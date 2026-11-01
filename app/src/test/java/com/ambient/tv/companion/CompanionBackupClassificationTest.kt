@@ -1,6 +1,10 @@
 package com.ambient.tv.companion
 
 import com.ambient.tv.data.local.SettingsBackup
+import com.ambient.tv.data.local.MonogramApiBackup
+import kotlinx.serialization.json.JsonNull
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.jsonObject
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -82,4 +86,27 @@ class CompanionBackupClassificationTest {
         assertFalse(merged(source, device = false))
         assertFalse(merged(source.copy(schemaVersion = 66), device = true))
     }
+    @Test fun monogramApiCredentialsAreAccountOnlyAndNeverSyncedWithoutConsent() {
+        val id = MonogramApiBackup(123456, "0123456789abcdef0123456789abcdef")
+        val sender = SettingsBackup(schemaVersion = 76, exportedAtEpochMs = 12,
+            monogramApiCredentials = id)
+        fun credentials(json: String) = Json.parseToJsonElement(json).jsonObject["monogramApiCredentials"]
+
+        assertTrue("monogramApiCredentials" in CompanionBackupPolicy.classifiedFields)
+        assertEquals(JsonNull, credentials(CompanionBackupPolicy.prepare(sender, false, "accounts")))
+        assertEquals(null, credentials(CompanionBackupPolicy.prepare(sender, false, "preferences")))
+        assertEquals(null, credentials(CompanionBackupPolicy.prepare(sender, true, "preferences")))
+        assertTrue(credentials(CompanionBackupPolicy.prepare(sender, true, "accounts")) != JsonNull)
+
+        val fresh = SettingsBackup(schemaVersion = 76, exportedAtEpochMs = 11)
+        val accepted = CompanionBackupPolicy.json.decodeFromString<SettingsBackup>(
+            CompanionBackupPolicy.merge(sender, fresh, "accounts", overwrite = true, deviceSettings = false))
+        assertEquals(id, accepted.monogramApiCredentials)
+
+        val existing = fresh.copy(monogramApiCredentials = MonogramApiBackup(777, "a".repeat(32)))
+        val protected = CompanionBackupPolicy.json.decodeFromString<SettingsBackup>(
+            CompanionBackupPolicy.merge(sender, existing, "accounts", overwrite = true, deviceSettings = false))
+        assertEquals(existing.monogramApiCredentials, protected.monogramApiCredentials)
+    }
+
 }

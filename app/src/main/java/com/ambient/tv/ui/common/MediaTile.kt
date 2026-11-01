@@ -26,6 +26,10 @@ import androidx.compose.foundation.layout.wrapContentWidth
 import androidx.compose.foundation.relocation.BringIntoViewRequester
 import androidx.compose.foundation.relocation.bringIntoViewRequester
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.AccountCircle
+import androidx.compose.material3.Icon
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -147,6 +151,21 @@ fun MediaTile(
     /** Menu, Info, or a long press. OK and a short tap stay [onClick]. */
     onInfo: (() -> Unit)? = null,
 ) {
+    // Monogram mirrors SmartTube's single-surface cards in Home, rows and grids.
+    // All non-Monogram sources keep the existing MediaTile presentation unchanged.
+    if (isMonogramMediaTile(item)) {
+        MonogramMediaCard(
+            item = item,
+            onClick = onClick,
+            modifier = modifier,
+            onFocused = onFocused,
+            requestInitialFocus = requestInitialFocus,
+            style = style,
+            fillCell = fillCell,
+            onInfo = onInfo,
+        )
+        return
+    }
     val handheld = LocalHandheldUi.current
     val heroRowTiles = LocalHeroRowTiles.current
     val resolvedStyle = resolveMediaTileStyle(style, item.type, handheld)
@@ -254,7 +273,24 @@ fun MediaTile(
                     .padding(2.dp),
             ) {
                 val imageUrl = mediaTileImageUrl(item, resolvedStyle)
-                MediaArtworkWithStreamIcons(
+                // Monogram channel cards follow SmartTube's round-avatar treatment.
+                // Content remains the normal shared card/focus component on TV and phone.
+                if (item.ratingKey.startsWith("telegram-channel:")) {
+                    Box(
+                        Modifier.fillMaxSize().background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = .45f)),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        if (imageUrl != null) ArtworkImage(
+                            model = imageUrl, title = item.title,
+                            modifier = Modifier.fillMaxHeight(.82f).aspectRatio(1f).clip(CircleShape),
+                            contentScale = ContentScale.Crop,
+                        ) else Icon(
+                            Icons.Filled.AccountCircle, contentDescription = item.title,
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.fillMaxHeight(.64f).aspectRatio(1f),
+                        )
+                    }
+                } else MediaArtworkWithStreamIcons(
                     item = item,
                     model = imageUrl,
                     title = item.title,
@@ -384,10 +420,21 @@ private fun MediaMetadataOverlay(
     }
 }
 
+/** Provider-specific upload date: all other MediaTile sources retain their original labels. */
+private fun monogramPublishedLabel(item: MediaItem): String? =
+    item.addedAt?.takeIf { it > 0L && (
+        item.ratingKey.startsWith("telegram:") ||
+        item.ratingKey.startsWith("telegram-youtube:")
+    ) }?.let { stamp ->
+        java.text.DateFormat.getDateInstance(java.text.DateFormat.MEDIUM)
+            .format(java.util.Date(stamp))
+    }
+
 /** The same four slots for every provider and type: year, length, age rating, score. */
 @Composable
 private fun focusedPrimaryMetadata(item: MediaItem): String = buildList {
     item.year?.let { add(it.toString()) }
+    monogramPublishedLabel(item)?.let(::add)
     focusedLengthLabel(item)?.let(::add)
     item.contentRating?.takeIf { it.isNotBlank() }?.let { rating ->
         val age = parseContentAge(rating)
@@ -453,7 +500,10 @@ private fun PosterLabels(item: MediaItem, focused: Boolean, reserveEpisodeLines:
                 item.year?.let { add(it.toString()) }
                 item.leafCount?.let { add(stringResource(R.string.media_episode_count, it)) }
             }
-            else -> item.year?.let { add(it.toString()) }
+            else -> {
+                item.year?.let { add(it.toString()) }
+                monogramPublishedLabel(item)?.let(::add)
+            }
         }
     }.joinToString(" · ")
     episodeTitle?.let { SecondaryLabel(it, focused) }
@@ -485,6 +535,7 @@ private fun EpisodeLabels(
     } else {
         val metadata = buildList {
             item.parentTitle?.takeIf { it.isNotBlank() }?.let(::add)
+            monogramPublishedLabel(item)?.let(::add)
             item.index?.let { add(stringResource(R.string.media_episode_short_label, it)) }
             formatDuration(item.durationMs)?.let(::add)
         }.joinToString(" · ")

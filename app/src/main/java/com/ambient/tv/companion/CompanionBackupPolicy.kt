@@ -19,7 +19,7 @@ internal object CompanionBackupPolicy {
         "youtubeAutoplayNextEnabled", "youtubeMediaSelectionBehaviorKey", "introSkipMode", "creditsSkipMode",
         "nextUpEnabled", "nextUpLeadSeconds", "nextUpCreditsDelaySeconds", "nextUpAutoplayEpisodes", "nextUpAutoplayCollections", "nextUpOverlayEnabled",
         "nextUpStillWatchingEpisodes", "sleepAutoStartKey", "sleepWarningMinutes", "sleepDailyStopMinute", "bigSeekJumpSeconds", "pauseRewindSeconds", "pauseRewindMinPauseSeconds", "resumeRewindSeconds", "sidebarSystemOrder", "sidebarDividersAfter", "sidebarEntryOrder", "sidebarEntryDividers", "systemNames",
-        "spotifySubmenuKeys", "radioSubmenuKeys", "tvheadendSubmenuKeys", "sidebarSettingsShortcutHidden",
+        "spotifySubmenuKeys", "radioSubmenuKeys", "telegramSubmenuKeys", "tvheadendSubmenuKeys", "sidebarSettingsShortcutHidden",
         "homeHeroIntensityPercent", "homeHeroSpreadKey", "homeBackgroundEverywhere", "focusArtworkBackdrop", "chooseServerOnStartup", "themeMusicVolume", "plexAutoRefreshIntervalSeconds",
         "plexThemeMusicEnabled", "jellyfinThemeMusicEnabled", "embyThemeMusicEnabled", "tvheadendShowOnHome",
         "playerTechBadgesVisible", "osdHiddenButtons", "visibleBackgroundVideoPlayback", "backgroundVideoDimPercent",
@@ -61,7 +61,8 @@ internal object CompanionBackupPolicy {
         "tvheadendStreamProfile", "tvheadendMacAddress", "tvheadendAutoWakeEnabled", "tmdbApiKey",
         "activeServerId", "activeJellyfinServerId", "activeEmbyServerId", "youtubeEnabled", "spotifyEnabled",
         "smartTubeAccounts", "spotifyAccount", "spotifyClientId", "wireGuardProfile", "wireGuardPrivateKey", "wireGuardPresharedKey",
-        "iptvSources", "openSubtitlesApiKey", "openSubtitlesUsername", "openSubtitlesPassword")
+        "iptvSources", "openSubtitlesApiKey", "openSubtitlesUsername", "openSubtitlesPassword",
+        "monogramApiCredentials")
     /** Every backup field the companion knows about; a new field must be added to one of the sets. */
     internal val classifiedFields: Set<String> get() = portable + hardware + accounts + deviceOnly
     /**
@@ -70,7 +71,7 @@ internal object CompanionBackupPolicy {
      * search history and hardware probes. Moving one into a synced set is a product decision.
      */
     private val deviceOnly = setOf(
-        "spotifyDeviceName", "spotifyBitrateKbps", "spotifyVisualizerModeKey", "plexHiddenSectionKeys",
+        "telegramEnabled", "spotifyDeviceName", "spotifyBitrateKbps", "spotifyVisualizerModeKey", "plexHiddenSectionKeys",
         "jellyfinHiddenSectionKeys", "embyHiddenSectionKeys", "localNetworkOnly", "wolRetryCount", "svpAvailable",
         "plexAudioPassthroughEnabled", "tvheadendAudioPassthroughEnabled", "screensaverPhotoAlbumKey",
         "screensaverPhotoAlbumTitle", "homeRows", "systemHomeHiddenRows", "libraryPreferences", "recentSearches",
@@ -112,6 +113,9 @@ internal object CompanionBackupPolicy {
                 JsonObject(it.jsonObject.toMutableMap().apply { put("token", JsonNull); if (field != "servers") put("password", JsonNull) })
             })
             s["smbPasswords"] = JsonObject(emptyMap()); s["sshKeys"] = JsonObject(emptyMap()); s["tvheadendPassword"] = JsonNull; s["tmdbApiKey"] = JsonNull
+            // Like Telegram's native session, its API application keys never travel in a
+            // companion transfer unless the user explicitly selected credentials.
+            s["monogramApiCredentials"] = JsonNull
             s["smartTubeAccounts"]?.takeUnless { it == JsonNull }?.let { accounts ->
                 s["smartTubeAccounts"] = JsonArray(accounts.jsonArray.map { JsonObject(it.jsonObject + ("credential" to JsonNull)) })
             }
@@ -232,6 +236,12 @@ internal object CompanionBackupPolicy {
                 ?: if (same) current.getValue("tvheadendPassword") else JsonNull
         }
         if (incoming["tmdbApiKey"] != JsonNull && (overwrite || current["tmdbApiKey"] == JsonNull)) result["tmdbApiKey"] = incoming.getValue("tmdbApiKey")
+        // Adopt a Monogram API application identity only on a fresh receiver. Never change
+        // an existing ID/hash behind a live MTProto session, even with account overwrite.
+        if (incoming.optional("monogramApiCredentials") != null &&
+            current.optional("monogramApiCredentials") == null) {
+            result["monogramApiCredentials"] = incoming.getValue("monogramApiCredentials")
+        }
         // OpenSubtitles: key and account travel together.
         if (incoming.optional("openSubtitlesApiKey") != null && (overwrite || current.optional("openSubtitlesApiKey") == null)) {
             for (key in listOf("openSubtitlesApiKey", "openSubtitlesUsername", "openSubtitlesPassword")) result[key] = incoming[key] ?: JsonNull

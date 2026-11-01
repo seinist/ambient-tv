@@ -12,9 +12,11 @@ internal fun configuredContentRoute(
     files: Boolean,
     trailers: Boolean,
     iptvSourceId: String?,
+    telegram: Boolean = false,
 ): String? = when {
     plex || jellyfin || emby || tvheadend -> Destinations.HOME
     youtube -> Destinations.YOUTUBE
+    telegram -> Destinations.TELEGRAM
     spotify -> Destinations.SPOTIFY
     radio -> Destinations.RADIO
     files -> Destinations.FILES

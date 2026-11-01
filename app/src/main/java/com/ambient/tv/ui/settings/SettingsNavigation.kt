@@ -27,6 +27,7 @@ internal fun settingsShortcutItemKey(key: String?): String? {
         SettingsCategory.BACKGROUND -> target.takeIf { it == "video" }?.let { "background:$it" }
         SettingsCategory.SEEK -> target.takeIf { it == "controls" }?.let { "seek:$it" }
         SettingsCategory.SPOTIFY -> target.takeIf { it == "account" }?.let { "spotify:$it" }
+        SettingsCategory.TELEGRAM -> target.takeIf { it == "account" }?.let { "telegram-account" }
         SettingsCategory.PLEX, SettingsCategory.JELLYFIN, SettingsCategory.EMBY ->
             target.takeIf { it == "customization" }?.let { "${category.name.lowercase(Locale.ROOT)}:$it" }
         else -> null
@@ -79,6 +80,7 @@ internal enum class SettingsCategory(val area: SettingsArea, val titleRes: Int, 
     DLNA(SettingsArea.SYSTEMS, R.string.dlna_title, R.string.settings_page_dlna_hint),
     FILES(SettingsArea.SYSTEMS, R.string.files_title, R.string.settings_page_files_hint),
     YOUTUBE(SettingsArea.STREAMING, R.string.settings_youtube_group, R.string.settings_page_youtube_hint),
+    TELEGRAM(SettingsArea.STREAMING, R.string.telegram_title, R.string.settings_page_telegram_hint),
     SPOTIFY(SettingsArea.STREAMING, R.string.settings_spotify_title, R.string.settings_page_spotify_hint),
     RADIO(SettingsArea.STREAMING, R.string.radio_title, R.string.settings_page_radio_hint),
     TRAILERS(SettingsArea.STREAMING, R.string.trailers_title, R.string.trailers_setup_hint),
@@ -118,6 +120,7 @@ internal enum class SettingsCategory(val area: SettingsArea, val titleRes: Int, 
             "sync", "transfer" -> TRANSFER
             "tvh", "tvheadend" -> TVHEADEND
             "iptv", "m3u" -> IPTV
+            "monogram", "telegram", "mtproto" -> TELEGRAM.takeIf { com.ambient.tv.BuildConfig.MONOGRAM_NATIVE }
             "live_tv", "livetv", "timeshift", "reminders" -> LIVE_TV
             "locale", "language" -> LANGUAGE
             "nav", "navigation", "media_selection", "mediaselection" -> MEDIA_SELECTION
@@ -225,6 +228,12 @@ internal fun settingsSearchTargetKey(category: SettingsCategory, query: String):
         }
         SettingsCategory.SPOTIFY -> when {
             listOf("developer", "entwickler", "client", "advanced").any { it in q } -> "spotify:account"
+            else -> null
+        }
+        SettingsCategory.TELEGRAM -> when {
+            listOf("api", "hash", "anmeld", "login", "account", "konto", "code", "qr",
+                "phone", "telefon", "monogram", "telegram", "mtproto").any { it in q } ->
+                    "telegram-account"
             else -> null
         }
         SettingsCategory.PLEX, SettingsCategory.JELLYFIN, SettingsCategory.EMBY -> {

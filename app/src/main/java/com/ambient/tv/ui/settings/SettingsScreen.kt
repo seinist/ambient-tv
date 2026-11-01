@@ -710,7 +710,8 @@ fun SettingsScreen(
                         SettingsCategory.TVHEADEND,
                         SettingsCategory.SPOTIFY,
                         SettingsCategory.RADIO,
-                        SettingsCategory.YOUTUBE -> {
+                        SettingsCategory.YOUTUBE,
+                        SettingsCategory.TELEGRAM -> {
                             settingsSystemCategoryItems(
                                 category = selectedCategory,
                                 handheldUi = handheldUi,
@@ -1896,6 +1897,12 @@ private fun HomeRowAddButtons(
         stringResource(R.string.settings_home_source_spotify_albums) to (HomeRowDefinition.SYSTEM_SPOTIFY to "albums"),
         stringResource(R.string.settings_home_source_spotify_artists) to (HomeRowDefinition.SYSTEM_SPOTIFY to "artists"),
         stringResource(R.string.settings_home_source_spotify_now_playing) to (HomeRowDefinition.SYSTEM_SPOTIFY to "now_playing"),
+        stringResource(R.string.telegram_recent) to (HomeRowDefinition.SYSTEM_TELEGRAM to "recent"),
+        stringResource(R.string.telegram_channels) to (HomeRowDefinition.SYSTEM_TELEGRAM to "channels"),
+        stringResource(R.string.telegram_videos) to (HomeRowDefinition.SYSTEM_TELEGRAM to "videos"),
+        stringResource(R.string.telegram_youtube) to (HomeRowDefinition.SYSTEM_TELEGRAM to "youtube"),
+        stringResource(R.string.telegram_audio) to (HomeRowDefinition.SYSTEM_TELEGRAM to "audio"),
+        stringResource(R.string.telegram_photos) to (HomeRowDefinition.SYSTEM_TELEGRAM to "photos"),
         stringResource(R.string.settings_home_source_radio_popular) to (HomeRowDefinition.SYSTEM_RADIO to HomeRowDefinition.RADIO_POPULAR),
         stringResource(R.string.settings_home_source_radio_favorites) to (HomeRowDefinition.SYSTEM_RADIO to HomeRowDefinition.RADIO_FAVORITES),
         stringResource(R.string.settings_home_source_radio_recent) to (HomeRowDefinition.SYSTEM_RADIO to HomeRowDefinition.RADIO_RECENT),
@@ -1931,6 +1938,7 @@ private fun HomeRowAddButtons(
         val systemOrder = listOf(HomeRowDefinition.SYSTEM_ALL) + mediaServers + listOf(
             HomeRowDefinition.SYSTEM_TVHEADEND,
             HomeRowDefinition.SYSTEM_YOUTUBE,
+            HomeRowDefinition.SYSTEM_TELEGRAM,
             HomeRowDefinition.SYSTEM_SPOTIFY,
             HomeRowDefinition.SYSTEM_RADIO,
             HomeRowDefinition.SYSTEM_PHOTOS,

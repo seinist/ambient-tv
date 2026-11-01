@@ -1,0 +1,20 @@
+package com.ambient.tv.data.telegram
+
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
+import org.junit.Test
+
+class MonogramResumePositionTest {
+    @Test fun shortProgressIsNotResumed() {
+        assertFalse(monogramResumeWorthKeeping(positionMs = 4_000L, durationMs = 600_000L))
+    }
+
+    @Test fun progressInTheMiddleIsResumed() {
+        assertTrue(monogramResumeWorthKeeping(positionMs = 120_000L, durationMs = 600_000L))
+        assertTrue(monogramResumeWorthKeeping(positionMs = 120_000L, durationMs = 0L))
+    }
+
+    @Test fun nearlyFinishedMediaStartsOver() {
+        assertFalse(monogramResumeWorthKeeping(positionMs = 590_000L, durationMs = 600_000L))
+    }
+}

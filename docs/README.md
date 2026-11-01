@@ -21,6 +21,8 @@ Current features in the compendium:
 - [Night mode by the clock](DOCUMENTATION.md#66-audio-profiles)
 - [Player tools: A-B, frame step, bookmarks, screenshots, lyrics, gapless](DOCUMENTATION.md#71-playback-settings-menu)
 - [Home layout and offline servers](DOCUMENTATION.md#31-home-rows)
+- [Monogram (optional Telegram media): features, six Home rows and sign-in](DOCUMENTATION.md#411-monogram-telegram-media-optional-native-build)
+- [Monogram API ID/hash, QR login and GPL native build](monogram-integration.md)
 - [System and voice search](DOCUMENTATION.md#111-android-tv)
 
 ## Other project notes (repo root)

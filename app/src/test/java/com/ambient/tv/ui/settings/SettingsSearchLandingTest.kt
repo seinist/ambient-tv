@@ -55,4 +55,24 @@ class SettingsSearchLandingTest {
         val index = SettingsItemIndex().apply { replace(mapOf("plex:customization" to 20)) }
         assertNull(index.landingPosition("plex:customization", requested = false))
     }
+    @Test fun monogramAccountSetupIsReachableThroughSettingsSearchAndDirectEntry() {
+        if (!com.ambient.tv.BuildConfig.MONOGRAM_NATIVE) {
+            // Builds without the native core expose no Monogram entry at all.
+            assertNull(SettingsCategory.fromKey("monogram"))
+            return
+        }
+        assertEquals(SettingsCategory.TELEGRAM, SettingsCategory.fromKey("monogram"))
+        assertEquals(SettingsCategory.TELEGRAM, settingsShortcutCategory("telegram:account"))
+        assertEquals("telegram-account", settingsShortcutItemKey("telegram:account"))
+        assertEquals("telegram-account", settingsShortcutItemKey("monogram:account"))
+        for (query in listOf("Monogram API hash", "Telegram QR login", "Telefon Anmeldecode")) {
+            val target = settingsSearchTargetKey(SettingsCategory.TELEGRAM, query)
+            assertEquals(query, "telegram-account", target)
+            val index = SettingsItemIndex().apply {
+                replace(mapOf("telegram-account-section" to 4, "telegram-account" to 5))
+            }
+            assertEquals(5, index.landingPosition(target, requested = true))
+        }
+    }
+
 }

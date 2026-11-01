@@ -59,6 +59,8 @@ enum class MediaSystem(
     ),
     SPOTIFY("spotify", R.string.spotify_title, R.drawable.system_spotify, R.drawable.wordmark_spotify, brand = "Spotify"),
     RADIO("radio", R.string.radio_title, R.drawable.system_radio, coloredLogo = R.drawable.logo_radio_browser_official, brandColor = Color(0xFF5A4A8A), brand = "Radio Browser"),
+    TELEGRAM("telegram", R.string.telegram_title, R.drawable.system_monogram,
+        coloredLogo = R.drawable.logo_monogram, brandColor = Color(0xFF3E6F87), brand = "Monogram"),
     DLNA("dlna", R.string.dlna_title, R.drawable.system_dlna, R.drawable.wordmark_dlna),
     TRAILERS("trailers", R.string.trailers_title, R.drawable.system_tmdb, R.drawable.wordmark_tmdb),
     IPTV("iptv", R.string.iptv_title, R.drawable.system_iptv),
@@ -68,7 +70,7 @@ enum class MediaSystem(
     val hasBrandMark: Boolean get() = logo != null
 
     /** TMDB's lettering is unreadable at icon size and DLNA's symbol has none, so neither spells its name. */
-    val markSpellsName: Boolean get() = hasBrandMark && this !in setOf(TRAILERS, DLNA, IPTV, RADIO)
+    val markSpellsName: Boolean get() = hasBrandMark && this !in setOf(TRAILERS, DLNA, IPTV, RADIO, TELEGRAM)
 
     /** Name given to this system in Settings; null while it keeps the provider's own name. */
     val customName: String? get() = SystemNameOverrides.names[key]
@@ -82,10 +84,13 @@ enum class MediaSystem(
     companion object {
         private val brands = Regex(entries.mapNotNull { it.brand }.joinToString("|") { Regex.escape(it) })
 
-        /** Logo catalog on first launch and on Settings › Add system. */
+        /**
+         * Logo catalog on first launch and on Settings › Add system. Monogram (Telegram) is only
+         * offered by builds that contain its optional native MTProto core.
+         */
         val addOrder: List<MediaSystem> = listOf(
-            PLEX, JELLYFIN, EMBY, DLNA, TVHEADEND, IPTV, YOUTUBE, SPOTIFY, RADIO, TRAILERS, FILES,
-        )
+            PLEX, JELLYFIN, EMBY, DLNA, TVHEADEND, IPTV, YOUTUBE, TELEGRAM, SPOTIFY, RADIO, TRAILERS, FILES,
+        ).filter { it != TELEGRAM || com.ambient.tv.BuildConfig.MONOGRAM_NATIVE }
 
         fun fromKey(key: String?): MediaSystem? = when (key?.lowercase()) {
             "tv", "tvh", "live_tv" -> TVHEADEND

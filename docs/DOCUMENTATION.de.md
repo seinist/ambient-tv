@@ -2,7 +2,7 @@
 
 **Sprachen:** [English](DOCUMENTATION.md) · **Deutsch**
 
-**App:** Ambient TV (`com.ambient.tv`) · Version `1.0` (versionCode siehe `version.properties`) · minSdk 29, target/compileSdk 37 · Backup-Schema 72
+**App:** Ambient TV (`com.ambient.tv`) · Version `1.0` (versionCode siehe `version.properties`) · minSdk 29, target/compileSdk 37 · Backup-Schema 76
 **Lizenz:** [CC0 1.0 Universal](../LICENSE)
 
 Dieses Kompendium beschreibt, was die App heute kann: jede Einstellungsseite, die Video- und Audio-Panels im Player und die Medienquellen. Die Bezeichnungen sind die echten Oberflächentexte aus `app/src/main/res/values*/`. Standardwerte stammen aus dem Code (`AppPreferences`, `AudioOptions`, `VideoImageOptions`, `SettingsUiState`). Geplante Funktionen stehen hier nicht.
@@ -52,6 +52,7 @@ Ambient TV ist eine APK mit zwei Oberflächen: eine D-Pad-Oberfläche mit Seiten
 | IPTV | M3U-Wiedergabelisten, XMLTV-Programmführer, Sendergruppen, Live-Player | Alle |
 | SmartTube | YouTube-Bereiche, Anmeldung per Gerätecode, SponsorBlock, „Auf dem Fernseher ansehen“ | Alle |
 | Spotify | Native Wiedergabe (librespot) und Spotify-Connect-Empfänger; Wiedergabe braucht Premium | Alle |
+| Monogram (optionaler GPL-/MTProto-Build) | Telegram-Kanalmedien, vollständige Beitragstexte, sechs Home-Reihen, YouTube-Links via SmartTube, Anmeldung per TV-QR oder Telefoncode/2FA | Alle |
 | Trailer | TMDB-Trailer und Reihe „Jetzt im Kino“; braucht einen eigenen TMDB-Schlüssel | Alle |
 | DLNA | UPnP-/DLNA-Medienserver im LAN durchsuchen | Alle |
 | Dateien | Lokale/USB-Ordner, SMB-1/2/3- und NFSv3/v4-Freigaben, Favoriten, zuletzt geöffnet, Weiterschauen | Alle |
@@ -71,7 +72,7 @@ Die Einstellungen haben fünf Bereiche. Jeder Bereich listet seine Seiten; die S
 | Bereich | Seiten |
 | --- | --- |
 | **Oberfläche & Bedienung** | Startseiten-Reihen · Beim Auswählen eines Mediums · Sprache · Mediathek · Aussehen · Hintergrundvideo · Bildschirmschoner · Menütöne · Uhr |
-| **Medienquellen & Konten** | Plex · Jellyfin · Emby · TVHeadend · IPTV · SmartTube · Spotify · Trailer · DLNA · Dateien (eingerichtete Systeme zuerst, dann „hinzufügen“) |
+| **Medienquellen & Konten** | Plex · Jellyfin · Emby · TVHeadend · IPTV · SmartTube · Spotify · Monogram (optionaler Build) · Trailer · DLNA · Dateien (eingerichtete Systeme zuerst, dann „hinzufügen“) |
 | **Geräte & Netzwerk** | Handy & Geräte · UPnP-Receiver · WireGuard / VPN · Server & Wake-on-LAN |
 | **Wiedergabe** | Standard-Player · Untertitel · Intros, Abspann und nächste Folge · Spulen & Fortsetzen · Bildprofile · Audioprofile · Audio-Visualisierung · Fotos |
 | **App & Daten** | Benachrichtigungen · Accounts und Einstellungen übertragen · Einstellungen sichern · Diagnose · Über die App |
@@ -96,7 +97,7 @@ Jede Seite eines Mediensystems hat zusätzlich:
 | Einstellung | Optionen / Werte | Standard | Geräte | Beschreibung |
 | --- | --- | --- | --- | --- |
 | Startseite gestalten | Reihen anzeigen, verschieben, entfernen | Plex: Weiterschauen, Kürzlich hinzugefügt, Sammlungen; TVHeadend: Live-TV | Alle | Reihen-Editor für die Startseite der App. |
-| Reihe hinzufügen | Weiterschauen · Alle Systeme; je System: Weiterschauen, Kürzlich hinzugefügt, Sammlungen, Bibliotheken; Zuletzt gesehene TV-Sender; TVHeadend Live-TV / Programm / Aufnahmen / Timer; SmartTube Startseite / Abos / Verlauf / Playlists / Shorts / Musik / News / Gaming / Live / Kids; Spotify Startseite / Lieblingssongs / Playlists / Alben / Künstler / Läuft gerade; Trailer / Jetzt im Kino; Zuletzt hinzugefügte Fotos; Top im Genre; Direktzugänge zu Systembereichen | — | Alle | Inhaltsreihen oder Direktzugänge zu einem Bereich eines Systems. |
+| Reihe hinzufügen | Weiterschauen · Alle Systeme; je System: Weiterschauen, Kürzlich hinzugefügt, Sammlungen, Bibliotheken; Zuletzt gesehene TV-Sender; TVHeadend Live-TV / Programm / Aufnahmen / Timer; SmartTube Startseite / Abos / Verlauf / Playlists / Shorts / Musik / News / Gaming / Live / Kids; Spotify Startseite / Lieblingssongs / Playlists / Alben / Künstler / Läuft gerade; Monogram Neue Medien / Kanäle / Videos / YouTube-Links / Musik und Audio / Fotos (optional); Trailer / Jetzt im Kino; Zuletzt hinzugefügte Fotos; Top im Genre; Direktzugänge zu Systembereichen | — | Alle | Inhaltsreihen oder Direktzugänge zu einem Bereich eines Systems. |
 | Systeme in „Weiterschauen · Alle Systeme“ | Plex, Jellyfin, Emby | Alle an | Alle | Welche Server die gemeinsame Reihe füllen. Sichtbar, wenn diese Reihe auf der Startseite liegt. |
 | Auf dem Startbildschirm zeigen | An / Aus | An | TV | Watch Next sowie die Kanäle „Weiterschauen“ und „Kürzlich hinzugefügt“ im Android-TV-Launcher. Sichtbar, wenn der Launcher es unterstützt. |
 | TV-Senderverlauf löschen | Aktion | — | Alle | Die Reihe der zuletzt gesehenen Sender speichert bis zu 12 Sender auf dem Gerät; nicht im Backup. |
@@ -359,6 +360,27 @@ In Ordnern mit Musik liest die App im Hintergrund die Tags (MP3/ID3v2, FLAC, M4A
 ### 4.10 IPTV (M3U/XMLTV)
 
 Einstellungen › Systeme & Konten › **IPTV**: beliebig viele M3U-Wiedergabelisten (http/https) mit optionalem XMLTV-Programmführer (`.xml` oder `.xml.gz`; leer = `url-tvg` aus der Liste) und optionalem User-Agent. Sender, Gruppen, Logos, `tvg-chno` und `#EXTVLCOPT`-User-Agent/Referer werden übernommen. Jede Liste erscheint im Menü unter **IPTV** mit Live und Programm und nutzt die Live-TV-Ansichten und den Live-Player. Die Liste wird 6 h, der Programmführer 12 h zwischengespeichert (offline gilt die letzte geladene Liste). Adressen werden verschlüsselt gespeichert und sind nur in Backups mit Zugangsdaten enthalten. Keine Aufnahmen/Timer.
+
+---
+
+### 4.11 Monogram (Telegram-Medien; optionaler nativer Build)
+
+**Verfügbarkeit:** Optionaler Build mit `MONOGRAM_NATIVE=1` und einer gepinnten nativen MTProto-Bibliothek unter GPL-3.0-only. Standard-APKs enthalten Monogram nicht. Anleitung im [README](../README.de.md#monogram-einrichten-optionale-telegram-medien) und in der [technischen Doku](monogram-integration.md). Die Native-ABIs, Renderer und Gerätetests sind noch nicht vollständig verifiziert.
+
+| Einstellung | Optionen / Werte | Standard | Geräte | Beschreibung |
+| --- | --- | --- | --- | --- |
+| Monogram aktivieren (interner Systemschlüssel: Telegram) | An / Aus | Aus | Alle | Zeigt private Kanalmedien nach der Telegram-Anmeldung an. |
+| API-ID + API-Hash | Zahl + verdeckter 32-stelliger Hex-Hash | Leer | Alle | Telegram-API-Anwendung auf [my.telegram.org/apps](https://my.telegram.org/apps) erstellen. Beide Felder sind auch bei deaktiviertem System sichtbar; gemeinsame verschlüsselte Speicherung (nicht in der APK). |
+| API-Zugangsdaten speichern | Aktion | — | Alle | Prüft ID/Hash und initialisiert den abgemeldeten Native-Client neu; zum Ändern zuvor abmelden. |
+| Monogram-Konto: QR-Anmeldung | Mit Telegram unter Geräte scannen und bestätigen | — | TV | Telegram-`tg://login`-Token, kein Spotify-OAuth-Web-Callback; ein zweites, bereits angemeldetes Gerät ist nötig. |
+| Monogram-Konto: Telefoncode | Telefonnummer mit Ländervorwahl; Code anfordern/bestätigen/erneut senden | — | TV, Handy | Anmeldung auch auf dem Handy ohne eigenen QR-Scan; bei Bedarf Passwort für Zwei-Schritt-Verifizierung. |
+| Kontostatus / Abmelden | Verbundenes Konto · Abmelden | Abgemeldet | Alle | Katalog, Menüs und Home-Reihen nach Autorisierung; Abmelden sperrt private Daten und leert Caches. |
+| Untermenü-/TV-Chips und Home-Reihen | Neue Medien · Kanäle · Videos · YouTube-Links · Musik und Audio · Fotos | Alle sechs wählbar | Alle | Kategorien getrennt im Home-Editor und Systemmenü konfigurierbar. |
+| Ansichten und Cards | Reihen · Raster · Liste · Info-Liste | Reihen | Alle | 16:9-Cards wie SmartTube, Kanal-Avatar/-Name, Datum und Laufzeit; Lazy Paging und Fokuswiederherstellung. |
+| Beitragsdetails / YouTube | Vollständiger Beitragstext und YouTube-Vorschaubilder | — | Alle | Auch gemischte Foto-/Videobeiträge mit YouTube-Links; Übergabe an SmartTubes Wiedergabeauswahl. |
+| Player und Kanal-OSD | Media3 · VLC · MPV; Kanalbild, Beitreten/Verlassen | Globale Playerwahl | Alle | MTProto-Bytebereiche und gemeinsames Player-OSD; Gerätetest steht noch aus. |
+
+**Backup:** Normale Sicherung enthält Monogram-Ansicht, Anzeigename, TV-Chips und Home-Reihen. Nur *Export mit Zugangsdaten* enthält API-ID/Hash in einer passwortverschlüsselten Sicherung. Native Telegram-Sitzungen, Codes, Passwörter, private Medien und Thumbnails sind nicht auf andere Geräte übertragbar. Vor einer Veröffentlichung sind Monogram-GPL und Telegram-API-Bedingungen zu prüfen.
 
 ---
 
@@ -853,7 +875,8 @@ Unter **App & Daten › Sicherung**:
 - **Ohne Zugangsdaten exportieren** (Standard): keine Plex-Tokens, kein TVHeadend-Passwort; Dateiquellen-Passwörter nur bei Export mit Zugangsdaten. Vor dem Speichern kann optional ein Passwort gesetzt werden (zweimal einzugeben, Anzeigen/Verbergen); leer lassen ergibt wie bisher eine unverschlüsselte JSON-Datei
 - **Mit Zugangsdaten exportieren:** nur bei Bedarf; die Datei wird mit einer Passphrase (mindestens 8 Zeichen, AES-256-GCM, PBKDF2) verschlüsselt, die beim Import abgefragt wird. Ohne Passphrase ist das Backup nicht wiederherstellbar. Die Übertragung per Companion bleibt TLS-geschützt.
 - Verschlüsselte Dateien sind ein kleiner JSON-Umschlag (`"format":"ambient-tv-encrypted-backup"`, Version 1, PBKDF2-HMAC-SHA256 mit 310 000 Iterationen, zufälliges 16-Byte-Salt und 12-Byte-IV, AES-256-GCM). Der Import erkennt unverschlüsselte und verschlüsselte Dateien automatisch und fragt nach dem Passwort; bei falschem Passwort oder beschädigter Datei erscheint ein Hinweis und der Dialog bleibt für einen neuen Versuch offen.
-- Import stellt Einstellungen und Serverprofile wieder her (Schema bis aktuell **72**)
+- Import stellt Einstellungen und Serverprofile wieder her (Schema bis aktuell **76**)
+- Monogram-Aktivierung, sechs Menü-/TV-Chips, Home-Reihen und Ansichtsmodi sind im normalen Backup enthalten; Telegram-API-ID/Hash nur im passwortverschlüsselten Export **mit Zugangsdaten**. Native Telegram-Anmeldung/2FA, Sitzungen und private Medien bleiben auf dem Gerät; auf neuen Geräten neu anmelden.
 - IPTV-Wiedergabelisten sowie OpenSubtitles-Schlüssel und -Konto sind nur in Backups **mit Zugangsdaten** enthalten (Listen-Adressen enthalten oft das Anbieterkonto); ein Backup ohne Zugangsdaten lässt die vorhandenen auf dem Gerät unverändert. Timeshift-Größe, Timeshift-/Direktaufnahme-Schalter (ab Schema 59) und Erinnerungs-Vorlauf werden immer gesichert, geplante Erinnerungen nicht.
 - Dateiquellen und WOL werden gesichert; **lokale Ordner-Berechtigungen (SAF) sind nicht übertragbar** und müssen auf dem neuen Gerät erneut erteilt werden
 - OAuth-Sitzungen und Gerätekennungen sind nicht als „übertragbare Anmeldung“ gedacht – Konten ggf. neu anmelden

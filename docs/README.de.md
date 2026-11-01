@@ -21,6 +21,8 @@ Aktuelle Funktionen im Kompendium:
 - [Nachtmodus nach Uhrzeit](DOCUMENTATION.de.md#66-audioprofile)
 - [Player-Werkzeuge: A-B, Einzelbild, Lesezeichen, Bildschirmfotos, Songtexte, lückenlos](DOCUMENTATION.de.md#71-menü-wiedergabeeinstellungen)
 - [Startseiten-Ansicht und Offline-Server](DOCUMENTATION.de.md#31-startseiten-reihen)
+- [Monogram (optionale Telegram-Medien): Funktionen, sechs Home-Reihen und Anmeldung](DOCUMENTATION.de.md#411-monogram-telegram-medien-optionaler-nativer-build)
+- [Monogram-API-ID/-Hash, QR-Anmeldung und GPL-Native-Build](monogram-integration.md)
 - [System- und Sprachsuche](DOCUMENTATION.de.md#111-android-tv)
 
 ## Weitere Projektnotizen (Repo-Root)

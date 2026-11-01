@@ -650,6 +650,47 @@ internal fun LazyListScope.settingsSystemCategoryItems(
             }
         }
 
+        SettingsCategory.TELEGRAM -> {
+            item {
+                TvSettingRow(
+                    systemString(MediaSystem.TELEGRAM, R.string.settings_telegram_enable),
+                    stringResource(R.string.settings_page_telegram_hint),
+                    uiState.telegramEnabled,
+                    viewModel::onTelegramEnabledChanged,
+                )
+            }
+            // Same account-setup header hierarchy as Spotify. Credentials can be entered
+            // before enabling the source; account sign-in still requires the opt-in backend.
+            item(key = "telegram-account-section") {
+                SettingsSubheader(stringResource(R.string.settings_system_account_setup))
+            }
+            item(key = "telegram-account") {
+                MonogramAccountSettings(allowSignIn = uiState.telegramEnabled)
+            }
+            if (uiState.telegramEnabled) {
+                item { SystemNameField(MediaSystem.TELEGRAM, uiState, viewModel) }
+                item(key = "telegram-submenu") {
+                    SettingsGroup(title = stringResource(R.string.settings_submenu_items),
+                        subtitle = stringResource(R.string.settings_submenu_items_hint)) {
+                        listOf(
+                            "recent" to R.string.telegram_recent,
+                            "channels" to R.string.telegram_channels,
+                            "videos" to R.string.telegram_videos,
+                            "youtube" to R.string.telegram_youtube,
+                            "audio" to R.string.telegram_audio,
+                            "photos" to R.string.telegram_photos,
+                        ).forEach { (key, label) ->
+                            TvSettingRow(title = stringResource(label),
+                                checked = key in uiState.telegramSubmenuKeys,
+                                onCheckedChange = { value -> viewModel.onTelegramSubmenuChanged(key, value) })
+                        }
+                        SubmenuSettingsRow(MediaSystem.TELEGRAM, uiState,
+                            viewModel::onSidebarSettingsShortcutChanged)
+                    }
+                }
+            }
+        }
+
         SettingsCategory.RADIO -> {
             item {
                 TvSettingRow(

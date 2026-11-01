@@ -44,6 +44,7 @@
       <li class="card reveal"><span class="ic" aria-hidden="true">📚</span><h3 data-i18n="f1h">All sources, one app</h3><p data-i18n="f1">Bring Plex, Jellyfin and Emby libraries together with YouTube through SmartTube, Spotify and DLNA sources.</p></li>
       <li class="card reveal"><span class="ic" aria-hidden="true">📱</span><h3 data-i18n="f7h">Phone & TV together</h3><p data-i18n="f7">Pair by QR code on the same home network. Use your phone as a touchpad or keyboard, start supported content on TV, and transfer accounts and settings with confirmation. Keep Ambient TV open on both devices.</p></li>
       <li class="card reveal"><span class="ic" aria-hidden="true">📂</span><h3 data-i18n="f8h">Files without a media server</h3><p data-i18n="f8">Open local folders or connect via SMB, NFS, WebDAV or SFTP. Browse your own videos and music directly on the NAS or network storage.</p></li>
+      <li class="card reveal"><span class="ic" aria-hidden="true">📚</span><h3 data-i18n="f13h">Monogram (optional)</h3><p data-i18n="f13">A separate native GPL build adds Telegram channel media, six Home rows, full post text, YouTube previews and QR/phone login. Not included in the standard APK.</p></li>
       <li class="card reveal"><span class="ic" aria-hidden="true">▶️</span><h3 data-i18n="f2h">MPV · VLC · Media3</h3><p data-i18n="f2">Three engines in one shared player, picture settings remembered per title. A-B repeat, frame step, bookmarks and screenshots.</p></li>
       <li class="card reveal"><span class="ic" aria-hidden="true">✨</span><h3 data-i18n="f3h">Upscalers &amp; SVP</h3><p data-i18n="f3">GPU shader upscalers like NNEDI3, RAVU, FSRCNNX, Anime4K, FSR – plus experimental SVP motion smoothing.</p></li>
       <li class="card reveal"><span class="ic" aria-hidden="true">🌈</span><h3 data-i18n="f4h">HDR</h3><p data-i18n="f4">Display-mode matching, HDR tone mapping and optional SDR → HDR10 (Android 14+).</p></li>
@@ -72,6 +73,20 @@
       <li data-i18n="spotify_enter">In Ambient TV, open <strong>Settings › Media sources &amp; accounts › Spotify › Spotify account</strong>, enter your <strong>Spotify client ID</strong>, then choose <strong>Sign in</strong>.</li>
     </ol>
     <p><a data-spotify-guide href="https://github.com/seinist/ambient-tv/blob/main/README.md#spotify-setup" data-i18n="spotify_guide">Full Spotify setup guide</a></p>
+  </section>
+
+  <section class="why spotify-setup reveal" id="monogram-setup" aria-labelledby="monogram-h">
+    <h2 id="monogram-h" data-i18n="monogram_h">Monogram setup (optional)</h2>
+    <p data-i18n="monogram_intro">Monogram is not included in the regular Ambient TV APK. It uses a separate native MTProto build under GPL licensing, with your own Telegram API application.</p>
+    <ol>
+      <li data-i18n="monogram_build">Install a <strong>Monogram-enabled APK</strong>, built using <code>MONOGRAM_NATIVE=1 ./build.sh arm64</code>. Binary distribution and real-device testing are not yet approved.</li>
+      <li data-i18n="monogram_create">At <a href="https://my.telegram.org/apps">my.telegram.org/apps</a>, create a Telegram API application and copy its <strong>API ID</strong> and <strong>API hash</strong>.</li>
+      <li data-i18n="monogram_enter">In <strong>Settings › Media sources &amp; accounts › Monogram</strong>, save the API ID/hash, then enable Monogram. The hash stays encrypted on this device, not in the app's binary.</li>
+      <li data-i18n="monogram_qr">On TV, choose <strong>Sign in with QR code</strong>. Open Telegram on an already signed-in phone, then scan the code from Telegram's <strong>Devices</strong> screen. This uses Telegram's own QR token, not a Spotify callback.</li>
+      <li data-i18n="monogram_phone">On a phone (or as a TV alternative), request and confirm a Telegram <strong>login code</strong> using the number with country prefix, then enter your two-step verification password if requested.</li>
+    </ol>
+    <p data-i18n="monogram_notes">After login, you can add six Monogram Home rows: Recent media, Channels, Videos, YouTube links, Music &amp; audio and Photos. A settings backup with credentials saves the API ID/hash, but never the Telegram session; re-authenticate on each new device.</p>
+    <p><a data-monogram-guide href="https://github.com/seinist/ambient-tv/blob/main/README.md#monogram-setup-optional-telegram-media-integration" data-i18n="monogram_guide">Full Monogram setup guide</a></p>
   </section>
 
 </main>

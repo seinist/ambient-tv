@@ -73,3 +73,7 @@ GEMINI.md
 
 # Kotlin daemon logs and session data
 .kotlin/
+
+# Monogram API credentials and native build stamps are machine-private.
+telegram.properties
+/app/libs/.monogram-native-*

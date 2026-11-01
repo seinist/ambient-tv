@@ -146,6 +146,7 @@ import com.ambient.tv.ui.tvheadend.TvheadendScreen
 import com.ambient.tv.ui.youtube.YouTubeScreen
 import com.ambient.tv.ui.youtube.YouTubeDetailScreen
 import com.ambient.tv.ui.navigation.navigateToYouTubeBrowsePlayer
+import com.ambient.tv.ui.navigation.navigateToTelegramPlayer
 import com.ambient.tv.ui.youtube.YouTubePlayerScreen
 import com.ambient.tv.ui.spotify.SpotifyHomeScreen
 import com.ambient.tv.ui.spotify.SpotifyDetailScreen
@@ -174,6 +175,7 @@ open class MainActivity : ComponentActivity() {
     @Inject lateinit var tokenStore: TokenStore
     @Inject lateinit var mediaRepository: MediaRepository
     @Inject lateinit var radioBrowserRepository: com.ambient.tv.data.radio.RadioBrowserRepository
+    @Inject lateinit var telegramRepository: com.ambient.tv.data.telegram.TelegramRepository
     @Inject lateinit var radioPlaybackLauncher: com.ambient.tv.ui.radio.RadioPlaybackLauncher
     @Inject lateinit var radioPlaybackQueue: com.ambient.tv.ui.radio.RadioPlaybackQueue
     @Inject lateinit var playbackAvailability: com.ambient.tv.data.browse.PlaybackAvailability
@@ -838,6 +840,7 @@ open class MainActivity : ComponentActivity() {
                         plexRefreshBus = plexRefreshBus,
                         mediaRepository = mediaRepository,
                         radioBrowserRepository = radioBrowserRepository,
+                        telegramRepository = telegramRepository,
                         radioPlaybackLauncher = radioPlaybackLauncher,
                         playbackAvailability = playbackAvailability,
                         lastInteractionElapsedMs = lastInteractionElapsedMs.longValue,
@@ -913,8 +916,8 @@ internal fun radioSectionTransitionIsInstant(fromRoute: String?, toRoute: String
     return isRadioBrowse(fromRoute) && isRadioBrowse(toRoute)
 }
 
-internal val SIDEBAR_ROUTES = setOf(Destinations.TRAILERS, Destinations.TRAILER_FEED, Destinations.FILES, Destinations.FILE_SOURCE, Destinations.FILE_FAVORITES, Destinations.FILE_RECENT, Destinations.FILE_CONTINUE, Destinations.DLNA, Destinations.DLNA_SERVER, Destinations.HOME, Destinations.PLEX, Destinations.JELLYFIN, Destinations.EMBY, Destinations.SEARCH, Destinations.YOUTUBE, Destinations.YOUTUBE_FEED, Destinations.SPOTIFY, Destinations.SPOTIFY_SECTION, Destinations.RADIO, Destinations.RADIO_SECTION, Destinations.LIVE_TV, Destinations.LIVE_TV_SECTION, Destinations.SETTINGS, Destinations.SECTION)
-internal val FULLSCREEN_ROUTES = setOf(Destinations.ITEM_TRAILERS, Destinations.TMDB_TRAILERS, Destinations.PHOTO_VIEWER, Destinations.SETUP_COMPLETE, Destinations.INITIAL_SETUP, Destinations.SETUP_SETTINGS, Destinations.PLAYER, Destinations.TVH_PLAYER, Destinations.YOUTUBE_PLAYER, Destinations.YOUTUBE_DETAIL, Destinations.YOUTUBE_CHANNEL, Destinations.SPOTIFY_PLAYER, Destinations.RADIO_PLAYER, Destinations.SPOTIFY_DETAIL, Destinations.SERVER_SELECT, Destinations.DETAIL, Destinations.DETAIL_FILTERED_BROWSE)
+internal val SIDEBAR_ROUTES = setOf(Destinations.TRAILERS, Destinations.TRAILER_FEED, Destinations.FILES, Destinations.FILE_SOURCE, Destinations.FILE_FAVORITES, Destinations.FILE_RECENT, Destinations.FILE_CONTINUE, Destinations.DLNA, Destinations.DLNA_SERVER, Destinations.HOME, Destinations.PLEX, Destinations.JELLYFIN, Destinations.EMBY, Destinations.SEARCH, Destinations.YOUTUBE, Destinations.YOUTUBE_FEED, Destinations.TELEGRAM, Destinations.TELEGRAM_SECTION, Destinations.SPOTIFY, Destinations.SPOTIFY_SECTION, Destinations.RADIO, Destinations.RADIO_SECTION, Destinations.LIVE_TV, Destinations.LIVE_TV_SECTION, Destinations.SETTINGS, Destinations.SECTION)
+internal val FULLSCREEN_ROUTES = setOf(Destinations.ITEM_TRAILERS, Destinations.TMDB_TRAILERS, Destinations.PHOTO_VIEWER, Destinations.SETUP_COMPLETE, Destinations.INITIAL_SETUP, Destinations.SETUP_SETTINGS, Destinations.PLAYER, Destinations.TVH_PLAYER, Destinations.YOUTUBE_PLAYER, Destinations.TELEGRAM_PLAYER, Destinations.TELEGRAM_DETAIL, Destinations.YOUTUBE_DETAIL, Destinations.YOUTUBE_CHANNEL, Destinations.SPOTIFY_PLAYER, Destinations.RADIO_PLAYER, Destinations.SPOTIFY_DETAIL, Destinations.SERVER_SELECT, Destinations.DETAIL, Destinations.DETAIL_FILTERED_BROWSE)
 // Saved on the Settings back stack entry by a sidebar shortcut: the page to open, plus a serial
 // that changes with every request.
 private const val SETTINGS_PAGE_KEY = "settings_page"
@@ -943,6 +946,7 @@ private fun AmbientTvApp(
     plexRefreshBus: PlexRefreshBus,
     mediaRepository: MediaRepository,
     radioBrowserRepository: com.ambient.tv.data.radio.RadioBrowserRepository,
+    telegramRepository: com.ambient.tv.data.telegram.TelegramRepository,
     radioPlaybackLauncher: com.ambient.tv.ui.radio.RadioPlaybackLauncher,
     playbackAvailability: com.ambient.tv.data.browse.PlaybackAvailability,
     lastInteractionElapsedMs: Long,
@@ -1103,6 +1107,20 @@ private fun AmbientTvApp(
         collectionId: String? = null,
         collectionSort: String? = null,
     ) {
+        if (ratingKey.startsWith(com.ambient.tv.ui.telegram.TELEGRAM_CHANNEL_ITEM_PREFIX)) {
+            ratingKey.removePrefix(com.ambient.tv.ui.telegram.TELEGRAM_CHANNEL_ITEM_PREFIX)
+                .toLongOrNull()?.let { chatId ->
+                    navController.navigate(Destinations.telegramSection("channel:$chatId")) {
+                        launchSingleTop = true
+                    }
+                }
+            return
+        }
+        com.ambient.tv.data.telegram.telegramPostIds(ratingKey)?.let { (chatId, messageId) ->
+            // A private post has a detail page with full text and every linked YouTube video.
+            navController.navigate(Destinations.telegramDetail(chatId, messageId))
+            return
+        }
         if (ratingKey.startsWith(com.ambient.tv.data.radio.RADIO_HOME_ITEM_PREFIX)) {
             val stationId = ratingKey.removePrefix(com.ambient.tv.data.radio.RADIO_HOME_ITEM_PREFIX)
             if (stationId.isBlank() || mediaSelectionBusy) return
@@ -1206,6 +1224,7 @@ private fun AmbientTvApp(
         youtube = appPreferences.youtubeEnabled,
         spotify = appPreferences.spotifyEnabled && spotifyRepository.nativeAvailable && spotifyWebAuthorized(tokenStore),
         radio = appPreferences.radioEnabled,
+        telegram = appPreferences.telegramEnabled && telegramRepository.nativeAvailable,
         files = appPreferences.filesEnabled,
         trailers = appPreferences.trailersEnabled && !tokenStore.tmdbApiKey.isNullOrBlank(),
         iptvSourceId = configuredIptvSourceId,
@@ -1298,6 +1317,11 @@ private fun AmbientTvApp(
         Destinations.RADIO_SECTION -> currentBackStackEntry?.arguments?.getString("sectionKey")
         else -> null
     }
+    val currentTelegramSectionKey = when (currentRoute) {
+        Destinations.TELEGRAM -> "recent"
+        Destinations.TELEGRAM_SECTION -> currentBackStackEntry?.arguments?.getString("sectionKey")
+        else -> null
+    }
     val currentLiveTvSourceId = currentBackStackEntry?.arguments?.getString("sourceId")
     val currentTvheadendTab = if (currentRoute == Destinations.LIVE_TV_SECTION) currentBackStackEntry?.arguments?.getString("tab") else null
     val currentFileSourceId = if (currentRoute == Destinations.FILE_SOURCE) currentBackStackEntry?.arguments?.getString("sourceId") else null
@@ -1316,11 +1340,13 @@ private fun AmbientTvApp(
         currentRoute == Destinations.SPOTIFY_SECTION ||
         currentRoute == Destinations.RADIO ||
         currentRoute == Destinations.RADIO_SECTION ||
+        currentRoute == Destinations.TELEGRAM ||
+        currentRoute == Destinations.TELEGRAM_SECTION ||
         currentRoute == Destinations.LIVE_TV ||
         currentRoute == Destinations.LIVE_TV_SECTION
     val sidebarDestinationKey = sidebarConcreteRoute(
         currentRoute, currentSectionKey, currentFeedKey, currentTrailerFeedKey, currentSpotifySectionKey, currentTvheadendTab,
-        currentLiveTvSourceId, currentFileSourceId, currentDlnaServerId, currentRadioSectionKey,
+        currentLiveTvSourceId, currentFileSourceId, currentDlnaServerId, currentRadioSectionKey, currentTelegramSectionKey,
     )
     // Key readiness to the destination itself: a parent effect must not overwrite a child
     // readiness report later in the same composition frame.
@@ -1368,7 +1394,7 @@ private fun AmbientTvApp(
                 it.metadata?.sourceWidth, it.metadata?.sourceHeight, it.metadata?.sourceAspectRatioHint),
         )
     } })
-    val onPlayerScreen = currentRoute in setOf(Destinations.PLAYER, Destinations.TVH_PLAYER, Destinations.YOUTUBE_PLAYER)
+    val onPlayerScreen = currentRoute in setOf(Destinations.PLAYER, Destinations.TVH_PLAYER, Destinations.YOUTUBE_PLAYER, Destinations.TELEGRAM_PLAYER)
     val activity = androidx.activity.compose.LocalActivity.current
     val pipPresentation = (activity as? MainActivity)?.let { it.systemPipVisible || it.systemPipEntering } == true
     // Keep one native video plane alive for the complete playback lifetime. Fullscreen, browse
@@ -1568,9 +1594,9 @@ private fun AmbientTvApp(
         }
     }
     // The photo viewer is a presentation too: a running slideshow must not start the screensaver.
-    val onPlayerRoute = currentRoute in setOf(Destinations.PLAYER, Destinations.TVH_PLAYER, Destinations.YOUTUBE_PLAYER, Destinations.SPOTIFY_PLAYER, Destinations.RADIO_PLAYER)
+    val onPlayerRoute = currentRoute in setOf(Destinations.PLAYER, Destinations.TVH_PLAYER, Destinations.YOUTUBE_PLAYER, Destinations.TELEGRAM_PLAYER, Destinations.SPOTIFY_PLAYER, Destinations.RADIO_PLAYER)
     androidx.compose.runtime.SideEffect { com.ambient.tv.ui.player.SleepWarningKeyGate.playerRoute = onPlayerRoute }
-    val playbackActive = currentRoute == Destinations.PHOTO_VIEWER || currentRoute == Destinations.PLAYER || currentRoute == Destinations.TVH_PLAYER || currentRoute == Destinations.YOUTUBE_PLAYER || currentRoute == Destinations.SPOTIFY_PLAYER || currentRoute == Destinations.RADIO_PLAYER || backgroundPlayback.active
+    val playbackActive = currentRoute == Destinations.PHOTO_VIEWER || currentRoute == Destinations.PLAYER || currentRoute == Destinations.TVH_PLAYER || currentRoute == Destinations.YOUTUBE_PLAYER || currentRoute == Destinations.TELEGRAM_PLAYER || currentRoute == Destinations.SPOTIFY_PLAYER || currentRoute == Destinations.RADIO_PLAYER || backgroundPlayback.active
 
     // Handheld video pages are fullscreen exactly while the window is landscape, so turning the
     // device switches into fullscreen and back. Television keeps its manifest orientation.
@@ -1616,13 +1642,14 @@ private fun AmbientTvApp(
         }
     }
 
-    LaunchedEffect(currentRoute, currentSectionKey, currentFeedKey, currentTrailerFeedKey, currentSpotifySectionKey, currentRadioSectionKey, currentTvheadendTab, currentLiveTvSourceId, currentFileSourceId, currentDlnaServerId) {
+    LaunchedEffect(currentRoute, currentSectionKey, currentFeedKey, currentTrailerFeedKey, currentSpotifySectionKey, currentRadioSectionKey, currentTelegramSectionKey, currentTvheadendTab, currentLiveTvSourceId, currentFileSourceId, currentDlnaServerId) {
         if (currentRoute in SIDEBAR_ROUTES && currentRoute != Destinations.SETTINGS) {
             lastTopLevelRoute = when (currentRoute) {
                 Destinations.YOUTUBE_FEED -> currentFeedKey?.let(Destinations::youtubeFeed) ?: Destinations.YOUTUBE
                 Destinations.TRAILER_FEED -> currentTrailerFeedKey?.let(Destinations::trailerFeed) ?: Destinations.TRAILERS
                 Destinations.SPOTIFY_SECTION -> currentSpotifySectionKey?.let(Destinations::spotifySection) ?: Destinations.SPOTIFY
                 Destinations.RADIO_SECTION -> currentRadioSectionKey?.let(Destinations::radioSection) ?: Destinations.RADIO
+                Destinations.TELEGRAM_SECTION -> currentTelegramSectionKey?.let(Destinations::telegramSection) ?: Destinations.TELEGRAM
                 Destinations.LIVE_TV_SECTION -> currentTvheadendTab?.let { Destinations.liveTvSection(it, currentLiveTvSourceId) } ?: Destinations.LIVE_TV
                 Destinations.FILE_SOURCE -> currentFileSourceId?.let(Destinations::fileSource) ?: Destinations.FILES
                 Destinations.DLNA_SERVER -> currentDlnaServerId?.let(Destinations::dlnaServer) ?: Destinations.DLNA
@@ -1717,7 +1744,7 @@ private fun AmbientTvApp(
         }
         val activeSidebarRoute = sidebarConcreteRoute(
             currentRoute, currentSectionKey, currentFeedKey, currentTrailerFeedKey, currentSpotifySectionKey, currentTvheadendTab,
-            currentLiveTvSourceId, currentFileSourceId, currentDlnaServerId, currentRadioSectionKey,
+            currentLiveTvSourceId, currentFileSourceId, currentDlnaServerId, currentRadioSectionKey, currentTelegramSectionKey,
         )
         // Selecting the already active destination is only a focus handoff. Re-navigating a
         // singleton destination destroys its focused subtree and is especially visible when
@@ -1952,6 +1979,7 @@ private fun AmbientTvApp(
                     currentTrailerFeedKey = currentTrailerFeedKey,
                     currentSpotifySectionKey = currentSpotifySectionKey,
                     currentRadioSectionKey = currentRadioSectionKey,
+                    currentTelegramSectionKey = currentTelegramSectionKey,
                     currentTvheadendTab = currentTvheadendTab,
                     currentLiveTvSourceId = currentLiveTvSourceId,
                     currentFileSourceId = currentFileSourceId,
@@ -2060,6 +2088,7 @@ private fun AmbientTvApp(
                                 navController.navigate(Destinations.setupComplete(Destinations.YOUTUBE))
                             },
                             onSetupSpotify = { setupSource("spotify") },
+                            onSetupTelegram = { setupSource("telegram") },
                             onUseRadio = {
                                 if (!appPreferences.initialSetupCompleted) appPreferences.youtubeEnabled = false
                                 appPreferences.radioEnabled = true
@@ -2114,7 +2143,7 @@ private fun AmbientTvApp(
                         )
                     }
                     composable(Destinations.SETUP_COMPLETE, arguments = listOf(navArgument("destination") { type = NavType.StringType })) { entry ->
-                        val destination = entry.arguments?.getString("destination")?.takeIf { it in setOf(Destinations.HOME, Destinations.YOUTUBE, Destinations.SPOTIFY, Destinations.RADIO, Destinations.FILES) || it == configuredStartDestination() } ?: Destinations.HOME
+                        val destination = entry.arguments?.getString("destination")?.takeIf { it in setOf(Destinations.HOME, Destinations.YOUTUBE, Destinations.TELEGRAM, Destinations.SPOTIFY, Destinations.RADIO, Destinations.FILES) || it == configuredStartDestination() } ?: Destinations.HOME
                         com.ambient.tv.ui.setup.SetupCompleteScreen(
                             onStart = { navController.navigate(destination) { popUpTo(Destinations.INITIAL_SETUP) { inclusive = true } } },
                             onAddSource = { navController.popBackStack(Destinations.INITIAL_SETUP, false) },
@@ -2146,12 +2175,22 @@ private fun AmbientTvApp(
                                     }
                                 },
                                 onYouTubeVideoClick = { videoId, session -> handleYouTubeSelection(videoId, session) },
+                                onTelegramPostClick = { key, queue ->
+                                    com.ambient.tv.data.telegram.telegramPostIds(key)?.let { (chatId, messageId) ->
+                                        navController.navigate(Destinations.telegramDetail(chatId, messageId, queue))
+                                    } ?: handleMediaSelection(key)
+                                },
                                 onRadioHomeStationClick = ::handleHomeRadioSelection,
                                 onWatchLiveChannel = { channel -> playOnSelectedTarget(Destinations.tvhPlayer("channel", channel.uuid, channel.sourceId)) },
                                 onOpenHomeContent = { row ->
                                     when (row.system) {
                                         HomeRowDefinition.SYSTEM_YOUTUBE -> youtubeFeedRoute(row.contentKey).let { route -> if (route == Destinations.YOUTUBE) navigateTopLevel(route) else navigateToSection(route) }
                                         HomeRowDefinition.SYSTEM_SPOTIFY -> if (row.contentKey == "now_playing") playOnSelectedTarget(Destinations.spotifyPlayer()) else if (row.contentKey == "home") navigateTopLevel(Destinations.SPOTIFY) else navigateToSection(Destinations.spotifySection(row.contentKey))
+                                        HomeRowDefinition.SYSTEM_TELEGRAM -> {
+                                            val route = Destinations.telegramSection(row.contentKey)
+                                            if (route == Destinations.TELEGRAM) navigateTopLevel(route)
+                                            else navigateToSection(route)
+                                        }
                                         HomeRowDefinition.SYSTEM_RADIO -> {
                                             val section = when {
                                                 row.contentKey == "home" -> "popular"
@@ -2256,6 +2295,73 @@ private fun AmbientTvApp(
                                 onSelectFeed = { feed -> navigateSidebar(youtubeFeedRoute(feed.key)) },
                             )
                         }
+                    }
+                    composable(Destinations.TELEGRAM) {
+                        RestorableSidebarContent {
+                            com.ambient.tv.ui.telegram.TelegramScreen(
+                                sectionKey = "recent",
+                                onSelectSection = { key -> navigateSidebar(Destinations.telegramSection(key)) },
+                                onOpenSettings = { openSystemSettings("telegram:account") },
+                                onOpenChannel = { chatId -> navigateToSection(Destinations.telegramSection("channel:$chatId")) },
+                                onOpenPost = { chatId, messageId, queue ->
+                                    navController.navigate(Destinations.telegramDetail(chatId, messageId, queue))
+                                },
+                            )
+                        }
+                    }
+                    composable(Destinations.TELEGRAM_SECTION,
+                        arguments = listOf(navArgument("sectionKey") { type = NavType.StringType })) { entry ->
+                        RestorableSidebarContent {
+                            com.ambient.tv.ui.telegram.TelegramScreen(
+                                sectionKey = entry.arguments?.getString("sectionKey") ?: "recent",
+                                onSelectSection = { key -> navigateSidebar(Destinations.telegramSection(key)) },
+                                onOpenSettings = { openSystemSettings("telegram:account") },
+                                onOpenChannel = { chatId -> navigateToSection(Destinations.telegramSection("channel:$chatId")) },
+                                onOpenPost = { chatId, messageId, queue ->
+                                    navController.navigate(Destinations.telegramDetail(chatId, messageId, queue))
+                                },
+                            )
+                        }
+                    }
+                    composable(Destinations.TELEGRAM_DETAIL,
+                        arguments = listOf(
+                            navArgument("chatId") { type = NavType.LongType },
+                            navArgument("messageId") { type = NavType.IntType },
+                            navArgument("queue") { type = NavType.LongType; defaultValue = -1L },
+                        )) { entry ->
+                        com.ambient.tv.ui.telegram.TelegramPostDetailScreen(
+                            chatId = entry.arguments?.getLong("chatId") ?: 0L,
+                            messageId = entry.arguments?.getInt("messageId") ?: 0,
+                            repository = telegramRepository,
+                            onBack = ::navigateBack,
+                            onOpenSettings = { openSystemSettings("telegram:account") },
+                            onOpenChannel = { id ->
+                                navController.navigate(Destinations.telegramSection("channel:$id"))
+                            },
+                            onPlayMedia = { chat, message ->
+                                // The page's queue only applies to the post it was started with.
+                                val queue = entry.arguments?.getLong("queue")?.takeIf {
+                                    it >= 0L && chat == entry.arguments?.getLong("chatId") &&
+                                        message == entry.arguments?.getInt("messageId")
+                                }
+                                playOnSelectedTarget(Destinations.telegramPlayer(chat, message, queue),
+                                    navigate = { route -> navController.navigateToTelegramPlayer(route) })
+                            },
+                            onOpenYouTube = { videoId -> handleYouTubeSelection(videoId) },
+                        )
+                    }
+                    composable(Destinations.TELEGRAM_PLAYER,
+                        arguments = listOf(
+                            navArgument("chatId") { type = NavType.LongType },
+                            navArgument("messageId") { type = NavType.IntType },
+                            navArgument("queue") { type = NavType.LongType; defaultValue = -1L },
+                        )) {
+                        com.ambient.tv.ui.telegram.TelegramPlayerScreen(
+                            onBack = ::navigateBack,
+                            onOpenChannel = { chat ->
+                                navController.navigate(Destinations.telegramSection("channel:$chat"))
+                            },
+                        )
                     }
                     composable(Destinations.RADIO) {
                         RestorableSidebarContent {

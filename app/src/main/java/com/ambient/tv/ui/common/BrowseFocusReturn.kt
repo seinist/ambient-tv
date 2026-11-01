@@ -134,6 +134,12 @@ internal class BrowseFocusReturnState(private val scope: CoroutineScope, val vie
         if (lastKey == null) lastKey = key
     }
 
+    /**
+     * While true, entering the page waits (requestFocus answers null, so the Sidebar and the
+     * return-from-player handoff retry): the item to return to is still being loaded.
+     */
+    var holdEntry: Boolean = false
+
     fun forget() {
         cancelRecovery()
         last = null
@@ -205,6 +211,7 @@ internal class BrowseFocusReturnState(private val scope: CoroutineScope, val vie
     /** null means the target is being laid out. Only this synchronous call may transfer focus. */
     fun requestFocus(): Boolean? {
         if (!active) return false
+        if (holdEntry) return null
         if (NavReselect.restoreTop.value && lastKey != null) forget()
         if (preparation?.isActive == true) return null
 
@@ -299,6 +306,14 @@ internal fun BrowseFocusContentIdentity(identity: Any, restoreInitialTarget: Boo
 internal fun BrowseFocusInitialTarget(key: Any?, row: Any? = null) {
     val owner = LocalBrowseFocusReturnState.current
     SideEffect { owner?.initialTarget(key?.let { BrowseFocusKey(row, it, true) }) }
+}
+
+/** Holds page entry while [hold], e.g. until a post played after Next has been loaded. */
+@Composable
+internal fun BrowseFocusHoldEntry(hold: Boolean) {
+    val owner = LocalBrowseFocusReturnState.current ?: return
+    SideEffect { owner.holdEntry = hold }
+    DisposableEffect(owner) { onDispose { owner.holdEntry = false } }
 }
 
 @Composable

@@ -306,6 +306,8 @@ internal fun SettingsHub(
         if (category == SettingsCategory.ADVANCED || !handheld && category == SettingsCategory.TRANSFER) return@filter false
         // The UPnP receiver only runs on TVs; phones are senders.
         if (category == SettingsCategory.RECEIVER && handheld) return@filter false
+        // Monogram needs the optional native core; normal builds show no Telegram page at all.
+        if (category == SettingsCategory.TELEGRAM && !com.ambient.tv.BuildConfig.MONOGRAM_NATIVE) return@filter false
         // A renamed system is still found under its provider name.
         val haystack = buildString {
             append(title); append(' '); append(hint); append(' ')
@@ -1016,6 +1018,7 @@ internal fun settingsSystem(category: SettingsCategory): com.ambient.tv.ui.commo
     SettingsCategory.TVHEADEND -> com.ambient.tv.ui.common.MediaSystem.TVHEADEND
     SettingsCategory.IPTV -> com.ambient.tv.ui.common.MediaSystem.IPTV
     SettingsCategory.YOUTUBE -> com.ambient.tv.ui.common.MediaSystem.YOUTUBE
+    SettingsCategory.TELEGRAM -> com.ambient.tv.ui.common.MediaSystem.TELEGRAM
     SettingsCategory.TRAILERS -> com.ambient.tv.ui.common.MediaSystem.TRAILERS
     SettingsCategory.SPOTIFY -> com.ambient.tv.ui.common.MediaSystem.SPOTIFY
     SettingsCategory.RADIO -> com.ambient.tv.ui.common.MediaSystem.RADIO
@@ -1054,6 +1057,7 @@ internal fun sourceConfigured(category: SettingsCategory, state: SettingsUiState
     SettingsCategory.EMBY -> state.embyEnabled && state.embyConfigured
     SettingsCategory.TVHEADEND -> state.tvheadendEnabled && state.tvheadendHost.isNotBlank()
     SettingsCategory.YOUTUBE -> state.youtubeEnabled
+    SettingsCategory.TELEGRAM -> com.ambient.tv.BuildConfig.MONOGRAM_NATIVE && state.telegramEnabled
     SettingsCategory.TRAILERS -> state.trailersConfigured
     SettingsCategory.SPOTIFY -> state.spotifyEnabled && state.spotifyWebAuthorized
     SettingsCategory.RADIO -> state.radioEnabled
@@ -1079,6 +1083,7 @@ internal fun homeRowSourceAddable(system: String, contentKey: String, state: Set
             youtubeReady = sourceConfigured(SettingsCategory.YOUTUBE, state) && state.youtubeAvailable,
             spotifyReady = sourceConfigured(SettingsCategory.SPOTIFY, state),
             radioReady = sourceConfigured(SettingsCategory.RADIO, state),
+            telegramReady = sourceConfigured(SettingsCategory.TELEGRAM, state),
             photosReady = sourceConfigured(SettingsCategory.PLEX, state) ||
                 sourceConfigured(SettingsCategory.JELLYFIN, state) || sourceConfigured(SettingsCategory.EMBY, state),
         )
@@ -1105,6 +1110,7 @@ private fun settingsPageSummary(category: SettingsCategory, state: SettingsUiSta
             SettingsCategory.EMBY -> state.embyEnabled
             SettingsCategory.TVHEADEND -> state.tvheadendEnabled
             SettingsCategory.YOUTUBE -> state.youtubeEnabled
+            SettingsCategory.TELEGRAM -> state.telegramEnabled
             SettingsCategory.SPOTIFY -> state.spotifyEnabled
             SettingsCategory.RADIO -> state.radioEnabled
             SettingsCategory.DLNA -> true

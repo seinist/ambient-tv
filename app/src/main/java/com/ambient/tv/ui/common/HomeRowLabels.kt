@@ -13,6 +13,19 @@ import com.ambient.tv.data.radio.radioLanguageDisplayName
  */
 fun HomeRowDefinition.displayTitle(context: Context): String {
     if (title.isNotBlank()) return title
+    if (system == HomeRowDefinition.SYSTEM_TELEGRAM) {
+        val key = when (contentKey) {
+            "channels" -> R.string.telegram_channels
+            "videos" -> R.string.telegram_videos
+            "youtube" -> R.string.telegram_youtube
+            "audio" -> R.string.telegram_audio
+            "photos" -> R.string.telegram_photos
+            else -> R.string.telegram_recent
+        }
+        val name = MediaSystem.TELEGRAM.customName ?: context.getString(R.string.telegram_title)
+        return context.getString(R.string.telegram_home_row, context.getString(key))
+            .replaceFirst(context.getString(R.string.telegram_title), name)
+    }
     if (system == HomeRowDefinition.SYSTEM_TRAILERS) {
         val feed = com.ambient.tv.trailers.TrailerFeed.entries.firstOrNull { it.name == contentKey }
         val name = MediaSystem.TRAILERS.customName ?: context.getString(R.string.trailers_title)

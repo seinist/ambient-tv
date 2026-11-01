@@ -1,4 +1,5 @@
 import java.io.File
+import java.security.MessageDigest
 import java.net.URI
 import java.util.Properties
 import java.util.zip.ZipFile
@@ -109,6 +110,15 @@ require(appDisplayName.isNotBlank() && appDisplayName.none { it == '\n' || it ==
 
 val externalVersions = loadProjectProperties("gradle/external-versions.properties")
 val vulkanVlcAar = file("libs/libvlc-vulkan.aar")
+val monogramEnabled = (providers.gradleProperty("MONOGRAM_NATIVE").orElse(
+    providers.environmentVariable("MONOGRAM_NATIVE")
+).orElse("0").get()).let { it == "1" || it.equals("true", true) }
+val monogramAar = file("libs/monogram-mtproto.aar")
+if (monogramEnabled) {
+    require(monogramAar.isFile) {
+        "MONOGRAM_NATIVE requires a pinned native artifact. Run MONOGRAM_NATIVE=1 ./build.sh monogram first."
+    }
+}
 fun externalVersion(key: String): String = externalVersions.getProperty(key, "").trim()
 
 // APK_ABI controls which release artifact is produced by :app:packageRelease.
@@ -129,6 +139,27 @@ val selectedAbis = when (apkAbiMode) {
     "x86_64", "x86-64" -> listOf("x86_64")
     else -> listOf("arm64-v8a", "armeabi-v7a", "x86", "x86_64")
 }
+if (monogramEnabled) {
+    val stamp = file("libs/.monogram-native-version")
+    // Pinned to an upstream release tag plus the reviewed commit that tag pointed to.
+    val stampLines = if (stamp.isFile) stamp.readLines() else emptyList()
+    require(stampLines.contains("version=${externalVersion("MONOGRAM_VERSION")}") &&
+        stampLines.contains("ref=${externalVersion("MONOGRAM_REF")}")) {
+        "Monogram AAR pin mismatch (release ${externalVersion("MONOGRAM_VERSION")}); rebuild with ./build.sh monogram"
+    }
+    val patchBytes = file("../scripts/patch_monogram_leave.py").readBytes()
+    val patchHash = MessageDigest.getInstance("SHA-256").digest(patchBytes)
+        .joinToString("") { "%02x".format(it) }
+    require(stamp.readLines().contains("patch=$patchHash")) {
+        "Monogram Native patch changed; rebuild the MTProto AAR"
+    }
+    ZipFile(monogramAar).use { aar ->
+        val missing = selectedAbis.filter { aar.getEntry("jni/$it/libmonogram_mtproto.so") == null }
+        require(missing.isEmpty()) {
+            "Monogram AAR has no native runtime for $missing; use ./build.sh with matching ABI(s)"
+        }
+    }
+}
 if (vulkanVlcAar.isFile) {
     ZipFile(vulkanVlcAar).use { aar ->
         val missing = selectedAbis.filter { aar.getEntry("jni/$it/libvlcjni.so") == null || aar.getEntry("jni/$it/libvlc.so") == null }
@@ -146,6 +177,17 @@ android {
     }
     compileSdk = 37
     ndkVersion = "30.0.16248370"
+    if (monogramEnabled) {
+        // This folder is not compiled or packaged in normal CC0 builds.
+        sourceSets.getByName("main").java.directories.add("src/monogram/java")
+        // AGP built-in Kotlin compiles the Kotlin source set; the java directory alone skipped the backend.
+        sourceSets.getByName("main").kotlin.directories.add("src/monogram/java")
+        // Monogram's GPL-3.0-only logo artwork ships only in the opt-in build.
+        sourceSets.getByName("main").res.directories.add("src/monogram/res")
+    } else {
+        // Normal CC0 builds use Ambient TV's own neutral mark under the same names.
+        sourceSets.getByName("main").res.directories.add("src/plain/res")
+    }
 
     defaultConfig {
         applicationId = "com.ambient.tv"
@@ -160,6 +202,9 @@ android {
         // ndk.abiFilters here: AGP 8.11+ rejects using both mechanisms together.
 
         buildConfigField("String", "APP_DISPLAY_NAME", quotedBuildConfigString(appDisplayName))
+        buildConfigField("boolean", "MONOGRAM_NATIVE", monogramEnabled.toString())
+        buildConfigField("String", "MONOGRAM_REF", quotedBuildConfigString(externalVersion("MONOGRAM_REF")))
+        buildConfigField("String", "MONOGRAM_VERSION", quotedBuildConfigString(externalVersion("MONOGRAM_VERSION")))
         resValue("string", "brand_app_name", quotedBuildConfigString(appDisplayName))
         buildConfigField("String", "SPOTIFY_REDIRECT_URI", quotedBuildConfigString(spotifyRedirectUriForBuild))
         buildConfigField("String", "SPOTIFY_QR_REDIRECT_URI", quotedBuildConfigString(spotifyQrRedirectUriForBuild))
@@ -277,6 +322,8 @@ android {
             // Multiple runtimes bundle libc++_shared.so (app/mpv + VLC). Choose explicitly
             // to avoid duplicate packaging; combined-engine compatibility still needs a device test.
             pickFirsts += selectedAbis.map { "**/$it/libc++_shared.so" }
+            // JNA (Monogram) bundles libjnidispatch for ABIs Android no longer supports.
+            excludes += setOf("**/mips/libjnidispatch.so", "**/mips64/libjnidispatch.so", "**/armeabi/libjnidispatch.so")
 
             // AGP's llvm-strip rejects these prebuilt ELFs and would keep their debug info.
             // The release strip below still runs llvm-strip --strip-unneeded on every .so.
@@ -402,6 +449,13 @@ kotlin {
 }
 
 dependencies {
+    // Only :native:mtproto from Monogram. No Monogram :app, feature/*, chat
+    // UI, database, networking bridge or HTTP downloader is compiled.
+    if (monogramEnabled) {
+        implementation(files(monogramAar))
+        implementation("net.java.dev.jna:jna:5.19.1@aar")
+        implementation("org.rustls:rustls-platform-verifier:${externalVersion("MONOGRAM_RUSTLS_PLATFORM_VERIFIER_VERSION")}")
+    }
     implementation(libs.smbj)
     implementation(libs.jcifs.ng)
     // QR decoding for the phone's pairing scanner (pure Java, no transitive dependencies).

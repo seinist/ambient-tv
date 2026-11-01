@@ -172,4 +172,61 @@ class BackupCredentialImportTest {
         val merged = Json.parseToJsonElement(CompanionBackupPolicy.merge(source, target, "accounts", overwrite = true, deviceSettings = false)).jsonObject
         assertEquals("tvh-pass", merged.getValue("tvheadendPassword").jsonPrimitive.content)
     }
+    @Test fun monogramBackupRestoresSourceSettingsButNeverUserSessions() {
+        val (source, keys, exporter) = store()
+        val hash = "0123456789abcdef0123456789abcdef"
+        keys.setMonogramCredentials(12345678, hash)
+        source.telegramEnabled = true
+        source.telegramSubmenuKeys = listOf("channels", "youtube", "audio")
+        source.homeRows = listOf(HomeRowDefinition(
+            system = HomeRowDefinition.SYSTEM_TELEGRAM, contentKey = "youtube"))
+        source.setSectionViewMode("monogram.recent", "ROWS")
+        source.setSectionViewMode("monogram.youtube", "INFO_LIST")
+
+        val normal = exporter.exportJson(includeCredentials = false)
+        assertEquals(JsonNull, Json.parseToJsonElement(normal).jsonObject["monogramApiCredentials"])
+        // The backup must never contain native session material or Keystore state.
+        assertFalse(normal.contains("account.session"))
+        assertFalse(normal.contains("phoneCodeHash"))
+        assertFalse(normal.contains(hash))
+        val (_, preservedKeys, ordinaryImporter) = store()
+        preservedKeys.setMonogramCredentials(2, "a".repeat(32))
+        ordinaryImporter.importJson(normal)
+        assertEquals(2 to "a".repeat(32), preservedKeys.monogramCredentials())
+
+        val full = exporter.exportJson(includeCredentials = true)
+        val fullJson = Json.parseToJsonElement(full).jsonObject
+        assertEquals("12345678",
+            fullJson.getValue("monogramApiCredentials").jsonObject.getValue("apiId").toString())
+        assertFalse(full.contains("account.session"))
+        val (restored, restoredKeys, importer) = store()
+        importer.importJson(full)
+        assertEquals(12345678 to hash, restoredKeys.monogramCredentials())
+        assertTrue(restored.telegramEnabled)
+        assertEquals(source.telegramSubmenuKeys, restored.telegramSubmenuKeys)
+        assertEquals(source.homeRows, restored.homeRows)
+        assertEquals("ROWS", restored.sectionViewMode("monogram.recent"))
+        assertEquals("INFO_LIST", restored.sectionViewMode("monogram.youtube"))
+    }
+
+    @Test fun monogramBackupRejectsMalformedCredentialsBeforeApplyingOtherSettings() {
+        val (prefs, keys, importer) = store()
+        prefs.telegramEnabled = false
+        val bad = """{"schemaVersion":76,"exportedAtEpochMs":0,"telegramEnabled":true,
+            "monogramApiCredentials":{"apiId":123,"apiHash":"not-valid"}}"""
+        assertTrue(runCatching { importer.importJson(bad) }.isFailure)
+        assertNull(keys.monogramCredentials())
+        assertFalse(prefs.telegramEnabled)
+    }
+
+    @Test fun monogramBackupCannotSilentlyReplaceAnotherApplicationsCredentials() {
+        val (prefs, keys, importer) = store()
+        keys.setMonogramCredentials(111, "a".repeat(32))
+        val backup = """{"schemaVersion":76,"exportedAtEpochMs":0,"telegramEnabled":true,
+            "monogramApiCredentials":{"apiId":222,"apiHash":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}}"""
+        assertTrue(runCatching { importer.importJson(backup) }.isFailure)
+        assertEquals(111 to "a".repeat(32), keys.monogramCredentials())
+        assertFalse(prefs.telegramEnabled)
+    }
+
 }
