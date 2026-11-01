@@ -123,6 +123,7 @@ class YouTubeViewModel @Inject constructor(
             displayedContentKey, row, videoId,
             continuationRowIds = if (sectioned) listOfNotNull(row?.id) else rows.map { it.id },
             returnRowId = sourceRowId,
+            sort = state.sort, filter = state.filter, descending = state.sortDescending,
         )
     }
 
