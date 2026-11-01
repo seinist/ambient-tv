@@ -30,6 +30,7 @@ import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.runtime.saveable.SaveableStateHolder
 import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.ui.Modifier
+import com.ambient.tv.ui.common.dispatchBackOnRelease
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInRoot
@@ -299,6 +300,9 @@ fun PlayerOverlayVisibility(
                 }
                 // Exiting controls remain drawn; focus cannot re-enter their stale actions.
                 .focusProperties { onEnter = { if (!show) cancelFocusChange() } }
+                // Back on an OSD button reaches the player's BackHandler (hide the OSD) instead
+                // of Compose moving focus to the focusable player root and using the key up.
+                .then(if (show) Modifier.dispatchBackOnRelease() else Modifier)
                 .focusGroup()
                 // Intercept before outgoing child clickables consume the Main pass. Keep
                 // the guard until every finger lifts even though reveal recomposes the OSD;
