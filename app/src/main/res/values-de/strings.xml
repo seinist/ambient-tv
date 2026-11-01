@@ -2251,4 +2251,12 @@
     <string name="monogram_api_setup_hint">API-ID und API-Hash unter my.telegram.org/apps erstellen. Die Daten werden verschlüsselt auf diesem Gerät gespeichert und nicht in die App kompiliert.</string>
     <string name="monogram_leave_channel">Kanal verlassen</string>
     <string name="monogram_leave_failed">Kanal konnte nicht verlassen werden</string>
+    <string name="monogram_login_signed_out">Nicht bei Telegram angemeldet</string>
+    <string name="monogram_login_busy">Verbinde mit Telegram …</string>
+    <string name="monogram_login_check_code">Den von Telegram gesendeten Anmeldecode eingeben</string>
+    <string name="monogram_login_check_password">Passwort für die Zwei-Schritt-Verifizierung eingeben</string>
+    <string name="monogram_login_enable_source">Oben Monogram aktivieren, um das Telegram-Konto zu verbinden.</string>
+    <string name="monogram_login_phone_alternative">Oder mit deiner Telegram-Telefonnummer anmelden</string>
+    <string name="monogram_api_open_dashboard">Telegram-API-Anwendungen öffnen</string>
+    <string name="monogram_api_open_failed">Auf diesem Gerät ist kein Browser verfügbar.</string>
 </resources>
