@@ -19,6 +19,24 @@ class RadioPaginationTest {
         assertFalse(radioShouldLoadOnFocus(index = -1, size = 48, hasMore = true, loading = false, loadingMore = false))
     }
 
+    @Test fun pagingTailRequestsNextPageOnlyWhenIdle() {
+        assertTrue(radioPagingTailReady(hasMore = true, loading = false, loadingMore = false))
+        assertFalse(radioPagingTailReady(hasMore = false, loading = false, loadingMore = false))
+        assertFalse(radioPagingTailReady(hasMore = true, loading = true, loadingMore = false))
+        assertFalse(radioPagingTailReady(hasMore = true, loading = false, loadingMore = true))
+    }
+
+    @Test fun shortCountryPageUsesCountHintButStopsAfterEmptyPage() {
+        assertTrue(radioHasMoreStations(apiHasMore = true, mappedCount = 48,
+            nextOffset = 48, facetStationCount = null))
+        assertTrue(radioHasMoreStations(apiHasMore = false, mappedCount = 37,
+            nextOffset = 48, facetStationCount = 250))
+        assertFalse(radioHasMoreStations(apiHasMore = false, mappedCount = 0,
+            nextOffset = 96, facetStationCount = 250))
+        assertFalse(radioHasMoreStations(apiHasMore = false, mappedCount = 37,
+            nextOffset = 96, facetStationCount = 80))
+    }
+
     @Test fun pagingMatchesSmartTubeGridTuning() {
         assertEquals(10, RADIO_GRID_CONTINUE_THRESHOLD)
         assertEquals(350L, RADIO_FOCUS_SETTLE_MS)
