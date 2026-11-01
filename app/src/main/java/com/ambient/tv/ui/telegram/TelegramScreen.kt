@@ -5,6 +5,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.focusGroup
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -68,6 +69,10 @@ import com.ambient.tv.ui.common.FilterBarModel
 import com.ambient.tv.ui.common.LocalFilterBarSetting
 import com.ambient.tv.ui.common.MediaSystem
 import com.ambient.tv.ui.common.MediaTile
+import com.ambient.tv.ui.common.MonogramArtwork
+import com.ambient.tv.ui.common.MarqueeTitle
+import com.ambient.tv.ui.common.monogramCardMeta
+import com.ambient.tv.ui.common.bringFocusedContextIntoView
 import com.ambient.tv.ui.common.PageChipRow
 import com.ambient.tv.ui.common.PageHeader
 import com.ambient.tv.ui.common.PanelOption
@@ -99,6 +104,7 @@ import com.ambient.tv.ui.common.rememberRowColumnFocus
 import com.ambient.tv.ui.common.sortDirectionOptions
 import com.ambient.tv.ui.common.transparentSurfaceColors
 import com.ambient.tv.ui.mobile.deviceDensityGridCells
+import com.ambient.tv.ui.mobile.deviceDp
 import com.ambient.tv.ui.theme.screenGutter
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.launch
@@ -511,7 +517,7 @@ fun TelegramScreen(
     }
 }
 
-/** Consistent list-row card with independently selectable image+metadata, no new button skin. */
+/** Same SmartTube-like focused surface, marquee labels and avatar treatment as Monogram cards. */
 @Composable
 private fun MonogramListItem(
     item: MediaItem,
@@ -521,7 +527,15 @@ private fun MonogramListItem(
 ) {
     var focused by remember(item.ratingKey) { mutableStateOf(false) }
     val shape = RoundedCornerShape(10.dp)
-    val height = (520f / rowsPerScreen.coerceIn(4, 10)).dp.coerceIn(52.dp, 100.dp)
+    val rowScale = (7f / rowsPerScreen.coerceIn(4, 10)).coerceIn(.72f, 1.35f)
+    val locale = androidx.compose.ui.platform.LocalConfiguration.current.locales[0]
+    val info = remember(item, locale) {
+        monogramCardMeta(
+            item,
+            dateLabel = { java.text.DateFormat.getDateInstance(java.text.DateFormat.MEDIUM).format(java.util.Date(it)) },
+            durationLabel = { com.ambient.tv.ui.common.formatDuration(it) },
+        )
+    }
     Surface(
         onClick = onClick,
         colors = transparentSurfaceColors(),
@@ -530,6 +544,7 @@ private fun MonogramListItem(
         modifier = Modifier.fillMaxWidth().browseFocusTarget(item.ratingKey)
             .activateOnTvKey(onClick = onClick)
             .mediaFocusMotion(focused, focusedScale = 1.012f)
+            .bringFocusedContextIntoView()
             .onFocusChanged {
                 focused = it.isFocused
                 if (it.isFocused) onFocused()
@@ -539,39 +554,37 @@ private fun MonogramListItem(
             Modifier.fillMaxWidth()
                 .background(
                     if (focused) MaterialTheme.colorScheme.primary.copy(alpha = .12f)
-                    else MaterialTheme.colorScheme.surface.copy(alpha = .64f), shape,
+                    else Color.Transparent,
+                    shape,
                 )
                 .border(
                     if (focused) 2.dp else 1.dp,
                     if (focused) MaterialTheme.colorScheme.primary
-                    else Color.White.copy(alpha = .08f), shape,
+                    else Color.White.copy(alpha = .06f),
+                    shape,
                 )
-                .padding(8.dp),
+                .padding(10.dp * rowScale),
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(12.dp),
+            horizontalArrangement = Arrangement.spacedBy(14.dp * rowScale),
         ) {
-            ArtworkImage(
-                item.landscapeArtUrl ?: item.thumbUrl,
-                item.title,
-                modifier = Modifier.height(height).width(height * 16f / 9f),
+            MonogramArtwork(
+                item = item,
+                style = com.ambient.tv.ui.common.MediaTileStyle.LANDSCAPE,
+                modifier = Modifier.width(deviceDp(128.dp, 104.dp) * rowScale)
+                    .aspectRatio(16f / 9f).clip(RoundedCornerShape(7.dp)),
             )
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                Text(item.title, maxLines = 2, style = MaterialTheme.typography.titleMedium)
-                val info = buildList {
-                    item.parentTitle?.takeIf(String::isNotBlank)?.let(::add)
-                    item.addedAt?.takeIf { it > 0L }?.let { timestamp ->
-                        add(remember(timestamp) {
-                            java.text.DateFormat.getDateInstance(java.text.DateFormat.MEDIUM)
-                                .format(java.util.Date(timestamp))
-                        })
-                    }
-                    item.durationMs?.takeIf { it > 0 }?.let { duration ->
-                        com.ambient.tv.ui.common.formatDuration(duration)?.let(::add)
-                    }
-                }.joinToString(" · ")
-                if (info.isNotBlank()) Text(info, maxLines = 1,
+                MarqueeTitle(item.title, focused = focused,
+                    style = MaterialTheme.typography.titleMedium)
+                MarqueeTitle(
+                    info.ifBlank {
+                        if (item.ratingKey.startsWith(TELEGRAM_CHANNEL_ITEM_PREFIX))
+                            "Monogram" else ""
+                    },
+                    focused = focused,
+                    style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    style = MaterialTheme.typography.bodySmall)
+                )
             }
         }
     }
