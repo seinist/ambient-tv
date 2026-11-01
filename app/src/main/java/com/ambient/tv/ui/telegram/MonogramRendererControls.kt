@@ -55,7 +55,8 @@ internal fun monogramRendererControls(handle: PlaybackHandle?): MonogramRenderer
         }
         MonogramRendererControls(
             speed = player.playbackParameters.speed,
-            onSpeedChanged = player::setPlaybackSpeed,
+            onSpeedChanged = if (com.ambient.tv.ui.player.Media3AudioProcessing.session(player)?.bitstreamPermitted == true) null
+                else player::setPlaybackSpeed,
             audio = listOf("auto" to "Auto") +
                 audio.mapIndexed { index, value -> index.toString() to label(value, "Audio") },
             selectedAudio = audio.indexOfFirst { (group, index) -> group.isTrackSelected(index) }
@@ -70,7 +71,7 @@ internal fun monogramRendererControls(handle: PlaybackHandle?): MonogramRenderer
     }
     is VlcPlaybackController -> MonogramRendererControls(
         speed = handle.currentSpeed(),
-        onSpeedChanged = handle::setSpeed,
+        onSpeedChanged = if (handle.bitstreamPermitted) null else handle::setSpeed,
         audio = handle.audioTracks().map { (id, label) -> id.toString() to label },
         selectedAudio = handle.currentAudioTrackId().toString(),
         selectAudio = { it.toIntOrNull()?.let(handle::selectAudioTrack) },
@@ -81,7 +82,7 @@ internal fun monogramRendererControls(handle: PlaybackHandle?): MonogramRenderer
     )
     is MpvPlaybackController -> MonogramRendererControls(
         speed = handle.currentSpeed(),
-        onSpeedChanged = handle::setSpeed,
+        onSpeedChanged = if (handle.bitstreamPermitted) null else handle::setSpeed,
         audio = listOf("auto" to "Auto") +
             handle.audioTracks().map { it.id.toString() to it.label },
         selectedAudio = handle.audioTracks().firstOrNull { it.selected }?.id?.toString() ?: "auto",
