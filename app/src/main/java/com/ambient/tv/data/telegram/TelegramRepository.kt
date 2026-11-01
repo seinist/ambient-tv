@@ -3,6 +3,7 @@ package com.ambient.tv.data.telegram
 import android.content.Context
 import com.ambient.tv.BuildConfig
 import com.ambient.tv.data.local.AppPreferences
+import com.ambient.tv.data.local.TokenStore
 import com.ambient.tv.data.files.MediaFileServer
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.sync.Mutex
@@ -37,6 +38,8 @@ interface MonogramAuthClientPort {
     suspend fun submitPhoneCode(code: String): MonogramLoginState
     suspend fun submitTwoFactorPassword(password: String): MonogramLoginState
     suspend fun logout()
+    /** Destroys the unauthenticated native client after a credentials change. */
+    suspend fun resetForCredentials() = Unit
 }
 
 /** Results are cursor-based; tokens never escape the authenticated account. */
@@ -70,6 +73,7 @@ class TelegramRepository @Inject constructor(
     private val diskCache: TelegramDiskCache,
     private val preferences: AppPreferences,
     private val mediaFileServer: MediaFileServer,
+    private val tokenStore: TokenStore,
 ) {
     // Loading Rust/UniFFI is expensive; never initialize it on the UI thread
     // or on an ordinary no-Monogram build. Only enabled systems restore sessions.
@@ -78,7 +82,8 @@ class TelegramRepository @Inject constructor(
         if (!BuildConfig.MONOGRAM_NATIVE) null
         else runCatching {
             val factory = Class.forName("com.ambient.tv.data.telegram.MonogramNativeBackend")
-            factory.getConstructor(Context::class.java).newInstance(appContext) as MonogramAuthClientPort
+            factory.getConstructor(Context::class.java, TokenStore::class.java)
+                .newInstance(appContext, tokenStore) as MonogramAuthClientPort
         }.getOrNull()
     }
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -86,6 +91,31 @@ class TelegramRepository @Inject constructor(
         if (BuildConfig.MONOGRAM_NATIVE) MonogramLoginStep.READY else MonogramLoginStep.UNAVAILABLE))
     val login: StateFlow<MonogramLoginState> = mutableLogin.asStateFlow()
     val nativeAvailable: Boolean get() = BuildConfig.MONOGRAM_NATIVE
+    val configuredApiId: String get() = tokenStore.monogramApiId
+    val configuredApiHash: String get() = tokenStore.monogramApiHash
+    val apiCredentialsReady: Boolean get() = tokenStore.monogramCredentials() != null
+
+    /** Settings save, never an implicit edit while QR/OTP/2FA or playback is active. */
+    suspend fun configureApiCredentials(idText: String, hashText: String) =
+        sessionRestoreMutex.withLock {
+            val id = idText.trim().toIntOrNull()?.takeIf { it > 0 }
+                ?: throw IllegalArgumentException("Invalid Monogram API ID")
+            val hash = hashText.trim().lowercase(java.util.Locale.ROOT)
+            require(hash.matches(Regex("[a-f0-9]{32}"))) { "Invalid Monogram API hash" }
+            check(!available && !mutableLogin.value.busy &&
+                mutableLogin.value.step in setOf(MonogramLoginStep.READY, MonogramLoginStep.UNAVAILABLE)) {
+                "Sign out of Monogram before changing application credentials"
+            }
+            if (id.toString() == tokenStore.monogramApiId && hash == tokenStore.monogramApiHash) {
+                return@withLock
+            }
+            if (nativeAvailable) obtainBackend()?.resetForCredentials()
+            disconnect()
+            tokenStore.setMonogramCredentials(id, hash)
+            restoredSessionOnce = false
+            mutableLogin.value = MonogramLoginState(
+                if (nativeAvailable) MonogramLoginStep.READY else MonogramLoginStep.UNAVAILABLE)
+        }
 
     private suspend fun obtainBackend(): MonogramAuthClientPort? =
         withContext(Dispatchers.IO) { backend }
@@ -95,7 +125,7 @@ class TelegramRepository @Inject constructor(
 
     /** One asynchronous local session probe; never reset a pending QR/2FA login. */
     suspend fun restoreIfNeeded() = sessionRestoreMutex.withLock {
-        if (!nativeAvailable || available || restoredSessionOnce ||
+        if (!nativeAvailable || !apiCredentialsReady || available || restoredSessionOnce ||
             mutableLogin.value.step != MonogramLoginStep.READY ||
             mutableLogin.value.busy) return@withLock
         restoredSessionOnce = true
@@ -175,6 +205,10 @@ class TelegramRepository @Inject constructor(
     }
 
     private suspend fun transition(block: suspend MonogramAuthClientPort.() -> MonogramLoginState) {
+        if (!apiCredentialsReady) {
+            mutableLogin.value = mutableLogin.value.copy(error = "Configure the Monogram API ID and hash first")
+            return
+        }
         val target = obtainBackend() ?: run {
             mutableLogin.value = MonogramLoginState(MonogramLoginStep.UNAVAILABLE)
             return
