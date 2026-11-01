@@ -9,11 +9,13 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.ViewModel
@@ -28,6 +30,9 @@ import com.ambient.tv.ui.mobile.LocalHandheldUi
 import dagger.hilt.android.lifecycle.HiltViewModel
 import javax.inject.Inject
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import androidx.tv.material3.MaterialTheme
@@ -36,6 +41,34 @@ import androidx.tv.material3.Text
 @HiltViewModel
 class MonogramAccountViewModel @Inject constructor(val repository: TelegramRepository) : ViewModel() {
     val login = repository.login
+    private val mutableCredentialsRevision = MutableStateFlow(0)
+    val credentialsRevision = mutableCredentialsRevision.asStateFlow()
+    private val mutableCredentialsError = MutableStateFlow<String?>(null)
+    val credentialsError = mutableCredentialsError.asStateFlow()
+    private val mutableSavingCredentials = MutableStateFlow(false)
+    val savingCredentials = mutableSavingCredentials.asStateFlow()
+
+    fun saveApiCredentials(id: String, hash: String) {
+        if (mutableSavingCredentials.value) return
+        mutableSavingCredentials.value = true
+        mutableCredentialsError.value = null
+        viewModelScope.launch {
+            try {
+                repository.configureApiCredentials(id, hash)
+                mutableCredentialsRevision.value++
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (failure: Exception) {
+                // Validation errors contain no secrets. Never include user-supplied values.
+                mutableCredentialsError.value = when (failure) {
+                    is IllegalArgumentException -> "Invalid Monogram API ID or hash"
+                    else -> "Sign out before changing the Monogram application credentials"
+                }
+            } finally {
+                mutableSavingCredentials.value = false
+            }
+        }
+    }
     fun initialize() { viewModelScope.launch { repository.restoreIfNeeded() } }
     private var pollJob: Job? = null
     fun qr() {
@@ -61,6 +94,16 @@ class MonogramAccountViewModel @Inject constructor(val repository: TelegramRepos
 @Composable
 internal fun MonogramAccountSettings(viewModel: MonogramAccountViewModel = hiltViewModel()) {
     val login by viewModel.login.collectAsState()
+    val revision by viewModel.credentialsRevision.collectAsState()
+    val saveError by viewModel.credentialsError.collectAsState()
+    val saving by viewModel.savingCredentials.collectAsState()
+    var apiId by remember(viewModel) { mutableStateOf(viewModel.repository.configuredApiId) }
+    var apiHash by remember(viewModel) { mutableStateOf(viewModel.repository.configuredApiHash) }
+    val configured = remember(revision) { viewModel.repository.apiCredentialsReady }
+    val canEditCredentials = login.step in setOf(
+        MonogramLoginStep.READY, MonogramLoginStep.UNAVAILABLE) && !login.busy && !saving
+    val validId = apiId.toIntOrNull()?.let { it > 0 } == true
+    val validHash = apiHash.matches(Regex("[A-Fa-f0-9]{32}"))
     LaunchedEffect(Unit) { viewModel.initialize() }
     var phone by remember { mutableStateOf("") }
     var code by remember { mutableStateOf("") }
@@ -68,6 +111,49 @@ internal fun MonogramAccountSettings(viewModel: MonogramAccountViewModel = hiltV
     var qrDismissed by remember(login.qrUrl) { mutableStateOf(false) }
     LaunchedEffect(login.step) {
         if (login.step == MonogramLoginStep.AUTHORIZED) { code = ""; password = "" }
+    }
+    SettingsGroup(title = stringResource(R.string.monogram_api_settings), card = true) {
+        Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Text(stringResource(R.string.monogram_api_setup_hint),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant)
+            TvTextField(
+                value = apiId,
+                onValueChange = { apiId = it.filter(Char::isDigit).take(10) },
+                label = stringResource(R.string.monogram_api_id),
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number, imeAction = ImeAction.Next),
+                enabled = canEditCredentials,
+                modifier = Modifier.fillMaxWidth(),
+            )
+            TvTextField(
+                value = apiHash,
+                onValueChange = { apiHash = it.trim().take(32) },
+                label = stringResource(R.string.monogram_api_hash),
+                visualTransformation = PasswordVisualTransformation(),
+                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                enabled = canEditCredentials,
+                modifier = Modifier.fillMaxWidth(),
+            )
+            Text(
+                stringResource(if (configured) R.string.monogram_api_ready else R.string.monogram_api_required),
+                style = MaterialTheme.typography.bodySmall,
+                color = if (configured) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            if (login.step == MonogramLoginStep.AUTHORIZED) {
+                Text(stringResource(R.string.monogram_api_sign_out_first),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            saveError?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+            TvActionButton(
+                text = stringResource(R.string.monogram_api_save),
+                onClick = { viewModel.saveApiCredentials(apiId, apiHash) },
+                enabled = canEditCredentials && validId && validHash &&
+                    (apiId != viewModel.repository.configuredApiId ||
+                     !apiHash.equals(viewModel.repository.configuredApiHash, ignoreCase = true)),
+                loading = saving,
+            )
+        }
     }
     SettingsGroup(title = stringResource(R.string.telegram_account), card = true) {
         Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -87,7 +173,7 @@ internal fun MonogramAccountSettings(viewModel: MonogramAccountViewModel = hiltV
                         TvActionButton(
                             text = stringResource(R.string.monogram_sign_in_qr),
                             onClick = viewModel::qr,
-                            enabled = !login.busy,
+                            enabled = !login.busy && configured,
                             loading = login.busy,
                         )
                     }
@@ -100,7 +186,7 @@ internal fun MonogramAccountSettings(viewModel: MonogramAccountViewModel = hiltV
                     TvActionButton(
                         text = stringResource(R.string.monogram_sign_in_phone),
                         onClick = { viewModel.phone(phone.trim()) },
-                        enabled = !login.busy && phone.trim().startsWith("+") && phone.length >= 7,
+                        enabled = !login.busy && configured && phone.trim().startsWith("+") && phone.length >= 7,
                         loading = login.busy,
                     )
                     if (login.step == MonogramLoginStep.CODE) {
@@ -111,11 +197,11 @@ internal fun MonogramAccountSettings(viewModel: MonogramAccountViewModel = hiltV
                             modifier = Modifier.fillMaxWidth(),
                         )
                         TvActionButton(text = stringResource(R.string.monogram_verify_code),
-                            enabled = !login.busy && code.isNotBlank(),
+                            enabled = !login.busy && configured && code.isNotBlank(),
                             loading = login.busy,
                             onClick = { viewModel.code(code.trim()) })
                         TvActionButton(text = stringResource(R.string.monogram_resend_code),
-                            enabled = !login.busy, onClick = viewModel::resend)
+                            enabled = !login.busy && configured, onClick = viewModel::resend)
                     }
                     if (login.step == MonogramLoginStep.PASSWORD) {
                         TvTextField(
@@ -126,7 +212,7 @@ internal fun MonogramAccountSettings(viewModel: MonogramAccountViewModel = hiltV
                             modifier = Modifier.fillMaxWidth(),
                         )
                         TvActionButton(text = stringResource(R.string.monogram_verify_password),
-                            enabled = !login.busy && password.isNotBlank(),
+                            enabled = !login.busy && configured && password.isNotBlank(),
                             loading = login.busy,
                             onClick = { viewModel.password(password) })
                     }
