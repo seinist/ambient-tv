@@ -29,18 +29,26 @@ than silently ship an unusable x86 APK.
 ## Reproducible build
 
 Install Android SDK 37, NDK, JDK 17, Rust >= 1.98 and `cargo-ndk`.
-In an **untracked** `telegram.properties` (or environment) provide:
+**Builds require no Telegram application credentials**, and there are no
+`MONOGRAM_API_ID`/`MONOGRAM_API_HASH` BuildConfig constants.
 
-```properties
-MONOGRAM_API_ID=<your Telegram API id>
-MONOGRAM_API_HASH=<your Telegram API hash>
-```
+After installing a Monogram-enabled APK, open **Settings → Systems → Monogram**,
+enter your own **API ID** and **API hash** (obtained at
+https://my.telegram.org/apps), then select **Save API credentials**. Both
+values are written atomically to the encrypted, private TokenStore
+(`@EncryptedPrefs`). They are never included in source code or APK bytecode.
+The hash field is masked; it is an application key, not a session token.
+QR/phone/2FA login remains disabled until both fields are valid.
 
-Obtain these credentials from https://my.telegram.org/apps. The API hash is
-embedded in an opt-in client APK; do not confuse it with a user's login token or
-password. Telegram sessions are stored in `noBackupFilesDir`, protected with
-Monogram's Android Keystore-backed wrapping key. Phone codes, QR tokens and
+Application credentials can be edited only while signed out and with no
+authentication in progress. Saving an update destroys the old unsigned native
+client, discards stale local session files and starts a new application context.
+User session credentials are kept separately under `noBackupFilesDir`, with
+Monogram's Android Keystore-backed wrapping. Phone codes, QR tokens and
 2FA passwords are not persisted by Ambient TV.
+
+**Migration:** Builds that previously relied on `telegram.properties` or
+`-PMONOGRAM_API_ID` now require entering the credentials in Monogram Settings.
 
 ```sh
 ./build.sh monogram                     # build the pinned native AAR, all Android ABIs
