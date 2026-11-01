@@ -290,6 +290,19 @@ class MonogramNativeBackend(context: Context) : MonogramAuthClientPort, Telegram
         native.getMessage(h, chatId, messageId)?.let { media(h, it, title) }
     }
 
+    override suspend fun photoFile(chatId: Long, messageId: Int): String? = nativeCall { h ->
+        requireAuthorized(h)
+        val dir = File(cache, "photos").apply { mkdirs() }.canonicalFile
+        val output = File(dir, "$chatId-$messageId.media")
+        if (output.isFile && output.length() > 0L) return@nativeCall output.toURI().toString()
+        val actual = File(native.downloadMessageDisplay(h, chatId, messageId, output.path))
+            .canonicalFile
+        require(actual.parentFile == dir && actual.length() > 0L) {
+            "Monogram full-resolution photo unavailable"
+        }
+        actual.toURI().toString()
+    }
+
     override suspend fun mediaPart(chatId: Long, messageId: Int, offset: Long): ByteArray =
         nativeCall { h ->
             requireAuthorized(h)

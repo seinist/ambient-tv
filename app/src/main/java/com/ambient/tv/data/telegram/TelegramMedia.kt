@@ -77,7 +77,7 @@ fun TelegramMedia.playerMetadata(): PlaybackMetadata = PlaybackMetadata(
     subtitle = channel,
     source = "telegram",
     mediaId = mediaKey,
-    hasVideo = kind != TelegramMediaKind.AUDIO,
+    hasVideo = kind == TelegramMediaKind.VIDEO,
     artworkUrl = thumbnailUrl,
     durationMs = durationMs,
 )

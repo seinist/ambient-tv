@@ -44,6 +44,8 @@ interface TelegramClientPort {
     suspend fun channels(cursor: String? = null, limit: Int = 60): TelegramChannelPage
     suspend fun browse(section: String, cursor: String? = null, limit: Int = 60): TelegramMediaPage
     suspend fun media(chatId: Long, messageId: Int): TelegramMedia?
+    /** The original photo is fetched only when the viewer opens, never while listing. */
+    suspend fun photoFile(chatId: Long, messageId: Int): String? = null
     /** A byte range from a Telegram file; Monogram downloadMessageMediaChunk does the MTProto I/O. */
     suspend fun mediaPart(chatId: Long, messageId: Int, offset: Long): ByteArray
 }
@@ -197,6 +199,7 @@ class TelegramRepository @Inject constructor(
     } catch (_: Exception) { cachedBrowse(section).take(limit) }
 
     suspend fun media(chatId: Long, messageId: Int): TelegramMedia? = client?.media(chatId, messageId)
+    suspend fun photoFile(chatId: Long, messageId: Int): String? = client?.photoFile(chatId, messageId)
     suspend fun mediaPart(chatId: Long, messageId: Int, offset: Long): ByteArray =
         checkNotNull(client) { "Telegram account is not authorized" }.mediaPart(chatId, messageId, offset)
 }

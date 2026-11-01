@@ -92,6 +92,8 @@ class TelegramPlayerViewModel @Inject constructor(
 ) : ViewModel() {
     private val mutableMedia = MutableStateFlow<TelegramMedia?>(null)
     val media = mutableMedia.asStateFlow()
+    private val mutablePhotoUrl = MutableStateFlow<String?>(null)
+    val photoUrl = mutablePhotoUrl.asStateFlow()
     private val mutableError = MutableStateFlow<String?>(null)
     val error = mutableError.asStateFlow()
 
@@ -109,6 +111,19 @@ class TelegramPlayerViewModel @Inject constructor(
                 throw cancelled
             } catch (error: Exception) {
                 mutableError.value = error.message ?: "Telegram media could not be opened"
+            }
+        }
+    }
+
+    fun loadPhoto(media: TelegramMedia) {
+        mutablePhotoUrl.value = null
+        viewModelScope.launch {
+            try {
+                mutablePhotoUrl.value = repository.photoFile(media.chatId, media.messageId)
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Exception) {
+                // Keep the inline preview visible if fetching the original fails.
             }
         }
     }
@@ -169,6 +184,10 @@ private fun TelegramPlaybackContent(
     viewModel: TelegramPlayerViewModel,
 ) {
     val context = LocalContext.current
+    val fullPhotoUrl by viewModel.photoUrl.collectAsState()
+    LaunchedEffect(media.mediaKey) {
+        if (media.kind == TelegramMediaKind.PHOTO) viewModel.loadPhoto(media)
+    }
     val metadata = remember(media.mediaKey) { media.playerMetadata() }
     val snapshot by BackgroundPlaybackSession.snapshot.collectAsState()
     val controls = rememberPlayerControlsVisible()
@@ -233,7 +252,7 @@ private fun TelegramPlaybackContent(
         ) {
             if (media.kind == TelegramMediaKind.PHOTO) {
                 com.ambient.tv.ui.common.CrossfadeBackdropImage(
-                    model = media.thumbnailUrl,
+                    model = fullPhotoUrl ?: media.thumbnailUrl,
                     contentDescription = media.title,
                     modifier = Modifier.fillMaxSize(),
                 )
@@ -300,7 +319,7 @@ private fun TelegramPlaybackContent(
                     rendererKey = "media3",
                     showRenderer = false,
                     showVideo = metadata.hasVideo,
-                    showVisualizer = !metadata.hasVideo,
+                    showVisualizer = media.kind == TelegramMediaKind.AUDIO,
                 ),
             )
             PersistentPlayerOverlays(expectedSourceIdentity = media.mediaKey)
