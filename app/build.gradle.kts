@@ -143,6 +143,12 @@ if (monogramEnabled) {
     require(stamp.isFile && stamp.readLines().contains("ref=${externalVersion("MONOGRAM_REF")}")) {
         "Monogram AAR pin mismatch; rebuild with ./build.sh monogram"
     }
+    val patchBytes = file("../scripts/patch_monogram_leave.py").readBytes()
+    val patchHash = java.security.MessageDigest.getInstance("SHA-256").digest(patchBytes)
+        .joinToString("") { "%02x".format(it) }
+    require(stamp.readLines().contains("patch=$patchHash")) {
+        "Monogram Native patch changed; rebuild the MTProto AAR"
+    }
     ZipFile(monogramAar).use { aar ->
         val missing = selectedAbis.filter { aar.getEntry("jni/$it/libmonogram_mtproto.so") == null }
         require(missing.isEmpty()) {

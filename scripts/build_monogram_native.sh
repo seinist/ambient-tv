@@ -9,6 +9,8 @@ ref="$(sed -n 's/^MONOGRAM_REF=//p' "$pins" | head -1)"
 source_dir="$root/third_party/monogram"
 output="$root/app/libs/monogram-mtproto.aar"
 stamp="$root/app/libs/.monogram-native-version"
+patch_script="$root/scripts/patch_monogram_leave.py"
+patch_digest="$(python3 -c 'import hashlib,sys; print(hashlib.sha256(open(sys.argv[1], "rb").read()).hexdigest())' "$patch_script")"
 abis=(${MONOGRAM_ABIS:-arm64-v8a armeabi-v7a x86 x86_64})
 [[ "${#abis[@]}" -gt 0 ]] || exit 1
 for abi in "${abis[@]}"; do
@@ -17,7 +19,8 @@ done
 requested="$(printf '%s\n' "${abis[@]}" | sort -u | tr '\n' ',')"
 if [[ "${REBUILD_MONOGRAM:-0}" != "1" && -s "$output" && -f "$stamp" ]] &&
     grep -Fx "ref=$ref" "$stamp" >/dev/null &&
-    grep -Fx "abis=$requested" "$stamp" >/dev/null; then
+    grep -Fx "abis=$requested" "$stamp" >/dev/null &&
+    grep -Fx "patch=$patch_digest" "$stamp" >/dev/null; then
     echo "Reusing pinned Monogram MTProto-only AAR ($requested)"
     exit 0
 fi
@@ -35,6 +38,7 @@ git -C "$source_dir" -c advice.detachedHead=false checkout --detach --force "$re
 [[ "$(git -C "$source_dir" rev-parse HEAD)" == "$ref" ]] ||
     { echo "Monogram checkout is not at the pinned commit" >&2; exit 1; }
 git -C "$source_dir" submodule update --init --recursive vendor/tlottie vendor/mono-rs
+python3 "$patch_script" "$source_dir"
 scratch="$(mktemp -d)"
 trap 'rm -rf "$scratch"' EXIT
 for abi in "${abis[@]}"; do
@@ -56,5 +60,5 @@ done
 args=()
 for abi in "${abis[@]}"; do args+=("$abi=$scratch/$abi.aar"); done
 python3 "$root/scripts/merge_monogram_aars.py" "$output" "${args[@]}"
-printf 'ref=%s\nabis=%s\n' "$ref" "$requested" > "$stamp"
+printf 'ref=%s\nabis=%s\npatch=%s\n' "$ref" "$requested" "$patch_digest" > "$stamp"
 echo "Only the upstream Monogram MTProto native module was compiled; GPL terms apply to the opt-in build."
