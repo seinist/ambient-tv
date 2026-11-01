@@ -81,10 +81,10 @@ class TelegramViewModel @Inject constructor(
     private val preferences: AppPreferences,
 ) : ViewModel() {
     val visibleSections: List<String> get() = preferences.telegramSubmenuKeys
-    fun viewMode(section: String): MonogramBrowseLayout =
+    internal fun viewMode(section: String): MonogramBrowseLayout =
         runCatching { MonogramBrowseLayout.valueOf(preferences.sectionViewMode("monogram.$section") ?: "ROWS") }
             .getOrDefault(MonogramBrowseLayout.ROWS)
-    fun changeViewMode(section: String, mode: MonogramBrowseLayout) =
+    internal fun changeViewMode(section: String, mode: MonogramBrowseLayout) =
         preferences.setSectionViewMode("monogram.$section", mode.name)
     val gridColumns get() = preferences.libraryGridColumns
     val listRows get() = preferences.libraryListRows
