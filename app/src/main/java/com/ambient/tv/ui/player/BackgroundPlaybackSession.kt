@@ -590,6 +590,8 @@ object BackgroundPlaybackSession {
     fun setSleepTimer(value: SleepTimerConfig) {
         checkThread()
         SleepSession.set(value)
+        // "Stop after this item" must not leave the next song queued in a minimized engine.
+        Media3GaplessQueue.refresh()
     }
 
     /** "OK: +30 min" on the pre-warning or "Extend" in the notification. */

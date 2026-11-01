@@ -637,24 +637,15 @@ private fun PlayerContent(
         }
     }
 
-    // Gapless music: the prepared next song waits in the player's queue behind the current one.
-    val gaplessNext by viewModel.gaplessNext.collectAsState()
+    // Gapless music: the prepared next song waits in the engine's queue (Media3GaplessQueue) and
+    // stays there when this screen leaves. While the screen is open it adopts the song itself
+    // (onMediaItemTransition above); minimized or in the background the queue does.
     val endOfItemSleep = BackgroundPlaybackSession.sleepTimer.kind == SleepTimerKind.END_OF_ITEM
-    LaunchedEffect(exoPlayer, gaplessNext, endOfItemSleep) {
-        val index = exoPlayer.currentMediaItemIndex
-        if (exoPlayer.mediaItemCount > index + 1) exoPlayer.removeMediaItems(index + 1, exoPlayer.mediaItemCount)
-        val next = gaplessNext ?: return@LaunchedEffect
-        // "Stop after this item" must still end at the item's end.
-        if (endOfItemSleep) return@LaunchedEffect
-        exoPlayer.addMediaItem(androidx.media3.common.MediaItem.Builder().setUri(next.streamUrl).setMediaId(next.ratingKey).build())
-    }
-    // Only this screen can take the next song over. Minimized, the song ends as before instead of
-    // the engine playing on under the previous song's title.
+    LaunchedEffect(exoPlayer, endOfItemSleep) { Media3GaplessQueue.refresh() }
     DisposableEffect(exoPlayer) {
-        onDispose {
-            val index = exoPlayer.currentMediaItemIndex
-            if (exoPlayer.mediaItemCount > index + 1) runCatching { exoPlayer.removeMediaItems(index + 1, exoPlayer.mediaItemCount) }
-        }
+        Media3GaplessQueue.attachScreen(exoPlayer)
+        viewModel.queuePreparedGaplessNext()
+        onDispose { Media3GaplessQueue.detachScreen(exoPlayer) }
     }
 
     com.ambient.tv.ui.player.PlayerControlsAutoHide(
