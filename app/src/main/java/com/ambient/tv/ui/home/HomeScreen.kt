@@ -157,6 +157,10 @@ fun HomeScreen(
     onItemClick: (String) -> Unit,
     /** Uses SmartTube's existing details/play/ask setting and its source row queue. */
     onYouTubeVideoClick: (String, Long?) -> Unit = { videoId, _ -> onItemClick(HOME_YOUTUBE_ITEM_PREFIX + videoId) },
+    /** Radio Home rows keep their own queue, instead of playing with a singleton station. */
+    onRadioHomeStationClick: (HomeRadioPlaybackSelection) -> Unit = { selection ->
+        onItemClick(com.ambient.tv.data.radio.RADIO_HOME_ITEM_PREFIX + selection.stationId)
+    },
     onWatchLiveChannel: (TvhChannel) -> Unit = {},
     onOpenHomeContent: (HomeRowDefinition) -> Unit = {},
     /** System overview: the app home screen. Unused on the app home itself. */
@@ -344,6 +348,15 @@ fun HomeScreen(
                         onYouTubeHomeVideoClick = { videoId, rowId ->
                             viewModel.captureFocusForReturn()
                             onYouTubeVideoClick(videoId, viewModel.youtubePlaybackToken(rowId, videoId))
+                        },
+                        onRadioHomeStationClick = { stationId, rowId, visibleIds ->
+                            viewModel.captureFocusForReturn()
+                            onRadioHomeStationClick(HomeRadioPlaybackSelection(
+                                rowId = rowId,
+                                stationId = stationId,
+                                stationIds = visibleIds,
+                                cachedStations = viewModel.radioHomePlaybackStations(rowId),
+                            ))
                         },
                         onItemFocused = viewModel::onItemFocused,
                         onOpenRelevantSettings = openRelevantSettings,
@@ -585,6 +598,9 @@ internal fun LibraryContent(
     onYouTubeHomeVideoClick: (String, String) -> Unit = { videoId, _ ->
         onItemClick(HOME_YOUTUBE_ITEM_PREFIX + videoId)
     },
+    onRadioHomeStationClick: (String, String, List<String>) -> Unit = { stationId, _, _ ->
+        onItemClick(com.ambient.tv.data.radio.RADIO_HOME_ITEM_PREFIX + stationId)
+    },
 ) {
     // Keep partial rows out of the focus tree until the initial library load settles.
     if (state.loading && (state.rowKeys.isEmpty() || state.initialFocusTarget != HomeInitialFocusTarget.NONE)) {
@@ -642,7 +658,9 @@ internal fun LibraryContent(
                         ContentRow(row = row, onItemClick = { item ->
                             val videoId = homeYouTubeVideoId(item.ratingKey)
                             if (videoId != null) onYouTubeHomeVideoClick(videoId, row.id)
-                            else onItemClick(item.ratingKey)
+                            else homeRadioStationId(item.ratingKey)?.let { stationId ->
+                                onRadioHomeStationClick(stationId, row.id, row.items.mapNotNull { homeRadioStationId(it.ratingKey) })
+                            } ?: onItemClick(item.ratingKey)
                         }, onItemFocused = { onItemFocused(row.id, it) })
                     }
                 }
@@ -879,7 +897,9 @@ internal fun LibraryContent(
                                     onItemClick = { item ->
                                         val videoId = homeYouTubeVideoId(item.ratingKey)
                                         if (videoId != null) onYouTubeHomeVideoClick(videoId, row.id)
-                                        else onItemClick(item.ratingKey)
+                                        else homeRadioStationId(item.ratingKey)?.let { stationId ->
+                                            onRadioHomeStationClick(stationId, row.id, row.items.mapNotNull { homeRadioStationId(it.ratingKey) })
+                                        } ?: onItemClick(item.ratingKey)
                                     },
                                     onItemFocused = { item -> restoreArmed = false; onItemFocused(row.id, item) },
                                     onRowFocused = { centeredRowKey.value = rowKey },
