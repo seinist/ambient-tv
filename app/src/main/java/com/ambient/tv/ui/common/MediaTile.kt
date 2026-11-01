@@ -405,10 +405,21 @@ private fun MediaMetadataOverlay(
     }
 }
 
+/** Provider-specific upload date: all other MediaTile sources retain their original labels. */
+private fun monogramPublishedLabel(item: MediaItem): String? =
+    item.addedAt?.takeIf { it > 0L && (
+        item.ratingKey.startsWith("telegram:") ||
+        item.ratingKey.startsWith("telegram-youtube:")
+    ) }?.let { stamp ->
+        java.text.DateFormat.getDateInstance(java.text.DateFormat.MEDIUM)
+            .format(java.util.Date(stamp))
+    }
+
 /** The same four slots for every provider and type: year, length, age rating, score. */
 @Composable
 private fun focusedPrimaryMetadata(item: MediaItem): String = buildList {
     item.year?.let { add(it.toString()) }
+    monogramPublishedLabel(item)?.let(::add)
     focusedLengthLabel(item)?.let(::add)
     item.contentRating?.takeIf { it.isNotBlank() }?.let { rating ->
         val age = parseContentAge(rating)
@@ -474,7 +485,10 @@ private fun PosterLabels(item: MediaItem, focused: Boolean, reserveEpisodeLines:
                 item.year?.let { add(it.toString()) }
                 item.leafCount?.let { add(stringResource(R.string.media_episode_count, it)) }
             }
-            else -> item.year?.let { add(it.toString()) }
+            else -> {
+                item.year?.let { add(it.toString()) }
+                monogramPublishedLabel(item)?.let(::add)
+            }
         }
     }.joinToString(" · ")
     episodeTitle?.let { SecondaryLabel(it, focused) }
@@ -506,6 +520,7 @@ private fun EpisodeLabels(
     } else {
         val metadata = buildList {
             item.parentTitle?.takeIf { it.isNotBlank() }?.let(::add)
+            monogramPublishedLabel(item)?.let(::add)
             item.index?.let { add(stringResource(R.string.media_episode_short_label, it)) }
             formatDuration(item.durationMs)?.let(::add)
         }.joinToString(" · ")
