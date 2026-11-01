@@ -37,7 +37,9 @@ git -C "$source_dir" fetch --depth=1 origin "$ref"
 git -C "$source_dir" -c advice.detachedHead=false checkout --detach --force "$ref"
 [[ "$(git -C "$source_dir" rev-parse HEAD)" == "$ref" ]] ||
     { echo "Monogram checkout is not at the pinned commit" >&2; exit 1; }
-git -C "$source_dir" submodule update --init --recursive vendor/tlottie vendor/mono-rs
+# Only mono-rs is required after the pinned Ambient TV media-only Rust patch.
+# Do not fetch the huge tlottie submodule for sticker animations we do not ship.
+git -C "$source_dir" submodule update --init --recursive vendor/mono-rs
 python3 "$patch_script" "$source_dir"
 scratch="$(mktemp -d)"
 trap 'rm -rf "$scratch"' EXIT
