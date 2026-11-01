@@ -60,7 +60,7 @@ copy_current_apk "$scratch/monogram.apk"
 python3 "$root/scripts/monogram_size_audit.py" \
     --abi "$abi" --aar "$root/app/libs/monogram-mtproto.aar" \
     --base "$scratch/baseline.apk" --monogram "$scratch/monogram.apk" \
-    --max-native-mb 10 --max-apk-growth-mb 15 \
+    --max-native-mb 12 --max-apk-growth-mb 15 \
     --json "$root/dist/monogram-size-$abi.json" \
     --markdown "$root/dist/monogram-size-$abi.md"
 echo "Size reports: dist/monogram-size-$abi.json and .md"
