@@ -14,6 +14,14 @@ import kotlinx.coroutines.sync.withLock
  * NOT part of this queue: an Abos/History/Channel run must never silently become Home.
  * A token makes a restored or separately launched player unable to borrow a stale browse queue.
  */
+/** Source-relative navigation ignores only non-playable tiles, never recommendations. */
+internal fun previousPlayableBrowseVideo(items: List<YouTubeItem>, currentVideoId: String): YouTubeItem? {
+    val index = items.indexOfFirst { it.videoId == currentVideoId }
+    if (index <= 0) return null
+    return items.subList(0, index).asReversed()
+        .firstOrNull { !it.isChannel && !it.isLive && !it.isUpcoming }
+}
+
 /** A strictly adjacent playable successor in this same row, never a global suggestion. */
 internal fun nextPlayableBrowseVideo(items: List<YouTubeItem>, currentVideoId: String): YouTubeItem? {
     val index = items.indexOfFirst { it.videoId == currentVideoId }
@@ -76,6 +84,12 @@ class YouTubeBrowsePlaybackContext @Inject constructor(
         val videoId = session.lastPlayed ?: return null
         session.returnPending = false
         return ReturnTarget(session.rowId, videoId)
+    }
+
+    @Synchronized
+    fun previousLoaded(token: Long, videoId: String): YouTubeItem? {
+        val session = current?.takeIf { it.token == token } ?: return null
+        return previousPlayableBrowseVideo(session.items, videoId)
     }
 
     @Synchronized
