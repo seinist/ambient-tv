@@ -97,7 +97,6 @@ import com.ambient.tv.ui.common.rememberBrowseListState
 import com.ambient.tv.ui.common.handheldSwipeTabs
 import com.ambient.tv.ui.common.mediaFocusMotion
 import com.ambient.tv.ui.common.noSurfaceScale
-import com.ambient.tv.ui.common.overlayLazyGridScrollbar
 import com.ambient.tv.ui.common.pageContentUp
 import com.ambient.tv.ui.common.LocalBrowseRightIndexFocus
 import com.ambient.tv.ui.common.pageFocusStage
@@ -179,6 +178,8 @@ fun RadioScreen(
     }
     val alphabetJumps = remember(sortedFacets) { radioAlphabetJumps(sortedFacets) }
     val alphabetLetters = remember(alphabetJumps) { alphabetJumps.mapNotNull { it.letter.singleOrNull() } }
+    // A capped facet response may omit later letters; offer the real scrollbar instead.
+    val showFacetAlphabet = radioFacetAlphabetAllowed(sortedFacets.size)
     // Senderlisten (auch Raster, Suche und Favoriten) verwenden denselben Index wie Kategorien.
     // Die Sender selbst sind bereits vom ViewModel alphabetisch in der angezeigten Reihenfolge.
     val stationJumps = remember(state.stations) { radioStationAlphabetJumps(state.stations) }
@@ -248,7 +249,8 @@ fun RadioScreen(
         if (effectiveViewMode == RadioViewMode.GRID) gridState.firstVisibleItemIndex else listState.firstVisibleItemIndex,
     )?.let(::radioStationLetter)
     val stationLetter = alphabetTrackedLetter(handheld, visibleStationLetter, focusedStationLetter)
-    val showStationAlphabet = !showingFacets && stationLetters.isNotEmpty() && !requestedPagePending
+    val showStationAlphabet = !showingFacets && stationLetters.isNotEmpty() && !requestedPagePending &&
+        radioStationAlphabetAllowed(state.section, state.selectedFacet, state.submittedQuery)
 
     BrowseFocusContentIdentity(listOf(viewModel, focusScope, effectiveViewMode, state.sortDescending, state.returnFocusRevision),
         restoreInitialTarget = true)
@@ -474,7 +476,7 @@ fun RadioScreen(
                             .focusRequester(facetListFocus)
                             .focusGroup(),
                     ) {
-                        androidx.compose.runtime.CompositionLocalProvider(LocalBrowseRightIndexFocus provides alphabetRightFocusRequester.takeIf { alphabetLetters.size > 5 }) {
+                        androidx.compose.runtime.CompositionLocalProvider(LocalBrowseRightIndexFocus provides alphabetRightFocusRequester.takeIf { showFacetAlphabet }) {
                         RadioFacetList(
                             facets = sortedFacets,
                             listRows = state.listRows,
@@ -491,7 +493,7 @@ fun RadioScreen(
                         )
                         }
                     }
-                    if (alphabetLetters.size > 5) {
+                    if (showFacetAlphabet) {
                         // Shared component already used by the main library: no new A-Z widget.
                         AlphabetBar(
                             letters = alphabetLetters,
@@ -529,8 +531,8 @@ fun RadioScreen(
                         Modifier.weight(1f).fillMaxHeight()
                             .focusRequester(stationContentFocus).focusGroup(),
                     ) {
-                        // Reuse the existing focus-aware A–Z bar in both grid and list mode.
-                        // While shown, D-pad Right goes to its top entry rather than page actions.
+                        // Paged station results use the shared scrollbar; complete local catalogs
+                        // retain the A–Z index. Never render both on the same screen.
                         androidx.compose.runtime.CompositionLocalProvider(
                             LocalBrowseRightIndexFocus provides alphabetRightFocusRequester.takeIf { showStationAlphabet },
                         ) {
@@ -539,7 +541,6 @@ fun RadioScreen(
                                     TvLazyVerticalGrid(
                                         columns = deviceDensityGridCells(state.gridColumns, 160.dp, 8),
                                         modifier = Modifier.fillMaxSize()
-                                            .then(if (showStationAlphabet) Modifier else Modifier.overlayLazyGridScrollbar(gridState))
                                             .pageContentUp(focusChain).focusGroup(),
                                         state = gridState,
                                         contentPadding = PaddingValues(bottom = 40.dp),
