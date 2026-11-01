@@ -2234,4 +2234,12 @@
     <string name="monogram_qr_pending">Waiting for authorization on your phone…</string>
     <string name="monogram_search_loaded">Search loaded Monogram media</string>
     <string name="monogram_resend_code">Resend login code</string>
+    <string name="monogram_post_detail">Monogram post</string>
+    <string name="monogram_post_text">Post text</string>
+    <string name="monogram_open_photo">Open photo</string>
+    <string name="monogram_open_youtube">Open in SmartTube</string>
+    <string name="monogram_protected_post">This post restricts media playback. Its text and links remain available.</string>
+    <string name="monogram_join_channel">Join channel</string>
+    <string name="monogram_joined_channel">Joined</string>
+    <string name="monogram_join_failed">Unable to join this channel</string>
 </resources>
