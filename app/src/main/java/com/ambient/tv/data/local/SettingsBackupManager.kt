@@ -33,9 +33,11 @@ data class SettingsBackup(
     val youtubeEnabled: Boolean = false,
     val spotifyEnabled: Boolean = false,
     val radioEnabled: Boolean = false,
-    /** Telegram UI preferences only; never export MTProto authorization/session files. */
+    /** Portable Telegram system settings; native MTProto authorization/session stays device-local. */
     val telegramEnabled: Boolean = false,
     val telegramSubmenuKeys: List<String> = AppPreferences.DEFAULT_TELEGRAM_SUBMENU_KEYS,
+    /** Schema 76: application API ID/hash only in an encrypted credentials export; never a user session. */
+    val monogramApiCredentials: MonogramApiBackup? = null,
     val radioFavorites: List<com.ambient.tv.data.radio.RadioStation> = emptyList(),
     val smartTubeAccounts: List<SmartTubeAccountBackup>? = null,
     val spotifyAccount: SpotifyAccountBackup? = null,
@@ -349,6 +351,9 @@ class SettingsBackupManager @Inject constructor(
             radioEnabled = preferences.radioEnabled,
             telegramEnabled = preferences.telegramEnabled,
             telegramSubmenuKeys = preferences.telegramSubmenuKeys,
+            monogramApiCredentials = if (includeCredentials) tokenStore.monogramCredentials()?.let { (id, hash) ->
+                MonogramApiBackup(id, hash)
+            } else null,
             radioFavorites = preferences.radioFavorites,
             spotifyClientId = preferences.spotifyClientId,
             spotifyDeviceName = preferences.spotifyDeviceName,
@@ -595,6 +600,18 @@ class SettingsBackupManager @Inject constructor(
      */
     fun importJson(raw: String): SettingsBackup {
         val backup = previewJson(raw)
+        // An imported API ID/hash cannot be silently swapped into a running native session.
+        // A new device with no credentials accepts it; a configured target must match.
+        backup.monogramApiCredentials?.let { incoming ->
+            val existing = tokenStore.monogramCredentials()
+            require(existing == null ||
+                (existing.first == incoming.apiId && existing.second.equals(incoming.apiHash, ignoreCase = true))) {
+                "Different Monogram API credentials are already configured. Sign out and change them in Monogram settings before importing."
+            }
+            require(existing != null || context?.noBackupFilesDir?.resolve("monogram/account.id")?.isFile != true) {
+                "Sign out of the existing Monogram account before importing application credentials."
+            }
+        }
         val snapshot = runCatching { exportJson(includeCredentials = true) }.getOrNull()
         try {
             applyBackup(backup)
@@ -981,10 +998,17 @@ class SettingsBackupManager @Inject constructor(
             preferences.liveTimeshiftMb = backup.liveTimeshiftMb
             context?.let { com.ambient.tv.livetv.LiveTvReminderScheduler.setLeadMinutes(it, backup.liveTvReminderLeadMinutes) }
         }
+        // Last in the import: a partially failed settings restore must never leave the
+        // credentials changed. Old/plain backups have null and preserve this device's keys.
+        backup.monogramApiCredentials?.let { api ->
+            if (tokenStore.monogramCredentials() != (api.apiId to api.apiHash.lowercase(java.util.Locale.ROOT))) {
+                tokenStore.setMonogramCredentials(api.apiId, api.apiHash)
+            }
+        }
     }
 
     private companion object {
-        const val CURRENT_SCHEMA_VERSION = 75
+        const val CURRENT_SCHEMA_VERSION = 76
         val PORTABLE_DISPLAY_MODES = setOf("system", AppPreferences.DISPLAY_MODE_AUTO_CONTENT, AppPreferences.DISPLAY_MODE_AUTO_DISPLAY)
     }
 }
