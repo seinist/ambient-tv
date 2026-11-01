@@ -180,8 +180,10 @@ class RadioViewModel @Inject constructor(
         val currentId = returned.currentId ?: return false
         RadioFocusMemory.save(scope, currentId)
         val before = _state.value
-        val known = before.stations.mapTo(HashSet()) { it.id }
-        val stations = radioAlphabeticalStations(before.stations + returned.stations.filter { known.add(it.id) }, before.sortDescending)
+        val merged = radioAppendPagedStations(before.stations, returned.stations)
+        val stations = if (radioStationAlphabetAllowed(before.section, before.selectedFacet, before.submittedQuery)) {
+            radioAlphabeticalStations(merged, before.sortDescending)
+        } else merged
         _state.value = before.copy(
             stations = stations,
             nextOffset = returned.source?.nextOffset ?: before.nextOffset,
@@ -604,7 +606,11 @@ class RadioViewModel @Inject constructor(
                 _state.value = _state.value.copy(
                     loading = false,
                     loadingMore = false,
-                    stations = radioAlphabeticalStations((existing + page.items).distinctBy(RadioStation::id), descending),
+                    // API pages are sorted consistently by the remote cursor. Appending in
+                    // that order ensures a scroll fetch really extends the visible tail.
+                    stations = if (section == RadioSection.POPULAR && facet == null && query == null) {
+                        radioAlphabeticalStations(radioAppendPagedStations(existing, page.items), descending)
+                    } else radioAppendPagedStations(existing, page.items),
                     // Facet counts provide a fallback when a mirror delivers a short page.
                     // An empty mapped page still terminates the fallback to avoid endless fetches.
                     hasMore = radioHasMoreStations(page.hasMore, page.items.size,
