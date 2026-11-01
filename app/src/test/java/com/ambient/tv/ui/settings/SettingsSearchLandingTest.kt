@@ -56,6 +56,11 @@ class SettingsSearchLandingTest {
         assertNull(index.landingPosition("plex:customization", requested = false))
     }
     @Test fun monogramAccountSetupIsReachableThroughSettingsSearchAndDirectEntry() {
+        if (!com.ambient.tv.BuildConfig.MONOGRAM_NATIVE) {
+            // Builds without the native core expose no Monogram entry at all.
+            assertNull(SettingsCategory.fromKey("monogram"))
+            return
+        }
         assertEquals(SettingsCategory.TELEGRAM, SettingsCategory.fromKey("monogram"))
         assertEquals(SettingsCategory.TELEGRAM, settingsShortcutCategory("telegram:account"))
         assertEquals("telegram-account", settingsShortcutItemKey("telegram:account"))

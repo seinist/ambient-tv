@@ -80,6 +80,7 @@ internal fun telegramRows(section: String, entries: List<TelegramMedia>): List<C
 class TelegramViewModel @Inject constructor(
     private val repository: TelegramRepository,
     private val preferences: AppPreferences,
+    @dagger.hilt.android.qualifiers.ApplicationContext private val context: android.content.Context,
 ) : ViewModel() {
     // The system screen presents account status like Spotify instead of claiming
     // the native module is missing when only Telegram sign-in is missing.
@@ -222,10 +223,11 @@ class TelegramViewModel @Inject constructor(
             } catch (failure: Exception) {
                 if (generation == pageGeneration) {
                     val old = mutableState.value
+                    val message = failure.message ?: context.getString(com.ambient.tv.R.string.monogram_error_request)
                     mutableState.value = old.copy(
                         loading = false, loadingMore = false,
-                        error = if (old.rows.isEmpty()) (failure.message ?: "Monogram request failed") else null,
-                        pageError = if (old.rows.isNotEmpty()) (failure.message ?: "Monogram request failed") else null,
+                        error = if (old.rows.isEmpty()) message else null,
+                        pageError = if (old.rows.isNotEmpty()) message else null,
                     )
                 }
             }

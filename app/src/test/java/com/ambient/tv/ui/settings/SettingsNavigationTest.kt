@@ -58,7 +58,9 @@ class SettingsNavigationTest {
         assertTrue(showsInAreaIndex(SettingsCategory.APPEARANCE, SettingsArea.START, listed = false))
         assertFalse(showsInAreaIndex(SettingsCategory.PLEX, SettingsArea.STREAMING, listed = true))
         assertEquals(
-            listOf(MediaSystem.PLEX, MediaSystem.JELLYFIN, MediaSystem.EMBY, MediaSystem.DLNA, MediaSystem.TVHEADEND, MediaSystem.IPTV, MediaSystem.YOUTUBE, MediaSystem.TELEGRAM, MediaSystem.SPOTIFY, MediaSystem.RADIO, MediaSystem.TRAILERS, MediaSystem.FILES),
+            listOf(MediaSystem.PLEX, MediaSystem.JELLYFIN, MediaSystem.EMBY, MediaSystem.DLNA, MediaSystem.TVHEADEND, MediaSystem.IPTV, MediaSystem.YOUTUBE, MediaSystem.TELEGRAM, MediaSystem.SPOTIFY, MediaSystem.RADIO, MediaSystem.TRAILERS, MediaSystem.FILES)
+                // Monogram is only offered by builds that contain its native core.
+                .filter { it != MediaSystem.TELEGRAM || com.ambient.tv.BuildConfig.MONOGRAM_NATIVE },
             MediaSystem.addOrder,
         )
     }
@@ -123,6 +125,10 @@ class SettingsNavigationTest {
 
     @Test fun directSettingsEntryBackReturnsStraightToSource() {
         SettingsCategory.entries.forEach { category ->
+            if (category == SettingsCategory.TELEGRAM && !com.ambient.tv.BuildConfig.MONOGRAM_NATIVE) {
+                assertNull(SettingsCategory.fromKey(category.name))
+                return@forEach
+            }
             val initialPage = SettingsCategory.fromKey(category.name)!!
             val entry = settingsEntryNav(initialPage)
             assertEquals(category.name, initialPage, entry.page)

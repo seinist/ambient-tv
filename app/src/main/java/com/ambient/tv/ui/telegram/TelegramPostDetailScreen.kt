@@ -66,17 +66,18 @@ fun TelegramPostDetailScreen(
     var error by remember(chatId, messageId) { mutableStateOf<String?>(null) }
     var loading by remember(chatId, messageId) { mutableStateOf(true) }
     var retry by remember(chatId, messageId) { mutableIntStateOf(0) }
+    val unavailable = stringResource(R.string.monogram_error_post_unavailable)
 
     LaunchedEffect(chatId, messageId, retry) {
         loading = true
         error = null
         try {
             media = repository.media(chatId, messageId)
-            if (media == null) error = "Monogram post unavailable"
+            if (media == null) error = unavailable
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (failure: Exception) {
-            error = failure.message ?: "Monogram post unavailable"
+            error = failure.message ?: unavailable
         } finally {
             loading = false
         }

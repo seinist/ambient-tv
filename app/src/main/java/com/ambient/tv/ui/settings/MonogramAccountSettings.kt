@@ -42,7 +42,10 @@ import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
 
 @HiltViewModel
-class MonogramAccountViewModel @Inject constructor(val repository: TelegramRepository) : ViewModel() {
+class MonogramAccountViewModel @Inject constructor(
+    val repository: TelegramRepository,
+    @dagger.hilt.android.qualifiers.ApplicationContext private val context: android.content.Context,
+) : ViewModel() {
     val login = repository.login
     private val mutableCredentialsRevision = MutableStateFlow(0)
     val credentialsRevision = mutableCredentialsRevision.asStateFlow()
@@ -64,8 +67,8 @@ class MonogramAccountViewModel @Inject constructor(val repository: TelegramRepos
             } catch (failure: Exception) {
                 // Validation errors contain no secrets. Never include user-supplied values.
                 mutableCredentialsError.value = when (failure) {
-                    is IllegalArgumentException -> "Invalid Monogram API ID or hash"
-                    else -> "Sign out before changing the Monogram application credentials"
+                    is IllegalArgumentException -> context.getString(R.string.monogram_error_api_credentials)
+                    else -> context.getString(R.string.monogram_error_signout_first)
                 }
             } finally {
                 mutableSavingCredentials.value = false

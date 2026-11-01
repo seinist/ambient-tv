@@ -66,6 +66,8 @@ import com.ambient.tv.ui.player.OsdPlayer
 import com.ambient.tv.ui.player.PersistentPlayerChrome
 import com.ambient.tv.ui.player.PersistentPlayerOverlays
 import com.ambient.tv.ui.player.PlaybackEngineFactory
+import com.ambient.tv.ui.player.rendererSwitchPositionMs
+import com.ambient.tv.ui.player.rendererZeroPositionReady
 import com.ambient.tv.ui.player.resizeKey
 import com.ambient.tv.ui.player.aspectKey
 import com.ambient.tv.ui.player.videoResizeMode
@@ -110,13 +112,60 @@ class TelegramPlayerViewModel @Inject constructor(
     private val mutableRenderer = MutableStateFlow(PlaybackBackendResolver.resolve(preferences.playbackBackendKey).key)
     val renderer = mutableRenderer.asStateFlow()
 
+    /** Same user setting as every other player: passthrough applies to Media3, VLC and MPV. */
+    val audioPassthroughEnabled: Boolean get() = preferences.mediaAudioPassthroughEnabled
+
+    /**
+     * Start position of the current player session. Changes only together with the media or
+     * the renderer, so the session acquisition key stays stable while playing.
+     */
+    private val mutableStartPosition = MutableStateFlow(0L)
+    val startPositionMs = mutableStartPosition.asStateFlow()
+
     fun chooseRenderer(key: String, makeGlobal: Boolean) {
         val requested = key.takeIf { it in setOf("media3", "vlc", "mpv") } ?: "media3"
         if (requested == "mpv" && !MpvBackendAvailability.isAvailable) return
         if (makeGlobal) preferences.playbackBackendKey = requested
         TitleVideoSettingsStore.rememberRenderer(context, mutableMedia.value?.playerMetadata(),
             if (makeGlobal || key == "auto") null else requested)
+        if (requested == mutableRenderer.value) return
+        // Capture before the old renderer is released: the new one continues from here.
+        mutableMedia.value?.let { media ->
+            val position = currentPositionMs(media)
+            setStartPosition(media, position)
+        }
         mutableRenderer.value = requested
+    }
+
+    private fun setStartPosition(media: TelegramMedia, positionMs: Long) {
+        mutableStartPosition.value = positionMs.coerceAtLeast(0L)
+        repository.noteSessionStart(media.mediaKey, mutableStartPosition.value)
+    }
+
+    private fun ownsSession(media: TelegramMedia): Boolean =
+        BackgroundPlaybackSession.snapshot.value.metadata?.mediaId == media.mediaKey
+
+    private fun currentPositionMs(media: TelegramMedia): Long {
+        if (!ownsSession(media)) return mutableStartPosition.value
+        return rendererSwitchPositionMs(
+            BackgroundPlaybackSession.currentStatus()?.positionMs,
+            BackgroundPlaybackSession.snapshot.value.status.positionMs,
+            rendererZeroPositionReady(BackgroundPlaybackSession.activeHandle()),
+        )
+    }
+
+    /** Remembers where playback stands so reopening the post continues there. */
+    fun rememberPosition() {
+        val media = mutableMedia.value ?: return
+        if (media.kind == TelegramMediaKind.PHOTO || !ownsSession(media)) return
+        val status = BackgroundPlaybackSession.snapshot.value.status
+        repository.rememberResumePosition(media.mediaKey, currentPositionMs(media),
+            status.durationMs.takeIf { it > 0 } ?: media.playerMetadata().durationMs)
+    }
+
+    override fun onCleared() {
+        rememberPosition()
+        super.onCleared()
     }
 
     private val mutableMedia = MutableStateFlow<TelegramMedia?>(null)
@@ -142,13 +191,14 @@ class TelegramPlayerViewModel @Inject constructor(
                 if (accepted) {
                     mutableChannel.value = selected.copy(subscribed = !wasJoined)
                 } else {
-                    mutableChannelError.value = if (wasJoined)
-                        "Monogram channel could not be left" else "Monogram channel join not accepted"
+                    mutableChannelError.value = context.getString(if (wasJoined)
+                        R.string.monogram_leave_failed else R.string.monogram_join_failed)
                 }
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (failure: Exception) {
-                mutableChannelError.value = failure.message ?: "Monogram membership change failed"
+                mutableChannelError.value = failure.message
+                    ?: context.getString(R.string.monogram_membership_failed)
             } finally {
                 mutableChannelBusy.value = false
             }
@@ -160,6 +210,7 @@ class TelegramPlayerViewModel @Inject constructor(
     val error = mutableError.asStateFlow()
 
     fun load(chatId: Long, messageId: Int) {
+        rememberPosition()
         mutableError.value = null
         mutableMedia.value = null
         mutableChannel.value = null
@@ -167,12 +218,17 @@ class TelegramPlayerViewModel @Inject constructor(
         viewModelScope.launch {
             try {
                 val selected = repository.media(chatId, messageId)
-                if (selected == null) mutableError.value = "Telegram media is unavailable"
+                if (selected == null) mutableError.value = context.getString(R.string.monogram_error_media_unavailable)
                 else if (!selected.playableOnTelegram) mutableError.value =
-                    "This item is protected or requires an external player"
+                    context.getString(R.string.monogram_error_media_protected)
                 else {
                     mutableRenderer.value = PlaybackBackendResolver.resolve(TitleVideoSettingsStore.rendererFor(
                         context, selected.playerMetadata(), preferences.playbackBackendKey)).key
+                    // Still playing in the background: keep the original start so the running
+                    // session is reattached, not reopened. Otherwise continue where it stopped.
+                    setStartPosition(selected,
+                        if (ownsSession(selected)) repository.sessionStartMs(selected.mediaKey)
+                        else repository.resumePositionMs(selected.mediaKey))
                     mutableMedia.value = selected
                     // Load channel artwork and membership independently from the player start.
                     launch {
@@ -186,7 +242,7 @@ class TelegramPlayerViewModel @Inject constructor(
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (error: Exception) {
-                mutableError.value = error.message ?: "Telegram media could not be opened"
+                mutableError.value = error.message ?: context.getString(R.string.monogram_error_media_open)
             }
         }
     }
@@ -271,6 +327,19 @@ private fun TelegramPlaybackContent(
     }
     val metadata = remember(media.mediaKey) { media.playerMetadata() }
     val renderer by viewModel.renderer.collectAsState()
+    val startPositionMs by viewModel.startPositionMs.collectAsState()
+    val audioPassthrough = viewModel.audioPassthroughEnabled
+    val streamUnavailable = stringResource(R.string.monogram_error_stream)
+    val rendererUnavailable = stringResource(R.string.monogram_error_renderer)
+    val playbackFailed = stringResource(R.string.monogram_error_playback)
+    // While this screen is visible, keep the reopen position fresh (playback may continue
+    // in the background after leaving the screen).
+    LaunchedEffect(media.mediaKey) {
+        while (true) {
+            kotlinx.coroutines.delay(5_000L)
+            viewModel.rememberPosition()
+        }
+    }
     // MPV/VLC use Ambient TV's existing seekable localhost media transport.
     // Media3 keeps its direct authenticated DataSource; no relay or extra socket then.
     var loopbackUrl by remember(media.mediaKey, renderer) { mutableStateOf<String?>(null) }
@@ -281,7 +350,7 @@ private fun TelegramPlaybackContent(
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (error: Exception) {
-                onFailure(error.message ?: "Monogram stream unavailable")
+                onFailure(error.message ?: streamUnavailable)
             }
         }
     }
@@ -316,20 +385,22 @@ private fun TelegramPlaybackContent(
             when (renderer) {
                 "vlc" -> if (loopbackUrl != null) {
                     val controller = rememberVlcPlaybackController(
-                        context = context, url = loopbackUrl!!, startPositionMs = 0L,
+                        context = context, url = loopbackUrl!!, startPositionMs = startPositionMs,
                         headers = emptyMap(), networkCache = true,
+                        initialAudioPassthrough = audioPassthrough,
                     )
                     LaunchedEffect(controller, loopbackUrl) {
-                        if (controller == null) onFailure("Monogram VLC renderer unavailable")
+                        if (controller == null) onFailure(rendererUnavailable.format("VLC"))
                     }
                 }
                 "mpv" -> if (loopbackUrl != null) {
                     val controller = rememberMpvPlaybackController(
-                        context = context, url = loopbackUrl!!, startPositionMs = 0L,
+                        context = context, url = loopbackUrl!!, startPositionMs = startPositionMs,
                         headers = emptyMap(), networkCache = true,
+                        audioPassthroughEnabled = audioPassthrough,
                     )
                     LaunchedEffect(controller, loopbackUrl) {
-                        if (controller == null) onFailure("Monogram MPV renderer unavailable")
+                        if (controller == null) onFailure(rendererUnavailable.format("MPV"))
                     }
                 }
                 else -> LaunchedEffect(media.mediaKey, renderer, repository) {
@@ -337,14 +408,15 @@ private fun TelegramPlaybackContent(
                         PlaybackEngineFactory.create(
                             context = context,
                             streamUrl = "telegram://media/${media.chatId}/${media.messageId}",
-                            startPositionMs = 0L,
+                            startPositionMs = startPositionMs,
+                            audioPassthroughEnabled = audioPassthrough,
                             metadata = metadata,
                             dataSourceFactory = TelegramVideoDataSource.Factory(repository, media),
                         )
                     } catch (cancelled: CancellationException) {
                         throw cancelled
                     } catch (error: Exception) {
-                        onFailure(error.message ?: "Monogram playback failed")
+                        onFailure(error.message ?: playbackFailed)
                     }
                 }
             }
@@ -447,11 +519,12 @@ private fun TelegramPlaybackContent(
                     sleepTimer = BackgroundPlaybackSession.sleepTimer,
                     onSleepChanged = BackgroundPlaybackSession::setSleepTimer,
                     infoLines = listOf(
-                        "Source" to "Monogram",
-                        "Channel" to media.channel,
-                        "Media ID" to media.mediaKey,
-                        "Size" to "${media.fileSize} bytes",
-                        "Backend" to renderer.uppercase(),
+                        stringResource(R.string.monogram_info_source) to "Monogram",
+                        stringResource(R.string.monogram_info_channel) to media.channel,
+                        stringResource(R.string.monogram_info_media_id) to media.mediaKey,
+                        stringResource(R.string.monogram_info_size) to
+                            android.text.format.Formatter.formatShortFileSize(context, media.fileSize),
+                        stringResource(R.string.player_info_backend) to renderer.uppercase(),
                     ),
                     rendererKey = renderer,
                     onRendererSelected = { key, global -> viewModel.chooseRenderer(key, global) },

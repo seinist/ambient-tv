@@ -143,6 +143,9 @@ fun TelegramScreen(
     var activeChannel by remember(sectionKey) { mutableStateOf<TelegramChannel?>(null) }
     var joiningChannel by remember(sectionKey) { mutableStateOf(false) }
     var channelError by remember(sectionKey) { mutableStateOf<String?>(null) }
+    val leaveFailed = stringResource(R.string.monogram_leave_failed)
+    val joinFailed = stringResource(R.string.monogram_join_failed)
+    val membershipFailed = stringResource(R.string.monogram_membership_failed)
     val channelScope = rememberCoroutineScope()
     LaunchedEffect(activeChannelId) {
         activeChannel = activeChannelId?.let { viewModel.channel(it) }
@@ -316,13 +319,11 @@ fun TelegramScreen(
                                             if (accepted) {
                                                 activeChannel = activeChannel?.copy(subscribed = !wasJoined)
                                                 if (wasJoined) onSelectSection("channels")
-                                            } else channelError = if (wasJoined)
-                                                "Monogram channel could not be left"
-                                            else "Monogram channel join not accepted"
+                                            } else channelError = if (wasJoined) leaveFailed else joinFailed
                                         } catch (cancelled: CancellationException) {
                                             throw cancelled
                                         } catch (error: Exception) {
-                                            channelError = error.message ?: "Monogram channel join failed"
+                                            channelError = error.message ?: membershipFailed
                                         } finally { joiningChannel = false }
                                     }
                                 }
