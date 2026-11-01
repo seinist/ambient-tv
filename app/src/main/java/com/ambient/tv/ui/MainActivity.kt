@@ -2319,7 +2319,7 @@ private fun AmbientTvApp(
                             onPlayMedia = { chat, message ->
                                 playOnSelectedTarget(Destinations.telegramPlayer(chat, message))
                             },
-                            onOpenYouTube = ::handleYouTubeSelection,
+                            onOpenYouTube = { videoId -> handleYouTubeSelection(videoId) },
                         )
                     }
                     composable(Destinations.TELEGRAM_PLAYER,
