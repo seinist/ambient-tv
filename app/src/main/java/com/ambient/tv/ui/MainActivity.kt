@@ -915,7 +915,7 @@ internal fun radioSectionTransitionIsInstant(fromRoute: String?, toRoute: String
 }
 
 internal val SIDEBAR_ROUTES = setOf(Destinations.TRAILERS, Destinations.TRAILER_FEED, Destinations.FILES, Destinations.FILE_SOURCE, Destinations.FILE_FAVORITES, Destinations.FILE_RECENT, Destinations.FILE_CONTINUE, Destinations.DLNA, Destinations.DLNA_SERVER, Destinations.HOME, Destinations.PLEX, Destinations.JELLYFIN, Destinations.EMBY, Destinations.SEARCH, Destinations.YOUTUBE, Destinations.YOUTUBE_FEED, Destinations.TELEGRAM, Destinations.TELEGRAM_SECTION, Destinations.SPOTIFY, Destinations.SPOTIFY_SECTION, Destinations.RADIO, Destinations.RADIO_SECTION, Destinations.LIVE_TV, Destinations.LIVE_TV_SECTION, Destinations.SETTINGS, Destinations.SECTION)
-internal val FULLSCREEN_ROUTES = setOf(Destinations.ITEM_TRAILERS, Destinations.TMDB_TRAILERS, Destinations.PHOTO_VIEWER, Destinations.SETUP_COMPLETE, Destinations.INITIAL_SETUP, Destinations.SETUP_SETTINGS, Destinations.PLAYER, Destinations.TVH_PLAYER, Destinations.YOUTUBE_PLAYER, Destinations.TELEGRAM_PLAYER, Destinations.YOUTUBE_DETAIL, Destinations.YOUTUBE_CHANNEL, Destinations.SPOTIFY_PLAYER, Destinations.RADIO_PLAYER, Destinations.SPOTIFY_DETAIL, Destinations.SERVER_SELECT, Destinations.DETAIL, Destinations.DETAIL_FILTERED_BROWSE)
+internal val FULLSCREEN_ROUTES = setOf(Destinations.ITEM_TRAILERS, Destinations.TMDB_TRAILERS, Destinations.PHOTO_VIEWER, Destinations.SETUP_COMPLETE, Destinations.INITIAL_SETUP, Destinations.SETUP_SETTINGS, Destinations.PLAYER, Destinations.TVH_PLAYER, Destinations.YOUTUBE_PLAYER, Destinations.TELEGRAM_PLAYER, Destinations.TELEGRAM_DETAIL, Destinations.YOUTUBE_DETAIL, Destinations.YOUTUBE_CHANNEL, Destinations.SPOTIFY_PLAYER, Destinations.RADIO_PLAYER, Destinations.SPOTIFY_DETAIL, Destinations.SERVER_SELECT, Destinations.DETAIL, Destinations.DETAIL_FILTERED_BROWSE)
 // Saved on the Settings back stack entry by a sidebar shortcut: the page to open, plus a serial
 // that changes with every request.
 private const val SETTINGS_PAGE_KEY = "settings_page"
@@ -1108,22 +1108,10 @@ private fun AmbientTvApp(
                 }
             return
         }
-        com.ambient.tv.data.telegram.telegramMediaIds(ratingKey)?.let { (chatId, messageId) ->
-            if (mediaSelectionBusy) return
-            mediaSelectionBusy = true
-            val origin = navController.currentBackStackEntry?.id
-            mediaSelectionScope.launch {
-                val selected = try {
-                    suspendResult { telegramRepository.media(chatId, messageId) }.getOrNull()
-                } finally { mediaSelectionBusy = false }
-                if (origin != navController.currentBackStackEntry?.id || selected == null) return@launch
-                if (selected.kind == com.ambient.tv.data.telegram.TelegramMediaKind.YOUTUBE) {
-                    selected.youtubeVideoId?.let { id -> playOnSelectedTarget(Destinations.youtubePlayer(id)) }
-                } else if (selected.playableOnTelegram) {
-                    telegramRepository.activateHomePlaybackQueue(ratingKey)
-                    playOnSelectedTarget(Destinations.telegramPlayer(chatId, messageId))
-                }
-            }
+        com.ambient.tv.data.telegram.telegramPostIds(ratingKey)?.let { (chatId, messageId) ->
+            // A private post has a detail page with full text and every linked YouTube video.
+            // The Home row already registered its playback queue for the local media action.
+            navController.navigate(Destinations.telegramDetail(chatId, messageId))
             return
         }
         if (ratingKey.startsWith(com.ambient.tv.data.radio.RADIO_HOME_ITEM_PREFIX)) {
@@ -2294,8 +2282,9 @@ private fun AmbientTvApp(
                                 onSelectSection = { key -> navigateSidebar(Destinations.telegramSection(key)) },
                                 onOpenSettings = { openSystemSettings("telegram") },
                                 onOpenChannel = { chatId -> navigateToSection(Destinations.telegramSection("channel:$chatId")) },
-                                onOpenMedia = { chatId, messageId -> playOnSelectedTarget(Destinations.telegramPlayer(chatId, messageId)) },
-                                onOpenYouTube = { videoId -> handleYouTubeSelection(videoId) },
+                                onOpenPost = { chatId, messageId ->
+                                    navController.navigate(Destinations.telegramDetail(chatId, messageId))
+                                },
                             )
                         }
                     }
@@ -2307,10 +2296,31 @@ private fun AmbientTvApp(
                                 onSelectSection = { key -> navigateSidebar(Destinations.telegramSection(key)) },
                                 onOpenSettings = { openSystemSettings("telegram") },
                                 onOpenChannel = { chatId -> navigateToSection(Destinations.telegramSection("channel:$chatId")) },
-                                onOpenMedia = { chatId, messageId -> playOnSelectedTarget(Destinations.telegramPlayer(chatId, messageId)) },
-                                onOpenYouTube = { videoId -> handleYouTubeSelection(videoId) },
+                                onOpenPost = { chatId, messageId ->
+                                    navController.navigate(Destinations.telegramDetail(chatId, messageId))
+                                },
                             )
                         }
+                    }
+                    composable(Destinations.TELEGRAM_DETAIL,
+                        arguments = listOf(
+                            navArgument("chatId") { type = NavType.LongType },
+                            navArgument("messageId") { type = NavType.IntType },
+                        )) { entry ->
+                        com.ambient.tv.ui.telegram.TelegramPostDetailScreen(
+                            chatId = entry.arguments?.getLong("chatId") ?: 0L,
+                            messageId = entry.arguments?.getInt("messageId") ?: 0,
+                            repository = telegramRepository,
+                            onBack = ::navigateBack,
+                            onOpenSettings = { openSystemSettings("telegram") },
+                            onOpenChannel = { id ->
+                                navController.navigate(Destinations.telegramSection("channel:$id"))
+                            },
+                            onPlayMedia = { chat, message ->
+                                playOnSelectedTarget(Destinations.telegramPlayer(chat, message))
+                            },
+                            onOpenYouTube = ::handleYouTubeSelection,
+                        )
                     }
                     composable(Destinations.TELEGRAM_PLAYER,
                         arguments = listOf(
