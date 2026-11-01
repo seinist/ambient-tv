@@ -157,48 +157,8 @@ class TelegramRepository @Inject constructor(
         }
     }
     @Volatile private var client: TelegramClientPort? = null
-    /** Exact launch row (not a guessed global "recent" queue). Switching pages never changes it. */
     private val playbackUrls = LinkedHashMap<String, String>()
     private val streamEpoch = java.util.concurrent.atomic.AtomicLong()
-    private val queues = LinkedHashMap<String, List<String>>()
-    private var activeQueue: List<String> = emptyList()
-
-    @Synchronized
-    fun registerPlaybackQueue(source: String, ids: List<String>) {
-        val safe = ids.filter { telegramMediaIds(it) != null }.distinct().take(500)
-        queues.remove(source)
-        queues[source] = safe
-        while (queues.size > 24) queues.remove(queues.keys.first())
-    }
-
-    @Synchronized
-    fun activatePlaybackQueue(ids: List<String>, selected: String) {
-        activeQueue = ids.filter { telegramMediaIds(it) != null }.distinct().take(500)
-            .takeIf { selected in it } ?: listOf(selected)
-    }
-
-    @Synchronized
-    fun activateHomePlaybackQueue(selected: String) {
-        if (selected in activeQueue) return
-        val found = queues.values.firstOrNull { selected in it }
-        activeQueue = found ?: listOf(selected)
-    }
-
-    @Synchronized
-    fun playbackCandidates(current: String, direction: Int): List<Pair<Long, Int>> {
-        val i = activeQueue.indexOf(current)
-        if (i < 0 || direction == 0) return emptyList()
-        val next = if (direction > 0) activeQueue.drop(i + 1)
-            else activeQueue.take(i).asReversed()
-        return next.mapNotNull(::telegramMediaIds)
-    }
-
-    @Synchronized
-    fun clearPlaybackQueues() {
-        activeQueue = emptyList()
-        queues.clear()
-    }
-
     init {
         if (nativeAvailable && preferences.telegramEnabled) {
             scope.launch { restoreIfNeeded() }
@@ -320,7 +280,6 @@ class TelegramRepository @Inject constructor(
         revokePlaybackUrls()
         blockedChannels.clear()
         client = null
-        clearPlaybackQueues()
         clearResumePositions()
         mutableAuthorized.value = false
     }
@@ -455,7 +414,6 @@ class TelegramRepository @Inject constructor(
             blockedChannels.add(chatId)
             streamEpoch.incrementAndGet()
             revokePlaybackUrls()
-            clearPlaybackQueues()
             clearResumePositions()
             account.cacheIdentity?.let { diskCache.clearAccount(it) }
             mutableCatalogRevision.value++

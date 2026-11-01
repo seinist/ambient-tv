@@ -188,6 +188,7 @@ class HomeViewModel @Inject constructor(
     private val smartTubeEngine: SmartTubeEngine,
     private val youtubeContentCache: YouTubeContentCache,
     private val youtubePlaybackContext: YouTubeBrowsePlaybackContext,
+    private val telegramPlaybackContext: com.ambient.tv.ui.telegram.TelegramPlaybackContext,
     private val photoRepository: com.ambient.tv.data.photos.PhotoRepository,
     private val trailerRepository: com.ambient.tv.trailers.TmdbTrailerRepository,
     private val performanceProfileResolver: PerformanceProfileResolver,
@@ -1474,11 +1475,13 @@ class HomeViewModel @Inject constructor(
         }
 
     /** Telegram is account-private: never persist these rows in the shared Home snapshot cache. */
-    /** Home passes its exact source row, including on touch where no tile has focus. */
-    fun activateTelegramRow(rowId: String, itemKey: String) {
-        val source = telegramRows.firstOrNull { it.id == rowId } ?: return
-        telegramRepository.activatePlaybackQueue(
-            source.items.map(MediaItem::ratingKey), itemKey)
+    /**
+     * Home passes its exact source row, including on touch where no tile has focus. The queue
+     * is that row as shown; Home rows are not continued past their loaded posts.
+     */
+    fun telegramPlaybackToken(rowId: String, itemKey: String): Long? {
+        val source = telegramRows.firstOrNull { it.id == rowId } ?: return null
+        return telegramPlaybackContext.start("home:$rowId", source.items, itemKey)
     }
 
     private fun loadTelegramRows() {
@@ -1524,10 +1527,6 @@ class HomeViewModel @Inject constructor(
                 }
                 if (cached.isNotEmpty() && telegramRepository.available) {
                     telegramRows = cached
-                    cached.forEach { row ->
-                        telegramRepository.registerPlaybackQueue(
-                            "home:${row.id}", row.items.map(MediaItem::ratingKey))
-                    }
                     if (!_uiState.value.isFailurePage())
                         publishRows((_uiState.value as? HomeUiState.Loaded)?.rows.orEmpty())
                 }
@@ -1551,10 +1550,6 @@ class HomeViewModel @Inject constructor(
                     }.awaitAll().filterNotNull()
                 }
                 telegramRows = updates
-                updates.forEach { row ->
-                    telegramRepository.registerPlaybackQueue(
-                        "home:${row.id}", row.items.map(MediaItem::ratingKey))
-                }
             } catch (cancelled: kotlinx.coroutines.CancellationException) {
                 throw cancelled
             } catch (_: Exception) {

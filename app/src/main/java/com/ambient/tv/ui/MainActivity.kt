@@ -146,6 +146,7 @@ import com.ambient.tv.ui.tvheadend.TvheadendScreen
 import com.ambient.tv.ui.youtube.YouTubeScreen
 import com.ambient.tv.ui.youtube.YouTubeDetailScreen
 import com.ambient.tv.ui.navigation.navigateToYouTubeBrowsePlayer
+import com.ambient.tv.ui.navigation.navigateToTelegramPlayer
 import com.ambient.tv.ui.youtube.YouTubePlayerScreen
 import com.ambient.tv.ui.spotify.SpotifyHomeScreen
 import com.ambient.tv.ui.spotify.SpotifyDetailScreen
@@ -1117,7 +1118,6 @@ private fun AmbientTvApp(
         }
         com.ambient.tv.data.telegram.telegramPostIds(ratingKey)?.let { (chatId, messageId) ->
             // A private post has a detail page with full text and every linked YouTube video.
-            // The Home row already registered its playback queue for the local media action.
             navController.navigate(Destinations.telegramDetail(chatId, messageId))
             return
         }
@@ -2175,6 +2175,11 @@ private fun AmbientTvApp(
                                     }
                                 },
                                 onYouTubeVideoClick = { videoId, session -> handleYouTubeSelection(videoId, session) },
+                                onTelegramPostClick = { key, queue ->
+                                    com.ambient.tv.data.telegram.telegramPostIds(key)?.let { (chatId, messageId) ->
+                                        navController.navigate(Destinations.telegramDetail(chatId, messageId, queue))
+                                    } ?: handleMediaSelection(key)
+                                },
                                 onRadioHomeStationClick = ::handleHomeRadioSelection,
                                 onWatchLiveChannel = { channel -> playOnSelectedTarget(Destinations.tvhPlayer("channel", channel.uuid, channel.sourceId)) },
                                 onOpenHomeContent = { row ->
@@ -2298,8 +2303,8 @@ private fun AmbientTvApp(
                                 onSelectSection = { key -> navigateSidebar(Destinations.telegramSection(key)) },
                                 onOpenSettings = { openSystemSettings("telegram:account") },
                                 onOpenChannel = { chatId -> navigateToSection(Destinations.telegramSection("channel:$chatId")) },
-                                onOpenPost = { chatId, messageId ->
-                                    navController.navigate(Destinations.telegramDetail(chatId, messageId))
+                                onOpenPost = { chatId, messageId, queue ->
+                                    navController.navigate(Destinations.telegramDetail(chatId, messageId, queue))
                                 },
                             )
                         }
@@ -2312,8 +2317,8 @@ private fun AmbientTvApp(
                                 onSelectSection = { key -> navigateSidebar(Destinations.telegramSection(key)) },
                                 onOpenSettings = { openSystemSettings("telegram:account") },
                                 onOpenChannel = { chatId -> navigateToSection(Destinations.telegramSection("channel:$chatId")) },
-                                onOpenPost = { chatId, messageId ->
-                                    navController.navigate(Destinations.telegramDetail(chatId, messageId))
+                                onOpenPost = { chatId, messageId, queue ->
+                                    navController.navigate(Destinations.telegramDetail(chatId, messageId, queue))
                                 },
                             )
                         }
@@ -2322,6 +2327,7 @@ private fun AmbientTvApp(
                         arguments = listOf(
                             navArgument("chatId") { type = NavType.LongType },
                             navArgument("messageId") { type = NavType.IntType },
+                            navArgument("queue") { type = NavType.LongType; defaultValue = -1L },
                         )) { entry ->
                         com.ambient.tv.ui.telegram.TelegramPostDetailScreen(
                             chatId = entry.arguments?.getLong("chatId") ?: 0L,
@@ -2333,7 +2339,13 @@ private fun AmbientTvApp(
                                 navController.navigate(Destinations.telegramSection("channel:$id"))
                             },
                             onPlayMedia = { chat, message ->
-                                playOnSelectedTarget(Destinations.telegramPlayer(chat, message))
+                                // The page's queue only applies to the post it was started with.
+                                val queue = entry.arguments?.getLong("queue")?.takeIf {
+                                    it >= 0L && chat == entry.arguments?.getLong("chatId") &&
+                                        message == entry.arguments?.getInt("messageId")
+                                }
+                                playOnSelectedTarget(Destinations.telegramPlayer(chat, message, queue),
+                                    navigate = { route -> navController.navigateToTelegramPlayer(route) })
                             },
                             onOpenYouTube = { videoId -> handleYouTubeSelection(videoId) },
                         )
@@ -2342,10 +2354,9 @@ private fun AmbientTvApp(
                         arguments = listOf(
                             navArgument("chatId") { type = NavType.LongType },
                             navArgument("messageId") { type = NavType.IntType },
-                        )) { entry ->
+                            navArgument("queue") { type = NavType.LongType; defaultValue = -1L },
+                        )) {
                         com.ambient.tv.ui.telegram.TelegramPlayerScreen(
-                            chatId = entry.arguments?.getLong("chatId") ?: 0L,
-                            messageId = entry.arguments?.getInt("messageId") ?: 0,
                             onBack = ::navigateBack,
                             onOpenChannel = { chat ->
                                 navController.navigate(Destinations.telegramSection("channel:$chat"))

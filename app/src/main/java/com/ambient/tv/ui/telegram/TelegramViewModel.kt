@@ -81,6 +81,7 @@ class TelegramViewModel @Inject constructor(
     private val repository: TelegramRepository,
     private val preferences: AppPreferences,
     @dagger.hilt.android.qualifiers.ApplicationContext private val context: android.content.Context,
+    private val playbackContext: TelegramPlaybackContext,
 ) : ViewModel() {
     // The system screen presents account status like Spotify instead of claiming
     // the native module is missing when only Telegram sign-in is missing.
@@ -204,20 +205,8 @@ class TelegramViewModel @Inject constructor(
                     requestCursor = next
                 }
                 if (generation != pageGeneration || mutableState.value.section != section) return@launch
-                val previous = if (cursor != null) mutableState.value.rows else emptyList()
-                val merged = LinkedHashMap<String, ContentRowData>()
-                (previous + pageRows).forEach { row ->
-                    val old = merged[row.id]
-                    merged[row.id] = if (old == null) row else old.copy(
-                        items = (old.items + row.items).distinctBy(MediaItem::ratingKey),
-                    )
-                }
-                val earlier = if (cursor != null) mutableState.value.media else emptyMap()
-                mutableState.value = TelegramBrowseState(
-                    section = section, available = true, rows = merged.values.toList(),
-                    media = earlier + pageMedia.associateBy(TelegramMedia::mediaKey),
-                    nextCursor = next?.takeUnless { it == requestCursor },
-                )
+                publishPage(section, append = cursor != null, pageRows, pageMedia,
+                    next?.takeUnless { it == requestCursor })
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (failure: Exception) {
@@ -234,10 +223,73 @@ class TelegramViewModel @Inject constructor(
         }
     }
 
-    fun rememberPlaybackQueue(ids: List<String>, selected: String) {
-        val safe = ids.filter { mutableState.value.media[it]?.playableOnTelegram == true }
-        repository.activatePlaybackQueue(safe, selected)
+    private fun publishPage(
+        section: String,
+        append: Boolean,
+        pageRows: List<ContentRowData>,
+        pageMedia: List<TelegramMedia>,
+        next: String?,
+    ) {
+        val previous = if (append) mutableState.value.rows else emptyList()
+        val merged = LinkedHashMap<String, ContentRowData>()
+        (previous + pageRows).forEach { row ->
+            val old = merged[row.id]
+            merged[row.id] = if (old == null) row else old.copy(
+                items = (old.items + row.items).distinctBy(MediaItem::ratingKey),
+            )
+        }
+        val earlier = if (append) mutableState.value.media else emptyMap()
+        mutableState.value = TelegramBrowseState(
+            section = section, available = true, rows = merged.values.toList(),
+            media = earlier + pageMedia.associateBy(TelegramMedia::mediaKey),
+            nextCursor = next,
+        )
+    }
+
+    private fun playbackScope(section: String) = "telegram:$section"
+
+    /**
+     * Starts the player queue with exactly the row or flattened grid/list as shown. The player
+     * continues this page with its cursor; the token goes into the player route.
+     */
+    internal fun playbackToken(selected: String, origin: List<MediaItem>, view: TelegramQueueView): Long? {
+        val current = mutableState.value
+        if (current.section == "channels") return null
+        return playbackContext.start(
+            scope = playbackScope(current.section), origin = origin, selected = selected,
+            media = current.media, section = current.section,
+            cursor = current.nextCursor.takeIf { current.error == null }, view = view,
+        )
+    }
+
+    /**
+     * After the player: the last played post of this page's queue, once. Pages the player
+     * loaded at the end of the queue are added to this page, so that post is shown.
+     */
+    internal fun consumePlaybackReturn(section: String): String? {
+        val returned = playbackContext.consumeReturn(playbackScope(section)) ?: return null
+        val current = mutableState.value
+        if (current.section == section && returned.loadedMedia.isNotEmpty() && !current.loadingMore &&
+            current.nextCursor == returned.startCursor && returned.mediaKey !in current.media) {
+            publishPage(section, append = true, telegramRows(section, returned.loadedMedia),
+                returned.loadedMedia, returned.nextCursor)
+        }
+        return returned.mediaKey
+    }
+
+    /** Loads further pages (a few at most) until [key] is part of this page. */
+    internal suspend fun revealAfterPlayback(section: String, key: String) {
+        repeat(MAX_REVEAL_PAGES) {
+            loadJob?.join()
+            val current = mutableState.value
+            if (current.section != section || key in current.media || current.nextCursor == null || current.error != null ||
+                current.pageError != null) return
+            loadMore()
+            loadJob?.join()
+        }
     }
 
     fun selected(key: String): TelegramMedia? = mutableState.value.media[key]
 }
+
+private const val MAX_REVEAL_PAGES = 8

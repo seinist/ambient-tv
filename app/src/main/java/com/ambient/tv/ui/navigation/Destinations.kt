@@ -27,8 +27,8 @@ object Destinations {
     const val YOUTUBE = "youtube"
     const val TELEGRAM = "telegram"
     const val TELEGRAM_SECTION = "telegram_section/{sectionKey}"
-    const val TELEGRAM_PLAYER = "telegram_player/{chatId}/{messageId}"
-    const val TELEGRAM_DETAIL = "telegram_detail/{chatId}/{messageId}"
+    const val TELEGRAM_PLAYER = "telegram_player/{chatId}/{messageId}?queue={queue}"
+    const val TELEGRAM_DETAIL = "telegram_detail/{chatId}/{messageId}?queue={queue}"
     const val TRAILERS = "trailers"
     const val TRAILER_FEED = "trailers/feed/{feedKey}"
     const val ITEM_TRAILERS = "trailers/item/{ratingKey}"
@@ -69,8 +69,11 @@ object Destinations {
     fun dlnaServer(serverId: String) = "dlna/${Uri.encode(serverId)}"
     fun youtubeFeed(feedKey: String) = "youtube_feed/${Uri.encode(feedKey)}"
     fun telegramSection(key: String) = if (key == "recent") TELEGRAM else "telegram_section/${Uri.encode(key)}"
-    fun telegramPlayer(chatId: Long, messageId: Int) = "telegram_player/$chatId/$messageId"
-    fun telegramDetail(chatId: Long, messageId: Int) = "telegram_detail/$chatId/$messageId"
+    /** [queue]: token of the page's player queue (TelegramPlaybackContext); null plays one post. */
+    fun telegramPlayer(chatId: Long, messageId: Int, queue: Long? = null) =
+        "telegram_player/$chatId/$messageId" + queue?.let { "?queue=$it" }.orEmpty()
+    fun telegramDetail(chatId: Long, messageId: Int, queue: Long? = null) =
+        "telegram_detail/$chatId/$messageId" + queue?.let { "?queue=$it" }.orEmpty()
     /** SmartTube's root route shows the chosen start section; every other section has its feed route. */
     fun youtubeSection(feedKey: String, startFeedKey: String) = if (feedKey == startFeedKey) YOUTUBE else youtubeFeed(feedKey)
     fun trailerFeed(feedKey: String) = "trailers/feed/${Uri.encode(feedKey)}"

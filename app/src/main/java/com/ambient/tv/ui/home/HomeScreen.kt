@@ -157,6 +157,8 @@ fun HomeScreen(
     onItemClick: (String) -> Unit,
     /** Uses SmartTube's existing details/play/ask setting and its source row queue. */
     onYouTubeVideoClick: (String, Long?) -> Unit = { videoId, _ -> onItemClick(HOME_YOUTUBE_ITEM_PREFIX + videoId) },
+    /** A Telegram post of a Home row with the player queue token of that row (null: no queue). */
+    onTelegramPostClick: (String, Long?) -> Unit = { key, _ -> onItemClick(key) },
     /** Radio Home rows keep their own queue, instead of playing with a singleton station. */
     onRadioHomeStationClick: (HomeRadioPlaybackSelection) -> Unit = { selection ->
         onItemClick(com.ambient.tv.data.radio.RADIO_HOME_ITEM_PREFIX + selection.stationId)
@@ -347,7 +349,10 @@ fun HomeScreen(
                         homeHeroSpreadKey = homeHeroSpreadKey,
                         focusSnapshot = focusSnapshot,
                         onItemClick = openItem,
-                        onTelegramRowItemClick = viewModel::activateTelegramRow,
+                        onTelegramRowItemClick = { rowId, key ->
+                            viewModel.captureFocusForReturn()
+                            onTelegramPostClick(key, viewModel.telegramPlaybackToken(rowId, key))
+                        },
                         onYouTubeHomeVideoClick = { videoId, rowId ->
                             viewModel.captureFocusForReturn()
                             onYouTubeVideoClick(videoId, viewModel.youtubePlaybackToken(rowId, videoId))
@@ -595,7 +600,7 @@ internal fun LibraryContent(
     homeHeroSpreadKey: String,
     focusSnapshot: HomeFocusSnapshot,
     onItemClick: (String) -> Unit,
-    onTelegramRowItemClick: (String, String) -> Unit = { _, _ -> },
+    onTelegramRowItemClick: (String, String) -> Unit = { _, key -> onItemClick(key) },
     onItemFocused: (String, MediaItem) -> Unit,
     onOpenRelevantSettings: (String) -> Unit,
     onWatchLiveChannel: (TvhChannel) -> Unit,
@@ -679,7 +684,7 @@ internal fun LibraryContent(
                                 } else {
                                     if (item.ratingKey.startsWith(com.ambient.tv.data.telegram.TELEGRAM_MEDIA_PREFIX))
                                         onTelegramRowItemClick(row.id, item.ratingKey)
-                                    onItemClick(item.ratingKey)
+                                    else onItemClick(item.ratingKey)
                                 }
                             }
                         }, onItemFocused = { onItemFocused(row.id, it) })
@@ -926,7 +931,7 @@ internal fun LibraryContent(
                                             } else {
                                                 if (item.ratingKey.startsWith(com.ambient.tv.data.telegram.TELEGRAM_MEDIA_PREFIX))
                                                     onTelegramRowItemClick(row.id, item.ratingKey)
-                                                onItemClick(item.ratingKey)
+                                                else onItemClick(item.ratingKey)
                                             }
                                         }
                                     },

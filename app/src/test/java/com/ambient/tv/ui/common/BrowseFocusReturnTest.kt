@@ -71,6 +71,7 @@ class BrowseFocusReturnTest {
         var destination by mutableStateOf(Destinations.HOME)
         var itemIds by mutableStateOf((0 until 90).map { "item-$it" })
         var contentReady by mutableStateOf(true)
+        var hold by mutableStateOf(false)
         val sidebar = FocusRequester()
         val owners = mutableMapOf<String, BrowseFocusReturnState>()
         val grids = mutableMapOf<String, LazyGridState>()
@@ -99,8 +100,8 @@ class BrowseFocusReturnTest {
         NavReselect.restoreTop.value = false
     }
 
-    private fun mount(initialTarget: String = "item-0", enterContent: Boolean = true): Fixture {
-        val fixture = Fixture()
+    private fun mount(initialTarget: String = "item-0", enterContent: Boolean = true, hold: Boolean = false): Fixture {
+        val fixture = Fixture().also { it.hold = hold }
         currentFixture = fixture
         rule.setContent {
             CompositionLocalProvider(LocalHandheldUi provides false) {
@@ -168,7 +169,12 @@ class BrowseFocusReturnTest {
         val chain = rememberPageFocusChain()
         // Reordering the same content must not be mistaken for selecting a new filter/view.
         BrowseFocusContentIdentity("posters")
-        BrowseFocusInitialTarget(if (destination == Destinations.HOME) initialTarget else ids.firstOrNull())
+        BrowseFocusInitialTarget(when {
+            fixture.hold -> null
+            destination == Destinations.HOME -> initialTarget
+            else -> ids.firstOrNull()
+        })
+        BrowseFocusHoldEntry(fixture.hold)
         SideEffect {
             fixture.owners[destination] = owner
             fixture.grids[destination] = grid
@@ -327,6 +333,20 @@ class BrowseFocusReturnTest {
         rule.mainClock.advanceTimeBy(250)
         rule.waitForIdle()
         focused(fixture.tileTag("item-0"))
+    }
+
+    @Test fun aHeldEntryWaitsForTheItemToReturnToInsteadOfTakingTheFirstTile() {
+        // Back from a player that went on to a post the page has not loaded yet.
+        val fixture = mount(initialTarget = "item-later", enterContent = false, hold = true)
+        focused("sidebar:home")
+        rule.runOnIdle { assertNull(SidebarContentEntry.requestFocus()) }
+        rule.runOnIdle {
+            fixture.itemIds = fixture.itemIds + "item-later"
+            fixture.hold = false
+        }
+        returnFromSidebar(fixture)
+        focused(fixture.tileTag("item-later"))
+        rule.onNodeWithTag(fixture.tileTag("item-later"), useUnmergedTree = true).assertIsDisplayed()
     }
 
     @Test fun coldEntryFocusesTheFirstTileDespiteEarlierHeaderAndChipTargets() {

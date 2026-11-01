@@ -94,6 +94,7 @@ import com.ambient.tv.ui.common.RegisterBrowseFocusRows
 import com.ambient.tv.ui.common.RightPanelOverlay
 import com.ambient.tv.ui.common.SystemPageTitle
 import com.ambient.tv.ui.common.TvActionButton
+import com.ambient.tv.ui.common.BrowseFocusHoldEntry
 import com.ambient.tv.ui.common.TvChip
 import com.ambient.tv.ui.common.TvLazyVerticalGrid
 import com.ambient.tv.ui.common.TvTextField
@@ -137,9 +138,13 @@ fun TelegramScreen(
     onSelectSection: (String) -> Unit,
     onOpenSettings: () -> Unit,
     onOpenChannel: (Long) -> Unit,
-    onOpenPost: (Long, Int) -> Unit,
+    /** chat, message and the player queue token of the page as shown (null: no queue). */
+    onOpenPost: (Long, Int, Long?) -> Unit,
     viewModel: TelegramViewModel = hiltViewModel(),
 ) {
+    // Back from the player: the last played post of this page's queue (it may come from a page
+    // the player loaded). Claimed before the state is read, so those pages are already here.
+    val returnedKey = remember(sectionKey) { viewModel.consumePlaybackReturn(sectionKey) }
     val state by viewModel.state.collectAsState()
     val login by viewModel.login.collectAsState()
     val activeChannelId = remember(sectionKey) {
@@ -165,6 +170,7 @@ fun TelegramScreen(
     val canonical = sectionKey.takeIf { key -> shownTabs.any { it.first == key } }
         ?: shownTabs.first().first
     var lastKey by rememberSaveable(sectionKey) { mutableStateOf<String?>(null) }
+    remember(returnedKey) { if (returnedKey != null) lastKey = returnedKey; Unit }
     var layoutKey by rememberSaveable(sectionKey) { mutableStateOf(viewModel.viewMode(sectionKey).name) }
     val layout = MonogramBrowseLayout.valueOf(layoutKey)
     var gridColumns by remember { mutableIntStateOf(viewModel.gridColumns) }
@@ -229,9 +235,25 @@ fun TelegramScreen(
         if (query.isNotBlank()) query = "" else searchVisible = false
     }
     BrowseFocusContentIdentity(listOf(sectionKey, layoutKey, sortKey, descending, channelFilter, query))
+    // A post played after Next may not be loaded yet: load pages until it is, then focus it.
+    // Entering the page waits meanwhile, so focus lands on that post and not on the first one.
+    val returnPending = returnedKey != null && flat.none { it.ratingKey == returnedKey }
+    var revealDone by remember(returnedKey) { mutableStateOf(returnedKey == null) }
+    LaunchedEffect(returnedKey) {
+        try {
+            returnedKey?.let { viewModel.revealAfterPlayback(sectionKey, it) }
+        } finally {
+            revealDone = true
+        }
+    }
+    BrowseFocusHoldEntry(returnPending && !revealDone)
+    val initialKey = lastKey ?: currentRows.firstOrNull()?.items?.firstOrNull()?.ratingKey
     BrowseFocusInitialTarget(
-        lastKey ?: currentRows.firstOrNull()?.items?.firstOrNull()?.ratingKey,
-        if (layout == MonogramBrowseLayout.ROWS) currentRows.firstOrNull()?.id else null,
+        initialKey.takeUnless { returnPending },
+        if (layout == MonogramBrowseLayout.ROWS)
+            currentRows.firstOrNull { row -> row.items.any { it.ratingKey == initialKey } }?.id
+                ?: currentRows.firstOrNull()?.id
+        else null,
     )
     when (layout) {
         MonogramBrowseLayout.ROWS -> RegisterBrowseFocusRows(rowList,
@@ -253,7 +275,7 @@ fun TelegramScreen(
     com.ambient.tv.ui.navigation.ReportSidebarContentReady(
         state.section == sectionKey && (!state.loading || state.rows.isNotEmpty()),
     )
-    fun choose(item: MediaItem, origin: List<MediaItem>) {
+    fun choose(item: MediaItem, origin: List<MediaItem>, rowId: String? = null) {
         if (item.ratingKey.startsWith(TELEGRAM_CHANNEL_ITEM_PREFIX)) {
             item.ratingKey.removePrefix(TELEGRAM_CHANNEL_ITEM_PREFIX)
                 .toLongOrNull()?.let(onOpenChannel)
@@ -261,12 +283,14 @@ fun TelegramScreen(
         }
         // A short click opens the post detail, where its full caption, linked YouTube
         // videos and (when allowed) the local media player are separate actions.
-        val selected = viewModel.selected(item.ratingKey)
-        if (selected?.playableOnTelegram == true) {
-            viewModel.rememberPlaybackQueue(origin.map(MediaItem::ratingKey), item.ratingKey)
-        }
+        val token = if (telegramQueuePlayable(item, viewModel.selected(item.ratingKey))) {
+            viewModel.playbackToken(item.ratingKey, origin, TelegramQueueView(
+                query = query, channelRowId = channelFilter.takeUnless { it == "all" },
+                sort = sort, descending = descending, rowId = rowId,
+            ))
+        } else null
         com.ambient.tv.data.telegram.telegramPostIds(item.ratingKey)?.let { (chat, message) ->
-            onOpenPost(chat, message)
+            onOpenPost(chat, message, token)
         }
     }
     val activeSortCount = (if (channelFilter != "all") 1 else 0) +
@@ -456,7 +480,7 @@ fun TelegramScreen(
                                             if (index >= row.items.size - 8) viewModel.loadMore()
                                         },
                                         onViewportNearEnd = { viewModel.loadMore() },
-                                        onItemClick = { choose(it, row.items) },
+                                        onItemClick = { choose(it, row.items, row.id) },
                                     )
                                 }
                             }

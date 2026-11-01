@@ -99,6 +99,15 @@ import com.ambient.tv.ui.player.rememberPlayerSeekFocus
 import dagger.hilt.android.lifecycle.HiltViewModel
 import javax.inject.Inject
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Job
+import androidx.lifecycle.SavedStateHandle
+import com.ambient.tv.data.telegram.telegramMediaIds
+import com.ambient.tv.data.telegram.telegramMediaKey
+import com.ambient.tv.domain.model.MediaItem
+import com.ambient.tv.ui.navigation.Destinations
+import com.ambient.tv.ui.player.NextUpCandidate
+import com.ambient.tv.ui.player.NextUpConfig
+import com.ambient.tv.ui.player.RegisterPlayerItemNavigation
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
@@ -106,9 +115,24 @@ import kotlinx.coroutines.launch
 @HiltViewModel
 class TelegramPlayerViewModel @Inject constructor(
     val repository: TelegramRepository,
-    private val preferences: AppPreferences,
+    val preferences: AppPreferences,
     @ApplicationContext private val context: Context,
+    private val playbackContext: TelegramPlaybackContext,
+    private val savedStateHandle: SavedStateHandle,
 ) : ViewModel() {
+    /** Queue of the page the player was started from; null plays only this post. */
+    val queueToken: Long? = savedStateHandle.get<Long>("queue")?.takeIf { it >= 0L }
+    // The post shown now. Next/Previous change it without a new destination, like YouTube.
+    private var chatId: Long = savedStateHandle.get<Long>("chatId") ?: 0L
+    private var messageId: Int = savedStateHandle.get<Int>("messageId") ?: 0
+    private val mutableQueue = MutableStateFlow(TelegramQueueState())
+    val queue = mutableQueue.asStateFlow()
+    private val mutableQueueEnded = MutableStateFlow(false)
+    /** A Next found no playable post after all: the queue is over, like at the real end. */
+    val queueEnded = mutableQueueEnded.asStateFlow()
+    private var loadJob: Job? = null
+    private var successorJob: Job? = null
+    private var transitionToken: Long? = null
     private val mutableRenderer = MutableStateFlow(PlaybackBackendResolver.resolve(preferences.playbackBackendKey).key)
     val renderer = mutableRenderer.asStateFlow()
 
@@ -209,42 +233,147 @@ class TelegramPlayerViewModel @Inject constructor(
     private val mutableError = MutableStateFlow<String?>(null)
     val error = mutableError.asStateFlow()
 
-    fun load(chatId: Long, messageId: Int) {
+    /** Opens the destination's post once; re-entering the screen keeps what is playing. */
+    fun start() {
+        val wanted = telegramMediaKey(chatId, messageId)
+        if (loadJob?.isActive == true || mutableMedia.value?.mediaKey == wanted) return
+        load(chatId, messageId, direction = 0)
+    }
+
+    fun retry() = load(chatId, messageId, direction = 0)
+
+    /** [direction] > 0: Next, < 0: Previous; a post that cannot be played is skipped that way. */
+    private fun load(chat: Long, message: Int, direction: Int) {
         rememberPosition()
         mutableError.value = null
-        mutableMedia.value = null
-        mutableChannel.value = null
-        mutableChannelError.value = null
-        viewModelScope.launch {
+        mutableQueueEnded.value = false
+        successorJob?.cancel()
+        loadJob?.cancel()
+        val requestToken = transitionToken
+        loadJob = viewModelScope.launch {
+            var targetChat = chat
+            var targetMessage = message
             try {
-                val selected = repository.media(chatId, messageId)
-                if (selected == null) mutableError.value = context.getString(R.string.monogram_error_media_unavailable)
-                else if (!selected.playableOnTelegram) mutableError.value =
-                    context.getString(R.string.monogram_error_media_protected)
-                else {
-                    mutableRenderer.value = PlaybackBackendResolver.resolve(TitleVideoSettingsStore.rendererFor(
-                        context, selected.playerMetadata(), preferences.playbackBackendKey)).key
-                    // Still playing in the background: keep the original start so the running
-                    // session is reattached, not reopened. Otherwise continue where it stopped.
-                    setStartPosition(selected,
-                        if (ownsSession(selected)) repository.sessionStartMs(selected.mediaKey)
-                        else repository.resumePositionMs(selected.mediaKey))
-                    mutableMedia.value = selected
-                    // Load channel artwork and membership independently from the player start.
-                    launch {
-                        try {
-                            mutableChannel.value = repository.channel(selected.chatId)
-                        } catch (cancelled: CancellationException) {
-                            throw cancelled
-                        } catch (_: Exception) { /* Channel action remains optional. */ }
+                while (true) {
+                    val selected = repository.media(targetChat, targetMessage)
+                    val playable = selected != null && selected.playableOnTelegram &&
+                        (direction == 0 || selected.kind != TelegramMediaKind.PHOTO)
+                    if (playable && selected != null) {
+                        show(selected, requestToken)
+                        return@launch
                     }
+                    val following = if (direction == 0 || queueToken == null) null else {
+                        val key = telegramMediaKey(targetChat, targetMessage)
+                        if (direction > 0) playbackContext.nextLoaded(queueToken, key)
+                            ?: playbackContext.next(queueToken, key)
+                        else playbackContext.previousLoaded(queueToken, key)
+                    }?.let { telegramMediaIds(it.ratingKey) }
+                    if (following == null) {
+                        if (direction > 0) {
+                            // Autoplay or Next ran past the last playable post: the queue ended.
+                            transitionToken = null
+                            mutableQueueEnded.value = true
+                        } else {
+                            fail(context.getString(if (selected == null) R.string.monogram_error_media_unavailable
+                                else R.string.monogram_error_media_protected))
+                        }
+                        return@launch
+                    }
+                    targetChat = following.first
+                    targetMessage = following.second
                 }
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (error: Exception) {
-                mutableError.value = error.message ?: context.getString(R.string.monogram_error_media_open)
+                fail(error.message ?: context.getString(R.string.monogram_error_media_open))
             }
         }
+    }
+
+    private fun fail(message: String) {
+        transitionToken?.let {
+            BackgroundPlaybackSession.pause()
+            BackgroundPlaybackSession.failSourceReplacement(it, message)
+        }
+        transitionToken = null
+        mutableError.value = message
+    }
+
+    private fun show(selected: TelegramMedia, requestToken: Long?) {
+        // A newer request (or Stop) replaced this switch meanwhile.
+        if (requestToken != null && !BackgroundPlaybackSession.isSourceReplacement(requestToken)) return
+        transitionToken = null
+        chatId = selected.chatId
+        messageId = selected.messageId
+        savedStateHandle["chatId"] = selected.chatId
+        savedStateHandle["messageId"] = selected.messageId
+        mutableRenderer.value = PlaybackBackendResolver.resolve(TitleVideoSettingsStore.rendererFor(
+            context, selected.playerMetadata(), preferences.playbackBackendKey)).key
+        // Still playing in the background: keep the original start so the running
+        // session is reattached, not reopened. Otherwise continue where it stopped.
+        setStartPosition(selected,
+            if (ownsSession(selected)) repository.sessionStartMs(selected.mediaKey)
+            else repository.resumePositionMs(selected.mediaKey))
+        if (mutableChannel.value?.chatId != selected.chatId) mutableChannel.value = null
+        mutableChannelError.value = null
+        mutableMedia.value = selected
+        updateQueue(selected.mediaKey)
+        // Load channel artwork and membership independently from the player start.
+        viewModelScope.launch {
+            try {
+                val loaded = repository.channel(selected.chatId)
+                if (mutableMedia.value?.chatId == selected.chatId) mutableChannel.value = loaded
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Exception) { /* Channel action remains optional. */ }
+        }
+    }
+
+    /** Neighbours from the page's queue only: no suggestions, no wrap-around. */
+    private fun updateQueue(key: String) {
+        val token = queueToken?.takeIf { playbackContext.contains(it, key) }
+        if (token == null) {
+            mutableQueue.value = TelegramQueueState()
+            return
+        }
+        playbackContext.played(token, key)
+        val next = playbackContext.nextLoaded(token, key)
+        mutableQueue.value = TelegramQueueState(
+            previous = playbackContext.previousLoaded(token, key),
+            next = next,
+            successorsLoading = next == null,
+        )
+        if (next != null) return
+        successorJob = viewModelScope.launch {
+            val loaded = try {
+                playbackContext.next(token, key)
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Exception) {
+                null
+            }
+            if (mutableMedia.value?.mediaKey == key) mutableQueue.value =
+                mutableQueue.value.copy(next = loaded, successorsLoading = false)
+        }
+    }
+
+    fun playNext(nextKey: String) {
+        val state = mutableQueue.value
+        if (state.next?.ratingKey != nextKey) return
+        switchTo(nextKey, direction = 1)
+    }
+
+    fun playPrevious() {
+        val previous = mutableQueue.value.previous ?: return
+        switchTo(previous.ratingKey, direction = -1)
+    }
+
+    private fun switchTo(key: String, direction: Int) {
+        val (chat, message) = telegramMediaIds(key) ?: return
+        if (loadJob?.isActive == true) return // A switch is already on its way.
+        // Keep the outgoing picture and OSD until the next post is ready; no Stop in between.
+        transitionToken = BackgroundPlaybackSession.beginItemTransition()
+        load(chat, message, direction)
     }
 
     fun loadPhoto(media: TelegramMedia) {
@@ -260,37 +389,39 @@ class TelegramPlayerViewModel @Inject constructor(
         }
     }
 
-    fun switchInQueue(current: TelegramMedia, direction: Int) {
-        viewModelScope.launch {
-            for ((chat, msg) in repository.playbackCandidates(current.mediaKey, direction)) {
-                val candidate = runCatching { repository.media(chat, msg) }.getOrNull()
-                if (candidate?.playableOnTelegram == true) {
-                    load(chat, msg)
-                    return@launch
-                }
-            }
-        }
-    }
-
     fun reportFailure(message: String) {
         mutableError.value = message
     }
 }
 
+/** Neighbours of the shown post in the page's queue. */
+data class TelegramQueueState(
+    val previous: MediaItem? = null,
+    val next: MediaItem? = null,
+    val successorsLoading: Boolean = false,
+)
+
 @Composable
 fun TelegramPlayerScreen(
-    chatId: Long,
-    messageId: Int,
     onBack: () -> Unit,
     onOpenChannel: (Long) -> Unit,
     viewModel: TelegramPlayerViewModel = hiltViewModel(),
 ) {
     val media by viewModel.media.collectAsState()
     val failure by viewModel.error.collectAsState()
+    val queueEnded by viewModel.queueEnded.collectAsState()
     val available = viewModel.repository.available
-    LaunchedEffect(chatId, messageId, available) {
-        if (available) viewModel.load(chatId, messageId)
+    LaunchedEffect(viewModel, available) {
+        if (available) viewModel.start()
     }
+    // Ran past the last playable post: stop and show the page, like the real end of the queue.
+    LaunchedEffect(queueEnded) {
+        if (queueEnded) {
+            BackgroundPlaybackSession.stop()
+            onBack()
+        }
+    }
+    RegisterPlayerItemNavigation(viewModel, viewModel::playNext)
     PersistentPlayerChrome(viewModel) {
         val selected = media
         if (selected == null || failure != null) {
@@ -325,7 +456,35 @@ private fun TelegramPlaybackContent(
     LaunchedEffect(media.mediaKey) {
         if (media.kind == TelegramMediaKind.PHOTO) viewModel.loadPhoto(media)
     }
-    val metadata = remember(media.mediaKey) { media.playerMetadata() }
+    val queue by viewModel.queue.collectAsState()
+    val preferences = viewModel.preferences
+    val metadata = remember(media.mediaKey, queue) {
+        val base = media.playerMetadata()
+        val next = queue.next
+        base.copy(
+            // Reopening from the mini player keeps the queue of this page.
+            route = Destinations.telegramPlayer(media.chatId, media.messageId, viewModel.queueToken),
+            nextUp = next?.let {
+                NextUpCandidate(
+                    mediaId = it.ratingKey,
+                    title = it.title,
+                    subtitle = it.parentTitle.orEmpty(),
+                    artworkUrl = it.thumbUrl,
+                    source = "telegram",
+                    mediaType = if (it.type == "track") "audio" else "video",
+                    durationMs = it.durationMs,
+                )
+            },
+            successorsLoading = queue.successorsLoading,
+            nextUpConfig = NextUpConfig(
+                enabled = preferences.nextUpEnabled && viewModel.queueToken != null,
+                leadSeconds = preferences.nextUpLeadSeconds,
+                autoplay = preferences.nextUpAutoplayCollections,
+                stillWatchingEvery = preferences.nextUpStillWatchingEpisodes,
+                showOverlay = preferences.nextUpOverlayEnabled,
+            ),
+        )
+    }
     val renderer by viewModel.renderer.collectAsState()
     val startPositionMs by viewModel.startPositionMs.collectAsState()
     val audioPassthrough = viewModel.audioPassthroughEnabled
@@ -380,6 +539,9 @@ private fun TelegramPlaybackContent(
         panelNavigation = panelNavigation,
     )
     PlaybackSessionContent(metadata = metadata, onStopped = onBack,
+        onPlayNext = { candidate -> viewModel.playNext(candidate.mediaId) },
+        onPlayPrevious = queue.previous?.let { { viewModel.playPrevious() } },
+        onAutoplayChanged = { enabled -> preferences.nextUpAutoplayCollections = enabled },
         acquisitionKey = listOf(media.mediaKey, renderer)) {
         if (media.kind != TelegramMediaKind.PHOTO) {
             when (renderer) {
@@ -470,10 +632,10 @@ private fun TelegramPlaybackContent(
                     },
                     onStop = { BackgroundPlaybackSession.stop(); onBack() },
                     onBack = onBack,
-                    hasPrevious = repository.playbackCandidates(media.mediaKey, -1).isNotEmpty(),
-                    hasNext = repository.playbackCandidates(media.mediaKey, 1).isNotEmpty(),
-                    onPrevious = { viewModel.switchInQueue(media, -1) },
-                    onNext = { viewModel.switchInQueue(media, 1) },
+                    hasPrevious = queue.previous != null,
+                    hasNext = queue.next != null,
+                    onPrevious = viewModel::playPrevious,
+                    onNext = { queue.next?.let { viewModel.playNext(it.ratingKey) } },
                     channel = channel ?: TelegramChannel(media.chatId, media.channel),
                     channelBusy = channelBusy,
                     channelError = channelError,
