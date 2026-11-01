@@ -32,6 +32,8 @@ import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.platform.LocalContext
+import android.content.Context
+import dagger.hilt.android.qualifiers.ApplicationContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
@@ -39,6 +41,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.ambient.tv.R
 import com.ambient.tv.data.telegram.TelegramMedia
+import com.ambient.tv.data.local.AppPreferences
 import com.ambient.tv.data.telegram.TelegramMediaKind
 import com.ambient.tv.data.telegram.TelegramRepository
 import com.ambient.tv.data.telegram.TelegramVideoDataSource
@@ -60,6 +63,11 @@ import com.ambient.tv.ui.player.OsdPlayer
 import com.ambient.tv.ui.player.PersistentPlayerChrome
 import com.ambient.tv.ui.player.PersistentPlayerOverlays
 import com.ambient.tv.ui.player.PlaybackEngineFactory
+import com.ambient.tv.ui.player.TitleVideoSettingsStore
+import com.ambient.tv.ui.player.backend.MpvBackendAvailability
+import com.ambient.tv.ui.player.backend.PlaybackBackendResolver
+import com.ambient.tv.ui.player.backend.rememberMpvPlaybackController
+import com.ambient.tv.ui.player.backend.rememberVlcPlaybackController
 import com.ambient.tv.ui.player.PlaybackSessionContent
 import com.ambient.tv.ui.player.PlayerControlsAutoHide
 import com.ambient.tv.ui.player.PlayerOsdSpec
@@ -89,7 +97,21 @@ import kotlinx.coroutines.launch
 @HiltViewModel
 class TelegramPlayerViewModel @Inject constructor(
     val repository: TelegramRepository,
+    private val preferences: AppPreferences,
+    @ApplicationContext private val context: Context,
 ) : ViewModel() {
+    private val mutableRenderer = MutableStateFlow(PlaybackBackendResolver.resolve(preferences.playbackBackendKey).key)
+    val renderer = mutableRenderer.asStateFlow()
+
+    fun chooseRenderer(key: String, makeGlobal: Boolean) {
+        val requested = key.takeIf { it in setOf("media3", "vlc", "mpv") } ?: "media3"
+        if (requested == "mpv" && !MpvBackendAvailability.isAvailable) return
+        if (makeGlobal) preferences.playbackBackendKey = requested
+        TitleVideoSettingsStore.rememberRenderer(context, mutableMedia.value?.playerMetadata(),
+            if (makeGlobal || key == "auto") null else requested)
+        mutableRenderer.value = requested
+    }
+
     private val mutableMedia = MutableStateFlow<TelegramMedia?>(null)
     val media = mutableMedia.asStateFlow()
     private val mutablePhotoUrl = MutableStateFlow<String?>(null)
@@ -106,7 +128,11 @@ class TelegramPlayerViewModel @Inject constructor(
                 if (selected == null) mutableError.value = "Telegram media is unavailable"
                 else if (!selected.playableOnTelegram) mutableError.value =
                     "This item is protected or requires an external player"
-                else mutableMedia.value = selected
+                else {
+                    mutableRenderer.value = PlaybackBackendResolver.resolve(TitleVideoSettingsStore.rendererFor(
+                        context, selected.playerMetadata(), preferences.playbackBackendKey)).key
+                    mutableMedia.value = selected
+                }
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (error: Exception) {
@@ -189,6 +215,21 @@ private fun TelegramPlaybackContent(
         if (media.kind == TelegramMediaKind.PHOTO) viewModel.loadPhoto(media)
     }
     val metadata = remember(media.mediaKey) { media.playerMetadata() }
+    val renderer by viewModel.renderer.collectAsState()
+    // MPV/VLC use Ambient TV's existing seekable localhost media transport.
+    // Media3 keeps its direct authenticated DataSource; no relay or extra socket then.
+    var loopbackUrl by remember(media.mediaKey, renderer) { mutableStateOf<String?>(null) }
+    LaunchedEffect(media.mediaKey, renderer, repository) {
+        if (media.kind != TelegramMediaKind.PHOTO && renderer != "media3") {
+            try {
+                loopbackUrl = repository.playerHttpUrl(media)
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                onFailure(error.message ?: "Monogram stream unavailable")
+            }
+        }
+    }
     val snapshot by BackgroundPlaybackSession.snapshot.collectAsState()
     val controls = rememberPlayerControlsVisible()
     var controlsVisible by controls
@@ -213,19 +254,43 @@ private fun TelegramPlaybackContent(
         playbackStarted = snapshot.playing,
         panelNavigation = panelNavigation,
     )
-    PlaybackSessionContent(metadata = metadata, onStopped = onBack) {
-        LaunchedEffect(media.mediaKey, repository) {
-            if (media.kind == TelegramMediaKind.PHOTO) return@LaunchedEffect
-            try {
-                PlaybackEngineFactory.create(
-                    context = context,
-                    streamUrl = "telegram://media/${media.chatId}/${media.messageId}",
-                    startPositionMs = 0L,
-                    metadata = metadata,
-                    dataSourceFactory = TelegramVideoDataSource.Factory(repository, media),
-                )
-            } catch (error: Exception) {
-                onFailure(error.message ?: "Telegram playback failed")
+    PlaybackSessionContent(metadata = metadata, onStopped = onBack,
+        acquisitionKey = listOf(media.mediaKey, renderer)) {
+        if (media.kind != TelegramMediaKind.PHOTO) {
+            when (renderer) {
+                "vlc" -> if (loopbackUrl != null) {
+                    val controller = rememberVlcPlaybackController(
+                        context = context, url = loopbackUrl!!, startPositionMs = 0L,
+                        headers = emptyMap(), networkCache = true,
+                    )
+                    LaunchedEffect(controller, loopbackUrl) {
+                        if (controller == null) onFailure("Monogram VLC renderer unavailable")
+                    }
+                }
+                "mpv" -> if (loopbackUrl != null) {
+                    val controller = rememberMpvPlaybackController(
+                        context = context, url = loopbackUrl!!, startPositionMs = 0L,
+                        headers = emptyMap(), networkCache = true,
+                    )
+                    LaunchedEffect(controller, loopbackUrl) {
+                        if (controller == null) onFailure("Monogram MPV renderer unavailable")
+                    }
+                }
+                else -> LaunchedEffect(media.mediaKey, renderer, repository) {
+                    try {
+                        PlaybackEngineFactory.create(
+                            context = context,
+                            streamUrl = "telegram://media/${media.chatId}/${media.messageId}",
+                            startPositionMs = 0L,
+                            metadata = metadata,
+                            dataSourceFactory = TelegramVideoDataSource.Factory(repository, media),
+                        )
+                    } catch (cancelled: CancellationException) {
+                        throw cancelled
+                    } catch (error: Exception) {
+                        onFailure(error.message ?: "Monogram playback failed")
+                    }
+                }
             }
         }
         Box(
@@ -314,10 +379,11 @@ private fun TelegramPlaybackContent(
                         "Channel" to media.channel,
                         "Media ID" to media.mediaKey,
                         "Size" to "${media.fileSize} bytes",
-                        "Backend" to "Media3",
+                        "Backend" to renderer.uppercase(),
                     ),
-                    rendererKey = "media3",
-                    showRenderer = false,
+                    rendererKey = renderer,
+                    onRendererSelected = { key, global -> viewModel.chooseRenderer(key, global) },
+                    showRenderer = media.kind != TelegramMediaKind.PHOTO,
                     showVideo = metadata.hasVideo,
                     showVisualizer = media.kind == TelegramMediaKind.AUDIO,
                 ),
