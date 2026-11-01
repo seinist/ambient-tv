@@ -2307,4 +2307,14 @@
     <string name="telegram_error">Telegram media is not available</string>
     <string name="telegram_home_row">Monogram · %1$s</string>
     <string name="telegram_account">Monogram account</string>
+    <string name="monogram_sign_in_qr">Sign in with QR code</string>
+    <string name="monogram_sign_in_phone">Send login code</string>
+    <string name="monogram_phone">Phone number (+country code)</string>
+    <string name="monogram_code">Login code</string>
+    <string name="monogram_password">Two-step verification password</string>
+    <string name="monogram_verify_code">Verify code</string>
+    <string name="monogram_verify_password">Verify password</string>
+    <string name="monogram_connected">Connected account: %1$s</string>
+    <string name="monogram_qr_hint">Open Telegram on your phone, then scan this login QR code from Devices.</string>
+    <string name="monogram_qr_pending">Waiting for authorization on your phone…</string>
 </resources>

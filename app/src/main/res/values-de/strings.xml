@@ -2221,4 +2221,14 @@
     <string name="telegram_error">Telegram-Medien nicht verfügbar</string>
     <string name="telegram_home_row">Monogram · %1$s</string>
     <string name="telegram_account">Monogram-Konto</string>
+    <string name="monogram_sign_in_qr">Mit QR-Code anmelden</string>
+    <string name="monogram_sign_in_phone">Anmeldecode senden</string>
+    <string name="monogram_phone">Telefonnummer (+Ländervorwahl)</string>
+    <string name="monogram_code">Anmeldecode</string>
+    <string name="monogram_password">Passwort für die Zwei-Faktor-Authentifizierung</string>
+    <string name="monogram_verify_code">Code bestätigen</string>
+    <string name="monogram_verify_password">Passwort bestätigen</string>
+    <string name="monogram_connected">Verbundenes Konto: %1$s</string>
+    <string name="monogram_qr_hint">In Telegram auf dem Handy unter Geräte den Anmelde-QR-Code scannen.</string>
+    <string name="monogram_qr_pending">Warte auf die Bestätigung am Handy …</string>
 </resources>

@@ -662,14 +662,7 @@ internal fun LazyListScope.settingsSystemCategoryItems(
             if (uiState.telegramEnabled) {
                 item { SystemNameField(MediaSystem.TELEGRAM, uiState, viewModel) }
                 item(key = "telegram-account") {
-                    SettingsGroup(title = stringResource(R.string.telegram_account), card = true) {
-                        Text(stringResource(R.string.settings_telegram_native_missing),
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        Text(stringResource(R.string.settings_telegram_notice),
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    }
+                    MonogramAccountSettings()
                 }
                 item(key = "telegram-submenu") {
                     SettingsGroup(title = stringResource(R.string.settings_submenu_items),
