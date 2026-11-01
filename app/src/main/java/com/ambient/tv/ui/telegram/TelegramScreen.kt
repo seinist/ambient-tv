@@ -227,7 +227,8 @@ fun TelegramScreen(
         MonogramBrowseLayout.ROWS -> RegisterBrowseFocusRows(rowList,
             currentRows.map { row -> row.id to row.items.map { it.ratingKey } })
         MonogramBrowseLayout.GRID -> RegisterBrowseFocusGrid(grid, flat.map { it.ratingKey })
-        MonogramBrowseLayout.LIST -> RegisterBrowseFocusList(flatList, flat.map { it.ratingKey })
+        MonogramBrowseLayout.LIST, MonogramBrowseLayout.INFO_LIST ->
+            RegisterBrowseFocusList(flatList, flat.map { it.ratingKey })
     }
     LaunchedEffect(layout, grid, flatList, flat.size) {
         if (layout == MonogramBrowseLayout.ROWS) return@LaunchedEffect
@@ -478,6 +479,7 @@ fun TelegramScreen(
                     ) {
                         items(flat, key = { it.ratingKey }) { item ->
                             MonogramListItem(item, listRows,
+                                detailed = layout == MonogramBrowseLayout.INFO_LIST,
                                 onClick = { choose(item, flat) },
                                 onFocused = {
                                     lastKey = item.ratingKey
@@ -507,6 +509,7 @@ fun TelegramScreen(
                             ViewOption("ROWS", stringResource(R.string.library_view_rows), ViewPreview.ROWS),
                             ViewOption("GRID", stringResource(R.string.library_view_grid), ViewPreview.LANDSCAPE),
                             ViewOption("LIST", stringResource(R.string.library_view_list), ViewPreview.LIST),
+                            ViewOption("INFO_LIST", stringResource(R.string.library_view_info_list), ViewPreview.INFO_LIST),
                         ),
                         selectedView = layout.name,
                         onView = {
@@ -547,6 +550,7 @@ fun TelegramScreen(
 private fun MonogramListItem(
     item: MediaItem,
     rowsPerScreen: Int,
+    detailed: Boolean,
     onClick: () -> Unit,
     onFocused: () -> Unit,
 ) {
@@ -595,7 +599,7 @@ private fun MonogramListItem(
             MonogramArtwork(
                 item = item,
                 style = com.ambient.tv.ui.common.MediaTileStyle.LANDSCAPE,
-                modifier = Modifier.width(deviceDp(128.dp, 104.dp) * rowScale)
+                modifier = Modifier.width(deviceDp(if (detailed) 190.dp else 128.dp, 104.dp) * rowScale)
                     .aspectRatio(16f / 9f).clip(RoundedCornerShape(7.dp)),
             )
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -610,6 +614,14 @@ private fun MonogramListItem(
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
+                if (detailed) item.summary?.takeIf(String::isNotBlank)?.let { caption ->
+                    MarqueeTitle(
+                        caption,
+                        focused = focused,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
             }
         }
     }
