@@ -362,11 +362,12 @@ fun releaseNativeStripTool(): String? {
 tasks.configureEach {
     if (name == "stripReleaseDebugSymbols") {
         outputs.upToDateWhen { false }
+        // Resolved while configuring (configuration cache): the action below only uses plain values.
+        val stripTool = releaseNativeStripTool()
+        val nativeRoot = layout.buildDirectory.dir(
+            "intermediates/stripped_native_libs/release/stripReleaseDebugSymbols/out"
+        ).get().asFile
         doLast {
-            val stripTool = releaseNativeStripTool()
-            val nativeRoot = layout.buildDirectory.dir(
-                "intermediates/stripped_native_libs/release/stripReleaseDebugSymbols/out"
-            ).get().asFile
             if (stripTool == null) {
                 logger.warn("NDK llvm-strip not found; release native libraries stay unstripped.")
                 return@doLast
@@ -507,129 +508,131 @@ val adbApkMode = providers.gradleProperty("ADB_APK")
     .orElse(providers.environmentVariable("ADB_APK"))
     .orElse("auto")
 
-fun normalizeAdbTarget(raw: String): String {
-    val value = raw.trim()
-    if (value.isBlank()) return value
-    // Plain IPv4/hostname defaults to the standard wireless-debugging port.
-    // Explicit host:port and bracketed IPv6 are left unchanged.
-    return if (!value.contains(':')) "$value:5555" else value
-}
+// Plain object (no build-script references) so task actions stay configuration-cache compatible.
+object AdbReleaseDeploy {
+    fun normalizeAdbTarget(raw: String): String {
+        val value = raw.trim()
+        if (value.isBlank()) return value
+        // Plain IPv4/hostname defaults to the standard wireless-debugging port.
+        // Explicit host:port and bracketed IPv6 are left unchanged.
+        return if (!value.contains(':')) "$value:5555" else value
+    }
 
-fun runAdb(vararg args: String): Pair<Int, String> = try {
-    val process = ProcessBuilder(listOf("adb") + args)
-        .redirectErrorStream(true)
-        .start()
-    val output = process.inputStream.bufferedReader().use { it.readText() }.trim()
-    process.waitFor() to output
-} catch (t: Throwable) {
-    -1 to (t.message ?: t::class.java.simpleName)
-}
+    fun runAdb(vararg args: String): Pair<Int, String> = try {
+        val process = ProcessBuilder(listOf("adb") + args)
+            .redirectErrorStream(true)
+            .start()
+        val output = process.inputStream.bufferedReader().use { it.readText() }.trim()
+        process.waitFor() to output
+    } catch (t: Throwable) {
+        -1 to (t.message ?: t::class.java.simpleName)
+    }
 
-fun findReleaseApk(mode: String, detectedAbi: String? = null): File? {
-    val releaseDir = layout.buildDirectory.dir("outputs/apk/release").get().asFile
-    if (!releaseDir.isDirectory) return null
+    fun findReleaseApk(releaseDir: File, mode: String, detectedAbi: String? = null): File? {
+        if (!releaseDir.isDirectory) return null
 
-    val requested = when (mode.lowercase()) {
-        "auto" -> when {
-            detectedAbi?.contains("arm64-v8a", ignoreCase = true) == true -> "arm64-v8a"
-            detectedAbi?.contains("armeabi-v7a", ignoreCase = true) == true -> "armeabi-v7a"
-            detectedAbi?.contains("x86_64", ignoreCase = true) == true -> "x86_64"
-            detectedAbi?.equals("x86", ignoreCase = true) == true ||
-                detectedAbi?.contains(",x86", ignoreCase = true) == true -> "x86"
+        val requested = when (mode.lowercase()) {
+            "auto" -> when {
+                detectedAbi?.contains("arm64-v8a", ignoreCase = true) == true -> "arm64-v8a"
+                detectedAbi?.contains("armeabi-v7a", ignoreCase = true) == true -> "armeabi-v7a"
+                detectedAbi?.contains("x86_64", ignoreCase = true) == true -> "x86_64"
+                detectedAbi?.equals("x86", ignoreCase = true) == true ||
+                    detectedAbi?.contains(",x86", ignoreCase = true) == true -> "x86"
+                else -> "universal"
+            }
+            "arm64", "arm64-v8a" -> "arm64-v8a"
+            "arm", "armv7", "armeabi-v7a" -> "armeabi-v7a"
+            "x86_64", "x86-64" -> "x86_64"
+            "x86" -> "x86"
             else -> "universal"
         }
-        "arm64", "arm64-v8a" -> "arm64-v8a"
-        "arm", "armv7", "armeabi-v7a" -> "armeabi-v7a"
-        "x86_64", "x86-64" -> "x86_64"
-        "x86" -> "x86"
-        else -> "universal"
-    }
 
-    val apks = releaseDir.walkTopDown()
-        .filter { it.isFile && it.extension.equals("apk", ignoreCase = true) }
-        .toList()
+        val apks = releaseDir.walkTopDown()
+            .filter { it.isFile && it.extension.equals("apk", ignoreCase = true) }
+            .toList()
 
-    fun score(file: File): Int {
-        val name = file.name.lowercase()
-        return when (requested) {
-            "arm64-v8a" -> when {
-                "arm64-v8a" in name || "arm64" in name -> 100
-                else -> 0
-            }
-            "armeabi-v7a" -> when {
-                "armeabi-v7a" in name || "armeabi" in name -> 100
-                else -> 0
-            }
-            "x86_64" -> when {
-                "x86_64" in name || "x86-64" in name -> 100
-                else -> 0
-            }
-            "x86" -> when {
-                "x86_64" in name || "x86-64" in name -> 0
-                "x86" in name -> 100
-                else -> 0
-            }
-            else -> when {
-                "universal" in name -> 100
-                "arm64" !in name && "armeabi" !in name && "x86" !in name -> 50
-                else -> 0
+        fun score(file: File): Int {
+            val name = file.name.lowercase()
+            return when (requested) {
+                "arm64-v8a" -> when {
+                    "arm64-v8a" in name || "arm64" in name -> 100
+                    else -> 0
+                }
+                "armeabi-v7a" -> when {
+                    "armeabi-v7a" in name || "armeabi" in name -> 100
+                    else -> 0
+                }
+                "x86_64" -> when {
+                    "x86_64" in name || "x86-64" in name -> 100
+                    else -> 0
+                }
+                "x86" -> when {
+                    "x86_64" in name || "x86-64" in name -> 0
+                    "x86" in name -> 100
+                    else -> 0
+                }
+                else -> when {
+                    "universal" in name -> 100
+                    "arm64" !in name && "armeabi" !in name && "x86" !in name -> 50
+                    else -> 0
+                }
             }
         }
+
+        return apks.map { it to score(it) }
+            .filter { it.second > 0 }
+            .maxByOrNull { it.second }
+            ?.first
     }
 
-    return apks.map { it to score(it) }
-        .filter { it.second > 0 }
-        .maxByOrNull { it.second }
-        ?.first
-}
+    fun deploy(logger: Logger, configuredDevice: String?, apkMode: String, releaseDir: File) {
+        val configuredTarget = configuredDevice?.trim().orEmpty()
+        if (configuredTarget.isBlank()) {
+            logger.lifecycle("ADB deploy skipped: no ADB_DEVICE configured.")
+            return
+        }
 
-fun deployReleaseApkToAdb() {
-    val configuredTarget = adbDevice.orNull?.trim().orEmpty()
-    if (configuredTarget.isBlank()) {
-        logger.lifecycle("ADB deploy skipped: no ADB_DEVICE configured.")
-        return
-    }
+        val target = normalizeAdbTarget(configuredTarget)
+        val (connectCode, connectOutput) = runAdb("connect", target)
+        if (connectCode != 0 || (!connectOutput.contains("connected", true) && !connectOutput.contains("already", true))) {
+            logger.lifecycle("ADB deploy skipped: device $target is not reachable (${connectOutput.ifBlank { "adb connect failed" }}).")
+            return
+        }
 
-    val target = normalizeAdbTarget(configuredTarget)
-    val (connectCode, connectOutput) = runAdb("connect", target)
-    if (connectCode != 0 || (!connectOutput.contains("connected", true) && !connectOutput.contains("already", true))) {
-        logger.lifecycle("ADB deploy skipped: device $target is not reachable (${connectOutput.ifBlank { "adb connect failed" }}).")
-        return
-    }
+        val (stateCode, stateOutput) = runAdb("-s", target, "get-state")
+        if (stateCode != 0 || !stateOutput.contains("device", true)) {
+            logger.lifecycle("ADB deploy skipped: $target is not in device state (${stateOutput.ifBlank { "unknown state" }}).")
+            return
+        }
 
-    val (stateCode, stateOutput) = runAdb("-s", target, "get-state")
-    if (stateCode != 0 || !stateOutput.contains("device", true)) {
-        logger.lifecycle("ADB deploy skipped: $target is not in device state (${stateOutput.ifBlank { "unknown state" }}).")
-        return
-    }
+        val mode = apkMode.trim().ifBlank { "auto" }
+        val detectedAbi = if (mode.equals("auto", true)) {
+            val (abiCode, abiOutput) = runAdb("-s", target, "shell", "getprop", "ro.product.cpu.abi")
+            if (abiCode == 0) abiOutput.trim() else ""
+        } else null
 
-    val mode = adbApkMode.get().trim().ifBlank { "auto" }
-    val detectedAbi = if (mode.equals("auto", true)) {
-        val (abiCode, abiOutput) = runAdb("-s", target, "shell", "getprop", "ro.product.cpu.abi")
-        if (abiCode == 0) abiOutput.trim() else ""
-    } else null
+        val apk = findReleaseApk(releaseDir, mode, detectedAbi)
+        if (apk == null) {
+            logger.lifecycle("ADB deploy skipped: no release APK found for mode '$mode' (device ABI: ${detectedAbi ?: "not queried"}).")
+            return
+        }
 
-    val apk = findReleaseApk(mode, detectedAbi)
-    if (apk == null) {
-        logger.lifecycle("ADB deploy skipped: no release APK found for mode '$mode' (device ABI: ${detectedAbi ?: "not queried"}).")
-        return
-    }
-
-    logger.lifecycle("ADB deploy: installing ${apk.name} to $target${detectedAbi?.takeIf { it.isNotBlank() }?.let { " (ABI $it)" } ?: ""} ...")
-    val (installCode, installOutput) = runAdb("-s", target, "install", "-r", apk.absolutePath)
-    if (installCode == 0 && installOutput.contains("Success", true)) {
-        logger.lifecycle("ADB deploy: installed ${apk.name} successfully.")
-        // adb install ignores the APK's baseline profile until the device's idle dexopt (days on a
-        // TV box), so menus stutter meanwhile. Write the profile and compile with it right away.
-        val pkg = "com.ambient.tv"
-        runAdb("-s", target, "shell", "am", "broadcast", "-a", "androidx.profileinstaller.action.INSTALL_PROFILE",
-            "-n", "$pkg/androidx.profileinstaller.ProfileInstallReceiver")
-        val (compileCode, compileOutput) = runAdb("-s", target, "shell", "cmd", "package", "compile", "-f", "-m", "speed-profile", pkg)
-        if (compileCode == 0 && compileOutput.contains("Success", true)) logger.lifecycle("ADB deploy: compiled with the baseline profile.")
-        else logger.lifecycle("ADB deploy warning: profile compilation failed (${compileOutput.ifBlank { "no output" }}); the app works, it may stutter until the device compiles it.")
-    } else {
-        // Deployment is deliberately non-fatal so a missing/offline TV never breaks the build.
-        logger.lifecycle("ADB deploy warning: install failed but build remains successful. ${installOutput.ifBlank { "adb install failed" }}")
+        logger.lifecycle("ADB deploy: installing ${apk.name} to $target${detectedAbi?.takeIf { it.isNotBlank() }?.let { " (ABI $it)" } ?: ""} ...")
+        val (installCode, installOutput) = runAdb("-s", target, "install", "-r", apk.absolutePath)
+        if (installCode == 0 && installOutput.contains("Success", true)) {
+            logger.lifecycle("ADB deploy: installed ${apk.name} successfully.")
+            // adb install ignores the APK's baseline profile until the device's idle dexopt (days on a
+            // TV box), so menus stutter meanwhile. Write the profile and compile with it right away.
+            val pkg = "com.ambient.tv"
+            runAdb("-s", target, "shell", "am", "broadcast", "-a", "androidx.profileinstaller.action.INSTALL_PROFILE",
+                "-n", "$pkg/androidx.profileinstaller.ProfileInstallReceiver")
+            val (compileCode, compileOutput) = runAdb("-s", target, "shell", "cmd", "package", "compile", "-f", "-m", "speed-profile", pkg)
+            if (compileCode == 0 && compileOutput.contains("Success", true)) logger.lifecycle("ADB deploy: compiled with the baseline profile.")
+            else logger.lifecycle("ADB deploy warning: profile compilation failed (${compileOutput.ifBlank { "no output" }}); the app works, it may stutter until the device compiles it.")
+        } else {
+            // Deployment is deliberately non-fatal so a missing/offline TV never breaks the build.
+            logger.lifecycle("ADB deploy warning: install failed but build remains successful. ${installOutput.ifBlank { "adb install failed" }}")
+        }
     }
 }
 
@@ -637,7 +640,10 @@ val deployReleaseAdb = tasks.register("deployReleaseAdb") {
     group = "deployment"
     description = "Builds release APKs and optionally installs universal/ABI-matching APK to ADB_DEVICE without failing the build."
     dependsOn("packageRelease")
-    doLast { deployReleaseApkToAdb() }
+    val device = adbDevice
+    val apkMode = adbApkMode
+    val releaseDir = layout.buildDirectory.dir("outputs/apk/release").get().asFile
+    doLast { AdbReleaseDeploy.deploy(logger, device.orNull, apkMode.get(), releaseDir) }
 }
 
 // Opt-in automatic deployment after a normal release build.
@@ -646,8 +652,12 @@ val deployReleaseAdb = tasks.register("deployReleaseAdb") {
 // during build-script configuration (AGP 8.11+ may register it later).
 tasks.configureEach {
     if (name == "packageRelease") {
+        val deployEnabled = adbDeployEnabled
+        val device = adbDevice
+        val apkMode = adbApkMode
+        val releaseDir = layout.buildDirectory.dir("outputs/apk/release").get().asFile
         doLast {
-            if (adbDeployEnabled.get()) deployReleaseApkToAdb()
+            if (deployEnabled.get()) AdbReleaseDeploy.deploy(logger, device.orNull, apkMode.get(), releaseDir)
         }
     }
 }
@@ -695,19 +705,20 @@ registerAbiDeployTask("deployX86_64ReleaseAdb", "x86_64", "x86_64", "Builds the 
 val verifyAppNativeMediaInputs = tasks.register("verifyAppNativeMediaInputs") {
     group = "verification"
     description = "Fail fast when app-owned Spotify/projectM/SVP native libraries have not been prepared."
+    val rootDir = rootProject.projectDir
+    val required = selectedAbis.flatMap { abi ->
+        listOf(
+            rootProject.file("app/src/main/jniLibs/$abi/libspotify_receiver_core.so"),
+            rootProject.file("app/src/main/jniLibs/$abi/libprojectM-4.so"),
+            rootProject.file("app/src/main/jniLibs/$abi/libambientprojectm.so"),
+            rootProject.file("app/src/main/jniLibs/$abi/libambientsvp.so"),
+        )
+    }
     doLast {
-        val required = selectedAbis.flatMap { abi ->
-            listOf(
-                rootProject.file("app/src/main/jniLibs/$abi/libspotify_receiver_core.so"),
-                rootProject.file("app/src/main/jniLibs/$abi/libprojectM-4.so"),
-                rootProject.file("app/src/main/jniLibs/$abi/libambientprojectm.so"),
-                rootProject.file("app/src/main/jniLibs/$abi/libambientsvp.so"),
-            )
-        }
         val missing = required.filterNot { it.isFile }
         if (missing.isNotEmpty()) {
             throw GradleException(
-                "Missing app native media libraries:\n" + missing.joinToString("\n") { " - ${it.relativeTo(rootProject.projectDir)}" } +
+                "Missing app native media libraries:\n" + missing.joinToString("\n") { " - ${it.relativeTo(rootDir)}" } +
                     "\nRun ./build.sh (or the Spotify/projectM/SVP native build scripts) before invoking Android packaging directly."
             )
         }
@@ -731,19 +742,28 @@ val generateUpdateManifest = tasks.register<Exec>("generateUpdateManifest") {
     description = "Generates update.json from this release's signed APKs (deferred when unsigned)."
     dependsOn("packageRelease")
     val output = layout.buildDirectory.file("outputs/update/update.json")
-    doFirst {
-        val tools = File(androidComponents.sdkComponents.sdkDirectory.get().asFile, "build-tools/${android.buildToolsVersion}")
-        val expected = if (apkAbiMode == "universal") listOf("universal")
-            else selectedAbis + if (apkAbiMode == "all") listOf("universal") else emptyList()
-        commandLine("python3", rootProject.file("scripts/generate_update_manifest.py"),
-            "--output", output.get().asFile, "--aapt2", File(tools, "aapt2"),
-            "--apksigner", File(tools, "apksigner"), "--expected-abis", expected.joinToString(","),
-            "--gradle-metadata", layout.buildDirectory.file("outputs/apk/release/output-metadata.json").get().asFile,
-            "--skip-unsigned")
+    val script = rootProject.file("scripts/generate_update_manifest.py")
+    val gradleMetadata = layout.buildDirectory.file("outputs/apk/release/output-metadata.json")
+    // Build tools are resolved lazily (AGP finalizes buildToolsVersion after this block) and the
+    // result is stored as a plain value, so the task stays configuration-cache compatible.
+    val tools = androidComponents.sdkComponents.sdkDirectory.zip(providers.provider { android.buildToolsVersion }) { sdk, version ->
+        File(sdk.asFile, "build-tools/$version")
     }
+    val expected = (if (apkAbiMode == "universal") listOf("universal")
+        else selectedAbis + if (apkAbiMode == "all") listOf("universal") else emptyList()).joinToString(",")
+    executable = "python3"
+    argumentProviders.add(CommandLineArgumentProvider {
+        val toolsDir = tools.get()
+        listOf(script.path,
+            "--output", output.get().asFile.path, "--aapt2", File(toolsDir, "aapt2").path,
+            "--apksigner", File(toolsDir, "apksigner").path, "--expected-abis", expected,
+            "--gradle-metadata", gradleMetadata.get().asFile.path,
+            "--skip-unsigned")
+    })
 }
 tasks.matching { it.name == "packageRelease" }.configureEach {
-    doFirst { layout.buildDirectory.file("outputs/update/update.json").get().asFile.delete() }
+    val staleManifest = layout.buildDirectory.file("outputs/update/update.json").get().asFile
+    doFirst { staleManifest.delete() }
     finalizedBy(generateUpdateManifest)
 }
-generateUpdateManifest.configure { onlyIf { tasks.named("packageRelease").get().state.failure == null } }
+// generateUpdateManifest depends on packageRelease, so Gradle never runs it after a failed packageRelease.
