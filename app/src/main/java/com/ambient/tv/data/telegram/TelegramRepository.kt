@@ -510,11 +510,19 @@ class TelegramRepository @Inject constructor(
     } catch (_: Exception) { cachedChannels() }
 
     /** Home rows: background priority (see [interactive]). */
-    suspend fun browse(section: String, limit: Int = 60): List<TelegramMedia> = try {
+    suspend fun browse(
+        section: String,
+        limit: Int = 60,
+        /** Told the seconds of a FLOOD_WAIT; the cached rows are still returned. */
+        onFloodWait: ((Int) -> Unit)? = null,
+    ): List<TelegramMedia> = try {
         awaitInteractiveIdle()
         loadBrowsePage(section, null, limit).items.ifEmpty { cachedBrowse(section).take(limit) }
     } catch (cancelled: kotlinx.coroutines.CancellationException) {
         throw cancelled
+    } catch (flood: TelegramFloodWaitException) {
+        onFloodWait?.invoke(flood.seconds)
+        cachedBrowse(section).take(limit)
     } catch (_: Exception) { cachedBrowse(section).take(limit) }
 
     /** Hydrate the full post text on a disconnected launch only for the verified active account. */

@@ -1581,27 +1581,48 @@ class HomeViewModel @Inject constructor(
                     if (!_uiState.value.isFailurePage())
                         publishRows((_uiState.value as? HomeUiState.Loaded)?.rows.orEmpty())
                 }
-                val updates = coroutineScope {
+                // Each live row replaces its cached one as soon as it arrives: a slow
+                // category no longer holds back the others.
+                val previous = telegramRows.associateBy(ContentRowData::id)
+                val live = HashMap<String, ContentRowData?>()
+                var floodSeconds = 0
+                fun publishLive() {
+                    if (generation != telegramRowsGeneration) return
+                    telegramRows = definitions.mapNotNull { definition ->
+                        val id = "telegram.${definition.contentKey}"
+                        if (id in live) live[id] else previous[id]
+                    }
+                    if (!_uiState.value.isFailurePage())
+                        publishRows((_uiState.value as? HomeUiState.Loaded)?.rows.orEmpty())
+                }
+                coroutineScope {
                     definitions.map { definition ->
                         async {
                             val items = if (definition.contentKey == "channels") {
                                 telegramRepository.channels().map { channel -> channel.toBrowseItem() }
                             } else {
-                                val entries = telegramRepository.browse(definition.contentKey, HOME_ROW_LIMIT)
+                                val entries = telegramRepository.browse(definition.contentKey, HOME_ROW_LIMIT) {
+                                    floodSeconds = maxOf(floodSeconds, it)
+                                }
                                 com.ambient.tv.ui.telegram.telegramRows(definition.contentKey, entries,
                                     includeYouTubeLinks = smartTubeUsableForMonogram())
                                     .flatMap { it.items }.distinctBy(MediaItem::ratingKey)
                             }
-                            if (items.isEmpty()) null else ContentRowData(
+                            live["telegram.${definition.contentKey}"] = if (items.isEmpty()) null else ContentRowData(
                                 id = "telegram.${definition.contentKey}",
                                 title = definition.displayTitle(context),
                                 style = definition.tileStyle(MediaTileStyle.LANDSCAPE),
                                 items = items,
                             )
+                            publishLive()
                         }
-                    }.awaitAll().filterNotNull()
+                    }.awaitAll()
                 }
-                if (generation == telegramRowsGeneration) telegramRows = updates
+                // The rows stay on their cached state: say why instead of failing silently.
+                if (floodSeconds > 0 && generation == telegramRowsGeneration) android.widget.Toast.makeText(
+                    context, context.getString(com.ambient.tv.R.string.monogram_error_flood_wait, floodSeconds),
+                    android.widget.Toast.LENGTH_LONG,
+                ).show()
             } catch (cancelled: kotlinx.coroutines.CancellationException) {
                 throw cancelled
             } catch (_: Exception) {

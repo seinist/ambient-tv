@@ -87,7 +87,19 @@ internal fun MonogramArtwork(
                 modifier = Modifier.fillMaxHeight(.64f).aspectRatio(1f),
             )
         }
-    } else ArtworkImage(imageUrl, item.title, modifier, ContentScale.Crop)
+    } else {
+        // The post's inline preview is on disk already: show it at once and let the sharp
+        // thumbnail cover it when loaded, instead of an empty pulsing card meanwhile.
+        val inline = remember(imageUrl) {
+            imageUrl?.let { com.ambient.tv.data.telegram.parseMonogramThumbModel(it) }?.fallback
+        }
+        if (inline == null) ArtworkImage(imageUrl, item.title, modifier, ContentScale.Crop)
+        else Box(modifier) {
+            ArtworkImage(inline, item.title, Modifier.matchParentSize(), ContentScale.Crop)
+            ArtworkImage(imageUrl, item.title, Modifier.matchParentSize(), ContentScale.Crop,
+                placeholder = false)
+        }
+    }
 }
 
 @Composable

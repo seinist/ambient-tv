@@ -10,6 +10,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
 import org.monogram.mtproto.MtprotoNative
 import org.monogram.mtproto.MtprotoNativeLoader
@@ -43,6 +44,14 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
      */
     private val handleUse = java.util.concurrent.locks.ReentrantReadWriteLock()
     private val browseMutex = Mutex()
+    /**
+     * Category pages (videos, YouTube, audio, photos, a channel) no longer wait for each other:
+     * two run at once, enough to fill Home's rows in parallel without bursting into FLOOD_WAIT.
+     * The dialog catalog they share is guarded by [catalogLock]; "recent" keeps [browseMutex]
+     * for its stateful timeline.
+     */
+    private val browsePermits = kotlinx.coroutines.sync.Semaphore(2)
+    private val catalogLock = Any()
     private val diskChunkLock = Any()
     /** Account-generation fences prevent older thumbnail RPCs repopulating a new account's cache. */
     @Volatile private var cacheGeneration = 0L
@@ -59,7 +68,7 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
      * cleared by login/logout. Copy-on-write iteration never throws ConcurrentModificationException.
      */
     private val chats = java.util.concurrent.CopyOnWriteArrayList<ChatDto>()
-    private var chatsExhausted = false
+    @Volatile private var chatsExhausted = false
     private val recentFeeds = LinkedHashMap<String, MonogramRecentTimeline>()
     private val leftChannels = java.util.concurrent.ConcurrentHashMap.newKeySet<Long>()
     private var nextRecentFeed = 0L
@@ -470,7 +479,10 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
         check(native.isAuthorized(h)) { app.getString(R.string.monogram_error_not_authorized) }
     }
 
-    private fun knownChannels(h: Long, count: Int): List<ChatDto> {
+    private fun knownChannels(h: Long, count: Int): List<ChatDto> =
+        synchronized(catalogLock) { knownChannelsLocked(h, count) }
+
+    private fun knownChannelsLocked(h: Long, count: Int): List<ChatDto> {
         if (chats.isEmpty() && !chatsExhausted) {
             chats.addAll(native.getChats(h))
             if (chats.isEmpty()) chatsExhausted = true
@@ -597,7 +609,11 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
         }
     }
 
-    private fun media(h: Long, m: MessageDto, channel: String): TelegramMedia? {
+    private fun media(
+        h: Long, m: MessageDto, channel: String,
+        /** Checked before the inline preview is written: skipped posts cost no disk I/O. */
+        wanted: (TelegramMediaKind) -> Boolean = { true },
+    ): TelegramMedia? {
         // Telegram 'text_url' entities can hide an actual video link behind a title.
         // Resolve every URL, but validate hosts/IDs with the same trusted parser.
         val hiddenLinks = runCatching {
@@ -621,6 +637,7 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
             }
             else -> null
         } ?: if (youtube != null) TelegramMediaKind.YOUTUBE else return null
+        if (!wanted(type)) return null
         return TelegramMedia(
             chatId = m.chatId, messageId = m.id, channel = channel,
             title = m.text?.trim()?.take(150)?.takeIf(String::isNotEmpty)
@@ -679,9 +696,11 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
 
     // Other tabs keep their channel+history-offset cursor; recent uses a global timeline.
     override suspend fun browse(section: String, cursor: String?, limit: Int): TelegramMediaPage =
-        browseMutex.withLock { nativeCall { h ->
+        if (section == "recent") browseMutex.withLock { nativeCall { h ->
             requireAuthorized(h)
-            if (section == "recent") return@nativeCall recent(h, cursor, limit)
+            recent(h, cursor, limit)
+        } } else browsePermits.withPermit { nativeCall { h ->
+            requireAuthorized(h)
             val parts = cursor?.split(':')
             require(parts == null || (parts.size == 3 && parts[0].toLongOrNull() == epoch))
             var index = parts?.get(1)?.toIntOrNull() ?: 0
@@ -701,10 +720,20 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
                 val fetchLimit = minOf(60, limit.coerceIn(1, 60) - items.size)
                 // YouTube posts are sparse in a channel's history: Telegram's link filter
                 // returns only posts with links, so far fewer pages are read per card.
-                val history = if (section == "youtube")
-                    native.searchMessagesPage(h, id, "", "url", offset, 0, fetchLimit).messages
-                else historyPage(h, id, fetchLimit, offset)
-                val mapped = history.mapNotNull { media(h, it, title) }
+                val history = when (section) {
+                    "youtube" -> native.searchMessagesPage(h, id, "", "url", offset, 0, fetchLimit).messages
+                    // Telegram's photo filter is exact; videos/audio keep the history scan so
+                    // .mkv/.mp3 files sent as plain documents are still found.
+                    "photos" -> native.searchMessagesPage(h, id, "", "photos", offset, 0, fetchLimit).messages
+                    else -> historyPage(h, id, fetchLimit, offset)
+                }
+                val wanted: (TelegramMediaKind) -> Boolean = when (section) {
+                    "videos" -> { kind -> kind == TelegramMediaKind.VIDEO }
+                    "audio" -> { kind -> kind == TelegramMediaKind.AUDIO }
+                    "photos" -> { kind -> kind == TelegramMediaKind.PHOTO }
+                    else -> { _ -> true }
+                }
+                val mapped = history.mapNotNull { media(h, it, title, wanted) }
                     .flatMap { item -> if (section == "youtube") item.youtubePosts() else listOf(item) }
                     .filter {
                         when (section) {
