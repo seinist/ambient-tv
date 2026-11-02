@@ -404,7 +404,9 @@ fun TelegramScreen(
                     }
                 },
             )
-            PageChipRow(chain, contentPadding = PaddingValues(horizontal = screenGutter()),
+            // Phone: the header's round icon buttons sit right above the chips, so give them air; TV keeps its layout.
+            PageChipRow(chain, Modifier.padding(top = deviceDp(0.dp, 12.dp)),
+                contentPadding = PaddingValues(horizontal = screenGutter()),
                 selectedIndex = shownTabs.indexOfFirst { it.first == canonical }.coerceAtLeast(0)) {
                 items(shownTabs, key = { it.first }) { (key, label) ->
                     TvChip(
