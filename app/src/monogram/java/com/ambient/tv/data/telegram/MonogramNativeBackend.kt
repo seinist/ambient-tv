@@ -540,34 +540,26 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
         )
     }
 
-    /**
-     * Complete the dialog index once per global timeline. Otherwise a not-yet-loaded channel
-     * could contain newer media than entries that were already emitted.
-     */
-    private fun fullChannelCatalog(h: Long): List<ChatDto> {
-        var previous = -1
-        repeat(64) { round ->
-            // Each round may issue up to six messages.getDialogs pages. Pace large accounts so
-            // the first "recent" load does not trip Telegram's FLOOD_WAIT limits.
-            if (round > 0) Thread.sleep(CATALOG_ROUND_PAUSE_MS)
-            val current = knownChannels(h, Int.MAX_VALUE)
-            if (chatsExhausted) return current
-            if (chats.size == previous) return current
-            previous = chats.size
-        }
-        check(chatsExhausted) { "Monogram channel catalog exceeded paging safety limit" }
-        return knownChannels(h, Int.MAX_VALUE)
-    }
-
     private fun recent(h: Long, token: String?, limit: Int): TelegramMediaPage {
         val cursorToken = token ?: ("recent:" + epoch + ":" + (++nextRecentFeed))
         val timeline = if (token == null) {
-            val channels = fullChannelCatalog(h)
-                .map { channel ->
-                    MonogramRecentTimeline.Channel(channel.id,
-                        (channel.lastMessageDate ?: 0L) * 1000L)
-                }
-            MonogramRecentTimeline(channels) { id, offset, size ->
+            fun timelineChannel(channel: ChatDto) =
+                MonogramRecentTimeline.Channel(channel.id, (channel.lastMessageDate ?: 0L) * 1000L)
+            // Newest possible message of a dialog not loaded yet (dialogs come newest first).
+            fun unloadedBound(): Long? = if (chatsExhausted) null
+                else chats.lastOrNull()?.lastMessageDate?.times(1000L) ?: Long.MAX_VALUE
+            // The first channels only; the timeline pages the catalog when an unloaded channel
+            // could hold the next item. A large account no longer loads every dialog up front.
+            val initial = knownChannels(h, RECENT_CATALOG_STEP)
+            MonogramRecentTimeline(
+                initial.map(::timelineChannel),
+                unloadedBoundMs = unloadedBound(),
+                moreChannels = {
+                    val loaded = chats.count { it.isChannel && !it.left }
+                    val all = knownChannels(h, loaded + RECENT_CATALOG_STEP)
+                    MonogramRecentTimeline.CatalogPage(all.map(::timelineChannel), unloadedBound())
+                },
+            ) { id, offset, size ->
                 val history = historyPage(h, id, size, offset)
                 val title = chats.firstOrNull { it.id == id }?.title ?: "Monogram"
                 val items = history.mapNotNull { entry -> media(h, entry, title) }
@@ -806,7 +798,10 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
     }
 
     private companion object {
+        /** Pause between per-channel search requests (Telegram FLOOD_WAIT). */
         const val CATALOG_ROUND_PAUSE_MS = 300L
+        /** Channels added to the recent timeline per catalog step. */
+        const val RECENT_CATALOG_STEP = 20
         /** Shared channel history pages: long enough for one browse session across categories. */
         const val HISTORY_PAGE_TTL_MS = 120_000L
         const val HISTORY_SHARED_PAGE = 60
