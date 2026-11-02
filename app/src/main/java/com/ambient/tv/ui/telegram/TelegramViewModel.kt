@@ -82,12 +82,16 @@ class TelegramViewModel @Inject constructor(
     private val preferences: AppPreferences,
     @dagger.hilt.android.qualifiers.ApplicationContext private val context: android.content.Context,
     private val playbackContext: TelegramPlaybackContext,
+    private val smartTubeEngine: com.ambient.tv.youtube.SmartTubeEngine,
 ) : ViewModel() {
+    /** YouTube link posts play through SmartTube: its category exists only while it is usable. */
+    val smartTubeUsable: Boolean get() = preferences.youtubeEnabled && smartTubeEngine.available
     // The system screen presents account status like Spotify instead of claiming
     // the native module is missing when only Telegram sign-in is missing.
     val login = repository.login
     val apiCredentialsReady: Boolean get() = repository.apiCredentialsReady
-    val visibleSections: List<String> get() = preferences.telegramSubmenuKeys
+    val visibleSections: List<String> get() =
+        com.ambient.tv.ui.navigation.telegramUsableSections(preferences.telegramSubmenuKeys, smartTubeUsable)
     suspend fun channel(chatId: Long): TelegramChannel? = repository.channel(chatId)
     suspend fun joinChannel(chatId: Long): Boolean = repository.joinChannel(chatId)
     suspend fun leaveChannel(chatId: Long): Boolean = repository.leaveChannel(chatId)
@@ -132,7 +136,7 @@ class TelegramViewModel @Inject constructor(
     }
 
     fun open(section: String, refresh: Boolean = false) {
-        val key = section.takeIf { it in setOf("recent", "channels", "videos", "youtube", "audio", "photos") ||
+        val key = section.takeIf { it != "youtube" || smartTubeUsable }?.takeIf { it in setOf("recent", "channels", "videos", "youtube", "audio", "photos") ||
             (it.startsWith("channel:") && it.substringAfter(':').toLongOrNull() != null) } ?: "recent"
         val current = mutableState.value
         if (!refresh && current.section == key && current.available && current.rows.isNotEmpty()) return

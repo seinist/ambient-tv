@@ -1538,7 +1538,9 @@ class HomeViewModel @Inject constructor(
         }
         val definitions = appPreferences.homeRows.filter {
             it.enabled && it.system == HomeRowDefinition.SYSTEM_TELEGRAM &&
-                it.contentKey in HomeRowDefinition.TELEGRAM_ROW_KEYS
+                it.contentKey in HomeRowDefinition.TELEGRAM_ROW_KEYS &&
+                // YouTube link posts need SmartTube to play.
+                (it.contentKey != "youtube" || (appPreferences.youtubeEnabled && smartTubeEngine.available))
         }
         if (definitions.isEmpty()) {
             telegramRows = emptyList()
