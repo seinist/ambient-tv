@@ -228,6 +228,7 @@ class ServerConnectionManager @Inject constructor(
                         mac.orEmpty(),
                         wireGuardHost = preferences.host.takeIf { preferences.wireGuardPlexEnabled },
                         retry = forceNewWake || attempt > 0,
+                        targetHost = preferences.host,
                     ).getOrThrow()
                 },
                 retries = wakeRetries,

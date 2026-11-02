@@ -70,6 +70,8 @@ interface TelegramClientPort {
     suspend fun media(chatId: Long, messageId: Int): TelegramMedia?
     /** The original photo is fetched only when the viewer opens, never while listing. */
     suspend fun photoFile(chatId: Long, messageId: Int): String? = null
+    /** Called once when Telegram reports the session as revoked or unknown ([TelegramSessionLostException]). */
+    fun setSessionLostListener(listener: ((String) -> Unit)?) = Unit
     /** Telegram's real (non-inline) thumbnail of a post as a local file URI, or null. */
     suspend fun thumbnail(chatId: Long, messageId: Int): String? = null
     /** A byte range from a Telegram file; Monogram downloadMessageMediaChunk does the MTProto I/O. */
@@ -264,6 +266,7 @@ class TelegramRepository @Inject constructor(
 
     /** Install only an already authenticated Monogram client, never a partially signed-in one. */
     fun installAuthorized(port: TelegramClientPort) {
+        port.setSessionLostListener { type -> scope.launch { sessionLost(port, type) } }
         if (client !== port) {
             streamEpoch.incrementAndGet()
             revokePlaybackUrls()
@@ -271,6 +274,23 @@ class TelegramRepository @Inject constructor(
         }
         client = port
         mutableAuthorized.value = true
+    }
+
+    /**
+     * Telegram ended the session (revoked in another app, account deactivated, unknown key).
+     * Every request would fail from now on: disconnect and show the sign-in state with the reason,
+     * like the Monogram app, instead of failing each screen with a generic error.
+     */
+    private suspend fun sessionLost(port: TelegramClientPort, type: String) {
+        if (client !== port) return
+        timber.log.Timber.w("Monogram session ended: %s", type)
+        loginMutex.withLock {
+            if (client !== port) return@withLock
+            disconnect()
+            restoredSessionOnce = false
+            mutableLogin.value = MonogramLoginState(MonogramLoginStep.READY,
+                error = appContext.getString(R.string.monogram_error_session_lost, type))
+        }
     }
 
     fun disconnect() {
@@ -365,6 +385,9 @@ class TelegramRepository @Inject constructor(
     private companion object {
         const val MONOGRAM_LOCAL_MEDIA_SOURCE = "monogram-mtproto"
         const val RESUME_MAX_ENTRIES = 200
+        const val BACKGROUND_POLL_MS = 150L
+        /** Background work never starves: it starts at the latest after this. */
+        const val BACKGROUND_MAX_WAIT_MS = 15_000L
     }
 
     /** Cache is only read after native account authorization confirms the same identity. */
@@ -427,7 +450,31 @@ class TelegramRepository @Inject constructor(
             cached.filterNot { it.chatId in blockedChannels } else emptyList()
     }
 
-    suspend fun channelsPage(cursor: String? = null, limit: Int = 60): TelegramChannelPage {
+    /**
+     * Like the Monogram app's dispatch classes: what the user is opening (a page, a post, the
+     * player) is interactive; Home's Monogram rows are background work. Background work starts
+     * only while no interactive request runs, so a Home refresh never delays opening a page.
+     */
+    private val interactiveRequests = java.util.concurrent.atomic.AtomicInteger()
+
+    private suspend fun <T> interactive(block: suspend () -> T): T {
+        interactiveRequests.incrementAndGet()
+        try { return block() } finally { interactiveRequests.decrementAndGet() }
+    }
+
+    /** Waits (bounded) until no interactive request runs. */
+    private suspend fun awaitInteractiveIdle() {
+        var waitedMs = 0L
+        while (interactiveRequests.get() > 0 && waitedMs < BACKGROUND_MAX_WAIT_MS) {
+            kotlinx.coroutines.delay(BACKGROUND_POLL_MS)
+            waitedMs += BACKGROUND_POLL_MS
+        }
+    }
+
+    suspend fun channelsPage(cursor: String? = null, limit: Int = 60): TelegramChannelPage =
+        interactive { loadChannelsPage(cursor, limit) }
+
+    private suspend fun loadChannelsPage(cursor: String?, limit: Int): TelegramChannelPage {
         val selected = client ?: return TelegramChannelPage(emptyList())
         val generation = streamEpoch.get()
         val identity = selected.cacheIdentity
@@ -439,7 +486,10 @@ class TelegramRepository @Inject constructor(
         }
         return page
     }
-    suspend fun browsePage(section: String, cursor: String? = null, limit: Int = 60): TelegramMediaPage {
+    suspend fun browsePage(section: String, cursor: String? = null, limit: Int = 60): TelegramMediaPage =
+        interactive { loadBrowsePage(section, cursor, limit) }
+
+    private suspend fun loadBrowsePage(section: String, cursor: String?, limit: Int): TelegramMediaPage {
         val selected = client ?: return TelegramMediaPage(emptyList())
         val generation = streamEpoch.get()
         val identity = selected.cacheIdentity
@@ -451,20 +501,26 @@ class TelegramRepository @Inject constructor(
         }
         return page
     }
+    /** Home rows: background priority (see [interactive]). */
     suspend fun channels(): List<TelegramChannel> = try {
-        channelsPage().items.ifEmpty { cachedChannels() }
+        awaitInteractiveIdle()
+        loadChannelsPage(null, 60).items.ifEmpty { cachedChannels() }
     } catch (cancelled: kotlinx.coroutines.CancellationException) {
         throw cancelled
     } catch (_: Exception) { cachedChannels() }
 
+    /** Home rows: background priority (see [interactive]). */
     suspend fun browse(section: String, limit: Int = 60): List<TelegramMedia> = try {
-        browsePage(section, limit = limit).items.ifEmpty { cachedBrowse(section).take(limit) }
+        awaitInteractiveIdle()
+        loadBrowsePage(section, null, limit).items.ifEmpty { cachedBrowse(section).take(limit) }
     } catch (cancelled: kotlinx.coroutines.CancellationException) {
         throw cancelled
     } catch (_: Exception) { cachedBrowse(section).take(limit) }
 
     /** Hydrate the full post text on a disconnected launch only for the verified active account. */
-    suspend fun media(chatId: Long, messageId: Int): TelegramMedia? {
+    suspend fun media(chatId: Long, messageId: Int): TelegramMedia? = interactive { loadMedia(chatId, messageId) }
+
+    private suspend fun loadMedia(chatId: Long, messageId: Int): TelegramMedia? {
         val selected = client ?: return null
         if (chatId in blockedChannels) return null
         val generation = streamEpoch.get()
@@ -477,6 +533,8 @@ class TelegramRepository @Inject constructor(
         } catch (wait: TelegramFloodWaitException) {
             flood = wait
             null
+        } catch (lost: TelegramSessionLostException) {
+            throw lost
         } catch (_: Exception) { null }
         if (!sameAccount(selected, identity, generation) || chatId in blockedChannels) return null
         if (live != null) return live
@@ -555,7 +613,10 @@ class TelegramRepository @Inject constructor(
         return file.takeIf { sameAccount(selected, identity, generation) && chatId !in blockedChannels }
     }
 
-    suspend fun mediaPart(chatId: Long, messageId: Int, offset: Long): ByteArray {
+    suspend fun mediaPart(chatId: Long, messageId: Int, offset: Long): ByteArray =
+        interactive { loadMediaPart(chatId, messageId, offset) }
+
+    private suspend fun loadMediaPart(chatId: Long, messageId: Int, offset: Long): ByteArray {
         val selected = checkNotNull(client) { appContext.getString(R.string.monogram_error_not_authorized) }
         check(chatId !in blockedChannels) { appContext.getString(R.string.monogram_error_channel_left) }
         val generation = streamEpoch.get()

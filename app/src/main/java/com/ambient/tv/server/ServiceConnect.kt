@@ -182,7 +182,9 @@ internal suspend fun waitForService(
     val budgetMs = if (machineUp) window else com.ambient.tv.wol.wakeBudgetMs(retries, windowMs)
     val started = nowMs()
     var awake = machineUp
-    val ready = com.ambient.tv.wol.awaitServiceAfterWake(
+    // A private server outside every local network cannot be woken from here: stop at once
+    // instead of counting the whole wake budget down (the notice says why).
+    val ready = try { com.ambient.tv.wol.awaitServiceAfterWake(
         retries = retries,
         windowMs = window,
         pollMs = pollMs,
@@ -207,7 +209,9 @@ internal suspend fun waitForService(
                 }
             }
         },
-    )
+    ) } catch (_: com.ambient.tv.wol.WolNotOnLocalNetworkException) {
+        return ServiceWaitResult(ServerConnectionState.Offline, 0L, waited = false)
+    }
     return when {
         ready -> ServiceWaitResult(null, maxOf(started + budgetMs, nowMs() + CONNECT_RETRY_GRACE_MS), waited = true)
         !awake -> ServiceWaitResult(ServerConnectionState.WakeTimedOut, 0L, waited = true)

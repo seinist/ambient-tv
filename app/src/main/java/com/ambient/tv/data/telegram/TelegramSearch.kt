@@ -33,9 +33,45 @@ fun telegramSearchResults(
     .take(limit.coerceAtLeast(0))
     .toList()
 
-/** Longest FLOOD_WAIT that is waited out automatically (then the request is sent once more). */
-internal const val TELEGRAM_FLOOD_AUTO_WAIT_SECONDS = 30
+/**
+ * Longest FLOOD_WAIT that is waited out silently, as in the Monogram app (1..5 s, up to
+ * [TELEGRAM_FLOOD_AUTO_RETRIES] times). Longer waits are shown to the user with the seconds.
+ */
+internal const val TELEGRAM_FLOOD_AUTO_WAIT_SECONDS = 5
+internal const val TELEGRAM_FLOOD_AUTO_RETRIES = 6
 
 /** Delay before resending a request Telegram rejected with FLOOD_WAIT, or null to report it. */
 fun telegramFloodRetryDelayMs(seconds: Int): Long? =
-    if (seconds in 0..TELEGRAM_FLOOD_AUTO_WAIT_SECONDS) seconds.coerceAtLeast(1) * 1_000L else null
+    if (seconds in 0..TELEGRAM_FLOOD_AUTO_WAIT_SECONDS) (seconds + 1).coerceAtLeast(2) * 1_000L else null
+
+/** The session is no longer valid (revoked, deactivated, unknown key): sign in again. */
+class TelegramSessionLostException(val type: String) : IllegalStateException("Telegram session ended: $type")
+
+enum class TelegramFailureKind { FLOOD, NETWORK, SESSION, OTHER }
+
+/** Same classification as the Monogram app's TelegramError for the cases Ambient TV acts on. */
+fun classifyTelegramFailure(message: String?): TelegramFailureKind {
+    val raw = message?.trim()?.removePrefix("v1=")?.trim().orEmpty()
+    if (telegramFloodWaitSeconds(raw) != null) return TelegramFailureKind.FLOOD
+    val lower = raw.lowercase()
+    if (lower.startsWith("session invalidated:")) return TelegramFailureKind.SESSION
+    val upper = raw.uppercase()
+    // AUTH_KEY_UNSYNCHRONIZED / AUTH_KEY_PERM_EMPTY are transient: a reconnect fixes them.
+    if (upper.contains("AUTH_KEY_UNSYNCHRONIZED") || upper.contains("AUTH_KEY_PERM_EMPTY")) return TelegramFailureKind.NETWORK
+    if (upper.contains("AUTH_KEY") || upper.contains("SESSION_REVOKED") || upper.contains("SESSION_EXPIRED") ||
+        upper.contains("USER_DEACTIVATED")) return TelegramFailureKind.SESSION
+    if (lower.contains("rpc timeout") || lower == "timeout" || lower.contains("connection closed") ||
+        lower.contains("connection error") || lower.contains("failed to connect") ||
+        lower.contains("network is unreachable") || lower.contains("os error") ||
+        lower.contains("invalid mtproto") || lower.contains("msg_key") || lower.contains("unknown mtproto constructor") ||
+        lower.contains("invalid inbound message")) return TelegramFailureKind.NETWORK
+    return TelegramFailureKind.OTHER
+}
+
+/** Session error type for [TelegramSessionLostException], e.g. "AUTH_KEY_UNREGISTERED". */
+fun telegramSessionErrorType(message: String?): String {
+    val raw = message?.trim()?.removePrefix("v1=")?.trim().orEmpty()
+    return Regex("[A-Z][A-Z0-9_]{3,63}").findAll(raw.uppercase()).map { it.value }
+        .firstOrNull { it.contains("AUTH_KEY") || it.startsWith("SESSION_") || it.startsWith("USER_DEACTIVATED") }
+        ?: "SESSION_INVALIDATED"
+}

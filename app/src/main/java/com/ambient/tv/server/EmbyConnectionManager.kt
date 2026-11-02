@@ -209,7 +209,8 @@ class EmbyConnectionManager @Inject constructor(
                     mac.orEmpty(),
                     wireGuardHost = preferences.embyHost.takeIf { preferences.wireGuardEmbyEnabled },
                     retry = forceNewWake || attempt > 0,
-                )
+                    targetHost = preferences.embyHost,
+                ).onFailure { if (it is com.ambient.tv.wol.WolNotOnLocalNetworkException) throw it }
             },
             retries = wakeRetries,
             windowMs = wakeTimeoutMs,

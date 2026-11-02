@@ -247,6 +247,9 @@ class TelegramPlayerViewModel @Inject constructor(
 
     /** [direction] > 0: Next, < 0: Previous; a post that cannot be played is skipped that way. */
     private fun load(chat: Long, message: Int, direction: Int) {
+        // A manual retry or another post ends a pending countdown (the countdown clears it first).
+        floodRetryJob?.cancel()
+        floodRetryJob = null
         rememberPosition()
         mutableError.value = null
         mutableQueueEnded.value = false
@@ -292,9 +295,27 @@ class TelegramPlayerViewModel @Inject constructor(
                 throw cancelled
             } catch (wait: com.ambient.tv.data.telegram.TelegramFloodWaitException) {
                 fail(context.getString(R.string.monogram_error_flood_wait, wait.seconds))
+                retryAfterFloodWait(wait.seconds)
+            } catch (lost: com.ambient.tv.data.telegram.TelegramSessionLostException) {
+                fail(context.getString(R.string.monogram_error_session_lost, lost.type))
             } catch (error: Exception) {
                 fail(error.message ?: context.getString(R.string.monogram_error_media_open))
             }
+        }
+    }
+
+    private var floodRetryJob: Job? = null
+
+    /** Counts a long FLOOD_WAIT down on screen, then opens the post again by itself. */
+    private fun retryAfterFloodWait(seconds: Int) {
+        floodRetryJob?.cancel()
+        floodRetryJob = viewModelScope.launch {
+            for (left in seconds downTo 1) {
+                mutableError.value = context.getString(R.string.monogram_error_flood_wait, left)
+                kotlinx.coroutines.delay(1_000)
+            }
+            floodRetryJob = null
+            retry()
         }
     }
 

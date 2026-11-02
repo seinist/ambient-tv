@@ -155,6 +155,25 @@ class ServiceConnectTest {
     }
 
     @Test
+    fun `a server outside every local network ends the wait at once as offline`() = runBlocking {
+        val clock = Clock()
+        val states = mutableListOf<ServerConnectionState>()
+        var sends = 0
+        val result = waitForService(
+            serviceReady = { false },
+            machineAwake = { false },
+            hostHealth = { HostHealth.OFFLINE },
+            canWake = true,
+            send = { sends++; throw com.ambient.tv.wol.WolNotOnLocalNetworkException("192.168.1.5") },
+            retries = 2, windowMs = 60_000L, pollMs = 1L,
+            setState = { states += it }, lastWakeAtMs = { 0L }, nowMs = clock::read,
+        )
+        assertEquals(ServerConnectionState.Offline, result.failure)
+        assertFalse(result.waited)
+        assertEquals(1, sends)
+    }
+
+    @Test
     fun `a sleeping machine is woken and the wait ends only when the service answers`() = runBlocking {
         val clock = Clock()
         val states = mutableListOf<ServerConnectionState>()

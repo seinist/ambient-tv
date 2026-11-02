@@ -69,4 +69,40 @@ class MonogramRecentTimelineTest {
         assertEquals(listOf(3000L), timeline.nextPage(1).media.map { it.publishedAtMs })
         assertFalse(timeline.nextPage(1).hasMore)
     }
+
+    @Test fun catalogIsPagedOnlyWhileUnloadedChannelsCouldBeNewer() {
+        var catalogPages = 0
+        val timeline = MonogramRecentTimeline(
+            listOf(MonogramRecentTimeline.Channel(1, 10_000)),
+            unloadedBoundMs = 5_000,
+            moreChannels = {
+                catalogPages++
+                MonogramRecentTimeline.CatalogPage(listOf(MonogramRecentTimeline.Channel(2, 5_000)), null)
+            },
+        ) { chat, _, _ ->
+            MonogramRecentTimeline.HistoryBatch(
+                if (chat == 1L) listOf(media(1, 10, 9_000), media(1, 9, 8_000)) else listOf(media(2, 5, 5_000)),
+                null, 0)
+        }
+        // Channel 1's items are newer than anything unloaded: no catalog request yet.
+        assertEquals(listOf(9_000L, 8_000L), timeline.nextPage(2).media.map { it.publishedAtMs })
+        assertEquals(0, catalogPages)
+        // Now an unloaded channel could be next: one catalog page, then its media.
+        assertEquals(listOf(5_000L), timeline.nextPage(5).media.map { it.publishedAtMs })
+        assertEquals(1, catalogPages)
+    }
+
+    @Test fun aCatalogPageWithoutChannelsDoesNotEndPagingUnlessNothingMoves() {
+        val bounds = ArrayDeque(listOf(3_000L, 3_000L))
+        var calls = 0
+        val timeline = MonogramRecentTimeline(
+            emptyList(), unloadedBoundMs = 4_000,
+            moreChannels = { calls++; MonogramRecentTimeline.CatalogPage(emptyList(), bounds.removeFirst()) },
+        ) { _, _, _ -> MonogramRecentTimeline.HistoryBatch(emptyList(), null, 0) }
+        val page = timeline.nextPage(5)
+        assertTrue(page.media.isEmpty())
+        // 4000 -> 3000 moved the bound; 3000 -> 3000 changed nothing and ended paging.
+        assertEquals(2, calls)
+        assertFalse(page.hasMore)
+    }
 }

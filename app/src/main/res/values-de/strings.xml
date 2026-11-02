@@ -1926,6 +1926,7 @@
     <string name="sleep_trigger_input">Ohne Bedienung</string>
     <string name="search_source_partial">%1$s: Die Suchergebnisse sind unvollständig. Einige Quellen oder Bereiche konnten nicht durchsucht werden.</string>
     <string name="wol_network_unavailable">Wake-on-LAN nicht verfügbar: Keine LAN-/WLAN-Verbindung oder aktive WireGuard-Route zu diesem System.</string>
+    <string name="wol_not_local_network">Nicht geweckt: %1$s ist nicht im lokalen Netz dieses Geräts (z. B. unterwegs).</string>
     <string name="settings_live_tv_title">Live-TV</string>
     <string name="settings_page_live_tv_hint">Timeshift, Aufnahmen und Sendungserinnerungen für Live-TV.</string>
     <string name="settings_live_reminders">Sendungserinnerungen</string>
@@ -2286,6 +2287,7 @@
     <string name="monogram_error_account_changed">Monogram-Konto oder Kanalmitgliedschaft hat sich geändert</string>
     <string name="monogram_error_media_unavailable">Dieses Monogram-Medium ist nicht verfügbar</string>
     <string name="monogram_error_flood_wait">Telegram bittet um %1$d s Pause. Bitte gleich noch einmal versuchen.</string>
+    <string name="monogram_error_session_lost">Telegram hat diese Anmeldung beendet (%1$s). Bitte neu anmelden.</string>
     <string name="monogram_error_media_protected">Dieser Beitrag schränkt die Medienwiedergabe ein</string>
     <string name="monogram_error_media_open">Monogram-Medium konnte nicht geöffnet werden</string>
     <string name="monogram_error_post_unavailable">Monogram-Beitrag nicht verfügbar</string>
