@@ -805,6 +805,9 @@ internal data class TelegramOsd(
                     MetaBadge(systemName(MediaSystem.TELEGRAM), emphasized = true)
                     MetaBadge(media.channel)
                     channelError?.let { MetaBadge(it) }
+                    // Telegram posts carry no stream metadata: show what the engine decodes.
+                    if (media.kind != TelegramMediaKind.PHOTO) com.ambient.tv.ui.player.SessionFormatBadges(
+                        com.ambient.tv.ui.player.rememberSessionFormat(media.mediaKey))
                 }
                 PlayerControlBar(
                     player = OsdPlayer.MEDIA,
