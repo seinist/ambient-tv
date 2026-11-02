@@ -2287,6 +2287,7 @@
     <string name="monogram_error_account_changed">The Monogram account or channel membership changed</string>
     <string name="monogram_error_media_unavailable">This Monogram media is unavailable</string>
     <string name="monogram_error_flood_wait">Telegram asks for a pause of %1$d s. Please try again shortly.</string>
+    <string name="monogram_error_session_lost">Telegram ended this sign-in (%1$s). Please sign in again.</string>
     <string name="monogram_error_media_protected">This post restricts media playback</string>
     <string name="monogram_error_media_open">Monogram media could not be opened</string>
     <string name="monogram_error_post_unavailable">Monogram post unavailable</string>

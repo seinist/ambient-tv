@@ -50,7 +50,7 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
         runCatching { it.readText().trim().toLongOrNull() }.getOrNull()
     }
     private var handle = 0L
-    private var connected = false
+    @Volatile private var connected = false
     private var epoch = System.nanoTime()
     /**
      * Paged by browse calls under [browseMutex], but also read by the player/detail lookup and
@@ -101,17 +101,25 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
 
     private fun clearHistoryPages() = synchronized(historyPages) { historyPages.clear() }
 
+    @Volatile private var sessionLostListener: ((String) -> Unit)? = null
+    override fun setSessionLostListener(listener: ((String) -> Unit)?) { sessionLostListener = listener }
+
     /** Monotonic end of a FLOOD_WAIT Telegram asked for; every RPC waits it out first. */
     @Volatile private var floodUntilMs = 0L
 
     /**
-     * Telegram answers too many requests with FLOOD_WAIT_n. Sending more while it lasts only
-     * extends it, and the caller used to fail ("media unavailable"). Every RPC now waits until
-     * the wait has passed; a rejected RPC with a short wait is sent once more afterwards.
-     * Longer waits fail with [TelegramFloodWaitException] so the screen can say how long.
+     * Every RPC goes through here, with the Monogram app's error handling:
+     * - FLOOD_WAIT up to 5 s is waited out silently and the request resent (up to 6 times);
+     *   longer waits fail at once with [TelegramFloodWaitException] so the screen can show them.
+     *   While a wait lasts, later RPCs wait too instead of extending it.
+     * - Network errors (timeout, closed connection, OS errors) drop the connection so the next
+     *   attempt reconnects; the request is sent once more.
+     * - A revoked or unknown session fails with [TelegramSessionLostException]: sign in again.
      */
     private suspend fun <T> nativeCall(connect: Boolean = true, action: (Long) -> T): T {
-        repeat(2) { attempt ->
+        var floodRetries = 0
+        var networkRetried = false
+        while (true) {
             awaitFloodWait()
             try {
                 return nativeCallOnce(connect, action)
@@ -122,12 +130,29 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
                 noteFloodWait(flood.seconds)
                 throw flood
             } catch (failure: Exception) {
-                val seconds = telegramFloodWaitSeconds(failure.message) ?: throw failure
-                noteFloodWait(seconds)
-                if (attempt > 0 || telegramFloodRetryDelayMs(seconds) == null) throw TelegramFloodWaitException(seconds)
+                when (classifyTelegramFailure(failure.message)) {
+                    TelegramFailureKind.FLOOD -> {
+                        val seconds = telegramFloodWaitSeconds(failure.message) ?: throw failure
+                        noteFloodWait(seconds)
+                        if (telegramFloodRetryDelayMs(seconds) == null || floodRetries++ >= TELEGRAM_FLOOD_AUTO_RETRIES)
+                            throw TelegramFloodWaitException(seconds)
+                    }
+                    TelegramFailureKind.NETWORK -> {
+                        // The native client reconnects on the next connect(); a stale "connected"
+                        // made every later request fail until the app was restarted.
+                        connected = false
+                        if (networkRetried) throw failure
+                        networkRetried = true
+                    }
+                    TelegramFailureKind.SESSION -> {
+                        val type = telegramSessionErrorType(failure.message)
+                        sessionLostListener?.invoke(type)
+                        throw TelegramSessionLostException(type)
+                    }
+                    TelegramFailureKind.OTHER -> throw failure
+                }
             }
         }
-        error("unreachable")
     }
 
     private fun noteFloodWait(seconds: Int) {
@@ -135,12 +160,13 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
         floodUntilMs = maxOf(floodUntilMs, until)
     }
 
+    /** Waits out a short FLOOD_WAIT; a long one is reported at once with its remaining seconds. */
     private suspend fun awaitFloodWait() {
         val waitMs = floodUntilMs - android.os.SystemClock.elapsedRealtime()
         if (waitMs <= 0) return
         val seconds = ((waitMs + 999) / 1_000).toInt()
-        if (telegramFloodRetryDelayMs(seconds) == null) throw TelegramFloodWaitException(seconds)
-        kotlinx.coroutines.delay(waitMs)
+        if (seconds > TELEGRAM_FLOOD_AUTO_WAIT_SECONDS + 1) throw TelegramFloodWaitException(seconds)
+        kotlinx.coroutines.delay(waitMs + 250)
     }
 
     /** Serializes native operations and keeps network work off the UI thread. */

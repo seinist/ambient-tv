@@ -70,6 +70,8 @@ interface TelegramClientPort {
     suspend fun media(chatId: Long, messageId: Int): TelegramMedia?
     /** The original photo is fetched only when the viewer opens, never while listing. */
     suspend fun photoFile(chatId: Long, messageId: Int): String? = null
+    /** Called once when Telegram reports the session as revoked or unknown ([TelegramSessionLostException]). */
+    fun setSessionLostListener(listener: ((String) -> Unit)?) = Unit
     /** Telegram's real (non-inline) thumbnail of a post as a local file URI, or null. */
     suspend fun thumbnail(chatId: Long, messageId: Int): String? = null
     /** A byte range from a Telegram file; Monogram downloadMessageMediaChunk does the MTProto I/O. */
@@ -264,6 +266,7 @@ class TelegramRepository @Inject constructor(
 
     /** Install only an already authenticated Monogram client, never a partially signed-in one. */
     fun installAuthorized(port: TelegramClientPort) {
+        port.setSessionLostListener { type -> scope.launch { sessionLost(port, type) } }
         if (client !== port) {
             streamEpoch.incrementAndGet()
             revokePlaybackUrls()
@@ -271,6 +274,23 @@ class TelegramRepository @Inject constructor(
         }
         client = port
         mutableAuthorized.value = true
+    }
+
+    /**
+     * Telegram ended the session (revoked in another app, account deactivated, unknown key).
+     * Every request would fail from now on: disconnect and show the sign-in state with the reason,
+     * like the Monogram app, instead of failing each screen with a generic error.
+     */
+    private suspend fun sessionLost(port: TelegramClientPort, type: String) {
+        if (client !== port) return
+        timber.log.Timber.w("Monogram session ended: %s", type)
+        loginMutex.withLock {
+            if (client !== port) return@withLock
+            disconnect()
+            restoredSessionOnce = false
+            mutableLogin.value = MonogramLoginState(MonogramLoginStep.READY,
+                error = appContext.getString(R.string.monogram_error_session_lost, type))
+        }
     }
 
     fun disconnect() {
@@ -477,6 +497,8 @@ class TelegramRepository @Inject constructor(
         } catch (wait: TelegramFloodWaitException) {
             flood = wait
             null
+        } catch (lost: TelegramSessionLostException) {
+            throw lost
         } catch (_: Exception) { null }
         if (!sameAccount(selected, identity, generation) || chatId in blockedChannels) return null
         if (live != null) return live

@@ -78,10 +78,18 @@ fun TelegramPostDetailScreen(
             if (media == null) error = unavailable
         } catch (cancelled: CancellationException) {
             throw cancelled
+        } catch (wait: com.ambient.tv.data.telegram.TelegramFloodWaitException) {
+            // Count the pause down on screen, then load again by itself (restarts this effect).
+            loading = false
+            for (left in wait.seconds downTo 1) {
+                error = context.getString(R.string.monogram_error_flood_wait, left)
+                kotlinx.coroutines.delay(1_000)
+            }
+            retry++
+        } catch (lost: com.ambient.tv.data.telegram.TelegramSessionLostException) {
+            error = context.getString(R.string.monogram_error_session_lost, lost.type)
         } catch (failure: Exception) {
-            error = (failure as? com.ambient.tv.data.telegram.TelegramFloodWaitException)
-                ?.let { context.getString(R.string.monogram_error_flood_wait, it.seconds) }
-                ?: failure.message ?: unavailable
+            error = failure.message ?: unavailable
         } finally {
             loading = false
         }
