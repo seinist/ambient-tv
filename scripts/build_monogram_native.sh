@@ -31,6 +31,12 @@ if [[ "${REBUILD_MONOGRAM:-0}" != "1" && -s "$output" && -f "$stamp" ]] &&
     echo "Reusing pinned Monogram MTProto-only AAR ($requested)"
     exit 0
 fi
+# Askama derives relative template paths from the crate path and its canonical form. With a
+# symlinked home (/home -> /var/home on Fedora Atomic) these resolve wrongly, so uniffi_bindgen
+# fails with "couldn't read". Keep the registry on the canonical path.
+export CARGO_HOME="$(realpath -m "${CARGO_HOME:-$HOME/.cargo}")"
+# Pinned upstream code: its lint warnings are not actionable here and bury real build output.
+export RUSTFLAGS="${RUSTFLAGS:-} --cap-lints allow"
 for command in git java python3 cargo cargo-ndk rustup; do
     command -v "$command" >/dev/null || { echo "Missing $command" >&2; exit 1; }
 done

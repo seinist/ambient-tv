@@ -2,6 +2,7 @@
 """Merge only native/mtproto AAR outputs, never the rest of Monogram."""
 from __future__ import annotations
 
+import os
 import sys
 import zipfile
 from pathlib import Path
@@ -33,7 +34,8 @@ def merge(output: Path, parts: list[str]) -> None:
                     raise ValueError(f"Non-native AAR content differs across ABIs: {name}")
                 common[name] = payload
     output.parent.mkdir(parents=True, exist_ok=True)
-    temp = output.with_suffix(".tmp")
+    # Unique per process: parallel builds in one checkout must not share the temp file.
+    temp = output.with_suffix(f".{os.getpid()}.tmp")
     with zipfile.ZipFile(temp, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=6) as z:
         for name, data in sorted((common | native).items()):
             z.writestr(name, data)

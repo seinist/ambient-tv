@@ -206,11 +206,11 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
         }
     }
 
-    override suspend fun sendPhoneCode(number: String): MonogramLoginState =
+    override suspend fun sendPhoneCode(phone: String): MonogramLoginState =
         nativeCall(connect = false) { h ->
-            require(number.startsWith("+") && number.length in 7..19) { app.getString(R.string.monogram_error_phone) }
-            val sent = native.sendAuthCode(h, number)
-            phone = sent.phone
+            require(phone.startsWith("+") && phone.length in 7..19) { app.getString(R.string.monogram_error_phone) }
+            val sent = native.sendAuthCode(h, phone)
+            this.phone = sent.phone
             codeHash = sent.phoneCodeHash
             MonogramLoginState(MonogramLoginStep.CODE).also { loginState = it }
         }
