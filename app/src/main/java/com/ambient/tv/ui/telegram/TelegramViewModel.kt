@@ -42,7 +42,8 @@ fun TelegramChannel.toBrowseItem(): MediaItem = MediaItem(
     index = null,
     // The avatar's display size (sharp), the inline preview as its fallback.
     thumbUrl = com.ambient.tv.data.telegram.monogramThumbModel(chatId, 0, thumbnailUrl),
-    artUrl = thumbnailUrl,
+    // Landscape tiles draw artUrl: the inline preview there replaced the sharp avatar again.
+    artUrl = com.ambient.tv.data.telegram.monogramThumbModel(chatId, 0, thumbnailUrl),
     year = null,
     summary = description,
     tagline = null,
@@ -72,6 +73,8 @@ internal fun telegramRows(
             "youtube" -> entry.kind == TelegramMediaKind.YOUTUBE
             "audio" -> entry.kind == TelegramMediaKind.AUDIO
             "photos" -> entry.kind == TelegramMediaKind.PHOTO
+            // Photos have their own category; "Neue Medien" is what plays.
+            "recent" -> entry.kind != TelegramMediaKind.PHOTO
             else -> true
         }
     }.distinctBy(TelegramMedia::contentKey)

@@ -710,6 +710,7 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
             "videos" -> { kind -> kind == TelegramMediaKind.VIDEO }
             "audio" -> { kind -> kind == TelegramMediaKind.AUDIO }
             "photos" -> { kind -> kind == TelegramMediaKind.PHOTO }
+            "recent" -> { kind -> kind != TelegramMediaKind.PHOTO }
             else -> { _ -> true }
         }
         // The cursor is "<feed>:<page>": a new value per page, or a caller that stops on an
