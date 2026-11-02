@@ -174,6 +174,7 @@ fun TelegramScreen(
     var layoutKey by rememberSaveable(sectionKey) { mutableStateOf(viewModel.viewMode(sectionKey).name) }
     val layout = MonogramBrowseLayout.valueOf(layoutKey)
     var gridColumns by remember { mutableIntStateOf(viewModel.gridColumns) }
+    var mediaSelection by remember { mutableStateOf(viewModel.mediaSelectionBehavior) }
     var listRows by remember { mutableIntStateOf(viewModel.listRows) }
     var sortKey by rememberSaveable(sectionKey) { mutableStateOf(MonogramBrowseSort.DATE.name) }
     val sort = MonogramBrowseSort.valueOf(sortKey)
@@ -602,6 +603,32 @@ fun TelegramScreen(
                             query = ""
                         },
                         onClose = closeOptions,
+                        extraContent = {
+                            com.ambient.tv.ui.common.RightPanelDivider()
+                            com.ambient.tv.ui.common.RightPanelSectionTitle(
+                                stringResource(R.string.telegram_media_selection_title),
+                                stringResource(R.string.telegram_media_selection_hint),
+                            )
+                            listOf(
+                                com.ambient.tv.data.local.MediaSelectionPreferences.DETAILS,
+                                com.ambient.tv.data.local.MediaSelectionPreferences.PLAY,
+                                com.ambient.tv.data.local.MediaSelectionPreferences.ASK,
+                            ).forEach { behavior ->
+                                com.ambient.tv.ui.common.RightPanelChoice(
+                                    text = stringResource(when (behavior) {
+                                        com.ambient.tv.data.local.MediaSelectionPreferences.DETAILS -> R.string.settings_media_selection_details
+                                        com.ambient.tv.data.local.MediaSelectionPreferences.ASK -> R.string.settings_media_selection_ask
+                                        else -> R.string.settings_media_selection_play
+                                    }),
+                                    selected = mediaSelection == behavior,
+                                    onClick = {
+                                        viewModel.mediaSelectionBehavior = behavior
+                                        mediaSelection = viewModel.mediaSelectionBehavior
+                                    },
+                                    modifier = Modifier.fillMaxWidth(),
+                                )
+                            }
+                        },
                     )
                 }
             }

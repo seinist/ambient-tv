@@ -1050,6 +1050,7 @@ private fun AmbientTvApp(
     var pendingMediaSelectionCollectionSort by remember { mutableStateOf<String?>(null) }
     var mediaSelectionBusy by remember { mutableStateOf(false) }
     var pendingYouTubeVideoId by remember { mutableStateOf<String?>(null) }
+    var pendingTelegramPost by remember { mutableStateOf<Triple<Long, Int, Long?>?>(null) }
     var pendingYouTubeBrowseSession by remember { mutableStateOf<Long?>(null) }
 
     fun navigateToDetails(ratingKey: String, collectionId: String? = null, collectionSort: String? = null) {
@@ -1219,6 +1220,23 @@ private fun AmbientTvApp(
             Destinations.youtubePlayer(videoId, browseSession),
             navigate = { route -> navController.navigateToYouTubeBrowsePlayer(route, closeDetails = browseSession != null) },
         )
+    }
+
+    /**
+     * A Monogram post selected on a browse page or Home. Like SmartTube, its own setting decides:
+     * post page, play, or ask. Only posts with a playback queue ([queue], i.e. Telegram's own
+     * video/audio) can play directly; YouTube link posts and photos keep the post page.
+     */
+    fun openTelegramPost(chatId: Long, messageId: Int, queue: Long?) {
+        val behavior = appPreferences.telegramMediaSelectionBehaviorKey
+        when {
+            queue == null || behavior == com.ambient.tv.data.local.MediaSelectionPreferences.DETAILS ->
+                navController.navigate(Destinations.telegramDetail(chatId, messageId, queue))
+            behavior == com.ambient.tv.data.local.MediaSelectionPreferences.PLAY ->
+                playOnSelectedTarget(Destinations.telegramPlayer(chatId, messageId, queue),
+                    navigate = { route -> navController.navigateToTelegramPlayer(route) })
+            else -> pendingTelegramPost = Triple(chatId, messageId, queue)
+        }
     }
 
     fun handleYouTubeSelection(videoId: String, browseSession: Long? = null) {
@@ -2219,7 +2237,7 @@ private fun AmbientTvApp(
                                 onYouTubeVideoClick = { videoId, session -> handleYouTubeSelection(videoId, session) },
                                 onTelegramPostClick = { key, queue ->
                                     com.ambient.tv.data.telegram.telegramPostIds(key)?.let { (chatId, messageId) ->
-                                        navController.navigate(Destinations.telegramDetail(chatId, messageId, queue))
+                                        openTelegramPost(chatId, messageId, queue)
                                     } ?: handleMediaSelection(key)
                                 },
                                 onRadioHomeStationClick = ::handleHomeRadioSelection,
@@ -2346,7 +2364,7 @@ private fun AmbientTvApp(
                                 onOpenSettings = { openSystemSettings("telegram:account") },
                                 onOpenChannel = { chatId -> navigateToSection(Destinations.telegramSection("channel:$chatId")) },
                                 onOpenPost = { chatId, messageId, queue ->
-                                    navController.navigate(Destinations.telegramDetail(chatId, messageId, queue))
+                                    openTelegramPost(chatId, messageId, queue)
                                 },
                             )
                         }
@@ -2360,7 +2378,7 @@ private fun AmbientTvApp(
                                 onOpenSettings = { openSystemSettings("telegram:account") },
                                 onOpenChannel = { chatId -> navigateToSection(Destinations.telegramSection("channel:$chatId")) },
                                 onOpenPost = { chatId, messageId, queue ->
-                                    navController.navigate(Destinations.telegramDetail(chatId, messageId, queue))
+                                    openTelegramPost(chatId, messageId, queue)
                                 },
                             )
                         }
@@ -2902,6 +2920,21 @@ private fun AmbientTvApp(
                     )
                 }
 
+                pendingTelegramPost?.let { (chatId, messageId, queue) ->
+                    // Same choice dialog as SmartTube: play or open the post page.
+                    YouTubeSelectionDialog(
+                        onDismiss = { pendingTelegramPost = null },
+                        onPlay = {
+                            pendingTelegramPost = null
+                            playOnSelectedTarget(Destinations.telegramPlayer(chatId, messageId, queue),
+                                navigate = { route -> navController.navigateToTelegramPlayer(route) })
+                        },
+                        onDetails = {
+                            pendingTelegramPost = null
+                            navController.navigate(Destinations.telegramDetail(chatId, messageId, queue))
+                        },
+                    )
+                }
                 pendingYouTubeVideoId?.let { videoId ->
                     YouTubeSelectionDialog(
                         onDismiss = {
