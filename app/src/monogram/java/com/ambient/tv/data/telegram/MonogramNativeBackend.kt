@@ -282,6 +282,20 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
                     val (id, hash) = checkNotNull(tokenStore.monogramCredentials()) {
                         app.getString(R.string.monogram_api_required)
                     }
+                    // Telegram's session list names the app by the API ID's registered title;
+                    // device and version are ours to report, so the session reads "Ambient TV".
+                    runCatching {
+                        val lang = java.util.Locale.getDefault().language.ifBlank { "en" }
+                        native.setInitConnectionInfo(
+                            deviceModel = listOf(android.os.Build.MANUFACTURER, android.os.Build.MODEL)
+                                .filter(String::isNotBlank).distinct().joinToString(" ").ifBlank { "Android TV" },
+                            systemVersion = "Android ${android.os.Build.VERSION.RELEASE}",
+                            appVersion = "Ambient TV ${com.ambient.tv.BuildConfig.VERSION_NAME}",
+                            systemLangCode = lang,
+                            langPack = "android",
+                            langCode = lang,
+                        )
+                    }
                     handle = native.createClient(id, hash, session.absolutePath)
                     native.setDownloadChunkKib(512)
                     connected = false
