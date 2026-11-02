@@ -647,6 +647,47 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
         actual.toURI().toString()
     }
 
+    /** Telegram's real thumbnail (MediaDownloadKind::Thumb), cached with the inline previews. */
+    override suspend fun thumbnail(chatId: Long, messageId: Int): String? = nativeCall { h ->
+        requireAuthorized(h)
+        if (chatId in leftChannels) return@nativeCall null
+        val expectedGeneration = cacheGeneration
+        val expectedAccount = accountId
+        val dir = File(cache, "thumbs-hd").apply { mkdirs() }.canonicalFile
+        val output = File(dir, "$chatId-$messageId.img")
+        if (output.isFile && output.length() > 0L) {
+            output.setLastModified(System.currentTimeMillis())
+            return@nativeCall output.toURI().toString()
+        }
+        val actual = File(native.downloadMessageThumb(h, chatId, messageId, output.path)).canonicalFile
+        if (actual.parentFile != dir || actual.length() !in 1L..(2L * 1024 * 1024)) {
+            actual.delete()
+            return@nativeCall null
+        }
+        synchronized(diskChunkLock) {
+            // A logout or account switch meanwhile: never keep the old account's image.
+            if (expectedAccount == null || accountId != expectedAccount || cacheGeneration != expectedGeneration) {
+                actual.delete()
+                return@nativeCall null
+            }
+            if (++previewWrites % 16 == 1) trimThumbnailCache(dir)
+        }
+        actual.toURI().toString()
+    }
+
+    /** Same bounds as the inline previews: 7 days, 500 files, 64 MiB. */
+    private fun trimThumbnailCache(dir: File) {
+        val files = dir.listFiles().orEmpty().filter { it.isFile }.sortedBy { it.lastModified() }
+        val expiry = System.currentTimeMillis() - 7L * 24 * 60 * 60 * 1000
+        var bytes = files.sumOf { it.length() }
+        var count = files.size
+        for (item in files) {
+            if (item.lastModified() >= expiry && count <= 500 && bytes <= 64L * 1024 * 1024) break
+            val size = item.length()
+            if (item.delete()) { bytes -= size; count-- }
+        }
+    }
+
     override suspend fun mediaPart(chatId: Long, messageId: Int, offset: Long): ByteArray =
         nativeCall { h ->
             requireAuthorized(h)

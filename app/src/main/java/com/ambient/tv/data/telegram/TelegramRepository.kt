@@ -9,6 +9,7 @@ import com.ambient.tv.data.files.MediaFileServer
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.sync.withPermit
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -69,6 +70,8 @@ interface TelegramClientPort {
     suspend fun media(chatId: Long, messageId: Int): TelegramMedia?
     /** The original photo is fetched only when the viewer opens, never while listing. */
     suspend fun photoFile(chatId: Long, messageId: Int): String? = null
+    /** Telegram's real (non-inline) thumbnail of a post as a local file URI, or null. */
+    suspend fun thumbnail(chatId: Long, messageId: Int): String? = null
     /** A byte range from a Telegram file; Monogram downloadMessageMediaChunk does the MTProto I/O. */
     suspend fun mediaPart(chatId: Long, messageId: Int, offset: Long): ByteArray
     /**
@@ -533,6 +536,23 @@ class TelegramRepository @Inject constructor(
         } ?: throw IllegalStateException(appContext.getString(R.string.monogram_error_search_timeout))
         if (!sameAccount(selected, identity, generation)) return emptyList()
         return telegramSearchResults(found, subscribed = null, excluded = blockedChannels, limit = limit)
+    }
+
+    /** Two at a time: a scrolled grid must not turn into a burst of RPCs (FLOOD_WAIT). */
+    private val thumbnailPermits = kotlinx.coroutines.sync.Semaphore(2)
+
+    /** Real thumbnail for a visible card (see [TelegramMedia.cardImageUrl]); null when unavailable. */
+    suspend fun thumbnailFile(chatId: Long, messageId: Int): String? {
+        val selected = client ?: return null
+        if (chatId in blockedChannels) return null
+        val generation = streamEpoch.get()
+        val identity = selected.cacheIdentity
+        val file = try {
+            thumbnailPermits.withPermit { selected.thumbnail(chatId, messageId) }
+        } catch (cancelled: kotlinx.coroutines.CancellationException) {
+            throw cancelled
+        } catch (_: Exception) { null }
+        return file.takeIf { sameAccount(selected, identity, generation) && chatId !in blockedChannels }
     }
 
     suspend fun mediaPart(chatId: Long, messageId: Int, offset: Long): ByteArray {

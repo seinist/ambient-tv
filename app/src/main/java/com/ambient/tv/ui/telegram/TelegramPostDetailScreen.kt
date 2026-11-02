@@ -118,7 +118,7 @@ fun TelegramPostDetailScreen(
                         Text(formatted, style = MaterialTheme.typography.labelMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
-                    selected.thumbnailUrl?.takeIf { selected.kind != TelegramMediaKind.YOUTUBE }?.let {
+                    selected.cardImageUrl?.takeIf { selected.kind != TelegramMediaKind.YOUTUBE }?.let {
                         ArtworkImage(it, selected.title,
                             Modifier.fillMaxWidth().height(230.dp).clip(RoundedCornerShape(12.dp)),
                             contentScale = ContentScale.Fit)
