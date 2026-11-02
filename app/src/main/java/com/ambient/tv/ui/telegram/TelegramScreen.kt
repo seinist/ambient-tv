@@ -678,9 +678,7 @@ private fun MonogramFileRow(
         listOfNotNull(
             caption.takeIf { fileTitle != null && it != fileTitle },
             item.parentTitle?.takeIf(String::isNotBlank),
-            item.addedAt?.takeIf { it > 0L }?.let {
-                java.text.DateFormat.getDateInstance(java.text.DateFormat.MEDIUM).format(java.util.Date(it))
-            },
+            item.addedAt?.takeIf { it > 0L }?.let { com.ambient.tv.ui.common.relativePublishedLabel(it) },
         ).joinToString(" · ")
     }
     val meta = remember(item, media) {
@@ -722,7 +720,7 @@ private fun MonogramListItem(
     val info = remember(item, locale) {
         monogramCardMeta(
             item,
-            dateLabel = { java.text.DateFormat.getDateInstance(java.text.DateFormat.MEDIUM).format(java.util.Date(it)) },
+            dateLabel = { com.ambient.tv.ui.common.relativePublishedLabel(it) },
             durationLabel = { com.ambient.tv.ui.common.formatPlaybackClock(it) },
         )
     }

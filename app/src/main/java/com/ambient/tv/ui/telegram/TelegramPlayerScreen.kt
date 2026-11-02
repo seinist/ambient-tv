@@ -790,11 +790,7 @@ private fun TelegramPlaybackContent(
                     com.ambient.tv.ui.player.playerDetailForTelegram(
                         media = media,
                         channel = channel,
-                        formatDate = { ms ->
-                            java.text.DateFormat.getDateTimeInstance(
-                                java.text.DateFormat.MEDIUM, java.text.DateFormat.SHORT, locale,
-                            ).format(java.util.Date(ms))
-                        },
+                        formatDate = { ms -> com.ambient.tv.ui.common.relativePublishedLabel(ms, withTime = true) },
                         formatSize = { bytes -> android.text.format.Formatter.formatShortFileSize(context, bytes) },
                         playerDurationMs = playerDuration,
                     )

@@ -263,6 +263,7 @@ class TelegramViewModel @Inject constructor(
                 items = (old.items + row.items).distinctBy(MediaItem::ratingKey),
             )
         }
+        repository.prefetchThumbnails(pageMedia)
         val earlier = if (append) mutableState.value.media else emptyMap()
         mutableState.value = TelegramBrowseState(
             section = section, available = true, rows = merged.values.toList(),

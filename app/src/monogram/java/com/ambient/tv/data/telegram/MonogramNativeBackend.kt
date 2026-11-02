@@ -314,6 +314,9 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
                     }
                     handle = native.createClient(id, hash, session.absolutePath)
                     native.setDownloadChunkKib(512)
+                    // Upstream default: 2 media lanes. A grid of cards queued behind them, each
+                    // preview took 5-10 s; Monogram's "faster downloads" allows up to 8.
+                    runCatching { native.setDownloadConcurrency(6, 8) }
                     connected = false
                 }
                 if (connect && !connected) {
@@ -730,6 +733,7 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
                     val all = knownChannels(h, loaded + RECENT_CATALOG_STEP)
                     MonogramRecentTimeline.CatalogPage(all.map(::timelineChannel), unloadedBound())
                 },
+                parallelism = RECENT_PARALLEL_CHANNELS,
             ) { id, offset, size ->
                 val history = if (filter != null)
                     native.searchMessagesPage(h, id, "", filter, offset, 0, size).messages
@@ -870,7 +874,20 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
      * do), so it returned the same ~40 px image again; Display is the getFile size Monogram
      * itself uses to sharpen a cell. Thumb stays the fallback, but never the inline bytes.
      */
-    override suspend fun thumbnail(chatId: Long, messageId: Int): String? = nativeCall { h ->
+    override suspend fun thumbnail(chatId: Long, messageId: Int): String? {
+        // A preview on disk needs no MTProto at all: never queue it behind connecting, a
+        // FLOOD_WAIT or other RPCs (cards stayed on the inline preview meanwhile).
+        if (accountId != null && chatId !in leftChannels) {
+            val cached = File(File(cache, "previews"), "$chatId-$messageId.img")
+            if (cached.isFile && cached.length() > 0L) {
+                cached.setLastModified(System.currentTimeMillis())
+                return cached.toURI().toString()
+            }
+        }
+        return downloadThumbnail(chatId, messageId)
+    }
+
+    private suspend fun downloadThumbnail(chatId: Long, messageId: Int): String? = nativeCall { h ->
         requireAuthorized(h)
         if (chatId in leftChannels) return@nativeCall null
         val expectedGeneration = cacheGeneration
@@ -914,7 +931,11 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
                 runCatching { returned.copyTo(output, overwrite = true) }.getOrNull() ?: return@nativeCall null
             else -> return@nativeCall null
         }
-        if (actual.length() !in 1L..(2L * 1024 * 1024)) {
+        // A thumbnail no larger than the inline preview (the Thumb fallback can return the
+        // stripped ~40 px image) is never cached as the sharp one.
+        val bounds = android.graphics.BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        android.graphics.BitmapFactory.decodeFile(actual.path, bounds)
+        if (actual.length() !in 1L..(2L * 1024 * 1024) || maxOf(bounds.outWidth, bounds.outHeight) < 120) {
             actual.delete()
             return@nativeCall null
         }
@@ -1009,6 +1030,8 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
         /** Channels added to the recent timeline per catalog step. */
         const val RECENT_CATALOG_STEP = 20
         const val PLAYBACK_FLOOD_WAIT_SECONDS = 30
+        /** Channel histories fetched at once by a timeline page. */
+        const val RECENT_PARALLEL_CHANNELS = 6
         /** Native dispatch classes (ffi.rs set_dispatch_class). */
         const val DISPATCH_READ = 0
         const val DISPATCH_VISIBLE = 6

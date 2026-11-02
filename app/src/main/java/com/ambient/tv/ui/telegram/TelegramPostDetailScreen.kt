@@ -122,8 +122,7 @@ fun TelegramPostDetailScreen(
                     TvActionButton(selected.channel, onClick = { onOpenChannel(selected.chatId) })
                     if (selected.publishedAtMs > 0L) {
                         val formatted = remember(selected.publishedAtMs) {
-                            DateFormat.getDateTimeInstance(DateFormat.MEDIUM, DateFormat.SHORT)
-                                .format(Date(selected.publishedAtMs))
+                            com.ambient.tv.ui.common.relativePublishedLabel(selected.publishedAtMs, withTime = true)
                         }
                         Text(formatted, style = MaterialTheme.typography.labelMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant)
