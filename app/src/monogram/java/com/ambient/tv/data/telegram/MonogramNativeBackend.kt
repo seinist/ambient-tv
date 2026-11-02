@@ -7,6 +7,7 @@ import com.ambient.tv.data.local.TokenStore
 import java.io.File
 import org.json.JSONArray
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
@@ -16,6 +17,7 @@ import uniffi.monogram_mtproto.ChatDto
 import uniffi.monogram_mtproto.MessageDto
 import uniffi.monogram_mtproto.MtprotoException
 import uniffi.monogram_mtproto.QrLoginDto
+import uniffi.monogram_mtproto.UpdateEventDto
 
 /**
  * The ONLY application-side dependency on Monogram, compiled exclusively with
@@ -101,6 +103,98 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
 
     private fun clearHistoryPages() = synchronized(historyPages) { historyPages.clear() }
 
+    /**
+     * Telegram's update stream, like the Monogram app's UpdatesPump but only for what Ambient TV
+     * shows: new, edited or deleted posts drop the shared history pages of that channel (the
+     * next look is fresh instead of up to two minutes old) and keep the channel's latest date
+     * current, so "recent" sorts new posts in. Nothing on screen is replaced by it.
+     */
+    private val updatesScope = kotlinx.coroutines.CoroutineScope(
+        kotlinx.coroutines.SupervisorJob() + Dispatchers.IO)
+    private var updatesJob: kotlinx.coroutines.Job? = null
+    @Volatile private var updatesStarted = false
+
+    private fun startUpdatesPump() {
+        if (updatesJob?.isActive == true) return
+        updatesJob = updatesScope.launch {
+            var backoffMs = UPDATES_POLL_MS
+            while (true) {
+                kotlinx.coroutines.delay(backoffMs)
+                backoffMs = try {
+                    applyUpdates(nativeCall { h -> drainUpdateEvents(h) })
+                    UPDATES_POLL_MS
+                } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                    throw cancelled
+                } catch (lost: TelegramSessionLostException) {
+                    return@launch
+                } catch (failure: Exception) {
+                    // After a reconnect the stream has to be started again.
+                    updatesStarted = false
+                    (backoffMs * 2).coerceIn(4_000L, 30_000L)
+                }
+            }
+        }
+    }
+
+    private fun stopUpdatesPump() {
+        updatesJob?.cancel()
+        updatesJob = null
+        updatesStarted = false
+    }
+
+    /** Drains and acknowledges the delivered batches; replays pending ones when asked to. */
+    private fun drainUpdateEvents(h: Long): List<UpdateEventDto> {
+        if (!native.isAuthorized(h)) return emptyList()
+        if (!updatesStarted) {
+            native.startUpdates(h)
+            updatesStarted = true
+        }
+        val drained = native.drainUpdateBatches(h)
+        val batches = if (drained.replayRequired)
+            (drained.batches + native.pendingUpdateBatches(h)).distinctBy { it.batchId }
+        else drained.batches
+        // Nothing is stored durably here: acknowledge so the native side does not redeliver.
+        batches.forEach { batch ->
+            runCatching { native.acknowledgeUpdateBatch(h, batch.accountGeneration, batch.batchId) }
+        }
+        return batches.flatMap { it.events } + drained.liveEvents
+    }
+
+    private fun applyUpdates(events: List<UpdateEventDto>) {
+        if (events.isEmpty()) return
+        val touched = HashSet<Long>()
+        var everything = false
+        val latest = HashMap<Long, Pair<Long, Int>>()
+        for (event in events) {
+            when (event) {
+                is UpdateEventDto.NewMessage -> {
+                    touched += event.message.chatId
+                    val date = event.message.date.toLong()
+                    if ((latest[event.message.chatId]?.first ?: Long.MIN_VALUE) < date)
+                        latest[event.message.chatId] = date to event.message.id
+                }
+                is UpdateEventDto.MessageEdited -> touched += event.message.chatId
+                is UpdateEventDto.MessagesDeleted -> event.chatId?.let { touched += it } ?: run { everything = true }
+                else -> Unit
+            }
+        }
+        synchronized(historyPages) {
+            if (everything) historyPages.clear()
+            else historyPages.keys.removeAll { it.first in touched }
+        }
+        // Newer last-message dates for loaded dialogs. The catalog's last entry is the paging
+        // offset for loadMoreChats and stays untouched.
+        val lastIndex = chats.size - 1
+        latest.forEach { (chatId, newest) ->
+            val index = chats.indexOfFirst { it.id == chatId }
+            if (index in 0 until lastIndex) {
+                val chat = chats[index]
+                if ((chat.lastMessageDate ?: 0L) < newest.first)
+                    chats[index] = chat.copy(lastMessageDate = newest.first, lastMessageId = newest.second)
+            }
+        }
+    }
+
     @Volatile private var sessionLostListener: ((String) -> Unit)? = null
     override fun setSessionLostListener(listener: ((String) -> Unit)?) { sessionLostListener = listener }
 
@@ -146,6 +240,8 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
                     }
                     TelegramFailureKind.SESSION -> {
                         val type = telegramSessionErrorType(failure.message)
+                        updatesJob?.cancel()
+                        updatesStarted = false
                         sessionLostListener?.invoke(type)
                         throw TelegramSessionLostException(type)
                     }
@@ -212,6 +308,7 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
     }
 
     private fun wipeLocalLocked() {
+        stopUpdatesPump()
         if (handle != 0L) {
             // Waits for RPCs still using the handle (a running media chunk, a thumbnail).
             handleUse.writeLock().lock()
@@ -265,6 +362,7 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
         phone = null
         codeHash = null
         epoch++
+        startUpdatesPump()
         loginState = MonogramLoginState(MonogramLoginStep.AUTHORIZED, account = label)
         return loginState
     }
@@ -337,6 +435,7 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
         nativeCall { h -> authorized(native.checkPassword(h, password).userId) }
 
     override suspend fun logout() {
+        stopUpdatesPump()
         nativeCall { h -> native.logout(h) }
         mutex.withLock {
             chats.clear(); clearHistoryPages()
@@ -802,6 +901,8 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
         const val CATALOG_ROUND_PAUSE_MS = 300L
         /** Channels added to the recent timeline per catalog step. */
         const val RECENT_CATALOG_STEP = 20
+        /** Update stream drain interval; draining is local, it sends nothing to Telegram. */
+        const val UPDATES_POLL_MS = 5_000L
         /** Shared channel history pages: long enough for one browse session across categories. */
         const val HISTORY_PAGE_TTL_MS = 120_000L
         const val HISTORY_SHARED_PAGE = 60
