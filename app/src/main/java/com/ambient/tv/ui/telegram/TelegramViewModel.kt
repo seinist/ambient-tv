@@ -112,6 +112,8 @@ class TelegramViewModel @Inject constructor(
         (if (section == "audio" || section == "photos") MonogramBrowseLayout.FILES else MonogramBrowseLayout.GRID).let { default ->
             runCatching { MonogramBrowseLayout.valueOf(preferences.sectionViewMode("monogram.$section") ?: default.name) }
                 .getOrDefault(default)
+                // A list chosen before the file list existed becomes the file list.
+                .let { if (default == MonogramBrowseLayout.FILES && it == MonogramBrowseLayout.LIST) default else it }
         }
     internal fun changeViewMode(section: String, mode: MonogramBrowseLayout) =
         preferences.setSectionViewMode("monogram.$section", mode.name)

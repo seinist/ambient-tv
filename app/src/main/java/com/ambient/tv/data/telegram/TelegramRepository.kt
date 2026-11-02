@@ -604,8 +604,11 @@ class TelegramRepository @Inject constructor(
         return telegramSearchResults(found, subscribed = null, excluded = blockedChannels, limit = limit)
     }
 
-    /** Two at a time: a scrolled grid must not turn into a burst of RPCs (FLOOD_WAIT). */
-    private val thumbnailPermits = kotlinx.coroutines.sync.Semaphore(2)
+    /**
+     * Card images load a few at a time: two made a scrolled grid fill very slowly; the native
+     * media lanes spread six, and getFile of preview sizes rarely hits FLOOD_WAIT.
+     */
+    private val thumbnailPermits = kotlinx.coroutines.sync.Semaphore(6)
 
     /** Real thumbnail for a visible card (see [TelegramMedia.cardImageUrl]); null when unavailable. */
     suspend fun thumbnailFile(chatId: Long, messageId: Int): String? {
