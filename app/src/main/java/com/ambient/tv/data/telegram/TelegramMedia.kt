@@ -177,6 +177,11 @@ fun telegramYouTubeIds(text: String): List<String> {
 }
 
 const val MONOGRAM_THUMB_SCHEME = "monogram-thumb"
+/** Full photo of a post (photo viewer); same parameters as [monogramThumbModel]. */
+const val MONOGRAM_PHOTO_SCHEME = "monogram-photo"
+
+fun monogramPhotoModel(chatId: Long, messageId: Int, fallback: String?): String =
+    monogramThumbModel(chatId, messageId, fallback).replaceFirst(MONOGRAM_THUMB_SCHEME, MONOGRAM_PHOTO_SCHEME)
 
 /** Image model for a post's real thumbnail; [fallback] (the inline preview) if it cannot load. */
 fun monogramThumbModel(chatId: Long, messageId: Int, fallback: String?): String =
@@ -186,7 +191,8 @@ fun monogramThumbModel(chatId: Long, messageId: Int, fallback: String?): String 
 data class MonogramThumbRef(val chatId: Long, val messageId: Int, val fallback: String?)
 
 fun parseMonogramThumbModel(value: String): MonogramThumbRef? {
-    val rest = value.removePrefix("$MONOGRAM_THUMB_SCHEME://").takeIf { it != value } ?: return null
+    val rest = value.removePrefix("$MONOGRAM_THUMB_SCHEME://").takeIf { it != value }
+        ?: value.removePrefix("$MONOGRAM_PHOTO_SCHEME://").takeIf { it != value } ?: return null
     val path = rest.substringBefore('?')
     val fallback = rest.substringAfter('?', "").takeIf { it.startsWith("fallback=") }
         ?.removePrefix("fallback=")?.let { java.net.URLDecoder.decode(it, "UTF-8") }?.takeIf { it.isNotBlank() }

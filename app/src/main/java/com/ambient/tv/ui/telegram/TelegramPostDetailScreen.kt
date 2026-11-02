@@ -61,6 +61,8 @@ fun TelegramPostDetailScreen(
     onOpenSettings: () -> Unit,
     onOpenChannel: (Long) -> Unit,
     onPlayMedia: (Long, Int) -> Unit,
+    /** Photos open in the photo viewer, not the player. */
+    onOpenPhoto: (TelegramMedia) -> Unit = { onPlayMedia(it.chatId, it.messageId) },
     onOpenYouTube: (String) -> Unit,
 ) {
     var media by remember(chatId, messageId) { mutableStateOf<TelegramMedia?>(null) }
@@ -135,7 +137,10 @@ fun TelegramPostDetailScreen(
                         TvActionButton(
                             stringResource(if (selected.kind == TelegramMediaKind.PHOTO)
                                 R.string.monogram_open_photo else R.string.common_play),
-                            onClick = { onPlayMedia(selected.chatId, selected.messageId) },
+                            onClick = {
+                                if (selected.kind == TelegramMediaKind.PHOTO) onOpenPhoto(selected)
+                                else onPlayMedia(selected.chatId, selected.messageId)
+                            },
                         )
                     } else if (selected.protectedContent) {
                         Text(stringResource(R.string.monogram_protected_post),

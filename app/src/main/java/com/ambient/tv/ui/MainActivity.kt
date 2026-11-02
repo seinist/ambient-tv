@@ -2408,6 +2408,13 @@ private fun AmbientTvApp(
                                     navigate = { route -> navController.navigateToTelegramPlayer(route) })
                             },
                             onOpenYouTube = { videoId -> handleYouTubeSelection(videoId) },
+                            onOpenPhoto = { media ->
+                                val (entries, start) = com.ambient.tv.ui.telegram.TelegramPhotoGallery.open(media)
+                                com.ambient.tv.ui.photos.PhotoLaunch.deps(photoContext).photoSession().request = com.ambient.tv.data.photos.PhotoViewerSession.Request(
+                                    title = media.channel, entries = entries, startIndex = start,
+                                    startSlideshow = false, albumKey = null)
+                                navController.navigate(Destinations.PHOTO_VIEWER)
+                            },
                         )
                     }
                     composable(Destinations.TELEGRAM_PLAYER,

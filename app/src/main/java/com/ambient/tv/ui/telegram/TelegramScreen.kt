@@ -291,6 +291,8 @@ fun TelegramScreen(
         state.section == sectionKey && (!state.loading || state.rows.isNotEmpty()),
     )
     fun choose(item: MediaItem, origin: List<MediaItem>, rowId: String? = null) {
+        // The photo viewer steps through this page's photos in the order shown.
+        if (item.type == "photo") TelegramPhotoGallery.offer(origin.mapNotNull { viewModel.selected(it.ratingKey) })
         if (item.ratingKey.startsWith(TELEGRAM_CHANNEL_ITEM_PREFIX)) {
             item.ratingKey.removePrefix(TELEGRAM_CHANNEL_ITEM_PREFIX)
                 .toLongOrNull()?.let(onOpenChannel)
