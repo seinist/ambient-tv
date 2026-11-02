@@ -69,6 +69,38 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
     override val accountName get() = label
     override val cacheIdentity: String? get() = accountId?.toString()
 
+    private class HistoryPage(val requested: Int, val messages: List<MessageDto>, val atMs: Long)
+
+    /**
+     * Channel history pages shared by every category. Videos, YouTube, audio, photos and
+     * recent read the same pages and only filter them differently: each page used to be
+     * fetched once per category, which on a cold start alone tripped FLOOD_WAIT.
+     * Keyed by channel and offset message id; the first n messages of a larger page from the
+     * same offset are exactly the page of size n. Cleared with the channel catalog
+     * (account change, logout, manual refresh, leaving a channel).
+     */
+    private val historyPages = LinkedHashMap<Pair<Long, Int>, HistoryPage>(64, 0.75f, true)
+
+    private fun historyPage(h: Long, chatId: Long, size: Int, offset: Int): List<MessageDto> {
+        val key = chatId to offset
+        val now = android.os.SystemClock.elapsedRealtime()
+        synchronized(historyPages) {
+            historyPages[key]?.takeIf { now - it.atMs < HISTORY_PAGE_TTL_MS &&
+                (it.requested >= size || it.messages.size < it.requested) }
+                ?.let { return it.messages.take(size) }
+        }
+        // One shared, slightly larger page serves the smaller requests of other categories.
+        val requested = maxOf(size, HISTORY_SHARED_PAGE).coerceAtMost(100)
+        val fetched = native.getHistoryPage(h, chatId, requested, offset, 0, 0)
+        synchronized(historyPages) {
+            historyPages[key] = HistoryPage(requested, fetched, now)
+            while (historyPages.size > HISTORY_PAGE_LIMIT) historyPages.remove(historyPages.keys.first())
+        }
+        return fetched.take(size)
+    }
+
+    private fun clearHistoryPages() = synchronized(historyPages) { historyPages.clear() }
+
     /** Monotonic end of a FLOOD_WAIT Telegram asked for; every RPC waits it out first. */
     @Volatile private var floodUntilMs = 0L
 
@@ -176,7 +208,7 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
         // account.session, account.id and any native side files of this account.
         session.parentFile?.listFiles()?.forEach { it.deleteRecursively() }
         accountId = null
-        chats.clear()
+        chats.clear(); clearHistoryPages()
         chatsExhausted = false
         phone = null
         codeHash = null
@@ -202,7 +234,7 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
         accountId?.let { label = "Monogram #$it" }
         leftChannels.clear()
         recentFeeds.clear()
-        chats.clear()
+        chats.clear(); clearHistoryPages()
         chatsExhausted = false
         phone = null
         codeHash = null
@@ -281,7 +313,7 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
     override suspend fun logout() {
         nativeCall { h -> native.logout(h) }
         mutex.withLock {
-            chats.clear()
+            chats.clear(); clearHistoryPages()
             chatsExhausted = false
             recentFeeds.clear()
             leftChannels.clear()
@@ -303,7 +335,7 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
 
     override suspend fun refreshCatalog() {
         browseMutex.withLock {
-            chats.clear()
+            chats.clear(); clearHistoryPages()
             chatsExhausted = false
             recentFeeds.clear()
         }
@@ -371,7 +403,7 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
             val joined = native.joinChat(h, chatId).joined
             if (joined) {
                 leftChannels.remove(chatId)
-                chats.clear()
+                chats.clear(); clearHistoryPages()
                 chatsExhausted = false
                 recentFeeds.clear()
                 epoch++
@@ -392,7 +424,7 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
                 cache.mkdirs()
                 previewWrites = 0
             }
-            chats.clear()
+            chats.clear(); clearHistoryPages()
             chatsExhausted = false
             recentFeeds.clear()
             epoch++
@@ -510,7 +542,7 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
                         (channel.lastMessageDate ?: 0L) * 1000L)
                 }
             MonogramRecentTimeline(channels) { id, offset, size ->
-                val history = native.getHistoryPage(h, id, size, offset, 0, 0)
+                val history = historyPage(h, id, size, offset)
                 val title = chats.firstOrNull { it.id == id }?.title ?: "Monogram"
                 val items = history.mapNotNull { entry -> media(h, entry, title) }
                 val next = history.lastOrNull()?.id?.takeIf { history.size == size }
@@ -550,7 +582,7 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
             while (index < available.size && items.size < limit.coerceIn(1, 60) && steps++ < 12) {
                 val (id, title) = available[index]
                 val fetchLimit = minOf(60, limit.coerceIn(1, 60) - items.size)
-                val history = native.getHistoryPage(h, id, fetchLimit, offset, 0, 0)
+                val history = historyPage(h, id, fetchLimit, offset)
                 val mapped = history.mapNotNull { media(h, it, title) }
                     .flatMap { item -> if (section == "youtube") item.youtubePosts() else listOf(item) }
                     .filter {
@@ -749,6 +781,10 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
 
     private companion object {
         const val CATALOG_ROUND_PAUSE_MS = 300L
+        /** Shared channel history pages: long enough for one browse session across categories. */
+        const val HISTORY_PAGE_TTL_MS = 120_000L
+        const val HISTORY_SHARED_PAGE = 60
+        const val HISTORY_PAGE_LIMIT = 256
         const val SEARCH_GLOBAL_LIMIT = 50
         const val SEARCH_SUPPLEMENT_CHANNELS = 3
         const val SEARCH_CHANNEL_LIMIT = 20
