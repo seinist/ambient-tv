@@ -2287,6 +2287,7 @@
     <string name="monogram_error_channel_left">You left this channel</string>
     <string name="monogram_error_account_changed">The Monogram account or channel membership changed</string>
     <string name="monogram_error_media_unavailable">This Monogram media is unavailable</string>
+    <string name="monogram_channel_new_posts">New posts</string>
     <string name="monogram_view_files">File list</string>
     <string name="monogram_error_flood_wait">Telegram asks for a pause of %1$d s. Please try again shortly.</string>
     <string name="monogram_error_session_lost">Telegram ended this sign-in (%1$s). Please sign in again.</string>

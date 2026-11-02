@@ -40,7 +40,8 @@ fun TelegramChannel.toBrowseItem(): MediaItem = MediaItem(
     title = title,
     type = "collection",
     index = null,
-    thumbUrl = thumbnailUrl,
+    // The avatar's display size (sharp), the inline preview as its fallback.
+    thumbUrl = com.ambient.tv.data.telegram.monogramThumbModel(chatId, 0, thumbnailUrl),
     artUrl = thumbnailUrl,
     year = null,
     summary = description,
@@ -54,6 +55,9 @@ fun TelegramChannel.toBrowseItem(): MediaItem = MediaItem(
     contentRating = null,
     rating = null,
     studio = null,
+    addedAt = lastPostAtMs,
+    leafCount = unreadCount.takeIf { it > 0 },
+    viewedLeafCount = 0.takeIf { unreadCount > 0 },
 )
 
 /** [includeYouTubeLinks] false without a usable SmartTube: YouTube link cards could not play. */

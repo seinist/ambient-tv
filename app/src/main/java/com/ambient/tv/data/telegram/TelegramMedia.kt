@@ -68,6 +68,9 @@ data class TelegramChannel(
     val thumbnailUrl: String? = null,
     /** Unknown until the native session confirms the channel's membership. */
     val subscribed: Boolean? = null,
+    /** Unread posts: the channel tile's "new" badge, like SmartTube's channels. */
+    val unreadCount: Int = 0,
+    val lastPostAtMs: Long? = null,
 )
 
 const val TELEGRAM_MEDIA_PREFIX = "telegram:"
@@ -198,6 +201,7 @@ fun parseMonogramThumbModel(value: String): MonogramThumbRef? {
     val parts = path.split('/')
     if (parts.size != 2) return null
     val chatId = parts[0].toLongOrNull()?.takeIf { it != 0L } ?: return null
-    val messageId = parts[1].toIntOrNull()?.takeIf { it > 0 } ?: return null
+    // Message 0 is the channel's own avatar.
+    val messageId = parts[1].toIntOrNull()?.takeIf { it >= 0 } ?: return null
     return MonogramThumbRef(chatId, messageId, fallback)
 }

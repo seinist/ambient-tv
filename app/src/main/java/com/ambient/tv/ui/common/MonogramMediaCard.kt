@@ -86,6 +86,12 @@ internal fun MonogramArtwork(
                 tint = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.fillMaxHeight(.64f).aspectRatio(1f),
             )
+            // Unread posts, labelled like SmartTube's "new videos" so it cannot read as presence.
+            if ((item.leafCount ?: 0) > 0) com.ambient.tv.ui.common.MetaBadge(
+                text = androidx.compose.ui.res.stringResource(com.ambient.tv.R.string.monogram_channel_new_posts),
+                emphasized = true,
+                modifier = Modifier.align(Alignment.TopEnd).padding(7.dp),
+            )
         }
     } else {
         // The post's inline preview is on disk already: show it at once and let the sharp

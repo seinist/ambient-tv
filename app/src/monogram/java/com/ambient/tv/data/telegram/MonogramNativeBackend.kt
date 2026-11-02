@@ -546,7 +546,8 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
             val result = all.drop(index).take(limit.coerceIn(1, 60))
             TelegramChannelPage(result.map {
                 TelegramChannel(it.id, it.title, thumbnailUrl = preview(h, it.id, 0, true),
-                    subscribed = !it.left)
+                    subscribed = !it.left, unreadCount = it.unreadCount,
+                    lastPostAtMs = it.lastMessageDate?.takeIf { date -> date > 0 }?.times(1000L))
             }, if (index + result.size < all.size || (!chatsExhausted && result.isNotEmpty()))
                 cursor(index + result.size) else null)
         } }
