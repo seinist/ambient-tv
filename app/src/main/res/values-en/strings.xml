@@ -843,8 +843,9 @@
     <string name="nav_spotify_artists">Artists</string>
     <string name="nav_spotify_now_playing">Now Playing</string>
     <string name="nav_spotify_sign_in">Sign in</string>
-    <string name="settings_export_safe">Export without credentials</string>
-    <string name="settings_export_with_credentials">Export with credentials</string>
+    <string name="settings_export_safe">Export without sign-ins</string>
+    <string name="settings_export_with_sessions">Export with sign-in sessions</string>
+    <string name="settings_export_with_credentials">Export with sessions and passwords</string>
     <string name="settings_backup_passphrase_set">Protect the backup</string>
     <string name="settings_backup_passphrase_set_hint">Protects the backup with its passwords (min. 8 characters). No restore without it.</string>
     <string name="settings_backup_passphrase_enter">Encrypted backup</string>

@@ -93,10 +93,16 @@ internal object CompanionBackupPolicy {
         return fields.joinToString("\u0000") { key -> p.text(key).let { if (key == "host") normalizedHost(it) else it } }
     }
 
-    fun prepareWithInfo(source: SettingsBackup, credentials: Boolean, mode: String = "settings"): Prepared {
+    /**
+     * [sessions]: login sessions (Plex/Jellyfin/Emby tokens, SmartTube accounts, Spotify tokens),
+     * so the receiver is signed in. [credentials]: passwords and keys. Both are off by default
+     * and chosen separately; a Telegram user session is never part of either.
+     */
+    fun prepareWithInfo(source: SettingsBackup, credentials: Boolean, mode: String = "settings",
+        sessions: Boolean = credentials): Prepared {
         require(mode in setOf("accounts", "settings", "preferences", "nav_sounds"))
         if (mode == "nav_sounds") {
-            require(!credentials)
+            require(!credentials && !sessions)
             com.ambient.tv.ui.sound.NavSoundBank.import(source.navSoundBank.ifBlank { com.ambient.tv.ui.sound.NavSoundBank().encode() })
             require(source.navSoundsVolume.isFinite() && source.navSoundsVolume in 0f..1f)
             return Prepared(JsonObject(obj(source).filterKeys { it in navSounds || it in setOf("schemaVersion", "exportedAtEpochMs") })
@@ -108,20 +114,25 @@ internal object CompanionBackupPolicy {
         }.toMutableMap())
         val allowed = accounts + if (mode == "settings") portable + hardware else emptySet()
         val s = obj(source).filterKeys { it in allowed }.toMutableMap()
-        if (!credentials) {
+        if (!sessions) {
             for (field in listOf("servers", "jellyfinServers", "embyServers")) s[field] = JsonArray(s.getValue(field).jsonArray.map {
-                JsonObject(it.jsonObject.toMutableMap().apply { put("token", JsonNull); if (field != "servers") put("password", JsonNull) })
+                JsonObject(it.jsonObject.toMutableMap().apply { put("token", JsonNull) })
             })
-            s["smbPasswords"] = JsonObject(emptyMap()); s["sshKeys"] = JsonObject(emptyMap()); s["tvheadendPassword"] = JsonNull; s["tmdbApiKey"] = JsonNull
-            // Like Telegram's native session, its API application keys never travel in a
-            // companion transfer unless the user explicitly selected credentials.
-            s["monogramApiCredentials"] = JsonNull
             s["smartTubeAccounts"]?.takeUnless { it == JsonNull }?.let { accounts ->
                 s["smartTubeAccounts"] = JsonArray(accounts.jsonArray.map { JsonObject(it.jsonObject + ("credential" to JsonNull)) })
             }
             s["spotifyAccount"]?.takeUnless { it == JsonNull }?.let {
                 s["spotifyAccount"] = JsonObject(it.jsonObject + mapOf("accessToken" to JsonNull, "refreshToken" to JsonNull))
             }
+        }
+        if (!credentials) {
+            for (field in listOf("jellyfinServers", "embyServers")) s[field] = JsonArray(s.getValue(field).jsonArray.map {
+                JsonObject(it.jsonObject.toMutableMap().apply { put("password", JsonNull) })
+            })
+            s["smbPasswords"] = JsonObject(emptyMap()); s["sshKeys"] = JsonObject(emptyMap()); s["tvheadendPassword"] = JsonNull; s["tmdbApiKey"] = JsonNull
+            // Like Telegram's native session, its API application keys never travel in a
+            // companion transfer unless the user explicitly selected credentials.
+            s["monogramApiCredentials"] = JsonNull
             s.remove("wireGuardPrivateKey"); s.remove("wireGuardPresharedKey")
             // Playlist URLs carry the provider account; the OpenSubtitles key is the user's own.
             for (key in listOf("iptvSources", "openSubtitlesApiKey", "openSubtitlesUsername", "openSubtitlesPassword")) s[key] = JsonNull
@@ -136,7 +147,8 @@ internal object CompanionBackupPolicy {
     /** Companion payload plus whether title/scope profiles had to stay on this TV to fit [MAX_BYTES]. */
     data class Prepared(val json: String, val profilesOmitted: Boolean)
 
-    fun prepare(source: SettingsBackup, credentials: Boolean, mode: String = "settings"): String = prepareWithInfo(source, credentials, mode).json
+    fun prepare(source: SettingsBackup, credentials: Boolean, mode: String = "settings", sessions: Boolean = credentials): String =
+        prepareWithInfo(source, credentials, mode, sessions).json
 
     /**
      * Title and season/series/collection profiles travel compactly (no nulls, no default values). If the

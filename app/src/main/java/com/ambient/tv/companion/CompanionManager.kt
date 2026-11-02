@@ -911,7 +911,8 @@ class CompanionManager @Inject constructor(@ApplicationContext private val conte
         }
     }
 
-    fun sendSettings(raw: String, mode: String, credentials: Boolean, target: CompanionPeer? = mutable.value.target): Boolean {
+    fun sendSettings(raw: String, mode: String, credentials: Boolean, target: CompanionPeer? = mutable.value.target,
+        sessions: Boolean = credentials): Boolean {
         val reverse = target?.let { returnSessions[it.fingerprint] }
         val direct = mutable.value.online && target?.fingerprint == mutable.value.target?.fingerprint
         val s = mutable.value
@@ -920,8 +921,8 @@ class CompanionManager @Inject constructor(@ApplicationContext private val conte
             !direct && reverse == null -> BackupFailure.NOT_CONNECTED
             s.backupBusy || s.backupOffer != null || s.restoreDialog || s.prompt != null || s.pullRequest != null -> BackupFailure.BUSY
             settingsDirty && mode != "nav_sounds" -> BackupFailure.UNSAVED
-            mode == "nav_sounds" && (credentials || (if (reverse != null) s.syncPeers[target.fingerprint] else s.remote?.capabilities)?.contains("nav_sounds") != true) -> BackupFailure.UNSUPPORTED
-            mode == "preferences" && (credentials || (if (reverse != null) s.syncPeers[target.fingerprint] else s.remote?.capabilities)?.contains("settings_only") != true) -> BackupFailure.UNSUPPORTED
+            mode == "nav_sounds" && (credentials || sessions || (if (reverse != null) s.syncPeers[target.fingerprint] else s.remote?.capabilities)?.contains("nav_sounds") != true) -> BackupFailure.UNSUPPORTED
+            mode == "preferences" && (credentials || sessions || (if (reverse != null) s.syncPeers[target.fingerprint] else s.remote?.capabilities)?.contains("settings_only") != true) -> BackupFailure.UNSUPPORTED
             raw.toByteArray().size !in 1..CompanionBackupPolicy.MAX_BYTES -> BackupFailure.TOO_LARGE
             else -> null
         }
@@ -948,7 +949,7 @@ class CompanionManager @Inject constructor(@ApplicationContext private val conte
             }
             try {
                 if (reverse == null) queue.send(CompanionFrame(type = "input_release"))
-                transmit(CompanionFrame(type = "backup_begin", transferId = id, total = bytes.size, digest = fingerprint(bytes), mode = mode, credentials = credentials))
+                transmit(CompanionFrame(type = "backup_begin", transferId = id, total = bytes.size, digest = fingerprint(bytes), mode = mode, credentials = credentials, sessions = sessions))
                 var index = 0
                 for (offset in bytes.indices step 4096) {
                     transmit(CompanionFrame(type = "backup_chunk", transferId = id, index = index++, payload = Base64.getEncoder().encodeToString(bytes.copyOfRange(offset, minOf(offset + 4096, bytes.size)))))
@@ -981,11 +982,11 @@ class CompanionManager @Inject constructor(@ApplicationContext private val conte
         check(foreground && mutable.value.backupOffer == null && !mutable.value.backupBusy && !mutable.value.restoreDialog && mutable.value.prompt == null)
         check(companionReceiveModeAllowed(television, active.mode))
         val service = requireNotNull(settingsService)
-        val safe = service.prepareFile(active.finish(), active.credentials, active.mode)
+        val safe = service.prepareFile(active.finish(), active.credentials, active.mode, active.sessions)
         val parsed = service.preview(safe)
         releaseRemoteControl()
         offerRaw = safe; offerSession = nonce
-        mutable.update { it.copy(backupOffer = CompanionBackupOffer(active.id, peer.name, active.mode, active.credentials,
+        mutable.update { it.copy(backupOffer = CompanionBackupOffer(active.id, peer.name, active.mode, active.credentials || active.sessions,
             syncAccountChoices(parsed).count { !it.key.startsWith("files:") && !it.key.startsWith("dlna:") && !it.key.startsWith("iptv:") },
             parsed.fileSources.size + parsed.dlnaServers.size + parsed.iptvSources.orEmpty().size, exportedAt = parsed.exportedAtEpochMs,
             localAppliedAt = prefs.getLong(KEY_LAST_APPLIED, 0L), fromTelevision = !television), pulling = false) }
@@ -1459,7 +1460,8 @@ class CompanionManager @Inject constructor(@ApplicationContext private val conte
                                 "backup_begin" -> {
                                     check(settingsService != null && transfer == null)
                                     require(companionReceiveModeAllowed(television, request.mode))
-                                    transfer = CompanionTransfer(request.transferId, request.total, request.digest, request.mode, request.credentials)
+                                    transfer = CompanionTransfer(request.transferId, request.total, request.digest, request.mode, request.credentials,
+                                        request.sessions ?: request.credentials)
                                     transferDeadline = SystemClock.elapsedRealtime() + 120_000
                                 }
                                 "backup_chunk" -> {
@@ -1704,7 +1706,8 @@ class CompanionManager @Inject constructor(@ApplicationContext private val conte
                                     "backup_begin" -> {
                                         check(returnTransfer == null)
                                         require(companionReceiveModeAllowed(television, frame.mode))
-                                        returnTransfer = CompanionTransfer(frame.transferId, frame.total, frame.digest, frame.mode, frame.credentials)
+                                        returnTransfer = CompanionTransfer(frame.transferId, frame.total, frame.digest, frame.mode, frame.credentials,
+                                            frame.sessions ?: frame.credentials)
                                         returnDeadline = SystemClock.elapsedRealtime() + 120_000
                                     }
                                     "backup_chunk", "backup_finish" -> {
