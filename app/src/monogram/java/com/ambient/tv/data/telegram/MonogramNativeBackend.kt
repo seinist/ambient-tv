@@ -699,7 +699,11 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
             while (index < available.size && items.size < limit.coerceIn(1, 60) && steps++ < 12) {
                 val (id, title) = available[index]
                 val fetchLimit = minOf(60, limit.coerceIn(1, 60) - items.size)
-                val history = historyPage(h, id, fetchLimit, offset)
+                // YouTube posts are sparse in a channel's history: Telegram's link filter
+                // returns only posts with links, so far fewer pages are read per card.
+                val history = if (section == "youtube")
+                    native.searchMessagesPage(h, id, "", "url", offset, 0, fetchLimit).messages
+                else historyPage(h, id, fetchLimit, offset)
                 val mapped = history.mapNotNull { media(h, it, title) }
                     .flatMap { item -> if (section == "youtube") item.youtubePosts() else listOf(item) }
                     .filter {
