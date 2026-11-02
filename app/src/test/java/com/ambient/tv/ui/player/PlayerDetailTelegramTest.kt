@@ -43,7 +43,7 @@ class PlayerDetailTelegramTest {
         assertEquals("Neues Video aus dem Studio\n\nAlle Infos im Beitrag.", detail.overview)
         assertEquals(listOf(PlayerDetailLine(R.string.photos_info_file, "studio.mp4")), detail.lines)
         assertEquals(com.ambient.tv.data.telegram.monogramThumbModel(7, 42, "thumb"), detail.artworkUrl)
-        assertEquals(listOf("avatar"), detail.artworkFallbackUrls)
+        assertEquals(listOf(com.ambient.tv.data.telegram.monogramThumbModel(7, 0, "avatar")), detail.artworkFallbackUrls)
         assertEquals(PlayerDetailArtShape.WIDE, detail.artShape)
         // Telegram has none of these: their sections stay hidden.
         assertNull(detail.item)
@@ -72,7 +72,7 @@ class PlayerDetailTelegramTest {
 
     @Test fun withoutThumbnailTheChannelPictureIsShownAsLogo() {
         val detail = playerDetailForTelegram(video(thumb = null), TelegramChannel(7, "Kanal A", thumbnailUrl = "avatar"), date, size)
-        assertEquals("avatar", detail.artworkUrl)
+        assertEquals(com.ambient.tv.data.telegram.monogramThumbModel(7, 0, "avatar"), detail.artworkUrl)
         assertEquals(PlayerDetailArtShape.LOGO, detail.artShape)
         assertTrue(detail.artworkFallbackUrls.isEmpty())
     }

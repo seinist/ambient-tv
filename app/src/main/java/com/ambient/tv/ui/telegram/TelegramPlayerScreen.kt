@@ -453,7 +453,10 @@ fun TelegramPlayerScreen(
     RegisterPlayerItemNavigation(viewModel, viewModel::playNext)
     PersistentPlayerChrome(viewModel) {
         val selected = media
-        if (selected == null || failure != null) {
+        // Loading the post: a spinner, never the "module missing" panel for a moment.
+        if (selected == null && failure == null && available) {
+            com.ambient.tv.ui.common.FullscreenSpinner()
+        } else if (selected == null || failure != null) {
             BrowseStatusPanel(
                 title = stringResource(R.string.telegram_error),
                 body = failure ?: stringResource(R.string.settings_telegram_native_missing),
@@ -839,7 +842,7 @@ internal data class TelegramOsd(
                     title = media.title,
                     subtitle = media.summary,
                     contextLine = media.channel,
-                    artworkUrl = media.thumbnailUrl,
+                    artworkUrl = media.cardImageUrl ?: media.thumbnailUrl,
                 )
                 if (durationMs > 0 && media.kind != TelegramMediaKind.PHOTO) {
                     TvPlayerSeekBar(
@@ -885,7 +888,7 @@ internal data class TelegramOsd(
                         PlayerIconButton(
                             Icons.Filled.AccountCircle, channel.title,
                             onOpenChannel,
-                            imageUrl = channel.thumbnailUrl,
+                            imageUrl = channel.avatarUrl,
                         )
                         channel.subscribed?.let { joined ->
                             PlayerIconButton(

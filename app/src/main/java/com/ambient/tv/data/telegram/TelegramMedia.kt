@@ -71,7 +71,10 @@ data class TelegramChannel(
     /** Unread posts: the channel tile's "new" badge, like SmartTube's channels. */
     val unreadCount: Int = 0,
     val lastPostAtMs: Long? = null,
-)
+) {
+    /** The avatar's sharp display size; [thumbnailUrl] (inline ~40 px) is only its fallback. */
+    val avatarUrl: String? get() = monogramThumbModel(chatId, 0, thumbnailUrl)
+}
 
 const val TELEGRAM_MEDIA_PREFIX = "telegram:"
 const val TELEGRAM_YOUTUBE_PREFIX = "telegram-youtube:"
@@ -148,7 +151,7 @@ fun TelegramMedia.playerMetadata(): PlaybackMetadata = PlaybackMetadata(
     source = "telegram",
     mediaId = mediaKey,
     hasVideo = kind == TelegramMediaKind.VIDEO,
-    artworkUrl = thumbnailUrl,
+    artworkUrl = cardImageUrl ?: thumbnailUrl,
     durationMs = durationMs,
 )
 

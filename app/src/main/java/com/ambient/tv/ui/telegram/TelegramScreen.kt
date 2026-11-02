@@ -387,7 +387,7 @@ fun TelegramScreen(
                             horizontalArrangement = Arrangement.spacedBy(12.dp),
                         ) {
                             val label = activeChannel?.title ?: state.rows.firstOrNull()?.title ?: "Monogram"
-                            activeChannel?.thumbnailUrl?.let { url ->
+                            activeChannel?.avatarUrl?.let { url ->
                                 ArtworkImage(url, label, Modifier.size(48.dp).clip(CircleShape))
                             } ?: Icon(
                                 Icons.Filled.AccountCircle, label,
