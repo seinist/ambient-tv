@@ -1926,6 +1926,7 @@
     <string name="sleep_trigger_input">Ohne Bedienung</string>
     <string name="search_source_partial">%1$s: Die Suchergebnisse sind unvollständig. Einige Quellen oder Bereiche konnten nicht durchsucht werden.</string>
     <string name="wol_network_unavailable">Wake-on-LAN nicht verfügbar: Keine LAN-/WLAN-Verbindung oder aktive WireGuard-Route zu diesem System.</string>
+    <string name="wol_not_local_network">Nicht geweckt: %1$s ist nicht im lokalen Netz dieses Geräts (z. B. unterwegs).</string>
     <string name="settings_live_tv_title">Live-TV</string>
     <string name="settings_page_live_tv_hint">Timeshift, Aufnahmen und Sendungserinnerungen für Live-TV.</string>
     <string name="settings_live_reminders">Sendungserinnerungen</string>

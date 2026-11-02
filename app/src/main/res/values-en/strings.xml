@@ -2043,6 +2043,7 @@
     <string name="sleep_trigger_input">Without input</string>
     <string name="search_source_partial">%1$s: search results are incomplete. Some sources or sections could not be searched.</string>
     <string name="wol_network_unavailable">Wake-on-LAN unavailable: no LAN/Wi-Fi connection or active WireGuard route to this system.</string>
+    <string name="wol_not_local_network">Not woken: %1$s is not in this device\'s local network (for example on the road).</string>
     <string name="settings_live_tv_title">Live TV</string>
     <string name="settings_page_live_tv_hint">Timeshift, recordings and programme reminders for live TV.</string>
     <string name="settings_live_reminders">Programme reminders</string>

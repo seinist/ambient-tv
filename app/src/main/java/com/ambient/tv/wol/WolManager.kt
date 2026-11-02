@@ -57,6 +57,8 @@ class WolManager @Inject constructor(
         network: android.net.Network? = null,
         routeAlive: () -> Boolean = { true },
         retry: Boolean = false,
+        /** The server's address: a private IP outside every local network is not woken at all. */
+        targetHost: String? = null,
     ): Result<Unit> {
         val macKey = canonicalWolMacKey(macAddress)
             ?: return Result.failure(IllegalArgumentException(context.getString(com.ambient.tv.R.string.wol_invalid_mac, macAddress)))
@@ -70,6 +72,10 @@ class WolManager @Inject constructor(
         // Check before coalescing too: an earlier successful wake says nothing about today's route.
         if (!withContext(Dispatchers.IO) { wakeNetworkAvailable(network, wireGuardHosts, wakeStillActive) }) {
             return Result.failure(networkUnavailable(macAddress))
+        }
+        targetHost?.let(NetworkEndpoint::extractHost)?.trim()?.takeIf { it.isNotBlank() }?.let { host ->
+            if (!canReachLocally(host, broadcastAddress, wireGuardHosts, network))
+                return Result.failure(notOnLocalNetwork(host))
         }
         lastWakeBurstAtMs = System.currentTimeMillis()
 
@@ -125,6 +131,53 @@ class WolManager @Inject constructor(
                     caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI)
             }
         }
+    }
+
+    /**
+     * False only when [host] is a private IPv4 address that none of this device's local networks
+     * contains and no WireGuard wake target or directed broadcast covers it (see
+     * [wolLocalBroadcastCanReach]): a Magic Packet from here cannot arrive.
+     */
+    suspend fun canReachLocally(
+        host: String?,
+        broadcastAddress: String = "255.255.255.255",
+        wireGuardHosts: List<String> = emptyList(),
+        network: Network? = null,
+    ): Boolean = withContext(Dispatchers.IO) {
+        wolLocalBroadcastCanReach(
+            host = host?.let(NetworkEndpoint::extractHost)?.trim(),
+            broadcastAddress = broadcastAddress,
+            hasWireGuardTarget = wireGuardHosts.any { wireGuardRoute.wakeTargets(it).isNotEmpty() },
+            localSubnets = localIpv4Subnets(network),
+        )
+    }
+
+    /** Posts the "not in the local network" notice for a wake that was not started. */
+    fun reportNotOnLocalNetwork(host: String) { notOnLocalNetwork(host) }
+
+    /** IPv4 addresses with prefix of this device's Wi-Fi/Ethernet networks (or [network]). */
+    @Suppress("DEPRECATION")
+    private fun localIpv4Subnets(network: Network?): List<Pair<ByteArray, Int>> {
+        val connectivity = context.getSystemService(ConnectivityManager::class.java) ?: return emptyList()
+        return (network?.let { listOf(it) } ?: connectivity.allNetworks.toList()).flatMap { candidate ->
+            val caps = connectivity.getNetworkCapabilities(candidate) ?: return@flatMap emptyList()
+            if (network == null && !caps.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET) &&
+                !caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI)) return@flatMap emptyList()
+            connectivity.getLinkProperties(candidate)?.linkAddresses.orEmpty()
+                .filter { it.address is Inet4Address && !it.address.isLoopbackAddress }
+                .map { it.address.address to it.prefixLength }
+        }
+    }
+
+    private fun notOnLocalNetwork(host: String): WolNotOnLocalNetworkException {
+        AppNotifications.post(AppNotice(
+            key = "wol-not-local:$host",
+            message = R.string.wol_not_local_network,
+            subject = host,
+            phase = NoticePhase.ERROR,
+            kind = NoticeKind.WAKE,
+        ))
+        return WolNotOnLocalNetworkException(host)
     }
 
     private fun networkUnavailable(mac: String): IllegalStateException {

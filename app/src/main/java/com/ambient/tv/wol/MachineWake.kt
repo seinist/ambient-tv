@@ -111,6 +111,14 @@ class MachineWake @Inject constructor(
     /** Fire-and-forget: progress and result appear on the machine's shared wake card. */
     fun wake(request: ManualWakeRequest) {
         scope.launch {
+            // A private server outside every local network: say so instead of a wake that
+            // cannot reach it and only times out.
+            val host = request.host?.takeIf { it.isNotBlank() }
+            if (host != null && !wolManager.canReachLocally(host, request.broadcast,
+                    listOfNotNull(request.wireGuardHost))) {
+                wolManager.reportNotOnLocalNetwork(host)
+                return@launch
+            }
             val machine = machines.keyFor(request.system, request.host, request.mac)
             withCancellableWake(machine) { coordinator.wake(request) }
         }

@@ -209,7 +209,8 @@ class JellyfinConnectionManager @Inject constructor(
                     mac.orEmpty(),
                     wireGuardHost = preferences.jellyfinHost.takeIf { preferences.wireGuardJellyfinEnabled },
                     retry = forceNewWake || attempt > 0,
-                )
+                    targetHost = preferences.jellyfinHost,
+                ).onFailure { if (it is com.ambient.tv.wol.WolNotOnLocalNetworkException) throw it }
             },
             retries = wakeRetries,
             windowMs = wakeTimeoutMs,

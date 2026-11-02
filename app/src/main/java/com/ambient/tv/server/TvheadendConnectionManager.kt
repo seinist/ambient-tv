@@ -219,7 +219,8 @@ class TvheadendConnectionManager @Inject constructor(
                     mac.orEmpty(),
                     wireGuardHost = preferences.tvheadendHost.takeIf { preferences.wireGuardTvheadendEnabled },
                     retry = forceNewWake || attempt > 0,
-                )
+                    targetHost = preferences.tvheadendHost,
+                ).onFailure { if (it is com.ambient.tv.wol.WolNotOnLocalNetworkException) throw it }
             },
             retries = wakeRetries,
             windowMs = wakeTimeoutMs,
