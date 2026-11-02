@@ -402,13 +402,15 @@ private fun FilesRowAction(icon: androidx.compose.ui.graphics.vector.ImageVector
  * right-aligned inside the row, [trailing] actions after it.
  */
 @Composable
-private fun FilesBrowserRow(
+internal fun FilesBrowserRow(
     title: String,
     icon: androidx.compose.ui.graphics.vector.ImageVector,
     onOpen: () -> Unit,
     focusModifier: Modifier,
     detail: String = "",
     meta: String = "",
+    /** Replaces [icon], e.g. a small photo preview (Monogram's file list). */
+    leading: (@Composable () -> Unit)? = null,
     trailing: @Composable RowScope.() -> Unit,
 ) {
     val handheld = LocalHandheldUi.current
@@ -416,7 +418,7 @@ private fun FilesBrowserRow(
         androidx.compose.material3.ListItem(
             headlineContent = { Text(title, maxLines = 2, overflow = TextOverflow.Ellipsis) },
             supportingContent = detail.takeIf { it.isNotEmpty() }?.let { text -> { Text(text) } },
-            leadingContent = { androidx.compose.material3.Icon(icon, null) },
+            leadingContent = { leading?.invoke() ?: androidx.compose.material3.Icon(icon, null) },
             trailingContent = {
                 Row(horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.CenterVertically) {
                     if (meta.isNotEmpty()) Text(meta, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -443,7 +445,7 @@ private fun FilesBrowserRow(
                     horizontalArrangement = Arrangement.spacedBy(12.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    androidx.compose.material3.Icon(icon, null, Modifier.size(20.dp), tint = MaterialTheme.colorScheme.onSurface)
+                    leading?.invoke() ?: androidx.compose.material3.Icon(icon, null, Modifier.size(20.dp), tint = MaterialTheme.colorScheme.onSurface)
                     MarqueeTitle(title, focused = focused, modifier = Modifier.weight(1f), color = MaterialTheme.colorScheme.onSurface,
                         style = MaterialTheme.typography.labelLarge)
                     if (detail.isNotEmpty()) Text(detail, color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall, maxLines = 1)

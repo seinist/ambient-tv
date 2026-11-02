@@ -84,7 +84,8 @@ internal class MonogramRecentTimeline(
             }
             if (ready == null) break
             val item = ready.buffer.removeFirst()
-            if (emitted.add(item.mediaKey)) result.add(item)
+            // Reposts of one video/link in several channels appear once (the newest).
+            if (emitted.add(item.contentKey)) result.add(item)
         }
         return Page(result, hasMore())
     }

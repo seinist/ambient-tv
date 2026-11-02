@@ -70,7 +70,7 @@ internal fun telegramRows(
             "photos" -> entry.kind == TelegramMediaKind.PHOTO
             else -> true
         }
-    }.distinctBy(TelegramMedia::mediaKey)
+    }.distinctBy(TelegramMedia::contentKey)
         .groupBy { it.chatId }
         .map { (chatId, media) ->
             ContentRowData(
@@ -101,8 +101,14 @@ class TelegramViewModel @Inject constructor(
     suspend fun joinChannel(chatId: Long): Boolean = repository.joinChannel(chatId)
     suspend fun leaveChannel(chatId: Long): Boolean = repository.leaveChannel(chatId)
     internal fun viewMode(section: String): MonogramBrowseLayout =
-        runCatching { MonogramBrowseLayout.valueOf(preferences.sectionViewMode("monogram.$section") ?: "ROWS") }
-            .getOrDefault(MonogramBrowseLayout.ROWS)
+        // One continuous newest-first grid across channels, like SmartTube's subscriptions;
+        // rows per channel stay selectable in the view options.
+        // Audio posts rarely carry artwork and photos read best as a file list, like the
+        // Files (SMB) browser.
+        (if (section == "audio" || section == "photos") MonogramBrowseLayout.FILES else MonogramBrowseLayout.GRID).let { default ->
+            runCatching { MonogramBrowseLayout.valueOf(preferences.sectionViewMode("monogram.$section") ?: default.name) }
+                .getOrDefault(default)
+        }
     internal fun changeViewMode(section: String, mode: MonogramBrowseLayout) =
         preferences.setSectionViewMode("monogram.$section", mode.name)
     val gridColumns get() = preferences.libraryGridColumns

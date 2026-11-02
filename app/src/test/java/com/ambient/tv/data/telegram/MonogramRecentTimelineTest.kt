@@ -9,6 +9,18 @@ class MonogramRecentTimelineTest {
         kind = TelegramMediaKind.VIDEO, publishedAtMs = time,
     )
 
+    @Test fun aRepostInAnotherChannelAppearsOnceTheNewest() {
+        val original = media(1, 10, 1000).copy(fileSize = 4242, durationMs = 9000)
+        val repost = media(2, 20, 5000).copy(fileSize = 4242, durationMs = 9000)
+        val other = media(2, 19, 3000).copy(fileSize = 77, durationMs = 9000)
+        val timeline = MonogramRecentTimeline(
+            listOf(MonogramRecentTimeline.Channel(1, 1000), MonogramRecentTimeline.Channel(2, 5000)),
+        ) { chat, _, _ ->
+            MonogramRecentTimeline.HistoryBatch(if (chat == 1L) listOf(original) else listOf(repost, other), null, 0)
+        }
+        assertEquals(listOf("telegram:2:20", "telegram:2:19"), timeline.nextPage(10).media.map { it.mediaKey })
+    }
+
     @Test fun mergesAllChannelMediaByDateNotChannelOrder() {
         val all = mapOf(
             1L to listOf(media(1, 11, 9000), media(1, 10, 3000)),

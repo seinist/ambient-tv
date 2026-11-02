@@ -219,11 +219,16 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
      *   attempt reconnects; the request is sent once more.
      * - A revoked or unknown session fails with [TelegramSessionLostException]: sign in again.
      */
-    private suspend fun <T> nativeCall(connect: Boolean = true, action: (Long) -> T): T {
+    private suspend fun <T> nativeCall(
+        connect: Boolean = true,
+        /** Longest FLOOD_WAIT waited out instead of failing; playback waits longer than browsing. */
+        maxFloodWaitSeconds: Int = TELEGRAM_FLOOD_AUTO_WAIT_SECONDS,
+        action: (Long) -> T,
+    ): T {
         var floodRetries = 0
         var networkRetried = false
         while (true) {
-            awaitFloodWait()
+            awaitFloodWait(maxFloodWaitSeconds)
             try {
                 return nativeCallOnce(connect, action)
             } catch (cancelled: kotlinx.coroutines.CancellationException) {
@@ -237,7 +242,8 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
                     TelegramFailureKind.FLOOD -> {
                         val seconds = telegramFloodWaitSeconds(failure.message) ?: throw failure
                         noteFloodWait(seconds)
-                        if (telegramFloodRetryDelayMs(seconds) == null || floodRetries++ >= TELEGRAM_FLOOD_AUTO_RETRIES)
+                        // The loop's awaitFloodWait then sleeps until the wait is over.
+                        if (seconds > maxFloodWaitSeconds || floodRetries++ >= TELEGRAM_FLOOD_AUTO_RETRIES)
                             throw TelegramFloodWaitException(seconds)
                     }
                     TelegramFailureKind.NETWORK -> {
@@ -260,17 +266,27 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
         }
     }
 
+    /**
+     * The native scheduler routes a download by the calling thread's dispatch class; a thread
+     * left at the default "read" class fails every media download with "read class on the
+     * media family". IO threads are pooled, so the class is reset afterwards.
+     */
+    private inline fun <T> mediaClass(dispatchClass: Int, body: () -> T): T {
+        native.setDispatchClass(dispatchClass)
+        try { return body() } finally { native.setDispatchClass(DISPATCH_READ) }
+    }
+
     private fun noteFloodWait(seconds: Int) {
         val until = android.os.SystemClock.elapsedRealtime() + seconds.coerceAtLeast(1) * 1_000L
         floodUntilMs = maxOf(floodUntilMs, until)
     }
 
     /** Waits out a short FLOOD_WAIT; a long one is reported at once with its remaining seconds. */
-    private suspend fun awaitFloodWait() {
+    private suspend fun awaitFloodWait(maxSeconds: Int = TELEGRAM_FLOOD_AUTO_WAIT_SECONDS) {
         val waitMs = floodUntilMs - android.os.SystemClock.elapsedRealtime()
         if (waitMs <= 0) return
         val seconds = ((waitMs + 999) / 1_000).toInt()
-        if (seconds > TELEGRAM_FLOOD_AUTO_WAIT_SECONDS + 1) throw TelegramFloodWaitException(seconds)
+        if (seconds > maxSeconds + 1) throw TelegramFloodWaitException(seconds)
         kotlinx.coroutines.delay(waitMs + 250)
     }
 
@@ -670,8 +686,32 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
         )
     }
 
-    private fun recent(h: Long, token: String?, limit: Int): TelegramMediaPage {
-        val cursorToken = token ?: ("recent:" + epoch + ":" + (++nextRecentFeed))
+    /** Telegram search filter of a category timeline; null reads plain history (recent). */
+    private fun categoryFilter(section: String): String? = when (section) {
+        "youtube" -> "url"
+        "photos" -> "photos"
+        "videos" -> "videos"
+        "audio" -> "music"
+        else -> null
+    }
+
+    /**
+     * One newest-first timeline across all channels, like SmartTube's subscriptions: "recent"
+     * over every post, a category over Telegram's media filter for it (every returned message
+     * is a hit, instead of scanning plain history for the odd video).
+     */
+    private fun recent(h: Long, token: String?, limit: Int, section: String = "recent"): TelegramMediaPage {
+        val filter = categoryFilter(section)
+        val wanted: (TelegramMediaKind) -> Boolean = when (section) {
+            "videos" -> { kind -> kind == TelegramMediaKind.VIDEO }
+            "audio" -> { kind -> kind == TelegramMediaKind.AUDIO }
+            "photos" -> { kind -> kind == TelegramMediaKind.PHOTO }
+            else -> { _ -> true }
+        }
+        // The cursor is "<feed>:<page>": a new value per page, or a caller that stops on an
+        // unchanged cursor ended the list after the second page.
+        val cursorToken = token?.substringBeforeLast(':') ?: ("recent:" + epoch + ":" + (++nextRecentFeed))
+        val pageNumber = token?.substringAfterLast(':')?.toIntOrNull() ?: 0
         val timeline = if (token == null) {
             fun timelineChannel(channel: ChatDto) =
                 MonogramRecentTimeline.Channel(channel.id, (channel.lastMessageDate ?: 0L) * 1000L)
@@ -690,9 +730,13 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
                     MonogramRecentTimeline.CatalogPage(all.map(::timelineChannel), unloadedBound())
                 },
             ) { id, offset, size ->
-                val history = historyPage(h, id, size, offset)
+                val history = if (filter != null)
+                    native.searchMessagesPage(h, id, "", filter, offset, 0, size).messages
+                else historyPage(h, id, size, offset)
                 val title = chats.firstOrNull { it.id == id }?.title ?: "Monogram"
-                val items = history.mapNotNull { entry -> media(h, entry, title) }
+                val items = history.mapNotNull { entry -> media(h, entry, title, wanted) }
+                    .flatMap { item -> if (section == "youtube") item.youtubePosts() else listOf(item) }
+                    .filter { section != "youtube" || it.kind == TelegramMediaKind.YOUTUBE }
                 val next = history.lastOrNull()?.id?.takeIf { history.size == size }
                 MonogramRecentTimeline.HistoryBatch(
                     items, next,
@@ -700,19 +744,19 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
             }.also { recentFeeds[cursorToken] = it }
         } else {
             require(token.startsWith("recent:" + epoch + ":")) { "Stale Monogram recent cursor" }
-            checkNotNull(recentFeeds[token]) { "Expired Monogram recent cursor" }
+            checkNotNull(recentFeeds[cursorToken]) { "Expired Monogram recent cursor" }
         }
         val page = timeline.nextPage(limit.coerceIn(1, 60))
         if (!page.hasMore) recentFeeds.remove(cursorToken)
-        while (recentFeeds.size > 3) recentFeeds.remove(recentFeeds.keys.first())
-        return TelegramMediaPage(page.media, if (page.hasMore) cursorToken else null)
+        while (recentFeeds.size > 8) recentFeeds.remove(recentFeeds.keys.first())
+        return TelegramMediaPage(page.media, if (page.hasMore) "$cursorToken:${pageNumber + 1}" else null)
     }
 
-    // Other tabs keep their channel+history-offset cursor; recent uses a global timeline.
+    // A single channel keeps its history-offset cursor; recent and categories use a global timeline.
     override suspend fun browse(section: String, cursor: String?, limit: Int): TelegramMediaPage =
-        if (section == "recent") browseMutex.withLock { nativeCall { h ->
+        if (!section.startsWith("channel:")) browseMutex.withLock { nativeCall { h ->
             requireAuthorized(h)
-            recent(h, cursor, limit)
+            recent(h, cursor, limit, section)
         } } else browsePermits.withPermit { nativeCall { h ->
             requireAuthorized(h)
             val parts = cursor?.split(':')
@@ -732,33 +776,8 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
             while (index < available.size && items.size < limit.coerceIn(1, 60) && steps++ < 12) {
                 val (id, title) = available[index]
                 val fetchLimit = minOf(60, limit.coerceIn(1, 60) - items.size)
-                // YouTube posts are sparse in a channel's history: Telegram's link filter
-                // returns only posts with links, so far fewer pages are read per card.
-                val history = when (section) {
-                    "youtube" -> native.searchMessagesPage(h, id, "", "url", offset, 0, fetchLimit).messages
-                    // Telegram's photo filter is exact; videos/audio keep the history scan so
-                    // .mkv/.mp3 files sent as plain documents are still found.
-                    "photos" -> native.searchMessagesPage(h, id, "", "photos", offset, 0, fetchLimit).messages
-                    else -> historyPage(h, id, fetchLimit, offset)
-                }
-                val wanted: (TelegramMediaKind) -> Boolean = when (section) {
-                    "videos" -> { kind -> kind == TelegramMediaKind.VIDEO }
-                    "audio" -> { kind -> kind == TelegramMediaKind.AUDIO }
-                    "photos" -> { kind -> kind == TelegramMediaKind.PHOTO }
-                    else -> { _ -> true }
-                }
-                val mapped = history.mapNotNull { media(h, it, title, wanted) }
-                    .flatMap { item -> if (section == "youtube") item.youtubePosts() else listOf(item) }
-                    .filter {
-                        when (section) {
-                            "videos" -> it.kind == TelegramMediaKind.VIDEO
-                            "youtube" -> it.kind == TelegramMediaKind.YOUTUBE
-                            "audio" -> it.kind == TelegramMediaKind.AUDIO
-                            "photos" -> it.kind == TelegramMediaKind.PHOTO
-                            else -> true
-                        }
-                    }
-                items.addAll(mapped)
+                val history = historyPage(h, id, fetchLimit, offset)
+                items.addAll(history.mapNotNull { media(h, it, title) })
                 if (history.size == fetchLimit) {
                     offset = history.last().id
                     if (items.size >= limit.coerceIn(1, 60)) break
@@ -834,7 +853,7 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
         val dir = File(cache, "photos").apply { mkdirs() }.canonicalFile
         val output = File(dir, "$chatId-$messageId.media")
         if (output.isFile && output.length() > 0L) return@nativeCall output.toURI().toString()
-        val actual = File(native.downloadMessageDisplay(h, chatId, messageId, output.path))
+        val actual = File(mediaClass(DISPATCH_USER) { native.downloadMessageDisplay(h, chatId, messageId, output.path) })
             .canonicalFile
         require(actual.parentFile == dir && actual.length() > 0L &&
             chatId !in leftChannels) {
@@ -843,19 +862,49 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
         actual.toURI().toString()
     }
 
-    /** Telegram's real thumbnail (MediaDownloadKind::Thumb), cached with the inline previews. */
+    /**
+     * Telegram's sharp card preview (size "m", ~320 px) of a video or photo post. The native
+     * Thumb kind prefers the inline stripped preview whenever a post carries one (nearly all
+     * do), so it returned the same ~40 px image again; Display is the getFile size Monogram
+     * itself uses to sharpen a cell. Thumb stays the fallback, but never the inline bytes.
+     */
     override suspend fun thumbnail(chatId: Long, messageId: Int): String? = nativeCall { h ->
         requireAuthorized(h)
         if (chatId in leftChannels) return@nativeCall null
         val expectedGeneration = cacheGeneration
         val expectedAccount = accountId
-        val dir = File(cache, "thumbs-hd").apply { mkdirs() }.canonicalFile
+        // "thumbs-hd" held the inline previews the old Thumb download returned: never reuse it.
+        File(cache, "thumbs-hd").takeIf { it.isDirectory }?.deleteRecursively()
+        val dir = File(cache, "previews").apply { mkdirs() }.canonicalFile
         val output = File(dir, "$chatId-$messageId.img")
         if (output.isFile && output.length() > 0L) {
             output.setLastModified(System.currentTimeMillis())
             return@nativeCall output.toURI().toString()
         }
-        val returned = File(native.downloadMessageThumb(h, chatId, messageId, output.path)).canonicalFile
+        // Only a photo has a real display size here: for a video post the native Display kind
+        // downloaded the whole video file (tens of MB for one card), and its Thumb is the inline
+        // preview again. Videos keep the inline preview.
+        if (native.getMessage(h, chatId, messageId)?.mediaKind?.lowercase() != "photo") return@nativeCall null
+        fun display() = File(mediaClass(DISPATCH_VISIBLE) {
+            native.downloadMessageDisplay(h, chatId, messageId, output.path) }).canonicalFile
+        val returned = runCatching {
+            // The first file request after connecting may be cancelled by the media session
+            // switching over ("session changed"): sent once more.
+            runCatching { display() }.getOrElse { failure ->
+                if (failure.message?.contains("session changed") == true) display() else throw failure
+            }
+        }.getOrElse { failure ->
+            // A FLOOD_WAIT or network error is the caller's to handle; only a post without a
+            // display size falls back to its Thumb.
+            if (classifyTelegramFailure(failure.message) != TelegramFailureKind.OTHER) throw failure
+            val inline = native.peekMessageInlineThumb(h, chatId, messageId)
+            val thumb = File(mediaClass(DISPATCH_VISIBLE) { native.downloadMessageThumb(h, chatId, messageId, output.path) }).canonicalFile
+            if (inline != null && thumb.isFile && thumb.length() == inline.size.toLong()) {
+                thumb.delete()
+                return@nativeCall null
+            }
+            thumb
+        }
         // The native layer may keep the file in its own cache or add an extension: copy it into
         // our bounded cache instead of discarding a valid thumbnail.
         val actual = when {
@@ -892,8 +941,10 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
         }
     }
 
+    // A started video waits out a FLOOD_WAIT caused by browsing or card images instead of
+    // failing at once (the player then stood at 0:00).
     override suspend fun mediaPart(chatId: Long, messageId: Int, offset: Long): ByteArray =
-        nativeCall { h ->
+        nativeCall(maxFloodWaitSeconds = PLAYBACK_FLOOD_WAIT_SECONDS) { h ->
             requireAuthorized(h)
             check(chatId !in leftChannels) { app.getString(R.string.monogram_error_channel_left) }
             require(offset >= 0L && offset % TELEGRAM_MEDIA_PART_BYTES == 0L)
@@ -910,8 +961,8 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
             val temp = File.createTempFile("part-", ".bin", dir)
             var actual: File? = null
             try {
-                actual = File(native.downloadMessageMediaChunk(
-                    h, chatId, messageId, temp.absolutePath, offset)).canonicalFile
+                actual = File(mediaClass(DISPATCH_USER) { native.downloadMessageMediaChunk(
+                    h, chatId, messageId, temp.absolutePath, offset) }).canonicalFile
                 require(actual.parentFile == dir) { "Monogram chunk escaped private cache" }
                 require(actual.length() in 1..TELEGRAM_MEDIA_PART_BYTES.toLong()) {
                     "Invalid Monogram chunk size"
@@ -956,6 +1007,11 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
         const val CATALOG_ROUND_PAUSE_MS = 300L
         /** Channels added to the recent timeline per catalog step. */
         const val RECENT_CATALOG_STEP = 20
+        const val PLAYBACK_FLOOD_WAIT_SECONDS = 30
+        /** Native dispatch classes (ffi.rs set_dispatch_class). */
+        const val DISPATCH_READ = 0
+        const val DISPATCH_VISIBLE = 6
+        const val DISPATCH_USER = 7
         /** Update stream drain interval; draining is local, it sends nothing to Telegram. */
         const val UPDATES_POLL_MS = 5_000L
         /** Shared channel history pages: long enough for one browse session across categories. */

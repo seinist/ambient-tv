@@ -33,6 +33,16 @@ data class TelegramMedia(
             listOfNotNull(youtubeVideoId)).distinct()
     val mediaKey: String get() = if (kind == TelegramMediaKind.YOUTUBE && youtubeVideoId != null)
         telegramYouTubeMediaKey(chatId, messageId, youtubeVideoId) else telegramMediaKey(chatId, messageId)
+    /**
+     * The same content reposted in several channels: one YouTube video, or one file (Telegram
+     * keeps a forwarded file's size and duration). Lists show it once, the newest post first.
+     */
+    val contentKey: String get() = when {
+        kind == TelegramMediaKind.YOUTUBE && youtubeVideoId != null -> "yt:$youtubeVideoId"
+        (kind == TelegramMediaKind.VIDEO || kind == TelegramMediaKind.AUDIO) && fileSize > 0 ->
+            "file:${kind.name}:$fileSize:$durationMs"
+        else -> mediaKey
+    }
     val previewUrl: String? get() = if (kind == TelegramMediaKind.YOUTUBE && youtubeVideoId != null)
         com.ambient.tv.youtube.youtubeThumbnailUrl(youtubeVideoId) else thumbnailUrl
     /**
@@ -42,8 +52,9 @@ data class TelegramMedia(
      */
     val cardImageUrl: String? get() = when {
         kind == TelegramMediaKind.YOUTUBE && youtubeVideoId != null -> previewUrl
-        kind == TelegramMediaKind.VIDEO || kind == TelegramMediaKind.PHOTO ||
-            (kind == TelegramMediaKind.AUDIO && thumbnailUrl != null) ->
+        // Only photos have a downloadable card size; for videos the native layer offers just
+        // the inline preview (or the whole file), see MonogramNativeBackend.thumbnail.
+        kind == TelegramMediaKind.PHOTO ->
             monogramThumbModel(chatId, messageId, thumbnailUrl)
         else -> thumbnailUrl
     }

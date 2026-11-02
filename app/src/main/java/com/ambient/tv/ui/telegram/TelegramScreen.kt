@@ -1,5 +1,8 @@
 package com.ambient.tv.ui.telegram
 
+import androidx.compose.material.icons.filled.Image
+import androidx.compose.material.icons.filled.MusicNote
+
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -271,7 +274,7 @@ fun TelegramScreen(
         MonogramBrowseLayout.ROWS -> RegisterBrowseFocusRows(rowList,
             currentRows.map { row -> row.id to row.items.map { it.ratingKey } })
         MonogramBrowseLayout.GRID -> RegisterBrowseFocusGrid(grid, flat.map { it.ratingKey })
-        MonogramBrowseLayout.LIST, MonogramBrowseLayout.INFO_LIST ->
+        MonogramBrowseLayout.LIST, MonogramBrowseLayout.INFO_LIST, MonogramBrowseLayout.FILES ->
             RegisterBrowseFocusList(flatList, flat.map { it.ratingKey })
     }
     LaunchedEffect(layout, grid, flatList, flat.size) {
@@ -543,7 +546,14 @@ fun TelegramScreen(
                         verticalArrangement = Arrangement.spacedBy(8.dp),
                     ) {
                         items(flat, key = { it.ratingKey }) { item ->
-                            MonogramListItem(item, listRows,
+                            if (layout == MonogramBrowseLayout.FILES) MonogramFileRow(item,
+                                onClick = { choose(item, flat) },
+                                onFocused = {
+                                    lastKey = item.ratingKey
+                                    if (flat.indexOfFirst { it.ratingKey == item.ratingKey } >= flat.size - 10)
+                                        viewModel.loadMore()
+                                })
+                            else MonogramListItem(item, listRows,
                                 detailed = layout == MonogramBrowseLayout.INFO_LIST,
                                 onClick = { choose(item, flat) },
                                 onFocused = {
@@ -576,6 +586,7 @@ fun TelegramScreen(
                             ViewOption("GRID", stringResource(R.string.library_view_grid), ViewPreview.LANDSCAPE),
                             ViewOption("LIST", stringResource(R.string.library_view_list), ViewPreview.LIST),
                             ViewOption("INFO_LIST", stringResource(R.string.library_view_info_list), ViewPreview.INFO_LIST),
+                            ViewOption("FILES", stringResource(R.string.monogram_view_files), ViewPreview.LIST),
                         ),
                         selectedView = layout.name,
                         onView = {
@@ -638,6 +649,35 @@ fun TelegramScreen(
 }
 
 /** Same SmartTube-like focused surface, marquee labels and avatar treatment as Monogram cards. */
+/** One post as a Files (SMB) browser row: icon or small photo, title, channel · date, duration. */
+@Composable
+private fun MonogramFileRow(item: MediaItem, onClick: () -> Unit, onFocused: () -> Unit) {
+    val photo = item.type == "photo"
+    val locale = androidx.compose.ui.platform.LocalConfiguration.current.locales[0]
+    val detail = remember(item, locale) {
+        listOfNotNull(item.parentTitle?.takeIf(String::isNotBlank),
+            item.addedAt?.takeIf { it > 0L }?.let {
+                java.text.DateFormat.getDateInstance(java.text.DateFormat.MEDIUM).format(java.util.Date(it))
+            }).joinToString(" · ")
+    }
+    com.ambient.tv.ui.files.FilesBrowserRow(
+        title = item.title,
+        icon = if (photo) androidx.compose.material.icons.Icons.Filled.Image
+            else androidx.compose.material.icons.Icons.Filled.MusicNote,
+        onOpen = onClick,
+        focusModifier = Modifier.browseFocusTarget(item.ratingKey)
+            .onFocusChanged { if (it.isFocused) onFocused() },
+        detail = detail,
+        meta = item.durationMs?.takeIf { it > 0L }?.let { com.ambient.tv.ui.common.formatPlaybackClock(it) }.orEmpty(),
+        leading = if (photo && item.thumbUrl != null) ({
+            com.ambient.tv.ui.common.ArtworkImage(item.thumbUrl, item.title,
+                Modifier.size(width = 64.dp, height = 40.dp)
+                    .clip(RoundedCornerShape(6.dp)), androidx.compose.ui.layout.ContentScale.Crop)
+        }) else null,
+        trailing = {},
+    )
+}
+
 @Composable
 private fun MonogramListItem(
     item: MediaItem,

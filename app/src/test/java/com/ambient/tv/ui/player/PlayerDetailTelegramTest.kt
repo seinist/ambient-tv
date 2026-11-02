@@ -42,7 +42,7 @@ class PlayerDetailTelegramTest {
         assertEquals(listOf("Full HD", "1920×1080", "MP4", "245 MB"), detail.chips)
         assertEquals("Neues Video aus dem Studio\n\nAlle Infos im Beitrag.", detail.overview)
         assertEquals(listOf(PlayerDetailLine(R.string.photos_info_file, "studio.mp4")), detail.lines)
-        assertEquals(com.ambient.tv.data.telegram.monogramThumbModel(7, 42, "thumb"), detail.artworkUrl)
+        assertEquals("thumb", detail.artworkUrl)
         assertEquals(listOf("avatar"), detail.artworkFallbackUrls)
         assertEquals(PlayerDetailArtShape.WIDE, detail.artShape)
         // Telegram has none of these: their sections stay hidden.

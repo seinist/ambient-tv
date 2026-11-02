@@ -5,14 +5,15 @@ import com.ambient.tv.ui.common.ContentRowData
 import java.util.Locale
 
 /** A view is a presentation choice: one source queue, same items and stable IDs. */
-internal enum class MonogramBrowseLayout { ROWS, GRID, LIST, INFO_LIST }
+/** FILES: compact rows like the Files (SMB) browser, for audio and photos. */
+internal enum class MonogramBrowseLayout { ROWS, GRID, LIST, INFO_LIST, FILES }
 internal enum class MonogramBrowseSort { DATE, TITLE, DURATION }
 
 /** The loading placeholder that stands in for this view. */
 internal fun MonogramBrowseLayout.placeholderLayout(): com.ambient.tv.ui.common.MonogramPlaceholderLayout = when (this) {
     MonogramBrowseLayout.ROWS -> com.ambient.tv.ui.common.MonogramPlaceholderLayout.ROWS
     MonogramBrowseLayout.GRID -> com.ambient.tv.ui.common.MonogramPlaceholderLayout.GRID
-    MonogramBrowseLayout.LIST -> com.ambient.tv.ui.common.MonogramPlaceholderLayout.LIST
+    MonogramBrowseLayout.LIST, MonogramBrowseLayout.FILES -> com.ambient.tv.ui.common.MonogramPlaceholderLayout.LIST
     MonogramBrowseLayout.INFO_LIST -> com.ambient.tv.ui.common.MonogramPlaceholderLayout.INFO_LIST
 }
 
