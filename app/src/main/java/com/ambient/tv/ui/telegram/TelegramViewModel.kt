@@ -56,8 +56,13 @@ fun TelegramChannel.toBrowseItem(): MediaItem = MediaItem(
     studio = null,
 )
 
-internal fun telegramRows(section: String, entries: List<TelegramMedia>): List<ContentRowData> =
-    entries.asSequence().filter { entry ->
+/** [includeYouTubeLinks] false without a usable SmartTube: YouTube link cards could not play. */
+internal fun telegramRows(
+    section: String,
+    entries: List<TelegramMedia>,
+    includeYouTubeLinks: Boolean = true,
+): List<ContentRowData> =
+    entries.asSequence().filter { includeYouTubeLinks || it.kind != TelegramMediaKind.YOUTUBE }.filter { entry ->
         when (section) {
             "videos" -> entry.kind == TelegramMediaKind.VIDEO
             "youtube" -> entry.kind == TelegramMediaKind.YOUTUBE
@@ -160,7 +165,7 @@ class TelegramViewModel @Inject constructor(
                     id = "telegram.channels", title = "Monogram",
                     style = MediaTileStyle.LANDSCAPE,
                     items = list.map(TelegramChannel::toBrowseItem)))
-            } else telegramRows(key, cachedEntries)
+            } else telegramRows(key, cachedEntries, smartTubeUsable)
             if (generation == pageGeneration && mutableState.value.section == key &&
                 mutableState.value.rows.isEmpty() && cached.isNotEmpty()) {
                 mutableState.value = mutableState.value.copy(
@@ -205,7 +210,7 @@ class TelegramViewModel @Inject constructor(
                         next = page.nextCursor
                     } else {
                         val page = repository.browsePage(section, requestCursor)
-                        pageRows = telegramRows(section, page.items)
+                        pageRows = telegramRows(section, page.items, smartTubeUsable)
                         pageMedia = page.items
                         next = page.nextCursor
                     }
@@ -279,7 +284,7 @@ class TelegramViewModel @Inject constructor(
         val current = mutableState.value
         if (current.section == section && returned.loadedMedia.isNotEmpty() && !current.loadingMore &&
             current.nextCursor == returned.startCursor && returned.mediaKey !in current.media) {
-            publishPage(section, append = true, telegramRows(section, returned.loadedMedia),
+            publishPage(section, append = true, telegramRows(section, returned.loadedMedia, smartTubeUsable),
                 returned.loadedMedia, returned.nextCursor)
         }
         return returned.mediaKey

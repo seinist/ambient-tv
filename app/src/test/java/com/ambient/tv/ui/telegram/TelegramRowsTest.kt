@@ -31,4 +31,9 @@ class TelegramRowsTest {
         assertEquals(listOf("telegram:1:10"), telegramRows("videos", entries).flatMap { it.items }.map { it.ratingKey })
         assertTrue(telegramRows("photos", entries).isEmpty())
     }
+
+    @Test fun withoutSmartTubeYouTubeLinkCardsAreLeftOut() {
+        val rows = telegramRows("recent", entries, includeYouTubeLinks = false)
+        assertEquals(listOf("telegram:1:10", "telegram:2:12"), rows.flatMap { it.items }.map { it.ratingKey })
+    }
 }
