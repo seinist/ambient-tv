@@ -808,8 +808,16 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
             output.setLastModified(System.currentTimeMillis())
             return@nativeCall output.toURI().toString()
         }
-        val actual = File(native.downloadMessageThumb(h, chatId, messageId, output.path)).canonicalFile
-        if (actual.parentFile != dir || actual.length() !in 1L..(2L * 1024 * 1024)) {
+        val returned = File(native.downloadMessageThumb(h, chatId, messageId, output.path)).canonicalFile
+        // The native layer may keep the file in its own cache or add an extension: copy it into
+        // our bounded cache instead of discarding a valid thumbnail.
+        val actual = when {
+            returned.parentFile == dir -> returned
+            returned.isFile && returned.length() in 1L..(2L * 1024 * 1024) ->
+                runCatching { returned.copyTo(output, overwrite = true) }.getOrNull() ?: return@nativeCall null
+            else -> return@nativeCall null
+        }
+        if (actual.length() !in 1L..(2L * 1024 * 1024)) {
             actual.delete()
             return@nativeCall null
         }
