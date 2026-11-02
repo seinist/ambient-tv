@@ -604,11 +604,36 @@ class TelegramRepository @Inject constructor(
         return telegramSearchResults(found, subscribed = null, excluded = blockedChannels, limit = limit)
     }
 
-    /** Two at a time: a scrolled grid must not turn into a burst of RPCs (FLOOD_WAIT). */
-    private val thumbnailPermits = kotlinx.coroutines.sync.Semaphore(2)
+    /**
+     * Card images load a few at a time: two made a scrolled grid fill very slowly; the native
+     * media lanes spread six, and getFile of preview sizes rarely hits FLOOD_WAIT.
+     */
+    private val thumbnailPermits = kotlinx.coroutines.sync.Semaphore(6)
+
+    /** One download per card, shared by the prefetch and the card's own image request. */
+    private val thumbnailLoads = java.util.concurrent.ConcurrentHashMap<String, kotlinx.coroutines.Deferred<String?>>()
 
     /** Real thumbnail for a visible card (see [TelegramMedia.cardImageUrl]); null when unavailable. */
     suspend fun thumbnailFile(chatId: Long, messageId: Int): String? {
+        val key = "$chatId:$messageId"
+        val load = thumbnailLoads.computeIfAbsent(key) {
+            scope.async { try { loadThumbnailFile(chatId, messageId) } finally { thumbnailLoads.remove(key) } }
+        }
+        return load.await()
+    }
+
+    /**
+     * Loads the card images of a freshly shown page in the background, newest first, so they
+     * are on disk by the time the cards are drawn (the inline preview showed for long).
+     */
+    fun prefetchThumbnails(media: List<TelegramMedia>, limit: Int = 24) {
+        media.asSequence()
+            .filter { it.cardImageUrl?.startsWith(MONOGRAM_THUMB_SCHEME) == true }
+            .take(limit)
+            .forEach { item -> scope.launch { runCatching { thumbnailFile(item.chatId, item.messageId) } } }
+    }
+
+    private suspend fun loadThumbnailFile(chatId: Long, messageId: Int): String? {
         val selected = client ?: return null
         if (chatId in blockedChannels) return null
         val generation = streamEpoch.get()

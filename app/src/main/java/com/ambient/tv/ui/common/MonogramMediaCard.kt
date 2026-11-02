@@ -66,6 +66,9 @@ internal fun monogramCardMeta(
     item.durationMs?.takeIf { it > 0L }?.let { durationLabel(it)?.let(::add) }
 }.joinToString("  ·  ")
 
+/** Square cards (Monogram audio grid), like the Radio Browser's station grid. */
+internal val LocalMonogramSquareCards = androidx.compose.runtime.staticCompositionLocalOf { false }
+
 /** The same thumbnail treatment is used by rows, grids and lists. */
 @Composable
 internal fun MonogramArtwork(
@@ -85,6 +88,12 @@ internal fun MonogramArtwork(
                 Icons.Filled.AccountCircle, contentDescription = item.title,
                 tint = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.fillMaxHeight(.64f).aspectRatio(1f),
+            )
+            // Unread posts, labelled like SmartTube's "new videos" so it cannot read as presence.
+            if ((item.leafCount ?: 0) > 0) com.ambient.tv.ui.common.MetaBadge(
+                text = androidx.compose.ui.res.stringResource(com.ambient.tv.R.string.monogram_channel_new_posts),
+                emphasized = true,
+                modifier = Modifier.align(Alignment.TopEnd).padding(7.dp),
             )
         }
     } else {
@@ -115,7 +124,11 @@ internal fun MonogramMediaCard(
 ) {
     val handheld = LocalHandheldUi.current
     val resolvedStyle = resolveMediaTileStyle(style, item.type, handheld)
-    val aspect = if (resolvedStyle in setOf(MediaTileStyle.POSTER, MediaTileStyle.AUTO)) 2f / 3f else 16f / 9f
+    val aspect = when {
+        LocalMonogramSquareCards.current -> 1f
+        resolvedStyle in setOf(MediaTileStyle.POSTER, MediaTileStyle.AUTO) -> 2f / 3f
+        else -> 16f / 9f
+    }
     val width = LocalMonogramRowCardWidth.current ?: mediaTileWidth(resolvedStyle)
     val shape = RoundedCornerShape(10.dp)
     val artworkShape = RoundedCornerShape(7.dp)
@@ -139,7 +152,7 @@ internal fun MonogramMediaCard(
 
     val meta = remember(item, androidx.compose.ui.platform.LocalConfiguration.current.locales[0]) {
         monogramCardMeta(item,
-            dateLabel = { DateFormat.getDateInstance(DateFormat.MEDIUM).format(Date(it)) },
+            dateLabel = { relativePublishedLabel(it) },
             durationLabel = { formatPlaybackClock(it) },
         )
     }

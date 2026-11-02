@@ -17,11 +17,15 @@ import okio.Path.Companion.toOkioPath
  */
 class MonogramThumbFetcher(
     private val ref: MonogramThumbRef,
+    /** The post's full photo (photo viewer) instead of its card thumbnail. */
+    private val fullPhoto: Boolean,
     private val options: Options,
     private val repository: () -> TelegramRepository,
 ) : Fetcher {
     override suspend fun fetch(): FetchResult? {
-        val uri = repository().thumbnailFile(ref.chatId, ref.messageId) ?: ref.fallback ?: return null
+        val uri = (if (fullPhoto) runCatching { repository().photoFile(ref.chatId, ref.messageId) }
+                .getOrElse { if (it is kotlinx.coroutines.CancellationException) throw it; null }
+            else repository().thumbnailFile(ref.chatId, ref.messageId)) ?: ref.fallback ?: return null
         val file = runCatching { java.io.File(java.net.URI(uri)) }.getOrNull()?.takeIf { it.isFile } ?: return null
         return SourceFetchResult(
             source = ImageSource(file.toOkioPath(), options.fileSystem),
@@ -32,9 +36,9 @@ class MonogramThumbFetcher(
 
     class Factory(private val repository: () -> TelegramRepository) : Fetcher.Factory<Uri> {
         override fun create(data: Uri, options: Options, imageLoader: ImageLoader): Fetcher? {
-            if (data.scheme != MONOGRAM_THUMB_SCHEME) return null
+            if (data.scheme != MONOGRAM_THUMB_SCHEME && data.scheme != MONOGRAM_PHOTO_SCHEME) return null
             val ref = parseMonogramThumbModel(data.toString()) ?: return null
-            return MonogramThumbFetcher(ref, options, repository)
+            return MonogramThumbFetcher(ref, data.scheme == MONOGRAM_PHOTO_SCHEME, options, repository)
         }
     }
 }

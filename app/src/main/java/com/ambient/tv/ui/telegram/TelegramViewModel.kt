@@ -40,8 +40,10 @@ fun TelegramChannel.toBrowseItem(): MediaItem = MediaItem(
     title = title,
     type = "collection",
     index = null,
-    thumbUrl = thumbnailUrl,
-    artUrl = thumbnailUrl,
+    // The avatar's display size (sharp), the inline preview as its fallback.
+    thumbUrl = com.ambient.tv.data.telegram.monogramThumbModel(chatId, 0, thumbnailUrl),
+    // Landscape tiles draw artUrl: the inline preview there replaced the sharp avatar again.
+    artUrl = com.ambient.tv.data.telegram.monogramThumbModel(chatId, 0, thumbnailUrl),
     year = null,
     summary = description,
     tagline = null,
@@ -54,6 +56,9 @@ fun TelegramChannel.toBrowseItem(): MediaItem = MediaItem(
     contentRating = null,
     rating = null,
     studio = null,
+    addedAt = lastPostAtMs,
+    leafCount = unreadCount.takeIf { it > 0 },
+    viewedLeafCount = 0.takeIf { unreadCount > 0 },
 )
 
 /** [includeYouTubeLinks] false without a usable SmartTube: YouTube link cards could not play. */
@@ -68,9 +73,11 @@ internal fun telegramRows(
             "youtube" -> entry.kind == TelegramMediaKind.YOUTUBE
             "audio" -> entry.kind == TelegramMediaKind.AUDIO
             "photos" -> entry.kind == TelegramMediaKind.PHOTO
+            // Photos have their own category; "Neue Medien" is what plays.
+            "recent" -> entry.kind != TelegramMediaKind.PHOTO
             else -> true
         }
-    }.distinctBy(TelegramMedia::mediaKey)
+    }.distinctBy(TelegramMedia::contentKey)
         .groupBy { it.chatId }
         .map { (chatId, media) ->
             ContentRowData(
@@ -101,8 +108,16 @@ class TelegramViewModel @Inject constructor(
     suspend fun joinChannel(chatId: Long): Boolean = repository.joinChannel(chatId)
     suspend fun leaveChannel(chatId: Long): Boolean = repository.leaveChannel(chatId)
     internal fun viewMode(section: String): MonogramBrowseLayout =
-        runCatching { MonogramBrowseLayout.valueOf(preferences.sectionViewMode("monogram.$section") ?: "ROWS") }
-            .getOrDefault(MonogramBrowseLayout.ROWS)
+        // One continuous newest-first grid across channels, like SmartTube's subscriptions;
+        // rows per channel stay selectable in the view options.
+        // Audio posts rarely carry artwork and photos read best as a file list, like the
+        // Files (SMB) browser.
+        (if (section == "audio" || section == "photos") MonogramBrowseLayout.FILES else MonogramBrowseLayout.GRID).let { default ->
+            runCatching { MonogramBrowseLayout.valueOf(preferences.sectionViewMode("monogram.$section") ?: default.name) }
+                .getOrDefault(default)
+                // A list chosen before the file list existed becomes the file list.
+                .let { if (default == MonogramBrowseLayout.FILES && it == MonogramBrowseLayout.LIST) default else it }
+        }
     internal fun changeViewMode(section: String, mode: MonogramBrowseLayout) =
         preferences.setSectionViewMode("monogram.$section", mode.name)
     val gridColumns get() = preferences.libraryGridColumns
@@ -251,6 +266,7 @@ class TelegramViewModel @Inject constructor(
                 items = (old.items + row.items).distinctBy(MediaItem::ratingKey),
             )
         }
+        repository.prefetchThumbnails(pageMedia)
         val earlier = if (append) mutableState.value.media else emptyMap()
         mutableState.value = TelegramBrowseState(
             section = section, available = true, rows = merged.values.toList(),

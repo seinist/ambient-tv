@@ -15,6 +15,11 @@ internal class MonogramRecentTimeline(
      */
     unloadedBoundMs: Long? = null,
     private val moreChannels: (() -> CatalogPage)? = null,
+    /**
+     * Channels fetched at once when several may hold the next item: one by one, a first page
+     * over sixty channels took 16 s. The native client overlaps RPCs.
+     */
+    private val parallelism: Int = 1,
     private val fetch: (channel: Long, offsetId: Int, count: Int) -> HistoryBatch,
 ) {
     data class Channel(val id: Long, val latestMessageMs: Long)
@@ -66,25 +71,41 @@ internal class MonogramRecentTimeline(
                 continue
             }
             if (unseen != null && (ready == null || unseen.upperBound >= readyTime)) {
-                if (requests++ >= requestBudget) break
-                val before = unseen.offsetId
-                val batch = fetch(unseen.channel.id, before, 16)
-                unseen.buffer.addAll(batch.media.sortedWith(
-                    compareByDescending<TelegramMedia> { it.publishedAtMs }
-                        .thenByDescending { it.chatId }.thenByDescending { it.messageId },
-                ))
-                val after = batch.nextOffsetId
-                unseen.done = after == null || after == before
-                if (!unseen.done) {
-                    unseen.offsetId = after!!
-                    unseen.upperBound = batch.oldestMessageMs.takeIf { it > 0 }
-                        ?: Long.MAX_VALUE
+                // Every source that could hold the next item is needed anyway: fetch them together.
+                val wave = sources.filter { !it.done && it.buffer.isEmpty() && (ready == null || it.upperBound >= readyTime) }
+                    .sortedByDescending(Source::upperBound)
+                    .take(parallelism.coerceAtLeast(1).coerceAtMost(requestBudget - requests).coerceAtLeast(1))
+                if (requests >= requestBudget) break
+                requests += wave.size
+                val batches = if (wave.size == 1) listOf(fetch(wave[0].channel.id, wave[0].offsetId, 16))
+                else {
+                    val pool = java.util.concurrent.Executors.newFixedThreadPool(wave.size)
+                    try {
+                        wave.map { source -> pool.submit<HistoryBatch> { fetch(source.channel.id, source.offsetId, 16) } }
+                            .map { it.get() }
+                    } catch (failure: java.util.concurrent.ExecutionException) {
+                        throw failure.cause ?: failure
+                    } finally { pool.shutdownNow() }
+                }
+                wave.zip(batches).forEach { (source, batch) ->
+                    val before = source.offsetId
+                    source.buffer.addAll(batch.media.sortedWith(
+                        compareByDescending<TelegramMedia> { it.publishedAtMs }
+                            .thenByDescending { it.chatId }.thenByDescending { it.messageId },
+                    ))
+                    val after = batch.nextOffsetId
+                    source.done = after == null || after == before
+                    if (!source.done) {
+                        source.offsetId = after!!
+                        source.upperBound = batch.oldestMessageMs.takeIf { it > 0 } ?: Long.MAX_VALUE
+                    }
                 }
                 continue
             }
             if (ready == null) break
             val item = ready.buffer.removeFirst()
-            if (emitted.add(item.mediaKey)) result.add(item)
+            // Reposts of one video/link in several channels appear once (the newest).
+            if (emitted.add(item.contentKey)) result.add(item)
         }
         return Page(result, hasMore())
     }

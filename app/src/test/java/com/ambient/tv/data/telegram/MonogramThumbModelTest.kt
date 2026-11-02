@@ -12,10 +12,14 @@ class MonogramThumbModelTest {
         assertEquals(MonogramThumbRef(5L, 7, null), parseMonogramThumbModel(monogramThumbModel(5L, 7, null)))
     }
 
+    @Test fun messageZeroIsTheChannelAvatar() {
+        assertEquals(MonogramThumbRef(5, 0, null), parseMonogramThumbModel("monogram-thumb://5/0"))
+    }
+
     @Test fun otherUrlsAreNotMonogramThumbs() {
         assertNull(parseMonogramThumbModel("https://example.test/a.jpg"))
         assertNull(parseMonogramThumbModel("monogram-thumb://0/1"))
-        assertNull(parseMonogramThumbModel("monogram-thumb://5/0"))
+        assertNull(parseMonogramThumbModel("monogram-thumb://5/-1"))
         assertNull(parseMonogramThumbModel("monogram-thumb://5"))
     }
 
@@ -24,6 +28,8 @@ class MonogramThumbModelTest {
             kind = TelegramMediaKind.VIDEO, thumbnailUrl = "file:/inline.bin")
         assertEquals(monogramThumbModel(5, 7, "file:/inline.bin"), video.cardImageUrl)
         assertEquals(video.cardImageUrl, video.toMediaItem().thumbUrl)
+        val photo = video.copy(kind = TelegramMediaKind.PHOTO)
+        assertEquals(monogramThumbModel(5, 7, "file:/inline.bin"), photo.cardImageUrl)
         val audioWithoutCover = video.copy(kind = TelegramMediaKind.AUDIO, thumbnailUrl = null)
         assertNull(audioWithoutCover.cardImageUrl)
     }

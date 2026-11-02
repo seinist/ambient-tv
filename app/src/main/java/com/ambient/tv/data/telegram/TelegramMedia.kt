@@ -33,6 +33,16 @@ data class TelegramMedia(
             listOfNotNull(youtubeVideoId)).distinct()
     val mediaKey: String get() = if (kind == TelegramMediaKind.YOUTUBE && youtubeVideoId != null)
         telegramYouTubeMediaKey(chatId, messageId, youtubeVideoId) else telegramMediaKey(chatId, messageId)
+    /**
+     * The same content reposted in several channels: one YouTube video, or one file (Telegram
+     * keeps a forwarded file's size and duration). Lists show it once, the newest post first.
+     */
+    val contentKey: String get() = when {
+        kind == TelegramMediaKind.YOUTUBE && youtubeVideoId != null -> "yt:$youtubeVideoId"
+        (kind == TelegramMediaKind.VIDEO || kind == TelegramMediaKind.AUDIO) && fileSize > 0 ->
+            "file:${kind.name}:$fileSize:$durationMs"
+        else -> mediaKey
+    }
     val previewUrl: String? get() = if (kind == TelegramMediaKind.YOUTUBE && youtubeVideoId != null)
         com.ambient.tv.youtube.youtubeThumbnailUrl(youtubeVideoId) else thumbnailUrl
     /**
@@ -58,7 +68,13 @@ data class TelegramChannel(
     val thumbnailUrl: String? = null,
     /** Unknown until the native session confirms the channel's membership. */
     val subscribed: Boolean? = null,
-)
+    /** Unread posts: the channel tile's "new" badge, like SmartTube's channels. */
+    val unreadCount: Int = 0,
+    val lastPostAtMs: Long? = null,
+) {
+    /** The avatar's sharp display size; [thumbnailUrl] (inline ~40 px) is only its fallback. */
+    val avatarUrl: String? get() = monogramThumbModel(chatId, 0, thumbnailUrl)
+}
 
 const val TELEGRAM_MEDIA_PREFIX = "telegram:"
 const val TELEGRAM_YOUTUBE_PREFIX = "telegram-youtube:"
@@ -135,7 +151,7 @@ fun TelegramMedia.playerMetadata(): PlaybackMetadata = PlaybackMetadata(
     source = "telegram",
     mediaId = mediaKey,
     hasVideo = kind == TelegramMediaKind.VIDEO,
-    artworkUrl = thumbnailUrl,
+    artworkUrl = cardImageUrl ?: thumbnailUrl,
     durationMs = durationMs,
 )
 
@@ -166,6 +182,11 @@ fun telegramYouTubeIds(text: String): List<String> {
 }
 
 const val MONOGRAM_THUMB_SCHEME = "monogram-thumb"
+/** Full photo of a post (photo viewer); same parameters as [monogramThumbModel]. */
+const val MONOGRAM_PHOTO_SCHEME = "monogram-photo"
+
+fun monogramPhotoModel(chatId: Long, messageId: Int, fallback: String?): String =
+    monogramThumbModel(chatId, messageId, fallback).replaceFirst(MONOGRAM_THUMB_SCHEME, MONOGRAM_PHOTO_SCHEME)
 
 /** Image model for a post's real thumbnail; [fallback] (the inline preview) if it cannot load. */
 fun monogramThumbModel(chatId: Long, messageId: Int, fallback: String?): String =
@@ -175,13 +196,15 @@ fun monogramThumbModel(chatId: Long, messageId: Int, fallback: String?): String 
 data class MonogramThumbRef(val chatId: Long, val messageId: Int, val fallback: String?)
 
 fun parseMonogramThumbModel(value: String): MonogramThumbRef? {
-    val rest = value.removePrefix("$MONOGRAM_THUMB_SCHEME://").takeIf { it != value } ?: return null
+    val rest = value.removePrefix("$MONOGRAM_THUMB_SCHEME://").takeIf { it != value }
+        ?: value.removePrefix("$MONOGRAM_PHOTO_SCHEME://").takeIf { it != value } ?: return null
     val path = rest.substringBefore('?')
     val fallback = rest.substringAfter('?', "").takeIf { it.startsWith("fallback=") }
         ?.removePrefix("fallback=")?.let { java.net.URLDecoder.decode(it, "UTF-8") }?.takeIf { it.isNotBlank() }
     val parts = path.split('/')
     if (parts.size != 2) return null
     val chatId = parts[0].toLongOrNull()?.takeIf { it != 0L } ?: return null
-    val messageId = parts[1].toIntOrNull()?.takeIf { it > 0 } ?: return null
+    // Message 0 is the channel's own avatar.
+    val messageId = parts[1].toIntOrNull()?.takeIf { it >= 0 } ?: return null
     return MonogramThumbRef(chatId, messageId, fallback)
 }

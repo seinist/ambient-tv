@@ -453,7 +453,10 @@ fun TelegramPlayerScreen(
     RegisterPlayerItemNavigation(viewModel, viewModel::playNext)
     PersistentPlayerChrome(viewModel) {
         val selected = media
-        if (selected == null || failure != null) {
+        // Loading the post: a spinner, never the "module missing" panel for a moment.
+        if (selected == null && failure == null && available) {
+            com.ambient.tv.ui.common.FullscreenSpinner()
+        } else if (selected == null || failure != null) {
             BrowseStatusPanel(
                 title = stringResource(R.string.telegram_error),
                 body = failure ?: stringResource(R.string.settings_telegram_native_missing),
@@ -542,6 +545,11 @@ private fun TelegramPlaybackContent(
             }
         }
     }
+    /** The Media3 player of this post: its audio spectrum drives projectM for audio posts. */
+    var media3Player by remember(media.mediaKey, renderer) {
+        mutableStateOf<androidx.media3.exoplayer.ExoPlayer?>(null)
+    }
+    val projectMBrowser = com.ambient.tv.ui.common.projectm.rememberProjectMBrowser(preferences.projectmPresetCategoryKey)
     val snapshot by BackgroundPlaybackSession.snapshot.collectAsState()
     val presentation by BackgroundPlaybackSession.videoPresentation.collectAsState()
     val controls = rememberPlayerControlsVisible()
@@ -596,7 +604,7 @@ private fun TelegramPlaybackContent(
                 }
                 else -> LaunchedEffect(media.mediaKey, renderer, repository) {
                     try {
-                        PlaybackEngineFactory.create(
+                        val player = PlaybackEngineFactory.create(
                             context = context,
                             streamUrl = "telegram://media/${media.chatId}/${media.messageId}",
                             startPositionMs = startPositionMs,
@@ -604,6 +612,15 @@ private fun TelegramPlaybackContent(
                             metadata = metadata,
                             dataSourceFactory = TelegramVideoDataSource.Factory(repository, media),
                         )
+                        // Media3 ends a failed read in STATE_IDLE with an error and nothing else:
+                        // without this the screen stood at 0:00 without OSD and without a reason.
+                        media3Player = player
+                        player.addListener(object : androidx.media3.common.Player.Listener {
+                            override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
+                                com.ambient.tv.diagnostics.DiagnosticLog.error("monogram", "playback failed", error)
+                                onFailure(telegramPlaybackErrorMessage(context, error) ?: playbackFailed)
+                            }
+                        })
                     } catch (cancelled: CancellationException) {
                         throw cancelled
                     } catch (error: Exception) {
@@ -634,6 +651,26 @@ private fun TelegramPlaybackContent(
                     }
                 }.focusable(),
         ) {
+            // Audio posts: projectM or the spectrum, as in the other players (Media3 only).
+            val audioPlayer = media3Player
+            if (media.kind == TelegramMediaKind.AUDIO && audioPlayer != null) {
+                val mode = preferences.audioVisualizerModeKey
+                when {
+                    mode == "projectm" && com.ambient.tv.ui.common.projectm.ProjectMAvailability.isAvailable ->
+                        com.ambient.tv.ui.common.projectm.ProjectMVisualizer(
+                            analyzer = PlaybackEngineFactory.audioSpectrum(audioPlayer),
+                            intervalSeconds = preferences.projectmPresetIntervalSeconds,
+                            transitionSeconds = preferences.projectmTransitionSeconds,
+                            qualityKey = preferences.projectmQualityKey,
+                            categoryKey = preferences.projectmPresetCategoryKey,
+                            showControls = controlsVisible,
+                            browser = projectMBrowser,
+                            modifier = Modifier.fillMaxSize(),
+                        )
+                    mode != "off" -> com.ambient.tv.ui.common.AudioPlaybackVisualizer(
+                        Modifier.fillMaxSize(), PlaybackEngineFactory.audioSpectrum(audioPlayer))
+                }
+            }
             if (media.kind == TelegramMediaKind.PHOTO) {
                 com.ambient.tv.ui.common.CrossfadeBackdropImage(
                     model = fullPhotoUrl ?: media.thumbnailUrl,
@@ -646,6 +683,27 @@ private fun TelegramPlaybackContent(
             val duration = if (ownsSession) snapshot.status.durationMs.takeIf { it > 0 }
                 ?: metadata.durationMs else metadata.durationMs
             val playing = ownsSession && snapshot.playing
+            // Touch screens: a tap shows/hides the OSD, double taps seek, as in the other players.
+            com.ambient.tv.ui.common.PlayerTouchLayer(
+                onToggleControls = {
+                    if (panel != UnifiedPlayerPanel.NONE) panelNavigation.close()
+                    else if (osd.closing) osd.reveal() else controlsVisible = !controlsVisible
+                },
+                onTogglePlayback = {
+                    BackgroundPlaybackSession.userToggle()
+                    controlsVisible = true
+                },
+                onSeekBack = if (media.kind == TelegramMediaKind.PHOTO) null else ({
+                    if (ownsSession && duration > 0) BackgroundPlaybackSession.seekTo(
+                        (position - BackgroundPlaybackSession.seekJumpMs(10_000L)).coerceIn(0, duration))
+                    controlsVisible = true
+                }),
+                onSeekForward = if (media.kind == TelegramMediaKind.PHOTO) null else ({
+                    if (ownsSession && duration > 0) BackgroundPlaybackSession.seekTo(
+                        (position + BackgroundPlaybackSession.seekJumpMs(10_000L)).coerceIn(0, duration))
+                    controlsVisible = true
+                }),
+            )
             PublishPlayerOsd(
                 TelegramOsd(
                     media = media,
@@ -686,7 +744,7 @@ private fun TelegramPlaybackContent(
                 PublishPlayerPanel(
                     PlayerPanelModel(
                     scrimAlpha = 0.32f,
-                    projectMBrowser = null,
+                    projectMBrowser = if (media.kind == TelegramMediaKind.AUDIO) projectMBrowser else null,
                     audioSession = BackgroundPlaybackSession.currentAudioSession(),
                     hasVideo = metadata.hasVideo,
                     isLive = false,
@@ -735,11 +793,7 @@ private fun TelegramPlaybackContent(
                     com.ambient.tv.ui.player.playerDetailForTelegram(
                         media = media,
                         channel = channel,
-                        formatDate = { ms ->
-                            java.text.DateFormat.getDateTimeInstance(
-                                java.text.DateFormat.MEDIUM, java.text.DateFormat.SHORT, locale,
-                            ).format(java.util.Date(ms))
-                        },
+                        formatDate = { ms -> com.ambient.tv.ui.common.relativePublishedLabel(ms, withTime = true) },
                         formatSize = { bytes -> android.text.format.Formatter.formatShortFileSize(context, bytes) },
                         playerDurationMs = playerDuration,
                     )
@@ -788,7 +842,7 @@ internal data class TelegramOsd(
                     title = media.title,
                     subtitle = media.summary,
                     contextLine = media.channel,
-                    artworkUrl = media.thumbnailUrl,
+                    artworkUrl = media.cardImageUrl ?: media.thumbnailUrl,
                 )
                 if (durationMs > 0 && media.kind != TelegramMediaKind.PHOTO) {
                     TvPlayerSeekBar(
@@ -834,7 +888,7 @@ internal data class TelegramOsd(
                         PlayerIconButton(
                             Icons.Filled.AccountCircle, channel.title,
                             onOpenChannel,
-                            imageUrl = channel.thumbnailUrl,
+                            imageUrl = channel.avatarUrl,
                         )
                         channel.subscribed?.let { joined ->
                             PlayerIconButton(
@@ -859,4 +913,17 @@ internal data class TelegramOsd(
             }
         }
     }
+}
+
+/** The Telegram cause behind a Media3 error (e.g. FLOOD_WAIT), readable for the error panel. */
+internal fun telegramPlaybackErrorMessage(
+    context: android.content.Context,
+    error: Throwable,
+): String? {
+    val causes = generateSequence(error) { it.cause }.take(8).toList()
+    causes.firstNotNullOfOrNull { it as? com.ambient.tv.data.telegram.TelegramFloodWaitException }?.let {
+        return context.getString(R.string.monogram_error_flood_wait, it.seconds)
+    }
+    return causes.lastOrNull { !it.message.isNullOrBlank() && it !is java.io.IOException }?.message
+        ?: causes.lastOrNull { !it.message.isNullOrBlank() }?.message
 }

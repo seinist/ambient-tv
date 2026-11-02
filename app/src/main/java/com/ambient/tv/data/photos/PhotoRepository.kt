@@ -44,7 +44,10 @@ class PhotoRepository @Inject constructor(
 
     /** EXIF details; a failure (not a cancellation, which is rethrown) is reported, not hidden. */
     suspend fun detailsResult(entry: PhotoEntry): Result<PhotoExif?> =
-        suspendResult { source(entry.id).details(entry) ?: entry.exif }
+        suspendResult {
+            // Monogram photos have no photo source: their listing data is all there is.
+            sources.firstOrNull { it.owns(entry.id) }?.details(entry) ?: entry.exif
+        }
 
     /** Last [recent] result; the home row opens the viewer on exactly this list. */
     @Volatile var lastRecent: List<PhotoEntry> = emptyList()

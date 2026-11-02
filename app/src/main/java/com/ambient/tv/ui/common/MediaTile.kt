@@ -425,10 +425,7 @@ private fun monogramPublishedLabel(item: MediaItem): String? =
     item.addedAt?.takeIf { it > 0L && (
         item.ratingKey.startsWith("telegram:") ||
         item.ratingKey.startsWith("telegram-youtube:")
-    ) }?.let { stamp ->
-        java.text.DateFormat.getDateInstance(java.text.DateFormat.MEDIUM)
-            .format(java.util.Date(stamp))
-    }
+    ) }?.let { relativePublishedLabel(it) }
 
 /** The same four slots for every provider and type: year, length, age rating, score. */
 @Composable

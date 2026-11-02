@@ -2286,6 +2286,8 @@
     <string name="monogram_error_channel_left">Du hast diesen Kanal verlassen</string>
     <string name="monogram_error_account_changed">Monogram-Konto oder Kanalmitgliedschaft hat sich geändert</string>
     <string name="monogram_error_media_unavailable">Dieses Monogram-Medium ist nicht verfügbar</string>
+    <string name="monogram_channel_new_posts">Neue Beiträge</string>
+    <string name="monogram_view_files">Dateiliste</string>
     <string name="monogram_error_flood_wait">Telegram bittet um %1$d s Pause. Bitte gleich noch einmal versuchen.</string>
     <string name="monogram_error_session_lost">Telegram hat diese Anmeldung beendet (%1$s). Bitte neu anmelden.</string>
     <string name="monogram_error_media_protected">Dieser Beitrag schränkt die Medienwiedergabe ein</string>

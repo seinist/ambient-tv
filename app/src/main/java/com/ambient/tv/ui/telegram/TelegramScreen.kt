@@ -1,5 +1,9 @@
 package com.ambient.tv.ui.telegram
 
+import androidx.compose.material.icons.filled.Image
+import androidx.compose.material.icons.filled.MusicNote
+import androidx.compose.material.icons.filled.AudioFile
+
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -271,7 +275,7 @@ fun TelegramScreen(
         MonogramBrowseLayout.ROWS -> RegisterBrowseFocusRows(rowList,
             currentRows.map { row -> row.id to row.items.map { it.ratingKey } })
         MonogramBrowseLayout.GRID -> RegisterBrowseFocusGrid(grid, flat.map { it.ratingKey })
-        MonogramBrowseLayout.LIST, MonogramBrowseLayout.INFO_LIST ->
+        MonogramBrowseLayout.LIST, MonogramBrowseLayout.INFO_LIST, MonogramBrowseLayout.FILES ->
             RegisterBrowseFocusList(flatList, flat.map { it.ratingKey })
     }
     LaunchedEffect(layout, grid, flatList, flat.size) {
@@ -288,6 +292,8 @@ fun TelegramScreen(
         state.section == sectionKey && (!state.loading || state.rows.isNotEmpty()),
     )
     fun choose(item: MediaItem, origin: List<MediaItem>, rowId: String? = null) {
+        // The photo viewer steps through this page's photos in the order shown.
+        if (item.type == "photo") TelegramPhotoGallery.offer(origin.mapNotNull { viewModel.selected(it.ratingKey) })
         if (item.ratingKey.startsWith(TELEGRAM_CHANNEL_ITEM_PREFIX)) {
             item.ratingKey.removePrefix(TELEGRAM_CHANNEL_ITEM_PREFIX)
                 .toLongOrNull()?.let(onOpenChannel)
@@ -381,7 +387,7 @@ fun TelegramScreen(
                             horizontalArrangement = Arrangement.spacedBy(12.dp),
                         ) {
                             val label = activeChannel?.title ?: state.rows.firstOrNull()?.title ?: "Monogram"
-                            activeChannel?.thumbnailUrl?.let { url ->
+                            activeChannel?.avatarUrl?.let { url ->
                                 ArtworkImage(url, label, Modifier.size(48.dp).clip(CircleShape))
                             } ?: Icon(
                                 Icons.Filled.AccountCircle, label,
@@ -504,8 +510,12 @@ fun TelegramScreen(
                         }
                     }
                 layout == MonogramBrowseLayout.GRID ->
+                    // Audio: square cards in the Radio Browser's denser grid.
+                    androidx.compose.runtime.CompositionLocalProvider(
+                        com.ambient.tv.ui.common.LocalMonogramSquareCards provides (sectionKey == "audio")) {
                     TvLazyVerticalGrid(
-                        columns = deviceDensityGridCells(
+                        columns = if (sectionKey == "audio") deviceDensityGridCells(gridColumns, 160.dp, 8)
+                            else deviceDensityGridCells(
                             com.ambient.tv.ui.common.landscapeGridColumns(gridColumns), 260.dp, 4),
 
                         state = grid,
@@ -538,6 +548,7 @@ fun TelegramScreen(
                             MonogramPageRetry(viewModel::loadMore)
                         }
                     }
+                    }
                 else ->
                     androidx.compose.foundation.lazy.LazyColumn(
                         state = flatList, modifier = Modifier.weight(1f).pageContentUp(chain).focusGroup(),
@@ -545,7 +556,14 @@ fun TelegramScreen(
                         verticalArrangement = Arrangement.spacedBy(8.dp),
                     ) {
                         items(flat, key = { it.ratingKey }) { item ->
-                            MonogramListItem(item, listRows,
+                            if (layout == MonogramBrowseLayout.FILES) MonogramFileRow(item, viewModel.selected(item.ratingKey),
+                                onClick = { choose(item, flat) },
+                                onFocused = {
+                                    lastKey = item.ratingKey
+                                    if (flat.indexOfFirst { it.ratingKey == item.ratingKey } >= flat.size - 10)
+                                        viewModel.loadMore()
+                                })
+                            else MonogramListItem(item, listRows,
                                 detailed = layout == MonogramBrowseLayout.INFO_LIST,
                                 onClick = { choose(item, flat) },
                                 onFocused = {
@@ -578,6 +596,7 @@ fun TelegramScreen(
                             ViewOption("GRID", stringResource(R.string.library_view_grid), ViewPreview.LANDSCAPE),
                             ViewOption("LIST", stringResource(R.string.library_view_list), ViewPreview.LIST),
                             ViewOption("INFO_LIST", stringResource(R.string.library_view_info_list), ViewPreview.INFO_LIST),
+                            ViewOption("FILES", stringResource(R.string.monogram_view_files), ViewPreview.LIST),
                         ),
                         selectedView = layout.name,
                         onView = {
@@ -640,6 +659,54 @@ fun TelegramScreen(
 }
 
 /** Same SmartTube-like focused surface, marquee labels and avatar treatment as Monogram cards. */
+/**
+ * One post as a Files (NFS/SMB) browser row: the track name or file name as title, channel and
+ * date below (the post text where the title is the file), duration and size on the right.
+ */
+@Composable
+private fun MonogramFileRow(
+    item: MediaItem,
+    media: com.ambient.tv.data.telegram.TelegramMedia?,
+    onClick: () -> Unit,
+    onFocused: () -> Unit,
+) {
+    val photo = item.type == "photo"
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val locale = androidx.compose.ui.platform.LocalConfiguration.current.locales[0]
+    // Audio: the track label ("Title — Artist") or file name names the file, like Files' tags.
+    val fileTitle = media?.fileName?.takeIf { !photo && it.isNotBlank() }
+    val caption = item.title.lineSequence().firstOrNull { it.isNotBlank() }?.trim()
+    val detail = remember(item, media, locale) {
+        listOfNotNull(
+            caption.takeIf { fileTitle != null && it != fileTitle },
+            item.parentTitle?.takeIf(String::isNotBlank),
+            item.addedAt?.takeIf { it > 0L }?.let { com.ambient.tv.ui.common.relativePublishedLabel(it) },
+        ).joinToString(" · ")
+    }
+    val meta = remember(item, media) {
+        listOfNotNull(
+            item.durationMs?.takeIf { it > 0L }?.let { com.ambient.tv.ui.common.formatPlaybackClock(it) },
+            media?.fileSize?.takeIf { it > 0L }?.let { android.text.format.Formatter.formatShortFileSize(context, it) },
+        ).joinToString(" · ")
+    }
+    com.ambient.tv.ui.files.FilesBrowserRow(
+        title = fileTitle ?: caption ?: item.title,
+        icon = if (photo) androidx.compose.material.icons.Icons.Filled.Image
+            else androidx.compose.material.icons.Icons.Filled.AudioFile,
+        onOpen = onClick,
+        focusModifier = Modifier.browseFocusTarget(item.ratingKey)
+            .onFocusChanged { if (it.isFocused) onFocused() },
+        detail = detail,
+        meta = meta,
+        leading = if (photo && item.thumbUrl != null) ({
+            com.ambient.tv.ui.common.ArtworkImage(item.thumbUrl, item.title,
+                Modifier.size(width = 64.dp, height = 40.dp)
+                    .clip(RoundedCornerShape(6.dp)), androidx.compose.ui.layout.ContentScale.Crop)
+        }) else null,
+        trailing = {},
+    )
+}
+
 @Composable
 private fun MonogramListItem(
     item: MediaItem,
@@ -655,7 +722,7 @@ private fun MonogramListItem(
     val info = remember(item, locale) {
         monogramCardMeta(
             item,
-            dateLabel = { java.text.DateFormat.getDateInstance(java.text.DateFormat.MEDIUM).format(java.util.Date(it)) },
+            dateLabel = { com.ambient.tv.ui.common.relativePublishedLabel(it) },
             durationLabel = { com.ambient.tv.ui.common.formatPlaybackClock(it) },
         )
     }
