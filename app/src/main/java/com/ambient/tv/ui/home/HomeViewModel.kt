@@ -31,6 +31,9 @@ import com.ambient.tv.youtube.SmartTubeEngine
 import com.ambient.tv.ui.telegram.toBrowseItem
 import com.ambient.tv.youtube.YouTubeContentCache
 import com.ambient.tv.youtube.YouTubeRow
+import com.ambient.tv.youtube.HomeYouTubeLoadMode
+import com.ambient.tv.youtube.HomeYouTubePins
+import com.ambient.tv.youtube.IncompleteYouTubeFeedException
 import com.ambient.tv.ui.youtube.YouTubeBrowsePlaybackContext
 import com.ambient.tv.server.ServerConnectionManager
 import com.ambient.tv.server.ServerConnectionState
@@ -240,6 +243,7 @@ class HomeViewModel @Inject constructor(
     private var youtubeJob: Job? = null
     private var telegramJob: Job? = null
     private var telegramRowsPending = false
+    private var telegramRowsGeneration = 0
     // Keep empty Home in its loading phase until every enabled async row has answered.
     private var radioRowsPending = false
     private var radioRowsGeneration = 0
@@ -262,6 +266,8 @@ class HomeViewModel @Inject constructor(
     private var telegramRows: List<ContentRowData> = emptyList()
     /** The exact upstream SmartTube group per configured feed, for bounded next/previous. */
     private val youtubeSourceRows = mutableMapOf<String, YouTubeRow>()
+    /** YouTube rows shown from the cache on this visit of Home; refreshes leave them still. */
+    private val youtubeHomePins = HomeYouTubePins()
     /** "Recently added photos" row; merged into every publish so provider reloads keep it. */
     private var photoRow: ContentRowData? = null
     private var tvPreview = HomeTvPreview()
@@ -341,6 +347,7 @@ class HomeViewModel @Inject constructor(
         viewModelScope.launch {
             telegramRepository.authorized.collect { authorized ->
                 if (!authorized) {
+                    telegramRowsGeneration++
                     telegramJob?.cancel()
                     telegramRowsPending = false
                     telegramRows = emptyList()
@@ -436,7 +443,7 @@ class HomeViewModel @Inject constructor(
         focusStateKey: String = HOME_FOCUS_STATE_KEY,
     ) {
         hasEntered = true
-        start(plexOnly, jellyfinOnly, embyOnly, focusStateKey, refreshing = false)
+        start(plexOnly, jellyfinOnly, embyOnly, focusStateKey, refreshing = false, youtubeMode = HomeYouTubeLoadMode.OPEN)
     }
 
     private fun start(
@@ -445,6 +452,7 @@ class HomeViewModel @Inject constructor(
         embyOnly: Boolean,
         focusStateKey: String = homeFocusStateKey,
         refreshing: Boolean,
+        youtubeMode: HomeYouTubeLoadMode = HomeYouTubeLoadMode.BACKGROUND,
     ) {
         val keepSnapshot = _uiState.value is HomeUiState.Loaded &&
             this.plexOnly == plexOnly && this.jellyfinOnly == jellyfinOnly &&
@@ -480,7 +488,7 @@ class HomeViewModel @Inject constructor(
         loadPhotoRow()
         loadTrailerRows()
         loadRadioRows()
-        loadYouTubeRows()
+        loadYouTubeRows(youtubeMode)
         loadTelegramRows()
         if (!plexOnly && !jellyfinOnly && !embyOnly && liveTvRegistry.configured().isNotEmpty()) startTvPreview()
         if ((jellyfinOnly || embyOnly) && !refreshing && _uiState.value !is HomeUiState.Loaded) {
@@ -680,7 +688,7 @@ class HomeViewModel @Inject constructor(
         if (_refreshing.value) return
         unreachableServers.allowWakeRetry()
         captureFocusForReturn()
-        refresh()
+        refresh(invalidateCache = true, youtubeMode = HomeYouTubeLoadMode.EXPLICIT)
     }
 
     /** Stop wake attempts from cold start and let other systems remain usable. */
@@ -699,7 +707,7 @@ class HomeViewModel @Inject constructor(
         else if (loaded.loading) _uiState.value = loaded.copy(loading = false)
     }
 
-    private fun refresh(invalidateCache: Boolean) {
+    private fun refresh(invalidateCache: Boolean, youtubeMode: HomeYouTubeLoadMode = HomeYouTubeLoadMode.BACKGROUND) {
         if (!hasEntered) return
         loadGeneration++
         loadJob?.cancel()
@@ -712,6 +720,7 @@ class HomeViewModel @Inject constructor(
             embyOnly = embyOnly,
             focusStateKey = homeFocusStateKey,
             refreshing = true,
+            youtubeMode = youtubeMode,
         )
     }
 
@@ -1367,7 +1376,11 @@ class HomeViewModel @Inject constructor(
         if (!_uiState.value.isFailurePage()) publishRows((_uiState.value as? HomeUiState.Loaded)?.rows.orEmpty())
     }
 
-    private fun loadYouTubeRows() {
+    /**
+     * [mode] OPEN shows the newest cached feeds and then keeps them still; BACKGROUND loads never
+     * change visible YouTube tiles and only update the cache; EXPLICIT applies fresh rows at once.
+     */
+    private fun loadYouTubeRows(youtubeMode: HomeYouTubeLoadMode = HomeYouTubeLoadMode.BACKGROUND) {
         val generation = ++youtubeRowsGeneration
         youtubeJob?.cancel()
         youtubeRowsPending = false
@@ -1401,12 +1414,22 @@ class HomeViewModel @Inject constructor(
                         publishRows((_uiState.value as? HomeUiState.Loaded)?.rows.orEmpty())
                     }
                 }
+                // A new account or language takes its fresh rows immediately.
+                val mode = if (youtubeCacheRevision != null && youtubeCacheRevision != restoredRevision)
+                    HomeYouTubeLoadMode.EXPLICIT else youtubeMode
                 youtubeCacheRevision = restoredRevision
+                youtubeHomePins.startLoad(mode)
                 // Publish this account's cached Home feeds before service discovery/network
                 // checks. Otherwise another provider fills Home while these rows remain missing.
+                // Rows pinned for this visit stay exactly as they are during background loads.
                 definitions.forEach { definition ->
-                    homeYouTubeSourceRow(youtubeContentCache.get("feed:${definition.contentKey}").orEmpty(), HOME_ROW_LIMIT)
-                        ?.let { updateHomeYouTubeRow(generation, definition, it) }
+                    val key = definition.contentKey
+                    if (!youtubeHomePins.mayShowCached(key, mode, key in youtubeSourceRows)) return@forEach
+                    homeYouTubeSourceRow(youtubeContentCache.get("feed:$key").orEmpty(), HOME_ROW_LIMIT)
+                        ?.let {
+                            updateHomeYouTubeRow(generation, definition, it)
+                            youtubeHomePins.cachedShown(key, mode)
+                        }
                 }
                 val supportedResult = suspendResult { smartTubeEngine.supportedFeedKeys() }
                 // If the probe failed (rather than reporting an explicit signed-out state),
@@ -1424,8 +1447,10 @@ class HomeViewModel @Inject constructor(
                     available.map { definition -> async {
                         permits.withPermit {
                             val cacheKey = "feed:${definition.contentKey}"
+                            var partialRows = emptyList<YouTubeRow>()
                             val result = suspendResult {
                                 smartTubeEngine.feed(definition.contentKey) { partial ->
+                                    partialRows = partial
                                     // Reactive SmartTube can take a while to finish: publish the
                                     // first usable group if Home did not have that feed cached.
                                     withContext(kotlinx.coroutines.Dispatchers.Main.immediate) {
@@ -1437,6 +1462,7 @@ class HomeViewModel @Inject constructor(
                                     }
                                 }
                             }
+                            val failure = result.exceptionOrNull()
                             if (generation == youtubeRowsGeneration && result.isSuccess) {
                                 val rows = result.getOrThrow()
                                 // The common SmartTube cache reconciles by ID, preserving
@@ -1446,7 +1472,22 @@ class HomeViewModel @Inject constructor(
                                 val selected = homeYouTubeSourceRow(visible, HOME_ROW_LIMIT)
                                 // A successful empty feed removes expired Home tiles. A failed
                                 // refresh keeps the previously shown cached source instead.
-                                updateHomeYouTubeRow(generation, definition, selected)
+                                // Pinned tiles stay; the next opening of Home shows the new ones.
+                                if (youtubeHomePins.mayApplyFresh(definition.contentKey, definition.contentKey in youtubeSourceRows)) {
+                                    updateHomeYouTubeRow(generation, definition, selected)
+                                } else {
+                                    timber.log.Timber.tag("youtube-rows").d("Home %s refreshed in background; visible tiles stay until the next opening", cacheKey)
+                                }
+                            } else if (generation == youtubeRowsGeneration && failure is IncompleteYouTubeFeedException &&
+                                partialRows.isNotEmpty() && youtubeContentCache.revision() == revision
+                            ) {
+                                // SmartTube stopped at its emission/time limit: keep what arrived
+                                // as display state for the next opening, without deleting entries.
+                                timber.log.Timber.tag("youtube-rows").i(failure, "Home %s stopped early; keeping %d partial rows as display state", cacheKey, partialRows.size)
+                                val stored = youtubeContentCache.persistPartial(cacheKey, partialRows, revision)
+                                if (youtubeHomePins.mayApplyFresh(definition.contentKey, definition.contentKey in youtubeSourceRows)) {
+                                    homeYouTubeSourceRow(stored, HOME_ROW_LIMIT)?.let { updateHomeYouTubeRow(generation, definition, it) }
+                                }
                             }
                         }
                     } }.awaitAll()
@@ -1474,8 +1515,8 @@ class HomeViewModel @Inject constructor(
             )
         }
 
-    /** Telegram is account-private: never persist these rows in the shared Home snapshot cache. */
     /**
+     * Telegram is account-private: never persist these rows in the shared Home snapshot cache.
      * Home passes its exact source row, including on touch where no tile has focus. The queue
      * is that row as shown; Home rows are not continued past their loaded posts.
      */
@@ -1485,6 +1526,9 @@ class HomeViewModel @Inject constructor(
     }
 
     private fun loadTelegramRows() {
+        // Like Radio/SmartTube: a cancelled older load must not clear the newer one's pending
+        // state or publish its rows from its finally block.
+        val generation = ++telegramRowsGeneration
         telegramJob?.cancel()
         telegramRowsPending = false
         if (plexOnly || jellyfinOnly || embyOnly || !appPreferences.telegramEnabled ||
@@ -1525,6 +1569,7 @@ class HomeViewModel @Inject constructor(
                         }
                     }.awaitAll().filterNotNull()
                 }
+                if (generation != telegramRowsGeneration) return@launch
                 if (cached.isNotEmpty() && telegramRepository.available) {
                     telegramRows = cached
                     if (!_uiState.value.isFailurePage())
@@ -1549,15 +1594,17 @@ class HomeViewModel @Inject constructor(
                         }
                     }.awaitAll().filterNotNull()
                 }
-                telegramRows = updates
+                if (generation == telegramRowsGeneration) telegramRows = updates
             } catch (cancelled: kotlinx.coroutines.CancellationException) {
                 throw cancelled
             } catch (_: Exception) {
                 // Preserve previous authenticated rows for transient network failures.
             } finally {
-                telegramRowsPending = false
-                if (!_uiState.value.isFailurePage())
-                    publishRows((_uiState.value as? HomeUiState.Loaded)?.rows.orEmpty())
+                if (generation == telegramRowsGeneration) {
+                    telegramRowsPending = false
+                    if (!_uiState.value.isFailurePage())
+                        publishRows((_uiState.value as? HomeUiState.Loaded)?.rows.orEmpty())
+                }
             }
         }
     }
@@ -2345,6 +2392,8 @@ internal fun homeLoadingRowStyles(
     val visible = rows.asSequence().map { definition ->
         when {
             definition.isLiveTvChannelRow -> MediaTileStyle.LANDSCAPE
+            // SmartTube rows are always 16:9 (updateHomeYouTubeRow); a poster stand-in jumps.
+            definition.system == HomeRowDefinition.SYSTEM_YOUTUBE -> MediaTileStyle.LANDSCAPE
             else -> homeRowTileStyle(
                 definition.displayMode,
                 default = if (definition.contentKey == "continue") MediaTileStyle.CONTINUE else MediaTileStyle.POSTER,

@@ -20,4 +20,14 @@ object SystemNameOverrides {
         .filterKeys { it in KEYS }
         .mapValues { it.value.trim().take(MAX_LENGTH).trim() }
         .filterValues(String::isNotBlank)
+
+    /**
+     * The menu editor used to store the shown label of TVHeadend ("Live-TV"/"Live TV") as a
+     * custom name, because it compared against the provider name "TVHeadend". That made the
+     * TVHeadend settings page read "Live-TV" next to the real Live-TV page.
+     */
+    private val LEGACY_LABEL_COPIES = mapOf("tvheadend" to setOf("Live-TV", "Live TV"))
+
+    fun withoutLegacyLabelCopies(names: Map<String, String>): Map<String, String> =
+        names.filterNot { (key, value) -> value.trim() in LEGACY_LABEL_COPIES[key].orEmpty() }
 }

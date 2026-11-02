@@ -34,6 +34,12 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
     /** The upstream MTProto handle supports overlapping RPCs. Only handle creation and
      * connecting are serialized: an artwork request must never block video seeking. */
     private val mutex = Mutex()
+    /**
+     * RPCs on the handle run outside [mutex] so they can overlap. Each holds a read lock while
+     * it uses the handle; destroying the handle takes the write lock, so it waits for running
+     * RPCs instead of freeing native memory under them (use-after-free on logout/reset).
+     */
+    private val handleUse = java.util.concurrent.locks.ReentrantReadWriteLock()
     private val browseMutex = Mutex()
     private val diskChunkLock = Any()
     /** Account-generation fences prevent older thumbnail RPCs repopulating a new account's cache. */
@@ -79,9 +85,12 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
                     native.connect(handle)
                     connected = true
                 }
+                // Taken before the mutex is released: a wipe cannot slip in between. The body
+                // and action run without suspending, so this thread also releases it.
+                handleUse.readLock().lock()
                 handle
             }
-            action(current)
+            try { action(current) } finally { handleUse.readLock().unlock() }
         }
 
     /** Application credentials changed while logged out: never reuse the old MTProto handle. */
@@ -104,9 +113,15 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
 
     private fun wipeLocalLocked() {
         if (handle != 0L) {
-            runCatching { native.destroyClient(handle) }
-            handle = 0L
-            connected = false
+            // Waits for RPCs still using the handle (a running media chunk, a thumbnail).
+            handleUse.writeLock().lock()
+            try {
+                runCatching { native.destroyClient(handle) }
+                handle = 0L
+                connected = false
+            } finally {
+                handleUse.writeLock().unlock()
+            }
         }
         synchronized(diskChunkLock) {
             cacheGeneration++

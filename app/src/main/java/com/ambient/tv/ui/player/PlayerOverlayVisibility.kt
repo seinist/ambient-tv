@@ -30,6 +30,7 @@ import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.runtime.saveable.SaveableStateHolder
 import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.ui.Modifier
+import com.ambient.tv.ui.common.dispatchBackOnRelease
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInRoot
@@ -217,6 +218,17 @@ internal fun playerOsdExitFadeDelayMs(
     if (handheld) 300 else 700
 } else 0
 
+/** A re-mounted overlay starts visible only when the OSD was on screen and still should be. */
+internal fun playerOsdResumesOnScreen(wasOnScreen: Boolean, show: Boolean): Boolean = wasOnScreen && show
+
+/** Handheld openings slide the action row in; a resumed OSD keeps its current layout. */
+internal fun playerOsdStowStartsCollapsed(
+    resumed: Boolean,
+    handheld: Boolean,
+    hasController: Boolean,
+    expanded: Boolean?,
+): Boolean = if (resumed) expanded != true else (handheld && hasController) || expanded == false
+
 /** Stow expanded controls, hold the compact information briefly, then fade the shared OSD. */
 @Composable
 fun PlayerOverlayVisibility(
@@ -233,7 +245,10 @@ fun PlayerOverlayVisibility(
     val currentShow by rememberUpdatedState(show)
     val currentPanelOpen by rememberUpdatedState(panelOpen)
     var swallowingGesture by remember { mutableStateOf(false) }
-    val visibility = remember(hidden) { MutableTransitionState(false) }
+    // A visible OSD that is only re-mounted (new channel/station model, engine switch) keeps
+    // showing; only a real opening fades in.
+    val resumed = remember(hidden) { playerOsdResumesOnScreen(osd?.onScreen == true, show) }
+    val visibility = remember(hidden) { MutableTransitionState(resumed) }
     val controlFocus = LocalPlayerControlFocus.current
     androidx.compose.runtime.LaunchedEffect(show, panelOpen, controlFocus) {
         // A panel temporarily hides the OSD but retains its originating control.
@@ -242,12 +257,17 @@ fun PlayerOverlayVisibility(
     }
     visibility.targetState = show
     // Handheld reopening slides the action row in from below, even if the OSD expands immediately.
-    val stow = remember(hidden) { PlayerOsdStow(initiallyCollapsed = (handheld && osd != null) || osd?.expanded == false) }
+    val stow = remember(hidden) {
+        PlayerOsdStow(initiallyCollapsed = playerOsdStowStartsCollapsed(resumed, handheld, osd != null, osd?.expanded))
+    }
     val preview = remember(hidden) { SeekPreviewOverlayState() }
     var previewOrigin by remember { mutableStateOf(Offset.Zero) }
     var previewViewport by remember { mutableStateOf(IntSize.Zero) }
     // A real dismissal stows the bar first; a panel takes over the screen right away.
     val stowFirst = !show && !panelOpen
+    androidx.compose.runtime.SideEffect {
+        if (osd != null) osd.onScreen = show && (visibility.currentState || visibility.targetState)
+    }
     androidx.compose.runtime.SideEffect { stow.closing = stowFirst }
     // Capture once per dismissal; a moving bar must not change the fade delay midway through it.
     val fadeDelay = remember(show, panelOpen, osd?.transitionVersion) {
@@ -280,6 +300,9 @@ fun PlayerOverlayVisibility(
                 }
                 // Exiting controls remain drawn; focus cannot re-enter their stale actions.
                 .focusProperties { onEnter = { if (!show) cancelFocusChange() } }
+                // Back on an OSD button reaches the player's BackHandler (hide the OSD) instead
+                // of Compose moving focus to the focusable player root and using the key up.
+                .then(if (show) Modifier.dispatchBackOnRelease() else Modifier)
                 .focusGroup()
                 // Intercept before outgoing child clickables consume the Main pass. Keep
                 // the guard until every finger lifts even though reveal recomposes the OSD;

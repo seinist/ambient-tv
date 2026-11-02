@@ -29,3 +29,15 @@ internal class BrowseUiSessionPolicy {
         recreationPending = changingConfigurations
     }
 }
+
+/**
+ * A handheld leaves its root page with Back by moving the task to the background (the Activity
+ * stays alive). Opening the app from the launcher afterwards is a new start for the user, so it
+ * begins a new browse session at the top, like a cold start. Returning via Recents keeps it.
+ */
+internal fun launcherStartsFreshUiSession(
+    leftFromRoot: Boolean,
+    action: String?,
+    categories: Set<String>?,
+): Boolean = leftFromRoot && action == android.content.Intent.ACTION_MAIN &&
+    categories?.contains(android.content.Intent.CATEGORY_LAUNCHER) == true

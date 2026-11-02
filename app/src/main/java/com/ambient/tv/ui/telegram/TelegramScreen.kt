@@ -224,6 +224,16 @@ fun TelegramScreen(
         }) else null,
     )
     LaunchedEffect(sectionKey) { viewModel.open(sectionKey) }
+    // Like SmartTube: a page left in an error (offline, server refused) reloads by itself once
+    // the network is back. A healthy page keeps its rows; open() returns early for it.
+    com.ambient.tv.ui.common.RefreshOnEnterAndReconnect(setOf("telegram")) {
+        val current = viewModel.state.value
+        if (current.section != sectionKey) return@RefreshOnEnterAndReconnect
+        // A failed first page reloads; a failed later page only retries that page, keeping the
+        // pages already shown and the scroll position.
+        if (current.error != null) viewModel.open(sectionKey, refresh = true)
+        else if (current.pageError != null) viewModel.loadMore()
+    }
     LaunchedEffect(showViewOptions, restorePanelFocus) {
         if (!showViewOptions && restorePanelFocus) {
             androidx.compose.runtime.withFrameNanos { }

@@ -70,6 +70,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onKeyEvent
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.res.stringResource
@@ -195,6 +196,30 @@ fun RightPanelOverlay(
 }
 
 internal fun rightPanelBackKey(key: Key): Boolean = key == Key.Back || key == Key.Escape
+
+/**
+ * Left unconsumed, Compose turns Back into FocusDirection.Exit and moves focus to the nearest
+ * focusable ancestor (a drawer, the player's root). That uses the key up: nothing closes, and
+ * focus sits on a container with no visible selection. Placed on an overlay, this hands an
+ * unconsumed Back to the back dispatcher on release, like the platform. Bubbling phase: a
+ * focused child that handles Back itself still gets it first; text fields keep it for the IME.
+ */
+fun Modifier.dispatchBackOnRelease(): Modifier = composed {
+    val dispatcher = androidx.activity.compose.LocalOnBackPressedDispatcherOwner.current
+        ?.onBackPressedDispatcher ?: return@composed Modifier
+    var armed by remember { mutableStateOf(false) }
+    onKeyEvent { event ->
+        if (!rightPanelBackKey(event.key) || TvTextFieldFocus.anyFocused) return@onKeyEvent false
+        when (event.type) {
+            KeyEventType.KeyDown -> if (event.nativeKeyEvent.repeatCount == 0) armed = true
+            KeyEventType.KeyUp -> if (armed) {
+                armed = false
+                if (!event.nativeKeyEvent.isCanceled) dispatcher.onBackPressed()
+            }
+        }
+        true
+    }
+}
 
 /** Scrollbar of the enclosing [RightSidePanel] while its body overflows; null otherwise. */
 internal val LocalRightPanelScrollbarFocus = androidx.compose.runtime.staticCompositionLocalOf<FocusRequester?> { null }
@@ -520,6 +545,9 @@ private fun RightSidePanelChrome(
     val footerFocus = remember { FocusRequester() }
     val bodyFocus = remember { FocusRequester() }
     var panelHasFocus by remember { mutableStateOf(false) }
+    // The drawer's own focus group holding focus (no row inside it) is not a usable selection:
+    // nothing is highlighted and the D-pad has nowhere to go until OK picks a row.
+    var drawerSelfFocused by remember { mutableStateOf(false) }
     var bodyHasFocus by remember { mutableStateOf(false) }
     // A rebuilt level that already held focus rescues it like a panel that just lost it.
     var hadPanelFocus by remember { mutableStateOf(focusRescue?.levelFresh == false) }
@@ -583,6 +611,13 @@ private fun RightSidePanelChrome(
             }
         }
     }
+    LaunchedEffect(drawerSelfFocused, panelInteractive) {
+        if (!drawerSelfFocused || !panelInteractive) return@LaunchedEffect
+        // Let a pending rescue place its remembered row first; then fall back to a real row.
+        androidx.compose.runtime.withFrameNanos { }
+        androidx.compose.runtime.withFrameNanos { }
+        if (drawerSelfFocused && !focusFirstRow()) runCatching { footerFocus.requestFocus() }
+    }
     if (requestHeaderFocus && panelInteractive) {
         LaunchedEffect(requestHeaderFocus, panelInteractive) {
             // Do not leave focus on the old grid for 400 ms while the drawer enters.
@@ -630,6 +665,7 @@ private fun RightSidePanelChrome(
             .focusRequester(panelFocus)
             .onFocusChanged {
                 panelHasFocus = it.hasFocus
+                drawerSelfFocused = it.isFocused
                 if (it.hasFocus) {
                     hadPanelFocus = true
                     focusRescue?.onFocused?.invoke()
@@ -649,6 +685,8 @@ private fun RightSidePanelChrome(
                     false
                 }
             }
+            // Rows that use Back themselves (drop-ups, editors) still see it first.
+            .dispatchBackOnRelease()
             .then(if (!panelInteractive) Modifier.playerPanelInteractionGuard(false) else Modifier)
             .then(if (retainFocus) Modifier.focusRestorer() else Modifier)
             .focusGroup()

@@ -306,7 +306,7 @@
     <string name="player_tech_badges">Renderer and codec strip</string>
     <string name="osd_buttons">OSD buttons</string>
     <string name="osd_buttons_summary">%1$d of %2$d shown</string>
-    <string name="osd_buttons_hint">This player only.</string>
+    <string name="osd_buttons_hint">This player only. Details applies to all players.</string>
     <string name="osd_button_seek">Seek</string>
     <string name="osd_button_next">Skip</string>
     <string name="osd_button_zap">Channel up / down</string>
@@ -843,8 +843,9 @@
     <string name="nav_spotify_artists">Artists</string>
     <string name="nav_spotify_now_playing">Now Playing</string>
     <string name="nav_spotify_sign_in">Sign in</string>
-    <string name="settings_export_safe">Export without credentials</string>
-    <string name="settings_export_with_credentials">Export with credentials</string>
+    <string name="settings_export_safe">Export without sign-ins</string>
+    <string name="settings_export_with_sessions">Export with sign-in sessions</string>
+    <string name="settings_export_with_credentials">Export with sessions and passwords</string>
     <string name="settings_backup_passphrase_set">Protect the backup</string>
     <string name="settings_backup_passphrase_set_hint">Protects the backup with its passwords (min. 8 characters). No restore without it.</string>
     <string name="settings_backup_passphrase_enter">Encrypted backup</string>

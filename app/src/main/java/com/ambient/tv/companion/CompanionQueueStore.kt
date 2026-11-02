@@ -21,6 +21,7 @@ internal fun persistableQueueMedia(media: CompanionMedia): Boolean {
     if (media.collectionSort.length > 128 || media.collectionSort.any { it.isISOControl() }) return false
     return when (media.kind) {
         "youtube" -> media.source.isEmpty() && media.id.matches(Regex("[A-Za-z0-9_-]{11}"))
+        "telegram" -> media.source.isEmpty() && parseTelegramCompanionId(media.id) != null
         "library" -> media.source.matches(Regex("[a-f0-9]{64}")) && media.id.matches(Regex("(?:[je]:)?[A-Za-z0-9_-]{1,128}"))
         "file", "dlna" -> media.source.matches(Regex("[a-f0-9]{64}"))
         "live:recording" -> media.source.matches(Regex("[a-f0-9]{64}")) && media.id.length <= 256 && media.id.none { it.isISOControl() }

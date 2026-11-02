@@ -28,12 +28,13 @@ class CompanionSettingsService @Inject constructor(
         return backups.previewJson(raw)
     }
     fun snapshot() = backups.previewJson(backups.exportJson(includeCredentials = true))
-    fun export(credentials: Boolean, mode: String = "settings"): String {
-        val snapshot = backups.previewJson(backups.exportJson(credentials))
+    fun export(credentials: Boolean, mode: String = "settings", sessions: Boolean = credentials): String {
+        val snapshot = backups.previewJson(backups.exportJson(credentials, includeSessions = sessions))
         val source = if (mode in setOf("accounts", "settings")) selectSyncAccounts(snapshot, defaultSyncAccounts(syncAccountChoices(snapshot))) else snapshot
-        return CompanionBackupPolicy.prepare(source, credentials, mode)
+        return CompanionBackupPolicy.prepare(source, credentials, mode, sessions)
     }
-    fun prepareFile(raw: String, credentials: Boolean, mode: String = "settings") = CompanionBackupPolicy.prepare(preview(raw), credentials, mode)
+    fun prepareFile(raw: String, credentials: Boolean, mode: String = "settings", sessions: Boolean = credentials) =
+        CompanionBackupPolicy.prepare(preview(raw), credentials, mode, sessions)
 
     @Synchronized fun apply(raw: String, mode: String, overwrite: Boolean, deviceSettings: Boolean) {
         val source = preview(raw)

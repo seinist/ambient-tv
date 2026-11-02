@@ -19,8 +19,11 @@
     <string name="sync_accounts_hint">Choose the accounts and network sources to add or update on the receiving device.</string>
     <string name="sync_confirmation_hint">Keep Ambient TV open on both devices. Confirm the import on the TV.</string>
     <string name="sync_wireguard_hint">WireGuard is selected. Do not use the same VPN key on both devices at the same time.</string>
-    <string name="sync_credentials_on">Includes sign-ins and passwords. The receiving device asks for confirmation.</string>
-    <string name="sync_credentials_off">Without sign-ins or passwords. Spotify and SmartTube sign-ins and IPTV access require this option.</string>
+    <string name="sync_credentials_on">Includes passwords and keys (Jellyfin/Emby, TVHeadend, SMB/SFTP, WireGuard, IPTV, TMDB, OpenSubtitles, Monogram API). The receiving device asks for confirmation.</string>
+    <string name="sync_credentials_off">Without passwords or keys. IPTV access needs this option.</string>
+    <string name="sync_sessions_on">The receiver is signed in to Plex, Jellyfin, Emby, SmartTube and Spotify without passwords. Telegram (Monogram) sessions are never transferred.</string>
+    <string name="sync_sessions_off">Without sign-in sessions: sign in again on the receiver.</string>
+    <string name="companion_include_sessions">Include sign-in sessions</string>
     <string name="sync_more_options">More options</string>
     <string name="sync_reload">Reload current settings</string>
     <string name="sync_pull_accounts_hint">Imports accounts and sources from the TV. WireGuard stays on the TV.</string>

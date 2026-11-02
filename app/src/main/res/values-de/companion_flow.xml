@@ -19,8 +19,11 @@
     <string name="sync_accounts_hint">Wähle die Accounts und Netzwerkquellen aus, die am Ziel ergänzt oder aktualisiert werden sollen.</string>
     <string name="sync_confirmation_hint">Ambient TV auf beiden Geräten geöffnet lassen. Die Übernahme wird am TV bestätigt.</string>
     <string name="sync_wireguard_hint">WireGuard ist ausgewählt. Denselben VPN-Schlüssel nicht auf beiden Geräten gleichzeitig verwenden.</string>
-    <string name="sync_credentials_on">Mit Anmeldungen und Passwörtern. Am Zielgerät wird die Übernahme bestätigt.</string>
-    <string name="sync_credentials_off">Ohne Anmeldungen und Passwörter. Spotify- und SmartTube-Anmeldungen sowie IPTV-Zugänge benötigen diese Option.</string>
+    <string name="sync_credentials_on">Mit Passwörtern und Schlüsseln (Jellyfin/Emby, TVHeadend, SMB/SFTP, WireGuard, IPTV, TMDB, OpenSubtitles, Monogram-API). Am Zielgerät wird die Übernahme bestätigt.</string>
+    <string name="sync_credentials_off">Ohne Passwörter und Schlüssel. IPTV-Zugänge benötigen diese Option.</string>
+    <string name="sync_sessions_on">Das Zielgerät ist bei Plex, Jellyfin, Emby, SmartTube und Spotify angemeldet, ohne dass Passwörter übertragen werden. Telegram-Sitzungen (Monogram) werden nie übertragen.</string>
+    <string name="sync_sessions_off">Ohne Anmeldungen: Am Zielgerät neu anmelden.</string>
+    <string name="companion_include_sessions">Anmeldungen (Sitzungen) mitsenden</string>
     <string name="sync_more_options">Weitere Optionen</string>
     <string name="sync_reload">Aktuelle Einstellungen neu laden</string>
     <string name="sync_pull_accounts_hint">Übernimmt die Accounts und Quellen des TVs. WireGuard bleibt auf dem TV.</string>

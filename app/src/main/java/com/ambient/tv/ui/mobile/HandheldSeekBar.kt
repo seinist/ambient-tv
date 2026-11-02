@@ -27,6 +27,7 @@ import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.semantics.ProgressBarRangeInfo
 import androidx.compose.ui.semantics.contentDescription
@@ -75,7 +76,9 @@ fun HandheldSeekBar(
     val accessibilityLabel = stringResource(R.string.player_seekbar_description, elapsedLabel(shownPosition), elapsedLabel(durationMs))
 
     Column(modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-        com.ambient.tv.ui.player.CurrentChapterLabel(shownPosition)
+        val chapterAlpha by com.ambient.tv.ui.player.seekPreviewYieldAlpha()
+        com.ambient.tv.ui.player.CurrentChapterLabel(shownPosition,
+            Modifier.graphicsLayer { alpha = chapterAlpha })
         Box(
             Modifier
                 .fillMaxWidth()

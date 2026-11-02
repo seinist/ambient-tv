@@ -172,6 +172,7 @@ open class MainActivity : ComponentActivity() {
     @Inject lateinit var performanceProfileResolver: com.ambient.tv.ui.performance.PerformanceProfileResolver
     @Inject lateinit var plexRefreshBus: PlexRefreshBus
     @Inject lateinit var browseReconnects: com.ambient.tv.data.browse.BrowseReconnects
+    @Inject lateinit var browseDiskStore: dagger.Lazy<com.ambient.tv.data.browse.BrowseDiskStore>
     @Inject lateinit var tokenStore: TokenStore
     @Inject lateinit var mediaRepository: MediaRepository
     @Inject lateinit var radioBrowserRepository: com.ambient.tv.data.radio.RadioBrowserRepository
@@ -252,6 +253,7 @@ open class MainActivity : ComponentActivity() {
         super.onPictureInPictureModeChanged(isInPictureInPictureMode, newConfig)
         if (isInPictureInPictureMode) pipWasOpen = true
         systemPipVisible = isInPictureInPictureMode
+        com.ambient.tv.ui.player.BackgroundPlaybackGuard.setPictureInPicture(isInPictureInPictureMode)
         systemPipEntering = false
     }
 
@@ -310,9 +312,14 @@ open class MainActivity : ComponentActivity() {
     }
 
     override fun onStop() {
+        // A stopped Activity outside PiP (or a dismissed PiP window) is real background again.
+        if (!isInPictureInPictureMode || isFinishing) com.ambient.tv.ui.player.BackgroundPlaybackGuard.setPictureInPicture(false)
         stopDismissedPipIfFinishing()
         com.ambient.tv.data.browse.BrowseWorkBudget.foreground = false
         com.ambient.tv.data.browse.BrowseWorkBudget.interact()
+        // Display snapshots (e.g. a deferred YouTube refresh) must reach disk before Android
+        // may reclaim the process, also while playback had kept the writer waiting.
+        browseDiskStore.get().flush()
         com.ambient.tv.companion.CompanionRemoteInput.unregister(window)
         if (this is com.ambient.tv.ui.mobile.HandheldActivity || com.ambient.tv.ui.mobile.isTelevision(this)) companionManager.foreground(false, com.ambient.tv.ui.mobile.isTelevision(this))
         SpotifyPlaybackTakeoverUiPresence.onActivityStopped()
@@ -373,10 +380,24 @@ open class MainActivity : ComponentActivity() {
         super.onPause()
     }
     private val openPlaybackRequest = mutableLongStateOf(0)
+    /** Bumped when a launcher start after a root Back must show a fresh Home (see onNewIntent). */
+    private val freshUiSessionRequest = mutableLongStateOf(0)
+    private var leftFromRoot = false
+
+    /** Handheld root Back: leave the app but keep it warm; the next launcher start is fresh. */
+    internal fun leaveFromRoot() {
+        leftFromRoot = true
+        moveTaskToBack(true)
+    }
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
+        if (ownsBrowseUiSession && launcherStartsFreshUiSession(leftFromRoot, intent.action, intent.categories)) {
+            leftFromRoot = false
+            resetBrowseSessionPositions()
+            freshUiSessionRequest.longValue++
+        }
         launcherOpener.open(intent)
         com.ambient.tv.search.ExternalSearch.offer(intent)
         if (lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.STARTED)) companionManager.handleIntent(intent)
@@ -399,6 +420,8 @@ open class MainActivity : ComponentActivity() {
 
     override fun onResume() {
         super.onResume()
+        // Back via Recents (no launcher intent) continues the previous session.
+        leftFromRoot = false
         if (!isInPictureInPictureMode) {
             pipWasOpen = false // PiP expanded back into the app.
             systemPipEntering = false // Or the platform declined the transition.
@@ -834,6 +857,7 @@ open class MainActivity : ComponentActivity() {
                 com.ambient.tv.ui.common.OverscanBox(if (com.ambient.tv.ui.mobile.isTelevision(this@MainActivity)) appPreferences.overscanPercent else 0) {
                     AmbientTvApp(
                         openPlaybackRequest = openPlaybackRequest.longValue + if (intent.action == PlaybackService.ACTION_OPEN) 1 else 0,
+                        freshUiSessionRequest = freshUiSessionRequest.longValue,
                         appPreferences = appPreferences,
                         tokenStore = tokenStore,
                         spotifyRepository = spotify,
@@ -940,6 +964,7 @@ private data class ScreensaverPreview(
 @OptIn(androidx.compose.ui.ExperimentalComposeUiApi::class)
 private fun AmbientTvApp(
     openPlaybackRequest: Long,
+    freshUiSessionRequest: Long,
     appPreferences: AppPreferences,
     tokenStore: TokenStore,
     spotifyRepository: SpotifyRepository,
@@ -1588,6 +1613,14 @@ private fun AmbientTvApp(
         if (externalSearch == null || navController.currentDestination?.route == Destinations.SEARCH) return@LaunchedEffect
         runCatching { navController.navigate(Destinations.SEARCH) { launchSingleTop = true } }
     }
+    LaunchedEffect(freshUiSessionRequest) {
+        // A new start after root Back: a new root entry (new list state and ViewModel) at the top.
+        if (freshUiSessionRequest > 0) runCatching {
+            navController.navigate(rootRoute) {
+                popUpTo(navController.graph.id) { inclusive = true }
+            }
+        }
+    }
     LaunchedEffect(openPlaybackRequest) {
         if (openPlaybackRequest > 0) BackgroundPlaybackSession.snapshot.value.metadata?.route?.let {
             navController.navigate(it) { launchSingleTop = true }
@@ -1780,7 +1813,9 @@ private fun AmbientTvApp(
     fun focusSidebar() {
         // Handhelds have no sidebar to take focus, so root Back leaves the page instead.
         if (handheld) {
-            if (currentRoute == rootRoute) activity?.moveTaskToBack(true) else navigateBack()
+            if (currentRoute == rootRoute) {
+                (activity as? MainActivity)?.leaveFromRoot() ?: activity?.moveTaskToBack(true)
+            } else navigateBack()
             return
         }
         sidebarEntryRequested.value = true
@@ -2089,6 +2124,13 @@ private fun AmbientTvApp(
                             },
                             onSetupSpotify = { setupSource("spotify") },
                             onSetupTelegram = { setupSource("telegram") },
+                            onTelegramSignedIn = {
+                                // Like SmartTube: signing in from the setup step enables the system.
+                                if (!appPreferences.initialSetupCompleted) appPreferences.youtubeEnabled = false
+                                appPreferences.telegramEnabled = true
+                                appPreferences.initialSetupCompleted = true
+                                navController.navigate(Destinations.setupComplete(Destinations.TELEGRAM))
+                            },
                             onUseRadio = {
                                 if (!appPreferences.initialSetupCompleted) appPreferences.youtubeEnabled = false
                                 appPreferences.radioEnabled = true
@@ -2940,6 +2982,8 @@ private fun AmbientTvApp(
                 playback = onPlayerScreen,
                 // Settings already has an in-place Wake/Cancel toggle. Do not steal its D-pad focus.
                 autoFocusWake = currentRoute != Destinations.SETTINGS && currentRoute != Destinations.SETUP_SETTINGS,
+                // The page's content group restores its last focused control.
+                onWakeFocusReleased = { requestContentFocus() },
             )
             com.ambient.tv.companion.CompanionDialogs(companionVm)
             if (!handheld) com.ambient.tv.companion.CompanionRemoteInput.Overlay(activity?.window)

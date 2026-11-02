@@ -189,6 +189,9 @@ class TelegramPlayerViewModel @Inject constructor(
 
     override fun onCleared() {
         rememberPosition()
+        // Like YouTube: a switch still loading when the player goes away must not linger.
+        transitionToken?.let(BackgroundPlaybackSession::cancelSourceReplacement)
+        transitionToken = null
         super.onCleared()
     }
 
@@ -271,6 +274,9 @@ class TelegramPlayerViewModel @Inject constructor(
                     if (following == null) {
                         if (direction > 0) {
                             // Autoplay or Next ran past the last playable post: the queue ended.
+                            // End the started switch here, not only from the screen: a minimized
+                            // or background player would otherwise stay "replacing" forever.
+                            transitionToken?.let(BackgroundPlaybackSession::cancelSourceReplacement)
                             transitionToken = null
                             mutableQueueEnded.value = true
                         } else {

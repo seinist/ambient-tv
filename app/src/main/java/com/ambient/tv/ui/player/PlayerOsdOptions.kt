@@ -130,16 +130,36 @@ private fun osdKey(player: OsdPlayer, button: OsdButton) =
     (if (button.optIn) "+" else "") + "${player.name}/${button.name}"
 
 fun osdButtonVisible(button: OsdButton, player: OsdPlayer, hidden: Set<String>): Boolean =
-    (osdKey(player, button) in hidden) == button.optIn
+    if (button.sharedAcrossPlayers) sharedOsdButtonVisible(button, hidden)
+    else (osdKey(player, button) in hidden) == button.optIn
+
+/**
+ * Details is one switch for every player: switched on in one player's OSD buttons, it shows in
+ * every OSD that has a details dialog (Medien, YouTube, Live-TV, Radio, Telegram). Older
+ * per-player entries still count, so a button switched on anywhere stays on.
+ */
+internal val OsdButton.sharedAcrossPlayers: Boolean get() = this == OsdButton.DETAILS
+
+private fun sharedOsdButtonVisible(button: OsdButton, hidden: Set<String>): Boolean {
+    val players = OsdPlayer.entries.filter { button in it.buttons }
+    return if (button.optIn) players.any { osdKey(it, button) in hidden }
+    else players.none { osdKey(it, button) in hidden }
+}
+
+/** Stored entries after switching [button] for [player]; a shared button switches for all players. */
+internal fun osdHiddenAfterToggle(hidden: Set<String>, player: OsdPlayer, button: OsdButton, visible: Boolean): Set<String> {
+    val stored = visible == button.optIn
+    val keys = if (button.sharedAcrossPlayers) OsdPlayer.entries.filter { button in it.buttons }.map { osdKey(it, button) }
+    else listOf(osdKey(player, button))
+    return if (stored) hidden + keys else hidden - keys.toSet()
+}
 
 @Composable
 fun osdButtonVisible(button: OsdButton, player: OsdPlayer? = LocalOsdPlayer.current): Boolean =
     player == null && !button.optIn || player != null && osdButtonVisible(button, player, osdHiddenButtons())
 
 fun setOsdButtonVisible(preferences: AppPreferences, player: OsdPlayer, button: OsdButton, visible: Boolean) {
-    val key = osdKey(player, button)
-    val stored = visible == button.optIn
-    val hidden = (osdHiddenState.value ?: preferences.osdHiddenButtons).let { if (stored) it + key else it - key }
+    val hidden = osdHiddenAfterToggle(osdHiddenState.value ?: preferences.osdHiddenButtons, player, button, visible)
     osdHiddenState.value = hidden
     preferences.osdHiddenButtons = hidden
 }

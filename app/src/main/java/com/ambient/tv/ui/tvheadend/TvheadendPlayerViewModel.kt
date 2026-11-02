@@ -112,6 +112,8 @@ class TvheadendPlayerViewModel @Inject constructor(
     private var currentChannelUuid: String = initialId
     /** Intended channel, including while an asynchronous tune still holds the outgoing Ready state. */
     val expectedChannelUuid: String get() = currentChannelUuid
+    /** The channel being tuned (or playing), for the OSD while its stream is acquired. */
+    val expectedChannel: TvhChannel? get() = channels.firstOrNull { it.uuid == currentChannelUuid }
     private var channels: List<TvhChannel> = emptyList()
     /** Started from Live TV or the Guide: zapping stays within that view's filtered channels. */
     private val zapOrder: List<String>? =

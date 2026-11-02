@@ -312,7 +312,12 @@ class SettingsBackupManager @Inject constructor(
         encodeDefaults = true
     }
 
-    fun exportJson(includeCredentials: Boolean = false): String {
+    /**
+     * [includeSessions]: sign-in sessions (Plex/Jellyfin/Emby tokens, SmartTube accounts, Spotify
+     * tokens), so the restored device is signed in. [includeCredentials]: passwords and keys.
+     * A Telegram user session is never exported.
+     */
+    fun exportJson(includeCredentials: Boolean = false, includeSessions: Boolean = includeCredentials): String {
         val profiles = preferences.serverProfiles
         val (fileSources, smbPasswords, sshKeys) = synchronized(preferences.fileSourceLock) {
             val sources = preferences.fileSources
@@ -338,12 +343,12 @@ class SettingsBackupManager @Inject constructor(
             sshKeys = sshKeys,
             plexEnabled = preferences.plexEnabled,
             youtubeEnabled = preferences.youtubeEnabled,
-            smartTubeAccounts = smartTube?.exportAccounts(includeCredentials),
+            smartTubeAccounts = smartTube?.exportAccounts(includeSessions),
             spotifyAccount = SpotifyAccountBackup(
                 clientId = tokenStore.spotifyWebClientId.orEmpty(),
                 name = tokenStore.spotifyAccountName.orEmpty(),
-                accessToken = if (includeCredentials) tokenStore.spotifyWebAccessToken else null,
-                refreshToken = if (includeCredentials) tokenStore.spotifyWebRefreshToken else null,
+                accessToken = if (includeSessions) tokenStore.spotifyWebAccessToken else null,
+                refreshToken = if (includeSessions) tokenStore.spotifyWebRefreshToken else null,
                 expiresAtMs = tokenStore.spotifyWebAccessTokenExpiresAtMs,
                 scopes = tokenStore.spotifyWebScopes.orEmpty(),
             ),
@@ -360,14 +365,14 @@ class SettingsBackupManager @Inject constructor(
             spotifyBitrateKbps = preferences.spotifyBitrateKbps,
             spotifyVisualizerModeKey = preferences.spotifyVisualizerModeKey,
             servers = profiles.map { profile ->
-                ServerBackup(profile = profile, token = if (includeCredentials) tokenStore.tokenForServer(profile.id) else null)
+                ServerBackup(profile = profile, token = if (includeSessions) tokenStore.tokenForServer(profile.id) else null)
             },
             activeJellyfinServerId = preferences.activeJellyfinServerId,
             jellyfinEnabled = preferences.jellyfinEnabled,
             jellyfinServers = preferences.jellyfinServerProfiles.map { profile ->
                 JellyfinServerBackup(
                     profile = profile,
-                    token = if (includeCredentials) tokenStore.jellyfinTokenForServer(profile.id) else null,
+                    token = if (includeSessions) tokenStore.jellyfinTokenForServer(profile.id) else null,
                     password = if (includeCredentials) tokenStore.jellyfinPasswordForServer(profile.id) else null,
                 )
             },
@@ -377,7 +382,7 @@ class SettingsBackupManager @Inject constructor(
             embyServers = preferences.embyServerProfiles.map { profile ->
                 EmbyServerBackup(
                     profile = profile,
-                    token = if (includeCredentials) tokenStore.embyTokenForServer(profile.id) else null,
+                    token = if (includeSessions) tokenStore.embyTokenForServer(profile.id) else null,
                     password = if (includeCredentials) tokenStore.embyPasswordForServer(profile.id) else null,
                 )
             },

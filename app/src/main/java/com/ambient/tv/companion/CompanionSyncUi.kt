@@ -49,6 +49,8 @@ internal fun CompanionSyncDialog(vm: CompanionViewModel, navSnapshot: SettingsBa
     // Opened from a TV's card or detail page: that TV is the target.
     var pickedId by rememberSaveable { mutableStateOf(state.transferTarget) }
     var credentials by rememberSaveable { mutableStateOf(false) }
+    // Sign-in sessions (tokens) and passwords/keys are separate choices, both off by default.
+    var sessions by rememberSaveable { mutableStateOf(false) }
     var sent by rememberSaveable { mutableStateOf(false) }
     var loading by remember { mutableStateOf(navSnapshot == null) }
     var failed by remember { mutableStateOf(false) }
@@ -96,6 +98,7 @@ internal fun CompanionSyncDialog(vm: CompanionViewModel, navSnapshot: SettingsBa
     val directionAllowed = companionReceiveModeAllowed(handheld, mode)
     val includeAccounts = mode in setOf("accounts", "settings")
     val sendCredentials = credentials && includeAccounts
+    val sendSessions = sessions && includeAccounts
     if (handheld) DisposableEffect(manager) { manager.startPageSearch(); onDispose { manager.stopSearchUnlessPanel() } }
     val connecting = target != null && !connected && state.busy && state.target?.fingerprint == targetId
     val locked = sent || state.backupBusy
@@ -152,11 +155,11 @@ internal fun CompanionSyncDialog(vm: CompanionViewModel, navSnapshot: SettingsBa
                         val snapshot = source ?: return@TvActionButton
                         val result = runCatching {
                             val chosen = if (includeAccounts) selectSyncAccounts(snapshot, accountIds) else snapshot
-                            CompanionBackupPolicy.prepareWithInfo(chosen, sendCredentials, mode)
+                            CompanionBackupPolicy.prepareWithInfo(chosen, sendCredentials, mode, sendSessions)
                         }
                         result.onSuccess {
                             profilesOmitted = it.profilesOmitted
-                            sent = manager.sendSettings(it.json, mode, sendCredentials, target); failed = !sent
+                            sent = manager.sendSettings(it.json, mode, sendCredentials, target, sendSessions); failed = !sent
                         }
                             .onFailure { failed = true }
                     }, enabled = canSend, selected = canSend, modifier = Modifier.weight(1f))
@@ -199,6 +202,8 @@ internal fun CompanionSyncDialog(vm: CompanionViewModel, navSnapshot: SettingsBa
                             onCheckedChange = { checked -> selected = (if (checked) accountIds + choice.key else accountIds - choice.key).toList() })
                     }
                     if (WIREGUARD_CHOICE in accountIds) Text(stringResource(R.string.sync_wireguard_hint))
+                    TvSettingRow(title = stringResource(R.string.companion_include_sessions), checked = sessions, enabled = !locked, onCheckedChange = { sessions = it })
+                    Text(stringResource(if (sessions) R.string.sync_sessions_on else R.string.sync_sessions_off))
                     TvSettingRow(title = stringResource(R.string.companion_include_credentials), checked = credentials, enabled = !locked, onCheckedChange = { credentials = it })
                     Text(stringResource(if (credentials) R.string.sync_credentials_on else R.string.sync_credentials_off))
                 }

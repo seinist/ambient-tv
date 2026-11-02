@@ -55,6 +55,9 @@ internal class SeekPreviewOverlayState {
     }
 }
 
+/** The preview's fade-out; OSD content above the seekbar returns after it. */
+internal const val SEEK_PREVIEW_EXIT_MS = 260
+
 internal val LocalSeekPreviewOverlayState = staticCompositionLocalOf<SeekPreviewOverlayState?> { null }
 
 /** Keep the bubble centered on the scrub target without covering or escaping screen edges. */
@@ -133,7 +136,7 @@ internal fun BoxScope.SeekPreviewOverlay(
         modifier = Modifier.align(Alignment.TopStart)
             .offset { IntOffset(x.roundToInt(), y.roundToInt()) },
         enter = fadeIn(tween(140, delayMillis = 80)),
-        exit = fadeOut(tween(200)),
+        exit = fadeOut(tween(SEEK_PREVIEW_EXIT_MS)),
     ) {
         SeekPreviewCard(
             positionMs = shownPosition,
