@@ -69,8 +69,50 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
     override val accountName get() = label
     override val cacheIdentity: String? get() = accountId?.toString()
 
+    /** Monotonic end of a FLOOD_WAIT Telegram asked for; every RPC waits it out first. */
+    @Volatile private var floodUntilMs = 0L
+
+    /**
+     * Telegram answers too many requests with FLOOD_WAIT_n. Sending more while it lasts only
+     * extends it, and the caller used to fail ("media unavailable"). Every RPC now waits until
+     * the wait has passed; a rejected RPC with a short wait is sent once more afterwards.
+     * Longer waits fail with [TelegramFloodWaitException] so the screen can say how long.
+     */
+    private suspend fun <T> nativeCall(connect: Boolean = true, action: (Long) -> T): T {
+        repeat(2) { attempt ->
+            awaitFloodWait()
+            try {
+                return nativeCallOnce(connect, action)
+            } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                throw cancelled
+            } catch (flood: TelegramFloodWaitException) {
+                // Already classified (search): record, never retry.
+                noteFloodWait(flood.seconds)
+                throw flood
+            } catch (failure: Exception) {
+                val seconds = telegramFloodWaitSeconds(failure.message) ?: throw failure
+                noteFloodWait(seconds)
+                if (attempt > 0 || telegramFloodRetryDelayMs(seconds) == null) throw TelegramFloodWaitException(seconds)
+            }
+        }
+        error("unreachable")
+    }
+
+    private fun noteFloodWait(seconds: Int) {
+        val until = android.os.SystemClock.elapsedRealtime() + seconds.coerceAtLeast(1) * 1_000L
+        floodUntilMs = maxOf(floodUntilMs, until)
+    }
+
+    private suspend fun awaitFloodWait() {
+        val waitMs = floodUntilMs - android.os.SystemClock.elapsedRealtime()
+        if (waitMs <= 0) return
+        val seconds = ((waitMs + 999) / 1_000).toInt()
+        if (telegramFloodRetryDelayMs(seconds) == null) throw TelegramFloodWaitException(seconds)
+        kotlinx.coroutines.delay(waitMs)
+    }
+
     /** Serializes native operations and keeps network work off the UI thread. */
-    private suspend fun <T> nativeCall(connect: Boolean = true, action: (Long) -> T): T =
+    private suspend fun <T> nativeCallOnce(connect: Boolean = true, action: (Long) -> T): T =
         withContext(Dispatchers.IO) {
             val current = mutex.withLock {
                 if (handle == 0L) {

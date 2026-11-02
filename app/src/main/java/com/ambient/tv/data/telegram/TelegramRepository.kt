@@ -466,14 +466,19 @@ class TelegramRepository @Inject constructor(
         if (chatId in blockedChannels) return null
         val generation = streamEpoch.get()
         val identity = selected.cacheIdentity
+        var flood: TelegramFloodWaitException? = null
         val live = try {
             selected.media(chatId, messageId)
         } catch (cancelled: kotlinx.coroutines.CancellationException) {
             throw cancelled
+        } catch (wait: TelegramFloodWaitException) {
+            flood = wait
+            null
         } catch (_: Exception) { null }
         if (!sameAccount(selected, identity, generation) || chatId in blockedChannels) return null
         if (live != null) return live
-        if (identity == null) return null
+        // Telegram asked for a pause: say so (after the cache), not "media unavailable".
+        if (identity == null) flood?.let { throw it } ?: return null
         val sections = listOf("recent", "videos", "youtube", "audio", "photos", "channel:$chatId")
         for (section in sections) {
             val cached = diskCache.media(identity, section)
@@ -482,6 +487,7 @@ class TelegramRepository @Inject constructor(
                 sameAccount(selected, identity, generation) && chatId !in blockedChannels
             }
         }
+        flood?.let { throw it }
         return null
     }
     suspend fun photoFile(chatId: Long, messageId: Int): String? {
