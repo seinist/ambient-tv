@@ -4,11 +4,15 @@ import java.io.ByteArrayOutputStream
 import java.util.Base64
 
 /** One bounded, ordered transfer per authenticated connection. Never deserialize incomplete data. */
-internal class CompanionTransfer(val id: String, private val bytes: Int, private val sha256: String, val mode: String, val credentials: Boolean) {
+internal class CompanionTransfer(
+    val id: String, private val bytes: Int, private val sha256: String, val mode: String, val credentials: Boolean,
+    /** Login sessions (tokens); older senders only know [credentials], which then covers both. */
+    val sessions: Boolean = credentials,
+) {
     private val content = ByteArrayOutputStream()
     private var next = 0
     init {
-        require(mode !in setOf("nav_sounds", "preferences") || !credentials)
+        require(mode !in setOf("nav_sounds", "preferences") || (!credentials && !sessions))
         require(id.matches(Regex("[a-f0-9-]{36}")) && bytes in 1..CompanionBackupPolicy.MAX_BYTES)
         require(sha256.matches(Regex("[a-f0-9]{64}")) && mode in setOf("accounts", "settings", "preferences", "nav_sounds"))
     }

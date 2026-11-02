@@ -157,6 +157,9 @@ fun SettingsScreen(
     }
 
     var exportWithCredentials by remember { mutableStateOf(false) }
+    // Sign-in sessions (tokens) without passwords and keys: its own export choice.
+    var exportWithSessions by remember { mutableStateOf(false) }
+    var askSessionsExportPassphrase by remember { mutableStateOf(false) }
     var askExportPassphrase by remember { mutableStateOf(false) }
     var askSafeExportPassphrase by remember { mutableStateOf(false) }
     var exportPassphrase by remember { mutableStateOf<CharArray?>(null) }
@@ -172,7 +175,8 @@ fun SettingsScreen(
     ) { uri ->
         val passphrase = exportPassphrase
         exportPassphrase = null
-        if (uri != null) viewModel.exportSettings(uri, includeCredentials = exportWithCredentials, passphrase = passphrase)
+        if (uri != null) viewModel.exportSettings(uri, includeCredentials = exportWithCredentials, passphrase = passphrase,
+            includeSessions = exportWithSessions)
         else passphrase?.fill('\u0000')
     }
     // Android TV often has no document picker: tell the user instead of crashing.
@@ -180,6 +184,7 @@ fun SettingsScreen(
     val launchBackupPicker: (() -> Unit) -> Unit = { launch ->
         if (runCatching(launch).isFailure) {
             exportWithCredentials = false
+            exportWithSessions = false
             android.widget.Toast.makeText(displayContext, pickerUnavailableMessage, android.widget.Toast.LENGTH_LONG).show()
         }
     }
@@ -192,7 +197,22 @@ fun SettingsScreen(
                 askExportPassphrase = false
                 exportPassphrase = passphrase
                 exportWithCredentials = true
+                exportWithSessions = true
                 launchBackupPicker { exportLauncher.launch("ambient-tv-settings-with-credentials.json") }
+            },
+        )
+    }
+    if (askSessionsExportPassphrase) {
+        BackupPassphraseDialog(
+            confirm = true,
+            wrongPassphrase = false,
+            onDismiss = { askSessionsExportPassphrase = false },
+            onPassphrase = { passphrase ->
+                askSessionsExportPassphrase = false
+                exportPassphrase = passphrase
+                exportWithCredentials = false
+                exportWithSessions = true
+                launchBackupPicker { exportLauncher.launch("ambient-tv-settings-with-sign-ins.json") }
             },
         )
     }
@@ -207,6 +227,7 @@ fun SettingsScreen(
                 // Empty = plain JSON as before.
                 exportPassphrase = passphrase.takeIf { it.isNotEmpty() }
                 exportWithCredentials = false
+                exportWithSessions = false
                 launchBackupPicker { exportLauncher.launch("ambient-tv-settings.json") }
             },
         )
@@ -1430,10 +1451,16 @@ fun SettingsScreen(
                             item {
                                 SettingsActionRow() {
                                     TvActionButton(
-                                        text = if (uiState.isExportingSettings && !exportWithCredentials) stringResource(R.string.settings_exporting) else stringResource(R.string.settings_export_safe),
+                                        text = if (uiState.isExportingSettings && !exportWithCredentials && !exportWithSessions) stringResource(R.string.settings_exporting) else stringResource(R.string.settings_export_safe),
                                         onClick = { askSafeExportPassphrase = true },
                                         enabled = !uiState.isExportingSettings && !uiState.isImportingSettings,
-                                        loading = uiState.isExportingSettings && !exportWithCredentials,
+                                        loading = uiState.isExportingSettings && !exportWithCredentials && !exportWithSessions,
+                                    )
+                                    TvActionButton(
+                                        text = stringResource(R.string.settings_export_with_sessions),
+                                        onClick = { askSessionsExportPassphrase = true },
+                                        enabled = !uiState.isExportingSettings && !uiState.isImportingSettings,
+                                        loading = uiState.isExportingSettings && exportWithSessions && !exportWithCredentials,
                                     )
                                     TvActionButton(
                                         text = stringResource(R.string.settings_export_with_credentials),

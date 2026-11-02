@@ -14,7 +14,7 @@
     <string name="companion_insert_text">Text einfügen</string>
     <string name="companion_accounts_only">Nur Konten</string>
     <string name="companion_accounts_settings">Konten + Einstellungen</string>
-    <string name="companion_include_credentials">Zugangsdaten mitsenden</string>
+    <string name="companion_include_credentials">Passwörter und Schlüssel mitsenden</string>
     <string name="companion_current_settings">Aktuell gespeicherter Stand</string>
     <string name="companion_selected_backup">Ausgewählte Backup-Datei</string>
     <string name="companion_choose_backup">Backup-Datei wählen</string>

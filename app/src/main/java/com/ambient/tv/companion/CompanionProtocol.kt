@@ -52,6 +52,8 @@ data class CompanionFrame(
     val index: Int = 0,
     val mode: String = "accounts",
     val credentials: Boolean = false,
+    /** Login sessions (tokens) in a settings transfer; null (older senders) means [credentials]. */
+    val sessions: Boolean? = null,
     val backupStatus: String = "",
     /** Nullable for compatibility with older TVs which only report a title and playing flag. */
     val active: Boolean? = null,
@@ -355,14 +357,16 @@ internal fun companionCommandAllowed(television: Boolean, type: String): Boolean
     val credentials: Boolean = false,
     val index: Int = 0,
     val payload: String = "",
+    val sessions: Boolean? = null,
 ) {
     fun command(): CompanionFrame {
         require(sequence > 0 && type in setOf("backup_begin", "backup_chunk", "backup_finish", "backup_cancel"))
         return CompanionFrame(type = type, transferId = transferId, total = total, digest = digest,
-            mode = mode, credentials = credentials, index = index, payload = payload)
+            mode = mode, credentials = credentials, index = index, payload = payload, sessions = sessions)
     }
     companion object {
         fun from(sequence: Long, frame: CompanionFrame) = CompanionSyncFrame(sequence, frame.type,
-            frame.transferId, frame.total, frame.digest, frame.mode, frame.credentials, frame.index, frame.payload)
+            frame.transferId, frame.total, frame.digest, frame.mode, frame.credentials, frame.index, frame.payload,
+            frame.sessions)
     }
 }

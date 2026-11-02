@@ -3372,15 +3372,18 @@ class SettingsViewModel @Inject constructor(
      * A credentials export is always passphrase-protected; a normal export only when a passphrase
      * was entered (otherwise plain JSON). [passphrase] is wiped afterwards.
      */
-    fun exportSettings(uri: Uri, includeCredentials: Boolean = false, passphrase: CharArray? = null) {
+    fun exportSettings(uri: Uri, includeCredentials: Boolean = false, passphrase: CharArray? = null,
+        includeSessions: Boolean = includeCredentials) {
         if (_uiState.value.isExportingSettings || _uiState.value.isImportingSettings) return
         val ticket = beginFeedback("settings:export")
         _uiState.update { it.copy(isExportingSettings = true) }
         viewModelScope.launch {
             val result = suspendResult {
                 withContext(Dispatchers.IO) {
-                    val plain = settingsBackupManager.exportJson(includeCredentials = includeCredentials)
-                    val payload = if (includeCredentials || (passphrase != null && passphrase.isNotEmpty())) {
+                    val plain = settingsBackupManager.exportJson(includeCredentials = includeCredentials,
+                        includeSessions = includeSessions)
+                    // Sign-in sessions are as sensitive as passwords: always passphrase-protected.
+                    val payload = if (includeCredentials || includeSessions || (passphrase != null && passphrase.isNotEmpty())) {
                         com.ambient.tv.data.local.BackupEncryption.encrypt(plain, requireNotNull(passphrase))
                     } else plain
                     context.contentResolver.openOutputStream(uri, "wt")?.bufferedWriter()?.use { writer ->

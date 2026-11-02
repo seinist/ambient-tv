@@ -287,7 +287,7 @@
     <string name="companion_insert_text">Insert text</string>
     <string name="companion_accounts_only">Accounts only</string>
     <string name="companion_accounts_settings">Accounts + settings</string>
-    <string name="companion_include_credentials">Include credentials</string>
+    <string name="companion_include_credentials">Include passwords and keys</string>
     <string name="companion_current_settings">Currently saved settings</string>
     <string name="companion_selected_backup">Selected backup file</string>
     <string name="companion_choose_backup">Choose backup file</string>
