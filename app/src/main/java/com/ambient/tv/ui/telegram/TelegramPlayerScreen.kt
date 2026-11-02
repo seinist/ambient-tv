@@ -290,6 +290,8 @@ class TelegramPlayerViewModel @Inject constructor(
                 }
             } catch (cancelled: CancellationException) {
                 throw cancelled
+            } catch (wait: com.ambient.tv.data.telegram.TelegramFloodWaitException) {
+                fail(context.getString(R.string.monogram_error_flood_wait, wait.seconds))
             } catch (error: Exception) {
                 fail(error.message ?: context.getString(R.string.monogram_error_media_open))
             }

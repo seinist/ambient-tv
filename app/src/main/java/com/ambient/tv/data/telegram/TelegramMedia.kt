@@ -35,6 +35,18 @@ data class TelegramMedia(
         telegramYouTubeMediaKey(chatId, messageId, youtubeVideoId) else telegramMediaKey(chatId, messageId)
     val previewUrl: String? get() = if (kind == TelegramMediaKind.YOUTUBE && youtubeVideoId != null)
         com.ambient.tv.youtube.youtubeThumbnailUrl(youtubeVideoId) else thumbnailUrl
+    /**
+     * Card and detail artwork: Telegram's real thumbnail, fetched only when a card is shown
+     * (MonogramThumbFetcher). [thumbnailUrl] is the ~40 px inline preview embedded in the post:
+     * instant, but very pixelated when scaled to a card; it remains the fallback.
+     */
+    val cardImageUrl: String? get() = when {
+        kind == TelegramMediaKind.YOUTUBE && youtubeVideoId != null -> previewUrl
+        kind == TelegramMediaKind.VIDEO || kind == TelegramMediaKind.PHOTO ||
+            (kind == TelegramMediaKind.AUDIO && thumbnailUrl != null) ->
+            monogramThumbModel(chatId, messageId, thumbnailUrl)
+        else -> thumbnailUrl
+    }
     /** YouTube playback is delegated to SmartTube; the Telegram file never shadows it. */
     val playableOnTelegram: Boolean get() = kind != TelegramMediaKind.YOUTUBE && !protectedContent
 }
@@ -97,8 +109,8 @@ fun TelegramMedia.toMediaItem(): MediaItem = MediaItem(
         else -> "movie"
     },
     index = null,
-    thumbUrl = previewUrl,
-    artUrl = previewUrl,
+    thumbUrl = cardImageUrl,
+    artUrl = cardImageUrl,
     year = null,
     summary = summary,
     tagline = null,
@@ -151,4 +163,25 @@ fun telegramYouTubeIds(text: String): List<String> {
         }
         id?.takeIf(validId::matches)
     }.distinct().toList()
+}
+
+const val MONOGRAM_THUMB_SCHEME = "monogram-thumb"
+
+/** Image model for a post's real thumbnail; [fallback] (the inline preview) if it cannot load. */
+fun monogramThumbModel(chatId: Long, messageId: Int, fallback: String?): String =
+    "$MONOGRAM_THUMB_SCHEME://$chatId/$messageId" +
+        fallback?.let { "?fallback=" + java.net.URLEncoder.encode(it, "UTF-8") }.orEmpty()
+
+data class MonogramThumbRef(val chatId: Long, val messageId: Int, val fallback: String?)
+
+fun parseMonogramThumbModel(value: String): MonogramThumbRef? {
+    val rest = value.removePrefix("$MONOGRAM_THUMB_SCHEME://").takeIf { it != value } ?: return null
+    val path = rest.substringBefore('?')
+    val fallback = rest.substringAfter('?', "").takeIf { it.startsWith("fallback=") }
+        ?.removePrefix("fallback=")?.let { java.net.URLDecoder.decode(it, "UTF-8") }?.takeIf { it.isNotBlank() }
+    val parts = path.split('/')
+    if (parts.size != 2) return null
+    val chatId = parts[0].toLongOrNull()?.takeIf { it != 0L } ?: return null
+    val messageId = parts[1].toIntOrNull()?.takeIf { it > 0 } ?: return null
+    return MonogramThumbRef(chatId, messageId, fallback)
 }

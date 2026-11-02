@@ -32,3 +32,10 @@ fun telegramSearchResults(
     .distinctBy(TelegramMedia::mediaKey)
     .take(limit.coerceAtLeast(0))
     .toList()
+
+/** Longest FLOOD_WAIT that is waited out automatically (then the request is sent once more). */
+internal const val TELEGRAM_FLOOD_AUTO_WAIT_SECONDS = 30
+
+/** Delay before resending a request Telegram rejected with FLOOD_WAIT, or null to report it. */
+fun telegramFloodRetryDelayMs(seconds: Int): Long? =
+    if (seconds in 0..TELEGRAM_FLOOD_AUTO_WAIT_SECONDS) seconds.coerceAtLeast(1) * 1_000L else null

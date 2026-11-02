@@ -68,6 +68,7 @@ fun TelegramPostDetailScreen(
     var loading by remember(chatId, messageId) { mutableStateOf(true) }
     var retry by remember(chatId, messageId) { mutableIntStateOf(0) }
     val unavailable = stringResource(R.string.monogram_error_post_unavailable)
+    val context = androidx.compose.ui.platform.LocalContext.current
 
     LaunchedEffect(chatId, messageId, retry) {
         loading = true
@@ -78,7 +79,9 @@ fun TelegramPostDetailScreen(
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (failure: Exception) {
-            error = failure.message ?: unavailable
+            error = (failure as? com.ambient.tv.data.telegram.TelegramFloodWaitException)
+                ?.let { context.getString(R.string.monogram_error_flood_wait, it.seconds) }
+                ?: failure.message ?: unavailable
         } finally {
             loading = false
         }
@@ -115,7 +118,7 @@ fun TelegramPostDetailScreen(
                         Text(formatted, style = MaterialTheme.typography.labelMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
-                    selected.thumbnailUrl?.takeIf { selected.kind != TelegramMediaKind.YOUTUBE }?.let {
+                    selected.cardImageUrl?.takeIf { selected.kind != TelegramMediaKind.YOUTUBE }?.let {
                         ArtworkImage(it, selected.title,
                             Modifier.fillMaxWidth().height(230.dp).clip(RoundedCornerShape(12.dp)),
                             contentScale = ContentScale.Fit)

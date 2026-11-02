@@ -323,7 +323,8 @@ internal fun playerDetailForTelegram(
     playerDurationMs: Long = 0L,
 ): PlayerDetailInfo {
     val kind = media.kind
-    val cover = media.previewUrl?.takeIf { it.isNotBlank() }
+    // A post with a preview shows its real thumbnail; without one the channel picture is the logo.
+    val cover = media.previewUrl?.takeIf { it.isNotBlank() }?.let { media.cardImageUrl }
     val channelImage = channel?.takeIf { it.chatId == media.chatId }?.thumbnailUrl?.takeIf { it.isNotBlank() }
     val visual = kind == com.ambient.tv.data.telegram.TelegramMediaKind.VIDEO ||
         kind == com.ambient.tv.data.telegram.TelegramMediaKind.PHOTO

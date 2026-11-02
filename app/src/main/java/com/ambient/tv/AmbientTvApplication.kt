@@ -37,6 +37,7 @@ class AmbientTvApplication : Application(), coil3.SingletonImageLoader.Factory {
     @Inject lateinit var preferences: AppPreferences
     @Inject lateinit var spotifyRepository: Provider<SpotifyRepository>
     @Inject lateinit var filesPhotoSource: Provider<com.ambient.tv.data.photos.FilesPhotoSource>
+    @Inject lateinit var telegramRepository: Provider<com.ambient.tv.data.telegram.TelegramRepository>
     @Inject lateinit var resumeConnectivityMonitor: ResumeConnectivityMonitor
     @Inject lateinit var dlnaRenderer: com.ambient.tv.renderer.DlnaRenderer
     @Inject lateinit var youTubeTvLink: com.ambient.tv.youtube.YouTubeTvLink
@@ -89,6 +90,8 @@ class AmbientTvApplication : Application(), coil3.SingletonImageLoader.Factory {
                 add(OkHttpNetworkFetcherFactory(callFactory = { imageClient }))
                 add(com.ambient.tv.data.photos.FileImageKeyer())
                 add(com.ambient.tv.data.photos.FileImageFetcher.Factory { filesPhotoSource.get() })
+                // Monogram cards: the post's real thumbnail, loaded only for visible cards.
+                add(com.ambient.tv.data.telegram.MonogramThumbFetcher.Factory { telegramRepository.get() })
             }
             .build()
     }
