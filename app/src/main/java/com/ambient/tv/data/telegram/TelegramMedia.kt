@@ -52,9 +52,8 @@ data class TelegramMedia(
      */
     val cardImageUrl: String? get() = when {
         kind == TelegramMediaKind.YOUTUBE && youtubeVideoId != null -> previewUrl
-        // Only photos have a downloadable card size; for videos the native layer offers just
-        // the inline preview (or the whole file), see MonogramNativeBackend.thumbnail.
-        kind == TelegramMediaKind.PHOTO ->
+        kind == TelegramMediaKind.VIDEO || kind == TelegramMediaKind.PHOTO ||
+            (kind == TelegramMediaKind.AUDIO && thumbnailUrl != null) ->
             monogramThumbModel(chatId, messageId, thumbnailUrl)
         else -> thumbnailUrl
     }

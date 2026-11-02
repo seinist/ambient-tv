@@ -847,6 +847,7 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
         native.getMessage(h, chatId, messageId)?.let { media(h, it, title) }
     }
 
+    // The full photo for the viewer: the adapter's downloadMessageDisplay is the full download.
     override suspend fun photoFile(chatId: Long, messageId: Int): String? = nativeCall { h ->
         requireAuthorized(h)
         check(chatId !in leftChannels) { app.getString(R.string.monogram_error_channel_left) }
@@ -881,12 +882,11 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
             output.setLastModified(System.currentTimeMillis())
             return@nativeCall output.toURI().toString()
         }
-        // Only a photo has a real display size here: for a video post the native Display kind
-        // downloaded the whole video file (tens of MB for one card), and its Thumb is the inline
-        // preview again. Videos keep the inline preview.
-        if (native.getMessage(h, chatId, messageId)?.mediaKind?.lowercase() != "photo") return@nativeCall null
+        // Upstream's MtprotoNativeUniFfi.downloadMessageDisplay calls the FULL media download
+        // (a whole video for one card); the UniFFI export itself fetches the display size.
         fun display() = File(mediaClass(DISPATCH_VISIBLE) {
-            native.downloadMessageDisplay(h, chatId, messageId, output.path) }).canonicalFile
+            uniffi.monogram_mtproto.downloadMessageDisplay(h.toULong(), chatId, messageId, output.path)
+        }).canonicalFile
         val returned = runCatching {
             // The first file request after connecting may be cancelled by the media session
             // switching over ("session changed"): sent once more.

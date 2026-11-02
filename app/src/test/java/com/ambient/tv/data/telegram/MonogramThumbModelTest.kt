@@ -19,13 +19,13 @@ class MonogramThumbModelTest {
         assertNull(parseMonogramThumbModel("monogram-thumb://5"))
     }
 
-    @Test fun photosUseTheRealCardImageVideosTheInlinePreview() {
+    @Test fun cardsUseTheRealThumbnailForVideosAndPhotos() {
         val video = TelegramMedia(chatId = 5, messageId = 7, channel = "K", title = "T",
             kind = TelegramMediaKind.VIDEO, thumbnailUrl = "file:/inline.bin")
-        assertEquals("file:/inline.bin", video.cardImageUrl)
+        assertEquals(monogramThumbModel(5, 7, "file:/inline.bin"), video.cardImageUrl)
+        assertEquals(video.cardImageUrl, video.toMediaItem().thumbUrl)
         val photo = video.copy(kind = TelegramMediaKind.PHOTO)
         assertEquals(monogramThumbModel(5, 7, "file:/inline.bin"), photo.cardImageUrl)
-        assertEquals(photo.cardImageUrl, photo.toMediaItem().thumbUrl)
         val audioWithoutCover = video.copy(kind = TelegramMediaKind.AUDIO, thumbnailUrl = null)
         assertNull(audioWithoutCover.cardImageUrl)
     }
