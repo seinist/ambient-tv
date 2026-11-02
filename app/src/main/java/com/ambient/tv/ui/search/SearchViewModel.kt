@@ -395,7 +395,11 @@ class SearchViewModel @Inject constructor(
             // Telegram rate-limits searches with FLOOD_WAIT.
             if (telegramEnabled && !reuseTelegram) launch {
                 val result = suspendResult {
-                    telegramRepository.search(query).map { it.toMediaItem() }
+                    // YouTube link posts play through SmartTube: leave them out without it.
+                    val smartTubeUsable = preferences.youtubeEnabled && smartTubeEngine.available
+                    telegramRepository.search(query)
+                        .filter { smartTubeUsable || it.kind != com.ambient.tv.data.telegram.TelegramMediaKind.YOUTUBE }
+                        .map { it.toMediaItem() }
                 }
                 updateForQuery(query, revision) { state ->
                     result.fold(

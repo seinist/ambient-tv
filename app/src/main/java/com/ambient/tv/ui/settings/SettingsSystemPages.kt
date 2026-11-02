@@ -679,7 +679,10 @@ internal fun LazyListScope.settingsSystemCategoryItems(
                             "youtube" to R.string.telegram_youtube,
                             "audio" to R.string.telegram_audio,
                             "photos" to R.string.telegram_photos,
-                        ).forEach { (key, label) ->
+                        ).filter { (key, _) ->
+                            // Offered only while SmartTube can play YouTube link posts.
+                            key != "youtube" || (uiState.youtubeEnabled && uiState.youtubeAvailable)
+                        }.forEach { (key, label) ->
                             TvSettingRow(title = stringResource(label),
                                 checked = key in uiState.telegramSubmenuKeys,
                                 onCheckedChange = { value -> viewModel.onTelegramSubmenuChanged(key, value) })

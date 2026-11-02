@@ -23,6 +23,13 @@ private val TelegramMenuOrder = listOf(
     TelegramMenuEntry("photos", R.string.telegram_photos),
 )
 
+/**
+ * Monogram's "YouTube" category lists posts with YouTube links, which play through SmartTube:
+ * it is offered only while SmartTube is enabled and usable.
+ */
+internal fun telegramUsableSections(keys: Collection<String>, smartTubeUsable: Boolean): List<String> =
+    keys.filter { it != "youtube" || smartTubeUsable }
+
 /** The chosen Monogram entries in menu order; with none chosen, the overview alone. */
 internal fun telegramMenuEntries(submenuKeys: Collection<String>): List<TelegramMenuEntry> =
     TelegramMenuOrder.filter { it.key in submenuKeys }.ifEmpty { listOf(TelegramMenuOrder.first()) }

@@ -1525,6 +1525,9 @@ class HomeViewModel @Inject constructor(
         return telegramPlaybackContext.start("home:$rowId", source.items, itemKey)
     }
 
+    /** Monogram's YouTube link posts play through SmartTube: without it they are left out. */
+    private fun smartTubeUsableForMonogram(): Boolean = appPreferences.youtubeEnabled && smartTubeEngine.available
+
     private fun loadTelegramRows() {
         // Like Radio/SmartTube: a cancelled older load must not clear the newer one's pending
         // state or publish its rows from its finally block.
@@ -1538,7 +1541,9 @@ class HomeViewModel @Inject constructor(
         }
         val definitions = appPreferences.homeRows.filter {
             it.enabled && it.system == HomeRowDefinition.SYSTEM_TELEGRAM &&
-                it.contentKey in HomeRowDefinition.TELEGRAM_ROW_KEYS
+                it.contentKey in HomeRowDefinition.TELEGRAM_ROW_KEYS &&
+                // YouTube link posts need SmartTube to play.
+                (it.contentKey != "youtube" || smartTubeUsableForMonogram())
         }
         if (definitions.isEmpty()) {
             telegramRows = emptyList()
@@ -1558,6 +1563,7 @@ class HomeViewModel @Inject constructor(
                                 com.ambient.tv.ui.telegram.telegramRows(
                                     definition.contentKey,
                                     telegramRepository.cachedBrowse(definition.contentKey),
+                                    includeYouTubeLinks = smartTubeUsableForMonogram(),
                                 ).flatMap { it.items }.distinctBy(MediaItem::ratingKey)
                             }
                             if (items.isEmpty()) null else ContentRowData(
@@ -1582,7 +1588,8 @@ class HomeViewModel @Inject constructor(
                                 telegramRepository.channels().map { channel -> channel.toBrowseItem() }
                             } else {
                                 val entries = telegramRepository.browse(definition.contentKey, HOME_ROW_LIMIT)
-                                com.ambient.tv.ui.telegram.telegramRows(definition.contentKey, entries)
+                                com.ambient.tv.ui.telegram.telegramRows(definition.contentKey, entries,
+                                    includeYouTubeLinks = smartTubeUsableForMonogram())
                                     .flatMap { it.items }.distinctBy(MediaItem::ratingKey)
                             }
                             if (items.isEmpty()) null else ContentRowData(

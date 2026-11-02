@@ -23,4 +23,13 @@ class TelegramMenuTest {
         val on = SidebarUiState(telegramEnabled = true, telegramAuthorized = true)
         assertTrue(MediaSystem.TELEGRAM in menuOrderSystems(on))
     }
+
+    @Test fun youtubeCategoryOnlyWhileSmartTubeIsUsable() {
+        val chosen = listOf("recent", "youtube", "videos")
+        assertEquals(chosen, telegramUsableSections(chosen, smartTubeUsable = true))
+        assertEquals(listOf("recent", "videos"), telegramUsableSections(chosen, smartTubeUsable = false))
+        // Only YouTube chosen and SmartTube off: the menu falls back to the overview.
+        assertEquals(listOf("recent"),
+            telegramMenuEntries(telegramUsableSections(listOf("youtube"), false)).map { it.key })
+    }
 }

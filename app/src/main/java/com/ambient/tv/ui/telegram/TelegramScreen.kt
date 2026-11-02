@@ -165,7 +165,8 @@ fun TelegramScreen(
     val rowList = rememberBrowseListState()
     val flatList = rememberBrowseListState()
     val grid = rememberBrowseGridState()
-    val shownTabs = sections.filter { it.first in viewModel.visibleSections || it.first == sectionKey }
+    val shownTabs = sections.filter { it.first in viewModel.visibleSections ||
+        (it.first == sectionKey && (it.first != "youtube" || viewModel.smartTubeUsable)) }
         .ifEmpty { sections.take(1) }
     val canonical = sectionKey.takeIf { key -> shownTabs.any { it.first == key } }
         ?: shownTabs.first().first
