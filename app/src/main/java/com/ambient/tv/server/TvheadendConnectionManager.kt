@@ -225,6 +225,7 @@ class TvheadendConnectionManager @Inject constructor(
             retries = wakeRetries,
             windowMs = wakeTimeoutMs,
             pollMs = wakePollMs,
+            onAnswered = { wolManager.machineAnswered(mac) },
             setState = { _state.value = it },
         )
         wait.failure?.let { _state.value = it; return false }

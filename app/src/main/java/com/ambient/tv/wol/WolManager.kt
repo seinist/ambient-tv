@@ -37,6 +37,18 @@ class WolManager @Inject constructor(
     private val burstCoalescer = WakeBurstCoalescer()
     /** Follow-up bursts outlive the caller's wait loop; they are tiny and end on their own. */
     private val followUps = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    /** Pending follow-up bursts per NIC, so an answering machine stops them at once. */
+    private val followUpJobs = java.util.concurrent.ConcurrentHashMap<String, MutableSet<Job>>()
+
+    /**
+     * The machine with this NIC answered: drop its pending follow-up bursts. Without this they
+     * kept going for ~20 s while a sibling service (same machine) was still starting, so a server
+     * that was already on still received magic packets.
+     */
+    fun machineAnswered(macAddress: String?) {
+        val key = macAddress?.let(::canonicalWolMacKey) ?: return
+        followUpJobs.remove(key)?.forEach { it.cancel() }
+    }
 
     /**
      * Sends one reliable WOL burst per physical NIC. The MAC address is canonicalized before
@@ -95,11 +107,17 @@ class WolManager @Inject constructor(
             burst().also { sent ->
                 // UDP has no delivery guarantee (a congested tunnel, a NIC still settling into
                 // standby): repeat the burst while callers wait, once per wake cycle and NIC.
-                if (sent.isSuccess) followUps.launch {
-                    FOLLOW_UP_DELAYS_MS.forEach { wait ->
-                        delay(wait)
-                        if (!wakeStillActive() || burst().isFailure) return@launch
+                if (sent.isSuccess) {
+                    val job = followUps.launch(start = kotlinx.coroutines.CoroutineStart.LAZY) {
+                        FOLLOW_UP_DELAYS_MS.forEach { wait ->
+                            delay(wait)
+                            if (!wakeStillActive() || burst().isFailure) return@launch
+                        }
                     }
+                    val jobs = followUpJobs.computeIfAbsent(macKey) { java.util.concurrent.ConcurrentHashMap.newKeySet() }
+                    jobs += job
+                    job.invokeOnCompletion { jobs -= job }
+                    job.start()
                 }
             }
         }

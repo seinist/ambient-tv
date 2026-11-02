@@ -105,6 +105,7 @@ class WakeOnLan {
                 )
             },
             reachable = { online(source) },
+            onAnswered = { wolManager?.machineAnswered(source.wolMac) },
             onSent = { attempt, attempts -> notices.sent(machine, attempt, attempts, window) },
         )
         if (!ready) throw java.net.SocketTimeoutException("Wake timeout")

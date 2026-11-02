@@ -170,6 +170,8 @@ internal suspend fun waitForService(
     setState: (ServerConnectionState) -> Unit,
     lastWakeAtMs: () -> Long = { com.ambient.tv.wol.WolManager.lastWakeBurstAtMs },
     nowMs: () -> Long = System::currentTimeMillis,
+    /** The machine answered after a wake: stops pending follow-up bursts. */
+    onAnswered: () -> Unit = {},
 ): ServiceWaitResult {
     val hostWasOffline = hostHealth() == com.ambient.tv.connectivity.HostHealth.OFFLINE
     if (serviceReady()) return ServiceWaitResult(null, nowMs() + CONNECT_RETRY_GRACE_MS, waited = false)
@@ -193,6 +195,7 @@ internal suspend fun waitForService(
         send = send,
         sendPackets = !machineUp,
         nowMs = nowMs,
+        onAnswered = onAnswered,
         onProgress = { progress ->
             when (progress) {
                 is com.ambient.tv.wol.ServiceWakeProgress.Sending -> setState(ServerConnectionState.SendingWakePacket)

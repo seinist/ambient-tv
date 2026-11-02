@@ -32,6 +32,34 @@ class ServiceWakeTest {
     }
 
     @Test
+    fun `an answering machine stops pending follow-up bursts once`() = runBlocking {
+        var answered = 0
+        var polls = 0
+        val clock = Clock()
+        awaitServiceAfterWake(
+            retries = 2, windowMs = 100_000L, pollMs = 1L,
+            serviceReady = { ++polls >= 10 },
+            machineAwake = { polls >= 3 },
+            send = {},
+            nowMs = clock::read,
+            onAnswered = { answered++ },
+        )
+        assertEquals(1, answered)
+    }
+
+    @Test
+    fun `no burst sent means nothing to stop`() = runBlocking {
+        var answered = 0
+        val clock = Clock()
+        awaitServiceAfterWake(
+            retries = 2, windowMs = 5_000L, pollMs = 1L,
+            serviceReady = { true }, machineAwake = { true }, send = {},
+            sendPackets = false, nowMs = clock::read, onAnswered = { answered++ },
+        )
+        assertEquals(0, answered)
+    }
+
+    @Test
     fun `an open foreign port alone is no success`() = runBlocking {
         val clock = Clock()
         val ready = awaitServiceAfterWake(

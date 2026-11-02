@@ -39,6 +39,8 @@ internal suspend fun awaitServiceAfterWake(
     onProgress: suspend (ServiceWakeProgress) -> Unit = {},
     sendPackets: Boolean = true,
     nowMs: () -> Long = System::currentTimeMillis,
+    /** The machine or its service answered: no further magic packets are needed. */
+    onAnswered: () -> Unit = {},
 ): Boolean {
     val started = nowMs()
     val cycles = if (sendPackets) wakeCycles(retries) else 1
@@ -52,9 +54,9 @@ internal suspend fun awaitServiceAfterWake(
         }
         val windowStart = nowMs()
         while (nowMs() - windowStart < windowMs) {
-            if (serviceReady()) return true
+            if (serviceReady()) { if (sent > 0 && !awake) onAnswered(); return true }
             // Sticky: once the machine answered, more bursts are pointless and only its service is pending.
-            if (!awake && machineAwake()) awake = true
+            if (!awake && machineAwake()) { awake = true; if (sent > 0) onAnswered() }
             onProgress(ServiceWakeProgress.Waiting(((nowMs() - started) / 1000).toInt(), sent, if (sendPackets) cycles else 0, awake))
             delay(pollMs)
         }

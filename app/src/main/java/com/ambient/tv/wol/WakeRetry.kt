@@ -36,6 +36,8 @@ internal suspend fun wakeWithRetries(
     nowMs: () -> Long = System::currentTimeMillis,
     /** After each burst: its index and how many there can be, so the UI can say which one it was. */
     onSent: suspend (attempt: Int, attempts: Int) -> Unit = { _, _ -> },
+    /** The target answered: callers stop pending follow-up bursts ([WolManager.machineAnswered]). */
+    onAnswered: () -> Unit = {},
 ): Boolean {
     val started = nowMs()
     val cycles = wakeCycles(retries)
@@ -45,7 +47,7 @@ internal suspend fun wakeWithRetries(
         val windowStart = nowMs()
         while (nowMs() - windowStart < windowMs) {
             onWaiting(((nowMs() - started) / 1000).toInt())
-            if (reachable()) return true
+            if (reachable()) { onAnswered(); return true }
             delay(pollMs)
         }
     }

@@ -40,6 +40,8 @@ class ManualWakeCoordinator(
     private val retries: () -> Int = { 0 },
     private val windowMs: Long = 60_000L,
     private val pollMs: Long = 2_500L,
+    /** The machine answered: stop pending follow-up bursts of its NICs. */
+    private val answered: (macs: List<String>) -> Unit = {},
 ) {
     enum class Outcome { AWAKE, FAILED, ALREADY_WAKING, NO_MAC }
 
@@ -68,6 +70,7 @@ class ManualWakeCoordinator(
                 pollMs = pollMs,
                 send = { attempt -> burst(retry = attempt > 0) },
                 reachable = { reachable(host, port) },
+                onAnswered = { answered(macs) },
                 onSent = { attempt, attempts -> notices.sent(machine, attempt, attempts, windowMs) },
             )
             notices.finish(machine, request.system, success = ok, member = request.member)
@@ -103,6 +106,7 @@ class MachineWake @Inject constructor(
             }
         },
         retries = { preferences.wolRetryCount },
+        answered = { macs -> macs.forEach(wolManager::machineAnswered) },
     )
 
     fun machineKey(system: String, host: String?, mac: String?): String =

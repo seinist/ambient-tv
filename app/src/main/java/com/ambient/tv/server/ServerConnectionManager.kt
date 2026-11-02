@@ -234,6 +234,7 @@ class ServerConnectionManager @Inject constructor(
                 retries = wakeRetries,
                 windowMs = wakeTimeoutMs,
                 pollMs = wakePollMs,
+                onAnswered = { wolManager.machineAnswered(mac) },
                 setState = { _state.value = it },
             )
         } catch (cancelled: kotlinx.coroutines.CancellationException) {

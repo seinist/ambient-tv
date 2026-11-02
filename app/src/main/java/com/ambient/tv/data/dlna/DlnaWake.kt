@@ -59,6 +59,7 @@ class DlnaWake @Inject constructor(
                 pollMs = POLL_MS,
                 send = { attempt -> wolManager.sendWakeBurst(server.wolMac, retry = attempt > 0).getOrThrow() },
                 reachable = { online(target) },
+                onAnswered = { wolManager.machineAnswered(server.wolMac) },
                 onSent = { attempt, attempts -> com.ambient.tv.notifications.WakeNotices.sent(machine, attempt, attempts, WAIT_MS) },
             )
             if (!ready) throw java.net.SocketTimeoutException("Wake timeout")
