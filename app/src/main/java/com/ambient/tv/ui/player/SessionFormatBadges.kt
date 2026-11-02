@@ -23,7 +23,7 @@ internal data class SessionFormat(
     val videoCodec: String? = null,
     val audioCodec: String? = null,
     val audioChannels: Int? = null,
-    val audioOutput: String? = null,
+    val audioSession: AudioSession? = null,
 ) {
     val hasVideo: Boolean get() = width != null || dimensions != null || videoCodec != null
 }
@@ -40,7 +40,7 @@ private fun Media3PlaybackHandle.format(): SessionFormat {
         videoCodec = video?.let { it.codecs ?: it.sampleMimeType },
         audioCodec = audio?.let { it.codecs ?: it.sampleMimeType },
         audioChannels = audio?.channelCount?.takeIf { it > 0 },
-        audioOutput = audioOutputBadge(Media3AudioProcessing.session(player)),
+        audioSession = Media3AudioProcessing.session(player),
     )
 }
 
@@ -51,7 +51,7 @@ private fun MpvPlaybackController.format() = SessionFormat(
     fps = containerFps(),
     videoCodec = videoCodec(),
     audioCodec = audioCodec(),
-    audioOutput = audioOutputBadge(audioSession),
+    audioSession = audioSession,
 )
 
 /** Polls the active engine while shown; empty until it knows its tracks. */
@@ -63,7 +63,7 @@ internal fun rememberSessionFormat(sourceIdentity: String): SessionFormat {
                 is Media3PlaybackHandle -> handle.format()
                 is MpvPlaybackController -> withContext(Dispatchers.IO) { handle.format() }
                 is VlcPlaybackController -> SessionFormat(renderer = "VLC",
-                    audioOutput = audioOutputBadge(handle.audioSession))
+                    audioSession = handle.audioSession)
                 else -> SessionFormat()
             }
             delay(1_000)
@@ -89,5 +89,5 @@ internal fun SessionFormatBadges(format: SessionFormat) {
         MetaBadge(listOfNotNull(playerCodecLabel(codec), format.audioChannels?.let(::audioChannelLabel))
             .joinToString(" "))
     }
-    format.audioOutput?.let { MetaBadge(it) }
+    audioOutputBadge(format.audioSession)?.let { MetaBadge(it) }
 }
