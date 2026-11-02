@@ -16,7 +16,7 @@ internal object CompanionBackupPolicy {
         "showLibraryRowsOnHome", "showContinueWatchingHub", "showRecentHomeHubs", "showCollectionHomeHubs",
         "accentColorKey", "customAccentHex", "customPlaybackAccentHex", "dualAccentEnabled", "themeModeKey", "homeHeroStyleKey", "introAnimationKey", "notificationDisplayDurationKey",
         "trailersEnabled", "trailerLanguage", "youtubeSponsorBlockEnabled", "youtubeFeedKeys", "youtubeStartFeedKey",
-        "youtubeAutoplayNextEnabled", "youtubeMediaSelectionBehaviorKey", "introSkipMode", "creditsSkipMode",
+        "youtubeAutoplayNextEnabled", "youtubeMediaSelectionBehaviorKey", "telegramMediaSelectionBehaviorKey", "introSkipMode", "creditsSkipMode",
         "nextUpEnabled", "nextUpLeadSeconds", "nextUpCreditsDelaySeconds", "nextUpAutoplayEpisodes", "nextUpAutoplayCollections", "nextUpOverlayEnabled",
         "nextUpStillWatchingEpisodes", "sleepAutoStartKey", "sleepWarningMinutes", "sleepDailyStopMinute", "bigSeekJumpSeconds", "pauseRewindSeconds", "pauseRewindMinPauseSeconds", "resumeRewindSeconds", "sidebarSystemOrder", "sidebarDividersAfter", "sidebarEntryOrder", "sidebarEntryDividers", "systemNames",
         "spotifySubmenuKeys", "radioSubmenuKeys", "telegramSubmenuKeys", "tvheadendSubmenuKeys", "sidebarSettingsShortcutHidden",

@@ -1275,6 +1275,19 @@ class AppPreferences @Inject constructor(
         get() = prefs.getBoolean(KEY_YOUTUBE_AUTOPLAY_NEXT, false)
         set(value) = prefs.edit { putBoolean(KEY_YOUTUBE_AUTOPLAY_NEXT, value) }
 
+    /** Monogram's own choice, like SmartTube's; the post page stays the default. */
+    var telegramMediaSelectionBehaviorKey: String
+        get() = MediaSelectionPreferences.normalize(
+            prefs.getString(KEY_TELEGRAM_MEDIA_SELECTION_BEHAVIOR, MediaSelectionPreferences.DETAILS),
+            MediaSelectionPreferences.DETAILS,
+        )
+        set(value) = prefs.edit {
+            putString(
+                KEY_TELEGRAM_MEDIA_SELECTION_BEHAVIOR,
+                MediaSelectionPreferences.normalize(value, MediaSelectionPreferences.DETAILS),
+            )
+        }
+
     /** Independent of [mediaSelectionBehaviorKey]. Play immediately is the YouTube default. */
     var youtubeMediaSelectionBehaviorKey: String
         get() = MediaSelectionPreferences.normalize(
@@ -2392,6 +2405,7 @@ class AppPreferences @Inject constructor(
         const val KEY_YOUTUBE_SPONSORBLOCK = "youtube_sponsorblock_enabled"
         const val KEY_YOUTUBE_AUTOPLAY_NEXT = "youtube_autoplay_next_enabled"
         const val KEY_YOUTUBE_MEDIA_SELECTION_BEHAVIOR = "youtube_media_selection_behavior"
+        const val KEY_TELEGRAM_MEDIA_SELECTION_BEHAVIOR = "telegram_media_selection_behavior"
         const val KEY_NEXT_UP_ENABLED = "next_up_enabled"
         const val KEY_NEXT_UP_LEAD_SECONDS = "next_up_lead_seconds"
         const val KEY_NEXT_UP_AUTOPLAY_EPISODES = "next_up_autoplay_episodes"

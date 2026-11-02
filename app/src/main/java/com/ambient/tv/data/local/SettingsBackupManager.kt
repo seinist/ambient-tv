@@ -215,6 +215,7 @@ data class SettingsBackup(
     val vlcScalingFilterKey: String = "bilinear",
     val youtubeAutoplayNextEnabled: Boolean = false,
     val youtubeMediaSelectionBehaviorKey: String = MediaSelectionPreferences.PLAY,
+    val telegramMediaSelectionBehaviorKey: String = MediaSelectionPreferences.DETAILS,
     val introSkipMode: String = "button",
     val creditsSkipMode: String = "button",
     val nextUpEnabled: Boolean = true,
@@ -532,6 +533,7 @@ class SettingsBackupManager @Inject constructor(
             vlcScalingFilterKey = preferences.vlcScalingFilterKey,
             youtubeAutoplayNextEnabled = preferences.youtubeAutoplayNextEnabled,
             youtubeMediaSelectionBehaviorKey = preferences.youtubeMediaSelectionBehaviorKey,
+            telegramMediaSelectionBehaviorKey = preferences.telegramMediaSelectionBehaviorKey,
             introSkipMode = preferences.introSkipMode,
             creditsSkipMode = preferences.creditsSkipMode,
             nextUpEnabled = preferences.nextUpEnabled,
@@ -931,6 +933,7 @@ class SettingsBackupManager @Inject constructor(
         }
         preferences.youtubeAutoplayNextEnabled = backup.youtubeAutoplayNextEnabled
         preferences.youtubeMediaSelectionBehaviorKey = backup.youtubeMediaSelectionBehaviorKey
+        preferences.telegramMediaSelectionBehaviorKey = backup.telegramMediaSelectionBehaviorKey
         preferences.introSkipMode = backup.introSkipMode
         preferences.creditsSkipMode = backup.creditsSkipMode
         preferences.nextUpEnabled = backup.nextUpEnabled

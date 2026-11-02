@@ -790,6 +790,8 @@
     <string name="settings_youtube_autoplay_next_hint">Play the next recommended video.</string>
     <string name="youtube_media_selection_title">When selecting a video</string>
     <string name="youtube_media_selection_hint">SmartTube only.</string>
+    <string name="telegram_media_selection_title">When selecting a post</string>
+    <string name="telegram_media_selection_hint">Monogram only. Directly playable posts; YouTube links and photos open the post page.</string>
     <string name="settings_tvh_mac">TVHeadend MAC address for Wake-on-LAN</string>
     <string name="settings_tvh_auto_wake">Wake TVHeadend automatically</string>
     <string name="settings_tvh_auto_wake_hint">Wakes the server when unreachable.</string>

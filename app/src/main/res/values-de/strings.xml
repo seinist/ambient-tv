@@ -792,6 +792,8 @@
     <string name="settings_youtube_autoplay_next_hint">Danach das nächste empfohlene Video abspielen.</string>
     <string name="youtube_media_selection_title">Beim Auswählen eines Videos</string>
     <string name="youtube_media_selection_hint">Gilt nur für SmartTube.</string>
+    <string name="telegram_media_selection_title">Beim Auswählen eines Beitrags</string>
+    <string name="telegram_media_selection_hint">Gilt nur für Monogram und abspielbare Beiträge. YouTube-Links und Fotos öffnen die Beitragsseite.</string>
     <string name="settings_tvh_mac">TVHeadend-MAC-Adresse für Wake-on-LAN</string>
     <string name="settings_tvh_auto_wake">TVHeadend automatisch aufwecken</string>
     <string name="settings_tvh_auto_wake_hint">Weckt den Server, wenn er nicht erreichbar ist.</string>

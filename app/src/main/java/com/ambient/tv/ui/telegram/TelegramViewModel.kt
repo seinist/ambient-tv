@@ -99,6 +99,10 @@ class TelegramViewModel @Inject constructor(
     val gridColumns get() = preferences.libraryGridColumns
     val listRows get() = preferences.libraryListRows
     fun setGridColumns(columns: Int) { preferences.libraryGridColumns = columns }
+    /** What selecting a post does (post page, play, ask); Monogram's own setting like SmartTube's. */
+    var mediaSelectionBehavior: String
+        get() = preferences.telegramMediaSelectionBehaviorKey
+        set(value) { preferences.telegramMediaSelectionBehaviorKey = value }
     fun setListRows(rows: Int) { preferences.libraryListRows = rows }
 
     private val mutableState = MutableStateFlow(TelegramBrowseState())
