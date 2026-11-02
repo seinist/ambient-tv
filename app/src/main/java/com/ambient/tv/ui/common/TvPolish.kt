@@ -439,7 +439,7 @@ fun ArtworkImage(
         // An HD Telegram thumbnail that downloads but cannot be decoded must still fall back
         // to the post's inline preview instead of the title card.
         val monogramFallback = (model as? String)
-            ?.let(com.ambient.tv.data.telegram::parseMonogramThumbModel)?.fallback
+            ?.let { com.ambient.tv.data.telegram.parseMonogramThumbModel(it) }?.fallback
         (listOf(model, monogramFallback) + fallbackModels)
             .filter { it != null && (it !is String || it.isNotBlank()) }
             .distinct()
