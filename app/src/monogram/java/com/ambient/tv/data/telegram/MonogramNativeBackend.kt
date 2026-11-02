@@ -314,9 +314,11 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
                     }
                     handle = native.createClient(id, hash, session.absolutePath)
                     native.setDownloadChunkKib(512)
-                    // Upstream default: 2 media lanes. A grid of cards queued behind them, each
-                    // preview took 5-10 s; Monogram's "faster downloads" allows up to 8.
-                    runCatching { native.setDownloadConcurrency(6, 8) }
+                    // Measured on a phone: with upstream's pipelined parts (several getFile parts
+                    // in flight) a ~15 KiB card preview took 6-17 s, in steps of the native 5 s
+                    // silent-response grace: parts past the end of a tiny file go unanswered.
+                    // One part per lane, four lanes: 0.2-2.8 s. A video chunk is one part anyway.
+                    runCatching { native.setDownloadConcurrency(4, 1) }
                     connected = false
                 }
                 if (connect && !connected) {
@@ -903,7 +905,7 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
         }
         // Upstream's MtprotoNativeUniFfi.downloadMessageDisplay calls the FULL media download
         // (a whole video for one card); the UniFFI export itself fetches the display size.
-        fun display() = File(mediaClass(DISPATCH_VISIBLE) {
+        fun display() = File(mediaClass(DISPATCH_ORDINARY) {
             uniffi.monogram_mtproto.downloadMessageDisplay(h.toULong(), chatId, messageId, output.path)
         }).canonicalFile
         val returned = runCatching {
@@ -1036,6 +1038,8 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
         /** Native dispatch classes (ffi.rs set_dispatch_class). */
         const val DISPATCH_READ = 0
         const val DISPATCH_VISIBLE = 6
+        /** 128 KiB parts, 4 in flight (Visible: 512 KiB x 8, which stalls on a 15 KiB preview). */
+        const val DISPATCH_ORDINARY = 5
         const val DISPATCH_USER = 7
         /** Update stream drain interval; draining is local, it sends nothing to Telegram. */
         const val UPDATES_POLL_MS = 5_000L
