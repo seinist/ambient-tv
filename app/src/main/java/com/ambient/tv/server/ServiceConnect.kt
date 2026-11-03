@@ -177,7 +177,10 @@ internal suspend fun waitForService(
     if (serviceReady()) return ServiceWaitResult(null, nowMs() + CONNECT_RETRY_GRACE_MS, waited = false)
     val machineUp = machineAwake()
     if (!machineUp && !canWake) return ServiceWaitResult(ServerConnectionState.Offline, 0L, waited = false)
-    val recentlyWoken = hostWasOffline || nowMs() - lastWakeAtMs() in 0 until RECENT_WAKE_MS
+    // Only a machine this device can wake (MAC set) gets the wake countdown. Without a MAC
+    // an awake machine is connected to at once; a slow service start is covered by the
+    // connect retry instead of a "waking" wait for a wake that was never sent.
+    val recentlyWoken = canWake && (hostWasOffline || nowMs() - lastWakeAtMs() in 0 until RECENT_WAKE_MS)
     if (machineUp && !recentlyWoken) return ServiceWaitResult(null, nowMs() + CONNECT_RETRY_GRACE_MS, waited = false)
 
     val window = if (machineUp) SERVICE_START_GRACE_MS else windowMs

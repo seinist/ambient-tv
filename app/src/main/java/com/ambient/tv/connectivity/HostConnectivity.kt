@@ -117,12 +117,20 @@ class HostConnectivity internal constructor(
                 !tunnelDown(it.host)
         }
         // A policy restriction or a tunnel that is down (e.g. after the background) is not evidence that a host went down.
-        if (targets.isEmpty()) return@withLock false
+        if (targets.isEmpty()) {
+            com.ambient.tv.diagnostics.DiagnosticLog.warn("hosts",
+                "${check.machine}: no probe target (LAN-only=${preferences.localNetworkOnly})")
+            return@withLock false
+        }
         val reachable = coroutineScope {
             targets.distinctBy { it.host to it.port }.map { target -> async {
                 runInterruptible {
                     try { Socket().use { it.connect(InetSocketAddress(target.host, target.port), if (tunnelled(target.host)) 3_000 else 1500) }; true }
-                    catch (_: java.io.IOException) { false }
+                    catch (failure: java.io.IOException) {
+                        com.ambient.tv.diagnostics.DiagnosticLog.warn("hosts",
+                            "${check.machine}: ${target.system} ${target.host}:${target.port} unreachable: ${failure.message}")
+                        false
+                    }
                 }
             } }.awaitAll().any { it }
         }

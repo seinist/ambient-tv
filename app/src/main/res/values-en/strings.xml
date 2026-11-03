@@ -1148,6 +1148,7 @@
     <string name="settings_about_role_youtube_core">YouTube API/media service core</string>
     <string name="settings_about_role_shared">Shared SmartTube utilities</string>
     <string name="settings_about_role_spotify">Native Spotify playback core</string>
+    <string name="settings_about_role_telegram">Telegram client (Monogram)</string>
     <string name="sidebar_add_system">Add system</string>
     <string name="sidebar_customize">Edit menu</string>
     <string name="sidebar_manage_menu">Manage menu</string>
