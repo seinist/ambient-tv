@@ -15,6 +15,9 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.focusable
+import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -97,6 +100,16 @@ fun TelegramPostDetailScreen(
         }
     }
 
+    // TV: focus starts on the post's main action (play/open), not nowhere, so D-pad works at once.
+    val primaryFocus = remember(chatId, messageId) { androidx.compose.ui.focus.FocusRequester() }
+    val handheld = com.ambient.tv.ui.mobile.LocalHandheldUi.current
+    LaunchedEffect(media?.mediaKey) {
+        if (handheld || media == null) return@LaunchedEffect
+        repeat(3) {
+            androidx.compose.runtime.withFrameNanos { }
+            if (runCatching { primaryFocus.requestFocus() }.getOrDefault(false)) return@LaunchedEffect
+        }
+    }
     Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
         PageBackground(Modifier.fillMaxSize())
         val selected = media
@@ -119,7 +132,9 @@ fun TelegramPostDetailScreen(
                 ) {
                     SystemBadge(MediaSystem.TELEGRAM)
                     Text(selected.title, style = MaterialTheme.typography.headlineLarge)
-                    TvActionButton(selected.channel, onClick = { onOpenChannel(selected.chatId) })
+                    TvActionButton(selected.channel, onClick = { onOpenChannel(selected.chatId) },
+                        modifier = if (selected.playableOnTelegram) Modifier
+                            else Modifier.focusRequester(primaryFocus))
                     if (selected.publishedAtMs > 0L) {
                         val formatted = remember(selected.publishedAtMs) {
                             com.ambient.tv.ui.common.relativePublishedLabel(selected.publishedAtMs, withTime = true)
@@ -140,6 +155,7 @@ fun TelegramPostDetailScreen(
                                 if (selected.kind == TelegramMediaKind.PHOTO) onOpenPhoto(selected)
                                 else onPlayMedia(selected.chatId, selected.messageId)
                             },
+                            modifier = Modifier.focusRequester(primaryFocus),
                         )
                     } else if (selected.protectedContent) {
                         Text(stringResource(R.string.monogram_protected_post),
@@ -148,7 +164,18 @@ fun TelegramPostDetailScreen(
                     selected.summary?.takeIf(String::isNotBlank)?.let { fullText ->
                         Text(stringResource(R.string.monogram_post_text),
                             style = MaterialTheme.typography.titleMedium)
-                        Text(fullText, style = MaterialTheme.typography.bodyLarge)
+                        // Paragraphs are focus stops: D-pad down scrolls through a long post.
+                        fullText.split(Regex("\n\s*\n")).filter(String::isNotBlank).forEach { paragraph ->
+                            var focused by remember { mutableStateOf(false) }
+                            Text(paragraph.trim(), style = MaterialTheme.typography.bodyLarge,
+                                modifier = Modifier.fillMaxWidth()
+                                    .background(
+                                        if (focused) MaterialTheme.colorScheme.primary.copy(alpha = 0.10f)
+                                        else androidx.compose.ui.graphics.Color.Transparent,
+                                        RoundedCornerShape(8.dp))
+                                    .onFocusChanged { focused = it.isFocused }
+                                    .focusable())
+                        }
                     }
                     if (videos.isNotEmpty()) {
                         Text(stringResource(R.string.telegram_youtube),
@@ -173,6 +200,7 @@ fun TelegramPostDetailScreen(
             }
         }
         PageUtilityBar(onBack = onBack, onSettings = onOpenSettings,
+            onDown = if (media != null) ({ runCatching { primaryFocus.requestFocus() } }) else null,
             leftNavigatesBack = false, modifier = Modifier.align(Alignment.TopCenter))
     }
 }
