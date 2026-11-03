@@ -165,7 +165,7 @@ fun TelegramPostDetailScreen(
                         Text(stringResource(R.string.monogram_post_text),
                             style = MaterialTheme.typography.titleMedium)
                         // Paragraphs are focus stops: D-pad down scrolls through a long post.
-                        fullText.split(Regex("\n\s*\n")).filter(String::isNotBlank).forEach { paragraph ->
+                        fullText.split(Regex("\\n\\s*\\n")).filter(String::isNotBlank).forEach { paragraph ->
                             var focused by remember { mutableStateOf(false) }
                             Text(paragraph.trim(), style = MaterialTheme.typography.bodyLarge,
                                 modifier = Modifier.fillMaxWidth()
