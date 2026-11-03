@@ -143,7 +143,7 @@ does **not** show that the final APK fits: Android can store native libraries
 uncompressed, and Monogram also needs UniFFI, JNA and Rustls dependencies.
 
 To measure the **actual extra bytes per ABI**, use the full normal release build
-with the required existing Ambient TV engines (SmartTube, Spotify, VLC/MPV,
+with the required existing Ambient TV engines (SmartTube, VLC/MPV,
 projectM and SVP) available:
 
 ```sh
@@ -171,8 +171,8 @@ the size budget.
 
 ## Account setup and sign-in (Android TV / phone)
 
-The in-app Monogram account section follows the same **Settings → Media sources
-& accounts** workflow as Spotify: application credentials, the current account
+The in-app Monogram account section follows the **Settings → Media sources
+& accounts** workflow: application credentials, the current account
 status, then the available sign-in actions in a single settings card.
 
 1. Create an application at https://my.telegram.org/apps, then open
@@ -184,7 +184,7 @@ status, then the available sign-in actions in a single settings card.
    user account is authorized.
 3. **TV QR method:** Select **Sign in with QR code**. Telegram on a separate,
    already signed-in phone scans the QR through **Settings → Devices**. The
-   QR contains `tg://login?token=...`, **not** a web callback like Spotify.
+   QR contains `tg://login?token=...`, **not** a web callback.
    Closing the dialog does not sign into Telegram; the account status reflects
    actual native authorization.
 4. **Phone/code method (also on TV):** Enter an international phone number,
@@ -197,8 +197,7 @@ status, then the available sign-in actions in a single settings card.
    sign-out.
 
 The UI keeps input errors visible and never stores phone verification codes,
-QR tokens or 2FA passwords in preferences or backups. The APK does not
-use Spotify's OAuth redirect URI or callback server for Telegram.
+QR tokens or 2FA passwords in preferences or backups.
 
 ## Minimal channel leave patch
 

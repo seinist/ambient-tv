@@ -381,7 +381,8 @@ class AppPreferences @Inject constructor(
         set(value) = prefs.edit { putBoolean(KEY_YOUTUBE_ENABLED, value) }
 
     var spotifyEnabled: Boolean
-        get() = prefs.getBoolean(KEY_SPOTIFY_ENABLED, false)
+        // Off in builds without Spotify (SPOTIFY_NATIVE): every menu, row and search checks this.
+        get() = com.ambient.tv.BuildConfig.SPOTIFY_ENABLED && prefs.getBoolean(KEY_SPOTIFY_ENABLED, false)
         set(value) = prefs.edit { putBoolean(KEY_SPOTIFY_ENABLED, value) }
 
     var radioEnabled: Boolean

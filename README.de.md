@@ -2,7 +2,7 @@
 
 <img src="branding/png/wordmark/ambient-tv-wordmark-readme.png" alt="Ambient TV" width="420">
 
-**Android-TV- und Handy-Client für lokale Medien – Plex, Jellyfin, Emby, TVHeadend, SmartTube, Spotify, DLNA, Dateien/NAS und Fotos in einer App, abgespielt mit MPV, VLC oder Media3. Optional mit Monogram (Telegram-Medien).**
+**Android-TV- und Handy-Client für lokale Medien – Plex, Jellyfin, Emby, TVHeadend, SmartTube, DLNA, Dateien/NAS und Fotos in einer App, abgespielt mit MPV, VLC oder Media3. Optional mit Monogram (Telegram-Medien).**
 
 [![Android 10+](https://img.shields.io/badge/Android-API%2029%2B-3DDC84?logo=android&logoColor=white)](#voraussetzungen)
 [![Android TV](https://img.shields.io/badge/Android%20TV-ready-3DDC84?logo=androidtv&logoColor=white)](#funktionen)
@@ -71,7 +71,6 @@ Ambient TV entsteht in der Freizeit, aus Liebe zu einem guten Fernsehabend. Wenn
 - **TVHeadend** – Live-TV, EPG, Aufnahmen, Timer; Aufnahmen und Timer bearbeiten (Vor-/Nachlauf, Priorität) und löschen, Bilder aus EPG, TMDb oder Senderlogo
 - **IPTV** – M3U-Wiedergabelisten mit XMLTV-Programmführer
 - **SmartTube** – YouTube-Feeds, **SponsorBlock**, Anmeldung per QR-Code
-- **Spotify** – Connect-Empfänger + native Wiedergabe (librespot)
 - **Monogram** *(optionaler GPL-/MTProto-Build)* – Telegram-Kanalmedien, vollständige Beitragstexte, Vorschaubilder und YouTube-Links, sechs Home-Reihen, QR-/Telefon-/2FA-Anmeldung; Media3/VLC/MPV-Anbindung (Gerätetests stehen noch aus)
 - **Trailer** (TMDB) · **DLNA-Server** · **Fotos**
 - **Dateien** – Lokal/USB, **SMB 1/2/3**, **NFSv3/v4**, **WebDAV** (HTTP/HTTPS), **SFTP** (Passwort oder SSH-Schlüssel)
@@ -149,7 +148,7 @@ Ambient TV entsteht in der Freizeit, aus Liebe zu einem guten Fernsehabend. Wenn
 | **Geräte** | Android TV / Google TV, Handys und Tablets mit **Android API 29+** |
 | **ABIs** | arm64-v8a · armeabi-v7a · x86 · x86_64 |
 | **Geräteabhängig** | Vulkan-Ausgabe/-Dekodierung, SDR → HDR (Android 14+, HDR10-Display), Passthrough-Formate, SVP |
-| **Netzwerk** | LAN zu Medienserver/NAS; Internet für Plex-Link, SmartTube, Spotify, Trailer und optional Monogram |
+| **Netzwerk** | LAN zu Medienserver/NAS; Internet für Plex-Link, SmartTube, Trailer und optional Monogram |
 | **Build** | **JDK 17**, Android SDK/NDK (`ANDROID_NDK_HOME` oder `ANDROID_NDK_ROOT`); optional Keystore |
 
 ## Bauen
@@ -179,7 +178,7 @@ Ambient TV entsteht in der Freizeit, aus Liebe zu einem guten Fernsehabend. Wenn
 
 Artefakte landen unter `dist/` (z. B. `ambient-tv-arm64-<version>.apk`, `ambient-tv-x86_64-<version>.apk`). Vorab-Suffixe wie `beta`, `alpha` oder `rc` bleiben am Ende, die Build-Nummer steht davor (`ambient-tv-arm64-1.0.270-beta.apk`).
 
-Gradle direkt (mit automatischer MPV/FFmpeg-Vorbereitung bei fehlenden Local-Audio-Headern oder -Bibliotheken): `./gradlew :app:assembleDebug` – für produktnahe Builds `./build.sh` bevorzugen. `SKIP_MPV_NATIVE=1` überspringt den nativen MPV-Build (schnelle Builds/CI), z. B. `SKIP_MPV_NATIVE=1 ./gradlew :app:assembleDebug :app:testDebugUnitTest`. Es ist keine Spotify-Client-ID eingebaut; siehe [Spotify einrichten](#spotify-einrichten).
+Gradle direkt (mit automatischer MPV/FFmpeg-Vorbereitung bei fehlenden Local-Audio-Headern oder -Bibliotheken): `./gradlew :app:assembleDebug` – für produktnahe Builds `./build.sh` bevorzugen. `SKIP_MPV_NATIVE=1` überspringt den nativen MPV-Build (schnelle Builds/CI), z. B. `SKIP_MPV_NATIVE=1 ./gradlew :app:assembleDebug :app:testDebugUnitTest`.
 
 Details und Umgebungsvariablen: [docs/DOCUMENTATION.de.md §14](docs/DOCUMENTATION.de.md#14-entwicklung-und-build) · [EXTERNAL_LIBRARIES.md](EXTERNAL_LIBRARIES.md)
 
@@ -208,28 +207,12 @@ Ohne beides funktionieren Debug-Builds, Release-APKs bleiben unsigniert. `./buil
 | --- | --- |
 | Start & Bedienung | Home-Reihen, Medienauswahl, Sprache, Bibliothek |
 | Darstellung | Theme, Akzent, Skalierung, **Leistung**, Hintergrundvideo, Bildschirmschoner |
-| Systeme & Konten | Plex / Jellyfin / Emby / TVH / IPTV / SmartTube / Spotify / optional Monogram / Trailer / DLNA / Dateien |
+| Systeme & Konten | Plex / Jellyfin / Emby / TVH / IPTV / SmartTube / optional Monogram / Trailer / DLNA / Dateien |
 | Geräte & Netzwerk | Handy & Geräte, UPnP-Receiver, WireGuard / VPN, Server & Wake-on-LAN |
 | Wiedergabe | Player-Backend, Untertitel, „Als Nächstes“, Sprungweite |
 | Bild & Ton | Bild-/Audioprofile, Visualizer, Fotos |
 | App & Daten | Backup, Diagnose, Erweitert, Über |
 
-
-</details>
-
-### Spotify einrichten
-
-<details>
-<summary>Ambient TV enthält keine Spotify-Client-ID – erstelle deine eigene (ca. 5 Minuten)</summary>
-
-1. Im [Spotify Developer Dashboard](https://developer.spotify.com/dashboard) anmelden und **Create app** wählen.
-2. Beliebigen Namen und Beschreibung eintragen. Bei **Which API/SDKs are you planning to use?** **Web API** auswählen.
-3. Beide **Redirect URIs** hinzufügen und speichern:
-   - `ambienttv://spotify-auth` (Anmeldung auf dem Gerät)
-   - `https://seinist.github.io/ambient-tv-spotify-callback/spotify-callback.html` (QR-Anmeldung am TV; die Seite leitet den Code nur an den TV in deinem Netzwerk weiter)
-4. In den **Settings** der App die **Client ID** kopieren.
-5. In Ambient TV: **Einstellungen › Medienquellen & Konten › Spotify** → im Abschnitt **Spotify-Konto** bei **Spotify-Client-ID** einfügen, dann **Anmelden**.
-6. Neue Apps laufen im **Development mode**: im Dashboard unter **User Management** die Spotify-Konten (Name + E-Mail) eintragen, die sich anmelden dürfen.
 
 </details>
 
@@ -248,7 +231,7 @@ Ohne beides funktionieren Debug-Builds, Release-APKs bleiben unsigniert. `./buil
 2. In der Monogram-fähigen Ambient-TV-App **Einstellungen › Medienquellen & Konten › Monogram** öffnen. Die API-Felder sind auch bei noch deaktiviertem System verfügbar.
 3. **API-ID** und **API-Hash** eintragen und **API-Zugangsdaten speichern** wählen. Der Hash wird verdeckt eingegeben; die Werte landen verschlüsselt auf dem Gerät, **nicht** fest in der APK.
 4. **Monogram aktivieren**. Im Kontoabschnitt erscheint der Anmeldestatus mit den passenden Wegen:
-   - **Android TV:** **Mit QR-Code anmelden** wählen. Telegram auf einem **bereits angemeldeten Handy** öffnen, unter **Einstellungen › Geräte** den QR-Code scannen und die Anmeldung bestätigen. Dies ist ein Telegram-`tg://`-Anmeldetoken und **kein** Spotify-Web-Callback.
+   - **Android TV:** **Mit QR-Code anmelden** wählen. Telegram auf einem **bereits angemeldeten Handy** öffnen, unter **Einstellungen › Geräte** den QR-Code scannen und die Anmeldung bestätigen. Dies ist ein Telegram-`tg://`-Anmeldetoken.
    - **Handy oder Alternative am TV:** Telefonnummer mit Ländervorwahl eintragen, **Anmeldecode senden** wählen und den von Telegram erhaltenen Code bestätigen. Bei Bedarf das Passwort für die **Zwei-Schritt-Verifizierung** eingeben. Am Handy wird der QR-Login nicht angezeigt, da es den eigenen Bildschirm nicht scannen kann.
 5. Sobald **Verbundenes Konto** erscheint, die Monogram-Tabs bzw. sechs Home-Reihen einrichten: **Neue Medien, Kanäle, Videos, YouTube-Links, Musik und Audio, Fotos**. YouTube-Videos öffnen sich über die vorhandene SmartTube-Auswahl; vollständige Telegram-Beitragstexte stehen auf der Detailseite.
 
@@ -286,7 +269,7 @@ Ambient TV entsteht aus Leidenschaft – für alle, die mehr aus ihrem Medienset
 
 Dieses Projekt steht unter **[Creative Commons Zero v1.0 Universal (CC0-1.0)](LICENSE)** – Verzicht auf Urheberrechte soweit rechtlich möglich; ohne Garantie.
 
-Drittanbieter-Engines und Marken (Plex, Jellyfin, Emby, YouTube/SmartTube, Spotify, …) unterliegen eigenen Lizenzen und Kennzeichnungen – siehe „Über“ in der App und `third_party_licenses/`.
+Drittanbieter-Engines und Marken (Plex, Jellyfin, Emby, YouTube/SmartTube, …) unterliegen eigenen Lizenzen und Kennzeichnungen – siehe „Über“ in der App und `third_party_licenses/`.
 
 **Gebaute APKs:** Die App enthält GPL-lizenzierte Bestandteile (mpv: GPL-2.0-or-later; FFmpeg, von mpv-android mit `--enable-gpl --enable-version3` gebaut: GPL-3.0-or-later; NNEDI-Gewichte: GPL-2.0-or-later; TVHeadend-Logo: GPL-3.0-or-later) und LGPL-Bestandteile (VLC, SVP-Adapter). Die enthaltenen GLSL-Shader stehen unter LGPL-3.0-or-later, MIT, BSD-2-Clause oder CC0-1.0 (siehe `SHADER_SOURCES_027.json`). Aus diesem Repository gebaute APKs werden daher unter den Bedingungen der **GNU GPL v3.0** verteilt; der zugehörige Quelltext ist dieses Repository plus die gepinnten Upstream-Quellen in `gradle/external-versions.properties`.
 

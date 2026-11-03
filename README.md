@@ -2,7 +2,7 @@
 
 <img src="branding/png/wordmark/ambient-tv-wordmark-readme.png" alt="Ambient TV" width="420">
 
-**Android TV & phone client for local media — Plex, Jellyfin, Emby, TVHeadend, SmartTube, Spotify, DLNA, files/NAS and photos in one app, played through MPV, VLC or Media3. Optional Monogram (Telegram media) integration.**
+**Android TV & phone client for local media — Plex, Jellyfin, Emby, TVHeadend, SmartTube, DLNA, files/NAS and photos in one app, played through MPV, VLC or Media3. Optional Monogram (Telegram media) integration.**
 
 [![Android 10+](https://img.shields.io/badge/Android-API%2029%2B-3DDC84?logo=android&logoColor=white)](#requirements)
 [![Android TV](https://img.shields.io/badge/Android%20TV-ready-3DDC84?logo=androidtv&logoColor=white)](#features)
@@ -71,7 +71,6 @@ Ambient TV is built in spare time, out of love for a good couch evening. If it m
 - **TVHeadend** — live TV, EPG, recordings, timers; edit (padding, priority) and delete recordings and timers, artwork from the guide, TMDb or the channel logo
 - **IPTV** – M3U playlists with an XMLTV programme guide
 - **SmartTube** — YouTube feeds, **SponsorBlock**, sign-in by QR code
-- **Spotify** — Connect receiver + native playback (librespot)
 - **Monogram** *(optional GPL/MTProto build)* — Telegram channel media, full post text and previews, YouTube links, six customizable Home rows, QR/phone/2FA login; Media3/VLC/MPV playback paths (device testing pending)
 - **Trailers** (TMDB) · **DLNA servers** · **Photos**
 - **Files** — local/USB, **SMB 1/2/3**, **NFSv3/v4**, **WebDAV** (HTTP/HTTPS), **SFTP** (password or SSH key)
@@ -149,7 +148,7 @@ Ambient TV is built in spare time, out of love for a good couch evening. If it m
 | **Devices** | Android TV / Google TV, phones and tablets with **Android API 29+** |
 | **ABIs** | arm64-v8a · armeabi-v7a · x86 · x86_64 |
 | **Device-dependent** | Vulkan output/decoding, SDR → HDR (Android 14+, HDR10 display), passthrough formats, SVP |
-| **Network** | LAN to media servers / NAS; internet for Plex Link, SmartTube, Spotify, trailers and opt-in Monogram |
+| **Network** | LAN to media servers / NAS; internet for Plex Link, SmartTube, trailers and opt-in Monogram |
 | **Build** | **JDK 17**, Android SDK/NDK (`ANDROID_NDK_HOME` or `ANDROID_NDK_ROOT`); optional keystore |
 
 ## Build
@@ -179,7 +178,7 @@ Ambient TV is built in spare time, out of love for a good couch evening. If it m
 
 Artifacts land under `dist/` (e.g. `ambient-tv-arm64-<version>.apk`, `ambient-tv-x86_64-<version>.apk`). Pre-release suffixes such as `beta`, `alpha` or `rc` keep the suffix and insert the build number before it (`ambient-tv-arm64-1.0.270-beta.apk`).
 
-Gradle only (no native preflight): `./gradlew :app:assembleDebug` — prefer `./build.sh` for product-like builds. `SKIP_MPV_NATIVE=1` skips the native MPV build (quick builds/CI), e.g. `SKIP_MPV_NATIVE=1 ./gradlew :app:assembleDebug :app:testDebugUnitTest`. No Spotify client ID is built in; see [Spotify setup](#spotify-setup).
+Gradle only (no native preflight): `./gradlew :app:assembleDebug` — prefer `./build.sh` for product-like builds. `SKIP_MPV_NATIVE=1` skips the native MPV build (quick builds/CI), e.g. `SKIP_MPV_NATIVE=1 ./gradlew :app:assembleDebug :app:testDebugUnitTest`.
 
 Details & env vars: [docs/DOCUMENTATION.md §14](docs/DOCUMENTATION.md#14-development-and-build) · [EXTERNAL_LIBRARIES.md](EXTERNAL_LIBRARIES.md)
 
@@ -208,28 +207,12 @@ Without either, debug builds work and release APKs stay unsigned. `./build.sh ge
 | --- | --- |
 | Start & controls | Home rows, media selection, language, library |
 | Appearance | Theme, accent, scale, **performance**, background video, screensaver |
-| Systems & accounts | Plex / Jellyfin / Emby / TVH / IPTV / SmartTube / Spotify / optional Monogram / Trailers / DLNA / Files |
+| Systems & accounts | Plex / Jellyfin / Emby / TVH / IPTV / SmartTube / optional Monogram / Trailers / DLNA / Files |
 | Devices & network | Phone & devices, UPnP receiver, WireGuard / VPN, servers & Wake-on-LAN |
 | Playback | Player backend, subtitles, “Up next”, seek jump |
 | Picture & sound | Image/audio profiles, visualizer, photos |
 | App & data | Backup, diagnostics, advanced, About |
 
-
-</details>
-
-### Spotify setup
-
-<details>
-<summary>Ambient TV ships without a Spotify client ID — create your own (about 5 minutes)</summary>
-
-1. Open the [Spotify Developer Dashboard](https://developer.spotify.com/dashboard), sign in and choose **Create app**.
-2. Enter any name and description. Under **Which API/SDKs are you planning to use?** select **Web API**.
-3. Add both **Redirect URIs** and save:
-   - `ambienttv://spotify-auth` (sign-in on the device)
-   - `https://seinist.github.io/ambient-tv-spotify-callback/spotify-callback.html` (QR sign-in on a TV; the page only forwards the code to the TV in your network)
-4. Open the app's **Settings** and copy the **Client ID**.
-5. In Ambient TV: **Settings › Media sources & accounts › Spotify** → in the **Spotify account** section paste it into **Spotify client ID**, then **Sign in**.
-6. New apps run in **Development mode**: under **User Management** in the dashboard, add the Spotify account(s) (name + email) that should be able to sign in.
 
 </details>
 
@@ -248,7 +231,7 @@ Without either, debug builds work and release APKs stay unsigned. `./build.sh ge
 2. In a Monogram-enabled Ambient TV build, open **Settings › Media sources & accounts › Monogram**. The credentials section is available even before turning the system on.
 3. Enter the **API ID** and **API hash**, then choose **Save API credentials**. The hash is masked and both values are stored in encrypted app preferences, *not embedded in the APK*.
 4. Enable **Monogram**. The account section will show your connection status and sign-in methods:
-   - **Android TV:** Choose **Sign in with QR code**, then use Telegram on an **already signed-in phone** to scan and approve the QR from **Settings › Devices** in Telegram. This is a Telegram `tg://` login token, **not** Spotify's web callback.
+   - **Android TV:** Choose **Sign in with QR code**, then use Telegram on an **already signed-in phone** to scan and approve the QR from **Settings › Devices** in Telegram. This is a Telegram `tg://` login token.
    - **Phone or TV alternative:** Enter the Telegram phone number including the country code, choose **Send login code**, enter the code delivered by Telegram, and confirm a **two-step verification password** if requested. On a phone, the QR method is omitted because it cannot scan its own screen.
 5. Once the **Connected account** status appears, configure the six available Monogram tabs/Home rows: **Recent media, Channels, Videos, YouTube links, Music & audio, Photos**. The YouTube tab opens videos via the existing SmartTube selection behavior; full Telegram captions are shown on post detail pages.
 
@@ -286,7 +269,7 @@ Ambient TV is built by one enthusiast for everyone who wants more from their med
 
 This project is dedicated to the public domain under **[Creative Commons Zero v1.0 Universal (CC0-1.0)](LICENSE)** — to the extent possible under law; no warranty.
 
-Third-party engines and trademarks (Plex, Jellyfin, Emby, YouTube/SmartTube, Spotify, …) remain under their own licenses and branding — see About in the app and `third_party_licenses/`.
+Third-party engines and trademarks (Plex, Jellyfin, Emby, YouTube/SmartTube, …) remain under their own licenses and branding — see About in the app and `third_party_licenses/`.
 
 **Built APKs:** the app bundles GPL-licensed components (mpv: GPL-2.0-or-later; FFmpeg, built by mpv-android with `--enable-gpl --enable-version3`: GPL-3.0-or-later; NNEDI weights: GPL-2.0-or-later; TVHeadend logo: GPL-3.0-or-later) and LGPL components (VLC, SVP adapters). The bundled GLSL shaders are LGPL-3.0-or-later, MIT, BSD-2-Clause or CC0-1.0 (see `SHADER_SOURCES_027.json`). APKs built from this repository are therefore distributed under the terms of the **GNU GPL v3.0**; the corresponding source is this repository plus the pinned upstream sources in `gradle/external-versions.properties`.
 
