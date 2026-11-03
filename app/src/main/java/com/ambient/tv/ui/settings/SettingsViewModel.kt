@@ -428,6 +428,7 @@ class SettingsViewModel @Inject constructor(
         spotifyEnabled = appPreferences.spotifyEnabled,
         radioEnabled = appPreferences.radioEnabled,
         spotifyClientId = appPreferences.spotifyClientId,
+        fanartApiKey = tokenStore.fanartApiKey.orEmpty(),
         spotifyWebAuthorized = spotifyRepository.authState.value.authorized,
         spotifyAccountName = spotifyRepository.authState.value.accountName,
         spotifyAuthBusy = spotifyRepository.authState.value.busy,
@@ -1874,6 +1875,7 @@ class SettingsViewModel @Inject constructor(
     }
 
     fun onSpotifyClientIdChanged(value: String) = _uiState.update { it.copy(spotifyClientId = value.trim()) }
+    fun onFanartApiKeyChanged(value: String) = _uiState.update { it.copy(fanartApiKey = value.trim()) }
     fun loginSpotify() {
         // Authorizing Spotify is also an explicit request to use the system. Persist the opt-in
         // before the browser/WebView round trip so the sidebar can observe the resulting auth state.
@@ -2922,6 +2924,7 @@ class SettingsViewModel @Inject constructor(
             spotifyRepository.logoutWebApi()
         }
         appPreferences.spotifyClientId = state.spotifyClientId
+        tokenStore.fanartApiKey = state.fanartApiKey
         appPreferences.spotifyDeviceName = state.spotifyDeviceName
         appPreferences.spotifyBitrateKbps = state.spotifyBitrateKbps
         appPreferences.spotifyVisualizerModeKey = state.spotifyVisualizerModeKey

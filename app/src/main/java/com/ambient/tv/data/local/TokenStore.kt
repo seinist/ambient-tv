@@ -20,6 +20,12 @@ class TokenStore @Inject constructor(
             }
             tmdbCredentialVersion.value++
         }
+    /** Optional user-owned fanart.tv key: wide backgrounds for Spotify artist pages. */
+    var fanartApiKey: String?
+        get() = prefs.getString("fanart_api_key", null)
+        set(value) = prefs.edit {
+            if (value.isNullOrBlank()) remove("fanart_api_key") else putString("fanart_api_key", value.trim())
+        }
     var wireGuardPrivateKey: String?
         get() = prefs.getString(KEY_WG_PRIVATE, null)
         set(value) = prefs.edit {

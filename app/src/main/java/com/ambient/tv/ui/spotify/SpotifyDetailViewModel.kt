@@ -22,6 +22,11 @@ data class SpotifyDetailUiState(
     val artworkUrl: String? = null,
     val tracks: List<SpotifyTrack> = emptyList(),
     val albums: List<SpotifyAlbum> = emptyList(),
+    /** Playlist description (the subtitle is the artist / owner). */
+    val description: String? = null,
+    val releaseDate: String? = null,
+    /** A wide image for the backdrop (artists only, from a media server or fanart.tv). */
+    val backdropUrl: String? = null,
     val error: String? = null,
     val offline: Boolean = false,
 )
@@ -32,6 +37,7 @@ class SpotifyDetailViewModel @Inject constructor(saved: SavedStateHandle, privat
     private val snapshots: com.ambient.tv.data.browse.DisplaySnapshots,
     private val scopes: com.ambient.tv.data.browse.BrowseScopes,
     private val availability: com.ambient.tv.data.browse.SourceAvailability,
+    private val artistBackdrops: com.ambient.tv.spotify.ArtistBackdrops,
 ) : ViewModel() {
     internal val type = saved.get<String>("type").orEmpty()
     internal val id = saved.get<String>("id").orEmpty()
@@ -51,15 +57,24 @@ class SpotifyDetailViewModel @Inject constructor(saved: SavedStateHandle, privat
         }
         suspendResult {
             when (type) {
-                "album" -> repo.album(id).let { SpotifyDetailUiState(false, it.name, it.artists.joinToString(", ") { a -> a.name }, it.images.firstOrNull()?.url, it.tracks) }
-                "playlist" -> repo.playlist(id).let { SpotifyDetailUiState(false, it.name, listOfNotNull(it.ownerName, it.description).joinToString(" • "), it.images.firstOrNull()?.url, it.tracks) }
+                "album" -> repo.album(id).let { SpotifyDetailUiState(false, it.name, it.artists.joinToString(", ") { a -> a.name }, it.images.firstOrNull()?.url, it.tracks, releaseDate = it.releaseDate) }
+                "playlist" -> repo.playlist(id).let { SpotifyDetailUiState(false, it.name, it.ownerName, it.images.firstOrNull()?.url, it.tracks, description = it.description?.let(::plainPlaylistDescription)) }
                 "artist" -> repo.artist(id).let { detail -> SpotifyDetailUiState(false, detail.artist.name, null, detail.artist.images.firstOrNull()?.url, tracks = detail.topTracks, albums = detail.albums) }
                 else -> SpotifyDetailUiState(false, com.ambient.tv.ui.common.MediaSystem.SPOTIFY.customName ?: context.getString(com.ambient.tv.R.string.spotify_title), error = context.getString(com.ambient.tv.R.string.spotify_detail_type_unsupported))
             }
         }.onSuccess {
             if (scopes.forProvider("spotify") == identity) {
-                snapshots.write("spotify", namespace, key, it)
-                _state.value = it
+                // Keep a wide backdrop found earlier while the new one is looked up.
+                val loaded = it.copy(backdropUrl = it.backdropUrl ?: _state.value.backdropUrl)
+                snapshots.write("spotify", namespace, key, loaded)
+                _state.value = loaded
+                if (type == "artist" && loaded.backdropUrl == null) {
+                    artistBackdrops.find(loaded.title)?.let { wide ->
+                        val withBackdrop = _state.value.copy(backdropUrl = wide)
+                        _state.value = withBackdrop
+                        snapshots.write("spotify", namespace, key, withBackdrop)
+                    }
+                }
             }
         }.onFailure {
             _state.value = _state.value.copy(loading = false, offline = true, error = it.message.takeIf { _state.value.title.isBlank() })
@@ -83,3 +98,8 @@ class SpotifyDetailViewModel @Inject constructor(saved: SavedStateHandle, privat
         }
     }
 }
+
+/** Spotify playlist descriptions may contain HTML links and entities. */
+internal fun plainPlaylistDescription(raw: String): String? =
+    androidx.core.text.HtmlCompat.fromHtml(raw, androidx.core.text.HtmlCompat.FROM_HTML_MODE_LEGACY)
+        .toString().trim().takeIf(String::isNotBlank)
