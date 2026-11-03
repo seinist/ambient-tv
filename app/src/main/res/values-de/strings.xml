@@ -1150,6 +1150,7 @@
     <string name="settings_about_role_youtube_core">YouTube-API-/Mediendienst-Kern</string>
     <string name="settings_about_role_shared">Gemeinsame SmartTube-Hilfsbibliotheken</string>
     <string name="settings_about_role_spotify">Native Spotify-Wiedergabe</string>
+    <string name="settings_about_role_telegram">Telegram-Client (Monogram)</string>
     <string name="sidebar_add_system">System hinzufügen</string>
     <string name="sidebar_customize">Menü bearbeiten</string>
     <string name="sidebar_manage_menu">Menü verwalten</string>
