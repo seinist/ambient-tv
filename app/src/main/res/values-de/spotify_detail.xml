@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="spotify_top_tracks">Top-Titel</string>
+    <string name="spotify_kind_album">Album</string>
+    <string name="spotify_kind_playlist">Playlist</string>
+    <string name="spotify_kind_artist">Künstler</string>
+    <plurals name="spotify_track_count">
+        <item quantity="one">%d Titel</item>
+        <item quantity="other">%d Titel</item>
+    </plurals>
+    <string name="settings_fanart_api_key">fanart.tv-API-Key (optional)</string>
+    <string name="settings_fanart_api_key_hint">Breite Hintergründe für Spotify-Künstlerseiten von fanart.tv. Kostenloser Key unter fanart.tv/get-an-api-key. Ohne Key wird die Server-Bibliothek oder das unscharfe Cover genutzt.</string>
+</resources>

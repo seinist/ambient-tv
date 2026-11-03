@@ -103,6 +103,7 @@ data class SettingsUiState(
     val spotifyEnabled: Boolean = false,
     val radioEnabled: Boolean = false,
     val spotifyClientId: String = "",
+    val fanartApiKey: String = "",
     val spotifyWebAuthorized: Boolean = false,
     val spotifyAccountName: String? = null,
     val spotifyAuthBusy: Boolean = false,

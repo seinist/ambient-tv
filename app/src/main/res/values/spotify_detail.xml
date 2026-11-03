@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="spotify_top_tracks">Top tracks</string>
+    <string name="spotify_kind_album">Album</string>
+    <string name="spotify_kind_playlist">Playlist</string>
+    <string name="spotify_kind_artist">Artist</string>
+    <plurals name="spotify_track_count">
+        <item quantity="one">%d track</item>
+        <item quantity="other">%d tracks</item>
+    </plurals>
+    <string name="settings_fanart_api_key">fanart.tv API key (optional)</string>
+    <string name="settings_fanart_api_key_hint">Wide backgrounds for Spotify artist pages from fanart.tv. Free key at fanart.tv/get-an-api-key. Without it, the server library or the blurred cover is used.</string>
+</resources>
