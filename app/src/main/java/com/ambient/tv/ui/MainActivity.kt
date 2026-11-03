@@ -1497,6 +1497,10 @@ private fun AmbientTvApp(
     // entry composed in a later session forgets its page, area and focus and opens at the start,
     // even when Navigation restores it from a saved tab stack. Survives recreation (UI language).
     var settingsSession by rememberSaveable { mutableIntStateOf(0) }
+    // The Settings page a shortcut asked for, independent of when the new back stack entry
+    // becomes current: a sidebar "Configuration" row sometimes landed on the Settings start.
+    var requestedSettingsPage by rememberSaveable { mutableStateOf<String?>(null) }
+    var requestedSettingsSerial by rememberSaveable { mutableIntStateOf(0) }
     var settingsOpen by remember { mutableStateOf(currentRoute == Destinations.SETTINGS) }
     var restoreFocusAfterNavigation by remember { mutableStateOf(false) }
     fun requestContentFocus(): Boolean {
@@ -1563,6 +1567,7 @@ private fun AmbientTvApp(
         } else if (settingsOpen && runCatching { navController.getBackStackEntry(Destinations.SETTINGS) }.isFailure) {
             settingsOpen = false
             settingsSession++
+            requestedSettingsPage = null
         }
         if (returnsFromFullscreenPlayer(previousRoute, currentRoute) ||
             (previousRoute == Destinations.SETTINGS && currentRoute != Destinations.SETTINGS)) {
@@ -1720,6 +1725,8 @@ private fun AmbientTvApp(
      * The serial ensures another shortcut can replace an already open Settings view. */
     fun openSettings(category: String? = null, target: String? = null) {
         guardedSettingsExit {
+            requestedSettingsPage = category?.let { if (target.isNullOrBlank()) it else "${it}:${target}" }
+            requestedSettingsSerial++
             if (currentRoute != Destinations.SETTINGS) {
                 navController.navigate(Destinations.SETTINGS) { launchSingleTop = true }
             }
@@ -2684,8 +2691,10 @@ private fun AmbientTvApp(
                             if (entrySession != null) entry.savedStateHandle.remove<String>(SETTINGS_PAGE_KEY)
                             entry.savedStateHandle[SETTINGS_SESSION_KEY] = settingsSession
                         }
-                        val settingsPage by entry.savedStateHandle.getStateFlow<String?>(SETTINGS_PAGE_KEY, null).collectAsState()
-                        val settingsPageSerial by entry.savedStateHandle.getStateFlow(SETTINGS_PAGE_SERIAL, 0).collectAsState()
+                        val handlePage by entry.savedStateHandle.getStateFlow<String?>(SETTINGS_PAGE_KEY, null).collectAsState()
+                        val handleSerial by entry.savedStateHandle.getStateFlow(SETTINGS_PAGE_SERIAL, 0).collectAsState()
+                        val settingsPage = requestedSettingsPage ?: handlePage
+                        val settingsPageSerial = handleSerial * 100_000 + requestedSettingsSerial
                         RestorableSidebarContent {
                             // A repeated shortcut reopens its page even after Settings moved elsewhere.
                             // The session in the key also drops rememberSaveable state (area, page, search).
