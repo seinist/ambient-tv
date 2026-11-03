@@ -198,6 +198,8 @@ class EmbyConnectionManager @Inject constructor(
         }
         _state.value = ServerConnectionState.Checking
         val mac = preferences.embyMacAddress
+        val unreachableFromHere = wolManager.serverUnreachableFromHere(
+            preferences.embyHost, preferences.embyHost.takeIf { preferences.wireGuardEmbyEnabled })
         // Success only once Emby itself answers; another open port of the machine is not enough.
         val wait = waitForService(
             serviceReady = ::isReachable,
@@ -220,8 +222,13 @@ class EmbyConnectionManager @Inject constructor(
             pollMs = wakePollMs,
             onAnswered = { wolManager.machineAnswered(mac) },
             setState = { _state.value = it },
+            unreachableFromHere = unreachableFromHere,
         )
-        wait.failure?.let { _state.value = it; return false }
+        wait.failure?.let {
+            // Neither reachable nor wakeable from here: the whole machine is offline at once.
+            if (unreachableFromHere && it == ServerConnectionState.Offline) hosts.markOffline("emby")
+            _state.value = it; return false
+        }
         _state.value = ServerConnectionState.Connecting
         // A server that just started may still answer 503 or refuse once: retry within the wake budget.
         val identity = retryTransient(wait.identityDeadlineMs) { repository.getIdentity() }.getOrElse {

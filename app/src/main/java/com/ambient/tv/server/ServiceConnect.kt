@@ -172,7 +172,10 @@ internal suspend fun waitForService(
     nowMs: () -> Long = System::currentTimeMillis,
     /** The machine answered after a wake: stops pending follow-up bursts. */
     onAnswered: () -> Unit = {},
+    /** A private server outside this device's networks (no tunnel): offline without any probe. */
+    unreachableFromHere: Boolean = false,
 ): ServiceWaitResult {
+    if (unreachableFromHere && !canWake) return ServiceWaitResult(ServerConnectionState.Offline, 0L, waited = false)
     val hostWasOffline = hostHealth() == com.ambient.tv.connectivity.HostHealth.OFFLINE
     if (serviceReady()) return ServiceWaitResult(null, nowMs() + CONNECT_RETRY_GRACE_MS, waited = false)
     val machineUp = machineAwake()

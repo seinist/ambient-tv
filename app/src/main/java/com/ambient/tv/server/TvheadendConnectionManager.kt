@@ -208,6 +208,8 @@ class TvheadendConnectionManager @Inject constructor(
         }
         _state.value = ServerConnectionState.Checking
         val mac = preferences.tvheadendMacAddress
+        val unreachableFromHere = wolManager.serverUnreachableFromHere(
+            preferences.tvheadendHost, preferences.tvheadendHost.takeIf { preferences.wireGuardTvheadendEnabled })
         // Success only once TVHeadend's API answers; another open port of the machine is not enough.
         val wait = waitForService(
             serviceReady = ::serviceReady,
@@ -230,8 +232,13 @@ class TvheadendConnectionManager @Inject constructor(
             pollMs = wakePollMs,
             onAnswered = { wolManager.machineAnswered(mac) },
             setState = { _state.value = it },
+            unreachableFromHere = unreachableFromHere,
         )
-        wait.failure?.let { _state.value = it; return false }
+        wait.failure?.let {
+            // Neither reachable nor wakeable from here: the whole machine is offline at once.
+            if (unreachableFromHere && it == ServerConnectionState.Offline) hosts.markOffline("tvheadend")
+            _state.value = it; return false
+        }
         _state.value = ServerConnectionState.Connecting
         // Right after a wake the API may still answer 503, refuse, or reject the login once.
         val info = retryTransient(

@@ -244,4 +244,12 @@ class ServiceConnectTest {
         assertEquals(false, result.waited)
         assertTrue(states.none { it is ServerConnectionState.Waking })
     }
+
+    @Test
+    fun `a server unreachable from this network and not wakeable is offline without any probe`() = runBlocking {
+        val result = waitForService({ error("no probe") }, { error("no probe") }, { HostHealth.UNKNOWN }, canWake = false,
+            send = { error("no wake") }, retries = 1, windowMs = 5_000L, pollMs = 1L, setState = {},
+            lastWakeAtMs = { 0L }, nowMs = Clock()::read, unreachableFromHere = true)
+        assertEquals(ServerConnectionState.Offline, result.failure)
+    }
 }

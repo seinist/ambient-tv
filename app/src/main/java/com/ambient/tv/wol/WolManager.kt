@@ -198,6 +198,16 @@ class WolManager @Inject constructor(
         return true
     }
 
+    /**
+     * A private server outside every local network of this device, without a WireGuard route:
+     * nothing (no connection, no wake) can reach it from here, e.g. on mobile data.
+     */
+    suspend fun serverUnreachableFromHere(host: String?, wireGuardHost: String? = null): Boolean {
+        val target = host?.let(NetworkEndpoint::extractHost)?.trim()?.takeIf { it.isNotBlank() } ?: return false
+        if (privateIpv4Bytes(target) == null) return false
+        return !canReachLocally(target, wireGuardHosts = listOfNotNull(wireGuardHost))
+    }
+
     /** Posts the "not in the local network" notice for a wake that was not started. */
     fun reportNotOnLocalNetwork(host: String) { notOnLocalNetwork(host) }
 

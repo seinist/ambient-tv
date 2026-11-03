@@ -88,6 +88,8 @@ class HostConnectivity internal constructor(
     fun nextCheck(previous: HostCheck?): HostCheck? = previous?.let { store.begin(it.machine) }
     fun health(system: String): HostHealth = machine(system)?.let { store.current(it).health } ?: HostHealth.UNKNOWN
     fun online(check: HostCheck?) { if (check != null) store.online(check.machine) }
+    /** Known unreachable from this network (and not wakeable): every service on it is offline. */
+    fun markOffline(system: String) { begin(system)?.let(store::offline) }
     fun interceptor() = okhttp3.Interceptor { chain ->
         val url = chain.request().url
         val target = matchingHostEndpoint(endpoints(), url.host, url.port)
