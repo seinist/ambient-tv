@@ -455,7 +455,10 @@ fun TelegramPlayerScreen(
         val selected = media
         // Loading the post: a spinner, never the "module missing" panel for a moment.
         if (selected == null && failure == null && available) {
-            com.ambient.tv.ui.common.FullscreenSpinner()
+            // FullscreenSpinner is only the indicator: centre it on the screen.
+            androidx.compose.foundation.layout.Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                com.ambient.tv.ui.common.FullscreenSpinner()
+            }
         } else if (selected == null || failure != null) {
             BrowseStatusPanel(
                 title = stringResource(R.string.telegram_error),
