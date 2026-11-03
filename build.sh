@@ -614,7 +614,7 @@ spotify_libs_ready() {
     [[ -f "$marker" ]] || return 1
     grep -Fx "rusty_ref=${expected_ref}" "$marker" >/dev/null || return 1
     # A core built before the token sign-in patch is rebuilt where a source build is possible.
-    if ! grep -Fx "token_login=1" "$marker" >/dev/null && command -v cargo-ndk >/dev/null 2>&1; then
+    if ! grep -Fx "token_login=2" "$marker" >/dev/null && command -v cargo-ndk >/dev/null 2>&1; then
         return 1
     fi
     for abi in "${SUPPORTED_ABIS[@]}"; do
