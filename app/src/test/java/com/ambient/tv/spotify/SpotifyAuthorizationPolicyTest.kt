@@ -14,6 +14,7 @@ class SpotifyAuthorizationPolicyTest {
         assertTrue("user-library-read" in scopes)
         assertTrue("playlist-read-private" in scopes)
         assertTrue("user-follow-read" in scopes)
+        assertTrue("streaming" in scopes) // native in-app playback
         assertFalse("user-library-modify" in scopes)
         assertFalse("playlist-read-collaborative" in scopes)
         assertFalse("user-read-recently-played" in scopes)

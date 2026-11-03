@@ -35,4 +35,6 @@ object NativeBridge {
     external fun renameDevice(deviceName: String)
     external fun setStartupVolume(percent: Int)
     external fun requestAccessToken()
+    /** Ambient TV patch (scripts/patches): signs the receiver in without a Connect handoff. */
+    external fun loginWithAccessToken(token: String): Boolean
 }
