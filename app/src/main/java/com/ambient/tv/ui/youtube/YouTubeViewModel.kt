@@ -718,7 +718,10 @@ class YouTubeViewModel @Inject constructor(
                 // Use that expanded snapshot as the refresh extent, not the stale pre-player rows.
                 val refreshRows = _uiState.value.rows.takeIf { displayedContentKey == cacheKey }.orEmpty()
                 // Cached tiles on screen stay still; the refresh below only updates the cache.
-                visitPin.begin(cacheKey, cacheRevision, refreshRows, explicit)
+                // Except the first opening of a category since the app started: the cache is
+                // from an earlier run, so its fresh content replaces the tiles right away.
+                val firstSinceStart = YouTubeFreshThisRun.first(cacheKey)
+                visitPin.begin(cacheKey, cacheRevision, refreshRows, explicit || firstSinceStart)
                 var partialRows = emptyList<YouTubeRow>()
                 suspendResult {
                     val signed = engine.isSignedIn()
@@ -747,6 +750,7 @@ class YouTubeViewModel @Inject constructor(
                     signed to refreshYouTubeRowExtents(rows, refreshRows) { rowId -> engine.continueRow(cacheKey, rowId) }
                 }.onSuccess { (signed, rows) ->
                     if (generation != contentGeneration || contentCache.revision() != cacheRevision) return@onSuccess
+                    YouTubeFreshThisRun.loaded(cacheKey)
                     applyRefreshed(cacheKey, contentCache.replace(cacheKey, rows, cacheRevision), cacheRevision, signed)
                 }.onFailure { e ->
                     if (!keepPartialFeed(e, cacheKey, partialRows, cacheRevision, generation)) contentLoadFailed(e, manual, generation)
@@ -863,3 +867,10 @@ class YouTubeViewModel @Inject constructor(
 }
 
 private fun Throwable.userMessage() = message?.takeIf { it.isNotBlank() } ?: "YouTube konnte nicht geladen werden."
+
+/** Categories loaded fresh since this app process started (a cold start empties it). */
+internal object YouTubeFreshThisRun {
+    private val loaded = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
+    fun first(key: String): Boolean = key !in loaded
+    fun loaded(key: String) { loaded += key }
+}
