@@ -17,12 +17,15 @@ internal fun syncAccountChoices(source: SettingsBackup): List<CompanionAccountCh
     source.smartTubeAccounts.orEmpty().forEach { add(CompanionAccountChoice("smarttube:${it.id}", "SmartTube · ${it.name}")) }
     if (source.spotifyAccount.signedIn() || source.spotifyClientId.isNotBlank())
         add(CompanionAccountChoice("spotify", "Spotify · ${source.spotifyAccount?.name.orEmpty().ifBlank { source.spotifyDeviceName }}"))
+    // Monogram's API application; the Telegram session itself is never transferred.
+    if (source.monogramApiCredentials != null || source.telegramEnabled) add(CompanionAccountChoice(MONOGRAM_CHOICE, "Monogram"))
     source.wireGuardProfile?.takeIf { it.endpointHost.isNotBlank() }?.let { add(CompanionAccountChoice(WIREGUARD_CHOICE, "WireGuard · ${it.endpointHost}")) }
     if (!source.tmdbApiKey.isNullOrBlank()) add(CompanionAccountChoice("tmdb", "TMDB"))
 }
 
 /** A WireGuard identity used on two devices at once makes the peer flap between them, so it is opt-in. */
 internal const val WIREGUARD_CHOICE = "wireguard"
+internal const val MONOGRAM_CHOICE = "monogram"
 internal fun defaultSyncAccounts(choices: List<CompanionAccountChoice>) = choices.map { it.key }.toSet() - WIREGUARD_CHOICE
 
 internal fun SpotifyAccountBackup?.signedIn() = this != null && (refreshToken != null || accessToken != null)
@@ -49,6 +52,7 @@ internal fun selectSyncAccounts(source: SettingsBackup, selected: Set<String>): 
     smartTubeAccounts = source.smartTubeAccounts?.filter { "smarttube:${it.id}" in selected },
     spotifyAccount = source.spotifyAccount.takeIf { "spotify" in selected },
     spotifyClientId = source.spotifyClientId.takeIf { "spotify" in selected }.orEmpty(),
+    monogramApiCredentials = source.monogramApiCredentials.takeIf { MONOGRAM_CHOICE in selected },
     wireGuardProfile = source.wireGuardProfile.takeIf { WIREGUARD_CHOICE in selected },
     wireGuardPrivateKey = source.wireGuardPrivateKey.takeIf { WIREGUARD_CHOICE in selected },
     wireGuardPresharedKey = source.wireGuardPresharedKey.takeIf { WIREGUARD_CHOICE in selected },
