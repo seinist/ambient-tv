@@ -890,7 +890,7 @@
     <string name="settings_passthrough_visualizer_hint">Bei direkter Tonausgabe aus.</string>
     <string name="settings_spotify_web_title">Spotify-Konto</string>
     <string name="settings_spotify_web_subtitle">Mit Spotify anmelden, um deine Bibliothek und Playlists zu verwenden.</string>
-    <string name="settings_spotify_redirect">Die Weiterleitungsadresse ist fest eingebaut und muss in der Spotify-App genauso eingetragen sein.</string>
+    <string name="settings_spotify_redirect">Redirect URI in der Spotify-App (developer.spotify.com, genau so): %1$s</string>
     <string name="settings_spotify_audio_quality">Audioqualität</string>
     <string name="settings_spotify_audio_quality_subtitle">Qualität des Musikstreams</string>
     <string name="settings_spotify_visualization">Visualisierung</string>
