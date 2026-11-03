@@ -251,16 +251,20 @@ class SpotifyRepository @Inject constructor(
     private suspend fun signInReceiver(): Int? {
         if (playback.value.connected) return null
         val nativeLogin = auth.state.value.scopes.contains("streaming")
+        val log = { message: String -> com.ambient.tv.diagnostics.DiagnosticLog.warn("spotify", message) }
         if (nativeLogin) {
             val token = runCatching { auth.validAccessToken() }.getOrNull()
-            if (token != null) {
+            if (token == null) log("token sign-in: no access token")
+            else {
                 // The discovery loop starts on a native thread: retry until it accepts the token.
+                var accepted = false
                 for (attempt in 0 until 20) {
-                    if (engine.loginWithAccessToken(token)) break
+                    if (engine.loginWithAccessToken(token)) { accepted = true; break }
                     delay(150L)
                 }
+                log(if (accepted) "token sign-in: sent to the receiver" else "token sign-in: receiver did not accept it")
             }
-        }
+        } else log("token sign-in skipped: login has no 'streaming' scope (sign in again)")
         if (awaitSpotifyReceiverConnected()) return null
         // Signed in before "streaming" was requested: a new sign-in enables native playback.
         return if (nativeLogin) R.string.spotify_receiver_not_connected else R.string.spotify_relogin_for_native

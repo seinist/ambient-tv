@@ -172,6 +172,7 @@ class ResumeConnectivityMonitor @Inject constructor(
                 wasBackgrounded = lastStopElapsedMs >= 0L,
                 backgroundedForMs = backgroundedFor,
                 lastHealthAgeMs = healthAge,
+                handheld = !com.ambient.tv.ui.mobile.isTelevision(context),
             )) return
         requestRecheck(reason = "resume backgrounded=${backgroundedFor}ms healthAge=${healthAge}ms")
     }

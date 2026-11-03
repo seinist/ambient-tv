@@ -141,7 +141,11 @@ class LibrespotPlaybackEngine @Inject constructor(
     /** A prebuilt core without the Ambient TV patch has no such symbol: stays Connect-only. */
     override fun loginWithAccessToken(token: String): Boolean =
         available && started.get() && try { NativeBridge.loginWithAccessToken(token) }
-            catch (_: UnsatisfiedLinkError) { false }
+            catch (_: UnsatisfiedLinkError) {
+                com.ambient.tv.diagnostics.DiagnosticLog.warn("spotify",
+                    "core has no token sign-in (unpatched core, Connect only)")
+                false
+            }
     override fun pause(): Boolean = nativeTransport("pause") { NativeBridge.pause() }
     override fun next(): Boolean = nativeTransport("next") { NativeBridge.nextTrack() }
     override fun previous(): Boolean = nativeTransport("previous") { NativeBridge.previousTrack() }
