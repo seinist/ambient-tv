@@ -213,7 +213,10 @@ class TvheadendConnectionManager @Inject constructor(
             serviceReady = ::serviceReady,
             machineAwake = { hosts.verifySystem("tvheadend") },
             hostHealth = { hosts.health("tvheadend") },
-            canWake = preferences.tvheadendAutoWakeEnabled && !mac.isNullOrBlank(),
+            // Only a wake this device can actually send (Wi-Fi/Ethernet or a WireGuard route, server in
+                // the local network): on mobile data no countdown starts for nothing.
+                canWake = preferences.tvheadendAutoWakeEnabled && !mac.isNullOrBlank() && wolManager.wakePossible(
+                    mac, preferences.tvheadendHost, preferences.tvheadendHost.takeIf { preferences.wireGuardTvheadendEnabled }),
             send = { attempt ->
                 wolManager.sendWakeBurst(
                     mac.orEmpty(),

@@ -117,12 +117,11 @@ class MachineWake @Inject constructor(
         scope.launch {
             // A private server outside every local network: say so instead of a wake that
             // cannot reach it and only times out.
-            val host = request.host?.takeIf { it.isNotBlank() }
-            if (host != null && !wolManager.canReachLocally(host, request.broadcast,
-                    listOfNotNull(request.wireGuardHost))) {
-                wolManager.reportNotOnLocalNetwork(host)
-                return@launch
-            }
+            // No Wi-Fi/Ethernet (mobile data without a tunnel) is the same: nothing can be sent.
+            // (Without a MAC the coordinator reports that itself.)
+            if (!request.mac.isNullOrBlank() && !wolManager.wakePossible(request.mac,
+                    request.host?.takeIf { it.isNotBlank() }, request.wireGuardHost, request.broadcast,
+                    report = true)) return@launch
             val machine = machines.keyFor(request.system, request.host, request.mac)
             withCancellableWake(machine) { coordinator.wake(request) }
         }

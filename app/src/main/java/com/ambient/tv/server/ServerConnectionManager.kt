@@ -222,7 +222,10 @@ class ServerConnectionManager @Inject constructor(
                 serviceReady = { reachabilityChecker.isReachable() },
                 machineAwake = { hosts.verifySystem("plex") },
                 hostHealth = { hosts.health("plex") },
-                canWake = preferences.autoWakeEnabled && !mac.isNullOrBlank(),
+                // Only a wake this device can actually send (Wi-Fi/Ethernet or a WireGuard route, server in
+                // the local network): on mobile data no countdown starts for nothing.
+                canWake = preferences.autoWakeEnabled && !mac.isNullOrBlank() && wolManager.wakePossible(
+                    mac, preferences.host, preferences.host.takeIf { preferences.wireGuardPlexEnabled }),
                 send = { attempt ->
                     wolManager.sendWakeBurst(
                         mac.orEmpty(),

@@ -170,6 +170,34 @@ class WolManager @Inject constructor(
         )
     }
 
+    /**
+     * Whether a Magic Packet for [macAddress] can leave this device toward [targetHost] right
+     * now: a Wi-Fi/Ethernet network (or an active WireGuard wake route) exists, and a private
+     * server lies in one of the local networks. On mobile data without a tunnel this is false,
+     * so no wake countdown starts for a packet that cannot be sent. With [report] the reason is
+     * posted as the usual WOL notice.
+     */
+    suspend fun wakePossible(
+        macAddress: String?,
+        targetHost: String?,
+        wireGuardHost: String? = null,
+        broadcastAddress: String = "255.255.255.255",
+        report: Boolean = false,
+    ): Boolean {
+        val macKey = macAddress?.let(::canonicalWolMacKey) ?: return false
+        val wireGuardHosts = matchingWireGuardHosts(macKey, wireGuardHost)
+        if (!withContext(Dispatchers.IO) { wakeNetworkAvailable(null, wireGuardHosts) { true } }) {
+            if (report) networkUnavailable(macAddress)
+            return false
+        }
+        val host = targetHost?.let(NetworkEndpoint::extractHost)?.trim()?.takeIf { it.isNotBlank() } ?: return true
+        if (!canReachLocally(host, broadcastAddress, wireGuardHosts)) {
+            if (report) notOnLocalNetwork(host)
+            return false
+        }
+        return true
+    }
+
     /** Posts the "not in the local network" notice for a wake that was not started. */
     fun reportNotOnLocalNetwork(host: String) { notOnLocalNetwork(host) }
 

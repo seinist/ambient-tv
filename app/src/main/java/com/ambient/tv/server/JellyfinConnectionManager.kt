@@ -203,7 +203,10 @@ class JellyfinConnectionManager @Inject constructor(
             serviceReady = ::isReachable,
             machineAwake = { hosts.verifySystem("jellyfin") },
             hostHealth = { hosts.health("jellyfin") },
-            canWake = preferences.jellyfinAutoWakeEnabled && !mac.isNullOrBlank(),
+            // Only a wake this device can actually send (Wi-Fi/Ethernet or a WireGuard route, server in
+                // the local network): on mobile data no countdown starts for nothing.
+                canWake = preferences.jellyfinAutoWakeEnabled && !mac.isNullOrBlank() && wolManager.wakePossible(
+                    mac, preferences.jellyfinHost, preferences.jellyfinHost.takeIf { preferences.wireGuardJellyfinEnabled }),
             send = { attempt ->
                 wolManager.sendWakeBurst(
                     mac.orEmpty(),

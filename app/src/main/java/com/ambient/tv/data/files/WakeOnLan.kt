@@ -86,6 +86,13 @@ class WakeOnLan {
         val member = "files:${source.id}"
         val window = source.wolWaitSeconds.coerceIn(10, 180) * 1000L
         val budget = com.ambient.tv.wol.wakeBudgetMs(retryCount(), window)
+        // On mobile data without a tunnel (or with the NAS outside this network) nothing can be
+        // sent: no wake card and countdown, the notice says why.
+        if (wolManager?.wakePossible(source.wolMac, source.host, source.host.takeIf { source.wireGuard },
+                source.wolBroadcast, report = true) == false) {
+            if (manual) return false
+            throw java.net.SocketTimeoutException("Wake not possible from this network")
+        }
         if (manual) {
             if (!notices.tryBegin(machine, "files", source.name, member, budget)) return false
         } else notices.begin(machine, "files", source.name, member, budget)
