@@ -114,6 +114,11 @@ val monogramEnabled = (providers.gradleProperty("MONOGRAM_NATIVE").orElse(
     providers.environmentVariable("MONOGRAM_NATIVE")
 ).orElse("0").get()).let { it == "1" || it.equals("true", true) }
 val monogramAar = file("libs/monogram-mtproto.aar")
+// Spotify's in-app playback (librespot) is off: Spotify refuses its audio keys (librespot#1649).
+// SPOTIFY_NATIVE=1 brings the whole Spotify system back (core build, menus, settings).
+val spotifyEnabled = (providers.gradleProperty("SPOTIFY_NATIVE").orElse(
+    providers.environmentVariable("SPOTIFY_NATIVE")
+).orElse("0").get()).let { it == "1" || it.equals("true", true) }
 if (monogramEnabled) {
     require(monogramAar.isFile) {
         "MONOGRAM_NATIVE requires a pinned native artifact. Run MONOGRAM_NATIVE=1 ./build.sh monogram first."
@@ -203,6 +208,7 @@ android {
 
         buildConfigField("String", "APP_DISPLAY_NAME", quotedBuildConfigString(appDisplayName))
         buildConfigField("boolean", "MONOGRAM_NATIVE", monogramEnabled.toString())
+        buildConfigField("boolean", "SPOTIFY_ENABLED", spotifyEnabled.toString())
         buildConfigField("String", "MONOGRAM_REF", quotedBuildConfigString(externalVersion("MONOGRAM_REF")))
         buildConfigField("String", "MONOGRAM_VERSION", quotedBuildConfigString(externalVersion("MONOGRAM_VERSION")))
         resValue("string", "brand_app_name", quotedBuildConfigString(appDisplayName))
@@ -324,6 +330,8 @@ android {
             pickFirsts += selectedAbis.map { "**/$it/libc++_shared.so" }
             // JNA (Monogram) bundles libjnidispatch for ABIs Android no longer supports.
             excludes += setOf("**/mips/libjnidispatch.so", "**/mips64/libjnidispatch.so", "**/armeabi/libjnidispatch.so")
+            // An earlier build may have left the Spotify core in jniLibs: never ship it when disabled.
+            if (!spotifyEnabled) excludes += "**/libspotify_receiver_core.so"
 
             // AGP's llvm-strip rejects these prebuilt ELFs and would keep their debug info.
             // The release strip below still runs llvm-strip --strip-unneeded on every .so.
@@ -761,8 +769,8 @@ val verifyAppNativeMediaInputs = tasks.register("verifyAppNativeMediaInputs") {
     description = "Fail fast when app-owned Spotify/projectM/SVP native libraries have not been prepared."
     val rootDir = rootProject.projectDir
     val required = selectedAbis.flatMap { abi ->
-        listOf(
-            rootProject.file("app/src/main/jniLibs/$abi/libspotify_receiver_core.so"),
+        listOfNotNull(
+            rootProject.file("app/src/main/jniLibs/$abi/libspotify_receiver_core.so").takeIf { spotifyEnabled },
             rootProject.file("app/src/main/jniLibs/$abi/libprojectM-4.so"),
             rootProject.file("app/src/main/jniLibs/$abi/libambientprojectm.so"),
             rootProject.file("app/src/main/jniLibs/$abi/libambientsvp.so"),

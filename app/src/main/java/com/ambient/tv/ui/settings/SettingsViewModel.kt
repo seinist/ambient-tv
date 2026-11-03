@@ -544,6 +544,7 @@ class SettingsViewModel @Inject constructor(
         wolRetryCount = appPreferences.wolRetryCount,
         youtubeSponsorBlockEnabled = appPreferences.youtubeSponsorBlockEnabled,
         youtubeAutoplayNextEnabled = appPreferences.youtubeAutoplayNextEnabled,
+        youtubeSubtitlesEnabled = appPreferences.youtubeSubtitlesEnabled,
         youtubeFeedKeys = appPreferences.youtubeFeedKeys,
         youtubeStartFeedKey = appPreferences.youtubeStartFeedKey,
         youtubeMaxVideoHeight = appPreferences.youtubeMaxVideoHeight,
@@ -2623,6 +2624,7 @@ class SettingsViewModel @Inject constructor(
     fun onWolRetryCountChanged(value: Int) = _uiState.update { it.copy(wolRetryCount = com.ambient.tv.wol.normalizedWolRetryCount(value)) }
     fun onYoutubeSponsorBlockChanged(value: Boolean) = _uiState.update { it.copy(youtubeSponsorBlockEnabled = value) }
     fun onYoutubeAutoplayNextChanged(value: Boolean) = _uiState.update { it.copy(youtubeAutoplayNextEnabled = value) }
+    fun onYoutubeSubtitlesChanged(value: Boolean) = _uiState.update { it.copy(youtubeSubtitlesEnabled = value) }
     fun onYoutubeFeedChanged(key: String, enabled: Boolean) = _uiState.update { state ->
         if (key !in AppPreferences.YOUTUBE_FEED_KEYS || key !in state.youtubeSupportedFeedKeys) state else {
             val next = if (enabled) (state.youtubeFeedKeys + key).distinct() else state.youtubeFeedKeys.filterNot { it == key }
@@ -3074,6 +3076,7 @@ class SettingsViewModel @Inject constructor(
         appPreferences.wolRetryCount = state.wolRetryCount
         appPreferences.youtubeSponsorBlockEnabled = state.youtubeSponsorBlockEnabled
         appPreferences.youtubeAutoplayNextEnabled = state.youtubeAutoplayNextEnabled
+        appPreferences.youtubeSubtitlesEnabled = state.youtubeSubtitlesEnabled
         appPreferences.youtubeFeedKeys = state.youtubeFeedKeys
         appPreferences.youtubeStartFeedKey = state.youtubeStartFeedKey
         appPreferences.youtubeMaxVideoHeight = state.youtubeMaxVideoHeight

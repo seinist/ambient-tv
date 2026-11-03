@@ -13,10 +13,6 @@ projection APIs.
   `onSearch` displays multiple matching radio stations; voice playback also works.
   Selecting a station uses `RadioPlaybackLauncher` and its existing queue,
   reconnect, dynamic metadata and playback notification handling.
-- **Spotify (when enabled and authorized):** home, saved tracks, playlists,
-  albums, artists. Track selection is forwarded to the existing
-  `SpotifyRepository`; the car browser session mirrors Spotify's state.
-  Spotify remains responsible for its own Connect engine and audio focus.
 - **IPTV Radio and TVHeadend:** each configured source lists only channels
   explicitly typed RADIO, under All radios and channel groups. Stream URLs,
   headers and channel identity come from the existing `LiveTvRegistry`.
@@ -50,28 +46,25 @@ reorder it while a network request is outstanding.
 
 1. Install a debug APK on an Android phone, connect to DHU or a real Android
    Auto head unit, and open **Ambient TV** from the media launcher.
-2. Check that the root contains the currently configured audio systems; disabled
-   or unauthorized Spotify should not present an unusable sign-in page.
+2. Check that the root contains the currently configured audio systems.
 3. Browse radio favorites, recent, popular, all stations, country, language and
    genre filters. Open a page's "More…" entry; confirm no missing/duplicate
    stations, then use voice search and Android Auto's browsable results.
    Play two stations; confirm Play/Pause, Previous/Next and live title updates from the media widget,
    Bluetooth and steering-wheel transport controls.
-4. From Spotify, select a track from Saved/Playlist/Album; confirm the correct
-   Connect track, play/pause and seek and no simultaneous radio output.
-5. Browse a music library from each configured Plex/Jellyfin/Emby server and
+4. Browse a music library from each configured Plex/Jellyfin/Emby server and
    play a supported audio track. Confirm no video/movie entries are offered.
-6. Open IPTV and TVHeadend radio sources/groups, play radio, change channel,
+5. Open IPTV and TVHeadend radio sources/groups, play radio, change channel,
    and ensure ordinary TV programmes are absent and video tracks disabled.
-7. Browse DLNA folders containing mixed video/audio, use "More…" across
+6. Browse DLNA folders containing mixed video/audio, use "More…" across
    server pages, play tracks, and verify WOL and reconnect.
-8. Browse SMB shares with subfolders, including audio/video files, play
+7. Browse SMB shares with subfolders, including audio/video files, play
    FLAC/MP3, test file favorites/recent, WireGuard and invalid credentials.
-9. Disconnect/reconnect Android Auto, change WLAN/mobile data, lock the phone,
+8. Disconnect/reconnect Android Auto, change WLAN/mobile data, lock the phone,
    and return from the phone UI to the car while playback continues.
-10. Verify the app creates no idle foreground notification just from browsing
+9. Verify the app creates no idle foreground notification just from browsing
    and that its media foreground notification appears once playback begins.
-11. Test cold start and stop via Bluetooth, audio-focus interruption, headphone
+10. Test cold start and stop via Bluetooth, audio-focus interruption, headphone
    unplug, and notification dismissal. Check logs for source failures.
 
 ## Intentional exclusions and follow-ups

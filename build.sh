@@ -663,6 +663,12 @@ build_spotify() {
 }
 
 ensure_spotify() {
+    # Spotify is off by default: Spotify refuses audio keys to librespot (librespot#1649), so the
+    # in-app playback cannot work. SPOTIFY_NATIVE=1 builds the core and enables Spotify in the app.
+    if [[ "${SPOTIFY_NATIVE:-0}" != "1" ]]; then
+        log "Spotify disabled (set SPOTIFY_NATIVE=1 to build it); skipping the Spotify core"
+        return 0
+    fi
     if [[ "${SKIP_SPOTIFY_ENGINE:-0}" == "1" ]]; then
         warn "SKIP_SPOTIFY_ENGINE=1: Spotify Native/PCM visualizers will be unavailable."
         return 0

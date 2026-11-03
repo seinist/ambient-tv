@@ -21,8 +21,8 @@ main,footer{max-width:1100px;margin:0 auto;padding:0 24px}
 h2{font-size:clamp(24px,3vw,32px);margin:0 0 18px;letter-spacing:-.01em}
 .why{background:var(--surface);border:1px solid var(--outline);border-radius:var(--r);padding:36px 40px;margin:0 auto 72px;max-width:820px}
 .why p{color:var(--muted);margin:0 0 12px}
-.spotify-setup li{margin-bottom:12px;color:var(--muted)}
-.spotify-setup code{overflow-wrap:anywhere;color:var(--on)}
+.source-setup li{margin-bottom:12px;color:var(--muted)}
+.source-setup code{overflow-wrap:anywhere;color:var(--on)}
 .features h2,.shots h2{text-align:center}
 .grid{list-style:none;padding:0;margin:0 0 80px;display:grid;grid-template-columns:repeat(3,1fr);gap:18px}
 .card{background:var(--surface);border:1px solid var(--outline);border-radius:var(--r);padding:26px;transition:border-color .2s,transform .2s}

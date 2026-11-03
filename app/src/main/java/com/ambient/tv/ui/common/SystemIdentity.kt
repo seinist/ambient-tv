@@ -91,6 +91,7 @@ enum class MediaSystem(
         val addOrder: List<MediaSystem> = listOf(
             PLEX, JELLYFIN, EMBY, DLNA, TVHEADEND, IPTV, YOUTUBE, TELEGRAM, SPOTIFY, RADIO, TRAILERS, FILES,
         ).filter { it != TELEGRAM || com.ambient.tv.BuildConfig.MONOGRAM_NATIVE }
+            .filter { it != SPOTIFY || com.ambient.tv.BuildConfig.SPOTIFY_ENABLED }
 
         fun fromKey(key: String?): MediaSystem? = when (key?.lowercase()) {
             "tv", "tvh", "live_tv" -> TVHEADEND

@@ -612,7 +612,13 @@ object BackgroundPlaybackSession {
             val nativeSubtitlesSuppressed = metadata?.isLive == true && TeletextUi.subtitlesActive
             val prefs = subtitlePreferences
             if (prefs != null) {
-                subtitlePolicy.apply(player, metadata?.subtitleTracks.orEmpty(), prefs.subtitlePreferences,
+                // SmartTube has its own switch instead of the app-wide mode (default off).
+                val subtitleDefaults = if (metadata?.source == "youtube") prefs.subtitlePreferences.copy(
+                    mode = if (prefs.youtubeSubtitlesEnabled) com.ambient.tv.data.local.SubtitleMode.FULL
+                        else com.ambient.tv.data.local.SubtitleMode.OFF,
+                    forcedInUiLanguage = false,
+                ) else prefs.subtitlePreferences
+                subtitlePolicy.apply(player, metadata?.subtitleTracks.orEmpty(), subtitleDefaults,
                     prefs.playbackAudioLanguage,
                     com.ambient.tv.data.local.LanguagePreferences.systemLanguageTag(), metadata?.externalSubtitlesAllowed == true,
                     nativeSubtitlesSuppressed = nativeSubtitlesSuppressed)

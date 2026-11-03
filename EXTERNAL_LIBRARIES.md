@@ -19,7 +19,7 @@ This performs a network check for the managed external components without modify
 - SmartTube — newest stable GitHub release plus the exact MediaServiceCore and SharedModules submodule commits from that release
 - mpv-android — newest stable GitHub release/commit
 - projectM — newest stable GitHub release
-- Spotify native core (`SerafiniJose/rusty`) — newest stable GitHub release/tag
+- Spotify native core (`SerafiniJose/rusty`, only with `SPOTIFY_NATIVE=1`; off by default) — newest stable GitHub release/tag
 - Open-SVPFlow — newest published versioned release, or an explicitly named nightly when no stable version exists; always resolved to an exact commit
 - Monogram (GPL-3.0-only, opt-in) — newest published GitHub release, including pre-releases; the tag commit, the `vendor/mono-rs` submodule commit, and the `rustls-platform-verifier-android` version from that release. Drafts are ignored. Moving the pin does not build the native AAR.
 

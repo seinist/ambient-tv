@@ -308,6 +308,7 @@ internal fun SettingsHub(
         if (category == SettingsCategory.RECEIVER && handheld) return@filter false
         // Monogram needs the optional native core; normal builds show no Telegram page at all.
         if (category == SettingsCategory.TELEGRAM && !com.ambient.tv.BuildConfig.MONOGRAM_NATIVE) return@filter false
+        if (category == SettingsCategory.SPOTIFY && !com.ambient.tv.BuildConfig.SPOTIFY_ENABLED) return@filter false
         // A renamed system is still found under its provider name.
         val haystack = buildString {
             append(title); append(' '); append(hint); append(' ')

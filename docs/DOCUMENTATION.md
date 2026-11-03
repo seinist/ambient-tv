@@ -51,7 +51,6 @@ Ambient TV is one APK with two interfaces: a D-pad UI with a sidebar for Android
 | TVHeadend | Live TV, guide, recordings, timers, own player choice, deinterlacing | All |
 | IPTV | M3U playlists, XMLTV guide, channel groups, live player | All |
 | SmartTube | YouTube feeds, sign-in by device code, SponsorBlock, "Watch on TV" phone link | All |
-| Spotify | Native playback (librespot) and Spotify Connect receiver; Premium needed for playback | All |
 | Monogram (optional GPL/MTProto build) | Telegram channel media, full post captions, six Home rows, YouTube links via SmartTube; TV QR or phone code/2FA login | All |
 | Trailers | TMDB trailers and a "Now in cinemas" row; needs your own TMDB key | All |
 | DLNA | Browse UPnP/DLNA media servers on the LAN | All |
@@ -72,7 +71,7 @@ Settings has five areas. Each area lists its pages; the settings search finds pa
 | Area | Pages |
 | --- | --- |
 | **Interface & controls** | Home rows · When selecting media · Language · Library · Look & feel · Background video · Screensaver · Menu sounds · Clock |
-| **Media sources & accounts** | Plex · Jellyfin · Emby · TVHeadend · IPTV · SmartTube · Spotify · Monogram (opt-in build) · Trailers · DLNA · Files (configured systems first, then "add" entries) |
+| **Media sources & accounts** | Plex · Jellyfin · Emby · TVHeadend · IPTV · SmartTube · Monogram (opt-in build) · Trailers · DLNA · Files (configured systems first, then "add" entries) |
 | **Devices & network** | Phone & devices · UPnP receiver · WireGuard / VPN · Servers & Wake-on-LAN |
 | **Playback** | Default player · Subtitles · Intros, credits & next up · Seek & resume · Picture profiles · Audio profiles · Audio visualization · Photos |
 | **App & data** | Notifications · Transfer accounts and settings · Settings backup · Diagnostics · About this app |
@@ -97,7 +96,7 @@ Every media system page also has:
 | Setting | Options / values | Default | Devices | Description |
 | --- | --- | --- | --- | --- |
 | Customize Home | Show, reorder, remove rows | Plex: Continue watching, Recently added, Collections; TVHeadend: Live TV | All | Row editor for the app's Home. |
-| Add a row | Continue watching · All systems; per system: Continue watching, Recently added, Collections, Libraries; Recently watched TV channels; TVHeadend Live TV / Guide / Recordings / Timers; SmartTube Home / Subscriptions / History / Playlists / Shorts / Music / News / Gaming / Live / Kids; Spotify Home / Liked songs / Playlists / Albums / Artists / Now playing; Monogram Recent media / Channels / Videos / YouTube links / Music & audio / Photos (opt-in); Trailers / Now in cinemas; Recently added photos; Top in genre; shortcuts to system sections | — | All | Content rows or shortcuts to a section of a system. |
+| Add a row | Continue watching · All systems; per system: Continue watching, Recently added, Collections, Libraries; Recently watched TV channels; TVHeadend Live TV / Guide / Recordings / Timers; SmartTube Home / Subscriptions / History / Playlists / Shorts / Music / News / Gaming / Live / Kids; Monogram Recent media / Channels / Videos / YouTube links / Music & audio / Photos (opt-in); Trailers / Now in cinemas; Recently added photos; Top in genre; shortcuts to system sections | — | All | Content rows or shortcuts to a section of a system. |
 | Systems in "Continue watching · All systems" | Plex, Jellyfin, Emby | All on | All | Which servers feed the combined row. Shown when that row is on Home. |
 | Show on the home screen | On / Off | On | TV | Watch Next plus the channels "Continue watching" and "Recently added" on the Android TV launcher. Shown when the launcher supports it. |
 | Clear TV channel history | Action | — | All | The recent-channels row keeps up to 12 channels on this device; not in backups. |
@@ -106,7 +105,7 @@ Every media system page also has:
 
 **Offline servers on Home:** a server that does not answer keeps one row on Home with its name and **Wake up** (with Wake-on-LAN) or **Reconnect**; its other rows return by themselves once it answers. When only its rows were on Home, Home shows the offline page instead. A failure is reported by the connection notice only; there is no dialog.
 
-**Refresh on entry and after reconnect:** Content views fetch fresh data asynchronously every time they are entered, including a return from a detail page or from the background. A successful server reconnect or network recovery also refreshes the currently open view. This covers Home, libraries, details and submitted searches, plus Live TV channels, guide, recordings and timers; YouTube, Spotify, files/NAS, DLNA, photos and trailers participate too. The source, section, query and existing content remain in place while loading; previously loaded pages and focus are preserved where possible. Successful empty lists remove outdated entries, while a failed partial request retains its previous data. IPTV also requests fresh M3U and XMLTV data. Simultaneous entry and an already pending reconnect are combined. Ongoing changes, such as recording actions or watched-state updates, finish before the pending refresh runs. Renewed Spotify authorization also refreshes open Spotify views.
+**Refresh on entry and after reconnect:** Content views fetch fresh data asynchronously every time they are entered, including a return from a detail page or from the background. A successful server reconnect or network recovery also refreshes the currently open view. This covers Home, libraries, details and submitted searches, plus Live TV channels, guide, recordings and timers; YouTube, files/NAS, DLNA, photos and trailers participate too. The source, section, query and existing content remain in place while loading; previously loaded pages and focus are preserved where possible. Successful empty lists remove outdated entries, while a failed partial request retains its previous data. IPTV also requests fresh M3U and XMLTV data. Simultaneous entry and an already pending reconnect are combined. Ongoing changes, such as recording actions or watched-state updates, finish before the pending refresh runs.
 
 **Offline labels in the menu:** Plex, Jellyfin, Emby and TVHeadend, as well as individual NAS and DLNA sources, use the same confirmed host status on TV and handheld devices. Entries remain selectable. A login error or stored guide data alone does not mean “Offline” and does not block an otherwise reachable Live TV source. The Offline label for Live TV from a saved server profile uses that profile's own host, even when a different server is currently selected for the library.
 
@@ -136,7 +135,7 @@ The preferred **audio language** is on *Playback › Audio profiles*; subtitle l
 
 **View** is the last action on the right of the page header, including Live TV, guide, DLNA, search, person/collection results and photo albums. Its position stays the same when the filter bar is shown or hidden. It opens a shared panel containing the layouts, filters or sorting options supported by that page. Search offers rows/list, while person/collection results offer grid/list; a layout changes only when selected. Live TV keeps A–Z as a shortcut beside channel navigation and shows the channel count with the title context. Photos keeps timeline/folders as a separate section choice, while date/name and sort direction appear together in the filter bar or panel. The fixed chronological photo timeline has no additional view options. Closing the panel returns focus to the View action.
 
-**Reload** appears before **View** on refreshable browse pages: libraries and Plex/Jellyfin/Emby overviews, person/collection results, SmartTube, the trailer catalog and photos. Spotify offers the same action after its context actions. Live TV, guide, recordings/timers, Files and DLNA retain their existing refresh action. It shows the active request and keeps existing content along with the current section, filters and sort. DLNA also reloads the extent of pages already loaded. The manually activated header button keeps focus; removed content may fall back to a neighboring item on the next content entry. Global search is run again through **Search**.
+**Reload** appears before **View** on refreshable browse pages: libraries and Plex/Jellyfin/Emby overviews, person/collection results, SmartTube, the trailer catalog and photos. Live TV, guide, recordings/timers, Files and DLNA retain their existing refresh action. It shows the active request and keeps existing content along with the current section, filters and sort. DLNA also reloads the extent of pages already loaded. The manually activated header button keeps focus; removed content may fall back to a neighboring item on the next content entry. Global search is run again through **Search**.
 
 Changing filters, sort or layout keeps focus on the control being edited while results update. If a filter leaves no results, **Reset filters** returns focus to the last edited filter. With the filter bar hidden, it reopens the View panel at that filter. Normal content entry and returning from a detail page still restore the selected item.
 
@@ -308,19 +307,6 @@ Channel directories offer channel-appropriate sorting (provider order or title),
 
 The **New videos** label on a channel card means YouTube/SmartTube reports new content for that subscription. It is not an online or live status for the channel. Running and scheduled live videos have their own labels on the individual video.
 
-### 4.5 Spotify
-
-| Setting | Options / values | Default | Description |
-| --- | --- | --- | --- |
-| Enable Spotify | On / Off | Off | System and Spotify Connect receiver. |
-| Spotify account | Sign in / Sign out | — | OAuth with PKCE; your own client ID is required. TV offers QR sign-in. |
-| Submenu items | Home, Liked Songs, Playlists, Albums, Artists, Now Playing | All | |
-| Connect device name | Text | App name | Name in Spotify's device list. |
-| Audio quality | 96, 160, 320 kbps | 320 kbps | Music stream bitrate. |
-| Visualization | Ambient cover · Spectrum · projectM · Off | Ambient cover | Audio visualizations need local Spotify playback. |
-| Spotify account › Spotify client ID | Text | Empty | Your own client ID from the Spotify developer dashboard; required for sign-in (see the [README guide](../README.md#spotify-setup)). |
-
-Media3, VLC and MPV are not used for Spotify; their audio profiles do not apply.
 
 ### 4.6 Trailers
 
@@ -372,7 +358,7 @@ Settings › Systems & accounts › **IPTV**: any number of M3U playlists (http/
 | Enable Monogram (internal system key: Telegram) | On / Off | Off | All | Exposes private channel media only after Telegram authorization. |
 | API ID + API hash | Number + masked 32-character hexadecimal hash | Empty | All | Create a Telegram API application at [my.telegram.org/apps](https://my.telegram.org/apps). Both fields are available while Monogram is disabled, and are stored together in encrypted preferences (never compiled into APKs). |
 | Save API credentials | Action | — | All | Validates ID/hash and resets the unsigned native client. To change them, sign out first. |
-| Monogram account: QR sign-in | Scan and approve from Telegram's Devices page | — | TV | The code is a Telegram `tg://login` token, not a Spotify OAuth web callback. Requires another already signed-in device. |
+| Monogram account: QR sign-in | Scan and approve from Telegram's Devices page | — | TV | The code is a Telegram `tg://login` token. Requires another already signed-in device. |
 | Monogram account: phone code | International phone number; request/confirm/resend code | — | TV, Phone | The phone route works without scanning your own screen; an optional two-step verification password is requested when required. |
 | Account status / Sign out | Connected account · Sign out | Signed out | All | The account/catalog/menus become active after authorization; sign-out revokes private access and cache. |
 | Submenu TV chips and Home rows | Recent media · Channels · Videos · YouTube links · Music & audio · Photos | All six allowed | All | Each category can be selected independently in the Home editor and in the system menu. |
@@ -774,11 +760,11 @@ Interface and playback have separate modes (*Look & feel*). Until a side is save
 | --- | --- |
 | Android | minSdk 29, target/compileSdk 37 |
 | Device | Android TV / Leanback and/or phone/tablet |
-| Network | LAN to media servers; internet for SmartTube, Spotify, Plex link, TMDB |
-| Local network permission | Android may ask for local servers, SMB/NFS, WOL, Spotify Connect, UPnP receiver |
+| Network | LAN to media servers; internet for SmartTube, Plex link, TMDB |
+| Local network permission | Android may ask for local servers, SMB/NFS, WOL, UPnP receiver |
 | Camera | Only for "Scan QR code" during phone pairing |
 
-On first launch a setup screen offers Plex, Jellyfin, Emby, TVHeadend, SmartTube (with or without sign-in), Spotify and Files. More systems can be added later under *Media sources & accounts*. Plex, Jellyfin, Emby, TVHeadend and Spotify appear in menu, Home and search only after the server accepted address and sign-in; a later HTTP 401 hides the system until a sign-in succeeds again.
+On first launch a setup screen offers Plex, Jellyfin, Emby, TVHeadend, SmartTube (with or without sign-in) and Files. More systems can be added later under *Media sources & accounts*. Plex, Jellyfin, Emby and TVHeadend appear in menu, Home and search only after the server accepted address and sign-in; a later HTTP 401 hides the system until a sign-in succeeds again.
 
 ---
 
@@ -790,7 +776,7 @@ On first launch a setup screen offers Plex, Jellyfin, Emby, TVHeadend, SmartTube
 - Android TV system search and voice search ("search for … in Ambient TV") find movies and shows from Plex, Jellyfin and Emby; a hit connects (and wakes) the server first and opens the title. Servers known to be offline are skipped
 - An offline server stays in the menu as "… · Offline"; its overview and libraries show an offline page with Wake up / Reconnect and load by themselves once it answers
 - D-Pad: focus groups, scroll positions in settings subpages
-- Content focus and scroll positions belong to the current app session. After a cold start, each overview begins at the first item of its first populated row, including SmartTube subscriptions, Home, libraries, Spotify, Live TV, files, DLNA and photos. This also applies when the UI starts anew while a background service has kept the process alive. Rotation, returning from playback and ordinary returns to the still-open app preserve the position. Detail pages use the entry rules described below.
+- Content focus and scroll positions belong to the current app session. After a cold start, each overview begins at the first item of its first populated row, including SmartTube subscriptions, Home, libraries, Live TV, files, DLNA and photos. This also applies when the UI starts anew while a background service has kept the process alive. Rotation, returning from playback and ordinary returns to the still-open app preserve the position. Detail pages use the entry rules described below.
 - Vertical wrap in panels, dialogs and long lists: past the last row focus continues at the first, past the first at the last. It only applies when nothing else is reachable that way — where something sits above the list (a header, filter chips), Up still leads there
 - Settings Back: subpage → overview/search → area → leave hub
 - Mini-player and background playback stay while browsing (optional visible background video)
@@ -850,7 +836,7 @@ On the TV, **Settings → Devices & network → Pair phone → Pair phone** open
 
 Both apps must remain open on the same IPv4 Wi-Fi/Ethernet subnet. The receiver is disabled until explicitly enabled through pairing. Closed-app wake-up, Internet/VPN companion access, automatic handoff of an existing playback session and automatic local fallback are not implemented.
 
-Playback sends semantic references for Plex/Jellyfin/Emby library items, YouTube/trailers, Live TV, DLNA and SMB/NFS. Configure the corresponding source on the TV; library playback requires the same active media server. The TV selects its media version, uses its own credentials and reports progress to its own source. Library references do not transmit credentials or resolved stream URLs. Local phone files are not portable. Spotify continues to use Spotify Connect.
+Playback sends semantic references for Plex/Jellyfin/Emby library items, YouTube/trailers, Live TV, DLNA and SMB/NFS. Configure the corresponding source on the TV; library playback requires the same active media server. The TV selects its media version, uses its own credentials and reports progress to its own source. Library references do not transmit credentials or resolved stream URLs. Local phone files are not portable.
 
 Android **Share → Ambient TV → Send to [device name]** accepts exactly one YouTube link or direct HTTP(S) media link. Supported extensions: MP4/M4V, MKV, WebM, MOV, AVI, TS/M2TS, MPG/MPEG, OGV, HLS/M3U8, DASH/MPD, MP3, M4A, AAC, FLAC, OGG/OGA, Opus, WAV and WebA. Actual playback depends on reachability, codecs and the renderer. DRM, website extraction, extensionless links and local `content://`/`file://` files are not supported. The explicitly shared URL, including any query parameters, crosses the encrypted companion connection. The TV does not add credentials from its configured media servers. Shared links live in a bounded, process-local store, not a library or persistent history. HTTP media transport itself is unencrypted; prefer HTTPS.
 
@@ -898,7 +884,6 @@ Under **App & data › Diagnostics** (error log for release builds):
 - `app/` – Android app (Kotlin, Jetpack Compose, Hilt)
 - `native/` / `scripts/build_mpv_android.sh` – MPV JNI
 - `scripts/build_projectm_android.sh` – projectM
-- `scripts/build_spotify_engine.sh` – Spotify native (rusty/librespot)
 - `scripts/fetch_smarttube_engine.sh` – YouTube/SmartTube pins
 - `smarttube_wrappers/` – host wrappers for SmartTube modules
 - `gradle/external-versions.properties` – pinned external engines
@@ -910,7 +895,6 @@ Under **App & data › Diagnostics** (error log for release builds):
 - Android SDK / NDK (for native engines)
 - Network access for dependencies and optional engine fetches
 - Optional: `keystore.properties` for signed release artifacts (`storeFile`, `storePassword`, `keyAlias`, `keyPassword`)
-- Optional: `spotify.properties` / Gradle properties for `SPOTIFY_REDIRECT_URI`, plus `SPOTIFY_QR_REDIRECT_URI` for TV QR sign-in (default: [relay page](https://seinist.github.io/ambient-tv-spotify-callback/spotify-callback.html) from [seinist/ambient-tv-spotify-callback](https://github.com/seinist/ambient-tv-spotify-callback); build-time; no your own client ID is required — users enter their own in the app; do not put secrets in docs or public issues)
 
 ### 14.3 `./build.sh` (selection)
 
@@ -950,7 +934,7 @@ Unit tests live under `app/src/test/`. Full device acceptance (TV remote, real N
 
 Pushing a `v*` tag runs `.github/workflows/release.yml`: it builds MPV natively via `build.sh`, the four signed release APKs (`arm64`, `armv7`, `x86`, `x86_64`) and the debug APKs (`…-debug.apk`), and attaches all of them plus `SHA256SUMS.txt` to one GitHub Release. Tags containing `alpha`, `beta` or `rc` become prereleases.
 
-Required repository secrets: `AMBIENT_TV_KEYSTORE_BASE64` (base64 of the release keystore), `AMBIENT_TV_KEYSTORE_PASSWORD`, `AMBIENT_TV_KEY_ALIAS`, `AMBIENT_TV_KEY_PASSWORD`. Optional: `SPOTIFY_REDIRECT_URI`, `SPOTIFY_QR_REDIRECT_URI` (defaults to the relay page in [ambient-tv-spotify-callback](https://github.com/seinist/ambient-tv-spotify-callback)).
+Required repository secrets: `AMBIENT_TV_KEYSTORE_BASE64` (base64 of the release keystore), `AMBIENT_TV_KEYSTORE_PASSWORD`, `AMBIENT_TV_KEY_ALIAS`, `AMBIENT_TV_KEY_PASSWORD`.
 
 Versioning lives in `version.properties`:
 - `VERSION_CODE` goes up by one on every local build that produces an APK/AAB (`assemble*`, `bundle*`, `install*`, `package*` — including Android Studio and `./build.sh`). Sync, tests-only, `clean` and CI (`CI` set) leave it unchanged; `-PversionCode=N` overrides. The file is not committed automatically.
@@ -959,14 +943,13 @@ Versioning lives in `version.properties`:
 
 ## 15. Limits and notes
 
-- **Failure reasons in notices:** connection tests, sign-ins (Plex, Jellyfin, Emby, YouTube, Spotify), server connection notices and partial Home load failures name the concrete cause, e.g. “login rejected (HTTP 401)”, “no connection to 192.168.1.5:32400”, “HTTPS/certificate error”, “address not found”, “access to the local network is not allowed”. Tokens, passwords and URL parameters are stripped from error texts; details are also logged to logcat.
+- **Failure reasons in notices:** connection tests, sign-ins (Plex, Jellyfin, Emby, YouTube), server connection notices and partial Home load failures name the concrete cause, e.g. “login rejected (HTTP 401)”, “no connection to 192.168.1.5:32400”, “HTTPS/certificate error”, “address not found”, “access to the local network is not allowed”. Tokens, passwords and URL parameters are stripped from error texts; details are also logged to logcat.
 
 - No guarantee for every codec/bitstream/filter scenario on every device
 - Files: no NFS Kerberos, no NFSv4.1+, NAS discovery via mDNS only; music folders support folder artwork, but not embedded covers
-- Spotify DSP from the video players does not apply to Spotify Native
 - Performance Low changes effective video/visual paths but does not permanently erase saved image profiles
 - Third-party logos and upstream components have their own licenses (`third_party_licenses/`, About page)
-- Trademarks: Plex, Jellyfin, Emby, YouTube, SmartTube, Spotify, etc. belong to their respective owners; the app display name is in `branding.properties`
+- Trademarks: Plex, Jellyfin, Emby, YouTube, SmartTube, etc. belong to their respective owners; the app display name is in `branding.properties`
 
 ---
 

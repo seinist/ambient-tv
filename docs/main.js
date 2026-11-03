@@ -10,7 +10,7 @@ const T = {
     why1: "Ambient TV begann mit ein paar Wünschen für den eigenen Filmabend: den Server vom Sofa aus wecken, den Player selbst wählen und das Bild passend zum Film einstellen.",
     why2: "Daraus ist ein gemeinsamer Ort für Mediatheken, Netzwerkordner und Live-TV geworden – mit Fernbedienungssteuerung am TV und Touch-Bedienung auf Handy und Tablet.",
     feat_h: "Was drin steckt",
-    f1h: "Alle Quellen, eine App", f1: "Plex-, Jellyfin- und Emby-Mediatheken zusammen mit YouTube über SmartTube, Spotify und DLNA-Quellen nutzen.",
+    f1h: "Alle Quellen, eine App", f1: "Plex-, Jellyfin- und Emby-Mediatheken zusammen mit YouTube über SmartTube und DLNA-Quellen nutzen.",
     f13h: "Monogram (optional)", f13: "Ein separater nativer GPL-Build ergänzt Telegram-Kanalmedien, sechs Home-Reihen, vollständige Beitragstexte, YouTube-Vorschaubilder und QR-/Telefonanmeldung. Nicht in der Standard-APK enthalten.",
     f2h: "MPV · VLC · Media3", f2: "Drei Engines in einem gemeinsamen Player, Bildeinstellungen pro Titel gemerkt. A-B-Wiederholung, Einzelbild, Lesezeichen und Bildschirmfotos.",
     f3h: "Upscaler &amp; SVP", f3: "GPU-Shader-Upscaler wie NNEDI3, RAVU, FSRCNNX, Anime4K, FSR – dazu experimentelle SVP-Zwischenbildberechnung.",
@@ -23,21 +23,12 @@ const T = {
     f10h: "Deine eigene Startseite", f10: "Weiterschauen, neue Titel, zuletzt gesehene Sender und Mediathek-Zugänge so anordnen, wie du sie nutzen möchtest. Auch die Android-TV-System- und Sprachsuche findet deine Titel.",
     f11h: "Untertitel passend zum Film", f11: "Bevorzugte Sprachen und ein eigenes Aussehen für Text-Untertitel wählen, Untertitel neben der Videodatei laden und ihre Verzögerung anpassen – oder einen heruntergeladenen Untertitel automatisch am Server-Untertitel ausrichten lassen. Online-Suche mit eigenem OpenSubtitles-API-Schlüssel.",
     f12h: "Musik und Fotos", f12: "Musikordner mit Album-Tags und Coverbildern durchstöbern, Alben lückenlos mit mitlaufenden Songtexten hören, Spektrum oder projectM-Visualisierungen ausprobieren oder Fotos als Diashow mit sanften Schwenks und Zooms zeigen.",
-    spotify_h: "Spotify einrichten",
-    spotify_intro: "Ambient TV enthält keine Spotify-Client-ID. Erstelle deine eigene im Spotify Developer Dashboard und trage sie für die Anmeldung in der App ein.",
-    spotify_create: 'Öffne das <a href="https://developer.spotify.com/dashboard">Spotify Developer Dashboard</a>, wähle <strong>Create app</strong>, gib einen Namen und eine Beschreibung ein und wähle <strong>Web API</strong>.',
-    spotify_redirects: "Füge beide Redirect URIs hinzu und speichere sie:",
-    spotify_device: "Anmeldung auf dem Gerät",
-    spotify_tv: "QR-Anmeldung am TV; die Seite leitet den Code an den TV in deinem lokalen Netzwerk weiter",
-    spotify_copy: "Kopiere die <strong>Client ID</strong> aus den <strong>Settings</strong> deiner Spotify-App.",
-    spotify_enter: "Öffne in Ambient TV <strong>Einstellungen › Medienquellen &amp; Konten › Spotify › Spotify-Konto</strong>, trage deine <strong>Spotify-Client-ID</strong> ein und wähle <strong>Anmelden</strong>.",
-    spotify_guide: "Vollständige Spotify-Einrichtungsanleitung",
     monogram_h: "Monogram einrichten (optional)",
     monogram_intro: "Monogram ist nicht in der normalen Ambient-TV-APK enthalten. Ein separater nativer MTProto-Build unter GPL-Lizenz verwendet eine eigene Telegram-API-Anwendung.",
     monogram_build: 'Eine <strong>Monogram-fähige APK</strong> installieren, gebaut mit <code>MONOGRAM_NATIVE=1 ./build.sh arm64</code>. Die Verteilung und die Gerätetests sind noch nicht freigegeben.',
     monogram_create: 'Unter <a href="https://my.telegram.org/apps">my.telegram.org/apps</a> eine Telegram-API-Anwendung erstellen und <strong>API-ID</strong> sowie <strong>API-Hash</strong> kopieren.',
     monogram_enter: 'Unter <strong>Einstellungen › Medienquellen &amp; Konten › Monogram</strong> die API-ID und den API-Hash speichern, danach Monogram aktivieren. Der Hash wird verschlüsselt auf dem Gerät gespeichert, nicht in der APK.',
-    monogram_qr: 'Am TV <strong>Mit QR-Code anmelden</strong> wählen. Telegram auf einem bereits angemeldeten Handy öffnen und den QR-Code unter <strong>Geräte</strong> scannen. Das ist ein Telegram-Anmeldetoken, kein Spotify-Callback.',
+    monogram_qr: 'Am TV <strong>Mit QR-Code anmelden</strong> wählen. Telegram auf einem bereits angemeldeten Handy öffnen und den QR-Code unter <strong>Geräte</strong> scannen. Das ist ein Telegram-Anmeldetoken.',
     monogram_phone: 'Am Handy (oder alternativ am TV) mit der Telefonnummer inklusive Ländervorwahl einen <strong>Anmeldecode</strong> anfordern und bestätigen; bei Bedarf das Passwort für die Zwei-Schritt-Verifizierung eingeben.',
     monogram_notes: 'Nach Anmeldung sind sechs Monogram-Home-Reihen möglich: Neue Medien, Kanäle, Videos, YouTube-Links, Musik und Audio sowie Fotos. Das Backup mit Zugangsdaten sichert API-ID/Hash, niemals aber die Telegram-Sitzung; auf einem neuen Gerät erneut anmelden.',
     monogram_guide: "Vollständige Monogram-Einrichtungsanleitung",
@@ -56,7 +47,6 @@ function setLang(lang) {
   nodes.forEach(n => { const v = dict[n.dataset.i18n]; if (v) n.innerHTML = v; });
   document.querySelectorAll("[data-i18n-aria]").forEach(n => n.setAttribute("aria-label", lang === "de" ? T.de[n.dataset.i18nAria] : "Close"));
   html.lang = lang;
-  document.querySelector('[data-spotify-guide]').href = `https://github.com/${REPO}/blob/main/${lang === "de" ? "README.de.md#spotify-einrichten" : "README.md#spotify-setup"}`;
   document.querySelector('[data-monogram-guide]').href = `https://github.com/${REPO}/blob/main/${lang === "de" ? "README.de.md#monogram-einrichten-optionale-telegram-medien" : "README.md#monogram-setup-optional-telegram-media-integration"}`;
   document.querySelector('[data-docs]').href = `https://github.com/${REPO}/blob/main/docs/${lang === "de" ? "DOCUMENTATION.de.md" : "DOCUMENTATION.md"}`;
   document.querySelectorAll(".lang").forEach(b => b.setAttribute("aria-pressed", String(b.dataset.lang === lang)));
