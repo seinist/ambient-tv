@@ -54,6 +54,21 @@ private fun MpvPlaybackController.format() = SessionFormat(
     audioSession = audioSession,
 )
 
+/** LibVLC's current tracks; counters are skipped, only the format is needed. */
+private fun VlcPlaybackController.format(): SessionFormat {
+    val stats = runtimeStats(includeCounters = false)
+    return SessionFormat(
+        renderer = "VLC",
+        width = stats?.videoWidth?.takeIf { it > 0 },
+        height = stats?.videoHeight?.takeIf { it > 0 },
+        fps = stats?.videoFps?.takeIf { it > 0.0 },
+        videoCodec = stats?.videoCodec,
+        audioCodec = stats?.audioCodec,
+        audioChannels = stats?.audioChannels?.takeIf { it > 0 },
+        audioSession = audioSession,
+    )
+}
+
 /** Polls the active engine while shown; empty until it knows its tracks. */
 @Composable
 internal fun rememberSessionFormat(sourceIdentity: String): SessionFormat {
@@ -62,8 +77,7 @@ internal fun rememberSessionFormat(sourceIdentity: String): SessionFormat {
             value = when (val handle = BackgroundPlaybackSession.activeHandle()) {
                 is Media3PlaybackHandle -> handle.format()
                 is MpvPlaybackController -> withContext(Dispatchers.IO) { handle.format() }
-                is VlcPlaybackController -> SessionFormat(renderer = "VLC",
-                    audioSession = handle.audioSession)
+                is VlcPlaybackController -> withContext(Dispatchers.IO) { handle.format() }
                 else -> SessionFormat()
             }
             delay(1_000)
