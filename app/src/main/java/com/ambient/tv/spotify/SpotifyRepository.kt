@@ -244,30 +244,17 @@ class SpotifyRepository @Inject constructor(
     }
 
     /**
-     * Native playback without a Connect handoff: the receiver signs in with the app's own OAuth
-     * token. Falls back to waiting for a Spotify app to pick this device (older core, or a login
-     * from before the "streaming" scope was requested).
+     * The receiver signs in through a Spotify Connect handoff. Spotify does not accept a
+     * third-party client's OAuth token for playback (INVALID_CREDENTIALS / HTTP 400), so the
+     * patched core instead stores the handoff's reusable credentials and signs in with them on
+     * every later start: the device is picked in a Spotify app once, then plays natively.
      */
     private suspend fun signInReceiver(): Int? {
         if (playback.value.connected) return null
-        val nativeLogin = auth.state.value.scopes.contains("streaming")
-        val log = { message: String -> com.ambient.tv.diagnostics.DiagnosticLog.warn("spotify", message) }
-        if (nativeLogin) {
-            val token = runCatching { auth.validAccessToken() }.getOrNull()
-            if (token == null) log("token sign-in: no access token")
-            else {
-                // The discovery loop starts on a native thread: retry until it accepts the token.
-                var accepted = false
-                for (attempt in 0 until 20) {
-                    if (engine.loginWithAccessToken(token, auth.tokenClientId())) { accepted = true; break }
-                    delay(150L)
-                }
-                log(if (accepted) "token sign-in: sent to the receiver" else "token sign-in: receiver did not accept it")
-            }
-        } else log("token sign-in skipped: login has no 'streaming' scope (sign in again)")
         if (awaitSpotifyReceiverConnected()) return null
-        // Signed in before "streaming" was requested: a new sign-in enables native playback.
-        return if (nativeLogin) R.string.spotify_receiver_not_connected else R.string.spotify_relogin_for_native
+        com.ambient.tv.diagnostics.DiagnosticLog.warn("spotify",
+            "receiver not signed in: no stored credentials yet (pick this device once in a Spotify app)")
+        return R.string.spotify_receiver_not_connected
     }
 
     /** The reason a start failed, as a message the user can act on (no provider details). */
@@ -606,6 +593,8 @@ class SpotifyRepository @Inject constructor(
         com.ambient.tv.notifications.notifyLogin("spotify", com.ambient.tv.notifications.NoticePhase.INFO)
         auth.logout()
         stop()
+        // The receiver's stored sign-in belongs to this account: a new account picks it anew.
+        java.io.File(context.filesDir, "spotify-credentials").deleteRecursively()
     }
 
     private companion object {

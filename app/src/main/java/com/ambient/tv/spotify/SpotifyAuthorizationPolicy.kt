@@ -12,8 +12,6 @@ object SpotifyAuthorizationPolicy {
         "user-library-read",
         "playlist-read-private",
         "user-follow-read",
-        // Native in-app playback signs the librespot core in with this token.
-        "streaming",
     )
 
     /**

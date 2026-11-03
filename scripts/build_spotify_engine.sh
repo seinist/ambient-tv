@@ -70,7 +70,7 @@ tar -xzf "$ARCHIVE" -C "$TMP"
 SRC="$(find "$TMP" -mindepth 1 -maxdepth 1 -type d -name 'rusty-*' | head -n1)"
 [ -n "$SRC" ] || { echo "Rusty source archive layout not recognized" >&2; exit 3; }
 mv "$SRC" "$WORK"
-# Ambient TV: access-token sign-in, so playback starts in the app without a Connect handoff.
+# Ambient TV: stored sign-in after the first Connect handoff (plus token sign-in hook), so playback starts in the app.
 if [ "$RUSTY_SOURCE" = "$(external_version SPOTIFY_RUSTY_COMMIT)" ]; then
   patch -d "$WORK" -p1 --forward < "$ROOT/scripts/patches/rusty-token-login.patch"
 else
@@ -112,6 +112,6 @@ done
 rm -f "$OUT/.spotify-pcm-v39"
 printf 'rusty_ref=%s\n' "$RUSTY_REF" > "$OUT/.spotify-rusty"
 if [ "$RUSTY_SOURCE" = "$(external_version SPOTIFY_RUSTY_COMMIT)" ]; then
-  printf 'token_login=2\n' >> "$OUT/.spotify-rusty"
+  printf 'token_login=3\n' >> "$OUT/.spotify-rusty"
 fi
 echo "Built Spotify core (Rusty ${RUSTY_REF}) under app/src/main/jniLibs."
