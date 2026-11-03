@@ -26,7 +26,7 @@ interface SpotifyPlaybackEngine {
     fun setPcmTapEnabled(enabled: Boolean): Boolean
 
     /** Signs the running receiver in with an OAuth token (scope "streaming"); false if unsupported. */
-    fun loginWithAccessToken(token: String): Boolean = false
+    fun loginWithAccessToken(token: String, clientId: String): Boolean = false
 }
 
 data class SpotifyPlaybackEngineConfig(

@@ -1,12 +1,12 @@
 diff --git a/rust/src/lib.rs b/rust/src/lib.rs
-index 5f793b8..aeca0f8 100644
+index 5f793b8..540e966 100644
 --- a/rust/src/lib.rs
 +++ b/rust/src/lib.rs
 @@ -519,6 +519,8 @@ async fn start_discovery_loop(
      };
  
      info!("Discovery started. Waiting for connection...");
-+    let (token_tx, mut token_rx) = tokio::sync::mpsc::unbounded_channel::<String>();
++    let (token_tx, mut token_rx) = tokio::sync::mpsc::unbounded_channel::<(String, Option<String>)>();
 +    *token_login_slot().lock().unwrap_or_else(|poison| poison.into_inner()) = Some(token_tx);
  
      // `Some` while a controller is connected; `None` when idle and discoverable.
@@ -16,10 +16,10 @@ index 5f793b8..aeca0f8 100644
                  };
              }
 +            // Ambient TV: sign in with the app's OAuth token, without a Connect handoff.
-+            Some(token) = token_rx.recv() => {
++            Some((token, token_client_id)) = token_rx.recv() => {
 +                info!("Access-token sign-in requested");
 +                connect_controller(&mut active, &mut connect_config, &device_id, bitrate,
-+                    Credentials::with_access_token(token)).await;
++                    Credentials::with_access_token(token), token_client_id).await;
 +            }
              maybe_credentials = discovery.next() => {
                  match maybe_credentials {
@@ -59,11 +59,11 @@ index 5f793b8..aeca0f8 100644
 -                                active = None;
 -                            }
 -                        }
-+                        connect_controller(&mut active, &mut connect_config, &device_id, bitrate, credentials).await;
++                        connect_controller(&mut active, &mut connect_config, &device_id, bitrate, credentials, None).await;
                      }
                      None => {
                          error!("Discovery stream ended unexpectedly");
-@@ -637,10 +612,87 @@ async fn start_discovery_loop(
+@@ -637,10 +612,92 @@ async fn start_discovery_loop(
          }
      }
  
@@ -80,6 +80,7 @@ index 5f793b8..aeca0f8 100644
 +    device_id: &str,
 +    bitrate: Bitrate,
 +    credentials: Credentials,
++    client_id: Option<String>,
 +) {
 +    // Preempt any active session (e.g. a different account taking
 +    // over). Tear it down, then drain its goodbye off to the side
@@ -99,6 +100,7 @@ index 5f793b8..aeca0f8 100644
 +        device_id.to_string(),
 +        bitrate,
 +        credentials,
++        client_id,
 +    ).await {
 +        Ok(session) => {
 +            info!("Session established");
@@ -118,8 +120,8 @@ index 5f793b8..aeca0f8 100644
 +    }
 +}
 +
-+fn token_login_slot() -> &'static Mutex<Option<tokio::sync::mpsc::UnboundedSender<String>>> {
-+    static SLOT: OnceLock<Mutex<Option<tokio::sync::mpsc::UnboundedSender<String>>>> = OnceLock::new();
++fn token_login_slot() -> &'static Mutex<Option<tokio::sync::mpsc::UnboundedSender<(String, Option<String>)>>> {
++    static SLOT: OnceLock<Mutex<Option<tokio::sync::mpsc::UnboundedSender<(String, Option<String>)>>>> = OnceLock::new();
 +    SLOT.get_or_init(|| Mutex::new(None))
 +}
 +
@@ -130,6 +132,7 @@ index 5f793b8..aeca0f8 100644
 +    mut env: JNIEnv,
 +    _class: JClass,
 +    token_java: JString,
++    client_id_java: JString,
 +) -> jni::sys::jboolean {
 +    let token: String = match env.get_string(&token_java) {
 +        Ok(value) => value.into(),
@@ -139,8 +142,10 @@ index 5f793b8..aeca0f8 100644
 +        }
 +    };
 +    if token.is_empty() { return 0; }
++    let client_id: Option<String> = env.get_string(&client_id_java).ok()
++        .map(Into::<String>::into).map(|value| value.trim().to_string()).filter(|value| !value.is_empty());
 +    match token_login_slot().lock().unwrap_or_else(|poison| poison.into_inner()).as_ref() {
-+        Some(tx) if tx.send(token).is_ok() => 1,
++        Some(tx) if tx.send((token, client_id)).is_ok() => 1,
 +        _ => {
 +            info!("loginWithAccessToken: no running receiver");
 +            0
@@ -151,7 +156,21 @@ index 5f793b8..aeca0f8 100644
  /// Sets up one controller connection: builds the session/player/mixer, spawns the
  /// player-event forwarder, connects via `Spirc::new`, wires the JNI/session/spirc
  /// slots, and fires the connected callback. Returns the live handles for the
-@@ -1084,6 +1136,20 @@ fn send_native_receiver_connected(username: &str) {
+@@ -652,10 +709,12 @@ async fn build_active_session(
+     device_id: String,
+     bitrate: Bitrate,
+     credentials: Credentials,
++    client_id: Option<String>,
+ ) -> Result<ActiveSession, Box<dyn std::error::Error>> {
+     let session_config = SessionConfig {
+         device_id,
+-        client_id: RECEIVER_CLIENT_ID.to_string(),
++        // Ambient TV: an access token is only valid for the client that obtained it.
++        client_id: client_id.unwrap_or_else(|| RECEIVER_CLIENT_ID.to_string()),
+         // 0.8: autoplay moved here from ConnectConfig. Preserve prior autoplay: true.
+         autoplay: Some(true),
+         ..SessionConfig::default()
+@@ -1084,6 +1143,20 @@ fn send_native_receiver_connected(username: &str) {
  /// logout, or the idle timeout) and the receiver has returned to idle/discoverable.
  /// Mirrors `send_native_receiver_connected` but carries no payload. NOT fired on a
  /// takeover — there the following connected callback updates the UI directly.

@@ -102,6 +102,10 @@ class SpotifyAuthManager @Inject constructor(
     val qrAuthorizationCompleted: SharedFlow<Unit> = _qrAuthorizationCompleted.asSharedFlow()
 
     /** No client ID is built in: every user registers their own Spotify app (see README). */
+    /** The client the current access token was issued to (its session must use the same one). */
+    fun tokenClientId(): String =
+        tokenStore.spotifyWebClientId?.takeIf(String::isNotBlank) ?: effectiveClientId()
+
     private fun effectiveClientId(): String = SpotifyClientIdPolicy.effective(preferences.spotifyClientId)
 
     private fun loadState(): SpotifyAuthState {

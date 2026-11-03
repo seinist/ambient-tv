@@ -259,7 +259,7 @@ class SpotifyRepository @Inject constructor(
                 // The discovery loop starts on a native thread: retry until it accepts the token.
                 var accepted = false
                 for (attempt in 0 until 20) {
-                    if (engine.loginWithAccessToken(token)) { accepted = true; break }
+                    if (engine.loginWithAccessToken(token, auth.tokenClientId())) { accepted = true; break }
                     delay(150L)
                 }
                 log(if (accepted) "token sign-in: sent to the receiver" else "token sign-in: receiver did not accept it")
