@@ -31,4 +31,10 @@ class ResumeConnectivityPolicyTest {
     fun `negative ages force recheck`() {
         assertTrue(ResumeConnectivityPolicy.shouldRecheck(backgroundedForMs = -1L, lastHealthAgeMs = 0L))
     }
+
+    @Test fun phonesRecheckOnlyAfterALongerAbsenceTvAlways() {
+        assertFalse(ResumeConnectivityPolicy.shouldRecheckOnStart(true, 60_000L, 60_000L, handheld = true))
+        assertTrue(ResumeConnectivityPolicy.shouldRecheckOnStart(true, 10 * 60_000L, 0L, handheld = true))
+        assertTrue(ResumeConnectivityPolicy.shouldRecheckOnStart(true, 1_000L, 1_000L, handheld = false))
+    }
 }

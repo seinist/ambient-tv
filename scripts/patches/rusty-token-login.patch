@@ -1,5 +1,5 @@
 diff --git a/rust/src/lib.rs b/rust/src/lib.rs
-index 5f793b8..558f6d8 100644
+index 5f793b8..aeca0f8 100644
 --- a/rust/src/lib.rs
 +++ b/rust/src/lib.rs
 @@ -519,6 +519,8 @@ async fn start_discovery_loop(
@@ -63,7 +63,7 @@ index 5f793b8..558f6d8 100644
                      }
                      None => {
                          error!("Discovery stream ended unexpectedly");
-@@ -637,10 +612,86 @@ async fn start_discovery_loop(
+@@ -637,10 +612,87 @@ async fn start_discovery_loop(
          }
      }
  
@@ -106,6 +106,7 @@ index 5f793b8..558f6d8 100644
 +        }
 +        Err(e) => {
 +            error!("Session error: {:?}", e);
++            send_native_session_error(&format!("{:?}", e));
 +            // Make sure we land in a clean idle state if setup
 +            // failed partway (slots may have been set).
 +            *spirc_slot().lock().unwrap_or_else(|poison| poison.into_inner()) = None;
@@ -150,3 +151,24 @@ index 5f793b8..558f6d8 100644
  /// Sets up one controller connection: builds the session/player/mixer, spawns the
  /// player-event forwarder, connects via `Spirc::new`, wires the JNI/session/spirc
  /// slots, and fires the connected callback. Returns the live handles for the
+@@ -1084,6 +1136,20 @@ fn send_native_receiver_connected(username: &str) {
+ /// logout, or the idle timeout) and the receiver has returned to idle/discoverable.
+ /// Mirrors `send_native_receiver_connected` but carries no payload. NOT fired on a
+ /// takeover — there the following connected callback updates the UI directly.
++/// Ambient TV: a failed sign-in (e.g. a rejected access token) is reported to the app's log.
++fn send_native_session_error(message: &str) {
++    let (Some(java_vm), Some(service_class)) = (JAVA_VM.get(), SPOTIFY_SERVICE_CLASS.get()) else { return };
++    let Ok(mut env) = java_vm.attach_current_thread() else { return };
++    let Ok(text) = env.new_string(message) else { return };
++    if let Err(e) = env.call_static_method(service_class, "onNativeSessionError",
++        "(Ljava/lang/String;)V", &[JValue::Object(&text)]) {
++        error!("Failed to publish native session error to Android: {:?}", e);
++    }
++    if let Ok(true) = env.exception_check() {
++        let _ = env.exception_clear();
++    }
++}
++
+ fn send_native_receiver_disconnected() {
+     let Some(java_vm) = JAVA_VM.get() else {
+         error!("Cannot publish disconnected event before JavaVM is initialized");

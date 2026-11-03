@@ -15,6 +15,9 @@ class SpotifyService {
             if (NativeBridge.available) runCatching { NativeBridge.requestAccessToken() }
         }
         @JvmStatic fun onNativeReceiverDisconnected() = LibrespotNativeStateBus.disconnected()
+        /** Ambient TV patch: why a sign-in (Connect handoff or access token) failed. */
+        @JvmStatic fun onNativeSessionError(message: String?) =
+            com.ambient.tv.diagnostics.DiagnosticLog.warn("spotify", "native session failed: $message")
         @JvmStatic fun onNativeAccessToken(token: String?, expiresInSecs: Int) = LibrespotNativeStateBus.token(token)
 
         /** Visualizer PCM from [dev.rusty.app.audio.PcmTap]: mono f32, 44.1 kHz. */
