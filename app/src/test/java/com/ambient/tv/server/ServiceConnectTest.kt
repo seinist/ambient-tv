@@ -232,4 +232,16 @@ class ServiceConnectTest {
             retries = 1, windowMs = 5_000L, pollMs = 1L, setState = {}, lastWakeAtMs = { 0L }, nowMs = Clock()::read)
         assertEquals(ServerConnectionState.Offline, offline.failure)
     }
+
+    @Test
+    fun `an awake machine without a wake MAC is connected at once, never shown as waking`() = runBlocking {
+        val states = mutableListOf<ServerConnectionState>()
+        val result = waitForService({ false }, { true }, { HostHealth.OFFLINE }, canWake = false,
+            send = { error("no wake without a MAC") },
+            retries = 1, windowMs = 5_000L, pollMs = 1L, setState = { states += it },
+            lastWakeAtMs = { 0L }, nowMs = Clock()::read)
+        assertEquals(null, result.failure)
+        assertEquals(false, result.waited)
+        assertTrue(states.none { it is ServerConnectionState.Waking })
+    }
 }
