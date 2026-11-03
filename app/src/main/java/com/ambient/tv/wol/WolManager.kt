@@ -170,6 +170,44 @@ class WolManager @Inject constructor(
         )
     }
 
+    /**
+     * Whether a Magic Packet for [macAddress] can leave this device toward [targetHost] right
+     * now: a Wi-Fi/Ethernet network (or an active WireGuard wake route) exists, and a private
+     * server lies in one of the local networks. On mobile data without a tunnel this is false,
+     * so no wake countdown starts for a packet that cannot be sent. With [report] the reason is
+     * posted as the usual WOL notice.
+     */
+    suspend fun wakePossible(
+        macAddress: String?,
+        targetHost: String?,
+        wireGuardHost: String? = null,
+        broadcastAddress: String = "255.255.255.255",
+        report: Boolean = false,
+    ): Boolean {
+        val macKey = macAddress?.let(::canonicalWolMacKey) ?: return false
+        val wireGuardHosts = matchingWireGuardHosts(macKey, wireGuardHost)
+        if (!withContext(Dispatchers.IO) { wakeNetworkAvailable(null, wireGuardHosts) { true } }) {
+            if (report) networkUnavailable(macAddress)
+            return false
+        }
+        val host = targetHost?.let(NetworkEndpoint::extractHost)?.trim()?.takeIf { it.isNotBlank() } ?: return true
+        if (!canReachLocally(host, broadcastAddress, wireGuardHosts)) {
+            if (report) notOnLocalNetwork(host)
+            return false
+        }
+        return true
+    }
+
+    /**
+     * A private server outside every local network of this device, without a WireGuard route:
+     * nothing (no connection, no wake) can reach it from here, e.g. on mobile data.
+     */
+    suspend fun serverUnreachableFromHere(host: String?, wireGuardHost: String? = null): Boolean {
+        val target = host?.let(NetworkEndpoint::extractHost)?.trim()?.takeIf { it.isNotBlank() } ?: return false
+        if (privateIpv4Bytes(target) == null) return false
+        return !canReachLocally(target, wireGuardHosts = listOfNotNull(wireGuardHost))
+    }
+
     /** Posts the "not in the local network" notice for a wake that was not started. */
     fun reportNotOnLocalNetwork(host: String) { notOnLocalNetwork(host) }
 

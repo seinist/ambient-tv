@@ -47,6 +47,9 @@ class DlnaWake @Inject constructor(
         wolManager.sendWakeBurst(server.wolMac)
 
     private suspend fun wakeAndWait(server: DlnaServer, target: Pair<String, Int>, key: String) {
+        // Mobile data without a tunnel or a server outside this network: nothing to send.
+        if (!wolManager.wakePossible(server.wolMac, target.first, report = true))
+            throw java.net.SocketTimeoutException("Wake not possible from this network")
         val machine = machines.keyFor("dlna", target.first, server.wolMac)
         val member = "dlna:${server.id}"
         com.ambient.tv.notifications.WakeNotices.begin(machine, "dlna", server.name, member,

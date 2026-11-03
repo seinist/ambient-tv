@@ -216,13 +216,18 @@ class ServerConnectionManager @Inject constructor(
 
         _state.value = ServerConnectionState.Checking
         val mac = preferences.macAddress
+        val unreachableFromHere = wolManager.serverUnreachableFromHere(
+            preferences.host, preferences.host.takeIf { preferences.wireGuardPlexEnabled })
         // Success only once Plex itself answers /identity; another open port of the machine is not enough.
         val wait = try {
             waitForService(
                 serviceReady = { reachabilityChecker.isReachable() },
                 machineAwake = { hosts.verifySystem("plex") },
                 hostHealth = { hosts.health("plex") },
-                canWake = preferences.autoWakeEnabled && !mac.isNullOrBlank(),
+                // Only a wake this device can actually send (Wi-Fi/Ethernet or a WireGuard route, server in
+                // the local network): on mobile data no countdown starts for nothing.
+                canWake = preferences.autoWakeEnabled && !mac.isNullOrBlank() && wolManager.wakePossible(
+                    mac, preferences.host, preferences.host.takeIf { preferences.wireGuardPlexEnabled }),
                 send = { attempt ->
                     wolManager.sendWakeBurst(
                         mac.orEmpty(),
@@ -236,6 +241,7 @@ class ServerConnectionManager @Inject constructor(
                 pollMs = wakePollMs,
                 onAnswered = { wolManager.machineAnswered(mac) },
                 setState = { _state.value = it },
+                unreachableFromHere = unreachableFromHere,
             )
         } catch (cancelled: kotlinx.coroutines.CancellationException) {
             throw cancelled
@@ -243,7 +249,11 @@ class ServerConnectionManager @Inject constructor(
             _state.value = ServerConnectionState.Error(error.message.orEmpty())
             return false
         }
-        wait.failure?.let { _state.value = it; return false }
+        wait.failure?.let {
+            // Neither reachable nor wakeable from here: the whole machine is offline at once.
+            if (unreachableFromHere && it == ServerConnectionState.Offline) hosts.markOffline("plex")
+            _state.value = it; return false
+        }
 
         _state.value = ServerConnectionState.Connecting
         // A server that just started may still answer 503 or refuse once: retry within the wake budget.

@@ -198,12 +198,17 @@ class JellyfinConnectionManager @Inject constructor(
         }
         _state.value = ServerConnectionState.Checking
         val mac = preferences.jellyfinMacAddress
+        val unreachableFromHere = wolManager.serverUnreachableFromHere(
+            preferences.jellyfinHost, preferences.jellyfinHost.takeIf { preferences.wireGuardJellyfinEnabled })
         // Success only once Jellyfin itself answers; another open port of the machine is not enough.
         val wait = waitForService(
             serviceReady = ::isReachable,
             machineAwake = { hosts.verifySystem("jellyfin") },
             hostHealth = { hosts.health("jellyfin") },
-            canWake = preferences.jellyfinAutoWakeEnabled && !mac.isNullOrBlank(),
+            // Only a wake this device can actually send (Wi-Fi/Ethernet or a WireGuard route, server in
+                // the local network): on mobile data no countdown starts for nothing.
+                canWake = preferences.jellyfinAutoWakeEnabled && !mac.isNullOrBlank() && wolManager.wakePossible(
+                    mac, preferences.jellyfinHost, preferences.jellyfinHost.takeIf { preferences.wireGuardJellyfinEnabled }),
             send = { attempt ->
                 wolManager.sendWakeBurst(
                     mac.orEmpty(),
@@ -217,8 +222,13 @@ class JellyfinConnectionManager @Inject constructor(
             pollMs = wakePollMs,
             onAnswered = { wolManager.machineAnswered(mac) },
             setState = { _state.value = it },
+            unreachableFromHere = unreachableFromHere,
         )
-        wait.failure?.let { _state.value = it; return false }
+        wait.failure?.let {
+            // Neither reachable nor wakeable from here: the whole machine is offline at once.
+            if (unreachableFromHere && it == ServerConnectionState.Offline) hosts.markOffline("jellyfin")
+            _state.value = it; return false
+        }
         _state.value = ServerConnectionState.Connecting
         // A server that just started may still answer 503 or refuse once: retry within the wake budget.
         val identity = retryTransient(wait.identityDeadlineMs) { repository.getIdentity() }.getOrElse {
