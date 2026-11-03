@@ -243,6 +243,25 @@ class SpotifyRepository @Inject constructor(
         return withTimeoutOrNull(timeoutMs) { playback.first { it.connected }; true } ?: false
     }
 
+    /** The reason a start failed, as a message the user can act on (no provider details). */
+    private class SpotifyStartFailure(val messageRes: Int) : IllegalStateException()
+
+    private fun receiverStartFailure(): Int = when {
+        !engine.available -> R.string.spotify_error_native_missing
+        !LocalNetworkAccess.isGranted(context) -> R.string.spotify_local_network_missing
+        else -> R.string.spotify_native_start_failed
+    }
+
+    private fun spotifyPlayFailureMessage(error: Throwable): Int = when {
+        error is SpotifyStartFailure -> error.messageRes
+        // The receiver runs but Spotify never listed it as a Connect device.
+        error.message == context.getString(R.string.spotify_device_not_visible, prefs.spotifyDeviceName) ->
+            R.string.spotify_receiver_not_connected
+        // Spotify Connect playback through the Web API needs Premium.
+        error is SpotifyApiException && error.statusCode == 403 -> R.string.spotify_premium_required
+        else -> R.string.spotify_play_failed
+    }
+
     private fun failExplicitSpotifyPlayback(handoff: ExplicitPlaybackHandoff?, message: Int) {
         rollbackExplicitSpotifyPlayback(handoff)
         if (!playback.value.playing) context.stopService(Intent(context, SpotifyPlaybackService::class.java))
@@ -358,8 +377,12 @@ class SpotifyRepository @Inject constructor(
         beginPlaybackStartAttempt()
         scope.launch {
             try {
-                if (!start() || !awaitSpotifyReceiverConnected()) {
-                    failExplicitSpotifyPlayback(handoff, R.string.spotify_native_start_failed)
+                if (!start()) {
+                    failExplicitSpotifyPlayback(handoff, receiverStartFailure())
+                    return@launch
+                }
+                if (!awaitSpotifyReceiverConnected()) {
+                    failExplicitSpotifyPlayback(handoff, R.string.spotify_receiver_not_connected)
                     return@launch
                 }
                 if (!ensureSpotifyPlaybackService()) {
@@ -394,7 +417,8 @@ class SpotifyRepository @Inject constructor(
         beginPlaybackStartAttempt()
         try {
             suspendResult {
-                if (!start() || !awaitSpotifyReceiverConnected()) error(context.getString(R.string.spotify_native_start_failed))
+                if (!start()) throw SpotifyStartFailure(receiverStartFailure())
+                if (!awaitSpotifyReceiverConnected()) throw SpotifyStartFailure(R.string.spotify_receiver_not_connected)
                 spotifyWrite { token ->
                     val deviceId = requirePlaybackDevice(token)
                     if (!ensureSpotifyPlaybackService()) error(context.getString(R.string.spotify_background_start_denied))
@@ -405,7 +429,7 @@ class SpotifyRepository @Inject constructor(
                 commitExplicitSpotifyPlayback(handoff)
                 onResult(true)
             }.onFailure { error ->
-                failExplicitSpotifyPlayback(handoff, R.string.spotify_play_failed)
+                failExplicitSpotifyPlayback(handoff, spotifyPlayFailureMessage(error))
                 onResult(false)
             }
         } finally {
@@ -420,7 +444,8 @@ class SpotifyRepository @Inject constructor(
         beginPlaybackStartAttempt()
         try {
             suspendResult {
-                if (!start() || !awaitSpotifyReceiverConnected()) error(context.getString(R.string.spotify_native_start_failed))
+                if (!start()) throw SpotifyStartFailure(receiverStartFailure())
+                if (!awaitSpotifyReceiverConnected()) throw SpotifyStartFailure(R.string.spotify_receiver_not_connected)
                 spotifyWrite { token ->
                     val deviceId = requirePlaybackDevice(token)
                     if (!ensureSpotifyPlaybackService()) error(context.getString(R.string.spotify_background_start_denied))
@@ -430,7 +455,7 @@ class SpotifyRepository @Inject constructor(
             }.onSuccess {
                 commitExplicitSpotifyPlayback(handoff)
             }.onFailure { error ->
-                failExplicitSpotifyPlayback(handoff, R.string.spotify_play_failed)
+                failExplicitSpotifyPlayback(handoff, spotifyPlayFailureMessage(error))
             }
         } finally {
             endPlaybackStartAttempt()
