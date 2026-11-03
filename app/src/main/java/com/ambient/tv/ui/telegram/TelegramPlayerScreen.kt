@@ -7,6 +7,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Pause
@@ -493,13 +494,17 @@ fun TelegramPlayerScreen(
                 com.ambient.tv.ui.common.FullscreenSpinner()
             }
         } else if (selected == null || failure != null) {
-            BrowseStatusPanel(
-                title = stringResource(R.string.telegram_error),
-                body = failure ?: stringResource(R.string.settings_telegram_native_missing),
-                kind = if (failure == null) BrowseStatusKind.INFO else BrowseStatusKind.ERROR,
-                actionLabel = stringResource(R.string.back),
-                onAction = onBack,
-            )
+            // Like the spinner: centred on the whole screen (FLOOD_WAIT countdown, errors).
+            androidx.compose.foundation.layout.Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                BrowseStatusPanel(
+                    title = stringResource(R.string.telegram_error),
+                    body = failure ?: stringResource(R.string.settings_telegram_native_missing),
+                    kind = if (failure == null) BrowseStatusKind.INFO else BrowseStatusKind.ERROR,
+                    actionLabel = stringResource(R.string.back),
+                    onAction = onBack,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
         } else {
             TelegramPlaybackContent(selected, onBack, viewModel::reportFailure,
                 viewModel.repository, viewModel, onOpenChannel)
