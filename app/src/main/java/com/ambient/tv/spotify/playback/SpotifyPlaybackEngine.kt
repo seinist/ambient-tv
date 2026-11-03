@@ -24,6 +24,9 @@ interface SpotifyPlaybackEngine {
 
     /** Enables decoded PCM observation for in-app visualizers when the engine supports it. */
     fun setPcmTapEnabled(enabled: Boolean): Boolean
+
+    /** Signs the running receiver in with an OAuth token (scope "streaming"); false if unsupported. */
+    fun loginWithAccessToken(token: String): Boolean = false
 }
 
 data class SpotifyPlaybackEngineConfig(

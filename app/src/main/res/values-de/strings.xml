@@ -982,6 +982,7 @@
     <string name="spotify_takeover_switch">Zu Spotify wechseln</string>
     <string name="spotify_play_failed">Spotify-Wiedergabe konnte nicht gestartet werden.</string>
     <string name="spotify_receiver_not_connected">Spotify hat sich noch nicht mit diesem Gerät verbunden. Wähle es einmal in der Spotify-App unter „Geräte“ aus.</string>
+    <string name="spotify_relogin_for_native">Für die Wiedergabe direkt in der App bitte in den Spotify-Einstellungen ab- und wieder anmelden.</string>
     <string name="spotify_local_network_missing">Spotify Connect braucht den Zugriff auf das Heimnetz. Erlaube ihn in den Android-Einstellungen.</string>
     <string name="spotify_premium_required">Wiedergabe auf diesem Gerät erfordert Spotify Premium.</string>
     <string name="spotify_seek_failed">Spotify-Suche in der Wiedergabe fehlgeschlagen.</string>

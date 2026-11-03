@@ -982,6 +982,7 @@
     <string name="spotify_takeover_switch">Switch to Spotify</string>
     <string name="spotify_play_failed">Spotify playback could not be started.</string>
     <string name="spotify_receiver_not_connected">Spotify has not connected to this device yet. Select it once in the Spotify app under “Devices”.</string>
+    <string name="spotify_relogin_for_native">To play directly in the app, sign out of Spotify in settings and sign in again.</string>
     <string name="spotify_local_network_missing">Spotify Connect needs local network access. Allow it in Android settings.</string>
     <string name="spotify_premium_required">Playback on this device requires Spotify Premium.</string>
     <string name="spotify_seek_failed">Spotify seek failed.</string>

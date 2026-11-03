@@ -243,6 +243,29 @@ class SpotifyRepository @Inject constructor(
         return withTimeoutOrNull(timeoutMs) { playback.first { it.connected }; true } ?: false
     }
 
+    /**
+     * Native playback without a Connect handoff: the receiver signs in with the app's own OAuth
+     * token. Falls back to waiting for a Spotify app to pick this device (older core, or a login
+     * from before the "streaming" scope was requested).
+     */
+    private suspend fun signInReceiver(): Int? {
+        if (playback.value.connected) return null
+        val nativeLogin = auth.state.value.scopes.contains("streaming")
+        if (nativeLogin) {
+            val token = runCatching { auth.validAccessToken() }.getOrNull()
+            if (token != null) {
+                // The discovery loop starts on a native thread: retry until it accepts the token.
+                for (attempt in 0 until 20) {
+                    if (engine.loginWithAccessToken(token)) break
+                    delay(150L)
+                }
+            }
+        }
+        if (awaitSpotifyReceiverConnected()) return null
+        // Signed in before "streaming" was requested: a new sign-in enables native playback.
+        return if (nativeLogin) R.string.spotify_receiver_not_connected else R.string.spotify_relogin_for_native
+    }
+
     /** The reason a start failed, as a message the user can act on (no provider details). */
     private class SpotifyStartFailure(val messageRes: Int) : IllegalStateException()
 
@@ -381,8 +404,8 @@ class SpotifyRepository @Inject constructor(
                     failExplicitSpotifyPlayback(handoff, receiverStartFailure())
                     return@launch
                 }
-                if (!awaitSpotifyReceiverConnected()) {
-                    failExplicitSpotifyPlayback(handoff, R.string.spotify_receiver_not_connected)
+                signInReceiver()?.let { reason ->
+                    failExplicitSpotifyPlayback(handoff, reason)
                     return@launch
                 }
                 if (!ensureSpotifyPlaybackService()) {
@@ -418,7 +441,7 @@ class SpotifyRepository @Inject constructor(
         try {
             suspendResult {
                 if (!start()) throw SpotifyStartFailure(receiverStartFailure())
-                if (!awaitSpotifyReceiverConnected()) throw SpotifyStartFailure(R.string.spotify_receiver_not_connected)
+                signInReceiver()?.let { throw SpotifyStartFailure(it) }
                 spotifyWrite { token ->
                     val deviceId = requirePlaybackDevice(token)
                     if (!ensureSpotifyPlaybackService()) error(context.getString(R.string.spotify_background_start_denied))
@@ -445,7 +468,7 @@ class SpotifyRepository @Inject constructor(
         try {
             suspendResult {
                 if (!start()) throw SpotifyStartFailure(receiverStartFailure())
-                if (!awaitSpotifyReceiverConnected()) throw SpotifyStartFailure(R.string.spotify_receiver_not_connected)
+                signInReceiver()?.let { throw SpotifyStartFailure(it) }
                 spotifyWrite { token ->
                     val deviceId = requirePlaybackDevice(token)
                     if (!ensureSpotifyPlaybackService()) error(context.getString(R.string.spotify_background_start_denied))

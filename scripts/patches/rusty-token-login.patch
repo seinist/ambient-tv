@@ -1,0 +1,152 @@
+diff --git a/rust/src/lib.rs b/rust/src/lib.rs
+index 5f793b8..558f6d8 100644
+--- a/rust/src/lib.rs
++++ b/rust/src/lib.rs
+@@ -519,6 +519,8 @@ async fn start_discovery_loop(
+     };
+ 
+     info!("Discovery started. Waiting for connection...");
++    let (token_tx, mut token_rx) = tokio::sync::mpsc::unbounded_channel::<String>();
++    *token_login_slot().lock().unwrap_or_else(|poison| poison.into_inner()) = Some(token_tx);
+ 
+     // `Some` while a controller is connected; `None` when idle and discoverable.
+     // Polled concurrently with `discovery.next()` below so a NEW connection (even a
+@@ -566,44 +568,17 @@ async fn start_discovery_loop(
+                     }
+                 };
+             }
++            // Ambient TV: sign in with the app's OAuth token, without a Connect handoff.
++            Some(token) = token_rx.recv() => {
++                info!("Access-token sign-in requested");
++                connect_controller(&mut active, &mut connect_config, &device_id, bitrate,
++                    Credentials::with_access_token(token)).await;
++            }
+             maybe_credentials = discovery.next() => {
+                 match maybe_credentials {
+                     Some(credentials) => {
+                         info!("Connection request received!");
+-                        // Preempt any active session (e.g. a different account taking
+-                        // over). Tear it down, then drain its goodbye off to the side
+-                        // so it doesn't block the new connection. No disconnect callback
+-                        // here — the connected callback inside build_active_session
+-                        // overwrites the UI directly, avoiding an idle flicker.
+-                        if let Some(mut old) = active.take() {
+-                            info!("Preempting active session for the new controller");
+-                            teardown_active_session(&mut old);
+-                            tokio::spawn(old.spirc_task);
+-                        }
+-                        // Re-read per connection so a startup-volume change from settings
+-                        // lands on the next controller without cycling the receiver.
+-                        connect_config.initial_volume = STARTUP_VOLUME.load(Ordering::Relaxed);
+-                        match build_active_session(
+-                            connect_config.clone(),
+-                            device_id.clone(),
+-                            bitrate,
+-                            credentials,
+-                        ).await {
+-                            Ok(session) => {
+-                                info!("Session established");
+-                                active = Some(session);
+-                            }
+-                            Err(e) => {
+-                                error!("Session error: {:?}", e);
+-                                // Make sure we land in a clean idle state if setup
+-                                // failed partway (slots may have been set).
+-                                *spirc_slot().lock().unwrap_or_else(|poison| poison.into_inner()) = None;
+-                                *session_slot().lock().unwrap_or_else(|poison| poison.into_inner()) = None;
+-                                *duck_slot().lock().unwrap_or_else(|poison| poison.into_inner()) = None;
+-                                *player_slot().lock().unwrap_or_else(|poison| poison.into_inner()) = None;
+-                                active = None;
+-                            }
+-                        }
++                        connect_controller(&mut active, &mut connect_config, &device_id, bitrate, credentials).await;
+                     }
+                     None => {
+                         error!("Discovery stream ended unexpectedly");
+@@ -637,10 +612,86 @@ async fn start_discovery_loop(
+         }
+     }
+ 
++    *token_login_slot().lock().unwrap_or_else(|poison| poison.into_inner()) = None;
+     drop(discovery);
+     info!("Discovery loop exited; mDNS advertisement stopped for this receiver");
+ }
+ 
++
++/// Ambient TV: one controller (Connect handoff) or access-token sign-in replaces the active session.
++async fn connect_controller(
++    active: &mut Option<ActiveSession>,
++    connect_config: &mut ConnectConfig,
++    device_id: &str,
++    bitrate: Bitrate,
++    credentials: Credentials,
++) {
++    // Preempt any active session (e.g. a different account taking
++    // over). Tear it down, then drain its goodbye off to the side
++    // so it doesn't block the new connection. No disconnect callback
++    // here — the connected callback inside build_active_session
++    // overwrites the UI directly, avoiding an idle flicker.
++    if let Some(mut old) = active.take() {
++        info!("Preempting active session for the new controller");
++        teardown_active_session(&mut old);
++        tokio::spawn(old.spirc_task);
++    }
++    // Re-read per connection so a startup-volume change from settings
++    // lands on the next controller without cycling the receiver.
++    connect_config.initial_volume = STARTUP_VOLUME.load(Ordering::Relaxed);
++    match build_active_session(
++        connect_config.clone(),
++        device_id.to_string(),
++        bitrate,
++        credentials,
++    ).await {
++        Ok(session) => {
++            info!("Session established");
++            *active = Some(session);
++        }
++        Err(e) => {
++            error!("Session error: {:?}", e);
++            // Make sure we land in a clean idle state if setup
++            // failed partway (slots may have been set).
++            *spirc_slot().lock().unwrap_or_else(|poison| poison.into_inner()) = None;
++            *session_slot().lock().unwrap_or_else(|poison| poison.into_inner()) = None;
++            *duck_slot().lock().unwrap_or_else(|poison| poison.into_inner()) = None;
++            *player_slot().lock().unwrap_or_else(|poison| poison.into_inner()) = None;
++            *active = None;
++        }
++    }
++}
++
++fn token_login_slot() -> &'static Mutex<Option<tokio::sync::mpsc::UnboundedSender<String>>> {
++    static SLOT: OnceLock<Mutex<Option<tokio::sync::mpsc::UnboundedSender<String>>>> = OnceLock::new();
++    SLOT.get_or_init(|| Mutex::new(None))
++}
++
++/// Ambient TV: signs the running receiver in with an OAuth access token (scope "streaming"),
++/// so the app plays natively without first being picked in a Spotify app.
++#[unsafe(no_mangle)]
++pub extern "system" fn Java_dev_rusty_app_NativeBridge_loginWithAccessToken(
++    mut env: JNIEnv,
++    _class: JClass,
++    token_java: JString,
++) -> jni::sys::jboolean {
++    let token: String = match env.get_string(&token_java) {
++        Ok(value) => value.into(),
++        Err(e) => {
++            error!("loginWithAccessToken: failed to read token: {:?}", e);
++            return 0;
++        }
++    };
++    if token.is_empty() { return 0; }
++    match token_login_slot().lock().unwrap_or_else(|poison| poison.into_inner()).as_ref() {
++        Some(tx) if tx.send(token).is_ok() => 1,
++        _ => {
++            info!("loginWithAccessToken: no running receiver");
++            0
++        }
++    }
++}
++
+ /// Sets up one controller connection: builds the session/player/mixer, spawns the
+ /// player-event forwarder, connects via `Spirc::new`, wires the JNI/session/spirc
+ /// slots, and fires the connected callback. Returns the live handles for the

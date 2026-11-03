@@ -137,6 +137,11 @@ class LibrespotPlaybackEngine @Inject constructor(
     }
 
     override fun play(): Boolean = nativeTransport("play") { NativeBridge.play() }
+
+    /** A prebuilt core without the Ambient TV patch has no such symbol: stays Connect-only. */
+    override fun loginWithAccessToken(token: String): Boolean =
+        available && started.get() && try { NativeBridge.loginWithAccessToken(token) }
+            catch (_: UnsatisfiedLinkError) { false }
     override fun pause(): Boolean = nativeTransport("pause") { NativeBridge.pause() }
     override fun next(): Boolean = nativeTransport("next") { NativeBridge.nextTrack() }
     override fun previous(): Boolean = nativeTransport("previous") { NativeBridge.previousTrack() }

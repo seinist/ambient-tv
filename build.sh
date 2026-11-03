@@ -613,6 +613,10 @@ spotify_libs_ready() {
     expected_ref="${RUSTY_REF:-$(external_version SPOTIFY_RUSTY_REF)}"
     [[ -f "$marker" ]] || return 1
     grep -Fx "rusty_ref=${expected_ref}" "$marker" >/dev/null || return 1
+    # A core built before the token sign-in patch is rebuilt where a source build is possible.
+    if ! grep -Fx "token_login=1" "$marker" >/dev/null && command -v cargo-ndk >/dev/null 2>&1; then
+        return 1
+    fi
     for abi in "${SUPPORTED_ABIS[@]}"; do
         local dir="$ROOT_DIR/app/src/main/jniLibs/$abi"
         [[ -s "$dir/libspotify_receiver_core.so" && -s "$dir/libc++_shared.so" ]] || return 1
