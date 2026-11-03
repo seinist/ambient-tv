@@ -7,6 +7,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Pause
@@ -103,6 +104,7 @@ import kotlinx.coroutines.Job
 import androidx.lifecycle.SavedStateHandle
 import com.ambient.tv.data.telegram.telegramMediaIds
 import com.ambient.tv.data.telegram.telegramMediaKey
+import com.ambient.tv.data.telegram.toMediaItem
 import com.ambient.tv.domain.model.MediaItem
 import com.ambient.tv.ui.navigation.Destinations
 import com.ambient.tv.ui.player.NextUpCandidate
@@ -120,8 +122,12 @@ class TelegramPlayerViewModel @Inject constructor(
     private val playbackContext: TelegramPlaybackContext,
     private val savedStateHandle: SavedStateHandle,
 ) : ViewModel() {
-    /** Queue of the page the player was started from; null plays only this post. */
-    val queueToken: Long? = savedStateHandle.get<Long>("queue")?.takeIf { it >= 0L }
+    /**
+     * Queue of the page the player was started from. Opened without one (Home hero, search, a
+     * link), the post's channel becomes the queue, so Next and Next Up still work.
+     */
+    var queueToken: Long? = savedStateHandle.get<Long>("queue")?.takeIf { it >= 0L }
+        private set
     // The post shown now. Next/Previous change it without a new destination, like YouTube.
     private var chatId: Long = savedStateHandle.get<Long>("chatId") ?: 0L
     private var messageId: Int = savedStateHandle.get<Int>("messageId") ?: 0
@@ -268,11 +274,12 @@ class TelegramPlayerViewModel @Inject constructor(
                         show(selected, requestToken)
                         return@launch
                     }
-                    val following = if (direction == 0 || queueToken == null) null else {
+                    val token = queueToken
+                    val following = if (direction == 0 || token == null) null else {
                         val key = telegramMediaKey(targetChat, targetMessage)
-                        if (direction > 0) playbackContext.nextLoaded(queueToken, key)
-                            ?: playbackContext.next(queueToken, key)
-                        else playbackContext.previousLoaded(queueToken, key)
+                        if (direction > 0) playbackContext.nextLoaded(token, key)
+                            ?: playbackContext.next(token, key)
+                        else playbackContext.previousLoaded(token, key)
                     }?.let { telegramMediaIds(it.ratingKey) }
                     if (following == null) {
                         if (direction > 0) {
@@ -363,6 +370,7 @@ class TelegramPlayerViewModel @Inject constructor(
         val token = queueToken?.takeIf { playbackContext.contains(it, key) }
         if (token == null) {
             mutableQueue.value = TelegramQueueState()
+            startChannelQueue(key)
             return
         }
         playbackContext.played(token, key)
@@ -383,6 +391,32 @@ class TelegramPlayerViewModel @Inject constructor(
             }
             if (mutableMedia.value?.mediaKey == key) mutableQueue.value =
                 mutableQueue.value.copy(next = loaded, successorsLoading = false)
+        }
+    }
+
+    /** No page queue: this post's channel, in channel order, continues the playback. */
+    private fun startChannelQueue(key: String) {
+        val (chat, _) = telegramMediaIds(key) ?: return
+        successorJob?.cancel()
+        successorJob = viewModelScope.launch {
+            val section = "channel:$chat"
+            val page = try {
+                repository.browsePage(section)
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Exception) {
+                return@launch
+            }
+            val items = page.items.map(TelegramMedia::toMediaItem)
+            val token = playbackContext.start(
+                scope = "player:$section", origin = items, selected = key,
+                media = page.items.associateBy(TelegramMedia::mediaKey),
+                section = section, cursor = page.nextCursor,
+            ) ?: return@launch
+            if (mutableMedia.value?.mediaKey != key) return@launch
+            queueToken = token
+            savedStateHandle["queue"] = token
+            updateQueue(key)
         }
     }
 
@@ -455,15 +489,22 @@ fun TelegramPlayerScreen(
         val selected = media
         // Loading the post: a spinner, never the "module missing" panel for a moment.
         if (selected == null && failure == null && available) {
-            com.ambient.tv.ui.common.FullscreenSpinner()
+            // FullscreenSpinner is only the indicator: centre it on the screen.
+            androidx.compose.foundation.layout.Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                com.ambient.tv.ui.common.FullscreenSpinner()
+            }
         } else if (selected == null || failure != null) {
-            BrowseStatusPanel(
-                title = stringResource(R.string.telegram_error),
-                body = failure ?: stringResource(R.string.settings_telegram_native_missing),
-                kind = if (failure == null) BrowseStatusKind.INFO else BrowseStatusKind.ERROR,
-                actionLabel = stringResource(R.string.back),
-                onAction = onBack,
-            )
+            // Like the spinner: centred on the whole screen (FLOOD_WAIT countdown, errors).
+            androidx.compose.foundation.layout.Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                BrowseStatusPanel(
+                    title = stringResource(R.string.telegram_error),
+                    body = failure ?: stringResource(R.string.settings_telegram_native_missing),
+                    kind = if (failure == null) BrowseStatusKind.INFO else BrowseStatusKind.ERROR,
+                    actionLabel = stringResource(R.string.back),
+                    onAction = onBack,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
         } else {
             TelegramPlaybackContent(selected, onBack, viewModel::reportFailure,
                 viewModel.repository, viewModel, onOpenChannel)

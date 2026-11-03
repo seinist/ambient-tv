@@ -240,6 +240,17 @@ fun SettingsScreen(
             onPassphrase = { passphrase -> viewModel.importSettings(pending, passphrase) },
         )
     }
+    val diagnosticShareUrl by viewModel.diagnosticShareUrl.collectAsState()
+    diagnosticShareUrl?.let { url ->
+        com.ambient.tv.ui.common.QrCodeDialog(
+            title = stringResource(R.string.diagnostics_share_title),
+            hint = stringResource(R.string.diagnostics_share_hint),
+            payload = url,
+            onDismiss = viewModel::stopDiagnosticShare,
+        ) {
+            TvActionButton(stringResource(R.string.diagnostics_share_stop), viewModel::stopDiagnosticShare)
+        }
+    }
     val diagnosticExportLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.CreateDocument("application/zip"),
     ) { uri -> if (uri != null) viewModel.exportDiagnosticLog(uri) }
@@ -1515,6 +1526,11 @@ fun SettingsScreen(
                                                 val launched = runCatching { diagnosticExportLauncher.launch(viewModel.diagnosticZipName()) }.isSuccess
                                                 if (!launched) viewModel.exportDiagnosticLog(null)
                                             },
+                                        )
+                                        // TV: the saved file is out of reach; offer it on the home network instead.
+                                        TvActionButton(
+                                            text = stringResource(R.string.diagnostics_share_network),
+                                            onClick = viewModel::shareDiagnosticLogOnNetwork,
                                         )
                                         TvActionButton(
                                             text = stringResource(R.string.diagnostics_clear),

@@ -560,10 +560,10 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
     override suspend fun channel(chatId: Long): TelegramChannel? =
         browseMutex.withLock { nativeCall { h ->
             requireAuthorized(h)
-            // The dialog is often already in the catalog. One getChats fallback can locate
-            // an older channel without paging through unrelated subscriptions.
+            // The catalog's first page is loaded once and shared (knownChannels); a separate
+            // getChats per lookup returned the same page and ran into FLOOD_WAIT at start.
             val found = chats.firstOrNull { it.id == chatId && it.isChannel }
-                ?: native.getChats(h).firstOrNull { it.id == chatId && it.isChannel }
+                ?: knownChannels(h, 1).firstOrNull { it.id == chatId }
                 ?: return@nativeCall null
             TelegramChannel(found.id, found.title,
                 thumbnailUrl = preview(h, found.id, 0, true),
@@ -848,10 +848,10 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
     override suspend fun media(chatId: Long, messageId: Int): TelegramMedia? = nativeCall { h ->
         requireAuthorized(h)
         if (chatId in leftChannels) return@nativeCall null
-        // No paging here: browse owns the mutable dialog index under browseMutex. A player or
-        // detail lookup only reads the copy-on-write snapshot, or one getChats fallback.
+        // No paging here. A player or detail lookup reads the catalog, loading its first page
+        // once (shared with browsing) instead of a getChats per post, which hit FLOOD_WAIT.
         val title = (chats.firstOrNull { it.id == chatId }
-            ?: native.getChats(h).firstOrNull { it.id == chatId })?.title ?: "Monogram"
+            ?: knownChannels(h, 1).firstOrNull { it.id == chatId })?.title ?: "Monogram"
         native.getMessage(h, chatId, messageId)?.let { media(h, it, title) }
     }
 

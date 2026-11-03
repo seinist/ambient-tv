@@ -112,6 +112,6 @@ done
 rm -f "$OUT/.spotify-pcm-v39"
 printf 'rusty_ref=%s\n' "$RUSTY_REF" > "$OUT/.spotify-rusty"
 if [ "$RUSTY_SOURCE" = "$(external_version SPOTIFY_RUSTY_COMMIT)" ]; then
-  printf 'token_login=3\n' >> "$OUT/.spotify-rusty"
+  printf 'token_login=4\n' >> "$OUT/.spotify-rusty"
 fi
 echo "Built Spotify core (Rusty ${RUSTY_REF}) under app/src/main/jniLibs."

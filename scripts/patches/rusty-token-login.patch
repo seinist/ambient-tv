@@ -1,5 +1,5 @@
 diff --git a/rust/src/lib.rs b/rust/src/lib.rs
-index 5f793b8..5ee80a9 100644
+index 5f793b8..5da3cb5 100644
 --- a/rust/src/lib.rs
 +++ b/rust/src/lib.rs
 @@ -15,6 +15,7 @@ use jni::sys::{jfloat, jint};
@@ -21,7 +21,27 @@ index 5f793b8..5ee80a9 100644
  
      INIT_ANDROID_CONTEXT.call_once(|| {
          let java_vm = env.get_java_vm().expect("Failed to get JavaVM");
-@@ -519,12 +524,25 @@ async fn start_discovery_loop(
+@@ -364,9 +369,16 @@ pub extern "system" fn Java_dev_rusty_app_NativeBridge_initLogger(
+     _env: JNIEnv,
+     _class: JClass,
+ ) {
+-    android_logger::init_once(
+-        Config::default().with_max_level(LevelFilter::Info).with_tag("RustSpotify"),
+-    );
++    // Ambient TV: warnings and errors also reach the app's diagnostic log (why a track was
++    // skipped, a refused sign-in ...), not only Android's system log.
++    static LOGGER_INIT: Once = Once::new();
++    LOGGER_INIT.call_once(|| {
++        let inner = android_logger::AndroidLogger::new(
++            Config::default().with_max_level(LevelFilter::Info).with_tag("RustSpotify"));
++        if log::set_boxed_logger(Box::new(ForwardingLogger { inner })).is_ok() {
++            log::set_max_level(LevelFilter::Info);
++        }
++    });
+     INIT_PANIC_HOOK.call_once(|| {
+         std::panic::set_hook(Box::new(|panic_info| {
+             error!("Rust panic: {}\nBacktrace:\n{:?}", panic_info, Backtrace::force_capture());
+@@ -519,12 +531,25 @@ async fn start_discovery_loop(
      };
  
      info!("Discovery started. Waiting for connection...");
@@ -48,7 +68,7 @@ index 5f793b8..5ee80a9 100644
  
      loop {
          tokio::select! {
-@@ -566,44 +584,17 @@ async fn start_discovery_loop(
+@@ -566,44 +591,17 @@ async fn start_discovery_loop(
                      }
                  };
              }
@@ -100,7 +120,7 @@ index 5f793b8..5ee80a9 100644
                      }
                      None => {
                          error!("Discovery stream ended unexpectedly");
-@@ -637,10 +628,102 @@ async fn start_discovery_loop(
+@@ -637,10 +635,102 @@ async fn start_discovery_loop(
          }
      }
  
@@ -203,7 +223,7 @@ index 5f793b8..5ee80a9 100644
  /// Sets up one controller connection: builds the session/player/mixer, spawns the
  /// player-event forwarder, connects via `Spirc::new`, wires the JNI/session/spirc
  /// slots, and fires the connected callback. Returns the live handles for the
-@@ -652,17 +735,21 @@ async fn build_active_session(
+@@ -652,17 +742,21 @@ async fn build_active_session(
      device_id: String,
      bitrate: Bitrate,
      credentials: Credentials,
@@ -227,11 +247,33 @@ index 5f793b8..5ee80a9 100644
  
      let crossfade = Duration::from_millis(u64::from(CROSSFADE_MS.load(Ordering::Relaxed)));
      let player_config = PlayerConfig {
-@@ -1084,6 +1171,20 @@ fn send_native_receiver_connected(username: &str) {
+@@ -1084,6 +1178,42 @@ fn send_native_receiver_connected(username: &str) {
  /// logout, or the idle timeout) and the receiver has returned to idle/discoverable.
  /// Mirrors `send_native_receiver_connected` but carries no payload. NOT fired on a
  /// takeover — there the following connected callback updates the UI directly.
 +/// Ambient TV: a failed sign-in (e.g. a rejected access token) is reported to the app's log.
++struct ForwardingLogger { inner: android_logger::AndroidLogger }
++
++impl log::Log for ForwardingLogger {
++    fn enabled(&self, metadata: &log::Metadata) -> bool { self.inner.enabled(metadata) }
++    fn log(&self, record: &log::Record) {
++        self.inner.log(record);
++        if record.level() <= log::Level::Warn && self.inner.enabled(record.metadata()) {
++            forward_native_log(&format!("{} {}: {}", record.level(), record.target(), record.args()));
++        }
++    }
++    fn flush(&self) { self.inner.flush() }
++}
++
++/// Never logs itself (that would recurse through the logger).
++fn forward_native_log(message: &str) {
++    let (Some(java_vm), Some(service_class)) = (JAVA_VM.get(), SPOTIFY_SERVICE_CLASS.get()) else { return };
++    let Ok(mut env) = java_vm.attach_current_thread() else { return };
++    let Ok(text) = env.new_string(message) else { return };
++    let _ = env.call_static_method(service_class, "onNativeLog", "(Ljava/lang/String;)V", &[JValue::Object(&text)]);
++    if let Ok(true) = env.exception_check() { let _ = env.exception_clear(); }
++}
++
 +fn send_native_session_error(message: &str) {
 +    let (Some(java_vm), Some(service_class)) = (JAVA_VM.get(), SPOTIFY_SERVICE_CLASS.get()) else { return };
 +    let Ok(mut env) = java_vm.attach_current_thread() else { return };

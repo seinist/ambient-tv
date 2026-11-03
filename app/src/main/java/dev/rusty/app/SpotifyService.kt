@@ -18,6 +18,10 @@ class SpotifyService {
         /** Ambient TV patch: why a sign-in (Connect handoff or access token) failed. */
         @JvmStatic fun onNativeSessionError(message: String?) =
             com.ambient.tv.diagnostics.DiagnosticLog.warn("spotify", "native session failed: $message")
+        /** Ambient TV patch: the core's warnings and errors (e.g. why a track cannot be loaded). */
+        @JvmStatic fun onNativeLog(message: String?) {
+            if (!message.isNullOrBlank()) com.ambient.tv.diagnostics.DiagnosticLog.warn("spotify-native", message.take(600))
+        }
         @JvmStatic fun onNativeAccessToken(token: String?, expiresInSecs: Int) = LibrespotNativeStateBus.token(token)
 
         /** Visualizer PCM from [dev.rusty.app.audio.PcmTap]: mono f32, 44.1 kHz. */
@@ -37,6 +41,11 @@ class SpotifyService {
             coverUrl: String?,
             trackId: String?,
             autoAdvanced: Boolean = false,
-        ) = LibrespotNativeStateBus.playback(playbackState, title, artist, elapsedMs, durationMs, queueTitle, queueArtist, coverUrl, trackId)
+        ) {
+            // A track the core could not load is skipped: keep a trace of which one.
+            if (playbackState == "UNAVAILABLE") com.ambient.tv.diagnostics.DiagnosticLog.warn("spotify",
+                "track unavailable: ${trackId.orEmpty()} ${title.orEmpty()}")
+            LibrespotNativeStateBus.playback(playbackState, title, artist, elapsedMs, durationMs, queueTitle, queueArtist, coverUrl, trackId)
+        }
     }
 }

@@ -138,7 +138,7 @@ internal class SpotifyQrLoginServer private constructor(
          * data are skipped: a QR code pointing at a tunnel address is unreachable from the phone.
          */
         @Suppress("DEPRECATION")
-        private fun lanAddress(context: Context): InetAddress? {
+        internal fun lanAddress(context: Context): InetAddress? {
             val connectivity = context.getSystemService(ConnectivityManager::class.java)
             val lan = runCatching {
                 connectivity?.allNetworks.orEmpty().firstNotNullOfOrNull { network ->

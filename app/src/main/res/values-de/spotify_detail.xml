@@ -10,4 +10,10 @@
     </plurals>
     <string name="settings_fanart_api_key">fanart.tv-API-Key (optional)</string>
     <string name="settings_fanart_api_key_hint">Breite Hintergründe für Spotify-Künstlerseiten von fanart.tv. Kostenloser Key unter fanart.tv/get-an-api-key. Ohne Key wird die Server-Bibliothek oder das unscharfe Cover genutzt.</string>
+    <string name="diagnostics_share_network">Im Netzwerk teilen</string>
+    <string name="diagnostics_share_title">Log herunterladen</string>
+    <string name="diagnostics_share_hint">Öffne diese Adresse auf einem Handy oder PC im selben Netzwerk (oder scanne den Code), um das Log herunterzuladen. Sie gilt 10 Minuten oder bis du dieses Fenster schließt.</string>
+    <string name="diagnostics_share_stop">Teilen beenden</string>
+    <string name="diagnostics_share_ready">Das Log kann im Heimnetz heruntergeladen werden.</string>
+    <string name="diagnostics_share_no_network">Kein WLAN/Ethernet: das Log kann nicht geteilt werden.</string>
 </resources>
