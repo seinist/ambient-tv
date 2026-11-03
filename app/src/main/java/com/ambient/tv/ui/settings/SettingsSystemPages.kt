@@ -773,7 +773,7 @@ internal fun LazyListScope.settingsSystemCategoryItems(
                             modifier = Modifier.fillMaxWidth(),
                         )
                         Text(stringResource(R.string.settings_spotify_client_override_hint), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        Text(stringResource(R.string.settings_spotify_redirect), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text(stringResource(R.string.settings_spotify_redirect, com.ambient.tv.spotify.SpotifyAuthManager.REDIRECT_URI), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         com.ambient.tv.BuildConfig.SPOTIFY_QR_REDIRECT_URI.takeIf(String::isNotBlank)?.let { qrRedirect ->
                             Text(stringResource(R.string.settings_spotify_qr_redirect, qrRedirect), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         }

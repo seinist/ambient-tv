@@ -890,7 +890,7 @@
     <string name="settings_passthrough_visualizer_hint">Off during direct audio output.</string>
     <string name="settings_spotify_web_title">Spotify account</string>
     <string name="settings_spotify_web_subtitle">Sign in to Spotify to access your library and playlists.</string>
-    <string name="settings_spotify_redirect">The return address is built in and must be entered the same way in the Spotify app.</string>
+    <string name="settings_spotify_redirect">Redirect URI in the Spotify app (developer.spotify.com, exactly): %1$s</string>
     <string name="settings_spotify_audio_quality">Audio quality</string>
     <string name="settings_spotify_audio_quality_subtitle">Music stream quality</string>
     <string name="settings_spotify_visualization">Visualization</string>
