@@ -658,6 +658,34 @@ class SettingsViewModel @Inject constructor(
         }
     }
 
+    private var diagnosticShare: com.ambient.tv.diagnostics.DiagnosticShareServer? = null
+    private val mutableDiagnosticShareUrl = kotlinx.coroutines.flow.MutableStateFlow<String?>(null)
+    /** Address on the home network where the log ZIP can be downloaded (TV without a file picker). */
+    val diagnosticShareUrl = mutableDiagnosticShareUrl.asStateFlow()
+
+    fun shareDiagnosticLogOnNetwork() {
+        stopDiagnosticShare()
+        val ticket = beginFeedback("diagnostics:share")
+        viewModelScope.launch {
+            val share = withContext(Dispatchers.IO) {
+                runCatching { com.ambient.tv.diagnostics.DiagnosticShareServer.start(context) }.getOrNull()
+            }
+            if (share == null) {
+                finishFeedback(ticket, SettingsCategory.DIAGNOSTICS, R.string.diagnostics_share_no_network, false)
+                return@launch
+            }
+            diagnosticShare = share
+            mutableDiagnosticShareUrl.value = share.url
+            finishFeedback(ticket, SettingsCategory.DIAGNOSTICS, R.string.diagnostics_share_ready, true)
+        }
+    }
+
+    fun stopDiagnosticShare() {
+        diagnosticShare?.stop()
+        diagnosticShare = null
+        mutableDiagnosticShareUrl.value = null
+    }
+
     fun clearDiagnosticLog() {
         val ticket = beginFeedback("diagnostics:clear")
         viewModelScope.launch {
@@ -3531,6 +3559,7 @@ class SettingsViewModel @Inject constructor(
     }
 
     override fun onCleared() {
+        stopDiagnosticShare()
         youtubeSignInWatchJob?.cancel()
         linkingJob?.cancel()
         listOf("plex", "jellyfin", "emby", "youtube").forEach { AppNotifications.store.cancelWorking("login:$it") }
