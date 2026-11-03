@@ -25,6 +25,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.focusRequester
@@ -601,11 +602,18 @@ private fun TelegramPlaybackContent(
     val panelNavigation = rememberPlayerPanelNavigation()
     var panel by panelNavigation
 
+    // Same rule as the other players: Back stops playback, except where playback may continue
+    // in the background (phone audio, or "Back minimizes" switched on).
+    val handheldUi = com.ambient.tv.ui.mobile.LocalHandheldUi.current
+    val backMinimizes = com.ambient.tv.ui.player.rememberBackMinimizesPlayback()
     BackHandler(enabled = panel == UnifiedPlayerPanel.NONE) {
-        if (controlsVisible) {
+        if (controlsVisible && !handheldUi) {
             controlsVisible = false
             runCatching { focus.requestFocus() }
-        } else onBack()
+        } else if (com.ambient.tv.ui.player.backLeavesPlaybackRunning(
+                audioOnly = media.kind == TelegramMediaKind.AUDIO, handheld = handheldUi,
+                minimizeOnBack = backMinimizes())) onBack()
+        else BackgroundPlaybackSession.stop()
     }
     PlayerControlsAutoHide(controlsVisible, snapshot.playing,
         panel != UnifiedPlayerPanel.NONE) { shown -> controlsVisible = shown }
@@ -670,16 +678,20 @@ private fun TelegramPlaybackContent(
                 }
             }
         }
+        var surfaceFocused by remember { mutableStateOf(false) }
         Box(
             Modifier.fillMaxSize()
                 // The persistent Media3 SurfaceView is rendered beneath this navigation
                 // destination. Opaque player chrome would otherwise hide the video.
                 .background(if (media.kind == TelegramMediaKind.VIDEO) Color.Transparent else Color.Black)
                 .focusRequester(focus)
+                .onFocusChanged { surfaceFocused = it.isFocused }
                 .onPreviewKeyEvent { event ->
                     if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
                     when (event.key) {
-                        Key.Enter, Key.NumPadEnter, Key.DirectionCenter -> {
+                        // Only while the player surface itself has focus: OK on an OSD button
+                        // (settings, next, channel ...) belongs to that button, not to pause.
+                        Key.Enter, Key.NumPadEnter, Key.DirectionCenter -> if (!surfaceFocused) false else {
                             if (controlsVisible) BackgroundPlaybackSession.userToggle()
                             else { controlsVisible = true; osd.reveal() }
                             true
