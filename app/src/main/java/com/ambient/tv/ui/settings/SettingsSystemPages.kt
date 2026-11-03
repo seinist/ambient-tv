@@ -938,6 +938,12 @@ internal fun LazyListScope.settingsSystemCategoryItems(
                             checked = uiState.youtubeAutoplayNextEnabled,
                             onCheckedChange = viewModel::onYoutubeAutoplayNextChanged,
                         )
+                        TvSettingRow(
+                            title = stringResource(R.string.settings_youtube_subtitles),
+                            body = stringResource(R.string.settings_youtube_subtitles_hint),
+                            checked = uiState.youtubeSubtitlesEnabled,
+                            onCheckedChange = viewModel::onYoutubeSubtitlesChanged,
+                        )
                     }
                 }
                 item(key = "youtube-menu-section") { SettingsSubheader(stringResource(R.string.settings_system_menu_start)) }

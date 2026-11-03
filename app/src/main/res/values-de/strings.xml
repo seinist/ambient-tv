@@ -789,6 +789,8 @@
     <string name="settings_youtube_enable">SmartTube aktivieren</string>
     <string name="settings_youtube_enable_hint">Zeigt SmartTube in Navigation und Suche.</string>
     <string name="settings_youtube_autoplay_next">Nächstes Video automatisch abspielen</string>
+    <string name="settings_youtube_subtitles">Untertitel anzeigen</string>
+    <string name="settings_youtube_subtitles_hint">Nur für SmartTube, unabhängig von der allgemeinen Untertitel-Einstellung. Zeigt Untertitel in deiner Sprache, wenn das Video welche hat. Im Player-Panel lassen sie sich pro Video weiter umschalten.</string>
     <string name="settings_youtube_autoplay_next_hint">Danach das nächste empfohlene Video abspielen.</string>
     <string name="youtube_media_selection_title">Beim Auswählen eines Videos</string>
     <string name="youtube_media_selection_hint">Gilt nur für SmartTube.</string>

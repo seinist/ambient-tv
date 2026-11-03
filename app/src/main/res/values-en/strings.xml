@@ -787,6 +787,8 @@
     <string name="settings_youtube_enable">Enable SmartTube</string>
     <string name="settings_youtube_enable_hint">Shows SmartTube in navigation and search.</string>
     <string name="settings_youtube_autoplay_next">Automatically play next video</string>
+    <string name="settings_youtube_subtitles">Show subtitles</string>
+    <string name="settings_youtube_subtitles_hint">SmartTube only, independent of the app-wide subtitle setting. Shows captions in your language when the video has them. The player panel can still switch them per video.</string>
     <string name="settings_youtube_autoplay_next_hint">Play the next recommended video.</string>
     <string name="youtube_media_selection_title">When selecting a video</string>
     <string name="youtube_media_selection_hint">SmartTube only.</string>

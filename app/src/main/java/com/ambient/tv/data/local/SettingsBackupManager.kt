@@ -214,6 +214,7 @@ data class SettingsBackup(
     val mpvDebandEnabled: Boolean = true,
     val vlcScalingFilterKey: String = "bilinear",
     val youtubeAutoplayNextEnabled: Boolean = false,
+    val youtubeSubtitlesEnabled: Boolean = true,
     val youtubeMediaSelectionBehaviorKey: String = MediaSelectionPreferences.PLAY,
     val telegramMediaSelectionBehaviorKey: String = MediaSelectionPreferences.DETAILS,
     val introSkipMode: String = "button",
@@ -532,6 +533,7 @@ class SettingsBackupManager @Inject constructor(
             mpvDebandEnabled = preferences.mpvDebandEnabled,
             vlcScalingFilterKey = preferences.vlcScalingFilterKey,
             youtubeAutoplayNextEnabled = preferences.youtubeAutoplayNextEnabled,
+            youtubeSubtitlesEnabled = preferences.youtubeSubtitlesEnabled,
             youtubeMediaSelectionBehaviorKey = preferences.youtubeMediaSelectionBehaviorKey,
             telegramMediaSelectionBehaviorKey = preferences.telegramMediaSelectionBehaviorKey,
             introSkipMode = preferences.introSkipMode,
@@ -932,6 +934,7 @@ class SettingsBackupManager @Inject constructor(
             preferences.scopedVideoSettings = restorableScopedVideoSettings(backup.scopedVideoSettings)
         }
         preferences.youtubeAutoplayNextEnabled = backup.youtubeAutoplayNextEnabled
+        preferences.youtubeSubtitlesEnabled = backup.youtubeSubtitlesEnabled
         preferences.youtubeMediaSelectionBehaviorKey = backup.youtubeMediaSelectionBehaviorKey
         preferences.telegramMediaSelectionBehaviorKey = backup.telegramMediaSelectionBehaviorKey
         preferences.introSkipMode = backup.introSkipMode
