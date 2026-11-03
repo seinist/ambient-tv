@@ -1,17 +1,54 @@
 diff --git a/rust/src/lib.rs b/rust/src/lib.rs
-index 5f793b8..540e966 100644
+index 5f793b8..5ee80a9 100644
 --- a/rust/src/lib.rs
 +++ b/rust/src/lib.rs
-@@ -519,6 +519,8 @@ async fn start_discovery_loop(
+@@ -15,6 +15,7 @@ use jni::sys::{jfloat, jint};
+ use librespot::core::{Session, SessionConfig, SpotifyUri, FileId};
+ use librespot::core::config::DeviceType;
+ use librespot::core::authentication::Credentials;
++use librespot::core::cache::Cache;
+ use librespot::connect::{ConnectConfig, Spirc};
+ use librespot::playback::config::{PlayerConfig, Bitrate};
+ use librespot::playback::player::{Player, PlayerEvent, PlayerEventChannel};
+@@ -314,6 +315,10 @@ pub extern "system" fn Java_dev_rusty_app_NativeBridge_initAndroidContext(
+     env::set_var("TMPDIR", &cache_dir);
+     env::set_var("TEMP", &cache_dir);
+     env::set_var("TMP", &cache_dir);
++    // Ambient TV: reusable credentials live in the app's private files dir (cache can be wiped).
++    let files_dir = std::path::Path::new(&cache_dir).parent()
++        .map(|parent| parent.join("files").join("spotify-credentials"));
++    if let Some(dir) = files_dir { let _ = CREDENTIALS_DIR.set(dir); }
+ 
+     INIT_ANDROID_CONTEXT.call_once(|| {
+         let java_vm = env.get_java_vm().expect("Failed to get JavaVM");
+@@ -519,12 +524,25 @@ async fn start_discovery_loop(
      };
  
      info!("Discovery started. Waiting for connection...");
-+    let (token_tx, mut token_rx) = tokio::sync::mpsc::unbounded_channel::<(String, Option<String>)>();
-+    *token_login_slot().lock().unwrap_or_else(|poison| poison.into_inner()) = Some(token_tx);
- 
+-
      // `Some` while a controller is connected; `None` when idle and discoverable.
      // Polled concurrently with `discovery.next()` below so a NEW connection (even a
-@@ -566,44 +568,17 @@ async fn start_discovery_loop(
+     // different account) preempts the current session instead of being stuck behind
+     // it — the bug this whole restructure fixes.
+     let mut active: Option<ActiveSession> = None;
++    let (token_tx, mut token_rx) = tokio::sync::mpsc::unbounded_channel::<(String, Option<String>)>();
++    *token_login_slot().lock().unwrap_or_else(|poison| poison.into_inner()) = Some(token_tx);
++
++    // Ambient TV: a device picked once in a Spotify app signs in by itself from then on.
++    if let Some(stored) = credentials_cache().and_then(|cache| cache.credentials()) {
++        info!("Signing in with stored credentials");
++        connect_controller(&mut active, &mut connect_config, &device_id, bitrate, stored, None).await;
++        if active.is_none() {
++            // Revoked or expired: forget them; the next Connect handoff stores fresh ones.
++            if let Some(dir) = CREDENTIALS_DIR.get() {
++                let _ = std::fs::remove_file(dir.join("credentials.json"));
++            }
++        }
++    }
+ 
+     loop {
+         tokio::select! {
+@@ -566,44 +584,17 @@ async fn start_discovery_loop(
                      }
                  };
              }
@@ -63,7 +100,7 @@ index 5f793b8..540e966 100644
                      }
                      None => {
                          error!("Discovery stream ended unexpectedly");
-@@ -637,10 +612,92 @@ async fn start_discovery_loop(
+@@ -637,10 +628,102 @@ async fn start_discovery_loop(
          }
      }
  
@@ -120,6 +157,16 @@ index 5f793b8..540e966 100644
 +    }
 +}
 +
++static CREDENTIALS_DIR: OnceLock<std::path::PathBuf> = OnceLock::new();
++
++fn credentials_cache() -> Option<Cache> {
++    let dir = CREDENTIALS_DIR.get()?;
++    match Cache::new(Some(dir), None, None, None) {
++        Ok(cache) => Some(cache),
++        Err(e) => { error!("Credential cache unavailable: {:?}", e); None }
++    }
++}
++
 +fn token_login_slot() -> &'static Mutex<Option<tokio::sync::mpsc::UnboundedSender<(String, Option<String>)>>> {
 +    static SLOT: OnceLock<Mutex<Option<tokio::sync::mpsc::UnboundedSender<(String, Option<String>)>>>> = OnceLock::new();
 +    SLOT.get_or_init(|| Mutex::new(None))
@@ -156,7 +203,7 @@ index 5f793b8..540e966 100644
  /// Sets up one controller connection: builds the session/player/mixer, spawns the
  /// player-event forwarder, connects via `Spirc::new`, wires the JNI/session/spirc
  /// slots, and fires the connected callback. Returns the live handles for the
-@@ -652,10 +709,12 @@ async fn build_active_session(
+@@ -652,17 +735,21 @@ async fn build_active_session(
      device_id: String,
      bitrate: Bitrate,
      credentials: Credentials,
@@ -170,7 +217,17 @@ index 5f793b8..540e966 100644
          // 0.8: autoplay moved here from ConnectConfig. Preserve prior autoplay: true.
          autoplay: Some(true),
          ..SessionConfig::default()
-@@ -1084,6 +1143,20 @@ fn send_native_receiver_connected(username: &str) {
+     };
+     // 0.8: build the Session but DO NOT connect here. Spirc::new connects internally
+     // (it calls session.connect(credentials, true)); connecting twice errors.
+-    let session = Session::new(session_config, None);
++    // Ambient TV: with a cache, librespot stores the reusable credentials of a successful
++    // sign-in (e.g. the one-time Connect handoff) for the next start.
++    let session = Session::new(session_config, credentials_cache());
+ 
+     let crossfade = Duration::from_millis(u64::from(CROSSFADE_MS.load(Ordering::Relaxed)));
+     let player_config = PlayerConfig {
+@@ -1084,6 +1171,20 @@ fn send_native_receiver_connected(username: &str) {
  /// logout, or the idle timeout) and the receiver has returned to idle/discoverable.
  /// Mirrors `send_native_receiver_connected` but carries no payload. NOT fired on a
  /// takeover — there the following connected callback updates the UI directly.
