@@ -602,11 +602,18 @@ private fun TelegramPlaybackContent(
     val panelNavigation = rememberPlayerPanelNavigation()
     var panel by panelNavigation
 
+    // Same rule as the other players: Back stops playback, except where playback may continue
+    // in the background (phone audio, or "Back minimizes" switched on).
+    val handheldUi = com.ambient.tv.ui.mobile.LocalHandheldUi.current
+    val backMinimizes = com.ambient.tv.ui.player.rememberBackMinimizesPlayback()
     BackHandler(enabled = panel == UnifiedPlayerPanel.NONE) {
-        if (controlsVisible) {
+        if (controlsVisible && !handheldUi) {
             controlsVisible = false
             runCatching { focus.requestFocus() }
-        } else onBack()
+        } else if (com.ambient.tv.ui.player.backLeavesPlaybackRunning(
+                audioOnly = media.kind == TelegramMediaKind.AUDIO, handheld = handheldUi,
+                minimizeOnBack = backMinimizes())) onBack()
+        else BackgroundPlaybackSession.stop()
     }
     PlayerControlsAutoHide(controlsVisible, snapshot.playing,
         panel != UnifiedPlayerPanel.NONE) { shown -> controlsVisible = shown }
