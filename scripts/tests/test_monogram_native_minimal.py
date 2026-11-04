@@ -72,8 +72,17 @@ class MinimalMonogramTests(unittest.TestCase):
         workflow = workflow_file.read_text() if workflow_file.is_file() else ""
 
         for forbidden in ("MONOGRAM_API_ID", "MONOGRAM_API_HASH"):
-            self.assertNotIn(forbidden, gradle)
+            # Public builds and CI never embed Telegram credentials. The only build-time path is
+            # the opt-in private key file (build.sh PRIVATE_KEYS), empty unless a file is passed.
             self.assertNotIn(forbidden, workflow)
+            self.assertNotIn(f'"{forbidden}" to', gradle)
+            self.assertNotIn(f"-P{forbidden}", gradle)
+        self.assertIn('findProperty("privateKeysFile")', gradle)
+        self.assertIn("privateKeys[name].orEmpty()", gradle)
+        gitignore = (ROOT / ".gitignore").read_text()
+        self.assertIn("/private-keys.env", gitignore)
+        example = (ROOT / "private-keys.env.example").read_text()
+        self.assertIn("MONOGRAM_API_HASH=\n", example)
         self.assertIn("tokenStore.monogramCredentials()", backend)
         self.assertIn("TokenStore::class.java", repository)
         self.assertIn("@EncryptedPrefs private val prefs", token_store)
