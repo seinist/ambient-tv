@@ -50,6 +50,8 @@ class YouTubeContentCache() {
     }
     private val entries = LinkedHashMap<String, List<YouTubeRow>>(16, 0.75f, true)
     private val details = LinkedHashMap<String, YouTubeMetadata>(16, .75f, true)
+    /** Server order of the last completed load per key, adopted when the key is opened again. */
+    private val freshOrder = HashMap<String, List<YouTubeRow>>()
     private var disk: BrowseDiskStore? = null
     private var scopeResolver: (suspend () -> String)? = null
     @Volatile private var source: String? = null
@@ -111,6 +113,7 @@ class YouTubeContentCache() {
         // Persist the server's current ordering for the next cold start; the active view
         // uses stable ordering until the user leaves, avoiding a reflow under focus.
         persist(key, incoming, expected)
+        freshOrder[key] = incoming
         return rows
     }
 
@@ -161,9 +164,23 @@ class YouTubeContentCache() {
         }
     }
 
+    /**
+     * Start of a new visit: the rows take the server's order of the last completed load. Without
+     * this, new videos (subscriptions) stayed appended at the end of the old order all session.
+     */
+    @Synchronized fun adoptFreshOrder(key: String) {
+        freshOrder.remove(key)?.let { storeRows(key, it) }
+    }
+
+    /** Drops [key] from memory (not from disk) and returns what was there. */
+    @Synchronized fun forget(key: String): List<YouTubeRow>? {
+        freshOrder.remove(key)
+        return entries.remove(key)
+    }
+
     @Synchronized fun clear() {
         generation++
-        entries.clear(); details.clear()
+        entries.clear(); details.clear(); freshOrder.clear()
         source?.let { disk?.remove(it) }
         source = null
     }

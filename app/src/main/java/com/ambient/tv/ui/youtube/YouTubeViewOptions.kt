@@ -4,7 +4,11 @@ import com.ambient.tv.youtube.YouTubeItem
 import com.ambient.tv.youtube.YouTubeRow
 
 enum class YouTubeSort { DEFAULT, TITLE, DURATION }
-enum class YouTubeFilter { ALL, UNWATCHED, IN_PROGRESS, LIVE, SHORTS }
+enum class YouTubeFilter(val maxAgeMs: Long? = null) {
+    ALL, UNWATCHED, IN_PROGRESS, LIVE, SHORTS,
+    /** Published within the last day/week/month/year; videos without a known date are hidden. */
+    TODAY(86_400_000L), WEEK(7 * 86_400_000L), MONTH(31 * 86_400_000L), YEAR(366 * 86_400_000L),
+}
 
 /** Channel tiles have no watch status or video flags. A channel's uploads still do. */
 internal fun youtubeVideoFiltersAvailable(rows: List<YouTubeRow>): Boolean =
@@ -23,6 +27,7 @@ internal fun applyYouTubeViewOptions(
     sort: YouTubeSort,
     filter: YouTubeFilter,
     descending: Boolean = sort == YouTubeSort.DURATION,
+    nowMs: Long = System.currentTimeMillis(),
 ): List<YouTubeRow> {
     val effectiveSort = youtubeEffectiveSort(rows, sort)
     return rows.mapNotNull { row ->
@@ -33,6 +38,8 @@ internal fun applyYouTubeViewOptions(
                 YouTubeFilter.IN_PROGRESS -> item.percentWatched in 1..99
                 YouTubeFilter.LIVE -> item.isLive || item.isUpcoming
                 YouTubeFilter.SHORTS -> item.isShorts
+                YouTubeFilter.TODAY, YouTubeFilter.WEEK, YouTubeFilter.MONTH, YouTubeFilter.YEAR ->
+                    item.publishedAtMs?.let { nowMs - it <= filter.maxAgeMs!! } == true
             }
         }
         val sorted = when (effectiveSort) {

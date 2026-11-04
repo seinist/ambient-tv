@@ -19,6 +19,10 @@ data class YouTubeItem(
     val scheduledStartMs: Long? = null,
     /** Provider-reported new-content hint on subscribed channels; not an online or live status. */
     val hasNewContent: Boolean = false,
+    /** YouTube's own publish label ("vor 3 Tagen"), shown as is. */
+    val publishedText: String? = null,
+    /** Publish time for the time filters: exact when YouTube gives it, else from [publishedText]. */
+    val publishedAtMs: Long? = null,
 ) {
     /** Channel tiles carry [youtubeChannelKey] as videoId, so rows, focus and paging keep one key. */
     val isChannel: Boolean get() = youtubeChannelIdOf(videoId) != null
@@ -151,3 +155,30 @@ fun youtubeChannelIdInBrowseParams(params: String): String? = runCatching {
     val bytes = java.util.Base64.getDecoder().decode(base64.padEnd((base64.length + 3) / 4 * 4, '='))
     CHANNEL_ID_IN_PARAMS.find(String(bytes, Charsets.ISO_8859_1))?.value
 }.getOrNull()
+
+private val RELATIVE_AGE = Regex(
+    """(\d+)\s*(sekunde|second|minute|min|stunde|hour|tag|day|woche|week|monat|month|jahr|year)""",
+    RegexOption.IGNORE_CASE,
+)
+
+/**
+ * Publish time from YouTube's relative label ("3 days ago", "vor 2 Wochen", "Streamed 5 hours
+ * ago"), English or German; months and years are approximate. Null when nothing is recognised.
+ */
+fun youtubePublishedAtMs(text: String?, nowMs: Long = System.currentTimeMillis()): Long? {
+    val label = text?.lowercase()?.takeIf(String::isNotBlank) ?: return null
+    if ("gestern" in label || "yesterday" in label) return nowMs - 86_400_000L
+    val match = RELATIVE_AGE.find(label) ?: return null
+    val count = match.groupValues[1].toLongOrNull() ?: return null
+    val unit = when (match.groupValues[2]) {
+        "sekunde", "second" -> 1_000L
+        "minute", "min" -> 60_000L
+        "stunde", "hour" -> 3_600_000L
+        "tag", "day" -> 86_400_000L
+        "woche", "week" -> 7 * 86_400_000L
+        "monat", "month" -> 30 * 86_400_000L
+        else -> 365 * 86_400_000L
+    }
+    return nowMs - count * unit
+}
+

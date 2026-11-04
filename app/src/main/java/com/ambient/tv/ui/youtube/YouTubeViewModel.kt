@@ -679,9 +679,18 @@ class YouTubeViewModel @Inject constructor(
         // Re-entering a pinned visit (e.g. back from the player) keeps its tiles exactly.
         val keepVisible = !manual && pinned(requestedKey)
         val previousRows = refreshSnapshot(requestedKey, preserveExtent || keepVisible)
+        // First opening since the app started: the cache is from an earlier run. Show loading
+        // and then the fresh list, not the old list followed by a completely different one.
+        val coldOpen = !keepVisible && previousRows.isEmpty() && YouTubeFreshThisRun.first(requestedKey)
         val generation = beginContentLoad()
         resetPaging(null)
-        if (!keepVisible) showCachedContent(requestedKey, previousRows)
+        if (coldOpen) {
+            displayedContentKey = requestedKey
+            _uiState.value = _uiState.value.copy(loading = true, error = null, rows = emptyList())
+        } else if (!keepVisible) {
+            contentCache.adoptFreshOrder(requestedKey)
+            showCachedContent(requestedKey, previousRows)
+        }
         contentJob = viewModelScope.launch {
             try {
                 contentCache.restore()
@@ -711,6 +720,8 @@ class YouTubeViewModel @Inject constructor(
                 }
                 val cacheKey = "feed:${selectedFeed.key}"
                 val retainedRows = previousRows.takeIf { selectedFeed == feed }.orEmpty()
+                // Kept only to fall back to when the cold-start load fails.
+                val coldStale = if (coldOpen && cacheKey == requestedKey && retainedRows.isEmpty()) contentCache.forget(cacheKey) else null
                 if (!(keepVisible && cacheKey == requestedKey && !explicit && pinned(cacheKey))) {
                     showCachedContent(cacheKey, retainedRows)
                 }
@@ -753,6 +764,11 @@ class YouTubeViewModel @Inject constructor(
                     YouTubeFreshThisRun.loaded(cacheKey)
                     applyRefreshed(cacheKey, contentCache.replace(cacheKey, rows, cacheRevision), cacheRevision, signed)
                 }.onFailure { e ->
+                    if (coldStale != null && partialRows.isEmpty() && generation == contentGeneration &&
+                        contentCache.get(cacheKey) == null) {
+                        contentCache.merge(cacheKey, coldStale, cacheRevision)
+                        showCachedContent(cacheKey)
+                    }
                     if (!keepPartialFeed(e, cacheKey, partialRows, cacheRevision, generation)) contentLoadFailed(e, manual, generation)
                 }
             } finally {
