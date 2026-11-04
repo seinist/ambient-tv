@@ -716,6 +716,11 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
      */
     private fun recent(h: Long, token: String?, limit: Int, section: String = "recent"): TelegramMediaPage {
         val filter = categoryFilter(section)
+        // Categories: Telegram's own "media of all chats" (one searchGlobal per page) instead
+        // of one search per channel; the per-channel timeline stays the fallback.
+        if (filter != null && (token == null || token.startsWith("global:"))) {
+            globalCategory(h, token, limit, section, filter)?.let { return it }
+        }
         val wanted: (TelegramMediaKind) -> Boolean = when (section) {
             "videos" -> { kind -> kind == TelegramMediaKind.VIDEO }
             "audio" -> { kind -> kind == TelegramMediaKind.AUDIO }
@@ -766,6 +771,62 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
         if (!page.hasMore) recentFeeds.remove(cursorToken)
         while (recentFeeds.size > 8) recentFeeds.remove(recentFeeds.keys.first())
         return TelegramMediaPage(page.media, if (page.hasMore) "$cursorToken:${pageNumber + 1}" else null)
+    }
+
+    /** Telegram refused a filtered global search without query once: use per-channel search. */
+    @Volatile private var globalCategoryUnsupported = false
+
+    /**
+     * One newest-first page of a category over all subscribed channels: messages.searchGlobal
+     * with the media filter and broadcasts_only (Ambient TV's patched native export). The cursor
+     * carries Telegram's own offsets ("global:<epoch>:<rate>:<peer>:<id>"), so no state is kept.
+     * Returns null when the server rejects it on the first page; the caller then falls back.
+     */
+    private fun globalCategory(h: Long, token: String?, limit: Int, section: String, filter: String): TelegramMediaPage? {
+        if (globalCategoryUnsupported && token == null) return null
+        var rate = 0
+        var peer = 0L
+        var offset = 0
+        if (token != null) {
+            val parts = token.split(':')
+            require(parts.size == 5 && parts[1].toLongOrNull() == epoch) { "Stale Monogram category cursor" }
+            rate = parts[2].toInt(); peer = parts[3].toLong(); offset = parts[4].toInt()
+        }
+        val wanted: (TelegramMediaKind) -> Boolean = when (section) {
+            "videos" -> { kind -> kind == TelegramMediaKind.VIDEO }
+            "audio" -> { kind -> kind == TelegramMediaKind.AUDIO }
+            else -> { _ -> true }
+        }
+        // Titles come from the dialog snapshot (one getChats when empty).
+        knownChannels(h, 1)
+        val wantedCount = limit.coerceIn(1, 60)
+        val items = LinkedHashMap<String, TelegramMedia>()
+        var more = true
+        var rounds = 0
+        while (items.size < wantedCount && rounds++ < GLOBAL_CATEGORY_ROUNDS) {
+            val page = try {
+                uniffi.monogram_mtproto.searchGlobalFiltered(h.toULong(), "", filter, true,
+                    rate, peer, offset, GLOBAL_CATEGORY_PAGE)
+            } catch (failure: Exception) {
+                if (token == null && rounds == 1 &&
+                    classifyTelegramFailure(failure.message) == TelegramFailureKind.OTHER) {
+                    globalCategoryUnsupported = true
+                    return null
+                }
+                throw failure
+            }
+            for (message in page.messages) {
+                if (message.chatId in leftChannels) continue
+                val title = chats.firstOrNull { it.id == message.chatId }?.title ?: continue
+                val found = media(h, message, title, wanted) ?: continue
+                val posts = if (section == "youtube") found.youtubePosts().filter { it.kind == TelegramMediaKind.YOUTUBE }
+                    else listOf(found)
+                posts.forEach { items.putIfAbsent(it.mediaKey, it) }
+            }
+            if (page.messages.isEmpty() || page.nextOffsetId == 0) { more = false; break }
+            rate = page.nextRate; peer = page.nextPeerId; offset = page.nextOffsetId
+        }
+        return TelegramMediaPage(items.values.toList(), if (more) "global:$epoch:$rate:$peer:$offset" else null)
     }
 
     // A single channel keeps its history-offset cursor; recent and categories use a global timeline.
@@ -1043,6 +1104,9 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
         const val PLAYBACK_FLOOD_WAIT_SECONDS = 30
         /** Channel histories fetched at once by a timeline page. */
         const val RECENT_PARALLEL_CHANNELS = 6
+        /** Messages per searchGlobal request, and requests per category page at most. */
+        const val GLOBAL_CATEGORY_PAGE = 50
+        const val GLOBAL_CATEGORY_ROUNDS = 3
         /** Native dispatch classes (ffi.rs set_dispatch_class). */
         const val DISPATCH_READ = 0
         const val DISPATCH_VISIBLE = 6

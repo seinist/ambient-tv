@@ -213,6 +213,15 @@ silently reuse old MTProto binaries. Distributions must include these GPL
 patches and corresponding source. Verify join, leave, reconnect, account cache
 invalidation and all four ABIs on real devices before marking the PR ready.
 
+### Filtered global search
+
+The same script adds `search_global_filtered`: Telegram's `messages.searchGlobal`
+with a media filter (videos, music, URLs) and `broadcasts_only`, which upstream
+always sends with an empty filter. The Videos, YouTube and Music categories load
+one global page per request instead of one `messages.search` per channel, which
+ran into FLOOD_WAIT on a first load without cache. If Telegram rejects the empty
+query with a filter, the app falls back to the per-channel search.
+
 ### Modification notices (GPL-3.0 section 5a)
 
 The patch script writes a dated notice at the top of every upstream file it
