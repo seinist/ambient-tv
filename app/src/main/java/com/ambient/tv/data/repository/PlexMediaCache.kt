@@ -135,7 +135,7 @@ open class PlexMediaCache @Inject constructor() {
         syncScope()
         val expected = requestGeneration.get()
         if (expected != null && expected != generation) {
-            throw IOException("Media source changed during loading; please retry")
+            throw MediaSourceChangedException()
         }
     }
 
@@ -418,3 +418,9 @@ open class PlexMediaCache @Inject constructor() {
         const val MAX_MERGED_KEYS = 8_192
     }
 }
+
+/**
+ * The server connection (address, account) changed while a request ran. Not a server error: the
+ * reload that follows the change fetches the same rows again.
+ */
+class MediaSourceChangedException : IOException("Media source changed during loading; please retry")

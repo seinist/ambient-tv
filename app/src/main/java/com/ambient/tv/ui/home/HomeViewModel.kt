@@ -844,7 +844,12 @@ class HomeViewModel @Inject constructor(
         val firstFailure = java.util.concurrent.atomic.AtomicReference<Throwable?>(null)
         fun Result<List<MediaItem>>.counted(fallback: List<MediaItem> = emptyList()): List<MediaItem> {
             requested.incrementAndGet()
-            return getOrElse { failed.incrementAndGet(); firstFailure.compareAndSet(null, it); fallback }
+            return getOrElse { error ->
+                // A connection switch mid-load (local/remote address) or a cancelled call is no
+                // server failure: the reload after the switch fetches these rows again.
+                if (!homeFailureIsTransient(error)) { failed.incrementAndGet(); firstFailure.compareAndSet(null, error) }
+                fallback
+            }
         }
         fun sectionItems() = sections.mapNotNull { section -> previews[section.key]?.let { section to it } }
         fun rows() = buildLocalRows(onDeck, sectionItems(), sections.flatMap { releases[it.key].orEmpty() }, system, episodes, ranked)
@@ -2471,3 +2476,9 @@ internal fun homeAwaitingFirstResults(
     youtubePending: Boolean = false,
     telegramPending: Boolean = false,
 ): Boolean = !hasVisibleRows && (libraryPending || radioPending || liveTvPending || photoPending || trailerPending || youtubePending || telegramPending)
+
+/** Failures of a home row request that must not raise "some rows could not be loaded". */
+internal fun homeFailureIsTransient(error: Throwable): Boolean =
+    error is kotlinx.coroutines.CancellationException ||
+        error is com.ambient.tv.data.repository.MediaSourceChangedException ||
+        (error is java.io.IOException && error.message.equals("Canceled", ignoreCase = true))
