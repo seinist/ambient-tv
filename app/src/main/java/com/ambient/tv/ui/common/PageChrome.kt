@@ -451,9 +451,29 @@ fun PageChipRow(
         val index = selectedIndex ?: return@LaunchedEffect
         if (handheld && index >= 0) state.animateScrollToItem(index)
     }
+    // TV: a chosen category keeps the focus on its chip; the page's own initial focus must not
+    // pull it into the grid. The hold ends with the next key press (Down enters the content).
+    var chipsFocused by remember { mutableStateOf(false) }
+    val armedAt = PageChipFocusHold.armedAt
+    LaunchedEffect(chain, handheld, armedAt) {
+        if (handheld) return@LaunchedEffect
+        while (PageChipFocusHold.active) {
+            if (!chipsFocused) runCatching { chain.chips.requestFocus() }
+            withFrameNanos { }
+            kotlinx.coroutines.delay(50)
+        }
+    }
     LazyRow(
         state = state,
-        modifier = modifier.pageChips(chain, up),
+        modifier = modifier
+            .onFocusChanged { chipsFocused = it.hasFocus }
+            .onPreviewKeyEvent { event ->
+                if (!handheld && event.type == KeyEventType.KeyDown) {
+                    if (event.key in CHIP_CONFIRM_KEYS) PageChipFocusHold.arm() else PageChipFocusHold.disarm()
+                }
+                false
+            }
+            .pageChips(chain, up),
         contentPadding = contentPadding,
         horizontalArrangement = Arrangement.spacedBy(8.dp),
         content = content,
@@ -468,4 +488,17 @@ fun SettingsSectionHeader(
     firstInContent: Boolean = false,
 ) {
     SettingsHeading(title, SettingsHeadingLevel.SECTION, modifier, description, firstInContent)
+}
+
+private val CHIP_CONFIRM_KEYS = setOf(Key.DirectionCenter, Key.Enter, Key.NumPadEnter)
+
+/** Set when a category chip is confirmed with the remote; cleared by any other key or a timeout. */
+internal object PageChipFocusHold {
+    var armedAt by androidx.compose.runtime.mutableLongStateOf(0L)
+        private set
+    val active: Boolean get() = armedAt != 0L &&
+        android.os.SystemClock.uptimeMillis() - armedAt < HOLD_MS
+    fun arm() { armedAt = android.os.SystemClock.uptimeMillis() }
+    fun disarm() { armedAt = 0L }
+    private const val HOLD_MS = 15_000L
 }

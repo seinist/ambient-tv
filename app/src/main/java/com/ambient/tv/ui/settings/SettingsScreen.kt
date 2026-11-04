@@ -1949,7 +1949,6 @@ private fun HomeRowAddButtons(
         stringResource(R.string.telegram_videos) to (HomeRowDefinition.SYSTEM_TELEGRAM to "videos"),
         stringResource(R.string.telegram_youtube) to (HomeRowDefinition.SYSTEM_TELEGRAM to "youtube"),
         stringResource(R.string.telegram_audio) to (HomeRowDefinition.SYSTEM_TELEGRAM to "audio"),
-        stringResource(R.string.telegram_photos) to (HomeRowDefinition.SYSTEM_TELEGRAM to "photos"),
         stringResource(R.string.settings_home_source_radio_popular) to (HomeRowDefinition.SYSTEM_RADIO to HomeRowDefinition.RADIO_POPULAR),
         stringResource(R.string.settings_home_source_radio_favorites) to (HomeRowDefinition.SYSTEM_RADIO to HomeRowDefinition.RADIO_FAVORITES),
         stringResource(R.string.settings_home_source_radio_recent) to (HomeRowDefinition.SYSTEM_RADIO to HomeRowDefinition.RADIO_RECENT),

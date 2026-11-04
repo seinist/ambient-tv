@@ -25,13 +25,15 @@ MODIFICATIONS = {
     "vendor/mono-rs/crates/mono-proto-client/src/membership.rs":
         "added leave_chat client call",
     "vendor/mono-rs/crates/mono-proto-client/src/dispatch.rs":
-        "added leave_chat dispatch",
+        "added leave_chat and search_global_filtered dispatch",
     "native/mtproto-rs/src/ffi.rs":
-        "added leave_chat export; removed sticker, VPX, waveform and QR exports",
+        "added leave_chat and search_global_filtered exports; removed sticker, VPX, waveform and QR exports",
     "native/mtproto-rs/src/lib.rs":
         "removed sticker, VPX, waveform and QR modules",
     "native/mtproto-rs/Cargo.toml":
         "removed rxing (QR) and tlottie (sticker) dependencies",
+    "vendor/mono-rs/crates/mono-proto-messages/src/messages/search_rpc.rs":
+        "added search_global_filtered (messages.searchGlobal with media filter, channels only)",
     "native/mtproto/src/main/java/org/monogram/mtproto/MtprotoNative.kt":
         "added leaveChat",
     "native/mtproto/src/main/java/org/monogram/mtproto/MtprotoNativeUniFfi.kt":
@@ -149,6 +151,119 @@ add_before(adapter,
 """,
            "override fun leaveChat(handle: Long, chatId: Long)")
 
+# Category timelines: one messages.searchGlobal with a media filter over all channels
+# instead of one messages.search per channel (FLOOD_WAIT on a first load without cache).
+search_rpc = "vendor/mono-rs/crates/mono-proto-messages/src/messages/search_rpc.rs"
+add_before(search_rpc,
+           "fn offset_input_peer(",
+           """/// Ambient TV: messages.searchGlobal with a media filter, optionally only channels.
+#[allow(clippy::too_many_arguments)]
+pub fn search_global_filtered(
+    snapshot: &mut Snapshot,
+    api_id: i32,
+    peers: &mut HashMap<i64, CachedPeer>,
+    media: &mut MediaIndex,
+    query: &str,
+    filter: &str,
+    broadcasts_only: bool,
+    offset_rate: i32,
+    offset_peer_id: i64,
+    offset_id: i32,
+    limit: i32,
+) -> Result<GlobalMessageSearchDto, MtprotoError> {
+    let offset_peer = offset_input_peer(peers, offset_peer_id)?;
+    let (mut flags, folder_id) = search_global_folder(0);
+    let broadcasts = if broadcasts_only {
+        flags |= MessagesSearchGlobalRequest::BROADCASTS_ONLY_FLAG;
+        Some(Box::new(mono_proto::latest::api::True::True(
+            mono_proto::latest::api::TrueConstructor {},
+        )))
+    } else {
+        None
+    };
+    let request = MessagesSearchGlobalRequest {
+        flags,
+        broadcasts_only: broadcasts,
+        groups_only: None,
+        users_only: None,
+        folder_id,
+        community: None,
+        q: query.to_string(),
+        filter: Box::new(crate::messages_search::messages_filter(filter)),
+        min_date: 0,
+        max_date: 0,
+        offset_rate,
+        offset_peer: Box::new(offset_peer),
+        offset_id,
+        limit: clamp_search_limit(limit),
+    };
+    let response: mono_proto::latest::api::MessagesMessages =
+        api_invoke::invoke_api(snapshot, api_id, request)?;
+    let (messages, next_rate, _) = dialogs::dtos_from_messages_page(response, peers, media)?;
+    let (next_rate, next_peer_id, next_offset_id) = next_global_page(&messages, next_rate);
+    Ok(GlobalMessageSearchDto {
+        messages,
+        next_rate,
+        next_peer_id,
+        next_offset_id,
+    })
+}
+""",
+           "pub fn search_global_filtered(")
+add_before(dispatch,
+           "pub fn get_pinned_messages(",
+           """#[allow(clippy::too_many_arguments)]
+pub fn search_global_filtered(
+    handle: u64,
+    query: String,
+    filter: String,
+    broadcasts_only: bool,
+    offset_rate: i32,
+    offset_peer_id: i64,
+    offset_id: i32,
+    limit: i32,
+) -> Result<crate::GlobalMessageSearchDto, MtprotoError> {
+    with_client_mut(handle, |state| {
+        call_with_migrate(state, |state| {
+            crate::message_ops::search_rpc::search_global_filtered(
+                &mut state.snapshot,
+                state.api_id,
+                &mut state.peers,
+                &mut state.media,
+                &query,
+                &filter,
+                broadcasts_only,
+                offset_rate,
+                offset_peer_id,
+                offset_id,
+                limit,
+            )
+        })
+    })
+}
+""",
+           "pub fn search_global_filtered(")
+add_before(ffi,
+           "#[uniffi::export]\npub fn get_pinned_messages(",
+           """#[uniffi::export]
+#[allow(clippy::too_many_arguments)]
+pub fn search_global_filtered(
+    handle: u64,
+    query: String,
+    filter: String,
+    broadcasts_only: bool,
+    offset_rate: i32,
+    offset_peer_id: i64,
+    offset_id: i32,
+    limit: i32,
+) -> Result<GlobalMessageSearchDto, MtprotoError> {
+    mono_proto_client::dispatch::search_global_filtered(
+        handle, query, filter, broadcasts_only, offset_rate, offset_peer_id, offset_id, limit,
+    )
+}
+""",
+           "pub fn search_global_filtered(")
+
 # Ambient TV needs Telegram account/media transport, not Monogram sticker animation,
 # VPX video-sticker decoding, waveform generation, or its separate Rust QR codec.
 # Ambient's QR renderer is already used for account setup. Remove these transitive
@@ -237,4 +352,4 @@ for path, result in changes.items():
         path.write_text(result, encoding="utf-8")
 for relative in unused_wrappers:
     (root / relative).unlink(missing_ok=True)
-print("Applied pinned channel leave and size-focused MTProto-only source patch")
+print("Applied pinned channel leave, filtered global search and size-focused MTProto-only source patch")

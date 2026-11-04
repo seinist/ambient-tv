@@ -156,7 +156,7 @@ class TelegramViewModel @Inject constructor(
     }
 
     fun open(section: String, refresh: Boolean = false) {
-        val key = section.takeIf { it != "youtube" || smartTubeUsable }?.takeIf { it in setOf("recent", "channels", "videos", "youtube", "audio", "photos") ||
+        val key = section.takeIf { it != "youtube" || smartTubeUsable }?.takeIf { it in setOf("recent", "channels", "videos", "youtube", "audio") ||
             (it.startsWith("channel:") && it.substringAfter(':').toLongOrNull() != null) } ?: "recent"
         val current = mutableState.value
         if (!refresh && current.section == key && current.available && current.rows.isNotEmpty()) return

@@ -678,7 +678,6 @@ internal fun LazyListScope.settingsSystemCategoryItems(
                             "videos" to R.string.telegram_videos,
                             "youtube" to R.string.telegram_youtube,
                             "audio" to R.string.telegram_audio,
-                            "photos" to R.string.telegram_photos,
                         ).filter { (key, _) ->
                             // Offered only while SmartTube can play YouTube link posts.
                             key != "youtube" || (uiState.youtubeEnabled && uiState.youtubeAvailable)

@@ -4,7 +4,6 @@ import androidx.annotation.StringRes
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Audiotrack
 import androidx.compose.material.icons.filled.OndemandVideo
-import androidx.compose.material.icons.filled.PhotoLibrary
 import androidx.compose.material.icons.filled.SmartDisplay
 import androidx.compose.material.icons.filled.Subscriptions
 import androidx.compose.material.icons.filled.Update
@@ -20,7 +19,6 @@ private val TelegramMenuOrder = listOf(
     TelegramMenuEntry("videos", R.string.telegram_videos),
     TelegramMenuEntry("youtube", R.string.telegram_youtube),
     TelegramMenuEntry("audio", R.string.telegram_audio),
-    TelegramMenuEntry("photos", R.string.telegram_photos),
 )
 
 /**
@@ -39,6 +37,5 @@ internal fun telegramMenuIcon(key: String): ImageVector = when (key) {
     "videos" -> Icons.Filled.OndemandVideo
     "youtube" -> Icons.Filled.SmartDisplay
     "audio" -> Icons.Filled.Audiotrack
-    "photos" -> Icons.Filled.PhotoLibrary
     else -> Icons.Filled.Update
 }

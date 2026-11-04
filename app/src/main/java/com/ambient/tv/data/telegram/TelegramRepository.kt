@@ -586,7 +586,7 @@ class TelegramRepository @Inject constructor(
         if (live != null) return live
         // Telegram asked for a pause: say so (after the cache), not "media unavailable".
         if (identity == null) flood?.let { throw it } ?: return null
-        val sections = listOf("recent", "videos", "youtube", "audio", "photos", "channel:$chatId")
+        val sections = listOf("recent", "videos", "youtube", "audio", "channel:$chatId")
         for (section in sections) {
             val cached = diskCache.media(identity, section)
                 .firstOrNull { it.chatId == chatId && it.messageId == messageId }

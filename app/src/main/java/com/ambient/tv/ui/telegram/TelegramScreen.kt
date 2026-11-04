@@ -133,7 +133,6 @@ private val sections = listOf(
     "videos" to R.string.telegram_videos,
     "youtube" to R.string.telegram_youtube,
     "audio" to R.string.telegram_audio,
-    "photos" to R.string.telegram_photos,
 )
 
 @Composable
