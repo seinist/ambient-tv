@@ -48,16 +48,18 @@ fun PersistentPlaybackVideoHost(modifier: Modifier = Modifier, systemPip: Boolea
             .distinctUntilChanged()
     }.collectAsState(initial = remember { BackgroundPlaybackSession.snapshot.value.metadata?.sourceAspectRatioHint })
     val handle = BackgroundPlaybackSession.activeHandle()
-    // Ambient letterbox only on a portrait phone with a real picture; landscape stays black.
-    val portraitPhone = com.ambient.tv.ui.mobile.LocalHandheldUi.current &&
-        androidx.compose.ui.platform.LocalConfiguration.current.orientation == android.content.res.Configuration.ORIENTATION_PORTRAIT
-    val ambient = !systemPip && portraitPhone && when (handle) {
+    // Ambient letterbox on a phone with a real picture. In landscape only portrait/square videos
+    // (side bars) get it; widescreen keeps black bars ([AmbientVideoBackdrop.active]).
+    val phone = com.ambient.tv.ui.mobile.LocalHandheldUi.current
+    val landscape = androidx.compose.ui.platform.LocalConfiguration.current.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE
+    val ambient = !systemPip && phone && when (handle) {
         is Media3PlaybackHandle -> true
         is VlcPlaybackController -> !handle.audioSession.audioOnly
         is MpvPlaybackController -> !handle.audioSession.audioOnly
         else -> false
     }
-    DisposableEffect(ambient) {
+    DisposableEffect(ambient, landscape) {
+        AmbientVideoBackdrop.landscape = landscape
         AmbientVideoBackdrop.enabled = ambient
         onDispose { AmbientVideoBackdrop.enabled = false }
     }
@@ -75,7 +77,7 @@ fun PersistentPlaybackVideoHost(modifier: Modifier = Modifier, systemPip: Boolea
 @Composable
 private fun PersistentMedia3Video(handle: Media3PlaybackHandle, sourceAspectRatioHint: Float?, modifier: Modifier) {
     val presentation by BackgroundPlaybackSession.videoPresentation.collectAsState()
-    Box(if (AmbientVideoBackdrop.enabled) modifier else modifier.background(Color.Black), contentAlignment = Alignment.Center) {
+    Box(if (AmbientVideoBackdrop.active) modifier else modifier.background(Color.Black), contentAlignment = Alignment.Center) {
         Media3VideoSurface(
             player = handle.player,
             resizeMode = presentation.resizeMode,
@@ -136,7 +138,7 @@ fun Media3VideoSurface(
             // arrive while buffering and must not repeatedly resize the portrait letterbox.
             view.updatePresentationAspectRatio(effective.aspectRatio, sourceAspectRatioHint)
             if (view.player !== player) view.player = player
-            view.setBackgroundColor(if (AmbientVideoBackdrop.enabled) android.graphics.Color.TRANSPARENT else android.graphics.Color.BLACK)
+            view.setBackgroundColor(if (AmbientVideoBackdrop.active) android.graphics.Color.TRANSPARENT else android.graphics.Color.BLACK)
             (view.videoSurfaceView as? android.view.SurfaceView)?.let {
                 AmbientVideoBackdrop.attach(it)
                 Media3PlaybackHandle.forPlayer(player)?.attachVideoView(it)

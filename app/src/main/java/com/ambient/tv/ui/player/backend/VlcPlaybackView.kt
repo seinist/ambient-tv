@@ -2031,7 +2031,7 @@ fun VlcVideoSurface(
             it.renderAtDisplayResolution = controller.gpuRenderAtPanel
             it.presentation = presentation
             it.sourceAspectRatio = sourceAspectRatio
-            it.ambientBackdrop = com.ambient.tv.ui.player.AmbientVideoBackdrop.enabled
+            it.ambientBackdrop = com.ambient.tv.ui.player.AmbientVideoBackdrop.active
             it.videoSurface.applyUiHdrHeadroom(hdrHeadroom)
             if (lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)) controller.attach(it.videoSurface)
         },
