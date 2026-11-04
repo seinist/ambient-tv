@@ -14,6 +14,9 @@ class UnreachableServerViewModel @Inject constructor(
     fun retry() = gate.retry()
     fun retrySystem(system: String) = gate.retrySystem(system)
 
+    /** Startup wake without a machine card (connection observer); stops every in-flight server wake. */
+    fun cancelStartupWake() = gate.cancelStartupWake()
+
     /** Same machine key as the wake notification; stop jobs rather than dismissing the card. */
     fun cancelWake(machine: String) {
         com.ambient.tv.notifications.WakeCancellationJobs.cancel(machine)
