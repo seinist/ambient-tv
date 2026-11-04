@@ -38,6 +38,12 @@
     <uses-feature
         android:name="android.hardware.touchscreen"
         android:required="false" />
+    <!-- A dependency declares USB host as required. TV boxes without it (e.g. Mecool KT1)
+         then refuse the install outright; USB DACs and drives stay optional. -->
+    <uses-feature
+        android:name="android.hardware.usb.host"
+        android:required="false"
+        tools:replace="android:required" />
 
     <queries>
         <!-- YouTube activation must open in a browser even when YouTube handles web links. -->
