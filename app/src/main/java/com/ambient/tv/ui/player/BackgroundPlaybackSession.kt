@@ -628,7 +628,9 @@ object BackgroundPlaybackSession {
                 subtitlePolicy.apply(player, metadata?.subtitleTracks.orEmpty(), subtitleDefaults,
                     prefs.playbackAudioLanguage,
                     com.ambient.tv.data.local.LanguagePreferences.systemLanguageTag(), metadata?.externalSubtitlesAllowed == true,
-                    nativeSubtitlesSuppressed = nativeSubtitlesSuppressed)
+                    nativeSubtitlesSuppressed = nativeSubtitlesSuppressed,
+                    // SmartTube: "on" means any caption track when none matches the UI language.
+                    anyLanguageFallback = metadata?.source == "youtube" && prefs.youtubeSubtitlesEnabled)
             } else if (nativeSubtitlesSuppressed) player.applySubtitle(null)
         }
         val status = player.status()

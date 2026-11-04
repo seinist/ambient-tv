@@ -93,6 +93,7 @@ internal class SubtitleSessionPolicy {
         systemLanguage: String,
         allowExternal: Boolean,
         nativeSubtitlesSuppressed: Boolean = false,
+        anyLanguageFallback: Boolean = false,
     ) {
         if (defaults != null && defaults != preferences) { manual = false; restoringManual = false; appliedSignature = null }
         defaults = preferences
@@ -131,6 +132,8 @@ internal class SubtitleSessionPolicy {
         val tracks = handle.subtitleCandidates(source)
         val desired = if (manual) manualTrack?.let { old -> tracks.firstOrNull { it.forced == old.forced && LanguagePreferences.matches(it.language, old.language) } }
             else SubtitleSelectionPolicy.choose(tracks, preferences, audio, systemLanguage)
+                ?: if (anyLanguageFallback && preferences.mode != SubtitleMode.OFF)
+                    tracks.firstOrNull { !it.forced } ?: tracks.firstOrNull() else null
         val signature = listOf(tracks.map { Triple(it.id, it.language, it.forced) }, preferences, audio, desired?.id)
         if (signature != appliedSignature || tracks.firstOrNull { it.selected }?.id != desired?.id) {
             handle.applySubtitle(desired?.id)
