@@ -123,6 +123,8 @@ internal val MPV_IMAGE_SHADERS = mapOf(
     "fsrcnnx8" to MpvShaderAsset(R.raw.quality_fsrcnnx8_e800dbc5, "quality_fsrcnnx8_e800dbc5.glsl", true),
     "fsrcnnx16" to MpvShaderAsset(R.raw.quality_fsrcnnx16_d5a24a27, "quality_fsrcnnx16_d5a24a27.glsl", true),
     "krig" to MpvShaderAsset(R.raw.quality_krig_8a4798ab, "quality_krig_8a4798ab.glsl", true),
+    "matrix_601_to_709" to MpvShaderAsset(R.raw.quality_matrix_601_to_709_1fc76507, "quality_matrix_601_to_709_1fc76507.glsl", false),
+    "matrix_709_to_601" to MpvShaderAsset(R.raw.quality_matrix_709_to_601_71e99fba, "quality_matrix_709_to_601_71e99fba.glsl", false),
     "filmgrain_light" to MpvShaderAsset(R.raw.quality_filmgrain_light_4aee719a, "quality_filmgrain_light_4aee719a.glsl", true),
     "filmgrain_medium" to MpvShaderAsset(R.raw.quality_filmgrain_medium_4921afc1, "quality_filmgrain_medium_4921afc1.glsl", true),
     "filmgrain_strong" to MpvShaderAsset(R.raw.quality_filmgrain_strong_1d0e7c75, "quality_filmgrain_strong_1d0e7c75.glsl", true),

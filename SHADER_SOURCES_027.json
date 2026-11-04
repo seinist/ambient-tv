@@ -291,5 +291,21 @@
     "license": "CC0-1.0",
     "sha256": "4921afc101eda245a043171f3f3cf37f808ad628a2adc359b4fbf3a99ee22b68",
     "file": "app/src/main/res/raw/quality_filmgrain_medium_4921afc1.glsl"
+  },
+  {
+    "key": "matrix_601_to_709",
+    "url": "local: written for Ambient TV (no upstream)",
+    "revision": "local",
+    "license": "CC0-1.0",
+    "sha256": "1fc76507f18458e4503d2df781b5743e9c0aa19390f4963fe59e29b3de634508",
+    "file": "app/src/main/res/raw/quality_matrix_601_to_709_1fc76507.glsl"
+  },
+  {
+    "key": "matrix_709_to_601",
+    "url": "local: written for Ambient TV (no upstream)",
+    "revision": "local",
+    "license": "CC0-1.0",
+    "sha256": "71e99fba18938c712928682a030351329134f2c44fb58b651c302c37f71177a3",
+    "file": "app/src/main/res/raw/quality_matrix_709_to_601_71e99fba.glsl"
   }
 ]

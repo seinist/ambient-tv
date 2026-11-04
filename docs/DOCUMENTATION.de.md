@@ -664,6 +664,7 @@ Brauchen eine GPU-Ausgabe (OpenGL oder Vulkan). Mit „Android Surface (direkt)�
 | Helligkeit · Kontrast · Sättigung · Gamma | −20 … +20 | 0 | SDR. |
 | HDR-Tonemapping | Auto · BT.2390 · Reinhard · Hable · Möbius · Clip | Auto | HDR-Quelle auf SDR-Ausgabe. |
 | Dithering-Bittiefe | Automatisch · Aus · 8-bit · 10-bit | Automatisch | GPU-Ausgabe. |
+| Farbmatrix-Korrektur | Aus · BT.601 → BT.709 · BT.709 → BT.601 | Aus | MPV-GPU-Ausgabe, nur SDR. Korrigiert ein Bild, das Decoder oder Treiber mit der falschen Matrix umgerechnet haben (z. B. rotstichiges 4K-VP9/AV1 von YouTube); jederzeit während der Wiedergabe umschaltbar. |
 | Bewegungsglättung (SVP) | Aus · Automatisch · Ausgewogen · Hohe Qualität | Aus | Siehe 7.2. |
 
 ### 7.4 Bildoptionen VLC und Media3

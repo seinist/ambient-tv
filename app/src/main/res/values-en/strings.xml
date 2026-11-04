@@ -1201,6 +1201,9 @@
     <string name="image_tonemap_mobius">Möbius (keeps midtones)</string>
     <string name="image_tonemap_clip">Clip (no compression, hard highlights)</string>
     <string name="image_dither">Dithering depth</string>
+    <string name="image_color_matrix">Colour matrix correction</string>
+    <string name="image_color_matrix_601_to_709">BT.601 → BT.709 (reddish HD/4K)</string>
+    <string name="image_color_matrix_709_to_601">BT.709 → BT.601 (pale SD)</string>
     <string name="image_tonemap_hint">How HDR looks on a non-HDR TV.</string>
     <string name="image_mpv_shader_hint">Better scaling needs more power. Anime4K for animation.</string>
     <string name="image_mpv_filter_hint">Start low. High levels may stutter.</string>

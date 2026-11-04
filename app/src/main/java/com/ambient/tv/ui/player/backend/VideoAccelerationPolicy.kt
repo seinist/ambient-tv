@@ -8,7 +8,7 @@ internal fun mpvNeedsGpuProcessing(o: MpvImageOptions): Boolean =
         o.deband != "off" || o.sharpening != "off" || o.denoise != "off" || o.deblock != "off" || o.filmGrain != "off" ||
         o.superResolution || o.antiring > 0 || o.sigmoid || o.svpMode != "off" ||
         o.brightness != 0 || o.contrast != 0 || o.saturation != 0 || o.gamma != 0 ||
-        o.toneMapping != "auto" || o.ditherDepth !in setOf("auto", "no")
+        o.toneMapping != "auto" || o.ditherDepth !in setOf("auto", "no") || o.colorMatrix != "auto"
 
 @Serializable
 data class VulkanDecodeProfile(val codec: String, val bits: Int, val width: Int, val height: Int)

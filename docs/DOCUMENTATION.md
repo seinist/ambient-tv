@@ -664,6 +664,7 @@ Need a GPU output (OpenGL or Vulkan). With "Android Surface (direct)" the filter
 | Brightness · Contrast · Saturation · Gamma | −20 … +20 | 0 | SDR. |
 | HDR tone mapping | Auto · BT.2390 · Reinhard · Hable · Möbius · Clip | Auto | HDR input shown on an SDR output. |
 | Dithering depth | Automatic · Off · 8-bit · 10-bit | Automatic | GPU output. |
+| Colour matrix correction | Off · BT.601 → BT.709 · BT.709 → BT.601 | Off | MPV GPU output, SDR only. Fixes a picture the decoder or driver converted with the wrong matrix (e.g. reddish 4K VP9/AV1 from YouTube); can be switched during playback. |
 | Motion smoothing (SVP) | Off · Automatic · Balanced · High quality | Off | See 7.2. |
 
 ### 7.4 VLC and Media3 image options
