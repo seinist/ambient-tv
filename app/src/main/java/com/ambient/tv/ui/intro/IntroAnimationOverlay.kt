@@ -263,7 +263,8 @@ fun IntroAnimationOverlay(styleKey: String, onFinished: () -> Unit, modifier: Mo
             drawRect(background)
             // A slow camera push gives the whole scene depth; it settles and stays put.
             val push = if (still) 1f else 1f + 0.018f * soft(phase(seconds, 0f, 6f))
-            withTransform({ scale(push, push, pivot = stageCenter()) }) {
+            val pushPivot = stageCenter()
+            withTransform({ scale(push, push, pivot = pushPivot) }) {
                 when (style) {
                     IntroAnimation.HORIZON -> drawDaybreak(frame)
                     IntroAnimation.SIGNATURE -> drawSignature(frame)
