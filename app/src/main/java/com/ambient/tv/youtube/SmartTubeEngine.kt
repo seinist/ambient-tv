@@ -1081,6 +1081,9 @@ class SmartTubeEngine @Inject constructor(
             scheduledStartMs = youtubeScheduledStartMs(raw.callString("getUpcomingEventStartTime"), null),
             isShorts = raw.callBool("isShorts") ?: false,
             channelId = raw.callString("getChannelId"),
+            publishedText = raw.callString("getProductionDate")?.trim()?.takeIf(String::isNotBlank),
+            publishedAtMs = raw.callLong("getPublishedDate")?.takeIf { it > 0 }
+                ?: youtubePublishedAtMs(raw.callString("getProductionDate")),
         )
     }
 

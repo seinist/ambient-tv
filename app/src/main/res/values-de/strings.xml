@@ -428,6 +428,10 @@
     <string name="youtube_sort_duration">Laufzeit</string>
     <string name="youtube_filter_live">Live &amp; demnächst</string>
     <string name="youtube_filter_shorts">Shorts</string>
+    <string name="youtube_filter_today">Heute</string>
+    <string name="youtube_filter_week">Diese Woche</string>
+    <string name="youtube_filter_month">Dieser Monat</string>
+    <string name="youtube_filter_year">Dieses Jahr</string>
     <string name="settings_overscan">Overscan</string>
     <string name="settings_overscan_hint">Verkleinert das Bild zum Rand hin, falls dein Fernseher die Ränder abschneidet.</string>
     <string name="settings_ui_scale">Oberflächengröße</string>

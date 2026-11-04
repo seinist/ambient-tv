@@ -815,12 +815,14 @@ private fun YouTubeListItem(
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 com.ambient.tv.companion.PlaybackBadge(com.ambient.tv.companion.playbackIndicator(com.ambient.tv.companion.CompanionMedia("youtube", item.videoId)))
                 MarqueeTitle(item.title, focused = focused, style = MaterialTheme.typography.titleMedium)
-                MarqueeTitle(
-                    meta(item),
-                    focused = focused,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
+                listOfNotNull(metaChannel(item), metaDetails(item)).forEach { line ->
+                    MarqueeTitle(
+                        line,
+                        focused = focused,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
                 if (detailed) youtubeInfoSubtitle(item)?.let {
                     MarqueeTitle(
                         it,
@@ -1136,19 +1138,20 @@ private fun Card(
                 }
             }
             if (showText) {
-                Box(Modifier.fillMaxWidth().height(44.dp), contentAlignment = Alignment.Center) {
+                CenteredMarqueeTitle(
+                    text = item.title,
+                    focused = focused,
+                    style = MaterialTheme.typography.titleSmall,
+                )
+                // Channel and duration/date on separate lines instead of one truncated line.
+                listOfNotNull(metaChannel(item), metaDetails(item)).forEach { line ->
                     CenteredMarqueeTitle(
-                        text = item.title,
+                        text = line,
                         focused = focused,
-                        style = MaterialTheme.typography.titleSmall,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
-                CenteredMarqueeTitle(
-                    text = meta(item),
-                    focused = focused,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
             }
         }
     }
@@ -1369,8 +1372,14 @@ private fun Message(text: String, error: Boolean = false) =
             else com.ambient.tv.ui.common.BrowseStatusKind.EMPTY,
     )
 @Composable
-private fun meta(i: YouTubeItem) = listOfNotNull(
-    i.author ?: i.subtitle,
+private fun meta(i: YouTubeItem) = listOfNotNull(metaChannel(i), metaDetails(i)).joinToString("  ·  ")
+
+/** First meta line of a card: the channel. */
+private fun metaChannel(i: YouTubeItem): String? = (i.author ?: i.subtitle)?.takeIf(String::isNotBlank)
+
+/** Second meta line: duration or live state, then when it was published. */
+@Composable
+private fun metaDetails(i: YouTubeItem): String? = listOfNotNull(
     when {
         i.isUpcoming -> i.scheduledStartMs?.let { start ->
             stringResource(R.string.youtube_live_start_at,
@@ -1380,7 +1389,8 @@ private fun meta(i: YouTubeItem) = listOfNotNull(
         else -> i.durationMs.takeIf { it > 0 }?.let(::duration)
     },
     i.subtitle?.takeIf { i.isUpcoming && i.scheduledStartMs == null && i.author != null && it != i.author },
-).joinToString("  ·  ")
+    i.publishedText?.takeIf { !i.isUpcoming && !i.isLive },
+).joinToString("  ·  ").takeIf(String::isNotBlank)
 private fun duration(ms: Long): String = com.ambient.tv.ui.common.formatPlaybackClock(ms)
 @Composable private fun modeLabel(m:YouTubeViewMode)=stringResource(when(m){YouTubeViewMode.LANDSCAPE->R.string.library_view_landscape;YouTubeViewMode.LIST->R.string.library_view_list;YouTubeViewMode.INFO_LIST->R.string.library_view_info_list;YouTubeViewMode.WALL->R.string.library_view_wall;YouTubeViewMode.CINEMATIC->R.string.library_view_cinematic})
 @Composable private fun sortLabel(sort:YouTubeSort)=com.ambient.tv.ui.common.systemString(com.ambient.tv.ui.common.MediaSystem.YOUTUBE,when(sort){YouTubeSort.DEFAULT->R.string.youtube_sort_default;YouTubeSort.TITLE->R.string.library_sort_title;YouTubeSort.DURATION->R.string.youtube_sort_duration})
@@ -1390,6 +1400,6 @@ private fun duration(ms: Long): String = com.ambient.tv.ui.common.formatPlayback
     YouTubeSort.TITLE -> com.ambient.tv.ui.common.sortDirectionOptions(stringResource(R.string.library_sort_az), stringResource(R.string.library_sort_za))
     YouTubeSort.DURATION -> com.ambient.tv.ui.common.sortDirectionOptions(stringResource(R.string.library_sort_shortest), stringResource(R.string.library_sort_longest))
 }
-@Composable private fun filterLabel(filter:YouTubeFilter)=stringResource(when(filter){YouTubeFilter.ALL->R.string.library_filter_all;YouTubeFilter.UNWATCHED->R.string.library_filter_unwatched;YouTubeFilter.IN_PROGRESS->R.string.library_filter_in_progress;YouTubeFilter.LIVE->R.string.youtube_filter_live;YouTubeFilter.SHORTS->R.string.youtube_filter_shorts})
+@Composable private fun filterLabel(filter:YouTubeFilter)=stringResource(when(filter){YouTubeFilter.ALL->R.string.library_filter_all;YouTubeFilter.UNWATCHED->R.string.library_filter_unwatched;YouTubeFilter.IN_PROGRESS->R.string.library_filter_in_progress;YouTubeFilter.LIVE->R.string.youtube_filter_live;YouTubeFilter.SHORTS->R.string.youtube_filter_shorts;YouTubeFilter.TODAY->R.string.youtube_filter_today;YouTubeFilter.WEEK->R.string.youtube_filter_week;YouTubeFilter.MONTH->R.string.youtube_filter_month;YouTubeFilter.YEAR->R.string.youtube_filter_year})
 @Composable private fun feedLabel(f:YouTubeFeed)=stringResource(when(f){YouTubeFeed.HOME->R.string.nav_youtube_home;YouTubeFeed.SUBSCRIPTIONS->R.string.nav_youtube_subscriptions;YouTubeFeed.CHANNELS->R.string.nav_youtube_channels;YouTubeFeed.HISTORY->R.string.nav_youtube_history;YouTubeFeed.PLAYLISTS->R.string.nav_youtube_playlists;YouTubeFeed.SHORTS->R.string.nav_youtube_shorts;YouTubeFeed.MUSIC->R.string.nav_youtube_music;YouTubeFeed.NEWS->R.string.nav_youtube_news;YouTubeFeed.GAMING->R.string.nav_youtube_gaming;YouTubeFeed.LIVE->R.string.nav_youtube_live;YouTubeFeed.KIDS->R.string.nav_youtube_kids})
 private fun feedIcon(f:YouTubeFeed)=when(f){YouTubeFeed.HOME->Icons.Filled.Home;YouTubeFeed.SUBSCRIPTIONS->Icons.Filled.Subscriptions;YouTubeFeed.CHANNELS->Icons.Filled.AccountCircle;YouTubeFeed.HISTORY->Icons.Filled.History;YouTubeFeed.PLAYLISTS->Icons.AutoMirrored.Filled.PlaylistPlay;YouTubeFeed.SHORTS->Icons.Filled.SmartDisplay;YouTubeFeed.MUSIC->Icons.Filled.MusicNote;YouTubeFeed.NEWS->Icons.Filled.Newspaper;YouTubeFeed.GAMING->Icons.Filled.SportsEsports;YouTubeFeed.LIVE->Icons.Filled.LiveTv;YouTubeFeed.KIDS->Icons.Filled.ChildCare}

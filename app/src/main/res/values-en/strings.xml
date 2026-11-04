@@ -427,6 +427,10 @@
     <string name="youtube_sort_duration">Duration</string>
     <string name="youtube_filter_live">Live &amp; upcoming</string>
     <string name="youtube_filter_shorts">Shorts</string>
+    <string name="youtube_filter_today">Today</string>
+    <string name="youtube_filter_week">This week</string>
+    <string name="youtube_filter_month">This month</string>
+    <string name="youtube_filter_year">This year</string>
     <string name="settings_overscan">Overscan</string>
     <string name="settings_overscan_hint">Shrinks the picture away from the screen edges if your TV cuts off its borders.</string>
     <string name="settings_ui_scale">Interface size</string>
