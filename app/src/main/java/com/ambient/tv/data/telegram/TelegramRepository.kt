@@ -45,6 +45,8 @@ interface MonogramAuthClientPort {
     suspend fun resetForCredentials() = Unit
     /** Forgets this device's session and caches even when the server logout failed. */
     suspend fun forgetLocalSession() = Unit
+    /** Signs in another device by its QR login link with this device's session (Telegram's "link desktop device"). */
+    suspend fun acceptLoginLink(link: String): Boolean = false
 }
 
 /** Results are cursor-based; tokens never escape the authenticated account. */
@@ -213,6 +215,42 @@ class TelegramRepository @Inject constructor(
                 busy = false, error = error.message ?: appContext.getString(R.string.monogram_error_request))
         }
     }
+    /**
+     * Companion login on the TV: a QR login runs for a few minutes without the settings page, and
+     * [companionLoginLink] carries its link to the phone that sent the settings, which confirms it.
+     */
+    private val mutableCompanionLink = MutableStateFlow<String?>(null)
+    val companionLoginLink: String? get() = mutableCompanionLink.value
+    private var companionLoginJob: kotlinx.coroutines.Job? = null
+
+    fun startCompanionLogin() {
+        if (!nativeAvailable || !preferences.telegramEnabled || companionLoginJob?.isActive == true) return
+        companionLoginJob = scope.launch {
+            try {
+                restoreIfNeeded()
+                if (!apiCredentialsReady || available || mutableLogin.value.step == MonogramLoginStep.AUTHORIZED) return@launch
+                kotlinx.coroutines.withTimeoutOrNull(COMPANION_LOGIN_WINDOW_MS) {
+                    if (mutableLogin.value.step != MonogramLoginStep.QR) requestQr()
+                    while (true) {
+                        val state = mutableLogin.value
+                        if (state.step != MonogramLoginStep.QR) break
+                        mutableCompanionLink.value = state.qrUrl
+                        kotlinx.coroutines.delay(2_000)
+                        pollQr()
+                    }
+                }
+            } finally { mutableCompanionLink.value = null }
+        }
+    }
+
+    /** Phone side: confirm a TV's QR login link with this signed-in account. */
+    suspend fun approveLoginLink(link: String): Boolean {
+        if (!link.startsWith("tg://login?token=") || link.length > 512) return false
+        if (mutableLogin.value.step != MonogramLoginStep.AUTHORIZED) return false
+        val target = obtainBackend() ?: return false
+        return runCatching { target.acceptLoginLink(link) }.getOrDefault(false)
+    }
+
     suspend fun requestQr() = transition { beginQrLogin() }
     suspend fun pollQr() = transition { pollQrLogin() }
     suspend fun requestPhone(phone: String) = transition { sendPhoneCode(phone) }
@@ -669,6 +707,9 @@ class TelegramRepository @Inject constructor(
         }
     }
 }
+
+/** How long a TV waits for the phone to confirm its companion QR login. */
+private const val COMPANION_LOGIN_WINDOW_MS = 3 * 60_000L
 
 /** Positions under 10 s or within the last 15 s are not worth resuming. */
 internal fun monogramResumeWorthKeeping(positionMs: Long, durationMs: Long): Boolean =

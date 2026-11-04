@@ -436,6 +436,14 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
             is QrLoginDto.Authorized -> authorized(result.session.userId)
         }
 
+    override suspend fun acceptLoginLink(link: String): Boolean {
+        val token = runCatching {
+            Base64.decode(link.substringAfter("token=").substringBefore('&'),
+                Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING)
+        }.getOrNull()?.takeIf { it.isNotEmpty() } ?: return false
+        return nativeCall { h -> native.isAuthorized(h) && runCatching { native.acceptLoginToken(h, token) }.isSuccess }
+    }
+
     override suspend fun pollQrLogin(): MonogramLoginState = nativeCall { h ->
         try {
             if (native.pollLoginToken(h) || native.isAuthorized(h)) {

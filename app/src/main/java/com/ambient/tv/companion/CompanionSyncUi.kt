@@ -159,7 +159,8 @@ internal fun CompanionSyncDialog(vm: CompanionViewModel, navSnapshot: SettingsBa
                         }
                         result.onSuccess {
                             profilesOmitted = it.profilesOmitted
-                            sent = manager.sendSettings(it.json, mode, sendCredentials, target, sendSessions); failed = !sent
+                            sent = manager.sendSettings(it.json, mode, sendCredentials, target, sendSessions,
+                                monogram = if (includeAccounts) MONOGRAM_CHOICE in accountIds else snapshot.telegramEnabled); failed = !sent
                         }
                             .onFailure { failed = true }
                     }, enabled = canSend, selected = canSend, modifier = Modifier.weight(1f))

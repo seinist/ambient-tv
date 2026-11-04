@@ -376,6 +376,12 @@ class CompanionManager @Inject constructor(@ApplicationContext private val conte
     private var offerExpiry: Job? = null
     private var offerSession: String? = null
     private var offerRaw: String? = null
+    private var offerSessions = false
+    /** Monogram bridge; the TV starts a companion QR login, the phone confirms it. */
+    var monogramLogin: CompanionMonogramLogin? = null
+    /** Phone: receiver pin and deadline of a transfer that asked the TV to sign in to Monogram. */
+    @Volatile private var monogramApproval: Pair<String, Long>? = null
+    @Volatile private var monogramApprovedLink: String? = null
     private val backupResults = mutableMapOf<String, Pair<String, String>>()
     private var settingsService: CompanionSettingsService? = null
     private var settingsCanApply: () -> Boolean = { false }
@@ -912,7 +918,9 @@ class CompanionManager @Inject constructor(@ApplicationContext private val conte
     }
 
     fun sendSettings(raw: String, mode: String, credentials: Boolean, target: CompanionPeer? = mutable.value.target,
-        sessions: Boolean = credentials): Boolean {
+        sessions: Boolean = credentials, monogram: Boolean = false): Boolean {
+        monogramApproval = if (!television && sessions && monogram && target != null && monogramLogin?.signedIn == true)
+            target.fingerprint to SystemClock.elapsedRealtime() + MONOGRAM_APPROVAL_WINDOW_MS else null
         val reverse = target?.let { returnSessions[it.fingerprint] }
         val direct = mutable.value.online && target?.fingerprint == mutable.value.target?.fingerprint
         val s = mutable.value
@@ -985,7 +993,7 @@ class CompanionManager @Inject constructor(@ApplicationContext private val conte
         val safe = service.prepareFile(active.finish(), active.credentials, active.mode, active.sessions)
         val parsed = service.preview(safe)
         releaseRemoteControl()
-        offerRaw = safe; offerSession = nonce
+        offerRaw = safe; offerSession = nonce; offerSessions = active.sessions
         mutable.update { it.copy(backupOffer = CompanionBackupOffer(active.id, peer.name, active.mode, active.credentials || active.sessions,
             syncAccountChoices(parsed).count { !it.key.startsWith("files:") && !it.key.startsWith("dlna:") && !it.key.startsWith("iptv:") },
             parsed.fileSources.size + parsed.dlnaServers.size + parsed.iptvSources.orEmpty().size, exportedAt = parsed.exportedAtEpochMs,
@@ -1032,6 +1040,7 @@ class CompanionManager @Inject constructor(@ApplicationContext private val conte
             withContext(Dispatchers.Main) {
                 backupResults[session] = offer.id to if (success) "applied" else "failed"
                 if (success) prefs.edit().putLong(KEY_LAST_APPLIED, System.currentTimeMillis()).apply()
+                if (success && television && offerSessions) monogramLogin?.startOnReceiver()
                 offerRaw = null; offerSession = null
                 mutable.update { it.copy(backupOffer = null, backupBusy = false, backupStatus = if (success) "applied" else "failed", rollbackAvailable = service.hasRollback(),
                     settingsRevision = it.settingsRevision + if (success) 1 else 0) }
@@ -1500,6 +1509,7 @@ class CompanionManager @Inject constructor(@ApplicationContext private val conte
                         val playback = playbackState(queueOffset).let { if (returned == null) it else it.copy(artwork = "", options = emptyList(), queue = emptyList()) }
                         val result = backupResults[nonce]
                         playback.copy(nonce = nonce, sequence = request.sequence, syncReturn = returned,
+                            monogramLogin = monogramLogin?.receiverLink.orEmpty(),
                             controller = mutable.value.controller, inputGranted = synchronized(inputLease) { inputLease.owns(nonce, SystemClock.elapsedRealtime()) },
                             transferId = result?.first.orEmpty(), backupStatus = result?.second.orEmpty(),
                             error = companionReplyError(error, playback.phase, request.type))
@@ -1735,6 +1745,7 @@ class CompanionManager @Inject constructor(@ApplicationContext private val conte
                             playbackStartAck?.takeIf { it.first == command.startRequestId }?.second?.complete(state)
                         }
                         ensureRemoteService()
+                        approveMonogramLogin(trusted.fingerprint, state.monogramLogin, name)
                         if (command.type.startsWith("backup_")) { backupAckError = state.error; backupAck?.complete(companionBackupAckOk(state.error)) }
                         updateBackupResult(state.transferId, state.backupStatus, name)
                         if (command.type == "start" && mutable.value.sendingTo != null) {
@@ -2085,6 +2096,22 @@ class CompanionManager @Inject constructor(@ApplicationContext private val conte
         pendingConnection = null
         connect(pending.peer, pending.invitation, pending.initialMedia)
     }
+    /** Confirms the TV's Telegram QR login once, only for the receiver this phone just sent sessions to. */
+    private fun approveMonogramLogin(receiver: String, link: String, name: String) {
+        if (link.isEmpty() || link == monogramApprovedLink) return
+        val (pin, until) = monogramApproval ?: return
+        if (pin != receiver || SystemClock.elapsedRealtime() > until) return
+        val bridge = monogramLogin ?: return
+        monogramApprovedLink = link
+        scope.launch {
+            val ok = bridge.approve(link)
+            if (ok) monogramApproval = null else monogramApprovedLink = null
+            withContext(Dispatchers.Main) {
+                notice(if (ok) R.string.companion_monogram_login_done else R.string.companion_monogram_login_failed, name, error = !ok)
+            }
+        }
+    }
+
     fun notice(message: Int, name: String = "", error: Boolean = false) {
         AppNotifications.post(AppNotice(key = "companion:$message", message = message, args = listOf(name),
             kind = NoticeKind.PLAYBACK, phase = if (error) NoticePhase.ERROR else NoticePhase.INFO,
@@ -2119,3 +2146,13 @@ private class CompanionBackupRejected(val reason: String) : IllegalStateExceptio
 private const val KEY_LAST_APPLIED = "last_settings_applied_at"
 /** Time for TLS, the challenge and the auth frame before an unauthenticated socket is closed. */
 private const val AUTH_DEADLINE_MS = 10_000L
+
+/** Implemented by the app around TelegramRepository; absent in tests. */
+interface CompanionMonogramLogin {
+    val signedIn: Boolean
+    val receiverLink: String?
+    fun startOnReceiver()
+    suspend fun approve(link: String): Boolean
+}
+
+private const val MONOGRAM_APPROVAL_WINDOW_MS = 4 * 60_000L
