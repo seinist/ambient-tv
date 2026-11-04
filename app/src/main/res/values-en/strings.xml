@@ -1822,6 +1822,8 @@
     <string name="companion_reconnect_play">%1$s · Reconnect and play</string>
     <string name="companion_starting_on">Starting playback on %1$s…</string>
     <string name="companion_playing_on">Playing on %1$s</string>
+    <string name="companion_monogram_login_done">%1$s is now signed in to Monogram</string>
+    <string name="companion_monogram_login_failed">Could not sign %1$s in to Monogram</string>
     <string name="companion_start_failed">The TV could not start playback. Check the connection and whether this source is configured on the TV. Try again or play on this phone.</string>
     <string name="companion_target_start_timeout">The TV has not confirmed playback. Check the TV for a confirmation dialog or a playback error before retrying.</string>
     <string name="companion_source_phone_only">This content is only available on this phone.</string>

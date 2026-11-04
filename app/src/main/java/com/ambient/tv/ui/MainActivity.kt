@@ -1334,6 +1334,12 @@ private fun AmbientTvApp(
         )
     }
     DisposableEffect(companionVm, navController) {
+        companionVm.manager.monogramLogin = object : com.ambient.tv.companion.CompanionMonogramLogin {
+            override val signedIn get() = telegramRepository.login.value.step == com.ambient.tv.data.telegram.MonogramLoginStep.AUTHORIZED
+            override val receiverLink get() = telegramRepository.companionLoginLink
+            override fun startOnReceiver() = telegramRepository.startCompanionLogin()
+            override suspend fun approve(link: String) = telegramRepository.approveLoginLink(link)
+        }
         companionVm.manager.attachSettings(companionVm.settings) {
             !companionVm.manager.settingsDirty && !BackgroundPlaybackSession.snapshot.value.active && !spotifyRepository.playback.value.playing
         }

@@ -13,6 +13,8 @@
     <string name="companion_unavailable">Lokales Netzwerk nicht verfügbar. Netzwerkberechtigung und WLAN oder Ethernet prüfen.</string>
     <string name="companion_invalid_invitation">Ungültige Einladung. Einen neuen QR-Code am TV scannen.</string>
     <string name="companion_play_failed">Dieser Inhalt kann am TV nicht gestartet werden. Prüfe, ob dort dieselbe Medienquelle eingerichtet ist.</string>
+    <string name="companion_monogram_login_done">%1$s ist jetzt bei Monogram angemeldet</string>
+    <string name="companion_monogram_login_failed">%1$s konnte nicht bei Monogram angemeldet werden</string>
     <string name="companion_switch_server_title">Server wechseln?</string>
     <string name="companion_switch_server_message">Das Handy möchte einen Titel von %1$s abspielen. Dieser Server ist am TV gerade nicht aktiv.</string>
     <string name="companion_switch_server_confirm">Wechseln und abspielen</string>

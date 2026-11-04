@@ -94,6 +94,11 @@ data class CompanionFrame(
     val syncError: String = "",
     val syncResultId: String = "",
     val syncResult: String = "",
+    /**
+     * TV only, after a settings transfer with sessions: its Telegram QR login link (tg://login?token=…),
+     * which the sending phone confirms with its own Monogram session instead of the user scanning it.
+     */
+    val monogramLogin: String = "",
 
 
 )
