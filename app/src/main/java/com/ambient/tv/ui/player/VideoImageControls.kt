@@ -243,6 +243,11 @@ internal fun MpvImageOptionsEditor(
                 enabled = toneMappingEnabled,
             )
             ImageChoice(R.string.image_dither, o.ditherDepth, listOf("auto" to stringResource(R.string.player_automatic), "no" to stringResource(R.string.player_off), "8" to "8-bit", "10" to "10-bit")) { change(o.copy(ditherDepth = it)) }
+            ImageChoice(R.string.image_color_matrix, o.colorMatrix, listOf(
+            "auto" to stringResource(R.string.player_off),
+            "601_to_709" to stringResource(R.string.image_color_matrix_601_to_709),
+            "709_to_601" to stringResource(R.string.image_color_matrix_709_to_601),
+        )) { change(o.copy(colorMatrix = it)) }
             ImageHint(stringResource(R.string.image_tonemap_hint))
         }
     }

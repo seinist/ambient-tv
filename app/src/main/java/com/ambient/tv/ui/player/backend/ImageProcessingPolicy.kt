@@ -422,6 +422,7 @@ internal fun mpvRenderCheckSignature(
     if (safe.antiring != defaults.antiring) add("antiring:${safe.antiring}")
     if (safe.toneMapping != defaults.toneMapping) add("tone-map:${safe.toneMapping}")
     if (safe.ditherDepth != defaults.ditherDepth) add("dither:${safe.ditherDepth}")
+    if (safe.colorMatrix != defaults.colorMatrix) add("matrix:${safe.colorMatrix}")
 }.takeIf { it.isNotEmpty() }?.joinToString("|")
 
 /**
@@ -456,6 +457,8 @@ internal fun mpvImageShaderKeys(
     val hdrSource = !sdr
     val scale = fittedScale ?: if (upscaling) Double.POSITIVE_INFINITY else 0.0
     fun allowed(key: String) = !hdrSource || MPV_IMAGE_SHADERS[key]?.hdrSafe == true
+    // First: every later hook (scalers, sharpening, grain) works on corrected colours.
+    if (o.colorMatrix != "auto" && allowed("matrix_${o.colorMatrix}")) add("matrix_${o.colorMatrix}")
     if (o.chromaScaler in VideoImageCatalog.chromaShaders && allowed(o.chromaScaler)) add(o.chromaScaler)
     // A hook that will skip its own //!WHEN must not be loaded: most luma
     // upscalers force decoder copy-back for as long as the file is attached.

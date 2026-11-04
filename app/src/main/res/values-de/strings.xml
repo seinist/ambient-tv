@@ -1203,6 +1203,9 @@
     <string name="image_tonemap_mobius">Möbius (erhält Mitten)</string>
     <string name="image_tonemap_clip">Abschneiden (keine Kompression, harte Lichter)</string>
     <string name="image_dither">Dithering-Bittiefe</string>
+    <string name="image_color_matrix">Farbmatrix-Korrektur</string>
+    <string name="image_color_matrix_601_to_709">BT.601 → BT.709 (rotstichiges HD/4K)</string>
+    <string name="image_color_matrix_709_to_601">BT.709 → BT.601 (blasses SD)</string>
     <string name="image_tonemap_hint">Wie HDR ohne HDR-Fernseher aussieht.</string>
     <string name="image_mpv_shader_hint">Bessere Skalierung braucht mehr Leistung. Anime4K für Zeichentrick.</string>
     <string name="image_mpv_filter_hint">Niedrig anfangen. Hohe Stufen können ruckeln.</string>

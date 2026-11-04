@@ -114,6 +114,7 @@ object VideoImageCatalog {
     val media3Deband = strengths
     val toneMapping = setOf("auto", "bt.2390", "reinhard", "hable", "mobius", "clip")
     val svpModes = setOf("off", "light", "balanced", "quality")
+    val colorMatrix = setOf("auto", "601_to_709", "709_to_601")
 }
 
 /**
@@ -198,6 +199,11 @@ data class MpvImageOptions(
     val svp: SvpOptions = SvpOptions(),
     /** Synthetic film grain on luma, applied after scaling and sharpening. */
     val filmGrain: String = "off",
+    /**
+     * Colour matrix correction on the decoded RGB: "601_to_709" fixes HD/4K video that the
+     * decoder/driver converted with the SD matrix (red, too warm), "709_to_601" the reverse.
+     */
+    val colorMatrix: String = "auto",
 ) {
     fun normalized(): MpvImageOptions {
         val safeScaler = scaler.takeIf { it in VideoImageCatalog.mpvScalers } ?: "lanczos"
@@ -217,6 +223,7 @@ data class MpvImageOptions(
             svp = svp.normalized(),
             svpMode = normalizeSvpMode(svpMode),
             filmGrain = filmGrain.takeIf { it in VideoImageCatalog.strengths } ?: "off",
+            colorMatrix = colorMatrix.takeIf { it in VideoImageCatalog.colorMatrix } ?: "auto",
         )
     }
 }
