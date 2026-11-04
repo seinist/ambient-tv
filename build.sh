@@ -43,6 +43,10 @@
 #   REFRESH_YOUTUBE_ENGINE=1  Developer-only: test independent upstream heads instead of pinned pair.
 #   SKIP_NNEDI3_VENDOR=1     Do not pre-bundle additional NNEDI3 shader assets.
 #   ADB_DEVICE=<ip[:port]>     Wireless ADB target for *-adb modes (default port 5555).
+#   PRIVATE_KEYS=1            Private release: build the account keys from private-keys.env
+#                             (git-ignored; template: private-keys.env.example) into the APK.
+#                             Settings then hide those inputs. PRIVATE_KEYS=<file> uses another
+#                             file. Keys inside an APK can be extracted: never publish such builds.
 #
 # Output:
 #   dist/ambient-tv-debug-<version>.apk
@@ -838,12 +842,30 @@ restore_native_release_libs() {
     log "Restored unstripped native libraries for debug/development builds"
 }
 
+# PRIVATE_KEYS=1 -> private-keys.env in the repository; any other non-empty value is a path.
+private_keys_file() {
+    local choice="${PRIVATE_KEYS:-}"
+    [[ -z "$choice" || "$choice" == "0" ]] && return 0
+    local file="$choice"
+    [[ "$choice" == "1" ]] && file="$ROOT_DIR/private-keys.env"
+    [[ "$file" = /* ]] || file="$ROOT_DIR/$file"
+    [[ -f "$file" ]] || fail "PRIVATE_KEYS set, but $file does not exist (copy private-keys.env.example)."
+    printf '%s' "$file"
+}
+
 run_release_gradle() {
+    # Resolved before set +e below, so a missing key file still stops the build.
+    local keys_file
+    keys_file="$(private_keys_file)" || exit 1
     prepare_native_release_libs
     local rc=0
     set +e
     local -a strip_args=()
     [[ -n "$NATIVE_RELEASE_STRIP_TOOL" ]] && strip_args+=("-PRELEASE_STRIP_TOOL=$NATIVE_RELEASE_STRIP_TOOL")
+    if [[ -n "$keys_file" ]]; then
+        strip_args+=("-PprivateKeysFile=$keys_file")
+        log "Private build: account keys from $keys_file are built in (do not publish this APK)"
+    fi
     "$ROOT_DIR/gradlew" --no-daemon --no-configuration-cache "${strip_args[@]}" "$@"
     rc=$?
     set -e

@@ -133,6 +133,8 @@ internal fun MonogramAccountSettings(
             Text(stringResource(R.string.monogram_unofficial_notice),
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurface)
+            val builtIn = com.ambient.tv.data.local.BuiltInKeys.monogram != null
+            if (!builtIn) {
             Text(stringResource(R.string.monogram_api_settings),
                 style = MaterialTheme.typography.titleMedium)
             Text(stringResource(R.string.monogram_api_setup_hint),
@@ -201,6 +203,7 @@ internal fun MonogramAccountSettings(
             }
             if (apiDashboardError) Text(stringResource(R.string.monogram_api_open_failed),
                 color = MaterialTheme.colorScheme.error)
+            }
 
             val status = when {
                 login.busy || saving -> stringResource(R.string.monogram_login_busy)

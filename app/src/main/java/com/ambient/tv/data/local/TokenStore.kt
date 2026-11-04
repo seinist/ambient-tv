@@ -13,7 +13,7 @@ class TokenStore @Inject constructor(
     val tmdbCredentialVersion = kotlinx.coroutines.flow.MutableStateFlow(0L)
     /** User-owned TMDB API key; exported only when credentials are explicitly included. */
     var tmdbApiKey: String?
-        get() = prefs.getString("tmdb_api_key", null)
+        get() = BuiltInKeys.tmdbApiKey ?: prefs.getString("tmdb_api_key", null)
         set(value) {
             prefs.edit {
                 if (value.isNullOrBlank()) remove("tmdb_api_key") else putString("tmdb_api_key", value)
@@ -22,7 +22,7 @@ class TokenStore @Inject constructor(
         }
     /** Optional user-owned fanart.tv key: wide backgrounds for Spotify artist pages. */
     var fanartApiKey: String?
-        get() = prefs.getString("fanart_api_key", null)
+        get() = BuiltInKeys.fanartApiKey ?: prefs.getString("fanart_api_key", null)
         set(value) = prefs.edit {
             if (value.isNullOrBlank()) remove("fanart_api_key") else putString("fanart_api_key", value.trim())
         }
@@ -53,8 +53,8 @@ class TokenStore @Inject constructor(
      * client ID. The ID and hash are written in one encrypted-preferences transaction;
      * neither is ever written to the plain AppPreferences or included in a normal backup.
      */
-    val monogramApiId: String get() = prefs.getString("monogram_api_id", "").orEmpty()
-    val monogramApiHash: String get() = prefs.getString("monogram_api_hash", "").orEmpty()
+    val monogramApiId: String get() = BuiltInKeys.monogram?.first?.toString() ?: prefs.getString("monogram_api_id", "").orEmpty()
+    val monogramApiHash: String get() = BuiltInKeys.monogram?.second ?: prefs.getString("monogram_api_hash", "").orEmpty()
 
     fun monogramCredentials(): Pair<Int, String>? {
         val id = monogramApiId.toIntOrNull()?.takeIf { it > 0 } ?: return null
@@ -75,7 +75,7 @@ class TokenStore @Inject constructor(
 
     /** OpenSubtitles.com: the user's own API consumer key and (optional) account for the download quota. */
     var openSubtitlesApiKey: String?
-        get() = prefs.getString("opensubtitles_api_key", null)
+        get() = BuiltInKeys.openSubtitlesApiKey ?: prefs.getString("opensubtitles_api_key", null)
         set(value) = prefs.edit { if (value.isNullOrBlank()) remove("opensubtitles_api_key") else putString("opensubtitles_api_key", value.trim()) }
     var openSubtitlesUsername: String?
         get() = prefs.getString("opensubtitles_username", null)

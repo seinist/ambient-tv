@@ -460,7 +460,7 @@ class AppPreferences @Inject constructor(
     fun clearRecentRadioStations() = prefs.edit { remove(KEY_RADIO_RECENT) }
 
     var spotifyClientId: String
-        get() = prefs.getString(KEY_SPOTIFY_CLIENT_ID, "") ?: ""
+        get() = BuiltInKeys.spotifyClientId ?: prefs.getString(KEY_SPOTIFY_CLIENT_ID, "") ?: ""
         set(value) = prefs.edit { putString(KEY_SPOTIFY_CLIENT_ID, value.trim()) }
 
     var spotifyDeviceName: String

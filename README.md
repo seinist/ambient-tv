@@ -163,6 +163,11 @@ Ambient TV is built in spare time, out of love for a good couch evening. If it m
 # Signed release (when keystore.properties is present)
 ./build.sh release
 
+# Private build: compile account keys from private-keys.env (git-ignored,
+# template private-keys.env.example) into the APK; Settings hide those inputs.
+# Keys inside an APK can be extracted: never publish such builds.
+PRIVATE_KEYS=1 ./build.sh release
+
 # Single ABI (ARM TV / devices)
 ./build.sh arm64
 ./build.sh armv7
