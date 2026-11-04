@@ -128,11 +128,15 @@ fun AppNotificationHost(
     val others = visible.filterNot { it.notice.kind in CONNECTIVITY_KINDS }
     // The wake action is essential, so it must remain available even if notice duration is OFF.
     // A card may represent several services; each machine still has exactly one cancel action.
-    val activeWakes = if (!handheld && ownsPresentation && !hidden && !dialog)
-        snapshot.pending.map(NoticeEntry::notice).filter {
-            it.kind == NoticeKind.WAKE && it.phase == NoticePhase.WORKING && it.key.startsWith("wake:")
-        }.distinctBy(AppNotice::key)
-    else emptyList()
+    // Includes the startup wake reported by the connection observer ("connection:<host>"), which has
+    // no machine card of its own; without it a TV only showed the badge and nothing to focus.
+    val activeWakes = if (!handheld && ownsPresentation && !hidden && !dialog) {
+        val working = snapshot.pending.map(NoticeEntry::notice).filter { it.kind == NoticeKind.WAKE && it.phase == NoticePhase.WORKING }
+        val machines = working.filter { it.key.startsWith("wake:") }.distinctBy(AppNotice::key)
+        val covered = machines.flatMap { it.systems }.toSet()
+        machines + working.filter { it.key.startsWith("connection:") && (it.systems.isEmpty() || !covered.containsAll(it.systems)) }
+            .distinctBy(AppNotice::key)
+    } else emptyList()
     Box(Modifier.fillMaxSize()
         .then(if (handheld) Modifier.windowInsetsPadding(WindowInsets.safeDrawing) else Modifier)
         .padding(horizontal = if (handheld) 16.dp else 40.dp, vertical = 32.dp)) {
@@ -154,7 +158,9 @@ fun AppNotificationHost(
         }
         if (activeWakes.isNotEmpty()) {
             val wakeVm: UnreachableServerViewModel = hiltViewModel()
-            TvWakeCancelBar(activeWakes, autoFocus = autoFocusWake && !playback, onCancel = wakeVm::cancelWake,
+            TvWakeCancelBar(activeWakes, autoFocus = autoFocusWake && !playback, onCancel = { key ->
+                if (key.startsWith("connection:")) wakeVm.cancelStartupWake() else wakeVm.cancelWake(key.removePrefix("wake:"))
+            },
                 onFocusReleased = onWakeFocusReleased,
                 modifier = Modifier.align(Alignment.BottomCenter))
         }
@@ -187,7 +193,7 @@ private fun TvWakeCancelBar(
     ) {
         wakes.forEachIndexed { index, notice ->
             key(notice.key) {
-                val machine = notice.key.removePrefix("wake:")
+                val machine = notice.key
                 val focus = remember { FocusRequester() }
                 var focused by remember { mutableStateOf(false) }
                 if (index == 0 && autoFocus) {
