@@ -41,6 +41,8 @@ fun TrailerSettings(onConnected: () -> Unit = {}) {
         SettingsGroup(card = true) {
             Text(stringResource(R.string.trailers_key_help))
             if (configured) Text(stringResource(R.string.trailers_connected), color = MaterialTheme.colorScheme.primary)
+            // Private builds carry the TMDB key: no key input and no disconnect.
+            if (com.ambient.tv.data.local.BuiltInKeys.tmdbApiKey == null) {
             TvTextField(value = input, onValueChange = { input = it; failure = null }, label = stringResource(R.string.trailers_api_key),
                 modifier = Modifier.fillMaxWidth(), visualTransformation = PasswordVisualTransformation(),
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password))
@@ -63,6 +65,7 @@ fun TrailerSettings(onConnected: () -> Unit = {}) {
                 })
                 if (configured) TvActionButton(text = stringResource(R.string.trailers_disconnect), enabled = !busy,
                     onClick = { repository.disconnect(); input = ""; enabled = false; preferences.trailersEnabled = false; onConnected() })
+            }
             }
         }
         SettingsSubheader(stringResource(R.string.settings_section_general_trailer_behavior))

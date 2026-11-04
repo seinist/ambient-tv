@@ -309,8 +309,10 @@ fun OpenSubtitlesSettingsGroup(content: @Composable (title: String, subtitle: St
     var password by remember { mutableStateOf("") }
     content(stringResource(R.string.opensubtitles_title), stringResource(R.string.opensubtitles_hint)) {
         Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            if (com.ambient.tv.data.local.BuiltInKeys.openSubtitlesApiKey == null) {
             TvTextField(apiKey, { apiKey = it.trim() }, stringResource(if (settings.apiKeySet) R.string.opensubtitles_api_key_set else R.string.opensubtitles_api_key),
                 Modifier.fillMaxWidth(), visualTransformation = PasswordVisualTransformation())
+            }
             TvTextField(username, { username = it }, stringResource(R.string.opensubtitles_username), Modifier.fillMaxWidth())
             TvTextField(password, { password = it }, stringResource(if (settings.passwordSet) R.string.opensubtitles_password_set else R.string.opensubtitles_password),
                 Modifier.fillMaxWidth(), visualTransformation = PasswordVisualTransformation())

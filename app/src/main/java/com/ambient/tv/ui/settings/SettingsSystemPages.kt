@@ -765,20 +765,25 @@ internal fun LazyListScope.settingsSystemCategoryItems(
                             color = if (uiState.spotifyWebAuthorized) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                         // Required: no client ID is built in (see README "Spotify setup").
-                        TvTextField(
-                            value = uiState.spotifyClientId,
-                            onValueChange = viewModel::onSpotifyClientIdChanged,
-                            label = stringResource(R.string.settings_spotify_client_id),
-                            modifier = Modifier.fillMaxWidth(),
-                        )
-                        Text(stringResource(R.string.settings_spotify_client_override_hint), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        TvTextField(
-                            value = uiState.fanartApiKey,
-                            onValueChange = viewModel::onFanartApiKeyChanged,
-                            label = stringResource(R.string.settings_fanart_api_key),
-                            modifier = Modifier.fillMaxWidth(),
-                        )
-                        Text(stringResource(R.string.settings_fanart_api_key_hint), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        // Private builds carry their own keys; the inputs are then hidden.
+                        if (com.ambient.tv.data.local.BuiltInKeys.spotifyClientId == null) {
+                            TvTextField(
+                                value = uiState.spotifyClientId,
+                                onValueChange = viewModel::onSpotifyClientIdChanged,
+                                label = stringResource(R.string.settings_spotify_client_id),
+                                modifier = Modifier.fillMaxWidth(),
+                            )
+                            Text(stringResource(R.string.settings_spotify_client_override_hint), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                        if (com.ambient.tv.data.local.BuiltInKeys.fanartApiKey == null) {
+                            TvTextField(
+                                value = uiState.fanartApiKey,
+                                onValueChange = viewModel::onFanartApiKeyChanged,
+                                label = stringResource(R.string.settings_fanart_api_key),
+                                modifier = Modifier.fillMaxWidth(),
+                            )
+                            Text(stringResource(R.string.settings_fanart_api_key_hint), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
                         Text(stringResource(R.string.settings_spotify_redirect, com.ambient.tv.spotify.SpotifyAuthManager.REDIRECT_URI), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         com.ambient.tv.BuildConfig.SPOTIFY_QR_REDIRECT_URI.takeIf(String::isNotBlank)?.let { qrRedirect ->
                             Text(stringResource(R.string.settings_spotify_qr_redirect, qrRedirect), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)

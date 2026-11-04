@@ -46,6 +46,30 @@ require(!spotifyRedirectParsed.scheme.isNullOrBlank() && !spotifyRedirectParsed.
     "SPOTIFY_REDIRECT_URI must contain a scheme and host"
 }
 
+/**
+ * Private builds: account keys from a local KEY=VALUE file (see private-keys.env.example), set by
+ * build.sh with PRIVATE_KEYS. The file is git-ignored; without it every key stays empty and the
+ * app asks for them in Settings as before. Keys in an APK are readable: never publish such builds.
+ */
+val privateKeys: Map<String, String> = run {
+    val path = (project.findProperty("privateKeysFile") as? String)?.trim().orEmpty()
+    if (path.isEmpty()) return@run emptyMap()
+    val file = rootProject.file(path)
+    require(file.isFile) { "privateKeysFile not found: $path" }
+    file.readLines().map(String::trim)
+        .filter { it.isNotEmpty() && !it.startsWith("#") && '=' in it }
+        .associate { line ->
+            line.substringBefore('=').trim() to line.substringAfter('=').trim().removeSurrounding("\"").removeSurrounding("'")
+        }
+}
+val privateKeyNames = listOf(
+    "SPOTIFY_CLIENT_ID", "MONOGRAM_API_ID", "MONOGRAM_API_HASH",
+    "TMDB_API_KEY", "FANART_API_KEY", "OPENSUBTITLES_API_KEY",
+)
+privateKeys.keys.filterNot { it in privateKeyNames }.let { unknown ->
+    require(unknown.isEmpty()) { "Unknown keys in privateKeysFile: ${unknown.joinToString()}" }
+}
+
 fun quotedBuildConfigString(value: String): String =
     "\"" + value.replace("\\", "\\\\").replace("\"", "\\\"") + "\""
 
@@ -214,6 +238,9 @@ android {
         resValue("string", "brand_app_name", quotedBuildConfigString(appDisplayName))
         buildConfigField("String", "SPOTIFY_REDIRECT_URI", quotedBuildConfigString(spotifyRedirectUriForBuild))
         buildConfigField("String", "SPOTIFY_QR_REDIRECT_URI", quotedBuildConfigString(spotifyQrRedirectUriForBuild))
+        privateKeyNames.forEach { name ->
+            buildConfigField("String", "BUILTIN_$name", quotedBuildConfigString(privateKeys[name].orEmpty()))
+        }
         manifestPlaceholders["spotifyRedirectScheme"] = spotifyRedirectParsed.scheme
         manifestPlaceholders["spotifyRedirectHost"] = spotifyRedirectParsed.host
 

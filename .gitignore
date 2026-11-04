@@ -77,3 +77,7 @@ GEMINI.md
 # Monogram API credentials and native build stamps are machine-private.
 telegram.properties
 /app/libs/.monogram-native-*
+
+# Private build keys (template: private-keys.env.example)
+/private-keys.env
+*.private.env

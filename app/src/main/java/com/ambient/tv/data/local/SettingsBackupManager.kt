@@ -334,7 +334,7 @@ class SettingsBackupManager @Inject constructor(
         val backup = SettingsBackup(
             trailersEnabled = preferences.trailersEnabled,
             trailerLanguage = preferences.trailerLanguage,
-            tmdbApiKey = if (includeCredentials) tokenStore.tmdbApiKey else null,
+            tmdbApiKey = if (includeCredentials && BuiltInKeys.tmdbApiKey == null) tokenStore.tmdbApiKey else null,
             schemaVersion = CURRENT_SCHEMA_VERSION,
             exportedAtEpochMs = System.currentTimeMillis(),
             activeServerId = preferences.activeServerId,
@@ -358,11 +358,12 @@ class SettingsBackupManager @Inject constructor(
             radioEnabled = preferences.radioEnabled,
             telegramEnabled = preferences.telegramEnabled,
             telegramSubmenuKeys = preferences.telegramSubmenuKeys,
-            monogramApiCredentials = if (includeCredentials) tokenStore.monogramCredentials()?.let { (id, hash) ->
+            monogramApiCredentials = if (includeCredentials && BuiltInKeys.monogram == null) tokenStore.monogramCredentials()?.let { (id, hash) ->
                 MonogramApiBackup(id, hash)
             } else null,
             radioFavorites = preferences.radioFavorites,
-            spotifyClientId = preferences.spotifyClientId,
+            // Built-in keys of a private build never leave the device.
+            spotifyClientId = if (BuiltInKeys.spotifyClientId == null) preferences.spotifyClientId else "",
             spotifyDeviceName = preferences.spotifyDeviceName,
             spotifyBitrateKbps = preferences.spotifyBitrateKbps,
             spotifyVisualizerModeKey = preferences.spotifyVisualizerModeKey,
@@ -571,7 +572,7 @@ class SettingsBackupManager @Inject constructor(
             wireGuardPrivateKey = if (includeCredentials) tokenStore.wireGuardPrivateKey else null,
             wireGuardPresharedKey = if (includeCredentials) tokenStore.wireGuardPresharedKey else null,
             iptvSources = if (includeCredentials) com.ambient.tv.data.iptv.IptvStore(tokenStore).sources() else null,
-            openSubtitlesApiKey = if (includeCredentials) tokenStore.openSubtitlesApiKey else null,
+            openSubtitlesApiKey = if (includeCredentials && BuiltInKeys.openSubtitlesApiKey == null) tokenStore.openSubtitlesApiKey else null,
             openSubtitlesUsername = if (includeCredentials) tokenStore.openSubtitlesUsername else null,
             openSubtitlesPassword = if (includeCredentials) tokenStore.openSubtitlesPassword else null,
             liveTimeshiftMb = preferences.liveTimeshiftMb,
@@ -748,7 +749,8 @@ class SettingsBackupManager @Inject constructor(
             }
         }
         backup.smartTubeAccounts?.let { smartTube?.importAccounts(it) }
-        preferences.spotifyClientId = backup.spotifyClientId
+        // Empty from a private build (built-in key not exported): keep this device's own ID.
+        backup.spotifyClientId.takeIf(String::isNotBlank)?.let { preferences.spotifyClientId = it }
         preferences.spotifyDeviceName = backup.spotifyDeviceName
         preferences.spotifyBitrateKbps = backup.spotifyBitrateKbps
         preferences.spotifyVisualizerModeKey = backup.spotifyVisualizerModeKey
