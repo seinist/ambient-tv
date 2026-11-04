@@ -8,8 +8,8 @@ import org.junit.Test
 
 class TelegramMenuTest {
     @Test fun entriesFollowTheMenuOrderNotTheStoredOrder() {
-        assertEquals(listOf("recent", "videos", "photos"),
-            telegramMenuEntries(listOf("photos", "recent", "videos")).map { it.key })
+        assertEquals(listOf("recent", "videos", "audio"),
+            telegramMenuEntries(listOf("audio", "recent", "videos", "photos")).map { it.key })
     }
 
     @Test fun withoutAChoiceTheOverviewStays() {

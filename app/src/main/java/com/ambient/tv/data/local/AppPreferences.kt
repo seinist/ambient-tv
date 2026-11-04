@@ -2268,8 +2268,8 @@ class AppPreferences @Inject constructor(
         const val KEY_INITIAL_SETUP_COMPLETED = "initial_setup_completed"
         const val KEY_TELEGRAM_ENABLED = "telegram_enabled"
         const val KEY_TELEGRAM_SUBMENU_KEYS = "telegram_submenu_keys"
-        val TELEGRAM_SUBMENU_KEYS = setOf("recent", "channels", "videos", "youtube", "audio", "photos")
-        val DEFAULT_TELEGRAM_SUBMENU_KEYS = listOf("recent", "channels", "videos", "youtube", "audio", "photos")
+        val TELEGRAM_SUBMENU_KEYS = setOf("recent", "channels", "videos", "youtube", "audio")
+        val DEFAULT_TELEGRAM_SUBMENU_KEYS = listOf("recent", "channels", "videos", "youtube", "audio")
         const val KEY_RADIO_ENABLED = "radio_enabled"
         const val KEY_RADIO_SUBMENU_KEYS = "radio_submenu_keys"
         val RADIO_SUBMENU_KEYS = setOf("popular", "favorites", "recent", "genres", "countries", "languages")

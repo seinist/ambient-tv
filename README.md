@@ -233,7 +233,7 @@ Without either, debug builds work and release APKs stay unsigned. `./build.sh ge
 4. Enable **Monogram**. The account section will show your connection status and sign-in methods:
    - **Android TV:** Choose **Sign in with QR code**, then use Telegram on an **already signed-in phone** to scan and approve the QR from **Settings › Devices** in Telegram. This is a Telegram `tg://` login token.
    - **Phone or TV alternative:** Enter the Telegram phone number including the country code, choose **Send login code**, enter the code delivered by Telegram, and confirm a **two-step verification password** if requested. On a phone, the QR method is omitted because it cannot scan its own screen.
-5. Once the **Connected account** status appears, configure the six available Monogram tabs/Home rows: **Recent media, Channels, Videos, YouTube links, Music & audio, Photos**. The YouTube tab opens videos via the existing SmartTube selection behavior; full Telegram captions are shown on post detail pages.
+5. Once the **Connected account** status appears, configure the five available Monogram tabs/Home rows: **Recent media, Channels, Videos, YouTube links, Music & audio**. The YouTube tab opens videos via the existing SmartTube selection behavior; full Telegram captions are shown on post detail pages.
 
 **Backups:** Regular backups include Monogram settings, menu/TV chips and Home rows. **Export with credentials** additionally includes the API ID/hash inside a passphrase-encrypted backup; Telegram authorization and downloaded private media **never** travel in backups. Sign in again after restoring on another device. Changing your API credentials requires signing out first.
 
