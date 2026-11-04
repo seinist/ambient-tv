@@ -854,6 +854,10 @@ open class MainActivity : ComponentActivity() {
                 ) {
                 // Overscan inset wraps the whole UI, playback included, so nothing lands behind the TV bezel.
                 androidx.compose.foundation.layout.Box {
+                // Under an opaque intro the app keeps composing and loading, but is not drawn.
+                androidx.compose.foundation.layout.Box(Modifier.graphicsLayer {
+                    alpha = if (com.ambient.tv.ui.intro.IntroPresentation.coversContent) 0f else 1f
+                }) {
                 com.ambient.tv.ui.common.OverscanBox(if (com.ambient.tv.ui.mobile.isTelevision(this@MainActivity)) appPreferences.overscanPercent else 0) {
                     AmbientTvApp(
                         openPlaybackRequest = openPlaybackRequest.longValue + if (intent.action == PlaybackService.ACTION_OPEN) 1 else 0,
@@ -906,6 +910,7 @@ open class MainActivity : ComponentActivity() {
                             recreate()
                         },
                     )
+                }
                 }
                 if (introStyle != com.ambient.tv.data.local.IntroAnimation.OFF) {
                     androidx.compose.runtime.key(introRun) {

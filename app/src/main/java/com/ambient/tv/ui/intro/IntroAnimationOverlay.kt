@@ -85,6 +85,13 @@ object IntroPresentation {
         private set
     internal var skipRequests by mutableIntStateOf(0)
         private set
+    /**
+     * True while the intro fully covers the app: the app below is still composed (it loads
+     * meanwhile) but not drawn, so the GPU renders only the intro. Cleared when the fade starts.
+     */
+    var coversContent by mutableStateOf(false)
+        private set
+    internal fun setCovering(value: Boolean) { coversContent = value }
 
     fun skip() { skipRequests++ }
     internal fun setActive(value: Boolean) { active = value }
@@ -201,7 +208,8 @@ fun IntroAnimationOverlay(styleKey: String, onFinished: () -> Unit, modifier: Mo
     val status = workingConnectivity(snapshot)
     DisposableEffect(Unit) {
         IntroPresentation.setActive(true)
-        onDispose { IntroPresentation.setActive(false) }
+        IntroPresentation.setCovering(style != IntroAnimation.OFF)
+        onDispose { IntroPresentation.setActive(false); IntroPresentation.setCovering(false) }
     }
     // Taken at composition: a key pressed before the effect starts still skips.
     val skipBaseline = remember { IntroPresentation.skipRequests }
@@ -224,6 +232,7 @@ fun IntroAnimationOverlay(styleKey: String, onFinished: () -> Unit, modifier: Mo
         run.join()
         skipWatch.cancel()
         // The loop keeps running under the fade, so the light dims instead of freezing.
+        IntroPresentation.setCovering(false)
         exit.animateTo(0f, tween(if (skipped || still) 220 else 700, easing = LinearEasing))
         ticker?.cancel()
         finished()
@@ -255,7 +264,8 @@ fun IntroAnimationOverlay(styleKey: String, onFinished: () -> Unit, modifier: Mo
                 IntroAnimation.PRISM -> drawPrism(frame)
                 else -> drawLightField(frame)
             }
-            grain?.let { drawRect(it, alpha = 0.05f, blendMode = BlendMode.Overlay) }
+            // Plain alpha: an Overlay blend reads back the full frame, costly at 4K on TV GPUs.
+            grain?.let { drawRect(it, alpha = 0.025f) }
             if (!lite) drawVignette()
             // Calms the light under the status card so its text keeps full contrast.
             val scrim = statusAlpha.value
