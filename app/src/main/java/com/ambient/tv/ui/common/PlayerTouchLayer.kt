@@ -79,6 +79,11 @@ fun PlayerTouchLayer(
     val currentSeekBack by rememberUpdatedState(onSeekBack)
     val currentSeekForward by rememberUpdatedState(onSeekForward)
     val currentPinch by rememberUpdatedState(pinchZoom)
+    // Phone: swipe left/right over the picture plays the next/previous item, only when one
+    // exists (a restart-only "previous" does not count).
+    val itemControls = com.ambient.tv.ui.player.LocalPlaybackItemControls.current
+    val currentSwipeNext by rememberUpdatedState(itemControls?.next)
+    val currentSwipePrevious by rememberUpdatedState(itemControls?.previous?.takeIf { itemControls.hasPreviousItem })
     val pinchAvailable = LocalHandheldUi.current && pinchZoom != null
     val pinchEnabled = pinchAvailable && pinchZoom.enabled == true
     var viewport by remember(pinchZoom?.key) { mutableStateOf(IntSize.Zero) }
@@ -140,6 +145,31 @@ fun PlayerTouchLayer(
                     } while (event.changes.any { it.pressed })
                 }
             }
+            .pointerInput(handheld) {
+                if (!handheld) return@pointerInput
+                awaitEachGesture {
+                    val down = awaitFirstDown(requireUnconsumed = false)
+                    var dx = 0f
+                    var dy = 0f
+                    var multiTouch = false
+                    var horizontal = false
+                    do {
+                        val event = awaitPointerEvent()
+                        if (event.changes.count { it.pressed } >= 2) multiTouch = true
+                        event.changes.firstOrNull { it.id == down.id }?.let { change ->
+                            val delta = change.position - change.previousPosition
+                            dx += delta.x
+                            dy += delta.y
+                            // Past the slop a sideways drag is a swipe, not a tap.
+                            if (!multiTouch && !horizontal && abs(dx) > viewConfiguration.touchSlop && abs(dx) > abs(dy)) horizontal = true
+                            if (horizontal && !multiTouch) change.consume()
+                        }
+                    } while (event.changes.any { it.pressed })
+                    if (multiTouch || !horizontal || currentPanelOpen) return@awaitEachGesture
+                    if (abs(dx) < size.width * SWIPE_ITEM_FRACTION || abs(dx) < abs(dy) * 2f) return@awaitEachGesture
+                    if (dx < 0f) currentSwipeNext?.invoke() else currentSwipePrevious?.invoke()
+                }
+            }
             .pointerInput(Unit) {
                 detectTapGestures(
                     onTap = {
@@ -158,3 +188,6 @@ fun PlayerTouchLayer(
             },
     )
 }
+
+/** Share of the player width a sideways swipe must travel to change the item. */
+private const val SWIPE_ITEM_FRACTION = 0.25f

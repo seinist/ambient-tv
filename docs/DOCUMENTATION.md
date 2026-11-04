@@ -805,7 +805,7 @@ Chrome's Google Cast button cannot reach this app (Google Cast is tied to certif
 - Touch timeline: drag = preview, release = seek
 - Pinch video with two fingers: snaps when the picture width or height fills the available player area. Keep spreading or closing your fingers to leave the snap. Available with Media3, VLC and MPV, including SmartTube and TVHeadend.
 
-Pinch zoom ranges from 50 to 800 percent and preserves the original aspect ratio. Recognizing a zoom gesture therefore changes a forced picture format to Auto and converts Stretch/Crop to Fit with the appropriate zoom. Filling one dimension may crop the other dimension at the screen edges. Snaps use the actual player area, including portrait and split-window layouts. Resizing the player area resets gesture-created zoom to Fit. The video panel shows custom percentages too. Music and open settings panels do not respond to pinch zoom; taps and double taps retain their existing actions.
+Pinch zoom ranges from 50 to 800 percent and preserves the original aspect ratio. Recognizing a zoom gesture therefore changes a forced picture format to Auto and converts Stretch/Crop to Fit with the appropriate zoom. Filling one dimension may crop the other dimension at the screen edges. Snaps use the actual player area, including portrait and split-window layouts. Resizing the player area resets gesture-created zoom to Fit. The video panel shows custom percentages too. Music and open settings panels do not respond to pinch zoom; taps and double taps retain their existing actions. On phones, swiping left over the picture plays the next video and swiping right the previous one, only when such an item exists (not for live TV).
 
 ### 11.3 Media selection
 
