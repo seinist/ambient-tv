@@ -191,6 +191,9 @@ fun IntroAnimationOverlay(styleKey: String, onFinished: () -> Unit, modifier: Mo
     // Single-accent themes still get a second tone, a lighter cut of the same color.
     val second = if (playback == accent) lerp(accent, Color.White, 0.45f) else playback
     val background = MaterialTheme.colorScheme.background
+    // UI accents are made for buttons; as light they look neon. Calm them like film stock.
+    val lightA = remember(accent) { filmicLight(accent) }
+    val lightB = remember(second) { filmicLight(second) }
     val ink = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.92f)
     val profile = LocalPerformanceProfile.current
     // Sparsam: the settled frame without motion; reduced effects: motion without grain and extra light.
@@ -256,13 +259,17 @@ fun IntroAnimationOverlay(styleKey: String, onFinished: () -> Unit, modifier: Mo
                 if (seconds <= openSeconds) seconds / openSeconds
                 else ((seconds - openSeconds) % IDLE_SECONDS) / IDLE_SECONDS,
             )
-            val frame = IntroFrame(seconds, breath, accent, second, ink, background, logo, wordmark)
+            val frame = IntroFrame(seconds, breath, lightA, lightB, ink, background, logo, wordmark)
             drawRect(background)
-            when (style) {
-                IntroAnimation.HORIZON -> drawDaybreak(frame)
-                IntroAnimation.SIGNATURE -> drawSignature(frame)
-                IntroAnimation.PRISM -> drawPrism(frame)
-                else -> drawLightField(frame)
+            // A slow camera push gives the whole scene depth; it settles and stays put.
+            val push = if (still) 1f else 1f + 0.018f * soft(phase(seconds, 0f, 6f))
+            withTransform({ scale(push, push, pivot = stageCenter()) }) {
+                when (style) {
+                    IntroAnimation.HORIZON -> drawDaybreak(frame)
+                    IntroAnimation.SIGNATURE -> drawSignature(frame)
+                    IntroAnimation.PRISM -> drawPrism(frame)
+                    else -> drawLightField(frame)
+                }
             }
             // Plain alpha: an Overlay blend reads back the full frame, costly at 4K on TV GPUs.
             grain?.let { drawRect(it, alpha = 0.025f) }
@@ -346,10 +353,7 @@ private fun DrawScope.lightPool(color: Color, at: Offset, radius: Float, alpha: 
     withTransform({ scale(1f, squash, pivot = at) }) {
         drawCircle(
             Brush.radialGradient(
-                0f to color.copy(alpha = alpha),
-                0.35f to color.copy(alpha = alpha * 0.55f),
-                0.7f to color.copy(alpha = alpha * 0.14f),
-                1f to Color.Transparent,
+                *GAUSSIAN_FALLOFF.map { (stop, k) -> stop to color.copy(alpha = alpha * k) }.toTypedArray(),
                 center = at,
                 radius = radius,
             ),
@@ -359,6 +363,23 @@ private fun DrawScope.lightPool(color: Color, at: Offset, radius: Float, alpha: 
         )
     }
 }
+
+/** Gaussian falloff reaching exactly zero at the rim: soft light without a visible edge or rings. */
+private val GAUSSIAN_FALLOFF: List<Pair<Float, Float>> = (0..12).map { i ->
+    val r = i / 12f
+    val floor = kotlin.math.exp(-4.5f)
+    r to ((kotlin.math.exp(-4.5f * r * r) - floor) / (1f - floor)).coerceIn(0f, 1f)
+}
+
+/** Slightly desaturated, warmed accent: reads as light, not as a UI colour. */
+private fun filmicLight(color: Color): Color {
+    val luma = 0.2126f * color.red + 0.7152f * color.green + 0.0722f * color.blue
+    val calm = lerp(color, Color(luma, luma, luma, color.alpha), 0.22f)
+    return lerp(calm, Color(0xFFFFE6CC), 0.12f)
+}
+
+/** Fast start, long gentle landing. */
+private fun expoOut(x: Float): Float = if (x >= 1f) 1f else (1f - kotlin.math.exp(-6f * x)) / (1f - kotlin.math.exp(-6f))
 
 private fun DrawScope.drawVignette() {
     drawRect(
@@ -474,19 +495,59 @@ private fun DrawScope.drawWordmark(
     }) {
         frame.wordmark.letters.forEachIndexed { i, (x, glyph) ->
             val from = lettersFrom + (if (signature) 0.18f else 0.12f) * i
-            val letter = soft(phase(t, from, from + (if (signature) 1f else 1.2f)))
+            val raw = phase(t, from, from + (if (signature) 1f else 1.2f))
+            val letter = soft(raw)
+            // Movement lands softly (expo-out) while the opacity still fades in evenly.
+            val rise = if (signature) 0f else 2.4f * (1f - expoOut(raw))
             val outline = if (signature) {
                 soft(phase(t, from, from + 0.4f)) * (1f - soft(phase(t, from + 0.4f, from + 0.95f)))
             } else 0f
             if (letter <= 0f && outline <= 0f) return@forEachIndexed
+            if (letter > 0f && !IntroDraw.lite) {
+                // Soft contact shadow: three widening, fading copies below the glyph.
+                for ((i, spread) in listOf(0.35f, 0.7f, 1.1f).withIndex()) {
+                    withTransform({
+                        translate(x + spread * 0.25f, rise + spread)
+                        scale(GLYPH_SCALE, -GLYPH_SCALE, pivot = Offset.Zero)
+                    }) {
+                        drawPath(glyph, Color.Black.copy(alpha = 0.16f * letter / (i + 1)))
+                    }
+                }
+            }
+            if (letter in 0.001f..0.999f && !IntroDraw.lite) {
+                // Arriving out of focus: two faint ghosts close in on the glyph as it settles.
+                val spread = 1.4f * (1f - letter)
+                for (dy in listOf(-spread, spread)) {
+                    withTransform({
+                        translate(x, rise + dy)
+                        scale(GLYPH_SCALE, -GLYPH_SCALE, pivot = Offset.Zero)
+                    }) {
+                        drawPath(glyph, frame.ink.copy(alpha = frame.ink.alpha * letter * 0.22f))
+                    }
+                }
+            }
             withTransform({
-                translate(x, if (signature) 0f else 2.4f * (1f - letter))
+                translate(x, rise)
                 scale(GLYPH_SCALE, -GLYPH_SCALE, pivot = Offset.Zero)
             }) {
                 if (outline > 0f) {
                     drawPath(glyph, frame.ink.copy(alpha = frame.ink.alpha * outline * 0.28f), style = Stroke(16f, join = StrokeJoin.Round))
                 }
                 if (letter > 0f) drawPath(glyph, frame.ink.copy(alpha = frame.ink.alpha * letter))
+                // One glint travels across the finished lettering, then never again.
+                val sheen = if (IntroDraw.lite || IntroDraw.still) 0f
+                    else soft(phase(t, badgeFrom + 0.2f, badgeFrom + 0.6f)) * (1f - soft(phase(t, badgeFrom + 1.2f, badgeFrom + 1.7f)))
+                if (letter > 0.98f && sheen > 0f) {
+                    val bandX = (-20f + 170f * soft(phase(t, badgeFrom + 0.2f, badgeFrom + 1.7f)) - x) / GLYPH_SCALE
+                    val half = 9f / GLYPH_SCALE
+                    drawPath(glyph, Brush.linearGradient(
+                        0f to Color.Transparent,
+                        0.5f to Color.White.copy(alpha = 0.55f * sheen),
+                        1f to Color.Transparent,
+                        start = Offset(bandX - half, -half * 0.6f),
+                        end = Offset(bandX + half, half * 0.6f),
+                    ))
+                }
             }
         }
         if (line > 0f) {
