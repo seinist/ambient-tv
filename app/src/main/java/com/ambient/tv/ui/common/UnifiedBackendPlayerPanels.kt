@@ -35,6 +35,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.mutableStateOf
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
@@ -489,6 +490,22 @@ fun UnifiedBackendPlayerPanel(
             onBack = back,
         ) {
             if (isLive) ProbeTeletextSubtitlePages()
+            // SmartTube: its own on/off switch, the same as in its settings (kept for later videos).
+            val playingSource = com.ambient.tv.ui.player.BackgroundPlaybackSession.snapshot.collectAsState().value.metadata?.source
+            if (playingSource == "youtube") {
+                val prefs = remember(context) { com.ambient.tv.ui.player.videoImagePreferences(context) }
+                var youtubeSubtitles by remember { mutableStateOf(prefs.youtubeSubtitlesEnabled) }
+                PlayerPanelEntry(
+                    icon = Icons.Filled.Subtitles,
+                    title = stringResource(R.string.settings_youtube_subtitles),
+                    value = stringResource(if (youtubeSubtitles) R.string.player_on else R.string.player_off),
+                    onClick = {
+                        youtubeSubtitles = !youtubeSubtitles
+                        prefs.youtubeSubtitlesEnabled = youtubeSubtitles
+                        com.ambient.tv.ui.player.BackgroundPlaybackSession.resetSubtitleSelection()
+                    },
+                )
+            }
             PlayerDropUpSelector(
                 label = stringResource(R.string.player_subtitles),
                 value = subtitleSummary,

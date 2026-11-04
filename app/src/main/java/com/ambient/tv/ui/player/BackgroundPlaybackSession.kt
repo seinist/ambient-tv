@@ -210,6 +210,13 @@ object BackgroundPlaybackSession {
     private var subtitlePreferences: com.ambient.tv.data.local.AppPreferences? = null
     private var lastSubtitleCheck = 0L
     private var lastTitleSettingsSave = 0L
+    /** Defaults changed (e.g. SmartTube's subtitle switch): drop a manual choice, apply them anew. */
+    fun resetSubtitleSelection() {
+        checkThread()
+        subtitlePolicy = SubtitleSessionPolicy()
+        lastSubtitleCheck = 0L
+    }
+
     fun manualSubtitleSelection() {
         checkThread()
         subtitlePolicy.manualSelection()
