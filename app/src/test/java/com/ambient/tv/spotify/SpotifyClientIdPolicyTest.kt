@@ -14,7 +14,13 @@ class SpotifyClientIdPolicyTest {
     }
 
     @Test fun buildDoesNotBakeInAClientId() {
-        assertFalse(File("build.gradle.kts").readText().contains("SPOTIFY_CLIENT_ID"))
+        // Only the opt-in private key file (build.sh PRIVATE_KEYS) may provide one; public and
+        // test builds have none, and Gradle never names a fixed value.
+        val gradle = File("build.gradle.kts").readText()
+        assertFalse(gradle.contains("\"SPOTIFY_CLIENT_ID\" to"))
+        assertTrue(gradle.contains("privateKeys[name].orEmpty()"))
+        assertEquals("", com.ambient.tv.BuildConfig.BUILTIN_SPOTIFY_CLIENT_ID)
+        assertNull(com.ambient.tv.data.local.BuiltInKeys.spotifyClientId)
     }
 
     @Test fun missingIdHintPointsToTheReadmeGuide() {
