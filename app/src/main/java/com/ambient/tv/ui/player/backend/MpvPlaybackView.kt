@@ -303,7 +303,7 @@ fun MpvVideoSurface(
             view.renderAtDisplayResolution = controller.gpuRenderAtPanel
             view.presentation = presentation
             view.sourceAspectRatio = sourceAspectRatio
-            view.ambientBackdrop = com.ambient.tv.ui.player.AmbientVideoBackdrop.enabled
+            view.ambientBackdrop = com.ambient.tv.ui.player.AmbientVideoBackdrop.active
             view.videoSurface.applyUiHdrHeadroom(hdrHeadroom)
         },
         modifier = modifier.ignoreVideoSurfaceFocus(),

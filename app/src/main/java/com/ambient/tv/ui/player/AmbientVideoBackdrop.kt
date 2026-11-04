@@ -23,6 +23,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.FilterQuality
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
@@ -42,8 +43,14 @@ import kotlin.math.roundToInt
  * it continuously ([AmbientGlide]) instead of stepping from snapshot to snapshot.
  */
 internal object AmbientVideoBackdrop {
-    /** Set by the persistent video host; the video views drop their black fill while true. */
+    /** Set by the persistent video host: a phone shows a real picture (any orientation). */
     var enabled by mutableStateOf(false)
+    /** Phone in landscape: only side bars (portrait/square video) get ambient, never top/bottom bars. */
+    var landscape by mutableStateOf(false)
+    /** The picture is narrower than the player, i.e. it has bars left and right. */
+    var pillarbox by mutableStateOf(false)
+    /** The video views drop their black fill while true. */
+    val active: Boolean get() = enabled && (!landscape || pillarbox)
     /** The SurfaceView of the attached video output, if any. */
     var surface by mutableStateOf<SurfaceView?>(null)
 
@@ -52,6 +59,8 @@ internal object AmbientVideoBackdrop {
 }
 
 private const val CAPTURE_INTERVAL_MS = 500L
+/** Below 97 % of the player width the side bars are wide enough to be worth filling. */
+private const val PILLARBOX_THRESHOLD = 0.97f
 private const val CAPTURE_WIDTH = 32
 /** Time constant of the glide: a scene cut has settled after about three of these. */
 internal const val AMBIENT_GLIDE_TAU_MS = 700f
@@ -112,13 +121,18 @@ internal fun AmbientVideoBackdropLayer(modifier: Modifier = Modifier) {
     var shown by remember(surface) { mutableStateOf<Bitmap?>(null) }
     var version by remember(surface) { mutableIntStateOf(0) }
     val lifecycle = LocalLifecycleOwner.current.lifecycle
+    var layerWidth by remember { mutableIntStateOf(0) }
     LaunchedEffect(surface, lifecycle) {
         surface ?: return@LaunchedEffect
         val handler = Handler(Looper.getMainLooper())
         lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
             launch {
                 while (true) {
-                    captureFrame(surface, handler)?.let { captured ->
+                    // Widescreen in landscape keeps its black top/bottom bars.
+                    AmbientVideoBackdrop.pillarbox = layerWidth > 0 && surface.width > 0 &&
+                        surface.width * surface.scaleX < layerWidth * PILLARBOX_THRESHOLD
+                    // Nothing to fill (widescreen in landscape): no frame copies.
+                    if (AmbientVideoBackdrop.active) captureFrame(surface, handler)?.let { captured ->
                         val pixels = IntArray(captured.width * captured.height)
                         captured.getPixels(pixels, 0, captured.width, 0, 0, captured.width, captured.height)
                         glide.setTarget(pixels, captured.width, captured.height)
@@ -145,9 +159,10 @@ internal fun AmbientVideoBackdropLayer(modifier: Modifier = Modifier) {
             }
         }
     }
-    Box(modifier.background(Color.Black)) {
+    Box(modifier.background(Color.Black).onSizeChanged { layerWidth = it.width }) {
         val bitmap = shown
-        if (bitmap != null) {
+        val landscape = AmbientVideoBackdrop.landscape
+        if (bitmap != null && AmbientVideoBackdrop.active) {
             val image = remember(bitmap) { bitmap.asImageBitmap() }
             // A 32 px frame upscaled bilinearly is already soft; blur (API 31+) smooths the rest.
             Canvas(Modifier.fillMaxSize().blur(48.dp).graphicsLayer { alpha = 0.6f }) {
@@ -164,8 +179,11 @@ internal fun AmbientVideoBackdropLayer(modifier: Modifier = Modifier) {
                 )
             }
         }
-        // Fade into black towards the controls at the bottom, like YouTube.
-        Box(Modifier.fillMaxSize().background(Brush.verticalGradient(
+        // Fade into black towards the controls at the bottom, like YouTube; in landscape
+        // towards the screen edges left and right.
+        Box(Modifier.fillMaxSize().background(if (landscape) Brush.horizontalGradient(
+            0f to Color.Black.copy(alpha = 0.6f), 0.5f to Color.Transparent, 1f to Color.Black.copy(alpha = 0.6f),
+        ) else Brush.verticalGradient(
             0f to Color.Black.copy(alpha = 0.35f), 0.5f to Color.Transparent, 1f to Color.Black.copy(alpha = 0.7f),
         )))
     }
