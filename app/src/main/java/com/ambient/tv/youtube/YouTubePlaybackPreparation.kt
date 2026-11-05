@@ -184,7 +184,7 @@ internal fun applyYouTubePlaybackMetadata(stream: YouTubePlayback, metadata: You
         durationMs = duration,
         timeline = stream.timeline.copy(chapters = metadata?.chapters.orEmpty()).normalized(duration),
         resumeMs = if (resolveResume) com.ambient.tv.ui.player.resumeRewindPositionMs(
-            youtubeResumeMs(duration, YouTubeLocalProgress.percent(metadata.videoId, metadata.percentWatched), stream.isLive), stream.resumeRewindSeconds,
+            youtubeResumeMs(duration, YouTubeLocalProgress.resumePercent(metadata.videoId, metadata.percentWatched), stream.isLive), stream.resumeRewindSeconds,
         ) else stream.resumeMs,
         resumeResolved = stream.resumeResolved || resolveResume,
     )

@@ -189,7 +189,7 @@ fun YouTubeDetailScreen(
                             m.description?.let { Text(it, style=MaterialTheme.typography.bodyMedium, color=MaterialTheme.colorScheme.onSurfaceVariant, maxLines=8, overflow=TextOverflow.Ellipsis) }
                             if (state.offline) Text(stringResource(R.string.browse_offline))
                             DeviceActionRow(horizontalArrangement=Arrangement.spacedBy(12.dp)){
-                                if (!state.offline) TvActionButton(if (current != null) stringResource(R.string.playback_open) else if(com.ambient.tv.youtube.YouTubeLocalProgress.percent(m.videoId, m.percentWatched)>0) stringResource(R.string.common_resume) else stringResource(R.string.common_play), onClick={ if (current != null) openCurrent(current) else onPlay(m.videoId) }, modifier=Modifier.focusRequester(primaryFocusRequester))
+                                if (!state.offline) TvActionButton(if (current != null) stringResource(R.string.playback_open) else if(com.ambient.tv.youtube.YouTubeLocalProgress.resumePercent(m.videoId, m.percentWatched)>0) stringResource(R.string.common_resume) else stringResource(R.string.common_play), onClick={ if (current != null) openCurrent(current) else onPlay(m.videoId) }, modifier=Modifier.focusRequester(primaryFocusRequester))
                                 state.channel?.takeIf { !state.offline }?.let { channel ->
                                     TvActionButton(channel.title ?: stringResource(R.string.youtube_channel_open), onClick={ onOpenChannel(channel) }, icon=androidx.compose.material.icons.Icons.Filled.AccountCircle)
                                     channel.subscribed?.let { subscribed ->

@@ -24,4 +24,11 @@ class YouTubeLocalProgressTest {
         YouTubeLocalProgress.observeRemote(id, 0)
         assertEquals(30, YouTubeLocalProgress.percent(id, 0))
     }
+
+    @Test fun resumeUsesTheCardValueWhenWatchNextHasNone() {
+        val id = "local-progress-c"
+        YouTubeLocalProgress.observeRemote(id, 40)
+        assertEquals(40, YouTubeLocalProgress.resumePercent(id, 0))
+        assertEquals(25, YouTubeLocalProgress.resumePercent(id, 25))
+    }
 }

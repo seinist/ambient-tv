@@ -72,6 +72,16 @@ object YouTubeLocalProgress {
         persist()
     }
 
+    /**
+     * Resume point in percent: watch-next usually has no position, so YouTube's value from the
+     * last card seen for the video (feeds, history, search) is used when it reports none.
+     */
+    @Synchronized
+    fun resumePercent(videoId: String, metadataPercent: Int): Int {
+        val remote = metadataPercent.takeIf { it > 0 } ?: lastRemote[videoId] ?: 0
+        return percent(videoId, remote)
+    }
+
     /** Progress to show and resume from, given YouTube's [remotePercent] for [videoId]. */
     fun percent(videoId: String, remotePercent: Int): Int {
         val entry = entries[videoId] ?: return remotePercent

@@ -49,7 +49,7 @@ object DeArrow {
     fun cached(videoId: String): DeArrowBranding? = cache[videoId]
 
     fun thumbnailUrl(videoId: String, timeSeconds: Double): String =
-        "https://dearrow-thumb.ajay.app/api/v1/getThumbnail?videoID=$videoId&time=$timeSeconds"
+        "https://dearrow-thumb.ajay.app/api/v1/getThumbnail?videoID=$videoId&time=$timeSeconds&generateNow=true"
 
     suspend fun branding(videoId: String): DeArrowBranding? {
         cache[videoId]?.let { return it }
