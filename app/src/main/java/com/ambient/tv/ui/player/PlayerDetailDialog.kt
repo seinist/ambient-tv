@@ -228,6 +228,11 @@ internal fun PlayerDetailDialog(
     val density = LocalDensity.current
     // New channel, episode or SmartTube item starts at the beginning of its own details.
     LaunchedEffect(detail.title, detail.artworkUrl) { scroll.scrollTo(0) }
+    // If enrichment makes a long description short while the scrollbar had focus, it
+    // disappears. Do not leave the outer key handler thinking the scrollbar still owns input.
+    LaunchedEffect(scroll.maxValue) {
+        if (scroll.maxValue <= 0) scrollbarFocused = false
+    }
     val step = with(density) { 160.dp.toPx() }
 
     LaunchedEffect(interactive) {
@@ -241,7 +246,7 @@ internal fun PlayerDetailDialog(
 
     val keys = Modifier.onPreviewKeyEvent { event ->
         // The interactive scrollbar owns its own Left/Right and Page/Arrow events.
-        if (scrollbarFocused) return@onPreviewKeyEvent false
+        if (scrollbarFocused && scroll.maxValue > 0) return@onPreviewKeyEvent false
         val action = playerDetailKeyAction(event.key, closeFocused,
             scroll.canScrollBackward, scroll.canScrollForward,
             hasScrollbar = scroll.maxValue > 0 && !handheld)
