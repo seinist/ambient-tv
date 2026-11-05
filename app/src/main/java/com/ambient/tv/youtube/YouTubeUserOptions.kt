@@ -32,7 +32,7 @@ fun youtubeFilterItems(items: List<YouTubeItem>, scope: String, hideShorts: Bool
     }
 
 /** DeArrow's community title and thumbnail for one video. */
-data class DeArrowBranding(val title: String?, val thumbnailTimeSeconds: Double?)
+data class DeArrowBranding(val title: String?, val thumbnailTimeSeconds: Double?, val randomTime: Double? = null)
 
 /**
  * DeArrow (sponsor.ajay.app): crowd-sourced titles and thumbnails instead of clickbait. Only a
@@ -44,6 +44,18 @@ object DeArrow {
     private val json = Json { ignoreUnknownKeys = true }
     private val client by lazy {
         okhttp3.OkHttpClient.Builder().callTimeout(6, java.util.concurrent.TimeUnit.SECONDS).build()
+    }
+
+    /**
+     * Thumbnail frame: the community choice, else (like the DeArrow extension) a random frame,
+     * using DeArrow's per-video random time or a fraction derived from the video id.
+     * Null when neither a choice nor the duration is known.
+     */
+    fun thumbnailTime(videoId: String, branding: DeArrowBranding?, durationMs: Long): Double? {
+        branding?.thumbnailTimeSeconds?.let { return it }
+        if (durationMs <= 0L) return null
+        val fraction = branding?.randomTime ?: ((videoId.hashCode().toLong() and 0xffff) / 65535.0)
+        return durationMs / 1000.0 * fraction.coerceIn(0.1, 0.9)
     }
 
     fun cached(videoId: String): DeArrowBranding? = cache[videoId]
@@ -79,7 +91,7 @@ object DeArrow {
         val thumb = entry["thumbnails"]?.jsonArray?.map { it.jsonObject }
             ?.firstOrNull { it["original"]?.jsonPrimitive?.booleanOrNull != true && trusted(it) }
             ?.get("timestamp")?.jsonPrimitive?.doubleOrNull
-        return DeArrowBranding(title, thumb)
+        return DeArrowBranding(title, thumb, entry["randomTime"]?.jsonPrimitive?.doubleOrNull)
     }
 }
 

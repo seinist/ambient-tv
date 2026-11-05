@@ -173,7 +173,8 @@ internal suspend fun prepareYouTubePlayback(
 
 /** Fills title, chapters, and resume from watch-next without touching an in-flight sponsor list. */
 internal fun applyYouTubePlaybackMetadata(stream: YouTubePlayback, metadata: YouTubeMetadata?): YouTubePlayback {
-    val duration = metadata?.durationMs?.coerceAtLeast(0) ?: stream.durationMs
+    // Watch-next can report 0; the stream's own length is the fallback.
+    val duration = metadata?.durationMs?.takeIf { it > 0 } ?: stream.durationMs
     val resolveResume = !stream.resumeResolved && metadata != null && (duration > 0L || stream.isLive)
     return stream.copy(
         title = stream.title.takeUnless { it.isBlank() || it == "YouTube" || it == "SmartTube" } ?: metadata?.title ?: "SmartTube",
