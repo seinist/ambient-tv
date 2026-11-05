@@ -1,6 +1,7 @@
 package com.ambient.tv.ui.player
 
 import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.unit.dp
 import com.ambient.tv.R
 import com.ambient.tv.domain.model.CastMember
 import com.ambient.tv.domain.model.MediaItem
@@ -216,6 +217,40 @@ class PlayerDetailInfoTest {
         toggleDetailsByInfoKey(nav, "Details")
         assertEquals(UnifiedPlayerPanel.NONE, nav.panel)
         assertEquals("bar:Details", nav.restoreKey)
+    }
+
+    @Test fun fixedPanelDetailsButtonKeepsNestedPlaybackSettingsAndRestoresItsOwnFocus() {
+        val nav = PlayerPanelNavigation()
+        nav.fromOrigin("bar:Settings", root = true) { nav.open(UnifiedPlayerPanel.SETTINGS) }
+        nav.fromOrigin("entry:Video", root = false) { nav.open(UnifiedPlayerPanel.VIDEO) }
+        nav.videoState.section = "filters"
+        // OSD Details is opt-in and disabled, but the fixed panel action is independent.
+        assertFalse(osdButtonVisible(OsdButton.DETAILS, OsdPlayer.MEDIA, emptySet()))
+        openPlayerDetailsFromPanel(nav)
+        assertEquals(UnifiedPlayerPanel.DETAILS, nav.panel)
+        assertEquals(3, nav.depth)
+        closePlayerDetails(nav)
+        assertEquals(UnifiedPlayerPanel.VIDEO, nav.panel)
+        assertEquals(PLAYER_PANEL_DETAILS_FOCUS_KEY, nav.restoreKey)
+        assertEquals("filters", nav.videoState.section)
+        nav.back(UnifiedPlayerPanel.VIDEO)
+        assertEquals(UnifiedPlayerPanel.SETTINGS, nav.panel)
+        assertEquals("entry:Video", nav.restoreKey)
+        nav.back()
+        assertEquals(UnifiedPlayerPanel.NONE, nav.panel)
+        assertEquals("bar:Settings", nav.restoreKey)
+    }
+
+    @Test fun fixedArtworkLayoutUsesAvailableWidthAndOnlyTextHasScrollFocus() {
+        assertTrue(playerDetailSideBySide(1024.dp, handheld = false))
+        assertTrue(playerDetailSideBySide(780.dp, handheld = true))
+        assertFalse(playerDetailSideBySide(412.dp, handheld = true))
+        assertEquals(PlayerDetailKeyAction.FOCUS_SCROLLBAR,
+            playerDetailKeyAction(Key.DirectionRight, onCloseButton = false,
+                canScrollBackward = false, canScrollForward = true, hasScrollbar = true))
+        // Once text fits there is no scrollbar focus target, only Close.
+        assertEquals(PlayerDetailKeyAction.FOCUS_CLOSE,
+            playerDetailKeyAction(Key.DirectionRight, false, false, false, hasScrollbar = false))
     }
 
     @Test fun inactivityNeverClosesTheDialog() {
