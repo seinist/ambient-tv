@@ -18,6 +18,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.remember
@@ -126,6 +127,10 @@ fun ReferencePlayerHeader(
     artworkAspectRatio: Float = 16f / 9f,
     artworkContentScale: ContentScale = ContentScale.Crop,
     showPaused: Boolean = false,
+    /** Short metadata trailing the context/channel row without creating another OSD line. */
+    contextTrailingText: String? = null,
+    /** Short metadata trailing the subtitle/channel row, used by SmartTube's publish date. */
+    subtitleTrailingText: String? = null,
 ) {
     // The bubble occupies the area above the timeline. Fade only the header's pixels,
     // never its measured height: the seekbar, badges and actions must not jump.
@@ -146,13 +151,19 @@ fun ReferencePlayerHeader(
             )
         }
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
-            // A stream without a seekbar shows pause status in this existing context row.
-            if (!contextLine.isNullOrBlank() || showPaused) {
+            val contextValue = contextLine?.takeIf(String::isNotBlank)
+            val contextTrailing = contextTrailingText?.trim()?.takeIf(String::isNotBlank)
+            val subtitleValue = subtitle?.takeIf(String::isNotBlank)
+            val subtitleTrailing = subtitleTrailingText?.trim()?.takeIf(String::isNotBlank)
+            // Trailing metadata gets measured before the weighted channel name. On narrow
+            // screens, the channel ellipsizes first and the publish time stays readable.
+            // Neither line changes its measured height when a late date arrives.
+            if (contextValue != null || contextTrailing != null || showPaused) {
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
-                    contextLine?.takeIf { it.isNotBlank() }?.let {
+                    contextValue?.let {
                         Text(
                             text = it,
                             color = Color.White.copy(alpha = 0.72f),
@@ -161,6 +172,16 @@ fun ReferencePlayerHeader(
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
                             modifier = Modifier.weight(1f, fill = false),
+                        )
+                    }
+                    contextTrailing?.let {
+                        Text(
+                            text = if (contextValue == null) it else "· $it",
+                            color = Color.White.copy(alpha = 0.72f),
+                            fontSize = 14.sp,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.widthIn(max = deviceDp(244.dp, 144.dp)),
                         )
                     }
                     PlayerPausedIndicator(showPaused, showLabel = true)
@@ -176,14 +197,32 @@ fun ReferencePlayerHeader(
                 overflow = if (LocalHandheldUi.current) TextOverflow.Clip else TextOverflow.Ellipsis,
                 modifier = if (LocalHandheldUi.current) Modifier.basicMarquee(iterations = Int.MAX_VALUE, initialDelayMillis = 1_500) else Modifier,
             )
-            subtitle?.takeIf { it.isNotBlank() }?.let {
-                Text(
-                    text = it,
-                    color = Color.White.copy(alpha = 0.72f),
-                    fontSize = 14.sp,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
+            if (subtitleValue != null || subtitleTrailing != null) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    subtitleValue?.let {
+                        Text(
+                            text = it,
+                            color = Color.White.copy(alpha = 0.72f),
+                            fontSize = 14.sp,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f, fill = false),
+                        )
+                    }
+                    subtitleTrailing?.let {
+                        Text(
+                            text = if (subtitleValue == null) it else "· $it",
+                            color = Color.White.copy(alpha = 0.72f),
+                            fontSize = 14.sp,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.widthIn(max = deviceDp(244.dp, 144.dp)),
+                        )
+                    }
+                }
             }
         }
     }
