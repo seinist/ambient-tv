@@ -442,7 +442,10 @@ private fun YouTubeChannelTitle(channel: com.ambient.tv.youtube.YouTubeChannelIn
 @Composable
 private fun YouTubeItemArtwork(item: YouTubeItem, modifier: Modifier) {
     if (!item.isChannel) {
-        ArtworkImage(item.imageUrl, item.title, modifier, ContentScale.Crop)
+        // A DeArrow frame that cannot be generated falls back to YouTube's own thumbnail.
+        val original = com.ambient.tv.youtube.youtubeThumbnailUrl(item.videoId)
+        ArtworkImage(item.imageUrl, item.title, modifier, ContentScale.Crop,
+            fallbackModels = if (item.imageUrl != original) listOf(original) else emptyList())
         return
     }
     Box(modifier.background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = .4f)), contentAlignment = Alignment.Center) {

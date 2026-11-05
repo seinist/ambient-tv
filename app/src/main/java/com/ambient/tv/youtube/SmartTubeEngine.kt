@@ -786,7 +786,8 @@ class SmartTubeEngine @Inject constructor(
             imageUrl = imageUrl,
             backgroundUrl = meta.callString("getBackgroundImageUrl")?.takeIf(String::isNotBlank) ?: imageUrl,
             durationMs = meta.callLong("getDurationMs") ?: 0,
-            percentWatched = (meta.callInt("getPercentWatched") ?: 0).also { YouTubeLocalProgress.observeRemote(videoId, it) },
+            // Watch-next mostly carries no position (0 or -1); the card's value is kept separately.
+            percentWatched = (meta.callInt("getPercentWatched") ?: 0).coerceAtLeast(0),
             isLive = meta.callBool("isLive") ?: false,
             channelId = meta.callString("getChannelId")?.takeIf(String::isNotBlank),
             authorImageUrl = meta.callString("getAuthorImageUrl")?.takeIf(String::isNotBlank),
@@ -1095,7 +1096,7 @@ class SmartTubeEngine @Inject constructor(
             imageUrl = raw.callString("getCardImageUrl")?.takeIf(String::isNotBlank) ?: youtubeThumbnailUrl(videoId),
             backgroundUrl = raw.callString("getBackgroundImageUrl")?.takeIf(String::isNotBlank),
             durationMs = raw.callLong("getDurationMs") ?: 0,
-            percentWatched = (raw.callInt("getPercentWatched") ?: 0).also { YouTubeLocalProgress.observeRemote(videoId, it) },
+            percentWatched = (raw.callInt("getPercentWatched") ?: 0).coerceAtLeast(0).also { YouTubeLocalProgress.observeRemote(videoId, it) },
             isLive = raw.callBool("isLive") ?: false,
             isUpcoming = raw.callBool("isUpcoming") ?: false,
             scheduledStartMs = youtubeScheduledStartMs(raw.callString("getUpcomingEventStartTime"), null),
