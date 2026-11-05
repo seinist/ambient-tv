@@ -659,7 +659,7 @@ Need a GPU output (OpenGL or Vulkan). With "Android Surface (direct)" the filter
 | Smooth color bands | Off · Light · Medium · Strong | Medium | GPU output. |
 | Sharpening | Off · Standard sharpening: Light, Medium · Shader sharpening: AMD CAS, Adaptive Sharpen | Off | SDR; with NIS/FSR the row is replaced by a note on their integrated sharpening. |
 | Denoise · HQDN3D | Off · Light · Medium | Off | SDR. |
-| Deblock · CPU | Off · Light · Medium | Off | SDR. |
+| Deblock (GPU / CPU fallback) | Off · Light · Medium · Strong | Off | SDR; MPV uses a GPU luma shader on GPU output and falls back to FFmpeg CPU processing if the hook cannot load. Media3 uses its existing OpenGL ES effect. VLC has no configurable GPU post-deblock hook. |
 | SSimSuperRes | On / Off | Off | SDR; not with NIS/FSR. |
 | Brightness · Contrast · Saturation · Gamma | −20 … +20 | 0 | SDR. |
 | HDR tone mapping | Auto · BT.2390 · Reinhard · Hable · Möbius · Clip | Auto | HDR input shown on an SDR output. |
@@ -737,7 +737,7 @@ Interface and playback have separate modes (*Look & feel*). Until a side is save
 
 **Reduced interface:** no blur, soft shadows or spring focus; static Home hero; no Home background on other screens; high-resolution images off; smaller image decodes; screensaver at Economy; projectM throttled; TV menu sounds muted.
 
-**Reduced playback:** heavy video paths use lighter overrides (GPU shaders, CPU denoise/deblock, VLC software filters, Media3 effect chain, 2× deinterlace, spectrum). Saved image settings are kept and come back when leaving Low. Audio DSP stays available.
+**Reduced playback:** heavy video paths use lighter overrides (GPU shaders, CPU denoise/deblock fallback, VLC software filters, Media3 effect chain, 2× deinterlace, spectrum). Saved image settings are kept and come back when leaving Low. Audio DSP stays available.
 
 "Check interface" and "Check playback" run a short hidden measurement and save the result for that side.
 

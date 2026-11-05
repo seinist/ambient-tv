@@ -457,7 +457,10 @@ internal fun mpvImageShaderKeys(
     val hdrSource = !sdr
     val scale = fittedScale ?: if (upscaling) Double.POSITIVE_INFINITY else 0.0
     fun allowed(key: String) = !hdrSource || MPV_IMAGE_SHADERS[key]?.hdrSafe == true
-    // First: every later hook (scalers, sharpening, grain) works on corrected colours.
+    // Optional GPU cleanup on the original SDR luma grid, before scaling and sharpening.
+    // This cannot run on HDR transfer functions or Android's direct opaque surface.
+    if (sdr && o.deblock != "off") add("deblock_${o.deblock}")
+    // Colour correction applies to subsequent RGB hooks.
     if (o.colorMatrix != "auto" && allowed("matrix_${o.colorMatrix}")) add("matrix_${o.colorMatrix}")
     if (o.chromaScaler in VideoImageCatalog.chromaShaders && allowed(o.chromaScaler)) add(o.chromaScaler)
     // A hook that will skip its own //!WHEN must not be loaded: most luma
@@ -507,7 +510,10 @@ internal fun mpvBuiltinSharpen(sharpening: String, scaler: String, processing: B
         else -> "0"
     }
 
-internal fun mpvCpuImageFilters(options: MpvImageOptions, sdr: Boolean): Map<String, String> = buildMap {
+/** Keep the lavfi deblock as a fallback if the MPV GPU hook could not be loaded. */
+internal fun mpvCpuImageFilters(
+    options: MpvImageOptions, sdr: Boolean, hardwareDeblock: Boolean = false,
+): Map<String, String> = buildMap {
     if (!sdr) return@buildMap
     val o = options.normalized()
     when (o.denoise) {
@@ -515,7 +521,7 @@ internal fun mpvCpuImageFilters(options: MpvImageOptions, sdr: Boolean): Map<Str
         "medium" -> put("plex-denoise", "lavfi=[hqdn3d=3:2:4.5:3]")
         "strong" -> put("plex-denoise", "lavfi=[hqdn3d=6:4.5:9:6.75]")
     }
-    when (o.deblock) {
+    if (!hardwareDeblock) when (o.deblock) {
         "light" -> put("plex-deblock", "lavfi=[deblock=filter=weak:block=8]")
         "medium" -> put("plex-deblock", "lavfi=[deblock=filter=strong:block=8]")
         "strong" -> put("plex-deblock", "lavfi=[deblock=filter=strong:block=8:alpha=0.15:beta=0.09:gamma=0.08:delta=0.08]")

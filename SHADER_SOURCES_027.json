@@ -307,5 +307,13 @@
     "license": "CC0-1.0",
     "sha256": "71e99fba18938c712928682a030351329134f2c44fb58b651c302c37f71177a3",
     "file": "app/src/main/res/raw/quality_matrix_709_to_601_71e99fba.glsl"
+  },
+  {
+    "key": "deblock_medium",
+    "url": "local: written for Ambient TV (no upstream)",
+    "revision": "local",
+    "license": "CC0-1.0",
+    "sha256": "c22eca0ae3fa9e605e69536ccc40c26901f232edad44278c958b020bc9ae8ad1",
+    "file": "app/src/main/res/raw/quality_deblock_gpu.glsl"
   }
 ]

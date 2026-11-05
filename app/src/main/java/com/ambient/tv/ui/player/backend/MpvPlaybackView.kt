@@ -72,6 +72,8 @@ data class MpvPlaybackSnapshot(
     val pixelFormat: String? = null,
     val outputPixelFormat: String? = null,
     val activeVideoFilters: String? = null,
+    /** Successfully attached user GLSL hooks (separate from the CPU vf chain). */
+    val activeImageShaders: List<String>? = null,
     val activeScaler: String? = null,
     val activeUpscaling: Boolean? = null,
     val activeChromaScaler: String? = null,
@@ -416,6 +418,7 @@ fun rememberMpvPlaybackSnapshot(
                 pixelFormat = if (pollNerdStats) controller.pixelFormat() else snapshot.pixelFormat,
                 outputPixelFormat = if (pollNerdStats) controller.outputPixelFormat() else snapshot.outputPixelFormat,
                 activeVideoFilters = if (pollNerdStats) controller.activeVideoFilters() else snapshot.activeVideoFilters,
+                activeImageShaders = if (pollNerdStats) controller.loadedImageShaders() else snapshot.activeImageShaders,
                 activeScaler = if (pollNerdStats) controller.activeScaler() else snapshot.activeScaler,
                 activeUpscaling = if (pollNerdStats) controller.activeUpscaling() else snapshot.activeUpscaling,
                 activeChromaScaler = if (pollNerdStats) controller.activeChromaScaler() else snapshot.activeChromaScaler,
