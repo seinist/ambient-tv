@@ -69,6 +69,8 @@ internal class BrowseFocusReturnState(private val scope: CoroutineScope, val vie
     private val collections = linkedMapOf<Any, Collection>()
     private var last: Target? = null
     private var lastKey: BrowseFocusKey? = null
+    /** Last actual tile, preserved while the user moves to the floating page-action header. */
+    private var lastContentKey: BrowseFocusKey? = null
     private var pin: PinnableContainer.PinnedHandle? = null
     private var preparation: Job? = null
     private var recovery: Job? = null
@@ -114,6 +116,7 @@ internal class BrowseFocusReturnState(private val scope: CoroutineScope, val vie
         }
         last = target
         lastKey = target.key
+        if (target.key.content) lastContentKey = target.key
         preparation?.cancel()
         preparation = null
         prepared = null
@@ -125,6 +128,7 @@ internal class BrowseFocusReturnState(private val scope: CoroutineScope, val vie
         contentIdentity = identity
         if (restoreInitialTarget) initialTargetChosen = false
         if (lastKey?.content == true) forget()
+        else lastContentKey = null
     }
 
     fun initialTarget(key: BrowseFocusKey?) {
@@ -132,6 +136,7 @@ internal class BrowseFocusReturnState(private val scope: CoroutineScope, val vie
         if (initialTargetChosen || key == null) return
         initialTargetChosen = true
         if (lastKey == null) lastKey = key
+        if (lastContentKey == null) lastContentKey = key
     }
 
     /**
@@ -144,6 +149,7 @@ internal class BrowseFocusReturnState(private val scope: CoroutineScope, val vie
         cancelRecovery()
         last = null
         lastKey = null
+        lastContentKey = null
         releasePin()
         preparation?.cancel()
         preparation = null
@@ -208,33 +214,43 @@ internal class BrowseFocusReturnState(private val scope: CoroutineScope, val vie
     fun setFallback(owner: Any, action: () -> Boolean?) { fallbackOwner = owner; fallback = action }
     fun clearFallback(owner: Any) { if (fallbackOwner === owner) { fallbackOwner = null; fallback = null } }
 
-    /** null means the target is being laid out. Only this synchronous call may transfer focus. */
-    fun requestFocus(): Boolean? {
+    /** Generic sidebar entry: restoring a focused chip/header is correct for Back/navigation. */
+    fun requestFocus(): Boolean? = requestFocusInternal(contentOnly = false)
+
+    /**
+     * D-pad Down from a provider overview header must never select that same header again.
+     * Use the last tile (or the first real tile after a cold start); if it is offscreen,
+     * prepare its lazy row and let the caller retry after layout.
+     */
+    fun requestContentFocus(): Boolean? = requestFocusInternal(contentOnly = true)
+
+    /** null means the tile is being laid out; true means focus moved synchronously. */
+    private fun requestFocusInternal(contentOnly: Boolean): Boolean? {
         if (!active) return false
         if (holdEntry) return null
         if (NavReselect.restoreTop.value && lastKey != null) forget()
         if (preparation?.isActive == true) return null
 
-        if (lastKey == null) {
+        if (!contentOnly && lastKey == null) {
             fallback?.let { action ->
                 val result = action()
                 if (result != false) return result
             }
         }
-        val remembered = lastKey
+        val remembered = if (contentOnly) lastContentKey else lastKey
         val collection = remembered?.takeIf { it.content }?.let { key ->
             collections.values.firstOrNull { source -> source.slots().any { it.key == key } }
         }
-        val existing = (last?.takeIf { it in targets }
-            ?: targets.keys.lastOrNull { it.key == remembered })?.takeIf {
-            !it.key.content || collections.isEmpty() || collection != null
-        }
+        val existing = ((last?.takeIf { it in targets && (!contentOnly || it.key.content) }
+            ?: targets.keys.lastOrNull { it.key == remembered && (!contentOnly || it.key.content) }))
+            ?.takeIf { !it.key.content || collections.isEmpty() || collection != null }
         val initial = collections.values.firstNotNullOfOrNull { it.slots().firstOrNull() }
         val wanted = when {
             existing != null -> existing.key
             collection != null -> remembered
             initial != null -> initial.key
-            else -> targets.keys.firstOrNull { it.key.content }?.key ?: targets.keys.firstOrNull()?.key
+            else -> targets.keys.firstOrNull { it.key.content }?.key
+                ?: if (contentOnly) null else targets.keys.firstOrNull()?.key
         } ?: return false
         val target = existing?.takeIf { it.key == wanted } ?: targets.keys.firstOrNull { it.key == wanted }
         val laidOut = collections.values.all { source ->
@@ -243,7 +259,8 @@ internal class BrowseFocusReturnState(private val scope: CoroutineScope, val vie
         if (target?.visible == true && laidOut &&
             runCatching { target.requester.requestFocus() }.getOrDefault(false)
         ) return true
-        if (prepared == wanted) return false
+        // A prepared row still needs a new frame before it exposes its inner tile.
+        if (prepared == wanted) return if (contentOnly) null else false
         if (target == null && collections.values.none { source -> source.slots().any { it.key == wanted } }) return false
         prepared = wanted
         preparation = scope.launch {
