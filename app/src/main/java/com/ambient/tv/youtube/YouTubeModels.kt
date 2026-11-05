@@ -131,6 +131,8 @@ data class YouTubePlayback(
     val sponsorSegments: List<YouTubeSponsorSegment> = emptyList(),
     val timeline: com.ambient.tv.domain.model.PlaybackTimeline = com.ambient.tv.domain.model.PlaybackTimeline(),
     val headers: Map<String, String> = emptyMap(),
+    /** Source-provided publication label; never synthesize an exact upload time from a relative one. */
+    val publishedDate: String? = null,
 )
 
 /** Stable fallback for watch-next metadata, which does not expose the current video artwork. */
