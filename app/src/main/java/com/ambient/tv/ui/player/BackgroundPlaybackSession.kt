@@ -822,7 +822,8 @@ object BackgroundPlaybackSession {
         val target = if (!automatic && metadata?.sponsorSkipEnabled == true &&
             prefs?.youtubeSponsorBlockEnabled == true && youtube != null && !youtube.isLive) {
             sponsorBlockSeekTarget(requested, youtube.sponsorSegments, duration,
-                prefs.youtubeSponsorBlockEffectiveModes)
+                prefs.youtubeSponsorBlockEffectiveModes,
+                backward = requested < snapshot.value.status.positionMs)
         } else requested
         handle?.seekTo(target)
         committedSeekPositionMs = target
