@@ -15,6 +15,10 @@ import com.ambient.tv.livetv.LiveTvPlaybackSource
 import java.util.Locale
 import com.ambient.tv.data.repository.RoutingMediaRepository
 import com.ambient.tv.domain.model.MediaItem
+import com.ambient.tv.data.telegram.MonogramLoginStep
+import com.ambient.tv.data.telegram.TelegramMedia
+import com.ambient.tv.data.telegram.TelegramMediaKind
+import com.ambient.tv.data.telegram.TelegramRepository
 import com.ambient.tv.spotify.SpotifyBrowseItem
 import com.ambient.tv.spotify.SpotifyEntityType
 import com.ambient.tv.spotify.SpotifyRepository
@@ -32,6 +36,7 @@ internal data class CarAudioEntry(
     val playable: Boolean = false,
     val radioStation: RadioStation? = null,
     val libraryItem: MediaItem? = null,
+    val telegramMedia: TelegramMedia? = null,
 )
 
 internal sealed interface CarAudioSelection {
@@ -40,6 +45,8 @@ internal sealed interface CarAudioSelection {
     data class Library(val item: MediaItem, val queue: List<String>) : CarAudioSelection
     data class Live(val channel: LiveTvChannel, val stream: LiveTvPlaybackSource,
         val queue: List<String>, val system: String) : CarAudioSelection
+    /** [queue] holds car item IDs of the browsed Telegram audio posts. */
+    data class Telegram(val media: TelegramMedia, val url: String, val queue: List<String>) : CarAudioSelection
 }
 
 /** Read-only, driver-safe browse facade. Existing repositories and playback engines own the data. */
@@ -51,6 +58,8 @@ internal class CarAudioCatalog @Inject constructor(
     private val spotify: SpotifyRepository,
     private val media: RoutingMediaRepository,
     private val auxiliary: CarAuxiliaryAudio,
+    /** Lazy: a no-Monogram build or a disabled system never touches the native client. */
+    private val telegram: javax.inject.Provider<TelegramRepository>,
 ) {
     private data class Page(val entries: List<CarAudioEntry>, val loadedAt: Long)
     private val pages = LinkedHashMap<String, Page>()
@@ -107,6 +116,25 @@ internal class CarAudioCatalog @Inject constructor(
 
     private fun folder(id: String, title: String, subtitle: String? = null) =
         CarAudioEntry(id, title, subtitle)
+
+    /** Signed-in Monogram account; Telegram restores its session itself when enabled. */
+    private fun telegramReady(): Boolean = preferences.telegramEnabled &&
+        telegram.get().let { it.nativeAvailable && it.login.value.step == MonogramLoginStep.AUTHORIZED }
+
+    /** Only audio files Telegram lets us stream; protected posts and links stay hidden. */
+    private fun TelegramMedia.asCarEntry(): CarAudioEntry? =
+        if (kind != TelegramMediaKind.AUDIO || !playableOnTelegram || fileSize <= 0L) null
+        else CarAudioEntry(
+            id = CarAudioIds.telegramItem(chatId, messageId),
+            title = title.lineSequence().firstOrNull { it.isNotBlank() }?.trim() ?: channel,
+            subtitle = channel,
+            artworkUrl = thumbnailUrl,
+            playable = true,
+            telegramMedia = this,
+        )
+
+    private suspend fun telegramAudio(section: String): List<CarAudioEntry> =
+        telegram.get().browsePage(section, limit = 100).items.mapNotNull { it.asCarEntry() }
 
     private fun RadioStation.asEntry() = CarAudioEntry(
         id = CarAudioIds.station(id),
@@ -249,14 +277,30 @@ internal class CarAudioCatalog @Inject constructor(
             }
         }
         CarAudioIds.MUSIC_LIBRARIES -> {
+            // Root holds at most four tabs; Telegram audio lives with the other music sources.
+            val telegramFolder = if (telegramReady())
+                listOf(folder(CarAudioIds.TELEGRAM_ROOT, context.getString(R.string.car_audio_telegram)))
+            else emptyList()
             // Include all configured backend instances; provider-owned IDs stay opaque.
-            listOf(media.plex, media.jellyfin, media.emby)
+            telegramFolder + listOf(media.plex, media.jellyfin, media.emby)
                 .flatMap { provider -> provider.getLibrarySections().getOrDefault(emptyList()) }
                 .filter { carAudioBrowseType(it.type) }
                 .distinctBy { it.key }
                 .map { folder(CarAudioIds.musicSection(it.key), it.title) }
         }
+        CarAudioIds.TELEGRAM_ROOT -> if (telegramReady()) listOf(
+            folder(CarAudioIds.TELEGRAM_AUDIO, context.getString(R.string.car_audio_telegram_audio)),
+            folder(CarAudioIds.TELEGRAM_CHANNELS, context.getString(R.string.car_audio_telegram_channels)),
+        ) else emptyList()
+        CarAudioIds.TELEGRAM_AUDIO -> if (telegramReady()) telegramAudio("audio") else emptyList()
+        CarAudioIds.TELEGRAM_CHANNELS -> if (telegramReady())
+            telegram.get().channelsPage(limit = 100).items.map {
+                folder(CarAudioIds.telegramChannel(it.chatId), it.title)
+            } else emptyList()
         else -> {
+            CarAudioIds.telegramChannelId(parentId)?.let { chatId ->
+                return if (telegramReady()) telegramAudio("channel:$chatId") else emptyList()
+            }
             val spotifyCollection = CarAudioIds.spotifyCollectionId(parentId)
             val musicSection = CarAudioIds.musicSectionId(parentId)
             val musicItem = CarAudioIds.musicItemId(parentId)
@@ -307,6 +351,16 @@ internal class CarAudioCatalog @Inject constructor(
             if (!spotifyEnabled()) return null
             return CarAudioSelection.Spotify("spotify:track:$trackId")
         }
+        CarAudioIds.telegramItemId(id)?.let { (chatId, messageId) ->
+            if (!telegramReady()) return null
+            val repository = telegram.get()
+            val media = entriesById[id]?.telegramMedia
+                ?: repository.media(chatId, messageId)?.takeIf { it.asCarEntry() != null }
+                ?: return null
+            val queue = parents[id]?.let(pages::get)?.entries.orEmpty()
+                .filter { it.telegramMedia != null }.map { it.id }
+            return CarAudioSelection.Telegram(media, repository.playerHttpUrl(media), queue.ifEmpty { listOf(id) })
+        }
         CarAudioIds.musicItemId(id)?.let { key ->
             // Browse previews often omit stream URLs; resolve the authoritative track
             // metadata before claiming the item is unavailable to the head unit.
@@ -331,6 +385,7 @@ internal class CarAudioCatalog @Inject constructor(
             is CarAudioSelection.Library -> selection.item.asEntry()
             is CarAudioSelection.Live -> CarAudioEntry(id, selection.channel.name,
                 selection.channel.numberLabel, selection.channel.iconUrl, playable = true)
+            is CarAudioSelection.Telegram -> selection.media.asCarEntry()
             else -> null
         }
 
@@ -351,6 +406,10 @@ internal class CarAudioCatalog @Inject constructor(
             entry.playable && entry.title.contains(q, ignoreCase = true) &&
                 CarAudioIds.musicItemId(entry.id)?.let { DlnaKeys.owns(it) || FileKeys.owns(it) } == true
         }.take(20)
+        if (telegramReady()) {
+            runCatching { telegram.get().search(q).mapNotNull { it.asCarEntry() } }
+                .getOrDefault(emptyList()).take(15).let(found::addAll)
+        }
         if (spotifyEnabled()) {
             runCatching { spotify.search(q).mapNotNull { it.asEntry() } }
                 .getOrDefault(emptyList()).take(15).let(found::addAll)

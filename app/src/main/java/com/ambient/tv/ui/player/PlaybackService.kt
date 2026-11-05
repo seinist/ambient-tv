@@ -42,6 +42,7 @@ import com.ambient.tv.youtube.SmartTubeEngine
 import com.ambient.tv.youtube.YouTubePlayback
 import com.ambient.tv.data.local.AppPreferences
 import com.ambient.tv.car.CarAudioIds
+import com.ambient.tv.data.telegram.playerMetadata
 import com.ambient.tv.car.CarAudioCatalog
 import com.ambient.tv.car.CarAudioSelection
 import com.ambient.tv.car.toBrowserItem
@@ -87,6 +88,8 @@ class PlaybackService : MediaBrowserServiceCompat() {
     private val sponsorSkip = BackgroundSponsorSkipPolicy()
     private var carMusicQueue: List<String> = emptyList()
     private var carLiveQueue: List<String> = emptyList()
+    /** Car item IDs of the browsed Telegram audio posts; the playing post is found by mediaKey. */
+    private var carTelegramQueue: List<String> = emptyList()
     private var foregroundStarted = false
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private lateinit var mediaSession: MediaSession
@@ -481,6 +484,7 @@ class PlaybackService : MediaBrowserServiceCompat() {
                 carSpotifySelection.clear()
                 carMusicQueue = emptyList()
                 carLiveQueue = emptyList()
+                carTelegramQueue = emptyList()
                 radioPlaybackLauncher.play(selection.station, selection.queue)
                     .onFailure { Timber.w(it, "Android Auto radio playback failed") }
                 carCatalog.invalidate(CarAudioIds.RADIO_RECENT)
@@ -491,6 +495,7 @@ class PlaybackService : MediaBrowserServiceCompat() {
                 val start = carSpotifySelection.begin()
                 carMusicQueue = emptyList()
                 carLiveQueue = emptyList()
+                carTelegramQueue = emptyList()
                 mediaSession.setPlaybackState(PlaybackState.Builder()
                     .setActions(PlaybackState.ACTION_PLAY or PlaybackState.ACTION_PAUSE or
                         PlaybackState.ACTION_PLAY_PAUSE or PlaybackState.ACTION_PLAY_FROM_MEDIA_ID or
@@ -517,6 +522,7 @@ class PlaybackService : MediaBrowserServiceCompat() {
                 val url = item.streamUrl ?: return
                 carMusicQueue = selection.queue
                 carLiveQueue = emptyList()
+                carTelegramQueue = emptyList()
                 repository.preparePlayback(item.ratingKey, 0)
                 val source = when {
                     JellyfinBackend.owns(item.ratingKey) -> "jellyfin"
@@ -542,11 +548,27 @@ class PlaybackService : MediaBrowserServiceCompat() {
                     audioOnly = true,
                 )
             }
+            is CarAudioSelection.Telegram -> {
+                if (carSpotifySelected) spotify.pause()
+                carSpotifySelection.clear()
+                carMusicQueue = emptyList()
+                carLiveQueue = emptyList()
+                carTelegramQueue = selection.queue
+                val media = selection.media
+                PlaybackEngineFactory.create(
+                    context = this,
+                    streamUrl = selection.url,
+                    startPositionMs = telegram.get().resumePositionMs(media.mediaKey),
+                    metadata = media.playerMetadata().copy(hasVideo = false),
+                    audioOnly = true,
+                )
+            }
             is CarAudioSelection.Live -> {
                 if (carSpotifySelected) spotify.pause()
                 carSpotifySelection.clear()
                 carMusicQueue = emptyList()
                 carLiveQueue = selection.queue
+                carTelegramQueue = emptyList()
                 val stream = selection.stream
                 val channel = selection.channel
                 val playbackId = carLiveQueue.firstOrNull {
@@ -577,6 +599,11 @@ class PlaybackService : MediaBrowserServiceCompat() {
         }
     }
 
+    private fun carTelegramIndex(mediaKey: String?): Int {
+        val ids = mediaKey?.let { com.ambient.tv.data.telegram.telegramMediaIds(it) } ?: return -1
+        return carTelegramQueue.indexOf(CarAudioIds.telegramItem(ids.first, ids.second))
+    }
+
     private fun skipCarAudio(next: Boolean) {
         if (carSpotifySelected) {
             if (next) spotify.next() else spotify.previous()
@@ -591,6 +618,12 @@ class PlaybackService : MediaBrowserServiceCompat() {
         val liveTarget = if (next) liveIndex + 1 else liveIndex - 1
         if (liveIndex >= 0 && liveTarget in carLiveQueue.indices) {
             requestCarAudioPlayback(carLiveQueue[liveTarget])
+            return
+        }
+        val telegramIndex = carTelegramIndex(current?.mediaId)
+        val telegramTarget = if (next) telegramIndex + 1 else telegramIndex - 1
+        if (telegramIndex >= 0 && telegramTarget in carTelegramQueue.indices) {
+            requestCarAudioPlayback(carTelegramQueue[telegramTarget])
             return
         }
         val index = carMusicQueue.indexOf(current?.mediaId)
@@ -667,11 +700,15 @@ class PlaybackService : MediaBrowserServiceCompat() {
         val carMusic = metadata?.source != "radio" && carIndex >= 0
         val liveIndex = carLiveQueue.indexOf(metadata?.mediaId)
         val carLive = metadata?.source in setOf("iptv", "tvheadend") && liveIndex >= 0
-        val hasPrevious = hasPreviousRadio || (carMusic && carIndex > 0) || (carLive && liveIndex > 0)
+        val telegramIndex = if (metadata?.source == "telegram") carTelegramIndex(metadata.mediaId) else -1
+        val carTelegram = telegramIndex >= 0
+        val hasPrevious = hasPreviousRadio || (carMusic && carIndex > 0) || (carLive && liveIndex > 0) ||
+            (carTelegram && telegramIndex > 0)
         val hasNext = hasNextRadio || (carMusic && carIndex < carMusicQueue.lastIndex) ||
-            (carLive && liveIndex < carLiveQueue.lastIndex)
+            (carLive && liveIndex < carLiveQueue.lastIndex) ||
+            (carTelegram && telegramIndex < carTelegramQueue.lastIndex)
         mediaSession.setPlaybackState(PlaybackState.Builder()
-            .setActions(platformPlaybackActions(metadata?.source, hasPrevious, hasNext, carMusic || carLive))
+            .setActions(platformPlaybackActions(metadata?.source, hasPrevious, hasNext, carMusic || carLive || carTelegram))
             .setState(when {
                 !state.active || state.status.ended -> PlaybackState.STATE_STOPPED
                 state.status.error != null -> PlaybackState.STATE_ERROR

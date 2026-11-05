@@ -77,4 +77,16 @@ class CarAudioIdsTest {
             assertFalse(type, carAudioBrowseType(type))
         }
     }
+
+    @Test fun telegramIdsRoundTripAndOnlyFoldersBrowse() {
+        val item = CarAudioIds.telegramItem(-1004567L, 37)
+        assertEquals(-1004567L to 37, CarAudioIds.telegramItemId(item))
+        assertFalse(CarAudioIds.isFolder(item))
+        val channel = CarAudioIds.telegramChannel(-1004567L)
+        assertEquals(-1004567L, CarAudioIds.telegramChannelId(channel))
+        assertTrue(CarAudioIds.isFolder(channel))
+        assertTrue(CarAudioIds.isFolder(CarAudioIds.TELEGRAM_AUDIO))
+        assertEquals(null, CarAudioIds.telegramItemId("car:telegram:item:x:1"))
+        assertEquals(null, CarAudioIds.telegramItemId("car:telegram:item:5:0"))
+    }
 }

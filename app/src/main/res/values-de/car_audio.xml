@@ -19,4 +19,7 @@
     <string name="car_audio_languages">Sprachen</string>
     <string name="car_audio_iptv_radio">IPTV-Radio</string>
     <string name="car_audio_tvh_radio">TVHeadend-Radio</string>
+    <string name="car_audio_telegram">Telegram</string>
+    <string name="car_audio_telegram_audio">Audio</string>
+    <string name="car_audio_telegram_channels">Kanäle</string>
 </resources>

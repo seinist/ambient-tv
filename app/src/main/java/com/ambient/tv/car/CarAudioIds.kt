@@ -29,6 +29,9 @@ internal object CarAudioIds {
     const val SPOTIFY_ALBUMS = "car:spotify:albums"
     const val SPOTIFY_ARTISTS = "car:spotify:artists"
     const val MUSIC_LIBRARIES = "car:music:libraries"
+    const val TELEGRAM_ROOT = "car:telegram:root"
+    const val TELEGRAM_AUDIO = "car:telegram:audio"
+    const val TELEGRAM_CHANNELS = "car:telegram:channels"
 
     private const val STATION = "car:station:"
     private const val SPOTIFY_TRACK = "car:spotify:track:"
@@ -45,6 +48,8 @@ internal object CarAudioIds {
     private const val FILE_SOURCE = "car:file:source:"
     private const val FILE_FOLDER = "car:file:folder:"
     private const val MORE = "car:more:"
+    private const val TELEGRAM_CHANNEL = "car:telegram:channel:"
+    private const val TELEGRAM_ITEM = "car:telegram:item:"
 
 
     private fun encode(value: String): String =
@@ -133,12 +138,24 @@ internal object CarAudioIds {
     fun fileFolderId(id: String) = id.takeIf { it.startsWith(FILE_FOLDER) }
         ?.removePrefix(FILE_FOLDER)?.let(::decode)
 
+    fun telegramChannel(chatId: Long) = TELEGRAM_CHANNEL + chatId
+    fun telegramChannelId(id: String): Long? = id.takeIf { it.startsWith(TELEGRAM_CHANNEL) }
+        ?.removePrefix(TELEGRAM_CHANNEL)?.toLongOrNull()
+    fun telegramItem(chatId: Long, messageId: Int) = "$TELEGRAM_ITEM$chatId:$messageId"
+    fun telegramItemId(id: String): Pair<Long, Int>? {
+        val raw = id.takeIf { it.startsWith(TELEGRAM_ITEM) }?.removePrefix(TELEGRAM_ITEM) ?: return null
+        val chatId = raw.substringBefore(':').toLongOrNull() ?: return null
+        val messageId = raw.substringAfter(':', "").toIntOrNull()?.takeIf { it > 0 } ?: return null
+        return chatId to messageId
+    }
+
     private fun isFolderBase(id: String): Boolean =
         id in setOf(ROOT, RADIO_ROOT, RADIO_ALL, RADIO_GENRES, RADIO_COUNTRIES, RADIO_LANGUAGES,
             LIVE_RADIO_IPTV, LIVE_RADIO_TVH, STORAGE_ROOT, DLNA_ROOT, FILES_ROOT,
             FILE_FAVORITES, FILE_RECENT, SPOTIFY_ROOT, RADIO_FAVORITES, RADIO_RECENT, RADIO_POPULAR,
             SPOTIFY_HOME, SPOTIFY_LIKED, SPOTIFY_PLAYLISTS, SPOTIFY_ALBUMS,
-            SPOTIFY_ARTISTS, MUSIC_LIBRARIES) ||
+            SPOTIFY_ARTISTS, MUSIC_LIBRARIES, TELEGRAM_ROOT, TELEGRAM_AUDIO, TELEGRAM_CHANNELS) ||
+            telegramChannelId(id) != null ||
             musicSectionId(id) != null || musicItemId(id) != null || spotifyCollectionId(id) != null
 
     fun isFolder(id: String): Boolean =
