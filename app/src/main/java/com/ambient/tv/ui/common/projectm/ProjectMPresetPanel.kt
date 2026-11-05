@@ -36,6 +36,9 @@ import com.ambient.tv.ui.common.RightPanelChoice
 import com.ambient.tv.ui.common.RightPanelSectionTitle
 import com.ambient.tv.ui.common.RightSideLazyPanel
 import com.ambient.tv.ui.common.TvChip
+import com.ambient.tv.ui.common.playerPanelFocusKey
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusProperties
 
 @Composable
 fun ProjectMPresetPanel(
@@ -51,6 +54,8 @@ fun ProjectMPresetPanel(
     val currentPreset = browser.currentPath?.let(::ProjectMPreset)
     val navigation = com.ambient.tv.ui.common.LocalPlayerPanelNavigation.current
     val requestInitialFocus = remember(settingsView) { navigation?.restoreKey == null }
+    val scrollbarFocus = com.ambient.tv.ui.common.LocalRightPanelScrollbarFocus.current
+    val toScrollbar = Modifier.focusProperties { right = scrollbarFocus ?: FocusRequester.Default }
     RightSideLazyPanel(
         title = stringResource(if (settingsView) R.string.projectm_display_settings else R.string.player_visualizer),
         subtitle = "projectM · MilkDrop",
@@ -108,6 +113,7 @@ fun ProjectMPresetPanel(
                         icon = if (browser.locked) Icons.Filled.Lock else Icons.Filled.LockOpen,
                         selected = browser.locked,
                         onClick = { browser.locked = !browser.locked },
+                        modifier = Modifier.playerPanelFocusKey("projectm:lock"),
                     )
                 }
             }
@@ -117,6 +123,7 @@ fun ProjectMPresetPanel(
                     value = "${browser.intervalSeconds} s · ${browser.transitionSeconds} s · ${projectMResolutionLabel(browser.resolutionKey)}",
                     icon = Icons.Filled.GraphicEq,
                     onClick = onOpenSettings,
+                    modifier = toScrollbar,
                 )
             }
         }
@@ -135,6 +142,20 @@ fun ProjectMPresetPanel(
                         text = stringResource(R.string.player_on),
                         selected = browser.showPresetName,
                         onClick = { browser.showPresetName = true },
+                    )
+                }
+            }
+            item("order") {
+                ProjectMOptionRow(stringResource(R.string.settings_projectm_order)) {
+                    TvChip(
+                        text = stringResource(R.string.settings_projectm_order_list),
+                        selected = !browser.shuffle,
+                        onClick = { browser.shuffle = false },
+                    )
+                    TvChip(
+                        text = stringResource(R.string.settings_projectm_order_shuffle),
+                        selected = browser.shuffle,
+                        onClick = { browser.shuffle = true },
                     )
                 }
             }
@@ -231,12 +252,14 @@ fun ProjectMPresetPanel(
                         text = stringResource(R.string.settings_projectm_all_presets),
                         selected = browser.filter != "favorites",
                         onClick = { browser.applyFilter("all") },
+                        modifier = Modifier.playerPanelFocusKey("projectm:filter_all"),
                     )
                     TvChip(
                         text = stringResource(R.string.settings_projectm_favorites_only),
                         icon = Icons.Filled.FavoriteBorder,
                         selected = browser.filter == "favorites",
                         onClick = { browser.applyFilter("favorites") },
+                        modifier = Modifier.playerPanelFocusKey("projectm:filter_favorites"),
                     )
                 }
             }
@@ -262,13 +285,14 @@ fun ProjectMPresetPanel(
                             subtitle = preset.category,
                             selected = preset.assetPath == browser.currentPath,
                             onClick = { browser.select(preset) },
-                            modifier = Modifier.weight(1f),
+                            modifier = Modifier.weight(1f).playerPanelFocusKey("projectm:preset:${preset.assetPath}"),
                         )
                         PlayerIconButton(
                             icon = if (browser.isFavorite(preset.assetPath)) Icons.Filled.Favorite else Icons.Filled.FavoriteBorder,
                             label = stringResource(if (browser.isFavorite(preset.assetPath)) R.string.projectm_remove_favorite else R.string.projectm_favorite),
                             onClick = { browser.toggleFavorite(preset.assetPath) },
                             selected = browser.isFavorite(preset.assetPath),
+                            modifier = toScrollbar.playerPanelFocusKey("projectm:favorite:${preset.assetPath}"),
                         )
                     }
                 }
