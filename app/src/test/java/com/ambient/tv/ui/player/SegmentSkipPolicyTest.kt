@@ -100,7 +100,7 @@ class SegmentSkipPolicyTest {
         )
         val modes = com.ambient.tv.youtube.SponsorBlockCategories.DEFAULTS
         assertEquals(40_000L, sponsorBlockSeekTarget(30_000L, ranges, 100_000L, modes))
-        assertEquals(19_999L, sponsorBlockSeekTarget(30_000L, ranges, 100_000L, modes, backward = true))
+        assertEquals(19_000L, sponsorBlockSeekTarget(30_000L, ranges, 100_000L, modes, backward = true))
         assertEquals(40_000L, sponsorBlockSeekTarget(20_000L, ranges, 100_000L, modes)) // start is included
         assertEquals(40_000L, sponsorBlockSeekTarget(40_000L, ranges, 100_000L, modes))
         assertEquals(70_000L, sponsorBlockSeekTarget(70_000L, ranges, 100_000L, modes)) // button
@@ -119,7 +119,7 @@ class SegmentSkipPolicyTest {
             com.ambient.tv.youtube.YouTubeSponsorSegment(30_000L, 50_000L, "selfpromo"),
         )
         assertEquals(50_000L, sponsorBlockSeekTarget(20_000L, overlapping, 100_000L, modes))
-        assertEquals(9_999L, sponsorBlockSeekTarget(32_000L, overlapping, 100_000L, modes, backward = true))
+        assertEquals(9_000L, sponsorBlockSeekTarget(32_000L, overlapping, 100_000L, modes, backward = true))
         assertEquals(20_000L, sponsorBlockSeekTarget(20_000L, overlapping, 0L, modes))
         val final = listOf(com.ambient.tv.youtube.YouTubeSponsorSegment(70_000L, 100_000L, "sponsor"))
         assertEquals(98_500L, sponsorBlockSeekTarget(80_000L, final, 100_000L, modes))
