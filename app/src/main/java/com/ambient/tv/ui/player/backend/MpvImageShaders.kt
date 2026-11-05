@@ -26,7 +26,7 @@ internal data class MpvShaderAsset(
      * gpu-next). Below 1.0 so Light < Medium < "AMD CAS" in strength.
      */
     val casBlend: String? = null,
-    /** Custom strength for an original MPV GPU deblock shader (the medium source is pinned). */
+    /** Custom strength for an original MPV RGB GPU deblock shader (medium source pinned). */
     val deblockStrength: String? = null,
     /** Film grain only: hook OUTPUT (after tone mapping, RGB) instead of source LUMA. */
     val outputHook: Boolean = false,
@@ -127,12 +127,12 @@ internal val MPV_IMAGE_SHADERS = mapOf(
     "krig" to MpvShaderAsset(R.raw.quality_krig_8a4798ab, "quality_krig_8a4798ab.glsl", true),
     "matrix_601_to_709" to MpvShaderAsset(R.raw.quality_matrix_601_to_709_1fc76507, "quality_matrix_601_to_709_1fc76507.glsl", false),
     "matrix_709_to_601" to MpvShaderAsset(R.raw.quality_matrix_709_to_601_71e99fba, "quality_matrix_709_to_601_71e99fba.glsl", false),
-    // One pinned luma shader with cache-distinct intensity variants (light/medium/strong).
-    // A LUMA hook needs copy-back on Android MediaCodec when opaque YUV is not sampleable.
-    "deblock_light" to MpvShaderAsset(R.raw.quality_deblock_gpu, "quality_deblock_gpu.glsl", true,
+    // One pinned MAIN (source-size RGB) shader with cache-distinct strength variants.
+    // MAIN runs before scaling, and needs no extra YUV readback on a GPU VO.
+    "deblock_light" to MpvShaderAsset(R.raw.quality_deblock_gpu, "quality_deblock_gpu.glsl", false,
         cacheFileName = "quality_deblock_gpu_light.glsl", deblockStrength = "0.25"),
-    "deblock_medium" to MpvShaderAsset(R.raw.quality_deblock_gpu, "quality_deblock_gpu.glsl", true),
-    "deblock_strong" to MpvShaderAsset(R.raw.quality_deblock_gpu, "quality_deblock_gpu.glsl", true,
+    "deblock_medium" to MpvShaderAsset(R.raw.quality_deblock_gpu, "quality_deblock_gpu.glsl", false),
+    "deblock_strong" to MpvShaderAsset(R.raw.quality_deblock_gpu, "quality_deblock_gpu.glsl", false,
         cacheFileName = "quality_deblock_gpu_strong.glsl", deblockStrength = "0.75"),
     "filmgrain_light" to MpvShaderAsset(R.raw.quality_filmgrain_light_4aee719a, "quality_filmgrain_light_4aee719a.glsl", true),
     "filmgrain_medium" to MpvShaderAsset(R.raw.quality_filmgrain_medium_4921afc1, "quality_filmgrain_medium_4921afc1.glsl", true),

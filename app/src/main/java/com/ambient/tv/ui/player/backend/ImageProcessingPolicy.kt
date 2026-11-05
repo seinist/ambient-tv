@@ -457,7 +457,7 @@ internal fun mpvImageShaderKeys(
     val hdrSource = !sdr
     val scale = fittedScale ?: if (upscaling) Double.POSITIVE_INFINITY else 0.0
     fun allowed(key: String) = !hdrSource || MPV_IMAGE_SHADERS[key]?.hdrSafe == true
-    // Optional GPU cleanup on the original SDR luma grid, before scaling and sharpening.
+    // Optional GPU cleanup on decoded SDR RGB pixels, before scaling and sharpening.
     // This cannot run on HDR transfer functions or Android's direct opaque surface.
     if (sdr && o.deblock != "off") add("deblock_${o.deblock}")
     // Colour correction applies to subsequent RGB hooks.

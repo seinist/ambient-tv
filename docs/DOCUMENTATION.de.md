@@ -659,7 +659,7 @@ Brauchen eine GPU-Ausgabe (OpenGL oder Vulkan). Mit „Android Surface (direkt)�
 | Farbbänder glätten | Aus · Leicht · Mittel · Stark | Mittel | GPU-Ausgabe. |
 | Schärfung | Aus · Standardschärfung: Leicht, Mittel · Shader-Schärfung: AMD CAS, Adaptive Sharpen | Aus | SDR; bei NIS/FSR ersetzt ein Hinweis auf deren integrierte Schärfung die Zeile. |
 | Entrauschen · HQDN3D | Aus · Leicht · Mittel | Aus | SDR. |
-| Entblocken (GPU / CPU-Fallback) | Aus · Leicht · Mittel · Stark | Aus | SDR; MPV verwendet bei GPU-Ausgabe einen Luma-GPU-Shader, bei Ladefehlern FFmpeg per CPU. Media3 nutzt seinen bestehenden OpenGL-ES-Effekt. VLC bietet keinen separat einstellbaren GPU-Deblocking-Hook. |
+| Entblocken (GPU / CPU-Fallback) | Aus · Leicht · Mittel · Stark | Aus | SDR; MPV verwendet bei GPU-Ausgabe einen RGB-Shader vor dem Skalieren (Zero-Copy bleibt nach Möglichkeit erhalten), bei Ladefehlern FFmpeg per CPU. Media3 nutzt seinen bestehenden OpenGL-ES-Effekt. VLC bietet keinen separat einstellbaren GPU-Deblocking-Hook. |
 | SSimSuperRes | An / Aus | Aus | SDR; nicht mit NIS/FSR. |
 | Helligkeit · Kontrast · Sättigung · Gamma | −20 … +20 | 0 | SDR. |
 | HDR-Tonemapping | Auto · BT.2390 · Reinhard · Hable · Möbius · Clip | Auto | HDR-Quelle auf SDR-Ausgabe. |

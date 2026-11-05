@@ -3,4 +3,4 @@ Original shader written for Ambient TV.
 CC0 1.0 Universal (public domain dedication).
 https://creativecommons.org/publicdomain/zero/1.0/
 
-The shader is optional SDR source-luma post-processing and does not replace codec in-loop deblocking.
+The shader is optional SDR source-size RGB post-processing and does not replace codec in-loop deblocking.
