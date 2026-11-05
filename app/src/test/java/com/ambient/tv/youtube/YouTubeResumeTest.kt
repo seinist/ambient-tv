@@ -117,8 +117,10 @@ class YouTubeResumeTest {
 
     @Test fun lateAbsoluteDateIsKeptWithoutCreatingAStringFromAnEpochNumber() {
         val instant = 1_700_000_000_000L
+        // Older on-disk cache entries contain an epoch formatted as a String instead
+        // of publishedAtMs; migrate them without ever showing the raw digits.
         val loaded = applyYouTubePlaybackMetadata(stream(), metadata().copy(
-            publishedDate = "1700000000000", publishedAtMs = instant,
+            publishedDate = "1700000000000",
         ))
         assertNull(loaded.publishedDate)
         assertEquals(instant, loaded.publishedAtMs)
