@@ -152,7 +152,9 @@ internal fun youtubePublicationEpochMs(value: Long?): Long? = when (value) {
 
 /** Keep the provider's *human* date/relative label as given, without inventing precision. */
 internal fun youtubePublicationText(value: String?): String? = value?.trim()?.takeIf {
-    it.isNotBlank() && it != "-" && it.toLongOrNull() == null &&
+    val numeric = it.toLongOrNull()
+    it.isNotBlank() && it != "-" &&
+        (numeric == null || numeric in 2005L..2100L) && // Year-only labels are meaningful.
         !it.equals("unknown", ignoreCase = true) && !it.equals("null", ignoreCase = true)
 }
 
