@@ -194,6 +194,9 @@ internal fun applyYouTubePlaybackMetadata(stream: YouTubePlayback, metadata: You
         title = stream.title.takeUnless { it.isBlank() || it == "YouTube" || it == "SmartTube" } ?: metadata?.title ?: "SmartTube",
         author = stream.author ?: metadata?.author,
         description = stream.description ?: metadata?.description,
+        // Watch-next metadata may arrive after the first video frame. Keep the initial label
+        // until then; a blank/missing response must never erase a valid stream-side date.
+        publishedDate = metadata?.publishedDate?.trim()?.takeIf(String::isNotBlank) ?: stream.publishedDate,
         imageUrl = metadata?.imageUrl ?: stream.imageUrl,
         backgroundUrl = metadata?.backgroundUrl ?: stream.backgroundUrl,
         durationMs = duration,
