@@ -78,6 +78,7 @@ import com.ambient.tv.ui.common.SystemPageTitle
 import com.ambient.tv.ui.common.TvActionButton
 import com.ambient.tv.ui.common.TvChip
 import com.ambient.tv.ui.common.TvLazyColumn
+import com.ambient.tv.ui.common.overlayLazyScrollbar
 import com.ambient.tv.ui.common.TvLazyVerticalGrid
 import com.ambient.tv.ui.common.TvTextField
 import com.ambient.tv.ui.common.ViewOption
@@ -778,7 +779,8 @@ private fun RadioFacetList(
     TvLazyColumn(
         allowUpExit = true,
         focusActionsOnRight = false, // D-pad Right enters the shared AlphabetBar, not page actions.
-        modifier = modifier.fillMaxSize(),
+        modifier = modifier.fillMaxSize().overlayLazyScrollbar(state),
+        scrollbarBesideIndex = true,
         state = state,
         contentPadding = PaddingValues(vertical = 8.dp, horizontal = 2.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp * rowScale),
@@ -1103,7 +1105,8 @@ private fun RadioStationList(
     TvLazyColumn(
         allowUpExit = true,
         focusActionsOnRight = false,
-        modifier = modifier.fillMaxSize(),
+        modifier = modifier.fillMaxSize().overlayLazyScrollbar(state),
+        scrollbarBesideIndex = true,
         state = state,
         contentPadding = PaddingValues(vertical = 8.dp, horizontal = 2.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp * rowScale),
