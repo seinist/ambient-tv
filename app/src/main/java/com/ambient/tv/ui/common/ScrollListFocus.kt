@@ -97,15 +97,13 @@ fun TvLazyColumn(
     allowUpExit: Boolean = false,
     wrapVerticalFocus: Boolean = true,
     focusActionsOnRight: Boolean = false,
-    /** Draw the scrollbar even beside a right alphabet index (Right still enters the index). */
-    scrollbarBesideIndex: Boolean = false,
     content: LazyListScope.() -> Unit,
 ) {
     BrowseScrollBudget(state)
     val animate = !LocalPerformanceProfile.current.reducedEffects
     // The right alphabet index already serves as position/scroll navigation.
     // Never draw a second scrollbar beside or underneath it.
-    LazyScrollbarFrame(modifier, (scrollbarBesideIndex || LocalBrowseRightIndexFocus.current == null) &&
+    LazyScrollbarFrame(modifier, LocalBrowseRightIndexFocus.current == null &&
         (state.canScrollForward || state.canScrollBackward),
         scrollbar = { bar, contentFocus -> OverlayLazyScrollbar(state, bar, contentFocus) }) { listModifier ->
         val scrollbarFocus = LocalBrowseRightIndexFocus.current ?: LocalLazyScrollbarRightTarget.current

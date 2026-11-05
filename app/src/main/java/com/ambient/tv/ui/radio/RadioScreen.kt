@@ -780,7 +780,6 @@ private fun RadioFacetList(
         allowUpExit = true,
         focusActionsOnRight = false, // D-pad Right enters the shared AlphabetBar, not page actions.
         modifier = modifier.fillMaxSize().overlayLazyScrollbar(state),
-        scrollbarBesideIndex = true,
         state = state,
         contentPadding = PaddingValues(vertical = 8.dp, horizontal = 2.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp * rowScale),
@@ -1106,7 +1105,6 @@ private fun RadioStationList(
         allowUpExit = true,
         focusActionsOnRight = false,
         modifier = modifier.fillMaxSize().overlayLazyScrollbar(state),
-        scrollbarBesideIndex = true,
         state = state,
         contentPadding = PaddingValues(vertical = 8.dp, horizontal = 2.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp * rowScale),
