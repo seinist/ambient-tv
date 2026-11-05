@@ -161,8 +161,9 @@ fun Modifier.animatedFocusBorder(
     shape: Shape,
     focusedColor: Color,
     unfocusedColor: Color = Color.Transparent,
-    width: Dp = LocalUiTokens.current.focusBorder,
+    width: Dp? = null,
 ): Modifier = composed {
+    val strokeWidth = width ?: LocalUiTokens.current.focusBorder
     val reduced = LocalPerformanceProfile.current.reducedEffects
     val reveal = animateFloatAsState(
         targetValue = if (focused) 1f else 0f,
@@ -173,7 +174,7 @@ fun Modifier.animatedFocusBorder(
         label = "focus outline fade",
     )
     this.drawWithCache {
-        val strokePx = width.toPx()
+        val strokePx = strokeWidth.toPx()
         val inset = strokePx / 2f
         val outline = shape.createOutline(
             Size((size.width - strokePx).coerceAtLeast(0f),
