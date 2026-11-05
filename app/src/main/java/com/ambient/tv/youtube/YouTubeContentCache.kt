@@ -150,7 +150,11 @@ class YouTubeContentCache() {
     @Synchronized fun metadata(id: String): YouTubeMetadata? = details[id] ?: entries.values.asSequence()
         .flatMap { it.asSequence() }.flatMap { it.items.asSequence() }.firstOrNull { it.videoId == id }?.let {
             YouTubeMetadata(it.videoId, it.title, it.author, imageUrl = it.imageUrl, backgroundUrl = it.backgroundUrl,
-                durationMs = it.durationMs, percentWatched = it.percentWatched, isLive = it.isLive)
+                durationMs = it.durationMs, percentWatched = it.percentWatched, isLive = it.isLive,
+                publishedDate = youtubePublicationText(it.publishedText),
+                // Feed dates inferred from "3 days ago" must not masquerade as exact times.
+                publishedAtMs = it.publishedAtMs.takeIf { _ -> youtubePublicationText(it.publishedText) == null }
+                    ?.let(::youtubePublicationEpochMs))
         }
 
     @Synchronized fun putMetadata(value: YouTubeMetadata, expected: Long) {
