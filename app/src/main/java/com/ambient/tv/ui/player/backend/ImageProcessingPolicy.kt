@@ -256,6 +256,47 @@ internal fun mpvCopyBackNeeded(
 ): Boolean = deinterlaceEnabled || cpuFilters ||
     shaderKeys.any { MPV_IMAGE_SHADERS[it]?.requiresCopyBack == true }
 
+
+/**
+ * The first decoder must already support the chosen GPU/YUV shader. Changing the hwdec
+ * preference after FILE_LOADED does not guarantee that MediaCodec recreates its active decoder.
+ * For startup, assume the selected upscaler will enlarge the video until geometry is known.
+ *
+ * RGB-only MAIN/OUTPUT hooks (including GPU deblock) do not require copy-back.
+ * FFmpeg denoise and SVP need CPU-accessible frames before their vf chain can be attached.
+ */
+internal fun mpvStartupRequiresCopyBack(effective: MpvImageOptions): Boolean {
+    val o = effective.normalized()
+    return o.denoise != "off" || o.svpMode != "off" ||
+        mpvImageShaderKeys(o, sdr = true).any { MPV_IMAGE_SHADERS[it]?.requiresCopyBack == true }
+}
+
+/**
+ * A GPU/YUV effect selected *during* playback cannot depend on mpv switching the running
+ * MediaCodec decoder from opaque zero-copy to copy-back just by setting the hwdec property.
+ * Reopen the same media once with an explicit copy-back plan; never mark this as a device
+ * failure. Vulkan/native software routes are unaffected.
+ */
+internal fun mpvProcessingNeedsCopyBackReopen(
+    plan: MpvAccelerationPlan,
+    decoderInUse: String?,
+    shaderKeys: Collection<String>,
+    cpuFilters: Boolean,
+    deinterlaceEnabled: Boolean,
+): Boolean = plan.output == "gpu" && plan.zeroCopy && decoderInUse?.trim() == "mediacodec" &&
+    mpvCopyBackNeeded(shaderKeys, cpuFilters, deinterlaceEnabled)
+
+/** Includes the *actual* SurfaceView buffer, not the Android TV desktop resolution. */
+internal fun mpvUpscalerGeometrySignature(
+    decodedDisplayWidth: Double,
+    decodedDisplayHeight: Double,
+    outputWidth: Int,
+    outputHeight: Int,
+): String {
+    fun dimension(value: Double) = value.takeIf { it.isFinite() && it > 0.0 }?.toInt() ?: 0
+    return "${dimension(decodedDisplayWidth)}x${dimension(decodedDisplayHeight)}->${outputWidth.coerceAtLeast(0)}x${outputHeight.coerceAtLeast(0)}"
+}
+
 internal data class MpvDeinterlaceBackoff(
     val mode: String,
     val filter: String,

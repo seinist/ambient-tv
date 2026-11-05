@@ -84,13 +84,18 @@ internal fun initialMpvAccelerationPlan(
     nativeHdrPreferred: Boolean,
     hdrGpuPassthrough: Boolean,
     toneMappingRequired: Boolean,
-): MpvAccelerationPlan = planMpvAcceleration(videoOutputMode, decoderMode, VideoAccelerationRuntime.current(context),
-    // Select the processing path from the chosen width/title image settings.
-    // Auto goes to the GPU only for image work the user chose; untouched defaults stay direct.
-    gpuProcessing = mpvUserImageProcessing(initialImageOptions, reducedVideoEffects(context), svpAllowed(context)),
-    nativeHdrPreferred = nativeHdrPreferred,
-    hdrPassthrough = hdrGpuPassthrough, toneMappingRequired = toneMappingRequired,
-    zeroCopy = !videoImagePreferences(context).mpvZeroCopyFailed)
+): MpvAccelerationPlan {
+    val reduced = reducedVideoEffects(context)
+    val svp = svpAllowed(context)
+    val effective = effectiveMpvImageOptions(initialImageOptions, reduced, svp, mpvCheapDefaults(context))
+    return planMpvAcceleration(videoOutputMode, decoderMode, VideoAccelerationRuntime.current(context),
+        // Auto uses the GPU for explicit image processing, but never starts opaque zero-copy
+        // when a configured LUMA/CHROMA shader will need readable hardware-decoded frames.
+        gpuProcessing = mpvUserImageProcessing(initialImageOptions, reduced, svp),
+        nativeHdrPreferred = nativeHdrPreferred,
+        hdrPassthrough = hdrGpuPassthrough, toneMappingRequired = toneMappingRequired,
+        zeroCopy = !videoImagePreferences(context).mpvZeroCopyFailed && !mpvStartupRequiresCopyBack(effective))
+}
 
 internal class MpvPlaybackEngine(
     private val context: Context,
@@ -357,6 +362,8 @@ internal class MpvPlaybackEngine(
     /** True only while plex-svp is requested and still in the vf chain. */
     private var svpCopyBackSession = false
     private var lastImageUpscaling = true
+    /** Geometry changes even when both sizes are above the same scaler //!WHEN threshold. */
+    private var lastImageGeometry: String? = null
     /** Separate from [lastImageUpscaling]: NNEDI/RAVU need ~1.41×, not 1.01×. */
     private var lastLumaShaderEligible = true
     /**
@@ -714,11 +721,18 @@ internal class MpvPlaybackEngine(
             detachedVideoSelection?.let { setProperty("vid", it) }
             detachedVideoSelection = null
         }
+        // Background/foreground surface recreation may change the render target (UI vs 4K
+        // panel) while preserving the same file and transfer. Do not wait for a new codec event.
+        if (gpuQualityMode && fileReady) {
+            imageApplyStale = true
+            refreshImageSource()
+        }
     }
 
     fun surfaceSizeChanged(width: Int, height: Int) {
         if (released) return
-        if (surfaceWidth != width || surfaceHeight != height) {
+        val geometryChanged = surfaceWidth != width || surfaceHeight != height
+        if (geometryChanged) {
             conversionSampleStarted = 0L
             onOutputTransition()
         }
@@ -729,6 +743,12 @@ internal class MpvPlaybackEngine(
             // renders directly to the Surface and does not consume this GPU-context property.
             setProperty("android-surface-size", "${width}x$height")
             Timber.i("%s MPV GPU surface size changed=%dx%d", HDR_AUDIT_TAG, width, height)
+        }
+        // A late 1080p -> 4K SurfaceView resize must replan source-space user shaders
+        // even if the decoded video is unchanged. Also covers aspect/display-mode changes.
+        if (geometryChanged && gpuQualityMode && fileReady) {
+            imageApplyStale = true
+            refreshImageSource()
         }
     }
 
@@ -1059,9 +1079,15 @@ internal class MpvPlaybackEngine(
             stored = imageOptions, effective = effective, shaderKeys = shaderKeys, svpAllowed = svpAllowed(context),
             fittedScale = fittedScale, sdr = sdr, hdr = hdr, vo = configuredVo,
         )
-        if (line == lastImageLog) return
-        lastImageLog = line
-        Timber.i("%s %s", HDR_AUDIT_TAG, line)
+        val sourceW = getPropertyDouble("video-params/dw", 0.0).toInt()
+        val sourceH = getPropertyDouble("video-params/dh", 0.0).toInt()
+        val geometry = "source=${sourceW}x$sourceH surface=${surfaceWidth}x$surfaceHeight" +
+            " render=${if (gpuRenderAtPanel) "panel" else "ui"}" +
+            " hwdec-current=${getPropertyString("hwdec-current") ?: "pending"}"
+        val diagnostic = "$line $geometry"
+        if (diagnostic == lastImageLog) return
+        lastImageLog = diagnostic
+        Timber.i("%s %s", HDR_AUDIT_TAG, diagnostic)
     }
 
     private fun applyImageOptions(
@@ -1110,6 +1136,17 @@ internal class MpvPlaybackEngine(
         }
         activeShaderPresetKey = o.scaler.takeIf { it in loadedShaderKeys }
         val desiredFilters = desiredImageFilters(o, sdr)
+        if (mpvProcessingNeedsCopyBackReopen(
+                acceleration, getPropertyString("hwdec-current"), loadedShaderKeys,
+                desiredFilters.isNotEmpty() || activeCpuImageFilters.isNotEmpty(), deinterlaceRequested,
+            )) {
+            // The shader may have been selected while an opaque MediaCodec decoder was already
+            // running (e.g. SmartTube switches to NNEDI3 mid-playback). Merely setting "hwdec"
+            // will not reconstruct that decoder; reopen at the same position instead.
+            Timber.i("%s MPV GPU shader requires readable decoder frames; reopen on MediaCodec copy-back", HDR_AUDIT_TAG)
+            failZeroCopy("gpu_filter_copyback", remember = false)
+            return
+        }
         // Latch only for the add itself. It is cleared once plex-svp is gone
         // so copy-back does not stick for the rest of the session.
         if ("plex-svp" in desiredFilters) svpCopyBackSession = true
@@ -1620,6 +1657,11 @@ internal class MpvPlaybackEngine(
         getPropertyDouble("video-params/dw", 0.0), getPropertyDouble("video-params/dh", 0.0), surfaceWidth, surfaceHeight,
     )
 
+    private fun currentMpvImageGeometry(): String = mpvUpscalerGeometrySignature(
+        getPropertyDouble("video-params/dw", 0.0), getPropertyDouble("video-params/dh", 0.0),
+        surfaceWidth, surfaceHeight,
+    )
+
     private fun currentMpvUpscaling(): Boolean = currentMpvFittedScale() > MPV_ANY_UPSCALE_SCALE
 
     private fun desiredImageFilters(o: MpvImageOptions, sdr: Boolean): Map<String, String> =
@@ -1698,13 +1740,16 @@ internal class MpvPlaybackEngine(
             (renderCheckSignature == null || renderCheckSignature != overloadSuspendedSignature)) {
             engageRenderOverload("plex-svp-bypass", 0L, 0.0, svpBypass, 0L, 0.0)
         }
+        val geometry = if (sdrTransfer) currentMpvImageGeometry() else null
         if (transfer != lastImageTransfer || upscaling != lastImageUpscaling ||
             lumaEligible != lastLumaShaderEligible || svpSignature != lastSvpSignature ||
+            geometry != lastImageGeometry ||
             (imageApplyStale && imageUpdateJob?.isActive != true)
         ) {
             lastImageTransfer = transfer
             lastImageUpscaling = upscaling
             lastLumaShaderEligible = lumaEligible
+            lastImageGeometry = geometry
             lastSvpSignature = svpSignature
             updateImageOptions(imageOptions)
         }
@@ -2389,6 +2434,20 @@ internal class MpvPlaybackEngine(
                     }
                     logHdrDiagnostics("file-loaded")
                     setProperty("pause", if (nativePlayWanted || dvPrimeTarget != null) "no" else "yes")
+                    // FILE_LOADED is the first reliable opportunity to install upscalers:
+                    // startup often had no video transfer/geometry and planned no shaders.
+                    if (gpuQualityMode && !audioOnly) {
+                        imageApplyStale = true
+                        refreshImageSource()
+                    }
+                }
+                MPV_EVENT_VIDEO_RECONFIG -> {
+                    // SmartTube adaptive format switches and MPV track changes may update the
+                    // source dimensions while keeping the same transfer and upscale thresholds.
+                    if (gpuQualityMode && fileReady && !audioOnly) {
+                        imageApplyStale = true
+                        refreshImageSource()
+                    }
                 }
                 MPV_EVENT_SHUTDOWN -> { errorMessage = context.getString(com.ambient.tv.R.string.mpv_shutdown); return }
             }
@@ -2510,6 +2569,11 @@ internal class MpvPlaybackEngine(
         zeroCopyFrameCheckSinceNs = 0L
         zeroCopyFrameWatch.reset()
         acceleration = acceleration.copy(zeroCopy = false)
+        // Force image options to re-apply to the replacement decoder, even if the source's
+        // transfer, scaler gate and surface dimensions are numerically unchanged.
+        imageApplyStale = true
+        lastImageTransfer = null
+        lastImageGeometry = null
         accelerationFallback = "MediaCodec zero-copy → copy-back: $reason"
         val position = positionMs().takeIf { it > 0L } ?: lastPlaybackPositionMs
         fallbackTrackSelection = listOf("aid", "sid", "speed").map(::getPropertyString)
