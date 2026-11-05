@@ -1119,11 +1119,12 @@ private fun Card(
                 YouTubeItemArtwork(item, Modifier.fillMaxSize())
                 com.ambient.tv.companion.PlaybackBadge(com.ambient.tv.companion.playbackIndicator(com.ambient.tv.companion.CompanionMedia("youtube", item.videoId)),
                     Modifier.align(Alignment.TopStart).padding(5.dp))
-                if (item.percentWatched > 0) {
+                val watched = com.ambient.tv.youtube.YouTubeLocalProgress.percent(item.videoId, item.percentWatched)
+                if (watched > 0) {
                     Box(
                         Modifier
                             .align(Alignment.BottomStart)
-                            .fillMaxWidth(item.percentWatched.coerceIn(0, 100) / 100f)
+                            .fillMaxWidth(watched.coerceIn(0, 100) / 100f)
                             .height(3.dp)
                             .background(MaterialTheme.colorScheme.primary),
                     )

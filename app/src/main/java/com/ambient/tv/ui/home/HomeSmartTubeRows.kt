@@ -25,7 +25,9 @@ internal fun homeYouTubeSourceRow(rows: List<YouTubeRow>, limit: Int): YouTubeRo
             .toList()).takeIf { it.items.isNotEmpty() }
     }
 
-internal fun YouTubeItem.asHomeMediaItem(): MediaItem = MediaItem(
+internal fun YouTubeItem.asHomeMediaItem(): MediaItem {
+    val percentWatched = com.ambient.tv.youtube.YouTubeLocalProgress.percent(videoId, percentWatched)
+    return MediaItem(
     ratingKey = HOME_YOUTUBE_ITEM_PREFIX + videoId,
     title = title,
     type = "clip",
@@ -46,4 +48,5 @@ internal fun YouTubeItem.asHomeMediaItem(): MediaItem = MediaItem(
     rating = null,
     studio = "SmartTube",
     viewCount = if (!isLive && !isUpcoming && percentWatched >= 95) 1 else null,
-)
+    )
+}

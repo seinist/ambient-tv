@@ -184,7 +184,7 @@ internal fun applyYouTubePlaybackMetadata(stream: YouTubePlayback, metadata: You
         durationMs = duration,
         timeline = stream.timeline.copy(chapters = metadata?.chapters.orEmpty()).normalized(duration),
         resumeMs = if (resolveResume) com.ambient.tv.ui.player.resumeRewindPositionMs(
-            youtubeResumeMs(duration, metadata.percentWatched, stream.isLive), stream.resumeRewindSeconds,
+            youtubeResumeMs(duration, YouTubeLocalProgress.percent(metadata.videoId, metadata.percentWatched), stream.isLive), stream.resumeRewindSeconds,
         ) else stream.resumeMs,
         resumeResolved = stream.resumeResolved || resolveResume,
     )
@@ -248,6 +248,7 @@ internal class YouTubePlaybackMetadataCache(private val nowMs: () -> Long = { Sy
             entries[id] = Entry(old.copy(percentWatched = percent), nowMs())
         }
     }
+    @Synchronized fun durationMs(id: String): Long? = entries[id]?.metadata?.durationMs?.takeIf { it > 0 }
     @Synchronized fun clear() { generation++; entries.clear() }
     /** Keep other details available, but reject pending writes from before a reconnect refresh. */
     @Synchronized fun invalidate(id: String) { generation++; entries.remove(id) }

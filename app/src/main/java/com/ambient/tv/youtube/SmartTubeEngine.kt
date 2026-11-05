@@ -68,6 +68,7 @@ class SmartTubeEngine @Inject constructor(
     val subscriptionChanges: kotlinx.coroutines.flow.StateFlow<Map<String, Boolean>> = subscriptionOverrides
 
     init {
+        YouTubeLocalProgress.init(context)
         // Lets VLC/MPV keep playing after googlevideo expires a link (hours of pause): the relay
         // asks for a fresh URL of the same stream and resumes at the same byte.
         YouTubeStreamRelay.renewer = { videoId, expiredUrl ->
@@ -746,8 +747,9 @@ class SmartTubeEngine @Inject constructor(
         com.ambient.tv.domain.model.TimelinePreview.Sprite(width, height, columns, rows, interval, Long.MAX_VALUE, urlTemplate = template)
     }.getOrNull()
 
-    suspend fun updateHistory(videoId: String, positionMs: Long) = io {
+    suspend fun updateHistory(videoId: String, positionMs: Long, durationMs: Long = 0L) = io {
         playbackMetadata.updatePosition(videoId, positionMs)
+        (durationMs.takeIf { it > 0 } ?: playbackMetadata.durationMs(videoId))?.let { YouTubeLocalProgress.record(videoId, positionMs, it) }
         // History paused: the position stays local, YouTube's history is not touched.
         if (appPreferences.youtubeHistoryPaused) return@io
         val media = service("getMediaItemService")
@@ -784,7 +786,7 @@ class SmartTubeEngine @Inject constructor(
             imageUrl = imageUrl,
             backgroundUrl = meta.callString("getBackgroundImageUrl")?.takeIf(String::isNotBlank) ?: imageUrl,
             durationMs = meta.callLong("getDurationMs") ?: 0,
-            percentWatched = meta.callInt("getPercentWatched") ?: 0,
+            percentWatched = (meta.callInt("getPercentWatched") ?: 0).also { YouTubeLocalProgress.observeRemote(videoId, it) },
             isLive = meta.callBool("isLive") ?: false,
             channelId = meta.callString("getChannelId")?.takeIf(String::isNotBlank),
             authorImageUrl = meta.callString("getAuthorImageUrl")?.takeIf(String::isNotBlank),
@@ -1093,7 +1095,7 @@ class SmartTubeEngine @Inject constructor(
             imageUrl = raw.callString("getCardImageUrl")?.takeIf(String::isNotBlank) ?: youtubeThumbnailUrl(videoId),
             backgroundUrl = raw.callString("getBackgroundImageUrl")?.takeIf(String::isNotBlank),
             durationMs = raw.callLong("getDurationMs") ?: 0,
-            percentWatched = raw.callInt("getPercentWatched") ?: 0,
+            percentWatched = (raw.callInt("getPercentWatched") ?: 0).also { YouTubeLocalProgress.observeRemote(videoId, it) },
             isLive = raw.callBool("isLive") ?: false,
             isUpcoming = raw.callBool("isUpcoming") ?: false,
             scheduledStartMs = youtubeScheduledStartMs(raw.callString("getUpcomingEventStartTime"), null),
