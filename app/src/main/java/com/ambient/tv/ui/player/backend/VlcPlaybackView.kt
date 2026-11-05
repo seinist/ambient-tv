@@ -1884,6 +1884,8 @@ fun rememberVlcPlaybackController(
     initialAudioPassthrough: Boolean = false,
     networkCache: Boolean = false,
     audioSlaveUrl: String? = null,
+    /** Retry a live URL as a new player even if the provider returned the same signed URI. */
+    refreshToken: Int = 0,
 ): VlcPlaybackController? {
     var retainedController by remember { mutableStateOf<VlcPlaybackController?>(null) }
     if (com.ambient.tv.ui.player.LocalPlayerChangingItem.current && retainedController != null) return retainedController
@@ -1894,7 +1896,7 @@ fun rememberVlcPlaybackController(
     val videoOutputMode = BackgroundPlaybackSession.videoSettings(metadata,
         com.ambient.tv.ui.player.PlayerVideoSettings.from(preferences).withResolution(resolution).withTitle(title)).vlcOutput
     val nativeHdr = nativeHdrSurfacePreferred(metadata?.handheldHdrStandard, HdrSupport.displayStandards(context), metadata?.hdrBaseLayer)
-    val key = listOf(url, startPositionMs, headers, initialAudioPassthrough, networkCache, videoOutputMode, audioSlaveUrl, nativeHdr, metadata?.handheldHdrStandard)
+    val key = listOf(url, startPositionMs, headers, initialAudioPassthrough, networkCache, videoOutputMode, audioSlaveUrl, nativeHdr, metadata?.handheldHdrStandard, refreshToken)
     val controller = remember(metadata?.route, key) {
         runCatching {
             val previous = (BackgroundPlaybackSession.activeHandle() as? VlcPlaybackController)
