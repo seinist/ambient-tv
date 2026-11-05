@@ -316,6 +316,7 @@ fun YouTubePlayerScreen(
             }
             // The shared session owns EOF, including successor loading and hand-off guards.
             val onCompleted: () -> Unit = {}
+            SideEffect { com.ambient.tv.youtube.YouTubeSpeedMemory.currentChannel = state.channel?.channelId ?: playback.author }
 
             // SponsorBlock responses may arrive after the first video frame. Update the
             // shared timeline without restarting or seeking the decoder.
@@ -728,6 +729,13 @@ private fun YouTubeMedia3Playback(
     com.ambient.tv.ui.player.Media3RenderOverloadDialog(player, panelNavigation) { panelNavigation.openVideoSettings() }
     com.ambient.tv.ui.player.ObserveMedia3DisplayFormat(player, onVideoFormatChanged)
     LaunchedEffect(com.ambient.tv.ui.player.Media3AudioProcessing.session(player)?.bitstreamPermitted) { speed = player.playbackParameters.speed }
+    // Start speed from SmartTube settings (or this channel's remembered speed).
+    LaunchedEffect(player, playback.videoId) {
+        val start = com.ambient.tv.youtube.YouTubeSpeedMemory.startSpeed(com.ambient.tv.ui.player.videoImagePreferences(context))
+        if (!playback.isLive && start != 1f && com.ambient.tv.ui.player.Media3AudioProcessing.session(player)?.bitstreamPermitted != true) {
+            speed = start; player.setPlaybackSpeed(start)
+        }
+    }
     val ytAudio = com.ambient.tv.ui.player.Media3AudioProcessing.session(player)
     val nerdStats = rememberMedia3NerdStats(player, ytAudio?.performanceHint == true)
     val persistentVideoHost = LocalPersistentPlaybackVideoHost.current
@@ -823,7 +831,8 @@ private fun YouTubeMedia3Playback(
                         onVideoFormatChanged(format.frameRate.takeIf { it > 0f } ?: 0f, format.width.takeIf { it > 0 }, format.height.takeIf { it > 0 })
                     }
                     if (!defaultAudioTrackApplied && value.groups.isNotEmpty()) {
-                        applyYouTubeDefaultAudioTrack(player, value)
+                        applyYouTubeDefaultAudioTrack(player, value,
+                            com.ambient.tv.youtube.youtubePreferredAudioLanguage(com.ambient.tv.ui.player.videoImagePreferences(context).youtubeAudioLanguage))
                         defaultAudioTrackApplied = true
                     }
                 }
@@ -1045,7 +1054,8 @@ private fun YouTubeMedia3Playback(
                     onScalingChanged = { key -> resizeMode = when (key) { "zoom" -> AspectRatioFrameLayout.RESIZE_MODE_ZOOM; "stretch" -> AspectRatioFrameLayout.RESIZE_MODE_FILL; else -> AspectRatioFrameLayout.RESIZE_MODE_FIT } },
                     onAspectChanged = { aspectKey = it },
                     onZoomChanged = { zoomFactor = it },
-                    onSpeedChanged = if (playback.isLive || com.ambient.tv.ui.player.Media3AudioProcessing.session(player)?.bitstreamPermitted == true) null else ({ value -> speed = value; player.setPlaybackSpeed(value) }),
+                    onSpeedChanged = if (playback.isLive || com.ambient.tv.ui.player.Media3AudioProcessing.session(player)?.bitstreamPermitted == true) null else ({ value -> speed = value; player.setPlaybackSpeed(value)
+                        com.ambient.tv.youtube.YouTubeSpeedMemory.chosen(com.ambient.tv.ui.player.videoImagePreferences(context), value) }),
                     qualityOptions = if (playback.isLive || videoChoices.size < 2) emptyList() else
                         listOf("auto" to stringResource(R.string.player_quality_auto, player.videoFormat?.height?.takeIf { it > 0 }?.let { "${it}p" } ?: "–")) +
                             videoChoices.sortedByDescending { it.group.getTrackFormat(it.index).height }.map { it.key to it.label },
@@ -1193,6 +1203,10 @@ private fun YouTubeVlcPlayback(playback: YouTubePlayback, audioUri: String?, str
     var zoom by remember { mutableFloatStateOf(1f) }
     var speed by remember { mutableFloatStateOf(1f) }
     LaunchedEffect(controller.bitstreamPermitted) { if (controller.bitstreamPermitted) speed = 1f }
+    LaunchedEffect(controller, playback.videoId) {
+        val start = com.ambient.tv.youtube.YouTubeSpeedMemory.startSpeed(preferences)
+        if (!playback.isLive && start != 1f && !controller.bitstreamPermitted) { speed = start; controller.setSpeed(start) }
+    }
     var sleepTimer by rememberPlaybackSleepTimer(controller)
     val videoTracks = controller.videoTracks()
     val audioTracks = controller.audioTracks()
@@ -1366,7 +1380,7 @@ private fun YouTubeVlcPlayback(playback: YouTubePlayback, audioUri: String?, str
                     onScalingChanged = { resize = it; controller.setVideoPresentation(resize, aspect.takeUnless { value -> value == "auto" }, zoom) },
                     onAspectChanged = { aspect = it; controller.setVideoPresentation(resize, it.takeUnless { value -> value == "auto" }, zoom) },
                     onZoomChanged = { zoom = it; controller.setVideoPresentation(resize, aspect.takeUnless { value -> value == "auto" }, zoom) },
-                    onSpeedChanged = if (playback.isLive || controller.bitstreamPermitted) null else ({ value -> speed = value; controller.setSpeed(value) }),
+                    onSpeedChanged = if (playback.isLive || controller.bitstreamPermitted) null else ({ value -> speed = value; controller.setSpeed(value); com.ambient.tv.youtube.YouTubeSpeedMemory.chosen(preferences, value) }),
                     audioOptions = streams?.audioOptions?.takeIf { it.size > 1 }
                         ?: audioTracks.map { it.first.toString() to youtubeTrackLabel(it.second, displayLocale) }.ifEmpty { listOf("auto" to stringResource(R.string.player_default_track)) },
                     selectedAudio = if ((streams?.audioOptions?.size ?: 0) > 1) streams!!.selectedAudio else controller.currentAudioTrackId().toString(),
@@ -1479,6 +1493,10 @@ private fun YouTubeMpvPlayback(playback: YouTubePlayback, streams: YouTubeStream
     var zoom by remember { mutableFloatStateOf(1f) }
     var speed by remember { mutableFloatStateOf(1f) }
     LaunchedEffect(controller.bitstreamPermitted) { if (controller.bitstreamPermitted) speed = 1f }
+    LaunchedEffect(controller, playback.videoId) {
+        val start = com.ambient.tv.youtube.YouTubeSpeedMemory.startSpeed(preferences)
+        if (!playback.isLive && start != 1f && !controller.bitstreamPermitted) { speed = start; controller.setSpeed(start) }
+    }
     var sleepTimer by rememberPlaybackSleepTimer(controller)
     val videoTracks = controller.videoTracks()
     val audioTracks = controller.audioTracks()
@@ -1639,7 +1657,7 @@ private fun YouTubeMpvPlayback(playback: YouTubePlayback, streams: YouTubeStream
                     onScalingChanged = { resize = it; controller.setVideoPresentation(resize, aspect.takeUnless { value -> value == "auto" }, zoom) },
                     onAspectChanged = { aspect = it; controller.setVideoPresentation(resize, it.takeUnless { value -> value == "auto" }, zoom) },
                     onZoomChanged = { zoom = it; controller.setVideoPresentation(resize, aspect.takeUnless { value -> value == "auto" }, zoom) },
-                    onSpeedChanged = if (playback.isLive || controller.bitstreamPermitted) null else ({ value -> speed = value; controller.setSpeed(value) }),
+                    onSpeedChanged = if (playback.isLive || controller.bitstreamPermitted) null else ({ value -> speed = value; controller.setSpeed(value); com.ambient.tv.youtube.YouTubeSpeedMemory.chosen(preferences, value) }),
                     audioOptions = streams?.audioOptions?.takeIf { it.size > 1 }
                         ?: audioTracks.map { it.id.toString() to youtubeTrackLabel(it.label, displayLocale) }.ifEmpty { listOf("auto" to stringResource(R.string.player_default_track)) },
                     selectedAudio = if ((streams?.audioOptions?.size ?: 0) > 1) streams!!.selectedAudio else audioTracks.firstOrNull { it.selected }?.id?.toString() ?: "auto",
@@ -1988,10 +2006,15 @@ private fun applyYtAudioLanguage(player: ExoPlayer, language: YtAudioLanguage) {
  * Starts in the original language: YouTube can mark an auto-dub as the manifest default. Without
  * an original marker Media3's manifest selection stays untouched.
  */
-private fun applyYouTubeDefaultAudioTrack(player: ExoPlayer, tracks: Tracks) {
+private fun applyYouTubeDefaultAudioTrack(player: ExoPlayer, tracks: Tracks, preferLanguage: String? = null) {
     val languages = ytAudioLanguages(tracks)
     if (languages.size < 2) return
-    languages.firstOrNull { it.option.original }?.let { applyYtAudioLanguage(player, it) }
+    // A preferred language (SmartTube setting "app language") wins when offered, original first.
+    val preferred = preferLanguage?.let { tag ->
+        languages.filter { com.ambient.tv.youtube.youtubeSameLanguage(it.option.language, tag) }
+            .sortedBy { if (it.option.original) 0 else 1 }.firstOrNull()
+    }
+    (preferred ?: languages.firstOrNull { it.option.original })?.let { applyYtAudioLanguage(player, it) }
 }
 
 private fun currentTrackLabel(options: List<YtTrackChoice>, fallback: String): String = options.firstOrNull { it.group.isTrackSelected(it.index) }?.label ?: fallback

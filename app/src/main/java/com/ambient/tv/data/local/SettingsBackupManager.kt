@@ -146,6 +146,16 @@ data class SettingsBackup(
     /** SponsorBlock action per category ("sponsor=auto,…"); null in older backups. */
     val youtubeSponsorBlockModes: String? = null,
     val youtubeSponsorBlockShowSegments: Boolean = true,
+    /** Further SmartTube options; null in older backups (left unchanged on import). */
+    val youtubeDefaultSpeed: Float? = null,
+    val youtubeRememberChannelSpeed: Boolean? = null,
+    val youtubeAudioLanguage: String? = null,
+    val youtubeSubtitleLanguage: String? = null,
+    val youtubeAutoCaptions: Boolean? = null,
+    val youtubeHistoryPaused: Boolean? = null,
+    val youtubeHideShorts: Boolean? = null,
+    val youtubeHideLiveInSubscriptions: Boolean? = null,
+    val youtubeDeArrow: Boolean? = null,
     val youtubeFeedKeys: List<String> = AppPreferences.DEFAULT_YOUTUBE_FEEDS,
     /** Null in backups made before the setting existed: restoring them keeps the device's choice. */
     val youtubeStartFeedKey: String? = null,
@@ -477,6 +487,15 @@ class SettingsBackupManager @Inject constructor(
             youtubeSponsorBlockEnabled = preferences.youtubeSponsorBlockEnabled,
             youtubeSponsorBlockModes = com.ambient.tv.youtube.SponsorBlockCategories.format(preferences.youtubeSponsorBlockModes),
             youtubeSponsorBlockShowSegments = preferences.youtubeSponsorBlockShowSegments,
+            youtubeDefaultSpeed = preferences.youtubeDefaultSpeed,
+            youtubeRememberChannelSpeed = preferences.youtubeRememberChannelSpeed,
+            youtubeAudioLanguage = preferences.youtubeAudioLanguage,
+            youtubeSubtitleLanguage = preferences.youtubeSubtitleLanguage,
+            youtubeAutoCaptions = preferences.youtubeAutoCaptions,
+            youtubeHistoryPaused = preferences.youtubeHistoryPaused,
+            youtubeHideShorts = preferences.youtubeHideShorts,
+            youtubeHideLiveInSubscriptions = preferences.youtubeHideLiveInSubscriptions,
+            youtubeDeArrow = preferences.youtubeDeArrow,
             youtubeFeedKeys = preferences.youtubeFeedKeys,
             youtubeStartFeedKey = preferences.youtubeStartFeedKey,
             youtubeMaxVideoHeight = preferences.youtubeMaxVideoHeight,
@@ -860,6 +879,15 @@ class SettingsBackupManager @Inject constructor(
         backup.resumeRewindSeconds?.let { preferences.resumeRewindSeconds = it }
         preferences.youtubeSponsorBlockEnabled = backup.youtubeSponsorBlockEnabled
         preferences.youtubeSponsorBlockShowSegments = backup.youtubeSponsorBlockShowSegments
+        backup.youtubeDefaultSpeed?.let { preferences.youtubeDefaultSpeed = it }
+        backup.youtubeRememberChannelSpeed?.let { preferences.youtubeRememberChannelSpeed = it }
+        backup.youtubeAudioLanguage?.let { preferences.youtubeAudioLanguage = it }
+        backup.youtubeSubtitleLanguage?.let { preferences.youtubeSubtitleLanguage = it }
+        backup.youtubeAutoCaptions?.let { preferences.youtubeAutoCaptions = it }
+        backup.youtubeHistoryPaused?.let { preferences.youtubeHistoryPaused = it }
+        backup.youtubeHideShorts?.let { preferences.youtubeHideShorts = it }
+        backup.youtubeHideLiveInSubscriptions?.let { preferences.youtubeHideLiveInSubscriptions = it }
+        backup.youtubeDeArrow?.let { preferences.youtubeDeArrow = it }
         backup.youtubeSponsorBlockModes?.let { preferences.youtubeSponsorBlockModes = com.ambient.tv.youtube.SponsorBlockCategories.parse(it) }
         preferences.youtubeFeedKeys = backup.youtubeFeedKeys
         backup.youtubeStartFeedKey?.let { preferences.youtubeStartFeedKey = it }
