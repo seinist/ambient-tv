@@ -68,6 +68,8 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
      * cleared by login/logout. Copy-on-write iteration never throws ConcurrentModificationException.
      */
     private val chats = java.util.concurrent.CopyOnWriteArrayList<ChatDto>()
+    /** When [chats] was last loaded from Telegram (elapsedRealtime). */
+    @Volatile private var chatsLoadedAtMs = 0L
     @Volatile private var chatsExhausted = false
     private val recentFeeds = LinkedHashMap<String, MonogramRecentTimeline>()
     private val leftChannels = java.util.concurrent.ConcurrentHashMap.newKeySet<Long>()
@@ -526,8 +528,18 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
         synchronized(catalogLock) { knownChannelsLocked(h, count) }
 
     private fun knownChannelsLocked(h: Long, count: Int): List<ChatDto> {
+        // The dialog list orders the timelines (newest channel first). A TV keeps the app running
+        // for days, and Telegram sends no update for most channels: an old list kept the
+        // categories on posts of days ago. Reload it (one getChats) once it is a few minutes old.
+        val now = android.os.SystemClock.elapsedRealtime()
+        if (chats.isNotEmpty() && now - chatsLoadedAtMs > DIALOGS_MAX_AGE_MS) {
+            chats.clear()
+            chatsExhausted = false
+            clearHistoryPages()
+        }
         if (chats.isEmpty() && !chatsExhausted) {
             chats.addAll(native.getChats(h))
+            chatsLoadedAtMs = now
             if (chats.isEmpty()) chatsExhausted = true
         }
         var pages = 0
@@ -719,7 +731,19 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
         // Categories: Telegram's own "media of all chats" (one searchGlobal per page) instead
         // of one search per channel; the per-channel timeline stays the fallback.
         if (filter != null && (token == null || token.startsWith("global:"))) {
-            globalCategory(h, token, limit, section, filter)?.let { return it }
+            globalCategory(h, token, limit, section, filter)?.let { global ->
+                if (token != null) return global
+                // Telegram's search index can trail the channels by days, so the first page
+                // also takes the category's posts from the newest history ("Neue Medien"), which
+                // is shared and usually cached. Newest first; paging continues the search.
+                val fromHistory = runCatching { recent(h, null, limit, "recent").items }.getOrDefault(emptyList())
+                    .flatMap { item -> if (section == "youtube") item.youtubePosts() else listOf(item) }
+                    .filter { categoryKindMatches(section, it.kind) }
+                val merged = (global.items + fromHistory).distinctBy(TelegramMedia::mediaKey)
+                    .sortedByDescending(TelegramMedia::publishedAtMs)
+                    .take(limit.coerceIn(1, 60))
+                return TelegramMediaPage(merged, global.nextCursor)
+            }
         }
         val wanted: (TelegramMediaKind) -> Boolean = when (section) {
             "videos" -> { kind -> kind == TelegramMediaKind.VIDEO }
@@ -771,6 +795,13 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
         if (!page.hasMore) recentFeeds.remove(cursorToken)
         while (recentFeeds.size > 8) recentFeeds.remove(recentFeeds.keys.first())
         return TelegramMediaPage(page.media, if (page.hasMore) "$cursorToken:${pageNumber + 1}" else null)
+    }
+
+    private fun categoryKindMatches(section: String, kind: TelegramMediaKind): Boolean = when (section) {
+        "videos" -> kind == TelegramMediaKind.VIDEO
+        "audio" -> kind == TelegramMediaKind.AUDIO
+        "youtube" -> kind == TelegramMediaKind.YOUTUBE
+        else -> true
     }
 
     /** Telegram refused a filtered global search without query once: use per-channel search. */
@@ -1117,6 +1148,8 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
         const val UPDATES_POLL_MS = 5_000L
         /** Shared channel history pages: long enough for one browse session across categories. */
         const val HISTORY_PAGE_TTL_MS = 120_000L
+        /** Age after which the dialog list (channel order, newest posts) is loaded again. */
+        const val DIALOGS_MAX_AGE_MS = 10 * 60_000L
         const val HISTORY_SHARED_PAGE = 60
         const val HISTORY_PAGE_LIMIT = 256
         const val SEARCH_GLOBAL_LIMIT = 50

@@ -269,8 +269,10 @@ fun PlaybackSessionContent(
         when {
             audioSuccessor != null && BackgroundPlaybackSession.sleepTimer.kind != SleepTimerKind.END_OF_ITEM -> playNext(automatic = true)
             nextUpDue && config.autoplay && !stillWatching -> playNext(automatic = true)
-            // Keep the choice visible at EOF when autoplay is off or confirmation is required.
-            showNextUp -> Unit
+            // Only the still-watching question waits at EOF (it needs an answer to continue).
+            // Without autoplay the card had its time before the end: playback just stops,
+            // instead of the ended title waiting until the card is closed.
+            showNextUp && config.autoplay && stillWatching -> Unit
             candidateKey == dismissedKey || !canOfferNext || nextUpDue -> BackgroundPlaybackSession.stopIfCurrent(metadata.route, snapshot.generation)
         }
     }
