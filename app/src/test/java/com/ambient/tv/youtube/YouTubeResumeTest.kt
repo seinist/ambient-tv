@@ -54,6 +54,34 @@ class YouTubeResumeTest {
             assertEquals(position, applyYouTubePlaybackMetadata(explicit, metadata()).resumeMs)
         }
     }
+    @Test fun liveHistoryAndInFlightMetadataCannotTurnAnOldClockIntoASeek() {
+        val stale = stream(live = true).copy(
+            durationMs = 7_200_000, resumeMs = 3_600_000,
+            resumeResolved = true, resumeRewindSeconds = 10,
+        )
+        val immediate = youtubeAtLiveEdge(stale)
+        assertEquals(0L, immediate.resumeMs)
+        assertEquals(0L, immediate.durationMs)
+        assertTrue(immediate.resumeResolved)
+        assertEquals(0, immediate.resumeRewindSeconds)
+        val enriched = applyYouTubePlaybackMetadata(stale,
+            metadata().copy(durationMs = 5_400_000, percentWatched = 72))
+        assertEquals(0L, enriched.resumeMs)
+        assertEquals(0L, enriched.durationMs)
+        assertTrue(enriched.resumeResolved)
+        assertEquals(0, enriched.resumeRewindSeconds)
+        assertTrue(enriched.timeline.chapters.isEmpty())
+    }
+
+    @Test fun completedBroadcastThatIsNowVodCanStillResume() {
+        val archived = stream(live = false).copy(durationMs = 3_600_000)
+        val enriched = applyYouTubePlaybackMetadata(archived,
+            metadata().copy(durationMs = 3_600_000, percentWatched = 50))
+        assertFalse(enriched.isLive)
+        assertEquals(1_800_000L, enriched.resumeMs)
+        assertEquals(1_800_000L, youtubeAtLiveEdge(enriched).resumeMs)
+    }
+
     @Test fun disabledRewindAndLivePlaybackKeepTheirExistingStarts() {
         val vod = prepareYouTubeSavedResume(applyYouTubePlaybackMetadata(stream(), metadata()), 0)
         assertEquals(30_000L, vod.resumeMs)
