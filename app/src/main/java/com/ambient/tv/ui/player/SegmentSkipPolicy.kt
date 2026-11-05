@@ -36,11 +36,12 @@ internal fun safeSegmentSkipTarget(endMs: Long, currentMs: Long, durationMs: Lon
 private const val SEGMENT_END_PROXIMITY_MS = 750L
 private const val SEGMENT_END_TAIL_MS = 1_500L
 private const val SEGMENT_MIN_FORWARD_MS = 250L
+private const val SEGMENT_REWIND_LEAD_MS = 1_000L
 
 /**
  * A user-directed seek always uses the original media clock (never subtract skipped time).
  * If its target falls inside an automatically skipped SponsorBlock range, land at the end
- * instead. For backwards navigation land just before the segment start, otherwise repeated
+ * instead. For backwards navigation land briefly before the segment start, otherwise repeated
  * rewind steps would get stuck at its end. Button/mark/off categories stay seekable.
  * Handle overlapping auto-ranges in traversal order and keep the safe EOF tail.
  */
@@ -60,7 +61,7 @@ internal fun sponsorBlockSeekTarget(
     for (segment in if (backward) segments.asReversed() else segments) {
         if (com.ambient.tv.youtube.sponsorCategoryOf(segment.type)?.let(modes::get) != "auto" ||
             landing < segment.startMs || landing >= segment.endMs) continue
-        landing = if (backward) (segment.startMs - 1L).coerceAtLeast(0L)
+        landing = if (backward) (segment.startMs - SEGMENT_REWIND_LEAD_MS).coerceAtLeast(0L)
         else safeSegmentSkipTarget(segment.endMs, landing, durationMs) ?: landing
     }
     return landing
