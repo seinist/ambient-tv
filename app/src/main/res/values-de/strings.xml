@@ -936,6 +936,16 @@
     <string name="settings_spotify_visual_off">Aus</string>
     <string name="settings_spotify_visual_cover">Cover-Atmosphäre</string>
     <string name="settings_youtube_sponsorblock_title">SponsorBlock</string>
+    <string name="settings_youtube_auto_captions">Automatische Untertitel</string>
+    <string name="settings_youtube_auto_captions_hint">Auch von YouTubes Spracherkennung erzeugte Untertitel anbieten.</string>
+    <string name="settings_youtube_history_paused">Wiedergabeverlauf pausieren</string>
+    <string name="settings_youtube_history_paused_hint">Nichts Angesehenes geht in deinen YouTube-Verlauf; Positionen bleiben nur auf diesem Gerät.</string>
+    <string name="settings_youtube_hide_shorts">Shorts ausblenden</string>
+    <string name="settings_youtube_hide_shorts_hint">Keine Shorts in Startseite, Abos, Kanälen und Suche. Der Bereich Shorts zeigt sie weiter.</string>
+    <string name="settings_youtube_hide_live">Live und Geplant in Abos ausblenden</string>
+    <string name="settings_youtube_hide_live_hint">Laufende Streams und Premieren erscheinen nicht in den Abos.</string>
+    <string name="settings_youtube_dearrow">DeArrow</string>
+    <string name="settings_youtube_dearrow_hint">Community-Titel und -Vorschaubilder statt Clickbait (dearrow.ajay.app). Gesendet wird nur ein kurzer Hash der Video-ID.</string>
     <string name="settings_youtube_sponsorblock_categories">SponsorBlock-Kategorien</string>
     <string name="settings_youtube_sponsorblock_show">Segmente anzeigen</string>
     <string name="settings_youtube_sponsorblock_show_hint">Aus: keine Markierungen in der Seekbar und keine Überspringen-Buttons; jede Kategorie, die nicht auf Aus steht, wird automatisch übersprungen.</string>

@@ -759,7 +759,7 @@ private fun SectionedYouTubeList(
                 val rowId = youtubeRowId(sectionIndex, row)
                 BrowseFocusRow(rowId) {
                 YouTubeListItem(
-                    item = item,
+                    rawItem = item,
                     rowScale = rowScale,
                     click = { tapped -> onItemFocused(rowId, tapped); click(tapped) },
                     detailed = detailed,
@@ -774,13 +774,14 @@ private fun SectionedYouTubeList(
 
 @Composable
 private fun YouTubeListItem(
-    item: YouTubeItem,
+    rawItem: YouTubeItem,
     rowScale: Float,
     click: (String) -> Unit,
     detailed: Boolean,
     focusRequester: FocusRequester?,
     onFocused: () -> Unit,
 ) {
+    val item = rememberDeArrowItem(rawItem)
     var focused by remember(item.videoId) { mutableStateOf(false) }
     val shape = RoundedCornerShape(10.dp)
     Surface(
@@ -915,7 +916,7 @@ private fun Cinematic(
         }
         Column(Modifier.fillMaxSize().padding(top = 30.dp), verticalArrangement = Arrangement.SpaceBetween) {
             Column(Modifier.padding(horizontal = screenGutter()).fillMaxWidth(.62f), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text(hero.title, style = MaterialTheme.typography.displaySmall, maxLines = 2)
+                Text(rememberDeArrowItem(hero).title, style = MaterialTheme.typography.displaySmall, maxLines = 2)
                 Text(meta(hero), style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 youtubeInfoSubtitle(hero)?.let { Text(it, style = MaterialTheme.typography.bodyMedium, maxLines = 4, overflow = TextOverflow.Ellipsis) }
             }
@@ -1008,7 +1009,7 @@ private fun YouTubeCinematicSection(
             Box(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Color.Transparent, MaterialTheme.colorScheme.background.copy(alpha = .96f)))))
             Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.SpaceBetween) {
                 Column(Modifier.padding(horizontal = screenGutter(), vertical = 18.dp).fillMaxWidth(.72f), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text(hero.title, style = MaterialTheme.typography.headlineMedium, maxLines = 2)
+                    Text(rememberDeArrowItem(hero).title, style = MaterialTheme.typography.headlineMedium, maxLines = 2)
                     Text(meta(hero), style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     youtubeInfoSubtitle(hero)?.let { Text(it, style = MaterialTheme.typography.bodyMedium, maxLines = 3, overflow = TextOverflow.Ellipsis) }
                 }
@@ -1084,13 +1085,14 @@ internal fun YouTubeItemCard(item: YouTubeItem, onClick: (String) -> Unit, modif
 
 @Composable
 private fun Card(
-    item: YouTubeItem,
+    rawItem: YouTubeItem,
     click: (String) -> Unit,
     modifier: Modifier,
     showText: Boolean,
     focusRequester: FocusRequester? = null,
     onFocused: () -> Unit = {},
 ) {
+    val item = rememberDeArrowItem(rawItem)
     var focused by remember(item.videoId) { mutableStateOf(false) }
     val shape = RoundedCornerShape(10.dp)
     Surface(
@@ -1403,3 +1405,22 @@ private fun duration(ms: Long): String = com.ambient.tv.ui.common.formatPlayback
 @Composable private fun filterLabel(filter:YouTubeFilter)=stringResource(when(filter){YouTubeFilter.ALL->R.string.library_filter_all;YouTubeFilter.UNWATCHED->R.string.library_filter_unwatched;YouTubeFilter.IN_PROGRESS->R.string.library_filter_in_progress;YouTubeFilter.LIVE->R.string.youtube_filter_live;YouTubeFilter.SHORTS->R.string.youtube_filter_shorts;YouTubeFilter.TODAY->R.string.youtube_filter_today;YouTubeFilter.WEEK->R.string.youtube_filter_week;YouTubeFilter.MONTH->R.string.youtube_filter_month;YouTubeFilter.YEAR->R.string.youtube_filter_year})
 @Composable private fun feedLabel(f:YouTubeFeed)=stringResource(when(f){YouTubeFeed.HOME->R.string.nav_youtube_home;YouTubeFeed.SUBSCRIPTIONS->R.string.nav_youtube_subscriptions;YouTubeFeed.CHANNELS->R.string.nav_youtube_channels;YouTubeFeed.HISTORY->R.string.nav_youtube_history;YouTubeFeed.PLAYLISTS->R.string.nav_youtube_playlists;YouTubeFeed.SHORTS->R.string.nav_youtube_shorts;YouTubeFeed.MUSIC->R.string.nav_youtube_music;YouTubeFeed.NEWS->R.string.nav_youtube_news;YouTubeFeed.GAMING->R.string.nav_youtube_gaming;YouTubeFeed.LIVE->R.string.nav_youtube_live;YouTubeFeed.KIDS->R.string.nav_youtube_kids})
 private fun feedIcon(f:YouTubeFeed)=when(f){YouTubeFeed.HOME->Icons.Filled.Home;YouTubeFeed.SUBSCRIPTIONS->Icons.Filled.Subscriptions;YouTubeFeed.CHANNELS->Icons.Filled.AccountCircle;YouTubeFeed.HISTORY->Icons.Filled.History;YouTubeFeed.PLAYLISTS->Icons.AutoMirrored.Filled.PlaylistPlay;YouTubeFeed.SHORTS->Icons.Filled.SmartDisplay;YouTubeFeed.MUSIC->Icons.Filled.MusicNote;YouTubeFeed.NEWS->Icons.Filled.Newspaper;YouTubeFeed.GAMING->Icons.Filled.SportsEsports;YouTubeFeed.LIVE->Icons.Filled.LiveTv;YouTubeFeed.KIDS->Icons.Filled.ChildCare}
+
+/**
+ * DeArrow (SmartTube setting): the community title and, when one was chosen, the community
+ * thumbnail frame. Original values until the lookup answers or when DeArrow has nothing.
+ */
+@Composable
+internal fun rememberDeArrowItem(item: YouTubeItem): YouTubeItem {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val enabled = remember { com.ambient.tv.ui.player.videoImagePreferences(context).youtubeDeArrow }
+    if (!enabled || item.isChannel) return item
+    val branding by produceState(com.ambient.tv.youtube.DeArrow.cached(item.videoId), item.videoId) {
+        value = com.ambient.tv.youtube.DeArrow.branding(item.videoId)
+    }
+    val current = branding ?: return item
+    return item.copy(
+        title = current.title ?: item.title,
+        imageUrl = current.thumbnailTimeSeconds?.let { com.ambient.tv.youtube.DeArrow.thumbnailUrl(item.videoId, it) } ?: item.imageUrl,
+    )
+}

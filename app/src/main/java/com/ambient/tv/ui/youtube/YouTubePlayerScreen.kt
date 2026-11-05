@@ -823,7 +823,8 @@ private fun YouTubeMedia3Playback(
                         onVideoFormatChanged(format.frameRate.takeIf { it > 0f } ?: 0f, format.width.takeIf { it > 0 }, format.height.takeIf { it > 0 })
                     }
                     if (!defaultAudioTrackApplied && value.groups.isNotEmpty()) {
-                        applyYouTubeDefaultAudioTrack(player, value)
+                        applyYouTubeDefaultAudioTrack(player, value,
+                            com.ambient.tv.youtube.youtubePreferredAudioLanguage(com.ambient.tv.ui.player.videoImagePreferences(context).playbackAudioLanguage))
                         defaultAudioTrackApplied = true
                     }
                 }
@@ -1988,10 +1989,15 @@ private fun applyYtAudioLanguage(player: ExoPlayer, language: YtAudioLanguage) {
  * Starts in the original language: YouTube can mark an auto-dub as the manifest default. Without
  * an original marker Media3's manifest selection stays untouched.
  */
-private fun applyYouTubeDefaultAudioTrack(player: ExoPlayer, tracks: Tracks) {
+private fun applyYouTubeDefaultAudioTrack(player: ExoPlayer, tracks: Tracks, preferLanguage: String? = null) {
     val languages = ytAudioLanguages(tracks)
     if (languages.size < 2) return
-    languages.firstOrNull { it.option.original }?.let { applyYtAudioLanguage(player, it) }
+    // A preferred language (SmartTube setting "app language") wins when offered, original first.
+    val preferred = preferLanguage?.let { tag ->
+        languages.filter { com.ambient.tv.youtube.youtubeSameLanguage(it.option.language, tag) && it.option.kind != "dubbed-auto" }
+            .sortedBy { if (it.option.original) 0 else 1 }.firstOrNull()
+    }
+    (preferred ?: languages.firstOrNull { it.option.original })?.let { applyYtAudioLanguage(player, it) }
 }
 
 private fun currentTrackLabel(options: List<YtTrackChoice>, fallback: String): String = options.firstOrNull { it.group.isTrackSelected(it.index) }?.label ?: fallback

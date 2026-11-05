@@ -951,6 +951,7 @@ internal fun LazyListScope.settingsSystemCategoryItems(
                         )
                     }
                 }
+                item(key = "youtube-extra-settings") { YouTubeExtraSettings() }
                 item(key = "youtube-menu-section") { SettingsSubheader(stringResource(R.string.settings_system_menu_start)) }
                 item(key = "youtube-feeds") {
                     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -1620,4 +1621,28 @@ private fun sponsorModeLabel(mode: String): Int = when (mode) {
     "button" -> R.string.sponsorblock_mode_button
     "mark" -> R.string.sponsorblock_mode_mark
     else -> R.string.sponsorblock_mode_off
+}
+
+/** Further SmartTube options; saved right away, read when a video or feed is loaded. */
+@Composable
+private fun YouTubeExtraSettings() {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val prefs = remember(context) { com.ambient.tv.ui.player.videoImagePreferences(context) }
+    var autoCaptions by remember { mutableStateOf(prefs.youtubeAutoCaptions) }
+    var historyPaused by remember { mutableStateOf(prefs.youtubeHistoryPaused) }
+    var hideShorts by remember { mutableStateOf(prefs.youtubeHideShorts) }
+    var hideLive by remember { mutableStateOf(prefs.youtubeHideLiveInSubscriptions) }
+    var deArrow by remember { mutableStateOf(prefs.youtubeDeArrow) }
+    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        TvSettingRow(stringResource(R.string.settings_youtube_auto_captions), stringResource(R.string.settings_youtube_auto_captions_hint),
+            autoCaptions, { autoCaptions = it; prefs.youtubeAutoCaptions = it })
+        TvSettingRow(stringResource(R.string.settings_youtube_history_paused), stringResource(R.string.settings_youtube_history_paused_hint),
+            historyPaused, { historyPaused = it; prefs.youtubeHistoryPaused = it })
+        TvSettingRow(stringResource(R.string.settings_youtube_hide_shorts), stringResource(R.string.settings_youtube_hide_shorts_hint),
+            hideShorts, { hideShorts = it; prefs.youtubeHideShorts = it })
+        TvSettingRow(stringResource(R.string.settings_youtube_hide_live), stringResource(R.string.settings_youtube_hide_live_hint),
+            hideLive, { hideLive = it; prefs.youtubeHideLiveInSubscriptions = it })
+        TvSettingRow(stringResource(R.string.settings_youtube_dearrow), stringResource(R.string.settings_youtube_dearrow_hint),
+            deArrow, { deArrow = it; prefs.youtubeDeArrow = it })
+    }
 }

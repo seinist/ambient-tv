@@ -609,9 +609,9 @@ class AppPreferences @Inject constructor(
         get() = LanguagePreferences.normalizeKey(prefs.getString(KEY_METADATA_LANGUAGE, LanguagePreferences.AUTO))
         set(value) = prefs.edit { putString(KEY_METADATA_LANGUAGE, LanguagePreferences.normalizeKey(value)) }
 
-    /** Raw language preference. "auto" follows the app UI language at playback time. */
+    /** Raw language preference. "auto" follows the app UI language at playback time; default is the original language. */
     var audioLanguageKey: String
-        get() = LanguagePreferences.normalizeKey(prefs.getString(KEY_AUDIO_LANGUAGE, LanguagePreferences.AUTO))
+        get() = LanguagePreferences.normalizeKey(prefs.getString(KEY_AUDIO_LANGUAGE, LanguagePreferences.ORIGINAL))
         set(value) = prefs.edit { putString(KEY_AUDIO_LANGUAGE, LanguagePreferences.normalizeKey(value)) }
 
     val playbackAudioLanguage: String
@@ -1276,6 +1276,31 @@ class AppPreferences @Inject constructor(
     var youtubeSponsorBlockModes: Map<String, String>
         get() = com.ambient.tv.youtube.SponsorBlockCategories.parse(prefs.getString("youtube_sponsorblock_modes", null))
         set(value) = prefs.edit { putString("youtube_sponsorblock_modes", com.ambient.tv.youtube.SponsorBlockCategories.format(value)) }
+
+    /** SmartTube: offer YouTube's automatically generated captions. */
+    var youtubeAutoCaptions: Boolean
+        get() = prefs.getBoolean("youtube_auto_captions", true)
+        set(value) = prefs.edit { putBoolean("youtube_auto_captions", value) }
+
+    /** SmartTube: no watch history and positions are sent to YouTube. */
+    var youtubeHistoryPaused: Boolean
+        get() = prefs.getBoolean("youtube_history_paused", false)
+        set(value) = prefs.edit { putBoolean("youtube_history_paused", value) }
+
+    /** SmartTube: Shorts are left out of Home, Subscriptions, channels and search (not the Shorts section). */
+    var youtubeHideShorts: Boolean
+        get() = prefs.getBoolean("youtube_hide_shorts", false)
+        set(value) = prefs.edit { putBoolean("youtube_hide_shorts", value) }
+
+    /** SmartTube: live and upcoming streams are left out of Subscriptions. */
+    var youtubeHideLiveInSubscriptions: Boolean
+        get() = prefs.getBoolean("youtube_hide_live_subscriptions", false)
+        set(value) = prefs.edit { putBoolean("youtube_hide_live_subscriptions", value) }
+
+    /** SmartTube: DeArrow community titles and thumbnails instead of clickbait. */
+    var youtubeDeArrow: Boolean
+        get() = prefs.getBoolean("youtube_dearrow", false)
+        set(value) = prefs.edit { putBoolean("youtube_dearrow", value) }
 
     /** False: no SponsorBlock marks or buttons; every category not set to "off" is skipped automatically. */
     var youtubeSponsorBlockShowSegments: Boolean

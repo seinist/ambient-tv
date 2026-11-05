@@ -330,9 +330,16 @@ fun youtubeAudioLabel(option: YouTubeAudioOption, displayLocale: Locale, kinds: 
 }
 
 /** The audio stream for [key]; [YOUTUBE_STREAM_AUTO] takes the original language. AAC before Opus, then bitrate. */
-fun youtubePickAudio(formats: List<YouTubeAdaptiveFormat>, key: String): YouTubeAdaptiveFormat? {
+fun youtubePickAudio(formats: List<YouTubeAdaptiveFormat>, key: String, preferLanguage: String? = null): YouTubeAdaptiveFormat? {
     val audio = usableAudio(formats)
     val candidates = (if (key != YOUTUBE_STREAM_AUTO) audio.filter { audioKey(it) == key } else emptyList())
+        // Automatic with a preferred language: that language (its original track first), if offered.
+        .ifEmpty {
+            if (key != YOUTUBE_STREAM_AUTO || preferLanguage == null) emptyList()
+            // YouTube's machine dubs are never picked by preference, only manually.
+            else audio.filter { youtubeSameLanguage(it.audioLanguage(), preferLanguage) && it.audioKind() != "dubbed-auto" }
+                .sortedBy { if (it.originalAudio()) 0 else 1 }
+        }
         .ifEmpty { audio.filter { it.originalAudio() } }
         .ifEmpty { audio }
     return candidates.minWithOrNull(
@@ -349,9 +356,10 @@ internal fun youtubeAdaptivePair(
     formats: List<YouTubeAdaptiveFormat>,
     target: YouTubeVideoPreset,
     decode: YouTubeDecodeCheck = youtubeDecodeAnything,
+    preferLanguage: String? = null,
 ): Pair<String, String>? {
     val video = youtubePickVideo(formats, YOUTUBE_STREAM_AUTO, target, decode) ?: return null
-    val audio = youtubePickAudio(formats, YOUTUBE_STREAM_AUTO) ?: return null
+    val audio = youtubePickAudio(formats, YOUTUBE_STREAM_AUTO, preferLanguage) ?: return null
     return (video.url ?: return null) to (audio.url ?: return null)
 }
 
@@ -371,3 +379,17 @@ fun youtubeRenewedUrl(expiredUrl: String, candidates: List<String>): String? {
     // The server may hand back the very same (still valid) link; that is a renewal, not a failure.
     return matching.firstOrNull { it != expiredUrl } ?: matching.firstOrNull()
 }
+
+/** Same base language ("de-DE" and "de"). */
+fun youtubeSameLanguage(a: String?, b: String?): Boolean {
+    val x = a?.substringBefore('-')?.lowercase(Locale.ROOT)?.takeIf(String::isNotBlank) ?: return false
+    val y = b?.substringBefore('-')?.lowercase(Locale.ROOT)?.takeIf(String::isNotBlank) ?: return false
+    return x == y
+}
+
+/**
+ * Language of the global audio setting (resolved playback language) for YouTube; null for
+ * "Original" (the global default), which keeps YouTube's original track.
+ */
+fun youtubePreferredAudioLanguage(playbackAudioLanguage: String): String? =
+    playbackAudioLanguage.takeUnless { it.isBlank() || it == com.ambient.tv.data.local.LanguagePreferences.ORIGINAL }
