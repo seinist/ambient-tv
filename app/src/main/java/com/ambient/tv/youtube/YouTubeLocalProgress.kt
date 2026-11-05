@@ -56,6 +56,13 @@ object YouTubeLocalProgress {
         persist()
     }
 
+    /** Older versions could store a moving live-window clock as VOD watch progress. */
+    @Synchronized
+    fun discardLive(videoId: String) {
+        lastRemote.remove(videoId)
+        if (entries.remove(videoId) != null) persist()
+    }
+
     /** Position reached in this app's player. */
     @Synchronized
     fun record(videoId: String, positionMs: Long, durationMs: Long) {

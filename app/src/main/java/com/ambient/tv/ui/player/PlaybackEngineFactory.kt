@@ -245,13 +245,17 @@ object PlaybackEngineFactory {
                             }
                         }
                     })
-                    val primeResume = needsDolbyVisionResumePriming(android.os.Build.MANUFACTURER,
-                        android.os.Build.VERSION.SDK_INT, sourceHdrStandard, startPositionMs)
+                    val initialSeek = media3InitialSeekPositionMs(startPositionMs, liveStream,
+                        com.ambient.tv.livetv.isLiveTimeshiftUrl(streamUrl))
+                    val primeResume = initialSeek != null && needsDolbyVisionResumePriming(
+                        android.os.Build.MANUFACTURER, android.os.Build.VERSION.SDK_INT, sourceHdrStandard, initialSeek)
                     setMediaItem(mediaItem)
-                    seekTo(if (primeResume) 0L else startPositionMs.coerceAtLeast(0L))
+                    // A seek to 0 on a sliding HLS live window can land behind its oldest
+                    // segment. Media3's unset start uses the manifest's default live position.
+                    if (initialSeek != null) seekTo(if (primeResume) 0L else initialSeek)
                     playWhenReady = true
                     Media3ImageProcessing.get(context, this)
-                    if (primeResume) Media3ResumePrimer.start(this, startPositionMs)
+                    if (primeResume) Media3ResumePrimer.start(this, initialSeek ?: 0L)
                     if (!deferPrepare) prepare()
                 }
         }

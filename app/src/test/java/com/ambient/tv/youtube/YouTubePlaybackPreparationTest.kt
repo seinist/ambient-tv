@@ -151,6 +151,17 @@ class YouTubePlaybackPreparationTest {
         assertEquals("https://fixture.invalid/video.mp4", uri)
     }
 
+    @Test fun smartTubeClientsMissingLiveFlagStillRecognizeActiveHls() {
+        assertTrue(youtubeCurrentlyLive(providerLive = true, hls = null, lengthSeconds = 5_000.0))
+        assertTrue(youtubeCurrentlyLive(providerLive = false,
+            hls = "https://manifest.googlevideo.com/live.m3u8", lengthSeconds = 0.0))
+        assertTrue(youtubeCurrentlyLive(providerLive = false,
+            hls = "https://manifest.googlevideo.com/live.m3u8", lengthSeconds = null))
+        assertFalse(youtubeCurrentlyLive(providerLive = false,
+            hls = "https://manifest.googlevideo.com/archive.m3u8", lengthSeconds = 4_800.0))
+        assertFalse(youtubeCurrentlyLive(providerLive = false, hls = null, lengthSeconds = null))
+    }
+
     @Test fun livePlaybackStillPrefersHlsRegardlessOfVodPolicy() {
         val uri = selectYouTubePlaybackUri(
             isLive = true,
