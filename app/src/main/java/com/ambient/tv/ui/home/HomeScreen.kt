@@ -444,13 +444,39 @@ internal fun SystemOverviewHeader(
     optionsModifier: Modifier = Modifier,
     modifier: Modifier = Modifier,
 ) {
+    val contentFocus = com.ambient.tv.ui.common.LocalBrowseFocusReturnState.current
+    var headerHasFocus by remember { mutableStateOf(false) }
+    var pendingDown by remember { androidx.compose.runtime.mutableIntStateOf(0) }
+    // Lazy rows can be offscreen or not yet composed after a refresh. A single Down press
+    // requests their placement; retry only while focus still belongs to the header, so this
+    // cannot steal focus after Back, a different key or opening a view-options dialog.
+    LaunchedEffect(pendingDown, headerHasFocus) {
+        if (pendingDown == 0 || !headerHasFocus) return@LaunchedEffect
+        repeat(16) {
+            withFrameNanos { }
+            if (!headerHasFocus) return@LaunchedEffect
+            when (contentFocus?.requestContentFocus()) {
+                true, false -> return@LaunchedEffect
+                null -> Unit
+            }
+        }
+    }
     Column(modifier.fillMaxWidth()
-        // The header floats over the hero, so no row lies in the focus search's beam below it:
-        // Down hands focus to the rows' remembered tile directly.
+        .onFocusChanged { headerHasFocus = it.hasFocus }
+        // The header floats over the hero: geometric Down search may find only another
+        // header button. SidebarContentEntry restores the *last focused control* (which
+        // is now a header action), so do not use it here; enter a real content tile.
         .onPreviewKeyEvent { event ->
-            if (event.key != Key.DirectionDown) return@onPreviewKeyEvent false
+            if (event.key != Key.DirectionDown) {
+                if (event.type == KeyEventType.KeyDown) pendingDown = 0
+                return@onPreviewKeyEvent false
+            }
             if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent true
-            com.ambient.tv.ui.navigation.SidebarContentEntry.requestFocus() == true
+            when (contentFocus?.requestContentFocus()) {
+                true -> { pendingDown = 0; true }
+                null -> { pendingDown++; true }
+                false -> false // No tiles (offline/empty): allow normal focus search.
+            }
         }
         .padding(start = screenGutter(), end = screenGutter(), top = com.ambient.tv.ui.common.pageHeaderTop(24.dp), bottom = 10.dp)) {
         com.ambient.tv.ui.common.PageHeader(actions = { OverviewActions(onOpenHome, onRefresh, refreshing, onOpenOptions, optionsModifier) }) {
