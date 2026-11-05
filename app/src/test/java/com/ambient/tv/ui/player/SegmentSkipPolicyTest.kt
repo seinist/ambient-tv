@@ -92,6 +92,63 @@ class SegmentSkipPolicyTest {
             60_000L, playing = true))
     }
 
+    @Test fun nearEofSponsorSkipCannotBeRearmedByDecoderKeyframeJitter() {
+        val policy = BackgroundSponsorSkipPolicy()
+        val finalAd = listOf(com.ambient.tv.youtube.YouTubeSponsorSegment(95_000L, 98_000L, "sponsor"))
+        assertEquals(98_000L, policy.nextSeek(10L, finalAd, 95_500L, 100_000L, playing = true))
+        // A native seek first reports the desired position outside the ad, then decodes
+        // again from a previous keyframe inside it. It must not jump forward repeatedly.
+        assertNull(policy.nextSeek(10L, finalAd, 98_100L, 100_000L, playing = true))
+        assertNull(policy.nextSeek(10L, finalAd, 98_600L, 100_000L, playing = true))
+        assertNull(policy.nextSeek(10L, finalAd, 96_000L, 100_000L, playing = true))
+        // SponsorBlock's asynchronous endpoint updates must not rearm the same ad.
+        val extended = listOf(com.ambient.tv.youtube.YouTubeSponsorSegment(95_000L, 100_000L, "sponsor"))
+        assertNull(policy.nextSeek(10L, extended, 96_500L, 100_000L, playing = true))
+        // A new item/generation gets a fresh auto-skip.
+        assertEquals(98_500L, policy.nextSeek(11L, extended, 96_500L, 100_000L, playing = true))
+    }
+
+    @Test fun sponsorCoveringEofSkipsOnlyOnceEvenAfterAFalseOutsideWindow() {
+        val policy = BackgroundSponsorSkipPolicy()
+        val finalAd = listOf(com.ambient.tv.youtube.YouTubeSponsorSegment(94_000L, 100_000L, "sponsor"))
+        assertEquals(98_500L, policy.nextSeek(3L, finalAd, 94_200L, 100_000L, playing = true))
+        assertNull(policy.nextSeek(3L, finalAd, 100_000L, 100_000L, playing = true))
+        assertNull(policy.nextSeek(3L, finalAd, 100_200L, 100_000L, playing = true))
+        assertNull(policy.nextSeek(3L, finalAd, 95_000L, 100_000L, playing = true))
+        assertNull(policy.nextSeek(3L, finalAd, 98_600L, 100_000L, playing = true))
+    }
+
+    @Test fun hiddenNextUpCanAdvanceAtTerminalAutoSponsorButNeverBypassConfirmation() {
+        val finalAd = listOf(com.ambient.tv.youtube.YouTubeSponsorSegment(95_000L, 100_000L, "sponsor"))
+        val modes = com.ambient.tv.youtube.SponsorBlockCategories.DEFAULTS
+        fun due(
+            range: List<com.ambient.tv.youtube.YouTubeSponsorSegment> = finalAd,
+            mode: Map<String, String> = modes,
+            position: Long = 96_000L,
+            duration: Long = 100_000L,
+            autoplay: Boolean = true,
+            overlay: Boolean = false,
+            confirm: Boolean = false,
+        ) = terminalSponsorAutoAdvance(position, duration, range, mode, autoplay, overlay, confirm)
+
+        assertTrue(due())
+        assertTrue(due(position = 98_500L)) // the safe 1.5-second end tail
+        assertFalse(due(autoplay = false))
+        assertFalse(due(overlay = true))
+        assertFalse(due(confirm = true)) // still-watching must appear at actual EOF
+        assertFalse(due(mode = modes + ("sponsor" to "button")))
+        assertFalse(due(mode = modes + ("sponsor" to "mark")))
+        assertFalse(due(mode = modes + ("sponsor" to "off")))
+        assertFalse(due(range = emptyList()))
+        assertFalse(due(position = 94_000L))
+        assertFalse(due(position = 100_000L))
+        assertFalse(due(duration = 0L))
+        // A 2-5 second gap can contain a real ending: keep playback, despite the
+        // near-EOF re-arm guard preventing another automatic skip.
+        assertFalse(due(range = listOf(finalAd.single().copy(endMs = 97_000L))))
+        assertTrue(due(range = listOf(finalAd.single().copy(endMs = 99_500L))))
+    }
+
     @Test fun manualSponsorSeekUsesTheOriginalMediaClockAndRespectsCategoryModes() {
         val ranges = listOf(
             com.ambient.tv.youtube.YouTubeSponsorSegment(20_000L, 40_000L, "sponsor"),

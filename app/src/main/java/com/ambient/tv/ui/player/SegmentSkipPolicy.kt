@@ -37,6 +37,35 @@ private const val SEGMENT_END_PROXIMITY_MS = 750L
 private const val SEGMENT_END_TAIL_MS = 1_500L
 private const val SEGMENT_MIN_FORWARD_MS = 250L
 private const val SEGMENT_REWIND_LEAD_MS = 1_000L
+/** End-near skips must never be re-armed by a decoder briefly reporting an older keyframe. */
+private const val SPONSOR_NEAR_EOF_REARM_GUARD_MS = 5_000L
+
+/**
+ * A hidden Next Up overlay should not strand autoplay behind an automatic SponsorBlock
+ * segment covering the actual EOF. There is no meaningful content after this range: let
+ * the shared Next Up handoff happen instead of repeatedly seeking into the same tail.
+ *
+ * This is deliberately stricter than the re-arm guard: a sponsor ending several seconds
+ * *before* EOF may be followed by a real post-credit scene which must still be played.
+ */
+internal fun terminalSponsorAutoAdvance(
+    positionMs: Long,
+    durationMs: Long,
+    ranges: List<com.ambient.tv.youtube.YouTubeSponsorSegment>,
+    modes: Map<String, String>,
+    autoplay: Boolean,
+    showOverlay: Boolean,
+    stillWatching: Boolean,
+): Boolean {
+    if (!autoplay || showOverlay || stillWatching || durationMs <= 0L ||
+        positionMs < 0L || positionMs >= durationMs) return false
+    return ranges.any { range ->
+        modes[range.category] == "auto" &&
+            range.startMs >= 0L && range.startMs < durationMs &&
+            range.endMs >= durationMs - SEGMENT_END_PROXIMITY_MS &&
+            positionMs >= range.startMs && positionMs < range.endMs
+    }
+}
 
 /**
  * A user-directed seek always uses the original media clock (never subtract skipped time).
@@ -75,6 +104,8 @@ internal fun sponsorBlockSeekTarget(
 internal class BackgroundSponsorSkipPolicy {
     private var generation: Long? = null
     private val handledStarts = mutableSetOf<Long>()
+    /** Terminal skips stay handled for the whole item, even after optimistic outside samples. */
+    private val terminalHandledStarts = mutableSetOf<Long>()
     // A decoder may briefly report a seek target outside a range before falling back to its
     // preceding keyframe. Require two outside polls to re-arm, not a single optimistic sample.
     private val outsideSamples = mutableMapOf<Long, Int>()
@@ -91,6 +122,7 @@ internal class BackgroundSponsorSkipPolicy {
         if (generation != playbackGeneration) {
             generation = playbackGeneration
             handledStarts.clear()
+            terminalHandledStarts.clear()
             outsideSamples.clear()
         }
         // Without a known EOF, a segment's end may be the decoder's final timestamp.
@@ -102,6 +134,10 @@ internal class BackgroundSponsorSkipPolicy {
         // Previously skipped ranges must become actionable again after playback actually
         // leaves them. Otherwise a later user seek back into the same sponsor is never skipped.
         for (start in handledStarts.toList()) {
+            // Near EOF, a seek may land on an older keyframe or temporarily report a
+            // position past the segment; re-arming would skip the same final seconds forever.
+            // Manual seeks are redirected separately by sponsorBlockSeekTarget.
+            if (start in terminalHandledStarts) continue
             val stillInside = segments.any { it.startMs == start && positionMs >= it.startMs && positionMs < it.endMs }
             if (stillInside) {
                 outsideSamples.remove(start)
@@ -118,6 +154,9 @@ internal class BackgroundSponsorSkipPolicy {
             positionMs >= it.startMs && positionMs < it.endMs && it.startMs !in handledStarts
         } ?: return null
         handledStarts.add(active.startMs)
+        if (active.endMs >= durationMs - SPONSOR_NEAR_EOF_REARM_GUARD_MS) {
+            terminalHandledStarts.add(active.startMs)
+        }
         return safeSegmentSkipTarget(active.endMs, positionMs, durationMs)
     }
 }
