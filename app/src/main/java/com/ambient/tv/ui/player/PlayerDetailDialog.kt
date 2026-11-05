@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBars
@@ -70,6 +71,8 @@ import com.ambient.tv.ui.common.DetailTitleRow
 import com.ambient.tv.ui.common.LocalPlayerPanelNavigation
 import com.ambient.tv.ui.common.OverlayAccentStrip
 import com.ambient.tv.ui.common.OverlayEdgeFades
+import com.ambient.tv.ui.common.OverlayScrollbar
+import com.ambient.tv.ui.common.playerPanelFocusKey
 import com.ambient.tv.ui.common.PlayerIconButton
 import com.ambient.tv.ui.common.StreamPropertyAdaptiveRows
 import com.ambient.tv.ui.common.TvActionButton
@@ -85,7 +88,7 @@ import com.ambient.tv.domain.model.dedupeCastMembers
 import kotlinx.coroutines.launch
 
 /** What a remote key does inside the details dialog. */
-internal enum class PlayerDetailKeyAction { SCROLL_UP, SCROLL_DOWN, FOCUS_CLOSE, FOCUS_TEXT, CONSUME, PASS }
+internal enum class PlayerDetailKeyAction { SCROLL_UP, SCROLL_DOWN, FOCUS_CLOSE, FOCUS_TEXT, FOCUS_SCROLLBAR, CONSUME, PASS }
 
 /**
  * Key routing of the dialog: the text scrolls with Up/Down; at its end (or with Right) focus
@@ -97,6 +100,7 @@ internal fun playerDetailKeyAction(
     onCloseButton: Boolean,
     canScrollBackward: Boolean,
     canScrollForward: Boolean,
+    hasScrollbar: Boolean = false,
 ): PlayerDetailKeyAction = when (key) {
     Key.DirectionDown, Key.PageDown -> when {
         onCloseButton -> PlayerDetailKeyAction.CONSUME
@@ -108,7 +112,8 @@ internal fun playerDetailKeyAction(
         canScrollBackward -> PlayerDetailKeyAction.SCROLL_UP
         else -> PlayerDetailKeyAction.CONSUME
     }
-    Key.DirectionRight -> if (onCloseButton) PlayerDetailKeyAction.CONSUME else PlayerDetailKeyAction.FOCUS_CLOSE
+    Key.DirectionRight -> if (onCloseButton) PlayerDetailKeyAction.CONSUME
+        else if (hasScrollbar) PlayerDetailKeyAction.FOCUS_SCROLLBAR else PlayerDetailKeyAction.FOCUS_CLOSE
     Key.DirectionLeft -> if (onCloseButton) PlayerDetailKeyAction.FOCUS_TEXT else PlayerDetailKeyAction.CONSUME
     // OK on the text does nothing; on the button it activates it.
     Key.DirectionCenter, Key.Enter, Key.NumPadEnter -> if (onCloseButton) PlayerDetailKeyAction.PASS else PlayerDetailKeyAction.CONSUME
@@ -118,6 +123,37 @@ internal fun playerDetailKeyAction(
 /** Opens the details dialog as if its action-bar button had been pressed, so closing focuses that button. */
 internal fun openPlayerDetails(navigation: com.ambient.tv.ui.common.PlayerPanelNavigation, buttonLabel: String) {
     navigation.fromOrigin("bar:$buttonLabel", root = true) { navigation.open(UnifiedPlayerPanel.DETAILS) }
+}
+
+/**
+ * The panel-header action is present independently of the optional OSD Details button.
+ * Keep the settings hierarchy instead of rooting the dialog at the player bar: Back returns
+ * to this fixed header action and another Back returns to the preceding settings level.
+ */
+internal const val PLAYER_PANEL_DETAILS_FOCUS_KEY = "panel:details"
+
+internal fun openPlayerDetailsFromPanel(navigation: com.ambient.tv.ui.common.PlayerPanelNavigation) {
+    navigation.fromOrigin(PLAYER_PANEL_DETAILS_FOCUS_KEY, root = false) {
+        navigation.open(UnifiedPlayerPanel.DETAILS)
+    }
+}
+
+/**
+ * A permanent entry in the fixed header of every standard playback side panel.
+ * It never scrolls out of view and is independent of the opt-in OSD Details action.
+ */
+@Composable
+internal fun PlayerPanelDetailsHeaderButton() {
+    val navigation = LocalPlayerPanelNavigation.current ?: return
+    if (LocalPlayerChromeState.current?.detail?.value == null) return
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+        TvActionButton(
+            text = stringResource(R.string.player_details),
+            icon = Icons.Outlined.Info,
+            onClick = { openPlayerDetailsFromPanel(navigation) },
+            modifier = Modifier.playerPanelFocusKey(PLAYER_PANEL_DETAILS_FOCUS_KEY),
+        )
+    }
 }
 
 /** Closes the dialog; the navigation hands focus back to the Details button. */
@@ -185,9 +221,18 @@ internal fun PlayerDetailDialog(
     val scroll = rememberScrollState()
     val scope = rememberCoroutineScope()
     val textFocus = remember { FocusRequester() }
+    val scrollbarFocus = remember { FocusRequester() }
     val closeFocus = remember { FocusRequester() }
     var closeFocused by remember { mutableStateOf(false) }
+    var scrollbarFocused by remember { mutableStateOf(false) }
     val density = LocalDensity.current
+    // New channel, episode or SmartTube item starts at the beginning of its own details.
+    LaunchedEffect(detail.title, detail.artworkUrl) { scroll.scrollTo(0) }
+    // If enrichment makes a long description short while the scrollbar had focus, it
+    // disappears. Do not leave the outer key handler thinking the scrollbar still owns input.
+    LaunchedEffect(scroll.maxValue) {
+        if (scroll.maxValue <= 0) scrollbarFocused = false
+    }
     val step = with(density) { 160.dp.toPx() }
 
     LaunchedEffect(interactive) {
@@ -200,13 +245,18 @@ internal fun PlayerDetailDialog(
     }
 
     val keys = Modifier.onPreviewKeyEvent { event ->
-        val action = playerDetailKeyAction(event.key, closeFocused, scroll.canScrollBackward, scroll.canScrollForward)
+        // The interactive scrollbar owns its own Left/Right and Page/Arrow events.
+        if (scrollbarFocused && scroll.maxValue > 0) return@onPreviewKeyEvent false
+        val action = playerDetailKeyAction(event.key, closeFocused,
+            scroll.canScrollBackward, scroll.canScrollForward,
+            hasScrollbar = scroll.maxValue > 0 && !handheld)
         if (action == PlayerDetailKeyAction.PASS) return@onPreviewKeyEvent false
         if (event.type == KeyEventType.KeyDown) when (action) {
             PlayerDetailKeyAction.SCROLL_DOWN -> scope.launch { scroll.animateScrollBy(step) }
             PlayerDetailKeyAction.SCROLL_UP -> scope.launch { scroll.animateScrollBy(-step) }
             PlayerDetailKeyAction.FOCUS_CLOSE -> runCatching { closeFocus.requestFocus() }
             PlayerDetailKeyAction.FOCUS_TEXT -> runCatching { textFocus.requestFocus() }
+            PlayerDetailKeyAction.FOCUS_SCROLLBAR -> runCatching { scrollbarFocus.requestFocus() }
             else -> Unit
         }
         true
@@ -218,6 +268,9 @@ internal fun PlayerDetailDialog(
             .pointerInput(Unit) { detectTapGestures { if (interactive) onClose() } },
     ) {
         val maxCardHeight = maxHeight * if (handheld) 0.86f else 0.84f
+        // Capture the BoxWithConstraints scope before entering ColumnScope (which shadows
+        // maxWidth). This also reflects the actual card width, not the entire TV viewport.
+        val dialogWidth = if (handheld) maxWidth else minOf(maxWidth * 0.74f, 1180.dp)
         val shape = if (handheld) RoundedCornerShape(topStart = tokens.panelRadius, topEnd = tokens.panelRadius)
             else RoundedCornerShape(tokens.panelRadius)
         Column(
@@ -248,26 +301,30 @@ internal fun PlayerDetailDialog(
         ) {
             OverlayAccentStrip()
             Spacer(Modifier.height(tokens.itemGap))
+            // Only the description/metadata column scrolls. Artwork stays pinned at the
+            // left on TV and landscape; on a narrow phone it stays above the text viewport.
+            // The footer remains outside this viewport, so Close is always accessible.
+            val sideBySide = playerDetailSideBySide(dialogWidth, handheld)
             Box(Modifier.weight(1f, fill = false)) {
-                Box(
-                    Modifier
-                        .focusRequester(textFocus)
-                        .focusable()
-                        .verticalScroll(scroll),
-                ) {
-                    if (handheld) {
-                        Column(verticalArrangement = Arrangement.spacedBy(13.dp)) {
-                            PlayerDetailArtwork(detail, compact = true)
-                            PlayerDetailText(detail)
+                if (sideBySide) {
+                    Row(Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(28.dp),
+                        verticalAlignment = Alignment.Top) {
+                        PlayerDetailArtwork(detail, compact = handheld)
+                        Box(Modifier.weight(1f)) {
+                            PlayerDetailScrollableText(detail, scroll, textFocus, scrollbarFocus,
+                                closeFocus, { scrollbarFocused = it })
                         }
-                    } else {
-                        Row(horizontalArrangement = Arrangement.spacedBy(28.dp), verticalAlignment = Alignment.Top) {
-                            PlayerDetailArtwork(detail, compact = false)
-                            Column(Modifier.weight(1f)) { PlayerDetailText(detail) }
+                    }
+                } else {
+                    Column(verticalArrangement = Arrangement.spacedBy(13.dp)) {
+                        PlayerDetailArtwork(detail, compact = true)
+                        Box(Modifier.weight(1f, fill = false).fillMaxWidth()) {
+                            PlayerDetailScrollableText(detail, scroll, textFocus, scrollbarFocus,
+                                closeFocus, { scrollbarFocused = it })
                         }
                     }
                 }
-                OverlayEdgeFades(scroll.canScrollBackward, scroll.canScrollForward)
             }
             Spacer(Modifier.height(tokens.itemGap))
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
@@ -278,6 +335,46 @@ internal fun PlayerDetailDialog(
                     modifier = Modifier.focusRequester(closeFocus).onFocusChanged { closeFocused = it.isFocused },
                 )
             }
+        }
+    }
+}
+
+/** Use a horizontal, fixed-artwork layout wherever the dialog has enough room. */
+internal fun playerDetailSideBySide(availableWidth: Dp, handheld: Boolean): Boolean =
+    !handheld || availableWidth >= 680.dp
+
+/** Scrollable text only; its scrollbar and fades use the same shared panel chrome. */
+@Composable
+private fun PlayerDetailScrollableText(
+    detail: PlayerDetailInfo,
+    scroll: ScrollState,
+    textFocus: FocusRequester,
+    scrollbarFocus: FocusRequester,
+    closeFocus: FocusRequester,
+    onScrollbarFocusChanged: (Boolean) -> Unit,
+) {
+    Box(Modifier.fillMaxWidth()) {
+        Column(
+            Modifier.fillMaxWidth()
+                .focusRequester(textFocus)
+                .focusable()
+                .verticalScroll(scroll)
+                .padding(end = if (scroll.maxValue > 0) 16.dp else 0.dp),
+        ) {
+            PlayerDetailText(detail)
+        }
+        OverlayEdgeFades(scroll.canScrollBackward, scroll.canScrollForward)
+        if (scroll.maxValue > 0) {
+            OverlayScrollbar(
+                state = scroll,
+                modifier = Modifier.align(Alignment.CenterEnd)
+                    .fillMaxHeight()
+                    .padding(vertical = 10.dp, horizontal = 4.dp)
+                    .focusRequester(scrollbarFocus)
+                    .onFocusChanged { onScrollbarFocusChanged(it.isFocused) },
+                contentFocus = textFocus,
+                actionsFocus = closeFocus,
+            )
         }
     }
 }
