@@ -1448,6 +1448,11 @@ private fun AmbientTvApp(
                 it.metadata?.sourceWidth, it.metadata?.sourceHeight, it.metadata?.sourceAspectRatioHint),
         )
     } })
+    // Spotify has its own playback service, separate from BackgroundPlaybackSession.
+    // Observe only changes in playing state so position updates never recompose the shell.
+    val spotifyPlaying by remember(spotifyRepository) {
+        spotifyRepository.playback.map { it.playing }.distinctUntilChanged()
+    }.collectAsState(initial = spotifyRepository.playback.value.playing)
     val onPlayerScreen = currentRoute in setOf(Destinations.PLAYER, Destinations.TVH_PLAYER, Destinations.YOUTUBE_PLAYER, Destinations.TELEGRAM_PLAYER)
     val activity = androidx.activity.compose.LocalActivity.current
     val pipPresentation = (activity as? MainActivity)?.let { it.systemPipVisible || it.systemPipEntering } == true
@@ -1668,21 +1673,30 @@ private fun AmbientTvApp(
     // Handheld video pages are fullscreen exactly while the window is landscape, so turning the
     // device switches into fullscreen and back. Television keeps its manifest orientation.
     val handheldFullscreen = com.ambient.tv.ui.mobile.rememberHandheldFullscreen(activity, onPlayerScreen)
-    // Shell-owned keep-screen-on (LocalView), not window clearFlags and not unconditional
-    // SurfaceView flags: clearFlags raced the video surfaces and let the phone sleep while
-    // buffering, and surface-level keepScreenOn=true also blocked sleep during browse/mini-player.
-    // wantsToPlay covers buffering; isPlaying alone was too narrow.
+    // Android TV uses the Activity's FLAG_KEEP_SCREEN_ON to suppress the system screensaver.
+    // A view-level flag is insufficiently reliable across renderer surface replacements.
+    // Keep the TV awake for any local playback (including radio and Spotify), while a phone
+    // only stays awake on its visible player page. PiP, idle browse and sleep standby are
+    // deliberately excluded. Play intent keeps the flag during buffering and source changes.
     val standbyRequested = !handheld && com.ambient.tv.ui.player.SleepSession.standbyRequested
-    val keepScreenOn = !standbyRequested && (
-        screensaverOverlayPresent ||
-        (!handheld && screensaverEnabled) ||
-        // The user can lock the phone while PiP is floating; audio will keep playing.
-        ((onPlayerScreen || currentRoute == Destinations.RADIO_PLAYER) &&
-            backgroundPlayback.wantsToPlay && !(handheld && pipPresentation)) ||
-        (!handheld && backgroundPlayback.activeVideo && backgroundPlayback.wantsToPlay))
-    DisposableEffect(keepScreenOn) {
-        focusSoundView.keepScreenOn = keepScreenOn
-        onDispose { focusSoundView.keepScreenOn = false }
+    val keepScreenOn = com.ambient.tv.ui.player.shouldKeepScreenOn(
+        handheld = handheld,
+        appScreensaverEnabled = screensaverEnabled,
+        screensaverOverlayPresent = screensaverOverlayPresent,
+        photoViewer = currentRoute == Destinations.PHOTO_VIEWER,
+        playerPageVisible = onPlayerRoute,
+        pipVisible = pipPresentation,
+        sessionActive = backgroundPlayback.active,
+        isPlaying = backgroundPlayback.playing,
+        wantsToPlay = backgroundPlayback.wantsToPlay,
+        spotifyPlaying = spotifyPlaying,
+        standbyRequested = standbyRequested,
+    )
+    val activityWindow = (activity as? MainActivity)?.window
+    DisposableEffect(activityWindow, keepScreenOn) {
+        val flag = android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON
+        if (keepScreenOn) activityWindow?.addFlags(flag) else activityWindow?.clearFlags(flag)
+        onDispose { if (keepScreenOn) activityWindow?.clearFlags(flag) }
     }
 
     LaunchedEffect(currentRoute) {
