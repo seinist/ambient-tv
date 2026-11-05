@@ -9,6 +9,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
+import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import coil3.ImageLoader
 import coil3.SingletonImageLoader
@@ -111,6 +112,22 @@ class YouTubeOsdNavigationTest {
     private fun restartButton() = rule.onNodeWithContentDescription(rule.activity.getString(R.string.detail_restart))
     private fun previousButton() = rule.onNodeWithContentDescription(rule.activity.getString(R.string.player_previous_item))
     private fun nextButton() = rule.onNodeWithContentDescription(rule.activity.getString(R.string.player_next_item))
+
+    @Test fun publicationShowsBesideChannelAndDisappearsForRunningLiveStreams() {
+        val fixture = mount()
+        rule.runOnIdle {
+            fixture.model.value = fixture.model.value.copy(playback = fixture.model.value.playback.copy(
+                author = "Fixture Channel", publishedDate = "vor 3 Tagen",
+            ))
+        }
+        rule.onNodeWithText("Fixture Channel", useUnmergedTree = true).assertIsDisplayed()
+        rule.onNodeWithText("· vor 3 Tagen", useUnmergedTree = true).assertIsDisplayed()
+
+        rule.runOnIdle {
+            fixture.model.value = fixture.model.value.copy(playback = fixture.model.value.playback.copy(isLive = true))
+        }
+        rule.onNodeWithText("· vor 3 Tagen", useUnmergedTree = true).assertDoesNotExist()
+    }
 
     @Test fun navigationButtonsStayVisibleAndCallOnlyAvailableActionsForEveryRendererLabel() {
         val fixture = mount()
