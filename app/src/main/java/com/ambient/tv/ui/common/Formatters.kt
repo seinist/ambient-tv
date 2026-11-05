@@ -2,6 +2,7 @@ package com.ambient.tv.ui.common
 
 fun formatDuration(durationMs: Long?): String? {
     if (durationMs == null || durationMs <= 0) return null
+    if (durationMs < 60_000) return "${(durationMs / 1000).coerceAtLeast(1)}s"
     val totalMinutes = durationMs / 60_000
     val hours = totalMinutes / 60
     val minutes = totalMinutes % 60

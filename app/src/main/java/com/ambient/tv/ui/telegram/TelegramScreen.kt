@@ -684,7 +684,7 @@ private fun MonogramFileRow(
     }
     val meta = remember(item, media) {
         listOfNotNull(
-            item.durationMs?.takeIf { it > 0L }?.let { com.ambient.tv.ui.common.formatPlaybackClock(it) },
+            item.durationMs?.takeIf { it > 0L }?.let { com.ambient.tv.ui.common.formatDuration(it) },
             media?.fileSize?.takeIf { it > 0L }?.let { android.text.format.Formatter.formatShortFileSize(context, it) },
         ).joinToString(" · ")
     }
@@ -722,7 +722,7 @@ private fun MonogramListItem(
         monogramCardMeta(
             item,
             dateLabel = { com.ambient.tv.ui.common.relativePublishedLabel(it) },
-            durationLabel = { com.ambient.tv.ui.common.formatPlaybackClock(it) },
+            durationLabel = { com.ambient.tv.ui.common.formatDuration(it) },
         )
     }
     Surface(

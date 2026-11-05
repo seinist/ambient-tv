@@ -153,7 +153,7 @@ internal fun MonogramMediaCard(
     val meta = remember(item, androidx.compose.ui.platform.LocalConfiguration.current.locales[0]) {
         monogramCardMeta(item,
             dateLabel = { relativePublishedLabel(it) },
-            durationLabel = { formatPlaybackClock(it) },
+            durationLabel = { formatDuration(it) },
         )
     }
     // SmartTube cards are the full row/grid cell. Adding MediaTile's outer 8dp

@@ -1378,12 +1378,11 @@ private fun metaDetails(i: YouTubeItem): String? = listOfNotNull(
                 java.text.DateFormat.getDateTimeInstance(java.text.DateFormat.MEDIUM, java.text.DateFormat.SHORT).format(java.util.Date(start)))
         } ?: stringResource(R.string.youtube_live_planned)
         i.isLive -> stringResource(R.string.youtube_live_badge)
-        else -> i.durationMs.takeIf { it > 0 }?.let(::duration)
+        else -> com.ambient.tv.ui.common.formatDuration(i.durationMs)
     },
     // A known start time already says when; SmartTube's own upcoming text would repeat it.
     *youtubeCardInfo(i).details.takeUnless { i.isUpcoming && i.scheduledStartMs != null }.orEmpty().toTypedArray(),
 ).joinToString("  ·  ").takeIf(String::isNotBlank)
-private fun duration(ms: Long): String = com.ambient.tv.ui.common.formatPlaybackClock(ms)
 @Composable private fun modeLabel(m:YouTubeViewMode)=stringResource(when(m){YouTubeViewMode.LANDSCAPE->R.string.library_view_landscape;YouTubeViewMode.LIST->R.string.library_view_list;YouTubeViewMode.INFO_LIST->R.string.library_view_info_list;YouTubeViewMode.WALL->R.string.library_view_wall;YouTubeViewMode.CINEMATIC->R.string.library_view_cinematic})
 @Composable private fun sortLabel(sort:YouTubeSort)=com.ambient.tv.ui.common.systemString(com.ambient.tv.ui.common.MediaSystem.YOUTUBE,when(sort){YouTubeSort.DEFAULT->R.string.youtube_sort_default;YouTubeSort.TITLE->R.string.library_sort_title;YouTubeSort.DURATION->R.string.youtube_sort_duration})
 
