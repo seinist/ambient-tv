@@ -679,6 +679,7 @@ private fun TelegramPlaybackContent(
             }
         }
         var surfaceFocused by remember { mutableStateOf(false) }
+        val itemControls = com.ambient.tv.ui.player.LocalPlaybackItemControls.current
         Box(
             Modifier.fillMaxSize()
                 // The persistent Media3 SurfaceView is rendered beneath this navigation
@@ -687,21 +688,48 @@ private fun TelegramPlaybackContent(
                 .focusRequester(focus)
                 .onFocusChanged { surfaceFocused = it.isFocused }
                 .onPreviewKeyEvent { event ->
-                    if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
-                    when (event.key) {
-                        // Only while the player surface itself has focus: OK on an OSD button
-                        // (settings, next, channel ...) belongs to that button, not to pause.
-                        Key.Enter, Key.NumPadEnter, Key.DirectionCenter -> if (!surfaceFocused) false else {
-                            if (controlsVisible) BackgroundPlaybackSession.userToggle()
-                            else { controlsVisible = true; osd.reveal() }
-                            true
-                        }
-                        Key.MediaPlayPause -> {
-                            BackgroundPlaybackSession.userToggle()
-                            true
-                        }
-                        else -> false
+                    // OK on the bare surface with the OSD up pauses; on an OSD button it is the button's.
+                    if (event.type == KeyEventType.KeyDown && surfaceFocused && controlsVisible &&
+                        event.key in setOf(Key.Enter, Key.NumPadEnter, Key.DirectionCenter)) {
+                        BackgroundPlaybackSession.userToggle()
+                        return@onPreviewKeyEvent true
                     }
+                    // Everything else: the shared remote handling of all players, so Left/Right
+                    // seek and Up/Down jump with the OSD hidden instead of only opening it.
+                    val photo = media.kind == TelegramMediaKind.PHOTO
+                    val owns = snapshot.metadata?.mediaId == media.mediaKey
+                    val now = if (owns) snapshot.status.positionMs else 0L
+                    val length = (if (owns) snapshot.status.durationMs.takeIf { it > 0 } else null) ?: metadata.durationMs
+                    com.ambient.tv.ui.player.handlePlayerOsdKey(
+                        event.key, event.type == KeyEventType.KeyDown,
+                        com.ambient.tv.ui.player.OsdKeyState(
+                            com.ambient.tv.ui.player.OsdContent.VIDEO,
+                            controlsVisible && !osd.seekFeedback && !osd.closing,
+                            panel != UnifiedPlayerPanel.NONE, osd.seekFeedback,
+                            canSeekForward = !photo && length > 0, closing = osd.closing,
+                        ),
+                        com.ambient.tv.ui.player.OsdSeekSteps(BackgroundPlaybackSession.seekJumpMs(10_000L)),
+                        object : com.ambient.tv.ui.player.OsdKeyTarget {
+                            override fun isPlaying() = snapshot.playing
+                            override fun togglePlayback() { BackgroundPlaybackSession.userToggle() }
+                            override fun play() { BackgroundPlaybackSession.userPlay() }
+                            override fun pause() { BackgroundPlaybackSession.userPause() }
+                            override fun stop() { BackgroundPlaybackSession.stop() }
+                            override fun seek(deltaMs: Long, revealOsd: Boolean) {
+                                if (photo || !owns || length <= 0) { controlsVisible = true; osd.reveal(); return }
+                                BackgroundPlaybackSession.userSeek()
+                                BackgroundPlaybackSession.seekTo((now + deltaMs).coerceIn(0, length))
+                                osd.interact()
+                                if (revealOsd) { controlsVisible = true; osd.reveal() } else osd.showSeekFeedback()
+                            }
+                            override fun showOsd() { controlsVisible = true; osd.reveal() }
+                            override fun hideSeekFeedback() { controlsVisible = true; osd.reveal() }
+                            override fun restart() { itemControls?.previous?.invoke() }
+                            override fun next() { itemControls?.next?.invoke() }
+                            override fun previousTrack() { itemControls?.previous?.invoke() }
+                            override fun zap(delta: Int) = Unit
+                        },
+                    )
                 }.focusable(),
         ) {
             // Audio posts: projectM or the spectrum, as in the other players (Media3 only).
