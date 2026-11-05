@@ -57,6 +57,16 @@ class PlaybackSeekCoordinator(
         return target
     }
 
+    /**
+     * A background/remote seek can supersede an OSD request (for example SponsorBlock
+     * jumping over a range). Track that actual decoder target without committing another seek:
+     * otherwise the OSD may stay indefinitely on the obsolete in-segment requested time.
+     */
+    fun followExternalSeek(targetMs: Long) {
+        val target = requestAbsolute(targetMs)
+        lastCommittedTargetMs = target
+    }
+
     fun displayedPosition(enginePositionMs: Long): Long {
         val engine = enginePositionMs.coerceAtLeast(0L)
         val now = nowMs()

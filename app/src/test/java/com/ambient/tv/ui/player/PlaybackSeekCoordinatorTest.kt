@@ -155,6 +155,25 @@ class PlaybackSeekCoordinatorTest {
         assertNull(seek.pendingTarget)
     }
 
+    @Test fun externalSponsorSkipReplacesStaleOsdTargetWithoutRequestingAnotherSeek() {
+        var now = 0L
+        val seek = PlaybackSeekCoordinator(nowMs = { now })
+        seek.requestAbsolute(25_000L)
+        assertEquals(25_000L, seek.consumeCommit())
+        now = 100L
+        // The service already moved the decoder to the end of the sponsor range.
+        seek.followExternalSeek(40_000L)
+        assertEquals(40_000L, seek.pendingTarget)
+        assertNull(seek.consumeCommit()) // no duplicate seek from the OSD
+        now = 900L
+        assertEquals(40_000L, seek.displayedPosition(26_000L)) // stale pre-skip sample
+        now = 1_200L
+        assertEquals(40_000L, seek.displayedPosition(40_000L))
+        now = 1_800L
+        assertEquals(40_500L, seek.displayedPosition(40_500L))
+        assertNull(seek.pendingTarget)
+    }
+
     @Test fun seeksClampToTheKnownDuration() {
         assertEquals(90_000L, PlaybackSeekCoordinator(nowMs = { 0L }).requestRelative(30_000, 80_000, 90_000))
         assertEquals(0L, PlaybackSeekCoordinator(nowMs = { 0L }).requestRelative(-20_000, 5_000, 90_000))

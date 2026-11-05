@@ -798,14 +798,36 @@ object BackgroundPlaybackSession {
         registerUserInteraction()
     }
 
-    /** Bumped by every seek routed through the session (companion, media session, DLNA, OSD). */
+    /** User seeks, including previews, invalidate late resume. Automatic sponsor skips do not. */
     var externalSeekVersion by mutableIntStateOf(0)
         private set
-    fun seekTo(positionMs: Long) {
+    /** Committed decoder seeks (also background SponsorBlock), used to align the OSD clock. */
+    var committedSeekVersion by mutableIntStateOf(0)
+        private set
+    var committedSeekPositionMs by mutableStateOf(0L)
+        private set
+
+    fun seekTo(positionMs: Long, automatic: Boolean = false) {
         checkThread()
         clearPauseRewind()
-        externalSeekVersion++
-        handle?.seekTo(positionMs.coerceAtLeast(0))
+        if (!automatic) externalSeekVersion++
+        val metadata = snapshot.value.metadata
+        val prefs = subtitlePreferences
+        val youtube = metadata?.resumeState as? com.ambient.tv.youtube.YouTubePlayback
+        val duration = metadata?.durationMs?.takeIf { it > 0L }
+            ?: snapshot.value.status.durationMs
+        val requested = positionMs.coerceAtLeast(0L)
+        // The user's original timeline is never compressed. Redirect targets *inside* auto
+        // ranges before asking any backend to seek, including DLNA/media-session/phone seeks.
+        val target = if (!automatic && metadata?.sponsorSkipEnabled == true &&
+            prefs?.youtubeSponsorBlockEnabled == true && youtube != null && !youtube.isLive) {
+            sponsorBlockSeekTarget(requested, youtube.sponsorSegments, duration,
+                prefs.youtubeSponsorBlockEffectiveModes,
+                backward = requested < snapshot.value.status.positionMs)
+        } else requested
+        handle?.seekTo(target)
+        committedSeekPositionMs = target
+        committedSeekVersion++
         tick()
     }
 

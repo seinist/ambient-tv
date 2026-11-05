@@ -664,6 +664,7 @@ private fun YouTubeMedia3Playback(
     onStreamTuning: ((com.ambient.tv.ui.player.Media3StreamTuning, Long) -> Unit)? = null,
 ) {
     val context = LocalContext.current
+    val sponsorPrefs = remember(context) { com.ambient.tv.ui.player.videoImagePreferences(context) }
     var controls by com.ambient.tv.ui.player.rememberPlayerControlsVisible()
     val osd = com.ambient.tv.ui.player.rememberPlayerOsdController()
     val changingItem = com.ambient.tv.ui.player.LocalPlayerChangingItem.current
@@ -683,6 +684,7 @@ private fun YouTubeMedia3Playback(
     var defaultAudioTrackApplied by remember(playback.videoId) { mutableStateOf(false) }
     var completionPending by remember { mutableStateOf(false) }
     val seekCoordinator = remember(playback.videoId) { PlaybackSeekCoordinator() }
+    SyncYouTubeSessionSeek(seekCoordinator, playback, seekCoordinator)
     var lateResumeApplied by remember(seekCoordinator) { mutableStateOf(startPositionMs > 0L) }
     var userSeeked by remember(playback.videoId) { mutableStateOf(false) }
     // A seek from the phone or the session controls is a user seek too: the late resume
@@ -879,7 +881,9 @@ private fun YouTubeMedia3Playback(
         osd.interact()
         userSeeked = true
         val limit = duration.takeIf { it > 0L } ?: playback.durationMs
-        position = seekCoordinator.requestRelative(delta, position, limit)
+        val requested = seekCoordinator.requestRelative(delta, position, limit)
+        val landing = adjustedYouTubeSeekTarget(requested, playback, limit, sponsorPrefs, metadata.sponsorSkipEnabled, delta < 0L)
+        position = if (landing != requested) seekCoordinator.requestAbsolute(landing) else requested
         seekCoordinator.consumeCommit()?.let(player::seekTo)
         seekCommitVersion++
     }
@@ -1179,6 +1183,7 @@ private fun YouTubeVlcPlayback(playback: YouTubePlayback, audioUri: String?, str
         }
     }
     val seekCoordinator = remember(controller) { PlaybackSeekCoordinator() }
+    SyncYouTubeSessionSeek(seekCoordinator, playback, seekCoordinator)
     var lateResumeApplied by remember(seekCoordinator) { mutableStateOf(startPositionMs > 0L) }
     var userSeeked by remember(controller) { mutableStateOf(false) }
     // A seek from the phone or the session controls is a user seek too: the late resume
@@ -1217,13 +1222,16 @@ private fun YouTubeVlcPlayback(playback: YouTubePlayback, audioUri: String?, str
         }
     }
     LaunchedEffect(controller.ended) { if (!playback.isLive && controller.ended) onCompleted() }
+    val sponsorSkipEnabled = LocalPlaybackMetadata.current?.sponsorSkipEnabled == true
     fun seek(delta: Long) {
         if (playback.isLive) return
         BackgroundPlaybackSession.userSeek()
         osd.interact()
         userSeeked = true
         val limit = snapshot.durationMs.takeIf { it > 0L } ?: playback.durationMs
-        displayedPosition = seekCoordinator.requestRelative(delta, displayedPosition, limit)
+        val requested = seekCoordinator.requestRelative(delta, displayedPosition, limit)
+        val landing = adjustedYouTubeSeekTarget(requested, playback, limit, preferences, sponsorSkipEnabled, delta < 0L)
+        displayedPosition = if (landing != requested) seekCoordinator.requestAbsolute(landing) else requested
         seekCoordinator.consumeCommit()?.let(controller::seekTo)
         seekCommitVersion++
     }
@@ -1465,6 +1473,7 @@ private fun YouTubeMpvPlayback(playback: YouTubePlayback, streams: YouTubeStream
     }
     com.ambient.tv.ui.player.MpvRenderOverloadDialog(controller, panelNavigation)
     val seekCoordinator = remember(controller) { PlaybackSeekCoordinator() }
+    SyncYouTubeSessionSeek(seekCoordinator, playback, seekCoordinator)
     var lateResumeApplied by remember(seekCoordinator) { mutableStateOf(startPositionMs > 0L) }
     var userSeeked by remember(controller) { mutableStateOf(false) }
     // A seek from the phone or the session controls is a user seek too: the late resume
@@ -1503,13 +1512,16 @@ private fun YouTubeMpvPlayback(playback: YouTubePlayback, streams: YouTubeStream
         }
     }
     LaunchedEffect(controller.ended) { if (!playback.isLive && controller.ended) onCompleted() }
+    val sponsorSkipEnabled = LocalPlaybackMetadata.current?.sponsorSkipEnabled == true
     fun seek(delta: Long) {
         if (playback.isLive) return
         BackgroundPlaybackSession.userSeek()
         osd.interact()
         userSeeked = true
         val limit = snapshot.durationMs.takeIf { it > 0L } ?: playback.durationMs
-        displayedPosition = seekCoordinator.requestRelative(delta, displayedPosition, limit)
+        val requested = seekCoordinator.requestRelative(delta, displayedPosition, limit)
+        val landing = adjustedYouTubeSeekTarget(requested, playback, limit, preferences, sponsorSkipEnabled, delta < 0L)
+        displayedPosition = if (landing != requested) seekCoordinator.requestAbsolute(landing) else requested
         seekCoordinator.consumeCommit()?.let(controller::seekTo)
         seekCommitVersion++
     }
@@ -1898,6 +1910,42 @@ private fun YouTubeControls(
         hasVideoExtras = panelConfig.hasVideoExtras,
         videoExtras = panelConfig.videoExtras,
     ))
+    }
+}
+
+/** All YouTube backends share the same uncompressed timeline and SponsorBlock seek policy. */
+private fun adjustedYouTubeSeekTarget(
+    requestedMs: Long,
+    playback: YouTubePlayback,
+    durationMs: Long,
+    preferences: AppPreferences,
+    enabled: Boolean,
+    backward: Boolean,
+): Long = if (enabled && preferences.youtubeSponsorBlockEnabled && !playback.isLive) {
+    com.ambient.tv.ui.player.sponsorBlockSeekTarget(
+        requestedMs, playback.sponsorSegments, durationMs, preferences.youtubeSponsorBlockEffectiveModes,
+        backward = backward)
+} else requestedMs
+
+/**
+ * A service-driven SponsorBlock seek supersedes any pending manual target. Without this
+ * notification the OSD can stay on a time inside the skipped range while the decoder plays
+ * well past it, because the coordinator waits for a landing near the obsolete manual target.
+ */
+@Composable
+private fun SyncYouTubeSessionSeek(
+    owner: Any,
+    playback: YouTubePlayback,
+    coordinator: PlaybackSeekCoordinator,
+) {
+    val baseline = remember(owner) { BackgroundPlaybackSession.committedSeekVersion }
+    val version = BackgroundPlaybackSession.committedSeekVersion
+    LaunchedEffect(owner, playback.videoId, version) {
+        if (version != baseline && BackgroundPlaybackSession.snapshot.value.metadata?.let {
+            it.source == "youtube" && it.mediaId == playback.videoId
+        } == true) {
+            coordinator.followExternalSeek(BackgroundPlaybackSession.committedSeekPositionMs)
+        }
     }
 }
 

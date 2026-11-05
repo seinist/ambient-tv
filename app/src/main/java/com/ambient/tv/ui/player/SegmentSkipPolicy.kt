@@ -36,6 +36,36 @@ internal fun safeSegmentSkipTarget(endMs: Long, currentMs: Long, durationMs: Lon
 private const val SEGMENT_END_PROXIMITY_MS = 750L
 private const val SEGMENT_END_TAIL_MS = 1_500L
 private const val SEGMENT_MIN_FORWARD_MS = 250L
+private const val SEGMENT_REWIND_LEAD_MS = 1_000L
+
+/**
+ * A user-directed seek always uses the original media clock (never subtract skipped time).
+ * If its target falls inside an automatically skipped SponsorBlock range, land at the end
+ * instead. For backwards navigation land briefly before the segment start, otherwise repeated
+ * rewind steps would get stuck at its end. Button/mark/off categories stay seekable.
+ * Handle overlapping auto-ranges in traversal order and keep the safe EOF tail.
+ */
+internal fun sponsorBlockSeekTarget(
+    requestedMs: Long,
+    ranges: List<com.ambient.tv.youtube.YouTubeSponsorSegment>,
+    durationMs: Long,
+    modes: Map<String, String>,
+    backward: Boolean = false,
+): Long {
+    val target = requestedMs.coerceIn(0L, durationMs.takeIf { it > 0L } ?: Long.MAX_VALUE)
+    if (ranges.isEmpty() || durationMs <= 0L) return target
+    val segments = com.ambient.tv.youtube.youtubeSponsorTimeline(
+        com.ambient.tv.domain.model.PlaybackTimeline(), ranges, durationMs, modes,
+    ).segments
+    var landing = target
+    for (segment in if (backward) segments.asReversed() else segments) {
+        if (com.ambient.tv.youtube.sponsorCategoryOf(segment.type)?.let(modes::get) != "auto" ||
+            landing < segment.startMs || landing >= segment.endMs) continue
+        landing = if (backward) (segment.startMs - SEGMENT_REWIND_LEAD_MS).coerceAtLeast(0L)
+        else safeSegmentSkipTarget(segment.endMs, landing, durationMs) ?: landing
+    }
+    return landing
+}
 
 /**
  * SponsorBlock is owned by the background playback service, not the Compose skip overlay:
@@ -45,6 +75,9 @@ private const val SEGMENT_MIN_FORWARD_MS = 250L
 internal class BackgroundSponsorSkipPolicy {
     private var generation: Long? = null
     private val handledStarts = mutableSetOf<Long>()
+    // A decoder may briefly report a seek target outside a range before falling back to its
+    // preceding keyframe. Require two outside polls to re-arm, not a single optimistic sample.
+    private val outsideSamples = mutableMapOf<Long, Int>()
 
     fun nextSeek(
         playbackGeneration: Long,
@@ -58,17 +91,31 @@ internal class BackgroundSponsorSkipPolicy {
         if (generation != playbackGeneration) {
             generation = playbackGeneration
             handledStarts.clear()
+            outsideSamples.clear()
         }
         // Without a known EOF, a segment's end may be the decoder's final timestamp.
         // Wait for playback duration rather than risking an exact-end seek.
-        if (!playing || ranges.isEmpty() || durationMs <= 0L) return null
+        if (ranges.isEmpty() || durationMs <= 0L) return null
         val segments = com.ambient.tv.youtube.youtubeSponsorTimeline(
             com.ambient.tv.domain.model.PlaybackTimeline(), ranges, durationMs, modes,
-        ).segments
+        ).segments.filter { com.ambient.tv.youtube.sponsorCategoryOf(it.type)?.let(modes::get) == "auto" }
+        // Previously skipped ranges must become actionable again after playback actually
+        // leaves them. Otherwise a later user seek back into the same sponsor is never skipped.
+        for (start in handledStarts.toList()) {
+            val stillInside = segments.any { it.startMs == start && positionMs >= it.startMs && positionMs < it.endMs }
+            if (stillInside) {
+                outsideSamples.remove(start)
+            } else {
+                val samples = (outsideSamples[start] ?: 0) + 1
+                if (samples >= 2) {
+                    handledStarts.remove(start)
+                    outsideSamples.remove(start)
+                } else outsideSamples[start] = samples
+            }
+        }
+        if (!playing) return null
         val active = segments.firstOrNull {
-            com.ambient.tv.youtube.sponsorCategoryOf(it.type)?.let(modes::get) == "auto" &&
-                positionMs >= it.startMs && positionMs < it.endMs &&
-                it.startMs !in handledStarts
+            positionMs >= it.startMs && positionMs < it.endMs && it.startMs !in handledStarts
         } ?: return null
         handledStarts.add(active.startMs)
         return safeSegmentSkipTarget(active.endMs, positionMs, durationMs)
