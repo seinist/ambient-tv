@@ -320,10 +320,11 @@ fun YouTubePlayerScreen(
             // SponsorBlock responses may arrive after the first video frame. Update the
             // shared timeline without restarting or seeking the decoder.
             val playbackTimeline = remember(playback.timeline, playback.sponsorSegments, playback.durationMs) {
-                if (prefs.youtubeSponsorBlockEnabled && !playback.isLive && !isTrailer)
+                // Hidden segments: the service still skips them, the timeline shows nothing.
+                if (prefs.youtubeSponsorBlockEnabled && prefs.youtubeSponsorBlockShowSegments && !playback.isLive && !isTrailer)
                     com.ambient.tv.youtube.youtubeSponsorTimeline(
                         playback.timeline, playback.sponsorSegments, playback.durationMs,
-                        prefs.youtubeSponsorBlockModes,
+                        prefs.youtubeSponsorBlockEffectiveModes,
                     )
                 else playback.timeline
             }

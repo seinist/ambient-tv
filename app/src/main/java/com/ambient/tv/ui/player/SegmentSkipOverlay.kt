@@ -38,7 +38,7 @@ internal fun SegmentSkipOverlay(
     val valid = snapshot.active && snapshot.metadata?.route == metadata.route && metadata.hasVideo && !metadata.isLive
     val position = snapshot.status.positionMs + metadata.timelineOffsetMs
     val overlayContext = androidx.compose.ui.platform.LocalContext.current
-    val sponsorModes = remember(mediaKey) { videoImagePreferences(overlayContext).youtubeSponsorBlockModes }
+    val sponsorModes = remember(mediaKey) { videoImagePreferences(overlayContext).youtubeSponsorBlockEffectiveModes }
     fun mode(segment: com.ambient.tv.domain.model.PlaybackSegment): String = when (segment.type) {
         "intro" -> metadata.introSkipMode
         "credits" -> metadata.creditsSkipMode

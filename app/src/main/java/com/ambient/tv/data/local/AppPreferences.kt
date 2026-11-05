@@ -1277,6 +1277,17 @@ class AppPreferences @Inject constructor(
         get() = com.ambient.tv.youtube.SponsorBlockCategories.parse(prefs.getString("youtube_sponsorblock_modes", null))
         set(value) = prefs.edit { putString("youtube_sponsorblock_modes", com.ambient.tv.youtube.SponsorBlockCategories.format(value)) }
 
+    /** False: no SponsorBlock marks or buttons; every category not set to "off" is skipped automatically. */
+    var youtubeSponsorBlockShowSegments: Boolean
+        get() = prefs.getBoolean("youtube_sponsorblock_show_segments", true)
+        set(value) = prefs.edit { putBoolean("youtube_sponsorblock_show_segments", value) }
+
+    /** What the player does per category, with [youtubeSponsorBlockShowSegments] applied. */
+    val youtubeSponsorBlockEffectiveModes: Map<String, String>
+        get() = youtubeSponsorBlockModes.let { modes ->
+            if (youtubeSponsorBlockShowSegments) modes else modes.mapValues { (_, mode) -> if (mode == "off") "off" else "auto" }
+        }
+
     /**
      * SmartTube's own subtitle switch, independent of the app-wide subtitle mode (whose default
      * is off): on shows captions in the viewer's language, off hides them for SmartTube only.

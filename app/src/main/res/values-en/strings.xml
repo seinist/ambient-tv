@@ -935,6 +935,8 @@
     <string name="settings_spotify_visual_cover">Ambient cover</string>
     <string name="settings_youtube_sponsorblock_title">SponsorBlock</string>
     <string name="settings_youtube_sponsorblock_categories">SponsorBlock categories</string>
+    <string name="settings_youtube_sponsorblock_show">Show segments</string>
+    <string name="settings_youtube_sponsorblock_show_hint">Off: no marks in the seek bar and no skip buttons; every category not set to Off is skipped automatically.</string>
     <string name="sponsorblock_category_sponsor">Sponsor</string>
     <string name="player_skip_sponsor">Skip sponsor</string>
     <string name="sponsorblock_category_selfpromo">Self-promotion</string>

@@ -1579,6 +1579,13 @@ private fun SponsorBlockCategorySettings() {
     val context = androidx.compose.ui.platform.LocalContext.current
     val prefs = remember(context) { com.ambient.tv.ui.player.videoImagePreferences(context) }
     var modes by remember { mutableStateOf(prefs.youtubeSponsorBlockModes) }
+    var showSegments by remember { mutableStateOf(prefs.youtubeSponsorBlockShowSegments) }
+    TvSettingRow(
+        title = stringResource(R.string.settings_youtube_sponsorblock_show),
+        body = stringResource(R.string.settings_youtube_sponsorblock_show_hint),
+        checked = showSegments,
+        onCheckedChange = { showSegments = it; prefs.youtubeSponsorBlockShowSegments = it },
+    )
     SettingsSubheader(stringResource(R.string.settings_youtube_sponsorblock_categories))
     com.ambient.tv.youtube.SponsorBlockCategories.ALL.forEach { category ->
         SettingsSelect(

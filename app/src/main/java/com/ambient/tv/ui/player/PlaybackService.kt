@@ -253,7 +253,7 @@ class PlaybackService : MediaBrowserServiceCompat() {
                         ?: playback.status.durationMs
                     sponsorSkip.nextSeek(
                         playback.generation, youtubeState.sponsorSegments, playback.status.positionMs,
-                        duration, playback.playing, preferences.youtubeSponsorBlockModes,
+                        duration, playback.playing, preferences.youtubeSponsorBlockEffectiveModes,
                     )?.let(BackgroundPlaybackSession::seekTo)
                 }
                 for (finished in BackgroundPlaybackSession.takeCompleted()) enqueueReport(finished, stopped = true)

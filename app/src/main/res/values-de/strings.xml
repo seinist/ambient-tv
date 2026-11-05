@@ -937,6 +937,8 @@
     <string name="settings_spotify_visual_cover">Cover-Atmosphäre</string>
     <string name="settings_youtube_sponsorblock_title">SponsorBlock</string>
     <string name="settings_youtube_sponsorblock_categories">SponsorBlock-Kategorien</string>
+    <string name="settings_youtube_sponsorblock_show">Segmente anzeigen</string>
+    <string name="settings_youtube_sponsorblock_show_hint">Aus: keine Markierungen in der Seekbar und keine Überspringen-Buttons; jede Kategorie, die nicht auf Aus steht, wird automatisch übersprungen.</string>
     <string name="sponsorblock_category_sponsor">Sponsor</string>
     <string name="player_skip_sponsor">Sponsor überspringen</string>
     <string name="sponsorblock_category_selfpromo">Eigenwerbung</string>
