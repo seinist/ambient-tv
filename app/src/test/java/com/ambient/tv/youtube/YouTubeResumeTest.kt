@@ -82,6 +82,52 @@ class YouTubeResumeTest {
         assertEquals(1_800_000L, youtubeAtLiveEdge(enriched).resumeMs)
     }
 
+    @Test fun publicationDateFromWatchNextEnrichesPlaybackWithoutChangingResumeOrSource() {
+        val original = stream().copy(publishedDate = "vor 2 Tagen")
+        val updated = applyYouTubePlaybackMetadata(original, metadata().copy(
+            publishedDate = "  12.10.2026  ",
+        ))
+        assertEquals("12.10.2026", updated.publishedDate)
+        assertEquals(original.uri, updated.uri)
+        assertEquals(30_000L, updated.resumeMs)
+        // Incomplete watch-next data may arrive later; it must not erase a valid early label.
+        val blank = applyYouTubePlaybackMetadata(updated, metadata().copy(publishedDate = "  "))
+        assertEquals("12.10.2026", blank.publishedDate)
+    }
+
+    @Test fun earlyPublicationLabelRemainsAvailableWhenWatchNextMetadataIsMissing() {
+        val original = stream().copy(publishedDate = "vor 3 Tagen")
+        assertEquals(original.publishedDate, applyYouTubePlaybackMetadata(original, null).publishedDate)
+        assertEquals(original.publishedDate, applyYouTubePlaybackMetadata(original, metadata()).publishedDate)
+        assertNull(applyYouTubePlaybackMetadata(stream(), metadata()).publishedDate)
+    }
+
+    @Test fun providerPublicationTimesHandleSecondsMillisAndRejectUntrustedNumbers() {
+        assertEquals(1_700_000_000_000L, youtubePublicationEpochMs(1_700_000_000L))
+        assertEquals(1_700_000_000_000L, youtubePublicationEpochMs(1_700_000_000_000L))
+        assertNull(youtubePublicationEpochMs(0L))
+        assertNull(youtubePublicationEpochMs(999_999_999_999_999L))
+        assertEquals("vor 3 Tagen", youtubePublicationText("  vor 3 Tagen  "))
+        assertEquals("2026-10-18", youtubePublicationText("2026-10-18"))
+        assertEquals("2020", youtubePublicationText("2020")) // Year-only is not an epoch.
+        assertNull(youtubePublicationText("1700000000000"))
+        assertNull(youtubePublicationText("0"))
+        assertNull(youtubePublicationText("unknown"))
+    }
+
+    @Test fun lateAbsoluteDateIsKeptWithoutCreatingAStringFromAnEpochNumber() {
+        val instant = 1_700_000_000_000L
+        // Older on-disk cache entries contain an epoch formatted as a String instead
+        // of publishedAtMs; migrate them without ever showing the raw digits.
+        val loaded = applyYouTubePlaybackMetadata(stream(), metadata().copy(
+            publishedDate = "1700000000000",
+        ))
+        assertNull(loaded.publishedDate)
+        assertEquals(instant, loaded.publishedAtMs)
+        val unchanged = applyYouTubePlaybackMetadata(loaded, metadata())
+        assertEquals(instant, unchanged.publishedAtMs)
+    }
+
     @Test fun disabledRewindAndLivePlaybackKeepTheirExistingStarts() {
         val vod = prepareYouTubeSavedResume(applyYouTubePlaybackMetadata(stream(), metadata()), 0)
         assertEquals(30_000L, vod.resumeMs)

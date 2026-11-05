@@ -571,6 +571,12 @@ class SmartTubeEngine @Inject constructor(
             title = info.callString("getTitle") ?: "SmartTube",
             author = info.callString("getAuthor"),
             description = info.callString("getDescription"),
+            // The initial player response may already carry a relative upload date. The
+            // watch-next metadata task can enrich it later without delaying playback.
+            publishedDate = youtubePublicationText(info.callString("getProductionDate")
+                ?: info.callString("getPublishedDate")),
+            publishedAtMs = youtubePublicationEpochMs(info.callLong("getPublishedDate")
+                ?: info.callString("getPublishedDate")?.toLongOrNull()),
             uri = uri,
             mimeType = mimeType,
             progressiveUri = direct?.takeIf { it != uri },
@@ -800,7 +806,10 @@ class SmartTubeEngine @Inject constructor(
             authorImageUrl = meta.callString("getAuthorImageUrl")?.takeIf(String::isNotBlank),
             subscribed = meta.callBool("isSubscribed") ?: false,
             viewCount = meta.callString("getViewCount")?.takeIf(String::isNotBlank),
-            publishedDate = meta.callString("getPublishedDate")?.takeIf(String::isNotBlank),
+            publishedDate = youtubePublicationText(meta.callString("getProductionDate")
+                ?: meta.callString("getPublishedDate")),
+            publishedAtMs = youtubePublicationEpochMs(meta.callLong("getPublishedDate")
+                ?: meta.callString("getPublishedDate")?.toLongOrNull()),
             likeCount = meta.callString("getLikeCount")?.takeIf(String::isNotBlank),
             likeStatus = likeOverrides[videoId] ?: when (meta.callInt("getLikeStatus")) {
                 1 -> YouTubeLikeStatus.LIKE

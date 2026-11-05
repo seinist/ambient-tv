@@ -1778,6 +1778,10 @@ internal data class YouTubeOsdModel(
         val osd = com.ambient.tv.ui.player.rememberPlayerOsdController()
         val playFocusRequester = com.ambient.tv.ui.player.rememberPlayerPlayFocus()
         val navigation = LocalPlayerPanelNavigation.current
+        val publication = if (playback.isLive) null else playback.publishedAtMs?.let {
+            com.ambient.tv.ui.common.relativePublishedLabel(it)
+        } ?: com.ambient.tv.youtube.youtubePublicationText(playback.publishedDate)
+            ?.takeUnless { playback.isLive }
         // Shared visibility hides controls while panels own the screen and Back.
         PlayerOverlayVisibility(visible = visible) {
             ReferencePlayerOverlayBackground()
@@ -1796,6 +1800,11 @@ internal data class YouTubeOsdModel(
                         stringResource(R.string.youtube_live_badge).takeIf { playback.isLive },
                     ).joinToString("  •  "),
                     subtitle = playback.author,
+                    // Keep the date next to its channel below the title. If no author has
+                    // arrived yet, reuse the existing system/backend line rather than adding
+                    // a third OSD row that would push the seekbar down.
+                    contextTrailingText = publication?.takeIf { playback.author.isNullOrBlank() },
+                    subtitleTrailingText = publication?.takeUnless { playback.author.isNullOrBlank() },
                     showPaused = playback.isLive && paused,
                 )
                 if (!playback.isLive && duration > 0L) {
