@@ -27,8 +27,7 @@ class DeblockLabelResourceTest {
             }
             val label = context.createConfigurationContext(config).getString(R.string.image_deblock)
             assertEquals(locale, expected, label)
-            assertFalse(locale, label.contains("${"))
-            assertFalse(locale, label.contains("}"))
+            assertFalse(locale, label.contains('{') || label.contains('}'))
         }
     }
 }
