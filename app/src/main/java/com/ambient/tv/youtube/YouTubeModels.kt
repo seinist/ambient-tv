@@ -50,6 +50,8 @@ data class YouTubeMetadata(
     /** YouTube's own texts, e.g. "1.234.567 Aufrufe" and "vor 3 Tagen". */
     val viewCount: String? = null,
     val publishedDate: String? = null,
+    /** Exact provider timestamp when available, normalized from seconds or milliseconds. */
+    val publishedAtMs: Long? = null,
     val likeCount: String? = null,
     val likeStatus: YouTubeLikeStatus = YouTubeLikeStatus.NONE,
 )
@@ -133,7 +135,26 @@ data class YouTubePlayback(
     val headers: Map<String, String> = emptyMap(),
     /** Source-provided publication label; never synthesize an exact upload time from a relative one. */
     val publishedDate: String? = null,
+    /** A known absolute publication instant; null for missing or invalid provider timestamps. */
+    val publishedAtMs: Long? = null,
 )
+
+/**
+ * SmartTube's reflective APIs may supply the publication time as Unix seconds or milliseconds.
+ * Only accept real dates in a broad YouTube-era range; never show raw epoch numbers in the OSD.
+ */
+internal fun youtubePublicationEpochMs(value: Long?): Long? = when (value) {
+    null -> null
+    in 946_684_800L..4_102_444_800L -> value * 1_000L
+    in 946_684_800_000L..4_102_444_800_000L -> value
+    else -> null
+}
+
+/** Keep the provider's *human* date/relative label as given, without inventing precision. */
+internal fun youtubePublicationText(value: String?): String? = value?.trim()?.takeIf {
+    it.isNotBlank() && it != "-" && it.toLongOrNull() == null &&
+        !it.equals("unknown", ignoreCase = true) && !it.equals("null", ignoreCase = true)
+}
 
 /** Stable fallback for watch-next metadata, which does not expose the current video artwork. */
 fun youtubeThumbnailUrl(videoId: String): String =
