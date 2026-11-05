@@ -102,6 +102,29 @@ class YouTubeResumeTest {
         assertNull(applyYouTubePlaybackMetadata(stream(), metadata()).publishedDate)
     }
 
+    @Test fun providerPublicationTimesHandleSecondsMillisAndRejectUntrustedNumbers() {
+        assertEquals(1_700_000_000_000L, youtubePublicationEpochMs(1_700_000_000L))
+        assertEquals(1_700_000_000_000L, youtubePublicationEpochMs(1_700_000_000_000L))
+        assertNull(youtubePublicationEpochMs(0L))
+        assertNull(youtubePublicationEpochMs(999_999_999_999_999L))
+        assertEquals("vor 3 Tagen", youtubePublicationText("  vor 3 Tagen  "))
+        assertEquals("2026-10-18", youtubePublicationText("2026-10-18"))
+        assertNull(youtubePublicationText("1700000000000"))
+        assertNull(youtubePublicationText("0"))
+        assertNull(youtubePublicationText("unknown"))
+    }
+
+    @Test fun lateAbsoluteDateIsKeptWithoutCreatingAStringFromAnEpochNumber() {
+        val instant = 1_700_000_000_000L
+        val loaded = applyYouTubePlaybackMetadata(stream(), metadata().copy(
+            publishedDate = "1700000000000", publishedAtMs = instant,
+        ))
+        assertNull(loaded.publishedDate)
+        assertEquals(instant, loaded.publishedAtMs)
+        val unchanged = applyYouTubePlaybackMetadata(loaded, metadata())
+        assertEquals(instant, unchanged.publishedAtMs)
+    }
+
     @Test fun disabledRewindAndLivePlaybackKeepTheirExistingStarts() {
         val vod = prepareYouTubeSavedResume(applyYouTubePlaybackMetadata(stream(), metadata()), 0)
         assertEquals(30_000L, vod.resumeMs)
