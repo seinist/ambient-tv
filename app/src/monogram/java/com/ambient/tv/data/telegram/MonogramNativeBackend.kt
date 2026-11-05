@@ -731,7 +731,19 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
         // Categories: Telegram's own "media of all chats" (one searchGlobal per page) instead
         // of one search per channel; the per-channel timeline stays the fallback.
         if (filter != null && (token == null || token.startsWith("global:"))) {
-            globalCategory(h, token, limit, section, filter)?.let { return it }
+            globalCategory(h, token, limit, section, filter)?.let { global ->
+                if (token != null) return global
+                // Telegram's search index can trail the channels by days, so the first page
+                // also takes the category's posts from the newest history ("Neue Medien"), which
+                // is shared and usually cached. Newest first; paging continues the search.
+                val fromHistory = runCatching { recent(h, null, limit, "recent").items }.getOrDefault(emptyList())
+                    .flatMap { item -> if (section == "youtube") item.youtubePosts() else listOf(item) }
+                    .filter { categoryKindMatches(section, it.kind) }
+                val merged = (global.items + fromHistory).distinctBy(TelegramMedia::mediaKey)
+                    .sortedByDescending(TelegramMedia::publishedAtMs)
+                    .take(limit.coerceIn(1, 60))
+                return TelegramMediaPage(merged, global.nextCursor)
+            }
         }
         val wanted: (TelegramMediaKind) -> Boolean = when (section) {
             "videos" -> { kind -> kind == TelegramMediaKind.VIDEO }
@@ -783,6 +795,13 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
         if (!page.hasMore) recentFeeds.remove(cursorToken)
         while (recentFeeds.size > 8) recentFeeds.remove(recentFeeds.keys.first())
         return TelegramMediaPage(page.media, if (page.hasMore) "$cursorToken:${pageNumber + 1}" else null)
+    }
+
+    private fun categoryKindMatches(section: String, kind: TelegramMediaKind): Boolean = when (section) {
+        "videos" -> kind == TelegramMediaKind.VIDEO
+        "audio" -> kind == TelegramMediaKind.AUDIO
+        "youtube" -> kind == TelegramMediaKind.YOUTUBE
+        else -> true
     }
 
     /** Telegram refused a filtered global search without query once: use per-channel search. */
