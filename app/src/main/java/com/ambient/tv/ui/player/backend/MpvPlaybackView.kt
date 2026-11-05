@@ -108,6 +108,8 @@ fun rememberMpvPlaybackController(
     videoOutputMode: String = "direct",
     networkCache: Boolean = false,
     knownAudioCodec: String? = null,
+    /** A recovered signed live URL may be unchanged, but still needs a fresh decoder. */
+    refreshToken: Int = 0,
 ): MpvPlaybackController? {
     var retainedController by remember { mutableStateOf<MpvPlaybackController?>(null) }
     if (com.ambient.tv.ui.player.LocalPlayerChangingItem.current && retainedController != null) return retainedController
@@ -154,7 +156,7 @@ fun rememberMpvPlaybackController(
     // A recorded failure plays "Direkt" without a session override, so nothing reaches the title store.
     val outputMode = mpvHdrGpuOutputMode(hdrGpu, settings.mpvOutput, hdrFailure)
     val nativeHdr = nativeHdrSurfacePreferred(declaredHdr, displayHdr) && !hdrGpu.gpu
-    val key = listOf(url, startPositionMs, headers, audioPassthroughEnabled, outputMode, decoderMode, networkCache, nativeHdr, hdrGpu.gpu)
+    val key = listOf(url, startPositionMs, headers, audioPassthroughEnabled, outputMode, decoderMode, networkCache, nativeHdr, hdrGpu.gpu, refreshToken)
     val controller = remember(metadata?.route, key) {
         runCatching {
             val previous = (BackgroundPlaybackSession.activeHandle() as? MpvPlaybackController)
