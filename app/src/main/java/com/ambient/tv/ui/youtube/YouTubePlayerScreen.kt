@@ -882,7 +882,7 @@ private fun YouTubeMedia3Playback(
         userSeeked = true
         val limit = duration.takeIf { it > 0L } ?: playback.durationMs
         val requested = seekCoordinator.requestRelative(delta, position, limit)
-        val landing = adjustedYouTubeSeekTarget(requested, playback, limit, sponsorPrefs)
+        val landing = adjustedYouTubeSeekTarget(requested, playback, limit, sponsorPrefs, metadata.sponsorSkipEnabled)
         position = if (landing != requested) seekCoordinator.requestAbsolute(landing) else requested
         seekCoordinator.consumeCommit()?.let(player::seekTo)
         seekCommitVersion++
@@ -1222,6 +1222,7 @@ private fun YouTubeVlcPlayback(playback: YouTubePlayback, audioUri: String?, str
         }
     }
     LaunchedEffect(controller.ended) { if (!playback.isLive && controller.ended) onCompleted() }
+    val sponsorSkipEnabled = LocalPlaybackMetadata.current?.sponsorSkipEnabled == true
     fun seek(delta: Long) {
         if (playback.isLive) return
         BackgroundPlaybackSession.userSeek()
@@ -1229,7 +1230,7 @@ private fun YouTubeVlcPlayback(playback: YouTubePlayback, audioUri: String?, str
         userSeeked = true
         val limit = snapshot.durationMs.takeIf { it > 0L } ?: playback.durationMs
         val requested = seekCoordinator.requestRelative(delta, displayedPosition, limit)
-        val landing = adjustedYouTubeSeekTarget(requested, playback, limit, preferences)
+        val landing = adjustedYouTubeSeekTarget(requested, playback, limit, preferences, sponsorSkipEnabled)
         displayedPosition = if (landing != requested) seekCoordinator.requestAbsolute(landing) else requested
         seekCoordinator.consumeCommit()?.let(controller::seekTo)
         seekCommitVersion++
@@ -1511,6 +1512,7 @@ private fun YouTubeMpvPlayback(playback: YouTubePlayback, streams: YouTubeStream
         }
     }
     LaunchedEffect(controller.ended) { if (!playback.isLive && controller.ended) onCompleted() }
+    val sponsorSkipEnabled = LocalPlaybackMetadata.current?.sponsorSkipEnabled == true
     fun seek(delta: Long) {
         if (playback.isLive) return
         BackgroundPlaybackSession.userSeek()
@@ -1518,7 +1520,7 @@ private fun YouTubeMpvPlayback(playback: YouTubePlayback, streams: YouTubeStream
         userSeeked = true
         val limit = snapshot.durationMs.takeIf { it > 0L } ?: playback.durationMs
         val requested = seekCoordinator.requestRelative(delta, displayedPosition, limit)
-        val landing = adjustedYouTubeSeekTarget(requested, playback, limit, preferences)
+        val landing = adjustedYouTubeSeekTarget(requested, playback, limit, preferences, sponsorSkipEnabled)
         displayedPosition = if (landing != requested) seekCoordinator.requestAbsolute(landing) else requested
         seekCoordinator.consumeCommit()?.let(controller::seekTo)
         seekCommitVersion++
@@ -1917,7 +1919,8 @@ private fun adjustedYouTubeSeekTarget(
     playback: YouTubePlayback,
     durationMs: Long,
     preferences: AppPreferences,
-): Long = if (preferences.youtubeSponsorBlockEnabled && !playback.isLive) {
+    enabled: Boolean,
+): Long = if (enabled && preferences.youtubeSponsorBlockEnabled && !playback.isLive) {
     com.ambient.tv.ui.player.sponsorBlockSeekTarget(
         requestedMs, playback.sponsorSegments, durationMs, preferences.youtubeSponsorBlockEffectiveModes)
 } else requestedMs
