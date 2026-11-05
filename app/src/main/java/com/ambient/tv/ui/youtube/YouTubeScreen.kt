@@ -3,6 +3,7 @@
 package com.ambient.tv.ui.youtube
 
 import com.ambient.tv.ui.theme.screenGutter
+import com.ambient.tv.ui.theme.animatedFocusBorder
 import com.ambient.tv.ui.mobile.DeviceActionRow
 import com.ambient.tv.ui.mobile.LocalHandheldUi
 
@@ -815,7 +816,11 @@ private fun YouTubeListItem(
         Row(
             Modifier
                 .background(if (focused) MaterialTheme.colorScheme.primary.copy(alpha = .12f) else Color.Transparent, shape)
-                .border(if (focused) 2.dp else 1.dp, if (focused) MaterialTheme.colorScheme.primary else Color.White.copy(alpha = .06f), shape)
+                .animatedFocusBorder(
+                    focused = focused, shape = shape,
+                    focusedColor = MaterialTheme.colorScheme.primary,
+                    unfocusedColor = Color.White.copy(alpha = .04f),
+                )
                 .padding(10.dp * rowScale),
             horizontalArrangement = Arrangement.spacedBy(14.dp * rowScale),
             verticalAlignment = Alignment.CenterVertically,
@@ -1121,10 +1126,10 @@ private fun Card(
                     else MaterialTheme.colorScheme.surface.copy(alpha = .58f),
                     shape,
                 )
-                .border(
-                    if (focused) 2.dp else 1.dp,
-                    if (focused) MaterialTheme.colorScheme.primary else Color.White.copy(alpha = .06f),
-                    shape,
+                .animatedFocusBorder(
+                    focused = focused, shape = shape,
+                    focusedColor = MaterialTheme.colorScheme.primary,
+                    unfocusedColor = Color.White.copy(alpha = .04f),
                 )
                 .padding(if (showText) 8.dp else 3.dp),
             verticalArrangement = Arrangement.spacedBy(7.dp),

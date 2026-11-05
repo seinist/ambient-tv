@@ -26,6 +26,7 @@ import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.zIndex
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.ui.unit.Dp
 import androidx.tv.material3.MaterialTheme
 import com.ambient.tv.ui.performance.LocalPerformanceProfile
 
@@ -133,7 +134,66 @@ fun focusColorSpec(): AnimationSpec<Color> {
     }
 }
 
-private const val REDUCED_FOCUS_FADE_MS = 90
+
+private const val REDUCED_FOCUS_FADE_MS = 140
+
+/**
+ * The focus target changes immediately on D-pad input; only the border's draw color animates.
+ * A lightweight fade is safe even with reduced UI effects because it never changes layout size,
+ * creates a shadow, or allocates an additional compositing layer.
+ */
+internal fun focusBorderFadeDurationMs(focused: Boolean, reducedEffects: Boolean): Int =
+    if (reducedEffects) {
+        if (focused) 140 else 110
+    } else {
+        if (focused) 160 else 130
+    }
+
+/**
+ * A constant-width focus outline for browsable cards and rows. Keeping one fixed stroke avoids
+ * the abrupt 1dp-to-2dp change (and its subpixel shimmer) when the remote moves focus.
+ *
+ * The animation state is read only while drawing, not during composition of poster content;
+ * rapid focus hops reverse the fade without leaving an old outline stuck on a card.
+ */
+fun Modifier.animatedFocusBorder(
+    focused: Boolean,
+    shape: Shape,
+    focusedColor: Color,
+    unfocusedColor: Color = Color.Transparent,
+    width: Dp? = null,
+): Modifier = composed {
+    val strokeWidth = width ?: LocalUiTokens.current.focusBorder
+    val reduced = LocalPerformanceProfile.current.reducedEffects
+    val reveal = animateFloatAsState(
+        targetValue = if (focused) 1f else 0f,
+        animationSpec = tween(
+            durationMillis = focusBorderFadeDurationMs(focused, reduced),
+            easing = LinearOutSlowInEasing,
+        ),
+        label = "focus outline fade",
+    )
+    this.drawWithCache {
+        val strokePx = strokeWidth.toPx()
+        val inset = strokePx / 2f
+        val outline = shape.createOutline(
+            Size((size.width - strokePx).coerceAtLeast(0f),
+                (size.height - strokePx).coerceAtLeast(0f)),
+            layoutDirection,
+            this,
+        )
+        val stroke = Stroke(strokePx)
+        onDrawWithContent {
+            drawContent()
+            if (strokePx > 0f) {
+                val color = lerp(unfocusedColor, focusedColor, reveal.value)
+                if (color.alpha > 0f) {
+                    translate(inset, inset) { drawOutline(outline, color, style = stroke) }
+                }
+            }
+        }
+    }
+}
 
 /** Subtle TV-menu focus motion; reduced-performance profiles keep the focus state static. */
 fun Modifier.menuFocusMotion(focused: Boolean, focusedScale: Float = 1.012f): Modifier = composed {

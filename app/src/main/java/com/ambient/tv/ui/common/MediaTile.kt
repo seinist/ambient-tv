@@ -61,6 +61,7 @@ import androidx.tv.material3.Text
 import com.ambient.tv.R
 import com.ambient.tv.domain.model.MediaItem
 import com.ambient.tv.ui.theme.LocalUiTokens
+import com.ambient.tv.ui.theme.animatedFocusBorder
 import com.ambient.tv.ui.common.activateOnTvKey
 import kotlinx.coroutines.delay
 
@@ -180,7 +181,7 @@ fun MediaTile(
     val performance = LocalPerformanceProfile.current
     val focusRequester = remember { FocusRequester() }
     val focusScale by animateFloatAsState(
-        targetValue = if (focused) tokens.focusScale else 1f,
+        targetValue = if (focused && performance.allowSpringFocus) tokens.focusScale else 1f,
         animationSpec = if (performance.allowSpringFocus) {
             spring(
                 dampingRatio = Spring.DampingRatioNoBouncy,
@@ -191,15 +192,13 @@ fun MediaTile(
         },
         label = "mediaTileScale",
     )
-    // One transform animation is enough to communicate focus. Animating elevation, border width,
-    // border color and overlay separately invalidated both the old and new tile on every frame.
+    // Sparsam keeps the tile's geometry fixed. Its focus outline uses a draw-only opacity fade,
+    // avoiding an abrupt scale snap or any layout/image recomposition.
     val focusElevation = when {
         !performance.allowFocusedItemShadow -> 0.dp
         focused -> 5.dp
         else -> 0.dp // Do not rasterize a separate shadow for every entering/unfocused card.
     }
-    val borderWidth = if (focused) 2.dp else 1.dp
-    val borderColor = if (focused) MaterialTheme.colorScheme.onSurface.copy(alpha = .90f) else Color.Transparent
     val filterFocus = LocalFilterFocusState.current
     val browseFocus = LocalBrowseFocusReturnState.current
     // A suppressed restore is consumed. Re-entering content must not restart an old tile request.
@@ -264,11 +263,13 @@ fun MediaTile(
             Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .border(
-                        width = borderWidth,
-                        color = com.ambient.tv.ui.display.uiHdrHighlight(borderColor,
-                            if (focused) com.ambient.tv.ui.display.LocalUiHdrState.current?.headroom ?: 1f else 1f),
+                    .animatedFocusBorder(
+                        focused = focused,
                         shape = tileShape,
+                        focusedColor = com.ambient.tv.ui.display.uiHdrHighlight(
+                            MaterialTheme.colorScheme.onSurface.copy(alpha = .90f),
+                            com.ambient.tv.ui.display.LocalUiHdrState.current?.headroom ?: 1f,
+                        ),
                     )
                     .padding(2.dp),
             ) {

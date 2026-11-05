@@ -29,6 +29,16 @@ class InteractionStyleTest {
         assertTrue(contrastRatio(result, AppSurface) >= 4.5f)
     }
 
+    @Test fun focusOutlineUsesFastFadeInAndFasterFadeOutWithReducedEffects() {
+        assertEquals(140, focusBorderFadeDurationMs(focused = true, reducedEffects = true))
+        assertEquals(110, focusBorderFadeDurationMs(focused = false, reducedEffects = true))
+    }
+
+    @Test fun focusOutlineKeepsShortFadesForBalancedAndMaximumProfiles() {
+        assertEquals(160, focusBorderFadeDurationMs(focused = true, reducedEffects = false))
+        assertEquals(130, focusBorderFadeDurationMs(focused = false, reducedEffects = false))
+    }
+
     @Test fun foregroundSwitchesWithTheActionFill() {
         assertEquals(Color.Black, contentOnAccent(Color.White))
         assertEquals(Color.White, contentOnAccent(Color.Black))
