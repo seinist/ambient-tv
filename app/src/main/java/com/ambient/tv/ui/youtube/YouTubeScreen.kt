@@ -52,6 +52,7 @@ import androidx.compose.material.icons.filled.SmartDisplay
 import androidx.compose.material.icons.filled.SportsEsports
 import androidx.compose.material.icons.filled.Subscriptions
 import androidx.compose.runtime.*
+import androidx.compose.animation.core.VisibilityThreshold
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -646,7 +647,7 @@ private fun RowMode(
             itemsIndexed(row.items, key = { _, it -> it.videoId }) { _, item ->
                 Card(
                     item, { tapped -> onItemFocused(rowId, tapped); click(tapped) },
-                    Modifier.width(cardWidth).rowColumnFocusTarget(rowFocus, rowId, item.videoId), true,
+                    youtubeItemMotionModifier().width(cardWidth).rowColumnFocusTarget(rowFocus, rowId, item.videoId), true,
                     focusRequester = if (rowId == focusTarget.rowId && item.videoId == focusTarget.itemId) initialFocusRequester else null,
                     onFocused = { onItemFocused(rowId, item.videoId) },
                 )
@@ -713,11 +714,13 @@ private fun ListMode(
         verticalArrangement = Arrangement.spacedBy(8.dp * rowScale),
     ) {
         itemsIndexed(items, key = { _, it -> it.videoId }) { _, item ->
+            Box(youtubeItemMotionModifier()) {
             YouTubeListItem(
                 item, rowScale, click, detailed,
                 if (item.videoId == focusTarget.itemId) initialFocusRequester else null,
                 onFocused = { onItemFocused(null, item.videoId) },
             )
+            }
         }
     }
 }
@@ -760,6 +763,7 @@ private fun SectionedYouTubeList(
             }
             itemsIndexed(row.items, key = { itemIndex, item -> "youtube-list:${row.id}:${item.videoId}" }) { itemIndex, item ->
                 val rowId = youtubeRowId(sectionIndex, row)
+                Box(youtubeItemMotionModifier()) {
                 BrowseFocusRow(rowId) {
                 YouTubeListItem(
                     rawItem = item,
@@ -769,6 +773,7 @@ private fun SectionedYouTubeList(
                     focusRequester = if (rowId == focusTarget.rowId && item.videoId == focusTarget.itemId) initialFocusRequester else null,
                     onFocused = { onItemFocused(rowId, item.videoId) },
                 )
+                }
                 }
             }
         }
@@ -925,7 +930,7 @@ private fun Cinematic(
             ) {
                 itemsIndexed(items, key = { _, it -> it.videoId }) { _, item ->
                     Card(
-                        item, click, Modifier.width(landscapeCardWidth())
+                        item, click, youtubeItemMotionModifier().width(landscapeCardWidth())
                             .rowColumnFocusTarget(rowFocus, "youtube-cinematic", item.videoId), false,
                         focusRequester = if (item.videoId == focusTarget.itemId) initialFocusRequester else null,
                         onFocused = {
@@ -1024,7 +1029,7 @@ private fun YouTubeCinematicSection(
                         Card(
                             item,
                             { tapped -> onItemFocused(rowId, tapped); click(tapped) },
-                            Modifier.width(landscapeCardWidth()).rowColumnFocusTarget(rowFocus, rowId, item.videoId),
+                            youtubeItemMotionModifier().width(landscapeCardWidth()).rowColumnFocusTarget(rowFocus, rowId, item.videoId),
                             false,
                             focusRequester = if (rowId == focusTarget.rowId && item.videoId == focusTarget.itemId) initialFocusRequester else null,
                             onFocused = {
@@ -1425,3 +1430,20 @@ internal fun rememberDeArrowItem(item: YouTubeItem): YouTubeItem {
             ?.let { com.ambient.tv.youtube.DeArrow.thumbnailUrl(item.videoId, it) } ?: item.imageUrl,
     )
 }
+
+/**
+ * New items from a refresh slide in and push the existing cards aside instead of making them
+ * jump. Only with full interface effects; reduced effects keep the instant layout.
+ */
+@Composable
+private fun androidx.compose.foundation.lazy.LazyItemScope.youtubeItemMotionModifier(): Modifier =
+    if (com.ambient.tv.ui.performance.LocalPerformanceProfile.current.reducedEffects) Modifier
+    else Modifier.animateItem(
+        fadeInSpec = androidx.compose.animation.core.tween(260),
+        placementSpec = androidx.compose.animation.core.spring(
+            dampingRatio = androidx.compose.animation.core.Spring.DampingRatioNoBouncy,
+            stiffness = androidx.compose.animation.core.Spring.StiffnessMediumLow,
+            visibilityThreshold = androidx.compose.ui.unit.IntOffset.VisibilityThreshold,
+        ),
+        fadeOutSpec = androidx.compose.animation.core.tween(180),
+    )
