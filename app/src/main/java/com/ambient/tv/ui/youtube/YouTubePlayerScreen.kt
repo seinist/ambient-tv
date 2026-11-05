@@ -1796,6 +1796,10 @@ internal data class YouTubeOsdModel(
                         stringResource(R.string.youtube_live_badge).takeIf { playback.isLive },
                     ).joinToString("  •  "),
                     subtitle = playback.author,
+                    // Keep SmartTube's system/backend context above the title. The upload
+                    // label sits next to the channel without adding another row or moving
+                    // the seekbar; a running live broadcast has no publication date.
+                    subtitleTrailingText = playback.publishedDate?.takeUnless { playback.isLive },
                     showPaused = playback.isLive && paused,
                 )
                 if (!playback.isLive && duration > 0L) {
