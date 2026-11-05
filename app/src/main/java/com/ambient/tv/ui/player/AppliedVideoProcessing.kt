@@ -26,7 +26,7 @@ internal fun appliedStatValue(value: String?): String = value?.takeIf { it.isNot
 internal fun mpvAppliedProcessing(snapshot: MpvPlaybackSnapshot): AppliedVideoProcessing {
     if (!snapshot.processingSampled) return AppliedVideoProcessing()
     return AppliedVideoProcessing(
-        videoFilters = summarizeMpvVideoFilters(snapshot.activeVideoFilters),
+        videoFilters = summarizeMpvVideoFilters(snapshot.activeVideoFilters, snapshot.activeImageShaders),
         deinterlacer = summarizeMpvDeinterlacer(snapshot.activeVideoFilters, snapshot.activeDeinterlace),
         upscaler = if (!snapshot.gpuScalerExposed) {
             "n/a"
@@ -57,19 +57,23 @@ internal fun withSvpStatus(summary: String, svpStatus: String?): String {
 }
 
 /** Labels successfully present in mpv's `vf` property. Deinterlace is reported on its own line. */
-internal fun summarizeMpvVideoFilters(vf: String?): String {
-    if (vf.isNullOrBlank() || vf == "[]") return "off"
+internal fun summarizeMpvVideoFilters(vf: String?, gpuShaderKeys: List<String>? = null): String {
+    val gpu = gpuShaderKeys.orEmpty().mapNotNull { key ->
+        key.removePrefix("deblock_").takeIf { key.startsWith("deblock_") && it in setOf("light", "medium", "strong") }
+            ?.let { "deblock GPU ($it)" }
+    }
+    if (vf.isNullOrBlank() || vf == "[]") return gpu.joinToString(", ").ifBlank { "off" }
     val labels = Regex("""plex-[a-z0-9-]+""").findAll(vf).map { it.value }.distinct().toList()
     val friendly = labels.mapNotNull { label ->
         when (label) {
             "plex-deint" -> null
             "plex-denoise" -> "denoise"
-            "plex-deblock" -> "deblock"
+            "plex-deblock" -> "deblock CPU"
             "plex-svp" -> "svp"
             else -> label.removePrefix("plex-")
         }
     }
-    if (friendly.isNotEmpty()) return friendly.joinToString(", ")
+    if (friendly.isNotEmpty() || gpu.isNotEmpty()) return (friendly + gpu).distinct().joinToString(", ")
     // A chain we could not name is still on. Do not invent filter names.
     return if (labels.isEmpty()) "on" else "off"
 }

@@ -659,7 +659,7 @@ Brauchen eine GPU-Ausgabe (OpenGL oder Vulkan). Mit „Android Surface (direkt)�
 | Farbbänder glätten | Aus · Leicht · Mittel · Stark | Mittel | GPU-Ausgabe. |
 | Schärfung | Aus · Standardschärfung: Leicht, Mittel · Shader-Schärfung: AMD CAS, Adaptive Sharpen | Aus | SDR; bei NIS/FSR ersetzt ein Hinweis auf deren integrierte Schärfung die Zeile. |
 | Entrauschen · HQDN3D | Aus · Leicht · Mittel | Aus | SDR. |
-| Entblocken · CPU | Aus · Leicht · Mittel | Aus | SDR. |
+| Entblocken (GPU / CPU-Fallback) | Aus · Leicht · Mittel · Stark | Aus | SDR; MPV verwendet bei GPU-Ausgabe einen RGB-Shader vor dem Skalieren (Zero-Copy bleibt nach Möglichkeit erhalten), bei Ladefehlern FFmpeg per CPU. Media3 nutzt seinen bestehenden OpenGL-ES-Effekt. VLC bietet keinen separat einstellbaren GPU-Deblocking-Hook. |
 | SSimSuperRes | An / Aus | Aus | SDR; nicht mit NIS/FSR. |
 | Helligkeit · Kontrast · Sättigung · Gamma | −20 … +20 | 0 | SDR. |
 | HDR-Tonemapping | Auto · BT.2390 · Reinhard · Hable · Möbius · Clip | Auto | HDR-Quelle auf SDR-Ausgabe. |
@@ -737,7 +737,7 @@ Oberfläche und Wiedergabe haben getrennte Modi (*Aussehen*). Solange eine Seite
 
 **Reduzierte Oberfläche:** kein Blur, keine weichen Schatten und kein Feder-Fokus; ruhiger Startseiten-Hero; kein Home-Hintergrund auf anderen Ansichten; hochauflösende Bilder aus; kleinere Bilddekodierung; Bildschirmschoner auf Sparsam; projectM gedrosselt; Menütöne am TV stumm.
 
-**Reduzierte Wiedergabe:** aufwendige Videopfade nutzen leichtere Ersatzwerte (GPU-Shader, CPU-Entrauschen/-Deblock, VLC-Software-Filter, Media3-Effektkette, 2×-Deinterlacing, Spektrum). Gespeicherte Bildeinstellungen bleiben erhalten und gelten wieder, sobald Sparsam verlassen wird. Audio-DSP bleibt verfügbar.
+**Reduzierte Wiedergabe:** aufwendige Videopfade nutzen leichtere Ersatzwerte (GPU-Shader, CPU-Entrauschen/-Deblocking-Fallback, VLC-Software-Filter, Media3-Effektkette, 2×-Deinterlacing, Spektrum). Gespeicherte Bildeinstellungen bleiben erhalten und gelten wieder, sobald Sparsam verlassen wird. Audio-DSP bleibt verfügbar.
 
 „Oberfläche prüfen“ und „Wiedergabe prüfen“ messen kurz im Hintergrund und speichern das Ergebnis für die jeweilige Seite.
 

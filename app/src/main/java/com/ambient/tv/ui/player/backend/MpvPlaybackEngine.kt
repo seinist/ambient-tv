@@ -1626,7 +1626,10 @@ internal class MpvPlaybackEngine(
         desiredCopyBackImageFilters(o, sdr)
 
     private fun desiredCopyBackImageFilters(o: MpvImageOptions, sdr: Boolean): Map<String, String> = buildMap {
-        putAll(mpvCpuImageFilters(o, sdr))
+        // The GPU hook replaces, never stacks with, FFmpeg's CPU filter.
+        // When shader loading failed, retain the existing CPU fallback.
+        putAll(mpvCpuImageFilters(o, sdr,
+            hardwareDeblock = sdr && o.deblock != "off" && "deblock_${o.deblock}" in loadedShaderKeys))
         if (sdr && !svpOverloaded && svpAllowed(context)) {
             // Quality waits on light. Sparsam already forced svpMode off above this call.
             val mode = mpvSvpAppliedMode(o.svpMode, svpQualityCleared && !svpQualityProbeFailed)

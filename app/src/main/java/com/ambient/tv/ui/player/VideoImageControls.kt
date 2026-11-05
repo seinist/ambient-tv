@@ -218,7 +218,7 @@ internal fun MpvImageOptionsEditor(
                     PlayerDropUpSection(stringResource(R.string.image_sharpen_shader), listOf("cas" to "AMD CAS", "adaptive" to "Adaptive Sharpen")),
                 )) { change(o.copy(sharpening = it)) }
             } else ImageHint(stringResource(if (o.scaler == "nis") R.string.image_nis_integrated_sharpen else R.string.image_fsr_integrated_sharpen))
-            // CPU cleanup filters and SSimSuperRes need an SDR source.
+            // SDR-only cleanup: MPV prefers the GPU luma hook; lavfi is a fallback.
             if (!hdrTransfer) {
                 ImageChoice(R.string.image_denoise, o.denoise, imageStrengths()) { change(o.copy(denoise = it)) }
                 ImageChoice(R.string.image_deblock, o.deblock, imageStrengths()) { change(o.copy(deblock = it)) }

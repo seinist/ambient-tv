@@ -1222,7 +1222,7 @@
     <string name="image_fsr_integrated_sharpen">FSR · RCAS-Schärfung integriert</string>
     <string name="image_nis_integrated_sharpen">NVIDIA NIS · Schärfung integriert</string>
     <string name="image_denoise">Entrauschen · HQDN3D</string>
-    <string name="image_deblock">Entblocken · CPU</string>
+    <string name="image_deblock">${label}</string>
     <string name="image_film_grain">Korn</string>
     <string name="image_superres">SSimSuperRes</string>
     <string name="image_brightness">Helligkeit</string>
