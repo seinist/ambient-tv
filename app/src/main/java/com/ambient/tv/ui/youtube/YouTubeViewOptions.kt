@@ -29,8 +29,8 @@ internal fun applyYouTubeViewOptions(
         val filtered = row.items.filter { item ->
             item.isChannel || when (filter) {
                 YouTubeFilter.ALL -> true
-                YouTubeFilter.UNWATCHED -> item.percentWatched <= 0
-                YouTubeFilter.IN_PROGRESS -> item.percentWatched in 1..99
+                YouTubeFilter.UNWATCHED -> com.ambient.tv.youtube.YouTubeLocalProgress.percent(item.videoId, item.percentWatched) <= 0
+                YouTubeFilter.IN_PROGRESS -> com.ambient.tv.youtube.YouTubeLocalProgress.percent(item.videoId, item.percentWatched) in 1..99
                 YouTubeFilter.LIVE -> item.isLive || item.isUpcoming
                 YouTubeFilter.SHORTS -> item.isShorts
             }
