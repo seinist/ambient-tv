@@ -109,6 +109,7 @@ class YouTubeResumeTest {
         assertNull(youtubePublicationEpochMs(999_999_999_999_999L))
         assertEquals("vor 3 Tagen", youtubePublicationText("  vor 3 Tagen  "))
         assertEquals("2026-10-18", youtubePublicationText("2026-10-18"))
+        assertEquals("2020", youtubePublicationText("2020")) // Year-only is not an epoch.
         assertNull(youtubePublicationText("1700000000000"))
         assertNull(youtubePublicationText("0"))
         assertNull(youtubePublicationText("unknown"))
