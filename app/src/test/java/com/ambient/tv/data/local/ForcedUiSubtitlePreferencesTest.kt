@@ -50,13 +50,13 @@ class ForcedUiSubtitlePreferencesTest {
         assertFalse(p.forcedSubtitlesInUiLanguage)
         p.forcedSubtitlesInUiLanguage = true
         p.uiLanguageKey = "de"
-        assertEquals(preferences, p.subtitlePreferences)
+        assertEquals(preferences.copy(preferredAudioLanguage = LanguagePreferences.ORIGINAL), p.subtitlePreferences)
         val manager = SettingsBackupManager(p, TokenStore(memoryPreferences(), p))
         val backup = manager.exportJson()
         p.forcedSubtitlesInUiLanguage = false
         p.uiLanguageKey = "en"
         manager.importJson(backup)
-        assertEquals(preferences, p.subtitlePreferences)
+        assertEquals(preferences.copy(preferredAudioLanguage = LanguagePreferences.ORIGINAL), p.subtitlePreferences)
         manager.importJson("""{"schemaVersion":53,"exportedAtEpochMs":0}""")
         assertFalse(p.forcedSubtitlesInUiLanguage)
     }

@@ -58,7 +58,7 @@ class SubtitlePreferencesTest {
         val p = AppPreferences(memoryPreferences()); p.subtitleModeKey = "forced"; p.subtitleLanguageKey = "de"; p.subtitleFallbackLanguageKey = "en"
         val manager = SettingsBackupManager(p, TokenStore(memoryPreferences(), p)); val backup = manager.exportJson()
         p.subtitleModeKey = "off"; p.subtitleLanguageKey = "ja"; manager.importJson(backup)
-        assertEquals(SubtitlePreferences(SubtitleMode.FORCED, "de", "en"), p.subtitlePreferences)
+        assertEquals(SubtitlePreferences(SubtitleMode.FORCED, "de", "en", preferredAudioLanguage = LanguagePreferences.ORIGINAL), p.subtitlePreferences)
     }
     @Test fun legacyBackupReplacesNewPolicyWithoutRetainingFallback() {
         val p = AppPreferences(memoryPreferences()); p.subtitleModeKey = "full"; p.subtitleLanguageKey = "ja"; p.subtitleFallbackLanguageKey = "en"
