@@ -98,7 +98,6 @@ internal fun IptvSettingsSection(viewModel: IptvSettingsViewModel = androidx.hil
                 viewModel.clearResult(); editing = IptvSource(name = "", playlistUrl = "")
             })
         }
-        SettingsHint(stringResource(R.string.iptv_privacy_hint))
     }
     editing?.let { source -> IptvSourceDialog(source, existing = sources.any { it.id == source.id }, viewModel, onDismiss = { editing = null }) }
 }

@@ -939,13 +939,13 @@
     <string name="settings_youtube_auto_captions">Automatische Untertitel</string>
     <string name="settings_youtube_auto_captions_hint">Auch von YouTubes Spracherkennung erzeugte Untertitel anbieten.</string>
     <string name="settings_youtube_history_paused">Wiedergabeverlauf pausieren</string>
-    <string name="settings_youtube_history_paused_hint">Nichts Angesehenes geht in deinen YouTube-Verlauf; Positionen bleiben nur auf diesem Gerät.</string>
+    <string name="settings_youtube_history_paused_hint">Angesehene Videos erscheinen nicht in deinem YouTube-Verlauf.</string>
     <string name="settings_youtube_hide_shorts">Shorts ausblenden</string>
     <string name="settings_youtube_hide_shorts_hint">Keine Shorts in Startseite, Abos, Kanälen und Suche. Der Bereich Shorts zeigt sie weiter.</string>
     <string name="settings_youtube_hide_live">Live und Geplant in Abos ausblenden</string>
     <string name="settings_youtube_hide_live_hint">Laufende Streams und Premieren erscheinen nicht in den Abos.</string>
     <string name="settings_youtube_dearrow">DeArrow</string>
-    <string name="settings_youtube_dearrow_hint">Community-Titel und -Vorschaubilder statt Clickbait (dearrow.ajay.app). Gesendet wird nur ein kurzer Hash der Video-ID.</string>
+    <string name="settings_youtube_dearrow_hint">Community-Titel und -Vorschaubilder statt Clickbait.</string>
     <string name="settings_youtube_sponsorblock_categories">SponsorBlock-Kategorien</string>
     <string name="settings_youtube_sponsorblock_show">Segmente anzeigen</string>
     <string name="settings_youtube_sponsorblock_show_hint">Aus: keine Markierungen in der Seekbar und keine Überspringen-Buttons; jede Kategorie, die nicht auf Aus steht, wird automatisch übersprungen.</string>
@@ -1525,7 +1525,7 @@
     <string name="wg_paste">wg-quick-Konfiguration einfügen</string>
     <string name="wg_load_file">Konfiguration laden</string>
     <string name="wg_scan_qr">QR-Code scannen</string>
-    <string name="wg_scan_qr_hint">Kamera auf einen QR-Code mit einer WireGuard-Konfiguration richten. Der private Schlüssel bleibt auf diesem Gerät.</string>
+    <string name="wg_scan_qr_hint">Kamera auf einen QR-Code mit einer WireGuard-Konfiguration richten.</string>
     <string name="wg_file_title">WireGuard-Datei wählen</string>
     <string name="wg_file_system_picker">System-Dateiauswahl</string>
     <string name="wg_file_empty">Keine Ordner oder .conf-Dateien hier.</string>
@@ -1534,7 +1534,7 @@
     <string name="wg_save">Konfiguration speichern</string>
     <string name="wg_connect">Verbinden</string>
     <string name="wg_disconnect">Trennen</string>
-    <string name="wg_saved">WireGuard-Konfiguration gespeichert. Der private Schlüssel wird verschlüsselt gespeichert.</string>
+    <string name="wg_saved">WireGuard-Konfiguration gespeichert.</string>
     <string name="wg_test">Verbindung testen</string>
     <string name="wg_testing">Verbindung wird getestet…</string>
     <string name="wg_test_no_handshake">Keine Handshake-Antwort vom Server. Endpoint, Port und Schlüssel prüfen und ob der Endpoint ohne Tunnel erreichbar ist.</string>
@@ -1948,7 +1948,7 @@
     <string name="timeshift_programme_position">Sendung %1$s / %2$s · Wiedergabe %3$s</string>
     <string name="timeshift_before_programme">Wiedergabe %1$s · vor aktueller Sendung</string>
     <string name="settings_network_buffer">Netzwerk-Puffer</string>
-    <string name="settings_network_buffer_hint">Wie weit Media3, MPV und VLC vorausladen. Groß hilft bei Streams übers Internet oder wackligem WLAN, startet aber etwas später. MPV puffert im Heimnetz nicht. SmartTube hat eine eigene Puffergröße.</string>
+    <string name="settings_network_buffer_hint">Wie weit beim Abspielen vorausgeladen wird. Groß hilft bei Streams übers Internet oder wackligem WLAN, startet aber etwas später. SmartTube hat eine eigene Puffergröße.</string>
     <string name="settings_network_buffer_low">Klein</string>
     <string name="settings_network_buffer_medium">Mittel (Standard)</string>
     <string name="settings_network_buffer_high">Groß</string>
@@ -2156,7 +2156,7 @@
     <string name="subtitle_sync_failed">Untertitel ließ sich nicht automatisch synchronisieren</string>
     <string name="player_tools_music">Musik</string>
     <string name="player_tools_gapless">Lückenlose Wiedergabe</string>
-    <string name="player_tools_gapless_hint">Titel folgen ohne Pause aufeinander, wenn Media3 sie direkt abspielt. Gilt ab dem nächsten Titel.</string>
+    <string name="player_tools_gapless_hint">Titel folgen ohne Pause aufeinander. Gilt ab dem nächsten Titel.</string>
     <string name="player_nerd_sound_processing">Klangverarbeitung</string>
     <string name="player_nerd_dsp_suspended">ausgesetzt (Bitstream)</string>
     <string name="player_nerd_automatic">automatisch</string>
@@ -2304,7 +2304,7 @@
     <string name="monogram_api_ready">API-Zugangsdaten eingerichtet</string>
     <string name="monogram_api_required">Zum Anmelden eigene API-ID und API-Hash eingeben.</string>
     <string name="monogram_api_sign_out_first">Zum Ändern der API-Zugangsdaten zuerst bei Monogram abmelden.</string>
-    <string name="monogram_api_setup_hint">API-ID und API-Hash unter my.telegram.org/apps erstellen. Die Daten werden verschlüsselt auf diesem Gerät gespeichert und nicht in die App kompiliert.</string>
+    <string name="monogram_api_setup_hint">API-ID und API-Hash unter my.telegram.org/apps erstellen.</string>
     <string name="monogram_leave_channel">Kanal verlassen</string>
     <string name="monogram_leave_failed">Kanal konnte nicht verlassen werden</string>
     <string name="monogram_login_signed_out">Nicht bei Telegram angemeldet</string>

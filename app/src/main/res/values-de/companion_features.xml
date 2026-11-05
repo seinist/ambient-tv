@@ -26,7 +26,7 @@
     <string name="companion_overwrite_question">Vorhandene Einstellungen überschreiben?</string>
     <string name="companion_overwrite_accounts">Bereits vorhandene Konten überschreiben</string>
     <string name="companion_include_hardware">Auch Bild-, Audio- und Geräteeinstellungen überschreiben</string>
-    <string name="companion_import_safety">Andere Konten auf diesem Gerät bleiben erhalten. Vor Änderungen wird eine verschlüsselte lokale Rücksicherung angelegt. Laufende Wiedergabe erst stoppen und offene Änderungen speichern. Am Zielgerät bestätigen; Fernsteuerung ist hier gesperrt.</string>
+    <string name="companion_import_safety">Andere Konten auf diesem Gerät bleiben erhalten. Laufende Wiedergabe erst stoppen und offene Änderungen speichern. Am Zielgerät bestätigen.</string>
     <string name="companion_abort">Abbrechen</string>
     <string name="companion_overwrite">Überschreiben</string>
     <string name="companion_add_accounts">Konten ergänzen</string>
