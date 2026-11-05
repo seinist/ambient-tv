@@ -785,6 +785,9 @@ private fun YouTubeListItem(
     onFocused: () -> Unit,
 ) {
     val item = rememberDeArrowItem(rawItem)
+    LaunchedEffect(rawItem.videoId, rawItem.percentWatched) {
+        if (!rawItem.isChannel) com.ambient.tv.youtube.YouTubeLocalProgress.observeRemote(rawItem.videoId, rawItem.percentWatched)
+    }
     var focused by remember(item.videoId) { mutableStateOf(false) }
     val shape = RoundedCornerShape(10.dp)
     Surface(
@@ -1086,6 +1089,9 @@ private fun Card(
     onFocused: () -> Unit = {},
 ) {
     val item = rememberDeArrowItem(rawItem)
+    LaunchedEffect(rawItem.videoId, rawItem.percentWatched) {
+        if (!rawItem.isChannel) com.ambient.tv.youtube.YouTubeLocalProgress.observeRemote(rawItem.videoId, rawItem.percentWatched)
+    }
     var focused by remember(item.videoId) { mutableStateOf(false) }
     val shape = RoundedCornerShape(10.dp)
     Surface(
@@ -1414,6 +1420,8 @@ internal fun rememberDeArrowItem(item: YouTubeItem): YouTubeItem {
     val current = branding ?: return item
     return item.copy(
         title = current.title ?: item.title,
-        imageUrl = current.thumbnailTimeSeconds?.let { com.ambient.tv.youtube.DeArrow.thumbnailUrl(item.videoId, it) } ?: item.imageUrl,
+        imageUrl = com.ambient.tv.youtube.DeArrow.thumbnailTime(item.videoId, current, item.durationMs)
+            ?.takeUnless { item.isLive || item.isUpcoming }
+            ?.let { com.ambient.tv.youtube.DeArrow.thumbnailUrl(item.videoId, it) } ?: item.imageUrl,
     )
 }

@@ -26,6 +26,7 @@ internal fun homeYouTubeSourceRow(rows: List<YouTubeRow>, limit: Int): YouTubeRo
     }
 
 internal fun YouTubeItem.asHomeMediaItem(): MediaItem {
+    com.ambient.tv.youtube.YouTubeLocalProgress.observeRemote(videoId, percentWatched)
     val percentWatched = com.ambient.tv.youtube.YouTubeLocalProgress.percent(videoId, percentWatched)
     return MediaItem(
     ratingKey = HOME_YOUTUBE_ITEM_PREFIX + videoId,
