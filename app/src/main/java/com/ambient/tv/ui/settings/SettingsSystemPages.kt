@@ -103,7 +103,7 @@ internal fun LazyListScope.settingsSystemCategoryItems(
             item { SettingsPageLink(SettingsCategory.WAKE, "files-network", R.string.settings_network_link) }
             item { Text(stringResource(R.string.files_backup_hint), style = MaterialTheme.typography.bodySmall) }
             if (uiState.filesEnabled) item {
-                SettingsGroup(title = stringResource(R.string.settings_submenu_items), subtitle = stringResource(R.string.settings_submenu_items_hint)) {
+                SettingsGroup(title = stringResource(R.string.settings_submenu_items), subtitle = stringResource(R.string.settings_submenu_items_hint), collapsible = true) {
                     SubmenuSettingsRow(MediaSystem.FILES, uiState, viewModel::onSidebarSettingsShortcutChanged)
                 }
             }
@@ -271,7 +271,7 @@ internal fun LazyListScope.settingsSystemCategoryItems(
                     SystemCustomizationTabs(
                         showStartPageTab = uiState.plexConfigured,
                         submenuContent = {
-                            SettingsGroup(title = stringResource(R.string.settings_submenu_items), subtitle = stringResource(R.string.settings_submenu_items_hint)) {
+                            SettingsGroup(title = stringResource(R.string.settings_submenu_items), subtitle = stringResource(R.string.settings_submenu_items_hint), collapsible = true) {
                                 uiState.plexLibrarySections.forEach { section ->
                                     TvSettingRow(
                                         title = section.title,
@@ -408,7 +408,7 @@ internal fun LazyListScope.settingsSystemCategoryItems(
                     SystemCustomizationTabs(
                         showStartPageTab = uiState.jellyfinConfigured,
                         submenuContent = {
-                            SettingsGroup(title = stringResource(R.string.settings_submenu_items), subtitle = stringResource(R.string.settings_submenu_items_hint)) {
+                            SettingsGroup(title = stringResource(R.string.settings_submenu_items), subtitle = stringResource(R.string.settings_submenu_items_hint), collapsible = true) {
                                 uiState.jellyfinLibrarySections.forEach { section ->
                                     TvSettingRow(
                                         title = section.title,
@@ -539,7 +539,7 @@ internal fun LazyListScope.settingsSystemCategoryItems(
                     SystemCustomizationTabs(
                         showStartPageTab = uiState.embyConfigured,
                         submenuContent = {
-                            SettingsGroup(title = stringResource(R.string.settings_submenu_items), subtitle = stringResource(R.string.settings_submenu_items_hint)) {
+                            SettingsGroup(title = stringResource(R.string.settings_submenu_items), subtitle = stringResource(R.string.settings_submenu_items_hint), collapsible = true) {
                                 uiState.embyLibrarySections.forEach { section ->
                                     TvSettingRow(
                                         title = section.title,
@@ -588,7 +588,7 @@ internal fun LazyListScope.settingsSystemCategoryItems(
                 item { Text(stringResource(R.string.settings_tvh_permissions_hint), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
                 item(key = "tvheadend-menu-section") { SettingsSubheader(stringResource(R.string.settings_system_menu_home)) }
                 item {
-                    SettingsGroup(title = stringResource(R.string.settings_submenu_items), subtitle = stringResource(R.string.settings_submenu_items_hint)) {
+                    SettingsGroup(title = stringResource(R.string.settings_submenu_items), subtitle = stringResource(R.string.settings_submenu_items_hint), collapsible = true) {
                         listOf(
                             "live" to stringResource(R.string.tvh_live),
                             "guide" to stringResource(R.string.tvh_guide),
@@ -671,7 +671,7 @@ internal fun LazyListScope.settingsSystemCategoryItems(
                 item { SystemNameField(MediaSystem.TELEGRAM, uiState, viewModel) }
                 item(key = "telegram-submenu") {
                     SettingsGroup(title = stringResource(R.string.settings_submenu_items),
-                        subtitle = stringResource(R.string.settings_submenu_items_hint)) {
+                        subtitle = stringResource(R.string.settings_submenu_items_hint), collapsible = true) {
                         listOf(
                             "recent" to R.string.telegram_recent,
                             "channels" to R.string.telegram_channels,
@@ -715,6 +715,7 @@ internal fun LazyListScope.settingsSystemCategoryItems(
                     SettingsGroup(
                         title = stringResource(R.string.settings_submenu_items),
                         subtitle = stringResource(R.string.settings_submenu_items_hint),
+                        collapsible = true,
                     ) {
                         listOf(
                             "popular" to stringResource(R.string.radio_popular),
@@ -820,7 +821,7 @@ internal fun LazyListScope.settingsSystemCategoryItems(
             item(key = "spotify-display-section") { SettingsSubheader(stringResource(R.string.settings_system_menu_display)) }
             if (uiState.spotifyEnabled) {
                 item {
-                    SettingsGroup(title = stringResource(R.string.settings_submenu_items), subtitle = stringResource(R.string.settings_submenu_items_hint)) {
+                    SettingsGroup(title = stringResource(R.string.settings_submenu_items), subtitle = stringResource(R.string.settings_submenu_items_hint), collapsible = true) {
                         listOf(
                             "home" to stringResource(R.string.nav_spotify_home),
                             "liked" to stringResource(R.string.nav_spotify_liked),
@@ -954,8 +955,7 @@ internal fun LazyListScope.settingsSystemCategoryItems(
                 item(key = "youtube-extra-settings") { YouTubeExtraSettings() }
                 item(key = "youtube-menu-section") { SettingsSubheader(stringResource(R.string.settings_system_menu_start)) }
                 item(key = "youtube-feeds") {
-                    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                        ConnectionListCaption(stringResource(R.string.settings_youtube_feeds))
+                    SettingsGroup(title = stringResource(R.string.settings_youtube_feeds), collapsible = true) {
                         val youtubeFeedLabels = listOf(
                             "home" to stringResource(R.string.nav_youtube_home),
                             "subscriptions" to stringResource(R.string.nav_youtube_subscriptions),

@@ -63,6 +63,8 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ExpandLess
+import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.PowerSettingsNew
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.tv.material3.MaterialTheme
@@ -1847,8 +1849,26 @@ internal fun SettingsGroup(
     title: String? = null,
     subtitle: String? = null,
     card: Boolean = false,
+    /** Starts folded behind a header chip (lists of shown sections); the open state lasts the session. */
+    collapsible: Boolean = false,
     content: @Composable () -> Unit,
 ) {
+    if (collapsible && title != null) {
+        var expanded by androidx.compose.runtime.saveable.rememberSaveable(title) { mutableStateOf(false) }
+        Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(LocalUiTokens.current.compactGap)) {
+            com.ambient.tv.ui.common.TvChip(
+                text = title,
+                selected = expanded,
+                icon = if (expanded) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
+                onClick = { expanded = !expanded },
+            )
+            if (expanded) {
+                if (subtitle != null) com.ambient.tv.ui.common.SettingsHint(subtitle)
+                content()
+            }
+        }
+        return
+    }
     val surface = if (card) Modifier
         .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.30f), RoundedCornerShape(10.dp))
         .border(1.dp, MaterialTheme.colorScheme.onSurface.copy(alpha = 0.07f), RoundedCornerShape(10.dp))
