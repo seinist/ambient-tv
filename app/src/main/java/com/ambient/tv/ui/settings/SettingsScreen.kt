@@ -336,8 +336,6 @@ fun SettingsScreen(
             if (!handheldUi) SettingsPageTitle(settingsCategoryTitle(selectedCategory))
             if (selectedCategory == SettingsCategory.RECEIVER) {
                 Text(stringResource(R.string.settings_network_receiver_save_hint), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            } else if (selectedCategory.isMediaSource() || selectedCategory in setOf(SettingsCategory.BACKUP, SettingsCategory.WIREGUARD, SettingsCategory.TRANSFER)) {
-                Text(stringResource(R.string.settings_actions_immediate), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
             if (selectedCategory == SettingsCategory.NAV_SOUNDS) {
                 NavSoundEditor(

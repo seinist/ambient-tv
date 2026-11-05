@@ -26,7 +26,7 @@
     <string name="companion_overwrite_question">Overwrite existing settings?</string>
     <string name="companion_overwrite_accounts">Overwrite existing accounts</string>
     <string name="companion_include_hardware">Also overwrite display, audio and device settings</string>
-    <string name="companion_import_safety">Other accounts on this device are retained. An encrypted local recovery copy is saved before changes. Stop playback and save pending edits first. Confirm on the receiving device; remote input is blocked here.</string>
+    <string name="companion_import_safety">Other accounts on this device are retained. Stop playback and save pending edits first. Confirm on the receiving device.</string>
     <string name="companion_abort">Cancel</string>
     <string name="companion_overwrite">Overwrite</string>
     <string name="companion_add_accounts">Add accounts</string>
