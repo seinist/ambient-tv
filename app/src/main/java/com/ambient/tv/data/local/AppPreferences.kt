@@ -1272,6 +1272,11 @@ class AppPreferences @Inject constructor(
         get() = prefs.getBoolean(KEY_YOUTUBE_SPONSORBLOCK, true)
         set(value) = prefs.edit { putBoolean(KEY_YOUTUBE_SPONSORBLOCK, value) }
 
+    /** SponsorBlock action per category (see SponsorBlockCategories). */
+    var youtubeSponsorBlockModes: Map<String, String>
+        get() = com.ambient.tv.youtube.SponsorBlockCategories.parse(prefs.getString("youtube_sponsorblock_modes", null))
+        set(value) = prefs.edit { putString("youtube_sponsorblock_modes", com.ambient.tv.youtube.SponsorBlockCategories.format(value)) }
+
     /**
      * SmartTube's own subtitle switch, independent of the app-wide subtitle mode (whose default
      * is off): on shows captions in the viewer's language, off hides them for SmartTube only.

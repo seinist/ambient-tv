@@ -48,10 +48,12 @@ internal class BackgroundSponsorSkipPolicy {
 
     fun nextSeek(
         playbackGeneration: Long,
-        ranges: List<LongRange>,
+        ranges: List<com.ambient.tv.youtube.YouTubeSponsorSegment>,
         positionMs: Long,
         durationMs: Long,
         playing: Boolean,
+        /** Only categories set to "auto" are skipped here; "button" belongs to the overlay. */
+        modes: Map<String, String> = com.ambient.tv.youtube.SponsorBlockCategories.DEFAULTS,
     ): Long? {
         if (generation != playbackGeneration) {
             generation = playbackGeneration
@@ -61,10 +63,11 @@ internal class BackgroundSponsorSkipPolicy {
         // Wait for playback duration rather than risking an exact-end seek.
         if (!playing || ranges.isEmpty() || durationMs <= 0L) return null
         val segments = com.ambient.tv.youtube.youtubeSponsorTimeline(
-            com.ambient.tv.domain.model.PlaybackTimeline(), ranges, durationMs,
+            com.ambient.tv.domain.model.PlaybackTimeline(), ranges, durationMs, modes,
         ).segments
         val active = segments.firstOrNull {
-            it.type == "sponsor" && positionMs >= it.startMs && positionMs < it.endMs &&
+            com.ambient.tv.youtube.sponsorCategoryOf(it.type)?.let(modes::get) == "auto" &&
+                positionMs >= it.startMs && positionMs < it.endMs &&
                 it.startMs !in handledStarts
         } ?: return null
         handledStarts.add(active.startMs)

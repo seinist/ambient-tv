@@ -37,12 +37,15 @@ internal fun SegmentSkipOverlay(
     val currentSeek by rememberUpdatedState(onSeek)
     val valid = snapshot.active && snapshot.metadata?.route == metadata.route && metadata.hasVideo && !metadata.isLive
     val position = snapshot.status.positionMs + metadata.timelineOffsetMs
+    val overlayContext = androidx.compose.ui.platform.LocalContext.current
+    val sponsorModes = remember(mediaKey) { videoImagePreferences(overlayContext).youtubeSponsorBlockModes }
     fun mode(segment: com.ambient.tv.domain.model.PlaybackSegment): String = when (segment.type) {
         "intro" -> metadata.introSkipMode
         "credits" -> metadata.creditsSkipMode
-        // SponsorBlock runs exclusively in PlaybackService, including during background play.
-        "sponsor" -> "off"
-        else -> "off"
+        // SponsorBlock "auto" runs exclusively in PlaybackService (also in the background);
+        // only categories set to "button" get the overlay's button here.
+        else -> com.ambient.tv.youtube.sponsorCategoryOf(segment.type)
+            ?.takeIf { sponsorModes[it] == "button" }?.let { "button" } ?: "off"
     }
     val segments = navigation.timeline.segments.filter {
         mode(it) != "off" && (it.endMs >= 0 || onPlayNext != null)
@@ -87,7 +90,7 @@ internal fun SegmentSkipOverlay(
     // Leaving the segment re-arms the manual button, but never automatic skipping.
     LaunchedEffect(segment) { if (segment != dismissed) dismissed = null }
     // SponsorBlock never displays a manual button; the service owns its automatic seek.
-    val visible = segment != null && segment.type != "sponsor" && segment != dismissed &&
+    val visible = segment != null && segment != dismissed &&
         !navigation.skipOverlayBlocked && !navigation.chaptersOpen && !nextUpVisible
     val restorePlayerFocus = !visible && focused
     LaunchedEffect(visible) {
@@ -109,9 +112,11 @@ internal fun SegmentSkipOverlay(
             navigation.returnToControls()
         }
         if (visible) {
+            val sponsorCategory = com.ambient.tv.youtube.sponsorCategoryOf(segment.type)
             val actionText = stringResource(when {
                 segment.endMs == -1L -> R.string.player_credits_next
                 segment.type == "credits" -> R.string.player_skip_credits
+                sponsorCategory != null -> sponsorSkipLabel(sponsorCategory)
                 else -> R.string.player_skip_intro
             })
             val setAutomatic = when (segment.type) {
@@ -160,4 +165,17 @@ internal fun SegmentSkipOverlay(
             }
         }
     }
+}
+
+/** "Skip sponsor", "Skip intro", … for a SponsorBlock category. */
+internal fun sponsorSkipLabel(category: String): Int = when (category) {
+    "sponsor" -> R.string.player_skip_sponsor
+    "selfpromo" -> R.string.player_skip_selfpromo
+    "interaction" -> R.string.player_skip_interaction
+    "intro" -> R.string.player_skip_intro
+    "outro" -> R.string.player_skip_outro
+    "preview" -> R.string.player_skip_preview
+    "filler" -> R.string.player_skip_filler
+    "music_offtopic" -> R.string.player_skip_music_offtopic
+    else -> R.string.player_skip_sponsor
 }

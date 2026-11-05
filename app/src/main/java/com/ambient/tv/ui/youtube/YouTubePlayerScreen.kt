@@ -323,6 +323,7 @@ fun YouTubePlayerScreen(
                 if (prefs.youtubeSponsorBlockEnabled && !playback.isLive && !isTrailer)
                     com.ambient.tv.youtube.youtubeSponsorTimeline(
                         playback.timeline, playback.sponsorSegments, playback.durationMs,
+                        prefs.youtubeSponsorBlockModes,
                     )
                 else playback.timeline
             }

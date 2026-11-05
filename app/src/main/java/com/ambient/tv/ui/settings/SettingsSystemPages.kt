@@ -936,6 +936,7 @@ internal fun LazyListScope.settingsSystemCategoryItems(
                             checked = uiState.youtubeSponsorBlockEnabled,
                             onCheckedChange = viewModel::onYoutubeSponsorBlockChanged,
                         )
+                        if (uiState.youtubeSponsorBlockEnabled) SponsorBlockCategorySettings()
                         TvSettingRow(
                             title = stringResource(R.string.settings_youtube_autoplay_next),
                             body = stringResource(R.string.settings_youtube_autoplay_next_hint),
@@ -1570,4 +1571,46 @@ private fun YouTubeTvLinkSection(viewModel: SettingsViewModel) {
             }
         }
     }
+}
+
+/** What happens per SponsorBlock category; saved right away, read when a video starts. */
+@Composable
+private fun SponsorBlockCategorySettings() {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val prefs = remember(context) { com.ambient.tv.ui.player.videoImagePreferences(context) }
+    var modes by remember { mutableStateOf(prefs.youtubeSponsorBlockModes) }
+    SettingsSubheader(stringResource(R.string.settings_youtube_sponsorblock_categories))
+    com.ambient.tv.youtube.SponsorBlockCategories.ALL.forEach { category ->
+        SettingsSelect(
+            label = stringResource(sponsorCategoryLabel(category)),
+            options = com.ambient.tv.youtube.SponsorBlockCategories.MODES.map { mode ->
+                SettingsSelectOption(
+                    text = stringResource(sponsorModeLabel(mode)),
+                    selected = modes[category] == mode,
+                    onClick = {
+                        modes = modes + (category to mode)
+                        prefs.youtubeSponsorBlockModes = modes
+                    },
+                )
+            },
+        )
+    }
+}
+
+private fun sponsorCategoryLabel(category: String): Int = when (category) {
+    "sponsor" -> R.string.sponsorblock_category_sponsor
+    "selfpromo" -> R.string.sponsorblock_category_selfpromo
+    "interaction" -> R.string.sponsorblock_category_interaction
+    "intro" -> R.string.sponsorblock_category_intro
+    "outro" -> R.string.sponsorblock_category_outro
+    "preview" -> R.string.sponsorblock_category_preview
+    "filler" -> R.string.sponsorblock_category_filler
+    else -> R.string.sponsorblock_category_music_offtopic
+}
+
+private fun sponsorModeLabel(mode: String): Int = when (mode) {
+    "auto" -> R.string.sponsorblock_mode_auto
+    "button" -> R.string.sponsorblock_mode_button
+    "mark" -> R.string.sponsorblock_mode_mark
+    else -> R.string.sponsorblock_mode_off
 }
