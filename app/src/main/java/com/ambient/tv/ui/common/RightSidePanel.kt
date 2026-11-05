@@ -399,6 +399,8 @@ fun RightSideLazyPanel(
     closeInsteadOfBack: Boolean = false,
     requestHeaderFocus: Boolean = true,
     onOutsideTap: (() -> Unit)? = onBack,
+    /** Pinned action above the lazy list; not part of its scroll state. */
+    header: (@Composable () -> Unit)? = null,
     content: LazyListScope.() -> Unit,
 ) {
     val listState = androidx.compose.foundation.lazy.rememberLazyListState()
@@ -420,7 +422,7 @@ fun RightSideLazyPanel(
         } else null,
         canScrollBackward = listState.canScrollBackward,
         canScrollForward = listState.canScrollForward,
-        header = null,
+        header = header,
         onOutsideTap = onOutsideTap,
         retainFocus = true,
     ) {
