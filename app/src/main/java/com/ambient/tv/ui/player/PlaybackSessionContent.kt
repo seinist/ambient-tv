@@ -157,8 +157,27 @@ fun PlaybackSessionContent(
     val changingItem = LocalPlayerChangingItem.current || snapshot.replacingSource
     val ownsSnapshot = snapshot.metadata?.route == metadata.route
     val canOfferNext = acquired && ownsSnapshot && !changingItem && linkCreditsToNextUp && !queuePending
+    // With the Next Up card disabled, autoplay should hand off directly when a SponsorBlock
+    // auto-skip covers the actual EOF. Otherwise the service seeks into the last 1.5 seconds
+    // and an imprecise/keyframe-decoding backend can keep repeating that tail without EOF.
+    // Preserve still-watching confirmation, disabled SponsorBlock, manual categories, sleep
+    // timers and post-credit scenes (segments ending before EOF).
+    val terminalSponsorHandoff = canOfferNext && !metadata.successorsLoading && !navigation.skipOverlayBlocked &&
+        !navigation.chaptersOpen && candidateKey != dismissedKey && candidateKey != handledKey &&
+        metadata.source == "youtube" && metadata.sponsorSkipEnabled && snapshot.status.playing &&
+        run {
+            val sponsorSettings = videoImagePreferences(androidx.compose.ui.platform.LocalContext.current)
+            sponsorSettings.youtubeSponsorBlockEnabled && terminalSponsorAutoAdvance(
+                positionMs, durationMs,
+                (metadata.resumeState as? com.ambient.tv.youtube.YouTubePlayback)?.sponsorSegments.orEmpty(),
+                sponsorSettings.youtubeSponsorBlockEffectiveModes,
+                autoplay = config.autoplay,
+                showOverlay = config.showOverlay,
+                stillWatching = stillWatching,
+            )
+        }
     val nextUpDue = canOfferNext && !navigation.skipOverlayBlocked && !navigation.chaptersOpen && candidateKey != dismissedKey && candidateKey != handledKey &&
-        (atEnd || timing.offer)
+        (atEnd || timing.offer || terminalSponsorHandoff)
     // A hidden overlay still has to ask the still-watching question at the end.
     val showNextUp = nextUpDue && (config.showOverlay || (atEnd && stillWatching))
 
@@ -249,7 +268,13 @@ fun PlaybackSessionContent(
     // "0" forever. Once the countdown has reached 0, hand over after a short grace for a real EOF.
     val countdownExpired = !atEnd && !creditsDue && nextUpDue && config.autoplay && !stillWatching &&
         creditsRemainingMs == null && timing.remainingMs <= 0L && snapshot.wantsToPlay
-    LaunchedEffect(acquired, atEnd, creditsDue, countdownExpired, candidateKey, showNextUp, nextUpDue, config.autoplay, stillWatching, queuePending, changingItem, metadata.successorsLoading, snapshot.generation) {
+    LaunchedEffect(acquired, atEnd, creditsDue, countdownExpired, terminalSponsorHandoff, candidateKey, showNextUp, nextUpDue, config.autoplay, stillWatching, queuePending, changingItem, metadata.successorsLoading, snapshot.generation) {
+        if (terminalSponsorHandoff) {
+            // This is the same guarded, once-per-candidate transition as ordinary EOF.
+            // It runs only with an actual next item and only for an auto-skipped EOF range.
+            playNext(automatic = true)
+            return@LaunchedEffect
+        }
         if (countdownExpired) {
             kotlinx.coroutines.delay(NEXT_UP_EOF_GRACE_MS)
             val current = BackgroundPlaybackSession.snapshot.value
