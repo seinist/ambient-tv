@@ -268,6 +268,9 @@ internal fun PlayerDetailDialog(
             .pointerInput(Unit) { detectTapGestures { if (interactive) onClose() } },
     ) {
         val maxCardHeight = maxHeight * if (handheld) 0.86f else 0.84f
+        // Capture the BoxWithConstraints scope before entering ColumnScope (which shadows
+        // maxWidth). This also reflects the actual card width, not the entire TV viewport.
+        val dialogWidth = if (handheld) maxWidth else minOf(maxWidth * 0.74f, 1180.dp)
         val shape = if (handheld) RoundedCornerShape(topStart = tokens.panelRadius, topEnd = tokens.panelRadius)
             else RoundedCornerShape(tokens.panelRadius)
         Column(
@@ -301,7 +304,7 @@ internal fun PlayerDetailDialog(
             // Only the description/metadata column scrolls. Artwork stays pinned at the
             // left on TV and landscape; on a narrow phone it stays above the text viewport.
             // The footer remains outside this viewport, so Close is always accessible.
-            val sideBySide = playerDetailSideBySide(maxWidth, handheld)
+            val sideBySide = playerDetailSideBySide(dialogWidth, handheld)
             Box(Modifier.weight(1f, fill = false)) {
                 if (sideBySide) {
                     Row(Modifier.fillMaxWidth(),
