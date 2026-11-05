@@ -808,7 +808,8 @@ private fun YouTubeSearchRow(youtubeItems: List<YouTubeItem>, onClick: (String) 
                     ) {
                         ArtworkImage(model = item.imageUrl, title = item.title, modifier = Modifier.fillMaxWidth().aspectRatio(16f / 9f).clip(RoundedCornerShape(10.dp)), contentScale = ContentScale.Crop)
                         CenteredMarqueeTitle(item.title, focused = focused, style = MaterialTheme.typography.titleSmall)
-                        item.author?.let {
+                        val info = com.ambient.tv.ui.youtube.youtubeCardInfo(item)
+                        listOfNotNull(info.channel, info.details.joinToString("  ·  ").takeIf(String::isNotBlank)).forEach {
                             CenteredMarqueeTitle(
                                 it,
                                 focused = focused,

@@ -54,9 +54,24 @@ internal fun applyYouTubeViewOptions(
     }
 }
 
-/** Second gray line for info list / cinematic. Skips channel text already shown in the primary line. */
-internal fun youtubeInfoSubtitle(item: YouTubeItem): String? {
-    val extra = item.subtitle?.trim()?.takeIf { it.isNotEmpty() } ?: return null
-    val primary = item.author?.trim()?.takeIf { it.isNotEmpty() } ?: extra
-    return extra.takeUnless { it.equals(primary, ignoreCase = true) }
+/** Card text from SmartTube's second title ("@kanal • 1,2 Mio. Aufrufe • vor 2 Jahren"), without repeats. */
+internal data class YouTubeCardInfo(val channel: String?, val details: List<String>)
+
+internal fun youtubeCardInfo(item: YouTubeItem): YouTubeCardInfo {
+    val parts = item.subtitle.orEmpty().split('•', '·').map(String::trim).filter(String::isNotEmpty)
+        .distinctBy(String::lowercase)
+    val author = item.author?.trim()?.takeIf(String::isNotEmpty)
+    val published = item.publishedText?.trim()?.takeIf(String::isNotEmpty)
+    fun isHandle(s: String) = s.startsWith("@")
+    fun isPublished(s: String) = published != null && s.equals(published, ignoreCase = true)
+    val channel = author
+        ?: parts.firstOrNull { !isHandle(it) && !it.any(Char::isDigit) }
+        ?: parts.firstOrNull(::isHandle)
+    val sameChannel = { s: String ->
+        channel != null && (s.equals(channel, ignoreCase = true) || isHandle(s) ||
+            s.removePrefix("@").replace(" ", "").equals(channel.replace(" ", ""), ignoreCase = true))
+    }
+    val extra = parts.filterNot { sameChannel(it) || isPublished(it) }
+    val showPublished = published?.takeIf { !item.isUpcoming && !item.isLive }
+    return YouTubeCardInfo(channel, extra + listOfNotNull(showPublished))
 }

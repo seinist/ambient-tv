@@ -824,14 +824,6 @@ private fun YouTubeListItem(
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
-                if (detailed) youtubeInfoSubtitle(item)?.let {
-                    MarqueeTitle(
-                        it,
-                        focused = focused,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
             }
         }
     }
@@ -918,7 +910,6 @@ private fun Cinematic(
             Column(Modifier.padding(horizontal = screenGutter()).fillMaxWidth(.62f), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text(rememberDeArrowItem(hero).title, style = MaterialTheme.typography.displaySmall, maxLines = 2)
                 Text(meta(hero), style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                youtubeInfoSubtitle(hero)?.let { Text(it, style = MaterialTheme.typography.bodyMedium, maxLines = 4, overflow = TextOverflow.Ellipsis) }
             }
             LazyRow(
                 state = rowState,
@@ -1011,7 +1002,6 @@ private fun YouTubeCinematicSection(
                 Column(Modifier.padding(horizontal = screenGutter(), vertical = 18.dp).fillMaxWidth(.72f), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text(rememberDeArrowItem(hero).title, style = MaterialTheme.typography.headlineMedium, maxLines = 2)
                     Text(meta(hero), style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    youtubeInfoSubtitle(hero)?.let { Text(it, style = MaterialTheme.typography.bodyMedium, maxLines = 3, overflow = TextOverflow.Ellipsis) }
                 }
                 val rowState = rememberBrowseRowState(
                     initialFirstVisibleItemIndex = if (rowId == focusTarget.rowId)
@@ -1377,9 +1367,9 @@ private fun Message(text: String, error: Boolean = false) =
 private fun meta(i: YouTubeItem) = listOfNotNull(metaChannel(i), metaDetails(i)).joinToString("  ·  ")
 
 /** First meta line of a card: the channel. */
-private fun metaChannel(i: YouTubeItem): String? = (i.author ?: i.subtitle)?.takeIf(String::isNotBlank)
+private fun metaChannel(i: YouTubeItem): String? = youtubeCardInfo(i).channel
 
-/** Second meta line: duration or live state, then when it was published. */
+/** Second meta line: duration or live state, then views and when it was published. */
 @Composable
 private fun metaDetails(i: YouTubeItem): String? = listOfNotNull(
     when {
@@ -1390,8 +1380,8 @@ private fun metaDetails(i: YouTubeItem): String? = listOfNotNull(
         i.isLive -> stringResource(R.string.youtube_live_badge)
         else -> i.durationMs.takeIf { it > 0 }?.let(::duration)
     },
-    i.subtitle?.takeIf { i.isUpcoming && i.scheduledStartMs == null && i.author != null && it != i.author },
-    i.publishedText?.takeIf { !i.isUpcoming && !i.isLive },
+    // A known start time already says when; SmartTube's own upcoming text would repeat it.
+    *youtubeCardInfo(i).details.takeUnless { i.isUpcoming && i.scheduledStartMs != null }.orEmpty().toTypedArray(),
 ).joinToString("  ·  ").takeIf(String::isNotBlank)
 private fun duration(ms: Long): String = com.ambient.tv.ui.common.formatPlaybackClock(ms)
 @Composable private fun modeLabel(m:YouTubeViewMode)=stringResource(when(m){YouTubeViewMode.LANDSCAPE->R.string.library_view_landscape;YouTubeViewMode.LIST->R.string.library_view_list;YouTubeViewMode.INFO_LIST->R.string.library_view_info_list;YouTubeViewMode.WALL->R.string.library_view_wall;YouTubeViewMode.CINEMATIC->R.string.library_view_cinematic})

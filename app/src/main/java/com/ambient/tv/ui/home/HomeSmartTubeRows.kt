@@ -33,8 +33,8 @@ internal fun YouTubeItem.asHomeMediaItem(): MediaItem = MediaItem(
     thumbUrl = imageUrl,
     artUrl = backgroundUrl ?: imageUrl,
     year = null,
-    summary = subtitle ?: author,
-    tagline = author,
+    summary = com.ambient.tv.ui.youtube.youtubeCardInfo(this).details.joinToString("  ·  ").takeIf(String::isNotBlank),
+    tagline = com.ambient.tv.ui.youtube.youtubeCardInfo(this).channel,
     durationMs = durationMs.takeIf { it > 0 },
     viewOffsetMs = if (!isLive && durationMs > 0 && percentWatched > 0)
         durationMs * percentWatched.coerceIn(0, 100) / 100 else null,

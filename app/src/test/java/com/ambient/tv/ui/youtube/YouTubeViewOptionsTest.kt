@@ -58,12 +58,15 @@ class YouTubeViewOptionsTest {
         assertEquals(YouTubeSelectionRoute.Play("abc"), youtubeSelectionRoute("details-from-library", "abc"))
     }
 
-    @Test fun infoListDoesNotRepeatChannelUnderTheTitle() {
-        val channelOnly = YouTubeItem(videoId = "a", title = "Video", subtitle = "Channel", author = "Channel")
-        val subtitleAsAuthor = YouTubeItem(videoId = "b", title = "Video", subtitle = "Channel")
-        val distinct = YouTubeItem(videoId = "c", title = "Video", subtitle = "1.2M views", author = "Channel")
-        assertEquals(null, youtubeInfoSubtitle(channelOnly))
-        assertEquals(null, youtubeInfoSubtitle(subtitleAsAuthor))
-        assertEquals("1.2M views", youtubeInfoSubtitle(distinct))
+    @Test fun cardInfoDropsHandleAndRepeatsAndKeepsViews() {
+        val regular = YouTubeItem(videoId = "a", title = "Video", author = "Kanal",
+            subtitle = "@kanal • 1,2 Mio. Aufrufe • vor 2 Jahren", publishedText = "vor 2 Jahren")
+        assertEquals(YouTubeCardInfo("Kanal", listOf("1,2 Mio. Aufrufe", "vor 2 Jahren")), youtubeCardInfo(regular))
+        val kids = YouTubeItem(videoId = "b", title = "Video", subtitle = "Kids Kanal • 300 Aufrufe • vor 1 Jahr")
+        assertEquals(YouTubeCardInfo("Kids Kanal", listOf("300 Aufrufe", "vor 1 Jahr")), youtubeCardInfo(kids))
+        val handleOnly = YouTubeItem(videoId = "c", title = "Video", subtitle = "@kanal • 5 Aufrufe")
+        assertEquals(YouTubeCardInfo("@kanal", listOf("5 Aufrufe")), youtubeCardInfo(handleOnly))
+        val channelOnly = YouTubeItem(videoId = "d", title = "Video", subtitle = "Kanal", author = "Kanal")
+        assertEquals(YouTubeCardInfo("Kanal", emptyList()), youtubeCardInfo(channelOnly))
     }
 }
