@@ -172,8 +172,7 @@ fun ProjectMVisualizer(
         while (true) {
             delay(intervalSeconds.coerceIn(10, 600) * 1000L)
             if (!browser.locked && availablePresets.isNotEmpty()) {
-                val next = (browser.indexOf(browser.currentPath) + 1) % availablePresets.size
-                load(availablePresets[next], true)
+                browser.nextPreset()?.let { load(it, true) }
             }
         }
     }

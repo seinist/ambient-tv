@@ -39,6 +39,14 @@ class ProjectMBrowser(
             showPresetNameState = value
             preferences.projectmShowPresetName = value
         }
+    private var shuffleState by mutableStateOf(preferences.projectmPresetShuffle)
+    var shuffle: Boolean
+        get() = shuffleState
+        set(value) {
+            shuffleState = value
+            preferences.projectmPresetShuffle = value
+        }
+    private val recent = ArrayDeque<String>()
     var intervalSeconds by mutableIntStateOf(preferences.projectmPresetIntervalSeconds)
     var transitionSeconds by mutableIntStateOf(preferences.projectmTransitionSeconds)
     var qualityKey by mutableStateOf(preferences.projectmQualityKey)
@@ -116,6 +124,19 @@ class ProjectMBrowser(
     fun presetData(preset: ProjectMPreset): String? = repository.readPreset(preset)
 
     fun textureDirectory() = repository.textureDirectory()
+
+    /** Next preset of the automatic rotation: random without recent repeats, or list order. */
+    fun nextPreset(): ProjectMPreset? {
+        val list = presets()
+        if (list.isEmpty()) return null
+        val next = if (shuffle && list.size > 1) {
+            val fresh = list.filter { it.assetPath != currentPath && it.assetPath !in recent }
+            (fresh.ifEmpty { list.filter { it.assetPath != currentPath } }).random()
+        } else list[(indexOf(currentPath) + 1) % list.size]
+        recent.addLast(next.assetPath)
+        while (recent.size > (list.size / 2).coerceIn(1, 50)) recent.removeFirst()
+        return next
+    }
 
     fun indexOf(path: String?): Int = presets().indexOfFirst { it.assetPath == path }.takeIf { it >= 0 } ?: 0
 }

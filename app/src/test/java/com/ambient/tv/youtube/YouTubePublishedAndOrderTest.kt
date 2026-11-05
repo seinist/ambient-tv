@@ -1,8 +1,5 @@
 package com.ambient.tv.youtube
 
-import com.ambient.tv.ui.youtube.YouTubeFilter
-import com.ambient.tv.ui.youtube.YouTubeSort
-import com.ambient.tv.ui.youtube.applyYouTubeViewOptions
 import org.junit.Assert.*
 import org.junit.Test
 
@@ -17,15 +14,6 @@ class YouTubePublishedAndOrderTest {
         assertEquals(now - day, youtubePublishedAtMs("Gestern", now))
         assertNull(youtubePublishedAtMs("Premiere", now))
         assertNull(youtubePublishedAtMs(null, now))
-    }
-
-    @Test fun timeFiltersHideOlderAndUndatedVideos() {
-        val fresh = YouTubeItem("a", "A", publishedAtMs = now - 2 * 3_600_000L)
-        val week = YouTubeItem("b", "B", publishedAtMs = now - 5 * day)
-        val undated = YouTubeItem("c", "C")
-        val rows = listOf(YouTubeRow("r", listOf(fresh, week, undated)))
-        assertEquals(listOf("a"), applyYouTubeViewOptions(rows, YouTubeSort.DEFAULT, YouTubeFilter.TODAY, nowMs = now).single().items.map { it.videoId })
-        assertEquals(listOf("a", "b"), applyYouTubeViewOptions(rows, YouTubeSort.DEFAULT, YouTubeFilter.WEEK, nowMs = now).single().items.map { it.videoId })
     }
 
     @Test fun nextVisitAdoptsTheServerOrderOfTheLastCompletedLoad() {

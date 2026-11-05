@@ -404,6 +404,7 @@ fun RightSideLazyPanel(
     val listState = androidx.compose.foundation.lazy.rememberLazyListState()
     val scrollbarContentFocus = remember { FocusRequester() }
     val overflow = listState.canScrollForward || listState.canScrollBackward
+    val scrollbarFocus = remember { FocusRequester() }
     RightSidePanelChrome(
         title = title,
         onBack = onBack,
@@ -415,7 +416,7 @@ fun RightSideLazyPanel(
         scrollToTop = { listState.scrollToItem(0) },
         scrollToEnd = { listState.scrollToItem((listState.layoutInfo.totalItemsCount - 1).coerceAtLeast(0)) },
         scrollbar = if (overflow) {
-            { OverlayLazyScrollbar(listState, Modifier.fillMaxHeight(), contentFocus = scrollbarContentFocus) }
+            { OverlayLazyScrollbar(listState, Modifier.fillMaxHeight().focusRequester(scrollbarFocus), contentFocus = scrollbarContentFocus) }
         } else null,
         canScrollBackward = listState.canScrollBackward,
         canScrollForward = listState.canScrollForward,
@@ -423,18 +424,23 @@ fun RightSideLazyPanel(
         onOutsideTap = onOutsideTap,
         retainFocus = true,
     ) {
-        LazyColumn(
-            state = listState,
-            modifier = Modifier
-                .fillMaxWidth()
-                .fillMaxHeight()
-                .focusRequester(scrollbarContentFocus).focusGroup()
-                .padding(end = if (overflow) 16.dp else 0.dp)
-                .padding(vertical = 12.dp),
-            contentPadding = PaddingValues(horizontal = 6.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
-            content = content,
-        )
+        // Rows mark their rightmost control with LocalRightPanelScrollbarFocus so Right reaches the bar.
+        androidx.compose.runtime.CompositionLocalProvider(
+            LocalRightPanelScrollbarFocus provides if (overflow) scrollbarFocus else null,
+        ) {
+            LazyColumn(
+                state = listState,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .fillMaxHeight()
+                    .focusRequester(scrollbarContentFocus).focusGroup()
+                    .padding(end = if (overflow) 16.dp else 0.dp)
+                    .padding(vertical = 12.dp),
+                contentPadding = PaddingValues(horizontal = 6.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+                content = content,
+            )
+        }
     }
 }
 

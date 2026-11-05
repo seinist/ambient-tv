@@ -428,10 +428,6 @@
     <string name="youtube_sort_duration">Laufzeit</string>
     <string name="youtube_filter_live">Live &amp; demnächst</string>
     <string name="youtube_filter_shorts">Shorts</string>
-    <string name="youtube_filter_today">Heute</string>
-    <string name="youtube_filter_week">Diese Woche</string>
-    <string name="youtube_filter_month">Dieser Monat</string>
-    <string name="youtube_filter_year">Dieses Jahr</string>
     <string name="settings_overscan">Overscan</string>
     <string name="settings_overscan_hint">Verkleinert das Bild zum Rand hin, falls dein Fernseher die Ränder abschneidet.</string>
     <string name="settings_ui_scale">Oberflächengröße</string>
@@ -764,6 +760,9 @@
     <string name="settings_projectm_hint">Wechselt automatisch die Visualisierung.</string>
     <string name="settings_projectm_show_preset_name">Preset-Namen anzeigen</string>
     <string name="settings_projectm_show_preset_name_hint">Blendet den Namen bei jedem Preset-Wechsel für 2 Sekunden ein.</string>
+    <string name="settings_projectm_order">Reihenfolge</string>
+    <string name="settings_projectm_order_list">Der Reihe nach</string>
+    <string name="settings_projectm_order_shuffle">Zufällig</string>
     <string name="settings_projectm_interval">Preset-Wechsel</string>
     <string name="settings_projectm_transition">Übergang</string>
     <string name="settings_projectm_quality">Detailstufe</string>

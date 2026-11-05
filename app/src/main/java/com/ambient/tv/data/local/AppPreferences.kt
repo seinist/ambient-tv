@@ -1243,6 +1243,10 @@ class AppPreferences @Inject constructor(
         get() = prefs.getBoolean(KEY_PROJECTM_SHOW_PRESET_NAME, true)
         set(value) = prefs.edit { putBoolean(KEY_PROJECTM_SHOW_PRESET_NAME, value) }
 
+    var projectmPresetShuffle: Boolean
+        get() = prefs.getBoolean(KEY_PROJECTM_PRESET_SHUFFLE, true)
+        set(value) = prefs.edit { putBoolean(KEY_PROJECTM_PRESET_SHUFFLE, value) }
+
     var projectmPresetIntervalSeconds: Int
         get() = prefs.getInt(KEY_PROJECTM_PRESET_INTERVAL, 60).coerceIn(10, 600)
         set(value) = prefs.edit { putInt(KEY_PROJECTM_PRESET_INTERVAL, value.coerceIn(10, 600)) }
@@ -2442,6 +2446,7 @@ class AppPreferences @Inject constructor(
         const val KEY_TVH_AUDIO_PASSTHROUGH = "tvh_audio_passthrough"
         const val KEY_AUDIO_VISUALIZER_MODE = "audio_visualizer_mode"
         const val KEY_PROJECTM_SHOW_PRESET_NAME = "projectm_show_preset_name"
+        const val KEY_PROJECTM_PRESET_SHUFFLE = "projectm_preset_shuffle"
         const val KEY_PROJECTM_PRESET_INTERVAL = "projectm_preset_interval"
         const val KEY_PROJECTM_TRANSITION_SECONDS = "projectm_transition_seconds"
         const val KEY_PROJECTM_QUALITY = "projectm_quality"

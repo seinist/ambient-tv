@@ -26,7 +26,7 @@ class RadioBrowserRepository @Inject constructor(
         reverse: Boolean = true,
     ): RadioSearchPage {
         val safeOffset = offset.coerceAtLeast(0)
-        val safeLimit = limit.coerceIn(1, 100)
+        val safeLimit = limit.coerceIn(1, 500)
         val dtos = api.searchStations(
             name = query?.trim()?.takeIf(String::isNotBlank),
             countryCode = countryCode?.trim()?.uppercase()?.takeIf(String::isNotBlank),

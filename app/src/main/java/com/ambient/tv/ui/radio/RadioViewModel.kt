@@ -596,7 +596,7 @@ class RadioViewModel @Inject constructor(
                         language = facet?.id.takeIf { section == RadioSection.LANGUAGES },
                         tag = facet?.id.takeIf { section == RadioSection.GENRES },
                         offset = offset,
-                        limit = PAGE_SIZE,
+                        limit = if (facet != null) FACET_PAGE_SIZE else PAGE_SIZE,
                         order = "name",
                         reverse = descending,
                     )
@@ -619,6 +619,12 @@ class RadioViewModel @Inject constructor(
                     error = false,
                     contentReady = true,
                 )
+                // A country, language or genre is loaded completely, so the A–Z index and the
+                // list cover every station, not only the pages reached by scrolling.
+                if (facet != null && _state.value.hasMore) {
+                    _state.value = _state.value.copy(loadingMore = true)
+                    loadStations(reset = false)
+                }
             }.onFailure { error ->
                 timber.log.Timber.tag("RadioBrowser").w(error, "Failed to load stations for %s", section.key)
                 _state.value = _state.value.copy(
@@ -665,6 +671,7 @@ class RadioViewModel @Inject constructor(
 
     companion object {
         private const val PAGE_SIZE = 48
+        private const val FACET_PAGE_SIZE = 500
         private const val POPULAR_LIMIT = 100
         private const val RADIO_VIEW_STATE_KEY = "radio"
     }
