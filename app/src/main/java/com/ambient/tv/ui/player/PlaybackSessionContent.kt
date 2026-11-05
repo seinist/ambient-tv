@@ -162,20 +162,18 @@ fun PlaybackSessionContent(
     // and an imprecise/keyframe-decoding backend can keep repeating that tail without EOF.
     // Preserve still-watching confirmation, disabled SponsorBlock, manual categories, sleep
     // timers and post-credit scenes (segments ending before EOF).
+    val sponsorSettings = videoImagePreferences(androidx.compose.ui.platform.LocalContext.current)
     val terminalSponsorHandoff = canOfferNext && !metadata.successorsLoading && !navigation.skipOverlayBlocked &&
         !navigation.chaptersOpen && candidateKey != dismissedKey && candidateKey != handledKey &&
         metadata.source == "youtube" && metadata.sponsorSkipEnabled && snapshot.status.playing &&
-        run {
-            val sponsorSettings = videoImagePreferences(androidx.compose.ui.platform.LocalContext.current)
-            sponsorSettings.youtubeSponsorBlockEnabled && terminalSponsorAutoAdvance(
-                positionMs, durationMs,
-                (metadata.resumeState as? com.ambient.tv.youtube.YouTubePlayback)?.sponsorSegments.orEmpty(),
-                sponsorSettings.youtubeSponsorBlockEffectiveModes,
-                autoplay = config.autoplay,
-                showOverlay = config.showOverlay,
-                stillWatching = stillWatching,
-            )
-        }
+        sponsorSettings.youtubeSponsorBlockEnabled && terminalSponsorAutoAdvance(
+            positionMs, durationMs,
+            (metadata.resumeState as? com.ambient.tv.youtube.YouTubePlayback)?.sponsorSegments.orEmpty(),
+            sponsorSettings.youtubeSponsorBlockEffectiveModes,
+            autoplay = config.autoplay,
+            showOverlay = config.showOverlay,
+            stillWatching = stillWatching,
+        )
     val nextUpDue = canOfferNext && !navigation.skipOverlayBlocked && !navigation.chaptersOpen && candidateKey != dismissedKey && candidateKey != handledKey &&
         (atEnd || timing.offer || terminalSponsorHandoff)
     // A hidden overlay still has to ask the still-watching question at the end.
