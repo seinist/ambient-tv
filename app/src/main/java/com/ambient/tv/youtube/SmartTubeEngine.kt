@@ -534,7 +534,7 @@ class SmartTubeEngine @Inject constructor(
             YouTubeDeviceVideo.videoTarget(context, appPreferences.youtubeVideoPreset, appPreferences.youtubeMaxVideoHeight),
             // SDR baseline; the player upgrades to HDR where its output path shows it.
             YouTubeDeviceVideo.decodeCheck(),
-            youtubePreferredAudioLanguage(appPreferences.youtubeAudioLanguage),
+            youtubePreferredAudioLanguage(appPreferences.playbackAudioLanguage),
         )
         // VLC/MPV never read the MPD; building it (with OTF init-segment fetches) only delays
         // their start. It is still built in the background for a later switch to Media3.

@@ -5,7 +5,6 @@ import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.QueueMusic
-import androidx.compose.material.icons.filled.Speed
 import androidx.compose.material.icons.filled.Sync
 import androidx.compose.material.icons.filled.Public
 import androidx.compose.material.icons.automirrored.filled.Subject
@@ -438,23 +437,6 @@ fun UnifiedBackendPlayerPanel(
                             selectedKey = speed.toString(),
                             onSelected = { it.toFloatOrNull()?.let(onSpeedChanged) },
                         )
-                        // SmartTube: keep the chosen speed for this channel's videos (SmartTube setting).
-                        val speedSource = com.ambient.tv.ui.player.BackgroundPlaybackSession.snapshot.collectAsState().value.metadata?.source
-                        if (speedSource == "youtube") {
-                            val context = androidx.compose.ui.platform.LocalContext.current
-                            val prefs = remember(context) { com.ambient.tv.ui.player.videoImagePreferences(context) }
-                            var rememberSpeed by remember { androidx.compose.runtime.mutableStateOf(prefs.youtubeRememberChannelSpeed) }
-                            PlayerPanelEntry(
-                                icon = Icons.Filled.Speed,
-                                title = stringResource(R.string.settings_youtube_remember_speed),
-                                value = stringResource(if (rememberSpeed) R.string.player_on else R.string.player_off),
-                                onClick = {
-                                    rememberSpeed = !rememberSpeed
-                                    prefs.youtubeRememberChannelSpeed = rememberSpeed
-                                    if (rememberSpeed) com.ambient.tv.youtube.YouTubeSpeedMemory.chosen(prefs, speed)
-                                },
-                            )
-                        }
                     }
                 },
                 hasOutputExtras = hasVideoExtras || videoExtrasTitle != null,

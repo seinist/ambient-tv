@@ -1277,35 +1277,6 @@ class AppPreferences @Inject constructor(
         get() = com.ambient.tv.youtube.SponsorBlockCategories.parse(prefs.getString("youtube_sponsorblock_modes", null))
         set(value) = prefs.edit { putString("youtube_sponsorblock_modes", com.ambient.tv.youtube.SponsorBlockCategories.format(value)) }
 
-    /** SmartTube: playback speed a video starts with (0.5–2.0). */
-    var youtubeDefaultSpeed: Float
-        get() = prefs.getFloat("youtube_default_speed", 1f).coerceIn(0.25f, 3f)
-        set(value) = prefs.edit { putFloat("youtube_default_speed", value.coerceIn(0.25f, 3f)) }
-
-    /** SmartTube: a speed chosen in the player is kept for that channel's next videos. */
-    var youtubeRememberChannelSpeed: Boolean
-        get() = prefs.getBoolean("youtube_remember_channel_speed", false)
-        set(value) = prefs.edit { putBoolean("youtube_remember_channel_speed", value) }
-
-    /** Channel key → remembered speed (only with [youtubeRememberChannelSpeed]). */
-    var youtubeChannelSpeeds: Map<String, Float>
-        get() = prefs.getString("youtube_channel_speeds", null).orEmpty().split('\n').mapNotNull { line ->
-            val key = line.substringBeforeLast('=', "").takeIf(String::isNotBlank) ?: return@mapNotNull null
-            line.substringAfterLast('=').toFloatOrNull()?.let { key to it }
-        }.toMap()
-        set(value) = prefs.edit { putString("youtube_channel_speeds",
-            value.entries.toList().takeLast(500).joinToString("\n") { "${it.key.replace("\n", " ")}=${it.value}" }) }
-
-    /** SmartTube audio track: "original" (YouTube's original language) or "ui" (the app language when offered). */
-    var youtubeAudioLanguage: String
-        get() = prefs.getString("youtube_audio_language", null)?.takeIf { it in setOf("original", "ui") } ?: "original"
-        set(value) = prefs.edit { putString("youtube_audio_language", value.takeIf { it in setOf("original", "ui") } ?: "original") }
-
-    /** SmartTube subtitle language; [LanguagePreferences.AUTO] follows the app language. */
-    var youtubeSubtitleLanguage: String
-        get() = prefs.getString("youtube_subtitle_language", null)?.takeIf(String::isNotBlank) ?: LanguagePreferences.AUTO
-        set(value) = prefs.edit { putString("youtube_subtitle_language", value.ifBlank { LanguagePreferences.AUTO }) }
-
     /** SmartTube: offer YouTube's automatically generated captions. */
     var youtubeAutoCaptions: Boolean
         get() = prefs.getBoolean("youtube_auto_captions", true)

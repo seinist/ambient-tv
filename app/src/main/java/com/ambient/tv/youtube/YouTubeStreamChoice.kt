@@ -336,7 +336,8 @@ fun youtubePickAudio(formats: List<YouTubeAdaptiveFormat>, key: String, preferLa
         // Automatic with a preferred language: that language (its original track first), if offered.
         .ifEmpty {
             if (key != YOUTUBE_STREAM_AUTO || preferLanguage == null) emptyList()
-            else audio.filter { youtubeSameLanguage(it.audioLanguage(), preferLanguage) }
+            // YouTube's machine dubs are never picked by preference, only manually.
+            else audio.filter { youtubeSameLanguage(it.audioLanguage(), preferLanguage) && it.audioKind() != "dubbed-auto" }
                 .sortedBy { if (it.originalAudio()) 0 else 1 }
         }
         .ifEmpty { audio.filter { it.originalAudio() } }
@@ -386,6 +387,9 @@ fun youtubeSameLanguage(a: String?, b: String?): Boolean {
     return x == y
 }
 
-/** Language the SmartTube audio preference asks for; null keeps the original track. */
-fun youtubePreferredAudioLanguage(preference: String): String? =
-    if (preference == "ui") com.ambient.tv.data.local.LanguagePreferences.systemLanguageTag() else null
+/**
+ * Language of the global audio setting (resolved playback language); null for "original", which
+ * keeps YouTube's original track.
+ */
+fun youtubePreferredAudioLanguage(playbackAudioLanguage: String): String? =
+    playbackAudioLanguage.takeUnless { it == com.ambient.tv.data.local.LanguagePreferences.ORIGINAL || it.isBlank() }

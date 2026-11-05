@@ -1628,42 +1628,12 @@ private fun sponsorModeLabel(mode: String): Int = when (mode) {
 private fun YouTubeExtraSettings() {
     val context = androidx.compose.ui.platform.LocalContext.current
     val prefs = remember(context) { com.ambient.tv.ui.player.videoImagePreferences(context) }
-    var speed by remember { mutableStateOf(prefs.youtubeDefaultSpeed) }
-    var rememberSpeed by remember { mutableStateOf(prefs.youtubeRememberChannelSpeed) }
-    var audio by remember { mutableStateOf(prefs.youtubeAudioLanguage) }
-    var subtitleLanguage by remember { mutableStateOf(prefs.youtubeSubtitleLanguage) }
     var autoCaptions by remember { mutableStateOf(prefs.youtubeAutoCaptions) }
     var historyPaused by remember { mutableStateOf(prefs.youtubeHistoryPaused) }
     var hideShorts by remember { mutableStateOf(prefs.youtubeHideShorts) }
     var hideLive by remember { mutableStateOf(prefs.youtubeHideLiveInSubscriptions) }
     var deArrow by remember { mutableStateOf(prefs.youtubeDeArrow) }
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        SettingsSelect(
-            label = stringResource(R.string.settings_youtube_default_speed),
-            options = listOf(0.5f, 0.75f, 1f, 1.25f, 1.5f, 1.75f, 2f).map { value ->
-                SettingsSelectOption(text = if (value == 1f) "1×" else "${value}×", selected = speed == value,
-                    onClick = { speed = value; prefs.youtubeDefaultSpeed = value })
-            },
-        )
-        TvSettingRow(stringResource(R.string.settings_youtube_remember_speed), stringResource(R.string.settings_youtube_remember_speed_hint),
-            rememberSpeed, { rememberSpeed = it; prefs.youtubeRememberChannelSpeed = it })
-        SettingsSelect(
-            label = stringResource(R.string.settings_youtube_audio_language),
-            options = listOf("original" to R.string.settings_youtube_audio_original, "ui" to R.string.settings_youtube_audio_system).map { (key, label) ->
-                SettingsSelectOption(text = stringResource(label), selected = audio == key,
-                    onClick = { audio = key; prefs.youtubeAudioLanguage = key })
-            },
-        )
-        SettingsSelect(
-            label = stringResource(R.string.settings_youtube_subtitle_language),
-            options = (listOf(com.ambient.tv.data.local.LanguagePreferences.AUTO to stringResource(R.string.player_automatic)) +
-                listOf("de", "en", "fr", "es", "it", "nl", "pl", "tr").map { tag ->
-                    tag to java.util.Locale.forLanguageTag(tag).let { it.getDisplayLanguage(it).replaceFirstChar(Char::titlecase) }
-                }).map { (key, label) ->
-                SettingsSelectOption(text = label, selected = subtitleLanguage == key,
-                    onClick = { subtitleLanguage = key; prefs.youtubeSubtitleLanguage = key })
-            },
-        )
         TvSettingRow(stringResource(R.string.settings_youtube_auto_captions), stringResource(R.string.settings_youtube_auto_captions_hint),
             autoCaptions, { autoCaptions = it; prefs.youtubeAutoCaptions = it })
         TvSettingRow(stringResource(R.string.settings_youtube_history_paused), stringResource(R.string.settings_youtube_history_paused_hint),

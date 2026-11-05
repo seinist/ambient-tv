@@ -623,7 +623,6 @@ object BackgroundPlaybackSession {
                 val subtitleDefaults = if (metadata?.source == "youtube") prefs.subtitlePreferences.copy(
                     mode = if (prefs.youtubeSubtitlesEnabled) com.ambient.tv.data.local.SubtitleMode.FULL
                         else com.ambient.tv.data.local.SubtitleMode.OFF,
-                    language = prefs.youtubeSubtitleLanguage,
                     forcedInUiLanguage = false,
                 ) else prefs.subtitlePreferences
                 subtitlePolicy.apply(player, metadata?.subtitleTracks.orEmpty(), subtitleDefaults,

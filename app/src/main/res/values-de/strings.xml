@@ -936,13 +936,6 @@
     <string name="settings_spotify_visual_off">Aus</string>
     <string name="settings_spotify_visual_cover">Cover-Atmosphäre</string>
     <string name="settings_youtube_sponsorblock_title">SponsorBlock</string>
-    <string name="settings_youtube_default_speed">Standard-Geschwindigkeit</string>
-    <string name="settings_youtube_remember_speed">Geschwindigkeit pro Kanal merken</string>
-    <string name="settings_youtube_remember_speed_hint">Eine im Player gewählte Geschwindigkeit gilt wieder für die nächsten Videos dieses Kanals.</string>
-    <string name="settings_youtube_audio_language">Tonspur</string>
-    <string name="settings_youtube_audio_original">Originalsprache</string>
-    <string name="settings_youtube_audio_system">Systemsprache, falls vorhanden</string>
-    <string name="settings_youtube_subtitle_language">Untertitelsprache</string>
     <string name="settings_youtube_auto_captions">Automatische Untertitel</string>
     <string name="settings_youtube_auto_captions_hint">Auch von YouTubes Spracherkennung erzeugte Untertitel anbieten.</string>
     <string name="settings_youtube_history_paused">Wiedergabeverlauf pausieren</string>

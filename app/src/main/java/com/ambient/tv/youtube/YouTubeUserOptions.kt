@@ -1,6 +1,5 @@
 package com.ambient.tv.youtube
 
-import com.ambient.tv.data.local.AppPreferences
 import java.security.MessageDigest
 import java.util.concurrent.ConcurrentHashMap
 import kotlinx.coroutines.Dispatchers
@@ -31,24 +30,6 @@ fun youtubeFilterItems(items: List<YouTubeItem>, scope: String, hideShorts: Bool
         (hideShorts && item.isShorts && scope != "feed:shorts") ||
             (hideLiveInSubscriptions && scope == "feed:subscriptions" && (item.isLive || item.isUpcoming))
     }
-
-/** Start speed and per-channel memory of the SmartTube player. */
-object YouTubeSpeedMemory {
-    /** Channel of the video now playing (channel id, else the author name). */
-    @Volatile var currentChannel: String? = null
-
-    fun startSpeed(prefs: AppPreferences, channel: String? = currentChannel): Float =
-        channel?.takeIf { prefs.youtubeRememberChannelSpeed }?.let { prefs.youtubeChannelSpeeds[it] }
-            ?: prefs.youtubeDefaultSpeed
-
-    fun chosen(prefs: AppPreferences, speed: Float, channel: String? = currentChannel) {
-        if (!prefs.youtubeRememberChannelSpeed || channel.isNullOrBlank()) return
-        val map = prefs.youtubeChannelSpeeds.toMutableMap()
-        map.remove(channel)
-        if (speed != prefs.youtubeDefaultSpeed) map[channel] = speed
-        prefs.youtubeChannelSpeeds = map
-    }
-}
 
 /** DeArrow's community title and thumbnail for one video. */
 data class DeArrowBranding(val title: String?, val thumbnailTimeSeconds: Double?)

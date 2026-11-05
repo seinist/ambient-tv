@@ -147,10 +147,6 @@ data class SettingsBackup(
     val youtubeSponsorBlockModes: String? = null,
     val youtubeSponsorBlockShowSegments: Boolean = true,
     /** Further SmartTube options; null in older backups (left unchanged on import). */
-    val youtubeDefaultSpeed: Float? = null,
-    val youtubeRememberChannelSpeed: Boolean? = null,
-    val youtubeAudioLanguage: String? = null,
-    val youtubeSubtitleLanguage: String? = null,
     val youtubeAutoCaptions: Boolean? = null,
     val youtubeHistoryPaused: Boolean? = null,
     val youtubeHideShorts: Boolean? = null,
@@ -487,10 +483,6 @@ class SettingsBackupManager @Inject constructor(
             youtubeSponsorBlockEnabled = preferences.youtubeSponsorBlockEnabled,
             youtubeSponsorBlockModes = com.ambient.tv.youtube.SponsorBlockCategories.format(preferences.youtubeSponsorBlockModes),
             youtubeSponsorBlockShowSegments = preferences.youtubeSponsorBlockShowSegments,
-            youtubeDefaultSpeed = preferences.youtubeDefaultSpeed,
-            youtubeRememberChannelSpeed = preferences.youtubeRememberChannelSpeed,
-            youtubeAudioLanguage = preferences.youtubeAudioLanguage,
-            youtubeSubtitleLanguage = preferences.youtubeSubtitleLanguage,
             youtubeAutoCaptions = preferences.youtubeAutoCaptions,
             youtubeHistoryPaused = preferences.youtubeHistoryPaused,
             youtubeHideShorts = preferences.youtubeHideShorts,
@@ -879,10 +871,6 @@ class SettingsBackupManager @Inject constructor(
         backup.resumeRewindSeconds?.let { preferences.resumeRewindSeconds = it }
         preferences.youtubeSponsorBlockEnabled = backup.youtubeSponsorBlockEnabled
         preferences.youtubeSponsorBlockShowSegments = backup.youtubeSponsorBlockShowSegments
-        backup.youtubeDefaultSpeed?.let { preferences.youtubeDefaultSpeed = it }
-        backup.youtubeRememberChannelSpeed?.let { preferences.youtubeRememberChannelSpeed = it }
-        backup.youtubeAudioLanguage?.let { preferences.youtubeAudioLanguage = it }
-        backup.youtubeSubtitleLanguage?.let { preferences.youtubeSubtitleLanguage = it }
         backup.youtubeAutoCaptions?.let { preferences.youtubeAutoCaptions = it }
         backup.youtubeHistoryPaused?.let { preferences.youtubeHistoryPaused = it }
         backup.youtubeHideShorts?.let { preferences.youtubeHideShorts = it }
