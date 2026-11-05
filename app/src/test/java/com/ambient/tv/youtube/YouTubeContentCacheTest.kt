@@ -82,5 +82,25 @@ class YouTubeContentCacheTest {
         assertNull(cache.get("home"))
     }
 
+    @Test fun cachedFeedHumanDateRemainsRelativeRatherThanPretendingToBeExact() {
+        val cache = YouTubeContentCache()
+        cache.replace("home", listOf(YouTubeRow("Featured", listOf(
+            item("dated").copy(publishedText = "vor 3 Tagen", publishedAtMs = 1_700_000_000_000L),
+        ))))
+        val cached = cache.metadata("dated")!!
+        assertEquals("vor 3 Tagen", cached.publishedDate)
+        assertNull(cached.publishedAtMs)
+    }
+
+    @Test fun cachedFeedRetainsProviderAbsolutePublicationTimeIfNoLabelExists() {
+        val cache = YouTubeContentCache()
+        cache.replace("home", listOf(YouTubeRow("Featured", listOf(
+            item("dated").copy(publishedAtMs = 1_700_000_000L),
+        ))))
+        val cached = cache.metadata("dated")!!
+        assertNull(cached.publishedDate)
+        assertEquals(1_700_000_000_000L, cached.publishedAtMs)
+    }
+
     private fun item(id: String) = YouTubeItem(videoId = id, title = id)
 }
