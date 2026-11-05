@@ -824,7 +824,7 @@ private fun YouTubeMedia3Playback(
                     }
                     if (!defaultAudioTrackApplied && value.groups.isNotEmpty()) {
                         applyYouTubeDefaultAudioTrack(player, value,
-                            com.ambient.tv.youtube.youtubePreferredAudioLanguage(com.ambient.tv.ui.player.videoImagePreferences(context).playbackAudioLanguage))
+                            com.ambient.tv.youtube.youtubePreferredAudioLanguage(com.ambient.tv.ui.player.videoImagePreferences(context).audioLanguageKey))
                         defaultAudioTrackApplied = true
                     }
                 }

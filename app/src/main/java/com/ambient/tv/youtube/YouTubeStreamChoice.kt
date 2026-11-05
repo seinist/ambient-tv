@@ -388,8 +388,11 @@ fun youtubeSameLanguage(a: String?, b: String?): Boolean {
 }
 
 /**
- * Language of the global audio setting (resolved playback language); null for "original", which
- * keeps YouTube's original track.
+ * Language of the global audio setting for YouTube. "Automatic" and "Original" both keep YouTube's
+ * original track (the default); only an explicitly chosen language picks its dub when offered.
  */
-fun youtubePreferredAudioLanguage(playbackAudioLanguage: String): String? =
-    playbackAudioLanguage.takeUnless { it == com.ambient.tv.data.local.LanguagePreferences.ORIGINAL || it.isBlank() }
+fun youtubePreferredAudioLanguage(audioLanguageKey: String): String? =
+    audioLanguageKey.takeUnless {
+        it.isBlank() || it == com.ambient.tv.data.local.LanguagePreferences.ORIGINAL ||
+            it == com.ambient.tv.data.local.LanguagePreferences.AUTO
+    }
