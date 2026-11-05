@@ -1668,7 +1668,7 @@ private fun AmbientTvApp(
     // The photo viewer is a presentation too: a running slideshow must not start the screensaver.
     val onPlayerRoute = currentRoute in setOf(Destinations.PLAYER, Destinations.TVH_PLAYER, Destinations.YOUTUBE_PLAYER, Destinations.TELEGRAM_PLAYER, Destinations.SPOTIFY_PLAYER, Destinations.RADIO_PLAYER)
     androidx.compose.runtime.SideEffect { com.ambient.tv.ui.player.SleepWarningKeyGate.playerRoute = onPlayerRoute }
-    val playbackActive = currentRoute == Destinations.PHOTO_VIEWER || currentRoute == Destinations.PLAYER || currentRoute == Destinations.TVH_PLAYER || currentRoute == Destinations.YOUTUBE_PLAYER || currentRoute == Destinations.TELEGRAM_PLAYER || currentRoute == Destinations.SPOTIFY_PLAYER || currentRoute == Destinations.RADIO_PLAYER || backgroundPlayback.active
+    val playbackActive = currentRoute == Destinations.PHOTO_VIEWER || currentRoute == Destinations.PLAYER || currentRoute == Destinations.TVH_PLAYER || currentRoute == Destinations.YOUTUBE_PLAYER || currentRoute == Destinations.TELEGRAM_PLAYER || currentRoute == Destinations.SPOTIFY_PLAYER || currentRoute == Destinations.RADIO_PLAYER || backgroundPlayback.active || spotifyPlaying
 
     // Handheld video pages are fullscreen exactly while the window is landscape, so turning the
     // device switches into fullscreen and back. Television keeps its manifest orientation.
