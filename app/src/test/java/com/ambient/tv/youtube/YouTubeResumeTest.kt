@@ -82,6 +82,26 @@ class YouTubeResumeTest {
         assertEquals(1_800_000L, youtubeAtLiveEdge(enriched).resumeMs)
     }
 
+    @Test fun publicationDateFromWatchNextEnrichesPlaybackWithoutChangingResumeOrSource() {
+        val original = stream().copy(publishedDate = "vor 2 Tagen")
+        val updated = applyYouTubePlaybackMetadata(original, metadata().copy(
+            publishedDate = "  12.10.2026  ",
+        ))
+        assertEquals("12.10.2026", updated.publishedDate)
+        assertEquals(original.uri, updated.uri)
+        assertEquals(30_000L, updated.resumeMs)
+        // Incomplete watch-next data may arrive later; it must not erase a valid early label.
+        val blank = applyYouTubePlaybackMetadata(updated, metadata().copy(publishedDate = "  "))
+        assertEquals("12.10.2026", blank.publishedDate)
+    }
+
+    @Test fun earlyPublicationLabelRemainsAvailableWhenWatchNextMetadataIsMissing() {
+        val original = stream().copy(publishedDate = "vor 3 Tagen")
+        assertEquals(original.publishedDate, applyYouTubePlaybackMetadata(original, null).publishedDate)
+        assertEquals(original.publishedDate, applyYouTubePlaybackMetadata(original, metadata()).publishedDate)
+        assertNull(applyYouTubePlaybackMetadata(stream(), metadata()).publishedDate)
+    }
+
     @Test fun disabledRewindAndLivePlaybackKeepTheirExistingStarts() {
         val vod = prepareYouTubeSavedResume(applyYouTubePlaybackMetadata(stream(), metadata()), 0)
         assertEquals(30_000L, vod.resumeMs)
