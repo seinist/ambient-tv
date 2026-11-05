@@ -1,5 +1,7 @@
 package com.ambient.tv.ui.radio
 
+import com.ambient.tv.ui.theme.animatedFocusBorder
+
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -813,7 +815,8 @@ private fun RadioFacetList(
                     Modifier
                         .fillMaxWidth()
                         .background(if (focused) MaterialTheme.colorScheme.primary.copy(alpha = .12f) else Color.Transparent, shape)
-                        .border(if (focused) 2.dp else 1.dp, if (focused) MaterialTheme.colorScheme.primary else Color.White.copy(alpha = .06f), shape)
+                        .animatedFocusBorder(focused = focused, shape = shape, focusedColor = MaterialTheme.colorScheme.primary,
+                            unfocusedColor = Color.White.copy(alpha = .04f))
                         .padding(10.dp * rowScale),
                     horizontalArrangement = Arrangement.spacedBy(14.dp * rowScale),
                     verticalAlignment = Alignment.CenterVertically,
@@ -1030,11 +1033,11 @@ private fun RadioStationTile(
                         else MaterialTheme.colorScheme.surface.copy(alpha = 0.72f),
                         shape,
                     )
-                    .border(
-                        2.dp,
-                        if (cardHasFocus || playing) MaterialTheme.colorScheme.primary
-                        else Color.White.copy(alpha = 0.08f),
-                        shape,
+                    .animatedFocusBorder(
+                        focused = cardHasFocus || playing,
+                        shape = shape,
+                        focusedColor = MaterialTheme.colorScheme.primary,
+                        unfocusedColor = Color.White.copy(alpha = .06f),
                     )
                     .padding(10.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp),
@@ -1131,10 +1134,11 @@ private fun RadioStationList(
                         else MaterialTheme.colorScheme.surface.copy(alpha = .58f),
                         shape,
                     )
-                    .border(
-                        if (rowHasFocus || selected) 2.dp else 1.dp,
-                        if (rowHasFocus || selected) MaterialTheme.colorScheme.primary else Color.White.copy(alpha = .06f),
-                        shape,
+                    .animatedFocusBorder(
+                        focused = rowHasFocus || selected,
+                        shape = shape,
+                        focusedColor = MaterialTheme.colorScheme.primary,
+                        unfocusedColor = Color.White.copy(alpha = .04f),
                     ),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
