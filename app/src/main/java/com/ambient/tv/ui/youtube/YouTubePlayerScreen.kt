@@ -256,6 +256,14 @@ fun YouTubePlayerScreen(
             // reapply an old absolute clock to a sliding YouTube live window.
             val effectiveResumePosition = if (playback.isLive) 0L else resumePosition
             var liveStreamRefreshes by remember(playback.videoId) { mutableIntStateOf(0) }
+            val refreshLiveSource: () -> Boolean = {
+                if (!playback.isLive || liveStreamRefreshes >= 2) false
+                else {
+                    liveStreamRefreshes++
+                    viewModel.retry()
+                    true
+                }
+            }
             // SmartTube's network engine and buffer size; the player panel changes them in place.
             var streamTuning by remember { mutableStateOf(com.ambient.tv.ui.player.Media3StreamTuning(prefs.youtubeNetworkEngine, prefs.youtubeBufferKey)) }
             // Watch-next may arrive late. Once this session has been handed off or its source
@@ -421,6 +429,7 @@ fun YouTubePlayerScreen(
                             externalPlayback.copy(uri = vlcSource.uri, mimeType = null, headers = if (vlcSource.relayed) emptyMap() else playback.headers),
                             vlcSource.audioUri, streamPanel,
                             effectiveResumePosition, rendererKey, prefs.bigSeekJumpSeconds, prefs, onBack, onCompleted, ::switchRenderer, formatChanged,
+                            refreshLiveSource,
                         )
                     } else {
                         val fallback = if (MpvBackendAvailability.isAvailable) "mpv" else "media3"
@@ -441,6 +450,7 @@ fun YouTubePlayerScreen(
                         YouTubeMpvPlayback(
                             externalPlayback.copy(uri = mpvSource.uri, mimeType = null, headers = if (mpvSource.relayed) emptyMap() else playback.headers),
                             streamPanel, effectiveResumePosition, rendererKey, prefs.bigSeekJumpSeconds, prefs, onBack, onCompleted, ::switchRenderer, formatChanged,
+                            refreshLiveSource,
                         )
                     } else {
                         LaunchedEffect(playback.videoId) { switchRenderer("media3", resumePosition, false) }
@@ -480,16 +490,7 @@ fun YouTubePlayerScreen(
                         switchRenderer(if (MpvBackendAvailability.isAvailable) "mpv" else "vlc", positionMs, false)
                     },
                     refreshGeneration = state.liveRefreshGeneration,
-                    onLiveSourceError = {
-                        // Re-resolve the SmartTube format response: retrying an expired HLS
-                        // manifest or its already-evicted segment at the old URL cannot help.
-                        if (!playback.isLive || liveStreamRefreshes >= 2) false
-                        else {
-                            liveStreamRefreshes++
-                            viewModel.retry()
-                            true
-                        }
-                    },
+                    onLiveSourceError = refreshLiveSource,
                 )
                 }
             }
@@ -1170,7 +1171,7 @@ private fun YouTubeMedia3Playback(
 }
 
 @Composable
-private fun YouTubeVlcPlayback(playback: YouTubePlayback, audioUri: String?, streams: YouTubeStreamPanel?, startPositionMs: Long, rendererKey: String, bigSeekSeconds: Int, preferences: AppPreferences, onBack: () -> Unit, onCompleted: () -> Unit, onRenderer: (String, Long, Boolean) -> Unit, onVideoFormatChanged: (Float, Int?, Int?) -> Unit) {
+private fun YouTubeVlcPlayback(playback: YouTubePlayback, audioUri: String?, streams: YouTubeStreamPanel?, startPositionMs: Long, rendererKey: String, bigSeekSeconds: Int, preferences: AppPreferences, onBack: () -> Unit, onCompleted: () -> Unit, onRenderer: (String, Long, Boolean) -> Unit, onVideoFormatChanged: (Float, Int?, Int?) -> Unit, onLiveSourceError: () -> Boolean = { false }) {
     val context = LocalContext.current
     val controller = rememberVlcPlaybackController(
         context,
@@ -1195,6 +1196,7 @@ private fun YouTubeVlcPlayback(playback: YouTubePlayback, audioUri: String?, str
     LaunchedEffect(controller.errorMessage) {
         val message = controller.errorMessage ?: return@LaunchedEffect
         if (!BackgroundPlaybackSession.owns(controller)) return@LaunchedEffect
+        if (playback.isLive && onLiveSourceError()) return@LaunchedEffect
         com.ambient.tv.diagnostics.DiagnosticLog.warn("playback", "YouTube VLC failed, continuing in Media3: $message")
         com.ambient.tv.notifications.AppNotifications.post(com.ambient.tv.notifications.AppNotice(
             "playback:backend-switch", R.string.notice_switched_to_media3, subject = "VLC",
@@ -1475,7 +1477,7 @@ private fun YouTubeVlcPlayback(playback: YouTubePlayback, audioUri: String?, str
 }
 
 @Composable
-private fun YouTubeMpvPlayback(playback: YouTubePlayback, streams: YouTubeStreamPanel?, startPositionMs: Long, rendererKey: String, bigSeekSeconds: Int, preferences: AppPreferences, onBack: () -> Unit, onCompleted: () -> Unit, onRenderer: (String, Long, Boolean) -> Unit, onVideoFormatChanged: (Float, Int?, Int?) -> Unit) {
+private fun YouTubeMpvPlayback(playback: YouTubePlayback, streams: YouTubeStreamPanel?, startPositionMs: Long, rendererKey: String, bigSeekSeconds: Int, preferences: AppPreferences, onBack: () -> Unit, onCompleted: () -> Unit, onRenderer: (String, Long, Boolean) -> Unit, onVideoFormatChanged: (Float, Int?, Int?) -> Unit, onLiveSourceError: () -> Boolean = { false }) {
     val context = LocalContext.current
     val controller = rememberMpvPlaybackController(
         context, playback.uri, startPositionMs, playback.headers,
@@ -1496,6 +1498,7 @@ private fun YouTubeMpvPlayback(playback: YouTubePlayback, streams: YouTubeStream
     LaunchedEffect(controller.errorMessage) {
         val message = controller.errorMessage ?: return@LaunchedEffect
         if (!BackgroundPlaybackSession.owns(controller)) return@LaunchedEffect
+        if (playback.isLive && onLiveSourceError()) return@LaunchedEffect
         com.ambient.tv.diagnostics.DiagnosticLog.warn("playback", "YouTube MPV failed, continuing in Media3: $message")
         com.ambient.tv.notifications.AppNotifications.post(com.ambient.tv.notifications.AppNotice(
             "playback:backend-switch", R.string.notice_switched_to_media3, subject = "MPV",
