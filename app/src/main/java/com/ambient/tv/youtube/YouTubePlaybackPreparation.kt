@@ -197,7 +197,10 @@ internal fun applyYouTubePlaybackMetadata(stream: YouTubePlayback, metadata: You
         // Watch-next metadata may arrive after the first video frame. Keep the initial label
         // until then; a blank/missing response must never erase a valid stream-side date.
         publishedDate = youtubePublicationText(metadata?.publishedDate) ?: youtubePublicationText(stream.publishedDate),
-        publishedAtMs = metadata?.publishedAtMs ?: stream.publishedAtMs,
+        publishedAtMs = metadata?.publishedAtMs
+            ?: youtubePublicationEpochMs(metadata?.publishedDate?.toLongOrNull())
+            ?: stream.publishedAtMs
+            ?: youtubePublicationEpochMs(stream.publishedDate?.toLongOrNull()),
         imageUrl = metadata?.imageUrl ?: stream.imageUrl,
         backgroundUrl = metadata?.backgroundUrl ?: stream.backgroundUrl,
         durationMs = duration,
