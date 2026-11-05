@@ -1329,7 +1329,7 @@ internal fun TvPlayerSeekBar(
                         fun x(ms: Long) = (ms.toDouble() / durationMs).toFloat().coerceIn(0f, 1f) * size.width
                         timeline.segments.forEach { segment ->
                             val end = if (segment.endMs < 0) durationMs else segment.endMs
-                            drawRect(Color(0xFFFFD54F).copy(alpha = 0.35f), androidx.compose.ui.geometry.Offset(x(segment.startMs), 0f),
+                            drawRect(seekBarSegmentColor(segment.type), androidx.compose.ui.geometry.Offset(x(segment.startMs), 0f),
                                 androidx.compose.ui.geometry.Size(x(end) - x(segment.startMs), size.height))
                         }
                         if (highlighted && current != null) {
@@ -1990,3 +1990,19 @@ internal fun media3PauseOnToggle(playWhenReady: Boolean, playbackState: Int): Bo
 
 /** A position change larger than playback can make between two updates: a jump. */
 private const val SEEK_FEEDBACK_JUMP_MS = 3_000L
+
+/**
+ * Seek bar marks: SponsorBlock categories in SponsorBlock's usual colours (sponsor green,
+ * intro cyan, …); server intro/credits markers stay the soft yellow.
+ */
+internal fun seekBarSegmentColor(type: String): Color = when (com.ambient.tv.youtube.sponsorCategoryOf(type)) {
+    "sponsor" -> Color(0xFF00D400)
+    "selfpromo" -> Color(0xFFFFFF00)
+    "interaction" -> Color(0xFFCC00FF)
+    "intro" -> Color(0xFF00FFFF)
+    "outro" -> Color(0xFF0202ED)
+    "preview" -> Color(0xFF008FD6)
+    "filler" -> Color(0xFF7300FF)
+    "music_offtopic" -> Color(0xFFFF9900)
+    else -> Color(0xFFFFD54F)
+}.copy(alpha = if (type.startsWith("sponsor:")) 0.6f else 0.35f)

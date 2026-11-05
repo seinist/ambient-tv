@@ -749,11 +749,13 @@ class SmartTubeEngine @Inject constructor(
     }
 
     /** Optional enrichment runs after the player is published, and only when enabled. */
-    suspend fun playbackSponsorSegments(videoId: String): List<LongRange> {
+    suspend fun playbackSponsorSegments(videoId: String): List<YouTubeSponsorSegment> {
         if (!appPreferences.youtubeSponsorBlockEnabled) return emptyList()
+        val categories = SponsorBlockCategories.requested(appPreferences.youtubeSponsorBlockModes)
+        if (categories.isEmpty()) return emptyList()
         return io {
             if (!appPreferences.youtubeSponsorBlockEnabled) emptyList()
-            else sponsorSegments(service("getMediaItemService"), videoId)
+            else sponsorSegments(service("getMediaItemService"), videoId, categories)
         }
     }
 
@@ -793,13 +795,15 @@ class SmartTubeEngine @Inject constructor(
         )
     }
 
-    private fun sponsorSegments(media: Any, videoId: String): List<LongRange> = runCatching {
-        val raw = media.call("getSponsorSegments", videoId) as? Iterable<*> ?: return@runCatching emptyList()
+    private fun sponsorSegments(media: Any, videoId: String, categories: Set<String>): List<YouTubeSponsorSegment> = runCatching {
+        val raw = (media.call("getSponsorSegments", videoId, java.util.LinkedHashSet(categories))
+            ?: media.call("getSponsorSegments", videoId)) as? Iterable<*> ?: return@runCatching emptyList()
         raw.mapNotNull { segment ->
             segment ?: return@mapNotNull null
             val start = segment.callLong("getStartMs") ?: ((segment.callDouble("getStart") ?: return@mapNotNull null) * 1000).toLong()
             val end = segment.callLong("getEndMs") ?: ((segment.callDouble("getEnd") ?: return@mapNotNull null) * 1000).toLong()
-            if (end > start) start..end else null
+            val category = segment.callString("getCategory")?.takeIf { it in SponsorBlockCategories.ALL } ?: "sponsor"
+            if (end > start && category in categories) YouTubeSponsorSegment(start, end, category) else null
         }
     }.getOrDefault(emptyList())
 

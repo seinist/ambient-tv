@@ -128,7 +128,7 @@ data class YouTubePlayback(
     val resumeResolved: Boolean = false,
     /** Captured for this launch while its saved watch position may still arrive asynchronously. */
     val resumeRewindSeconds: Int = 0,
-    val sponsorSegments: List<LongRange> = emptyList(),
+    val sponsorSegments: List<YouTubeSponsorSegment> = emptyList(),
     val timeline: com.ambient.tv.domain.model.PlaybackTimeline = com.ambient.tv.domain.model.PlaybackTimeline(),
     val headers: Map<String, String> = emptyMap(),
 )

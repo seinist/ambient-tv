@@ -143,6 +143,9 @@ data class SettingsBackup(
     val pauseRewindMinPauseSeconds: Int? = null,
     val resumeRewindSeconds: Int? = null,
     val youtubeSponsorBlockEnabled: Boolean = true,
+    /** SponsorBlock action per category ("sponsor=auto,…"); null in older backups. */
+    val youtubeSponsorBlockModes: String? = null,
+    val youtubeSponsorBlockShowSegments: Boolean = true,
     val youtubeFeedKeys: List<String> = AppPreferences.DEFAULT_YOUTUBE_FEEDS,
     /** Null in backups made before the setting existed: restoring them keeps the device's choice. */
     val youtubeStartFeedKey: String? = null,
@@ -472,6 +475,8 @@ class SettingsBackupManager @Inject constructor(
             pauseRewindMinPauseSeconds = preferences.pauseRewindMinPauseSeconds,
             resumeRewindSeconds = preferences.resumeRewindSeconds,
             youtubeSponsorBlockEnabled = preferences.youtubeSponsorBlockEnabled,
+            youtubeSponsorBlockModes = com.ambient.tv.youtube.SponsorBlockCategories.format(preferences.youtubeSponsorBlockModes),
+            youtubeSponsorBlockShowSegments = preferences.youtubeSponsorBlockShowSegments,
             youtubeFeedKeys = preferences.youtubeFeedKeys,
             youtubeStartFeedKey = preferences.youtubeStartFeedKey,
             youtubeMaxVideoHeight = preferences.youtubeMaxVideoHeight,
@@ -854,6 +859,8 @@ class SettingsBackupManager @Inject constructor(
         backup.pauseRewindMinPauseSeconds?.let { preferences.pauseRewindMinPauseSeconds = it }
         backup.resumeRewindSeconds?.let { preferences.resumeRewindSeconds = it }
         preferences.youtubeSponsorBlockEnabled = backup.youtubeSponsorBlockEnabled
+        preferences.youtubeSponsorBlockShowSegments = backup.youtubeSponsorBlockShowSegments
+        backup.youtubeSponsorBlockModes?.let { preferences.youtubeSponsorBlockModes = com.ambient.tv.youtube.SponsorBlockCategories.parse(it) }
         preferences.youtubeFeedKeys = backup.youtubeFeedKeys
         backup.youtubeStartFeedKey?.let { preferences.youtubeStartFeedKey = it }
         preferences.youtubeMaxVideoHeight = backup.youtubeMaxVideoHeight
