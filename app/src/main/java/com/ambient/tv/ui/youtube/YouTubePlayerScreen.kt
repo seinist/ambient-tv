@@ -429,7 +429,7 @@ fun YouTubePlayerScreen(
                             externalPlayback.copy(uri = vlcSource.uri, mimeType = null, headers = if (vlcSource.relayed) emptyMap() else playback.headers),
                             vlcSource.audioUri, streamPanel,
                             effectiveResumePosition, rendererKey, prefs.bigSeekJumpSeconds, prefs, onBack, onCompleted, ::switchRenderer, formatChanged,
-                            refreshLiveSource,
+                            refreshLiveSource, state.liveRefreshGeneration,
                         )
                     } else {
                         val fallback = if (MpvBackendAvailability.isAvailable) "mpv" else "media3"
@@ -450,7 +450,7 @@ fun YouTubePlayerScreen(
                         YouTubeMpvPlayback(
                             externalPlayback.copy(uri = mpvSource.uri, mimeType = null, headers = if (mpvSource.relayed) emptyMap() else playback.headers),
                             streamPanel, effectiveResumePosition, rendererKey, prefs.bigSeekJumpSeconds, prefs, onBack, onCompleted, ::switchRenderer, formatChanged,
-                            refreshLiveSource,
+                            refreshLiveSource, state.liveRefreshGeneration,
                         )
                     } else {
                         LaunchedEffect(playback.videoId) { switchRenderer("media3", resumePosition, false) }
@@ -1171,7 +1171,7 @@ private fun YouTubeMedia3Playback(
 }
 
 @Composable
-private fun YouTubeVlcPlayback(playback: YouTubePlayback, audioUri: String?, streams: YouTubeStreamPanel?, startPositionMs: Long, rendererKey: String, bigSeekSeconds: Int, preferences: AppPreferences, onBack: () -> Unit, onCompleted: () -> Unit, onRenderer: (String, Long, Boolean) -> Unit, onVideoFormatChanged: (Float, Int?, Int?) -> Unit, onLiveSourceError: () -> Boolean = { false }) {
+private fun YouTubeVlcPlayback(playback: YouTubePlayback, audioUri: String?, streams: YouTubeStreamPanel?, startPositionMs: Long, rendererKey: String, bigSeekSeconds: Int, preferences: AppPreferences, onBack: () -> Unit, onCompleted: () -> Unit, onRenderer: (String, Long, Boolean) -> Unit, onVideoFormatChanged: (Float, Int?, Int?) -> Unit, onLiveSourceError: () -> Boolean = { false }, refreshGeneration: Int = 0) {
     val context = LocalContext.current
     val controller = rememberVlcPlaybackController(
         context,
@@ -1182,6 +1182,7 @@ private fun YouTubeVlcPlayback(playback: YouTubePlayback, audioUri: String?, str
         initialAudioPassthrough = preferences.mediaAudioPassthroughEnabled,
         networkCache = true,
         audioSlaveUrl = audioUri,
+        refreshToken = refreshGeneration,
     )
     if (controller == null) { LaunchedEffect(Unit) { onRenderer("media3", startPositionMs, false) }; return }
     val persistentVideoHost = LocalPersistentPlaybackVideoHost.current
@@ -1477,13 +1478,14 @@ private fun YouTubeVlcPlayback(playback: YouTubePlayback, audioUri: String?, str
 }
 
 @Composable
-private fun YouTubeMpvPlayback(playback: YouTubePlayback, streams: YouTubeStreamPanel?, startPositionMs: Long, rendererKey: String, bigSeekSeconds: Int, preferences: AppPreferences, onBack: () -> Unit, onCompleted: () -> Unit, onRenderer: (String, Long, Boolean) -> Unit, onVideoFormatChanged: (Float, Int?, Int?) -> Unit, onLiveSourceError: () -> Boolean = { false }) {
+private fun YouTubeMpvPlayback(playback: YouTubePlayback, streams: YouTubeStreamPanel?, startPositionMs: Long, rendererKey: String, bigSeekSeconds: Int, preferences: AppPreferences, onBack: () -> Unit, onCompleted: () -> Unit, onRenderer: (String, Long, Boolean) -> Unit, onVideoFormatChanged: (Float, Int?, Int?) -> Unit, onLiveSourceError: () -> Boolean = { false }, refreshGeneration: Int = 0) {
     val context = LocalContext.current
     val controller = rememberMpvPlaybackController(
         context, playback.uri, startPositionMs, playback.headers,
         audioPassthroughEnabled = preferences.mediaAudioPassthroughEnabled,
         videoOutputMode = preferences.mpvVideoOutputModeKey,
         networkCache = true,
+        refreshToken = refreshGeneration,
     )
     if (controller == null) { LaunchedEffect(Unit) { onRenderer("media3", startPositionMs, false) }; return }
     val persistentVideoHost = LocalPersistentPlaybackVideoHost.current
