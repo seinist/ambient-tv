@@ -23,6 +23,20 @@ internal fun youtubeFormatHasAudioAndVideo(mime: String?): Boolean =
 internal fun youtubeVodStreamPolicy(isEmulator: Boolean): YouTubeVodStreamPolicy =
     if (isEmulator) YouTubeVodStreamPolicy.PROGRESSIVE_FIRST else YouTubeVodStreamPolicy.DASH_FIRST
 
+/**
+ * SmartTube clients sometimes return isLive=false for an already-running live broadcast.
+ * A live HLS manifest with no finite video length is authoritative; an archived broadcast
+ * with a finite length remains seekable VOD and must keep its normal resume point.
+ */
+internal fun youtubeCurrentlyLive(providerLive: Boolean, hls: String?, lengthSeconds: Double?): Boolean =
+    providerLive || (!hls.isNullOrBlank() && (lengthSeconds == null || !lengthSeconds.isFinite() || lengthSeconds <= 0.0))
+
+/** No historical seek (including a chapter or an old background session) may reach a live source. */
+internal fun youtubeAtLiveEdge(playback: YouTubePlayback): YouTubePlayback =
+    if (!playback.isLive) playback else playback.copy(
+        resumeMs = 0L, durationMs = 0L, resumeResolved = true, resumeRewindSeconds = 0,
+    )
+
 internal fun selectYouTubePlaybackUri(
     isLive: Boolean,
     vodPolicy: YouTubeVodStreamPolicy,
@@ -174,8 +188,8 @@ internal suspend fun prepareYouTubePlayback(
 /** Fills title, chapters, and resume from watch-next without touching an in-flight sponsor list. */
 internal fun applyYouTubePlaybackMetadata(stream: YouTubePlayback, metadata: YouTubeMetadata?): YouTubePlayback {
     // Watch-next can report 0; the stream's own length is the fallback.
-    val duration = metadata?.durationMs?.takeIf { it > 0 } ?: stream.durationMs
-    val resolveResume = !stream.resumeResolved && metadata != null && (duration > 0L || stream.isLive)
+    val duration = if (stream.isLive) 0L else metadata?.durationMs?.takeIf { it > 0 } ?: stream.durationMs
+    val resolveResume = !stream.resumeResolved && metadata != null && duration > 0L
     return stream.copy(
         title = stream.title.takeUnless { it.isBlank() || it == "YouTube" || it == "SmartTube" } ?: metadata?.title ?: "SmartTube",
         author = stream.author ?: metadata?.author,
@@ -183,11 +197,12 @@ internal fun applyYouTubePlaybackMetadata(stream: YouTubePlayback, metadata: You
         imageUrl = metadata?.imageUrl ?: stream.imageUrl,
         backgroundUrl = metadata?.backgroundUrl ?: stream.backgroundUrl,
         durationMs = duration,
-        timeline = stream.timeline.copy(chapters = metadata?.chapters.orEmpty()).normalized(duration),
-        resumeMs = if (resolveResume) com.ambient.tv.ui.player.resumeRewindPositionMs(
-            youtubeResumeMs(duration, YouTubeLocalProgress.resumePercent(metadata.videoId, metadata.percentWatched), stream.isLive), stream.resumeRewindSeconds,
+        timeline = stream.timeline.copy(chapters = if (stream.isLive) emptyList() else metadata?.chapters.orEmpty()).normalized(duration),
+        resumeMs = if (stream.isLive) 0L else if (resolveResume) com.ambient.tv.ui.player.resumeRewindPositionMs(
+            youtubeResumeMs(duration, YouTubeLocalProgress.resumePercent(metadata.videoId, metadata.percentWatched), false), stream.resumeRewindSeconds,
         ) else stream.resumeMs,
-        resumeResolved = stream.resumeResolved || resolveResume,
+        resumeResolved = stream.isLive || stream.resumeResolved || resolveResume,
+        resumeRewindSeconds = if (stream.isLive) 0 else stream.resumeRewindSeconds,
     )
 }
 

@@ -32,6 +32,8 @@ data class YouTubePlayerState(
     val channel: com.ambient.tv.youtube.YouTubeChannelInfo? = null,
     /** Previous video in this player destination's navigation, not the account's watch history. */
     val previousVideoId: String? = null,
+    /** Forces a fresh backend even when a retried HLS manifest reuses its URL. */
+    val liveRefreshGeneration: Int = 0,
 )
 
 @HiltViewModel
@@ -47,6 +49,7 @@ class YouTubePlayerViewModel @Inject constructor(@dagger.hilt.android.qualifiers
     private val loadMutex = kotlinx.coroutines.sync.Mutex()
     private val savedResumeRequest = com.ambient.tv.ui.player.SavedResumeRequest()
     private val playbackHistory = YouTubePlaybackHistory()
+    private var liveRefreshGeneration = 0
 
     init {
         load()
@@ -117,6 +120,8 @@ class YouTubePlayerViewModel @Inject constructor(@dagger.hilt.android.qualifiers
     }
 
     private fun load(refresh: Boolean = false) {
+        if (refresh) liveRefreshGeneration++
+        val refreshGeneration = liveRefreshGeneration
         val videoId = videoId
         val requestToken = transitionToken
         loadJob?.cancel()
@@ -176,16 +181,21 @@ class YouTubePlayerViewModel @Inject constructor(@dagger.hilt.android.qualifiers
                 else playbackHistory.previousVideoId
             val nextInSource = if (fromBrowse) browseContext.nextLoaded(browseSession, videoId)
                 else playbackHistory.nextVideo
-            _uiState.value = YouTubePlayerState(false, when {
+            val requestedPlayback = when {
                 isTrailer -> playback.copy(resumeMs = 0, resumeResolved = true, resumeRewindSeconds = 0)
                 revisitingVideo -> playback.copy(resumeMs = 0, resumeResolved = true, resumeRewindSeconds = 0)
-                chapterStart != null -> playback.copy(resumeMs = chapterStart, resumeResolved = true, resumeRewindSeconds = 0)
+                chapterStart != null && !playback.isLive -> playback.copy(resumeMs = chapterStart, resumeResolved = true, resumeRewindSeconds = 0)
                 reusedSession -> playback.copy(resumeResolved = true, resumeRewindSeconds = 0)
                 else -> com.ambient.tv.youtube.prepareYouTubeSavedResume(playback, rewindSeconds)
-            },
+            }
+            _uiState.value = YouTubePlayerState(
+                loading = false,
+                playback = com.ambient.tv.youtube.youtubeAtLiveEdge(requestedPlayback),
                 nextVideo = nextInSource,
                 previousVideoId = previousId,
-                successorsLoading = fromBrowse && nextInSource == null)
+                successorsLoading = fromBrowse && nextInSource == null,
+                liveRefreshGeneration = refreshGeneration,
+            )
             if (isTrailer) return@launch
             // Next Up uses only the originating feed/row, including continuation pages.
             // Never substitute Home or account recommendations at the end of the source.
@@ -242,7 +252,11 @@ class YouTubePlayerViewModel @Inject constructor(@dagger.hilt.android.qualifiers
             }
         }
     }
-    fun reportPosition(positionMs: Long) { val id = _uiState.value.playback?.videoId ?: return; if (!isTrailer) viewModelScope.launch { suspendResult { engine.updateHistory(id, positionMs) } } }
+    fun reportPosition(positionMs: Long) {
+        val playback = _uiState.value.playback ?: return
+        if (isTrailer || playback.isLive) return
+        viewModelScope.launch { suspendResult { engine.updateHistory(playback.videoId, positionMs) } }
+    }
     override fun onCleared() {
         transitionToken?.let(BackgroundPlaybackSession::cancelSourceReplacement)
         super.onCleared()

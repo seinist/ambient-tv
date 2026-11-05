@@ -362,7 +362,9 @@ class PlaybackService : MediaBrowserServiceCompat() {
                 "files" -> files.updateProgress(metadata.mediaId, position, state.status.durationMs.takeIf { it > 0 } ?: metadata.durationMs,
                     ended = if (metadata.hasVideo) completed else state.status.ended && state.status.error == null,
                     streamUrl = (metadata.resumeState as? PlayerUiState.Ready)?.streamUrl)
-                "youtube" -> youtube.updateHistory(metadata.mediaId, position, duration)
+                // YouTube live clocks are relative to a changing HLS window. Sending them
+                // as watch progress creates bogus "continue at saved position" entries.
+                "youtube" -> if (!metadata.isLive) youtube.updateHistory(metadata.mediaId, position, duration)
                 // Telegram keeps its resume point on the device and needs only the final position;
                 // an unknown one (renderer at 0) was already replaced by the last position seen.
                 "telegram" -> if (stopped) telegram.get().rememberResumePosition(metadata.mediaId,
