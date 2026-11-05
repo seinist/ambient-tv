@@ -257,7 +257,7 @@ class PlaybackService : MediaBrowserServiceCompat() {
                     sponsorSkip.nextSeek(
                         playback.generation, youtubeState.sponsorSegments, playback.status.positionMs,
                         duration, playback.playing, preferences.youtubeSponsorBlockEffectiveModes,
-                    )?.let(BackgroundPlaybackSession::seekTo)
+                    )?.let { BackgroundPlaybackSession.seekTo(it, automatic = true) }
                 }
                 for (finished in BackgroundPlaybackSession.takeCompleted()) enqueueReport(finished, stopped = true)
                 val state = BackgroundPlaybackSession.snapshot.value
