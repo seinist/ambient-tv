@@ -92,6 +92,65 @@ class SegmentSkipPolicyTest {
             60_000L, playing = true))
     }
 
+    @Test fun manualSponsorSeekUsesTheOriginalMediaClockAndRespectsCategoryModes() {
+        val ranges = listOf(
+            com.ambient.tv.youtube.YouTubeSponsorSegment(20_000L, 40_000L, "sponsor"),
+            com.ambient.tv.youtube.YouTubeSponsorSegment(60_000L, 80_000L, "intro"),
+            com.ambient.tv.youtube.YouTubeSponsorSegment(85_000L, 95_000L, "preview"),
+        )
+        val modes = com.ambient.tv.youtube.SponsorBlockCategories.DEFAULTS
+        assertEquals(40_000L, sponsorBlockSeekTarget(30_000L, ranges, 100_000L, modes))
+        assertEquals(40_000L, sponsorBlockSeekTarget(20_000L, ranges, 100_000L, modes)) // start is included
+        assertEquals(40_000L, sponsorBlockSeekTarget(40_000L, ranges, 100_000L, modes))
+        assertEquals(70_000L, sponsorBlockSeekTarget(70_000L, ranges, 100_000L, modes)) // button
+        assertEquals(90_000L, sponsorBlockSeekTarget(90_000L, ranges, 100_000L, modes)) // mark
+        assertEquals(10_000L, sponsorBlockSeekTarget(10_000L, ranges, 100_000L, modes))
+        assertEquals(40_000L, sponsorBlockSeekTarget(30_000L, ranges, 100_000L,
+            modes + ("sponsor" to "auto")))
+        assertEquals(30_000L, sponsorBlockSeekTarget(30_000L, ranges, 100_000L,
+            modes + ("sponsor" to "off")))
+    }
+
+    @Test fun manualSponsorSeekHandlesOverlapsAndFinalTailSafely() {
+        val modes = com.ambient.tv.youtube.SponsorBlockCategories.DEFAULTS
+        val overlapping = listOf(
+            com.ambient.tv.youtube.YouTubeSponsorSegment(10_000L, 35_000L, "sponsor"),
+            com.ambient.tv.youtube.YouTubeSponsorSegment(30_000L, 50_000L, "selfpromo"),
+        )
+        assertEquals(50_000L, sponsorBlockSeekTarget(20_000L, overlapping, 100_000L, modes))
+        assertEquals(20_000L, sponsorBlockSeekTarget(20_000L, overlapping, 0L, modes))
+        val final = listOf(com.ambient.tv.youtube.YouTubeSponsorSegment(70_000L, 100_000L, "sponsor"))
+        assertEquals(98_500L, sponsorBlockSeekTarget(80_000L, final, 100_000L, modes))
+        // The final 1.5-second safety tail must play naturally, never seek backwards.
+        assertEquals(99_300L, sponsorBlockSeekTarget(99_300L, final, 100_000L, modes))
+    }
+
+    @Test fun backgroundSponsorSkipRearmsOnlyAfterAConfirmedExit() {
+        val policy = BackgroundSponsorSkipPolicy()
+        val segments = listOf(com.ambient.tv.youtube.YouTubeSponsorSegment(20_000L, 40_000L, "sponsor"))
+        assertEquals(40_000L, policy.nextSeek(7L, segments, 25_000L, 100_000L, playing = true))
+        assertNull(policy.nextSeek(7L, segments, 26_000L, 100_000L, playing = true))
+        assertNull(policy.nextSeek(7L, segments, 40_000L, 100_000L, playing = true))
+        // One optimistic outside report is not enough; native decoders can report a prior keyframe.
+        assertNull(policy.nextSeek(7L, segments, 26_000L, 100_000L, playing = true))
+        assertNull(policy.nextSeek(7L, segments, 45_000L, 100_000L, playing = true))
+        assertNull(policy.nextSeek(7L, segments, 46_000L, 100_000L, playing = true))
+        assertEquals(40_000L, policy.nextSeek(7L, segments, 25_000L, 100_000L, playing = true))
+    }
+
+    @Test fun backgroundSponsorSkipDoesNotSkipButtonOrMarkSegments() {
+        val policy = BackgroundSponsorSkipPolicy()
+        val modes = com.ambient.tv.youtube.SponsorBlockCategories.DEFAULTS
+        val segments = listOf(
+            com.ambient.tv.youtube.YouTubeSponsorSegment(10_000L, 20_000L, "intro"),
+            com.ambient.tv.youtube.YouTubeSponsorSegment(30_000L, 40_000L, "preview"),
+        )
+        assertNull(policy.nextSeek(1L, segments, 12_000L, 100_000L, playing = true, modes = modes))
+        assertNull(policy.nextSeek(1L, segments, 35_000L, 100_000L, playing = true, modes = modes))
+        assertEquals(20_000L, policy.nextSeek(1L, segments, 12_000L, 100_000L,
+            playing = true, modes = modes + ("intro" to "auto")))
+    }
+
     @Test fun embyMarkersPairWithoutRelyingOnChapterNames() {
         val segments = playbackSegmentsFromMarkers(listOf("IntroEnd" to 40_000L, "Chapter" to 0L,
             "IntroStart" to 10_000L, "CreditsStart" to 80_000L, "IntroStart" to 95_000L))
