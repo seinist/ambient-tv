@@ -155,11 +155,19 @@ class TelegramViewModel @Inject constructor(
         }
     }
 
+    /** When the visible section was last fetched from Telegram (elapsedRealtime). */
+    private var lastFreshLoadMs = 0L
+
     fun open(section: String, refresh: Boolean = false) {
         val key = section.takeIf { it != "youtube" || smartTubeUsable }?.takeIf { it in setOf("recent", "channels", "videos", "youtube", "audio") ||
             (it.startsWith("channel:") && it.substringAfter(':').toLongOrNull() != null) } ?: "recent"
         val current = mutableState.value
-        if (!refresh && current.section == key && current.available && current.rows.isNotEmpty()) return
+        // Re-entering the same section keeps its rows only while they are recent; a TV keeps
+        // this ViewModel for days, so the categories never showed newer posts again.
+        val now = android.os.SystemClock.elapsedRealtime()
+        if (!refresh && current.section == key && current.available && current.rows.isNotEmpty() &&
+            now - lastFreshLoadMs < SECTION_STALE_MS) return
+        lastFreshLoadMs = now
         loadJob?.cancel()
         pageGeneration++
         mutableState.value = current.copy(
@@ -322,3 +330,6 @@ class TelegramViewModel @Inject constructor(
 }
 
 private const val MAX_REVEAL_PAGES = 8
+
+/** Rows of a section re-entered after this long are fetched again. */
+private const val SECTION_STALE_MS = 5 * 60_000L

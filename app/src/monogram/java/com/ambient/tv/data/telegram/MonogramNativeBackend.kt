@@ -68,6 +68,8 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
      * cleared by login/logout. Copy-on-write iteration never throws ConcurrentModificationException.
      */
     private val chats = java.util.concurrent.CopyOnWriteArrayList<ChatDto>()
+    /** When [chats] was last loaded from Telegram (elapsedRealtime). */
+    @Volatile private var chatsLoadedAtMs = 0L
     @Volatile private var chatsExhausted = false
     private val recentFeeds = LinkedHashMap<String, MonogramRecentTimeline>()
     private val leftChannels = java.util.concurrent.ConcurrentHashMap.newKeySet<Long>()
@@ -526,8 +528,18 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
         synchronized(catalogLock) { knownChannelsLocked(h, count) }
 
     private fun knownChannelsLocked(h: Long, count: Int): List<ChatDto> {
+        // The dialog list orders the timelines (newest channel first). A TV keeps the app running
+        // for days, and Telegram sends no update for most channels: an old list kept the
+        // categories on posts of days ago. Reload it (one getChats) once it is a few minutes old.
+        val now = android.os.SystemClock.elapsedRealtime()
+        if (chats.isNotEmpty() && now - chatsLoadedAtMs > DIALOGS_MAX_AGE_MS) {
+            chats.clear()
+            chatsExhausted = false
+            clearHistoryPages()
+        }
         if (chats.isEmpty() && !chatsExhausted) {
             chats.addAll(native.getChats(h))
+            chatsLoadedAtMs = now
             if (chats.isEmpty()) chatsExhausted = true
         }
         var pages = 0
@@ -1117,6 +1129,8 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
         const val UPDATES_POLL_MS = 5_000L
         /** Shared channel history pages: long enough for one browse session across categories. */
         const val HISTORY_PAGE_TTL_MS = 120_000L
+        /** Age after which the dialog list (channel order, newest posts) is loaded again. */
+        const val DIALOGS_MAX_AGE_MS = 10 * 60_000L
         const val HISTORY_SHARED_PAGE = 60
         const val HISTORY_PAGE_LIMIT = 256
         const val SEARCH_GLOBAL_LIMIT = 50
