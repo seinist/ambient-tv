@@ -882,7 +882,7 @@ private fun YouTubeMedia3Playback(
         userSeeked = true
         val limit = duration.takeIf { it > 0L } ?: playback.durationMs
         val requested = seekCoordinator.requestRelative(delta, position, limit)
-        val landing = adjustedYouTubeSeekTarget(requested, playback, limit, sponsorPrefs, metadata.sponsorSkipEnabled)
+        val landing = adjustedYouTubeSeekTarget(requested, playback, limit, sponsorPrefs, metadata.sponsorSkipEnabled, delta < 0L)
         position = if (landing != requested) seekCoordinator.requestAbsolute(landing) else requested
         seekCoordinator.consumeCommit()?.let(player::seekTo)
         seekCommitVersion++
@@ -1230,7 +1230,7 @@ private fun YouTubeVlcPlayback(playback: YouTubePlayback, audioUri: String?, str
         userSeeked = true
         val limit = snapshot.durationMs.takeIf { it > 0L } ?: playback.durationMs
         val requested = seekCoordinator.requestRelative(delta, displayedPosition, limit)
-        val landing = adjustedYouTubeSeekTarget(requested, playback, limit, preferences, sponsorSkipEnabled)
+        val landing = adjustedYouTubeSeekTarget(requested, playback, limit, preferences, sponsorSkipEnabled, delta < 0L)
         displayedPosition = if (landing != requested) seekCoordinator.requestAbsolute(landing) else requested
         seekCoordinator.consumeCommit()?.let(controller::seekTo)
         seekCommitVersion++
@@ -1520,7 +1520,7 @@ private fun YouTubeMpvPlayback(playback: YouTubePlayback, streams: YouTubeStream
         userSeeked = true
         val limit = snapshot.durationMs.takeIf { it > 0L } ?: playback.durationMs
         val requested = seekCoordinator.requestRelative(delta, displayedPosition, limit)
-        val landing = adjustedYouTubeSeekTarget(requested, playback, limit, preferences, sponsorSkipEnabled)
+        val landing = adjustedYouTubeSeekTarget(requested, playback, limit, preferences, sponsorSkipEnabled, delta < 0L)
         displayedPosition = if (landing != requested) seekCoordinator.requestAbsolute(landing) else requested
         seekCoordinator.consumeCommit()?.let(controller::seekTo)
         seekCommitVersion++
@@ -1920,9 +1920,11 @@ private fun adjustedYouTubeSeekTarget(
     durationMs: Long,
     preferences: AppPreferences,
     enabled: Boolean,
+    backward: Boolean,
 ): Long = if (enabled && preferences.youtubeSponsorBlockEnabled && !playback.isLive) {
     com.ambient.tv.ui.player.sponsorBlockSeekTarget(
-        requestedMs, playback.sponsorSegments, durationMs, preferences.youtubeSponsorBlockEffectiveModes)
+        requestedMs, playback.sponsorSegments, durationMs, preferences.youtubeSponsorBlockEffectiveModes,
+        backward = backward)
 } else requestedMs
 
 /**
