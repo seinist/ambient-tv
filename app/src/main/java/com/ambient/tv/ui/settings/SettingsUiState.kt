@@ -153,7 +153,7 @@ data class SettingsUiState(
     val highQualityAssetsEnabled: Boolean = false,
     val uiLanguageKey: String = LanguagePreferences.AUTO,
     val metadataLanguageKey: String = LanguagePreferences.AUTO,
-    val audioLanguageKey: String = LanguagePreferences.AUTO,
+    val audioLanguageKey: String = LanguagePreferences.ORIGINAL,
     val forcedSubtitlesEnabled: Boolean = false,
     val subtitleModeKey: String = "off",
     val subtitleLanguageKey: String = "auto",

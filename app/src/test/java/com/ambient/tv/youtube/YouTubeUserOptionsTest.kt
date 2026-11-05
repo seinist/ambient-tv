@@ -38,8 +38,7 @@ class YouTubeUserOptionsTest {
 }
 
 class YouTubePreferredAudioTest {
-    @org.junit.Test fun automaticAndOriginalKeepTheOriginalTrack() {
-        org.junit.Assert.assertNull(youtubePreferredAudioLanguage("auto"))
+    @org.junit.Test fun originalKeepsTheOriginalTrack() {
         org.junit.Assert.assertNull(youtubePreferredAudioLanguage("original"))
         org.junit.Assert.assertEquals("de", youtubePreferredAudioLanguage("de"))
     }

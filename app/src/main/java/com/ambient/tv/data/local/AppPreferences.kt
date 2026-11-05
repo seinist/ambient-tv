@@ -609,9 +609,9 @@ class AppPreferences @Inject constructor(
         get() = LanguagePreferences.normalizeKey(prefs.getString(KEY_METADATA_LANGUAGE, LanguagePreferences.AUTO))
         set(value) = prefs.edit { putString(KEY_METADATA_LANGUAGE, LanguagePreferences.normalizeKey(value)) }
 
-    /** Raw language preference. "auto" follows the app UI language at playback time. */
+    /** Raw language preference. "auto" follows the app UI language at playback time; default is the original language. */
     var audioLanguageKey: String
-        get() = LanguagePreferences.normalizeKey(prefs.getString(KEY_AUDIO_LANGUAGE, LanguagePreferences.AUTO))
+        get() = LanguagePreferences.normalizeKey(prefs.getString(KEY_AUDIO_LANGUAGE, LanguagePreferences.ORIGINAL))
         set(value) = prefs.edit { putString(KEY_AUDIO_LANGUAGE, LanguagePreferences.normalizeKey(value)) }
 
     val playbackAudioLanguage: String
