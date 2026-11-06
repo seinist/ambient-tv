@@ -1369,11 +1369,8 @@ internal fun TvPlayerSeekBar(
             }
         }
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
-            ) {
-                PlayerPausedIndicator(paused)
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                PlayerPausedIndicator(paused, trailingSpacing = 6.dp)
                 Text(
                     if (durationMs > 0L) "${formatDuration(displayedPosition)} / ${formatDuration(durationMs)}" else formatDuration(displayedPosition),
                     color = Color.White.copy(alpha = 0.82f),
