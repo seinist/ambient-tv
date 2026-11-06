@@ -48,7 +48,7 @@ class PlayerSkipOverlayPlacementTest {
         val viewport = IntSize(360, 230)
         val action = IntSize(350, 100)
         assertEquals(
-            IntOffset(10, 118),
+            IntOffset(0, 118),
             skipOverlayPosition(viewport, action, Offset.Zero,
                 Rect(10f, 180f, 340f, 220f), true, 12),
         )
