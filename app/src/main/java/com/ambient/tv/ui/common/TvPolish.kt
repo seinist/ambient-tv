@@ -19,7 +19,6 @@ import androidx.compose.animation.core.tween
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.spring
-import androidx.compose.animation.core.snap
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.foundation.MarqueeSpacing
 import androidx.compose.foundation.background
@@ -1285,7 +1284,6 @@ fun TvActionButton(
     var keyPressed by remember { mutableStateOf(false) }
     val uiScale = rememberUhdScale()
     val tokens = LocalUiTokens.current
-    val motionEnabled = LocalPerformanceProfile.current.allowSpringFocus
     // One shared geometry for shadow, background and border. Do not clip the border
     // to the same outer path: anti-aliased edge pixels can otherwise be cut off at
     // rounded corners even when the nominal corner radius is identical.
@@ -1335,9 +1333,17 @@ fun TvActionButton(
         val interaction = interactionColors(focused, selected, visuallyEnabled)
         // A white custom accent must still show an unmistakable focus change on a primary action.
         val primaryFill = selected && visuallyEnabled && !focused
-        val container by animateColorAsState(if (primaryFill) MaterialTheme.colorScheme.primary else interaction.container,
-            if (motionEnabled) tween(tokens.animationFastMs) else snap(), label = "action surface")
-        val foreground = if (primaryFill) MaterialTheme.colorScheme.onPrimary else interaction.content
+        val fadeMs = com.ambient.tv.ui.theme.focusBorderFadeDurationMs(
+            focused, LocalPerformanceProfile.current.reducedEffects,
+        )
+        val container by animateColorAsState(
+            if (primaryFill) MaterialTheme.colorScheme.primary else interaction.container,
+            tween(fadeMs), label = "action surface",
+        )
+        val foreground by animateColorAsState(
+            if (primaryFill) MaterialTheme.colorScheme.onPrimary else interaction.content,
+            tween(fadeMs), label = "action foreground",
+        )
         val outline = interaction.outline
         // Keep the stroke geometry invariant across focus/selected/pressed states.
         // Only its color changes; changing width can produce sub-pixel edge shimmer on TVs.

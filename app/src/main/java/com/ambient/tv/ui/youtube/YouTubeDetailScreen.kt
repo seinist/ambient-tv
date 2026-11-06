@@ -1,5 +1,6 @@
 package com.ambient.tv.ui.youtube
 
+import com.ambient.tv.ui.theme.animatedFocusSurface
 import com.ambient.tv.ui.mobile.DeviceActionRow
 import com.ambient.tv.ui.mobile.LocalHandheldUi
 
@@ -97,8 +98,14 @@ private fun YouTubeDetailChapters(chapters: List<com.ambient.tv.domain.model.Vid
             ) {
                 Column(
                     Modifier
-                        .background(if (focused) MaterialTheme.colorScheme.primary.copy(alpha = .12f) else MaterialTheme.colorScheme.surface.copy(alpha = .58f), shape)
-                        .border(if (focused) 2.dp else 1.dp, if (focused) MaterialTheme.colorScheme.primary else androidx.compose.ui.graphics.Color.White.copy(alpha = .06f), shape)
+                        .animatedFocusSurface(
+                focused = focused, shape = shape,
+                focusedBackground = MaterialTheme.colorScheme.primary.copy(alpha = .12f),
+                unfocusedBackground = MaterialTheme.colorScheme.surface.copy(alpha = .58f),
+                focusedBorder = MaterialTheme.colorScheme.primary,
+                unfocusedBorder = androidx.compose.ui.graphics.Color.White.copy(alpha = .06f),
+                borderWidth = 2.dp,
+            )
                         .padding(8.dp),
                     verticalArrangement = Arrangement.spacedBy(6.dp),
                 ) {

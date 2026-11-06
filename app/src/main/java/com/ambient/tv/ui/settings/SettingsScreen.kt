@@ -1,5 +1,6 @@
 package com.ambient.tv.ui.settings
 
+import com.ambient.tv.ui.theme.animatedFocusBorder
 import com.ambient.tv.data.local.AppPreferences
 import com.ambient.tv.data.radio.radioLanguageDisplayName
 import com.ambient.tv.ui.common.withTvFocusInsets
@@ -1702,11 +1703,7 @@ private fun AboutAppCard() {
                 .fillMaxWidth()
                 .onFocusChanged { focused = it.isFocused }
                 .focusable()
-                .border(
-                    if (focused) 2.dp else 0.dp,
-                    if (focused) MaterialTheme.colorScheme.primary else Color.Transparent,
-                    RoundedCornerShape(10.dp),
-                ),
+                .animatedFocusBorder(focused, RoundedCornerShape(10.dp), MaterialTheme.colorScheme.primary),
             horizontalArrangement = Arrangement.spacedBy(16.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
@@ -1747,11 +1744,7 @@ private fun AboutComponentCard(component: AboutComponent) {
             .onFocusChanged { focused = it.isFocused }
             .focusable()
             .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.30f), shape)
-            .border(
-                if (focused) 2.dp else 1.dp,
-                MaterialTheme.colorScheme.onSurface.copy(alpha = if (focused) 0.90f else 0.07f),
-                shape,
-            )
+            .animatedFocusBorder(focused, shape, MaterialTheme.colorScheme.onSurface.copy(alpha = 0.90f), unfocusedColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.07f))
             .padding(horizontal = 14.dp, vertical = 12.dp),
         horizontalArrangement = Arrangement.spacedBy(14.dp),
         verticalAlignment = Alignment.CenterVertically,

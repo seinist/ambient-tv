@@ -2,6 +2,11 @@ package com.ambient.tv.ui.player
 
 import com.ambient.tv.ui.mobile.LocalHandheldUi
 import com.ambient.tv.ui.mobile.deviceDp
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.shrinkVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.rememberScrollState
@@ -159,11 +164,14 @@ fun ReferencePlayerHeader(
                 // Trailing metadata gets measured before the weighted channel name. On narrow
                 // screens, the channel ellipsizes first and the publish time stays readable.
                 // Neither line changes its measured height when a late date arrives.
-                if (contextValue != null || contextTrailing != null || showPaused) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    ) {
+                // Keep the line composed during exit; otherwise a pause-only header
+                // would vanish instantly when playback resumes.
+                AnimatedVisibility(
+                    visible = contextValue != null || contextTrailing != null || showPaused,
+                    enter = expandVertically(animationSpec = tween(180)) + fadeIn(tween(180)),
+                    exit = shrinkVertically(animationSpec = tween(180)) + fadeOut(tween(180)),
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
                         contextValue?.let {
                             Text(
                                 text = it,
@@ -182,10 +190,12 @@ fun ReferencePlayerHeader(
                                 fontSize = 14.sp,
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis,
-                                modifier = Modifier.widthIn(max = deviceDp(244.dp, 144.dp)),
+                                modifier = Modifier
+                                    .padding(start = if (contextValue != null) 8.dp else 0.dp)
+                                    .widthIn(max = deviceDp(244.dp, 144.dp)),
                             )
                         }
-                        PlayerPausedIndicator(showPaused, showLabel = true)
+                        PlayerPausedIndicator(showPaused, showLabel = true, leadingSpacing = 8.dp)
                     }
                 }
                 Text(

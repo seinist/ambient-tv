@@ -195,7 +195,6 @@ fun BoxScope.TvhReferencePlayerChrome(
             // without briefly showing programme information from the previous channel.
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Text(
@@ -208,7 +207,7 @@ fun BoxScope.TvhReferencePlayerChrome(
                     modifier = Modifier.weight(1f),
                 )
                 // Without timeshift there is no seekbar. Reuse the reserved next-programme line.
-                if (!showTimeshift) com.ambient.tv.ui.player.PlayerPausedIndicator(paused, showLabel = true)
+                if (!showTimeshift) com.ambient.tv.ui.player.PlayerPausedIndicator(paused, showLabel = true, leadingSpacing = 8.dp)
             }
         } else if (!source.isLive && durationMs > 0L) {
             TvPlayerSeekBar(

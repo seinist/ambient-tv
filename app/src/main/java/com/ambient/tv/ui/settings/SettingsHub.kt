@@ -1,5 +1,6 @@
 package com.ambient.tv.ui.settings
 
+import com.ambient.tv.ui.theme.animatedFocusSurface
 import com.ambient.tv.ui.common.withTvFocusInsets
 import com.ambient.tv.ui.common.TvTextFieldFocus
 
@@ -1156,8 +1157,14 @@ internal fun SettingsHubRow(title: String, subtitle: String?, selected: Boolean,
     Surface(onClick = activate, colors = transparentSurfaceColors(), scale = noSurfaceScale(), shape = ClickableSurfaceDefaults.shape(shape),
         modifier = modifier.fillMaxWidth().activateOnTvKey(onClick = activate).onFocusChanged { focused = it.isFocused; if (it.isFocused) uiSounds?.playFocus() }) {
         Row(Modifier.fillMaxWidth()
-            .background(if (focused) MaterialTheme.colorScheme.primary.copy(alpha = 0.17f) else if (selected) MaterialTheme.colorScheme.primary.copy(alpha = 0.07f) else Color.Transparent, shape)
-            .border(if (focused) 2.dp else 1.dp, if (focused) MaterialTheme.colorScheme.primary else if (selected) MaterialTheme.colorScheme.primary.copy(alpha = 0.35f) else Color.Transparent, shape)
+            .animatedFocusSurface(
+                focused = focused, shape = shape,
+                focusedBackground = MaterialTheme.colorScheme.primary.copy(alpha = 0.17f),
+                unfocusedBackground = if (selected) MaterialTheme.colorScheme.primary.copy(alpha = 0.07f) else Color.Transparent,
+                focusedBorder = MaterialTheme.colorScheme.primary,
+                unfocusedBorder = if (selected) MaterialTheme.colorScheme.primary.copy(alpha = 0.35f) else Color.Transparent,
+                borderWidth = 2.dp,
+            )
             .padding(12.dp), horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
             Icon(icon, null, modifier = Modifier.size(22.dp))
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {

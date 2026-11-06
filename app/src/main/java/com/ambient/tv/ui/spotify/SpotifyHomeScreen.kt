@@ -1,5 +1,6 @@
 package com.ambient.tv.ui.spotify
 
+import com.ambient.tv.ui.theme.animatedFocusSurface
 import com.ambient.tv.ui.theme.screenGutter
 import androidx.activity.compose.BackHandler
 import com.ambient.tv.ui.mobile.deviceDp
@@ -223,8 +224,14 @@ private fun SpotifyTile(
     ) {
         Column(
             Modifier
-                .background(if (focused) MaterialTheme.colorScheme.primary.copy(alpha = 0.14f) else MaterialTheme.colorScheme.surface.copy(alpha = 0.72f), cardShape)
-                .border(2.dp, if (focused) MaterialTheme.colorScheme.primary else Color.White.copy(alpha = 0.08f), cardShape)
+                .animatedFocusSurface(
+                focused = focused, shape = cardShape,
+                focusedBackground = MaterialTheme.colorScheme.primary.copy(alpha = 0.14f),
+                unfocusedBackground = MaterialTheme.colorScheme.surface.copy(alpha = 0.72f),
+                focusedBorder = MaterialTheme.colorScheme.primary,
+                unfocusedBorder = Color.White.copy(alpha = 0.08f),
+                borderWidth = 2.dp,
+            )
                 .padding(10.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {

@@ -4,6 +4,8 @@ package com.ambient.tv.ui.section
 
 import com.ambient.tv.ui.common.glideToItem
 import com.ambient.tv.ui.theme.screenGutter
+import com.ambient.tv.ui.theme.animatedFocusBorder
+import com.ambient.tv.ui.theme.animatedFocusSurface
 import com.ambient.tv.ui.common.fillWindowHeight
 
 import com.ambient.tv.ui.common.AlphabetBar
@@ -999,8 +1001,14 @@ private fun RecommendationListItem(
         Row(
             Modifier
                 .fillMaxWidth()
-                .background(if (focused) MaterialTheme.colorScheme.primary.copy(alpha = 0.10f) else MaterialTheme.colorScheme.surface.copy(alpha = 0.58f), shape)
-                .border(if (focused) 1.5.dp else 1.dp, if (focused) MaterialTheme.colorScheme.primary else Color.White.copy(alpha = 0.06f), shape)
+                .animatedFocusSurface(
+                focused = focused, shape = shape,
+                focusedBackground = MaterialTheme.colorScheme.primary.copy(alpha = 0.10f),
+                unfocusedBackground = MaterialTheme.colorScheme.surface.copy(alpha = 0.58f),
+                focusedBorder = MaterialTheme.colorScheme.primary,
+                unfocusedBorder = Color.White.copy(alpha = 0.06f),
+                borderWidth = 1.5.dp,
+            )
                 .padding(10.dp * rowScale),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(14.dp * rowScale),
@@ -1120,7 +1128,7 @@ private fun WallTile(
             Modifier
                 .fillMaxWidth()
                 .aspectRatio(if (poster) 2f / 3f else 16f / 9f)
-                .border(if (focused) 2.dp else 1.dp, if (focused) MaterialTheme.colorScheme.primary else Color.White.copy(alpha = 0.06f), shape),
+                .animatedFocusBorder(focused, shape, MaterialTheme.colorScheme.primary, unfocusedColor = Color.White.copy(alpha = 0.06f)),
         ) {
             MediaArtworkWithStreamIcons(
                 item = item,
@@ -1594,8 +1602,14 @@ private fun StylishMediaList(
                 Row(
                     Modifier
                         .fillMaxWidth()
-                        .background(if (isFocused) MaterialTheme.colorScheme.primary.copy(alpha = 0.09f) else MaterialTheme.colorScheme.surface.copy(alpha = 0.58f), rowShape)
-                        .border(if (isFocused) 1.5.dp else 1.dp, if (isFocused) MaterialTheme.colorScheme.primary else Color.White.copy(alpha = 0.06f), rowShape)
+                        .animatedFocusSurface(
+                focused = isFocused, shape = rowShape,
+                focusedBackground = MaterialTheme.colorScheme.primary.copy(alpha = 0.09f),
+                unfocusedBackground = MaterialTheme.colorScheme.surface.copy(alpha = 0.58f),
+                focusedBorder = MaterialTheme.colorScheme.primary,
+                unfocusedBorder = Color.White.copy(alpha = 0.06f),
+                borderWidth = 1.5.dp,
+            )
                         .padding(10.dp * rowScale),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(14.dp * rowScale),
@@ -1779,8 +1793,14 @@ private fun InfoList(
                 ) {
                     Row(
                         Modifier.fillMaxWidth()
-                            .background(if (focused) MaterialTheme.colorScheme.primary.copy(alpha = 0.12f) else Color.Transparent, rowShape)
-                            .border(if (focused) 1.5.dp else 1.dp, if (focused) MaterialTheme.colorScheme.primary else Color.White.copy(alpha = 0.04f), rowShape)
+                            .animatedFocusSurface(
+                focused = focused, shape = rowShape,
+                focusedBackground = MaterialTheme.colorScheme.primary.copy(alpha = 0.12f),
+                unfocusedBackground = Color.Transparent,
+                focusedBorder = MaterialTheme.colorScheme.primary,
+                unfocusedBorder = Color.White.copy(alpha = 0.04f),
+                borderWidth = 1.5.dp,
+            )
                             .padding(horizontal = 12.dp * rowScale, vertical = 9.dp * rowScale),
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(12.dp),
@@ -1898,7 +1918,7 @@ private fun WallGrid(
             ) {
                 Box(
                     Modifier.fillMaxWidth().aspectRatio(if (poster) 2f / 3f else 16f / 9f)
-                        .border(if (focused) 2.dp else 1.dp, if (focused) MaterialTheme.colorScheme.primary else Color.White.copy(alpha = 0.06f), cardShape),
+                        .animatedFocusBorder(focused, cardShape, MaterialTheme.colorScheme.primary, unfocusedColor = Color.White.copy(alpha = 0.06f)),
                 ) {
                     MediaArtworkWithStreamIcons(
                         item = item,
@@ -1996,8 +2016,14 @@ private fun CollectionGrid(state: SectionUiState.Loaded, onClick: (String, Strin
                     // A fixed 160dp TV card overflows narrow phone grid cells and overlaps
                     // neighboring tiles when density changes. Respect each grid cell on handheld.
                     (if (LocalHandheldUi.current) Modifier.fillMaxWidth() else Modifier.width(cardWidth))
-                        .background(if (isFocused) MaterialTheme.colorScheme.primary.copy(alpha = 0.09f) else MaterialTheme.colorScheme.surface.copy(alpha = 0.58f), cardShape)
-                        .border(if (isFocused) 1.5.dp else 1.dp, if (isFocused) MaterialTheme.colorScheme.primary else Color.White.copy(alpha = 0.06f), cardShape)
+                        .animatedFocusSurface(
+                focused = isFocused, shape = cardShape,
+                focusedBackground = MaterialTheme.colorScheme.primary.copy(alpha = 0.09f),
+                unfocusedBackground = MaterialTheme.colorScheme.surface.copy(alpha = 0.58f),
+                focusedBorder = MaterialTheme.colorScheme.primary,
+                unfocusedBorder = Color.White.copy(alpha = 0.06f),
+                borderWidth = 1.5.dp,
+            )
                 ) {
                     ArtworkImage(
                         model = collection.representative.thumbUrl ?: collection.representative.artUrl,
@@ -2041,8 +2067,14 @@ private fun CollectionList(state: SectionUiState.Loaded, onClick: (String, Strin
             Surface(onClick = { onClick(c.id, c.title) }, colors = transparentSurfaceColors(), scale = noSurfaceScale(), shape = ClickableSurfaceDefaults.shape(shape = rowShape), modifier = focusModifier.browseFocusTarget(c.id).mediaFocusMotion(isFocused, focusedScale = 1.012f).activateOnTvKey { onClick(c.id, c.title) }.onFocusChanged { isFocused = it.isFocused; if (it.isFocused) onFocused(c.id) }) {
                 Row(
                     Modifier.fillMaxWidth()
-                        .background(if (isFocused) MaterialTheme.colorScheme.primary.copy(alpha = 0.09f) else MaterialTheme.colorScheme.surface.copy(alpha = 0.58f), rowShape)
-                        .border(if (isFocused) 1.5.dp else 1.dp, if (isFocused) MaterialTheme.colorScheme.primary else Color.White.copy(alpha = 0.06f), rowShape)
+                        .animatedFocusSurface(
+                focused = isFocused, shape = rowShape,
+                focusedBackground = MaterialTheme.colorScheme.primary.copy(alpha = 0.09f),
+                unfocusedBackground = MaterialTheme.colorScheme.surface.copy(alpha = 0.58f),
+                focusedBorder = MaterialTheme.colorScheme.primary,
+                unfocusedBorder = Color.White.copy(alpha = 0.06f),
+                borderWidth = 1.5.dp,
+            )
                         .padding(10.dp * rowScale),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(14.dp * rowScale),

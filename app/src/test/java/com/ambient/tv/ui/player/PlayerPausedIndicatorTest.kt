@@ -1,10 +1,16 @@
 package com.ambient.tv.ui.player
 
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class PlayerPausedIndicatorTest {
+    @Test fun pauseBadgeMotionRemainsVisibleInSparsam() {
+        assertEquals(180, pausedIndicatorMotionMs(reducedEffects = false))
+        assertEquals(120, pausedIndicatorMotionMs(reducedEffects = true))
+    }
+
     @Test fun explicitPauseShowsStatus() {
         assertTrue(shouldShowPlayerPaused(playRequested = false))
     }

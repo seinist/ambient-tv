@@ -1,5 +1,6 @@
 package com.ambient.tv.ui.browse
 
+import com.ambient.tv.ui.theme.animatedFocusSurface
 import com.ambient.tv.ui.theme.screenGutter
 import com.ambient.tv.ui.mobile.deviceDp
 import androidx.activity.compose.BackHandler
@@ -390,8 +391,14 @@ private fun BrowseList(state: FilteredBrowseUiState.Loaded, onClick: (String) ->
             Surface(onClick = { onClick(item.ratingKey) }, colors = transparentSurfaceColors(), scale = noSurfaceScale(), shape = androidx.tv.material3.ClickableSurfaceDefaults.shape(shape = rowShape), modifier = focus.mediaFocusMotion(isFocused, focusedScale = 1.012f).activateOnTvKey { onClick(item.ratingKey) }.bringFocusedContextIntoView().onFocusChanged { isFocused = it.isFocused; if (it.isFocused) onFocused(item) }) {
                 Row(
                     Modifier.fillMaxWidth()
-                        .background(if (isFocused) MaterialTheme.colorScheme.primary.copy(alpha = 0.09f) else MaterialTheme.colorScheme.surface.copy(alpha = 0.58f), rowShape)
-                        .border(if (isFocused) 1.5.dp else 1.dp, if (isFocused) MaterialTheme.colorScheme.primary else Color.White.copy(alpha = 0.06f), rowShape)
+                        .animatedFocusSurface(
+                focused = isFocused, shape = rowShape,
+                focusedBackground = MaterialTheme.colorScheme.primary.copy(alpha = 0.09f),
+                unfocusedBackground = MaterialTheme.colorScheme.surface.copy(alpha = 0.58f),
+                focusedBorder = MaterialTheme.colorScheme.primary,
+                unfocusedBorder = Color.White.copy(alpha = 0.06f),
+                borderWidth = 1.5.dp,
+            )
                         .padding(14.dp),
                     horizontalArrangement = Arrangement.spacedBy(20.dp), verticalAlignment = Alignment.CenterVertically,
                 ) {

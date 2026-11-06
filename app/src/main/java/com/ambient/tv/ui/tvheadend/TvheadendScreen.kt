@@ -814,8 +814,10 @@ internal fun GuideEventCard(
             // Hairline separators rather than a rounded border around every programme.
             Box(Modifier.align(Alignment.CenterEnd).width(1.dp).fillMaxHeight()
                 .background(Color.White.copy(alpha = .18f)))
-            if (focused) Box(Modifier.matchParentSize().border(2.dp,
-                MaterialTheme.colorScheme.primary, cardShape))
+            Box(Modifier.matchParentSize().animatedFocusBorder(
+                focused = focused, shape = cardShape,
+                focusedColor = MaterialTheme.colorScheme.primary,
+            ))
         }
     }
     }
