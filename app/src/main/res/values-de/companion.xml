@@ -19,6 +19,7 @@
     <string name="companion_switch_server_message">Das Handy möchte einen Titel von %1$s abspielen. Dieser Server ist am TV gerade nicht aktiv.</string>
     <string name="companion_switch_server_confirm">Wechseln und abspielen</string>
     <string name="companion_share_unsupported">Teile genau einen YouTube-Link oder direkten HTTP(S)-Medienlink, z. B. MP4, M3U8, MP3 oder FLAC. Webseiten und lokale Dateien werden nicht unterstützt.</string>
+    <string name="companion_share_start_failed">Senden an den TV konnte nicht gestartet werden. Bitte erneut versuchen.</string>
     <string name="companion_send_to">An %1$s senden</string>
     <string name="companion_sending">Wird an %1$s gesendet…</string>
     <string name="companion_sent">Wiedergabe auf %1$s angefordert</string>
