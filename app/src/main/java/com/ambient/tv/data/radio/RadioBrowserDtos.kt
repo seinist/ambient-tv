@@ -43,6 +43,7 @@ data class RadioBrowserFacetDto(
     @SerialName("iso_639") val iso639: String? = null,
 )
 
+@Serializable
 data class RadioFacet(
     val id: String,
     val name: String,

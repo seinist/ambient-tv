@@ -66,8 +66,15 @@ class RadioPlaybackLauncher @Inject constructor(
 
             // A reconnect refreshes the catalog row but does not count another user click or
             // duplicate the Recent entry. The stored URL is still the final offline fallback.
-            val currentStation = if (reconnect) repository.station(station.id) ?: station else station
-            val streamUrl = if (reconnect) currentStation.streamUrl else repository.playbackUrl(currentStation)
+            // Persistent catalogue entries are display-only: hydrate their playable URL
+            // on selection. A cancelled or failed lookup must not start an empty stream.
+            val catalogStation = if (reconnect || station.streamUrl.isBlank()) {
+                suspendResult { repository.station(station.id) }.getOrNull() ?: station
+            } else station
+            val streamUrl = if (reconnect) catalogStation.streamUrl else repository.playbackUrl(catalogStation)
+            require(streamUrl.isNotBlank()) { "No playable Radio Browser URL for ${station.id}" }
+            val currentStation = if (catalogStation.streamUrl.isBlank())
+                catalogStation.copy(streamUrl = streamUrl) else catalogStation
 
             val player = PlaybackEngineFactory.create(
                 context = context,
@@ -93,7 +100,11 @@ class RadioPlaybackLauncher @Inject constructor(
 
             // Commit browse/player state only after the replacement player exists. A failed or
             // cancelled start must leave the previous queue and Recent history untouched.
-            if (stations != null) queue.replace(stations, currentStation.id, source) else queue.select(currentStation.id)
+            if (stations != null) {
+                // A display-cache entry must not remain blank in the committed playback queue.
+                queue.replace(stations.map { if (it.id == currentStation.id) currentStation else it },
+                    currentStation.id, source)
+            } else queue.select(currentStation.id)
             if (!reconnect) {
                 reconnectStationId = currentStation.id
                 reconnectAttempt = 0

@@ -66,6 +66,20 @@ SHOUTcast and TuneIn are intentionally out of scope. The user-facing system is s
 - an optional Radio Home shortcut can be added through the existing Home row editor;
 - RadioBrowser logo source/license is documented in SYSTEM_LOGO_RADIO_BROWSER_LICENSE.txt.
 
+## Persistent Radio catalogue cache
+
+- Home and Radio routes share one scoped, bounded RadioCatalogCache on top of BrowseDiskStore.
+- Cached station pages and facet lists hydrate before network revalidation. Fresh entries suppress requests;
+  stale entries can still be displayed offline (up to BrowseDiskStore's 30-day retention window).
+- Cache keys include normalized filters, offset, page size and sort direction, to avoid mixing cursors.
+- TTLs: facets 24 h, popular top 100 1 h, filtered station pages 4 h, text searches 20 min.
+- Popular uses one top-100 source for both Home (first 24) and the Radio Popular page.
+- Only display-safe station metadata is written to disk; never save stream URLs, homepage URLs
+  or image URL credentials. A cold-start cached station resolves its playable URL when selected.
+- A manual refresh bypasses freshness TTL; on network failure, stale cached pages remain visible.
+- Filtered results are fetched in scroll-sized pages instead of eagerly walking the entire country
+  or genre before the user scrolls.
+
 ## Still to implement
 
 1. Device playback tests with representative MP3/AAC/HLS and ICY stations.
