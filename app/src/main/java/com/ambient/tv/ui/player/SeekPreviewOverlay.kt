@@ -111,24 +111,31 @@ internal fun BoxScope.SeekPreviewOverlay(
     val frame = timeline.previewFrameAt(shownPosition)
     val chapter = timeline.chapterAt(shownPosition)
     val track = state.trackBoundsInRoot
-    val show = target != null && (frame != null || chapter != null) &&
-        track != null && viewportSize.width > 0 && viewportSize.height > 0
-
     val density = LocalDensity.current
     val margin = with(density) { 12.dp.toPx() }
+    val previewGap = with(density) { 12.dp.toPx() }
     val desiredWidth = with(density) { (if (LocalHandheldUi.current) 152.dp else 208.dp).toPx() }
     val widthPx = desiredWidth.coerceAtMost((viewportSize.width - 2f * margin).coerceAtLeast(1f))
     var measuredHeight by remember { mutableIntStateOf(0) }
     val estimatedHeight = if (frame != null) widthPx * 9f / 16f else with(density) { 62.dp.toPx() }
     val heightPx = measuredHeight.takeIf { it > 0 }?.toFloat() ?: estimatedHeight
+    // Keep the preview above a visible skip context row, not over its focused action.
+    // On a very short screen prefer the Skip button if both cannot fit at once.
+    val skipSlot = navigation.skipContextBoundsInRoot?.takeIf {
+        navigation.skipActionVisible && navigation.chromeVisible
+    }
+    val previewFits = skipSlot == null ||
+        skipSlot.top - viewportOrigin.y - heightPx - previewGap >= margin
+    val show = target != null && (frame != null || chapter != null) &&
+        track != null && viewportSize.width > 0 && viewportSize.height > 0 && previewFits
     val fraction = (shownPosition.toDouble() / state.durationMs.coerceAtLeast(1L)).toFloat()
     val x = track?.let {
         seekPreviewScreenX(it.left, it.width, viewportOrigin.x, viewportSize.width.toFloat(),
             widthPx, fraction, margin)
     } ?: 0f
     val y = track?.let {
-        seekPreviewScreenY(it.top, viewportOrigin.y, viewportSize.height.toFloat(),
-            heightPx, with(density) { 12.dp.toPx() }, margin)
+        seekPreviewScreenY(skipSlot?.let { slot -> minOf(it.top, slot.top) } ?: it.top,
+            viewportOrigin.y, viewportSize.height.toFloat(), heightPx, previewGap, margin)
     } ?: 0f
 
     AnimatedVisibility(

@@ -1,8 +1,20 @@
 package com.ambient.tv.ui.player
 
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.animateIntOffsetAsState
+import androidx.compose.animation.core.spring
 import androidx.compose.foundation.layout.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.layout.positionInRoot
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.IntSize
+import androidx.compose.ui.zIndex
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusDirection
 import androidx.compose.ui.focus.FocusRequester
@@ -93,6 +105,33 @@ internal fun SegmentSkipOverlay(
     // SponsorBlock never displays a manual button; the service owns its automatic seek.
     val visible = segment != null && segment != dismissed &&
         !navigation.skipOverlayBlocked && !navigation.chaptersOpen && !nextUpVisible
+    // The shared OSD header reserves an action slot only while this transient prompt exists.
+    SideEffect { navigation.skipActionVisible = visible }
+    DisposableEffect(navigation) {
+        onDispose {
+            navigation.skipActionVisible = false
+            navigation.skipActionSize = IntSize.Zero
+            navigation.skipContextBoundsInRoot = null
+        }
+    }
+    var viewport by remember { mutableStateOf(IntSize.Zero) }
+    var viewportOrigin by remember { mutableStateOf(Offset.Zero) }
+    val actionSize = navigation.skipActionSize
+    val ready = viewport.width > 0 && viewport.height > 0 && actionSize.width > 0 && actionSize.height > 0
+    val density = LocalDensity.current
+    val marginPx = with(density) { (if (handheld) 12.dp else 32.dp).roundToPx() }
+    val osdVisible = navigation.chromeVisible && LocalPlayerChromeState.current?.osd?.show != false
+    val target = skipOverlayPosition(
+        viewport, actionSize, viewportOrigin, navigation.skipContextBoundsInRoot,
+        contextVisible = visible && osdVisible, marginPx = marginPx,
+    )
+    // Compose the row once, not a floating copy plus an inline copy: this preserves D-pad
+    // focus and avoids double clicks while its measured destination changes.
+    val animatedPosition = if (visible && ready) animateIntOffsetAsState(
+        targetValue = target,
+        animationSpec = spring(stiffness = Spring.StiffnessMediumLow, dampingRatio = Spring.DampingRatioNoBouncy),
+        label = "Skip action floats into OSD",
+    ).value else IntOffset.Zero
     val restorePlayerFocus = !visible && focused
     LaunchedEffect(visible) {
         if (restorePlayerFocus && !nextUpVisible) {
@@ -100,7 +139,14 @@ internal fun SegmentSkipOverlay(
             navigation.returnToControls()
         }
     }
-    Box(Modifier.fillMaxSize()) {
+    Box(
+        Modifier.fillMaxSize()
+            .onSizeChanged { if (viewport != it) viewport = it }
+            .onGloballyPositioned {
+                val origin = it.positionInRoot()
+                if (viewportOrigin != origin) viewportOrigin = origin
+            },
+    ) {
         content()
         // Register after the player's Back handlers: dismiss the skip action before
         // leaving playback or closing the OSD, even if its button lost focus.
@@ -128,17 +174,18 @@ internal fun SegmentSkipOverlay(
                 "credits" -> controls?.onCreditsModeChanged?.takeIf { controls.creditsMode == "button" }
                 else -> null
             }
-            // Keep D-pad navigation among the visible actions. Direction keys do not
-            // accidentally return to the underlying OSD; OK or Back resolves this prompt.
+            // The same focus group is placed at either measured OSD context coordinates
+            // or a safe bottom-right floating position. Never lay out two action instances.
             val focusBehavior = if (handheld) Modifier.fillMaxWidth() else Modifier
-            DeviceActionRow(
-                modifier = Modifier.align(Alignment.BottomEnd)
+            Box(
+                modifier = Modifier.align(Alignment.TopStart)
                     .then(if (handheld) Modifier.fillMaxWidth() else Modifier)
-                    .padding(
-                        start = if (handheld) 12.dp else 0.dp,
-                        end = if (handheld) 12.dp else 32.dp,
-                        bottom = if (navigation.chromeVisible) { if (handheld) 196.dp else 220.dp } else { if (handheld) 12.dp else 32.dp },
-                    )
+                    .offset { animatedPosition }
+                    .onSizeChanged {
+                        if (navigation.skipActionSize != it) navigation.skipActionSize = it
+                    }
+                    .graphicsLayer { alpha = if (ready) 1f else 0f }
+                    .zIndex(PLAYER_SETTINGS_PANEL_Z_INDEX + 1f)
                     .onFocusChanged { focused = it.hasFocus }
                     .focusProperties {
                         onExit = {
@@ -150,26 +197,30 @@ internal fun SegmentSkipOverlay(
                         }
                     }
                     .focusGroup(),
-                horizontalArrangement = Arrangement.spacedBy(10.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                stack = handheld,
             ) {
-                setAutomatic?.let { changeMode ->
-                    TvActionButton(
-                        stringResource(if (segment.type == "intro") R.string.player_always_skip_intros else R.string.player_always_skip_credits),
-                        {
-                            changeMode("auto")
-                            skip(segment)
-                            navigation.returnToControls()
-                        },
-                        focusBehavior,
-                        fillWidth = handheld,
-                    )
+                DeviceActionRow(
+                    modifier = if (handheld) Modifier.fillMaxWidth().padding(horizontal = 12.dp) else Modifier,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    stack = handheld,
+                ) {
+                    setAutomatic?.let { changeMode ->
+                        TvActionButton(
+                            stringResource(if (segment.type == "intro") R.string.player_always_skip_intros else R.string.player_always_skip_credits),
+                            {
+                                changeMode("auto")
+                                skip(segment)
+                                navigation.returnToControls()
+                            },
+                            focusBehavior,
+                            fillWidth = handheld,
+                        )
+                    }
+                    TvActionButton(actionText, {
+                        skip(segment)
+                        navigation.returnToControls()
+                    }, focusBehavior.focusRequester(focus), fillWidth = handheld)
                 }
-                TvActionButton(actionText, {
-                    skip(segment)
-                    navigation.returnToControls()
-                }, focusBehavior.focusRequester(focus), fillWidth = handheld)
             }
         }
     }

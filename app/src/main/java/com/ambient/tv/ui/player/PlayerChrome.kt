@@ -135,96 +135,101 @@ fun ReferencePlayerHeader(
     // The bubble occupies the area above the timeline. Fade only the header's pixels,
     // never its measured height: the seekbar, badges and actions must not jump.
     val headerAlpha by seekPreviewYieldAlpha()
-    Row(
-        modifier = modifier.fillMaxWidth().graphicsLayer { alpha = headerAlpha },
-        horizontalArrangement = Arrangement.spacedBy(16.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        if (!artworkUrl.isNullOrBlank() || artworkFallbackUrls.isNotEmpty()) {
-            PlaybackArtworkCard(
-                artworkUrl = artworkUrl,
-                fallbackUrls = artworkFallbackUrls,
-                title = title,
-                headers = artworkHeaders,
-                contentScale = artworkContentScale,
-                modifier = Modifier.height(deviceDp(104.dp, 56.dp)).aspectRatio(artworkAspectRatio),
-            )
-        }
-        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
-            val contextValue = contextLine?.takeIf(String::isNotBlank)
-            val contextTrailing = contextTrailingText?.trim()?.takeIf(String::isNotBlank)
-            val subtitleValue = subtitle?.takeIf(String::isNotBlank)
-            val subtitleTrailing = subtitleTrailingText?.trim()?.takeIf(String::isNotBlank)
-            // Trailing metadata gets measured before the weighted channel name. On narrow
-            // screens, the channel ellipsizes first and the publish time stays readable.
-            // Neither line changes its measured height when a late date arrives.
-            if (contextValue != null || contextTrailing != null || showPaused) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    contextValue?.let {
-                        Text(
-                            text = it,
-                            color = Color.White.copy(alpha = 0.72f),
-                            fontSize = 15.sp,
-                            fontWeight = FontWeight.Medium,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                            modifier = Modifier.weight(1f, fill = false),
-                        )
-                    }
-                    contextTrailing?.let {
-                        Text(
-                            text = if (contextValue == null) it else "· $it",
-                            color = Color.White.copy(alpha = 0.72f),
-                            fontSize = 14.sp,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                            modifier = Modifier.widthIn(max = deviceDp(244.dp, 144.dp)),
-                        )
-                    }
-                    PlayerPausedIndicator(showPaused, showLabel = true)
-                }
+    Column(modifier = modifier.fillMaxWidth()) {
+        Row(
+            modifier = Modifier.fillMaxWidth().graphicsLayer { alpha = headerAlpha },
+            horizontalArrangement = Arrangement.spacedBy(16.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            if (!artworkUrl.isNullOrBlank() || artworkFallbackUrls.isNotEmpty()) {
+                PlaybackArtworkCard(
+                    artworkUrl = artworkUrl,
+                    fallbackUrls = artworkFallbackUrls,
+                    title = title,
+                    headers = artworkHeaders,
+                    contentScale = artworkContentScale,
+                    modifier = Modifier.height(deviceDp(104.dp, 56.dp)).aspectRatio(artworkAspectRatio),
+                )
             }
-            Text(
-                text = title,
-                color = Color.White,
-                fontSize = if (LocalHandheldUi.current) 20.sp else 27.sp,
-                fontWeight = FontWeight.SemiBold,
-                maxLines = 1,
-                // Handheld: scroll a title wider than the screen instead of cutting it off.
-                overflow = if (LocalHandheldUi.current) TextOverflow.Clip else TextOverflow.Ellipsis,
-                modifier = if (LocalHandheldUi.current) Modifier.basicMarquee(iterations = Int.MAX_VALUE, initialDelayMillis = 1_500) else Modifier,
-            )
-            if (subtitleValue != null || subtitleTrailing != null) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    subtitleValue?.let {
-                        Text(
-                            text = it,
-                            color = Color.White.copy(alpha = 0.72f),
-                            fontSize = 14.sp,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                            modifier = Modifier.weight(1f, fill = false),
-                        )
-                    }
-                    subtitleTrailing?.let {
-                        Text(
-                            text = if (subtitleValue == null) it else "· $it",
-                            color = Color.White.copy(alpha = 0.72f),
-                            fontSize = 14.sp,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                            modifier = Modifier.widthIn(max = deviceDp(244.dp, 144.dp)),
-                        )
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                val contextValue = contextLine?.takeIf(String::isNotBlank)
+                val contextTrailing = contextTrailingText?.trim()?.takeIf(String::isNotBlank)
+                val subtitleValue = subtitle?.takeIf(String::isNotBlank)
+                val subtitleTrailing = subtitleTrailingText?.trim()?.takeIf(String::isNotBlank)
+                // Trailing metadata gets measured before the weighted channel name. On narrow
+                // screens, the channel ellipsizes first and the publish time stays readable.
+                // Neither line changes its measured height when a late date arrives.
+                if (contextValue != null || contextTrailing != null || showPaused) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        contextValue?.let {
+                            Text(
+                                text = it,
+                                color = Color.White.copy(alpha = 0.72f),
+                                fontSize = 15.sp,
+                                fontWeight = FontWeight.Medium,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.weight(1f, fill = false),
+                            )
+                        }
+                        contextTrailing?.let {
+                            Text(
+                                text = if (contextValue == null) it else "· $it",
+                                color = Color.White.copy(alpha = 0.72f),
+                                fontSize = 14.sp,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.widthIn(max = deviceDp(244.dp, 144.dp)),
+                            )
+                        }
+                        PlayerPausedIndicator(showPaused, showLabel = true)
                     }
                 }
+                Text(
+                    text = title,
+                    color = Color.White,
+                    fontSize = if (LocalHandheldUi.current) 20.sp else 27.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 1,
+                    // Handheld: scroll a title wider than the screen instead of cutting it off.
+                    overflow = if (LocalHandheldUi.current) TextOverflow.Clip else TextOverflow.Ellipsis,
+                    modifier = if (LocalHandheldUi.current) Modifier.basicMarquee(iterations = Int.MAX_VALUE, initialDelayMillis = 1_500) else Modifier,
+                )
+                if (subtitleValue != null || subtitleTrailing != null) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        subtitleValue?.let {
+                            Text(
+                                text = it,
+                                color = Color.White.copy(alpha = 0.72f),
+                                fontSize = 14.sp,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.weight(1f, fill = false),
+                            )
+                        }
+                        subtitleTrailing?.let {
+                            Text(
+                                text = if (subtitleValue == null) it else "· $it",
+                                color = Color.White.copy(alpha = 0.72f),
+                                fontSize = 14.sp,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.widthIn(max = deviceDp(244.dp, 144.dp)),
+                            )
+                        }
+                    }
+                }
             }
         }
+        // Inline OSD context position, just after the title and before the seekbar.
+        // The action itself stays in the playback overlay to retain focus during movement.
+        PlayerSkipContextAnchor()
     }
 }
 

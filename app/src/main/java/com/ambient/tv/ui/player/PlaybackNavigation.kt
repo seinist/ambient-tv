@@ -26,6 +26,7 @@ import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.layout
@@ -37,6 +38,7 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.tv.material3.MaterialTheme
@@ -59,6 +61,12 @@ class PlaybackNavigationState {
     var timeline by mutableStateOf(PlaybackTimeline())
     var chromeVisible by mutableStateOf(false)
     var skipOverlayBlocked by mutableStateOf(false)
+    /** One transient skip action, even while it moves from the video to the OSD. */
+    var skipActionVisible by mutableStateOf(false)
+    /** Measured button group, used to reserve the correct OSD row height. */
+    var skipActionSize by mutableStateOf(IntSize.Zero)
+    /** Content slot measured by the shared ReferencePlayerHeader (root coordinates). */
+    var skipContextBoundsInRoot by mutableStateOf<Rect?>(null)
     var focusReturnVersion by mutableIntStateOf(0)
     fun returnToControls() { focusReturnVersion++; revealControls() }
     var revealControls: () -> Unit = {}
