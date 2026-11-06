@@ -68,6 +68,8 @@ import com.ambient.tv.ui.player.OsdPlayer
 import com.ambient.tv.ui.player.PersistentPlayerChrome
 import com.ambient.tv.ui.player.PersistentPlayerOverlays
 import com.ambient.tv.ui.player.PlaybackEngineFactory
+import com.ambient.tv.ui.player.PlayerBufferingSpinner
+import com.ambient.tv.ui.player.waitingForPlaybackPicture
 import com.ambient.tv.ui.player.rendererSwitchPositionMs
 import com.ambient.tv.ui.player.rendererZeroPositionReady
 import com.ambient.tv.ui.player.resizeKey
@@ -758,6 +760,22 @@ private fun TelegramPlaybackContent(
                     contentDescription = media.title,
                     modifier = Modifier.fillMaxSize(),
                 )
+            } else {
+                // The post may already be loaded while its stream/renderer is still opening.
+                // Use the same delayed spinner as the other players, including rebuffering,
+                // without showing it during a user pause or on a finished video.
+                PlayerBufferingSpinner(
+                    visible = monogramNeedsBufferingSpinner(
+                        requestedMediaKey = media.mediaKey,
+                        requestedRenderer = renderer,
+                        activeMediaKey = snapshot.metadata?.mediaId,
+                        activeRenderer = snapshot.backend,
+                        replacingSource = snapshot.replacingSource,
+                        wantsToPlay = snapshot.wantsToPlay,
+                        status = snapshot.status,
+                    ),
+                    modifier = Modifier.align(Alignment.Center),
+                )
             }
             val ownsSession = snapshot.metadata?.mediaId == media.mediaKey
             val position = if (ownsSession) snapshot.status.positionMs else 0L
@@ -1002,6 +1020,26 @@ internal data class TelegramOsd(
             }
         }
     }
+}
+
+/**
+ * The selected Monogram post/renderer may not own the shared playback session yet:
+ * opening its authenticated stream (or switching source/backend) is still loading.
+ * Once acquired, use the same play-intent-based buffering rule as the other renderers.
+ */
+internal fun monogramNeedsBufferingSpinner(
+    requestedMediaKey: String,
+    requestedRenderer: String,
+    activeMediaKey: String?,
+    activeRenderer: String,
+    replacingSource: Boolean,
+    wantsToPlay: Boolean,
+    status: com.ambient.tv.ui.player.PlaybackStatus,
+): Boolean {
+    if (activeMediaKey != requestedMediaKey ||
+        activeRenderer != requestedRenderer || replacingSource) return true
+    return !status.ended && status.error == null &&
+        waitingForPlaybackPicture(wantsToPlay, status.playing)
 }
 
 /** The Telegram cause behind a Media3 error (e.g. FLOOD_WAIT), readable for the error panel. */
