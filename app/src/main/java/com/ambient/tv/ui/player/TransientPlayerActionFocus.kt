@@ -30,8 +30,9 @@ internal fun TransientPlayerActionFocus(
     val handheld = LocalHandheldUi.current
     val windowFocused = LocalWindowInfo.current.isWindowFocused
     val currentActionFocused by rememberUpdatedState(hasActionFocus)
-    LaunchedEffect(visible, requester, focusIdentity, handheld, windowFocused) {
-        if (!visible || handheld || !windowFocused) return@LaunchedEffect
+    // Retry also if a native video surface takes focus after the first successful request.
+    LaunchedEffect(visible, requester, focusIdentity, handheld, windowFocused, hasActionFocus) {
+        if (!visible || handheld || !windowFocused || hasActionFocus) return@LaunchedEffect
         // A button composed in the same pass cannot reliably be focused before layout.
         delay(40)
         repeat(12) {
