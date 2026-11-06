@@ -34,6 +34,20 @@ class GpuFramedropWashoutPolicyTest {
         assertEquals("Direct", gpuRenderResolutionLabel(false, false, null, null))
     }
 
+    @Test fun explicitUpscalerMayOverrideAutoLowEndTargetButNeverExplicitUi() {
+        val opts = MpvImageOptions(scaler = "nnedi3_nns32")
+        assertTrue(com.ambient.tv.ui.player.mpvExplicitUpscalerRequestsPanel(opts))
+        assertTrue(com.ambient.tv.ui.player.mpvExplicitUpscalerRequestsPanel(MpvImageOptions(scaler = "ewa_lanczossharp")))
+        assertFalse(com.ambient.tv.ui.player.mpvExplicitUpscalerRequestsPanel(MpvImageOptions()))
+        assertFalse(com.ambient.tv.ui.player.mpvExplicitUpscalerRequestsPanel(MpvImageOptions(scaler = "bilinear")))
+        // MPV's Auto policy now accepts an explicit GPU upscaler as an opt-in on low-end.
+        assertTrue(gpuRenderAtPanelResolution(AppPreferences.GPU_RENDER_AUTO, gpuOutput = true,
+            lowEndDevice = true && !com.ambient.tv.ui.player.mpvExplicitUpscalerRequestsPanel(opts),
+            userImageProcessing = true))
+        assertFalse(gpuRenderAtPanelResolution(AppPreferences.GPU_RENDER_UI, gpuOutput = true,
+            lowEndDevice = false, userImageProcessing = true))
+    }
+
     // P2
     @Test fun openGlZeroCopyListsCopyBackAsMpvFallback() {
         val plan = planMpvAcceleration("gpu", "mediacodec", caps, gpuProcessing = true, zeroCopy = true)
