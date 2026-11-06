@@ -68,6 +68,9 @@ import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import timber.log.Timber
 
+// Hilt copies this Java suppression to its generated base class, which also extends
+// the deprecated MediaBrowserServiceCompat used by our Android Auto bridge.
+@java.lang.SuppressWarnings("deprecation")
 @AndroidEntryPoint
 class PlaybackService : MediaBrowserServiceCompat() {
     @Inject lateinit var files: com.ambient.tv.data.files.FilesRepository

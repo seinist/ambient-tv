@@ -180,7 +180,7 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
             when (event) {
                 is UpdateEventDto.NewMessage -> {
                     touched += event.message.chatId
-                    val date = event.message.date.toLong()
+                    val date = event.message.date
                     if ((latest[event.message.chatId]?.first ?: Long.MIN_VALUE) < date)
                         latest[event.message.chatId] = date to event.message.id
                 }

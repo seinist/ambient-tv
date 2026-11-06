@@ -255,7 +255,7 @@ object PlaybackEngineFactory {
                     if (initialSeek != null) seekTo(if (primeResume) 0L else initialSeek)
                     playWhenReady = true
                     Media3ImageProcessing.get(context, this)
-                    if (primeResume) Media3ResumePrimer.start(this, initialSeek ?: 0L)
+                    if (primeResume) Media3ResumePrimer.start(this, initialSeek)
                     if (!deferPrepare) prepare()
                 }
         }
