@@ -35,6 +35,36 @@ class GpuDeblockingTest {
         assertFalse(mpvCopyBackNeeded(listOf("deblock_strong"), cpuFilters = false, deinterlaceEnabled = false))
     }
 
+    @Test fun liveSwitchRequiresRemovingCpuFilterBeforeEnablingGpuHook() {
+        val cpuActive = listOf("plex-denoise", "plex-deblock")
+        for (strength in listOf("light", "medium", "strong")) {
+            val shader = "deblock_$strength"
+            assertTrue(mpvDeblockCpuMustRetireBeforeGpu(listOf(shader), cpuActive))
+            // Once CPU is retired, the same single saved strength executes only on GPU.
+            val cpuPlan = mpvCpuImageFilters(MpvImageOptions(deblock = strength), sdr = true,
+                hardwareDeblock = true)
+            assertFalse("plex-deblock" in cpuPlan)
+            assertFalse(mpvDeblockCpuMustRetireBeforeGpu(listOf(shader), cpuPlan.keys))
+        }
+        // CPU fallback can continue if the requested shader cannot be materialized/loaded.
+        assertFalse(mpvDeblockCpuMustRetireBeforeGpu(emptyList(), cpuActive))
+        assertFalse(mpvDeblockCpuMustRetireBeforeGpu(listOf("cas", "ravu_lite_r3"), cpuActive))
+        assertFalse(mpvDeblockCpuMustRetireBeforeGpu(listOf("deblock_medium"), listOf("plex-denoise")))
+    }
+
+    @Test fun failedGpuLoadUsesExactlyOneCpuFallbackFilter() {
+        val options = MpvImageOptions(deblock = "medium")
+        val requested = mpvImageShaderKeys(options, sdr = true)
+        assertEquals(listOf("deblock_medium"), requested)
+        // When GPU loading is rejected the loaded set is empty: no active GPU and
+        // the desired CPU vf chain contains one deblock implementation.
+        val loaded = emptyList<String>()
+        val cpu = mpvCpuImageFilters(options, sdr = true,
+            hardwareDeblock = "deblock_medium" in loaded)
+        assertEquals(setOf("plex-deblock"), cpu.keys)
+        assertFalse(mpvDeblockCpuMustRetireBeforeGpu(loaded, cpu.keys))
+    }
+
     @Test fun hdrAndUnknownTransferMustNotStartOptionalDeblocking() {
         for ((sdr, hdr) in listOf(false to false, false to true)) {
             assertTrue(mpvImageShaderKeys(MpvImageOptions(deblock = "medium"), sdr = sdr, hdr = hdr).isEmpty())

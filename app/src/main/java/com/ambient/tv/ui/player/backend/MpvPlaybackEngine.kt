@@ -1122,6 +1122,22 @@ internal class MpvPlaybackEngine(
                 MpvComputeSupport.SUPPORTED -> Unit
             }
         }
+        // Live handoff: mpv's CPU lavfi filters precede GPU GLSL hooks in the video pipeline.
+        // Adding the GPU deblock hook first briefly applies BOTH to the same frames. A failed
+        // later vf/remove can leave them stacked indefinitely. Retire CPU before the GPU
+        // shader is activated; if that removal fails, keep CPU and retry without loading GPU.
+        val readyShaders = shaderKeys.filter { it in loadedShaderKeys || shaderFiles[it] != null }
+        if (mpvDeblockCpuMustRetireBeforeGpu(readyShaders, activeCpuImageFilters.keys)) {
+            onOutputTransition()
+            if (optionalCommand("vf", "remove", "@plex-deblock")) {
+                activeCpuImageFilters.remove("plex-deblock")
+            } else {
+                imageApplyStale = true
+                imageOptionWarnings = (warnings + "deblock-cpu-remove").distinct()
+                Timber.w("%s CPU deblock removal rejected; keeping CPU fallback, GPU hook not enabled", HDR_AUDIT_TAG)
+                return
+            }
+        }
         if (shaderKeys != loadedShaderKeys ||
             (mpvTransferAwareShaderLoaded(shaderKeys) && casTransferProfile(transfer)?.suffix != loadedShaderTransferKey)
         ) {
