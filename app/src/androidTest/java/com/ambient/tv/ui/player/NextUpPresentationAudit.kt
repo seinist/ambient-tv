@@ -116,13 +116,17 @@ class NextUpPresentationAudit(private val instrumentation: Instrumentation, priv
             settle()
             screenshot("nextup-confirmation.png")
             awaitText(label("next_up_confirm"))
+            // The primary action is focused without any initial D-pad navigation.
             instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_CENTER)
             settle()
-            main { check(plays == 1) }
+            main { check(plays == 1) { "Next Up primary action did not receive initial focus" } }
+            // Back must dismiss even after focus moves to one of the secondary buttons.
+            instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_LEFT)
+            settle()
             instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_BACK)
             settle()
             main { check(dismisses == 1) }
-            log("PASS confirmation status and D-pad actions")
+            log("PASS Next Up initially focused, secondary actions contained, Back dismisses")
         } finally { main { activity.finish() } }
     }
 }

@@ -1,14 +1,15 @@
 package com.ambient.tv.ui.player
 
-import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusDirection
 import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusGroup
+import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
-import androidx.compose.ui.input.key.*
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import com.ambient.tv.R
@@ -99,18 +100,21 @@ internal fun SegmentSkipOverlay(
             navigation.returnToControls()
         }
     }
-    Box(Modifier.fillMaxSize().onPreviewKeyEvent { event ->
-        if (visible && !navigation.chromeVisible && !focused && event.key == Key.DirectionUp) {
-            if (event.type == KeyEventType.KeyDown) focus.requestFocus()
-            true
-        } else false
-    }) {
+    Box(Modifier.fillMaxSize()) {
         content()
-        // Registered after player Back handlers so Back dismisses this focused action first.
-        BackHandler(enabled = visible && focused) {
-            dismissed = segment
-            navigation.returnToControls()
-        }
+        // Register after the player's Back handlers: dismiss the skip action before
+        // leaving playback or closing the OSD, even if its button lost focus.
+        TransientPlayerActionFocus(
+            visible = visible,
+            requester = focus,
+            focusIdentity = segment,
+            hasActionFocus = focused,
+            onDismiss = {
+                dismissed = segment
+                navigation.interact()
+                navigation.returnToControls()
+            },
+        )
         if (visible) {
             val sponsorCategory = com.ambient.tv.youtube.sponsorCategoryOf(segment.type)
             val actionText = stringResource(when {
@@ -124,16 +128,9 @@ internal fun SegmentSkipOverlay(
                 "credits" -> controls?.onCreditsModeChanged?.takeIf { controls.creditsMode == "button" }
                 else -> null
             }
-            val focusBehavior = Modifier.onFocusChanged { focused = it.isFocused }
-                .onPreviewKeyEvent { event ->
-                    if (event.key == Key.DirectionDown) {
-                        if (event.type == KeyEventType.KeyDown) {
-                            dismissed = segment
-                            navigation.returnToControls()
-                        }
-                        true
-                    } else false
-                }
+            // Keep D-pad navigation among the visible actions. Direction keys do not
+            // accidentally return to the underlying OSD; OK or Back resolves this prompt.
+            val focusBehavior = if (handheld) Modifier.fillMaxWidth() else Modifier
             DeviceActionRow(
                 modifier = Modifier.align(Alignment.BottomEnd)
                     .then(if (handheld) Modifier.fillMaxWidth() else Modifier)
@@ -141,7 +138,18 @@ internal fun SegmentSkipOverlay(
                         start = if (handheld) 12.dp else 0.dp,
                         end = if (handheld) 12.dp else 32.dp,
                         bottom = if (navigation.chromeVisible) { if (handheld) 196.dp else 220.dp } else { if (handheld) 12.dp else 32.dp },
-                    ),
+                    )
+                    .onFocusChanged { focused = it.hasFocus }
+                    .focusProperties {
+                        onExit = {
+                            when (requestedFocusDirection) {
+                                FocusDirection.Left, FocusDirection.Right,
+                                FocusDirection.Up, FocusDirection.Down -> cancelFocusChange()
+                                else -> Unit
+                            }
+                        }
+                    }
+                    .focusGroup(),
                 horizontalArrangement = Arrangement.spacedBy(10.dp),
                 verticalAlignment = Alignment.CenterVertically,
                 stack = handheld,
@@ -154,14 +162,14 @@ internal fun SegmentSkipOverlay(
                             skip(segment)
                             navigation.returnToControls()
                         },
-                        focusBehavior.then(if (handheld) Modifier.fillMaxWidth() else Modifier),
+                        focusBehavior,
                         fillWidth = handheld,
                     )
                 }
                 TvActionButton(actionText, {
                     skip(segment)
                     navigation.returnToControls()
-                }, focusBehavior.focusRequester(focus).then(if (handheld) Modifier.fillMaxWidth() else Modifier), fillWidth = handheld)
+                }, focusBehavior.focusRequester(focus), fillWidth = handheld)
             }
         }
     }
