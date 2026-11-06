@@ -134,8 +134,10 @@ fun ReferencePlayerHeader(
     showPaused: Boolean = false,
     /** Short metadata trailing the context/channel row without creating another OSD line. */
     contextTrailingText: String? = null,
-    /** Short metadata trailing the subtitle/channel row, used by SmartTube's publish date. */
+    /** Short metadata trailing the subtitle/channel row, such as the publication date. */
     subtitleTrailingText: String? = null,
+    /** Optional content summary below the subtitle/metadata row. */
+    description: String? = null,
 ) {
     // The bubble occupies the area above the timeline. Fade only the header's pixels,
     // never its measured height: the seekbar, badges and actions must not jump.
@@ -195,7 +197,11 @@ fun ReferencePlayerHeader(
                                     .widthIn(max = deviceDp(244.dp, 144.dp)),
                             )
                         }
-                        PlayerPausedIndicator(showPaused, showLabel = true, leadingSpacing = 8.dp)
+                        PlayerPausedIndicator(
+                            showPaused,
+                            showLabel = true,
+                            leadingSpacing = if (contextValue != null || contextTrailing != null) 8.dp else 0.dp,
+                        )
                     }
                 }
                 Text(
@@ -234,6 +240,15 @@ fun ReferencePlayerHeader(
                             )
                         }
                     }
+                }
+                description?.takeIf(String::isNotBlank)?.let {
+                    Text(
+                        text = it,
+                        color = Color.White.copy(alpha = 0.72f),
+                        fontSize = 14.sp,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
                 }
             }
         }

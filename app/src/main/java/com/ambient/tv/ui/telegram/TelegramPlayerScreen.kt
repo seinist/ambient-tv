@@ -939,13 +939,14 @@ internal data class TelegramOsd(
             ReferencePlayerBottomContent(onTogglePlayback = onToggle) {
                 ReferencePlayerHeader(
                     title = media.title,
-                    subtitle = media.summary,
-                    contextLine = media.channel,
+                    subtitle = media.channel,
                     // Monogram already provides a real post timestamp. Use the same localized,
-                    // relative date formatting as its cards and details, beside the channel.
-                    contextTrailingText = media.publishedAtMs.takeIf { it > 0L }?.let {
+                    // relative date formatting as its cards and details, beside the channel
+                    // below the title, matching SmartTube's OSD.
+                    subtitleTrailingText = media.publishedAtMs.takeIf { it > 0L }?.let {
                         com.ambient.tv.ui.common.relativePublishedLabel(it)
                     },
+                    description = media.summary,
                     artworkUrl = media.cardImageUrl ?: media.thumbnailUrl,
                 )
                 if (durationMs > 0 && media.kind != TelegramMediaKind.PHOTO) {

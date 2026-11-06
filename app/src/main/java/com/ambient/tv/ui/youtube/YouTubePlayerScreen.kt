@@ -1799,17 +1799,10 @@ internal data class YouTubeOsdModel(
                     title = playback.title,
                     artworkUrl = youtubePanelThumbnailUrls(playback.videoId).firstOrNull(),
                     artworkFallbackUrls = (listOfNotNull(playback.backgroundUrl, playback.imageUrl) + youtubePanelThumbnailUrls(playback.videoId).drop(1)).distinct(),
-                    contextLine = listOfNotNull(
-                        com.ambient.tv.ui.common.systemName(com.ambient.tv.ui.common.MediaSystem.YOUTUBE),
-                        backend,
-                        stringResource(R.string.youtube_live_badge).takeIf { playback.isLive },
-                    ).joinToString("  •  "),
                     subtitle = playback.author,
-                    // Keep the date next to its channel below the title. If no author has
-                    // arrived yet, reuse the existing system/backend line rather than adding
-                    // a third OSD row that would push the seekbar down.
-                    contextTrailingText = publication?.takeIf { playback.author.isNullOrBlank() },
-                    subtitleTrailingText = publication?.takeUnless { playback.author.isNullOrBlank() },
+                    // Keep publication metadata below the title, also while the channel
+                    // name is still missing. System and renderer belong to diagnostics.
+                    subtitleTrailingText = publication,
                     showPaused = playback.isLive && paused,
                 )
                 if (!playback.isLive && duration > 0L) {
