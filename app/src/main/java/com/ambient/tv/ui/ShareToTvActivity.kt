@@ -44,7 +44,7 @@ class ShareToTvActivity : Activity() {
                 // A share is an explicit user gesture, so it can start the connected-device
                 // transfer even though Ambient TV itself has no visible UI.
                 if (runCatching { ContextCompat.startForegroundService(this, outgoing) }.isFailure) {
-                    Toast.makeText(this, R.string.companion_background_failed, Toast.LENGTH_LONG).show()
+                    Toast.makeText(this, R.string.companion_share_start_failed, Toast.LENGTH_LONG).show()
                 }
             }
             // Even on failure, never replace YouTube/the originating app with Ambient TV.
