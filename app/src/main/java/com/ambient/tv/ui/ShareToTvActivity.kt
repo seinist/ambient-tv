@@ -5,7 +5,7 @@ import android.content.Intent
 import android.os.Bundle
 import androidx.core.content.ContextCompat
 import com.ambient.tv.companion.CompanionDirectShareService
-import com.ambient.tv.companion.LocalNetworkAccess
+import com.ambient.tv.util.LocalNetworkAccess
 import com.ambient.tv.ui.mobile.isTelevision
 
 /**
