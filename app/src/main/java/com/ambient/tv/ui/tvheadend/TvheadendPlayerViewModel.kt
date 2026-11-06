@@ -757,8 +757,9 @@ class TvheadendPlayerViewModel @Inject constructor(
         if (changingChannel) return
         val normalized = key.takeIf { it in setOf("auto", "media3", "vlc", "mpv") } ?: "auto"
         if (normalized == "mpv" && !com.ambient.tv.ui.player.backend.MpvBackendAvailability.isAvailable) return
-        if (makeGlobal) preferences.tvheadendPlaybackBackendKey = normalized
         val current = _uiState.value as? TvheadendPlayerState.Ready ?: return
+        if (!com.ambient.tv.ui.player.currentPlayerRendererAvailability(metadata(current)).canSelect(normalized)) return
+        if (makeGlobal) preferences.tvheadendPlaybackBackendKey = normalized
         // Only this explicit action changes the manual choice. Recovery stays session-local.
         BackgroundPlaybackSession.cancelResumeRewind()
         _uiState.value = current.copy(manualRendererKey = normalized, recoveryRendererKey = null)

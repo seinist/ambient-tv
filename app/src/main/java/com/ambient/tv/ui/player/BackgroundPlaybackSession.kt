@@ -92,6 +92,8 @@ data class PlaybackMetadata(
     val sponsorSkipEnabled: Boolean = false,
     /** Server, season, series and collections for scoped playback settings; null outside libraries. */
     val videoScope: PlaybackVideoScope? = null,
+    /** Source restriction stays known even when a decoder reports only the HDR10 base layer. */
+    val dolbyVisionSource: Boolean = false,
 )
 
 /** Library context of a title: where "remember changes for" can store besides the title itself. */

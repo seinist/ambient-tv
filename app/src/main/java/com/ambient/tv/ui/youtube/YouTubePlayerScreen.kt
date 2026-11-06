@@ -290,6 +290,7 @@ fun YouTubePlayerScreen(
             fun switchRenderer(key: String, positionMs: Long, global: Boolean) {
                 val normalized = key.takeIf { it in setOf("auto", "media3", "vlc", "mpv") } ?: "auto"
                 if (normalized == "mpv" && !MpvBackendAvailability.isAvailable) return
+                if (!com.ambient.tv.ui.player.currentPlayerRendererAvailability(profileMetadata).canSelect(normalized)) return
                 BackgroundPlaybackSession.cancelResumeRewind()
                 val change = PlaybackBackendResolver.resolve(rendererKey) != PlaybackBackendResolver.resolve(normalized)
                 if (change) allowLateResume = false

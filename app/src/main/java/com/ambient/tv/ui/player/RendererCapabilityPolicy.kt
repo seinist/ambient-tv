@@ -1,5 +1,17 @@
 package com.ambient.tv.ui.player
 
+private val supportedRendererKeys = setOf("auto", "media3", "vlc", "mpv")
+
+/** The same restrictions govern playback routing and explicit choices in the player panel. */
+internal data class RendererAvailability(val dolbyVision: Boolean, val mpvAvailable: Boolean) {
+    val disabledKeys: Set<String> = buildSet {
+        if (dolbyVision) addAll(setOf("vlc", "mpv"))
+        if (!mpvAvailable) add("mpv")
+    }
+
+    fun canSelect(key: String): Boolean = key in supportedRendererKeys && key !in disabledKeys
+}
+
 /**
  * Keeps a user-requested renderer from opening a stream it cannot present correctly.
  *
@@ -9,26 +21,38 @@ package com.ambient.tv.ui.player
  * MIME type to MediaCodec and is therefore the safe renderer for these streams.
  */
 object RendererCapabilityPolicy {
-    private val supportedKeys = setOf("auto", "media3", "vlc", "mpv")
-
     fun effectiveBackend(
         requested: String?,
         videoCodec: String?,
         dynamicRange: String?,
         videoProfile: String?,
         detectedDolbyVision: Boolean = false,
+        videoTranscoded: Boolean = false,
     ): String {
-        val normalized = requested?.takeIf(supportedKeys::contains) ?: "auto"
+        val normalized = requested?.takeIf(supportedRendererKeys::contains) ?: "auto"
+        val dolbyVision = isDolbyVision(videoCodec, dynamicRange, videoProfile, detectedDolbyVision, videoTranscoded)
+        return if (dolbyVision && normalized in setOf("vlc", "mpv")) "media3" else normalized
+    }
+
+    fun isDolbyVision(
+        videoCodec: String?,
+        dynamicRange: String?,
+        videoProfile: String?,
+        detectedDolbyVision: Boolean = false,
+        videoTranscoded: Boolean = false,
+    ): Boolean {
+        // A full video transcode replaces the original video. Audio conversion/direct stream
+        // still copies it; only confirmed video conversion may discard the source descriptors.
+        if (detectedDolbyVision) return true
+        if (videoTranscoded) return false
         val descriptor = listOfNotNull(videoCodec, dynamicRange, videoProfile)
             .joinToString(" ")
-            .lowercase().replace('_', ' ')
-        val dolbyVision = detectedDolbyVision || descriptor.contains("dolby vision") ||
+            .lowercase().replace('_', ' ').replace('-', ' ')
+        return descriptor.contains("dolby vision") ||
             descriptor.contains("dolbyvision") ||
             descriptor.contains("dovi") ||
             descriptor.contains("dvhe") || descriptor.contains("dvh1") ||
-            descriptor.contains("dvav") || descriptor.contains("dva1") ||
+            descriptor.contains("dvav") || descriptor.contains("dva1") || descriptor.contains("dav1") ||
             dynamicRange?.trim()?.equals("dv", ignoreCase = true) == true
-
-        return if (dolbyVision && normalized in setOf("vlc", "mpv")) "media3" else normalized
     }
 }

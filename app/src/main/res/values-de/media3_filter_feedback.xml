@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="image_media3_source_dolby_vision">Bildfilter bleiben für Dolby Vision aus, damit die native Verarbeitung und die dynamischen Metadaten erhalten bleiben.</string>
+    <string name="image_media3_source_hdr">Die aktuellen Media3-Bildfilter unterstützen SDR. Für HDR-Videos bleiben sie ausgeschaltet.</string>
+    <string name="image_media3_source_protected">Diese Videospur ist DRM-geschützt. Bildeffekte stehen dafür nicht zur Verfügung.</string>
+    <string name="image_media3_source_unknown_color">Das Farbformat dieser Videospur ist nicht als SDR erkennbar. Bildeffekte bleiben ausgeschaltet.</string>
+    <string name="image_media3_source_waiting">Die Videospur wird noch ermittelt. Danach wird geprüft, welche Bildeffekte verfügbar sind.</string>
+    <string name="image_media3_effects_failed">Bildeffekte wurden nach einem Fehler deaktiviert. Deine Filterauswahl bleibt erhalten.</string>
+    <string name="image_media3_filter_budget_detail">%1$s wird übersprungen: Die Verarbeitung von %2$d × %3$d, berechnet mit %4$s fps, überschreitet das Verarbeitungsbudget dieses Filters.</string>
+    <string name="image_media3_scaler_fallback">%1$s: Für dieses Video wird %3$s statt %2$s verwendet. Deine Auswahl bleibt erhalten.</string>
+    <string name="image_media3_reconstruction_reduced">SSimSuperRes wird bei diesem Video nicht angewendet. Deine Auswahl bleibt erhalten.</string>
+    <string name="image_media3_antiring_reduced">Anti-Ringing: %1$d%% gewählt, %2$d%% mit %3$s angewendet.</string>
+    <string name="image_media3_sigmoid_reduced">Sigmoid-Upscaling ist in der aktuellen Bildverarbeitung inaktiv. Deine Auswahl bleibt erhalten.</string>
+    <string name="image_media3_stage_not_applied">%1$s ist für dieses Video inaktiv. Deine Auswahl bleibt erhalten.</string>
+    <string name="image_media3_filter_named">%1$s · %2$s</string>
+    <string name="image_media3_denoise">Entrauschen</string>
+</resources>

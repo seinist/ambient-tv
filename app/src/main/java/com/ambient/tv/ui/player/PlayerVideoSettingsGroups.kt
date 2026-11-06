@@ -241,18 +241,22 @@ internal fun PlayerVideoSettingsGroups(
 internal fun PlayerRendererSelector(rendererKey: String, onRendererSelected: (String, Boolean) -> Unit) {
     val context = LocalContext.current
     val metadata = LocalPlaybackMetadata.current
+    val availability = rememberPlayerRendererAvailability(metadata)
     // Its level is titled "Player" (video area and audio-only panel alike).
     PlayerDropUpSelector(
         label = stringResource(R.string.player_renderer_current),
         value = rendererLabel(rendererKey),
         options = rendererOptions(),
         selectedKey = rendererKey,
+        disabledKeys = availability.disabledKeys,
         onSelected = {
-            TitleVideoSettingsStore.rememberRenderer(context, metadata, it)
-            onRendererSelected(it, false)
+            selectAvailablePlayerRenderer(context, metadata, it, onRendererSelected)
         },
     )
-    metadata?.liveRendererOrigin?.let { origin ->
+    if (availability.dolbyVision) {
+        ImageHint(stringResource(R.string.player_renderer_dolby_vision_only_media3))
+    }
+    metadata?.liveRendererOrigin?.takeUnless { availability.dolbyVision }?.let { origin ->
         val reason = when (origin) {
             com.ambient.tv.ui.tvheadend.LiveRendererOrigin.DEFAULT -> R.string.channel_renderer_default
             com.ambient.tv.ui.tvheadend.LiveRendererOrigin.CHANNEL -> R.string.channel_renderer_saved
@@ -608,11 +612,11 @@ private fun Media3VideoGroups(player: ExoPlayer, section: String) {
         val blocked = media3FiltersUnavailableReason(processing.gpuEffectsSupported, processing.sdrEffectsAllowed,
             LocalPerformanceProfile.current.gateExpensiveVideoVisuals)
         if (blocked != null) {
-            ImageHint(stringResource(when (blocked) {
-                Media3FiltersUnavailableReason.DEVICE -> R.string.image_media3_device_bypass
-                Media3FiltersUnavailableReason.PERFORMANCE -> R.string.image_filters_sparsam_hint
-                Media3FiltersUnavailableReason.SOURCE -> R.string.image_media3_filters_source_unavailable
-            }))
+            ImageHint(when (blocked) {
+                Media3FiltersUnavailableReason.DEVICE -> stringResource(R.string.image_media3_device_bypass)
+                Media3FiltersUnavailableReason.PERFORMANCE -> stringResource(R.string.image_filters_sparsam_hint)
+                Media3FiltersUnavailableReason.SOURCE -> media3SourceRestrictionText(processing.sourceRestriction)
+            })
             return
         }
         ImageChoice(R.string.image_processing, if (options.enabled) "on" else "off", imageOnOff()) {
@@ -622,11 +626,12 @@ private fun Media3VideoGroups(player: ExoPlayer, section: String) {
             ImageHint(stringResource(R.string.image_media3_enable_filters_hint))
             return
         }
-        Media3FilterRows(options, fsrSharpens = media3FsrSharpens(options, visibility.upscaler),
+        Media3FilterRows(options, fsrSharpens = processing.integratedSharpening != null,
+            integratedSharpening = processing.integratedSharpening,
             deband = visibility.deband, sharpen = visibility.shaders,
             superResolutionVisible = media3SuperResRowVisible(options, visibility.upscaler),
             change = ::change)
-        if (processing.filtersOverBudget) ImageHint(stringResource(R.string.image_media3_filters_over_budget))
+        Media3ImageProcessingFeedback(processing)
         return
     }
     if (!visibility.media3Processing && !visibility.upscaler && !visibility.downscaler && !visibility.picture) return
@@ -643,7 +648,7 @@ private fun Media3VideoGroups(player: ExoPlayer, section: String) {
             if (!visibility.upscaler && !visibility.downscaler) {
                 upscalerNotNeededHint(processing.scaleRelation)?.let { ImageHint(stringResource(it)) }
             }
-            if (processing.filtersOverBudget) ImageHint(stringResource(R.string.image_media3_filters_over_budget))
+            Media3ImageProcessingFeedback(processing)
         }
     }
     if (section == "color" && visibility.picture) {
@@ -651,6 +656,7 @@ private fun Media3VideoGroups(player: ExoPlayer, section: String) {
         ImageLevel(R.string.image_contrast, options.contrast) { change(options.copy(contrast = it)) }
         ImageLevel(R.string.image_saturation, options.saturation) { change(options.copy(saturation = it)) }
         if (visibility.pictureGamma) ImageLevel(R.string.image_gamma, options.gamma) { change(options.copy(gamma = it)) }
+        Media3ImageProcessingFeedback(processing)
     }
 }
 

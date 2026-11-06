@@ -23,4 +23,13 @@ class LocalAudioFallbackPolicyTest {
         assertNull(LocalAudioFallbackPolicy.nextBackend("media3", emptySet(), true, videoCodec = "hevc", dynamicRange = "Dolby Vision"))
         assertEquals("mpv", LocalAudioFallbackPolicy.nextBackend("media3", emptySet(), true, videoCodec = "hevc", dynamicRange = "HDR10"))
     }
+
+    @Test fun convertedVideoCanRecoverLocallyButActualDolbyVisionStillCannot() {
+        assertEquals("mpv", LocalAudioFallbackPolicy.nextBackend("media3", emptySet(), true,
+            videoCodec = "hevc", dynamicRange = "Dolby Vision", videoTranscoded = true))
+        assertNull(LocalAudioFallbackPolicy.nextBackend("media3", emptySet(), true,
+            videoCodec = "hevc", dynamicRange = "Dolby Vision", videoTranscoded = false))
+        assertNull(LocalAudioFallbackPolicy.nextBackend("media3", emptySet(), true,
+            videoCodec = "h264", dynamicRange = "SDR", videoTranscoded = true, detectedDolbyVision = true))
+    }
 }

@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="image_media3_source_dolby_vision">Picture filters are disabled for Dolby Vision to preserve its native processing and dynamic metadata.</string>
+    <string name="image_media3_source_hdr">The current Media3 picture filters support SDR. They remain off for HDR video.</string>
+    <string name="image_media3_source_protected">This video track is DRM protected. Picture effects are unavailable for it.</string>
+    <string name="image_media3_source_unknown_color">The color format of this track is not recognized as SDR. Picture effects remain off.</string>
+    <string name="image_media3_source_waiting">Waiting for video track details before checking which picture effects are available.</string>
+    <string name="image_media3_effects_failed">Picture effects were disabled after an error. Your filter choices have been retained.</string>
+    <string name="image_media3_filter_budget_detail">%1$s is skipped: processing %2$d × %3$d at the budget rate of %4$s fps exceeds the processing budget for this filter.</string>
+    <string name="image_media3_scaler_fallback">%1$s: using %3$s instead of %2$s for this video. Your selected setting is retained.</string>
+    <string name="image_media3_reconstruction_reduced">SSimSuperRes is inactive for this video workload. Your selected setting is retained.</string>
+    <string name="image_media3_antiring_reduced">Anti-ringing: selected %1$d%%, applied %2$d%% with %3$s.</string>
+    <string name="image_media3_sigmoid_reduced">Sigmoid upscaling is inactive in the current processing chain. Your selected setting is retained.</string>
+    <string name="image_media3_stage_not_applied">%1$s is inactive for this video. Your selected setting is retained.</string>
+    <string name="image_media3_filter_named">%1$s · %2$s</string>
+    <string name="image_media3_denoise">Denoise</string>
+</resources>

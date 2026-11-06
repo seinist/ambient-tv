@@ -34,15 +34,30 @@ import com.ambient.tv.ui.player.backend.mpvRenderSampleSeconds
 import java.lang.ref.WeakReference
 import java.util.WeakHashMap
 
-internal fun media3ImageEffectsAllowed(format: Format?): Boolean {
-    format ?: return false
-    if (format.drmInitData != null || format.sampleMimeType == MimeTypes.VIDEO_DOLBY_VISION ||
-        format.codecs?.split(',')?.any { it.trim().startsWith("dv", ignoreCase = true) } == true) return false
+internal enum class Media3ImageSourceRestriction { UNKNOWN_VIDEO, DRM, DOLBY_VISION, HDR, UNKNOWN_COLOR }
+
+/** One source policy for both the running chain and the reason shown by the filter panel. */
+internal fun media3ImageEffectsRestriction(
+    format: Format?,
+    declaredDolbyVision: Boolean = false,
+): Media3ImageSourceRestriction? {
+    // A decoder may report only the base layer. Do not lose the source's DV protection.
+    if (declaredDolbyVision) return Media3ImageSourceRestriction.DOLBY_VISION
+    format ?: return Media3ImageSourceRestriction.UNKNOWN_VIDEO
+    if (format.drmInitData != null || format.cryptoType != C.CRYPTO_TYPE_NONE) return Media3ImageSourceRestriction.DRM
+    if (RendererCapabilityPolicy.isDolbyVision(format.codecs, format.sampleMimeType, null)) {
+        return Media3ImageSourceRestriction.DOLBY_VISION
+    }
     // Fail closed when the stream does not identify itself as SDR, unless the codec profile
     // cannot carry HDR without saying so (most H.264 and 8-bit encodes write no colour info).
     val transfer = format.colorInfo?.colorTransfer?.takeIf { it != Format.NO_VALUE }
-    return media3TransferIsSdr(transfer) || transfer == null && media3UnsignalledIsSdr(format.sampleMimeType, format.codecs)
+    if (media3TransferIsSdr(transfer) || transfer == null && media3UnsignalledIsSdr(format.sampleMimeType, format.codecs)) return null
+    return if (transfer == C.COLOR_TRANSFER_ST2084 || transfer == C.COLOR_TRANSFER_HLG)
+        Media3ImageSourceRestriction.HDR else Media3ImageSourceRestriction.UNKNOWN_COLOR
 }
+
+/** Remains SDR-only: the same predicate also guards the separate SDR-to-HDR conversion path. */
+internal fun media3ImageEffectsAllowed(format: Format?): Boolean = media3ImageEffectsRestriction(format) == null
 
 /**
  * Streams without a transfer characteristic that are SDR in practice: AVC, MPEG-2/4, VC-1 and the
@@ -63,6 +78,7 @@ internal fun media3UnsignalledIsSdr(mimeType: String?, codecs: String?): Boolean
 /** Whether a playback error comes from the video effect chain (shader, GPU feature, frame processor). */
 internal fun media3EffectFailure(errorCode: Int, error: Throwable?): Boolean =
     errorCode == PlaybackException.ERROR_CODE_VIDEO_FRAME_PROCESSING_FAILED ||
+        errorCode == PlaybackException.ERROR_CODE_VIDEO_FRAME_PROCESSOR_INIT_FAILED ||
         generateSequence(error) { it.cause }.any { it is VideoFrameProcessingException }
 
 /** sRGB and gamma 2.2 are SDR transfers too; unknown/absent transfer stays fail-closed. */
@@ -111,6 +127,8 @@ internal class Media3ImageProcessing private constructor(context: Context, playe
     var saveDefaults by mutableStateOf(false)
     var effectsActive by mutableStateOf(false)
         private set
+    var sourceRestriction by mutableStateOf(media3ImageEffectsRestriction(player.videoFormat))
+        private set
     /** True only while the current track is SDR and Media3 will actually run the effect chain. */
     var sdrEffectsAllowed by mutableStateOf(media3ImageEffectsAllowed(player.videoFormat))
         private set
@@ -121,6 +139,14 @@ internal class Media3ImageProcessing private constructor(context: Context, playe
         private set
     /** Deband, sharpening or a heavy scaler is configured but skipped: the video is above the GPU budget. */
     var filtersOverBudget by mutableStateOf(false)
+        private set
+    /** Explain each omitted filter independently, including its actual processing workload. */
+    var filterBudgetExclusions by mutableStateOf(emptyList<Media3FilterBudgetExclusion>())
+        private set
+    var effectReductions by mutableStateOf(emptyList<Media3EffectReduction>())
+        private set
+    /** The scaler which really provides sharpening; a requested NIS fallback does not count. */
+    var integratedSharpening by mutableStateOf<String?>(null)
         private set
     // Media3 1.4.1 retains its video sink after setVideoEffects(emptyList()). Do not describe
     // an empty chain as direct output: direct output returns with the next player instance.
@@ -147,6 +173,7 @@ internal class Media3ImageProcessing private constructor(context: Context, playe
     val canReduceAfterOverload: Boolean get() = media3ImageOptionsAfterOverload(options) != null
     private val renderCheck = Runnable { checkRender() }
     private var renderCheckSignature: String? = null
+    private var appliedWorkloadSignature: String? = null
     /** Chain which passed its sample, or which the user is adjusting by hand: not sampled again. */
     private var settledSignature: String? = null
     private var steadySeconds = 0
@@ -183,7 +210,7 @@ internal class Media3ImageProcessing private constructor(context: Context, playe
         // A collected player ends the loop (release() is the normal way out).
         val player = playerRef.get() ?: return
         handler.postDelayed(renderCheck, 1_000L)
-        val signature = if (effectsActive) appliedStages.joinToString(" · ") { media3StageSummary(it) } else null
+        val signature = if (effectsActive) appliedWorkloadSignature else null
         if (signature != renderCheckSignature) {
             renderCheckSignature = signature
             steadySeconds = 0
@@ -312,7 +339,14 @@ internal class Media3ImageProcessing private constructor(context: Context, playe
     }
 
     private fun applyOptions() {
-        sdrEffectsAllowed = media3ImageEffectsAllowed(format)
+        val player = playerRef.get() ?: return
+        val sourceMetadata = BackgroundPlaybackSession.snapshot.value.metadata.takeIf {
+            (BackgroundPlaybackSession.activeHandle() as? Media3PlaybackHandle)?.player === player
+        }
+        sourceRestriction = media3ImageEffectsRestriction(format,
+            declaredDolbyVision = sourceMetadata?.dolbyVisionSource == true ||
+                sourceMetadata?.handheldHdrStandard == HdrStandard.DOLBY_VISION)
+        sdrEffectsAllowed = sourceRestriction == null
         val viewport = renderGeometry.scalerViewport
         scaleRelation = if (viewport == null) VideoScaleRelation.UNKNOWN else
             format?.takeIf { it.width > 0 && it.height > 0 }?.let {
@@ -326,11 +360,10 @@ internal class Media3ImageProcessing private constructor(context: Context, playe
             } ?: VideoScaleRelation.UNKNOWN
         // Sparsam disables the effect chain without clearing saved preferences.
         val gated = effectiveMedia3ImageOptions(options, reducedEffects)
-        val enabled = gpuEffectsSupported && !effectsFailed && gated.enabled && media3ImageEffectsAllowed(format)
+        val enabled = gpuEffectsSupported && !effectsFailed && gated.enabled && sdrEffectsAllowed
         // This must not wait for a Scale stage: the display matcher could otherwise switch to
         // the source's 1080p mode before the 4K surface makes that very stage available.
         rendererScalingRequested = enabled
-        val player = playerRef.get() ?: return
         // Player release clears the playlist. Never revive a stopped/released session.
         if (player.mediaItemCount == 0 || player.playbackState == Player.STATE_IDLE) return
         val effective = if (enabled) gated else Media3ImageOptions()
@@ -345,29 +378,20 @@ internal class Media3ImageProcessing private constructor(context: Context, playe
                 source.pixelWidthHeightRatio, source.rotationDegrees)
         } == true
         val configuredStages = if (enabled) media3EffectPlan(effective, upscaling, downscaling = downscaling) else emptyList()
-        // Sharpening/grain run on output pixels only with an actual GPU scale stage. Bilinear
-        // leaves scaling to the display path, so these passes still process source pixels.
         val fps = format?.frameRate ?: 0f
-        val debandAllowed = format?.let { media3FilterBudgetAllows(it.width, it.height, fps) } ?: true
-        val sharpenAllowed = media3SharpenBudgetAllows(
-            sourceWidth = format?.width ?: 0,
-            sourceHeight = format?.height ?: 0,
-            outputWidth = outputWidth,
-            outputHeight = outputHeight,
-            fps = fps,
-            scalingInChain = configuredStages.any { it is Media3Stage.Scale || it is Media3Stage.Downscale },
-        )
+        // Media3 rotates and expands non-square pixels before custom effects run. The raw
+        // format is conservative for decoder crops, but must include that expansion for budgets.
+        val processingInputSize = format?.let {
+            media3ProcessingInputSize(it.width, it.height, it.pixelWidthHeightRatio, it.rotationDegrees)
+        } ?: (0 to 0)
         // NIS, RAVU and the EWA/wide kernels at most 4K30 output; above that they run as Catmull-Rom.
         val heavyScaleAllowed = !upscaling || media3HeavyScalerBudgetAllows(outputWidth, outputHeight, fps)
-        val heavyDownscaleAllowed = !downscaling || format?.let { source ->
-            media3HeavyDownscaleBudgetAllows(source.width, source.height, outputWidth, outputHeight, fps)
-        } == true
-        val ssimDownAllowed = !downscaling || format?.let { source ->
-            media3SsimDownBudgetAllows(source.width, source.height, outputWidth, outputHeight, fps)
-        } == true
-        val ssimSuperAllowed = !upscaling || format?.let { source ->
-            media3SsimSuperBudgetAllows(source.width, source.height, outputWidth, outputHeight, fps)
-        } == true
+        val heavyDownscaleAllowed = !downscaling || media3HeavyDownscaleBudgetAllows(
+            processingInputSize.first, processingInputSize.second, outputWidth, outputHeight, fps)
+        val ssimDownAllowed = !downscaling || media3SsimDownBudgetAllows(
+            processingInputSize.first, processingInputSize.second, outputWidth, outputHeight, fps)
+        val ssimSuperAllowed = !upscaling || media3SsimSuperBudgetAllows(
+            processingInputSize.first, processingInputSize.second, outputWidth, outputHeight, fps)
         val anime4kAllowed = !upscaling || format?.let { source ->
             // The CNN's 2x feature grid assumes square pixels and an unrotated source.
             // Keep Media3's normal geometry path for anamorphic or rotated tracks.
@@ -390,10 +414,27 @@ internal class Media3ImageProcessing private constructor(context: Context, playe
                 media3NeuralComputeBudgetAllows(effective.scaler, source.width, source.height,
                     outputWidth, outputHeight, fps)
         } == true
-        val stages = if (enabled) media3EffectPlan(effective, upscaling, debandAllowed, sharpenAllowed,
-            heavyScaleAllowed, downscaling, heavyDownscaleAllowed, ssimDownAllowed,
-            ssimSuperAllowed, anime4kAllowed, fsrcnnxAllowed, nnedi3Allowed, computeAllowed) else emptyList()
-        filtersOverBudget = enabled && stages != configuredStages
+        val candidateStages = if (enabled) media3EffectPlan(effective, upscaling,
+            heavyScaleAllowed = heavyScaleAllowed, downscaling = downscaling,
+            heavyDownscaleAllowed = heavyDownscaleAllowed, ssimDownAllowed = ssimDownAllowed,
+            ssimSuperAllowed = ssimSuperAllowed, anime4kAllowed = anime4kAllowed,
+            fsrcnnxAllowed = fsrcnnxAllowed, nnedi3Allowed = nnedi3Allowed,
+            computeAllowed = computeAllowed) else emptyList()
+        // Budget the real stage order after scaler fallbacks. Cleanup reads source pixels;
+        // sharpening/grain read the fitted GPU output, or the source with display-only scaling.
+        val budget = media3ApplyFilterBudget(candidateStages,
+            sourceWidth = processingInputSize.first, sourceHeight = processingInputSize.second,
+            outputWidth = outputWidth, outputHeight = outputHeight, fps = fps)
+        val stages = budget.stages
+        filterBudgetExclusions = budget.excluded
+        effectReductions = media3EffectReductions(configuredStages, stages)
+        filtersOverBudget = enabled && (filterBudgetExclusions.isNotEmpty() || effectReductions.isNotEmpty())
+        // A source can move from 1080p24 to UHD60 without changing the shader list. That is
+        // a new workload and must not inherit the successful/accepted sample of the old one.
+        appliedWorkloadSignature = media3RenderWorkloadSignature(stages,
+            sourceWidth = processingInputSize.first, sourceHeight = processingInputSize.second,
+            outputWidth = outputWidth, outputHeight = outputHeight, fps = fps,
+            colorTransfer = format?.colorInfo?.colorTransfer)
         val userChange = userChangePending
         userChangePending = false
         if (signature == applied && stages == appliedStages) return
@@ -414,6 +455,12 @@ internal class Media3ImageProcessing private constructor(context: Context, playe
         }
         effectsActive = enabled && effects.isNotEmpty()
         scalerInChain = scaler
+        integratedSharpening = when {
+            !effectsActive -> null
+            scaler == "nis" -> "nis"
+            scaler == "fsr" && Media3Stage.Sharpen("rcas") in stages -> "fsr"
+            else -> null
+        }
         publishApplied()
     }
 
@@ -433,6 +480,10 @@ internal class Media3ImageProcessing private constructor(context: Context, playe
         restartWithEffects(player, emptyList())
         effectsActive = false
         scalerInChain = null
+        integratedSharpening = null
+        filterBudgetExclusions = emptyList()
+        effectReductions = emptyList()
+        filtersOverBudget = false
         publishApplied()
         return true
     }
@@ -551,11 +602,12 @@ internal fun Media3ImageControls(player: ExoPlayer) {
         ImageHint(stringResource(R.string.image_filters_sparsam_hint))
         return
     }
-    Media3ImageOptionsEditor(o, ::change)
-    if (o.enabled && processing.hasConfiguredEffects) {
-        ImageHint(stringResource(if (processing.effectsActive) R.string.image_media3_active else R.string.image_media3_waiting))
+    if (processing.sourceRestriction != null) {
+        ImageHint(media3SourceRestrictionText(processing.sourceRestriction))
+        return
     }
-    if (o.enabled && processing.filtersOverBudget) ImageHint(stringResource(R.string.image_media3_filters_over_budget))
+    Media3ImageOptionsEditor(o, ::change, integratedSharpening = processing.integratedSharpening)
+    Media3ImageProcessingFeedback(processing, showActive = processing.hasConfiguredEffects)
 }
 
 internal enum class Media3ChainTransition { NONE, RESTART, UPDATE }

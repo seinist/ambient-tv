@@ -55,4 +55,39 @@ class Media3ImageProcessingPolicyTest {
         assertFalse(media3ImageEffectsAllowed(Format.Builder().setSampleMimeType(MimeTypes.VIDEO_H264)
             .setDrmInitData(DrmInitData(emptyList())).build()))
     }
+
+    @Test fun restrictionsExplainSourceFailuresWithoutCallingFourKUnsupported() {
+        assertEquals(Media3ImageSourceRestriction.UNKNOWN_VIDEO, media3ImageEffectsRestriction(null))
+        val sdr = Format.Builder().setSampleMimeType(MimeTypes.VIDEO_H265)
+            .setWidth(3840).setHeight(2160).setFrameRate(60f)
+            .setColorInfo(ColorInfo.Builder().setColorTransfer(C.COLOR_TRANSFER_SDR).build()).build()
+        assertNull(media3ImageEffectsRestriction(sdr))
+        for (transfer in listOf(C.COLOR_TRANSFER_ST2084, C.COLOR_TRANSFER_HLG)) {
+            assertEquals(Media3ImageSourceRestriction.HDR, media3ImageEffectsRestriction(sdr.buildUpon()
+                .setColorInfo(ColorInfo.Builder().setColorTransfer(transfer).build()).build()))
+        }
+        assertEquals(Media3ImageSourceRestriction.UNKNOWN_COLOR, media3ImageEffectsRestriction(
+            sdr.buildUpon().setColorInfo(null).setCodecs("hvc1.2.4.L153.B0").build()))
+    }
+
+    @Test fun dolbyVisionAliasesAndKnownSourceDoNotSlipThroughTheSdrGate() {
+        val sdr = Format.Builder().setSampleMimeType(MimeTypes.VIDEO_H265)
+            .setColorInfo(ColorInfo.Builder().setColorTransfer(C.COLOR_TRANSFER_SDR).build()).build()
+        for (codec in listOf("dvhe.07.06", "dvh1.08.06", "dvav.09.09", "dav1.10.09")) {
+            assertEquals(codec, Media3ImageSourceRestriction.DOLBY_VISION,
+                media3ImageEffectsRestriction(sdr.buildUpon().setCodecs(codec).build()))
+        }
+        assertEquals(Media3ImageSourceRestriction.DOLBY_VISION,
+            media3ImageEffectsRestriction(sdr, declaredDolbyVision = true))
+        assertEquals(Media3ImageSourceRestriction.DOLBY_VISION,
+            media3ImageEffectsRestriction(null, declaredDolbyVision = true))
+    }
+
+    @Test fun cryptoTypeProtectsTheTrackEvenBeforeDrmInitDataArrives() {
+        val encrypted = Format.Builder().setSampleMimeType(MimeTypes.VIDEO_H264)
+            .setCryptoType(C.CRYPTO_TYPE_FRAMEWORK).build()
+        assertNull(encrypted.drmInitData)
+        assertFalse(media3ImageEffectsAllowed(encrypted))
+        assertEquals(Media3ImageSourceRestriction.DRM, media3ImageEffectsRestriction(encrypted))
+    }
 }

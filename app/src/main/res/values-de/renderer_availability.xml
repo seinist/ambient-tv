@@ -1,0 +1,4 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="player_renderer_dolby_vision_only_media3">Dieses Dolby-Vision-Video benötigt Media3. VLC und MPV sind nicht auswählbar. Automatisch verwendet ebenfalls Media3.</string>
+</resources>

@@ -10,12 +10,15 @@ object LocalAudioFallbackPolicy {
         videoCodec: String? = null,
         dynamicRange: String? = null,
         videoProfile: String? = null,
+        detectedDolbyVision: Boolean = false,
+        videoTranscoded: Boolean = false,
     ): String? {
         if (!enabled) return null
         val active = if (current == "auto") "media3" else current
         return listOfNotNull("mpv".takeIf { mpvAvailable }, "vlc").firstOrNull { candidate ->
             candidate != active && candidate !in attempted &&
-                RendererCapabilityPolicy.effectiveBackend(candidate, videoCodec, dynamicRange, videoProfile) == candidate
+                RendererCapabilityPolicy.effectiveBackend(candidate, videoCodec, dynamicRange, videoProfile,
+                    detectedDolbyVision, videoTranscoded) == candidate
         }
     }
 }

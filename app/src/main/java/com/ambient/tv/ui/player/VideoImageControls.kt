@@ -301,7 +301,12 @@ internal fun VlcImageOptionsEditor(
 }
 
 @Composable
-internal fun Media3ImageOptionsEditor(o: Media3ImageOptions, change: (Media3ImageOptions) -> Unit) {
+internal fun Media3ImageOptionsEditor(
+    o: Media3ImageOptions,
+    change: (Media3ImageOptions) -> Unit,
+    // Defaults have no active source; the playback editor supplies the actual planned scaler.
+    integratedSharpening: String? = o.scaler.takeIf { it == "fsr" || it == "nis" },
+) {
     if (!media3GpuEffectsSupported(android.os.Build.MANUFACTURER, android.os.Build.VERSION.SDK_INT)) {
         ImageHint(stringResource(R.string.image_media3_device_bypass))
         return
@@ -329,8 +334,8 @@ internal fun Media3ImageOptionsEditor(o: Media3ImageOptions, change: (Media3Imag
                 change(o.copy(sigmoid = it == "on"))
             }
         }
-        // Saved defaults: the source size is unknown, so FSR counts as upscaling.
-        Media3FilterRows(o, fsrSharpens = media3FsrSharpens(o, upscalerApplies = true),
+        Media3FilterRows(o, fsrSharpens = integratedSharpening != null,
+            integratedSharpening = integratedSharpening,
             superResolutionVisible = media3SuperResRowVisible(o, upscalerVisible = true),
             change = change)
         ImageLevel(R.string.image_brightness, o.brightness) { change(o.copy(brightness = it)) }
@@ -351,6 +356,7 @@ internal fun Media3FilterRows(
     deband: Boolean = true,
     sharpen: Boolean = true,
     superResolutionVisible: Boolean = false,
+    integratedSharpening: String? = o.scaler.takeIf { fsrSharpens },
     change: (Media3ImageOptions) -> Unit,
 ) {
     // Match MPV filter order: deband → sharpening → denoise/deblock → film grain.
@@ -359,15 +365,15 @@ internal fun Media3FilterRows(
         ImageChoice(R.string.player_deband, o.deband, imageStrengths()) { change(o.copy(deband = it)) }
     }
     if (sharpen) {
-        if (fsrSharpens) ImageHint(stringResource(
-            if (o.scaler == "nis") R.string.image_nis_integrated_sharpen else R.string.image_fsr_integrated_sharpen))
+        if (integratedSharpening == "fsr" || integratedSharpening == "nis") ImageHint(stringResource(
+            if (integratedSharpening == "nis") R.string.image_nis_integrated_sharpen else R.string.image_fsr_integrated_sharpen))
         else GroupedImageChoice(R.string.image_sharpen, o.sharpening, listOf(
             PlayerDropUpSection(stringResource(R.string.image_sharpen_builtin), imageStrengths()),
             PlayerDropUpSection(stringResource(R.string.image_sharpen_shader), listOf("cas" to "AMD CAS", "adaptive" to "Adaptive Sharpen")),
         )) { change(o.copy(sharpening = it)) }
     }
     if (deband) {
-        ImageChoice(R.string.image_denoise, o.denoise, imageStrengths()) { change(o.copy(denoise = it)) }
+        ImageChoice(R.string.image_media3_denoise, o.denoise, imageStrengths()) { change(o.copy(denoise = it)) }
         ImageChoice(R.string.image_deblock, o.deblock, imageStrengths()) { change(o.copy(deblock = it)) }
     }
     if (sharpen) {
