@@ -474,7 +474,10 @@ internal fun MpvPlayerContent(
                             com.ambient.tv.ui.player.backend.mpvSdrSurfaceLabel(controller.sdrSurfaceDataSpace))
                     }
                     com.ambient.tv.ui.player.mpvDeinterlaceStat(controller.deinterlaceModeKey, controller.deinterlaceFilterKey, snapshot.activeVideoFilters, snapshot.activeDeinterlace)?.let { add(stringResource(R.string.player_nerd_deinterlace_configured) to it) }
-                    snapshot.activeVideoFilters?.let { add(stringResource(R.string.player_nerd_video_filters) to it) }
+                    if (snapshot.processingSampled) add(
+                        stringResource(R.string.player_nerd_video_filters) to
+                            summarizeMpvVideoFilters(snapshot.activeVideoFilters, snapshot.activeImageShaders, snapshot.activeBuiltinSharpen)
+                    )
                     controller.loadedImageShaders().takeIf { it.isNotEmpty() }?.let { add(stringResource(R.string.player_nerd_shaders_loaded) to it.joinToString()) }
                     add(stringResource(R.string.audio_route_output) to audioRouteSummaryText(controller.audioSession))
                     add(stringResource(R.string.player_info_audio_output) to DirectAvDiagnostics.audio(context, controller.bitstreamPermitted, snapshot.audioCodec ?: state.audioCodec, snapshot.audioOutputFormat, controller.audioSession.outputPlan().mode))
