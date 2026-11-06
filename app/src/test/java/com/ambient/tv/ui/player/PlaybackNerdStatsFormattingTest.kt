@@ -53,6 +53,21 @@ class PlaybackNerdStatsFormattingTest {
     }
 
 
+    @Test fun gpuAndBuiltinMpvSharpeningAppearAsRealAppliedFilters() {
+        assertEquals("sharpen GPU (CAS)", summarizeMpvVideoFilters("[]", listOf("cas")))
+        assertEquals("sharpen GPU (CAS light), sharpen GPU (CAS medium)",
+            summarizeMpvVideoFilters(null, listOf("cas_light", "cas_medium")))
+        assertEquals("sharpen GPU (Adaptive Sharpen)",
+            summarizeMpvVideoFilters(null, listOf("adaptive")))
+        assertEquals("sharpen OpenGL (0.5)",
+            summarizeMpvVideoFilters(null, emptyList(), "0.5"))
+        assertEquals("off", summarizeMpvVideoFilters("[]", emptyList(), "0"))
+        assertEquals("denoise, sharpen GPU (CAS)",
+            summarizeMpvVideoFilters("@plex-denoise:lavfi=[hqdn3d]", listOf("cas")))
+        assertEquals("deblock GPU (medium), sharpen GPU (CAS)",
+            summarizeMpvVideoFilters(null, listOf("deblock_medium", "cas")))
+    }
+
     @org.junit.Test fun fpsRowShowsSourceToOutputOnlyWhenTheRateChanges() {
         assertEquals("23.976 → 59.940 fps", formatNerdFpsChange(23.976, 59.94))
         assertEquals("23.976 fps", formatNerdFpsChange(23.976, 23.98))
