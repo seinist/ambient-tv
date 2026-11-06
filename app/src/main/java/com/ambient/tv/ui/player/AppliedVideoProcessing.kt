@@ -26,7 +26,9 @@ internal fun appliedStatValue(value: String?): String = value?.takeIf { it.isNot
 internal fun mpvAppliedProcessing(snapshot: MpvPlaybackSnapshot): AppliedVideoProcessing {
     if (!snapshot.processingSampled) return AppliedVideoProcessing()
     return AppliedVideoProcessing(
-        videoFilters = summarizeMpvVideoFilters(snapshot.activeVideoFilters, snapshot.activeImageShaders),
+        videoFilters = summarizeMpvVideoFilters(
+            snapshot.activeVideoFilters, snapshot.activeImageShaders, snapshot.activeBuiltinSharpen,
+        ),
         deinterlacer = summarizeMpvDeinterlacer(snapshot.activeVideoFilters, snapshot.activeDeinterlace),
         upscaler = if (!snapshot.gpuScalerExposed) {
             "n/a"
@@ -56,13 +58,31 @@ internal fun withSvpStatus(summary: String, svpStatus: String?): String {
     return (others + "SVP $svpStatus").joinToString(" · ")
 }
 
-/** Labels successfully present in mpv's `vf` property. Deinterlace is reported on its own line. */
-internal fun summarizeMpvVideoFilters(vf: String?, gpuShaderKeys: List<String>? = null): String {
+/** The real GLSL registrations plus mpv's native vf chain (which does not contain GPU effects).
+ * A shader is installed, not necessarily executed: its //!WHEN predicate remains conditional.
+ */
+internal fun summarizeMpvVideoFilters(
+    vf: String?,
+    gpuShaderKeys: List<String>? = null,
+    builtinSharpen: String? = null,
+): String {
     val gpu = gpuShaderKeys.orEmpty().mapNotNull { key ->
-        key.removePrefix("deblock_").takeIf { key.startsWith("deblock_") && it in setOf("light", "medium", "strong") }
-            ?.let { "deblock GPU ($it)" }
+        when (key) {
+            "cas" -> "sharpen GPU (CAS)"
+            "cas_light" -> "sharpen GPU (CAS light)"
+            "cas_medium" -> "sharpen GPU (CAS medium)"
+            "adaptive" -> "sharpen GPU (Adaptive Sharpen)"
+            else -> key.removePrefix("deblock_")
+                .takeIf { key.startsWith("deblock_") && it in setOf("light", "medium", "strong") }
+                ?.let { "deblock GPU ($it)" }
+        }
     }
-    if (vf.isNullOrBlank() || vf == "[]") return gpu.joinToString(", ").ifBlank { "off" }
+    // OpenGL's built-in `sharpen` property is not a GLSL hook and never appears in vf.
+    // gpu-next ignores it; the engine only samples this value for vo=gpu.
+    val builtin = builtinSharpen?.toFloatOrNull()?.takeIf { it.isFinite() && it > 0f }
+        ?.let { "sharpen OpenGL ($builtinSharpen)" }
+    val extra = gpu + listOfNotNull(builtin)
+    if (vf.isNullOrBlank() || vf == "[]") return extra.distinct().joinToString(", ").ifBlank { "off" }
     val labels = Regex("""plex-[a-z0-9-]+""").findAll(vf).map { it.value }.distinct().toList()
     val friendly = labels.mapNotNull { label ->
         when (label) {
@@ -73,7 +93,7 @@ internal fun summarizeMpvVideoFilters(vf: String?, gpuShaderKeys: List<String>? 
             else -> label.removePrefix("plex-")
         }
     }
-    if (friendly.isNotEmpty() || gpu.isNotEmpty()) return (friendly + gpu).distinct().joinToString(", ")
+    if (friendly.isNotEmpty() || extra.isNotEmpty()) return (friendly + extra).distinct().joinToString(", ")
     // A chain we could not name is still on. Do not invent filter names.
     return if (labels.isEmpty()) "on" else "off"
 }

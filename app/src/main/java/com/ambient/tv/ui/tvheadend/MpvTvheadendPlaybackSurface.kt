@@ -462,7 +462,10 @@ internal fun MpvTvheadendPlaybackSurface(
                         if (snapshot.sparsam) add(stringResource(R.string.player_nerd_sparsam) to stringResource(R.string.settings_performance_low))
                     }
                     com.ambient.tv.ui.player.mpvDeinterlaceStat(controller.deinterlaceModeKey, controller.deinterlaceFilterKey, snapshot.activeVideoFilters, snapshot.activeDeinterlace)?.let { add(stringResource(R.string.player_nerd_deinterlace_configured) to it) }
-                    snapshot.activeVideoFilters?.let { add(stringResource(R.string.player_nerd_video_filters) to it) }
+                    if (snapshot.processingSampled) add(
+                        stringResource(R.string.player_nerd_video_filters) to
+                            com.ambient.tv.ui.player.summarizeMpvVideoFilters(snapshot.activeVideoFilters, snapshot.activeImageShaders, snapshot.activeBuiltinSharpen)
+                    )
                     controller.loadedImageShaders().takeIf { it.isNotEmpty() }?.let { add("Shaders (loaded; conditional)" to it.joinToString()) }
                     add(stringResource(R.string.player_info_audio_output) to com.ambient.tv.ui.player.DirectAvDiagnostics.audio(context, controller.bitstreamPermitted, snapshot.audioCodec, snapshot.audioOutputFormat))
                     snapshot.audioCodec?.takeIf { it.isNotBlank() }?.let { add(stringResource(R.string.player_audio) to it.uppercase()) }

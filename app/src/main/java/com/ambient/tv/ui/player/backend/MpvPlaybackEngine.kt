@@ -13,6 +13,7 @@ import com.ambient.tv.ui.player.reducedVideoEffects
 import com.ambient.tv.ui.player.performanceProfile
 import com.ambient.tv.ui.player.videoImagePreferences
 import com.ambient.tv.ui.player.gpuRenderAtPanelResolution
+import com.ambient.tv.ui.player.mpvExplicitUpscalerRequestsPanel
 import android.content.Context
 import android.os.SystemClock
 import com.ambient.tv.ui.display.SdrToHdrRequest
@@ -194,7 +195,8 @@ internal class MpvPlaybackEngine(
      * ([gpuRenderAtPanelResolution]: "Renderauflösung" Auto/Panel/UI).
      */
     val gpuRenderAtPanel: Boolean get() = gpuRenderAtPanelResolution(
-        videoImagePreferences(context).gpuRenderResolutionKey, gpuQualityMode, performanceProfile(context).lowEndDevice,
+        videoImagePreferences(context).gpuRenderResolutionKey, gpuQualityMode,
+        performanceProfile(context).lowEndDevice && !mpvExplicitUpscalerRequestsPanel(imageOptions),
         loadedShaderKeys.isNotEmpty() || mpvUserImageProcessing(imageOptions, reducedVideoEffects(context), svpAllowed(context)),
     )
     override val usesRendererScaling: Boolean get() = gpuQualityMode
@@ -372,6 +374,15 @@ internal class MpvPlaybackEngine(
      * a change below the thresholds; this makes it apply the current options once more.
      */
     private var imageApplyStale = false
+    /**
+     * A new file/VO/Surface or late GPU API probe can invalidate the native shader pipeline even
+     * when the saved shader keys have not changed. Reinstall exactly once on the owner thread.
+     */
+    private var nativeShaderRefreshRequired = false
+    private var lastShaderRoute: String? = null
+    /** Avoid a tight retry/recompile loop for permanently unsupported shader sources. */
+    private var shaderRetryAfterMs = 0L
+    private var shaderReloadFailures = 0
     /** mpv's own linear-downscaling value, restored when SSimDownscaler is not running. */
     private var linearDownscalingDefault: String? = null
     private var surfaceWidth = 0
@@ -724,6 +735,8 @@ internal class MpvPlaybackEngine(
         // Background/foreground surface recreation may change the render target (UI vs 4K
         // panel) while preserving the same file and transfer. Do not wait for a new codec event.
         if (gpuQualityMode && fileReady) {
+            nativeShaderRefreshRequired = true
+            shaderRetryAfterMs = 0L
             imageApplyStale = true
             refreshImageSource()
         }
@@ -747,6 +760,8 @@ internal class MpvPlaybackEngine(
         // A late 1080p -> 4K SurfaceView resize must replan source-space user shaders
         // even if the decoded video is unchanged. Also covers aspect/display-mode changes.
         if (geometryChanged && gpuQualityMode && fileReady) {
+            nativeShaderRefreshRequired = true
+            shaderRetryAfterMs = 0L
             imageApplyStale = true
             refreshImageSource()
         }
@@ -1005,7 +1020,12 @@ internal class MpvPlaybackEngine(
     fun updateImageOptions(options: MpvImageOptions) {
         // Persist the user's selection; Sparsam applies a cheap effective view at the boundary.
         val next = options.normalized()
-        if (next != imageOptions) onOutputTransition()
+        if (next != imageOptions) {
+            onOutputTransition()
+            // A new explicit panel selection must not inherit the last shader's retry backoff.
+            shaderReloadFailures = 0
+            shaderRetryAfterMs = 0L
+        }
         // An explicit edit needs a new probe; automatic refreshes keep the safety verdict.
         if (next.svp != imageOptions.svp || next.svpMode != imageOptions.svpMode) {
             svpOverloaded = false
@@ -1046,8 +1066,12 @@ internal class MpvPlaybackEngine(
                 (MPV_IMAGE_SHADERS[it]?.requiresCompute == true && computeSupport == MpvComputeSupport.UNSUPPORTED) ||
                     (MPV_IMAGE_SHADERS[it]?.requiresGpuNext == true && !gpuNextVulkan)
             }
-            val shaderReloadNeeded = shaderKeys != loadedShaderKeys ||
-                (mpvTransferAwareShaderLoaded(shaderKeys) && casTransferProfile(transfer)?.suffix != loadedShaderTransferKey)
+            val shaderReloadNeeded = mpvImageShadersNeedReload(
+                requested = shaderKeys, loaded = loadedShaderKeys,
+                outputRecreated = nativeShaderRefreshRequired,
+                transferProfileChanged = mpvTransferAwareShaderLoaded(shaderKeys) &&
+                    casTransferProfile(transfer)?.suffix != loadedShaderTransferKey,
+            )
             // Extract files on IO; all native changes stay on the single MPV owner thread.
             val shaderFiles = if (shaderKeys.isNotEmpty() && shaderReloadNeeded) withContext(Dispatchers.IO) {
                 shaderKeys.associateWith { key -> MPV_IMAGE_SHADERS[key]?.let { materializeShader(it, transfer, gpuNextVulkan) } }
@@ -1138,8 +1162,12 @@ internal class MpvPlaybackEngine(
                 return
             }
         }
-        if (shaderKeys != loadedShaderKeys ||
-            (mpvTransferAwareShaderLoaded(shaderKeys) && casTransferProfile(transfer)?.suffix != loadedShaderTransferKey)
+        if (mpvImageShadersNeedReload(
+                requested = shaderKeys, loaded = loadedShaderKeys,
+                outputRecreated = nativeShaderRefreshRequired,
+                transferProfileChanged = mpvTransferAwareShaderLoaded(shaderKeys) &&
+                    casTransferProfile(transfer)?.suffix != loadedShaderTransferKey,
+            )
         ) {
             if (optionalCommand("change-list", "glsl-shaders", "clr", "")) {
                 loadedShaderKeys = shaderKeys.filter { shaderKey ->
@@ -1148,7 +1176,26 @@ internal class MpvPlaybackEngine(
                         .also { if (!it) warnings += shaderKey }
                 }
                 loadedShaderTransferKey = if (mpvTransferAwareShaderLoaded(loadedShaderKeys)) casTransferProfile(transfer)?.suffix else null
-            } else warnings += "glsl-shaders"
+                nativeShaderRefreshRequired = loadedShaderKeys != shaderKeys
+            } else {
+                warnings += "glsl-shaders"
+                nativeShaderRefreshRequired = true
+            }
+            if (nativeShaderRefreshRequired) {
+                // A materialization/native failure must not leave the user's chosen shader idle
+                // forever. Retry when the output stabilizes, but avoid hammering JNI every frame.
+                imageApplyStale = true
+                shaderReloadFailures++
+                val retryDelayMs = when (shaderReloadFailures) {
+                    1 -> 1_500L
+                    2 -> 5_000L
+                    else -> 15_000L
+                }
+                shaderRetryAfterMs = SystemClock.elapsedRealtime() + retryDelayMs
+            } else {
+                shaderReloadFailures = 0
+                shaderRetryAfterMs = 0L
+            }
         }
         activeShaderPresetKey = o.scaler.takeIf { it in loadedShaderKeys }
         val desiredFilters = desiredImageFilters(o, sdr)
@@ -1719,6 +1766,15 @@ internal class MpvPlaybackEngine(
             return
         }
         if (!gpuQualityMode) return
+        // current-vo / gpu-api arrive after the first decoded frame on some EGL/Vulkan paths.
+        // Replan once they settle; gpu-next-only shaders need the confirmed Vulkan API.
+        val shaderRoute = (getPropertyString("current-vo") ?: configuredVo) + "/" +
+            (getPropertyString("gpu-api") ?: "pending")
+        if (shaderRoute != lastShaderRoute) {
+            lastShaderRoute = shaderRoute
+            nativeShaderRefreshRequired = true
+            shaderRetryAfterMs = 0L
+        }
         refreshSdrCurve()
         if (probeShieldBroadcast()) return
         // container-fps arrives after the first setDeinterlace. Re-plan once per verdict so a
@@ -1760,7 +1816,9 @@ internal class MpvPlaybackEngine(
         if (transfer != lastImageTransfer || upscaling != lastImageUpscaling ||
             lumaEligible != lastLumaShaderEligible || svpSignature != lastSvpSignature ||
             geometry != lastImageGeometry ||
-            (imageApplyStale && imageUpdateJob?.isActive != true)
+            ((imageApplyStale || nativeShaderRefreshRequired) &&
+                imageUpdateJob?.isActive != true &&
+                SystemClock.elapsedRealtime() >= shaderRetryAfterMs)
         ) {
             lastImageTransfer = transfer
             lastImageUpscaling = upscaling
@@ -2175,6 +2233,10 @@ internal class MpvPlaybackEngine(
     fun activeChromaScaler(): String? = if (supportsGpuFilters) getPropertyString("cscale")?.takeIf { it.isNotBlank() } else null
     fun activeDownscaler(): String? = if (supportsGpuFilters) getPropertyString("dscale")?.takeIf { it.isNotBlank() } else null
     fun activeShaderPreset(): String? = if (supportsGpuFilters) activeShaderPresetKey else null
+    /** OpenGL's built-in sharpen knob is not in vf or glsl-shaders; gpu-next ignores it. */
+    fun activeBuiltinSharpen(): String? = if (supportsGpuFilters && !rendersWithGpuNext()) {
+        getPropertyString("sharpen")?.takeIf { it.toFloatOrNull()?.let { value -> value.isFinite() && value > 0f } == true }
+    } else null
     fun configuredVideoOutput(): String? = getPropertyString("current-vo")?.takeIf { it.isNotBlank() }
         ?.let { if (it == "gpu-next" && acceleration.vulkan) "$it / Vulkan" else it }
     /** Output format plus the layout mpv hands to the AO, e.g. "s16 · 5.1 · 6 ch". */
@@ -2453,6 +2515,8 @@ internal class MpvPlaybackEngine(
                     // FILE_LOADED is the first reliable opportunity to install upscalers:
                     // startup often had no video transfer/geometry and planned no shaders.
                     if (gpuQualityMode && !audioOnly) {
+                        nativeShaderRefreshRequired = true
+                        shaderRetryAfterMs = 0L
                         imageApplyStale = true
                         refreshImageSource()
                     }
@@ -2460,6 +2524,9 @@ internal class MpvPlaybackEngine(
                 MPV_EVENT_VIDEO_RECONFIG -> {
                     // SmartTube adaptive format switches and MPV track changes may update the
                     // source dimensions while keeping the same transfer and upscale thresholds.
+                    // A GLSL property update can itself emit VIDEO_RECONFIG. Replan here, but
+                    // force native shader re-install only when the *output context* (VO/GPU API
+                    // or Surface) actually changed, to avoid a self-triggered recompile loop.
                     if (gpuQualityMode && fileReady && !audioOnly) {
                         imageApplyStale = true
                         refreshImageSource()

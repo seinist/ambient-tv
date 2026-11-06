@@ -45,6 +45,33 @@ class MpvUpscalerReconfigTest {
         assertEquals(emptyList<String>(), mpvImageShaderKeys(configured, sdr = true, fittedScale = logicalHd))
     }
 
+    @Test fun nativeReconfigurationReinstallsSameShaderButStablePlaybackDoesNot() {
+        val shader = listOf("nnedi3_nns32", "cas")
+        // A VO rebuild or SurfaceView reattachment can invalidate native shader programs
+        // even when the Java-side list still reports the old successful registrations.
+        assertTrue(mpvImageShadersNeedReload(shader, shader, outputRecreated = true))
+        assertFalse(mpvImageShadersNeedReload(shader, shader, outputRecreated = false))
+        // A live choice must re-register immediately, without waiting for a new video load.
+        assertTrue(mpvImageShadersNeedReload(listOf("fsr"), shader, outputRecreated = false))
+        assertTrue(mpvImageShadersNeedReload(shader, shader, outputRecreated = false,
+            transferProfileChanged = true))
+        // A complete shader removal is itself a real reconfiguration.
+        assertTrue(mpvImageShadersNeedReload(emptyList(), shader, outputRecreated = false))
+    }
+
+    @Test fun liveUpscalerCanSwitchAtNativeFourKScaleWithSvpOff() {
+        val fitted = mpvFittedScale(1920.0, 1080.0, 3840, 2160)
+        for (scaler in listOf("nnedi3_nns32", "fsr", "nis", "ravu_lite_r3", "anime4k")) {
+            val keys = mpvImageShaderKeys(MpvImageOptions(scaler = scaler), sdr = true,
+                fittedScale = fitted, svpActive = false)
+            assertTrue(scaler, scaler in keys)
+            assertTrue(mpvImageShadersNeedReload(keys, emptyList(), outputRecreated = false))
+        }
+        // The application's own UI-resolution target remains 1:1; the TV scales that.
+        assertTrue(mpvImageShaderKeys(MpvImageOptions(scaler = "nnedi3_nns32"),
+            sdr = true, fittedScale = 1.0, svpActive = false).isEmpty())
+    }
+
     @Test fun hdrNeverEnablesAnSdrOnlyUpscaler() {
         assertEquals(emptyList<String>(), mpvImageShaderKeys(MpvImageOptions(scaler = "nnedi3_nns32"), sdr = false, hdr = true, fittedScale = 2.0))
     }

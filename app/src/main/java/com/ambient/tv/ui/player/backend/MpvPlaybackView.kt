@@ -74,6 +74,8 @@ data class MpvPlaybackSnapshot(
     val activeVideoFilters: String? = null,
     /** Successfully attached user GLSL hooks (separate from the CPU vf chain). */
     val activeImageShaders: List<String>? = null,
+    /** Native OpenGL sharpen property; gpu-next instead exposes CAS as a shader key. */
+    val activeBuiltinSharpen: String? = null,
     val activeScaler: String? = null,
     val activeUpscaling: Boolean? = null,
     val activeChromaScaler: String? = null,
@@ -421,6 +423,7 @@ fun rememberMpvPlaybackSnapshot(
                 outputPixelFormat = if (pollNerdStats) controller.outputPixelFormat() else snapshot.outputPixelFormat,
                 activeVideoFilters = if (pollNerdStats) controller.activeVideoFilters() else snapshot.activeVideoFilters,
                 activeImageShaders = if (pollNerdStats) controller.loadedImageShaders() else snapshot.activeImageShaders,
+                activeBuiltinSharpen = if (pollNerdStats) controller.activeBuiltinSharpen() else snapshot.activeBuiltinSharpen,
                 activeScaler = if (pollNerdStats) controller.activeScaler() else snapshot.activeScaler,
                 activeUpscaling = if (pollNerdStats) controller.activeUpscaling() else snapshot.activeUpscaling,
                 activeChromaScaler = if (pollNerdStats) controller.activeChromaScaler() else snapshot.activeChromaScaler,

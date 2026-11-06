@@ -508,6 +508,7 @@ class MpvPlaybackController(
         }
     }
     fun loadedImageShaders(): List<String> = read("loadedImageShaders", emptyList(), 750L) { loadedImageShaders() }
+    fun activeBuiltinSharpen(): String? = read("activeBuiltinSharpen", null, 750L) { activeBuiltinSharpen() }
     fun sourceDimensions(): Pair<Int, Int>? = read("sourceDimensions", null, 750L) { sourceDimensions() }
     fun videoTracks(): List<MpvTrack> = read("videoTracks", emptyList(), 250L) { videoTracks() }
     fun audioTracks(): List<MpvTrack> = read("audioTracks", emptyList(), 250L) { audioTracks() }
