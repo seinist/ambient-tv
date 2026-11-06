@@ -7,7 +7,6 @@ import androidx.compose.runtime.setValue
 import com.ambient.tv.data.local.MpvImageOptions
 import com.ambient.tv.data.local.VideoImageCatalog
 import com.ambient.tv.data.local.mpvProperties
-import com.ambient.tv.data.local.validateNnedi3ShaderSource
 import com.ambient.tv.ui.player.mpvCheapDefaults
 import com.ambient.tv.ui.player.reducedVideoEffects
 import com.ambient.tv.ui.player.performanceProfile
@@ -349,6 +348,15 @@ internal class MpvPlaybackEngine(
     private var activeShaderPresetKey: String? = null
     private var loadedShaderKeys = emptyList<String>()
     private var loadedShaderTransferKey: String? = null
+    private val imageShaderCache by lazy {
+        MpvImageShaderCache(File(context.noBackupFilesDir, "mpv-shaders")) { resourceId, resourceName ->
+            val resolvedResourceId = resourceId ?: resourceName
+                ?.let { name -> context.resources.getIdentifier(name, "raw", context.packageName) }
+                ?.takeIf { it != 0 }
+                ?: error("Bundled shader resource is missing: $resourceName")
+            context.resources.openRawResource(resolvedResourceId).bufferedReader().use { it.readText() }
+        }
+    }
     private val activeCpuImageFilters = linkedMapOf<String, String>()
     private var lastImageTransfer: String? = null
     private var lastSvpSignature: String? = null
@@ -1066,22 +1074,30 @@ internal class MpvPlaybackEngine(
                 (MPV_IMAGE_SHADERS[it]?.requiresCompute == true && computeSupport == MpvComputeSupport.UNSUPPORTED) ||
                     (MPV_IMAGE_SHADERS[it]?.requiresGpuNext == true && !gpuNextVulkan)
             }
+            // Capture all native metadata on the MPV owner thread. In particular, CAS needs
+            // the source range as well as its transfer; querying it during IO rejects the
+            // shader at the native thread check, while non-transfer-aware shaders still load.
+            val transferAware = mpvTransferAwareShaderLoaded(shaderKeys)
+            val transferProfile = if (transferAware) casTransferProfile(transfer) else null
             val shaderReloadNeeded = mpvImageShadersNeedReload(
                 requested = shaderKeys, loaded = loadedShaderKeys,
                 outputRecreated = nativeShaderRefreshRequired,
-                transferProfileChanged = mpvTransferAwareShaderLoaded(shaderKeys) &&
-                    casTransferProfile(transfer)?.suffix != loadedShaderTransferKey,
+                transferProfileChanged = transferAware && transferProfile?.suffix != loadedShaderTransferKey,
             )
             // Extract files on IO; all native changes stay on the single MPV owner thread.
             val shaderFiles = if (shaderKeys.isNotEmpty() && shaderReloadNeeded) withContext(Dispatchers.IO) {
-                shaderKeys.associateWith { key -> MPV_IMAGE_SHADERS[key]?.let { materializeShader(it, transfer, gpuNextVulkan) } }
+                shaderKeys.associateWith { key -> MPV_IMAGE_SHADERS[key]?.let { materializeShader(it, transferProfile, gpuNextVulkan) } }
             } else emptyMap()
             ensureActive()
-            val liveSdr = fileReady && isMpvSdrTransfer(currentMpvTransfer())
+            val liveTransfer = currentMpvTransfer()
+            val liveTransferProfile = if (transferAware) casTransferProfile(liveTransfer) else null
+            val liveSdr = fileReady && isMpvSdrTransfer(liveTransfer)
             val liveSvp = "plex-svp" in desiredImageFilters(effective, liveSdr)
             val liveGpuNext = rendersWithGpuNext()
+            val liveGpuNextVulkan = mpvGpuNextVulkan(getPropertyString("current-vo"), getPropertyString("gpu-api"))
             if (released || optionsSnapshot != imageOptions || gpuNext != liveGpuNext ||
-                transfer != currentMpvTransfer() || fittedScale != currentMpvFittedScale() ||
+                gpuNextVulkan != liveGpuNextVulkan || transfer != liveTransfer ||
+                transferProfile != liveTransferProfile || fittedScale != currentMpvFittedScale() ||
                 svpActive != liveSvp ||
                 sdr != liveSdr) {
                 // A newer option change has its own job; anything else is retried by the poll.
@@ -1089,7 +1105,7 @@ internal class MpvPlaybackEngine(
                 return@launch
             }
             logImageOptions(effective, shaderKeys, fittedScale, sdr, hdr)
-            applyImageOptions(effective, requestedShaders, shaderKeys, shaderFiles, sdr, transfer, computeSupport, hdr, gpuNext)
+            applyImageOptions(effective, requestedShaders, shaderKeys, shaderFiles, sdr, transferProfile, computeSupport, hdr, gpuNext)
         }
     }
 
@@ -1120,7 +1136,7 @@ internal class MpvPlaybackEngine(
         shaderKeys: List<String>,
         shaderFiles: Map<String, File?>,
         sdr: Boolean,
-        transfer: String?,
+        transferProfile: MpvCasTransferProfile?,
         computeSupport: MpvComputeSupport,
         hdr: Boolean = false,
         gpuNext: Boolean = false,
@@ -1166,7 +1182,7 @@ internal class MpvPlaybackEngine(
                 requested = shaderKeys, loaded = loadedShaderKeys,
                 outputRecreated = nativeShaderRefreshRequired,
                 transferProfileChanged = mpvTransferAwareShaderLoaded(shaderKeys) &&
-                    casTransferProfile(transfer)?.suffix != loadedShaderTransferKey,
+                    transferProfile?.suffix != loadedShaderTransferKey,
             )
         ) {
             if (optionalCommand("change-list", "glsl-shaders", "clr", "")) {
@@ -1175,7 +1191,7 @@ internal class MpvPlaybackEngine(
                     (path != null && optionalCommand("change-list", "glsl-shaders", "append", path.absolutePath))
                         .also { if (!it) warnings += shaderKey }
                 }
-                loadedShaderTransferKey = if (mpvTransferAwareShaderLoaded(loadedShaderKeys)) casTransferProfile(transfer)?.suffix else null
+                loadedShaderTransferKey = if (mpvTransferAwareShaderLoaded(loadedShaderKeys)) transferProfile?.suffix else null
                 nativeShaderRefreshRequired = loadedShaderKeys != shaderKeys
             } else {
                 warnings += "glsl-shaders"
@@ -1813,10 +1829,14 @@ internal class MpvPlaybackEngine(
             engageRenderOverload("plex-svp-bypass", 0L, 0.0, svpBypass, 0L, 0.0)
         }
         val geometry = if (sdrTransfer) currentMpvImageGeometry() else null
+        // Range metadata can settle after the first frame without changing gamma or geometry.
+        // Rebuild a loaded CAS profile once it changes, respecting the normal retry backoff.
+        val transferProfileChanged = mpvTransferAwareShaderLoaded(loadedShaderKeys) &&
+            casTransferProfile(transfer)?.suffix != loadedShaderTransferKey
         if (transfer != lastImageTransfer || upscaling != lastImageUpscaling ||
             lumaEligible != lastLumaShaderEligible || svpSignature != lastSvpSignature ||
             geometry != lastImageGeometry ||
-            ((imageApplyStale || nativeShaderRefreshRequired) &&
+            ((imageApplyStale || nativeShaderRefreshRequired || transferProfileChanged) &&
                 imageUpdateJob?.isActive != true &&
                 SystemClock.elapsedRealtime() >= shaderRetryAfterMs)
         ) {
@@ -1829,53 +1849,8 @@ internal class MpvPlaybackEngine(
         }
     }
 
-    private fun materializeShader(shader: MpvShaderAsset, transfer: String?, gpuNextVulkan: Boolean): File? = runCatching {
-        val shaderDir = File(context.noBackupFilesDir, "mpv-shaders").apply { mkdirs() }
-        val transferProfile = if (shader.transferAware) {
-            casTransferProfile(transfer) ?: error("No transfer profile available for " + shader.fileName)
-        } else null
-        val artCnnOpenGl = shader.fileName.startsWith("quality_artcnn") && !gpuNextVulkan
-        val cacheBaseName = if (artCnnOpenGl) shader.fileName.removeSuffix(".glsl") + "_opengl.glsl"
-            else shader.cacheFileName ?: shader.fileName
-        val fileName = transferProfile?.let {
-            cacheBaseName.removeSuffix(".glsl") + "_" + it.suffix + ".glsl"
-        } ?: cacheBaseName
-        val shaderFile = File(shaderDir, fileName)
-        val resolvedResourceId = (if (transferProfile?.singlePassHdr == true) MPV_CAS_HDR_RESOURCE else null)
-            ?: shader.resourceId ?: shader.resourceName
-            ?.let { name -> context.resources.getIdentifier(name, "raw", context.packageName) }
-            ?.takeIf { it != 0 }
-            ?: error("Bundled shader resource is missing: ${shader.resourceName ?: shader.fileName}")
-        val source = context.resources.openRawResource(resolvedResourceId).bufferedReader().use { it.readText() }
-        val transformed = mpvShaderSourceFor(shader, source, transferProfile, artCnnOpenGl)
-        fun valid(file: File): Boolean = shader.nnedi3Preset?.let { preset ->
-            runCatching { validateNnedi3ShaderSource(file.readText(), preset) }.getOrDefault(false)
-        } ?: if (transferProfile != null) {
-            runCatching {
-                val source = file.readText()
-                mpvCasSourceValid(source, transferProfile, shader.casBlend)
-            }.getOrDefault(false)
-        } else file.isFile
-
-        // An APK update can fix shader code without changing the asset's name. In particular,
-        // retaining the pre-fix Adaptive Sharpen source retains its NaN/black-frame bug.
-        // This runs on IO only when loading shaders, never in the frame loop.
-        if (shaderFile.isFile && (!valid(shaderFile) ||
-                runCatching { shaderFile.readText() != transformed }.getOrDefault(true))) shaderFile.delete()
-        if (!shaderFile.isFile) {
-            // A cancelled IO task may finish copying while a new selection starts. Unique
-            // temporary files avoid two workers truncating the same staging file.
-            val pendingFile = File.createTempFile("${shader.fileName}.", ".pending", shaderDir)
-            try {
-                pendingFile.writeText(transformed)
-                check(valid(pendingFile)) { "Bundled shader failed validation: ${shader.fileName}" }
-                if (shaderFile.exists()) shaderFile.delete()
-                check(pendingFile.renameTo(shaderFile)) { "Could not install ${shader.fileName}" }
-            } finally {
-                pendingFile.delete()
-            }
-        }
-        shaderFile
+    private fun materializeShader(shader: MpvShaderAsset, transferProfile: MpvCasTransferProfile?, gpuNextVulkan: Boolean): File? = runCatching {
+        imageShaderCache.materialize(shader, transferProfile, gpuNextVulkan)
     }.onFailure { error ->
         Timber.e(error, "Could not prepare MPV image shader %s", shader.fileName)
     }.getOrNull()
