@@ -123,16 +123,17 @@ class YouTubeOsdNavigationTest {
         rule.onNodeWithText("Fixture Channel", useUnmergedTree = true).assertIsDisplayed()
         rule.onNodeWithText("· vor 3 Tagen", useUnmergedTree = true).assertIsDisplayed()
 
-        // Missing channel metadata must not create a new subtitle line.
+        // Without a channel, the date stays below the title without a leading separator.
         rule.runOnIdle {
             fixture.model.value = fixture.model.value.copy(playback = fixture.model.value.playback.copy(author = null))
         }
-        rule.onNodeWithText("· vor 3 Tagen", useUnmergedTree = true).assertIsDisplayed()
+        rule.onNodeWithText("vor 3 Tagen", useUnmergedTree = true).assertIsDisplayed()
 
         rule.runOnIdle {
             fixture.model.value = fixture.model.value.copy(playback = fixture.model.value.playback.copy(isLive = true))
         }
         rule.onNodeWithText("· vor 3 Tagen", useUnmergedTree = true).assertDoesNotExist()
+        rule.onNodeWithText("vor 3 Tagen", useUnmergedTree = true).assertDoesNotExist()
     }
 
     @Test fun navigationButtonsStayVisibleAndCallOnlyAvailableActionsForEveryRendererLabel() {

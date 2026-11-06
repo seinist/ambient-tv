@@ -195,7 +195,11 @@ fun ReferencePlayerHeader(
                                     .widthIn(max = deviceDp(244.dp, 144.dp)),
                             )
                         }
-                        PlayerPausedIndicator(showPaused, showLabel = true, leadingSpacing = 8.dp)
+                        PlayerPausedIndicator(
+                            showPaused,
+                            showLabel = true,
+                            leadingSpacing = if (contextValue != null || contextTrailing != null) 8.dp else 0.dp,
+                        )
                     }
                 }
                 Text(
