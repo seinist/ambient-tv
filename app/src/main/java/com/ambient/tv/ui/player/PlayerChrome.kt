@@ -135,11 +135,12 @@ fun ReferencePlayerHeader(
     // The bubble occupies the area above the timeline. Fade only the header's pixels,
     // never its measured height: the seekbar, badges and actions must not jump.
     val headerAlpha by seekPreviewYieldAlpha()
-    Row(
-        modifier = modifier.fillMaxWidth().graphicsLayer { alpha = headerAlpha },
-        horizontalArrangement = Arrangement.spacedBy(16.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
+    Column(modifier = modifier.fillMaxWidth()) {
+        Row(
+            modifier = Modifier.fillMaxWidth().graphicsLayer { alpha = headerAlpha },
+            horizontalArrangement = Arrangement.spacedBy(16.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
         if (!artworkUrl.isNullOrBlank() || artworkFallbackUrls.isNotEmpty()) {
             PlaybackArtworkCard(
                 artworkUrl = artworkUrl,
@@ -225,6 +226,10 @@ fun ReferencePlayerHeader(
                 }
             }
         }
+        }
+        // Inline OSD context position, just after the title and before the seekbar.
+        // The action itself stays in the playback overlay to retain focus during movement.
+        PlayerSkipContextAnchor()
     }
 }
 
