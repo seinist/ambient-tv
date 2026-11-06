@@ -760,17 +760,28 @@ class SmartTubeEngine @Inject constructor(
         com.ambient.tv.domain.model.TimelinePreview.Sprite(width, height, columns, rows, interval, Long.MAX_VALUE, urlTemplate = template)
     }.getOrNull()
 
-    suspend fun updateHistory(videoId: String, positionMs: Long, durationMs: Long = 0L) = io {
-        playbackMetadata.updatePosition(videoId, positionMs)
-        (durationMs.takeIf { it > 0 } ?: playbackMetadata.durationMs(videoId))?.let { YouTubeLocalProgress.record(videoId, positionMs, it) }
+    suspend fun updateHistory(videoId: String, positionMs: Long, durationMs: Long = 0L, completed: Boolean = false) = io {
+        val duration = durationMs.takeIf { it > 0L } ?: playbackMetadata.durationMs(videoId)
+            ?: YouTubeLocalProgress.durationMs(videoId) ?: 0L
+        val position = if (completed && duration > 0L) duration else positionMs.coerceAtLeast(0L)
+        // Cards and playback share this exact position. The watch-next metadata cache must
+        // not become a second, rounded resume source after a local progress report.
+        YouTubeLocalProgress.record(videoId, position, duration, completed)
         // History paused: the position stays local, YouTube's history is not touched.
         if (appPreferences.youtubeHistoryPaused) return@io
         val media = service("getMediaItemService")
+        // Native EOF can clear both clocks. Recover a length for the completed watch record;
+        // sending a made-up zero here would undo the seen state on YouTube.
+        val remotePosition = if (completed && duration <= 0L) {
+            media.call("getFormatInfo", videoId)?.callString("getLengthSeconds")
+                ?.toDoubleOrNull()?.takeIf { it.isFinite() && it > 0.0 }
+                ?.times(1_000.0)?.toLong() ?: return@io
+        } else position
         // Method names changed across MediaServiceCore revisions; try the public variants.
-        val seconds = (positionMs / 1000L).toFloat()
+        val seconds = remotePosition / 1000f
         val first = media.invokeCompatible("updateHistoryPosition", videoId, seconds)
         if (!first.invoked) {
-            media.invokeCompatible("updateHistoryPosition", videoId, positionMs)
+            media.invokeCompatible("updateHistoryPosition", videoId, remotePosition)
         }
     }
 
@@ -1104,6 +1115,14 @@ class SmartTubeEngine @Inject constructor(
         val type = raw.callInt("getType")
         if (type == MEDIA_ITEM_TYPE_CHANNEL || type == MEDIA_GROUP_TYPE_CHANNEL_UPLOADS) return mapChannelItem(raw)
         val videoId = raw.callString("getVideoId")?.takeIf(String::isNotBlank) ?: return null
+        val isLive = raw.callBool("isLive") ?: false
+        val isUpcoming = raw.callBool("isUpcoming") ?: false
+        // A missing/-1 position is not an explicit zero from YouTube. Preserve that
+        // distinction in cached cards too, so they cannot clear a known resume point.
+        val percentWatched = raw.callInt("getPercentWatched")?.takeIf { it >= 0 }?.coerceAtMost(100) ?: -1
+        if (!isLive && !isUpcoming && percentWatched >= 0) {
+            YouTubeLocalProgress.observeRemote(videoId, percentWatched)
+        }
         return YouTubeItem(
             videoId = videoId,
             title = raw.callString("getTitle") ?: "SmartTube",
@@ -1112,9 +1131,9 @@ class SmartTubeEngine @Inject constructor(
             imageUrl = raw.callString("getCardImageUrl")?.takeIf(String::isNotBlank) ?: youtubeThumbnailUrl(videoId),
             backgroundUrl = raw.callString("getBackgroundImageUrl")?.takeIf(String::isNotBlank),
             durationMs = raw.callLong("getDurationMs") ?: 0,
-            percentWatched = (raw.callInt("getPercentWatched") ?: 0).coerceAtLeast(0).also { YouTubeLocalProgress.observeRemote(videoId, it) },
-            isLive = raw.callBool("isLive") ?: false,
-            isUpcoming = raw.callBool("isUpcoming") ?: false,
+            percentWatched = percentWatched,
+            isLive = isLive,
+            isUpcoming = isUpcoming,
             scheduledStartMs = youtubeScheduledStartMs(raw.callString("getUpcomingEventStartTime"), null),
             isShorts = raw.callBool("isShorts") ?: false,
             channelId = raw.callString("getChannelId"),

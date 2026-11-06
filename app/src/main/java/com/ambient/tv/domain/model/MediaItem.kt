@@ -46,6 +46,8 @@ data class MediaItem(
     val logoUrl: String? = null,
     /** Wide backdrop of the show/season/album this item belongs to (episodes and seasons often have none of their own). */
     val parentBackdropUrl: String? = null,
+    /** Providers with an explicit watch state need not use the library's 90% heuristic. */
+    val watchedOverride: Boolean? = null,
 ) {
     val allRatingKeys: List<String>
         get() = (linkedRatingKeys + ratingKey).distinct()
@@ -87,6 +89,7 @@ data class MediaItem(
 
     val isWatched: Boolean
         get() {
+            watchedOverride?.let { return it }
             // A show or season is watched once every episode is. Plex sets viewCount on the show
             // as soon as a single episode has been played, so it cannot answer that.
             val total = leafCount
