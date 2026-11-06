@@ -2505,8 +2505,10 @@ internal class MpvPlaybackEngine(
                 MPV_EVENT_VIDEO_RECONFIG -> {
                     // SmartTube adaptive format switches and MPV track changes may update the
                     // source dimensions while keeping the same transfer and upscale thresholds.
+                    // A GLSL property update can itself emit VIDEO_RECONFIG. Replan here, but
+                    // force native shader re-install only when the *output context* (VO/GPU API
+                    // or Surface) actually changed, to avoid a self-triggered recompile loop.
                     if (gpuQualityMode && fileReady && !audioOnly) {
-                        nativeShaderRefreshRequired = true
                         imageApplyStale = true
                         refreshImageSource()
                     }
