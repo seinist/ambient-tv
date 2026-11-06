@@ -4,8 +4,8 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class YouTubeResumeTest {
-    private fun stream(live: Boolean = false) = YouTubePlayback("video", "SmartTube", uri = "https://fixture.invalid/video.mpd", isLive = live)
-    private fun metadata() = YouTubeMetadata("video", "Title", durationMs = 120_000, percentWatched = 25)
+    private fun stream(live: Boolean = false, id: String = "video") = YouTubePlayback(id, "SmartTube", uri = "https://fixture.invalid/video.mpd", isLive = live)
+    private fun metadata(id: String = "video") = YouTubeMetadata(id, "Title", durationMs = 120_000, percentWatched = 25)
 
     @Test fun partlyWatchedResumes() {
         assertEquals(30_000L, youtubeResumeMs(120_000, 25, isLive = false))
@@ -20,6 +20,133 @@ class YouTubeResumeTest {
     @Test fun liveAndUnknownStartAtZero() {
         assertEquals(0L, youtubeResumeMs(120_000, 50, isLive = true))
         assertEquals(0L, youtubeResumeMs(120_000, null, isLive = false))
+    }
+
+    @Test fun cardProgressResolvesBeforeOptionalMetadataAndCannotBeOverwrittenDuringStartup() {
+        val id = "resume-card-before-watch-next"
+        YouTubeLocalProgress.observeRemote(id, 40)
+        val loaded = applyYouTubePlaybackMetadata(stream(id = id).copy(durationMs = 120_000), null)
+        assertEquals(48_000L, loaded.resumeMs)
+        assertTrue(loaded.resumeResolved)
+
+        // A startup report or another request may update history while watch-next is pending.
+        // This launch already captured its start, so enrichment must never recalculate it.
+        YouTubeLocalProgress.record(id, positionMs = 0, durationMs = 120_000)
+        val enriched = applyYouTubePlaybackMetadata(loaded, metadata(id).copy(percentWatched = 80))
+        assertEquals(48_000L, enriched.resumeMs)
+        assertTrue(enriched.resumeResolved)
+    }
+
+    @Test fun currentCardProgressIncludingZeroOverridesOldPositiveMetadata() {
+        for (percent in listOf(40, 0)) {
+            val id = "resume-current-card-$percent"
+            YouTubeLocalProgress.observeRemote(id, percent)
+            val loaded = applyYouTubePlaybackMetadata(stream(id = id), metadata(id).copy(percentWatched = 80))
+            assertEquals(120_000L * percent / 100, loaded.resumeMs)
+            assertTrue(loaded.resumeResolved)
+        }
+    }
+
+    @Test fun exactLocalPositionAndDurationResolveWithoutWatchNextOrStreamLength() {
+        val id = "resume-exact-local-duration"
+        YouTubeLocalProgress.record(id, positionMs = 60_005, durationMs = 120_000)
+        val loaded = applyYouTubePlaybackMetadata(stream(id = id), null)
+        assertEquals(120_000L, loaded.durationMs)
+        assertEquals(60_005L, loaded.resumeMs)
+        assertTrue(loaded.resumeResolved)
+    }
+
+    @Test fun exactLocalResumeRewindsOnceAndSurvivesLaterMetadata() {
+        val id = "resume-exact-local-rewind"
+        YouTubeLocalProgress.observeRemote(id, 20)
+        YouTubeLocalProgress.record(id, positionMs = 60_005, durationMs = 120_000)
+        val loaded = applyYouTubePlaybackMetadata(stream(id = id), null)
+        val resumed = prepareYouTubeSavedResume(loaded, 10)
+        assertEquals(50_005L, resumed.resumeMs)
+        assertTrue(resumed.resumeResolved)
+        assertEquals(50_005L,
+            applyYouTubePlaybackMetadata(resumed, metadata(id).copy(percentWatched = 80)).resumeMs)
+    }
+
+    @Test fun completedLocalPlaybackCannotBeResurrectedByOldMetadata() {
+        val id = "resume-completed-local"
+        YouTubeLocalProgress.observeRemote(id, 60)
+        // EOF can precede the advertised length; completion is explicit, not a leftover clock.
+        YouTubeLocalProgress.record(id, positionMs = 71_999, durationMs = 120_000, completed = true)
+        val loaded = applyYouTubePlaybackMetadata(stream(id = id), metadata(id).copy(percentWatched = 60))
+        assertEquals(100, YouTubeLocalProgress.percent(id, 60))
+        assertEquals(0L, loaded.resumeMs)
+        assertTrue(loaded.resumeResolved)
+        assertEquals(0L,
+            applyYouTubePlaybackMetadata(loaded, metadata(id).copy(percentWatched = 80)).resumeMs)
+    }
+
+    @Test fun finishedCardLocksStartAtZeroBeforeOptionalMetadata() {
+        val id = "resume-finished-card"
+        YouTubeLocalProgress.observeRemote(id, 95)
+        val loaded = applyYouTubePlaybackMetadata(stream(id = id).copy(durationMs = 120_000), null)
+        assertEquals(0L, loaded.resumeMs)
+        assertTrue(loaded.resumeResolved)
+        assertEquals(0L,
+            applyYouTubePlaybackMetadata(loaded, metadata(id).copy(percentWatched = 40)).resumeMs)
+    }
+
+    @Test fun knownStreamLengthWithoutAnyProgressStillWaitsForMetadata() {
+        val id = "resume-unknown-progress"
+        val loaded = applyYouTubePlaybackMetadata(stream(id = id).copy(durationMs = 120_000), null)
+        assertFalse(loaded.resumeResolved)
+        val waiting = prepareYouTubeSavedResume(loaded, 10)
+        val resolved = applyYouTubePlaybackMetadata(waiting, metadata(id))
+        assertEquals(20_000L, resolved.resumeMs)
+        assertTrue(resolved.resumeResolved)
+        assertEquals(20_000L, applyYouTubePlaybackMetadata(resolved, metadata(id)).resumeMs)
+    }
+
+    @Test fun lateMetadataIgnoresThisPlaybacksFirstPositiveReport() {
+        for (rewind in listOf(0, 10)) {
+            val id = "resume-late-after-startup-report-$rewind"
+            val loaded = applyYouTubePlaybackMetadata(stream(id = id).copy(durationMs = 120_000), null)
+            assertFalse(loaded.resumeResolved)
+            val waiting = prepareYouTubeSavedResume(loaded, rewind)
+            YouTubeLocalProgress.record(id, positionMs = 1_000, durationMs = 120_000)
+
+            val resolved = applyYouTubePlaybackMetadata(waiting, metadata(id), useCurrentProgress = false)
+            assertEquals(30_000L - rewind * 1_000L, resolved.resumeMs)
+            assertTrue(resolved.resumeResolved)
+            assertEquals(resolved.resumeMs,
+                applyYouTubePlaybackMetadata(resolved, metadata(id), useCurrentProgress = false).resumeMs)
+        }
+    }
+
+    @Test fun lateMetadataCannotOverrideTheCardStartEvenWhenCurrentProgressIsIgnored() {
+        val id = "resume-card-locked-before-late-enrichment"
+        YouTubeLocalProgress.observeRemote(id, 40)
+        val loaded = applyYouTubePlaybackMetadata(stream(id = id).copy(durationMs = 120_000), null)
+        val enriched = applyYouTubePlaybackMetadata(loaded, metadata(id).copy(percentWatched = 80),
+            useCurrentProgress = false)
+        assertEquals(48_000L, enriched.resumeMs)
+        assertTrue(enriched.resumeResolved)
+    }
+
+    @Test fun failedLateMetadataDoesNotTurnCurrentPlaybackIntoAHistoricalSeek() {
+        val id = "resume-failed-late-metadata"
+        val loaded = applyYouTubePlaybackMetadata(stream(id = id).copy(durationMs = 120_000), null)
+        YouTubeLocalProgress.record(id, positionMs = 1_000, durationMs = 120_000)
+        val unchanged = applyYouTubePlaybackMetadata(loaded, null, useCurrentProgress = false)
+        assertEquals(0L, unchanged.resumeMs)
+        assertFalse(unchanged.resumeResolved)
+        // Reporting continues normally even if optional details never arrive.
+        YouTubeLocalProgress.record(id, positionMs = 5_000, durationMs = 120_000)
+        assertEquals(5_000L, YouTubeLocalProgress.resumePositionMs(id, 120_000))
+    }
+
+    @Test fun localSavedProgressNeverCreatesAHistoricalSeekForLivePlayback() {
+        val id = "resume-exact-local-live"
+        YouTubeLocalProgress.record(id, positionMs = 60_005, durationMs = 120_000)
+        val loaded = applyYouTubePlaybackMetadata(stream(live = true, id = id), null)
+        assertEquals(0L, loaded.resumeMs)
+        assertEquals(0L, loaded.durationMs)
+        assertTrue(loaded.resumeResolved)
     }
 
     @Test fun knownSavedResumeRewindsOnceAndMetadataCannotApplyItAgain() {

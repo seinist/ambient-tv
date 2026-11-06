@@ -210,7 +210,9 @@ fun PlaybackSessionContent(
             current.metadata?.route != metadata.route || current.generation != snapshot.generation) return
         if (handledKey == candidateKey) return
         handledKey = candidateKey
-        if (automatic) BackgroundPlaybackSession.recordAutomaticNextUp(next)
+        if (automatic) BackgroundPlaybackSession.recordAutomaticNextUp(next,
+            completed = metadata.source == "youtube" && current.status.error == null &&
+                (current.status.ended || terminalSponsorHandoff))
         else {
             BackgroundPlaybackSession.registerUserInteraction()
             BackgroundPlaybackSession.recordManualNextUp(next)
