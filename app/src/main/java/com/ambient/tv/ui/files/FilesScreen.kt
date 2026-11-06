@@ -58,6 +58,7 @@ import com.ambient.tv.ui.common.overlayLazyScrollbar
 import com.ambient.tv.ui.common.activateOnTvKey
 import com.ambient.tv.ui.common.noSurfaceBorder
 import com.ambient.tv.ui.common.noSurfaceScale
+import com.ambient.tv.ui.common.mediaFocusMotion
 import com.ambient.tv.ui.common.transparentSurfaceColors
 import com.ambient.tv.ui.navigation.ReportSidebarContentReady
 import com.ambient.tv.ui.theme.LocalUiTokens
@@ -437,11 +438,11 @@ internal fun FilesBrowserRow(
                 scale = noSurfaceScale(),
                 border = noSurfaceBorder(),
                 shape = ClickableSurfaceDefaults.shape(shape = shape),
-                modifier = Modifier.weight(1f).padding(2.dp).then(focusModifier)
+                modifier = Modifier.weight(1f).padding(2.dp).mediaFocusMotion(focused, focusedScale = 1.012f).then(focusModifier)
                     .activateOnTvKey(onClick = onOpen).onFocusChanged { focused = it.isFocused },
             ) {
                 Row(
-                    Modifier.fillMaxWidth().heightIn(min = 44.dp).appControlSurface(focused, shape = shape).padding(horizontal = 16.dp, vertical = 8.dp),
+                    Modifier.fillMaxWidth().heightIn(min = 44.dp).appControlSurface(focused, shape = shape, focusedAccent = true).padding(horizontal = 16.dp, vertical = 8.dp),
                     horizontalArrangement = Arrangement.spacedBy(12.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {

@@ -167,33 +167,53 @@ fun noSurfaceBorder(): ClickableSurfaceBorder = ClickableSurfaceDefaults.border(
  * library/provider screens historically only changed border/background color, which made focus
  * movement feel static and inconsistent. This helper reuses the same spring character globally.
  * Full-width list rows can pass a smaller [focusedScale] so the motion remains visible without
- * pushing a wide row into the viewport edges.
+ * pushing a wide row into the viewport edges; reduced profiles use a gentler tween.
  */
+/**
+ * Preserve the familiar spring focus lift in normal profiles. Sparsam still animates focus:
+ * a shorter, smaller tween replaces the spring without forcing layout, blur or extra shadows.
+ * Both paths update the graphics layer only, keeping poster and row content out of recomposition.
+ */
+internal fun mediaFocusTargetScale(focusedScale: Float, reducedEffects: Boolean): Float =
+    if (reducedEffects) 1f + (focusedScale - 1f) * 0.5f else focusedScale
+
+internal fun mediaFocusReducedDurationMs(focused: Boolean): Int = if (focused) 150 else 115
+
+@Composable
+internal fun rememberMediaFocusScale(
+    focused: Boolean,
+    focusedScale: Float,
+): androidx.compose.runtime.State<Float> {
+    val reduced = LocalPerformanceProfile.current.reducedEffects
+    return animateFloatAsState(
+        targetValue = if (focused) mediaFocusTargetScale(focusedScale, reduced) else 1f,
+        animationSpec = if (reduced) {
+            tween(mediaFocusReducedDurationMs(focused), easing = androidx.compose.animation.core.FastOutSlowInEasing)
+        } else {
+            spring(
+                dampingRatio = Spring.DampingRatioNoBouncy,
+                stiffness = Spring.StiffnessMediumLow,
+            )
+        },
+        label = "mediaFocusScale",
+    )
+}
+
 @Composable
 fun Modifier.mediaFocusMotion(
     focused: Boolean,
     focusedScale: Float = LocalUiTokens.current.focusScale,
 ): Modifier {
     val performance = LocalPerformanceProfile.current
-    val motionEnabled = performance.allowSpringFocus
     val tokens = LocalUiTokens.current
-    val animatedScale = animateFloatAsState(
-        targetValue = if (motionEnabled && focused) focusedScale else 1f,
-        animationSpec = if (motionEnabled) {
-            spring(
-                dampingRatio = Spring.DampingRatioNoBouncy,
-                stiffness = Spring.StiffnessMediumLow,
-            )
-        } else snap(),
-        label = "mediaFocusMotion",
-    )
+    val animatedScale = rememberMediaFocusScale(focused, focusedScale)
     return this
         .then(
             if (focused && performance.allowFocusedItemShadow) {
                 Modifier.shadow(5.dp, RoundedCornerShape(tokens.cardRadius), clip = false)
             } else Modifier
         )
-        .zIndex(if (motionEnabled && focused) 1f else 0f)
+        .zIndex(if (focused) 1f else 0f)
         .graphicsLayer {
             scaleX = animatedScale.value
             scaleY = animatedScale.value

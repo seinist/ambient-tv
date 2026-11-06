@@ -103,6 +103,7 @@ import com.ambient.tv.ui.common.mediaFocusMotion
 import com.ambient.tv.ui.common.handheldSwipeTabs
 import com.ambient.tv.ui.navigation.ReportSidebarContentReady
 import com.ambient.tv.ui.theme.LocalUiTokens
+import com.ambient.tv.ui.theme.animatedFocusBorder
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
@@ -653,9 +654,14 @@ internal fun ChannelRow(
     // D-pad Right cannot enter an Info button nested inside a focusable Surface.
     Row(
         modifier = Modifier.fillMaxWidth()
+            .mediaFocusMotion(rowHasFocus, focusedScale = 1.012f)
             .onFocusChanged { rowHasFocus = it.hasFocus }
             .background(if (rowHasFocus) MaterialTheme.colorScheme.primary.copy(alpha = 0.14f) else MaterialTheme.colorScheme.surface.copy(alpha = 0.78f), rowShape)
-            .border(if (focused) 2.dp else 1.dp, if (focused) MaterialTheme.colorScheme.primary else Color.White.copy(alpha = 0.08f), rowShape)
+            .animatedFocusBorder(
+                focused = rowHasFocus, shape = rowShape,
+                focusedColor = MaterialTheme.colorScheme.primary,
+                unfocusedColor = Color.White.copy(alpha = 0.08f),
+            )
             .padding(end = 14.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(10.dp),
@@ -665,7 +671,7 @@ internal fun ChannelRow(
         colors = transparentSurfaceColors(),
         scale = noSurfaceScale(),
         shape = androidx.tv.material3.ClickableSurfaceDefaults.shape(shape = rowShape),
-        modifier = modifier.weight(1f).browseFocusTarget(channel.uuid).mediaFocusMotion(focused, focusedScale = 1.012f).activateOnTvKey { onWatch(channel) }.onFocusChanged {
+        modifier = modifier.weight(1f).browseFocusTarget(channel.uuid).activateOnTvKey { onWatch(channel) }.onFocusChanged {
             focused = it.isFocused
             if (it.isFocused) onFocused()
         },
@@ -1005,9 +1011,14 @@ private fun DvrRow(
     // the focused surface, so buttons drawn inside its bounds could never be reached.
     Row(
         Modifier.fillMaxWidth()
+            .mediaFocusMotion(rowHasFocus, focusedScale = 1.012f)
             .onFocusChanged { rowHasFocus = it.hasFocus }
             .background(if (rowHasFocus) MaterialTheme.colorScheme.primary.copy(alpha = 0.14f) else MaterialTheme.colorScheme.surface.copy(alpha = 0.78f), rowShape)
-            .border(if (focused) 2.dp else 1.dp, if (focused) MaterialTheme.colorScheme.primary else Color.White.copy(alpha = 0.08f), rowShape)
+            .animatedFocusBorder(
+                focused = rowHasFocus, shape = rowShape,
+                focusedColor = MaterialTheme.colorScheme.primary,
+                unfocusedColor = Color.White.copy(alpha = 0.08f),
+            )
             .padding(end = 14.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(10.dp),
