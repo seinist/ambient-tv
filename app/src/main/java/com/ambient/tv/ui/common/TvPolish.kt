@@ -161,18 +161,9 @@ fun noSurfaceBorder(): ClickableSurfaceBorder = ClickableSurfaceDefaults.border(
 )
 
 /**
- * Shared focus motion for browsable media cards/rows outside [MediaTile].
- *
- * Home's MediaTile uses the shared spring scale when DPAD focus moves between items. Several
- * library/provider screens historically only changed border/background color, which made focus
- * movement feel static and inconsistent. This helper reuses the same spring character globally.
- * Full-width list rows can pass a smaller [focusedScale] so the motion remains visible without
- * pushing a wide row into the viewport edges; reduced profiles use a gentler tween.
- */
-/**
- * Preserve the familiar spring focus lift in normal profiles. Sparsam still animates focus:
- * a shorter, smaller tween replaces the spring without forcing layout, blur or extra shadows.
- * Both paths update the graphics layer only, keeping poster and row content out of recomposition.
+ * Shared media focus policy for Home tiles, library grids and provider rows.
+ * Balanced/Maximum keep their familiar spring; reduced UI profiles use a shorter,
+ * smaller tween, without layout, blur or extra shadows.
  */
 internal fun mediaFocusTargetScale(focusedScale: Float, reducedEffects: Boolean): Float =
     if (reducedEffects) 1f + (focusedScale - 1f) * 0.5f else focusedScale
@@ -199,6 +190,10 @@ internal fun rememberMediaFocusScale(
     )
 }
 
+/**
+ * Applies the shared focus scale to a graphics layer. Full-width list rows can pass a
+ * smaller [focusedScale] so adjacent actions and viewport edges stay clear.
+ */
 @Composable
 fun Modifier.mediaFocusMotion(
     focused: Boolean,
