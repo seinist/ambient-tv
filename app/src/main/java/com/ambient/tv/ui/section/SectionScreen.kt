@@ -4,6 +4,8 @@ package com.ambient.tv.ui.section
 
 import com.ambient.tv.ui.common.glideToItem
 import com.ambient.tv.ui.theme.screenGutter
+import com.ambient.tv.ui.theme.animatedFocusBorder
+import com.ambient.tv.ui.theme.animatedFocusSurface
 import com.ambient.tv.ui.common.fillWindowHeight
 
 import com.ambient.tv.ui.common.AlphabetBar

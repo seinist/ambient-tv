@@ -27,6 +27,7 @@ import androidx.compose.ui.zIndex
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.dp
 import androidx.tv.material3.MaterialTheme
 import com.ambient.tv.ui.performance.LocalPerformanceProfile
 
