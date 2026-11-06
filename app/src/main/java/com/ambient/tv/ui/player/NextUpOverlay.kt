@@ -21,11 +21,11 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.style.TextOverflow
@@ -37,6 +37,7 @@ import androidx.compose.ui.focus.FocusDirection
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.stringResource
@@ -54,7 +55,6 @@ import com.ambient.tv.R
 import com.ambient.tv.ui.common.DialogButtonFocusScope
 import com.ambient.tv.ui.common.LocalDialogButtonFocus
 import com.ambient.tv.ui.common.TvActionButton
-import kotlinx.coroutines.delay
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
@@ -73,12 +73,14 @@ internal fun NextUpOverlay(
 ) {
     val handheld = com.ambient.tv.ui.mobile.LocalHandheldUi.current
     val playFocus = remember(candidate.source, candidate.mediaId) { FocusRequester() }
+    var actionFocused by remember(candidate.source, candidate.mediaId) { mutableStateOf(false) }
     val footerButtons = remember { DialogButtonFocusScope(containSingleButton = true) }
-    LaunchedEffect(playFocus) {
-        delay(100)
-        runCatching { playFocus.requestFocus() }
-    }
-    androidx.activity.compose.BackHandler(onBack = onDismiss)
+    TransientPlayerActionFocus(
+        visible = true,
+        requester = playFocus,
+        hasActionFocus = actionFocused,
+        onDismiss = onDismiss,
+    )
     val shape = RoundedCornerShape(14.dp)
     Column(
         modifier = modifier
@@ -150,6 +152,7 @@ internal fun NextUpOverlay(
         CompositionLocalProvider(LocalDialogButtonFocus provides footerButtons) {
             FlowRow(
                 modifier = Modifier.fillMaxWidth()
+                    .onFocusChanged { actionFocused = it.hasFocus }
                     .focusProperties {
                         onExit = {
                             // Keep D-pad navigation in the overlay, including a one-button
