@@ -1,10 +1,12 @@
 # Android Auto (official audio browser)
 
-This integration uses the official `androidx.media.MediaBrowserServiceCompat`
-contract (including `onSearch`) and wraps Ambient TV's existing platform
-`PlaybackService`/`MediaSession` without a duplicate decoder. It does **not**
-bundle the unofficial OEM SDK from youtube-companion, display video, or use
-projection APIs.
+This integration uses AndroidX Media3 `MediaLibraryService` and
+`MediaLibrarySession`. `SessionPlaybackPlayer` adapts Ambient TV's existing
+`BackgroundPlaybackSession` to Media3's `Player` contract, so Media3, MPV and VLC
+keep their existing engine ownership, audio focus and playback policies.
+The service exposes both the Media3 and legacy browser actions: Android Auto,
+platform media controls and older browser clients reach the same session.
+The car interface offers audio browsing and playback through the host UI.
 
 ## Supported browse roots
 
@@ -37,10 +39,21 @@ standard driver-safe UI; there are no custom on-road touch controls.
 
 A mere Android Auto browse bind does not start a foreground service. When a
 playback engine starts, `PlaybackService.onStartCommand()` enters foreground
-promptly and publishes the same native MediaSession as the phone app and media
-notification. This avoids creating a second radio decoder in the car interface.
-Each page has a short-lived stable snapshot so reconnection does not immediately
-reorder it while a network request is outstanding.
+promptly and publishes the Media3 session's platform token in the existing
+notification. The service retains its own notification/foreground policy through
+`onUpdateNotificationAsync`, including sleep controls and final progress reports.
+Spotify's Connect service continues to own Spotify playback and audio focus;
+the Auto session mirrors its state and routes transport commands to it.
+
+`PlaybackLibraryCallback` serves asynchronous library and search results, validates
+trusted controllers, and resolves only catalog IDs. The existing synthetic
+"More…" folders remain stable, while Media3 page requests slice each folder's
+snapshot. Prepare-only selections stay silent until Play. Pending source changes
+are cancelled when stopped or replaced, and the adapter owns no decoder.
+
+A browser may remain bound after playback stops. The service keeps its polling
+and reporting loop available for the next selection instead of abandoning it
+after `stopSelfResult`. A retiring instance still cannot release a newer engine.
 
 ## Test checklist (phone + Desktop Head Unit)
 
@@ -66,6 +79,20 @@ reorder it while a network request is outstanding.
    and that its media foreground notification appears once playback begins.
 10. Test cold start and stop via Bluetooth, audio-focus interruption, headphone
    unplug, and notification dismissal. Check logs for source failures.
+11. With a Media3 browser, prepare a different audio item while paused: verify
+   silence until Play, then Play/Pause/Seek/Stop. Stop during source loading and
+   confirm a late response cannot restart it. Repeat while changing sources.
+12. Stop playback while Auto stays connected, then select another item. Verify
+   status/position updates and saved progress still work after the service's
+   started lifetime has ended once.
+13. For playback started in the app, test system controls with Media3, MPV and
+   VLC; check paused/buffering/ended/error states, absolute seek offsets, and
+   disabled seek for radio or an unseekable live stream.
+14. Switch between Spotify, radio and library audio. Check delayed/failed Spotify
+   starts, one notification owner, no duplicate audio focus, and next/previous.
+15. Dismiss the app from recents and stop an item near completion. Confirm final
+   server/local progress reports and correct teardown, including a new renderer
+   acquired during the old service's retirement.
 
 ## Intentional exclusions and follow-ups
 
@@ -77,7 +104,7 @@ reorder it while a network request is outstanding.
   crawl is triggered while driving.
 - FileAccess lists at most 2,000 entries in one directory; larger SMB folders
   require a later source-specific offset-based adapter.
-- `MediaBrowserServiceCompat` exposes official search results while wrapping
-  the existing API-29+ platform MediaSession. Migration to Media3
-  `MediaLibraryService` can be done later as one carefully tested session
-  conversion; a second competing media session would be a regression.
+- Media3 supplies its own backward-compatibility implementation for old clients.
+  The app no longer directly uses `MediaBrowserServiceCompat`, `MediaSessionCompat`
+  or their browser item types; a transitive compatibility dependency may remain
+  inside Media3 itself.
