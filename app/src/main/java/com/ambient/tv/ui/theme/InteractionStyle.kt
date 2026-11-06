@@ -60,6 +60,7 @@ private fun rememberInteractionColorState(
     selected: Boolean,
     enabled: Boolean,
     animate: Boolean?,
+    focusedAccent: Boolean = false,
 ): InteractionColorState {
     val scheme = MaterialTheme.colorScheme
     val animationSpec = if (animate == false) snap() else focusColorSpec()
@@ -73,7 +74,7 @@ private fun rememberInteractionColorState(
     )
     val outline = animateColorAsState(
         when {
-            focused -> scheme.onSurface.copy(alpha = .90f)
+            focused -> if (focusedAccent) scheme.primary.copy(alpha = .95f) else scheme.onSurface.copy(alpha = .90f)
             selected -> accessibleAccent(scheme.primary, scheme.surface).copy(alpha = .70f)
             else -> Color.Transparent
         }, animationSpec, label = "control outline",
@@ -82,7 +83,7 @@ private fun rememberInteractionColorState(
     return InteractionColorState(
         container,
         outline,
-        if (focused && enabled) hdrHeadroom else 1f,
+        if (focused && enabled && !focusedAccent) hdrHeadroom else 1f,
         if (enabled) scheme.onSurface else scheme.onSurfaceVariant.copy(alpha = .55f),
     )
 }
@@ -97,8 +98,9 @@ fun Modifier.appControlSurface(
     enabled: Boolean = true,
     shape: Shape,
     animate: Boolean? = null,
+    focusedAccent: Boolean = false,
 ): Modifier = composed {
-    val colors = rememberInteractionColorState(focused, selected, enabled, animate)
+    val colors = rememberInteractionColorState(focused, selected, enabled, animate, focusedAccent)
     val borderWidth = LocalUiTokens.current.focusBorder
     this.drawWithCache {
         val strokePx = borderWidth.toPx()
@@ -165,6 +167,13 @@ fun Modifier.animatedFocusBorder(
 ): Modifier = composed {
     val strokeWidth = width ?: LocalUiTokens.current.focusBorder
     val reduced = LocalPerformanceProfile.current.reducedEffects
+    // The outline's opacity fades on focus hops; its hue also crossfades when the user
+    // changes the configured accent while a card is already focused.
+    val accent = animateColorAsState(
+        targetValue = focusedColor,
+        animationSpec = tween(200, easing = LinearOutSlowInEasing),
+        label = "focus outline accent",
+    )
     val reveal = animateFloatAsState(
         targetValue = if (focused) 1f else 0f,
         animationSpec = tween(
@@ -186,7 +195,7 @@ fun Modifier.animatedFocusBorder(
         onDrawWithContent {
             drawContent()
             if (strokePx > 0f) {
-                val color = lerp(unfocusedColor, focusedColor, reveal.value)
+                val color = lerp(unfocusedColor, accent.value, reveal.value)
                 if (color.alpha > 0f) {
                     translate(inset, inset) { drawOutline(outline, color, style = stroke) }
                 }

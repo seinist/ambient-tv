@@ -562,7 +562,9 @@ private fun DlnaNodeRow(
     val currentAction = rememberUpdatedState(action)
     val shape = RoundedCornerShape(LocalUiTokens.current.controlRadius)
     Box(
-        modifier = Modifier.fillMaxWidth().padding(2.dp).then(focusModifier)
+        modifier = Modifier.fillMaxWidth().padding(2.dp)
+            .mediaFocusMotion(focused, focusedScale = 1.012f)
+            .then(focusModifier)
             .browseFocusTarget(node.key)
             .focusOnTvPointer()
             .onPreviewKeyEvent { event ->
@@ -588,7 +590,7 @@ private fun DlnaNodeRow(
             .pointerInput(Unit) { detectTapGestures(onTap = { currentAction.value() }) },
     ) {
         Row(
-            Modifier.fillMaxWidth().heightIn(min = 44.dp * rowScale).appControlSurface(focused, shape = shape)
+            Modifier.fillMaxWidth().heightIn(min = 44.dp * rowScale).appControlSurface(focused, shape = shape, focusedAccent = true)
                 .padding(horizontal = 16.dp * rowScale, vertical = 8.dp * rowScale),
             horizontalArrangement = Arrangement.spacedBy(12.dp * rowScale),
             verticalAlignment = Alignment.CenterVertically,

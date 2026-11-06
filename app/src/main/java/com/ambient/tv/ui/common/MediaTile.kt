@@ -3,10 +3,6 @@ package com.ambient.tv.ui.common
 import com.ambient.tv.ui.mobile.LocalHandheldUi
 import com.ambient.tv.ui.mobile.deviceDp
 
-import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.Spring
-import androidx.compose.animation.core.spring
-import androidx.compose.animation.core.snap
 import com.ambient.tv.ui.performance.LocalPerformanceProfile
 import com.ambient.tv.ui.sound.LocalUiSoundPlayer
 import androidx.compose.foundation.background
@@ -180,20 +176,9 @@ fun MediaTile(
     val tokens = LocalUiTokens.current
     val performance = LocalPerformanceProfile.current
     val focusRequester = remember { FocusRequester() }
-    val focusScale by animateFloatAsState(
-        targetValue = if (focused && performance.allowSpringFocus) tokens.focusScale else 1f,
-        animationSpec = if (performance.allowSpringFocus) {
-            spring(
-                dampingRatio = Spring.DampingRatioNoBouncy,
-                stiffness = Spring.StiffnessMediumLow,
-            )
-        } else {
-            snap()
-        },
-        label = "mediaTileScale",
-    )
-    // Sparsam keeps the tile's geometry fixed. Its focus outline uses a draw-only opacity fade,
-    // avoiding an abrupt scale snap or any layout/image recomposition.
+    // The same focus lift is used by Home rows, library grids and other provider cards.
+    // Sparsam keeps a subtle layer-only tween instead of dropping the animation entirely.
+    val focusScale by rememberMediaFocusScale(focused, tokens.focusScale)
     val focusElevation = when {
         !performance.allowFocusedItemShadow -> 0.dp
         focused -> 5.dp
@@ -266,10 +251,8 @@ fun MediaTile(
                     .animatedFocusBorder(
                         focused = focused,
                         shape = tileShape,
-                        focusedColor = com.ambient.tv.ui.display.uiHdrHighlight(
-                            MaterialTheme.colorScheme.onSurface.copy(alpha = .90f),
-                            com.ambient.tv.ui.display.LocalUiHdrState.current?.headroom ?: 1f,
-                        ),
+                        // The scheme primary is already contrast-adjusted and HDR-aware.
+                        focusedColor = MaterialTheme.colorScheme.primary.copy(alpha = .96f),
                     )
                     .padding(2.dp),
             ) {
