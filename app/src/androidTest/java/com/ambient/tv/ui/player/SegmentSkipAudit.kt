@@ -76,11 +76,8 @@ class SegmentSkipAudit(private val instrumentation: Instrumentation, private val
                 }
             }
             settle()
-            main { playerFocus.requestFocus() }
-            settle()
-            main { check(playerFocused) { "The prompt stole player focus" } }
-            key(KeyEvent.KEYCODE_DPAD_UP)
-            main { check(!playerFocused) { "Up did not focus skip" } }
+            // A transient skip action must be usable immediately, without pressing Up first.
+            main { check(!playerFocused) { "Intro skip did not take initial TV focus" } }
             screenshot("segment-skip-always.png")
             key(KeyEvent.KEYCODE_DPAD_LEFT)
             key(KeyEvent.KEYCODE_DPAD_CENTER)
@@ -90,33 +87,37 @@ class SegmentSkipAudit(private val instrumentation: Instrumentation, private val
                 check(playerFocused) { "Skip did not return player focus" }
             }
             log("PASS intro always-skip persists auto mode, seeks, and restores focus")
-            main { clock.position = 5_000; navigation.chromeVisible = false; BackgroundPlaybackSession.tick(); playerFocus.requestFocus() }
+            main { clock.position = 5_000; navigation.chromeVisible = false; BackgroundPlaybackSession.tick() }
             settle()
-            key(KeyEvent.KEYCODE_DPAD_UP)
+            main { check(!playerFocused) { "Reopened intro skip was not focused" } }
             main { clock.position = 35_000; BackgroundPlaybackSession.tick() }
             settle()
             main { check(playerFocused) { "Expired prompt left focus stranded" } }
             log("PASS focus returns when segment expires")
-            main { clock.position = 75_000; navigation.chromeVisible = false; BackgroundPlaybackSession.tick(); playerFocus.requestFocus() }
+            main { clock.position = 75_000; navigation.chromeVisible = false; BackgroundPlaybackSession.tick() }
             settle()
-            key(KeyEvent.KEYCODE_DPAD_UP)
+            // Down must not leak into the OSD or dismiss a focused skip action.
+            key(KeyEvent.KEYCODE_DPAD_DOWN)
             key(KeyEvent.KEYCODE_DPAD_CENTER)
             main { check(clock.seeks.last() == 80_000L) { "Credits skipped the post-credit scene" } }
             log("PASS credits stop before post-credit scene")
             main {
                 navigation.timeline = PlaybackTimeline(segments = listOf(PlaybackSegment("credits", 80_000, -1)))
-                clock.position = 75_000; navigation.chromeVisible = false; BackgroundPlaybackSession.tick(); playerFocus.requestFocus()
+                clock.position = 75_000; navigation.chromeVisible = false; BackgroundPlaybackSession.tick()
             }
             settle()
-            key(KeyEvent.KEYCODE_DPAD_UP)
+            main {
+                check(!playerFocused) { "Open-ended credits did not take focus" }
+                // Simulate a native player surface stealing focus before Back arrives.
+                playerFocus.requestFocus()
+            }
             key(KeyEvent.KEYCODE_BACK)
             main { check(nextCount == 0); check(playerFocused) }
-            log("PASS Back dismisses without changing episode")
+            log("PASS Back dismisses an overlay even when its button lost focus")
             main { clock.position = 50_000; BackgroundPlaybackSession.tick() }
             settle()
-            main { clock.position = 75_000; navigation.chromeVisible = false; BackgroundPlaybackSession.tick(); playerFocus.requestFocus() }
+            main { clock.position = 75_000; navigation.chromeVisible = false; BackgroundPlaybackSession.tick() }
             settle()
-            key(KeyEvent.KEYCODE_DPAD_UP)
             key(KeyEvent.KEYCODE_DPAD_CENTER)
             main { check(nextCount == 1) }
             log("PASS open-ended credits use next item")
