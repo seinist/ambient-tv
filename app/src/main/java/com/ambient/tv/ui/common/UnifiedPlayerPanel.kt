@@ -616,18 +616,6 @@ fun UnifiedPlayerSidePanel(
                 navigation?.videoState?.focusedSelector == null) &&
             (navigation?.panel?.isAudio != true || navigation.audioState.focusedSelector == null)
     }
-    // The details action is outside the scrollable rows, above the hairline. It stays
-    // visible in Settings, Video, Audio and every nested playback panel (including OSD
-    // options), even when the optional action-bar Details button was hidden.
-    // A standalone panel without persistent player details keeps its old header.
-    val hasPlayerDetails = com.ambient.tv.ui.player.LocalPlayerChromeState.current?.detail?.value != null
-    val fixedHeader: (@Composable () -> Unit)? =
-        if (hasPlayerDetails && navigation != null) {
-            {
-                header?.invoke()
-                com.ambient.tv.ui.player.PlayerPanelDetailsHeaderButton()
-            }
-        } else header
     RightSidePanel(
         title = title,
         onBack = onBack,
@@ -639,7 +627,7 @@ fun UnifiedPlayerSidePanel(
         scrollable = true,
         retainFocus = true,
         focusRescue = navigation?.focusRescue(),
-        header = fixedHeader,
+        header = header,
         content = content,
     )
 }

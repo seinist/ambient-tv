@@ -219,23 +219,17 @@ class PlayerDetailInfoTest {
         assertEquals("bar:Details", nav.restoreKey)
     }
 
-    @Test fun fixedPanelDetailsButtonKeepsNestedPlaybackSettingsAndRestoresItsOwnFocus() {
+    @Test fun rootDetailsRowOpensDialogAndBackRestoresRootEntryNotHeader() {
         val nav = PlayerPanelNavigation()
         nav.fromOrigin("bar:Settings", root = true) { nav.open(UnifiedPlayerPanel.SETTINGS) }
-        nav.fromOrigin("entry:Video", root = false) { nav.open(UnifiedPlayerPanel.VIDEO) }
-        nav.videoState.section = "filters"
-        // OSD Details is opt-in and disabled, but the fixed panel action is independent.
+        // OSD Details is opt-in; the root settings row is independent of that toggle.
         assertFalse(osdButtonVisible(OsdButton.DETAILS, OsdPlayer.MEDIA, emptySet()))
-        openPlayerDetailsFromPanel(nav)
+        nav.fromOrigin("entry:Details", root = false) { nav.open(UnifiedPlayerPanel.DETAILS) }
         assertEquals(UnifiedPlayerPanel.DETAILS, nav.panel)
-        assertEquals(3, nav.depth)
+        assertEquals(2, nav.depth)
         closePlayerDetails(nav)
-        assertEquals(UnifiedPlayerPanel.VIDEO, nav.panel)
-        assertEquals(PLAYER_PANEL_DETAILS_FOCUS_KEY, nav.restoreKey)
-        assertEquals("filters", nav.videoState.section)
-        nav.back(UnifiedPlayerPanel.VIDEO)
         assertEquals(UnifiedPlayerPanel.SETTINGS, nav.panel)
-        assertEquals("entry:Video", nav.restoreKey)
+        assertEquals("entry:Details", nav.restoreKey)
         nav.back()
         assertEquals(UnifiedPlayerPanel.NONE, nav.panel)
         assertEquals("bar:Settings", nav.restoreKey)

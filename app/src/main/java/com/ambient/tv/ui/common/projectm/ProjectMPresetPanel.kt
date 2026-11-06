@@ -64,10 +64,6 @@ fun ProjectMPresetPanel(
         closeInsteadOfBack = false,
         requestHeaderFocus = requestInitialFocus || navigation?.restoreFailed == true,
         onOutsideTap = com.ambient.tv.ui.common.LocalPlayerPanelNavigation.current?.let { nav -> { nav.close() } } ?: onBack,
-        // Same fixed Details action as all other playback subpanels; it stays visible
-        // while scrolling a long projectM preset list or its display settings.
-        header = if (com.ambient.tv.ui.player.LocalPlayerChromeState.current?.detail?.value != null)
-            ({ com.ambient.tv.ui.player.PlayerPanelDetailsHeaderButton() }) else null,
     ) {
         if (!ProjectMAvailability.isAvailable) {
             item("runtime_unavailable") {

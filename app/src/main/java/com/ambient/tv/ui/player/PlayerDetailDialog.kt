@@ -72,7 +72,6 @@ import com.ambient.tv.ui.common.LocalPlayerPanelNavigation
 import com.ambient.tv.ui.common.OverlayAccentStrip
 import com.ambient.tv.ui.common.OverlayEdgeFades
 import com.ambient.tv.ui.common.OverlayScrollbar
-import com.ambient.tv.ui.common.playerPanelFocusKey
 import com.ambient.tv.ui.common.PlayerIconButton
 import com.ambient.tv.ui.common.StreamPropertyAdaptiveRows
 import com.ambient.tv.ui.common.TvActionButton
@@ -123,37 +122,6 @@ internal fun playerDetailKeyAction(
 /** Opens the details dialog as if its action-bar button had been pressed, so closing focuses that button. */
 internal fun openPlayerDetails(navigation: com.ambient.tv.ui.common.PlayerPanelNavigation, buttonLabel: String) {
     navigation.fromOrigin("bar:$buttonLabel", root = true) { navigation.open(UnifiedPlayerPanel.DETAILS) }
-}
-
-/**
- * The panel-header action is present independently of the optional OSD Details button.
- * Keep the settings hierarchy instead of rooting the dialog at the player bar: Back returns
- * to this fixed header action and another Back returns to the preceding settings level.
- */
-internal const val PLAYER_PANEL_DETAILS_FOCUS_KEY = "panel:details"
-
-internal fun openPlayerDetailsFromPanel(navigation: com.ambient.tv.ui.common.PlayerPanelNavigation) {
-    navigation.fromOrigin(PLAYER_PANEL_DETAILS_FOCUS_KEY, root = false) {
-        navigation.open(UnifiedPlayerPanel.DETAILS)
-    }
-}
-
-/**
- * A permanent entry in the fixed header of every standard playback side panel.
- * It never scrolls out of view and is independent of the opt-in OSD Details action.
- */
-@Composable
-internal fun PlayerPanelDetailsHeaderButton() {
-    val navigation = LocalPlayerPanelNavigation.current ?: return
-    if (LocalPlayerChromeState.current?.detail?.value == null) return
-    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-        TvActionButton(
-            text = stringResource(R.string.player_details),
-            icon = Icons.Outlined.Info,
-            onClick = { openPlayerDetailsFromPanel(navigation) },
-            modifier = Modifier.playerPanelFocusKey(PLAYER_PANEL_DETAILS_FOCUS_KEY),
-        )
-    }
 }
 
 /** Closes the dialog; the navigation hands focus back to the Details button. */
