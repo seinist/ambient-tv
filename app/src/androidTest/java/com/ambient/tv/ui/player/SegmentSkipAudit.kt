@@ -8,6 +8,13 @@ import androidx.activity.compose.setContent
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.unit.dp
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
@@ -62,13 +69,28 @@ class SegmentSkipAudit(private val instrumentation: Instrumentation, private val
                 BackgroundPlaybackSession.acquire(activity, metadata.value, "fixture", "segments") { clock }
                 activity.setContent {
                     AmbientTvTheme {
-                        CompositionLocalProvider(LocalSegmentSkipControls provides SegmentSkipControls(
-                            introMode = "button",
-                            creditsMode = "button",
-                            onIntroModeChanged = { savedIntroMode = it },
-                        )) {
+                        CompositionLocalProvider(
+                            LocalPlaybackNavigation provides navigation,
+                            LocalSegmentSkipControls provides SegmentSkipControls(
+                                introMode = "button",
+                                creditsMode = "button",
+                                onIntroModeChanged = { savedIntroMode = it },
+                            ),
+                        ) {
                             SegmentSkipOverlay(metadata.value, "segments", navigation, null, false, { nextCount++ }, true) {
-                                Box(Modifier.fillMaxSize().focusRequester(playerFocus).onFocusChanged { playerFocused = it.isFocused }.focusable())
+                                Box(Modifier.fillMaxSize()) {
+                                    Box(Modifier.fillMaxSize().focusRequester(playerFocus).onFocusChanged {
+                                        playerFocused = it.isFocused
+                                    }.focusable())
+                                    if (navigation.chromeVisible) {
+                                        // A measured reference header is the real OSD context anchor.
+                                        Column(Modifier.align(Alignment.BottomCenter).fillMaxWidth()
+                                            .padding(horizontal = 58.dp, vertical = 32.dp)) {
+                                            ReferencePlayerHeader("Segments", artworkUrl = null)
+                                            Spacer(Modifier.height(80.dp))
+                                        }
+                                    }
+                                }
                             }
                         }
                         SideEffect { navigation.revealControls = { navigation.chromeVisible = true; playerFocus.requestFocus() } }
@@ -79,6 +101,18 @@ class SegmentSkipAudit(private val instrumentation: Instrumentation, private val
             // A transient skip action must be usable immediately, without pressing Up first.
             main { check(!playerFocused) { "Intro skip did not take initial TV focus" } }
             screenshot("segment-skip-always.png")
+            main { navigation.chromeVisible = true }
+            settle()
+            main {
+                val slot = checkNotNull(navigation.skipContextBoundsInRoot) {
+                    "Opening the OSD did not reserve the measured skip context row"
+                }
+                check(slot.width > 0f && slot.height > 0f)
+                check(!playerFocused) { "Moving the skip action into the OSD lost focus" }
+            }
+            screenshot("segment-skip-context-osd.png")
+            main { navigation.chromeVisible = false }
+            settle()
             key(KeyEvent.KEYCODE_DPAD_LEFT)
             key(KeyEvent.KEYCODE_DPAD_CENTER)
             main {
