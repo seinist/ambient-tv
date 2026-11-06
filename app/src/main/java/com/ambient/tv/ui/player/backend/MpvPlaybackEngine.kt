@@ -1058,8 +1058,12 @@ internal class MpvPlaybackEngine(
                 (MPV_IMAGE_SHADERS[it]?.requiresCompute == true && computeSupport == MpvComputeSupport.UNSUPPORTED) ||
                     (MPV_IMAGE_SHADERS[it]?.requiresGpuNext == true && !gpuNextVulkan)
             }
-            val shaderReloadNeeded = nativeShaderRefreshRequired || shaderKeys != loadedShaderKeys ||
-                (mpvTransferAwareShaderLoaded(shaderKeys) && casTransferProfile(transfer)?.suffix != loadedShaderTransferKey)
+            val shaderReloadNeeded = mpvImageShadersNeedReload(
+                requested = shaderKeys, loaded = loadedShaderKeys,
+                outputRecreated = nativeShaderRefreshRequired,
+                transferProfileChanged = mpvTransferAwareShaderLoaded(shaderKeys) &&
+                    casTransferProfile(transfer)?.suffix != loadedShaderTransferKey,
+            )
             // Extract files on IO; all native changes stay on the single MPV owner thread.
             val shaderFiles = if (shaderKeys.isNotEmpty() && shaderReloadNeeded) withContext(Dispatchers.IO) {
                 shaderKeys.associateWith { key -> MPV_IMAGE_SHADERS[key]?.let { materializeShader(it, transfer, gpuNextVulkan) } }
@@ -1150,8 +1154,12 @@ internal class MpvPlaybackEngine(
                 return
             }
         }
-        if (nativeShaderRefreshRequired || shaderKeys != loadedShaderKeys ||
-            (mpvTransferAwareShaderLoaded(shaderKeys) && casTransferProfile(transfer)?.suffix != loadedShaderTransferKey)
+        if (mpvImageShadersNeedReload(
+                requested = shaderKeys, loaded = loadedShaderKeys,
+                outputRecreated = nativeShaderRefreshRequired,
+                transferProfileChanged = mpvTransferAwareShaderLoaded(shaderKeys) &&
+                    casTransferProfile(transfer)?.suffix != loadedShaderTransferKey,
+            )
         ) {
             if (optionalCommand("change-list", "glsl-shaders", "clr", "")) {
                 loadedShaderKeys = shaderKeys.filter { shaderKey ->
