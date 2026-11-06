@@ -137,10 +137,17 @@ class CompanionSecurityAudit(private val instrumentation: Instrumentation, priva
             val shortcutId = CompanionShareTargets.id(sharedPeer)
             val shortcuts = base.getSystemService(android.content.pm.ShortcutManager::class.java)
             check(shortcuts.dynamicShortcuts.any { it.id == shortcutId && it.categories?.contains("com.ambient.tv.category.SHARE_TO_TV") == true })
-            log("PASS paired TV is published as an Android sharing shortcut")
+            // Direct Share must not use MainActivity (which redirects to the handheld UI).
+            // The launcher's standalone shortcut intentionally still opens the device panel.
+            val shareActivity = base.packageManager.getActivityInfo(
+                android.content.ComponentName(base, com.ambient.tv.ui.ShareToTvActivity::class.java), 0)
+            check(shareActivity.targetActivity == null)
+            check(shareActivity.flags and android.content.pm.ActivityInfo.FLAG_NO_HISTORY != 0)
+            log("PASS paired TV is published as an Android sharing shortcut with a no-display receiver")
             fun share(url: String, id: String? = shortcutId) = Intent(Intent.ACTION_SEND).setType("text/plain")
                 .putExtra(Intent.EXTRA_TEXT, url).also { if (id != null) it.putExtra(Intent.EXTRA_SHORTCUT_ID, id) }
-            phone.handleIntent(share("https://media.example.test/song.mp3?signature=test"))
+            phone.handleIntent(share("https://media.example.test/song.mp3?signature=test"), showSharePanel = false)
+            check(!phone.state.value.panel) { "Direct Share must not open the device panel" }
             await("MP3 Direct Share dispatches once to the selected TV without another chooser") { starts.get() == 2 && phone.state.value.sendingTo == null }
             check(received.last() == CompanionMedia("url", "https://media.example.test/song.mp3?signature=test"))
             check(phone.state.value.sharedMedia == null && !phone.state.value.panel)

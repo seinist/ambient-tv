@@ -173,19 +173,29 @@
             <meta-data android:name="android.app.searchable" android:resource="@xml/searchable" />
         </activity>
 
-        <!-- "Send to TV" share entry for phones. A TV cannot send to itself, so the alias is disabled at
-             startup on TV devices by CompanionShareTargets (manifest resources cannot vary by UI mode). -->
-        <activity-alias
+        <!-- A named Direct Share launches only a no-display trampoline, not the browsing UI.
+             CompanionShareTargets disables this share entry on TV devices at runtime. -->
+        <activity
             android:name=".ui.ShareToTvActivity"
-            android:targetActivity=".ui.MainActivity"
             android:enabled="true"
-            android:exported="true">
+            android:exported="true"
+            android:noHistory="true"
+            android:excludeFromRecents="true"
+            android:taskAffinity=""
+            android:theme="@android:style/Theme.NoDisplay">
             <intent-filter>
                 <action android:name="android.intent.action.SEND" />
                 <category android:name="android.intent.category.DEFAULT" />
                 <data android:mimeType="text/plain" />
             </intent-filter>
-        </activity-alias>
+        </activity>
+
+        <!-- The share trampoline finishes immediately. A short-lived connected-device
+             foreground service completes discovery/TLS and waits for the TV acknowledgement. -->
+        <service
+            android:name=".companion.CompanionDirectShareService"
+            android:exported="false"
+            android:foregroundServiceType="connectedDevice" />
 
         <activity
             android:name=".ui.mobile.HandheldActivity"

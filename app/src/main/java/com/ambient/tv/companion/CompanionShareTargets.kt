@@ -19,13 +19,12 @@ internal object CompanionShareTargets {
     fun peer(shortcutId: String, paired: List<CompanionPeer>): CompanionPeer? = paired.firstOrNull { id(it) == shortcutId }
 
     /**
-     * Keeps the share sheet entry off on TV devices. The manifest already disables the alias via
-     * a -television resource; this repeats it at runtime in case a launcher resolved it differently.
-     * On phones the manifest value applies (state DEFAULT).
+     * Keeps the exported share Activity off on TV devices. It exists in the common
+     * manifest for phones and TV; the phone uses the default enabled state.
      */
     fun syncShareEntry(context: Context) {
         runCatching {
-            val component = ComponentName(context, SHARE_ALIAS)
+            val component = ComponentName(context, SHARE_ACTIVITY)
             val wanted = if (com.ambient.tv.ui.mobile.isTelevision(context)) android.content.pm.PackageManager.COMPONENT_ENABLED_STATE_DISABLED
                 else android.content.pm.PackageManager.COMPONENT_ENABLED_STATE_DEFAULT
             val pm = context.packageManager
@@ -33,7 +32,7 @@ internal object CompanionShareTargets {
                 pm.setComponentEnabledSetting(component, wanted, android.content.pm.PackageManager.DONT_KILL_APP)
         }
     }
-    private const val SHARE_ALIAS = "com.ambient.tv.ui.ShareToTvActivity"
+    private const val SHARE_ACTIVITY = "com.ambient.tv.ui.ShareToTvActivity"
 
     fun publish(context: Context, peers: List<CompanionPeer>) {
         runCatching {
@@ -58,6 +57,8 @@ internal object CompanionShareTargets {
                 ShortcutInfo.Builder(context, id(peer))
                     .setShortLabel(label).setLongLabel(label).setRank(index)
                     .setIcon(Icon.createWithResource(context, R.drawable.ic_companion_share))
+                    // Launcher shortcuts still open the device panel. Android Direct Share
+                    // instead sends ACTION_SEND to the share-target class in companion_shortcuts.xml.
                     .setActivity(ComponentName(context, MainActivity::class.java))
                     // Shield's ShortcutService rejects the generated bitmap form of a long-lived
                     // vector icon. Dynamic targets are sufficient for Direct Share and remain
