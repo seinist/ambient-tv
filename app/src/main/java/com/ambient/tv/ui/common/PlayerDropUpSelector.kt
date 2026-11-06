@@ -524,12 +524,14 @@ private fun PlayerDropUpOptionRow(
         enabled = enabled,
         animate = false,
     )
-    fun select() {
-        if (!enabled) return
-        if (closeOnSelection) close()
-        onSelected(key)
+    // A local function reference can compare equal across recompositions despite changed
+    // captures, leaving rememberUpdatedState with the old disabled selection callback.
+    val selectAction = com.ambient.tv.ui.sound.rememberUiSoundAction(enabled = enabled) {
+        if (enabled) {
+            if (closeOnSelection) close()
+            onSelected(key)
+        }
     }
-    val selectAction = com.ambient.tv.ui.sound.rememberUiSoundAction(enabled = enabled, onClick = ::select)
     val dismissAction = com.ambient.tv.ui.sound.rememberUiSoundAction(kind = com.ambient.tv.ui.sound.UiSound.BACK, onClick = close)
     val fillTarget = when {
         optionFocused || matchTrigger && selected -> colors.container

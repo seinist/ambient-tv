@@ -304,6 +304,9 @@ class PlayerViewModel @Inject constructor(
             timelineSeekMs = state.timelineSeekMs,
             handheldHdrStandard = if (state.runtimeHdrKnown) state.runtimeHdrStandard else if (state.playbackMode != PlaybackMode.TRANSCODE)
                 HdrSupport.sourceStandard(state.videoCodec, state.videoDynamicRange) else null,
+            dolbyVisionSource = RendererCapabilityPolicy.isDolbyVision(state.videoCodec, state.videoDynamicRange,
+                state.videoProfile, state.runtimeHdrStandard == HdrStandard.DOLBY_VISION,
+                videoTranscoded = state.playbackMode == PlaybackMode.TRANSCODE),
             hdrBaseLayer = if (state.playbackMode != PlaybackMode.TRANSCODE) dolbyVisionBaseLayer(state.videoDynamicRange) else null,
             creditsSkipMode = if (state.mediaType.equals("episode", ignoreCase = true) || state.mediaType.equals("movie", ignoreCase = true)) appPreferences.creditsSkipMode else "off",
             introSkipMode = if (state.mediaType.equals("episode", ignoreCase = true)) appPreferences.introSkipMode else "off",
@@ -671,6 +674,7 @@ class PlayerViewModel @Inject constructor(
                             videoCodec = version.videoCodec,
                             dynamicRange = version.videoDynamicRange,
                             videoProfile = version.tracks.firstOrNull { it.type == MediaTrackType.VIDEO }?.profile,
+                            videoTranscoded = selectedPlan.mode == PlaybackMode.TRANSCODE,
                         ),
                         seekJumpMs = appPreferences.bigSeekJumpSeconds * 1000L,
                         audioVisualizerModeKey = appPreferences.audioVisualizerModeKey,
@@ -985,7 +989,8 @@ class PlayerViewModel @Inject constructor(
 
     fun mpvAudioAllowed(state: PlayerUiState.Ready): Boolean =
         RendererCapabilityPolicy.effectiveBackend("mpv", state.videoCodec, state.videoDynamicRange,
-            state.videoProfile, state.runtimeHdrStandard == HdrStandard.DOLBY_VISION) == "mpv"
+            state.videoProfile, state.runtimeHdrStandard == HdrStandard.DOLBY_VISION,
+            videoTranscoded = state.playbackMode == PlaybackMode.TRANSCODE) == "mpv"
 
     fun audioConversionLocationChanged(session: AudioSession, positionMs: Long): Boolean {
         val current = _uiState.value as? PlayerUiState.Ready ?: return false
@@ -1021,13 +1026,15 @@ class PlayerViewModel @Inject constructor(
         videoCodec: String?,
         dynamicRange: String?,
         videoProfile: String?,
+        videoTranscoded: Boolean,
     ): String {
         AudioCodecRejects.clear()
         val route = runCatching {
             AudioPassthroughPolicy.probeCached(context).copy(mpvAvailable = MpvBackendAvailability.isAvailable)
         }.getOrDefault(AudioRouteCapabilities(mpvAvailable = MpvBackendAvailability.isAvailable))
         val permittedRoute = route.copy(mpvAvailable = route.mpvAvailable &&
-            RendererCapabilityPolicy.effectiveBackend("mpv", videoCodec, dynamicRange, videoProfile) == "mpv")
+            RendererCapabilityPolicy.effectiveBackend("mpv", videoCodec, dynamicRange, videoProfile,
+                videoTranscoded = videoTranscoded) == "mpv")
         val audioPlan = planAudioOutput(
             options = appPreferences.audioSettings.currentForRoute(route.profile).let {
                 if (audioOnly) it.copy(output = "pcm", localFallback = "pcm", localAc3 = false) else it
@@ -1056,7 +1063,8 @@ class PlayerViewModel @Inject constructor(
             "Audio plan: mode=%s spdif=%s needsMpv=%s requested=%s resolved=%s",
             audioPlan.mode, audioPlan.spdifCodecs, audioPlan.needsMpv, requested, resolved,
         )
-        return RendererCapabilityPolicy.effectiveBackend(resolved, videoCodec, dynamicRange, videoProfile)
+        return RendererCapabilityPolicy.effectiveBackend(resolved, videoCodec, dynamicRange, videoProfile,
+            videoTranscoded = videoTranscoded)
             .let { if (it == "mpv" && !MpvBackendAvailability.isAvailable) "media3" else it }
     }
 
@@ -1189,6 +1197,8 @@ class PlayerViewModel @Inject constructor(
             active, audioFallbackBackends, MpvBackendAvailability.isAvailable,
             enabled = routedAudioOptions().localFallback != "off",
             videoCodec = current.videoCodec, dynamicRange = current.videoDynamicRange, videoProfile = current.videoProfile,
+            detectedDolbyVision = current.runtimeHdrStandard == HdrStandard.DOLBY_VISION,
+            videoTranscoded = current.playbackMode == PlaybackMode.TRANSCODE,
         )
         if (localBackend == null) {
             Timber.w("Local audio recovery exhausted: %s", cause)
@@ -1369,6 +1379,13 @@ class PlayerViewModel @Inject constructor(
         val normalized = key.takeIf { it in setOf("auto", "media3", "vlc", "mpv") } ?: "auto"
         val current = _uiState.value as? PlayerUiState.Ready ?: return
         if (normalized == "mpv" && !com.ambient.tv.ui.player.backend.MpvBackendAvailability.isAvailable) return
+        val dolbyVision = RendererCapabilityPolicy.isDolbyVision(current.videoCodec, current.videoDynamicRange,
+            current.videoProfile, detectedDolbyVision || current.runtimeHdrStandard == HdrStandard.DOLBY_VISION,
+            videoTranscoded = current.playbackMode == PlaybackMode.TRANSCODE)
+        // Reject an unavailable explicit choice before changing global or title preferences.
+        // Recovery still uses the effective-backend policy below without persisting its fallback.
+        if ((persistForTitle || makeGlobal) && !RendererAvailability(dolbyVision,
+                MpvBackendAvailability.isAvailable).canSelect(normalized)) return
         BackgroundPlaybackSession.cancelResumeRewind()
         if (makeGlobal) appPreferences.playbackBackendKey = normalized
         val requested = (if (normalized == "auto" && !makeGlobal) ResolutionVideoProfileStore.rendererFor(
@@ -1381,6 +1398,7 @@ class PlayerViewModel @Inject constructor(
             dynamicRange = current.videoDynamicRange,
             videoProfile = current.videoProfile,
             detectedDolbyVision = detectedDolbyVision || current.runtimeHdrStandard == HdrStandard.DOLBY_VISION,
+            videoTranscoded = current.playbackMode == PlaybackMode.TRANSCODE,
         )
         // Recovery is temporary; only an explicit panel choice changes the title preference.
         if (persistForTitle) TitleVideoSettingsStore.rememberRenderer(context,
@@ -1446,6 +1464,7 @@ class PlayerViewModel @Inject constructor(
         val effective = RendererCapabilityPolicy.effectiveBackend(
             preferred, current.videoCodec, current.videoDynamicRange, current.videoProfile,
             detectedDolbyVision || current.runtimeHdrStandard == HdrStandard.DOLBY_VISION,
+            videoTranscoded = current.playbackMode == PlaybackMode.TRANSCODE,
         ).let { if (it == "mpv" && !MpvBackendAvailability.isAvailable) "media3" else it }
         val changingEngine = com.ambient.tv.ui.player.backend.PlaybackBackendResolver.resolve(current.playbackBackendKey) !=
             com.ambient.tv.ui.player.backend.PlaybackBackendResolver.resolve(effective)
@@ -1540,7 +1559,9 @@ class PlayerViewModel @Inject constructor(
     private fun switchToVlcOrError(message: String) {
         val current = _uiState.value as? PlayerUiState.Ready
         if (current != null && requestedBackendKey == "auto" && current.playbackBackendKey != "vlc" &&
-            RendererCapabilityPolicy.effectiveBackend("vlc", current.videoCodec, current.videoDynamicRange, current.videoProfile) == "vlc") {
+            RendererCapabilityPolicy.effectiveBackend("vlc", current.videoCodec, current.videoDynamicRange, current.videoProfile,
+                detectedDolbyVision = current.runtimeHdrStandard == HdrStandard.DOLBY_VISION,
+                videoTranscoded = current.playbackMode == PlaybackMode.TRANSCODE) == "vlc") {
             Timber.w("Media3 playback failed; AUTO is switching to VLC: %s", message)
             com.ambient.tv.notifications.AppNotifications.post(com.ambient.tv.notifications.AppNotice(
                 "playback:backend-switch", R.string.notice_switched_to_vlc, kind = NoticeKind.PLAYBACK,

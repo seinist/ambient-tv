@@ -35,7 +35,7 @@ internal fun media3EffectPlan(
     upscaling: Boolean,
     /** False above [media3FilterBudgetAllows] for the source: no deband pass. */
     debandAllowed: Boolean = true,
-    /** False above [media3FilterBudgetAllows] for the sharpened size: no unsharp/CAS/RCAS pass. */
+    /** Explicit stage gate; runtime per-shader workload limits are applied by [media3ApplyFilterBudget]. */
     sharpenAllowed: Boolean = true,
     /** False above [media3HeavyScalerBudgetAllows] for the output: heavy scalers run as Catmull-Rom. */
     heavyScaleAllowed: Boolean = true,
@@ -90,6 +90,18 @@ internal fun media3EffectPlan(
         if (o.saturation != 0) add(Media3Stage.Saturation(o.saturation))
         if (o.gamma != 0) add(Media3Stage.Gamma(o.gamma))
     }
+}
+
+/** Requested settings versus the stages that will really run, without changing saved preferences. */
+internal data class Media3EffectReduction(val requested: Media3Stage, val applied: Media3Stage?)
+
+/** Includes skipped filters, scaler fallbacks and removed reconstruction/anti-ringing options. */
+internal fun media3EffectReductions(
+    requested: List<Media3Stage>,
+    applied: List<Media3Stage>,
+): List<Media3EffectReduction> = requested.mapNotNull { stage ->
+    val actual = applied.firstOrNull { it::class == stage::class }
+    if (actual == stage) null else Media3EffectReduction(stage, actual)
 }
 
 /**

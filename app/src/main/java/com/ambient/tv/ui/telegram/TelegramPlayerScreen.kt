@@ -158,8 +158,10 @@ class TelegramPlayerViewModel @Inject constructor(
     fun chooseRenderer(key: String, makeGlobal: Boolean) {
         val requested = key.takeIf { it in setOf("media3", "vlc", "mpv") } ?: "media3"
         if (requested == "mpv" && !MpvBackendAvailability.isAvailable) return
+        val metadata = mutableMedia.value?.playerMetadata()
+        if (!com.ambient.tv.ui.player.currentPlayerRendererAvailability(metadata).canSelect(requested)) return
         if (makeGlobal) preferences.playbackBackendKey = requested
-        TitleVideoSettingsStore.rememberRenderer(context, mutableMedia.value?.playerMetadata(),
+        TitleVideoSettingsStore.rememberRenderer(context, metadata,
             if (makeGlobal || key == "auto") null else requested)
         if (requested == mutableRenderer.value) return
         // Capture before the old renderer is released: the new one continues from here.
@@ -668,6 +670,10 @@ private fun TelegramPlaybackContent(
                         media3Player = player
                         player.addListener(object : androidx.media3.common.Player.Listener {
                             override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
+                                // The outgoing listener can still receive an error during a renderer hand-off.
+                                if ((BackgroundPlaybackSession.activeHandle() as? com.ambient.tv.ui.player.Media3PlaybackHandle)?.player !== player) return
+                                // Give a failed picture effect the same recovery as the other Media3 hosts.
+                                if (com.ambient.tv.ui.player.Media3ImageProcessing.recoverFromEffectFailure(player, error)) return
                                 com.ambient.tv.diagnostics.DiagnosticLog.error("monogram", "playback failed", error)
                                 onFailure(telegramPlaybackErrorMessage(context, error) ?: playbackFailed)
                             }

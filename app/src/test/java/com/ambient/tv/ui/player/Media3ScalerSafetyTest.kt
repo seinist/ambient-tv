@@ -1,7 +1,10 @@
 package com.ambient.tv.ui.player
 
+import androidx.media3.common.Format
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.VideoFrameProcessingException
+import androidx.media3.common.util.GlUtil
+import androidx.media3.exoplayer.video.VideoSink
 import com.ambient.tv.data.local.Media3ImageOptions
 import kotlin.math.exp
 import org.junit.Assert.assertEquals
@@ -38,6 +41,17 @@ class Media3ScalerSafetyTest {
             RuntimeException("wrapped", VideoFrameProcessingException("shader"))))
         assertFalse(media3EffectFailure(PlaybackException.ERROR_CODE_DECODING_FAILED, RuntimeException("decoder")))
         assertFalse(media3EffectFailure(PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_FAILED, null))
+    }
+
+    @Test fun frameProcessorInitializationFailureDoesNotNeedAWrappedProcessingException() {
+        // PlaybackVideoGraphWrapper can wrap EGL initialization errors directly in VideoSinkException.
+        // MediaCodecVideoRenderer reports INIT_FAILED, with no VideoFrameProcessingException cause.
+        val failure = VideoSink.VideoSinkException(GlUtil.GlException("EGL initialization failed"), Format.Builder().build())
+        assertTrue(media3EffectFailure(PlaybackException.ERROR_CODE_VIDEO_FRAME_PROCESSOR_INIT_FAILED, failure))
+        assertTrue(media3EffectFailure(PlaybackException.ERROR_CODE_VIDEO_FRAME_PROCESSOR_INIT_FAILED, null))
+        // Similar-looking messages from unrelated decoder/network failures must keep normal recovery.
+        assertFalse(media3EffectFailure(PlaybackException.ERROR_CODE_DECODING_FAILED, failure))
+        assertFalse(media3EffectFailure(PlaybackException.ERROR_CODE_IO_UNSPECIFIED, IllegalStateException("EGL initialization failed")))
     }
 
     @Test fun sigmoidConstantsAreMpvsDefaults() {

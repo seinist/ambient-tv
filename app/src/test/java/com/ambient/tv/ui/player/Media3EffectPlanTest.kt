@@ -135,4 +135,23 @@ class Media3EffectPlanTest {
         assertTrue(media3GammaExponent(20) < 1f)
         assertTrue(media3GammaExponent(-20) > 1f)
     }
+
+    @Test
+    fun reductionsIdentifySkippedFiltersAndActualScalerFallbacks() {
+        val requested = listOf(Media3Stage.Deband("light"), Media3Stage.Scale("nis"), Media3Stage.Gamma(2))
+        val applied = listOf(Media3Stage.Scale("catmull_rom"), Media3Stage.Gamma(2))
+        assertEquals(listOf(
+            Media3EffectReduction(Media3Stage.Deband("light"), null),
+            Media3EffectReduction(Media3Stage.Scale("nis"), Media3Stage.Scale("catmull_rom")),
+        ), media3EffectReductions(requested, applied))
+        assertTrue(media3EffectReductions(applied, applied).isEmpty())
+    }
+
+    @Test
+    fun reductionsRetainRemovedSuperResolutionDetails() {
+        val requested = Media3Stage.Scale("lanczos", superResolution = true)
+        val applied = requested.copy(superResolution = false)
+        assertEquals(listOf(Media3EffectReduction(requested, applied)),
+            media3EffectReductions(listOf(requested), listOf(applied)))
+    }
 }
