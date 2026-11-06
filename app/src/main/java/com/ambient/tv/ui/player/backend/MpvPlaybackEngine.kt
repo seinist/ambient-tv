@@ -2215,6 +2215,10 @@ internal class MpvPlaybackEngine(
     fun activeChromaScaler(): String? = if (supportsGpuFilters) getPropertyString("cscale")?.takeIf { it.isNotBlank() } else null
     fun activeDownscaler(): String? = if (supportsGpuFilters) getPropertyString("dscale")?.takeIf { it.isNotBlank() } else null
     fun activeShaderPreset(): String? = if (supportsGpuFilters) activeShaderPresetKey else null
+    /** OpenGL's built-in sharpen knob is not in vf or glsl-shaders; gpu-next ignores it. */
+    fun activeBuiltinSharpen(): String? = if (supportsGpuFilters && !rendersWithGpuNext()) {
+        getPropertyString("sharpen")?.takeIf { it.toFloatOrNull()?.let { value -> value.isFinite() && value > 0f } == true }
+    } else null
     fun configuredVideoOutput(): String? = getPropertyString("current-vo")?.takeIf { it.isNotBlank() }
         ?.let { if (it == "gpu-next" && acceleration.vulkan) "$it / Vulkan" else it }
     /** Output format plus the layout mpv hands to the AO, e.g. "s16 · 5.1 · 6 ch". */
