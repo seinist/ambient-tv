@@ -286,6 +286,18 @@ internal fun mpvProcessingNeedsCopyBackReopen(
 ): Boolean = plan.output == "gpu" && plan.zeroCopy && decoderInUse?.trim() == "mediacodec" &&
     mpvCopyBackNeeded(shaderKeys, cpuFilters, deinterlaceEnabled)
 
+/**
+ * A registered shader list can survive in Java while mpv has recreated the GL/Vulkan output.
+ * Live edits, changed transfer profiles and output-context reconfiguration all need a fresh
+ * install. Stable playback with the same confirmed shader set must not recompile each frame.
+ */
+internal fun mpvImageShadersNeedReload(
+    requested: List<String>,
+    loaded: List<String>,
+    outputRecreated: Boolean,
+    transferProfileChanged: Boolean = false,
+): Boolean = outputRecreated || requested != loaded || transferProfileChanged
+
 /** Includes the *actual* SurfaceView buffer, not the Android TV desktop resolution. */
 internal fun mpvUpscalerGeometrySignature(
     decodedDisplayWidth: Double,
