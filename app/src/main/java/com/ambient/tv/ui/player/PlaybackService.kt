@@ -1,4 +1,4 @@
-@file:Suppress("DEPRECATION")
+@file:androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
 
 package com.ambient.tv.ui.player
 
@@ -8,11 +8,16 @@ import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
-import androidx.media.MediaBrowserServiceCompat
-import androidx.media.utils.MediaConstants
-import android.support.v4.media.MediaBrowserCompat
-import android.support.v4.media.session.MediaSessionCompat
-import android.os.Bundle
+import androidx.media3.common.C
+import androidx.media3.common.MediaItem
+import androidx.media3.common.MediaMetadata
+import androidx.media3.session.MediaLibraryService
+import androidx.media3.session.MediaLibraryService.MediaLibrarySession
+import androidx.media3.session.MediaSession
+import com.google.common.util.concurrent.Futures
+import com.google.common.util.concurrent.ListenableFuture
+import com.google.common.util.concurrent.SettableFuture
+import android.os.Looper
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
@@ -22,9 +27,6 @@ import android.graphics.Bitmap
 import android.media.AudioAttributes
 import android.media.AudioFocusRequest
 import android.media.AudioManager
-import android.media.MediaMetadata
-import android.media.session.MediaSession
-import android.media.session.PlaybackState
 import android.os.Build
 import android.os.PowerManager
 import android.os.SystemClock
@@ -45,7 +47,7 @@ import com.ambient.tv.car.CarAudioIds
 import com.ambient.tv.data.telegram.playerMetadata
 import com.ambient.tv.car.CarAudioCatalog
 import com.ambient.tv.car.CarAudioSelection
-import com.ambient.tv.car.toBrowserItem
+import com.ambient.tv.car.PlaybackLibraryCallback
 import com.ambient.tv.data.dlna.DlnaKeys
 import com.ambient.tv.data.files.FileKeys
 import com.ambient.tv.data.jellyfin.JellyfinBackend
@@ -55,24 +57,27 @@ import com.ambient.tv.spotify.SpotifyPlaybackState
 import com.ambient.tv.ui.navigation.Destinations
 import dagger.hilt.android.AndroidEntryPoint
 import javax.inject.Inject
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import timber.log.Timber
+import java.io.ByteArrayOutputStream
 
-// Hilt copies this Java suppression to its generated base class, which also extends
-// the deprecated MediaBrowserServiceCompat used by our Android Auto bridge.
-@java.lang.SuppressWarnings("deprecation")
 @AndroidEntryPoint
-class PlaybackService : MediaBrowserServiceCompat() {
+class PlaybackService : MediaLibraryService() {
     @Inject lateinit var files: com.ambient.tv.data.files.FilesRepository
     @Inject lateinit var repository: MediaRepository
     @Inject lateinit var youtube: SmartTubeEngine
@@ -85,9 +90,17 @@ class PlaybackService : MediaBrowserServiceCompat() {
     // Resolved only for a Telegram playback: other sources never touch the repository.
     @Inject lateinit var telegram: javax.inject.Provider<com.ambient.tv.data.telegram.TelegramRepository>
     private var carPlaybackJob: Job? = null
+    private var carSelectionVersion = 0L
+    private var carPlaybackResult: SettableFuture<Void>? = null
+    private var carSelectionItemId: String? = null
+    private var carSelectionGeneration: Long? = null
+    private var carPlaybackError: String? = null
+    private var destroying = false
     private val carSpotifySelection = CarSpotifySelection()
     private val carSpotifySelected: Boolean get() = carSpotifySelection.active
     private var carSpotifyStartGeneration = -1L
+    private data class PendingSpotifyStart(val request: CarSpotifySelection.Request, val operation: Job)
+    private var pendingSpotifyStart: PendingSpotifyStart? = null
     private val sponsorSkip = BackgroundSponsorSkipPolicy()
     private var carMusicQueue: List<String> = emptyList()
     private var carLiveQueue: List<String> = emptyList()
@@ -95,7 +108,10 @@ class PlaybackService : MediaBrowserServiceCompat() {
     private var carTelegramQueue: List<String> = emptyList()
     private var foregroundStarted = false
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
-    private lateinit var mediaSession: MediaSession
+    private lateinit var mediaSession: MediaLibrarySession
+    private lateinit var sessionPlayer: SessionPlaybackPlayer
+    private lateinit var libraryCallback: PlaybackLibraryCallback
+    private var observedPlaybackGeneration: Long? = null
     private lateinit var wakeLock: PowerManager.WakeLock
     private var wakeLockRenewedAt = 0L
     private lateinit var audioManager: AudioManager
@@ -106,8 +122,9 @@ class PlaybackService : MediaBrowserServiceCompat() {
     private var lastStartId = 0
     private var lastReport = 0L
     private var lastNotification: Triple<Long, PlaybackStatus, Int?>? = null
-    private var lastMetadata: Triple<String?, String?, Long>? = null
+    private var notificationMetadata: Triple<String?, String?, Long>? = null
     private var artworkBitmap: Bitmap? = null
+    private var artworkData: ByteArray? = null
     private var artworkRequestKey: String? = null
     private var artworkJob: Job? = null
     private val markedWatched = mutableSetOf<Long>()
@@ -137,77 +154,69 @@ class PlaybackService : MediaBrowserServiceCompat() {
         super.onCreate()
         getSystemService(NotificationManager::class.java).createNotificationChannel(
             NotificationChannel(CHANNEL, getString(R.string.background_playback), NotificationManager.IMPORTANCE_LOW))
-        mediaSession = MediaSession(this, "AmbientTvPlayback").apply {
-            setCallback(object : MediaSession.Callback() {
-                override fun onPlay() {
-                    if (carSpotifySelected) spotify.play() else BackgroundPlaybackSession.userPlay()
-                }
-                override fun onPause() {
-                    resumeOnFocus = false
-                    if (carSpotifySelected) spotify.pause() else BackgroundPlaybackSession.userPause()
-                }
-                override fun onStop() {
-                    if (carSpotifySelected) {
-                        carSpotifySelection.clear()
-                        spotify.stop()
-                    } else BackgroundPlaybackSession.stop()
-                }
-                override fun onSkipToPrevious() { skipCarAudio(next = false) }
-                override fun onSkipToNext() { skipCarAudio(next = true) }
-                override fun onSeekTo(pos: Long) {
-                    if (carSpotifySelected) { spotify.seek(pos); return }
-                    if (BackgroundPlaybackSession.snapshot.value.metadata?.source == "radio") return
-                    BackgroundPlaybackSession.userSeek()
-                    val offset = BackgroundPlaybackSession.snapshot.value.metadata?.timelineOffsetMs ?: 0
-                    BackgroundPlaybackSession.seekTo((pos - offset).coerceAtLeast(0))
-                }
-                override fun onPlayFromMediaId(mediaId: String?, extras: Bundle?) {
-                    mediaId?.let(::requestCarAudioPlayback)
-                }
-                override fun onPlayFromSearch(query: String?, extras: Bundle?) {
-                    val search = query?.trim()?.takeIf { it.isNotEmpty() } ?: return
-                    carPlaybackJob?.cancel()
-                    carPlaybackJob = scope.launch {
-                        try {
-                            carCatalog.firstForVoiceSearch(search)?.let { startCarAudio(it) }
-                        } catch (cancelled: kotlinx.coroutines.CancellationException) {
-                            throw cancelled
-                        } catch (error: Exception) {
-                            Timber.w(error, "Android Auto voice search failed")
-                        }
-                    }
-                }
-            })
-            isActive = true
+        sessionPlayer = SessionPlaybackPlayer(Looper.getMainLooper(), object : SessionPlaybackPlayer.Actions {
+            override fun onPauseRequested() {
+                libraryCallback.cancelPendingSelections()
+                // Backends start when selected. Cancel an unfinished handoff before pausing
+                // so a delayed Spotify/radio response cannot briefly start audio after Pause.
+                cancelCarSelection()
+            }
+            override fun play() {
+                carPlaybackError = null
+                if (carSpotifySelected) spotify.play() else BackgroundPlaybackSession.userPlay()
+            }
+            override fun pause() {
+                libraryCallback.cancelPendingSelections()
+                resumeOnFocus = false
+                if (carSpotifySelected) spotify.pause() else BackgroundPlaybackSession.userPause()
+            }
+            override fun stop() = stopSessionPlayback()
+            override fun seekTo(positionMs: Long) = seekSessionPlayback(positionMs)
+            override fun skip(next: Boolean) = skipCarAudio(next)
+            override fun select(mediaItems: List<MediaItem>, startIndex: Int, startPositionMs: Long) =
+                selectCarMediaItems(mediaItems, startIndex, startPositionMs)
+        })
+        libraryCallback = PlaybackLibraryCallback(carCatalog, scope, getString(R.string.app_name),
+            onSelectionRequested = { cancelCarSelection() },
+        ) { session, controller ->
+            // Media3 validates package/UID ownership before passing real controllers here.
+            // Its notification controller is internal; all other callers need media-control trust.
+            session.isMediaNotificationController(controller) || controller.isTrusted ||
+                controller.uid == applicationInfo.uid
         }
-        // The very same platform session used by notifications and Bluetooth is now also
-        // discoverable by Android Auto. Never create a competing second player/session.
-        setSessionToken(requireNotNull(MediaSessionCompat.fromMediaSession(this, mediaSession)).sessionToken)
+        mediaSession = MediaLibrarySession.Builder(this, sessionPlayer, libraryCallback)
+            .setId("AmbientTvPlayback")
+            .setSessionActivity(openPlaybackIntent())
+            .build()
         audioManager = getSystemService(AudioManager::class.java)
         wakeLock = getSystemService(PowerManager::class.java)
             .newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "Ambient TV:Playback").apply { setReferenceCounted(false) }
         ContextCompat.registerReceiver(this, noisy, IntentFilter(AudioManager.ACTION_AUDIO_BECOMING_NOISY),
             ContextCompat.RECEIVER_NOT_EXPORTED)
+        addSession(mediaSession)
         // A browser-only bind must not start a foreground service. The explicit playback
         // start goes through onStartCommand and meets the Android 12+ foreground deadline there.
         // Synchronize focus on play/pause immediately, not at the next polling tick.
         scope.launch {
             BackgroundPlaybackSession.snapshot.collect { state ->
+                if (state.active && observedPlaybackGeneration != state.generation) {
+                    // A source chosen in the app also supersedes a still-resolving Auto request.
+                    libraryCallback.cancelPendingSelections()
+                    if (carPlaybackJob?.isActive == true && carSelectionGeneration != state.generation &&
+                        !matchesCarSelection(state)) cancelCarSelection()
+                    observedPlaybackGeneration = state.generation
+                    carPlaybackError = null
+                }
                 if (carSpotifySelected && state.active && state.generation != carSpotifyStartGeneration) {
                     carSpotifySelection.clear()
                 }
-                if (!carSpotifySelected) updatePlatformState(state)
+                if (!carSpotifySelected) updateSessionState(state)
                 else if (!state.active) {
                     // Spotify has its own Connect foreground service. A browser connection
                     // must not keep an obsolete radio/media foreground notification alive.
                     if (wakeLock.isHeld) wakeLock.release()
                     abandonFocus()
-                    if (foregroundStarted) {
-                        stopForeground(STOP_FOREGROUND_REMOVE)
-                        foregroundStarted = false
-                    }
-                    getSystemService(NotificationManager::class.java).cancel(NOTIFICATION)
-                    lastNotification = null
+                    clearPlaybackNotification()
                 }
             }
         }
@@ -271,9 +280,12 @@ class PlaybackService : MediaBrowserServiceCompat() {
                     // final position before deciding that the service has nothing left to save.
                     for (finished in BackgroundPlaybackSession.takeCompleted()) enqueueReport(finished, stopped = true)
                     val idle = BackgroundPlaybackSession.snapshot.value
-                    if (!idle.active && reportQueue.isEmpty && !reporting && stopSelfResult(lastStartId)) {
+                    if (!idle.active && carPlaybackJob?.isActive != true &&
+                        reportQueue.isEmpty && !reporting && lastStartId != 0 && stopSelfResult(lastStartId)) {
                         retiredGeneration = idle.generation
-                        break
+                        lastStartId = 0
+                        // A connected browser can keep this instance bound after stopSelfResult.
+                        // Keep polling so a later selection also ticks and saves its progress.
                     }
                 } else {
                     val reportState = Triple(state.generation, state.playing, state.status.ended || state.status.error != null)
@@ -298,24 +310,57 @@ class PlaybackService : MediaBrowserServiceCompat() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         lastStartId = startId
-        // A started playback service must enter foreground promptly. Merely browsing from
-        // the head unit binds this service without starting a notification or FGS.
-        if (!foregroundStarted) {
-            val initial = notification(BackgroundPlaybackSession.snapshot.value)
-            if (Build.VERSION.SDK_INT >= 29) startForeground(
-                NOTIFICATION, initial, ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK,
-            ) else startForeground(NOTIFICATION, initial)
-            foregroundStarted = true
+        retiredGeneration = null
+        // Actual service starts must meet the foreground deadline, including media-button starts.
+        // A browse-only connection never calls onStartCommand or displays this notification.
+        ensureForeground(BackgroundPlaybackSession.snapshot.value)
+        super.onStartCommand(intent, flags, startId) // Media3 dispatches platform media-button intents.
+        if (intent?.action in setOf(ACTION_TOGGLE, ACTION_STOP, ACTION_PREVIOUS, ACTION_NEXT)) {
+            BackgroundPlaybackSession.registerUserInteraction()
         }
-        if (intent?.action in setOf(ACTION_TOGGLE, ACTION_STOP, ACTION_PREVIOUS, ACTION_NEXT)) BackgroundPlaybackSession.registerUserInteraction()
         when (intent?.action) {
-            ACTION_TOGGLE -> BackgroundPlaybackSession.userToggle()
-            ACTION_STOP -> BackgroundPlaybackSession.stop()
-            ACTION_PREVIOUS -> playRadioAdjacent(next = false)
-            ACTION_NEXT -> playRadioAdjacent(next = true)
+            ACTION_TOGGLE -> if (sessionPlayer.playWhenReady) sessionPlayer.pause() else sessionPlayer.play()
+            ACTION_STOP -> sessionPlayer.stop()
+            ACTION_PREVIOUS -> skipCarAudio(next = false)
+            ACTION_NEXT -> skipCarAudio(next = true)
             ACTION_EXTEND_SLEEP -> BackgroundPlaybackSession.extendSleepTimer()
         }
+        if (carSpotifySelected && !BackgroundPlaybackSession.snapshot.value.active) clearPlaybackNotification()
         return START_NOT_STICKY // Never restart an unknown stream after process death.
+    }
+
+    private fun ensureForeground(state: BackgroundPlaybackSession.Snapshot) {
+        if (foregroundStarted || destroying) return
+        val initial = notification(state)
+        if (Build.VERSION.SDK_INT >= 29) startForeground(
+            NOTIFICATION, initial, ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK,
+        ) else startForeground(NOTIFICATION, initial)
+        foregroundStarted = true
+    }
+
+    /** Own the existing notification, sleep controls and Spotify handoff as one lifecycle. */
+    override fun onUpdateNotificationAsync(
+        session: MediaSession,
+        startInForegroundRequired: Boolean,
+    ): ListenableFuture<Void?> {
+        val state = BackgroundPlaybackSession.snapshot.value
+        if (!destroying && !carSpotifySelected && startInForegroundRequired &&
+            (state.active || sessionPlayer.hasPreparedSelection || sessionPlayer.isSelecting)) {
+            ensureForeground(state)
+        }
+        // State collectors publish our notification. Calling the default implementation would
+        // create a second notification and start a second FGS for mirrored Spotify playback.
+        return Futures.immediateVoidFuture()
+    }
+
+    private fun clearPlaybackNotification() {
+        if (foregroundStarted) {
+            stopForeground(STOP_FOREGROUND_REMOVE)
+            foregroundStarted = false
+        }
+        getSystemService(NotificationManager::class.java).cancel(NOTIFICATION)
+        lastNotification = null
+        notificationMetadata = null
     }
 
     private suspend fun report(state: BackgroundPlaybackSession.Snapshot, stopped: Boolean) {
@@ -388,101 +433,166 @@ class PlaybackService : MediaBrowserServiceCompat() {
 
     private fun playRadioAdjacent(next: Boolean) {
         if (BackgroundPlaybackSession.snapshot.value.metadata?.source != "radio") return
-        val station = if (next) radioQueue.next() else radioQueue.previous()
-        if (station != null) scope.launch {
-            radioPlaybackLauncher.play(station)
-                .onFailure { Timber.w(it, "Radio station change failed") }
+        val station = (if (next) radioQueue.next() else radioQueue.previous()) ?: return
+        libraryCallback.cancelPendingSelections()
+        launchCarSelection(CarAudioIds.station(station.id)) { version, generation ->
+            checkCarSelection(version, generation)
+            // Preserve the queue of the currently playing row, including UI-started radio.
+            radioPlaybackLauncher.play(station).getOrThrow()
         }
     }
 
+    override fun onGetSession(controllerInfo: MediaSession.ControllerInfo): MediaLibrarySession = mediaSession
+    // Legacy browser binds initially carry a synthetic controller with no useful UID. Actual
+    // controller authorization belongs to PlaybackLibraryCallback.onConnectAsync/onGetLibraryRoot.
 
-    /** Platform MediaBrowserService: Android Auto binds here; the normal media notification
-     * keeps using exactly the same platform MediaSession token. */
-    override fun onGetRoot(clientPackageName: String, clientUid: Int, rootHints: Bundle?): BrowserRoot? {
-        // Do not expose a user's private radio/music library to arbitrary installed apps.
-        // Android Auto and other trusted media controllers qualify; our own UID is allowed.
-        val owned = packageManager.getPackagesForUid(clientUid)?.contains(clientPackageName) == true
-        val trusted = if (owned) runCatching {
-            getSystemService(android.media.session.MediaSessionManager::class.java)
-                .isTrustedForMediaControl(
-                    android.media.session.MediaSessionManager.RemoteUserInfo(clientPackageName, -1, clientUid),
-                )
-        }.getOrDefault(false) else false
-        return if (owned && (clientUid == applicationInfo.uid || trusted)) BrowserRoot(
-            CarAudioIds.ROOT,
-            Bundle().apply { putBoolean(MediaConstants.BROWSER_SERVICE_EXTRAS_KEY_SEARCH_SUPPORTED, true) },
-        ) else null
+    private fun cancelCarSelection() {
+        carSelectionVersion++
+        val spotifyStart = pendingSpotifyStart
+        pendingSpotifyStart = null
+        // The repository launches Spotify work in its own scope. Cancel it and restore the
+        // owner synchronously: coroutine cancellation can unwind after the next Pause/Stop.
+        spotifyStart?.operation?.cancel()
+        val restoredOwner = spotifyStart?.takeIf { carSpotifySelection.rollbackFailed(it.request) }
+        if (restoredOwner != null) {
+            // An accepted Connect command can outlive its HTTP coroutine. Silence that receiver
+            // as well; a stale request must never stop a newer confirmed Spotify selection.
+            if (restoredOwner.request.previousActive) spotify.pause() else spotify.stop()
+        }
+        val result = carPlaybackResult
+        val job = carPlaybackJob
+        carPlaybackResult = null
+        carPlaybackJob = null
+        carSelectionItemId = null
+        carSelectionGeneration = null
+        // Cancel the returned future immediately, even if its coroutine is still unwinding.
+        // The adapter can then discard deferred Play before executing the user's Pause/Stop.
+        result?.cancel(false)
+        job?.cancel()
+        if (!destroying && restoredOwner != null) {
+            if (carSpotifySelected) publishCarSpotify(spotify.playback.value)
+            else updateSessionState(BackgroundPlaybackSession.snapshot.value)
+        }
+        if (!destroying && !BackgroundPlaybackSession.snapshot.value.active) clearPlaybackNotification()
     }
 
-    override fun onLoadChildren(
-        parentId: String,
-        result: MediaBrowserServiceCompat.Result<MutableList<MediaBrowserCompat.MediaItem>>,
-    ) {
-        if (!CarAudioIds.isFolder(parentId)) { result.sendResult(null); return }
-        result.detach()
-        scope.launch {
-            val entries = try {
-                carCatalog.children(parentId)
-            } catch (cancelled: kotlinx.coroutines.CancellationException) {
-                throw cancelled
-            } catch (error: Exception) {
-                Timber.w(error, "Android Auto browse failed for %s", parentId)
-                emptyList()
-            }
-            result.sendResult(entries.map { it.toBrowserItem() }.toMutableList())
+    private fun matchesCarSelection(state: BackgroundPlaybackSession.Snapshot): Boolean {
+        val id = carSelectionItemId ?: return false
+        val metadata = state.metadata ?: return false
+        return when (metadata.source) {
+            "radio" -> CarAudioIds.stationId(id) == metadata.mediaId
+            "telegram" -> CarAudioIds.telegramItemId(id) == com.ambient.tv.data.telegram.telegramMediaIds(metadata.mediaId)
+            "iptv", "tvheadend" -> id == metadata.mediaId
+            "plex", "jellyfin", "emby", "dlna", "files" -> CarAudioIds.musicItemId(id) == metadata.mediaId
+            else -> false
         }
     }
 
-    override fun onLoadItem(
-        itemId: String,
-        result: MediaBrowserServiceCompat.Result<MediaBrowserCompat.MediaItem>,
-    ) {
-        result.detach()
-        scope.launch {
-            val entry = runCatching { carCatalog.entry(itemId) }.getOrNull()
-            result.sendResult(entry?.toBrowserItem())
+    private suspend fun checkCarSelection(version: Long, generation: Long) {
+        currentCoroutineContext().ensureActive()
+        if (version != carSelectionVersion || BackgroundPlaybackSession.snapshot.value.generation != generation) {
+            throw CancellationException("Playback selection replaced")
         }
     }
 
-    /** Android Auto's actual browsable search results, not only one voice-selected station. */
-    override fun onSearch(
-        query: String,
-        extras: Bundle?,
-        result: MediaBrowserServiceCompat.Result<MutableList<MediaBrowserCompat.MediaItem>>,
-    ) {
-        result.detach()
-        scope.launch {
-            val found = try {
-                carCatalog.search(query)
-            } catch (cancelled: kotlinx.coroutines.CancellationException) {
-                throw cancelled
-            } catch (error: Exception) {
-                Timber.w(error, "Android Auto media search failed")
-                emptyList()
-            }
-            result.sendResult(found.map { it.toBrowserItem() }.toMutableList())
+    private fun stopSessionPlayback() {
+        val wasSpotifySelected = carSpotifySelected
+        libraryCallback.cancelPendingSelections()
+        cancelCarSelection()
+        resumeOnFocus = false
+        carPlaybackError = null
+        if (wasSpotifySelected || carSpotifySelected) {
+            carSpotifySelection.clear()
+            spotify.stop()
         }
+        BackgroundPlaybackSession.stop()
+        updateSessionState(BackgroundPlaybackSession.snapshot.value)
+    }
+
+    private fun seekSessionPlayback(positionMs: Long) {
+        if (carSpotifySelected) {
+            spotify.seek(positionMs.coerceAtLeast(0L))
+            return
+        }
+        if (!BackgroundPlaybackSession.canSeekFromMediaSession()) return
+        BackgroundPlaybackSession.userSeek()
+        val offset = BackgroundPlaybackSession.snapshot.value.metadata?.timelineOffsetMs ?: 0L
+        BackgroundPlaybackSession.seekTo((positionMs - offset).coerceAtLeast(0L))
     }
 
     private fun requestCarAudioPlayback(itemId: String) {
-        carPlaybackJob?.cancel()
-        carPlaybackJob = scope.launch {
-            try {
-                carCatalog.resolve(itemId)?.let { startCarAudio(it) }
-                    ?: Timber.w("Android Auto rejected unavailable/non-audio item")
-            } catch (cancelled: kotlinx.coroutines.CancellationException) {
-                throw cancelled
-            } catch (error: Exception) {
-                Timber.w(error, "Android Auto playback selection failed")
-                mediaSession.setPlaybackState(PlaybackState.Builder()
-                    .setActions(PlaybackState.ACTION_PLAY or PlaybackState.ACTION_PLAY_PAUSE or
-                    PlaybackState.ACTION_PLAY_FROM_MEDIA_ID or PlaybackState.ACTION_PLAY_FROM_SEARCH)
-                    .setState(PlaybackState.STATE_ERROR, 0L, 0f).build())
-            }
+        libraryCallback.cancelPendingSelections()
+        selectCarMediaItems(listOf(MediaItem.Builder().setMediaId(itemId).build()), 0, C.TIME_UNSET)
+    }
+
+    /** Real playback starts only on Play. The adapter keeps prepare-only selections silent. */
+    private fun selectCarMediaItems(
+        mediaItems: List<MediaItem>,
+        startIndex: Int,
+        startPositionMs: Long,
+    ): ListenableFuture<Void> {
+        if (mediaItems.size != 1 || startIndex !in listOf(0, C.INDEX_UNSET)) {
+            return Futures.immediateFailedFuture(IllegalArgumentException("Select one audio item"))
+        }
+        return launchCarSelection(mediaItems[0].mediaId) { version, generation ->
+            val selection = carCatalog.resolve(mediaItems[0].mediaId)
+                ?: throw IllegalArgumentException("Unavailable audio item")
+            checkCarSelection(version, generation)
+            startCarAudio(selection, version, generation)
+            if (version != carSelectionVersion) throw CancellationException("Playback selection replaced")
+            if (startPositionMs != C.TIME_UNSET) seekSessionPlayback(startPositionMs)
         }
     }
 
-    private suspend fun startCarAudio(selection: CarAudioSelection) {
+    private fun launchCarSelection(
+        itemId: String,
+        start: suspend (version: Long, generation: Long) -> Unit,
+    ): ListenableFuture<Void> {
+        cancelCarSelection()
+        val version = carSelectionVersion
+        val generation = BackgroundPlaybackSession.snapshot.value.generation
+        carSelectionItemId = itemId
+        carSelectionGeneration = generation
+        val result = SettableFuture.create<Void>()
+        carPlaybackResult = result
+        carPlaybackError = null
+        // This is an explicit Play/Next, after prepare-only catalog resolution has completed.
+        // Enter foreground before another RPC can consume Android's media-start exemption.
+        ensureForeground(BackgroundPlaybackSession.snapshot.value)
+        val job = scope.launch(start = CoroutineStart.LAZY) {
+            try {
+                start(version, generation)
+                if (version != carSelectionVersion) throw CancellationException("Playback selection replaced")
+                if (carSpotifySelected) {
+                    publishCarSpotify(spotify.playback.value)
+                    if (!BackgroundPlaybackSession.snapshot.value.active) clearPlaybackNotification()
+                } else updateSessionState(BackgroundPlaybackSession.snapshot.value)
+                result.set(null)
+            } catch (cancelled: CancellationException) {
+                result.cancel(false)
+                throw cancelled
+            } catch (error: Exception) {
+                Timber.w(error, "Android Auto playback selection failed")
+                if (version == carSelectionVersion) {
+                    carPlaybackError = if (carSpotifySelected || BackgroundPlaybackSession.snapshot.value.active) null
+                        else getString(R.string.player_load_failed)
+                    if (carSpotifySelected) publishCarSpotify(spotify.playback.value)
+                    else updateSessionState(BackgroundPlaybackSession.snapshot.value)
+                }
+                result.setException(error)
+            } finally {
+                if (!destroying && version == carSelectionVersion &&
+                    !BackgroundPlaybackSession.snapshot.value.active) clearPlaybackNotification()
+            }
+        }
+        carPlaybackJob = job
+        result.addListener({ if (result.isCancelled) job.cancel() }, ContextCompat.getMainExecutor(this))
+        job.invokeOnCompletion { cause -> if (cause != null) result.cancel(false) }
+        job.start()
+        return result
+    }
+
+    private suspend fun startCarAudio(selection: CarAudioSelection, version: Long, generation: Long) {
         when (selection) {
             is CarAudioSelection.Radio -> {
                 if (carSpotifySelected) spotify.pause()
@@ -490,10 +600,9 @@ class PlaybackService : MediaBrowserServiceCompat() {
                 carMusicQueue = emptyList()
                 carLiveQueue = emptyList()
                 carTelegramQueue = emptyList()
-                radioPlaybackLauncher.play(selection.station, selection.queue)
-                    .onFailure { Timber.w(it, "Android Auto radio playback failed") }
+                radioPlaybackLauncher.play(selection.station, selection.queue).getOrThrow()
                 carCatalog.invalidate(CarAudioIds.RADIO_RECENT)
-                notifyChildrenChanged(CarAudioIds.RADIO_RECENT)
+                mediaSession.notifyChildrenChanged(CarAudioIds.RADIO_RECENT, Int.MAX_VALUE, null)
             }
             is CarAudioSelection.Spotify -> {
                 carSpotifyStartGeneration = BackgroundPlaybackSession.snapshot.value.generation
@@ -501,23 +610,29 @@ class PlaybackService : MediaBrowserServiceCompat() {
                 carMusicQueue = emptyList()
                 carLiveQueue = emptyList()
                 carTelegramQueue = emptyList()
-                mediaSession.setPlaybackState(PlaybackState.Builder()
-                    .setActions(PlaybackState.ACTION_PLAY or PlaybackState.ACTION_PAUSE or
-                        PlaybackState.ACTION_PLAY_PAUSE or PlaybackState.ACTION_PLAY_FROM_MEDIA_ID or
-                        PlaybackState.ACTION_PLAY_FROM_SEARCH or PlaybackState.ACTION_SKIP_TO_NEXT or
-                        PlaybackState.ACTION_SKIP_TO_PREVIOUS or PlaybackState.ACTION_SEEK_TO)
-                    .setState(PlaybackState.STATE_BUFFERING, 0L, 0f).build())
-                spotify.playUri(selection.uri) { success ->
-                    // Run on this service's lifetime, never against a released MediaSession.
-                    scope.launch {
-                        // The repository already rolls back the previous background engine on
-                        // failure. A late result must not replace a newer source or stop selection.
-                        if (success) carSpotifySelection.confirm(start)
-                        else if (carSpotifySelection.rollbackFailed(start)) {
-                            if (carSpotifySelected) publishCarSpotify(spotify.playback.value)
-                            else updatePlatformState(BackgroundPlaybackSession.snapshot.value)
-                        }
+                sessionPlayer.update(SessionPlaybackState(
+                    mediaItem = MediaItem.Builder().setMediaId(selection.uri)
+                        .setMediaMetadata(MediaMetadata.Builder().setTitle("Spotify").setIsPlayable(true).build()).build(),
+                    uid = selection.uri,
+                    playWhenReady = true,
+                    buffering = true,
+                ))
+                val completed = CompletableDeferred<Boolean>()
+                val operation = spotify.playUri(selection.uri) { success -> completed.complete(success) }
+                val pending = PendingSpotifyStart(start, operation)
+                pendingSpotifyStart = pending
+                try {
+                    if (completed.await()) carSpotifySelection.confirm(start)
+                    else {
+                        carSpotifySelection.rollbackFailed(start)
+                        throw IllegalStateException("Spotify playback could not start")
                     }
+                } catch (cancelled: CancellationException) {
+                    carSpotifySelection.rollbackFailed(start)
+                    throw cancelled
+                } finally {
+                    if (pendingSpotifyStart === pending) pendingSpotifyStart = null
+                    if (!completed.isCompleted) operation.cancel()
                 }
             }
             is CarAudioSelection.Library -> {
@@ -529,6 +644,7 @@ class PlaybackService : MediaBrowserServiceCompat() {
                 carLiveQueue = emptyList()
                 carTelegramQueue = emptyList()
                 repository.preparePlayback(item.ratingKey, 0)
+                checkCarSelection(version, generation)
                 val source = when {
                     JellyfinBackend.owns(item.ratingKey) -> "jellyfin"
                     EmbyBackend.owns(item.ratingKey) -> "emby"
@@ -610,6 +726,8 @@ class PlaybackService : MediaBrowserServiceCompat() {
     }
 
     private fun skipCarAudio(next: Boolean) {
+        libraryCallback.cancelPendingSelections()
+        cancelCarSelection()
         if (carSpotifySelected) {
             if (next) spotify.next() else spotify.previous()
             return
@@ -641,29 +759,36 @@ class PlaybackService : MediaBrowserServiceCompat() {
     /** Spotify owns the actual Connect audio engine; the Auto browser mirrors its state, not a
      * competing decoder. Spotify's own foreground service remains responsible for its audio focus. */
     private fun publishCarSpotify(state: SpotifyPlaybackState) {
-        if (!carSpotifySelected) return
+        if (!carSpotifySelected || destroying) return
         val track = state.current
-        mediaSession.setMetadata(MediaMetadata.Builder()
-            .putString(MediaMetadata.METADATA_KEY_TITLE, track?.name.orEmpty())
-            .putString(MediaMetadata.METADATA_KEY_ARTIST, track?.artists?.joinToString(", ") { it.name }.orEmpty())
-            .putLong(MediaMetadata.METADATA_KEY_DURATION, track?.durationMs ?: state.durationMs)
-            .build())
-        mediaSession.setPlaybackState(PlaybackState.Builder()
-            .setActions(PlaybackState.ACTION_PLAY or PlaybackState.ACTION_PAUSE or PlaybackState.ACTION_PLAY_PAUSE or
-                PlaybackState.ACTION_PLAY_FROM_MEDIA_ID or PlaybackState.ACTION_PLAY_FROM_SEARCH or
-                PlaybackState.ACTION_STOP or PlaybackState.ACTION_SKIP_TO_NEXT or
-                PlaybackState.ACTION_SKIP_TO_PREVIOUS or PlaybackState.ACTION_SEEK_TO)
-            .setState(when {
-                state.playing -> PlaybackState.STATE_PLAYING
-                state.error != null -> PlaybackState.STATE_ERROR
-                else -> PlaybackState.STATE_PAUSED
-            }, state.positionMs, if (state.playing) 1f else 0f)
-            .build())
+        val metadata = MediaMetadata.Builder()
+            .setTitle(track?.name.orEmpty())
+            .setArtist(track?.artists?.joinToString(", ") { it.name }.orEmpty())
+            .setIsBrowsable(false)
+            .setIsPlayable(true)
+            .setMediaType(MediaMetadata.MEDIA_TYPE_MUSIC)
+            .apply {
+                track?.album?.images?.firstOrNull()?.url?.takeIf { it.startsWith("https://") }
+                    ?.let { setArtworkUri(android.net.Uri.parse(it)) }
+            }.build()
+        val id = track?.id?.let(CarAudioIds::spotifyTrack) ?: CarAudioIds.SPOTIFY_ROOT
+        sessionPlayer.update(SessionPlaybackState(
+            mediaItem = MediaItem.Builder().setMediaId(id).setMediaMetadata(metadata).build(),
+            uid = id,
+            positionMs = state.positionMs,
+            durationMs = (track?.durationMs ?: state.durationMs).takeIf { it > 0 } ?: C.TIME_UNSET,
+            playWhenReady = state.playing,
+            error = carPlaybackError ?: state.error,
+            canSeek = (track?.durationMs ?: state.durationMs) > 0,
+            hasPrevious = true,
+            hasNext = true,
+        ))
     }
 
     // Media-session notifications are exempt from Android 13's notification permission.
     @android.annotation.SuppressLint("NotificationPermission")
-    private fun updatePlatformState(state: BackgroundPlaybackSession.Snapshot) {
+    private fun updateSessionState(state: BackgroundPlaybackSession.Snapshot) {
+        if (destroying) return
         val now = SystemClock.elapsedRealtime()
         if (state.playing && (!wakeLock.isHeld || now - wakeLockRenewedAt >= 30_000)) {
             wakeLock.acquire(60_000)
@@ -679,24 +804,18 @@ class PlaybackService : MediaBrowserServiceCompat() {
             AudioFocusAction.ABANDON -> abandonFocus()
         }
         if (!state.active) {
-            mediaSession.setPlaybackState(PlaybackState.Builder()
-                .setActions(PlaybackState.ACTION_PLAY or PlaybackState.ACTION_PLAY_PAUSE or
-                    PlaybackState.ACTION_PLAY_FROM_MEDIA_ID or PlaybackState.ACTION_PLAY_FROM_SEARCH)
-                .setState(PlaybackState.STATE_STOPPED, 0L, 0f).build())
-            getSystemService(NotificationManager::class.java).cancel(NOTIFICATION)
-            lastNotification = null
-            lastMetadata = null
+            sessionPlayer.update(SessionPlaybackState(error = carPlaybackError))
+            clearPlaybackNotification()
             return
         }
         val metadata = state.metadata
-        val duration = metadata?.durationMs?.takeIf { it > 0 } ?: state.status.durationMs
+        val duration = metadata?.durationMs?.takeIf { it > 0 }
+            ?: state.status.durationMs.takeIf { it > 0 }?.plus(metadata?.timelineOffsetMs ?: 0L)
+            ?: C.TIME_UNSET
         ensureArtwork(metadata)
         val metadataKey = Triple(metadata?.title, metadata?.subtitle, duration)
-        if (lastMetadata != metadataKey) {
-            publishMetadata(metadata, duration)
-            lastMetadata = metadataKey
-            // A station's ICY title can change while generation/status stay unchanged.
-            // Force MediaStyle to rebuild so lock screen and notification follow MediaSession.
+        if (notificationMetadata != metadataKey) {
+            notificationMetadata = metadataKey
             lastNotification = null
         }
         val hasPreviousRadio = metadata?.source == "radio" && radioQueue.previous() != null
@@ -712,16 +831,41 @@ class PlaybackService : MediaBrowserServiceCompat() {
         val hasNext = hasNextRadio || (carMusic && carIndex < carMusicQueue.lastIndex) ||
             (carLive && liveIndex < carLiveQueue.lastIndex) ||
             (carTelegram && telegramIndex < carTelegramQueue.lastIndex)
-        mediaSession.setPlaybackState(PlaybackState.Builder()
-            .setActions(platformPlaybackActions(metadata?.source, hasPrevious, hasNext, carMusic || carLive || carTelegram))
-            .setState(when {
-                !state.active || state.status.ended -> PlaybackState.STATE_STOPPED
-                state.status.error != null -> PlaybackState.STATE_ERROR
-                state.playing -> PlaybackState.STATE_PLAYING
-                state.wantsToPlay -> PlaybackState.STATE_BUFFERING
-                else -> PlaybackState.STATE_PAUSED
-            }, state.status.positionMs + (metadata?.timelineOffsetMs ?: 0), if (state.playing) 1f else 0f)
-            .build())
+        val itemMetadata = MediaMetadata.Builder()
+            .setTitle(metadata?.title.orEmpty())
+            .setArtist(metadata?.subtitle.orEmpty())
+            .setIsBrowsable(false)
+            .setIsPlayable(true)
+            .setMediaType(when {
+                metadata?.isLive == true && metadata.hasVideo -> MediaMetadata.MEDIA_TYPE_TV_CHANNEL
+                metadata?.isLive == true -> MediaMetadata.MEDIA_TYPE_RADIO_STATION
+                metadata?.hasVideo == true -> MediaMetadata.MEDIA_TYPE_MOVIE
+                else -> MediaMetadata.MEDIA_TYPE_MUSIC
+            })
+            .apply { artworkData?.let { setArtworkData(it, MediaMetadata.PICTURE_TYPE_FRONT_COVER) } }
+            .build()
+        // Only opaque catalog/session IDs leave the app; authenticated stream URLs never do.
+        val id = when {
+            metadata?.source == "radio" -> CarAudioIds.station(metadata.mediaId)
+            carLive -> metadata?.mediaId.orEmpty()
+            carTelegram -> carTelegramQueue[telegramIndex]
+            carMusic -> CarAudioIds.musicItem(metadata?.mediaId.orEmpty())
+            else -> "playback:${state.generation}"
+        }
+        sessionPlayer.update(SessionPlaybackState(
+            mediaItem = MediaItem.Builder().setMediaId(id).setMediaMetadata(itemMetadata).build(),
+            uid = state.generation,
+            positionMs = state.status.positionMs + (metadata?.timelineOffsetMs ?: 0L),
+            durationMs = duration,
+            playWhenReady = state.wantsToPlay,
+            buffering = state.replacingSource || (state.wantsToPlay && !state.playing && !state.status.ended),
+            ended = state.status.ended,
+            error = carPlaybackError ?: state.status.error,
+            canSeek = BackgroundPlaybackSession.canSeekFromMediaSession(),
+            hasPrevious = hasPrevious,
+            hasNext = hasNext,
+            isLive = metadata?.isLive == true,
+        ))
         // Position updates go to MediaSession; avoid rebuilding a notification twice a second.
         val notificationKey = Triple(state.generation, state.status.copy(positionMs = 0, durationMs = 0),
             BackgroundPlaybackSession.sleepWarningDeadline?.let { sleepWarningMinutesLeft(it, now) })
@@ -729,18 +873,6 @@ class PlaybackService : MediaBrowserServiceCompat() {
             getSystemService(NotificationManager::class.java).notify(NOTIFICATION, notification(state))
             lastNotification = notificationKey
         }
-    }
-
-    private fun publishMetadata(metadata: PlaybackMetadata?, duration: Long) {
-        val builder = MediaMetadata.Builder()
-            .putString(MediaMetadata.METADATA_KEY_TITLE, metadata?.title.orEmpty())
-            .putString(MediaMetadata.METADATA_KEY_ARTIST, metadata?.subtitle.orEmpty())
-            .putLong(MediaMetadata.METADATA_KEY_DURATION, duration)
-        artworkBitmap?.let { art ->
-            builder.putBitmap(MediaMetadata.METADATA_KEY_ALBUM_ART, art)
-            builder.putBitmap(MediaMetadata.METADATA_KEY_ART, art)
-        }
-        mediaSession.setMetadata(builder.build())
     }
 
     private fun ensureArtwork(metadata: PlaybackMetadata?) {
@@ -751,17 +883,27 @@ class PlaybackService : MediaBrowserServiceCompat() {
         if (key == artworkRequestKey) return
         artworkRequestKey = key
         artworkBitmap = null
+        artworkData = null
+        lastNotification = null
         artworkJob?.cancel()
         if (url.isNullOrBlank()) return
         val headers = metadata?.artworkHeaders.orEmpty()
         artworkJob = scope.launch {
-            val bitmap = withContext(Dispatchers.IO) { loadNotificationArtwork(url, headers) }
-            if (artworkRequestKey != key) return@launch
-            artworkBitmap = bitmap
-            // Refresh metadata + notification so MediaStyle can show the cover on phones.
-            lastMetadata = null
+            val artwork = withContext(Dispatchers.IO) {
+                loadNotificationArtwork(url, headers)?.let { bitmap ->
+                    val bytes = ByteArrayOutputStream().use { output ->
+                        bitmap.compress(Bitmap.CompressFormat.JPEG, 85, output)
+                        output.toByteArray()
+                    }
+                    bitmap to bytes
+                }
+            }
+            if (artworkRequestKey != key || destroying) return@launch
+            artworkBitmap = artwork?.first
+            artworkData = artwork?.second
+            // Encoded artwork is shared through Media3 without leaking authenticated image URLs.
             lastNotification = null
-            updatePlatformState(BackgroundPlaybackSession.snapshot.value)
+            if (!carSpotifySelected) updateSessionState(BackgroundPlaybackSession.snapshot.value)
         }
     }
 
@@ -779,12 +921,15 @@ class PlaybackService : MediaBrowserServiceCompat() {
         }.onFailure { Timber.w(it, "Playback notification artwork failed") }.getOrNull()
     }
 
-    private fun notification(state: BackgroundPlaybackSession.Snapshot): Notification {
+    private fun openPlaybackIntent(): PendingIntent {
         val target = if (isTelevision(this)) MainActivity::class.java else HandheldActivity::class.java
-        val open = PendingIntent.getActivity(this, 0,
+        return PendingIntent.getActivity(this, 0,
             Intent(this, target).setAction(ACTION_OPEN)
                 .addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP),
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+    }
+
+    private fun notification(state: BackgroundPlaybackSession.Snapshot): Notification {
         fun action(action: String, request: Int) = PendingIntent.getService(this, request,
             Intent(this, PlaybackService::class.java).setAction(action),
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
@@ -794,7 +939,7 @@ class PlaybackService : MediaBrowserServiceCompat() {
             .setSmallIcon(android.R.drawable.ic_media_play)
             .setContentTitle(state.metadata?.title ?: getString(R.string.app_name))
             .setContentText(state.status.error ?: state.metadata?.subtitle ?: getString(R.string.background_playback))
-            .setContentIntent(open)
+            .setContentIntent(openPlaybackIntent())
             .setOnlyAlertOnce(true)
             .setOngoing(state.playing)
             .setVisibility(Notification.VISIBILITY_PUBLIC)
@@ -825,7 +970,7 @@ class PlaybackService : MediaBrowserServiceCompat() {
             add(playIndex)
             if (radioNext) add(playIndex + 1)
         }.take(3).toIntArray()
-        builder.setStyle(Notification.MediaStyle().setMediaSession(mediaSession.sessionToken)
+        builder.setStyle(Notification.MediaStyle().setMediaSession(mediaSession.platformToken)
             .setShowActionsInCompactView(*compact))
         artworkBitmap?.let { builder.setLargeIcon(it) }
         return builder.build()
@@ -919,6 +1064,9 @@ class PlaybackService : MediaBrowserServiceCompat() {
     }
 
     override fun onDestroy() {
+        destroying = true
+        libraryCallback.cancelPendingSelections()
+        cancelCarSelection()
         // A new acquisition can arrive between stopSelfResult and this callback. Its service
         // start is already queued; an old idle service must not release the new engine.
         if (retiredGeneration == null || BackgroundPlaybackSession.snapshot.value.generation == retiredGeneration) {
@@ -931,6 +1079,7 @@ class PlaybackService : MediaBrowserServiceCompat() {
         artworkBitmap = null
         unregisterReceiver(noisy)
         mediaSession.release()
+        sessionPlayer.release() // Adapter release never owns or destroys a renderer.
         scope.cancel()
         stopForeground(STOP_FOREGROUND_REMOVE)
         super.onDestroy()
@@ -961,11 +1110,13 @@ class PlaybackService : MediaBrowserServiceCompat() {
      */
     override fun onTaskRemoved(rootIntent: Intent?) {
         Timber.i("App closed from recents: stopping playback")
+        sessionPlayer.stop()
         BackgroundPlaybackGuard.stopForAppClosed()
-        super.onTaskRemoved(rootIntent)
+        // Our report loop retires the service after the final positions are saved. The Media3
+        // default calls pauseAllPlayersAndStopSelf immediately and would preempt that work.
     }
 
-    // MediaBrowserServiceCompat owns onBind: avoid a second ad-hoc browser binder.
+    // MediaLibraryService owns onBind for both modern and legacy media browsers.
 
     companion object {
         /** Outlives a destroyed service so the final positions can still be sent. */
@@ -981,21 +1132,4 @@ class PlaybackService : MediaBrowserServiceCompat() {
         private const val ACTION_NEXT = "com.ambient.tv.RADIO_NEXT"
         private const val ACTION_EXTEND_SLEEP = "com.ambient.tv.EXTEND_SLEEP_TIMER"
     }
-}
-
-internal fun platformPlaybackActions(
-    source: String?,
-    hasPrevious: Boolean,
-    hasNext: Boolean,
-    carAudioQueue: Boolean = false,
-): Long {
-    var actions = PlaybackState.ACTION_PLAY or PlaybackState.ACTION_PAUSE or PlaybackState.ACTION_PLAY_PAUSE or
-        PlaybackState.ACTION_STOP or PlaybackState.ACTION_PLAY_FROM_MEDIA_ID or PlaybackState.ACTION_PLAY_FROM_SEARCH
-    if (source != "radio") actions = actions or PlaybackState.ACTION_SEEK_TO
-    // Ordinary video stays seek-only; selected car music and radio provide a queue.
-    if (source == "radio" || carAudioQueue) {
-        if (hasPrevious) actions = actions or PlaybackState.ACTION_SKIP_TO_PREVIOUS
-        if (hasNext) actions = actions or PlaybackState.ACTION_SKIP_TO_NEXT
-    }
-    return actions
 }

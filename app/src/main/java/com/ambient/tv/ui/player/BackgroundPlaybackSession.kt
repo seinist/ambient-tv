@@ -265,6 +265,13 @@ object BackgroundPlaybackSession {
             snapshot.value.status.durationMs > 0L &&
             handle?.canSeekNow() == true
 
+    /** External transports use the active renderer's window, never an elapsed live clock. */
+    internal fun canSeekFromMediaSession(): Boolean {
+        val state = snapshot.value
+        return state.active && !state.replacingSource && state.metadata?.source != "radio" &&
+            handle?.canSeekNow() == true
+    }
+
     fun refreshMetadata(metadata: PlaybackMetadata) {
         checkThread()
         val current = snapshot.value
