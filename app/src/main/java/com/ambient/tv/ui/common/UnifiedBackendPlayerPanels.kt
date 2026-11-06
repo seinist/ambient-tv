@@ -21,6 +21,7 @@ import androidx.compose.material.icons.filled.RepeatOne
 import androidx.compose.material.icons.filled.Replay
 import androidx.compose.material.icons.filled.FastForward
 import androidx.compose.material.icons.filled.GraphicEq
+import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material.icons.filled.HighQuality
 import androidx.compose.material.icons.filled.Memory
 import androidx.compose.material.icons.filled.Save
@@ -273,19 +274,24 @@ fun UnifiedBackendPlayerPanel(
                     onClick = { onPanelChange(UnifiedPlayerPanel.VISUALIZER) },
                 )
             }
-            // A hidden sleep button would leave the timer without any entry point.
-            com.ambient.tv.ui.player.activeOsdPlayer
-                ?.takeIf { !com.ambient.tv.ui.player.osdButtonVisible(com.ambient.tv.ui.player.OsdButton.SLEEP, it) }
-                ?.let {
-                    PlayerPanelEntry(
-                        icon = Icons.Filled.Bedtime,
-                        title = stringResource(R.string.player_sleep_timer),
-                        value = stringResource(if (sleepTimer.kind == SleepTimerKind.OFF) R.string.player_off else R.string.player_on),
-                        onClick = { onPanelChange(UnifiedPlayerPanel.SLEEP) },
-                    )
-                }
             settingsExtrasTitle?.let { RightPanelSectionTitle(it) }
             settingsExtras()
+            // The final two entries stay at the bottom of the scrollable root settings,
+            // never in subpage headers. Sleep is useful here even if its OSD chip is shown.
+            PlayerPanelEntry(
+                icon = Icons.Filled.Bedtime,
+                title = stringResource(R.string.player_sleep_timer),
+                value = stringResource(if (sleepTimer.kind == SleepTimerKind.OFF) R.string.player_off else R.string.player_on),
+                onClick = { onPanelChange(UnifiedPlayerPanel.SLEEP) },
+            )
+            if (com.ambient.tv.ui.player.LocalPlayerChromeState.current?.detail?.value != null) {
+                PlayerPanelEntry(
+                    icon = Icons.Outlined.Info,
+                    title = stringResource(R.string.player_details),
+                    value = "",
+                    onClick = { onPanelChange(UnifiedPlayerPanel.DETAILS) },
+                )
+            }
         }
         UnifiedPlayerPanel.SEEK -> UnifiedPlayerSidePanel(
             title = stringResource(R.string.settings_seek_page_title),
