@@ -380,8 +380,9 @@ internal class MpvPlaybackEngine(
      */
     private var nativeShaderRefreshRequired = false
     private var lastShaderRoute: String? = null
-    /** Avoid a tight retry/recompile loop for rejected native shader commands. */
+    /** Avoid a tight retry/recompile loop for permanently unsupported shader sources. */
     private var shaderRetryAfterMs = 0L
+    private var shaderReloadFailures = 0
     /** mpv's own linear-downscaling value, restored when SSimDownscaler is not running. */
     private var linearDownscalingDefault: String? = null
     private var surfaceWidth = 0
@@ -735,6 +736,7 @@ internal class MpvPlaybackEngine(
         // panel) while preserving the same file and transfer. Do not wait for a new codec event.
         if (gpuQualityMode && fileReady) {
             nativeShaderRefreshRequired = true
+            shaderRetryAfterMs = 0L
             imageApplyStale = true
             refreshImageSource()
         }
@@ -759,6 +761,7 @@ internal class MpvPlaybackEngine(
         // even if the decoded video is unchanged. Also covers aspect/display-mode changes.
         if (geometryChanged && gpuQualityMode && fileReady) {
             nativeShaderRefreshRequired = true
+            shaderRetryAfterMs = 0L
             imageApplyStale = true
             refreshImageSource()
         }
@@ -1017,7 +1020,12 @@ internal class MpvPlaybackEngine(
     fun updateImageOptions(options: MpvImageOptions) {
         // Persist the user's selection; Sparsam applies a cheap effective view at the boundary.
         val next = options.normalized()
-        if (next != imageOptions) onOutputTransition()
+        if (next != imageOptions) {
+            onOutputTransition()
+            // A new explicit panel selection must not inherit the last shader's retry backoff.
+            shaderReloadFailures = 0
+            shaderRetryAfterMs = 0L
+        }
         // An explicit edit needs a new probe; automatic refreshes keep the safety verdict.
         if (next.svp != imageOptions.svp || next.svpMode != imageOptions.svpMode) {
             svpOverloaded = false
@@ -1177,8 +1185,17 @@ internal class MpvPlaybackEngine(
                 // A materialization/native failure must not leave the user's chosen shader idle
                 // forever. Retry when the output stabilizes, but avoid hammering JNI every frame.
                 imageApplyStale = true
-                shaderRetryAfterMs = SystemClock.elapsedRealtime() + 1_500L
-            } else shaderRetryAfterMs = 0L
+                shaderReloadFailures++
+                val retryDelayMs = when (shaderReloadFailures) {
+                    1 -> 1_500L
+                    2 -> 5_000L
+                    else -> 15_000L
+                }
+                shaderRetryAfterMs = SystemClock.elapsedRealtime() + retryDelayMs
+            } else {
+                shaderReloadFailures = 0
+                shaderRetryAfterMs = 0L
+            }
         }
         activeShaderPresetKey = o.scaler.takeIf { it in loadedShaderKeys }
         val desiredFilters = desiredImageFilters(o, sdr)
@@ -1756,6 +1773,7 @@ internal class MpvPlaybackEngine(
         if (shaderRoute != lastShaderRoute) {
             lastShaderRoute = shaderRoute
             nativeShaderRefreshRequired = true
+            shaderRetryAfterMs = 0L
         }
         refreshSdrCurve()
         if (probeShieldBroadcast()) return
@@ -2498,6 +2516,7 @@ internal class MpvPlaybackEngine(
                     // startup often had no video transfer/geometry and planned no shaders.
                     if (gpuQualityMode && !audioOnly) {
                         nativeShaderRefreshRequired = true
+                        shaderRetryAfterMs = 0L
                         imageApplyStale = true
                         refreshImageSource()
                     }
