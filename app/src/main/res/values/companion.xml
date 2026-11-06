@@ -19,6 +19,7 @@
     <string name="companion_switch_server_message">The phone wants to play a title from %1$s, which is not the active server on this TV.</string>
     <string name="companion_switch_server_confirm">Switch and play</string>
     <string name="companion_share_unsupported">Share exactly one YouTube link or direct HTTP(S) media link, such as MP4, M3U8, MP3 or FLAC. Web pages and local files are not supported.</string>
+    <string name="companion_share_start_failed">Could not start sending to the TV. Please try again.</string>
     <string name="companion_send_to">Send to %1$s</string>
     <string name="companion_sending">Sending to %1$s…</string>
     <string name="companion_sent">Playback requested on %1$s</string>
