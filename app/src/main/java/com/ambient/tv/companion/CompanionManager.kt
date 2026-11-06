@@ -642,7 +642,8 @@ class CompanionManager @Inject constructor(@ApplicationContext private val conte
     }
     internal fun remoteServiceStopped() {
         remoteServiceActive = false; remoteServiceRequested = false
-        if (!foreground && !television) disconnect(clearTarget = false)
+        // Stopping an old remote-control notification must not cancel an in-flight Direct Share.
+        if (!canSendToTv && !television) disconnect(clearTarget = false)
     }
 
     @Synchronized private fun stopReceiver() {
@@ -1941,7 +1942,10 @@ class CompanionManager @Inject constructor(@ApplicationContext private val conte
         }
         if (mutable.value.online && mutable.value.target?.fingerprint == peer.fingerprint) {
             mutable.update { it.copy(sendingTo = peer.name) }
-            if (!send(CompanionFrame(type = "start", media = media))) mutable.update { it.copy(sendingTo = null) }
+            if (!send(CompanionFrame(type = "start", media = media))) {
+                headlessShareCompletion?.complete(false)
+                mutable.update { it.copy(sendingTo = null) }
+            }
             return
         }
         disconnect()
