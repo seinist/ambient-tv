@@ -154,9 +154,9 @@ fun youtubeVlcPlaybackUri(uri: String, mimeType: String?, progressiveUri: String
 }
 
 /**
- * Resume position comes from watch-next percentWatched. A cache hit is folded in before the
- * player starts. A cache miss must not hold the first frame: the playable URI is returned as
- * soon as it exists, and [applyYouTubePlaybackMetadata] runs when watch-next arrives.
+ * Resolve the same local/card progress shown in browse before opening the decoder. Optional
+ * watch-next metadata enriches it without delaying the playable URI; only a genuinely unknown
+ * resume point remains pending until [applyYouTubePlaybackMetadata] receives that metadata.
  */
 @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
 internal suspend fun prepareYouTubePlayback(
@@ -185,11 +185,34 @@ internal suspend fun prepareYouTubePlayback(
     return applyYouTubePlaybackMetadata(stream, ready)
 }
 
-/** Fills title, chapters, and resume from watch-next without touching an in-flight sponsor list. */
-internal fun applyYouTubePlaybackMetadata(stream: YouTubePlayback, metadata: YouTubeMetadata?): YouTubePlayback {
-    // Watch-next can report 0; the stream's own length is the fallback.
-    val duration = if (stream.isLive) 0L else metadata?.durationMs?.takeIf { it > 0 } ?: stream.durationMs
-    val resolveResume = !stream.resumeResolved && metadata != null && duration > 0L
+/**
+ * Enriches details and resolves canonical progress without touching an in-flight sponsor list.
+ * Late enrichment disables [useCurrentProgress]: any known card/local start was already resolved
+ * before playback, and new local reports belong to the running session, not its saved start.
+ */
+internal fun applyYouTubePlaybackMetadata(
+    stream: YouTubePlayback,
+    metadata: YouTubeMetadata?,
+    useCurrentProgress: Boolean = true,
+): YouTubePlayback {
+    // Watch-next can report no length. A saved duration also lets an exact local position
+    // survive a stream response without one; live clocks never become VOD progress.
+    val duration = if (stream.isLive) 0L else metadata?.durationMs?.takeIf { it > 0L }
+        ?: stream.durationMs.takeIf { it > 0L }
+        ?: YouTubeLocalProgress.durationMs(stream.videoId)
+        ?: 0L
+    // Do this even without watch-next: the first playback report must not replace a known
+    // card/local position with the decoder's temporary zero while metadata is still loading.
+    // A known zero (unwatched/finished) is final too; old metadata must not revive a resume.
+    val savedResume = when {
+        stream.isLive || stream.resumeResolved -> null
+        useCurrentProgress -> YouTubeLocalProgress.resumePositionMs(stream.videoId, duration, metadata?.percentWatched)
+        else -> metadata?.percentWatched?.let { percent ->
+            if (duration > 0L || percent <= 0 || percent >= YOUTUBE_FINISHED_PERCENT)
+                youtubeResumeMs(duration, percent, isLive = false)
+            else null
+        }
+    }
     return stream.copy(
         title = stream.title.takeUnless { it.isBlank() || it == "YouTube" || it == "SmartTube" } ?: metadata?.title ?: "SmartTube",
         author = stream.author ?: metadata?.author,
@@ -205,10 +228,10 @@ internal fun applyYouTubePlaybackMetadata(stream: YouTubePlayback, metadata: You
         backgroundUrl = metadata?.backgroundUrl ?: stream.backgroundUrl,
         durationMs = duration,
         timeline = stream.timeline.copy(chapters = if (stream.isLive) emptyList() else metadata?.chapters.orEmpty()).normalized(duration),
-        resumeMs = if (stream.isLive) 0L else if (resolveResume) com.ambient.tv.ui.player.resumeRewindPositionMs(
-            youtubeResumeMs(duration, YouTubeLocalProgress.resumePercent(metadata.videoId, metadata.percentWatched), false), stream.resumeRewindSeconds,
-        ) else stream.resumeMs,
-        resumeResolved = stream.isLive || stream.resumeResolved || resolveResume,
+        resumeMs = if (stream.isLive) 0L else savedResume?.let {
+            com.ambient.tv.ui.player.resumeRewindPositionMs(it, stream.resumeRewindSeconds)
+        } ?: stream.resumeMs,
+        resumeResolved = stream.isLive || stream.resumeResolved || savedResume != null,
         resumeRewindSeconds = if (stream.isLive) 0 else stream.resumeRewindSeconds,
     )
 }
@@ -263,13 +286,6 @@ internal class YouTubePlaybackMetadataCache(private val nowMs: () -> Long = { Sy
         if (generation != expectedGeneration) return
         entries[metadata.videoId] = Entry(metadata, nowMs())
         while (entries.size > 24) entries.remove(entries.keys.first())
-    }
-    @Synchronized fun updatePosition(id: String, positionMs: Long) {
-        val old = get(id) ?: return
-        if (old.durationMs > 0) {
-            val percent = ((positionMs.coerceAtLeast(0).toDouble() / old.durationMs) * 100).toInt().coerceIn(0, 100)
-            entries[id] = Entry(old.copy(percentWatched = percent), nowMs())
-        }
     }
     @Synchronized fun durationMs(id: String): Long? = entries[id]?.metadata?.durationMs?.takeIf { it > 0 }
     @Synchronized fun clear() { generation++; entries.clear() }

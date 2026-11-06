@@ -412,7 +412,18 @@ class PlaybackService : MediaLibraryService() {
                     streamUrl = (metadata.resumeState as? PlayerUiState.Ready)?.streamUrl)
                 // YouTube live clocks are relative to a changing HLS window. Sending them
                 // as watch progress creates bogus "continue at saved position" entries.
-                "youtube" -> if (!metadata.isLive) youtube.updateHistory(metadata.mediaId, position, duration)
+                "youtube" -> if (!metadata.isLive) {
+                    com.ambient.tv.youtube.youtubeProgressReport(
+                        positionMs = position,
+                        durationMs = duration,
+                        ended = state.status.ended,
+                        failed = state.status.error != null,
+                        explicitSeek = state.requestedTimelinePositionMs != null,
+                        completedByNavigation = state.completedByNavigation,
+                    )?.let { progress ->
+                        youtube.updateHistory(metadata.mediaId, progress.positionMs, duration, progress.completed)
+                    }
+                }
                 // Telegram keeps its resume point on the device and needs only the final position;
                 // an unknown one (renderer at 0) was already replaced by the last position seen.
                 "telegram" -> if (stopped) telegram.get().rememberResumePosition(metadata.mediaId,

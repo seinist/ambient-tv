@@ -198,6 +198,8 @@ object BackgroundPlaybackSession {
         val replacingSource: Boolean = false,
         /** Final user target on the absolute timeline, even before the decoder seeks. */
         val requestedTimelinePositionMs: Long? = null,
+        /** An automatic EOF/terminal-segment handoff completed the outgoing item. */
+        val completedByNavigation: Boolean = false,
     ) {
         val active get() = metadata != null || replacingSource
         val playing get() = status.playing
@@ -403,8 +405,10 @@ object BackgroundPlaybackSession {
         previous?.detachVideoOutput()
         // A renderer replacement is not a stopped playback. Reporting it as stopped makes Plex/
         // Jellyfin briefly close the active session and can also move the resume point backwards.
+        // The outgoing report is final even if the next item is still loading; the service
+        // correctly rejects active transition heartbeats marked replacingSource.
         if (previous != null && !samePlayback) {
-            completed.addLast(current.copy(status = previousStatus ?: current.status))
+            completed.addLast(current.copy(status = previousStatus ?: current.status, replacingSource = false))
         }
         // Retire the outgoing owner before acquiring the next one. Native teardown may finish
         // asynchronously; the snapshot stays active so the UI cannot mistake this handoff for Stop.
@@ -421,7 +425,7 @@ object BackgroundPlaybackSession {
         } catch (error: Throwable) {
             // Same cleanup as stop(): the outgoing playback ended here, so report it as stopped
             // (a renderer switch had deliberately not queued it above).
-            if (previous != null && samePlayback) completed.addLast(current.copy(status = previousStatus ?: current.status))
+            if (previous != null && samePlayback) completed.addLast(current.copy(status = previousStatus ?: current.status, replacingSource = false))
             PlaybackOutputTransition.clear()
             handle = null
             identity = null
@@ -461,6 +465,7 @@ object BackgroundPlaybackSession {
         }
         mutableSnapshot.value = Snapshot(
             metadata, backend, created.status(), ++generation, wantsToPlay = created.wantsToPlay(),
+            completedByNavigation = samePlayback && current.completedByNavigation,
         )
         if (previous != null || current.replacingSource) PlaybackOutputTransition.begin(context)
         if (!continuesNextUpChain) consecutiveAutoAdvances = 0
@@ -484,7 +489,7 @@ object BackgroundPlaybackSession {
     }
 
     private fun completedSnapshot(current: Snapshot, status: PlaybackStatus): Snapshot =
-        current.copy(status = status, requestedTimelinePositionMs =
+        current.copy(status = status, replacingSource = false, requestedTimelinePositionMs =
             if (handle != null && seekOwner === handle) seekState?.pendingTargetMs else null)
 
     fun owns(candidate: PlaybackHandle) = handle === candidate
@@ -513,6 +518,7 @@ object BackgroundPlaybackSession {
         mutableVideoPresentation.value = VideoPresentation()
         SleepSession.itemChanged(sleepTarget)
         mutableSnapshot.value = current.copy(metadata = metadata, generation = ++generation, requestedTimelinePositionMs = null,
+            completedByNavigation = false,
             status = handle?.status() ?: current.status)
         return true
     }
@@ -550,7 +556,7 @@ object BackgroundPlaybackSession {
         appContext?.let { context ->
             runCatching { TitleVideoSettingsStore.capture(context, current.metadata, previous, videoSettingsOverride) }
         }
-        if (previous != null) completed.addLast(current.copy(status = status))
+        if (previous != null) completed.addLast(current.copy(status = status, replacingSource = false))
         handle = null
         identity = null
         videoSettingsOverride = null
@@ -561,6 +567,7 @@ object BackgroundPlaybackSession {
             metadata = replacementMetadata ?: current.metadata,
             status = if (replacementMetadata != null) PlaybackStatus() else status.copy(playing = false, ended = false, error = null),
             generation = ++generation, wantsToPlay = playIntent, replacingSource = true,
+            completedByNavigation = replacementMetadata == null && current.completedByNavigation,
         )
         val token = generation
         appContext?.let(PlaybackOutputTransition::begin)
@@ -841,9 +848,10 @@ object BackgroundPlaybackSession {
     }
 
     fun shouldConfirmNextUp(limit: Int): Boolean = limit > 0 && consecutiveAutoAdvances >= limit
-    fun recordAutomaticNextUp(candidate: NextUpCandidate) {
+    fun recordAutomaticNextUp(candidate: NextUpCandidate, completed: Boolean = false) {
         consecutiveAutoAdvances++
         expectedNextUp = candidate.source to candidate.mediaId
+        if (completed) mutableSnapshot.value = snapshot.value.copy(completedByNavigation = true)
     }
     fun recordManualNextUp(candidate: NextUpCandidate) {
         consecutiveAutoAdvances = 0

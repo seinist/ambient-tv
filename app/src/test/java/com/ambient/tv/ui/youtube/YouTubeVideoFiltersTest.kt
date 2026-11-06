@@ -107,4 +107,22 @@ class YouTubeVideoFiltersTest {
         assertFalse(youtubeVideoFiltersAvailable(emptyList()))
         assertFalse(youtubeVideoFiltersAvailable(listOf(YouTubeRow("Empty", emptyList()))))
     }
+
+    @Test fun completedVideoLeavesInProgressAndTheCachedCardShowsSeen() {
+        val id = "filter-completed-video"
+        val item = YouTubeItem(id, "Video", durationMs = 100_000, percentWatched = 40)
+        val rows = listOf(YouTubeRow("Videos", listOf(item)))
+        assertEquals(rows, applyYouTubeViewOptions(rows, YouTubeSort.DEFAULT, YouTubeFilter.IN_PROGRESS))
+        com.ambient.tv.youtube.YouTubeLocalProgress.record(id, 80_000, 100_000, completed = true)
+        assertEquals(100, youtubeCardProgress(item))
+        assertTrue(applyYouTubeViewOptions(rows, YouTubeSort.DEFAULT, YouTubeFilter.IN_PROGRESS).isEmpty())
+        assertTrue(applyYouTubeViewOptions(rows, YouTubeSort.DEFAULT, YouTubeFilter.UNWATCHED).isEmpty())
+    }
+
+    @Test fun cardCompletionAndInProgressUseTheSameThresholdAsResume() {
+        val item = YouTubeItem("filter-finished-threshold", "Video", durationMs = 100_000, percentWatched = 95)
+        assertEquals(95, youtubeCardProgress(item))
+        assertTrue(applyYouTubeViewOptions(listOf(YouTubeRow("Videos", listOf(item))),
+            YouTubeSort.DEFAULT, YouTubeFilter.IN_PROGRESS).isEmpty())
+    }
 }

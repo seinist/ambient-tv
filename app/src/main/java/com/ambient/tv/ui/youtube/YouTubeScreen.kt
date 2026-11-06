@@ -111,8 +111,8 @@ import androidx.lifecycle.repeatOnLifecycle
             YouTubeHomeSelection.requests.collect(viewModel::onHomeSelected)
         }
     }
-    val visibleRows = remember(state.rows, state.sort, state.sortDescending, state.filter) {
-        applyYouTubeViewOptions(state.rows, state.sort, state.filter, state.sortDescending)
+    val visibleRows by remember(state.rows, state.sort, state.sortDescending, state.filter) {
+        derivedStateOf { applyYouTubeViewOptions(state.rows, state.sort, state.filter, state.sortDescending) }
     }
     val populatedRows = remember(visibleRows) { visibleRows.filter { it.items.isNotEmpty() } }
     val browseSectioned = (state.query.isBlank() && state.feed == YouTubeFeed.HOME &&
@@ -792,7 +792,8 @@ private fun YouTubeListItem(
 ) {
     val item = rememberDeArrowItem(rawItem)
     LaunchedEffect(rawItem.videoId, rawItem.percentWatched) {
-        if (!rawItem.isChannel) com.ambient.tv.youtube.YouTubeLocalProgress.observeRemote(rawItem.videoId, rawItem.percentWatched)
+        if (!rawItem.isChannel && !rawItem.isLive && !rawItem.isUpcoming)
+            com.ambient.tv.youtube.YouTubeLocalProgress.observeCached(rawItem.videoId, rawItem.percentWatched)
     }
     var focused by remember(item.videoId) { mutableStateOf(false) }
     val shape = RoundedCornerShape(10.dp)
@@ -825,10 +826,11 @@ private fun YouTubeListItem(
             horizontalArrangement = Arrangement.spacedBy(14.dp * rowScale),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            YouTubeItemArtwork(
-                item,
-                Modifier.width(deviceDp(if (detailed) 190.dp else 128.dp, 104.dp) * rowScale).aspectRatio(16f / 9f).clip(RoundedCornerShape(7.dp)),
-            )
+            Box(Modifier.width(deviceDp(if (detailed) 190.dp else 128.dp, 104.dp) * rowScale)
+                .aspectRatio(16f / 9f).clip(RoundedCornerShape(7.dp))) {
+                YouTubeItemArtwork(item, Modifier.fillMaxSize())
+                YouTubeWatchProgress(item)
+            }
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 com.ambient.tv.companion.PlaybackBadge(com.ambient.tv.companion.playbackIndicator(com.ambient.tv.companion.CompanionMedia("youtube", item.videoId)))
                 MarqueeTitle(item.title, focused = focused, style = MaterialTheme.typography.titleMedium)
@@ -1100,7 +1102,8 @@ private fun Card(
 ) {
     val item = rememberDeArrowItem(rawItem)
     LaunchedEffect(rawItem.videoId, rawItem.percentWatched) {
-        if (!rawItem.isChannel) com.ambient.tv.youtube.YouTubeLocalProgress.observeRemote(rawItem.videoId, rawItem.percentWatched)
+        if (!rawItem.isChannel && !rawItem.isLive && !rawItem.isUpcoming)
+            com.ambient.tv.youtube.YouTubeLocalProgress.observeCached(rawItem.videoId, rawItem.percentWatched)
     }
     var focused by remember(item.videoId) { mutableStateOf(false) }
     val shape = RoundedCornerShape(10.dp)
@@ -1138,16 +1141,7 @@ private fun Card(
                 YouTubeItemArtwork(item, Modifier.fillMaxSize())
                 com.ambient.tv.companion.PlaybackBadge(com.ambient.tv.companion.playbackIndicator(com.ambient.tv.companion.CompanionMedia("youtube", item.videoId)),
                     Modifier.align(Alignment.TopStart).padding(5.dp))
-                val watched = com.ambient.tv.youtube.YouTubeLocalProgress.percent(item.videoId, item.percentWatched)
-                if (watched > 0) {
-                    Box(
-                        Modifier
-                            .align(Alignment.BottomStart)
-                            .fillMaxWidth(watched.coerceIn(0, 100) / 100f)
-                            .height(3.dp)
-                            .background(MaterialTheme.colorScheme.primary),
-                    )
-                }
+                YouTubeWatchProgress(item)
             }
             if (showText) {
                 CenteredMarqueeTitle(
@@ -1166,6 +1160,21 @@ private fun Card(
                 }
             }
         }
+    }
+}
+
+/** The same watch state drives rows, grids, filtering, and the player's saved start. */
+@Composable
+private fun BoxScope.YouTubeWatchProgress(item: YouTubeItem) {
+    val watched = youtubeCardProgress(item)
+    if (watched >= com.ambient.tv.youtube.YOUTUBE_FINISHED_PERCENT) {
+        MetaBadge(
+            text = "✓", emphasized = true,
+            modifier = Modifier.align(Alignment.TopEnd).padding(7.dp),
+        )
+    } else if (watched > 0) {
+        Box(Modifier.align(Alignment.BottomStart).fillMaxWidth(watched / 100f)
+            .height(3.dp).background(MaterialTheme.colorScheme.primary))
     }
 }
 /** Keeps the first loading frame in the exact selected presentation family. */

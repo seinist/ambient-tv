@@ -700,7 +700,7 @@ internal fun LibraryContent(
                         HomeShortcutRow(it, onOpenHomeContent, onShortcutFocused, requestInitialFocus = false)
                     }
                     else -> state.rows.firstOrNull { it.id == rowKey }?.let { row ->
-                        ContentRow(row = row, onItemClick = { item ->
+                        ContentRow(row = row.withHomeYouTubeProgress(), onItemClick = { item ->
                             val videoId = homeYouTubeVideoId(item.ratingKey)
                             if (videoId != null) onYouTubeHomeVideoClick(videoId, row.id)
                             else {
@@ -946,7 +946,7 @@ internal fun LibraryContent(
                             val index = state.rows.indexOfFirst { it.id == rowKey }
                             state.rows.getOrNull(index)?.let { row ->
                                 ContentRow(
-                                    row = row,
+                                    row = row.withHomeYouTubeProgress(),
                                     onItemClick = { item ->
                                         val videoId = homeYouTubeVideoId(item.ratingKey)
                                         if (videoId != null) onYouTubeHomeVideoClick(videoId, row.id)

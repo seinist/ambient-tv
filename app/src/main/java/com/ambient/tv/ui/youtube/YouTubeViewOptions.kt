@@ -6,6 +6,10 @@ import com.ambient.tv.youtube.YouTubeRow
 enum class YouTubeSort { DEFAULT, TITLE, DURATION }
 enum class YouTubeFilter { ALL, UNWATCHED, IN_PROGRESS, LIVE, SHORTS }
 
+internal fun youtubeCardProgress(item: YouTubeItem): Int =
+    if (item.isChannel || item.isLive || item.isUpcoming) 0
+    else com.ambient.tv.youtube.YouTubeLocalProgress.percent(item.videoId, item.percentWatched)
+
 /** Channel tiles have no watch status or video flags. A channel's uploads still do. */
 internal fun youtubeVideoFiltersAvailable(rows: List<YouTubeRow>): Boolean =
     rows.any { row -> row.items.any { !it.isChannel } }
@@ -29,8 +33,8 @@ internal fun applyYouTubeViewOptions(
         val filtered = row.items.filter { item ->
             item.isChannel || when (filter) {
                 YouTubeFilter.ALL -> true
-                YouTubeFilter.UNWATCHED -> com.ambient.tv.youtube.YouTubeLocalProgress.percent(item.videoId, item.percentWatched) <= 0
-                YouTubeFilter.IN_PROGRESS -> com.ambient.tv.youtube.YouTubeLocalProgress.percent(item.videoId, item.percentWatched) in 1..99
+                YouTubeFilter.UNWATCHED -> youtubeCardProgress(item) <= 0
+                YouTubeFilter.IN_PROGRESS -> youtubeCardProgress(item) in 1 until com.ambient.tv.youtube.YOUTUBE_FINISHED_PERCENT
                 YouTubeFilter.LIVE -> item.isLive || item.isUpcoming
                 YouTubeFilter.SHORTS -> item.isShorts
             }

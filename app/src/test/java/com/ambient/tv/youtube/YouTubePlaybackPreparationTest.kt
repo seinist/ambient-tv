@@ -40,6 +40,40 @@ class YouTubePlaybackPreparationTest {
         releaseMetadata.complete(Unit)
         Unit
     }
+    @Test fun knownCardResumeIsPublishedWhileWatchNextIsStillLoading() = runBlocking {
+        val id = "prepare-known-card-slow-watch-next"
+        YouTubeLocalProgress.observeRemote(id, 40)
+        val releaseMetadata = CompletableDeferred<Unit>()
+        val published = CompletableDeferred<YouTubePlayback>()
+        val loader = launch {
+            published.complete(prepareYouTubePlayback(null,
+                { releaseMetadata.await(); metadata(id).copy(percentWatched = 80) },
+                { stream().copy(videoId = id, durationMs = 120_000) },
+            ))
+        }
+        try {
+            val result = withTimeout(2000) { published.await() }
+            assertEquals(48_000L, result.resumeMs)
+            assertTrue(result.resumeResolved)
+            assertEquals("https://fixture.invalid/video.mpd", result.uri)
+            assertFalse(releaseMetadata.isCompleted)
+        } finally {
+            releaseMetadata.complete(Unit)
+            loader.join()
+        }
+    }
+    @Test fun freshCardOverridesOlderPlaybackMetadataCache() = runBlocking {
+        val id = "prepare-card-over-cached-position"
+        val cache = YouTubePlaybackMetadataCache { 0 }
+        cache.put(metadata(id).copy(percentWatched = 80), cache.generation)
+        YouTubeLocalProgress.observeRemote(id, 40)
+
+        val result = prepareYouTubePlayback(cache.get(id), { error("Unexpected metadata reload") },
+            { stream().copy(videoId = id) })
+        assertEquals(80, cache.get(id)!!.percentWatched)
+        assertEquals(48_000L, result.resumeMs)
+        assertTrue(result.resumeResolved)
+    }
     @Test fun metadataReadyBeforeTheStreamIsPublishedWithTheResume() = runBlocking {
         val result = prepareYouTubePlayback(null, { metadata() }, { stream() })
         assertEquals("Title", result.title)
@@ -84,10 +118,9 @@ class YouTubePlaybackPreparationTest {
         cache.put(metadata("video").copy(title = "Fresh response"), cache.generation)
         assertEquals("Fresh response", cache.get("video")!!.title)
     }
-    @Test fun recentProgressUpdatesCachedResumeAndCacheIsBounded() {
+    @Test fun metadataCacheIsBounded() {
         val cache = YouTubePlaybackMetadataCache { 0 }
-        cache.put(metadata(), cache.generation); cache.updatePosition("video", 60_000)
-        assertEquals(50, cache.get("video")!!.percentWatched)
+        cache.put(metadata(), cache.generation)
         repeat(25) { cache.put(metadata("video-$it"), cache.generation) }
         assertNull(cache.get("video")); assertNotNull(cache.get("video-24"))
     }

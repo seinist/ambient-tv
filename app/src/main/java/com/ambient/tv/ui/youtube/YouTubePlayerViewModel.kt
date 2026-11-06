@@ -231,7 +231,9 @@ class YouTubePlayerViewModel @Inject constructor(@dagger.hilt.android.qualifiers
             _uiState.update { current ->
                 val playback = current.playback
                 val enriched = if (playback != null && detail != null) {
-                    com.ambient.tv.youtube.applyYouTubePlaybackMetadata(playback, detail)
+                    // A still-unresolved start had no card/local progress at launch. Reports
+                    // from its first seconds must not replace the historical metadata now.
+                    com.ambient.tv.youtube.applyYouTubePlaybackMetadata(playback, detail, useCurrentProgress = false)
                 } else {
                     playback
                 }
