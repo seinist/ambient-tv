@@ -487,7 +487,7 @@ class HomeViewModel @Inject constructor(
         tvPreviewScope = nextTvScope
         loadPhotoRow()
         loadTrailerRows()
-        loadRadioRows()
+        loadRadioRows(forceRefresh = refreshing)
         loadYouTubeRows(youtubeMode)
         loadTelegramRows()
         if (!plexOnly && !jellyfinOnly && !embyOnly && liveTvRegistry.configured().isNotEmpty()) startTvPreview()
@@ -1642,7 +1642,7 @@ class HomeViewModel @Inject constructor(
         }
     }
 
-    private fun loadRadioRows() {
+    private fun loadRadioRows(forceRefresh: Boolean = false) {
         val generation = ++radioRowsGeneration
         radioJob?.cancel()
         radioRowsPending = false
@@ -1704,13 +1704,13 @@ class HomeViewModel @Inject constructor(
                         val result = suspendResult {
                             when {
                                 definition.contentKey in setOf("home", HomeRowDefinition.RADIO_POPULAR) ->
-                                    radioRepository.popular(HOME_ROW_LIMIT)
+                                    radioRepository.popular(HOME_ROW_LIMIT, forceRefresh)
                                 definition.contentKey.startsWith("${HomeRowDefinition.RADIO_GENRE}:") ->
-                                    radioRepository.search(tag = definition.contentKey.substringAfter(':'), limit = HOME_ROW_LIMIT).items
+                                    radioRepository.search(tag = definition.contentKey.substringAfter(':'), limit = HOME_ROW_LIMIT, forceRefresh = forceRefresh).items
                                 definition.contentKey.startsWith("${HomeRowDefinition.RADIO_COUNTRY}:") ->
-                                    radioRepository.search(countryCode = definition.contentKey.substringAfter(':'), limit = HOME_ROW_LIMIT).items
+                                    radioRepository.search(countryCode = definition.contentKey.substringAfter(':'), limit = HOME_ROW_LIMIT, forceRefresh = forceRefresh).items
                                 definition.contentKey.startsWith("${HomeRowDefinition.RADIO_LANGUAGE}:") ->
-                                    radioRepository.search(language = definition.contentKey.substringAfter(':'), limit = HOME_ROW_LIMIT).items
+                                    radioRepository.search(language = definition.contentKey.substringAfter(':'), limit = HOME_ROW_LIMIT, forceRefresh = forceRefresh).items
                                 else -> emptyList()
                             }
                         }

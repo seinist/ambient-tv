@@ -232,7 +232,7 @@ class RadioViewModel @Inject constructor(
             // Reopening an existing NavHost destination must revalidate its empty/error
             // result instead of returning without a request. Keep the active facet/search.
             if (initialSection != null && initialSection != _state.value.section) selectSection(initialSection)
-            else refresh()
+            else refreshOnEntry()
             return
         }
         entered = true
@@ -254,21 +254,26 @@ class RadioViewModel @Inject constructor(
         }
     }
 
-    fun refresh() {
+    fun refresh() = refreshInternal(forceRefresh = true)
+
+    private fun refreshOnEntry() = refreshInternal(forceRefresh = false)
+
+    private fun refreshInternal(forceRefresh: Boolean) {
         resetFocusPaging()
         refreshLocalState()
         val current = _state.value
-        // The request is scheduled in a coroutine. Mark a confirmed-empty remote page
-        // pending synchronously so Reload cannot paint another stale empty frame.
+        // A remote page which has not answered yet must not briefly show an empty-state message.
         val remote = current.submittedQuery.isNotBlank() || current.selectedFacet != null ||
             current.section == RadioSection.POPULAR || current.section.isFacetSection
         if (remote && (if (current.isFacetOverview()) current.facets.isEmpty() else current.stations.isEmpty())) {
             _state.value = current.copy(loading = true, contentReady = false, error = false)
         }
         when {
-            current.submittedQuery.isNotBlank() || current.selectedFacet != null -> loadStations(reset = true)
-            current.section == RadioSection.POPULAR -> loadStations(reset = true)
-            current.section.isFacetSection -> loadFacets(current.section)
+            current.submittedQuery.isNotBlank() || current.selectedFacet != null ->
+                loadStations(reset = true, forceRefresh = forceRefresh)
+            current.section == RadioSection.POPULAR ->
+                loadStations(reset = true, forceRefresh = forceRefresh)
+            current.section.isFacetSection -> loadFacets(current.section, forceRefresh)
             else -> showLocalSection(current.section)
         }
     }
@@ -517,124 +522,147 @@ class RadioViewModel @Inject constructor(
         )
     }
 
-    private fun loadFacets(section: RadioSection) {
+    private fun loadFacets(section: RadioSection, forceRefresh: Boolean = false) {
         if (!section.isFacetSection) return
         loadJob?.cancel()
         loadJob = viewModelScope.launch {
-            // Retain the last successful categories while refreshing so the list and focus
-            // do not collapse into generic placeholders if the remote catalog is slow.
             val previousFacets = _state.value.facets
             _state.value = _state.value.copy(
-                loading = true,
-                loadingMore = false,
-                stations = emptyList(),
-                facets = previousFacets,
-                selectedFacet = null,
-                hasMore = false,
-                error = false,
-                contentReady = previousFacets.isNotEmpty(),
+                loading = true, loadingMore = false, stations = emptyList(),
+                facets = previousFacets, selectedFacet = null, hasMore = false,
+                error = false, contentReady = previousFacets.isNotEmpty(),
             )
+            // Read an entire cached index first: a cold start can paint categories offline.
+            val cached = suspendResult {
+                when (section) {
+                    RadioSection.GENRES -> repository.cachedTags(RADIO_FACET_LIMIT)
+                    RadioSection.COUNTRIES -> repository.cachedCountries(RADIO_FACET_LIMIT)
+                    RadioSection.LANGUAGES -> repository.cachedLanguages(RADIO_FACET_LIMIT)
+                    else -> null
+                }
+            }.getOrNull()
+            if (cached != null && (cached.value.isNotEmpty() || cached.fresh) &&
+                _state.value.section == section && _state.value.selectedFacet == null
+            ) {
+                _state.value = _state.value.copy(
+                    loading = false, facets = cached.value, error = false, contentReady = true,
+                )
+            }
+            if (cached?.fresh == true && !forceRefresh) return@launch
             suspendResult {
                 when (section) {
-                    RadioSection.GENRES -> repository.tags(RADIO_FACET_LIMIT)
-                    RadioSection.COUNTRIES -> repository.countries(RADIO_FACET_LIMIT)
-                    RadioSection.LANGUAGES -> repository.languages(RADIO_FACET_LIMIT)
+                    RadioSection.GENRES -> repository.tags(RADIO_FACET_LIMIT, forceRefresh)
+                    RadioSection.COUNTRIES -> repository.countries(RADIO_FACET_LIMIT, forceRefresh)
+                    RadioSection.LANGUAGES -> repository.languages(RADIO_FACET_LIMIT, forceRefresh)
                     else -> emptyList()
                 }
             }.onSuccess { facets ->
                 if (_state.value.section == section && _state.value.selectedFacet == null) {
                     _state.value = _state.value.copy(
-                        loading = false,
-                        facets = facets,
-                        error = false,
-                        contentReady = true,
+                        loading = false, facets = facets, error = false, contentReady = true,
                     )
                 }
             }.onFailure { error ->
                 timber.log.Timber.tag("RadioBrowser").w(error, "Failed to load %s categories", section.key)
                 if (_state.value.section == section && _state.value.selectedFacet == null) {
                     _state.value = _state.value.copy(
-                        loading = false,
-                        facets = previousFacets,
-                        error = true,
-                        contentReady = true,
+                        loading = false, facets = _state.value.facets.ifEmpty { previousFacets },
+                        error = true, contentReady = true,
                     )
                 }
             }
         }
     }
 
-    private fun loadStations(reset: Boolean) {
+    private fun loadStations(reset: Boolean, forceRefresh: Boolean = false) {
         loadJob?.cancel()
         loadJob = viewModelScope.launch {
             val before = _state.value
             val offset = if (reset) 0 else before.nextOffset
+            val facet = before.selectedFacet
+            val section = before.section
+            val query = before.submittedQuery.takeIf(String::isNotBlank)
+            val descending = before.sortDescending
+            val popular = section == RadioSection.POPULAR && facet == null && query == null
+            val pageLimit = if (popular) POPULAR_LIMIT else PAGE_SIZE
             _state.value = before.copy(
-                loading = reset,
-                loadingMore = !reset,
-                // A reload of an already visible page must not wipe its cards or focus.
-                // New sections/searches clear the old page before calling this method.
-                stations = before.stations,
-                nextOffset = if (reset) 0 else before.nextOffset,
-                error = false,
+                loading = reset && before.stations.isEmpty(),
+                loadingMore = !reset || (reset && before.stations.isNotEmpty()),
+                stations = before.stations, error = false,
                 contentReady = before.stations.isNotEmpty() || before.contentReady,
             )
-            val facet = _state.value.selectedFacet
-            val section = _state.value.section
-            val query = _state.value.submittedQuery.takeIf(String::isNotBlank)
-            val descending = _state.value.sortDescending
-            suspendResult {
-                if (section == RadioSection.POPULAR && facet == null && query == null) {
-                    // 'Popular' remains the actual top-clicked catalog, not the entire
-                    // station database. Fetch its complete bounded set before indexing.
-                    val popular = repository.popular(POPULAR_LIMIT)
-                    RadioSearchPage(popular, offset = 0, limit = POPULAR_LIMIT, hasMore = false)
-                } else {
-                    repository.search(
-                        query = query,
-                        countryCode = facet?.id.takeIf { section == RadioSection.COUNTRIES },
-                        language = facet?.id.takeIf { section == RadioSection.LANGUAGES },
-                        tag = facet?.id.takeIf { section == RadioSection.GENRES },
-                        offset = offset,
-                        limit = if (facet != null) FACET_PAGE_SIZE else PAGE_SIZE,
-                        order = "name",
-                        reverse = descending,
-                    )
+
+            fun publish(page: RadioSearchPage, revalidating: Boolean = false) {
+                // Keep already loaded pages on return when page zero still has exactly the same
+                // UUID ordering. Do not discard scroll position or the currently focused card.
+                val retainTail = reset && before.stations.size > page.items.size &&
+                    page.items.size == PAGE_SIZE &&
+                    before.stations.take(PAGE_SIZE).map(RadioStation::id) == page.items.map(RadioStation::id)
+                val merged = when {
+                    retainTail -> page.items + before.stations.drop(PAGE_SIZE)
+                    reset -> page.items
+                    else -> radioAppendPagedStations(before.stations, page.items)
                 }
-            }.onSuccess { page ->
-                val existing = if (reset) emptyList() else _state.value.stations
                 _state.value = _state.value.copy(
-                    loading = false,
-                    loadingMore = false,
-                    // API pages are sorted consistently by the remote cursor. Appending in
-                    // that order ensures a scroll fetch really extends the visible tail.
-                    stations = if (section == RadioSection.POPULAR && facet == null && query == null) {
-                        radioAlphabeticalStations(radioAppendPagedStations(existing, page.items), descending)
-                    } else radioAppendPagedStations(existing, page.items),
-                    // Facet counts provide a fallback when a mirror delivers a short page.
-                    // An empty mapped page still terminates the fallback to avoid endless fetches.
-                    hasMore = radioHasMoreStations(page.hasMore, page.items.size,
-                        page.offset + page.limit, facet?.stationCount),
-                    nextOffset = page.offset + page.limit,
-                    error = false,
-                    contentReady = true,
+                    loading = false, loadingMore = revalidating,
+                    stations = if (popular) radioAlphabeticalStations(merged, descending) else merged,
+                    hasMore = if (retainTail) before.hasMore
+                        else radioHasMoreStations(page.hasMore, page.items.size,
+                            page.offset + page.limit, facet?.stationCount),
+                    nextOffset = if (retainTail) before.nextOffset else page.offset + page.limit,
+                    error = false, contentReady = true,
                 )
-                // A country, language or genre is loaded completely, so the A–Z index and the
-                // list cover every station, not only the pages reached by scrolling.
-                if (facet != null && _state.value.hasMore) {
-                    _state.value = _state.value.copy(loadingMore = true)
-                    loadStations(reset = false)
+            }
+
+            val cached = suspendResult {
+                if (popular) repository.cachedPopular(POPULAR_LIMIT)?.let {
+                    RadioSearchPage(it.value, 0, POPULAR_LIMIT, false) to it.fresh
+                } else repository.cachedSearch(
+                    query = query,
+                    countryCode = facet?.id.takeIf { section == RadioSection.COUNTRIES },
+                    language = facet?.id.takeIf { section == RadioSection.LANGUAGES },
+                    tag = facet?.id.takeIf { section == RadioSection.GENRES },
+                    offset = offset, limit = pageLimit, order = "name", reverse = descending,
+                )?.let { it.value to it.fresh }
+            }.getOrNull()
+            if (cached != null && (cached.first.items.isNotEmpty() || cached.second)) {
+                // A reused ViewModel's populated page is already better than resetting it
+                // to the cached first page. Keep its complete cursor until refresh finishes.
+                if (reset && before.stations.isNotEmpty()) {
+                    _state.value = _state.value.copy(
+                        loading = false, loadingMore = !cached.second || forceRefresh,
+                        contentReady = true,
+                    )
+                } else publish(cached.first, revalidating = !cached.second || forceRefresh)
+            }
+            if (cached?.second == true && !forceRefresh) {
+                if (reset && before.stations.isNotEmpty()) {
+                    _state.value = _state.value.copy(loading = false, loadingMore = false)
                 }
+                return@launch
+            }
+
+            suspendResult {
+                if (popular) {
+                    val stations = repository.popular(POPULAR_LIMIT, forceRefresh)
+                    RadioSearchPage(stations, offset = 0, limit = POPULAR_LIMIT, hasMore = false)
+                } else repository.search(
+                    query = query,
+                    countryCode = facet?.id.takeIf { section == RadioSection.COUNTRIES },
+                    language = facet?.id.takeIf { section == RadioSection.LANGUAGES },
+                    tag = facet?.id.takeIf { section == RadioSection.GENRES },
+                    offset = offset, limit = pageLimit, order = "name", reverse = descending,
+                    forceRefresh = forceRefresh,
+                )
+            }.onSuccess { page ->
+                publish(page)
             }.onFailure { error ->
                 timber.log.Timber.tag("RadioBrowser").w(error, "Failed to load stations for %s", section.key)
                 _state.value = _state.value.copy(
-                    loading = false,
-                    loadingMore = false,
-                    // Never auto-retry the same failed page on every focus movement.
-                    // Explicit refresh restores paging after the catalog returns.
-                    hasMore = false,
-                    error = true,
-                    contentReady = true,
+                    loading = false, loadingMore = false,
+                    // Never retry the same failed page on every focus movement.
+                    hasMore = if (_state.value.stations.isNotEmpty()) _state.value.hasMore else false,
+                    error = true, contentReady = true,
                 )
             }
         }
@@ -671,7 +699,6 @@ class RadioViewModel @Inject constructor(
 
     companion object {
         private const val PAGE_SIZE = 48
-        private const val FACET_PAGE_SIZE = 500
         private const val POPULAR_LIMIT = 100
         private const val RADIO_VIEW_STATE_KEY = "radio"
     }
