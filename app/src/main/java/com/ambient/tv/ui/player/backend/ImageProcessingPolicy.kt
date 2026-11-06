@@ -551,6 +551,17 @@ internal fun mpvBuiltinSharpen(sharpening: String, scaler: String, processing: B
         else -> "0"
     }
 
+/**
+ * MPV executes lavfi (CPU) before GLSL hooks (GPU). If both are registered, both process the
+ * same frame. During a live CPU -> GPU handoff, the old CPU filter must therefore be removed
+ * *before* the new shader is attached, not merely omitted from the desired filter map.
+ */
+internal fun mpvDeblockCpuMustRetireBeforeGpu(
+    upcomingShaderKeys: Collection<String>,
+    activeCpuFilterNames: Collection<String>,
+): Boolean = "plex-deblock" in activeCpuFilterNames &&
+    upcomingShaderKeys.any { it in setOf("deblock_light", "deblock_medium", "deblock_strong") }
+
 /** Keep the lavfi deblock as a fallback if the MPV GPU hook could not be loaded. */
 internal fun mpvCpuImageFilters(
     options: MpvImageOptions, sdr: Boolean, hardwareDeblock: Boolean = false,
