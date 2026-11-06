@@ -1,5 +1,6 @@
 package com.ambient.tv.ui.telegram
 
+import com.ambient.tv.ui.theme.animatedFocusSurface
 import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.AudioFile
@@ -741,17 +742,14 @@ private fun MonogramListItem(
     ) {
         Row(
             Modifier.fillMaxWidth()
-                .background(
-                    if (focused) MaterialTheme.colorScheme.primary.copy(alpha = .12f)
-                    else Color.Transparent,
-                    shape,
-                )
-                .border(
-                    if (focused) 2.dp else 1.dp,
-                    if (focused) MaterialTheme.colorScheme.primary
-                    else Color.White.copy(alpha = .06f),
-                    shape,
-                )
+                .animatedFocusSurface(
+                focused = focused, shape = shape,
+                focusedBackground = MaterialTheme.colorScheme.primary.copy(alpha = .12f),
+                unfocusedBackground = Color.Transparent,
+                focusedBorder = MaterialTheme.colorScheme.primary,
+                unfocusedBorder = Color.White.copy(alpha = .06f),
+                borderWidth = 2.dp,
+            )
                 .padding(10.dp * rowScale),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(14.dp * rowScale),

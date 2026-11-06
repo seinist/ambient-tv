@@ -1,5 +1,6 @@
 package com.ambient.tv.ui.detail
 
+import com.ambient.tv.ui.theme.animatedFocusSurface
 import com.ambient.tv.ui.theme.screenGutter
 import com.ambient.tv.ui.mobile.DeviceActionRow
 import com.ambient.tv.ui.mobile.LocalHandheldUi
@@ -1636,12 +1637,10 @@ internal fun DetailContextAction(
             .focusProperties { canFocus = enabled || focused }
             .onFocusChanged { focused = it.isFocused },
     ) {
-        val container = when {
-            !enabled -> MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.20f)
-            focused -> MaterialTheme.colorScheme.primary.copy(alpha = 0.19f)
-            subdued -> Color.Transparent
-            else -> Color.White.copy(alpha = 0.045f)
-        }
+        val disabledContainer = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.20f)
+        val normalContainer = if (subdued) Color.Transparent else Color.White.copy(alpha = 0.045f)
+        val focusedContainer = if (enabled) MaterialTheme.colorScheme.primary.copy(alpha = 0.19f) else disabledContainer
+        val unfocusedContainer = if (enabled) normalContainer else disabledContainer
         val foreground = when {
             !enabled -> MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.42f)
             focused -> MaterialTheme.colorScheme.onSurface
@@ -1651,12 +1650,14 @@ internal fun DetailContextAction(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .background(container, shape)
-                .border(
-                    1.dp,
-                    if (focused) MaterialTheme.colorScheme.primary else Color.White.copy(alpha = if (subdued) 0.06f else 0.10f),
-                    shape,
-                )
+                .animatedFocusSurface(
+                focused = focused, shape = shape,
+                focusedBackground = focusedContainer,
+                unfocusedBackground = unfocusedContainer,
+                focusedBorder = MaterialTheme.colorScheme.primary,
+                unfocusedBorder = Color.White.copy(alpha = if (subdued) 0.06f else 0.10f),
+                borderWidth = 1.dp,
+            )
                 .padding(horizontal = 16.dp, vertical = 12.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(12.dp),

@@ -204,6 +204,60 @@ fun Modifier.animatedFocusBorder(
     }
 }
 
+
+/**
+ * Fade the surface wash and stroke together when the focused TV item changes.
+ * The border has fixed geometry, and animated colors are only read in draw,
+ * preserving media focus scaling and avoiding poster/layout recomposition.
+ */
+fun Modifier.animatedFocusSurface(
+    focused: Boolean,
+    shape: Shape,
+    focusedBackground: Color,
+    unfocusedBackground: Color,
+    focusedBorder: Color,
+    unfocusedBorder: Color = Color.Transparent,
+    borderWidth: Dp = 2.dp,
+): Modifier = composed {
+    val reduced = LocalPerformanceProfile.current.reducedEffects
+    val fade = tween<Color>(
+        durationMillis = focusBorderFadeDurationMs(focused, reduced),
+        easing = LinearOutSlowInEasing,
+    )
+    val fill = animateColorAsState(
+        targetValue = if (focused) focusedBackground else unfocusedBackground,
+        animationSpec = fade,
+        label = "focus surface fill",
+    )
+    val strokeColor = animateColorAsState(
+        targetValue = if (focused) focusedBorder else unfocusedBorder,
+        animationSpec = fade,
+        label = "focus surface stroke",
+    )
+    this.drawWithCache {
+        val strokePx = borderWidth.toPx()
+        val full = shape.createOutline(size, layoutDirection, this)
+        val inset = strokePx / 2f
+        val inner = shape.createOutline(
+            Size(
+                (size.width - strokePx).coerceAtLeast(0f),
+                (size.height - strokePx).coerceAtLeast(0f),
+            ),
+            layoutDirection,
+            this,
+        )
+        onDrawWithContent {
+            drawOutline(full, fill.value)
+            drawContent()
+            if (strokePx > 0f && strokeColor.value.alpha > 0f) {
+                translate(inset, inset) {
+                    drawOutline(inner, strokeColor.value, style = Stroke(strokePx))
+                }
+            }
+        }
+    }
+}
+
 /** Subtle TV-menu focus motion; reduced-performance profiles keep the focus state static. */
 fun Modifier.menuFocusMotion(focused: Boolean, focusedScale: Float = 1.012f): Modifier = composed {
     val motionEnabled = LocalPerformanceProfile.current.allowSpringFocus

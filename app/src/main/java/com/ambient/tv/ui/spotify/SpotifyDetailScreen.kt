@@ -1,5 +1,6 @@
 package com.ambient.tv.ui.spotify
 
+import com.ambient.tv.ui.theme.animatedFocusSurface
 import com.ambient.tv.ui.theme.screenGutter
 import com.ambient.tv.ui.mobile.deviceDp
 import com.ambient.tv.companion.*
@@ -315,8 +316,14 @@ private fun SpotifyTrackRow(
         Row(
             Modifier
                 .fillMaxWidth()
-                .background(if (focused) accent.copy(alpha = 0.16f) else MaterialTheme.colorScheme.surface.copy(alpha = 0.42f), shape)
-                .border(2.dp, if (focused) accent else Color.Transparent, shape)
+                .animatedFocusSurface(
+                focused = focused, shape = shape,
+                focusedBackground = accent.copy(alpha = 0.16f),
+                unfocusedBackground = MaterialTheme.colorScheme.surface.copy(alpha = 0.42f),
+                focusedBorder = accent,
+                unfocusedBorder = Color.Transparent,
+                borderWidth = 2.dp,
+            )
                 .padding(horizontal = 14.dp, vertical = 9.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(14.dp),
@@ -381,8 +388,14 @@ private fun SpotifyAlbumCard(album: SpotifyAlbum, onClick: () -> Unit, modifier:
     ) {
         Column(
             Modifier
-                .background(if (focused) MaterialTheme.colorScheme.primary.copy(alpha = 0.14f) else MaterialTheme.colorScheme.surface.copy(alpha = 0.72f), shape)
-                .border(2.dp, if (focused) MaterialTheme.colorScheme.primary else Color.White.copy(alpha = 0.08f), shape)
+                .animatedFocusSurface(
+                focused = focused, shape = shape,
+                focusedBackground = MaterialTheme.colorScheme.primary.copy(alpha = 0.14f),
+                unfocusedBackground = MaterialTheme.colorScheme.surface.copy(alpha = 0.72f),
+                focusedBorder = MaterialTheme.colorScheme.primary,
+                unfocusedBorder = Color.White.copy(alpha = 0.08f),
+                borderWidth = 2.dp,
+            )
                 .padding(10.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {

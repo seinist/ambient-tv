@@ -1021,6 +1021,9 @@ private fun SidebarItem(
     val uiSounds = LocalUiSoundPlayer.current
     val uiScale = rememberUhdScale()
     val menuMotionEnabled = LocalPerformanceProfile.current.allowSpringFocus
+    val focusFadeMs = com.ambient.tv.ui.theme.focusBorderFadeDurationMs(
+        isFocused, LocalPerformanceProfile.current.reducedEffects,
+    )
     val activate = com.ambient.tv.ui.sound.rememberUiSoundAction(onClick = onSelect)
     // Focused row: solid white pill, dark text and icon. Active row: a faint white wash.
     val scheme = MaterialTheme.colorScheme
@@ -1032,12 +1035,12 @@ private fun SidebarItem(
             selected -> androidx.compose.ui.graphics.lerp(scheme.surface, scheme.primary, .16f)
             else -> scheme.surface.copy(alpha = 0f)
         },
-        animationSpec = if (menuMotionEnabled) androidx.compose.animation.core.tween(160, easing = androidx.compose.animation.core.FastOutSlowInEasing) else androidx.compose.animation.core.snap(),
+        animationSpec = androidx.compose.animation.core.tween(focusFadeMs, easing = androidx.compose.animation.core.FastOutSlowInEasing),
         label = "sidebarItemFill",
     )
     val content by androidx.compose.animation.animateColorAsState(
         if (isFocused) scheme.background else scheme.onSurface,
-        animationSpec = if (menuMotionEnabled) androidx.compose.animation.core.tween(160) else androidx.compose.animation.core.snap(),
+        animationSpec = androidx.compose.animation.core.tween(focusFadeMs),
         label = "sidebarItemContent",
     )
     // Small, bounce-free lift on focus; graphicsLayer only, so no relayout.

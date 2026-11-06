@@ -1,5 +1,6 @@
 package com.ambient.tv.ui.search
 
+import com.ambient.tv.ui.theme.animatedFocusSurface
 import com.ambient.tv.ui.theme.screenGutter
 import androidx.activity.compose.BackHandler
 import com.ambient.tv.ui.mobile.deviceDp
@@ -801,8 +802,14 @@ private fun YouTubeSearchRow(youtubeItems: List<YouTubeItem>, onClick: (String) 
                 val cardShape = RoundedCornerShape(10.dp)
                 Surface(onClick = { onClick(item.videoId) }, colors = transparentSurfaceColors(), scale = noSurfaceScale(), shape = ClickableSurfaceDefaults.shape(shape = cardShape), modifier = initialFocusModifier(requestInitialFocus && item == youtubeItems.firstOrNull()).width(250.dp).rowColumnFocusTarget(rowFocus, rowKey, "search:youtube:${item.videoId}").browseFocusTarget("search:youtube:${item.videoId}").mediaFocusMotion(focused).activateOnTvKey { onClick(item.videoId) }.onFocusChanged { focused = it.isFocused }) {
                     Column(
-                        Modifier.background(if (focused) MaterialTheme.colorScheme.primary.copy(alpha = 0.14f) else MaterialTheme.colorScheme.surface.copy(alpha = 0.72f), cardShape)
-                            .border(2.dp, if (focused) MaterialTheme.colorScheme.primary else Color.White.copy(alpha = 0.08f), cardShape)
+                        Modifier.animatedFocusSurface(
+                focused = focused, shape = cardShape,
+                focusedBackground = MaterialTheme.colorScheme.primary.copy(alpha = 0.14f),
+                unfocusedBackground = MaterialTheme.colorScheme.surface.copy(alpha = 0.72f),
+                focusedBorder = MaterialTheme.colorScheme.primary,
+                unfocusedBorder = Color.White.copy(alpha = 0.08f),
+                borderWidth = 2.dp,
+            )
                             .padding(8.dp),
                         verticalArrangement = Arrangement.spacedBy(7.dp),
                     ) {
@@ -878,8 +885,14 @@ private fun SpotifySearchRow(type: SpotifyEntityType, items: List<SpotifyBrowseI
                 val cardShape = RoundedCornerShape(10.dp)
                 Surface(onClick = { onClick(item) }, colors = transparentSurfaceColors(), scale = noSurfaceScale(), shape = ClickableSurfaceDefaults.shape(shape = cardShape), modifier = initialFocusModifier(requestInitialFocus && item == items.firstOrNull()).width(220.dp).rowColumnFocusTarget(rowFocus, rowKey, "search:spotify:${item.type}:${item.id}").browseFocusTarget("search:spotify:${item.type}:${item.id}").mediaFocusMotion(focused).activateOnTvKey { onClick(item) }.onFocusChanged { focused = it.isFocused }) {
                     Column(
-                        Modifier.background(if (focused) MaterialTheme.colorScheme.primary.copy(alpha = 0.14f) else MaterialTheme.colorScheme.surface.copy(alpha = 0.72f), cardShape)
-                            .border(2.dp, if (focused) MaterialTheme.colorScheme.primary else Color.White.copy(alpha = 0.08f), cardShape)
+                        Modifier.animatedFocusSurface(
+                focused = focused, shape = cardShape,
+                focusedBackground = MaterialTheme.colorScheme.primary.copy(alpha = 0.14f),
+                unfocusedBackground = MaterialTheme.colorScheme.surface.copy(alpha = 0.72f),
+                focusedBorder = MaterialTheme.colorScheme.primary,
+                unfocusedBorder = Color.White.copy(alpha = 0.08f),
+                borderWidth = 2.dp,
+            )
                             .padding(8.dp),
                         verticalArrangement = Arrangement.spacedBy(7.dp),
                     ) {
@@ -1024,8 +1037,14 @@ private fun SearchArtworkCard(
         modifier = initialFocusModifier(requestInitialFocus).width(250.dp).then(focusModifier).browseFocusTarget(focusKey).mediaFocusMotion(focused).activateOnTvKey(onClick = onClick).onFocusChanged { focused = it.isFocused },
     ) {
         Column(
-            Modifier.background(if (focused) MaterialTheme.colorScheme.primary.copy(alpha = 0.14f) else MaterialTheme.colorScheme.surface.copy(alpha = 0.72f), cardShape)
-                .border(2.dp, if (focused) MaterialTheme.colorScheme.primary else Color.White.copy(alpha = 0.08f), cardShape)
+            Modifier.animatedFocusSurface(
+                focused = focused, shape = cardShape,
+                focusedBackground = MaterialTheme.colorScheme.primary.copy(alpha = 0.14f),
+                unfocusedBackground = MaterialTheme.colorScheme.surface.copy(alpha = 0.72f),
+                focusedBorder = MaterialTheme.colorScheme.primary,
+                unfocusedBorder = Color.White.copy(alpha = 0.08f),
+                borderWidth = 2.dp,
+            )
                 .padding(8.dp),
             verticalArrangement = Arrangement.spacedBy(7.dp),
         ) {
@@ -1360,8 +1379,14 @@ private fun SearchMediaListItem(
         Row(
             Modifier
                 .fillMaxWidth()
-                .background(if (isFocused) MaterialTheme.colorScheme.primary.copy(alpha = 0.09f) else MaterialTheme.colorScheme.surface.copy(alpha = 0.58f), rowShape)
-                .border(if (isFocused) 1.5.dp else 1.dp, if (isFocused) MaterialTheme.colorScheme.primary else Color.White.copy(alpha = 0.06f), rowShape)
+                .animatedFocusSurface(
+                focused = isFocused, shape = rowShape,
+                focusedBackground = MaterialTheme.colorScheme.primary.copy(alpha = 0.09f),
+                unfocusedBackground = MaterialTheme.colorScheme.surface.copy(alpha = 0.58f),
+                focusedBorder = MaterialTheme.colorScheme.primary,
+                unfocusedBorder = Color.White.copy(alpha = 0.06f),
+                borderWidth = 1.5.dp,
+            )
                 .padding(14.dp),
             horizontalArrangement = Arrangement.spacedBy(20.dp),
             verticalAlignment = Alignment.CenterVertically,
@@ -1405,8 +1430,14 @@ private fun ExternalSearchListItem(
     ) {
         Row(
             Modifier.fillMaxWidth()
-                .background(if (focused) MaterialTheme.colorScheme.primary.copy(alpha = 0.09f) else MaterialTheme.colorScheme.surface.copy(alpha = 0.58f), rowShape)
-                .border(if (focused) 1.5.dp else 1.dp, if (focused) MaterialTheme.colorScheme.primary else Color.White.copy(alpha = 0.06f), rowShape)
+                .animatedFocusSurface(
+                focused = focused, shape = rowShape,
+                focusedBackground = MaterialTheme.colorScheme.primary.copy(alpha = 0.09f),
+                unfocusedBackground = MaterialTheme.colorScheme.surface.copy(alpha = 0.58f),
+                focusedBorder = MaterialTheme.colorScheme.primary,
+                unfocusedBorder = Color.White.copy(alpha = 0.06f),
+                borderWidth = 1.5.dp,
+            )
                 .padding(12.dp),
             horizontalArrangement = Arrangement.spacedBy(18.dp),
             verticalAlignment = Alignment.CenterVertically,

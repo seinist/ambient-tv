@@ -6,7 +6,6 @@ import com.ambient.tv.ui.mobile.deviceDp
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
-import androidx.compose.animation.core.snap
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -43,22 +42,22 @@ fun ContentSectionHeader(
     bottomPadding: Dp = 10.dp,
 ) {
     if (title.isBlank()) return
-    val motion = !LocalPerformanceProfile.current.reducedEffects
+    val fadeDurationMs = if (LocalPerformanceProfile.current.reducedEffects) 140 else 180
     // The animated values are read only in the draw phase (graphicsLayer / ColorProducer), so a
     // row change recomposes each header once, not on every frame of the 180 ms fade.
     val indicatorScale = animateFloatAsState(
         targetValue = if (focused) 1f else 14f / 22f,
-        animationSpec = if (motion) tween(durationMillis = 180) else snap(),
+        animationSpec = tween(durationMillis = fadeDurationMs),
         label = "sectionIndicatorScale",
     )
     val indicatorAlpha = animateFloatAsState(
         targetValue = if (focused) 1f else 0.5f,
-        animationSpec = if (motion) tween(durationMillis = 180) else snap(),
+        animationSpec = tween(durationMillis = fadeDurationMs),
         label = "sectionIndicatorAlpha",
     )
     val titleColor = animateColorAsState(
         targetValue = if (focused) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant,
-        animationSpec = if (motion) tween(durationMillis = 180) else snap(),
+        animationSpec = tween(durationMillis = fadeDurationMs),
         label = "sectionTitleColor",
     )
     val system = remember(sectionKey) {

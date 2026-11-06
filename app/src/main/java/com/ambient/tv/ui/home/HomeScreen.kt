@@ -1,5 +1,6 @@
 package com.ambient.tv.ui.home
 
+import com.ambient.tv.ui.theme.animatedFocusBorder
 import com.ambient.tv.ui.theme.screenGutter
 import com.ambient.tv.ui.common.requestHeaders
 import com.ambient.tv.ui.common.lineHeightDp
@@ -1301,7 +1302,7 @@ private fun LiveChannelTile(
                 .fillMaxSize()
                 .clip(shape)
                 .background(liveTileBrush())
-                .border(if (focused) 2.dp else 1.dp, if (focused) scheme.onSurface.copy(alpha = 0.90f) else scheme.onSurface.copy(alpha = 0.08f), shape),
+                .animatedFocusBorder(focused, shape, scheme.onSurface.copy(alpha = 0.90f), unfocusedColor = scheme.onSurface.copy(alpha = 0.08f)),
         ) {
             logo?.let {
                 ArtworkImage(
@@ -1373,7 +1374,7 @@ private fun LiveShortcutTile(
                 .fillMaxSize()
                 .clip(shape)
                 .background(liveTileBrush())
-                .border(if (focusState.value) 2.dp else 1.dp, if (focusState.value) scheme.onSurface.copy(alpha = 0.90f) else scheme.onSurface.copy(alpha = 0.08f), shape),
+                .animatedFocusBorder(focusState.value, shape, scheme.onSurface.copy(alpha = 0.90f), unfocusedColor = scheme.onSurface.copy(alpha = 0.08f)),
             horizontalArrangement = Arrangement.Center,
             verticalAlignment = Alignment.CenterVertically,
         ) {
