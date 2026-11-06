@@ -348,6 +348,10 @@ class CompanionManager @Inject constructor(@ApplicationContext private val conte
     private val sessionWatchJobs = ConcurrentHashMap<String, Job>()
     private val sessionWatchSockets = ConcurrentHashMap<String, Socket>()
     private var directShareJob: Job? = null
+    /** A user-initiated Android share can finish while the phone UI remains in the source app. */
+    @Volatile private var headlessShareActive = false
+    @Volatile private var headlessShareCompletion: CompletableDeferred<Boolean>? = null
+    private val canSendToTv get() = foreground || headlessShareActive
     private class ReturnSession(val nonce: String) {
         val frames = Channel<Pair<CompanionFrame, CompletableDeferred<Boolean>>>(1)
         var pending: Pair<CompanionSyncFrame, CompletableDeferred<Boolean>>? = null
@@ -616,10 +620,13 @@ class CompanionManager @Inject constructor(@ApplicationContext private val conte
         } else {
             releaseRemoteControl()
             rejectBackup("expired")
-            closePairing(); stopDiscovery()
+            closePairing()
+            // The short-lived share service owns discovery and the outgoing socket while the
+            // user's source app (e.g. YouTube) stays visible on the phone.
+            if (!headlessShareActive) stopDiscovery()
             if (!receiverActive()) { stopReceiver(); playbackArtwork.clear() }
-            if (television || !remoteServiceRequested || !mutable.value.online) disconnect(clearTarget = false)
-            else {
+            if (!headlessShareActive && (television || !remoteServiceRequested || !mutable.value.online)) disconnect(clearTarget = false)
+            else if (!headlessShareActive) {
                 if (mutable.value.remote?.inputGranted == true) send(CompanionFrame(type = "input_release"))
                 mutable.update { it.copy(panel = false, remotePanel = false, nowPlayingPanel = false, settingsPanel = false) }
             }
@@ -1574,8 +1581,11 @@ class CompanionManager @Inject constructor(@ApplicationContext private val conte
     }
 
     @Synchronized fun connect(peer: CompanionPeer, invitation: String = "", initialMedia: CompanionMedia? = null, allowWake: Boolean = true, openRemote: Boolean = false) {
-        if (television || !foreground || peer.role == COMPANION_HANDHELD) return
-        if (invitation.isEmpty() && !guardReachable(peer)) return
+        if (television || !canSendToTv || peer.role == COMPANION_HANDHELD) return
+        if (invitation.isEmpty() && !guardReachable(peer)) {
+            if (initialMedia != null) headlessShareCompletion?.complete(false)
+            return
+        }
         diagnosticFailure = ""
         stopSessionWatch(peer.fingerprint)
         if (!LocalNetworkAccess.isGranted(context)) {
@@ -1681,7 +1691,7 @@ class CompanionManager @Inject constructor(@ApplicationContext private val conte
                 var returnDeadline = 0L
                 var carried: CompanionFrame? = null
                 if (initialMedia != null) queue.send(CompanionFrame(type = "start", media = initialMedia))
-                while (isActive && (foreground || remoteServiceRequested)) {
+                while (isActive && (canSendToTv || remoteServiceRequested)) {
                     require(if (route.vpn) connectionTransport?.alive(route) == true else sessionLan()?.address == link?.address)
                     var command = carried?.also { carried = null }
                         ?: withTimeoutOrNull(if (returnTransfer != null || returnAck != 0L) 50L else 1_000L) { queue.receive() } ?: CompanionFrame(type = "status")
@@ -1749,6 +1759,7 @@ class CompanionManager @Inject constructor(@ApplicationContext private val conte
                         if (command.type.startsWith("backup_")) { backupAckError = state.error; backupAck?.complete(companionBackupAckOk(state.error)) }
                         updateBackupResult(state.transferId, state.backupStatus, name)
                         if (command.type == "start" && mutable.value.sendingTo != null) {
+                            headlessShareCompletion?.complete(state.error.isEmpty())
                             if (state.error.isEmpty()) {
                                 notice(R.string.companion_sent, name)
                                 runCatching { context.getSystemService(android.content.pm.ShortcutManager::class.java)
@@ -1782,6 +1793,7 @@ class CompanionManager @Inject constructor(@ApplicationContext private val conte
                 runCatching { ownedSocket?.close() }
                 synchronized(this@CompanionManager) {
                     if (commands === queue) {
+                        headlessShareCompletion?.complete(false)
                         clientSocket = null
                         backupAck?.complete(false)
                         playbackStartAck?.second?.completeExceptionally(IllegalStateException("Disconnected"))
@@ -1851,7 +1863,46 @@ class CompanionManager @Inject constructor(@ApplicationContext private val conte
         if (!silent) notice(R.string.companion_revoked, peer.name)
     }
 
-    fun handleIntent(intent: Intent?) {
+    /**
+     * A Direct Share target does not open Ambient TV on the phone. The service keeps the
+     * transfer alive after its no-display Android activity has finished. Only a verified
+     * saved TV can receive the link; the shortcut ID itself is not trusted as a pairing.
+     */
+    fun startHeadlessShare(intent: Intent): CompletableDeferred<Boolean>? {
+        if (television || intent.action != Intent.ACTION_SEND || intent.type != "text/plain") return null
+        val media = sharedMedia(intent.getCharSequenceExtra(Intent.EXTRA_TEXT)?.toString().orEmpty())
+        if (media == null) {
+            notice(R.string.companion_share_unsupported, error = true)
+            return null
+        }
+        val peer = intent.getStringExtra(Intent.EXTRA_SHORTCUT_ID)
+            ?.let { CompanionShareTargets.peer(it, mutable.value.paired) }
+        if (peer == null) {
+            notice(R.string.companion_target_removed, error = true)
+            return null
+        }
+        if (!LocalNetworkAccess.isGranted(context)) {
+            notice(R.string.companion_needs_local_network, error = true)
+            return null
+        }
+        val completion = CompletableDeferred<Boolean>()
+        headlessShareCompletion = completion
+        headlessShareActive = true
+        handleIntent(intent, showSharePanel = false)
+        return completion
+    }
+
+    fun finishHeadlessShare(completion: CompletableDeferred<Boolean>) {
+        if (headlessShareCompletion !== completion) return
+        headlessShareCompletion = null
+        headlessShareActive = false
+        if (!foreground) {
+            stopDiscovery()
+            if (!remoteServiceRequested) disconnect(clearTarget = false)
+        }
+    }
+
+    fun handleIntent(intent: Intent?, showSharePanel: Boolean = true) {
         if (television || intent == null) return
         if (intent.action == Intent.ACTION_VIEW && intent.data?.scheme == "ambienttv" && intent.data?.host == "now-playing") {
             showNowPlaying()
@@ -1866,7 +1917,7 @@ class CompanionManager @Inject constructor(@ApplicationContext private val conte
             mutable.update { it.copy(sharedMedia = media, sendingTo = null) }
             if (media == null) notice(R.string.companion_share_unsupported, error = true)
             else {
-                showPanel()
+                if (showSharePanel) showPanel()
                 val shortcutId = intent.getStringExtra(Intent.EXTRA_SHORTCUT_ID)
                 if (shortcutId != null) {
                     val peer = CompanionShareTargets.peer(shortcutId, mutable.value.paired)
@@ -1878,7 +1929,8 @@ class CompanionManager @Inject constructor(@ApplicationContext private val conte
     }
     fun sendSharedMediaTo(peer: CompanionPeer) {
         val media = mutable.value.sharedMedia ?: return
-        if (television || !foreground || mutable.value.paired.none { it.fingerprint == peer.fingerprint }) {
+        if (television || !canSendToTv || mutable.value.paired.none { it.fingerprint == peer.fingerprint }) {
+            headlessShareCompletion?.complete(false)
             notice(R.string.companion_target_removed, error = true); return
         }
         if (mutable.value.sendingTo != null) return
@@ -1902,7 +1954,8 @@ class CompanionManager @Inject constructor(@ApplicationContext private val conte
             withContext(Dispatchers.Main) {
                 ensureActive()
                 directShareJob = null
-                if (!foreground || mutable.value.paired.none { it.fingerprint == peer.fingerprint }) {
+                if (!canSendToTv || mutable.value.paired.none { it.fingerprint == peer.fingerprint }) {
+                    headlessShareCompletion?.complete(false)
                     mutable.update { it.copy(sendingTo = null) }
                     return@withContext
                 }
@@ -1928,7 +1981,7 @@ class CompanionManager @Inject constructor(@ApplicationContext private val conte
 
     @Suppress("DEPRECATION")
     fun discover() {
-        if (television || !foreground || !LocalNetworkAccess.isGranted(context)) return
+        if (television || !canSendToTv || !LocalNetworkAccess.isGranted(context)) return
         markSearching()
         if (discovery != null) return
         val listener = object : NsdManager.DiscoveryListener {
