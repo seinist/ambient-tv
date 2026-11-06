@@ -1730,7 +1730,12 @@ private fun YouTubeMpvPlayback(playback: YouTubePlayback, streams: YouTubeStream
                             formatMpvDebandStat(controller.imageOptions.deband, snapshot.sparsam, "Enabled")?.let { add(stringResource(R.string.player_nerd_deband_configured) to it) }
                             if (snapshot.sparsam) add(stringResource(R.string.player_nerd_sparsam) to stringResource(R.string.settings_performance_low))
                         }
-                        snapshot.activeVideoFilters?.let { add(stringResource(R.string.player_nerd_video_filters) to it) }
+                        if (snapshot.processingSampled) add(
+                            stringResource(R.string.player_nerd_video_filters) to
+                                com.ambient.tv.ui.player.summarizeMpvVideoFilters(
+                                    snapshot.activeVideoFilters, snapshot.activeImageShaders, snapshot.activeBuiltinSharpen,
+                                )
+                        )
                         controller.loadedImageShaders().takeIf { it.isNotEmpty() }?.let { add("Shaders (loaded; conditional)" to it.joinToString()) }
                         snapshot.audioCodec?.takeIf { it.isNotBlank() }?.let { add(stringResource(R.string.player_audio) to it.uppercase()) }
                         formatNerdBitrate(snapshot.audioBitrateBitsPerSecond)?.let { add(stringResource(R.string.player_nerd_audio_bitrate) to it) }
