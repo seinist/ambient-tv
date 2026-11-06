@@ -13,9 +13,10 @@ import com.ambient.tv.data.local.AppPreferences
  *
  * - [AppPreferences.GPU_RENDER_PANEL]: always physical.
  * - [AppPreferences.GPU_RENDER_UI]: always logical; the display/HWC scales.
- * - Auto: physical only on a device that is not low-end and only when the user chose GPU image
- *   work (non-default scaler, shaders, filters) that benefits from it. Untouched defaults,
- *   HDR→SDR tone mapping or a direct (MediaCodec) surface render at UI resolution.
+ * - Auto: physical on capable devices with selected GPU image work; MPV also permits a
+ *   deliberately selected upscaler to request physical output on low-end devices, because a
+ *   1080p logical buffer would otherwise disable 1080p→4K GPU upscaling entirely. Untouched
+ *   defaults, HDR→SDR tone mapping and direct MediaCodec output retain UI resolution.
  *
  * [gpuOutput] false (direct MediaCodec/Android surface) never fixes the buffer size.
  */
