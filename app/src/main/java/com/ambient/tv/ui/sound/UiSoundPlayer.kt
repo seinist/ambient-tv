@@ -51,7 +51,7 @@ class UiSoundPlayer @Inject constructor(
     private val handheldPreview = HandheldNavSoundOutput(scope)
     private val eventGate = UiSoundEventGate()
     private val actions = UiSoundActions { kind ->
-        scope.launch { if (eventGate.accept(kind, SystemClock.elapsedRealtime())) playNow(kind) }
+        scope.launch { if (eventGate.accept(kind)) playNow(kind) }
     }
     private var bankKey: String? = null
     private var bank = NavSoundBank()
@@ -78,8 +78,15 @@ class UiSoundPlayer @Inject constructor(
 
 
     override fun navigationInput(keyCode: Int, eventTime: Long) {
-        eventGate.input(keyCode, eventTime, SystemClock.elapsedRealtime())
+        val input = eventGate.input(keyCode, eventTime) ?: return
+        // Main (not Main.immediate) posts after this key dispatch, so controls can replace the
+        // tick with their semantic sound. Every input keeps its own job, even during fast taps.
+        scope.launch(kotlinx.coroutines.Dispatchers.Main) {
+            eventGate.complete(input)?.let(::playNow)
+        }
     }
+    override fun navigationInputReleased(keyCode: Int) = eventGate.releaseInput(keyCode)
+    override fun suppressNavigationInput(keyCode: Int, eventTime: Long) = eventGate.suppressInput(keyCode, eventTime)
     override fun play(kind: UiSound) = actions.request(kind)
     override fun perform(kind: UiSound, action: () -> Unit) = actions.perform(kind, action)
     override fun prepare() { scope.launch { if (television && shouldPlay()) ensureLoaded() } }
@@ -136,7 +143,7 @@ class UiSoundPlayer @Inject constructor(
             // load() now runs off the main thread, so completion can arrive before ids is filled.
             val kind = ids.entries.firstOrNull { it.value == id }?.key
                 ?: run { earlyLoads[id] = status; return@setOnLoadCompleteListener }
-            loadGate.loaded(kind, status == 0, SystemClock.elapsedRealtime())?.let(::playReady)
+            loadGate.loaded(kind, status == 0, SystemClock.elapsedRealtime()).forEach(::playReady)
         }
         scope.launch {
             for (kind in UiSound.entries) {
@@ -150,7 +157,7 @@ class UiSoundPlayer @Inject constructor(
                     if (pool !== currentPool) return@launch
                     ids[kind] = id
                     earlyLoads.remove(id)?.let { status ->
-                        loadGate.loaded(kind, status == 0, SystemClock.elapsedRealtime())?.let(::playReady)
+                        loadGate.loaded(kind, status == 0, SystemClock.elapsedRealtime()).forEach(::playReady)
                     }
                 } finally { file.delete() }
             }
@@ -213,7 +220,7 @@ class UiSoundPlayer @Inject constructor(
 
 val LocalUiSoundPlayer = staticCompositionLocalOf<UiSoundFeedback?> { null }
 
-/** Play [UiSound.FOCUS] when this node gains focus (D-Pad moves). */
+/** Report focus changes; the input gate owns the one audible tick for each D-pad press. */
 fun Modifier.uiSoundOnFocus(player: UiSoundFeedback?): Modifier {
     if (player == null) return this
     return this.onFocusChanged { state ->

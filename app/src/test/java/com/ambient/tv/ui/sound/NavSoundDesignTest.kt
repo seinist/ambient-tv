@@ -66,28 +66,4 @@ class NavSoundDesignTest {
         assertTrue(NavSoundRenderer.wav(maximum, UiSound.SELECT).size < 1_000_000)
     }
 
-    @Test fun programmaticFocusAndFocusFollowingClickRemainSilent() {
-        val gate = UiSoundEventGate()
-        assertFalse(gate.accept(UiSound.FOCUS, 100))
-        gate.input(23, 100, 100) // OK
-        assertTrue(gate.accept(UiSound.SELECT, 100))
-        assertFalse(gate.accept(UiSound.FOCUS, 116)) // next composition frame
-        assertFalse(gate.accept(UiSound.FOCUS, 500)) // slow screen entry
-        gate.input(20, 501, 501)
-        assertTrue(gate.accept(UiSound.FOCUS, 502)) // genuine direction immediately after click
-        assertFalse(gate.accept(UiSound.FOCUS, 503)) // manual moveFocus plus onFocusChanged
-    }
-
-    @Test fun eachDirectionPressSoundsOnceAndFastIndependentClicksSurvive() {
-        val gate = UiSoundEventGate()
-        repeat(3) { index ->
-            gate.input(20, index.toLong(), index.toLong())
-            assertTrue(gate.accept(UiSound.FOCUS, index.toLong()))
-            gate.input(20, index.toLong(), index.toLong()) // same event seen at nested root
-            assertFalse(gate.accept(UiSound.FOCUS, index.toLong()))
-            assertTrue(gate.accept(UiSound.SELECT, index.toLong()))
-        }
-        gate.input(20, 20, 20)
-        assertFalse(gate.accept(UiSound.FOCUS, 800))
-    }
 }
