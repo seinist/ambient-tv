@@ -98,12 +98,14 @@ import com.ambient.tv.ui.common.TvChip
 import androidx.compose.foundation.lazy.rememberLazyListState
 import com.ambient.tv.ui.common.overlayLazyScrollbar
 import com.ambient.tv.ui.common.noSurfaceScale
+import com.ambient.tv.ui.common.noSurfaceBorder
 import com.ambient.tv.ui.common.transparentSurfaceColors
 import com.ambient.tv.ui.common.mediaFocusMotion
 import com.ambient.tv.ui.common.handheldSwipeTabs
 import com.ambient.tv.ui.navigation.ReportSidebarContentReady
 import com.ambient.tv.ui.theme.LocalUiTokens
 import com.ambient.tv.ui.theme.animatedFocusBorder
+import com.ambient.tv.ui.theme.animatedFocusSurface
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
@@ -753,12 +755,12 @@ internal fun GuideEventCard(
     val width = guideTimelineWidthDp(visibleSeconds).coerceAtLeast(24f).dp
     val gapWidth = guideTimelineWidthDp(gapBeforeSeconds).dp
     val live = event.isLive(now)
-    // Square adjacent frames, one separator and a continuous top time rail.
-    val cardShape = RoundedCornerShape(0.dp)
+    val tokens = LocalUiTokens.current
+    val cardShape = RoundedCornerShape(tokens.cardRadius)
     Row(verticalAlignment = Alignment.CenterVertically) {
     if (gapBeforeSeconds > 0L) {
         Box(
-            Modifier.width(gapWidth).height(86.dp)
+            Modifier.width(gapWidth).padding(horizontal = 2.dp).height(GuideRowHeight).clip(cardShape)
                 .background(MaterialTheme.colorScheme.surface.copy(alpha = .44f)),
             contentAlignment = Alignment.Center,
         ) {
@@ -766,35 +768,36 @@ internal fun GuideEventCard(
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 maxLines = 1, overflow = TextOverflow.Ellipsis)
-            Box(Modifier.align(Alignment.TopStart).fillMaxWidth().height(2.dp)
-                .background(Color.White.copy(alpha = .12f)))
         }
     }
     Surface(
         onClick = { onEvent(event) },
         colors = transparentSurfaceColors(),
         scale = noSurfaceScale(),
+        border = noSurfaceBorder(),
         shape = androidx.tv.material3.ClickableSurfaceDefaults.shape(shape = cardShape),
-        modifier = modifier.width(width).browseFocusTarget("event:${event.eventId}", rowKey = event.channelUuid)
+        // The seam is inside the timed slot: LazyRow spacing would shift later programmes.
+        modifier = modifier.width(width).padding(horizontal = 2.dp)
+            .browseFocusTarget("event:${event.eventId}", rowKey = event.channelUuid)
             .activateOnTvKey { onEvent(event) }.onFocusChanged {
                 focused = it.isFocused
                 if (it.isFocused) onFocused()
             },
     ) {
-        // Fixed 86dp height keeps the EPG focus stable; no shimmer or zoom between cells.
-        Box(Modifier.fillMaxWidth().height(86.dp)) {
+        // Fixed height and outline geometry keep focus stable while the colours fade.
+        Box(Modifier.fillMaxWidth().height(GuideRowHeight).clip(cardShape)
+            .animatedFocusSurface(focused, cardShape,
+                focusedBackground = MaterialTheme.colorScheme.primary.copy(alpha = .22f),
+                unfocusedBackground = if (live) com.ambient.tv.ui.theme.LocalPlaybackAccent.current.indicator.copy(alpha = .10f)
+                    else MaterialTheme.colorScheme.surface.copy(alpha = .78f),
+                focusedBorder = MaterialTheme.colorScheme.primary,
+                unfocusedBorder = Color.White.copy(alpha = .08f),
+                borderWidth = tokens.focusBorder)) {
             if (previewArt != null) LiveTvArtBox(previewArt, event.title, imageHeaders,
-                Modifier.fillMaxSize(), artworkPlaceholder = false, cornerRadius = 0.dp)
+                Modifier.fillMaxSize(), artworkPlaceholder = false, cornerRadius = tokens.cardRadius)
             if (previewArt != null) {
                 Box(Modifier.matchParentSize().background(Brush.verticalGradient(
                     listOf(Color.Black.copy(alpha = .50f), Color.Black.copy(alpha = .82f)))))
-            } else {
-                val fill = when {
-                    focused -> MaterialTheme.colorScheme.primary.copy(alpha = .22f)
-                    live -> com.ambient.tv.ui.theme.LocalPlaybackAccent.current.indicator.copy(alpha = .10f)
-                    else -> MaterialTheme.colorScheme.surface.copy(alpha = .78f)
-                }
-                Box(Modifier.matchParentSize().background(fill))
             }
             Column(Modifier.fillMaxSize().padding(10.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 Row(horizontalArrangement = Arrangement.spacedBy(7.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -807,17 +810,6 @@ internal fun GuideEventCard(
                     color = if (previewArt != null) Color.White else MaterialTheme.colorScheme.onSurface,
                     overflow = TextOverflow.Ellipsis)
             }
-            // The upper rail stays continuous between neighbouring programme segments.
-            Box(Modifier.align(Alignment.TopStart).fillMaxWidth().height(2.dp)
-                .background(if (live) com.ambient.tv.ui.theme.LocalPlaybackAccent.current.indicator
-                    else Color.White.copy(alpha = .20f)))
-            // Hairline separators rather than a rounded border around every programme.
-            Box(Modifier.align(Alignment.CenterEnd).width(1.dp).fillMaxHeight()
-                .background(Color.White.copy(alpha = .18f)))
-            Box(Modifier.matchParentSize().animatedFocusBorder(
-                focused = focused, shape = cardShape,
-                focusedColor = MaterialTheme.colorScheme.primary,
-            ))
         }
     }
     }

@@ -5,12 +5,14 @@ import com.ambient.tv.ui.common.pageFocusStage
 import com.ambient.tv.ui.common.PageFocusLevel
 import com.ambient.tv.ui.common.RegisterBrowseFocusList
 
-import androidx.compose.foundation.background
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.focusGroup
+import androidx.compose.foundation.gestures.LocalBringIntoViewSpec
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -29,6 +31,10 @@ import com.ambient.tv.ui.common.*
 import com.ambient.tv.ui.common.TvLazyColumn as LazyColumn
 import com.ambient.tv.ui.mobile.DeviceActionRow
 import com.ambient.tv.ui.mobile.LocalHandheldUi
+import com.ambient.tv.ui.theme.LocalUiTokens
+import com.ambient.tv.ui.theme.animatedFocusSurface
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.distinctUntilChanged
@@ -67,6 +73,7 @@ internal fun Guide(
     artworkUpdates = artworkUpdates)
 
 /** The same filtered rows drive rendering, alphabet jumps and restored focus. */
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 internal fun LiveTvChannelBrowser(
     browseState: LiveTvBrowseState,
@@ -130,6 +137,29 @@ internal fun LiveTvChannelBrowser(
     val contentFocus = remember { FocusRequester() }
     val scope = rememberCoroutineScope()
     val handheld = LocalHandheldUi.current
+    val centerGuideRows = !handheld && !channelList
+    val rowCentering = rememberRowCenteringState(listState)
+    val focusedGuideRow = remember(listState) { MutableStateFlow<String?>(null) }
+    val channelIndices = remember(listing.visibleChannelIds) {
+        listing.visibleChannelIds.withIndex().associate { it.value to it.index }
+    }
+    LaunchedEffect(centerGuideRows, channelIndices, listState) {
+        if (!centerGuideRows) {
+            focusedGuideRow.value = null
+            return@LaunchedEffect
+        }
+        // Center the whole sender row once on entry. Retargeting preserves the current glide;
+        // lateral moves between its header and programmes must not start another vertical move.
+        focusedGuideRow.collectLatest { id ->
+            val index = id?.let(channelIndices::get)
+            if (index != null) rowCentering.centerItem(index)
+        }
+    }
+    val inheritedScrollSpec = LocalBringIntoViewSpec.current
+    val verticalScrollSpec = if (centerGuideRows) ExplicitRowScrollSpec else inheritedScrollSpec
+    val horizontalScrollSpec = if (centerGuideRows) TvBringIntoViewSpec else inheritedScrollSpec
+    val tokens = LocalUiTokens.current
+    val channelShape = RoundedCornerShape(tokens.controlRadius)
     val inputMode = androidx.compose.ui.platform.LocalInputModeManager.current
     var jumpJob by remember { mutableStateOf<kotlinx.coroutines.Job?>(null) }
     var pendingAlphabet by remember { mutableStateOf(false) }
@@ -272,6 +302,7 @@ internal fun LiveTvChannelBrowser(
                         filterFocusState.restoreFilter(if (filterBarShown) FilterFocusSurface.BAR else FilterFocusSurface.PANEL)
                     })
             } else Row(Modifier.fillMaxSize()) {
+                CompositionLocalProvider(LocalBringIntoViewSpec provides verticalScrollSpec) {
                 LazyColumn(allowUpExit = true, state = listState,
                     modifier = Modifier.weight(1f).fillMaxHeight().focusRequester(contentFocus).focusGroup()
                         .rowColumnFocusWrapRight(epgRowFocus)
@@ -329,10 +360,18 @@ internal fun LiveTvChannelBrowser(
                                     browseState.savePosition("guide:${channel.uuid}", it.eventId, rowState.firstVisibleItemScrollOffset)
                                 } }
                             }
-                            DeviceActionRow(Modifier.fillMaxWidth(), stack = true, verticalAlignment = Alignment.CenterVertically) {
+                            DeviceActionRow(Modifier.fillMaxWidth().then(if (centerGuideRows) Modifier
+                                .heightIn(min = GuideRowHeight)
+                                .onFocusChanged { state ->
+                                    if (state.hasFocus) focusedGuideRow.value = channel.uuid
+                                    else if (focusedGuideRow.value == channel.uuid) focusedGuideRow.value = null
+                                }.focusGroup() else Modifier),
+                                stack = true, verticalAlignment = Alignment.CenterVertically) {
                                 var focused by remember { mutableStateOf(false) }
                                 Surface(onClick = { if (canWatch) onWatch(channel.uuid) }, colors = transparentSurfaceColors(), scale = noSurfaceScale(),
-                                    modifier = Modifier.width(if (LocalHandheldUi.current) 260.dp else 212.dp)
+                                    border = noSurfaceBorder(),
+                                    shape = androidx.tv.material3.ClickableSurfaceDefaults.shape(shape = channelShape),
+                                    modifier = Modifier.width(if (handheld) 260.dp else 212.dp)
                                         .focusRequester(rowFocus.getOrPut(channel.uuid) { FocusRequester() })
                                         .browseFocusTarget("channel:${channel.uuid}", rowKey = channel.uuid)
                                         .then(if ("channel:${channel.uuid}" == focusTarget.contentId) Modifier.focusRequester(firstContentFocusRequester) else Modifier)
@@ -344,7 +383,13 @@ internal fun LiveTvChannelBrowser(
                                             }
                                         }
                                         .activateOnTvKey { if (canWatch) onWatch(channel.uuid) }) {
-                                    Row(Modifier.fillMaxWidth().background(if (focused) MaterialTheme.colorScheme.primary.copy(alpha = .22f) else Color.Transparent)
+                                    Row(Modifier.fillMaxWidth()
+                                        .then(if (centerGuideRows) Modifier.height(GuideRowHeight) else Modifier)
+                                        .animatedFocusSurface(focused, channelShape,
+                                            focusedBackground = MaterialTheme.colorScheme.primary.copy(alpha = .22f),
+                                            unfocusedBackground = Color.Transparent,
+                                            focusedBorder = MaterialTheme.colorScheme.primary,
+                                            borderWidth = tokens.focusBorder)
                                         .padding(6.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                         ArtworkImage(model = channel.iconUrl, title = channel.name, modifier = Modifier.size(64.dp, 44.dp),
                                             contentScale = ContentScale.Fit, headers = imageHeaders, fallbackText = channel.numberLabel ?: channel.name.take(3))
@@ -358,7 +403,8 @@ internal fun LiveTvChannelBrowser(
                                     androidx.compose.material3.CircularProgressIndicator(modifier = Modifier.size(24.dp), color = MaterialTheme.colorScheme.primary)
                                 } else if (rowEvents.isEmpty()) Text(stringResource(R.string.guide_no_programme), modifier = Modifier.padding(12.dp),
                                     style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                else LazyRow(state = rowState, modifier = Modifier.containRowFocusExit(),
+                                else CompositionLocalProvider(LocalBringIntoViewSpec provides horizontalScrollSpec) {
+                                LazyRow(state = rowState, modifier = Modifier.containRowFocusExit(),
                                     horizontalArrangement = Arrangement.spacedBy(0.dp)) {
                                     items(timelineSlots, key = { it.programme.eventId }) { slot ->
                                         val event = slot.programme
@@ -377,9 +423,11 @@ internal fun LiveTvChannelBrowser(
                                                 .rowColumnFocusTarget(epgRowFocus, channel.uuid, "event:${event.eventId}"))
                                     }
                                 }
+                                }
                             }
                         }
                     }
+                }
                 }
                 if (showAlphabet) GuideAlphabetBar(visibleChannels, letters, alphabetTarget, listState, onSelect = { letter ->
                     val index = visibleChannels.indexOfFirst { guideIndexLetter(it.name) == letter }
@@ -423,3 +471,6 @@ private fun GuideAlphabetBar(
 
 /** How long a guide jump waits for the target row to be laid out before it focuses anyway. */
 internal const val GUIDE_ROW_LAYOUT_WAIT_MS = 1_000L
+
+/** Match sender targets, programme cells and empty EPG rows on TV. */
+internal val GuideRowHeight = 86.dp
