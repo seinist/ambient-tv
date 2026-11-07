@@ -40,8 +40,9 @@ class PlaybackItemControlsTest {
     private class Clock(var seekable: Boolean = true) : PlaybackHandle {
         var position = 60_000L
         var playing = true
+        var ended = false
         val seeks = mutableListOf<Long>()
-        override fun status() = PlaybackStatus(positionMs = position, durationMs = 120_000, playing = playing)
+        override fun status() = PlaybackStatus(positionMs = position, durationMs = 120_000, playing = playing, ended = ended)
         override fun canSeekNow() = seekable
         override fun play() { playing = true }
         override fun pause() { playing = false }
@@ -310,11 +311,11 @@ class PlaybackItemControlsTest {
         }
     }
 
-    @Test fun liveVideoTrailersAndAudioDoNotPublishVideoItemControls() {
+    @Test fun liveVideoStandaloneTrailersAndAudioDoNotPublishVideoItemControls() {
         val fixture = mount(metadata().copy(isLive = true))
         rule.runOnIdle {
             assertNull(fixture.controls)
-            fixture.metadata.value = metadata().copy(isTrailer = true)
+            fixture.metadata.value = metadata(next = null).copy(isTrailer = true)
         }
         rule.runOnIdle {
             assertNull(fixture.controls)
@@ -327,6 +328,49 @@ class PlaybackItemControlsTest {
         rule.runOnIdle {
             assertNotNull(fixture.controls?.restart)
             assertNotNull(fixture.controls?.next)
+        }
+    }
+
+    @Test fun trailerSourceQueuePublishesManualNextAndPreviousWithNextUpDisabled() {
+        val fixture = mount(metadata().copy(isTrailer = true), hasPrevious = true)
+        rule.runOnIdle {
+            assertFalse(fixture.metadata.value.nextUpConfig.enabled)
+            val controls = requireNotNull(fixture.controls)
+            assertTrue(controls.hasPreviousItem)
+            requireNotNull(controls.previous).invoke()
+            requireNotNull(controls.next).invoke()
+            assertEquals(1, fixture.previousCalls)
+            assertEquals(listOf(successor), fixture.advances)
+        }
+    }
+
+    @Test fun lastTrailerKeepsPreviousAvailableWithoutInventingANextVideo() {
+        val fixture = mount(metadata(next = null).copy(isTrailer = true), hasPrevious = true)
+        rule.runOnIdle {
+            val controls = requireNotNull(fixture.controls)
+            assertTrue(controls.hasPreviousItem)
+            assertNull(controls.next)
+            requireNotNull(controls.previous).invoke()
+            assertEquals(1, fixture.previousCalls)
+        }
+    }
+
+    @Test fun trailerSourceQueueStopsAtEofEvenIfTheGlobalAutoplayPreferenceIsOn() {
+        val fixture = mount(metadata().copy(
+            isTrailer = true,
+            nextUpConfig = NextUpConfig(enabled = false, autoplay = true),
+        ))
+        rule.runOnIdle {
+            assertNotNull(fixture.controls?.next)
+            fixture.clock.position = 120_000
+            fixture.clock.playing = false
+            fixture.clock.ended = true
+            BackgroundPlaybackSession.tick()
+        }
+        rule.waitForIdle()
+        rule.runOnIdle {
+            assertFalse(BackgroundPlaybackSession.snapshot.value.active)
+            assertTrue(fixture.advances.isEmpty())
         }
     }
 }

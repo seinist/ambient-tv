@@ -48,7 +48,8 @@ class YouTubePlayerViewModel @Inject constructor(@dagger.hilt.android.qualifiers
     private var foreground = true
     private val loadMutex = kotlinx.coroutines.sync.Mutex()
     private val savedResumeRequest = com.ambient.tv.ui.player.SavedResumeRequest()
-    private val playbackHistory = YouTubePlaybackHistory()
+    private val playbackNavigation = YouTubePlayerNavigation(browseContext, browseSession, isTrailer)
+    private val trailerLifetime = if (isTrailer) TrailerPlaybackLifetime() else null
     private var liveRefreshGeneration = 0
 
     init {
@@ -64,23 +65,23 @@ class YouTubePlayerViewModel @Inject constructor(@dagger.hilt.android.qualifiers
 
     fun playNext(nextId: String) {
         val state = _uiState.value
-        if (isTrailer || state.loading || state.playback?.isLive == true || state.playback?.videoId != videoId ||
-            state.nextVideo?.videoId != nextId || !playbackHistory.requestNext(videoId, nextId)) return
+        if (state.loading || state.playback?.isLive == true || state.playback?.videoId != videoId ||
+            state.nextVideo?.videoId != nextId || !playbackNavigation.requestNext(videoId, nextId)) return
         navigateTo(nextId)
     }
 
     fun playPrevious(previousId: String) {
         val state = _uiState.value
-        val sourcePrevious = browseSession?.let { browseContext.previousLoaded(it, videoId)?.videoId }
-        if (isTrailer || state.loading || state.playback?.isLive == true || state.playback?.videoId != videoId ||
+        if (state.loading || state.playback?.isLive == true || state.playback?.videoId != videoId ||
             state.previousVideoId != previousId ||
-            !playbackHistory.requestPrevious(videoId, previousId, fromSource = sourcePrevious == previousId)) return
+            !playbackNavigation.requestPrevious(videoId, previousId)) return
         navigateTo(previousId)
     }
 
     private fun navigateTo(nextId: String) {
         savedResumeRequest.skip()
         transitionToken = BackgroundPlaybackSession.beginItemTransition()
+        trailerLifetime?.replacing(requireNotNull(transitionToken))
         videoId = nextId
         savedStateHandle["videoId"] = nextId
         load()
@@ -88,8 +89,15 @@ class YouTubePlayerViewModel @Inject constructor(@dagger.hilt.android.qualifiers
 
     fun retry() {
         savedResumeRequest.skip()
-        if (transitionToken != null) transitionToken = BackgroundPlaybackSession.beginItemTransition()
+        if (transitionToken != null) {
+            transitionToken = BackgroundPlaybackSession.beginItemTransition()
+            trailerLifetime?.replacing(requireNotNull(transitionToken))
+        }
         load(refresh = true)
+    }
+
+    internal fun stopTrailerOnExit() {
+        trailerLifetime?.stopIfOwned()
     }
 
     private fun failTransition(message: String) {
@@ -163,24 +171,22 @@ class YouTubePlayerViewModel @Inject constructor(@dagger.hilt.android.qualifiers
             val playback = checkNotNull(ready)
             if (videoId != this@YouTubePlayerViewModel.videoId) return@launch
             if (requestToken != null && !BackgroundPlaybackSession.isSourceReplacement(requestToken)) return@launch
-            val revisitingVideo = playbackHistory.startsAtBeginning(videoId)
-            if (!isTrailer && !playbackHistory.loaded(YouTubeItem(
+            val revisitingVideo = playbackNavigation.startsAtBeginning(videoId)
+            if (!playbackNavigation.loaded(YouTubeItem(
                 videoId = playback.videoId, title = playback.title, author = playback.author,
                 imageUrl = playback.imageUrl, backgroundUrl = playback.backgroundUrl,
                 durationMs = playback.durationMs, isLive = playback.isLive,
             ))) return@launch
-            if (!isTrailer) browseSession?.let { browseContext.played(it, videoId) }
+            trailerLifetime?.loaded(playback.videoId)
             transitionToken = null
             val chapterStart = YouTubeStartRequest.take(videoId)
             val rewindSeconds = savedResumeRequest.takeSeconds(preferences.resumeRewindSeconds,
                 eligible = !isTrailer && chapterStart == null && !reusedSession && !playback.isLive)
-            val fromBrowse = !isTrailer && browseSession?.let { browseContext.contains(it, videoId) } == true
+            val fromBrowse = playbackNavigation.fromBrowse(videoId)
             // Source adjacency is authoritative, including PREVIOUS entries that have never
             // been played in this player. History is only used for a standalone player.
-            val previousId = if (fromBrowse) browseContext.previousLoaded(browseSession, videoId)?.videoId
-                else playbackHistory.previousVideoId
-            val nextInSource = if (fromBrowse) browseContext.nextLoaded(browseSession, videoId)
-                else playbackHistory.nextVideo
+            val previousId = playbackNavigation.previousVideoId(videoId)
+            val nextInSource = playbackNavigation.nextVideo(videoId)
             val requestedPlayback = when {
                 isTrailer -> playback.copy(resumeMs = 0, resumeResolved = true, resumeRewindSeconds = 0)
                 revisitingVideo -> playback.copy(resumeMs = 0, resumeResolved = true, resumeRewindSeconds = 0)
@@ -193,7 +199,7 @@ class YouTubePlayerViewModel @Inject constructor(@dagger.hilt.android.qualifiers
                 playback = com.ambient.tv.youtube.youtubeAtLiveEdge(requestedPlayback),
                 nextVideo = nextInSource,
                 previousVideoId = previousId,
-                successorsLoading = fromBrowse && nextInSource == null,
+                successorsLoading = !isTrailer && fromBrowse && nextInSource == null,
                 liveRefreshGeneration = refreshGeneration,
             )
             // Next Up uses only the originating feed/row, including continuation pages.
@@ -201,7 +207,7 @@ class YouTubePlayerViewModel @Inject constructor(@dagger.hilt.android.qualifiers
             if (fromBrowse && nextInSource == null) {
                 launch {
                     val next = try {
-                        browseContext.next(browseSession, videoId)
+                        browseContext.next(requireNotNull(browseSession), videoId)
                     } catch (cancelled: CancellationException) {
                         throw cancelled
                     } catch (error: Exception) {
@@ -257,6 +263,7 @@ class YouTubePlayerViewModel @Inject constructor(@dagger.hilt.android.qualifiers
         viewModelScope.launch { suspendResult { engine.updateHistory(playback.videoId, positionMs) } }
     }
     override fun onCleared() {
+        trailerLifetime?.stopIfOwned()
         transitionToken?.let(BackgroundPlaybackSession::cancelSourceReplacement)
         super.onCleared()
     }

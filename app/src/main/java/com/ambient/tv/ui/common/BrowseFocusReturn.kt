@@ -260,11 +260,20 @@ internal class BrowseFocusReturnState(private val scope: CoroutineScope, val vie
      */
     fun requestContentFocus(): Boolean? = requestFocusInternal(contentOnly = true)
 
+    /** A player return names its exact item even if the old tile is still actually focused. */
+    fun requestContentFocus(target: BrowseFocusKey): Boolean? =
+        requestFocusInternal(contentOnly = true, requested = target)
+
     /** null means the tile is being laid out; true means focus moved synchronously. */
-    private fun requestFocusInternal(contentOnly: Boolean): Boolean? {
+    private fun requestFocusInternal(contentOnly: Boolean, requested: BrowseFocusKey? = null): Boolean? {
         if (!active) return false
         if (holdEntry) return null
         if (NavReselect.restoreTop.value && lastKey != null) forget()
+        if (requested != null && prepared != requested) {
+            preparation?.cancel()
+            preparation = null
+            prepared = null
+        }
         if (preparation?.isActive == true) return null
 
         if (!contentOnly && lastKey == null) {
@@ -273,15 +282,16 @@ internal class BrowseFocusReturnState(private val scope: CoroutineScope, val vie
                 if (result != false) return result
             }
         }
-        val remembered = if (contentOnly) lastContentKey else lastKey
+        val remembered = requested ?: if (contentOnly) lastContentKey else lastKey
         val collection = remembered?.takeIf { it.content }?.let { key ->
             collections.values.firstOrNull { it.slot(key) != null }
         }
-        val existing = ((last?.takeIf { it in targets && (!contentOnly || it.key.content) }
+        val existing = ((last?.takeIf { it in targets && (!contentOnly || it.key.content) &&
+            (requested == null || it.key == requested) }
             ?: targets.keys.lastOrNull { it.key == remembered && (!contentOnly || it.key.content) }))
             ?.takeIf { !it.key.content || collections.isEmpty() || collection != null }
-        val initial = collections.values.firstNotNullOfOrNull { it.slots().firstOrNull() }
-        val wanted = when {
+        val initial = if (requested == null) collections.values.firstNotNullOfOrNull { it.slots().firstOrNull() } else null
+        val wanted = requested ?: when {
             existing != null -> existing.key
             collection != null -> remembered
             initial != null -> initial.key
@@ -294,9 +304,13 @@ internal class BrowseFocusReturnState(private val scope: CoroutineScope, val vie
         }
         if (target?.visible == true && laidOut &&
             runCatching { target.requester.requestFocus() }.getOrDefault(false)
-        ) return true
+        ) {
+            // A container can accept entry before its leaf's focus event arrives. An explicit
+            // return must never mistake a still-focused old child for the requested tile.
+            return if (requested == null || targets.keys.any { it.key == wanted && it.hasFocus }) true else null
+        }
         // A prepared row still needs a new frame before it exposes its inner tile.
-        if (prepared == wanted) return if (contentOnly) null else false
+        if (prepared == wanted && requested == null) return if (contentOnly) null else false
         if (target == null && collections.values.none { it.slot(wanted) != null }) return false
         prepared = wanted
         preparation = scope.launch {

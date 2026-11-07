@@ -178,18 +178,14 @@ fun YouTubePlayerScreen(
             viewModel.setForeground(false)
         }
     }
-    val trailerRoute = state.playback?.videoId?.let(Destinations::trailerPlayer)
-    DisposableEffect(lifecycleOwner, isTrailer, trailerRoute) {
-        fun stopTrailer() {
-            if (isTrailer && trailerRoute != null && BackgroundPlaybackSession.snapshot.value.metadata?.route == trailerRoute) {
-                BackgroundPlaybackSession.stop()
-            }
-        }
+    // Next/Previous replace the content inside this destination. Changing the route must
+    // not dispose a stop callback while the outgoing decoder is handing over to the next.
+    DisposableEffect(lifecycleOwner, viewModel, isTrailer) {
         val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
-            if (event == androidx.lifecycle.Lifecycle.Event.ON_STOP) stopTrailer()
+            if (event == androidx.lifecycle.Lifecycle.Event.ON_STOP) viewModel.stopTrailerOnExit()
         }
         lifecycleOwner.lifecycle.addObserver(observer)
-        onDispose { lifecycleOwner.lifecycle.removeObserver(observer); stopTrailer() }
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer); viewModel.stopTrailerOnExit() }
     }
     val context = LocalContext.current
     val prefs = remember { EntryPointAccessors.fromApplication(context.applicationContext, YouTubePrefsEntryPoint::class.java).prefs() }
@@ -316,16 +312,20 @@ fun YouTubePlayerScreen(
                     }
                 }
             }
-            if (PlaybackBackendResolver.resolve(rendererKey) != PlaybackBackend.MEDIA3) {
+            val streamCompanionControls = if (PlaybackBackendResolver.resolve(rendererKey) != PlaybackBackend.MEDIA3) {
                 streamPanel?.let { panel ->
-                    com.ambient.tv.companion.CompanionSourceControls(route,
-                        com.ambient.tv.companion.CompanionPlaybackControls.SourceControls(
-                            quality = panel.qualityOptions.takeUnless { playback.isLive }.orEmpty().map { (k, v) -> com.ambient.tv.companion.CompanionOption(k, v.take(120), k == panel.selectedQuality) },
-                            chooseQuality = { key -> resumePosition = if (playback.isLive) 0L else BackgroundPlaybackSession.currentStatus()?.positionMs ?: resumePosition; panel.onQuality(key) },
-                            audio = panel.audioOptions.map { (k, v) -> com.ambient.tv.companion.CompanionOption(k, v.take(120), k == panel.selectedAudio) },
-                            chooseAudio = { key -> resumePosition = if (playback.isLive) 0L else BackgroundPlaybackSession.currentStatus()?.positionMs ?: resumePosition; panel.onAudio(key) },
-                        ))
+                    com.ambient.tv.companion.CompanionPlaybackControls.SourceControls(
+                        quality = panel.qualityOptions.takeUnless { playback.isLive }.orEmpty().map { (k, v) -> com.ambient.tv.companion.CompanionOption(k, v.take(120), k == panel.selectedQuality) },
+                        chooseQuality = { key -> resumePosition = if (playback.isLive) 0L else BackgroundPlaybackSession.currentStatus()?.positionMs ?: resumePosition; panel.onQuality(key) },
+                        audio = panel.audioOptions.map { (k, v) -> com.ambient.tv.companion.CompanionOption(k, v.take(120), k == panel.selectedAudio) },
+                        chooseAudio = { key -> resumePosition = if (playback.isLive) 0L else BackgroundPlaybackSession.currentStatus()?.positionMs ?: resumePosition; panel.onAudio(key) },
+                    )
                 }
+            } else null
+            youtubeCompanionControls(state, isTrailer, streamCompanionControls, advance, viewModel::playPrevious)?.let { controls ->
+                // Keep one route-owned lease: a transport-only lease would hide VLC/MPV's
+                // quality/audio callbacks. Media3 retains its native track fallback (audio=null).
+                com.ambient.tv.companion.CompanionSourceControls(route, controls)
             }
             // The shared session owns EOF, including successor loading and hand-off guards.
             val onCompleted: () -> Unit = {}
@@ -342,7 +342,9 @@ fun YouTubePlayerScreen(
                 else playback.timeline
             }
             // Live streams have no final end time, so Next Up must stay off for them.
-            val nextUp = state.nextVideo?.takeUnless { playback.isLive || isTrailer }?.let { next ->
+            // TMDB exposes only its own finite row as manual Next/Previous. Its automatic
+            // Next Up stays disabled below, including when the global preference is on.
+            val nextUp = state.nextVideo?.takeUnless { playback.isLive }?.let { next ->
                 NextUpCandidate(
                     mediaId = next.videoId,
                     title = next.title,
@@ -409,7 +411,7 @@ fun YouTubePlayerScreen(
                     nextUpConfig = NextUpConfig(
                         enabled = prefs.nextUpEnabled && !isTrailer,
                         leadSeconds = prefs.nextUpLeadSeconds,
-                        autoplay = prefs.youtubeAutoplayNextEnabled,
+                        autoplay = prefs.youtubeAutoplayNextEnabled && !isTrailer,
                         stillWatchingEvery = prefs.nextUpStillWatchingEpisodes,
                         showOverlay = prefs.nextUpOverlayEnabled,
                     ),

@@ -158,6 +158,8 @@ fun HomeScreen(
     onItemClick: (String) -> Unit,
     /** Uses SmartTube's existing details/play/ask setting and its source row queue. */
     onYouTubeVideoClick: (String, Long?) -> Unit = { videoId, _ -> onItemClick(HOME_YOUTUBE_ITEM_PREFIX + videoId) },
+    /** TMDB's direct-play Home cards carry their exact source-row queue. */
+    onTrailerVideoClick: (String, Long?) -> Unit = { videoId, _ -> onItemClick(HOME_TRAILER_ITEM_PREFIX + videoId) },
     /** A Telegram post of a Home row with the player queue token of that row (null: no queue). */
     onTelegramPostClick: (String, Long?) -> Unit = { key, _ -> onItemClick(key) },
     /** Radio Home rows keep their own queue, instead of playing with a singleton station. */
@@ -177,6 +179,9 @@ fun HomeScreen(
     /** Contextual navigation for Library, Wake-on-LAN and the affected media provider. */
     onOpenRelevantSettings: (String) -> Unit = { onOpenSettings() },
 ) {
+    // Apply a completed player session before the remounted rows capture their old focus.
+    // enter() also handles a resumed destination whose composition stayed alive.
+    remember(viewModel, focusStateKey) { viewModel.restoreTrailerPlaybackFocus(focusStateKey) }
     val uiState by viewModel.uiState.collectAsState()
     val wakeState by viewModel.startupWakeState.collectAsState()
     // Even with cached rows already visible, an app-scoped cold-start wake can still run.
@@ -357,6 +362,10 @@ fun HomeScreen(
                         onYouTubeHomeVideoClick = { videoId, rowId ->
                             viewModel.captureFocusForReturn()
                             onYouTubeVideoClick(videoId, viewModel.youtubePlaybackToken(rowId, videoId))
+                        },
+                        onTrailerHomeVideoClick = { videoId, rowId ->
+                            viewModel.captureFocusForReturn()
+                            onTrailerVideoClick(videoId, viewModel.trailerPlaybackToken(rowId, videoId))
                         },
                         onRadioHomeStationClick = { stationId, rowId, visibleIds ->
                             viewModel.captureFocusForReturn()
@@ -643,6 +652,9 @@ internal fun LibraryContent(
     onYouTubeHomeVideoClick: (String, String) -> Unit = { videoId, _ ->
         onItemClick(HOME_YOUTUBE_ITEM_PREFIX + videoId)
     },
+    onTrailerHomeVideoClick: (String, String) -> Unit = { videoId, _ ->
+        onItemClick(HOME_TRAILER_ITEM_PREFIX + videoId)
+    },
     onRadioHomeStationClick: (String, String, List<String>) -> Unit = { stationId, _, _ ->
         onItemClick(com.ambient.tv.data.radio.RADIO_HOME_ITEM_PREFIX + stationId)
     },
@@ -701,8 +713,10 @@ internal fun LibraryContent(
                     }
                     else -> state.rows.firstOrNull { it.id == rowKey }?.let { row ->
                         ContentRow(row = row.withHomeYouTubeProgress(), onItemClick = { item ->
+                            val trailerId = homeTrailerVideoId(item.ratingKey)
                             val videoId = homeYouTubeVideoId(item.ratingKey)
-                            if (videoId != null) onYouTubeHomeVideoClick(videoId, row.id)
+                            if (trailerId != null) onTrailerHomeVideoClick(trailerId, row.id)
+                            else if (videoId != null) onYouTubeHomeVideoClick(videoId, row.id)
                             else {
                                 val radioId = homeRadioStationId(item.ratingKey)
                                 if (radioId != null) {
@@ -752,17 +766,17 @@ internal fun LibraryContent(
         // ordinary focus move, and - whenever the same item also appears in another row
         // (e.g. "Recently Added" and "Continue Watching" both listing it) - would yank both
         // scroll position and D-pad focus into that other row mid-browse.
-        val initialFocusKey = remember {
+        val initialFocusKey = remember(state.playbackReturnRevision) {
             focusSnapshot.ratingKey?.takeIf { key ->
                 state.rows.any { row -> row.items.any { key in it.allRatingKeys } }
             }
         }
-        val initialFocusRowId = remember { focusSnapshot.rowId }
+        val initialFocusRowId = remember(state.playbackReturnRevision) { focusSnapshot.rowId }
         var rowsHaveFocus by remember { mutableStateOf(false) }
         val refreshRecovery = remember(state.focusRecovery) { state.focusRecovery.takeIf { rowsHaveFocus } }
 
         // A fresh entry uses the first target from the completed initial load.
-        var restoreArmed by remember {
+        var restoreArmed by remember(state.playbackReturnRevision) {
             mutableStateOf(initialFocusKey != null && state.initialFocusTarget == HomeInitialFocusTarget.NONE)
         }
         val restoreRowIndex = remember(state.rows, initialFocusRowId, initialFocusKey) {
@@ -804,10 +818,20 @@ internal fun LibraryContent(
             }
         })
         val initialRow = state.rows.getOrNull(restoreRowIndex)
+        val initialItemKey = initialRow?.items?.firstOrNull { initialFocusKey != null && initialFocusKey in it.allRatingKeys }?.ratingKey
+        com.ambient.tv.ui.common.BrowseFocusContentIdentity(state.playbackReturnRevision, restoreInitialTarget = true)
         com.ambient.tv.ui.common.BrowseFocusInitialTarget(
-            initialRow?.items?.firstOrNull { initialFocusKey != null && initialFocusKey in it.allRatingKeys }?.ratingKey,
+            initialItemKey,
             initialRow?.id,
         )
+        val browseFocus = com.ambient.tv.ui.common.LocalBrowseFocusReturnState.current
+        LaunchedEffect(state.playbackReturnRevision, browseFocus) {
+            if (state.playbackReturnRevision == 0 || browseFocus == null || initialItemKey == null) return@LaunchedEffect
+            val target = com.ambient.tv.ui.common.BrowseFocusKey(initialRow?.id, initialItemKey, content = true)
+            com.ambient.tv.ui.common.retryFocusFor {
+                !restoreArmed || browseFocus.requestContentFocus(target) == true
+            }
+        }
         LaunchedEffect(rowListState) {
             snapshotFlow { rowListState.isScrollInProgress }.collect { rowsScrolling.value = it }
         }
@@ -948,8 +972,10 @@ internal fun LibraryContent(
                                 ContentRow(
                                     row = row.withHomeYouTubeProgress(),
                                     onItemClick = { item ->
+                                        val trailerId = homeTrailerVideoId(item.ratingKey)
                                         val videoId = homeYouTubeVideoId(item.ratingKey)
-                                        if (videoId != null) onYouTubeHomeVideoClick(videoId, row.id)
+                                        if (trailerId != null) onTrailerHomeVideoClick(trailerId, row.id)
+                                        else if (videoId != null) onYouTubeHomeVideoClick(videoId, row.id)
                                         else {
                                             val radioId = homeRadioStationId(item.ratingKey)
                                             if (radioId != null) {
@@ -962,7 +988,13 @@ internal fun LibraryContent(
                                             }
                                         }
                                     },
-                                    onItemFocused = { item -> restoreArmed = false; onItemFocused(row.id, item) },
+                                    onItemFocused = { item ->
+                                        // A transient old tile can take focus before the return owner
+                                        // finishes laying out the newly played item.
+                                        if (state.playbackReturnRevision == 0 ||
+                                            (row.id == initialFocusRowId && initialFocusKey != null && initialFocusKey in item.allRatingKeys)) restoreArmed = false
+                                        onItemFocused(row.id, item)
+                                    },
                                     onRowFocused = { centeredRowKey.value = rowKey },
                                     columnFocus = columnFocus,
                                     restoreRatingKey = when {

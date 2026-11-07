@@ -17,6 +17,7 @@ import androidx.navigation.navArgument
 import androidx.test.core.app.ApplicationProvider
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertSame
+import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
@@ -26,6 +27,20 @@ import org.robolectric.annotation.Config
 @Config(sdk = [33], application = Application::class)
 class YouTubeBrowseNavigationTest {
     class ChannelPageState : ViewModel()
+
+    @Test fun trailerRouteCarriesBothTrailerModeAndItsSourceSession() {
+        val nav = controller()
+        nav.navigate(Destinations.trailerPlayer("trailer-id", 42L))
+        val args = requireNotNull(nav.currentBackStackEntry?.arguments)
+        assertEquals("trailer-id", args.getString("videoId"))
+        assertTrue(args.getBoolean("trailer"))
+        assertEquals(42L, args.getLong("browseSession"))
+        nav.popBackStack()
+        nav.navigate(Destinations.trailerPlayer("standalone"))
+        val standalone = requireNotNull(nav.currentBackStackEntry?.arguments)
+        assertTrue(standalone.getBoolean("trailer"))
+        assertEquals(-1L, standalone.getLong("browseSession"))
+    }
 
     @Test fun channelWithoutPlayerBelowSimplyOpensThePlayerAboveIt() {
         val nav = controller()

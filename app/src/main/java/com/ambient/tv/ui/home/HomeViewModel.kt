@@ -162,6 +162,8 @@ sealed interface HomeUiState {
         /** A library load is still running: empty rows are not yet "no libraries". */
         val loading: Boolean = false,
         val focusRecovery: HomeFocusSnapshot? = null,
+        /** Only a player return replaces this visit's initial focus; ordinary D-pad moves do not. */
+        val playbackReturnRevision: Int = 0,
     ) : HomeUiState
     data class Offline(val serverName: String) : HomeUiState
     data class Error(val message: String) : HomeUiState
@@ -257,6 +259,7 @@ class HomeViewModel @Inject constructor(
     private var photoRowGeneration = 0
     private var tvPreviewGeneration = 0
     private var trailerRows: List<ContentRowData> = emptyList()
+    private val trailerPlaybackReturn = HomeTrailerPlaybackReturn()
     private var radioRows: List<ContentRowData> = emptyList()
     /** The actual stations behind each displayed Radio Browser Home row. */
     private val radioSourceRows = java.util.concurrent.ConcurrentHashMap<String, List<RadioStation>>()
@@ -309,6 +312,7 @@ class HomeViewModel @Inject constructor(
     val refreshGeneration = plexRefreshBus.generation
 
     fun focusSnapshot(): HomeFocusSnapshot {
+        trailerPlaybackReturn.pendingTarget?.let { return it }
         if (activeFocusKnown) return HomeFocusSnapshot(activeFocusedRatingKey, activeFocusedRowId)
         val loaded = _uiState.value as? HomeUiState.Loaded
         return HomeFocusSnapshot(loaded?.focusedRatingKey, loaded?.focusedRowId)
@@ -316,6 +320,9 @@ class HomeViewModel @Inject constructor(
 
     /** Commit the most recent D-pad target when leaving Home, without publishing on every step. */
     fun captureFocusForReturn() {
+        // A new navigation also releases a touch/companion return with no D-pad focus event.
+        // Trailer launches capture first and install their new source queue afterwards.
+        trailerPlaybackReturn.clear()
         val current = _uiState.value as? HomeUiState.Loaded ?: return
         if (!activeFocusKnown) return
         homeFocusPersistenceJob?.cancel()
@@ -335,6 +342,29 @@ class HomeViewModel @Inject constructor(
             focusedRowId = activeFocusedRowId,
             hero = hero,
         )
+    }
+
+    /** Called before the returning Home tree restores its old selection, and again on resume. */
+    fun restoreTrailerPlaybackFocus(focusStateKey: String = homeFocusStateKey) {
+        if (focusStateKey != homeFocusStateKey) return
+        val returned = youtubePlaybackContext.consumeReturn("home-trailers:$focusStateKey") ?: return
+        val current = _uiState.value as? HomeUiState.Loaded ?: return
+        val source = trailerPlaybackReturn.source ?: return
+        if (!appPreferences.trailersEnabled || !appPreferences.homeRows.any {
+                it.enabled && it.system == HomeRowDefinition.SYSTEM_TRAILERS && "trailers.${it.contentKey}" == source.id
+            }) {
+            trailerPlaybackReturn.clear()
+            return
+        }
+        val target = trailerPlaybackReturn.restore(returned.rowId, returned.videoId) ?: return
+        val item = source.items.first { it.ratingKey == target.ratingKey }
+        trailerRows = trailerRows.filterNot { it.id == source.id } + source
+        activeFocusKnown = true
+        activeFocusedRatingKey = target.ratingKey
+        activeFocusedRowId = target.rowId
+        _heroContent.value = item.toHeroContent()
+        queueHomeFocusPersistence(item.ratingKey, source.id)
+        publishRows(current.rows)
     }
 
     init {
@@ -442,6 +472,8 @@ class HomeViewModel @Inject constructor(
         embyOnly: Boolean = false,
         focusStateKey: String = HOME_FOCUS_STATE_KEY,
     ) {
+        restoreTrailerPlaybackFocus(focusStateKey)
+        trailerPlaybackReturn.enter()
         hasEntered = true
         start(plexOnly, jellyfinOnly, embyOnly, focusStateKey, refreshing = false, youtubeMode = HomeYouTubeLoadMode.OPEN)
     }
@@ -468,6 +500,7 @@ class HomeViewModel @Inject constructor(
         this.embyOnly = embyOnly
         _overviewViewMode.value = systemOverviewPageMode() ?: HomeRowDefinition.DISPLAY_POSTER
         if (homeFocusStateKey != focusStateKey) {
+            trailerPlaybackReturn.clear()
             homeFocusStateKey = focusStateKey
             persistedHomeFocusKey = appPreferences.sectionFocus(focusStateKey)
             persistedHomeFocusRowId = appPreferences.sectionFocusRow(focusStateKey)
@@ -686,6 +719,7 @@ class HomeViewModel @Inject constructor(
 
     fun reload() {
         if (_refreshing.value) return
+        trailerPlaybackReturn.clear()
         unreachableServers.allowWakeRetry()
         captureFocusForReturn()
         refresh(invalidateCache = true, youtubeMode = HomeYouTubeLoadMode.EXPLICIT)
@@ -1359,6 +1393,14 @@ class HomeViewModel @Inject constructor(
         return youtubePlaybackContext.start("feed:$key", original, videoId)
     }
 
+    /** TMDB Home cards play directly and keep manual Next/Previous inside their exact row. */
+    fun trailerPlaybackToken(rowId: String, videoId: String): Long? {
+        val source = (_uiState.value as? HomeUiState.Loaded)?.rows?.firstOrNull { it.id == rowId } ?: return null
+        val queue = homeTrailerPlaybackRow(source, videoId) ?: return null
+        return youtubePlaybackContext.start("home-trailers:$homeFocusStateKey", queue, videoId, isTrailer = true)
+            ?.also { trailerPlaybackReturn.start(source, videoId) }
+    }
+
     /** SmartTube feeds are regular video rows on Home, not one large category action button. */
     private fun updateHomeYouTubeRow(generation: Int, definition: HomeRowDefinition, source: YouTubeRow?) {
         if (generation != youtubeRowsGeneration) return
@@ -1806,7 +1848,8 @@ class HomeViewModel @Inject constructor(
                 if (generation != trailerRowsGeneration) return@launch
                 val lastRows = (cached + trailerRows).associateBy { it.id }
                 trailerRows = definitions.mapNotNull { definition ->
-                    lastRows["trailers.${definition.contentKey}"]?.copy(
+                    val id = "trailers.${definition.contentKey}"
+                    trailerPlaybackReturn.row(id, lastRows[id])?.copy(
                         title = definition.displayTitle(context),
                         style = homeRowTileStyle(definition.displayMode, MediaTileStyle.LANDSCAPE),
                     )
@@ -1839,7 +1882,7 @@ class HomeViewModel @Inject constructor(
                         )
                     }
                     homeRowSnapshots.save("trailers", id, row)
-                    trailerRows = trailerRows.filterNot { it.id == id } + listOfNotNull(row)
+                    trailerRows = trailerRows.filterNot { it.id == id } + listOfNotNull(trailerPlaybackReturn.row(id, row))
                     if (!_uiState.value.isFailurePage()) publishRows((_uiState.value as? HomeUiState.Loaded)?.rows.orEmpty())
                 }
             } finally {
@@ -2033,7 +2076,7 @@ class HomeViewModel @Inject constructor(
         // Initial focus belongs to the first row on screen, which follows rowKeys (the editor
         // order), not the provider order of `rows`.
         val firstContentRow = rows.firstOrNull { it.id == rowKeys.firstOrNull() && it.items.isNotEmpty() }
-        var savedFocus = if (activeFocusKnown) {
+        var savedFocus = trailerPlaybackReturn.pendingTarget ?: if (activeFocusKnown) {
             HomeFocusSnapshot(activeFocusedRatingKey, activeFocusedRowId)
         } else {
             HomeFocusSnapshot(
@@ -2058,7 +2101,9 @@ class HomeViewModel @Inject constructor(
         // own snapshot, recreating its destination restores it instead of sharing Home's focus.
         val needsInitialTopLeft = (previous == null || previous.rowKeys.isEmpty()) && !savedContentFocusExists
         // Resolve the initial target while loading; the first actual focus event consumes it.
-        val initialFocusTarget = if (needsInitialTopLeft || previous?.initialFocusTarget?.let { it != HomeInitialFocusTarget.NONE } == true) {
+        val initialFocusTarget = if (trailerPlaybackReturn.target != null) {
+            HomeInitialFocusTarget.NONE
+        } else if (needsInitialTopLeft || previous?.initialFocusTarget?.let { it != HomeInitialFocusTarget.NONE } == true) {
             when {
                 rowKeys.firstOrNull()?.startsWith("live-tv") == true -> HomeInitialFocusTarget.LIVE_TV
                 rowKeys.firstOrNull()?.startsWith("recent-tv") == true -> HomeInitialFocusTarget.RECENT_TV
@@ -2107,6 +2152,7 @@ class HomeViewModel @Inject constructor(
         _heroContent.value = hero
         _uiState.value = HomeUiState.Loaded(
             rows = rows,
+            playbackReturnRevision = trailerPlaybackReturn.revision,
             focusRecovery = focusRecovery, focusedRatingKey = focusedKey, focusedRowId = focusedRowId, hero = hero,
             tvRows = tvRows, liveTvItems = liveTvItems, shortcuts = shortcuts, recentTvItems = recentTvItems, rowKeys = rowKeys,
             liveTvTitle = configuredRow(HomeRowDefinition.SYSTEM_TVHEADEND, "live")?.displayTitle(context).orEmpty(),
@@ -2132,6 +2178,7 @@ class HomeViewModel @Inject constructor(
         homeFetchLimiter.withPermit { block() }
 
     fun onItemFocused(rowId: String, item: MediaItem) {
+        trailerPlaybackReturn.focused(rowId, item.ratingKey)
         if (!item.ratingKey.startsWith(HOME_YOUTUBE_ITEM_PREFIX)) metadataPrefetcher.detail(item.ratingKey)
         val current = _uiState.value as? HomeUiState.Loaded ?: return
         val focusChanged = !activeFocusKnown || activeFocusedRatingKey != item.ratingKey || activeFocusedRowId != rowId
@@ -2156,6 +2203,7 @@ class HomeViewModel @Inject constructor(
     }
 
     fun onLiveTvFocused(item: HomeLiveTvItem) {
+        trailerPlaybackReturn.focused(null, null)
         val current = _uiState.value as? HomeUiState.Loaded ?: return
         val nextHero = item.toHeroContent()
         val mustReleaseInitialFocus = current.initialFocusTarget != HomeInitialFocusTarget.NONE
@@ -2177,6 +2225,7 @@ class HomeViewModel @Inject constructor(
     }
 
     fun onShortcutFocused(row: HomeRowDefinition) {
+        trailerPlaybackReturn.focused(null, null)
         val current = _uiState.value as? HomeUiState.Loaded ?: return
         val nextHero = row.toHeroContent()
         val mustReleaseInitialFocus = current.initialFocusTarget != HomeInitialFocusTarget.NONE

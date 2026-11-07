@@ -10,7 +10,7 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 
 /**
- * The originating browse row owns automatic playback. Metadata suggestions are deliberately
+ * The originating browse row owns sequential playback. Metadata suggestions are deliberately
  * NOT part of this queue: an Abos/History/Channel run must never silently become Home.
  * A token makes a restored or separately launched player unable to borrow a stale browse queue.
  */
@@ -48,6 +48,7 @@ class YouTubeBrowsePlaybackContext @Inject constructor(
         val sort: YouTubeSort,
         val filter: YouTubeFilter,
         val descending: Boolean,
+        val isTrailer: Boolean,
         val exhaustedRows: MutableSet<String> = mutableSetOf(),
         var lastPlayed: String? = null,
         var returnPending: Boolean = false,
@@ -67,19 +68,22 @@ class YouTubeBrowsePlaybackContext @Inject constructor(
         sort: YouTubeSort = YouTubeSort.DEFAULT,
         filter: YouTubeFilter = YouTubeFilter.ALL,
         descending: Boolean = false,
+        isTrailer: Boolean = false,
     ): Long? {
         if (scope.isNullOrBlank() || row == null || row.items.none { it.videoId == videoId }) return null
         current?.let { engine.discardRowContinuation(it.playerScope) }
         val token = ++nextToken
         val playerScope = "youtube-player-row:$token"
-        val sourceRows = continuationRowIds.filter(String::isNotBlank).distinct()
+        // TMDB supplies a complete, finite row. Never ask SmartTube for a continuation
+        // or borrow a YouTube feed's paging handle for this trailer session.
+        val sourceRows = if (isTrailer) emptyList() else continuationRowIds.filter(String::isNotBlank).distinct()
             .ifEmpty { listOf(row.id) }
         val forked = sourceRows.filter { engine.forkRowContinuation(scope, playerScope, it) }.toMutableSet()
         current = Session(
             token = token, scope = scope, rowId = returnRowId ?: row.id,
             items = row.items.distinctBy { it.videoId }.toMutableList(),
             playerScope = playerScope, continuationRows = sourceRows, forkedRows = forked,
-            sort = sort, filter = filter, descending = descending,
+            sort = sort, filter = filter, descending = descending, isTrailer = isTrailer,
         )
         return token
     }
@@ -87,6 +91,10 @@ class YouTubeBrowsePlaybackContext @Inject constructor(
     @Synchronized
     fun contains(token: Long, videoId: String): Boolean =
         current?.takeIf { it.token == token }?.items?.any { it.videoId == videoId } == true
+
+    @Synchronized
+    fun containsTrailer(token: Long, videoId: String): Boolean =
+        current?.takeIf { it.token == token && it.isTrailer }?.items?.any { it.videoId == videoId } == true
 
     @Synchronized
     fun played(token: Long, videoId: String) {
@@ -155,6 +163,7 @@ class YouTubeBrowsePlaybackContext @Inject constructor(
     @Synchronized
     internal fun appendContinuation(token: Long, rowId: String, page: com.ambient.tv.youtube.YouTubeRowPage?) {
         val session = current?.takeIf { it.token == token } ?: return
+        if (session.isTrailer) return
         if (page == null || !page.hasMore) session.exhaustedRows.add(rowId)
         if (page == null) return
         val known = session.items.mapTo(HashSet()) { it.videoId }
