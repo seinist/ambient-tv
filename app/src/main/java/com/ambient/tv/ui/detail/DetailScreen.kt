@@ -507,7 +507,7 @@ internal fun DetailContent(
             }
             return false
         }
-        LaunchedEffect(item.mediaVersions, playbackAvailable) {
+        LaunchedEffect(focusScope, item.ratingKey, item.mediaVersions, playbackAvailable) {
             val previous = focusedVersionKey ?: return@LaunchedEffect
             if (previous in versionRowKeys) return@LaunchedEffect
             // TV Surface drops focus when its source becomes disabled. Transfer it explicitly
@@ -1131,7 +1131,7 @@ private fun MediaVersionPicker(
                     var focused by remember { mutableStateOf(false) }
                     val previousIndex = remember { intArrayOf(index) }
                     val reveal = remember { BringIntoViewRequester() }
-                    LaunchedEffect(index) {
+                    LaunchedEffect(index, focused) {
                         val moved = previousIndex[0] != index
                         previousIndex[0] = index
                         if (moved && focused) {
