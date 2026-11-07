@@ -818,16 +818,18 @@ internal fun LibraryContent(
             }
         })
         val initialRow = state.rows.getOrNull(restoreRowIndex)
+        val initialItemKey = initialRow?.items?.firstOrNull { initialFocusKey != null && initialFocusKey in it.allRatingKeys }?.ratingKey
         com.ambient.tv.ui.common.BrowseFocusContentIdentity(state.playbackReturnRevision, restoreInitialTarget = true)
         com.ambient.tv.ui.common.BrowseFocusInitialTarget(
-            initialRow?.items?.firstOrNull { initialFocusKey != null && initialFocusKey in it.allRatingKeys }?.ratingKey,
+            initialItemKey,
             initialRow?.id,
         )
         val browseFocus = com.ambient.tv.ui.common.LocalBrowseFocusReturnState.current
         LaunchedEffect(state.playbackReturnRevision, browseFocus) {
-            if (state.playbackReturnRevision == 0 || browseFocus == null) return@LaunchedEffect
+            if (state.playbackReturnRevision == 0 || browseFocus == null || initialItemKey == null) return@LaunchedEffect
+            val target = com.ambient.tv.ui.common.BrowseFocusKey(initialRow?.id, initialItemKey, content = true)
             com.ambient.tv.ui.common.retryFocusFor {
-                !restoreArmed || browseFocus.requestContentFocus() == true
+                !restoreArmed || browseFocus.requestContentFocus(target) == true
             }
         }
         LaunchedEffect(rowListState) {

@@ -20,7 +20,6 @@ import androidx.compose.ui.test.hasClickAction
 import androidx.compose.ui.test.hasContentDescription
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
-import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performKeyInput
 import androidx.compose.ui.test.pressKey
 import androidx.compose.ui.unit.dp
@@ -40,6 +39,7 @@ import com.ambient.tv.ui.performance.PerformanceProfile
 import com.ambient.tv.ui.theme.AmbientTvTheme
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Before
 import org.junit.Rule
@@ -132,13 +132,8 @@ class TrailerTitleFocusTest {
     @Test fun leavingPlaybackRestoresTheClickedNonfirstVideoWithItsSavedViewport() {
         val fixture = Fixture(videos(), key(8))
         mount(fixture)
-        focused(fixture, 8)
-        tile(8).performClick()
-        rule.waitForIdle()
-        rule.runOnIdle {
-            assertEquals(video(8).key, fixture.launchedVideo)
-            fixture.visible = true
-        }
+        launchOnRemote(fixture, 8)
+        rule.runOnIdle { fixture.visible = true }
         focused(fixture, 8)
     }
 
@@ -159,9 +154,7 @@ class TrailerTitleFocusTest {
     @Test fun returnUsesVideoIdentityAfterTheTitleListHasBeenReordered() {
         val fixture = Fixture(videos(), key(4))
         mount(fixture)
-        focused(fixture, 4)
-        tile(4).performClick()
-        rule.waitForIdle()
+        launchOnRemote(fixture, 4)
         rule.runOnIdle {
             fixture.videos = fixture.videos.reversed()
             fixture.focusKey = key(7)
@@ -215,6 +208,19 @@ class TrailerTitleFocusTest {
         rule.runOnIdle {
             fixture.focusKey = key(index)
             fixture.focusRequest++
+        }
+    }
+
+    private fun launchOnRemote(fixture: Fixture, index: Int) {
+        focused(fixture, index)
+        // TV cards activate through the remote's OK key. A synthetic touch click on this
+        // plain ComponentActivity only exercises the pointer-focus path.
+        tile(index).performKeyInput { pressKey(Key.DirectionCenter) }
+        rule.waitForIdle()
+        tile(index).assertDoesNotExist()
+        rule.runOnIdle {
+            assertEquals(video(index).key, fixture.launchedVideo)
+            assertFalse("The title must leave composition before testing a saved-state return", fixture.visible)
         }
     }
 

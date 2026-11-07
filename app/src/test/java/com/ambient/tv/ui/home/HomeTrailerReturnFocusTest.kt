@@ -11,6 +11,7 @@ import androidx.compose.ui.test.ExperimentalTestApi
 import androidx.compose.ui.test.assertIsFocused
 import androidx.compose.ui.test.hasClickAction
 import androidx.compose.ui.test.hasText
+import androidx.compose.ui.test.isFocused
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performKeyInput
@@ -104,16 +105,26 @@ class HomeTrailerReturnFocusTest {
 
     private fun tile(row: String, index: Int) = rule.onNode(hasText("$row $index") and hasClickAction())
 
+    private fun focused(fixture: Fixture, row: String, index: Int) {
+        try {
+            tile(row, index).assertIsFocused()
+        } catch (failure: AssertionError) {
+            val nodes = rule.onAllNodes(isFocused(), useUnmergedTree = true).fetchSemanticsNodes()
+                .joinToString { it.config.toString() }
+            throw AssertionError("${failure.message}\nLast Home focus: ${fixture.lastFocus}; focused nodes: $nodes", failure)
+        }
+    }
+
     @Test fun nextAndPreviousRetargetAnAlreadyComposedHomeBeyondItsViewport() {
         val row = "trailers.CINEMA"
         val fixture = mount()
         tile(row, 0).assertIsFocused()
         rule.runOnIdle { fixture.returned(row, 16) }
         rule.waitForIdle()
-        tile(row, 16).assertIsFocused()
+        focused(fixture, row, 16)
         rule.runOnIdle { fixture.returned(row, 15) }
         rule.waitForIdle()
-        tile(row, 15).assertIsFocused()
+        focused(fixture, row, 15)
 
         tile(row, 15).performKeyInput { pressKey(Key.DirectionLeft) }
         rule.waitForIdle()
@@ -129,7 +140,7 @@ class HomeTrailerReturnFocusTest {
         val fixture = mount(listOf("trailers.CINEMA", row))
         rule.runOnIdle { fixture.returned(row, 12) }
         rule.waitForIdle()
-        tile(row, 12).assertIsFocused()
+        focused(fixture, row, 12)
         rule.runOnIdle { assertEquals(HomeFocusSnapshot("trailer-video:video-12", row), fixture.lastFocus) }
     }
 
