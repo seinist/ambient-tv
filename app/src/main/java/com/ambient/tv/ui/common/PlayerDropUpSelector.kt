@@ -291,6 +291,10 @@ private fun PlayerDropUpSelectorImpl(
                     if (!expanded) return@onPreviewKeyEvent false
                     selectorMenuKey(event.key) {
                         val dismissal = event.key == Key.Back || event.key == Key.Escape || event.key == Key.DirectionLeft
+                        // Left closes on release; reserve its feedback for the Back action below.
+                        if (event.key == Key.DirectionLeft && event.type == KeyEventType.KeyDown) {
+                            uiSounds?.suppressNavigationInput(event.nativeKeyEvent.keyCode, event.nativeKeyEvent.eventTime)
+                        }
                         if (event.type != if (dismissal) KeyEventType.KeyUp else KeyEventType.KeyDown) return@selectorMenuKey
                         when (event.key) {
                             Key.DirectionDown, Key.DirectionUp ->
@@ -556,6 +560,10 @@ private fun PlayerDropUpOptionRow(
             .onPreviewKeyEvent { event ->
                 selectorMenuKey(event.key) {
                     val dismissal = event.key == Key.Back || event.key == Key.Escape || event.key == Key.DirectionLeft
+                    // Left closes on release; reserve its feedback for the Back action below.
+                    if (event.key == Key.DirectionLeft && event.type == KeyEventType.KeyDown) {
+                        uiSounds?.suppressNavigationInput(event.nativeKeyEvent.keyCode, event.nativeKeyEvent.eventTime)
+                    }
                     if (event.type != if (dismissal) KeyEventType.KeyUp else KeyEventType.KeyDown) return@selectorMenuKey
                     when (event.key) {
                         Key.DirectionDown ->

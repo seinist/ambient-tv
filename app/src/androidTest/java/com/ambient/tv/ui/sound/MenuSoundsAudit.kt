@@ -4,6 +4,7 @@ import android.app.Instrumentation
 import android.content.Intent
 import android.view.KeyEvent
 import androidx.activity.compose.setContent
+import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -14,6 +15,8 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.unit.dp
 import com.ambient.tv.ui.catalog.UiCatalogActivity
 import com.ambient.tv.ui.common.*
@@ -25,10 +28,16 @@ import com.ambient.tv.ui.sound.navigationSoundInput
 internal class MenuSoundsAudit(private val instrumentation: Instrumentation, private val log: (String) -> Unit) {
     private val heard = mutableListOf<UiSound>()
     private val callbacks = mutableMapOf<String, Int>()
+    private val feedbackQueue = android.os.Handler(android.os.Looper.getMainLooper())
     private val sounds = object : UiSoundFeedback {
         val gate = UiSoundEventGate()
-        val actions = UiSoundActions { if (gate.accept(it, android.os.SystemClock.elapsedRealtime())) heard += it }
-        override fun navigationInput(keyCode: Int, eventTime: Long) = gate.input(keyCode, eventTime, android.os.SystemClock.elapsedRealtime())
+        val actions = UiSoundActions { if (gate.accept(it)) heard += it }
+        override fun navigationInput(keyCode: Int, eventTime: Long) {
+            val input = gate.input(keyCode, eventTime) ?: return
+            feedbackQueue.post { gate.complete(input)?.let { heard += it } }
+        }
+        override fun navigationInputReleased(keyCode: Int) = gate.releaseInput(keyCode)
+        override fun suppressNavigationInput(keyCode: Int, eventTime: Long) = gate.suppressInput(keyCode, eventTime)
         override fun play(kind: UiSound) = actions.request(kind)
         override fun perform(kind: UiSound, action: () -> Unit) = actions.perform(kind, action)
     }
@@ -51,6 +60,64 @@ internal class MenuSoundsAudit(private val instrumentation: Instrumentation, pri
         log("PASS $label")
     }
     private fun count(id: String) { callbacks[id] = (callbacks[id] ?: 0) + 1 }
+
+    private fun checkDirectionFeedback(activity: UiCatalogActivity) {
+        val refs = List(4) { FocusRequester() }
+        val consumeDirections = mutableStateOf(false)
+        var focused = -1
+        main {
+            activity.setContent {
+                CompositionLocalProvider(LocalUiSoundPlayer provides sounds) {
+                    AmbientTvTheme {
+                        SilenceSystemMenuSounds()
+                        Column(Modifier.navigationSoundInput().fillMaxSize().onPreviewKeyEvent { event ->
+                            val native = event.nativeKeyEvent
+                            consumeDirections.value && native.action == KeyEvent.ACTION_DOWN && native.keyCode in 19..22
+                        }) {
+                            repeat(2) { row ->
+                                Row {
+                                    repeat(2) { column ->
+                                        val index = row * 2 + column
+                                        // Deliberately no sound callback: input owns the feedback.
+                                        Box(Modifier.size(64.dp).focusRequester(refs[index])
+                                            .onFocusChanged { if (it.isFocused) focused = index }.focusable())
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        Thread.sleep(700)
+        main { heard.clear(); check(refs[0].requestFocus()) }
+        checkSound(null, "programmatic focus stays silent")
+        for ((code, target) in listOf(KeyEvent.KEYCODE_DPAD_RIGHT to 1, KeyEvent.KEYCODE_DPAD_DOWN to 3,
+                KeyEvent.KEYCODE_DPAD_LEFT to 2, KeyEvent.KEYCODE_DPAD_UP to 0)) {
+            key(code)
+            main { check(focused == target) { "Direction $code did not reach tile $target: $focused" } }
+            checkSound(UiSound.FOCUS, "direction $code sounds once without a target sound callback")
+        }
+        main {
+            consumeDirections.value = true
+            val start = android.os.SystemClock.uptimeMillis()
+            repeat(12) { index ->
+                val time = start + index * 2
+                val code = listOf(KeyEvent.KEYCODE_DPAD_LEFT, KeyEvent.KEYCODE_DPAD_DOWN,
+                    KeyEvent.KEYCODE_DPAD_RIGHT, KeyEvent.KEYCODE_DPAD_UP)[index % 4]
+                // All dispatches happen before queued sound completions; no 200 ms key helper.
+                activity.dispatchKeyEvent(KeyEvent(time, time, KeyEvent.ACTION_DOWN, code, 0))
+                activity.dispatchKeyEvent(KeyEvent(time, time + 1, KeyEvent.ACTION_UP, code, 0))
+            }
+        }
+        main {
+            check(heard == List(12) { UiSound.FOCUS }) { "Fast consumed direction clicks: $heard" }
+            check(focused == 0) { "Consumed keys unexpectedly moved focus" }
+            heard.clear()
+        }
+        log("PASS every fast direction click has feedback while focus work consumes the key")
+    }
+
     private fun checkHandheldPcmOutput() {
         val scope = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.Main.immediate)
         val output = HandheldNavSoundOutput(scope)
@@ -214,6 +281,7 @@ internal class MenuSoundsAudit(private val instrumentation: Instrumentation, pri
         val value = mutableStateOf(0)
         val checked = mutableStateOf(false)
         try {
+            checkDirectionFeedback(activity)
             main {
                 activity.setContent {
                     CompositionLocalProvider(LocalUiSoundPlayer provides sounds, com.ambient.tv.ui.mobile.LocalHandheldUi provides false) {
@@ -273,12 +341,12 @@ internal class MenuSoundsAudit(private val instrumentation: Instrumentation, pri
             checkSound(UiSound.SELECT, "held OK does not repeat activation sounds")
             main { check(callbacks["save"] == 2); refs[5].requestFocus(); heard.clear() }
             key(KeyEvent.KEYCODE_DPAD_LEFT)
-            checkSound(null, "disabled decrease remains silent")
+            checkSound(UiSound.FOCUS, "decrease at its limit gives only navigation feedback")
             key(KeyEvent.KEYCODE_DPAD_RIGHT)
             checkSound(UiSound.VALUE, "enabled step changes value with one sound")
             main { check(value.value == 1) }
             key(KeyEvent.KEYCODE_DPAD_RIGHT)
-            checkSound(null, "step at its upper limit remains silent")
+            checkSound(UiSound.FOCUS, "step at its upper limit gives only navigation feedback")
             main { refs[6].requestFocus(); heard.clear() }
             key(KeyEvent.KEYCODE_DPAD_CENTER)
             checkSound(UiSound.SELECT, "settings selector opening has feedback")
@@ -291,6 +359,15 @@ internal class MenuSoundsAudit(private val instrumentation: Instrumentation, pri
             checkSound(UiSound.SELECT, "selector reopens")
             key(KeyEvent.KEYCODE_BACK)
             checkSound(UiSound.BACK, "selector Back has one Back sound")
+            key(KeyEvent.KEYCODE_DPAD_CENTER)
+            checkSound(UiSound.SELECT, "selector reopens for Left release")
+            val leftTime = android.os.SystemClock.uptimeMillis()
+            instrumentation.sendKeySync(KeyEvent(leftTime, leftTime, KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_DPAD_LEFT, 0))
+            main { }
+            checkSound(null, "selector Left waits for release without an extra focus sound")
+            instrumentation.sendKeySync(KeyEvent(leftTime, leftTime + 50, KeyEvent.ACTION_UP, KeyEvent.KEYCODE_DPAD_LEFT, 0))
+            Thread.sleep(200)
+            checkSound(UiSound.BACK, "selector Left release gives exactly one Back sound")
             main { refs[7].requestFocus(); heard.clear() }
             key(KeyEvent.KEYCODE_DPAD_CENTER)
             checkSound(UiSound.TOGGLE_ON, "existing toggle still gives one sound")
@@ -303,7 +380,11 @@ internal class MenuSoundsAudit(private val instrumentation: Instrumentation, pri
                 heard.clear()
                 activity.setContent {
                     CompositionLocalProvider(LocalUiSoundPlayer provides sounds, com.ambient.tv.ui.mobile.LocalHandheldUi provides false) {
-                        AmbientTvTheme { NavSoundEditor("", .3f, {}, true, {}, {}) }
+                        AmbientTvTheme {
+                            Column(Modifier.navigationSoundInput().fillMaxSize()) {
+                                NavSoundEditor("", .3f, {}, true, {}, {})
+                            }
+                        }
                     }
                 }
             }

@@ -23,6 +23,7 @@ import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onKeyEvent
+import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.runtime.*
@@ -151,7 +152,14 @@ internal fun NavSoundEditor(
     CompositionLocalProvider(LocalUiSoundPlayer provides null,
         androidx.compose.material3.LocalContentColor provides MaterialTheme.colorScheme.onSurface,
         androidx.tv.material3.LocalContentColor provides MaterialTheme.colorScheme.onSurface) {
-        Column(modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        Column(modifier.fillMaxSize().onPreviewKeyEvent { event ->
+            // Activity input feedback precedes this LocalUiSoundPlayer=null scope. Suppress
+            // that event too, so editing a draft still produces only its explicit preview.
+            val native = event.nativeKeyEvent
+            if (native.action == android.view.KeyEvent.ACTION_DOWN)
+                player?.suppressNavigationInput(native.keyCode, native.eventTime)
+            false
+        }, verticalArrangement = Arrangement.spacedBy(10.dp)) {
             val general: @Composable ColumnScope.() -> Unit = {
                 SettingsSubheader(stringResource(R.string.settings_section_general_sound_general))
                 TvSettingRow(

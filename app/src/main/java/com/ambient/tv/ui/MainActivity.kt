@@ -449,7 +449,6 @@ open class MainActivity : ComponentActivity() {
         }
         if (event.action == KeyEvent.ACTION_DOWN) com.ambient.tv.companion.CompanionRemoteInput.hide()
         com.ambient.tv.data.browse.BrowseWorkBudget.interact()
-        if (event.action == KeyEvent.ACTION_DOWN) uiSoundPlayer.navigationInput(event.keyCode, event.eventTime)
         val phase = when (event.action) {
             KeyEvent.ACTION_DOWN -> ScreensaverInputPhase.DOWN
             KeyEvent.ACTION_UP -> ScreensaverInputPhase.UP
@@ -485,6 +484,10 @@ open class MainActivity : ComponentActivity() {
         }
         // Focused Compose controls and editors get first refusal. This keeps typing, selection,
         // clipboard shortcuts and Space activation intact while playback hotkeys remain global.
+        when (event.action) {
+            KeyEvent.ACTION_DOWN -> uiSoundPlayer.navigationInput(event.keyCode, event.eventTime)
+            KeyEvent.ACTION_UP -> uiSoundPlayer.navigationInputReleased(event.keyCode)
+        }
         if (super.dispatchKeyEvent(event)) return true
         if (!com.ambient.tv.ui.mobile.isTelevision(this)) return false
 
@@ -2038,11 +2041,9 @@ private fun AmbientTvApp(
                         false
                     }
                     .onKeyEvent { event ->
-                        // Left/Up reach Compose's root key handler, which plays the navigation tick.
-                        // Down/Right often do not: rows and dialogs consume them while moving focus,
-                        // and the root effect for those two directions is silent on many TV images.
-                        // Play the same tick here when this row still sees the key, and consume a
-                        // successful move so the root does not click a second time.
+                        // Keep the fallback focus traversal for unconsumed Down/Right. Sound
+                        // feedback is owned by the input event for all four directions, including
+                        // Left/Up handled by Compose and keys consumed during an async focus move.
                         if (handheld || event.type != KeyEventType.KeyDown) return@onKeyEvent false
                         val direction = when (event.key) {
                             ComposeKey.DirectionDown -> FocusDirection.Down
@@ -2050,7 +2051,6 @@ private fun AmbientTvApp(
                             else -> return@onKeyEvent false
                         }
                         if (!focusManager.moveFocus(direction)) return@onKeyEvent false
-                        uiSounds?.playFocus()
                         true
                     },
             ) {
