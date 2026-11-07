@@ -1,7 +1,7 @@
 package com.ambient.tv.ui.common
 
 import androidx.compose.foundation.focusable
-import androidx.compose.foundation.gestures.animateScrollBy
+import androidx.compose.foundation.gestures.ScrollableState
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.background
@@ -19,6 +19,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusProperties
@@ -31,10 +32,10 @@ import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.input.key.*
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
-import kotlinx.coroutines.launch
 import com.ambient.tv.ui.mobile.LocalHandheldUi
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -122,13 +123,22 @@ private fun InteractiveScrollbar(
     modifier: Modifier,
     contentFocus: FocusRequester? = null,
     actionsFocus: FocusRequester? = null,
-    page: suspend (Int) -> Unit,
+    scrollState: ScrollableState,
+    viewportSize: () -> Float,
+    reverseLayout: () -> Boolean = { false },
 ) {
     var focused by remember { mutableStateOf(false) }
     var horizontalPress by remember { mutableStateOf<Key?>(null) }
     val scope = rememberCoroutineScope()
     val scrollbarDescription = androidx.compose.ui.res.stringResource(com.ambient.tv.R.string.common_scrollbar)
-    var paging by remember { mutableStateOf<kotlinx.coroutines.Job?>(null) }
+    val currentViewportSize by rememberUpdatedState(viewportSize)
+    val currentReverseLayout by rememberUpdatedState(reverseLayout)
+    val scrolling = remember(scope, scrollState) {
+        ScrollbarKeyScroller(scope, scrollState, { currentViewportSize() }, { currentReverseLayout() })
+    }
+    DisposableEffect(scrolling) {
+        onDispose { scrolling.stop() }
+    }
     val accent = MaterialTheme.colorScheme.primary
     val handheld = LocalHandheldUi.current
     val focusManager = LocalFocusManager.current
@@ -148,16 +158,21 @@ private fun InteractiveScrollbar(
         .focusGroup()
         .onFocusChanged {
             focused = it.isFocused
-            if (!focused) horizontalPress = null
+            if (!focused) {
+                horizontalPress = null
+                scrolling.stop()
+            }
         }
         .onPreviewKeyEvent { event ->
             // Select rows dismiss on Left-up. Complete this gesture here before returning
             // focus, so its release cannot accidentally close the newly focused option.
             if (event.key == Key.DirectionLeft) {
-                if (event.type == KeyEventType.KeyDown) horizontalPress = event.key
+                if (event.type == KeyEventType.KeyDown) {
+                    horizontalPress = event.key
+                    scrolling.stop()
+                }
                 if (event.type == KeyEventType.KeyUp && horizontalPress == event.key) {
                     horizontalPress = null
-                    paging?.cancel()
                     if (contentFocus == null || !runCatching {
                             contentFocus.requestFocus(FocusDirection.Left)
                         }.getOrDefault(false)) focusManager.moveFocus(FocusDirection.Left)
@@ -167,10 +182,12 @@ private fun InteractiveScrollbar(
             if (event.key == Key.DirectionRight) {
                 // The Right-down that entered the bar belongs to the list. Its release
                 // must not immediately skip the bar and continue to the footer.
-                if (event.type == KeyEventType.KeyDown) horizontalPress = event.key
+                if (event.type == KeyEventType.KeyDown) {
+                    horizontalPress = event.key
+                    scrolling.stop()
+                }
                 if (event.type == KeyEventType.KeyUp && horizontalPress == event.key) {
                     horizontalPress = null
-                    paging?.cancel()
                     // Prefer adjacent controls, then the owning modal footer/page header.
                     // An explicit modal target must never fall through to the page behind it.
                     if (!focusManager.moveFocus(FocusDirection.Right)) {
@@ -181,15 +198,13 @@ private fun InteractiveScrollbar(
                 }
                 return@onPreviewKeyEvent true
             }
-            val direction = when (event.key) {
-                Key.DirectionUp, Key.PageUp -> -1
-                Key.DirectionDown, Key.PageDown -> 1
-                else -> return@onPreviewKeyEvent false
-            }
-            if (event.type == KeyEventType.KeyDown && paging?.isActive != true) {
-                paging = scope.launch { page(direction) }
-            }
-            true
+            scrolling.onKeyEvent(event)
+        }
+        .focusProperties {
+            // Ancestor D-pad acceleration may attempt a focus move on held repeats.
+            // Vertical input belongs to this scrollbar until the user leaves sideways.
+            up = FocusRequester.Cancel
+            down = FocusRequester.Cancel
         }
         .semantics { contentDescription = scrollbarDescription }
         .focusable(enabled = max > 0 && !handheld)
@@ -198,9 +213,11 @@ private fun InteractiveScrollbar(
 
 @Composable
 internal fun OverlayScrollbar(state: ScrollState, modifier: Modifier = Modifier, contentFocus: FocusRequester? = null, actionsFocus: FocusRequester? = null) {
-    InteractiveScrollbar(state.value, state.maxValue, modifier, contentFocus, actionsFocus) { direction ->
-        state.animateScrollBy(direction * state.viewportSize.toFloat())
-    }
+    InteractiveScrollbar(
+        state.value, state.maxValue, modifier, contentFocus, actionsFocus,
+        scrollState = state,
+        viewportSize = { state.viewportSize.toFloat() },
+    )
 }
 
 /** Scroll offset and scroll range in pixels, estimated from the visible items; null while the list fits. */
@@ -223,10 +240,12 @@ private fun LazyListState.estimatedScroll(): Pair<Int, Int>? {
 @Composable
 internal fun OverlayLazyScrollbar(state: LazyListState, modifier: Modifier = Modifier, contentFocus: FocusRequester? = null, actionsFocus: FocusRequester? = null) {
     val (scroll, max) = state.estimatedScroll() ?: return
-    InteractiveScrollbar(scroll, max, modifier, contentFocus, actionsFocus) { direction ->
-        val info = state.layoutInfo
-        state.animateScrollBy(direction * (info.viewportEndOffset - info.viewportStartOffset).toFloat() * if (info.reverseLayout) -1 else 1)
-    }
+    InteractiveScrollbar(
+        scroll, max, modifier, contentFocus, actionsFocus,
+        scrollState = state,
+        viewportSize = { (state.layoutInfo.viewportEndOffset - state.layoutInfo.viewportStartOffset).toFloat() },
+        reverseLayout = { state.layoutInfo.reverseLayout },
+    )
 }
 
 /** Scroll offset and scroll range in pixels, estimated from the visible lines; null while the grid fits. */
@@ -264,10 +283,12 @@ internal fun Modifier.overlayLazyGridScrollbar(state: LazyGridState, gutter: Dp?
 @Composable
 internal fun OverlayLazyGridScrollbar(state: LazyGridState, modifier: Modifier = Modifier, contentFocus: FocusRequester? = null, actionsFocus: FocusRequester? = null) {
     val (scroll, max) = state.estimatedScroll() ?: return
-    InteractiveScrollbar(scroll, max, modifier, contentFocus, actionsFocus) { direction ->
-        val info = state.layoutInfo
-        state.animateScrollBy(direction * (info.viewportEndOffset - info.viewportStartOffset).toFloat() * if (info.reverseLayout) -1 else 1)
-    }
+    InteractiveScrollbar(
+        scroll, max, modifier, contentFocus, actionsFocus,
+        scrollState = state,
+        viewportSize = { (state.layoutInfo.viewportEndOffset - state.layoutInfo.viewportStartOffset).toFloat() },
+        reverseLayout = { state.layoutInfo.reverseLayout },
+    )
 }
 
 /** Browse content may exit Right only into its adjacent scrollbar, never a distant header. */
