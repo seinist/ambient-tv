@@ -274,16 +274,27 @@ internal class ScrollListFocusAudit(private val instrumentation: Instrumentation
             val viewport = state.layoutInfo.viewportEndOffset - state.layoutInfo.viewportStartOffset
             val height = state.layoutInfo.visibleItemsInfo.first().size
             val offset = state.firstVisibleItemIndex * height + state.firstVisibleItemScrollOffset
-            check(kotlin.math.abs(offset - viewport) <= 2) { "Expected one page ($viewport px), got $offset" }
-            check(focused == null) { "Paging moved focus into content" }
+            check(offset > 0 && offset < viewport / 2) { "Expected a small D-pad step, got $offset of $viewport px" }
+            check(focused == null) { "Scrolling moved focus into content" }
         }
         key(KeyEvent.KEYCODE_DPAD_UP)
+        Thread.sleep(500)
+        main { check(state.firstVisibleItemIndex == 0 && state.firstVisibleItemScrollOffset == 0) }
+        key(KeyEvent.KEYCODE_PAGE_DOWN)
+        Thread.sleep(500)
+        main {
+            val viewport = state.layoutInfo.viewportEndOffset - state.layoutInfo.viewportStartOffset
+            val height = state.layoutInfo.visibleItemsInfo.first().size
+            val offset = state.firstVisibleItemIndex * height + state.firstVisibleItemScrollOffset
+            check(kotlin.math.abs(offset - viewport) <= 2) { "Expected Page Down to move $viewport px, got $offset" }
+        }
+        key(KeyEvent.KEYCODE_PAGE_UP)
         Thread.sleep(500)
         main { check(state.firstVisibleItemIndex == 0 && state.firstVisibleItemScrollOffset == 0) }
         key(KeyEvent.KEYCODE_DPAD_UP)
         key(KeyEvent.KEYCODE_DPAD_LEFT)
         main { check(focused?.startsWith("paging:") == true) { "Left did not return to content: $focused" } }
-        log("PASS focusable list scrollbar pages by viewport, stays focused at top and returns with Left")
+        log("PASS list scrollbar: small D-pad steps, explicit Page Up/Down, stable edge focus and Left return")
     }
 
     private fun auditGridScrollbar(activity: UiCatalogActivity) {
@@ -311,15 +322,25 @@ internal class ScrollListFocusAudit(private val instrumentation: Instrumentation
         main { check(focused == null) { "Grid Right did not focus the scrollbar: $focused" } }
         key(KeyEvent.KEYCODE_DPAD_DOWN)
         Thread.sleep(500)
+        var beforePage = 0
         main {
             val viewport = state.layoutInfo.viewportEndOffset - state.layoutInfo.viewportStartOffset
             val height = state.layoutInfo.visibleItemsInfo.first().size.height
             val offset = state.firstVisibleItemIndex / 2 * height + state.firstVisibleItemScrollOffset
-            check(kotlin.math.abs(offset - viewport) <= 2) { "Expected grid page ($viewport px), got $offset" }
+            check(offset > 0 && offset < viewport / 2) { "Expected a small grid D-pad step, got $offset of $viewport px" }
+            beforePage = offset
+        }
+        key(KeyEvent.KEYCODE_PAGE_DOWN)
+        Thread.sleep(500)
+        main {
+            val viewport = state.layoutInfo.viewportEndOffset - state.layoutInfo.viewportStartOffset
+            val height = state.layoutInfo.visibleItemsInfo.first().size.height
+            val offset = state.firstVisibleItemIndex / 2 * height + state.firstVisibleItemScrollOffset
+            check(kotlin.math.abs(offset - beforePage - viewport) <= 2) { "Expected grid Page Down to move $viewport px, got ${offset - beforePage}" }
         }
         key(KeyEvent.KEYCODE_DPAD_LEFT)
         main { check(focused?.startsWith("tile:") == true) { "Grid Left did not return to content: $focused" } }
-        log("PASS grid scrollbar pages by viewport and returns to a visible tile")
+        log("PASS grid scrollbar: small D-pad steps, explicit Page Down and return to a visible tile")
     }
 
     private fun assertVisible(activity: UiCatalogActivity, id: String) {

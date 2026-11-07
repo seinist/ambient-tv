@@ -339,7 +339,8 @@ private fun PlayerDetailScrollableText(
                     .fillMaxHeight()
                     .padding(vertical = 10.dp, horizontal = 4.dp)
                     .focusRequester(scrollbarFocus)
-                    .onFocusChanged { onScrollbarFocusChanged(it.isFocused) },
+                    // This observer wraps the scrollbar's internal focus group.
+                    .onFocusChanged { onScrollbarFocusChanged(it.hasFocus) },
                 contentFocus = textFocus,
                 actionsFocus = closeFocus,
             )

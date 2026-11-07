@@ -46,7 +46,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusDirection
 import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
@@ -1161,6 +1163,7 @@ private fun RadioStationList(
         lazyItems(stations, key = { it.id }) { station ->
             // Highlight the entire row (play target + favorite action) as one surface.
             var rowHasFocus by remember(station.id) { mutableStateOf(false) }
+            val rowFocusRequester = remember(station.id) { FocusRequester() }
             val selected = playbackId == station.id
             val favorite = station.id in favoriteIds
             val shape = RoundedCornerShape(10.dp)
@@ -1174,7 +1177,17 @@ private fun RadioStationList(
             // outer shadow *inside* the row and scale only its play half.
             Row(
                 Modifier.fillMaxWidth()
+                    .focusProperties {
+                        onEnter = {
+                            // Returning left from the scrollbar enters the station, not
+                            // its rightmost action. Inside the row, Right still reaches it.
+                            if (requestedFocusDirection == FocusDirection.Left) {
+                                rowFocusRequester.requestFocus()
+                            }
+                        }
+                    }
                     .onFocusChanged { rowHasFocus = it.hasFocus }
+                    .focusGroup()
                     .background(
                         if (rowHasFocus || selected) MaterialTheme.colorScheme.primary.copy(alpha = .12f)
                         else MaterialTheme.colorScheme.surface.copy(alpha = .58f),
@@ -1195,6 +1208,7 @@ private fun RadioStationList(
                     scale = noSurfaceScale(),
                     shape = ClickableSurfaceDefaults.shape(shape),
                     modifier = focusModifier.weight(1f)
+                        .focusRequester(rowFocusRequester)
                         .browseFocusTarget(station.id)
                         // No nested shadow or zoom: the containing row owns its highlight.
                         .activateOnTvKey { onClick(station) }
