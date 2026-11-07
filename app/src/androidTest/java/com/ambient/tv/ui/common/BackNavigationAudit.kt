@@ -124,7 +124,7 @@ internal class BackNavigationAudit(private val instrumentation: Instrumentation,
         await("video returns to parent entry") { nav.panel == UnifiedPlayerPanel.SETTINGS && focused == "entry:Video" }
         key(KeyEvent.KEYCODE_BACK)
         await("panel returns to opener") { nav.panel == UnifiedPlayerPanel.NONE && focused == "bar:settings" }
-        main { check(nav.focusRequester("bar:video").requestFocus()) }
+        main { check(nav.requestFocus("bar:video")) }
         key(KeyEvent.KEYCODE_DPAD_CENTER)
         await("direct video") { nav.panel == UnifiedPlayerPanel.VIDEO && focused == "selector" }
         key(KeyEvent.KEYCODE_BACK)

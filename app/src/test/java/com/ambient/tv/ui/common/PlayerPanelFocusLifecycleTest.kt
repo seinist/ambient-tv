@@ -5,6 +5,7 @@ import androidx.activity.ComponentActivity
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.size
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
@@ -13,6 +14,7 @@ import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsFocused
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithTag
@@ -35,29 +37,37 @@ class PlayerPanelFocusLifecycleTest {
     @Test fun backWaitsForTheOriginToReenterCompositionAndUsesItsNewRequester() {
         val showParent = mutableStateOf(true)
         lateinit var navigation: PlayerPanelNavigation
-        rule.mainClock.autoAdvance = false
         rule.setContent {
             navigation = rememberPlayerPanelNavigation()
             CompositionLocalProvider(LocalPlayerPanelNavigation provides navigation) {
-                when (navigation.panel) {
-                    UnifiedPlayerPanel.VISUALIZER -> if (showParent.value) {
-                        Target("entry:appearance", "origin")
+                // Keep the player host laid out even while neither panel's content is mounted.
+                Box(Modifier.fillMaxSize()) {
+                    when (navigation.panel) {
+                        UnifiedPlayerPanel.VISUALIZER -> if (showParent.value) {
+                            Target("entry:appearance", "origin")
+                        }
+                        UnifiedPlayerPanel.VISUALIZER_SETTINGS -> Target("settings:control", "child")
+                        else -> Unit
                     }
-                    UnifiedPlayerPanel.VISUALIZER_SETTINGS -> Target("settings:control", "child")
-                    else -> Unit
                 }
             }
         }
         rule.runOnIdle { navigation.open(UnifiedPlayerPanel.VISUALIZER) }
-        rule.mainClock.advanceTimeBy(64)
+        rule.onNodeWithTag("origin").assertIsDisplayed()
         rule.runOnIdle {
+            assertEquals(1, navigation.registeredFocusTargetCount)
             assertTrue(navigation.requestFocus("entry:appearance"))
+        }
+        rule.onNodeWithTag("origin").assertIsFocused()
+        rule.runOnIdle {
             navigation.fromOrigin("entry:appearance", root = false) {
                 navigation.open(UnifiedPlayerPanel.VISUALIZER_SETTINGS)
             }
         }
-        rule.mainClock.advanceTimeBy(64)
         rule.onNodeWithTag("origin").assertDoesNotExist()
+        rule.onNodeWithTag("child").assertIsDisplayed()
+        // Only pause time for the deliberate gap in the Back hand-back, after initial layout.
+        rule.mainClock.autoAdvance = false
         rule.runOnIdle {
             assertEquals(1, navigation.registeredFocusTargetCount)
             assertFalse(navigation.requestFocus("entry:appearance"))
@@ -66,19 +76,27 @@ class PlayerPanelFocusLifecycleTest {
         }
 
         // The hand-back begins while the original row is absent, as during panel rebuilding.
-        rule.mainClock.advanceTimeBy(96)
+        advance(96)
         rule.runOnIdle {
             assertEquals("entry:appearance", navigation.restoreKey)
             assertEquals(0, navigation.registeredFocusTargetCount)
             showParent.value = true
         }
-        rule.mainClock.advanceTimeBy(96)
+        advance(96)
         rule.onNodeWithTag("origin").assertIsFocused()
         rule.runOnIdle {
             assertNull(navigation.restoreKey)
             assertFalse(navigation.restoreFailed)
             assertEquals(1, navigation.registeredFocusTargetCount)
         }
+    }
+
+    private fun advance(milliseconds: Long) {
+        rule.waitForIdle()
+        rule.mainClock.advanceTimeByFrame()
+        rule.waitForIdle()
+        rule.mainClock.advanceTimeBy(milliseconds)
+        rule.waitForIdle()
     }
 
     @Test fun disposingOneOfTwoComposedCopiesDoesNotUnregisterTheOther() {
