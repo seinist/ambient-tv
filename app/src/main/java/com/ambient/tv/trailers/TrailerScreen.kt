@@ -7,8 +7,10 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
@@ -64,6 +66,7 @@ interface TrailerDependencies {
     fun trailers(): TmdbTrailerRepository
     fun media(): MediaRepository
     fun preferences(): com.ambient.tv.data.local.AppPreferences
+    fun playbackContext(): com.ambient.tv.ui.youtube.YouTubeBrowsePlaybackContext
 }
 
 /** Resolves the title once before exposing a trailer action on a server detail page. */
@@ -115,7 +118,7 @@ internal data class TrailerFeedUi(
 @Composable
 fun TrailerScreen(
     onBack: () -> Unit,
-    onPlay: (String) -> Unit,
+    onPlay: (String, Long?) -> Unit,
     onOpenSettings: () -> Unit,
     onOpenTitle: (String, Int) -> Unit,
     initialFeedKey: String? = null,
@@ -526,7 +529,7 @@ private fun TrailerPagingFooter(state: TrailerFeedUi, onLoadMore: () -> Unit) {
 }
 
 @Composable
-private fun TrailerTitleScreen(onBack: () -> Unit, onPlay: (String) -> Unit, onOpenSettings: () -> Unit,
+private fun TrailerTitleScreen(onBack: () -> Unit, onPlay: (String, Long?) -> Unit, onOpenSettings: () -> Unit,
     ratingKey: String?, tmdbType: String?, tmdbId: Int?, onPlayServerTrailer: (String) -> Unit) {
     val context = androidx.compose.ui.platform.LocalContext.current
     val dependencies = remember(context) { EntryPointAccessors.fromApplication(context.applicationContext, TrailerDependencies::class.java) }
@@ -541,12 +544,22 @@ private fun TrailerTitleScreen(onBack: () -> Unit, onPlay: (String) -> Unit, onO
     var loading by remember(requestKey) { mutableStateOf(loadedKey != requestKey) }
     var error by remember { mutableStateOf<Throwable?>(null) }
     var retry by remember { mutableIntStateOf(0) }
-    var selectedVideo by rememberSaveable { mutableStateOf<String?>(null) }
-    val firstFocus = remember { FocusRequester() }
+    var selectedKey by rememberSaveable(ratingKey, tmdbType, tmdbId) { mutableStateOf<String?>(null) }
+    var requestedFocusKey by remember { mutableStateOf<String?>(null) }
+    var focusRequest by remember { mutableIntStateOf(0) }
     var serverTrailers by snapshot.serverTrailers
-    var initialFocusRequested by remember(requestKey) { mutableStateOf(false) }
+    val playbackContext = dependencies.playbackContext()
+    val playbackScope = "trailer-title:$ratingKey:$tmdbType:$tmdbId"
     val sources = setOfNotNull("trailers", ratingKey?.let { com.ambient.tv.data.browse.mediaProvider(it) })
     com.ambient.tv.ui.common.RefreshOnEnterAndReconnect(sources) {
+        // Resolve the player's last successful selection before restoring any old focus.
+        // This also runs when navigation keeps this destination composed behind the player.
+        val returned = playbackContext.consumeReturn(playbackScope)
+        if (returned != null) selectedKey = "trailer-video:${returned.videoId}"
+        if (focusRequest == 0 || returned != null) {
+            requestedFocusKey = selectedKey
+            focusRequest++
+        }
         retry++
     }
     BackHandler { onBack() }
@@ -575,33 +588,111 @@ private fun TrailerTitleScreen(onBack: () -> Unit, onPlay: (String) -> Unit, onO
         }.onFailure { if (!keepContent) error = it }
         loading = false
     }
-    LaunchedEffect(loading, videos, serverTrailers) {
-        if (!initialFocusRequested && !loading && (videos.isNotEmpty() || serverTrailers.isNotEmpty())) {
-            withFrameNanos { }
-            initialFocusRequested = runCatching { firstFocus.requestFocus() }.getOrDefault(false)
+    ReportSidebarContentReady(!loading)
+    TrailerTitleContent(
+        title = title,
+        videos = videos,
+        serverTrailers = serverTrailers,
+        configured = dependencies.trailers().configured && dependencies.preferences().trailersEnabled,
+        loading = loading,
+        error = error,
+        focusKey = requestedFocusKey,
+        focusRequest = focusRequest,
+        onBack = onBack,
+        onOpenSettings = onOpenSettings,
+        onRetry = { retry++ },
+        onPlay = { videoId ->
+            selectedKey = "trailer-video:$videoId"
+            val row = com.ambient.tv.youtube.YouTubeRow(
+                id = playbackScope,
+                title = title,
+                items = videos.map { video ->
+                    com.ambient.tv.youtube.YouTubeItem(videoId = video.key,
+                        title = video.name.ifBlank { video.type },
+                        imageUrl = "https://i.ytimg.com/vi/${video.key}/hqdefault.jpg")
+                },
+            )
+            onPlay(videoId, playbackContext.start(playbackScope, row, videoId, isTrailer = true))
+        },
+        onPlayServerTrailer = { key -> selectedKey = key; onPlayServerTrailer(key) },
+        onFocused = { selectedKey = it },
+    )
+}
+
+internal data class TrailerTitleFocusTarget(val key: String, val rowIndex: Int, val itemIndex: Int, val server: Boolean)
+
+/** Stable IDs survive refresh/reordering; a vanished selection falls back to the first playable tile. */
+internal fun trailerTitleFocusTarget(
+    videos: List<TrailerVideo>,
+    serverTrailers: List<MediaItem>,
+    selectedKey: String?,
+): TrailerTitleFocusTarget? {
+    val serverIndex = serverTrailers.indexOfFirst { it.ratingKey == selectedKey }
+    if (serverIndex >= 0) return TrailerTitleFocusTarget(serverTrailers[serverIndex].ratingKey, 1, serverIndex, true)
+    val videoIndex = videos.indexOfFirst { "trailer-video:${it.key}" == selectedKey }
+    val videoRow = if (serverTrailers.isEmpty()) 1 else 2
+    if (videoIndex >= 0) return TrailerTitleFocusTarget("trailer-video:${videos[videoIndex].key}", videoRow, videoIndex, false)
+    return serverTrailers.firstOrNull()?.let { TrailerTitleFocusTarget(it.ratingKey, 1, 0, true) }
+        ?: videos.firstOrNull()?.let { TrailerTitleFocusTarget("trailer-video:${it.key}", videoRow, 0, false) }
+}
+
+@Composable
+internal fun TrailerTitleContent(
+    title: String,
+    videos: List<TrailerVideo>,
+    serverTrailers: List<MediaItem>,
+    configured: Boolean,
+    loading: Boolean,
+    error: Throwable?,
+    focusKey: String?,
+    focusRequest: Int,
+    onBack: () -> Unit,
+    onOpenSettings: () -> Unit,
+    onRetry: () -> Unit,
+    onPlay: (String) -> Unit,
+    onPlayServerTrailer: (String) -> Unit,
+    onFocused: (String) -> Unit,
+) {
+    val focus = remember { FocusRequester() }
+    val columnState = rememberLazyListState()
+    val serverState = rememberLazyListState()
+    val videoState = rememberLazyListState()
+    val visibleVideos = if (configured && !loading && error == null) videos else emptyList()
+    val target = remember(visibleVideos, serverTrailers, focusKey) {
+        trailerTitleFocusTarget(visibleVideos, serverTrailers, focusKey)
+    }
+    var appliedFocusRequest by remember { mutableIntStateOf(0) }
+    val handheld = com.ambient.tv.ui.mobile.LocalHandheldUi.current
+    LaunchedEffect(focusRequest, target, loading, handheld) {
+        if (focusRequest <= appliedFocusRequest || loading || target == null) return@LaunchedEffect
+        // Both lazy layouts may have restored an older viewport. Make the actual returned
+        // video exist before requesting focus, including a TMDB row below server trailers.
+        columnState.scrollToItem(target.rowIndex)
+        val rowState = if (target.server) serverState else videoState
+        rowState.scrollToItem(target.itemIndex)
+        if (handheld || retryFocusFor { runCatching { focus.requestFocus() }.getOrDefault(false) }) {
+            appliedFocusRequest = focusRequest
         }
     }
-    ReportSidebarContentReady(!loading)
-    LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(start = 32.dp, end = 32.dp, bottom = 32.dp, top = com.ambient.tv.ui.common.pageHeaderTop(32.dp)), verticalArrangement = Arrangement.spacedBy(20.dp)) {
-        item { PageHeader(actions = {
+    LazyColumn(Modifier.fillMaxSize(), state = columnState, contentPadding = PaddingValues(start = 32.dp, end = 32.dp, bottom = 32.dp, top = com.ambient.tv.ui.common.pageHeaderTop(32.dp)), verticalArrangement = Arrangement.spacedBy(20.dp)) {
+        item(key = "trailer-title-header") { PageHeader(actions = {
             TvChip(stringResource(R.string.trailers_back), modifier = Modifier.leftKeyAction(onBack), icon = Icons.AutoMirrored.Filled.ArrowBack, iconOnly = true, onClick = onBack)
         }) {
             Text(title.ifBlank { stringResource(R.string.trailers_title) }, style = MaterialTheme.typography.headlineLarge)
         } }
-        if (serverTrailers.isNotEmpty()) item {
-            ServerTrailerRow(serverTrailers, onPlayServerTrailer, firstFocus)
+        if (serverTrailers.isNotEmpty()) item(key = "server-trailers") {
+            ServerTrailerRow(serverTrailers, onPlayServerTrailer, focus, target?.key, serverState, onFocused)
         }
         when {
-            !dependencies.trailers().configured || !dependencies.preferences().trailersEnabled ->
+            !configured ->
                 if (serverTrailers.isEmpty()) item { TrailerSetupRequired(onOpenSettings) } else Unit
             loading -> items(3) { SkeletonRow("", style = MediaTileStyle.LANDSCAPE) }
-            error != null -> item { TrailerErrorPanel(error, { retry++ }) }
+            error != null -> item { TrailerErrorPanel(error, onRetry) }
             videos.isEmpty() -> if (serverTrailers.isEmpty()) item {
                 StatePanel(stringResource(R.string.trailers_empty), stringResource(R.string.trailers_empty_title))
             } else Unit
-            else -> item {
-                TrailerVideoRow(videos, { selectedVideo = it; onPlay(it) },
-                    if (serverTrailers.isEmpty()) firstFocus else remember { FocusRequester() }, selectedVideo)
+            else -> item(key = "tmdb-trailers") {
+                TrailerVideoRow(videos, onPlay, focus, target?.key, videoState, onFocused)
             }
         }
     }
@@ -609,16 +700,17 @@ private fun TrailerTitleScreen(onBack: () -> Unit, onPlay: (String) -> Unit, onO
 
 /** Trailers stored with the title on the media server; played by the regular player. */
 @Composable
-private fun ServerTrailerRow(trailers: List<MediaItem>, onPlay: (String) -> Unit, firstFocus: FocusRequester) {
+private fun ServerTrailerRow(trailers: List<MediaItem>, onPlay: (String) -> Unit, focus: FocusRequester,
+    focusKey: String?, state: LazyListState, onFocused: (String) -> Unit) {
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
         Text(stringResource(R.string.trailers_from_server), style = MaterialTheme.typography.titleMedium)
-        LazyRow(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+        LazyRow(state = state, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             items(trailers, key = { it.ratingKey }) { trailer ->
-                val first = trailer === trailers.first()
                 TvActionButton(
                     text = trailer.title.ifBlank { stringResource(R.string.trailers_title) },
                     onClick = { onPlay(trailer.ratingKey) },
-                    modifier = if (first) Modifier.focusRequester(firstFocus) else Modifier,
+                    modifier = (if (trailer.ratingKey == focusKey) Modifier.focusRequester(focus) else Modifier)
+                        .onFocusChanged { if (it.isFocused) onFocused(trailer.ratingKey) },
                 )
             }
         }
@@ -673,13 +765,13 @@ fun TrailerSearchItem.toMediaItem() = MediaItem(
 )
 
 @Composable
-private fun TrailerVideoRow(videos: List<TrailerVideo>, onPlay: (String) -> Unit, focus: FocusRequester?, selectedVideo: String?) {
-    val target = selectedVideo?.takeIf { selected -> videos.any { it.key == selected } } ?: videos.firstOrNull()?.key
-    val state = androidx.compose.foundation.lazy.rememberLazyListState(initialFirstVisibleItemIndex = videos.indexOfFirst { it.key == target }.coerceAtLeast(0))
+private fun TrailerVideoRow(videos: List<TrailerVideo>, onPlay: (String) -> Unit, focus: FocusRequester,
+    focusKey: String?, state: LazyListState, onFocused: (String) -> Unit) {
     LazyRow(state = state, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
         items(videos, key = { it.key }) { video ->
             MediaTile(item = video.toMediaItem(), style = MediaTileStyle.LANDSCAPE, onClick = { onPlay(video.key) },
-                modifier = if (focus != null && video.key == target) Modifier.focusRequester(focus) else Modifier,
+                modifier = if ("trailer-video:${video.key}" == focusKey) Modifier.focusRequester(focus) else Modifier,
+                onFocused = { onFocused("trailer-video:${video.key}") },
                 showDescription = false)
         }
     }

@@ -178,18 +178,14 @@ fun YouTubePlayerScreen(
             viewModel.setForeground(false)
         }
     }
-    val trailerRoute = state.playback?.videoId?.let(Destinations::trailerPlayer)
-    DisposableEffect(lifecycleOwner, isTrailer, trailerRoute) {
-        fun stopTrailer() {
-            if (isTrailer && trailerRoute != null && BackgroundPlaybackSession.snapshot.value.metadata?.route == trailerRoute) {
-                BackgroundPlaybackSession.stop()
-            }
-        }
+    // Next/Previous replace the content inside this destination. Changing the route must
+    // not dispose a stop callback while the outgoing decoder is handing over to the next.
+    DisposableEffect(lifecycleOwner, viewModel, isTrailer) {
         val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
-            if (event == androidx.lifecycle.Lifecycle.Event.ON_STOP) stopTrailer()
+            if (event == androidx.lifecycle.Lifecycle.Event.ON_STOP) viewModel.stopTrailerOnExit()
         }
         lifecycleOwner.lifecycle.addObserver(observer)
-        onDispose { lifecycleOwner.lifecycle.removeObserver(observer); stopTrailer() }
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer); viewModel.stopTrailerOnExit() }
     }
     val context = LocalContext.current
     val prefs = remember { EntryPointAccessors.fromApplication(context.applicationContext, YouTubePrefsEntryPoint::class.java).prefs() }
@@ -342,7 +338,9 @@ fun YouTubePlayerScreen(
                 else playback.timeline
             }
             // Live streams have no final end time, so Next Up must stay off for them.
-            val nextUp = state.nextVideo?.takeUnless { playback.isLive || isTrailer }?.let { next ->
+            // TMDB exposes only its own finite row as manual Next/Previous. Its automatic
+            // Next Up stays disabled below, including when the global preference is on.
+            val nextUp = state.nextVideo?.takeUnless { playback.isLive }?.let { next ->
                 NextUpCandidate(
                     mediaId = next.videoId,
                     title = next.title,
@@ -409,7 +407,7 @@ fun YouTubePlayerScreen(
                     nextUpConfig = NextUpConfig(
                         enabled = prefs.nextUpEnabled && !isTrailer,
                         leadSeconds = prefs.nextUpLeadSeconds,
-                        autoplay = prefs.youtubeAutoplayNextEnabled,
+                        autoplay = prefs.youtubeAutoplayNextEnabled && !isTrailer,
                         stillWatchingEvery = prefs.nextUpStillWatchingEpisodes,
                         showOverlay = prefs.nextUpOverlayEnabled,
                     ),

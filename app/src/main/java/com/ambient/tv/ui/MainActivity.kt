@@ -2267,6 +2267,7 @@ private fun AmbientTvApp(
                                     }
                                 },
                                 onYouTubeVideoClick = { videoId, session -> handleYouTubeSelection(videoId, session) },
+                                onTrailerVideoClick = { videoId, session -> playOnSelectedTarget(Destinations.trailerPlayer(videoId, session)) },
                                 onTelegramPostClick = { key, queue ->
                                     com.ambient.tv.data.telegram.telegramPostIds(key)?.let { (chatId, messageId) ->
                                         openTelegramPost(chatId, messageId, queue)
@@ -2561,7 +2562,7 @@ private fun AmbientTvApp(
                                 onOpenSettings = { openSystemSettings("trailers") },
                                 onSelectFeed = { feed -> navigateSidebar(trailerFeedRoute(feed)) },
                                 onOpenTitle = { type, id -> navController.navigate(Destinations.tmdbTrailers(type, id)) },
-                                onPlay = { playOnSelectedTarget(Destinations.trailerPlayer(it)) })
+                                onPlay = { videoId, session -> playOnSelectedTarget(Destinations.trailerPlayer(videoId, session)) })
                         }
                     }
                     composable(Destinations.TRAILER_FEED, arguments = listOf(navArgument("feedKey") { type = NavType.StringType })) { entry ->
@@ -2572,7 +2573,7 @@ private fun AmbientTvApp(
                                 onOpenSettings = { openSystemSettings("trailers") },
                                 onSelectFeed = { feed -> navigateSidebar(trailerFeedRoute(feed)) },
                                 onOpenTitle = { type, id -> navController.navigate(Destinations.tmdbTrailers(type, id)) },
-                                onPlay = { playOnSelectedTarget(Destinations.trailerPlayer(it)) },
+                                onPlay = { videoId, session -> playOnSelectedTarget(Destinations.trailerPlayer(videoId, session)) },
                             )
                         }
                     }
@@ -2581,7 +2582,7 @@ private fun AmbientTvApp(
                             onOpenSettings = { openSystemSettings("trailers") },
                             onOpenTitle = { type, id -> navController.navigate(Destinations.tmdbTrailers(type, id)) },
                             ratingKey = entry.arguments?.getString("ratingKey"),
-                            onPlay = { playOnSelectedTarget(Destinations.trailerPlayer(it)) },
+                            onPlay = { videoId, session -> playOnSelectedTarget(Destinations.trailerPlayer(videoId, session)) },
                             onPlayServerTrailer = { playOnSelectedTarget(Destinations.player(it, restart = true)) })
                     }
                     composable(
@@ -2595,7 +2596,7 @@ private fun AmbientTvApp(
                             onOpenTitle = { type, id -> navController.navigate(Destinations.tmdbTrailers(type, id)) },
                             tmdbType = entry.arguments?.getString("mediaType"),
                             tmdbId = entry.arguments?.getInt("tmdbId"),
-                            onPlay = { playOnSelectedTarget(Destinations.trailerPlayer(it)) },
+                            onPlay = { videoId, session -> playOnSelectedTarget(Destinations.trailerPlayer(videoId, session)) },
                         )
                     }
                     composable(

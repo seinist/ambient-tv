@@ -88,7 +88,9 @@ object Destinations {
     fun spotifyPlayer(uri: String? = null) = if (uri.isNullOrBlank()) "spotify_player" else "spotify_player?uri=${Uri.encode(uri)}"
     fun youtubePlayer(videoId: String, browseSession: Long? = null) =
         "youtube_player/${Uri.encode(videoId)}" + browseSession?.let { "?browseSession=$it" }.orEmpty()
-    fun trailerPlayer(videoId: String) = "${youtubePlayer(videoId)}?trailer=true"
+    fun trailerPlayer(videoId: String) = trailerPlayer(videoId, null)
+    fun trailerPlayer(videoId: String, browseSession: Long?) =
+        "${youtubePlayer(videoId)}?trailer=true" + browseSession?.let { "&browseSession=$it" }.orEmpty()
     fun liveTvSection(tab: String, sourceId: String? = null) = "live_tv/${Uri.encode(tab)}" + sourceQuery(sourceId)
     fun tvhPlayer(kind: String, id: String, sourceId: String? = null) = "tvh_player/$kind/${Uri.encode(id)}" + sourceQuery(sourceId)
     private fun sourceQuery(id: String?) = id?.takeIf { it.isNotBlank() }?.let { "?sourceId=${Uri.encode(it)}" }.orEmpty()

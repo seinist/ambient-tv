@@ -251,7 +251,8 @@ fun PlaybackSessionContent(
 
     val itemActionsReady = ownsSnapshot && !changingItem && !queuePending
     val restartAction = if (itemActionsReady && (onTimelineSeek != null || BackgroundPlaybackSession.activeHandle()?.canSeekNow() == true)) ::restart else null
-    val itemControls = if (metadata.hasVideo && !metadata.isLive && !metadata.isTrailer) PlaybackItemControls(
+    val hasTrailerNavigation = candidate != null || onPlayPrevious != null
+    val itemControls = if (metadata.hasVideo && !metadata.isLive && (!metadata.isTrailer || hasTrailerNavigation)) PlaybackItemControls(
         restart = restartAction,
         next = if (itemActionsReady && candidate != null) ({ playNext(automatic = false) }) else null,
         previous = when {
@@ -329,7 +330,7 @@ fun PlaybackSessionContent(
                 nextUpVisible = showNextUp,
                 onPlayNext = if (candidate != null) ({ automatic -> playNext(automatic) }) else null,
                 // With Next Up enabled, open-ended credits must not bypass its autoplay/confirmation rules.
-                canAutoAdvance = !changingItem && !queuePending && !linkCreditsToNextUp && !BackgroundPlaybackSession.shouldConfirmNextUp(config.stillWatchingEvery) &&
+                canAutoAdvance = !metadata.isTrailer && !changingItem && !queuePending && !linkCreditsToNextUp && !BackgroundPlaybackSession.shouldConfirmNextUp(config.stillWatchingEvery) &&
                     BackgroundPlaybackSession.sleepTimer.kind != SleepTimerKind.END_OF_ITEM,
                 navigationState = navigation,
                 creditsHandledByNextUp = linkCreditsToNextUp,
