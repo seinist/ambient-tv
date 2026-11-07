@@ -33,20 +33,7 @@ object ContentDeduplicator {
         ) ?: items.first()
 
         val orderedItems = listOf(representative) + items.filterNot { it === representative }
-        val versions = orderedItems
-            .flatMap { it.mediaVersions }
-            .groupBy { version ->
-                listOf(
-                    version.sourceRatingKey.orEmpty(),
-                    version.sourceMediaIndex.toString(),
-                    version.streamUrl.orEmpty(),
-                ).joinToString("|")
-            }
-            // The same version from a list endpoint lacks the file name that full metadata carries.
-            .map { (_, same) -> same.first().let { first -> first.copy(fileName = first.fileName ?: same.firstNotNullOfOrNull { it.fileName }) } }
-            // List endpoints only carry a resolution placeholder (no URL, no source). Once full
-            // metadata is merged in, the placeholder must not survive as a selectable version.
-            .let { all -> all.filterNot { it.isPlaceholder }.ifEmpty { all } }
+        val versions = mergeMediaVersions(orderedItems.flatMap { it.mediaVersions })
 
         val bestProgressItem = representativePool.maxByOrNull(::progressScore) ?: representative
         val anyWatched = items.any { it.isWatched }
@@ -81,11 +68,35 @@ object ContentDeduplicator {
         )
     }
 
-    private val MediaVersion.isPlaceholder: Boolean
-        get() = streamUrl == null && sourceRatingKey == null
-
     private fun progressScore(item: MediaItem): Double {
         if (item.isWatched) return 2.0
         return item.progressFraction?.toDouble() ?: 0.0
     }
 }
+
+/** A refreshed URL is still the same physical version. Earlier entries supply current values. */
+internal fun mergeMediaVersions(versions: List<MediaVersion>): List<MediaVersion> = versions
+    .groupBy { version ->
+        version.sourceRatingKey?.let { key ->
+            version.sourceId?.takeIf { it.isNotBlank() }?.let { listOf("source", key, it) }
+                ?: listOf("index", key, version.sourceMediaIndex.toString())
+        } ?: listOf("url", version.streamUrl.orEmpty(), version.sourceMediaIndex.toString())
+    }
+    .values.map { same ->
+        same.first().copy(
+            streamUrl = same.firstNotNullOfOrNull { it.streamUrl },
+            resolution = same.firstNotNullOfOrNull { it.resolution },
+            videoCodec = same.firstNotNullOfOrNull { it.videoCodec },
+            audioCodec = same.firstNotNullOfOrNull { it.audioCodec },
+            container = same.firstNotNullOfOrNull { it.container },
+            bitrateKbps = same.firstNotNullOfOrNull { it.bitrateKbps },
+            width = same.firstNotNullOfOrNull { it.width },
+            height = same.firstNotNullOfOrNull { it.height },
+            videoFrameRate = same.firstNotNullOfOrNull { it.videoFrameRate },
+            videoDynamicRange = same.firstNotNullOfOrNull { it.videoDynamicRange },
+            tracks = same.firstOrNull { it.tracks.isNotEmpty() }?.tracks.orEmpty(),
+            fileName = same.firstNotNullOfOrNull { it.fileName },
+        )
+    }
+    // List endpoints can carry resolution placeholders, never selectable alongside real sources.
+    .let { all -> all.filterNot { it.streamUrl == null && it.sourceRatingKey == null }.ifEmpty { all } }

@@ -165,36 +165,36 @@ class PlexRepository @Inject constructor(
      */
     private suspend fun resolveCanonicalDuplicates(item: MediaItem): MediaItem {
         val cached = cache.mergedFor(item.ratingKey)
-        if (cache.isCanonicalResolved(item.canonicalContentKey) && cached != null) return register(item)
-        val candidates = mutableListOf(item)
-        if (cached != null && cached.canonicalContentKey == item.canonicalContentKey) candidates += cached
+        if (cache.isCanonicalResolved(item.canonicalContentKey, SECTION_ITEMS_TTL_MS) && cached != null) return register(item)
 
         // Duplicate discovery is an enhancement: one broken library must not fail metadata
         // (and with it playback). Failed sections are skipped and retried on the next open.
         val sections = getLibrarySections().getOrElse { return register(item) }
-        val lookups = coroutineScope {
-            sections.map { section ->
-                async {
-                    suspendResult {
-                        val local = cache.sectionItems(section.key)
-                        if (local != null) {
-                            local.filter { it.canonicalContentKey == item.canonicalContentKey }
-                        } else {
-                            api.getSectionItems(
-                                sectionKey = section.key,
-                                titleFilter = item.title,
-                                start = 0,
-                                size = DUPLICATE_LOOKUP_LIMIT_PER_SECTION,
-                            ).container.metadata.map { it.toDomain(urlBuilder) }
-                                .filter { it.canonicalContentKey == item.canonicalContentKey }
-                        }
-                    }
+        val known = (listOfNotNull(cached) + sections.flatMap { section ->
+            // Keep known GUID matches even when another library uses a translated/custom title.
+            // These are hints to hydrate, never a reason to skip the server lookup.
+            cache.sectionItems(section.key).orEmpty()
+                .filter { it.canonicalContentKey == item.canonicalContentKey }
+        }).filter { it.canonicalContentKey == item.canonicalContentKey }
+            .takeIf { it.isNotEmpty() }?.let(ContentDeduplicator::mergeGroup)
+        val resolution = resolvePlexDuplicateVersions(
+            item, known, sections,
+            sectionItems = { section ->
+                // Browse snapshots may be display-only or capped. They cannot prove the server's
+                // complete version inventory; query only the matching title, in full pages.
+                fetchAllMediaPages(
+                    DUPLICATE_LOOKUP_PAGE_SIZE, key = { it.ratingKey }, maxItems = MAX_FILTERED_ITEMS,
+                ) { start, size ->
+                    val container = api.getSectionItems(
+                        sectionKey = section.key, titleFilter = item.title, start = start, size = size,
+                    ).container
+                    MediaItemsPage(container.metadata.map { it.toDomain(urlBuilder) }, container.totalSize)
                 }
-            }.awaitAll()
-        }
-        candidates += lookups.flatMap { it.getOrDefault(emptyList()) }
-        val merged = register(ContentDeduplicator.mergeGroup(candidates))
-        if (lookups.all { it.isSuccess }) cache.markCanonicalResolved(item.canonicalContentKey)
+            },
+            metadata = { key -> api.getMetadata(key).container.metadata.firstOrNull()?.toDomain(urlBuilder) },
+        )
+        val merged = cache.registerResolved(resolution.item)
+        if (resolution.complete) cache.markCanonicalResolved(item.canonicalContentKey)
         return merged
     }
 
@@ -711,7 +711,7 @@ class PlexRepository @Inject constructor(
         const val SEARCH_LIMIT_PER_SECTION = 100
         const val FILTERED_PAGE_SIZE = 250
         const val MAX_FILTERED_ITEMS = 10_000
-        const val DUPLICATE_LOOKUP_LIMIT_PER_SECTION = 50
+        const val DUPLICATE_LOOKUP_PAGE_SIZE = 50
         const val LIBRARY_SECTIONS_TTL_MS = 5 * 60_000L
         const val ON_DECK_TTL_MS = 30_000L
         const val SECTION_ITEMS_TTL_MS = 2 * 60_000L

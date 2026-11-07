@@ -77,6 +77,22 @@ class ContentDeduplicatorTest {
         assertEquals(listOf("http://local/1"), versions.map { it.streamUrl })
     }
 
+    @Test fun unnamedProviderSourcesRemainDistinctByMediaIndex() {
+        val first = item("1", "imdb://tt123", 0L, 10_000L, "1080p").mediaVersions.single().copy(sourceId = "")
+        val second = first.copy(sourceMediaIndex = 1, streamUrl = "http://local/second")
+        assertEquals(2, mergeMediaVersions(listOf(first, second)).size)
+    }
+
+    @Test fun stableProviderSourceIdSurvivesAnIndexAndUrlChange() {
+        val old = item("1", "imdb://tt123", 0L, 10_000L, "1080p").mediaVersions.single()
+            .copy(sourceId = "source-a", fileName = "Movie.mkv")
+        val fresh = old.copy(sourceMediaIndex = 2, streamUrl = "http://local/new", fileName = null)
+        val merged = mergeMediaVersions(listOf(fresh, old)).single()
+        assertEquals(2, merged.sourceMediaIndex)
+        assertEquals("http://local/new", merged.streamUrl)
+        assertEquals("Movie.mkv", merged.fileName)
+    }
+
     private fun item(
         ratingKey: String,
         guid: String,

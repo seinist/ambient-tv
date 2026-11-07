@@ -915,11 +915,11 @@ internal fun LibraryContent(
                                 onWatch = onWatchLiveChannel,
                                 requestInitialFocus = rowKey == state.rowKeys.firstOrNull() && state.initialFocusTarget ==
                                     if (recent) HomeInitialFocusTarget.RECENT_TV else HomeInitialFocusTarget.LIVE_TV,
-                                onItemFocused = { item ->
+                                onRowFocused = {
                                     restoreArmed = false
                                     centeredRowKey.value = rowKey
-                                    onLiveTvFocused(item)
                                 },
+                                onItemFocused = onLiveTvFocused,
                                 bringContextIntoView = false,
                                 columnFocus = columnFocus,
                                 rowKey = rowKey,
@@ -1064,13 +1064,14 @@ private fun HomeShortcutRow(
 
 @Composable
 @OptIn(ExperimentalFoundationApi::class)
-private fun HomeLiveTvRow(
+internal fun HomeLiveTvRow(
     items: List<HomeLiveTvItem>,
     title: String,
     imageHeaders: Map<String, String>,
     onWatch: (TvhChannel) -> Unit,
     requestInitialFocus: Boolean,
     onItemFocused: (HomeLiveTvItem) -> Unit,
+    onRowFocused: () -> Unit = {},
     // False where the parent list centers the row itself; a second relocation would fight it.
     bringContextIntoView: Boolean = true,
     columnFocus: RowColumnFocus? = null,
@@ -1172,7 +1173,12 @@ private fun HomeLiveTvRow(
                 contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = screenGutter()),
                 horizontalArrangement = Arrangement.spacedBy(12.dp),
                 modifier = if (!tv) Modifier else Modifier
-                    .onFocusChanged { rowHasFocus = it.hasFocus }
+                    .onFocusChanged {
+                        rowHasFocus = it.hasFocus
+                        // The guide/channels shortcut is a real row entry, too. Waiting for
+                        // a channel's focus callback leaves this whole row faded out on Home.
+                        if (it.hasFocus) onRowFocused()
+                    }
                     .onPreviewKeyEvent { event ->
                         if (event.type == KeyEventType.KeyDown &&
                             (event.key == Key.DirectionLeft || event.key == Key.DirectionRight)
