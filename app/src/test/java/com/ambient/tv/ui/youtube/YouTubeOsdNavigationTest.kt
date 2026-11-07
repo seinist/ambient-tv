@@ -7,6 +7,7 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
@@ -149,7 +150,12 @@ class YouTubeOsdNavigationTest {
             )
         }
 
-        rule.onNodeWithText("Official Movie Trailer", useUnmergedTree = true).assertIsDisplayed()
+        // The offline artwork fixture shows the title in its fallback tile as well as
+        // the real header. Both must update and remain visible after enrichment.
+        val titles = rule.onAllNodesWithText("Official Movie Trailer", useUnmergedTree = true)
+        titles.assertCountEquals(2)
+        titles[0].assertIsDisplayed()
+        titles[1].assertIsDisplayed()
         rule.onNodeWithText("Movie Studio", useUnmergedTree = true).assertIsDisplayed()
         rule.onNodeWithText("· vor 3 Tagen", useUnmergedTree = true).assertIsDisplayed()
         assertEquals(playback.uri, state.value.playback?.uri)
