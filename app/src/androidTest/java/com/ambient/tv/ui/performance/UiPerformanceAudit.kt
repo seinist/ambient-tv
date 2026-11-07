@@ -121,13 +121,21 @@ internal class UiPerformanceAudit(private val instrumentation: Instrumentation, 
                     androidx.compose.runtime.key(state) {
                         CompositionLocalProvider(LocalHandheldUi provides false, LocalPerformanceProfile provides profile) {
                             AmbientTvTheme {
-                                LibraryContent(state.value, hero, style, 60, HomeHeroStyle.SOFT, HomeFocusSnapshot("0:0", "row-0"),
+                                LibraryContent(
+                                    state = state.value,
+                                    loadingRowStyles = rows.map { it.style },
+                                    loadingRowsMonogram = List(rows.size) { false },
+                                    heroContent = hero,
+                                    homeHeroStyleKey = style,
+                                    homeHeroIntensityPercent = 60,
+                                    homeHeroSpreadKey = HomeHeroStyle.SOFT,
+                                    focusSnapshot = HomeFocusSnapshot("0:0", "row-0"),
                                     onItemClick = {}, onItemFocused = { row, media ->
                                         focus.set(media.ratingKey)
                                         hero.value = HomeHeroContent(media.ratingKey, media.title, artworkUrl = url, mediaItem = media)
                                         if (state.value.initialFocusTarget != HomeInitialFocusTarget.NONE) state.value = state.value.copy(
                                             initialFocusTarget = HomeInitialFocusTarget.NONE, focusedRatingKey = media.ratingKey, focusedRowId = row)
-                                    }, onOpenSettings = {}, onWatchLiveChannel = {}, onLiveTvFocused = {}, onShortcutFocused = {},
+                                    }, onOpenRelevantSettings = {}, onWatchLiveChannel = {}, onLiveTvFocused = {}, onShortcutFocused = {},
                                     onOpenHomeContent = {}, tvheadendImageHeaders = emptyMap(), entranceProgress = { 1f })
                             }
                         }
@@ -260,14 +268,22 @@ internal class UiPerformanceAudit(private val instrumentation: Instrumentation, 
                     AmbientTvTheme {
                         // UiCatalogActivity does not have MainActivity's input hook; mirror that hook here.
                         Box(Modifier.fillMaxSize().onPreviewKeyEventForBrowseAudit { budget.interact() }) {
-                            LibraryContent(state.value, hero, HomeHeroStyle.DEPTH, 60, HomeHeroStyle.SOFT,
-                                HomeFocusSnapshot("0:0", "row-0"), onItemClick = {}, onItemFocused = { row, media ->
+                            LibraryContent(
+                                state = state.value,
+                                loadingRowStyles = rows.map { it.style },
+                                loadingRowsMonogram = List(rows.size) { false },
+                                heroContent = hero,
+                                homeHeroStyleKey = HomeHeroStyle.DEPTH,
+                                homeHeroIntensityPercent = 60,
+                                homeHeroSpreadKey = HomeHeroStyle.SOFT,
+                                focusSnapshot = HomeFocusSnapshot("0:0", "row-0"),
+                                onItemClick = {}, onItemFocused = { row, media ->
                                     focus.set(media.ratingKey)
                                     hero.value = HomeHeroContent(media.ratingKey, media.title, artworkUrl = url, mediaItem = media)
                                     if (state.value.initialFocusTarget != HomeInitialFocusTarget.NONE) state.value = state.value.copy(
                                         initialFocusTarget = HomeInitialFocusTarget.NONE, focusedRatingKey = media.ratingKey, focusedRowId = row)
                                     if (enabled) prefetch.detail("focus-${sequence++}")
-                                }, onOpenSettings = {}, onWatchLiveChannel = {}, onLiveTvFocused = {}, onShortcutFocused = {},
+                                }, onOpenRelevantSettings = {}, onWatchLiveChannel = {}, onLiveTvFocused = {}, onShortcutFocused = {},
                                 onOpenHomeContent = {}, tvheadendImageHeaders = emptyMap(), entranceProgress = { 1f })
                         }
                     }
