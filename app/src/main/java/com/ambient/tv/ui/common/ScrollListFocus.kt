@@ -193,25 +193,48 @@ fun TvLazyVerticalGrid(
 }
 
 /**
- * Wrap jumps (bottom → top and back): one continuous eased slide over the whole distance with a
- * fixed duration, so the list visibly travels back instead of cutting. The pixel distance is
- * estimated from the visible items' average size; a final [animateScrollToItem] corrects it.
+ * Wrap jumps (bottom → top and back) keep a short eased slide. Large catalogs first jump near
+ * the destination so a fixed-duration animation never measures thousands of intervening rows.
+ * The remaining pixel distance is estimated from the new visible items' average size; a final
+ * [animateScrollToItem] corrects it.
  */
 private const val GLIDE_MS = 520
 private const val GLIDE_ROWS = 3
 
+/** Keep at most two visible ranges to animate; short lists retain their continuous wrap. */
+internal fun listGlideJumpIndex(currentIndex: Int, targetIndex: Int, visibleItemCount: Int): Int? {
+    val span = (visibleItemCount.toLong() * 2).coerceAtLeast(GLIDE_ROWS.toLong())
+    val distance = targetIndex.toLong() - currentIndex
+    return when {
+        distance > span -> (targetIndex - span).toInt()
+        distance < -span -> (targetIndex + span).toInt()
+        else -> null
+    }
+}
+
 internal suspend fun LazyListState.glideToItem(animate: Boolean, index: Int) {
-    if (!animate) return scrollToItem(index)
+    val count = layoutInfo.totalItemsCount
+    if (count == 0) return
+    val target = index.coerceIn(0, count - 1)
+    if (!animate) return scrollToItem(target)
+    listGlideJumpIndex(firstVisibleItemIndex, target, layoutInfo.visibleItemsInfo.size)?.let {
+        scrollToItem(it)
+    }
+    // Read the layout again after the jump, including a possible catalog change while suspended.
+    val remainingCount = layoutInfo.totalItemsCount
+    if (remainingCount == 0) return
+    val remainingTarget = target.coerceAtMost(remainingCount - 1)
     val visible = layoutInfo.visibleItemsInfo
     if (visible.isNotEmpty()) {
         val spacing = layoutInfo.mainAxisItemSpacing
         val average = visible.sumOf { it.size + spacing }.toFloat() / visible.size
-        val distance = (index - firstVisibleItemIndex) * average - firstVisibleItemScrollOffset
+        val distance = (remainingTarget - firstVisibleItemIndex) * average - firstVisibleItemScrollOffset
         if (distance != 0f) {
             animateScrollBy(distance, androidx.compose.animation.core.tween(GLIDE_MS, easing = androidx.compose.animation.core.FastOutSlowInEasing))
         }
     }
-    animateScrollToItem(index)
+    val finalCount = layoutInfo.totalItemsCount
+    if (finalCount > 0) animateScrollToItem(remainingTarget.coerceAtMost(finalCount - 1))
 }
 
 internal suspend fun LazyGridState.glideToItem(animate: Boolean, index: Int) {

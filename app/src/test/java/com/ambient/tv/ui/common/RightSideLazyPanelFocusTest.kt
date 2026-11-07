@@ -10,6 +10,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.FavoriteBorder
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
@@ -48,9 +49,11 @@ class RightSideLazyPanelFocusTest {
     private var focusedRow: String? = null
     private var selectedPreset: Int? = null
     private var favoriteChanges = 0
+    private lateinit var navigation: PlayerPanelNavigation
+    private val mountedRows = mutableSetOf<Int>()
 
-    private fun mount(count: Int = 1_000) {
-        val navigation = PlayerPanelNavigation().apply { open(UnifiedPlayerPanel.VISUALIZER) }
+    private fun mount(count: Int = 10_000) {
+        navigation = PlayerPanelNavigation().apply { open(UnifiedPlayerPanel.VISUALIZER) }
         val indices = (0 until count).toList()
         rule.setContent {
             CompositionLocalProvider(
@@ -66,6 +69,10 @@ class RightSideLazyPanelFocusTest {
                         requestHeaderFocus = true,
                     ) {
                         items(indices, key = { "classic/preset-$it.milk" }) { index ->
+                            DisposableEffect(index) {
+                                mountedRows.add(index)
+                                onDispose { mountedRows.remove(index) }
+                            }
                             // Resolve the panel target inside its content, as a real preset row does.
                             val scrollbar = LocalRightPanelScrollbarFocus.current
                             Row(
@@ -118,6 +125,18 @@ class RightSideLazyPanelFocusTest {
 
     private fun scrollbar() = rule.onNodeWithContentDescription(rule.activity.getString(R.string.common_scrollbar))
 
+    private fun assertRegistryTracksMountedRows() {
+        rule.runOnIdle {
+            // Choice, keyed favorite and the icon's shared origin, plus the panel chrome.
+            // Visiting more rows must not retain every requester ever seen in the catalog.
+            val targets = navigation.registeredFocusTargetCount
+            assertTrue(
+                "$targets focus targets retained for ${mountedRows.size} mounted rows",
+                targets <= mountedRows.size * 3 + 16,
+            )
+        }
+    }
+
     @Test fun upAndDownKeepEachColumnAcrossManyLazyViewports() {
         mount()
         for (index in 1..24) {
@@ -132,6 +151,7 @@ class RightSideLazyPanelFocusTest {
         }
         press(AndroidKeyEvent.KEYCODE_DPAD_LEFT)
         focused("preset:0")
+        assertRegistryTracksMountedRows()
         assertEquals(null, selectedPreset)
         assertEquals(0, favoriteChanges)
     }
@@ -154,16 +174,41 @@ class RightSideLazyPanelFocusTest {
         focused(row)
         press(AndroidKeyEvent.KEYCODE_DPAD_UP)
         focused("preset:${row.substringAfter(':').toInt() - 1}")
+        assertRegistryTracksMountedRows()
     }
 
     @Test fun wrappingBothEndsRepeatedlyReleasesOldLazyFocusBeforeScrolling() {
         mount()
         repeat(3) {
             press(AndroidKeyEvent.KEYCODE_DPAD_UP)
-            focused("favorite:999")
+            focused("favorite:9999")
+            assertRegistryTracksMountedRows()
             press(AndroidKeyEvent.KEYCODE_DPAD_DOWN)
             focused("preset:0")
+            assertRegistryTracksMountedRows()
         }
+        assertEquals(null, selectedPreset)
+        assertEquals(0, favoriteChanges)
+    }
+
+    @Test fun heldKeysDuringTenThousandRowWrapKeepTheDestinationFocused() {
+        mount()
+        rule.mainClock.autoAdvance = false
+        try {
+            press(AndroidKeyEvent.KEYCODE_DPAD_UP)
+            repeat(4) { repeat ->
+                rule.mainClock.advanceTimeByFrame()
+                press(AndroidKeyEvent.KEYCODE_DPAD_UP, repeatCount = repeat + 1)
+            }
+        } finally {
+            rule.mainClock.autoAdvance = true
+        }
+        rule.waitForIdle()
+        focused("favorite:9999")
+        assertRegistryTracksMountedRows()
+        press(AndroidKeyEvent.KEYCODE_DPAD_DOWN)
+        focused("preset:0")
+        assertRegistryTracksMountedRows()
         assertEquals(null, selectedPreset)
         assertEquals(0, favoriteChanges)
     }
@@ -212,5 +257,6 @@ class RightSideLazyPanelFocusTest {
         val row = checkNotNull(focusedRow)
         assertTrue("Scrollbar returned to an old offscreen row: $row", row.substringAfter(':').toInt() > 0)
         focused(row)
+        assertRegistryTracksMountedRows()
     }
 }
