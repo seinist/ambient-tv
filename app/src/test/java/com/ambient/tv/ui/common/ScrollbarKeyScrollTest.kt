@@ -42,7 +42,8 @@ class ScrollbarKeyScrollTest {
     private val outside = FocusRequester()
 
     private fun showList(reverseLayout: Boolean = false, initialIndex: Int = if (reverseLayout) 20 else 0) {
-        rule.mainClock.autoAdvance = false
+        // The scrollbar is composed only after the first lazy-list measurement.
+        rule.mainClock.autoAdvance = true
         rule.setContent {
             AmbientTvTheme {
                 Column(Modifier.acceleratedDpadNavigation()) {
@@ -62,11 +63,10 @@ class ScrollbarKeyScrollTest {
             }
         }
         rule.waitForIdle()
-        rule.mainClock.advanceTimeByFrame()
-        rule.waitForIdle()
         rule.runOnIdle { assertTrue("Scrollbar attaches after layout", scrollbar.requestFocus()) }
         rule.waitForIdle()
         rule.onNodeWithTag("scrollbar").assertIsFocused()
+        rule.mainClock.autoAdvance = false
     }
 
     private fun key(action: Int, code: Int, repeatCount: Int = 0) {
