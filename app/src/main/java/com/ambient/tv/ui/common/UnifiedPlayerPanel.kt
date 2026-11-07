@@ -31,6 +31,7 @@ import androidx.compose.material.icons.filled.Speed
 import androidx.compose.material.icons.filled.KeyboardArrowRight
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.Stable
 import androidx.compose.runtime.mutableIntStateOf
@@ -128,7 +129,7 @@ class PlayerPanelNavigation {
     internal val activity = PlayerPanelActivity()
 
     private val path = mutableStateListOf<Level>()
-    private val requesters = HashMap<String, FocusRequester>()
+    private val focusTargets = PlayerPanelFocusRegistry()
     private var pendingOrigin: String? = null
     private var pendingRoot = false
 
@@ -255,7 +256,18 @@ class PlayerPanelNavigation {
         restoreGeneration++
     }
 
-    fun focusRequester(key: String): FocusRequester = requesters.getOrPut(key) { FocusRequester() }
+    /** Registers this mounted control; another composition of the same key gets its own owner. */
+    @Composable
+    fun focusRequester(key: String): FocusRequester {
+        val requester = remember(this, key) { FocusRequester() }
+        DisposableEffect(this, key, requester) {
+            focusTargets.register(key, requester) { requester.requestFocus() }
+            onDispose { focusTargets.unregister(key, requester) }
+        }
+        return requester
+    }
+
+    internal val registeredFocusTargetCount: Int get() = focusTargets.registeredTargetCount
 
     /** The open level has not held focus yet. */
     internal val levelFresh: Boolean get() = path.lastOrNull()?.hadFocus != true
@@ -293,8 +305,7 @@ class PlayerPanelNavigation {
         path.lastOrNull()?.hadFocus = true
     }
 
-    internal fun requestFocus(key: String): Boolean =
-        requesters[key]?.let { runCatching { it.requestFocus() }.getOrDefault(false) } ?: false
+    internal fun requestFocus(key: String): Boolean = focusTargets.requestFocus(key)
 
     internal fun focusRescue(): PanelFocusRescue = PanelFocusRescue(
         levelFresh = levelFresh,
@@ -330,7 +341,6 @@ fun rememberPlayerPanelNavigation(vararg keys: Any?): PlayerPanelNavigation {
         val key = navigation.restoreKey ?: return@LaunchedEffect
         val generation = navigation.restoreGeneration
         val destination = navigation.panel
-        val requester = navigation.focusRequester(key)
         if (destination == UnifiedPlayerPanel.NONE && key.startsWith("bar:")) {
             if (chrome?.osd?.let { it.closing || !it.visible.value } == true) {
                 navigation.cancelFocusReturn()
@@ -348,7 +358,8 @@ fun rememberPlayerPanelNavigation(vararg keys: Any?): PlayerPanelNavigation {
                 navigation.cancelFocusReturn()
                 return@retryFocusFor true
             }
-            placed = runCatching { requester.requestFocus() }.getOrDefault(false)
+            // The keyed control can be disposed/recreated while this hand-back is waiting.
+            placed = navigation.requestFocus(key)
             placed
         }
         if (finished && !placed) return@LaunchedEffect

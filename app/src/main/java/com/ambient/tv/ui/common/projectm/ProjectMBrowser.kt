@@ -125,20 +125,17 @@ class ProjectMBrowser(
 
     fun textureDirectory() = repository.textureDirectory()
 
+    /** Pick only when starting without an active preset; a filter change keeps the current one. */
+    fun initialPreset(): ProjectMPreset? = initialProjectMPreset(presets(), currentPath, shuffle)
+
     /** Next preset of the automatic rotation: random without recent repeats, or list order. */
     fun nextPreset(): ProjectMPreset? {
         val list = presets()
-        if (list.isEmpty()) return null
-        val next = if (shuffle && list.size > 1) {
-            val fresh = list.filter { it.assetPath != currentPath && it.assetPath !in recent }
-            (fresh.ifEmpty { list.filter { it.assetPath != currentPath } }).random()
-        } else list[(indexOf(currentPath) + 1) % list.size]
+        val next = nextProjectMPreset(list, currentPath, shuffle, recent) ?: return null
         recent.addLast(next.assetPath)
         while (recent.size > (list.size / 2).coerceIn(1, 50)) recent.removeFirst()
         return next
     }
-
-    fun indexOf(path: String?): Int = presets().indexOfFirst { it.assetPath == path }.takeIf { it >= 0 } ?: 0
 }
 
 @Composable

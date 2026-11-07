@@ -13,6 +13,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -29,6 +30,7 @@ import com.ambient.tv.R
 import com.ambient.tv.ui.performance.LocalPerformanceProfile
 import com.ambient.tv.ui.player.backend.AudioPcmSink
 import com.ambient.tv.ui.player.backend.AudioSpectrumAnalyzer
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicLong
 import javax.microedition.khronos.egl.EGLConfig
@@ -36,7 +38,6 @@ import javax.microedition.khronos.opengles.GL10
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import kotlin.random.Random
 
 @Composable
 fun ProjectMVisualizer(
@@ -63,6 +64,7 @@ fun ProjectMVisualizer(
     val lifecycleOwner = LocalLifecycleOwner.current
     val nativeHandle = remember { AtomicLong(0L) }
     val nativeLifecycleLock = remember { Any() }
+    val nativeReleased = remember { AtomicBoolean(false) }
     var glView by remember { mutableStateOf<GLSurfaceView?>(null) }
     var viewSize by remember { mutableStateOf(IntSize.Zero) }
     val resolutionKey = browser.resolutionKey
@@ -75,8 +77,10 @@ fun ProjectMVisualizer(
     val surfaceWidth = remember { AtomicInteger(0) }
     val surfaceHeight = remember { AtomicInteger(0) }
     val availablePresets = browser.presets()
-    val current = availablePresets.firstOrNull { it.assetPath == browser.currentPath }
-        ?: availablePresets.getOrNull(browser.indexOf(browser.currentPath))
+    val current = browser.currentPath?.let(::ProjectMPreset)
+    // AndroidView creates its Renderer once. Surface recreation must read the live browser,
+    // including a later manual selection, instead of replaying a captured startup preset.
+    val currentBrowser = rememberUpdatedState(browser)
 
     // The MilkDrop texture pack can contain many files. Extract it off the GL thread so the
     // first visualizer frame is not blocked by APK I/O. Once ready, queue the path onto the
@@ -107,6 +111,13 @@ fun ProjectMVisualizer(
     LaunchedEffect(browser.pendingPath) {
         val pending = browser.consumePending() ?: return@LaunchedEffect
         load(pending.first, pending.second)
+    }
+
+    LaunchedEffect(browser, browser.filter, browser.shuffle, availablePresets.isEmpty()) {
+        // A non-null fallback to entry zero hid the uninitialized state and made shuffle's
+        // startup branch unreachable. Publish the actual choice even before GL is ready;
+        // onSurfaceCreated then loads that same preset rather than choosing a second one.
+        if (browser.currentPath == null) browser.initialPreset()?.let { load(it, false) }
     }
 
     LaunchedEffect(browser.locked) {
@@ -166,9 +177,8 @@ fun ProjectMVisualizer(
         if (size == null) view.holder.setSizeFromLayout() else view.holder.setFixedSize(size.first, size.second)
     }
 
-    LaunchedEffect(availablePresets.size, intervalSeconds, browser.locked, nativeHandle.get()) {
+    LaunchedEffect(browser, availablePresets.size, intervalSeconds, browser.locked) {
         if (availablePresets.isEmpty()) return@LaunchedEffect
-        if (current == null) load(availablePresets[Random.nextInt(availablePresets.size)], false)
         while (true) {
             delay(intervalSeconds.coerceIn(10, 600) * 1000L)
             if (!browser.locked && availablePresets.isNotEmpty()) {
@@ -193,7 +203,10 @@ fun ProjectMVisualizer(
     DisposableEffect(Unit) {
         onDispose {
             val view = glView
-            val handle = synchronized(nativeLifecycleLock) { nativeHandle.getAndSet(0L) }
+            val handle = synchronized(nativeLifecycleLock) {
+                nativeReleased.set(true)
+                nativeHandle.getAndSet(0L)
+            }
             if (handle != 0L) {
                 if (view != null) view.queueEvent { ProjectMNativeBridge.nativeDestroy(handle) }
                 else ProjectMNativeBridge.nativeDestroy(handle)
@@ -222,18 +235,30 @@ fun ProjectMVisualizer(
                     glView = this
                     setRenderer(object : GLSurfaceView.Renderer {
                         override fun onSurfaceCreated(gl: GL10?, config: EGLConfig?) {
-                            if (!ProjectMAvailability.isAvailable) return
+                            if (nativeReleased.get() || !ProjectMAvailability.isAvailable) return
                             val handle = ProjectMNativeBridge.nativeCreate()
                             if (handle != 0L && nativeAudioSource != 0)
                                 ProjectMNativeBridge.nativeSetAudioSource(handle, nativeAudioSource)
-                            val previous = synchronized(nativeLifecycleLock) { nativeHandle.getAndSet(handle) }
-                            if (previous != 0L) ProjectMNativeBridge.nativeDestroy(previous)
-                            if (handle != 0L) {
-                                texturePath?.let { ProjectMNativeBridge.nativeSetTexturePath(handle, it) }
-                                ProjectMNativeBridge.nativeSetPresetDuration(handle, intervalSeconds.toDouble())
-                                ProjectMNativeBridge.nativeSetSoftCutDuration(handle, transitionSeconds.coerceIn(0, 10).toDouble())
-                                ProjectMNativeBridge.nativeSetBeatSensitivity(handle, 1.0f)
-                                current?.let { preset -> browser.presetData(preset)?.let { ProjectMNativeBridge.nativeLoadPreset(handle, it, false) } }
+                            synchronized(nativeLifecycleLock) {
+                                // nativeCreate may finish after disposal cleared the published
+                                // handle. Destroy that late result here on its GL thread.
+                                if (nativeReleased.get()) {
+                                    if (handle != 0L) ProjectMNativeBridge.nativeDestroy(handle)
+                                    return@synchronized
+                                }
+                                val previous = nativeHandle.getAndSet(handle)
+                                if (previous != 0L) ProjectMNativeBridge.nativeDestroy(previous)
+                                if (handle != 0L) {
+                                    val activeBrowser = currentBrowser.value
+                                    texturePath?.let { ProjectMNativeBridge.nativeSetTexturePath(handle, it) }
+                                    ProjectMNativeBridge.nativeSetPresetDuration(handle, activeBrowser.intervalSeconds.toDouble())
+                                    ProjectMNativeBridge.nativeSetSoftCutDuration(handle, activeBrowser.transitionSeconds.coerceIn(0, 10).toDouble())
+                                    ProjectMNativeBridge.nativeSetBeatSensitivity(handle, 1.0f)
+                                    activeBrowser.currentPath?.let(::ProjectMPreset)?.let { preset ->
+                                        activeBrowser.presetData(preset)?.let { ProjectMNativeBridge.nativeLoadPreset(handle, it, false) }
+                                    }
+                                    ProjectMNativeBridge.nativeSetLocked(handle, activeBrowser.locked)
+                                }
                             }
                         }
 
