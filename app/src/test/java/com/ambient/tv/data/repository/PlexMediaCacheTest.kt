@@ -1,6 +1,7 @@
 package com.ambient.tv.data.repository
 
 import com.ambient.tv.domain.model.MediaItem
+import com.ambient.tv.domain.model.MediaVersion
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Test
@@ -154,6 +155,75 @@ class PlexMediaCacheTest {
         assertEquals(0, cache.mediaItem("1")!!.viewCount)
     }
 
+    @Test fun aLaterPreviewPairKeepsEveryPreviouslyResolvedVersion() {
+        val cache = PlexMediaCache()
+        val copies = (1..5).map { versioned("$it") }
+        cache.registerResolved(ContentDeduplicator.mergeGroup(copies))
+        val preview = cache.mergeAndRegister(copies.take(2)).single()
+        assertEquals((1..5).map { "$it" }.toSet(), preview.allRatingKeys.toSet())
+        assertEquals(5, preview.mediaVersions.size)
+        (1..5).forEach { assertEquals(5, cache.mediaItem("$it")!!.mediaVersions.size) }
+    }
+
+    @Test fun overlappingGroupKeepsSiblingsWhenANewKeyBecomesRepresentative() {
+        val cache = PlexMediaCache()
+        cache.registerResolved(ContentDeduplicator.mergeGroup(listOf(versioned("1"), versioned("2"))))
+        val newCopy = versioned("3").copy(addedAt = Long.MAX_VALUE)
+        val refreshed = cache.mergeAndRegister(listOf(newCopy, versioned("2"))).single()
+        assertEquals(setOf("1", "2", "3"), refreshed.allRatingKeys.toSet())
+        assertEquals(3, refreshed.mediaVersions.size)
+    }
+
+    @Test fun newerListUrlReplacesSamePhysicalVersionWithoutDroppingDetailsOrSiblings() {
+        val cache = PlexMediaCache()
+        val original = versioned("1")
+        cache.registerResolved(ContentDeduplicator.mergeGroup(listOf(original, versioned("2"))))
+        val updated = original.copy(mediaVersions = original.mediaVersions.map {
+            it.copy(streamUrl = "http://local/new-url", fileName = null)
+        })
+        val listed = cache.mergeAndRegister(listOf(updated)).single()
+        assertEquals(2, listed.mediaVersions.size)
+        val current = listed.mediaVersions.single { it.sourceRatingKey == "1" }
+        assertEquals("http://local/new-url", current.streamUrl)
+        assertEquals("1.mkv", current.fileName)
+        val sparse = updated.copy(mediaVersions = updated.mediaVersions.map { it.copy(streamUrl = null) })
+        val retained = cache.mergeAndRegister(listOf(sparse)).single()
+        assertEquals(2, retained.mediaVersions.size)
+        assertEquals("http://local/new-url", retained.mediaVersions.single { it.sourceRatingKey == "1" }.streamUrl)
+    }
+
+    @Test fun displayOnlyListCannotErasePlayableMetadata() {
+        val cache = PlexMediaCache()
+        cache.register(versioned("1"))
+        val listed = cache.mergeAndRegister(listOf(item("1"))).single()
+        assertEquals("http://local/1", listed.mediaVersions.single().streamUrl)
+    }
+
+    @Test fun freshMetadataStillReplacesItsOwnRemovedMediaSources() {
+        val cache = PlexMediaCache()
+        val original = versioned("1")
+        val secondSource = original.mediaVersions.single().copy(sourceMediaIndex = 1, streamUrl = "http://local/1/second")
+        cache.registerResolved(ContentDeduplicator.mergeGroup(listOf(
+            original.copy(mediaVersions = original.mediaVersions + secondSource), versioned("2"),
+        )))
+        val updated = cache.register(original)
+        assertEquals(2, updated.mediaVersions.size)
+        assertEquals(listOf(0), updated.mediaVersions.filter { it.sourceRatingKey == "1" }.map { it.sourceMediaIndex })
+        assertEquals(setOf("1", "2"), updated.allRatingKeys.toSet())
+    }
+
+    @Test fun refreshAndSectionInvalidationRequireDuplicateDiscoveryAgain() {
+        val cache = PlexMediaCache()
+        val key = item("1").canonicalContentKey
+        cache.markCanonicalResolved(key)
+        assertTrue(cache.isCanonicalResolved(key, 60_000))
+        cache.expire()
+        assertEquals(false, cache.isCanonicalResolved(key, 60_000))
+        cache.markCanonicalResolved(key)
+        cache.clearSection("movies")
+        assertEquals(false, cache.isCanonicalResolved(key, 60_000))
+    }
+
     @Test fun failedSecondPageCannotReplaceLastCompleteSnapshot() = runBlocking {
         val cache = PlexMediaCache()
         cache.setSectionItems("movies", listOf(item("saved")))
@@ -168,6 +238,10 @@ class PlexMediaCacheTest {
         assertTrue(result.isFailure)
         assertEquals("saved", cache.sectionItems("movies")!!.single().ratingKey)
     }
+
+    private fun versioned(key: String) = item(key).copy(mediaVersions = listOf(
+        MediaVersion("http://local/$key", "1080p", "h264", "aac", "mkv", sourceRatingKey = key, fileName = "$key.mkv"),
+    ))
 
     private fun item(ratingKey: String, linked: List<String> = emptyList()) = MediaItem(
         ratingKey = ratingKey,

@@ -100,6 +100,7 @@ open class PlexMediaCache @Inject constructor() {
     @Synchronized fun expire() {
         syncScope()
         generation++
+        resolvedCanonicalKeys.clear()
         librarySections = librarySections?.copy(storedAtMs = 0)
         onDeck = onDeck?.copy(storedAtMs = 0)
         listOf(sectionItems, sectionPreviews, children, similar, filtered, searches).forEach { map ->
@@ -158,7 +159,7 @@ open class PlexMediaCache @Inject constructor() {
     /** Keys registered since the last prune; they survive the next prune even when no list holds them yet. */
     private val registeredSincePrune = HashSet<String>()
     private var pruneThreshold = MAX_MERGED_KEYS
-    private val resolvedCanonicalKeys = ConcurrentHashMap.newKeySet<String>()
+    private val resolvedCanonicalKeys = ConcurrentHashMap<String, Long>()
 
     fun librarySections(): List<LibrarySection>? = run { syncScope(); librarySections?.value }
     fun freshLibrarySections(maxAgeMs: Long): List<LibrarySection>? = run { syncScope(); librarySections?.fresh(maxAgeMs) }
@@ -249,6 +250,7 @@ open class PlexMediaCache @Inject constructor() {
     fun clearSection(sectionKey: String) {
         checkRequestGeneration()
 
+        resolvedCanonicalKeys.clear()
         sectionItems.computeIfPresent(sectionKey) { _, value -> value.copy(storedAtMs = 0) }
         sectionPreviews.keys.removeIf { it.startsWith("$sectionKey|") }
         hubs.keys.removeIf { it.startsWith("$sectionKey|") }
@@ -283,24 +285,54 @@ open class PlexMediaCache @Inject constructor() {
     @Synchronized
     fun mergeAndRegister(items: List<MediaItem>): List<MediaItem> {
         checkRequestGeneration()
-        return ContentDeduplicator.merge(items).also { merged -> merged.forEach(::registerMerged) }
+        return ContentDeduplicator.merge(items).map { item ->
+            mergeRegisteredVersions(item, fromList = true).also(::registerMerged)
+        }
     }
 
     @Synchronized
     fun register(item: MediaItem): MediaItem {
         checkRequestGeneration()
 
-        val existing = mergedByRatingKey[item.ratingKey]
-        val merged = if (existing != null && existing.canonicalContentKey == item.canonicalContentKey) {
-            val otherVersions = existing.mediaVersions.filter { it.sourceRatingKey != null && it.sourceRatingKey !in item.allRatingKeys }
-            item.copy(linkedRatingKeys = (item.allRatingKeys + existing.allRatingKeys).distinct(),
-                mediaVersions = item.mediaVersions + otherVersions)
-        } else {
-            item.copy(linkedRatingKeys = item.allRatingKeys)
-        }
+        val merged = mergeRegisteredVersions(item, fromList = false)
         registerMerged(merged)
         persist("item:${merged.ratingKey}", BrowseSnapshot(items = listOf(merged)))
         return merged
+    }
+
+    /** Full discovery has checked every known physical key, including failed-key fallbacks. */
+    @Synchronized
+    internal fun registerResolved(item: MediaItem): MediaItem {
+        checkRequestGeneration()
+        val oldKeys = item.allRatingKeys.mapNotNull(mergedByRatingKey::get)
+            .filter { it.canonicalContentKey == item.canonicalContentKey }
+            .flatMap { it.allRatingKeys }.toSet()
+        (oldKeys - item.allRatingKeys.toSet()).forEach { key ->
+            // Fresh metadata may have removed/rematched a sibling. It must not be attached again
+            // by the ordinary single-item registration path that preserves undiscovered siblings.
+            mergedByRatingKey[key]?.takeIf { it.canonicalContentKey == item.canonicalContentKey }
+                ?.let { mergedByRatingKey.remove(key, it) }
+        }
+        val resolved = item.copy(linkedRatingKeys = item.allRatingKeys)
+        registerMerged(resolved)
+        persist("item:${resolved.ratingKey}", BrowseSnapshot(items = listOf(resolved)))
+        return resolved
+    }
+
+    /** Preview pages can contain only part of a previously resolved group. */
+    private fun mergeRegisteredVersions(item: MediaItem, fromList: Boolean): MediaItem {
+        val known = item.allRatingKeys.mapNotNull(mergedByRatingKey::get)
+            .filter { it.canonicalContentKey == item.canonicalContentKey }
+            .distinctBy { it.ratingKey }
+        if (known.isEmpty()) return item.copy(linkedRatingKeys = item.allRatingKeys)
+        val otherVersions = known.flatMap { it.mediaVersions }.filter {
+            it.sourceRatingKey != null && (fromList || it.sourceRatingKey !in item.allRatingKeys)
+        }
+        val versions = mergeMediaVersions(item.mediaVersions + otherVersions)
+        return item.copy(
+            linkedRatingKeys = (item.allRatingKeys + known.flatMap { it.allRatingKeys }).distinct(),
+            mediaVersions = versions,
+        )
     }
 
     /**
@@ -312,17 +344,18 @@ open class PlexMediaCache @Inject constructor() {
         val stale = ratingKeys.mapNotNull(mergedByRatingKey::get)
         stale.forEach { item ->
             item.allRatingKeys.forEach(mergedByRatingKey::remove)
-            resolvedCanonicalKeys -= item.canonicalContentKey
+            resolvedCanonicalKeys.remove(item.canonicalContentKey)
         }
     }
 
     fun mergedFor(ratingKey: String): MediaItem? = mergedByRatingKey[ratingKey]
     fun linkedKeys(ratingKey: String): List<String> = mergedByRatingKey[ratingKey]?.allRatingKeys ?: listOf(ratingKey)
-    fun isCanonicalResolved(canonicalKey: String): Boolean = canonicalKey in resolvedCanonicalKeys
+    fun isCanonicalResolved(canonicalKey: String, maxAgeMs: Long): Boolean =
+        resolvedCanonicalKeys[canonicalKey]?.let { System.currentTimeMillis() - it <= maxAgeMs } == true
     @Synchronized
     fun markCanonicalResolved(canonicalKey: String) {
         checkRequestGeneration()
-        resolvedCanonicalKeys += canonicalKey
+        resolvedCanonicalKeys[canonicalKey] = System.currentTimeMillis()
     }
 
     @Synchronized

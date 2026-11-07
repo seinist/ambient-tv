@@ -28,9 +28,24 @@ internal val DetailFocusSessions = DetailFocusSessionStore()
 
 internal fun detailRowForFocusKey(key: String?): String? = when {
     key == null -> null
+    key.startsWith("versions:") -> key
     key.startsWith("actor:") -> key.substringBefore('\u0000')
     key.startsWith("collection:") -> "collections"
     else -> key.substringBefore(':')
+}
+
+/** Keep focus on the same physical source when late metadata inserts or reorders versions. */
+internal fun detailVersionFocusKeys(item: MediaItem): List<String> {
+    val occurrences = mutableMapOf<String, Int>()
+    return item.mediaVersions.map { version ->
+        val source = version.sourceRatingKey ?: item.ratingKey
+        val media = version.sourceId?.takeIf { it.isNotBlank() }?.let { "id:$it" }
+            ?: "index:${version.sourceMediaIndex}"
+        val identity = "versions:$source\u0000$media"
+        val occurrence = occurrences.getOrDefault(identity, 0)
+        occurrences[identity] = occurrence + 1
+        "$identity\u0000$occurrence"
+    }
 }
 
 /** The preferred first entry is used only until the row has an explicit remembered item. */

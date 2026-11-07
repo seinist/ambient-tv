@@ -18,6 +18,8 @@ import android.view.Display
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.relocation.BringIntoViewRequester
+import androidx.compose.foundation.relocation.bringIntoViewRequester
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -294,7 +296,7 @@ private fun DetailLoadingSkeleton(
 
 @OptIn(ExperimentalFoundationApi::class, androidx.compose.ui.ExperimentalComposeUiApi::class)
 @Composable
-private fun DetailContent(
+internal fun DetailContent(
     /** Wide backdrop the server offers but has not selected, else TMDb's, when the item has only a poster. */
     fallbackBackdrop: String? = null,
     playbackAvailable: Boolean,
@@ -346,16 +348,18 @@ private fun DetailContent(
     var enterPrimaryPending by remember(focusScope, item.ratingKey) { mutableStateOf(false) }
     var initialFocusHandled by remember(focusScope, item.ratingKey) { mutableStateOf(false) }
     var requestUtilityFocus by remember(focusScope, item.ratingKey) { mutableStateOf(false) }
+    var focusedVersionKey by remember(focusScope, item.ratingKey) { mutableStateOf<String?>(null) }
     fun rememberFocused(key: String?) {
         initialFocusHandled = true
         requestUtilityFocus = false
         focusMemory.record(key)
+        focusedVersionKey = key?.takeIf { it.startsWith("versions:") }
         childFocusPending = false
         if (restoreFocusPending) restoreFocusPending = false
         enterPrimaryPending = false
     }
     var restoreTrailer by androidx.compose.runtime.saveable.rememberSaveable(item.ratingKey) { mutableStateOf(false) }
-    val trailerAvailable = rememberTrailerAvailable(item, playbackAvailable && onTrailer != null)
+    val trailerAvailable = if (playbackAvailable && onTrailer != null) rememberTrailerAvailable(item, true) else false
     val activePlayback = com.ambient.tv.companion.playbackIndicator(item)
     val heroHasFocusTarget = remember(
         item.type, item.mediaVersions, item.progressFraction, nextEpisode?.ratingKey,
@@ -455,6 +459,18 @@ private fun DetailContent(
             actorRows.forEach { add("actor:${it.actorId}") }
             if (item.collections.isNotEmpty()) add("collections")
         }
+        // Versions are vertical focus destinations even though they share the hero's lazy item.
+        // Registering only the whole hero made Down skip straight past every version.
+        val allVersionKeys = remember(item.ratingKey, item.mediaVersions) { detailVersionFocusKeys(item) }
+        val versionRowKeys = if (playbackAvailable && item.type !in setOf("show", "season") && item.mediaVersions.size > 1) {
+            item.mediaVersions.mapIndexedNotNull { index, version ->
+                allVersionKeys[index].takeIf { version.streamUrl != null }
+            }
+        } else emptyList()
+        val rowSectionIndices = buildMap {
+            sectionKeys.forEachIndexed { index, key -> put(key, index) }
+            versionRowKeys.forEach { put(it, 0) }
+        }
         val castItems = item.cast.dedupeCastMembers().take(16)
         val rowDefaults = buildMap {
             preferredChild?.let { put("children", it) }
@@ -464,6 +480,7 @@ private fun DetailContent(
         // Decorative/disabled cards and loading placeholders are not navigation destinations.
         val rowOrder = buildList {
             if (heroHasFocusTarget) add("hero")
+            addAll(versionRowKeys)
             if (seasonStripVisible) add("season-strip")
             if (childrenSectionVisible && (children.isNotEmpty() || (childrenLoadFailed && !childrenLoading))) add("children")
             if (castItems.any { it.id != null }) add("cast")
@@ -475,7 +492,7 @@ private fun DetailContent(
         suspend fun focusRow(rowKey: String, stillRequested: () -> Boolean): Boolean {
             if (!stillRequested()) return false
             if (columnFocus.focusEntry(rowKey)) return true
-            sectionKeys.indexOf(rowKey).takeIf { it >= 0 }?.let { listState.scrollToItem(it) }
+            rowSectionIndices[rowKey]?.let { listState.scrollToItem(it) }
             var frames = 0
             while (!columnFocus.canScrollToEntry(rowKey) && frames++ < 12) {
                 withFrameNanos { }
@@ -490,13 +507,31 @@ private fun DetailContent(
             }
             return false
         }
+        LaunchedEffect(focusScope, item.ratingKey, item.mediaVersions, playbackAvailable) {
+            val previous = focusedVersionKey ?: return@LaunchedEffect
+            if (previous in versionRowKeys) return@LaunchedEffect
+            // TV Surface drops focus when its source becomes disabled. Transfer it explicitly
+            // to an enabled neighbour; a metadata refresh must never leave navigation nowhere.
+            val previousIndex = allVersionKeys.indexOf(previous)
+            val destination = versionRowKeys.firstOrNull { allVersionKeys.indexOf(it) > previousIndex }
+                ?: versionRowKeys.lastOrNull()
+                ?: "hero".takeIf { heroHasFocusTarget }
+            withFrameNanos { }
+            if (focusedVersionKey != previous) return@LaunchedEffect
+            if (destination != null) {
+                focusRow(destination) { focusedVersionKey == previous }
+            } else {
+                focusedVersionKey = null
+                requestUtilityFocus = true
+            }
+        }
         LaunchedEffect(enterPrimaryPending, childrenLoading, childrenLoadFailed, rowOrder) {
             if (!enterPrimaryPending) return@LaunchedEffect
             // Down is an explicit request, so a not-yet-loaded primary row can finish before
             // focus moves. Any other navigation cancels this intent; refresh alone never arms it.
             if (detailShowsChildrenSection(item.type) && childrenLoading && children.isEmpty()) return@LaunchedEffect
             val destination = "children".takeIf { it in rowOrder }
-                ?: rowOrder.firstOrNull { it != "hero" }
+                ?: rowOrder.firstOrNull { it != "hero" && it !in versionRowKeys }
             if (destination != null) focusRow(destination) { enterPrimaryPending }
             enterPrimaryPending = false
         }
@@ -516,11 +551,11 @@ private fun DetailContent(
             if (childFocusPending && childrenLoading) return@LaunchedEffect
             if (restoreFocusPending) {
                 val section = detailRowForFocusKey(restoreFocusKey)
-                val sectionIndex = sectionKeys.indexOf(section)
+                val sectionIndex = rowSectionIndices[section]
                 // Restore through the same row-entry policy as D-pad navigation. A deleted
                 // saved card falls back to the row default rather than leaving focus nowhere.
                 if (section !in rowOrder && (childrenLoading || similarLoading)) return@LaunchedEffect
-                if (sectionIndex >= 0 && section != null && section in rowOrder) {
+                if (sectionIndex != null && section != null && section in rowOrder) {
                     if (focusRow(section) { !initialFocusHandled } || initialFocusHandled) {
                         initialFocusHandled = true
                         restoreFocusPending = false
@@ -646,7 +681,9 @@ private fun DetailContent(
             modifier = Modifier.fillMaxSize()
                 .onPreviewKeyEvent { event ->
                     if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
-                    if (event.key == Key.DirectionDown && heroHasFocus.value) {
+                    if (event.key == Key.DirectionDown && heroHasFocus.value &&
+                        columnFocus.nextRow(rowOrder, down = true) !in versionRowKeys
+                    ) {
                         enterPrimaryPending = true
                         true
                     } else {
@@ -658,7 +695,7 @@ private fun DetailContent(
                 .rowColumnFocusNavigation(
                     columnFocus,
                     scrollToRow = { rowKey ->
-                        sectionKeys.indexOf(rowKey).takeIf { it >= 0 }?.let { listState.scrollToItem(it) }
+                        rowSectionIndices[rowKey]?.let { listState.scrollToItem(it) }
                     },
                 ) { rowOrder }
                 .focusProperties {
@@ -674,28 +711,34 @@ private fun DetailContent(
             item(key = "hero") {
                 Box(
                     Modifier
-                        .rowColumnFocusTarget(columnFocus, "hero", "hero", soundsOnFocus = true)
                         .onSizeChanged { heroHeightPx.intValue = it.height }
-                        .onFocusChanged { heroHasFocus.value = it.hasFocus },
+                        .onFocusChanged { heroHasFocus.value = it.hasFocus }
+                        .focusGroup(),
                 ) {
-                DetailHero(
-                    playbackAvailable = playbackAvailable,
-                    availabilityMessage = availabilityMessage,                    onTrailer = onTrailer?.let { action -> { media -> restoreTrailer = true; action(media) } },
-                    restoreTrailer = restoreTrailer && trailerAvailable,
-                    trailerAvailable = trailerAvailable,
-                    item = item,
-                    nextEpisode = nextEpisode,
-                    autoSelectDisplayVersion = autoSelectDisplayVersion,
-                    onPlay = { media, version, restart -> restoreTrailer = false; onPlay(media, version, restart) },
-                    onMore = {
-                        moreOpened = true
-                        showMore = true
-                    },
-                    canEdit = editSupport.any,
-                    onHeroFocused = { rememberFocused(null) },
-                    initialActionFocus = initialActionFocus,
-                    moreActionFocus = moreActionFocus,
-                )
+                    // Only the outer page uses the hero-height relocation policy. The nested
+                    // versions list and horizontal metadata scroll in their own coordinates.
+                    CompositionLocalProvider(LocalBringIntoViewSpec provides baseBringIntoViewSpec) {
+                        DetailHero(
+                            playbackAvailable = playbackAvailable,
+                            availabilityMessage = availabilityMessage,
+                            onTrailer = onTrailer?.let { action -> { media -> restoreTrailer = true; action(media) } },
+                            restoreTrailer = restoreTrailer && trailerAvailable,
+                            trailerAvailable = trailerAvailable,
+                            item = item,
+                            nextEpisode = nextEpisode,
+                            autoSelectDisplayVersion = autoSelectDisplayVersion,
+                            onPlay = { media, version, restart -> restoreTrailer = false; onPlay(media, version, restart) },
+                            onMore = {
+                                moreOpened = true
+                                showMore = true
+                            },
+                            canEdit = editSupport.any,
+                            onHeroFocused = { rememberFocused(null) },
+                            onVersionFocused = { rememberFocused(it) },
+                            initialActionFocus = initialActionFocus,
+                            moreActionFocus = moreActionFocus,
+                        )
+                    }
                 }
             }
 
@@ -861,9 +904,11 @@ private fun DetailHero(
     onMore: (() -> Unit)?,
     canEdit: Boolean,
     onHeroFocused: () -> Unit,
+    onVersionFocused: (String) -> Unit,
     initialActionFocus: FocusRequester,
     moreActionFocus: FocusRequester,
 ) {
+    val columnFocus = LocalDetailRowFocus.current?.focus
     val isPlayable = playbackAvailable && item.type !in setOf("show", "season")
     val maxDisplayPixels = rememberMaxDisplayPixels()
     val optimalIndex = remember(item.mediaVersions, maxDisplayPixels, autoSelectDisplayVersion) {
@@ -888,7 +933,6 @@ private fun DetailHero(
         stack = handheldDetailStacks(LocalConfiguration.current.screenWidthDp),
         modifier = Modifier
             .fillMaxWidth()
-            .onFocusChanged { if (it.hasFocus) onHeroFocused() }
             .padding(start = screenGutter(), end = screenGutter(), top = com.ambient.tv.ui.common.pageHeaderTop(18.dp), bottom = 40.dp),
         horizontalArrangement = Arrangement.spacedBy(28.dp),
         verticalAlignment = Alignment.Top,
@@ -964,7 +1008,10 @@ private fun DetailHero(
 
                 availabilityMessage?.let { Text(stringResource(it), style = MaterialTheme.typography.bodyMedium) }
                 DeviceActionRow(
-                    modifier = Modifier.padding(top = 8.dp),
+                    modifier = Modifier.padding(top = 8.dp)
+                        .rowColumnFocusTarget(columnFocus, "hero", "hero", soundsOnFocus = true)
+                        .onFocusChanged { if (it.hasFocus) onHeroFocused() }
+                        .focusGroup(),
                     horizontalArrangement = Arrangement.spacedBy(12.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
@@ -1015,7 +1062,7 @@ private fun DetailHero(
                 }
             }
             if (isPlayable && item.mediaVersions.size > 1) {
-                MediaVersionPicker(item, optimalIndex, onPlay)
+                MediaVersionPicker(item, optimalIndex, onPlay, onVersionFocused)
             }
         }
     }
@@ -1056,12 +1103,16 @@ private fun PrimaryPlaybackActions(
 }
 
 @Composable
+@OptIn(ExperimentalFoundationApi::class)
 private fun MediaVersionPicker(
     item: MediaItem,
     optimalIndex: Int,
     onPlay: (MediaItem, Int, Boolean) -> Unit,
+    onFocused: (String) -> Unit,
 ) {
     val handheld = LocalHandheldUi.current
+    val columnFocus = LocalDetailRowFocus.current?.focus
+    val focusKeys = remember(item.ratingKey, item.mediaVersions) { detailVersionFocusKeys(item) }
     Column(
         modifier = Modifier.bringFocusedContextIntoView(),
         verticalArrangement = Arrangement.spacedBy(8.dp),
@@ -1074,41 +1125,64 @@ private fun MediaVersionPicker(
             else Modifier,
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-        item.mediaVersions.forEachIndexed { index, version ->
-            Row(
-                horizontalArrangement = Arrangement.spacedBy(10.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                val label = formatResolution(version.resolution) ?: "#${index + 1}"
-                TvActionButton(
-                    text = label,
-                    onClick = { onPlay(item, index, false) },
-                    enabled = version.streamUrl != null,
-                    selected = index == optimalIndex,
-                    modifier = Modifier.width(116.dp),
-                    fillWidth = true,
-                )
-                Column(Modifier.weight(1f)) {
-                    StreamPropertyRow(
-                        version = version,
-                        maxItems = 4,
-                        // Narrow widths: badges scroll instead of being clipped.
-                        modifier = Modifier.horizontalScroll(rememberScrollState()),
-                    )
-                    version.fileName?.takeIf { it.isNotBlank() }?.let { name ->
-                        Text(
-                            name,
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.65f),
-                            maxLines = 1,
-                            // Phones: long names scroll by swipe instead of being cut off.
-                            overflow = if (handheld) TextOverflow.Clip else TextOverflow.Ellipsis,
-                            modifier = if (handheld) Modifier.horizontalScroll(rememberScrollState()) else Modifier,
+            item.mediaVersions.forEachIndexed { index, version ->
+                val focusKey = focusKeys[index]
+                androidx.compose.runtime.key(focusKey) {
+                    var focused by remember { mutableStateOf(false) }
+                    val previousIndex = remember { intArrayOf(index) }
+                    val reveal = remember { BringIntoViewRequester() }
+                    LaunchedEffect(index, focused) {
+                        val moved = previousIndex[0] != index
+                        previousIndex[0] = index
+                        if (moved && focused) {
+                            // Stable keys preserve focus, but Compose does not relocate an
+                            // already-focused child when metadata moves it within the list.
+                            withFrameNanos { }
+                            withFrameNanos { }
+                            if (focused) reveal.bringIntoView()
+                        }
+                    }
+                    Row(
+                        modifier = Modifier.bringIntoViewRequester(reveal),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        val label = formatResolution(version.resolution) ?: "#${index + 1}"
+                        TvActionButton(
+                            text = label,
+                            onClick = { onPlay(item, index, false) },
+                            enabled = version.streamUrl != null,
+                            selected = index == optimalIndex,
+                            modifier = Modifier.width(116.dp)
+                                .detailRowTarget(focusKey, focusKey, columnFocus)
+                                .onFocusChanged {
+                                    focused = it.isFocused
+                                    if (it.isFocused) onFocused(focusKey)
+                                },
+                            fillWidth = true,
                         )
+                        Column(Modifier.weight(1f)) {
+                            StreamPropertyRow(
+                                version = version,
+                                maxItems = 4,
+                                // Narrow widths: badges scroll instead of being clipped.
+                                modifier = Modifier.horizontalScroll(rememberScrollState()),
+                            )
+                            version.fileName?.takeIf { it.isNotBlank() }?.let { name ->
+                                Text(
+                                    name,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.65f),
+                                    maxLines = 1,
+                                    // Phones: long names scroll by swipe instead of being cut off.
+                                    overflow = if (handheld) TextOverflow.Clip else TextOverflow.Ellipsis,
+                                    modifier = if (handheld) Modifier.horizontalScroll(rememberScrollState()) else Modifier,
+                                )
+                            }
+                        }
                     }
                 }
             }
-        }
         }
     }
 }
