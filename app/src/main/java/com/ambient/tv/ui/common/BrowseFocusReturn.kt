@@ -38,6 +38,30 @@ internal data class BrowseFocusKey(val row: Any?, val item: Any, val content: Bo
 
 internal data class BrowseFocusSlot(val key: BrowseFocusKey, val index: Int)
 
+/**
+ * Registrations publish immutable slot snapshots. Build their lookup once per snapshot, not on
+ * every D-pad transition; a dense library can register thousands of offscreen slots too.
+ */
+internal class BrowseFocusSlotIndex(private val slots: () -> List<BrowseFocusSlot>) {
+    private var indexedSlots: List<BrowseFocusSlot>? = null
+    private var slotsByKey: Map<BrowseFocusKey, BrowseFocusSlot> = emptyMap()
+
+    operator fun get(key: BrowseFocusKey): BrowseFocusSlot? {
+        val current = slots()
+        // Identity is intentional: comparing the list's contents would itself scan the library.
+        if (current !== indexedSlots) {
+            slotsByKey = buildMap(current.size) {
+                current.forEach { slot ->
+                    // Keep the same first-match semantics as the original firstOrNull lookups.
+                    if (slot.key !in this) put(slot.key, slot)
+                }
+            }
+            indexedSlots = current
+        }
+        return slotsByKey[key]
+    }
+}
+
 /** A removed selection stays in its row when possible, otherwise at the top of the content. */
 internal fun missingBrowseFocusFallback(lost: BrowseFocusKey, slots: List<BrowseFocusSlot>): BrowseFocusKey? {
     val available = slots.map { it.key }.filter { it.content }
@@ -64,7 +88,10 @@ internal class BrowseFocusReturnState(private val scope: CoroutineScope, val vie
         val visible: (Int) -> Boolean,
         val scroll: suspend (Int) -> Unit,
         val allowRecovery: () -> Boolean,
-    )
+    ) {
+        private val index = BrowseFocusSlotIndex(slots)
+        fun slot(key: BrowseFocusKey): BrowseFocusSlot? = index[key]
+    }
     private val targets = linkedMapOf<Target, Unit>()
     private val collections = linkedMapOf<Any, Collection>()
     private var last: Target? = null
@@ -99,7 +126,15 @@ internal class BrowseFocusReturnState(private val scope: CoroutineScope, val vie
         target.hasFocus = hasFocus
         // A shared MediaTile may also have a precise row/item modifier supplied by its
         // caller (for example Detail). Prefer that address regardless of callback order.
-        val selected = targets.keys.filter { it.hasFocus }.maxByOrNull { if (it.key.row != null) 1 else 0 }
+        var selected: Target? = null
+        for (candidate in targets.keys) {
+            if (!candidate.hasFocus) continue
+            if (selected == null) selected = candidate
+            if (candidate.key.row != null) {
+                selected = candidate
+                break
+            }
+        }
         if (selected != null) focused(selected)
     }
 
@@ -174,23 +209,24 @@ internal class BrowseFocusReturnState(private val scope: CoroutineScope, val vie
         recovery = scope.launch {
             // Let the new lazy item registry and focus tree settle before inspecting survivors.
             withFrameNanos { }
-            val sources = collections.values.toList()
+            val sources = collections.values
             if (!active || generation != recoveryGeneration || identity != contentIdentity ||
                 NavReselect.restoreTop.value) return@launch
             // A page may register many independent Rows (Search) or an outer list plus
-            // nested Rows (Home/SmartTube). Match the entire visible registry first.
+            // nested Rows (Home/SmartTube). Ordinary focus moves retain the old item, so check
+            // cached membership before allocating/scanning a full merged fallback list.
+            if (sources.any { it.slot(lost) != null } || sources.any { !it.allowRecovery() }) return@launch
             val available = sources.flatMap { it.slots() }
-            if (available.any { it.key == lost } || sources.any { !it.allowRecovery() }) return@launch
             val destination = missingBrowseFocusFallback(lost, available) ?: return@launch
             repeat(12) {
                 if (!active || generation != recoveryGeneration || identity != contentIdentity ||
                     NavReselect.restoreTop.value || collections.values.any { !it.allowRecovery() } ||
-                    collections.values.any { collection -> collection.slots().any { slot -> slot.key == lost } }
+                    collections.values.any { it.slot(lost) != null }
                 ) return@launch
                 // Nested horizontal rows need their outer row and inner tile both composed.
                 try {
                     collections.values.toList().forEach { collection ->
-                        collection.slots().firstOrNull { it.key == destination }?.let { slot ->
+                        collection.slot(destination)?.let { slot ->
                             if (!collection.visible(slot.index)) collection.scroll(slot.index)
                         }
                     }
@@ -239,7 +275,7 @@ internal class BrowseFocusReturnState(private val scope: CoroutineScope, val vie
         }
         val remembered = if (contentOnly) lastContentKey else lastKey
         val collection = remembered?.takeIf { it.content }?.let { key ->
-            collections.values.firstOrNull { source -> source.slots().any { it.key == key } }
+            collections.values.firstOrNull { it.slot(key) != null }
         }
         val existing = ((last?.takeIf { it in targets && (!contentOnly || it.key.content) }
             ?: targets.keys.lastOrNull { it.key == remembered && (!contentOnly || it.key.content) }))
@@ -254,14 +290,14 @@ internal class BrowseFocusReturnState(private val scope: CoroutineScope, val vie
         } ?: return false
         val target = existing?.takeIf { it.key == wanted } ?: targets.keys.firstOrNull { it.key == wanted }
         val laidOut = collections.values.all { source ->
-            source.slots().firstOrNull { it.key == wanted }?.let { source.visible(it.index) } ?: true
+            source.slot(wanted)?.let { source.visible(it.index) } ?: true
         }
         if (target?.visible == true && laidOut &&
             runCatching { target.requester.requestFocus() }.getOrDefault(false)
         ) return true
         // A prepared row still needs a new frame before it exposes its inner tile.
         if (prepared == wanted) return if (contentOnly) null else false
-        if (target == null && collections.values.none { source -> source.slots().any { it.key == wanted } }) return false
+        if (target == null && collections.values.none { it.slot(wanted) != null }) return false
         prepared = wanted
         preparation = scope.launch {
             try {
@@ -270,10 +306,10 @@ internal class BrowseFocusReturnState(private val scope: CoroutineScope, val vie
                 val scrolled = mutableSetOf<Collection>()
                 while (true) {
                     val source = collections.values.firstOrNull { source ->
-                        source !in scrolled && source.slots().any { it.key == wanted }
+                        source !in scrolled && source.slot(wanted) != null
                     } ?: break
                     scrolled += source
-                    val index = source.slots().firstOrNull { it.key == wanted }?.index ?: continue
+                    val index = source.slot(wanted)?.index ?: continue
                     source.scroll(index)
                     withFrameNanos { }
                 }

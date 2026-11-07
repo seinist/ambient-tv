@@ -250,7 +250,7 @@ class SectionViewModel @Inject constructor(
         if (newPage == SectionPage.COLLECTIONS) ensureCollectionsLoaded()
     }
 
-    private fun stateKey(): String = "$sectionKey:${page.name.lowercase()}"
+    private fun stateKey(targetPage: SectionPage = page): String = "$sectionKey:${targetPage.name.lowercase()}"
 
     private fun sort(): SectionSort = preferences.sectionSort(stateKey())?.let { runCatching { SectionSort.valueOf(it) }.getOrNull() } ?: SectionSort.TITLE
     private fun sortOrder(): SectionSortOrder = preferences.sectionSortOrder(stateKey())
@@ -359,8 +359,9 @@ class SectionViewModel @Inject constructor(
         metadataPrefetcher.detail(item.ratingKey)
         bufferFocus(item.ratingKey, null)
         focusedRecommendationRowId = null
-        val current = _uiState.value as? SectionUiState.Loaded ?: return
-        if (current.focusedRatingKey != item.ratingKey) _uiState.value = current.copy(focusedRatingKey = item.ratingKey)
+        // Focus belongs to the tile and the small A–Z indicator. Publishing a whole Loaded
+        // snapshot here invalidates the library grid and its callbacks on every D-pad step.
+        // Navigation and background rebuilds take the newest target from the buffer.
     }
 
     fun onRecommendationItemFocused(rowId: String, item: MediaItem) {
@@ -375,8 +376,6 @@ class SectionViewModel @Inject constructor(
     fun onCollectionFocused(id: String) {
         bufferFocus("collection:$id", null)
         focusedRecommendationRowId = null
-        val current = _uiState.value as? SectionUiState.Loaded ?: return
-        if (current.focusedCollectionId != id) _uiState.value = current.copy(focusedCollectionId = id)
     }
 
     private fun bufferFocus(itemKey: String, rowId: String?) {
@@ -394,6 +393,10 @@ class SectionViewModel @Inject constructor(
         focusPersistenceJob?.cancel()
         focusPersistenceJob = null
         flushFocusWrites()
+        // A retained ViewModel can be shown again before its entry refresh completes. Store
+        // the return target once on exit, rather than making every focus hop recompose it.
+        val current = _uiState.value as? SectionUiState.Loaded ?: return
+        _uiState.value = current.withLatestBrowseFocus(focusBuffer.get(stateKey(current.page)))
     }
 
     private fun flushFocusWrites() {
