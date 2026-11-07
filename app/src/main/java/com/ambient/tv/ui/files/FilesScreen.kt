@@ -108,7 +108,10 @@ fun FilesScreen(onPlay: (String, Boolean) -> Unit, onBack: () -> Unit, contentAc
         if (state.loading) viewModel.cancelLoading() else if (!viewModel.up()) onBack()
     }
     val sourceList = state.folders.isEmpty() && viewModel.tab == "browse"
-    val ids = if (sourceList) state.sources.map { "source:${it.id}" } else state.entries.map { it.id }
+    val ids = remember(sourceList, state.sources, state.entries) {
+        if (sourceList) state.sources.map { "source:${it.id}" } else state.entries.map { it.id }
+    }
+    val hasImages = remember(state.entries) { state.entries.any { it.image } }
     val emptyPending = com.ambient.tv.ui.common.awaitingEmptyBrowseResult(ids.isEmpty(), state.loading, state.refreshing)
     ReportSidebarContentReady(!emptyPending && !state.loading)
     // Same condition as FilesViewModel.up(): a pinned share's root has no parent inside this page.
@@ -117,9 +120,11 @@ fun FilesScreen(onPlay: (String, Boolean) -> Unit, onBack: () -> Unit, contentAc
     val retryFocus = remember { FocusRequester() }
     LaunchedEffect(state.revision, locationKey, contentActive, dialogOpen, ids, state.loading, state.error.takeIf { ids.isEmpty() }, keepHeaderFocus) {
         if (handheld || !contentActive || dialogOpen || state.loading || keepHeaderFocus) return@LaunchedEffect
-        val id = state.focusId?.takeIf { it in ids } ?: ids.firstOrNull()
+        // Read the latest session target only for a real restoration, not in composition.
+        val remembered = viewModel.focusedContentId()
+        val id = remembered?.takeIf { it in ids } ?: ids.firstOrNull()
         // The ".." row leads the list: it shifts the entry indices and is the focus of an empty folder.
-        val onUp = canUp && (id == null || state.focusId == UP_ID)
+        val onUp = canUp && (id == null || remembered == UP_ID)
         val index = if (onUp) 0 else ids.indexOf(id).let { if (it >= 0 && canUp) it + 1 else it }
         if (index >= 0 && list.layoutInfo.visibleItemsInfo.none { it.index == index }) list.scrollToItem(index)
         delay(60)
@@ -140,7 +145,7 @@ fun FilesScreen(onPlay: (String, Boolean) -> Unit, onBack: () -> Unit, contentAc
                 loading = state.loading || state.refreshing, iconOnly = true,
                 onClick = { keepHeaderFocus = true; viewModel.reload() })
             // Folder slideshow (optionally with subfolders, see photo settings).
-            if (state.entries.any { it.image }) {
+            if (hasImages) {
                 TvChip(stringResource(R.string.photos_slideshow), icon = Icons.Default.Slideshow, iconOnly = true) { if (viewModel.preparePhotos(null)) onOpenPhotos() }
             }
         }) { com.ambient.tv.ui.common.SystemPageTitle(com.ambient.tv.ui.common.MediaSystem.FILES) }

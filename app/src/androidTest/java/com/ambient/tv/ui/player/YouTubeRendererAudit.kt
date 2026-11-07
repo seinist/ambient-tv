@@ -16,6 +16,7 @@ import com.ambient.tv.ui.catalog.UiCatalogActivity
 import com.ambient.tv.ui.theme.AmbientTvTheme
 import com.ambient.tv.ui.youtube.*
 import com.ambient.tv.youtube.SmartTubeEngine
+import com.ambient.tv.youtube.YouTubeContentCache
 import com.ambient.tv.ui.player.backend.*
 import com.ambient.tv.data.local.*
 import java.util.concurrent.CountDownLatch
@@ -78,7 +79,16 @@ internal class YouTubeRendererAudit(private val instrumentation: Instrumentation
         val start = SystemClock.elapsedRealtime()
         try {
             main {
-                model = YouTubePlayerViewModel(context.applicationContext, SavedStateHandle(mapOf("videoId" to (args.getString("videoId") ?: "aqz-KE-bpKQ"))), SmartTubeEngine(context, prefs), auditPlaybackAvailability(context), auditSourceAvailability(context), prefs)
+                val engine = SmartTubeEngine(context, prefs)
+                model = YouTubePlayerViewModel(
+                    context.applicationContext,
+                    SavedStateHandle(mapOf("videoId" to (args.getString("videoId") ?: "aqz-KE-bpKQ"))),
+                    engine,
+                    auditPlaybackAvailability(context),
+                    auditSourceAvailability(context),
+                    prefs,
+                    browseContext = YouTubeBrowsePlaybackContext(engine, YouTubeContentCache()),
+                )
                 activity.viewModelStore.put("youtube-renderer-audit", model)
                 activity.setContent {
                     AmbientTvTheme {

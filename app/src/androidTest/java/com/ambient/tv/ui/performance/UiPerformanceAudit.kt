@@ -121,13 +121,21 @@ internal class UiPerformanceAudit(private val instrumentation: Instrumentation, 
                     androidx.compose.runtime.key(state) {
                         CompositionLocalProvider(LocalHandheldUi provides false, LocalPerformanceProfile provides profile) {
                             AmbientTvTheme {
-                                LibraryContent(state.value, hero, style, 60, HomeHeroStyle.SOFT, HomeFocusSnapshot("0:0", "row-0"),
+                                LibraryContent(
+                                    state = state.value,
+                                    loadingRowStyles = rows.map { it.style },
+                                    loadingRowsMonogram = List(rows.size) { false },
+                                    heroContent = hero,
+                                    homeHeroStyleKey = style,
+                                    homeHeroIntensityPercent = 60,
+                                    homeHeroSpreadKey = HomeHeroStyle.SOFT,
+                                    focusSnapshot = HomeFocusSnapshot("0:0", "row-0"),
                                     onItemClick = {}, onItemFocused = { row, media ->
                                         focus.set(media.ratingKey)
                                         hero.value = HomeHeroContent(media.ratingKey, media.title, artworkUrl = url, mediaItem = media)
                                         if (state.value.initialFocusTarget != HomeInitialFocusTarget.NONE) state.value = state.value.copy(
                                             initialFocusTarget = HomeInitialFocusTarget.NONE, focusedRatingKey = media.ratingKey, focusedRowId = row)
-                                    }, onOpenSettings = {}, onWatchLiveChannel = {}, onLiveTvFocused = {}, onShortcutFocused = {},
+                                    }, onOpenRelevantSettings = {}, onWatchLiveChannel = {}, onLiveTvFocused = {}, onShortcutFocused = {},
                                     onOpenHomeContent = {}, tvheadendImageHeaders = emptyMap(), entranceProgress = { 1f })
                             }
                         }
@@ -139,25 +147,34 @@ internal class UiPerformanceAudit(private val instrumentation: Instrumentation, 
                     List(7) { KeyEvent.KEYCODE_DPAD_UP })
                 auditRapidNavigation("home-$style")
             }
-            val libraryScenarios = listOf(
-                SectionViewMode.POSTER to "library-grid",
-                SectionViewMode.LANDSCAPE to "library-landscape",
-                SectionViewMode.INFO_LIST to "library-info",
-                SectionViewMode.CINEMATIC to "library-cinematic",
+            // Keep the usual tour unchanged. A separate density sweep isolates the cost of
+            // more visible posters, without changing the fixture size or artwork between runs.
+            val densityAudit = uiScenario == "library-grid-density" ||
+                uiScenario in setOf("library-grid-4", "library-grid-8", "library-grid-12")
+            val libraryScenarios = if (densityAudit) {
+                listOf(4, 8, 12).map { Triple(SectionViewMode.POSTER, "library-grid-$it", it) }
+            } else listOf(
+                Triple(SectionViewMode.POSTER, "library-grid", 8),
+                Triple(SectionViewMode.LANDSCAPE, "library-landscape", 8),
+                Triple(SectionViewMode.INFO_LIST, "library-info", 8),
+                Triple(SectionViewMode.CINEMATIC, "library-cinematic", 8),
             )
-            for ((viewMode, tag) in libraryScenarios) {
-                if (uiScenario != "all" && uiScenario != tag) continue
+            val libraryItems = rows.flatMap { it.items }
+            for ((viewMode, tag, columns) in libraryScenarios) {
+                if (uiScenario != "all" && uiScenario != "library-grid-density" && uiScenario != tag) continue
                 focus.set(null)
-                val state = mutableStateOf(SectionUiState.Loaded("Library", SectionPage.LIBRARY, rows.flatMap { it.items },
+                val state = SectionUiState.Loaded("Library", SectionPage.LIBRARY, libraryItems,
                     emptyList(), emptyList(), SectionSort.TITLE, SectionSortOrder.ASCENDING, SectionFilter.ALL,
-                    SectionQualityFilter.ALL, viewMode = viewMode, focusedRatingKey = "0:0"))
+                    SectionQualityFilter.ALL, viewMode = viewMode, focusedRatingKey = "0:0", gridColumns = columns)
                 main { activity.setContent {
                     androidx.compose.runtime.key(state) {
                         CompositionLocalProvider(LocalHandheldUi provides false, LocalPerformanceProfile provides profile) {
                             AmbientTvTheme {
-                                SectionContent(state.value, MediaSystem.PLEX, onItemClick = {}, onCollectionClick = { _, _ -> },
+                                SectionContent(state, MediaSystem.PLEX, onItemClick = {}, onCollectionClick = { _, _ -> },
                                     onOpenOverview = {}, onBack = null, onPage = {}, onItemFocused = { media ->
-                                        focus.set(media.ratingKey); state.value = state.value.copy(focusedRatingKey = media.ratingKey)
+                                        // Mirror production: live focus is owned inside SectionContent;
+                                        // recording it must not republish the whole library on each key.
+                                        focus.set(media.ratingKey)
                                     }, onRecommendationItemFocused = { _, _ -> }, onCollectionFocused = {}, onSetSort = {},
                                     onSetSortOrder = {}, onSetFilterGroup = { _, _ -> }, onResetFilters = {}, onSetView = {},
                                     onSetGridColumns = {}, onSetListRows = {}, onSelectLetter = {})
@@ -166,6 +183,10 @@ internal class UiPerformanceAudit(private val instrumentation: Instrumentation, 
                     }
                 } }
                 await("Library initial media focus") { focus.get() == "0:0" }
+                if (densityAudit) {
+                    auditGridDensityNavigation(tag, columns, libraryItems)
+                    continue
+                }
                 val keys = when (viewMode) {
                     SectionViewMode.CINEMATIC -> List(7) { KeyEvent.KEYCODE_DPAD_RIGHT } +
                         List(7) { KeyEvent.KEYCODE_DPAD_LEFT } + listOf(KeyEvent.KEYCODE_DPAD_RIGHT)
@@ -247,14 +268,22 @@ internal class UiPerformanceAudit(private val instrumentation: Instrumentation, 
                     AmbientTvTheme {
                         // UiCatalogActivity does not have MainActivity's input hook; mirror that hook here.
                         Box(Modifier.fillMaxSize().onPreviewKeyEventForBrowseAudit { budget.interact() }) {
-                            LibraryContent(state.value, hero, HomeHeroStyle.DEPTH, 60, HomeHeroStyle.SOFT,
-                                HomeFocusSnapshot("0:0", "row-0"), onItemClick = {}, onItemFocused = { row, media ->
+                            LibraryContent(
+                                state = state.value,
+                                loadingRowStyles = rows.map { it.style },
+                                loadingRowsMonogram = List(rows.size) { false },
+                                heroContent = hero,
+                                homeHeroStyleKey = HomeHeroStyle.DEPTH,
+                                homeHeroIntensityPercent = 60,
+                                homeHeroSpreadKey = HomeHeroStyle.SOFT,
+                                focusSnapshot = HomeFocusSnapshot("0:0", "row-0"),
+                                onItemClick = {}, onItemFocused = { row, media ->
                                     focus.set(media.ratingKey)
                                     hero.value = HomeHeroContent(media.ratingKey, media.title, artworkUrl = url, mediaItem = media)
                                     if (state.value.initialFocusTarget != HomeInitialFocusTarget.NONE) state.value = state.value.copy(
                                         initialFocusTarget = HomeInitialFocusTarget.NONE, focusedRatingKey = media.ratingKey, focusedRowId = row)
                                     if (enabled) prefetch.detail("focus-${sequence++}")
-                                }, onOpenSettings = {}, onWatchLiveChannel = {}, onLiveTvFocused = {}, onShortcutFocused = {},
+                                }, onOpenRelevantSettings = {}, onWatchLiveChannel = {}, onLiveTvFocused = {}, onShortcutFocused = {},
                                 onOpenHomeContent = {}, tvheadendImageHeaders = emptyMap(), entranceProgress = { 1f })
                         }
                     }
@@ -527,7 +556,62 @@ internal class UiPerformanceAudit(private val instrumentation: Instrumentation, 
         log("PASS soft explicit scroll reaches mixed-height rows in both directions and centers below the hero")
     }
 
-    private fun walk(tag: String, home: Boolean, keys: List<Int> = navigationKeys()) {
+    private fun auditGridDensityNavigation(tag: String, columns: Int, items: List<MediaItem>) {
+        val indexByKey = items.mapIndexed { index, media -> media.ratingKey to index }.toMap()
+        fun index(key: String): Int = checkNotNull(indexByKey[key]) { "Grid focus left the library: $key" }
+        val checkStep: (Int, String, String) -> Unit = { key, before, after ->
+            val expectedDelta = when (key) {
+                KeyEvent.KEYCODE_DPAD_RIGHT -> 1
+                KeyEvent.KEYCODE_DPAD_LEFT -> -1
+                KeyEvent.KEYCODE_DPAD_DOWN -> columns
+                else -> -columns
+            }
+            check(index(after) - index(before) == expectedDelta) {
+                "$tag skipped a grid cell: $before -> $after for key $key"
+            }
+        }
+        // Stay within the first already-visible row, then traverse new rows separately.
+        walk("$tag-horizontal", false,
+            List(columns - 1) { KeyEvent.KEYCODE_DPAD_RIGHT } + List(columns - 1) { KeyEvent.KEYCODE_DPAD_LEFT },
+            checkStep)
+        walk("$tag-vertical", false,
+            List(7) { KeyEvent.KEYCODE_DPAD_DOWN } + List(7) { KeyEvent.KEYCODE_DPAD_UP }, checkStep)
+
+        fun held(key: Int, repeats: Int): Int {
+            val initialIndex = index(checkNotNull(focus.get()))
+            val downTime = android.os.SystemClock.uptimeMillis()
+            phase.set("$tag-held/${if (key == KeyEvent.KEYCODE_DPAD_DOWN) "down" else "up"}")
+            try {
+                repeat(repeats) { count ->
+                    instrumentation.sendKeySync(KeyEvent(downTime, android.os.SystemClock.uptimeMillis(),
+                        KeyEvent.ACTION_DOWN, key, count, 0, -1, 0, 0, android.view.InputDevice.SOURCE_DPAD))
+                    Thread.sleep(80)
+                    check(index(checkNotNull(focus.get())) % columns == initialIndex % columns) {
+                        "$tag held vertical input changed columns"
+                    }
+                }
+            } finally {
+                instrumentation.sendKeySync(KeyEvent(downTime, android.os.SystemClock.uptimeMillis(),
+                    KeyEvent.ACTION_UP, key, 0, 0, -1, 0, 0, android.view.InputDevice.SOURCE_DPAD))
+            }
+            val released = checkNotNull(focus.get())
+            val delta = index(released) - initialIndex
+            check(if (key == KeyEvent.KEYCODE_DPAD_DOWN) delta > 0 else delta < 0) {
+                "$tag held input did not advance in the requested direction"
+            }
+            Thread.sleep(400)
+            check(focus.get() == released) { "$tag focus kept moving after key release" }
+            return kotlin.math.abs(delta) / columns
+        }
+        val movedRows = held(KeyEvent.KEYCODE_DPAD_DOWN, 12)
+        // Reverse while staying below the first row, even if a slow device coalesced repeats.
+        if (movedRows > 1) held(KeyEvent.KEYCODE_DPAD_UP, minOf(6, movedRows - 1))
+        phase.set("idle")
+        log("PASS $tag columns=$columns: horizontal, vertical and held grid navigation retain focus")
+    }
+
+    private fun walk(tag: String, home: Boolean, keys: List<Int> = navigationKeys(),
+        onStep: ((Int, String, String) -> Unit)? = null) {
         Thread.sleep(1_500) // Exclude entrance and first image decode; cold-cache/network needs a separate device run.
         val inputNs = mutableListOf<Long>()
         android.os.Trace.beginSection(tag)
@@ -544,6 +628,7 @@ internal class UiPerformanceAudit(private val instrumentation: Instrumentation, 
             instrumentation.sendKeyDownUpSync(key)
             await("$tag focus after key $key") { focus.get() != null && focus.get() != before }
             val after = checkNotNull(focus.get())
+            onStep?.invoke(key, checkNotNull(before), after)
             if (home && key == KeyEvent.KEYCODE_DPAD_DOWN) check(after.substringBefore(':') != before?.substringBefore(':'))
             inputNs += System.nanoTime() - start
             log("STEP $tag/$direction $before -> $after elapsedMs=${inputNs.last() / 1_000_000.0}")

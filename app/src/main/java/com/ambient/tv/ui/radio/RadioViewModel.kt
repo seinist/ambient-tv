@@ -171,6 +171,7 @@ class RadioViewModel @Inject constructor(
     private var playJob: Job? = null
     private var focusLoadJob: Job? = null
     private var focusedStationId: String? = null
+    private val stationIndex = RadioStationIndex()
     internal fun lastFocusedContent(scope: RadioFocusScope): String? = RadioFocusMemory.last(scope)
 
     /** Synchronize pages loaded by the Player and prefer its last station on returning. */
@@ -464,7 +465,8 @@ class RadioViewModel @Inject constructor(
         RadioFocusMemory.save(_state.value.focusScope(), stationId)
         focusedStationId = stationId
         val current = _state.value
-        val index = current.stations.indexOfFirst { it.id == stationId }
+        val index = if (current.hasMore && !current.loading && !current.loadingMore)
+            stationIndex.indexOf(current.stations, stationId) else -1
         if (!radioShouldLoadOnFocus(index, current.stations.size, current.hasMore, current.loading, current.loadingMore)) {
             focusLoadJob?.cancel()
             focusLoadJob = null
@@ -479,7 +481,7 @@ class RadioViewModel @Inject constructor(
             while (BrowseWorkBudget.scrolling.get() > 0) delay(50)
             val latest = _state.value
             val latestFocusedId = focusedStationId ?: return@launch
-            val latestIndex = latest.stations.indexOfFirst { it.id == latestFocusedId }
+            val latestIndex = stationIndex.indexOf(latest.stations, latestFocusedId)
             if (!radioShouldLoadOnFocus(
                     latestIndex,
                     latest.stations.size,

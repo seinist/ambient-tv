@@ -274,6 +274,22 @@ class BrowseFocusReturnTest {
         focused(fixture.tileTag("item-6"))
     }
 
+    @Test fun ordinaryGridNavigationKeepsItsDestinationAfterTheRecoveryFrame() {
+        val fixture = mount()
+        press(Key.DirectionRight)
+        focused(fixture.tileTag("item-1"))
+        press(Key.DirectionDown)
+        focused(fixture.tileTag("item-4"))
+        press(Key.DirectionRight)
+        focused(fixture.tileTag("item-5"))
+        press(Key.DirectionLeft)
+        focused(fixture.tileTag("item-4"))
+        press(Key.DirectionDown)
+        rule.mainClock.advanceTimeBy(250)
+        rule.waitForIdle()
+        focused(fixture.tileTag("item-7"))
+    }
+
     @Test fun aChipOriginStaysAChipEvenAfterContentHadFocus() {
         val fixture = mount()
         press(Key.DirectionDown)

@@ -94,6 +94,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.State
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
@@ -339,9 +340,8 @@ internal fun SectionContent(
     val alphabetHandheld = LocalHandheldUi.current
     // TV follows DPAD focus; touch scroll does not change focus, so handhelds follow the
     // first visible item instead. Keep both indicators independent to avoid scroll-to-focus loops.
-    val initialLibraryLetter = libraryFocusedAlphabetLetter(state.items, state.focusedRatingKey)
-    var visibleLibraryLetter by remember(state.items, state.focusedRatingKey, state.page, state.sortOrder, state.viewMode) {
-        mutableStateOf(initialLibraryLetter)
+    val focusedLibraryLetter = remember(sectionKey, state.items, state.page, state.sortOrder, state.viewMode) {
+        mutableStateOf(libraryFocusedAlphabetLetter(state.items, state.focusedRatingKey))
     }
     val viewportLetterState = remember(state.items, state.page, state.sortOrder, state.viewMode) {
         mutableStateOf<Char?>(null)
@@ -351,7 +351,7 @@ internal fun SectionContent(
     }
     val onLibraryItemFocused: (MediaItem) -> Unit = { item ->
         markInitialFocusHandled()
-        visibleLibraryLetter = libraryIndexLetter(item.title)
+        focusedLibraryLetter.value = libraryIndexLetter(item.title)
         onItemFocused(item)
     }
     // Match Files root-Back: stay on route, hand focus to the sidebar.
@@ -484,11 +484,12 @@ internal fun SectionContent(
                         }
                     }
                     if (showAlphabetBar) {
-                        AlphabetBar(
+                        LibraryAlphabetBar(
                             letters = state.availableLetters,
-                            selected = alphabetTrackedLetter(alphabetHandheld, viewportLetterState.value, visibleLibraryLetter),
+                            focusedLetter = focusedLibraryLetter,
+                            viewportLetter = viewportLetterState,
                             onSelect = { letter ->
-                                visibleLibraryLetter = letter
+                                focusedLibraryLetter.value = letter
                                 if (alphabetHandheld) viewportLetterState.value = letter
                                 onSelectLetter(letter)
                             },
@@ -518,6 +519,30 @@ internal fun SectionContent(
             }
         }
     }
+}
+
+/** Read frequently changing letters here, so neither focus hops nor touch scrolling recompose
+ * SectionContent and its entire grid just to move the small A–Z highlight. */
+@Composable
+private fun LibraryAlphabetBar(
+    letters: List<Char>,
+    focusedLetter: State<Char?>,
+    viewportLetter: State<Char?>,
+    onSelect: (Char?) -> Unit,
+    gridFocus: FocusRequester,
+    modifier: Modifier = Modifier,
+    firstEntryFocusRequester: FocusRequester? = null,
+    actionsFocus: FocusRequester? = null,
+) {
+    AlphabetBar(
+        letters = letters,
+        selected = alphabetTrackedLetter(LocalHandheldUi.current, viewportLetter.value, focusedLetter.value),
+        onSelect = onSelect,
+        gridFocus = gridFocus,
+        modifier = modifier,
+        firstEntryFocusRequester = firstEntryFocusRequester,
+        actionsFocus = actionsFocus,
+    )
 }
 
 @Composable
@@ -1356,8 +1381,9 @@ private fun RecommendationCinematicSection(
     val sampledAccent = rememberArtworkAccent(heroArtwork)
     val heroAccent = if (LocalAccentModeKey.current == "artwork") sampledAccent else MaterialTheme.colorScheme.primary
     val handheld = LocalHandheldUi.current
-    val rowState = rememberLazyListState(itemKeys = row.items.map { it.ratingKey })
-    com.ambient.tv.ui.common.RegisterRowColumnFocus(rowFocus, row.id, rowState, row.items.map { it.ratingKey })
+    val itemKeys = remember(row.items) { row.items.map { it.ratingKey } }
+    val rowState = rememberLazyListState(itemKeys = itemKeys)
+    com.ambient.tv.ui.common.RegisterRowColumnFocus(rowFocus, row.id, rowState, itemKeys)
     BrowseFocusRow(row.id) {
     Column(modifier.fillMaxWidth()) {
         ContentSectionHeader(title = row.title)
@@ -1508,7 +1534,8 @@ private fun LibraryGrid(
     val restoreKey = remember(state.items) { state.focusedRatingKey }
     var restorePending by remember(state.items) { mutableStateOf(true) }
     val restoreIndex = remember(state.items, restoreKey) { state.items.indexOfFirst { it.ratingKey == restoreKey }.coerceAtLeast(0) }
-    val gridState = rememberLazyGridState(initialFirstVisibleItemIndex = restoreIndex, itemKeys = state.items.map { it.ratingKey })
+    val itemKeys = remember(state.items) { state.items.map { it.ratingKey } }
+    val gridState = rememberLazyGridState(initialFirstVisibleItemIndex = restoreIndex, itemKeys = itemKeys)
     LaunchedEffect(restoreKey, state.items) {
         if (state.selectedLetter == null && restoreKey != null && restoreIndex in state.items.indices) {
             gridState.scrollToItem(restoreIndex)
@@ -1567,7 +1594,8 @@ private fun StylishMediaList(
 ) {
     val initialFocusedKey = remember(items) { focusedKey }
     val restoreIndex = remember(items, initialFocusedKey) { items.indexOfFirst { it.ratingKey == initialFocusedKey }.coerceAtLeast(0) }
-    val listState = rememberLazyListState(initialFirstVisibleItemIndex = restoreIndex, itemKeys = items.map { it.ratingKey })
+    val itemKeys = remember(items) { items.map { it.ratingKey } }
+    val listState = rememberLazyListState(initialFirstVisibleItemIndex = restoreIndex, itemKeys = itemKeys)
     val restoreRequester = remember { FocusRequester() }
     val filterFocusState = LocalFilterFocusState.current
     val sharedInitialFocus = com.ambient.tv.ui.common.LocalBrowseFocusReturnState.current != null
@@ -1653,7 +1681,8 @@ private fun PosterGrid(
     val restoreKey = remember(items) { focusedKey }
     var restorePending by remember(items) { mutableStateOf(true) }
     val restoreIndex = remember(items, restoreKey) { items.indexOfFirst { it.ratingKey == restoreKey }.coerceAtLeast(0) }
-    val gridState = rememberLazyGridState(initialFirstVisibleItemIndex = restoreIndex, itemKeys = items.map { it.ratingKey })
+    val itemKeys = remember(items) { items.map { it.ratingKey } }
+    val gridState = rememberLazyGridState(initialFirstVisibleItemIndex = restoreIndex, itemKeys = itemKeys)
     LazyVerticalGrid(
         state = gridState,
         modifier = Modifier.overlayLazyGridScrollbar(gridState, gutter = screenGutter()),
@@ -1688,7 +1717,8 @@ private fun LandscapeGrid(
     val restoreKey = remember(items) { focusedKey }
     var restorePending by remember(items) { mutableStateOf(true) }
     val restoreIndex = remember(items, restoreKey) { items.indexOfFirst { it.ratingKey == restoreKey }.coerceAtLeast(0) }
-    val gridState = rememberLazyGridState(initialFirstVisibleItemIndex = restoreIndex, itemKeys = items.map { it.ratingKey })
+    val itemKeys = remember(items) { items.map { it.ratingKey } }
+    val gridState = rememberLazyGridState(initialFirstVisibleItemIndex = restoreIndex, itemKeys = itemKeys)
     LaunchedEffect(selectedLetter, items) {
         selectedLetter?.let { letter ->
             items.indexOfFirst { libraryIndexLetter(it.title) == letter }
@@ -1743,7 +1773,8 @@ private fun InfoList(
     if (items.isEmpty()) return
     val initialFocusedKey = remember(items) { focusedKey ?: items.firstOrNull()?.ratingKey }
     val restoreIndex = remember(items, initialFocusedKey) { items.indexOfFirst { it.ratingKey == initialFocusedKey }.coerceAtLeast(0) }
-    val listState = rememberLazyListState(initialFirstVisibleItemIndex = restoreIndex, itemKeys = items.map { it.ratingKey })
+    val itemKeys = remember(items) { items.map { it.ratingKey } }
+    val listState = rememberLazyListState(initialFirstVisibleItemIndex = restoreIndex, itemKeys = itemKeys)
     val restoreRequester = remember { FocusRequester() }
     val filterFocusState = LocalFilterFocusState.current
     val sharedInitialFocus = com.ambient.tv.ui.common.LocalBrowseFocusReturnState.current != null
@@ -1884,7 +1915,8 @@ private fun WallGrid(
     val wallColumns = if (poster) coverWallColumns(columns) else (columns + 2).coerceIn(6, 14)
     val restoreKey = remember(items) { focusedKey }
     val restoreIndex = remember(items, restoreKey) { items.indexOfFirst { it.ratingKey == restoreKey }.coerceAtLeast(0) }
-    val gridState = rememberLazyGridState(initialFirstVisibleItemIndex = restoreIndex, itemKeys = items.map { it.ratingKey })
+    val itemKeys = remember(items) { items.map { it.ratingKey } }
+    val gridState = rememberLazyGridState(initialFirstVisibleItemIndex = restoreIndex, itemKeys = itemKeys)
     val restoreRequester = remember { FocusRequester() }
     val filterFocusState = LocalFilterFocusState.current
     val sharedInitialFocus = com.ambient.tv.ui.common.LocalBrowseFocusReturnState.current != null
@@ -1950,9 +1982,10 @@ private fun CinematicView(
     var restorePending by remember(items) { mutableStateOf(true) }
     var hero by remember(items) { mutableStateOf(items.firstOrNull { it.ratingKey == restoreKey } ?: items.first()) }
     val restoreIndex = remember(items, restoreKey) { items.indexOfFirst { it.ratingKey == restoreKey }.coerceAtLeast(0) }
-    val rowState = rememberLazyListState(initialFirstVisibleItemIndex = (restoreIndex - 1).coerceAtLeast(0), itemKeys = items.map { it.ratingKey })
+    val itemKeys = remember(items) { items.map { it.ratingKey } }
+    val rowState = rememberLazyListState(initialFirstVisibleItemIndex = (restoreIndex - 1).coerceAtLeast(0), itemKeys = itemKeys)
     val rowFocus = com.ambient.tv.ui.common.rememberRowColumnFocus()
-    com.ambient.tv.ui.common.RegisterRowColumnFocus(rowFocus, "cinematic-library", rowState, items.map { it.ratingKey })
+    com.ambient.tv.ui.common.RegisterRowColumnFocus(rowFocus, "cinematic-library", rowState, itemKeys)
     val heroArtwork = hero.landscapeBackdropUrl
     val sampledAccent = rememberArtworkAccent(heroArtwork)
     val heroAccent = if (LocalAccentModeKey.current == "artwork") sampledAccent else MaterialTheme.colorScheme.primary
@@ -1987,7 +2020,8 @@ private fun CollectionGrid(state: SectionUiState.Loaded, onClick: (String, Strin
     // Captured once per list, see LibraryGrid: a live key would snap-scroll on every focus move.
     val restoreId = remember(state.collections) { state.focusedCollectionId }
     val restoreIndex = remember(state.collections, restoreId) { state.collections.indexOfFirst { it.id == restoreId }.coerceAtLeast(0) }
-    val gridState = rememberLazyGridState(initialFirstVisibleItemIndex = restoreIndex, itemKeys = state.collections.map { it.id })
+    val itemKeys = remember(state.collections) { state.collections.map { it.id } }
+    val gridState = rememberLazyGridState(initialFirstVisibleItemIndex = restoreIndex, itemKeys = itemKeys)
     val restoreRequester = remember { FocusRequester() }
     val filterFocusState = LocalFilterFocusState.current
     val sharedInitialFocus = com.ambient.tv.ui.common.LocalBrowseFocusReturnState.current != null
@@ -2048,7 +2082,8 @@ private fun CollectionList(state: SectionUiState.Loaded, onClick: (String, Strin
     val restoreRequester = remember { FocusRequester() }
     val filterFocusState = LocalFilterFocusState.current
     val sharedInitialFocus = com.ambient.tv.ui.common.LocalBrowseFocusReturnState.current != null
-    val listState = rememberLazyListState(initialFirstVisibleItemIndex = restoreIndex, itemKeys = state.collections.map { it.id })
+    val itemKeys = remember(state.collections) { state.collections.map { it.id } }
+    val listState = rememberLazyListState(initialFirstVisibleItemIndex = restoreIndex, itemKeys = itemKeys)
     LaunchedEffect(filterFocusState, sharedInitialFocus) {
         if (sharedInitialFocus) return@LaunchedEffect
         if (filterFocusState?.allowContentAutoFocus != false && initialFocusedCollectionId != null &&

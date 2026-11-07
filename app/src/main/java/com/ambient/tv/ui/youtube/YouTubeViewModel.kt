@@ -102,6 +102,9 @@ class YouTubeViewModel @Inject constructor(
     // Persisted selection may belong to an earlier app session. Start a fresh feed at the
     // first card; only restore an item after it has actually held focus on this screen.
     private val visitedFocusKeys = mutableSetOf<String>()
+    private val displaySnapshots = YouTubeDisplaySnapshotCache()
+    internal fun displayedContent(state: YouTubeUiState = _uiState.value): YouTubeDisplaySnapshot =
+        displaySnapshots.get(state.rows, state.sort, state.filter, state.sortDescending)
     fun focusedVideoId(feed: YouTubeFeed): String? = stateKey(feed).takeIf { it in visitedFocusKeys }
         ?.let(preferences::sectionFocus)
     fun focusedRowId(feed: YouTubeFeed): String? = stateKey(feed).takeIf { it in visitedFocusKeys }
@@ -117,7 +120,7 @@ class YouTubeViewModel @Inject constructor(
         // Opening a channel tile is navigation, not a new playback queue.
         if (com.ambient.tv.youtube.youtubeChannelIdOf(videoId) != null) return null
         val state = _uiState.value
-        val rows = applyYouTubeViewOptions(state.rows, state.sort, state.filter, state.sortDescending)
+        val rows = displayedContent(state).rows
         val preferredRow = focusedRowId(state.feed)
         val row = youtubePlaybackSourceRow(rows, videoId, preferredRow, sectioned)
         val sourceRowId = rows.firstOrNull {
@@ -204,24 +207,18 @@ class YouTubeViewModel @Inject constructor(
         }
     }
 
-    private fun singleRowId(): String? {
-        val state = _uiState.value
-        return applyYouTubeViewOptions(state.rows, state.sort, state.filter, state.sortDescending).singleOrNull()?.id
-    }
-
     private fun scheduleRowContinuation(rowId: String?, videoId: String) {
         val grid = rowId == null
-        val target = rowId ?: singleRowId()
+        val displayed = displayedContent()
+        val target = rowId ?: displayed.row(null)?.id
         focusedRowId = target
         if (target == null || paging.session == null) { focusLoadJob?.cancel(); return }
         // Horizontal moves inside the pending row keep its timer; leaving the row cancels it,
         // so passing rows vertically never starts a request.
         if (focusLoadJob?.isActive == true && focusLoadRowId == target) return
         focusLoadJob?.cancel()
-        val state = _uiState.value
-        val row = state.rows.firstOrNull { it.id == target } ?: return
-        val visible = applyYouTubeViewOptions(listOf(row), state.sort, state.filter, state.sortDescending).firstOrNull()?.items ?: return
-        val index = visible.indexOfFirst { it.videoId == videoId }
+        val visible = displayed.row(target)?.items ?: return
+        val index = displayed.itemIndex(target, videoId)
         if (!paging.shouldLoadOnFocus(target, index, visible.size, grid) || target in rowLoadJobs) return
         focusLoadRowId = target
         focusLoadJob = viewModelScope.launch {
@@ -239,13 +236,12 @@ class YouTubeViewModel @Inject constructor(
         if (paging.session == null) return
         val state = _uiState.value
         if (state.loading || !state.available) return
-        val displayed = applyYouTubeViewOptions(state.rows, state.sort, state.filter, state.sortDescending)
-        val visible = (if (rowId == null) displayed.singleOrNull()
-            else displayed.firstOrNull { it.id == rowId }) ?: return
-        val source = state.rows.firstOrNull { it.id == visible.id } ?: return
+        val displayed = displayedContent(state)
+        val visible = displayed.row(rowId) ?: return
+        val sourceSize = displayed.sourceSize(visible.id) ?: return
         if (!paging.shouldLoadOnFocus(visible.id, lastVisibleIndex.coerceAtMost(visible.items.lastIndex),
                 visible.items.size, grid) ||
-            !paging.canLoad(visible.id, source.items.size) || visible.id in rowLoadJobs) return
+            !paging.canLoad(visible.id, sourceSize) || visible.id in rowLoadJobs) return
         startRowContinuation(visible.id, showPlaceholder = true)
     }
 

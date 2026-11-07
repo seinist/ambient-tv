@@ -51,7 +51,9 @@ class RowColumnFocus(initialMemory: Map<String, String> = emptyMap()) {
         val state: LazyListState,
         val defaultItemKey: () -> Any?,
         val focusableItemKeys: () -> List<Any>,
-    )
+    ) {
+        val index = RowColumnItemIndex()
+    }
 
     /** A single Right press, invalidated by a different focus transaction or row registration. */
     internal class RightWrapRequest(
@@ -96,7 +98,7 @@ class RowColumnFocus(initialMemory: Map<String, String> = emptyMap()) {
     private fun entry(rowKey: Any): Pair<Any, Int>? {
         val handle = handles[rowKey]
         val keys = handle?.itemKeys?.invoke() ?: rows[rowKey]?.keys?.toList() ?: return null
-        val index = rowColumnEntryIndex(
+        val index = (handle?.index ?: RowColumnItemIndex()).entryIndex(
             keys, memory[rowKey], handle?.defaultItemKey?.invoke(),
             handle?.focusableItemKeys?.invoke() ?: keys,
         ) ?: return null
@@ -131,7 +133,7 @@ class RowColumnFocus(initialMemory: Map<String, String> = emptyMap()) {
         val itemKey = activeItem ?: return null
         val handle = handles[rowKey] ?: return null
         val keys = handle.itemKeys()
-        val index = rowColumnWrapRightIndex(keys, itemKey, handle.focusableItemKeys()) ?: return null
+        val index = handle.index.wrapRightIndex(keys, itemKey, handle.focusableItemKeys()) ?: return null
         return RightWrapRequest(rowKey, itemKey, keys[index], focusGeneration, handle)
     }
 
@@ -140,7 +142,7 @@ class RowColumnFocus(initialMemory: Map<String, String> = emptyMap()) {
         if (request.focusGeneration != focusGeneration || activeRow != request.rowKey || activeItem != request.sourceItemKey) return null
         val handle = handles[request.rowKey]?.takeIf { it === request.rowHandle } ?: return null
         val keys = handle.itemKeys()
-        val index = rowColumnWrapRightIndex(keys, request.sourceItemKey, handle.focusableItemKeys()) ?: return null
+        val index = handle.index.wrapRightIndex(keys, request.sourceItemKey, handle.focusableItemKeys()) ?: return null
         return index.takeIf { keys[it] == request.targetItemKey }
     }
 

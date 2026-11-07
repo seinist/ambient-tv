@@ -103,8 +103,8 @@ data class SearchUiState(
     val tvheadendState: SearchSourceState = SearchSourceState.IDLE,
     val tvheadendImageHeaders: Map<String, String> = emptyMap(),
     val viewMode: SearchViewMode = SearchViewMode.ROWS,
-    val focusedRatingKey: String? = null,
-    val restoreResultFocus: Boolean = false,
+    /** Repeating the same external/recent query still starts a fresh content-focus request. */
+    val resultResetRevision: Long = 0,
 ) {
     val resultCount: Int get() = results.size + jellyfinResults.size + embyResults.size + trailerResults.size + telegramResults.size + youtubeResults.size + spotifyResults.size + radioResults.size + tvheadendResults.size
     val hasResults: Boolean get() = resultCount > 0
@@ -163,6 +163,7 @@ class SearchViewModel @Inject constructor(
         }
     }
 
+    private val resultFocus = SearchResultFocus(preferences.sectionFocus(SEARCH_STATE_KEY))
     private val initialSources = availableSearchSources()
     private val _uiState = MutableStateFlow(
         SearchUiState(
@@ -170,8 +171,6 @@ class SearchViewModel @Inject constructor(
             selectedSources = defaultSearchSources(initialSources),
             recentSearches = preferences.recentSearches(),
             viewMode = preferences.sectionViewMode(SEARCH_STATE_KEY)?.let { runCatching { SearchViewMode.valueOf(it) }.getOrNull() } ?: SearchViewMode.ROWS,
-            focusedRatingKey = preferences.sectionFocus(SEARCH_STATE_KEY),
-            restoreResultFocus = preferences.sectionFocus(SEARCH_STATE_KEY) != null,
             tvheadendImageHeaders = tvheadendRepository.authHeaders(),
         ),
     )
@@ -234,19 +233,23 @@ class SearchViewModel @Inject constructor(
     fun onQueryChanged(query: String) {
         searchJob?.cancel()
         searchRevision++
-        _uiState.update { clearResults(it.copy(query = query, restoreResultFocus = false)) }
+        _uiState.update { clearResults(it.copy(query = query)) }
     }
 
-    private fun clearResults(state: SearchUiState) = state.copy(
-        results = emptyList(), jellyfinResults = emptyList(), embyResults = emptyList(),
-        trailerResults = emptyList(), telegramResults = emptyList(), youtubeResults = emptyList(), spotifyResults = emptyList(), radioResults = emptyList(),
-        tvheadendResults = TvhSearchResults(), hasSearched = false, restoreResultFocus = false,
-        plexState = SearchSourceState.IDLE, jellyfinState = SearchSourceState.IDLE,
-        embyState = SearchSourceState.IDLE, trailerState = SearchSourceState.IDLE,
-        telegramState = SearchSourceState.IDLE, telegramRetryAfterSeconds = null,
-        youtubeState = SearchSourceState.IDLE, spotifyState = SearchSourceState.IDLE, radioState = SearchSourceState.IDLE,
-        tvheadendState = SearchSourceState.IDLE,
-    )
+    private fun clearResults(state: SearchUiState): SearchUiState {
+        resultFocus.clear()
+        return state.copy(
+            resultResetRevision = state.resultResetRevision + 1,
+            results = emptyList(), jellyfinResults = emptyList(), embyResults = emptyList(),
+            trailerResults = emptyList(), telegramResults = emptyList(), youtubeResults = emptyList(), spotifyResults = emptyList(), radioResults = emptyList(),
+            tvheadendResults = TvhSearchResults(), hasSearched = false,
+            plexState = SearchSourceState.IDLE, jellyfinState = SearchSourceState.IDLE,
+            embyState = SearchSourceState.IDLE, trailerState = SearchSourceState.IDLE,
+            telegramState = SearchSourceState.IDLE, telegramRetryAfterSeconds = null,
+            youtubeState = SearchSourceState.IDLE, spotifyState = SearchSourceState.IDLE, radioState = SearchSourceState.IDLE,
+            tvheadendState = SearchSourceState.IDLE,
+        )
+    }
 
     fun useRecentSearch(query: String) = onQueryChanged(query)
 
@@ -278,9 +281,11 @@ class SearchViewModel @Inject constructor(
     }
 
     fun onItemFocused(item: MediaItem) {
+        resultFocus.focused(item.ratingKey)
         preferences.setSectionFocus(SEARCH_STATE_KEY, item.ratingKey)
-        _uiState.update { it.copy(focusedRatingKey = item.ratingKey, restoreResultFocus = true) }
     }
+
+    internal fun resultFocusRequest(): SearchFocusRequest = resultFocus.request()
 
     private suspend fun performSearch(rawQuery: String, selected: Set<SearchSource>, revision: Long, preserveResults: Boolean) {
         val query = rawQuery.trim()

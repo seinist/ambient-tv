@@ -28,6 +28,69 @@ class FilteredBrowseRefreshTest {
         contentRating = null, rating = null, studio = null,
     )
 
+    @Test fun focusMovesKeepThePublishedScreenStableAndCaptureTheLatestReturnTargetOnce() = runTest {
+        Dispatchers.setMain(StandardTestDispatcher(testScheduler))
+        val items = List(150) { item("movie-$it", 2000 + it) }
+        val preferences = AppPreferences(memoryPreferences())
+        val model = FilteredBrowseViewModel(saved(), preferences, { _, _ -> Result.success(items) }, {})
+        val store = ViewModelStore().apply { put("browse", model) }
+        try {
+            model.load()
+            runCurrent()
+            val initial = model.uiState.value
+            items.take(120).forEach { focused ->
+                model.onItemFocused(focused)
+                assertSame("Ordinary focus must not invalidate the result screen", initial, model.uiState.value)
+            }
+            assertEquals("movie-119", preferences.sectionFocus("browse:collection:44"))
+
+            model.captureFocusForReturn()
+            val captured = model.uiState.value as FilteredBrowseUiState.Loaded
+            assertEquals("movie-119", captured.focusedRatingKey)
+            assertSame((initial as FilteredBrowseUiState.Loaded).items, captured.items)
+            model.captureFocusForReturn()
+            assertSame("Capturing an unchanged target is idempotent", captured, model.uiState.value)
+
+            model.onItemFocused(items[135])
+            model.setViewMode(BrowseViewMode.LIST)
+            assertEquals("movie-135", (model.uiState.value as FilteredBrowseUiState.Loaded).focusedRatingKey)
+            model.onItemFocused(items[145])
+            model.setSort(BrowseSort.YEAR)
+            val sorted = model.uiState.value as FilteredBrowseUiState.Loaded
+            assertEquals("movie-145", sorted.focusedRatingKey)
+            assertEquals("movie-149", sorted.items.first().ratingKey)
+        } finally { store.clear(); Dispatchers.resetMain() }
+    }
+
+    @Test fun aPendingRefreshUsesTheLatestBufferedFocus() = runTest {
+        Dispatchers.setMain(StandardTestDispatcher(testScheduler))
+        val first = item("first")
+        val last = item("last")
+        val response = CompletableDeferred<Result<List<MediaItem>>>()
+        var reads = 0
+        val model = FilteredBrowseViewModel(saved(), AppPreferences(memoryPreferences()),
+            { _, _ -> if (++reads == 1) Result.success(listOf(first, last)) else response.await() }, {},
+        )
+        val store = ViewModelStore().apply { put("browse", model) }
+        try {
+            model.load()
+            runCurrent()
+            model.onItemFocused(first)
+            model.refresh()
+            runCurrent()
+            val duringRefresh = model.uiState.value
+            model.onItemFocused(last)
+            assertSame(duringRefresh, model.uiState.value)
+            response.complete(Result.success(listOf(first, last.copy(title = "Updated"))))
+            runCurrent()
+            assertEquals("last", (model.uiState.value as FilteredBrowseUiState.Loaded).focusedRatingKey)
+        } finally {
+            response.complete(Result.success(emptyList()))
+            store.clear()
+            Dispatchers.resetMain()
+        }
+    }
+
     @Test fun manualRefreshPreparesOnlyItsSourceAndKeepsContentAndPreferencesWhileBusy() = runTest {
         Dispatchers.setMain(StandardTestDispatcher(testScheduler))
         val prepared = CompletableDeferred<Unit>()

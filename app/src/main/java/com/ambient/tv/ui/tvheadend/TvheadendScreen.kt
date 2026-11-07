@@ -847,10 +847,12 @@ private fun RecordingList(
         com.ambient.tv.ui.common.BrowseStatusPanel(title = stringResource(R.string.tvh_no_recordings))
         return
     }
-    val listState = rememberLazyListState(
-        initialFirstVisibleItemIndex = rows.indexOfFirst { it.first.uuid == focusTarget.contentId }.coerceAtLeast(0),
-    )
-    com.ambient.tv.ui.common.RegisterBrowseFocusList(listState, rows.map { it.first.uuid })
+    val rowIds = remember(rows) { rows.map { it.first.uuid } }
+    val initialIndex = remember(rowIds, focusTarget.contentId) {
+        rowIds.indexOf(focusTarget.contentId).coerceAtLeast(0)
+    }
+    val listState = rememberLazyListState(initialFirstVisibleItemIndex = initialIndex)
+    com.ambient.tv.ui.common.RegisterBrowseFocusList(listState, rowIds)
     Box(Modifier.fillMaxSize().pageContentUp(focusChain).focusGroup()) {
     LazyColumn(Modifier.fillMaxSize().overlayLazyScrollbar(listState), allowUpExit = true, state = listState, verticalArrangement = Arrangement.spacedBy(8.dp), contentPadding = androidx.compose.foundation.layout.PaddingValues(bottom = 36.dp)) {
         items(rows, key = { it.first.uuid }) { (entry, failed) ->
@@ -894,17 +896,22 @@ private fun TimerList(
         com.ambient.tv.ui.common.BrowseStatusPanel(title = stringResource(R.string.tvh_no_timers))
         return
     }
-    val targetIndex = timers.indexOfFirst { it.uuid == focusTarget.contentId }.takeIf { it >= 0 }
-        ?: autoRecs.indexOfFirst { "autorec:${it.uuid}" == focusTarget.contentId }
-            .takeIf { it >= 0 }?.let { timers.size + 1 + it }
-        ?: 0
+    val targetIndex = remember(timers, autoRecs, focusTarget.contentId) {
+        timers.indexOfFirst { it.uuid == focusTarget.contentId }.takeIf { it >= 0 }
+            ?: autoRecs.indexOfFirst { "autorec:${it.uuid}" == focusTarget.contentId }
+                .takeIf { it >= 0 }?.let { timers.size + 1 + it }
+            ?: 0
+    }
     val listState = rememberLazyListState(initialFirstVisibleItemIndex = targetIndex)
-    com.ambient.tv.ui.common.RegisterBrowseFocusSlots(listState, buildList {
-        timers.forEachIndexed { index, entry -> add(com.ambient.tv.ui.common.BrowseFocusSlot(
-            com.ambient.tv.ui.common.BrowseFocusKey(null, entry.uuid, true), index)) }
-        autoRecs.forEachIndexed { index, entry -> add(com.ambient.tv.ui.common.BrowseFocusSlot(
-            com.ambient.tv.ui.common.BrowseFocusKey(null, "autorec:${entry.uuid}", true), timers.size + 1 + index)) }
-    })
+    val focusSlots = remember(timers, autoRecs) {
+        buildList {
+            timers.forEachIndexed { index, entry -> add(com.ambient.tv.ui.common.BrowseFocusSlot(
+                com.ambient.tv.ui.common.BrowseFocusKey(null, entry.uuid, true), index)) }
+            autoRecs.forEachIndexed { index, entry -> add(com.ambient.tv.ui.common.BrowseFocusSlot(
+                com.ambient.tv.ui.common.BrowseFocusKey(null, "autorec:${entry.uuid}", true), timers.size + 1 + index)) }
+        }
+    }
+    com.ambient.tv.ui.common.RegisterBrowseFocusSlots(listState, focusSlots)
     Box(Modifier.fillMaxSize().pageContentUp(focusChain).focusGroup()) {
     LazyColumn(Modifier.fillMaxSize().overlayLazyScrollbar(listState), allowUpExit = true, state = listState, verticalArrangement = Arrangement.spacedBy(8.dp), contentPadding = androidx.compose.foundation.layout.PaddingValues(bottom = 36.dp)) {
         if (timers.isNotEmpty()) {

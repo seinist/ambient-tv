@@ -128,7 +128,10 @@ class FilesViewModel @Inject constructor(
     }
     fun scroll(key: String): Pair<Int, Int> = (saved.get<Int>("scroll-index:$key") ?: 0) to (saved.get<Int>("scroll-offset:$key") ?: 0)
     fun saveScroll(key: String, index: Int, offset: Int) { saved["scroll-index:$key"] = index; saved["scroll-offset:$key"] = offset }
-    fun focus(id: String) { saved["focus"] = id; _state.update { it.copy(focusId = id) } }
+    // SavedStateHandle keeps the current target without invalidating the whole file listing.
+    // Refresh, folder navigation and viewer return already publish their own restore event.
+    fun focus(id: String) { saved["focus"] = id }
+    fun focusedContentId(): String? = saved["focus"]
     fun refresh() = refresh(silent = false)
     fun reload() {
         if (_state.value.loading || _state.value.refreshing || sourceMutationBusy) return

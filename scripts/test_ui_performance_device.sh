@@ -1,10 +1,20 @@
 #!/usr/bin/env bash
 # Synthetic production Home/library layouts in an isolated APK; no configured media servers.
+# Usage: scripts/test_ui_performance_device.sh SERIAL [ui|browse|grid] [balanced|low|maximum|auto]
+# grid compares 4/8/12 poster columns with separate horizontal, vertical and held-input metrics.
+# UI profiles apply to ui/grid; browse retains its fixed-profile paired workload.
 set -euo pipefail
 serial="${1:-emulator-5554}"
 mode="${2:-ui}"
-args=()
-if [[ "$mode" == "browse" ]]; then args=(-e browsePerformance true); fi
+ui_profile="${3:-balanced}"
+case "$ui_profile" in balanced|low|maximum|auto) ;; *) echo "Unsupported UI profile: $ui_profile" >&2; exit 2 ;; esac
+args=(-e uiProfile "$ui_profile")
+case "$mode" in
+    ui) ;;
+    browse) args+=(-e browsePerformance true) ;;
+    grid) args+=(-e uiScenario library-grid-density) ;;
+    *) echo "Unsupported audit mode: $mode (use ui, browse or grid)" >&2; exit 2 ;;
+esac
 cd "$(dirname "$0")/.."
 abi="$(adb -s "$serial" shell getprop ro.product.cpu.abi | tr -d '\r')"
 case "$abi" in x86|x86_64|arm64-v8a|armeabi-v7a) ;; *) echo "Unsupported ABI: $abi" >&2; exit 2 ;; esac
@@ -32,6 +42,15 @@ if [[ "$mode" == "browse" ]]; then
     printf '%s\n' "$visual_result"
     [[ "$visual_result" == *"PASS ambient pauses during navigation and resumes without a phase jump"* ]]
     [[ "$visual_result" == *"UI PERFORMANCE AUDIT PASSED"* && "$visual_result" != *"FAIL:"* ]]
+    exit 0
+fi
+if [[ "$mode" == "grid" ]]; then
+    for columns in 4 8 12; do
+        [[ "$result" == *"PASS library-grid-$columns columns=$columns:"* ]]
+        for movement in horizontal vertical held; do
+            [[ "$result" == *"PASS FrameMetrics captured for library-grid-$columns-$movement;"* ]]
+        done
+    done
     exit 0
 fi
 [[ "$result" == *"PASS Home mask records its child draw tree once"* ]]

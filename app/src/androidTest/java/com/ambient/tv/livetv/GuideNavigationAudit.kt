@@ -109,7 +109,11 @@ internal class GuideNavigationAudit(private val instrumentation: Instrumentation
                         androidx.tv.material3.LocalContentColor provides androidx.tv.material3.MaterialTheme.colorScheme.onSurface) {
                         val controls = rememberLiveTvBrowseControls(browse, "guide")
                         val chain = rememberPageFocusChain()
-                        val model = guideFilterModel(options.value, channels.flatMap { it.tags }.distinct()) { options.value = it }
+                        val model = guideFilterModel(
+                            options.value,
+                            channels.flatMap { it.tags }.distinct(),
+                            hasHbbtvCategory = channels.any { !it.hbbtvUrl.isNullOrBlank() },
+                        ) { options.value = it }
                         Box(Modifier.fillMaxSize()) {
                             Column(Modifier.fillMaxSize()) {
                             TvheadendHeader(

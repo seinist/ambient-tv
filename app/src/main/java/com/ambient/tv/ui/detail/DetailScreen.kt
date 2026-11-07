@@ -339,8 +339,8 @@ internal fun DetailContent(
     var childFocusPending by remember(focusScope, item.ratingKey) {
         mutableStateOf(item.type in setOf("season", "collection") && focusMemory.key == null)
     }
-    val preferredChild = detailPreferredChildKey(item, children, nextEpisode)
-    val childKeys = children.map { "children:${it.ratingKey}" }
+    val preferredChild = remember(item, children, nextEpisode) { detailPreferredChildKey(item, children, nextEpisode) }
+    val childKeys = remember(children) { children.map { "children:${it.ratingKey}" } }
     val childFocusKey = if (childFocusPending) {
         (columnFocus.rememberedItem("children") as? String)?.takeIf { it in childKeys } ?: preferredChild
     } else null
@@ -1213,18 +1213,24 @@ private fun rememberDetailRowState(
     val navigation = LocalDetailRowFocus.current
     val remembered = navigation?.focus?.rememberedItem(rowKey) as? String
     val defaultKey = navigation?.defaults?.get(rowKey)
-    val entryKey = remembered?.takeIf { it in focusableKeys }
-        ?: restoreFocusKey?.takeIf { it in focusableKeys }
-        ?: defaultKey?.takeIf { it in focusableKeys }
+    val focusable = remember(focusableKeys) { focusableKeys.toHashSet() }
+    val indices = remember(focusKeys) {
+        buildMap<String, Int>(focusKeys.size) {
+            focusKeys.forEachIndexed { index, key -> if (key !in this) put(key, index) }
+        }
+    }
+    val entryKey = remembered?.takeIf { it in focusable }
+        ?: restoreFocusKey?.takeIf { it in focusable }
+        ?: defaultKey?.takeIf { it in focusable }
         ?: focusableKeys.firstOrNull()
-    val initialIndex = focusKeys.indexOf(entryKey).coerceAtLeast(0)
+    val initialIndex = entryKey?.let(indices::get) ?: 0
     val state = rememberLazyListState(initialFirstVisibleItemIndex = initialIndex)
     RegisterRowColumnFocus(
         navigation?.focus, rowKey, state, focusKeys,
         defaultItemKey = defaultKey, focusableItemKeys = focusableKeys,
     )
     LaunchedEffect(restoreFocusKey, focusKeys, focusableKeys) {
-        val targetIndex = restoreFocusKey?.takeIf { it in focusableKeys }?.let(focusKeys::indexOf) ?: -1
+        val targetIndex = restoreFocusKey?.takeIf { it in focusable }?.let(indices::get) ?: -1
         if (targetIndex >= 0) state.scrollToItem(targetIndex)
     }
     return state
@@ -1252,7 +1258,7 @@ private fun CollectionItemsSection(
         )
         if (children.isNotEmpty()) {
             LazyRow(
-                state = rememberDetailRowState("children", children.map { "children:${it.ratingKey}" }, restoreFocusKey),
+                state = rememberDetailRowState("children", remember(children) { children.map { "children:${it.ratingKey}" } }, restoreFocusKey),
                 contentPadding = PaddingValues(horizontal = screenGutter()),
                 horizontalArrangement = Arrangement.spacedBy(18.dp),
                 modifier = Modifier.containRowFocusExit(),
@@ -1306,10 +1312,11 @@ private fun SeasonStrip(
 ) {
     val columnFocus = LocalDetailRowFocus.current?.focus
     val seriesFocus = "season-strip:series"
+    val keys = remember(seasons) { listOf(seriesFocus) + seasons.map { "season-strip:${it.ratingKey}" } }
     Column(modifier = Modifier.fillMaxWidth().bringFocusedContextIntoView()) {
         LazyRow(
             state = rememberDetailRowState(
-                "season-strip", listOf(seriesFocus) + seasons.map { "season-strip:${it.ratingKey}" }, restoreFocusKey,
+                "season-strip", keys, restoreFocusKey,
             ),
             contentPadding = PaddingValues(horizontal = screenGutter()),
             horizontalArrangement = Arrangement.spacedBy(10.dp),
@@ -1381,7 +1388,7 @@ private fun ChildrenSection(
             // contentPadding (not an outer Modifier.padding) so a focused item's scale-up can
             // render into that margin instead of being clipped by the row's own layout bounds.
             LazyRow(
-                state = rememberDetailRowState("children", children.map { "children:${it.ratingKey}" }, restoreFocusKey),
+                state = rememberDetailRowState("children", remember(children) { children.map { "children:${it.ratingKey}" } }, restoreFocusKey),
                 contentPadding = PaddingValues(horizontal = screenGutter()),
                 horizontalArrangement = Arrangement.spacedBy(18.dp),
                 modifier = Modifier.containRowFocusExit(),
@@ -1400,11 +1407,12 @@ private fun ChildrenSection(
                 }
             }
         } else if (children.isNotEmpty()) {
+            val childKeys = remember(children) { children.map { "children:${it.ratingKey}" } }
             val episodeListState = rememberDetailRowState(
-                "children", children.map { "children:${it.ratingKey}" }, restoreFocusKey,
+                "children", childKeys, restoreFocusKey,
             )
             val scope = rememberCoroutineScope()
-            val requesters = remember(children.map { it.ratingKey }) { children.map { FocusRequester() } }
+            val requesters = remember(childKeys) { List(childKeys.size) { FocusRequester() } }
             var wrapping by remember { mutableStateOf(false) }
             LazyRow(
                 state = episodeListState,
@@ -1519,7 +1527,7 @@ private fun SimilarSection(
             return@Column
         }
         LazyRow(
-            state = rememberDetailRowState("similar", items.map { "similar:${it.ratingKey}" }, restoreFocusKey),
+            state = rememberDetailRowState("similar", remember(items) { items.map { "similar:${it.ratingKey}" } }, restoreFocusKey),
             contentPadding = PaddingValues(horizontal = screenGutter()),
             horizontalArrangement = Arrangement.spacedBy(18.dp),
             modifier = Modifier.containRowFocusExit(),
@@ -1554,8 +1562,9 @@ private fun ActorRowSection(
             modifier = Modifier.padding(start = screenGutter(), end = screenGutter(), bottom = 12.dp),
         )
         val prefix = "actor:${row.actorId}\u0000"
+        val keys = remember(row.items, prefix) { row.items.map { prefix + it.ratingKey } }
         LazyRow(
-            state = rememberDetailRowState("actor:${row.actorId}", row.items.map { prefix + it.ratingKey }, restoreFocusKey),
+            state = rememberDetailRowState("actor:${row.actorId}", keys, restoreFocusKey),
             contentPadding = PaddingValues(horizontal = screenGutter()),
             horizontalArrangement = Arrangement.spacedBy(18.dp),
             modifier = Modifier.containRowFocusExit(),
@@ -1761,12 +1770,14 @@ private fun CollectionsSection(
     onFocused: (String) -> Unit,
 ) {
     val columnFocus = LocalDetailRowFocus.current?.focus
+    val keys = remember(item.collections) { item.collections.map { "collection:${it.id ?: it.name}" } }
+    val focusableKeys = remember(item.collections) { item.collections.filter { it.id != null }.map { "collection:${it.id}" } }
     Column(modifier = Modifier.fillMaxWidth().bringFocusedContextIntoView()) {
         Text(stringResource(R.string.detail_collections), style = MaterialTheme.typography.titleLarge, modifier = Modifier.padding(start = screenGutter(), end = screenGutter(), bottom = 10.dp))
         LazyRow(
             state = rememberDetailRowState(
-                "collections", item.collections.map { "collection:${it.id ?: it.name}" }, restoreFocusKey,
-                focusableKeys = item.collections.filter { it.id != null }.map { "collection:${it.id}" },
+                "collections", keys, restoreFocusKey,
+                focusableKeys = focusableKeys,
             ),
             contentPadding = PaddingValues(horizontal = screenGutter()),
             horizontalArrangement = Arrangement.spacedBy(10.dp),
@@ -1797,13 +1808,15 @@ private fun CastSection(
     onFocused: (String) -> Unit,
 ) {
     val columnFocus = LocalDetailRowFocus.current?.focus
-    val members = item.cast.dedupeCastMembers().take(16)
+    val members = remember(item.cast) { item.cast.dedupeCastMembers().take(16) }
+    val keys = remember(members) { members.map { "cast:${it.id ?: it.name}" } }
+    val focusableKeys = remember(members) { members.filter { it.id != null }.map { "cast:${it.id}" } }
     Column(modifier = Modifier.fillMaxWidth().bringFocusedContextIntoView()) {
         Text(stringResource(R.string.detail_cast), style = MaterialTheme.typography.titleLarge, modifier = Modifier.padding(start = screenGutter(), end = screenGutter(), bottom = 12.dp))
         LazyRow(
             state = rememberDetailRowState(
-                "cast", members.map { "cast:${it.id ?: it.name}" }, restoreFocusKey,
-                focusableKeys = members.filter { it.id != null }.map { "cast:${it.id}" },
+                "cast", keys, restoreFocusKey,
+                focusableKeys = focusableKeys,
             ),
             contentPadding = PaddingValues(horizontal = screenGutter()),
             horizontalArrangement = Arrangement.spacedBy(20.dp),

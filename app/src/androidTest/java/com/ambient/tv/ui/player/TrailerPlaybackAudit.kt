@@ -7,10 +7,12 @@ import androidx.activity.compose.setContent
 import androidx.lifecycle.SavedStateHandle
 import com.ambient.tv.ui.catalog.UiCatalogActivity
 import com.ambient.tv.ui.theme.AmbientTvTheme
+import com.ambient.tv.ui.youtube.YouTubeBrowsePlaybackContext
 import com.ambient.tv.ui.youtube.YouTubePlayerScreen
 import com.ambient.tv.ui.youtube.YouTubePlayerViewModel
 import com.ambient.tv.ui.youtube.YouTubePrefsEntryPoint
 import com.ambient.tv.youtube.SmartTubeEngine
+import com.ambient.tv.youtube.YouTubeContentCache
 import dagger.hilt.android.EntryPointAccessors
 
 /** Real YouTube resolution and production trailer player, without requiring a TMDB account. */
@@ -48,7 +50,16 @@ class TrailerPlaybackAudit(private val instrumentation: Instrumentation, private
         }
         try {
             main {
-                model = YouTubePlayerViewModel(context.applicationContext, SavedStateHandle(mapOf("videoId" to videoId, "trailer" to true)), SmartTubeEngine(context.applicationContext, preferences), auditPlaybackAvailability(context), auditSourceAvailability(context), preferences)
+                val engine = SmartTubeEngine(context.applicationContext, preferences)
+                model = YouTubePlayerViewModel(
+                    context.applicationContext,
+                    SavedStateHandle(mapOf("videoId" to videoId, "trailer" to true)),
+                    engine,
+                    auditPlaybackAvailability(context),
+                    auditSourceAvailability(context),
+                    preferences,
+                    browseContext = YouTubeBrowsePlaybackContext(engine, YouTubeContentCache()),
+                )
                 activity.viewModelStore.put("trailer-audit", model)
                 activity.setContent {
                     AmbientTvTheme {

@@ -104,8 +104,13 @@ internal fun LiveTvChannelBrowser(
     val positionKey = if (channelList) "channels" else "guide"
     val filterFocusState = controls.filterFocusState
     val savedPosition = remember(browseState, positionKey) { browseState.position(positionKey) }
+    val initialChannelIndex = remember(visibleChannels, savedPosition, channelList, focusTarget) {
+        visibleChannels.indexOfFirst {
+            it.uuid == (savedPosition?.itemId ?: if (channelList) focusTarget.contentId else focusTarget.rowId)
+        }.coerceAtLeast(0)
+    }
     val listState = rememberLazyListState(
-        initialFirstVisibleItemIndex = visibleChannels.indexOfFirst { it.uuid == (savedPosition?.itemId ?: if (channelList) focusTarget.contentId else focusTarget.rowId) }.coerceAtLeast(0),
+        initialFirstVisibleItemIndex = initialChannelIndex,
         initialFirstVisibleItemScrollOffset = savedPosition?.offset ?: 0,
     )
     if (channelList) RegisterBrowseFocusList(listState, listing.visibleChannelIds)
@@ -128,11 +133,9 @@ internal fun LiveTvChannelBrowser(
     val inputMode = androidx.compose.ui.platform.LocalInputModeManager.current
     var jumpJob by remember { mutableStateOf<kotlinx.coroutines.Job?>(null) }
     var pendingAlphabet by remember { mutableStateOf(false) }
-    var alphabetTarget by remember(options, visibleChannels) { mutableStateOf<String?>(null) }
+    val alphabetTarget = remember(options, visibleChannels) { mutableStateOf<String?>(null) }
     val letters = remember(visibleChannels) { visibleChannels.map { guideIndexLetter(it.name) }.distinct() }
     val showAlphabet = options.sort == GuideSort.NAME && letters.isNotEmpty()
-    val selectedLetter = (visibleChannels.firstOrNull { it.uuid == alphabetTarget }
-        ?: visibleChannels.getOrNull(listState.firstVisibleItemIndex))?.let { guideIndexLetter(it.name) }
     fun jumpTo(index: Int, focus: Boolean) {
         val channel = visibleChannels.getOrNull(index) ?: return
         if (focus) filterFocusState.enterContent()
@@ -287,7 +290,10 @@ internal fun LiveTvChannelBrowser(
                             val currentArt = current?.let { liveTvProgrammeArt(it, listOf(channel), titleArt) }
                             ChannelRow(channel, current, next, recording, imageHeaders,
                                 onWatch = { if (canWatch) onWatch(it.uuid) }, onEvent = onEvent,
-                                onFocused = { alphabetTarget = channel.uuid; contentFocused(channel.uuid, null) },
+                                onFocused = {
+                                    if (showAlphabet) alphabetTarget.value = channel.uuid
+                                    contentFocused(channel.uuid, null)
+                                },
                                 art = currentArt,
                                 modifier = Modifier.focusRequester(rowFocus.getOrPut(channel.uuid) { FocusRequester() })
                                     .then(if (channel.uuid == focusTarget.contentId) Modifier.focusRequester(firstContentFocusRequester) else Modifier))
@@ -301,13 +307,19 @@ internal fun LiveTvChannelBrowser(
                             val channelTarget = channel.uuid == focusTarget.rowId && focusTarget.contentId == "channel:${channel.uuid}"
                             val rowPosition = remember(browseState, channel.uuid) { browseState.position("guide:${channel.uuid}") }
                                 ?.takeUnless { channelTarget && restoreFocus }
-                            val rowState = rememberLazyListState(
-                                initialFirstVisibleItemIndex = if (rowPosition == null && channelTarget) guideLiveIndex(rowEvents, now)
+                            val initialEventIndex = remember(rowEvents, rowPosition, channelTarget, focusTarget, now) {
+                                if (rowPosition == null && channelTarget) guideLiveIndex(rowEvents, now)
                                 else rowEvents.indexOfFirst {
                                     if (rowPosition != null) it.eventId == rowPosition.itemId
                                     else channel.uuid == focusTarget.rowId && "event:${it.eventId}" == focusTarget.contentId
-                                }.coerceAtLeast(0), initialFirstVisibleItemScrollOffset = rowPosition?.offset ?: 0)
-                            RegisterRowColumnFocus(epgRowFocus, channel.uuid, rowState, rowEvents.map { "event:${it.eventId}" })
+                                }.coerceAtLeast(0)
+                            }
+                            val rowState = rememberLazyListState(
+                                initialFirstVisibleItemIndex = initialEventIndex,
+                                initialFirstVisibleItemScrollOffset = rowPosition?.offset ?: 0,
+                            )
+                            val rowEventIds = remember(rowEvents) { rowEvents.map { "event:${it.eventId}" } }
+                            RegisterRowColumnFocus(epgRowFocus, channel.uuid, rowState, rowEventIds)
                             // The row may keep an old saved position: show the current programme again.
                             if (channelTarget && restoreFocus) LaunchedEffect(filterFocusState) {
                                 if (filterFocusState.allowContentAutoFocus && rowEvents.isNotEmpty()) rowState.scrollToItem(guideLiveIndex(rowEvents, now))
@@ -324,7 +336,13 @@ internal fun LiveTvChannelBrowser(
                                         .focusRequester(rowFocus.getOrPut(channel.uuid) { FocusRequester() })
                                         .browseFocusTarget("channel:${channel.uuid}", rowKey = channel.uuid)
                                         .then(if ("channel:${channel.uuid}" == focusTarget.contentId) Modifier.focusRequester(firstContentFocusRequester) else Modifier)
-                                        .onFocusChanged { focused = it.isFocused; if (it.isFocused) { alphabetTarget = channel.uuid; contentFocused("channel:${channel.uuid}", channel.uuid) } }
+                                        .onFocusChanged {
+                                            focused = it.isFocused
+                                            if (it.isFocused) {
+                                                if (showAlphabet) alphabetTarget.value = channel.uuid
+                                                contentFocused("channel:${channel.uuid}", channel.uuid)
+                                            }
+                                        }
                                         .activateOnTvKey { if (canWatch) onWatch(channel.uuid) }) {
                                     Row(Modifier.fillMaxWidth().background(if (focused) MaterialTheme.colorScheme.primary.copy(alpha = .22f) else Color.Transparent)
                                         .padding(6.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -344,7 +362,10 @@ internal fun LiveTvChannelBrowser(
                                     horizontalArrangement = Arrangement.spacedBy(0.dp)) {
                                     items(timelineSlots, key = { it.programme.eventId }) { slot ->
                                         val event = slot.programme
-                                        GuideEventCard(event, now, onEvent, onFocused = { alphabetTarget = channel.uuid; contentFocused("event:${event.eventId}", channel.uuid) },
+                                        GuideEventCard(event, now, onEvent, onFocused = {
+                                            if (showAlphabet) alphabetTarget.value = channel.uuid
+                                            contentFocused("event:${event.eventId}", channel.uuid)
+                                        },
                                             art = liveTvProgrammeArt(event, listOf(channel), titleArt),
                                             imageHeaders = imageHeaders,
                                             artworkUpdates = artworkUpdates,
@@ -360,14 +381,14 @@ internal fun LiveTvChannelBrowser(
                         }
                     }
                 }
-                if (showAlphabet) AlphabetBar(letters, selectedLetter, onSelect = { letter ->
+                if (showAlphabet) GuideAlphabetBar(visibleChannels, letters, alphabetTarget, listState, onSelect = { letter ->
                     val index = visibleChannels.indexOfFirst { guideIndexLetter(it.name) == letter }
-                    alphabetTarget = visibleChannels.getOrNull(index)?.uuid
+                    alphabetTarget.value = visibleChannels.getOrNull(index)?.uuid
                     jumpTo(index, false)
                 }, gridFocus = contentFocus, modifier = Modifier.fillMaxHeight(), firstEntryFocusRequester = alphabetFocus,
                     actionsFocus = pageFocusChain?.actions,
                     onReturnToContent = {
-                        val target = visibleChannels.indexOfFirst { it.uuid == alphabetTarget }.takeIf { it >= 0 } ?: listState.firstVisibleItemIndex
+                        val target = visibleChannels.indexOfFirst { it.uuid == alphabetTarget.value }.takeIf { it >= 0 } ?: listState.firstVisibleItemIndex
                         jumpTo(target, true)
                     })
             }
@@ -375,6 +396,29 @@ internal fun LiveTvChannelBrowser(
         }
     }
     }
+}
+
+/** The alphabet alone observes D-pad selection and viewport changes. */
+@Composable
+private fun GuideAlphabetBar(
+    channels: List<LiveTvChannel>,
+    letters: List<Char>,
+    target: State<String?>,
+    listState: androidx.compose.foundation.lazy.LazyListState,
+    onSelect: (Char?) -> Unit,
+    gridFocus: FocusRequester,
+    modifier: Modifier,
+    firstEntryFocusRequester: FocusRequester,
+    actionsFocus: FocusRequester?,
+    onReturnToContent: () -> Unit,
+) {
+    val lettersById = remember(channels) { channels.associate { it.uuid to guideIndexLetter(it.name) } }
+    val selectedLetter = target.value?.let(lettersById::get)
+        ?: channels.getOrNull(listState.firstVisibleItemIndex)?.let { guideIndexLetter(it.name) }
+    AlphabetBar(
+        letters, selectedLetter, onSelect, gridFocus, modifier, onReturnToContent,
+        firstEntryFocusRequester, actionsFocus,
+    )
 }
 
 /** How long a guide jump waits for the target row to be laid out before it focuses anyway. */

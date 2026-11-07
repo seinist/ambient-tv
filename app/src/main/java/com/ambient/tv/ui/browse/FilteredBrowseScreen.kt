@@ -110,6 +110,12 @@ fun FilteredBrowseScreen(
     viewModel: FilteredBrowseViewModel = hiltViewModel(),
 ) {
     val state by viewModel.uiState.collectAsState()
+    androidx.compose.runtime.DisposableEffect(viewModel) {
+        onDispose { viewModel.captureFocusForReturn() }
+    }
+    val openItem: (String, BrowseSort) -> Unit = remember(viewModel, onItemClick) {
+        { key, sort -> viewModel.captureFocusForReturn(); onItemClick(key, sort) }
+    }
     val refreshing by viewModel.refreshing.collectAsState()
     val refreshError by viewModel.refreshError.collectAsState()
     com.ambient.tv.ui.common.RefreshOnEnterAndReconnect(viewModel.reconnectSources, viewModel::load)
@@ -246,8 +252,10 @@ fun FilteredBrowseScreen(
                     }
                     is FilteredBrowseUiState.Loaded -> {
                         BrowseFocusContentIdentity(listOf(viewModel, value.viewMode, value.sort, value.sortDescending))
-                        BrowseFocusInitialTarget(value.focusedRatingKey?.takeIf { key -> value.items.any { it.ratingKey == key } }
-                            ?: value.items.firstOrNull()?.ratingKey)
+                        BrowseFocusInitialTarget(remember(value.items, value.focusedRatingKey) {
+                            value.focusedRatingKey?.takeIf { key -> value.items.any { it.ratingKey == key } }
+                                ?: value.items.firstOrNull()?.ratingKey
+                        })
                         if (value.items.isEmpty()) Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                             com.ambient.tv.ui.common.BrowseStatusPanel(stringResource(R.string.library_empty_title), stringResource(R.string.library_empty_body))
                         } else Box(Modifier.fillMaxSize()
@@ -259,8 +267,8 @@ fun FilteredBrowseScreen(
                                 viewModel.onItemFocused(it)
                             }
                             SoftViewChange(value.viewMode, Modifier.fillMaxSize()) {
-                                if (value.viewMode == BrowseViewMode.GRID) BrowseGrid(value, { onItemClick(it, value.sort) }, onFocused)
-                                else BrowseList(value, { onItemClick(it, value.sort) }, onFocused)
+                                if (value.viewMode == BrowseViewMode.GRID) BrowseGrid(value, { openItem(it, value.sort) }, onFocused)
+                                else BrowseList(value, { openItem(it, value.sort) }, onFocused)
                             }
                         }
                     }
