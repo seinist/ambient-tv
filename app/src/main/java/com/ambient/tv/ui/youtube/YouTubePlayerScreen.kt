@@ -312,16 +312,20 @@ fun YouTubePlayerScreen(
                     }
                 }
             }
-            if (PlaybackBackendResolver.resolve(rendererKey) != PlaybackBackend.MEDIA3) {
+            val streamCompanionControls = if (PlaybackBackendResolver.resolve(rendererKey) != PlaybackBackend.MEDIA3) {
                 streamPanel?.let { panel ->
-                    com.ambient.tv.companion.CompanionSourceControls(route,
-                        com.ambient.tv.companion.CompanionPlaybackControls.SourceControls(
-                            quality = panel.qualityOptions.takeUnless { playback.isLive }.orEmpty().map { (k, v) -> com.ambient.tv.companion.CompanionOption(k, v.take(120), k == panel.selectedQuality) },
-                            chooseQuality = { key -> resumePosition = if (playback.isLive) 0L else BackgroundPlaybackSession.currentStatus()?.positionMs ?: resumePosition; panel.onQuality(key) },
-                            audio = panel.audioOptions.map { (k, v) -> com.ambient.tv.companion.CompanionOption(k, v.take(120), k == panel.selectedAudio) },
-                            chooseAudio = { key -> resumePosition = if (playback.isLive) 0L else BackgroundPlaybackSession.currentStatus()?.positionMs ?: resumePosition; panel.onAudio(key) },
-                        ))
+                    com.ambient.tv.companion.CompanionPlaybackControls.SourceControls(
+                        quality = panel.qualityOptions.takeUnless { playback.isLive }.orEmpty().map { (k, v) -> com.ambient.tv.companion.CompanionOption(k, v.take(120), k == panel.selectedQuality) },
+                        chooseQuality = { key -> resumePosition = if (playback.isLive) 0L else BackgroundPlaybackSession.currentStatus()?.positionMs ?: resumePosition; panel.onQuality(key) },
+                        audio = panel.audioOptions.map { (k, v) -> com.ambient.tv.companion.CompanionOption(k, v.take(120), k == panel.selectedAudio) },
+                        chooseAudio = { key -> resumePosition = if (playback.isLive) 0L else BackgroundPlaybackSession.currentStatus()?.positionMs ?: resumePosition; panel.onAudio(key) },
+                    )
                 }
+            } else null
+            youtubeCompanionControls(state, isTrailer, streamCompanionControls, advance, viewModel::playPrevious)?.let { controls ->
+                // Keep one route-owned lease: a transport-only lease would hide VLC/MPV's
+                // quality/audio callbacks. Media3 retains its native track fallback (audio=null).
+                com.ambient.tv.companion.CompanionSourceControls(route, controls)
             }
             // The shared session owns EOF, including successor loading and hand-off guards.
             val onCompleted: () -> Unit = {}

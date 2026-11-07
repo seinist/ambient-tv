@@ -57,9 +57,50 @@ class HomeTrailerPlaybackTest {
         memory.focused(source.id, "trailer-video:b")
         assertSame(fresh, memory.row(source.id, fresh))
         memory.start(source, "a")
-        memory.clear()
+        memory.enter()
         assertNull(memory.restore(source.id, "a"))
         assertSame(fresh, memory.row(source.id, fresh))
+    }
+
+    @Test fun returningEntryKeepsItsPlayedRowButALaterSidebarVisitReleasesIt() {
+        val source = row("trailers.CINEMA", "a", "b")
+        val fresh = row("trailers.CINEMA", "new")
+        for (focusBeforeEnter in listOf(false, true)) {
+            val memory = HomeTrailerPlaybackReturn()
+            memory.start(source, "a")
+            val target = memory.restore(source.id, "b")
+            // A remounted screen may have focused the returned item before enter runs.
+            // A retained composition can instead consume the return inside enter itself.
+            if (focusBeforeEnter) memory.focused(source.id, "trailer-video:b")
+            memory.enter()
+            assertEquals(target, memory.target)
+            assertSame(source, memory.row(source.id, fresh))
+            if (!focusBeforeEnter) memory.focused(source.id, "trailer-video:b")
+
+            // Sidebar navigation can leave Home without any capture/focus callback.
+            memory.enter()
+            assertSame(fresh, memory.row(source.id, fresh))
+            assertNull(memory.target)
+            assertNull(memory.pendingTarget)
+            assertEquals("Releasing a row must not replay the focus request", 1, memory.revision)
+        }
+    }
+
+    @Test fun aNewConfirmedPlaybackReturnKeepsItsOwnEntryAfterAPreviousReturn() {
+        val source = row("trailers.CINEMA", "a", "b")
+        val fresh = row("trailers.CINEMA", "new")
+        val memory = HomeTrailerPlaybackReturn()
+        memory.start(source, "a")
+        memory.restore(source.id, "b")
+        memory.enter()
+        memory.focused(source.id, "trailer-video:b")
+
+        memory.start(fresh, "new")
+        val target = memory.restore(fresh.id, "new")
+        memory.enter()
+        assertEquals(target, memory.pendingTarget)
+        assertSame(fresh, memory.row(source.id, source))
+        assertEquals(2, memory.revision)
     }
 
     private fun row(id: String, vararg videos: String) = ContentRowData(

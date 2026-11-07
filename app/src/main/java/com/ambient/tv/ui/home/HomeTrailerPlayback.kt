@@ -33,6 +33,7 @@ internal class HomeTrailerPlaybackReturn {
         private set
     private var landed = false
     private var origin: HomeFocusSnapshot? = null
+    private var preserveForNextEntry = false
     val pendingTarget: HomeFocusSnapshot? get() = target.takeUnless { landed }
 
     fun start(row: ContentRowData, videoId: String) {
@@ -40,6 +41,7 @@ internal class HomeTrailerPlaybackReturn {
         origin = HomeFocusSnapshot(HOME_TRAILER_ITEM_PREFIX + videoId, row.id)
         target = null
         landed = false
+        preserveForNextEntry = false
     }
 
     fun restore(rowId: String, videoId: String): HomeFocusSnapshot? {
@@ -49,8 +51,14 @@ internal class HomeTrailerPlaybackReturn {
         return HomeFocusSnapshot(key, rowId).also {
             target = it
             landed = false
+            preserveForNextEntry = true
             revision++
         }
+    }
+
+    /** A return can be consumed before composition or during enter; both own just this entry. */
+    fun enter() {
+        if (preserveForNextEntry) preserveForNextEntry = false else clear()
     }
 
     fun focused(rowId: String?, ratingKey: String?) {
@@ -70,5 +78,6 @@ internal class HomeTrailerPlaybackReturn {
         origin = null
         target = null
         landed = false
+        preserveForNextEntry = false
     }
 }

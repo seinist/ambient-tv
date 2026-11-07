@@ -473,7 +473,7 @@ class HomeViewModel @Inject constructor(
         focusStateKey: String = HOME_FOCUS_STATE_KEY,
     ) {
         restoreTrailerPlaybackFocus(focusStateKey)
-        if (trailerPlaybackReturn.target == null) trailerPlaybackReturn.clear()
+        trailerPlaybackReturn.enter()
         hasEntered = true
         start(plexOnly, jellyfinOnly, embyOnly, focusStateKey, refreshing = false, youtubeMode = HomeYouTubeLoadMode.OPEN)
     }
