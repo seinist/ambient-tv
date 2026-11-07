@@ -443,6 +443,7 @@ fun RightSideLazyPanel(
         onOutsideTap = onOutsideTap,
         retainFocus = true,
         bodyOwnsNavigation = !com.ambient.tv.ui.mobile.LocalHandheldUi.current,
+        footerReturnFocus = scrollbarFocus.takeIf { overflow },
     ) {
         // Rows mark their rightmost control with LocalRightPanelScrollbarFocus so Right reaches the bar.
         androidx.compose.runtime.CompositionLocalProvider(
@@ -488,6 +489,7 @@ private fun RightSidePanelChrome(
     retainFocus: Boolean = false,
     focusRescue: PanelFocusRescue? = null,
     bodyOwnsNavigation: Boolean = false,
+    footerReturnFocus: FocusRequester? = null,
     body: @Composable () -> Unit,
 ) {
     com.ambient.tv.ui.player.SleepWarningKeyGate.BlockWhileShown()
@@ -553,7 +555,8 @@ private fun RightSidePanelChrome(
                 )
                 RightSidePanelChrome(title, onBack, Modifier, subtitle, width, closeInsteadOfBack, requestHeaderFocus,
                     scrollToTop, scrollToEnd, scrollbar, canScrollBackward, canScrollForward, header, onOutsideTap = null,
-                    retainFocus = retainFocus, focusRescue = focusRescue, bodyOwnsNavigation = bodyOwnsNavigation, body = body)
+                    retainFocus = retainFocus, focusRescue = focusRescue, bodyOwnsNavigation = bodyOwnsNavigation,
+                    footerReturnFocus = footerReturnFocus, body = body)
             }
         }
         return
@@ -799,6 +802,7 @@ private fun RightSidePanelChrome(
                 text = stringResource(if (closeInsteadOfBack) R.string.action_close else R.string.back),
                 onClick = { dismiss(onBack) },
                 modifier = Modifier.focusRequester(footerFocus)
+                    .onFocusChanged { if (!it.isFocused) footerWrapJob?.cancel() }
                     .onPreviewKeyEvent { event ->
                         if (bodyOwnsNavigation && event.key == Key.DirectionDown) {
                             // The lazy body owns vertical wrapping; the footer is outside
@@ -813,8 +817,12 @@ private fun RightSidePanelChrome(
                         }
                         if (event.key != Key.DirectionLeft) return@onPreviewKeyEvent false
                         if (event.type == KeyEventType.KeyDown) {
-                            // Return to the item that led to Back, independent of its geometry.
-                            if (!bodyFocus.restoreFocusedChild()) bodyFocus.requestFocus()
+                            // Keep the lazy panel's list -> scrollbar -> footer route reversible.
+                            // Its nested focus groups cannot reliably restore the bar implicitly.
+                            val returned = footerReturnFocus?.let {
+                                runCatching { it.requestFocus() }.getOrDefault(false)
+                            } == true
+                            if (!returned && !bodyFocus.restoreFocusedChild()) bodyFocus.requestFocus()
                         }
                         true
                     },

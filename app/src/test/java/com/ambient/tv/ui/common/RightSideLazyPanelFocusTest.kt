@@ -185,6 +185,18 @@ class RightSideLazyPanelFocusTest {
         scrollbar().assertIsFocused()
         press(AndroidKeyEvent.KEYCODE_DPAD_RIGHT)
         rule.onNode(hasText(rule.activity.getString(R.string.back)) and hasClickAction()).assertIsFocused()
+        // A second direction before the next layout frame cancels the pending wrap.
+        // Otherwise its delayed request would steal focus back from the scrollbar.
+        rule.runOnUiThread {
+            listOf(AndroidKeyEvent.KEYCODE_DPAD_DOWN, AndroidKeyEvent.KEYCODE_DPAD_LEFT).forEach { code ->
+                rule.activity.dispatchKeyEvent(AndroidKeyEvent(AndroidKeyEvent.ACTION_DOWN, code))
+                rule.activity.dispatchKeyEvent(AndroidKeyEvent(AndroidKeyEvent.ACTION_UP, code))
+            }
+        }
+        rule.waitForIdle()
+        scrollbar().assertIsFocused()
+        press(AndroidKeyEvent.KEYCODE_DPAD_RIGHT)
+        rule.onNode(hasText(rule.activity.getString(R.string.back)) and hasClickAction()).assertIsFocused()
         press(AndroidKeyEvent.KEYCODE_DPAD_DOWN)
         focused("preset:0")
         press(AndroidKeyEvent.KEYCODE_DPAD_RIGHT)
