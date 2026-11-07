@@ -14,7 +14,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusProperties
-import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.test.assertCountEquals
@@ -51,7 +50,6 @@ class RightSideLazyPanelFocusTest {
     private var favoriteChanges = 0
 
     private fun mount(count: Int = 1_000) {
-        val first = FocusRequester()
         val navigation = PlayerPanelNavigation().apply { open(UnifiedPlayerPanel.VISUALIZER) }
         val indices = (0 until count).toList()
         rule.setContent {
@@ -65,7 +63,7 @@ class RightSideLazyPanelFocusTest {
                         title = "Visualisierung",
                         subtitle = "projectM · MilkDrop",
                         onBack = {},
-                        requestHeaderFocus = false,
+                        requestHeaderFocus = true,
                     ) {
                         items(indices, key = { "classic/preset-$it.milk" }) { index ->
                             // Resolve the panel target inside its content, as a real preset row does.
@@ -83,7 +81,6 @@ class RightSideLazyPanelFocusTest {
                                     modifier = Modifier.weight(1f)
                                         .testTag("preset:$index")
                                         .playerPanelFocusKey("projectm:preset:classic/preset-$index.milk")
-                                        .then(if (index == 0) Modifier.focusRequester(first) else Modifier)
                                         .onFocusChanged { if (it.isFocused) focusedRow = "preset:$index" },
                                 )
                                 PlayerIconButton(
@@ -105,8 +102,6 @@ class RightSideLazyPanelFocusTest {
                 }
             }
         }
-        rule.waitForIdle()
-        rule.runOnIdle { first.requestFocus() }
         rule.waitForIdle()
         focused("preset:0")
     }
@@ -180,9 +175,21 @@ class RightSideLazyPanelFocusTest {
         focused("favorite:0")
         press(AndroidKeyEvent.KEYCODE_DPAD_RIGHT)
         scrollbar().assertIsFocused()
+        press(AndroidKeyEvent.KEYCODE_DPAD_LEFT)
+        focused("favorite:0")
+        press(AndroidKeyEvent.KEYCODE_DPAD_RIGHT)
+        scrollbar().assertIsFocused()
         press(AndroidKeyEvent.KEYCODE_DPAD_RIGHT)
         rule.onNode(hasText(rule.activity.getString(R.string.back)) and hasClickAction()).assertIsFocused()
         press(AndroidKeyEvent.KEYCODE_DPAD_LEFT)
+        scrollbar().assertIsFocused()
+        press(AndroidKeyEvent.KEYCODE_DPAD_RIGHT)
+        rule.onNode(hasText(rule.activity.getString(R.string.back)) and hasClickAction()).assertIsFocused()
+        press(AndroidKeyEvent.KEYCODE_DPAD_DOWN)
+        focused("preset:0")
+        press(AndroidKeyEvent.KEYCODE_DPAD_RIGHT)
+        focused("favorite:0")
+        press(AndroidKeyEvent.KEYCODE_DPAD_RIGHT)
         scrollbar().assertIsFocused()
 
         repeat(3) {

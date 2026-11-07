@@ -239,6 +239,16 @@ internal val LocalRightPanelReturnFocus = androidx.compose.runtime.staticComposi
 fun Modifier.rightPanelScrollbarReturn(): Modifier = composed {
     val holder = LocalRightPanelReturnFocus.current ?: return@composed Modifier
     val requester = remember { FocusRequester() }
+    androidx.compose.runtime.DisposableEffect(holder, requester) {
+        onDispose {
+            // Lazy panel rows can leave composition while the scrollbar owns focus.
+            // Never hand Left back to a requester whose node has been detached.
+            if (holder.target === requester) {
+                holder.target = null
+                holder.memberFocused = false
+            }
+        }
+    }
     focusRequester(requester).onFocusChanged {
         if (it.isFocused) { holder.memberFocused = true; holder.target = requester }
         else if (holder.target === requester) holder.memberFocused = false
@@ -405,6 +415,15 @@ fun RightSideLazyPanel(
     val scrollbarContentFocus = remember { FocusRequester() }
     val overflow = listState.canScrollForward || listState.canScrollBackward
     val scrollbarFocus = remember { FocusRequester() }
+    val returnFocus = remember { RightPanelReturnFocus() }
+    LaunchedEffect(listState) {
+        androidx.compose.runtime.snapshotFlow {
+            listState.firstVisibleItemIndex to listState.firstVisibleItemScrollOffset
+        }.collect {
+            // Paging must return to the new viewport, not scroll back to the old row.
+            if (!returnFocus.memberFocused) returnFocus.target = null
+        }
+    }
     RightSidePanelChrome(
         title = title,
         onBack = onBack,
@@ -416,24 +435,30 @@ fun RightSideLazyPanel(
         scrollToTop = { listState.scrollToItem(0) },
         scrollToEnd = { listState.scrollToItem((listState.layoutInfo.totalItemsCount - 1).coerceAtLeast(0)) },
         scrollbar = if (overflow) {
-            { OverlayLazyScrollbar(listState, Modifier.fillMaxHeight().focusRequester(scrollbarFocus), contentFocus = scrollbarContentFocus) }
+            { OverlayLazyScrollbar(listState, Modifier.fillMaxHeight().focusRequester(scrollbarFocus), contentFocus = returnFocus.target ?: scrollbarContentFocus) }
         } else null,
         canScrollBackward = listState.canScrollBackward,
         canScrollForward = listState.canScrollForward,
         header = null,
         onOutsideTap = onOutsideTap,
         retainFocus = true,
+        bodyOwnsNavigation = !com.ambient.tv.ui.mobile.LocalHandheldUi.current,
     ) {
         // Rows mark their rightmost control with LocalRightPanelScrollbarFocus so Right reaches the bar.
         androidx.compose.runtime.CompositionLocalProvider(
             LocalRightPanelScrollbarFocus provides if (overflow) scrollbarFocus else null,
+            LocalRightPanelReturnFocus provides returnFocus,
         ) {
             LazyColumn(
                 state = listState,
+                // The list owns vertical wrapping/parking. Right must be allowed to leave
+                // it for this panel's scrollbar and footer, not a browse-page index.
+                focusActionsOnRight = true,
                 modifier = Modifier
                     .fillMaxWidth()
                     .fillMaxHeight()
                     .focusRequester(scrollbarContentFocus).focusGroup()
+                    .onFocusEvent { if (it.hasFocus && !returnFocus.memberFocused) returnFocus.target = null }
                     .padding(end = if (overflow) 16.dp else 0.dp)
                     .padding(vertical = 12.dp),
                 contentPadding = PaddingValues(horizontal = 6.dp),
@@ -462,6 +487,7 @@ private fun RightSidePanelChrome(
     onOutsideTap: (() -> Unit)?,
     retainFocus: Boolean = false,
     focusRescue: PanelFocusRescue? = null,
+    bodyOwnsNavigation: Boolean = false,
     body: @Composable () -> Unit,
 ) {
     com.ambient.tv.ui.player.SleepWarningKeyGate.BlockWhileShown()
@@ -527,7 +553,7 @@ private fun RightSidePanelChrome(
                 )
                 RightSidePanelChrome(title, onBack, Modifier, subtitle, width, closeInsteadOfBack, requestHeaderFocus,
                     scrollToTop, scrollToEnd, scrollbar, canScrollBackward, canScrollForward, header, onOutsideTap = null,
-                    retainFocus = retainFocus, focusRescue = focusRescue, body = body)
+                    retainFocus = retainFocus, focusRescue = focusRescue, bodyOwnsNavigation = bodyOwnsNavigation, body = body)
             }
         }
         return
@@ -550,6 +576,7 @@ private fun RightSidePanelChrome(
     ) { dismissBack() }
     val footerFocus = remember { FocusRequester() }
     val bodyFocus = remember { FocusRequester() }
+    var footerWrapJob by remember { mutableStateOf<kotlinx.coroutines.Job?>(null) }
     var panelHasFocus by remember { mutableStateOf(false) }
     // The drawer's own focus group holding focus (no row inside it) is not a usable selection:
     // nothing is highlighted and the D-pad has nowhere to go until OK picks a row.
@@ -696,8 +723,12 @@ private fun RightSidePanelChrome(
             .then(if (!panelInteractive) Modifier.playerPanelInteractionGuard(false) else Modifier)
             .then(if (retainFocus) Modifier.focusRestorer() else Modifier)
             .focusGroup()
-            .tvModalFocus(initialFocus = requestHeaderFocus, scrollToTop = scrollToTop,
-                footerFocus = footerFocus, scrollToEnd = scrollToEnd)
+            // A lazy body already owns its parking target and wrap coroutine. A second
+            // modal handler can move/restore focus while that body recycles its old row.
+            // The Chrome's focusFirstRow effect still handles initial focus for both.
+            .then(if (bodyOwnsNavigation) Modifier else Modifier.tvModalFocus(
+                initialFocus = requestHeaderFocus, scrollToTop = scrollToTop,
+                footerFocus = footerFocus, scrollToEnd = scrollToEnd))
             // Handheld edge-to-edge: keep header and footer clear of the status and navigation bars.
             .then(if (com.ambient.tv.ui.mobile.LocalHandheldUi.current) Modifier.windowInsetsPadding(androidx.compose.foundation.layout.WindowInsets.systemBars.only(androidx.compose.foundation.layout.WindowInsetsSides.Vertical)) else Modifier)
             .padding(start = deviceDp(28.dp, 16.dp), end = 24.dp, top = deviceDp(26.dp, 16.dp), bottom = deviceDp(16.dp, 12.dp)),
@@ -769,6 +800,17 @@ private fun RightSidePanelChrome(
                 onClick = { dismiss(onBack) },
                 modifier = Modifier.focusRequester(footerFocus)
                     .onPreviewKeyEvent { event ->
+                        if (bodyOwnsNavigation && event.key == Key.DirectionDown) {
+                            // The lazy body owns vertical wrapping; the footer is outside
+                            // that group. Keep its existing Down-to-first-row shortcut.
+                            if (event.type == KeyEventType.KeyDown && footerWrapJob?.isActive != true) {
+                                footerWrapJob = rescueScope.launch {
+                                    scrollToTop?.invoke()
+                                    retryFocusFor { focusFirstRow() }
+                                }
+                            }
+                            return@onPreviewKeyEvent true
+                        }
                         if (event.key != Key.DirectionLeft) return@onPreviewKeyEvent false
                         if (event.type == KeyEventType.KeyDown) {
                             // Return to the item that led to Back, independent of its geometry.
