@@ -18,6 +18,8 @@ import android.view.Display
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.relocation.BringIntoViewRequester
+import androidx.compose.foundation.relocation.bringIntoViewRequester
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -462,9 +464,7 @@ internal fun DetailContent(
         val allVersionKeys = remember(item.ratingKey, item.mediaVersions) { detailVersionFocusKeys(item) }
         val versionRowKeys = if (playbackAvailable && item.type !in setOf("show", "season") && item.mediaVersions.size > 1) {
             item.mediaVersions.mapIndexedNotNull { index, version ->
-                // A source becoming unavailable keeps its current focus only until the user
-                // moves away; it still needs an exit to the next enabled source meanwhile.
-                allVersionKeys[index].takeIf { version.streamUrl != null || it == focusedVersionKey }
+                allVersionKeys[index].takeIf { version.streamUrl != null }
             }
         } else emptyList()
         val rowSectionIndices = buildMap {
@@ -506,6 +506,24 @@ internal fun DetailContent(
                 if (columnFocus.focusEntry(rowKey)) return true
             }
             return false
+        }
+        LaunchedEffect(item.mediaVersions, playbackAvailable) {
+            val previous = focusedVersionKey ?: return@LaunchedEffect
+            if (previous in versionRowKeys) return@LaunchedEffect
+            // TV Surface drops focus when its source becomes disabled. Transfer it explicitly
+            // to an enabled neighbour; a metadata refresh must never leave navigation nowhere.
+            val previousIndex = allVersionKeys.indexOf(previous)
+            val destination = versionRowKeys.firstOrNull { allVersionKeys.indexOf(it) > previousIndex }
+                ?: versionRowKeys.lastOrNull()
+                ?: "hero".takeIf { heroHasFocusTarget }
+            withFrameNanos { }
+            if (focusedVersionKey != previous) return@LaunchedEffect
+            if (destination != null) {
+                focusRow(destination) { focusedVersionKey == previous }
+            } else {
+                focusedVersionKey = null
+                requestUtilityFocus = true
+            }
         }
         LaunchedEffect(enterPrimaryPending, childrenLoading, childrenLoadFailed, rowOrder) {
             if (!enterPrimaryPending) return@LaunchedEffect
@@ -1085,6 +1103,7 @@ private fun PrimaryPlaybackActions(
 }
 
 @Composable
+@OptIn(ExperimentalFoundationApi::class)
 private fun MediaVersionPicker(
     item: MediaItem,
     optimalIndex: Int,
@@ -1109,7 +1128,22 @@ private fun MediaVersionPicker(
             item.mediaVersions.forEachIndexed { index, version ->
                 val focusKey = focusKeys[index]
                 androidx.compose.runtime.key(focusKey) {
+                    var focused by remember { mutableStateOf(false) }
+                    val previousIndex = remember { intArrayOf(index) }
+                    val reveal = remember { BringIntoViewRequester() }
+                    LaunchedEffect(index) {
+                        val moved = previousIndex[0] != index
+                        previousIndex[0] = index
+                        if (moved && focused) {
+                            // Stable keys preserve focus, but Compose does not relocate an
+                            // already-focused child when metadata moves it within the list.
+                            withFrameNanos { }
+                            withFrameNanos { }
+                            if (focused) reveal.bringIntoView()
+                        }
+                    }
                     Row(
+                        modifier = Modifier.bringIntoViewRequester(reveal),
                         horizontalArrangement = Arrangement.spacedBy(10.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
@@ -1121,7 +1155,10 @@ private fun MediaVersionPicker(
                             selected = index == optimalIndex,
                             modifier = Modifier.width(116.dp)
                                 .detailRowTarget(focusKey, focusKey, columnFocus)
-                                .onFocusChanged { if (it.isFocused) onFocused(focusKey) },
+                                .onFocusChanged {
+                                    focused = it.isFocused
+                                    if (it.isFocused) onFocused(focusKey)
+                                },
                             fillWidth = true,
                         )
                         Column(Modifier.weight(1f)) {

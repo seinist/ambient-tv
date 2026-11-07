@@ -219,7 +219,7 @@ class DetailVersionFocusTest {
         action("#4").assertIsFocused().assertIsDisplayed()
     }
 
-    @Test fun aSourceBecomingUnavailableKeepsAnExitPathAndCannotBePlayed() {
+    @Test fun aSourceBecomingUnavailableMovesToTheNextPlayableSourceWithoutStartingPlayback() {
         val itemState = mount()
         repeat(3) { press(Key.DirectionDown) }
         action("#3").assertIsFocused()
@@ -232,12 +232,10 @@ class DetailVersionFocusTest {
             )
         }
         rule.waitForIdle()
-        action("#3").assertIsFocused().assertIsNotEnabled()
-        press(Key.DirectionCenter)
+        action("#3").assertIsNotEnabled()
+        action("#4").assertIsFocused().assertIsDisplayed()
         assertEquals(emptyList<Playback>(), playback)
 
-        press(Key.DirectionDown)
-        action("#4").assertIsFocused().assertIsDisplayed()
         press(Key.DirectionUp)
         action("#2").assertIsFocused().assertIsDisplayed()
         press(Key.DirectionCenter)
