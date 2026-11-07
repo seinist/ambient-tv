@@ -71,6 +71,11 @@ class TrailerPlaybackAudit(private val instrumentation: Instrumentation, private
                 val handle = BackgroundPlaybackSession.activeHandle() as? Media3PlaybackHandle
                 handle?.player?.videoFormat != null && handle.player.audioFormat != null && handle.player.videoSize.width > 0 && handle.player.isPlaying
             }
+            await("trailer title metadata") {
+                val title = model.uiState.value.playback?.title
+                !title.isNullOrBlank() && title != "SmartTube" && title != "YouTube" &&
+                    BackgroundPlaybackSession.snapshot.value.metadata?.title == title
+            }
             var start = 0L
             main {
                 val snapshot = BackgroundPlaybackSession.snapshot.value
@@ -80,7 +85,7 @@ class TrailerPlaybackAudit(private val instrumentation: Instrumentation, private
                 start = snapshot.status.positionMs
             }
             await("advancing playback", 20_000) { BackgroundPlaybackSession.snapshot.value.status.positionMs > start + 3_000 }
-            log("PASS trailer resolves and plays with YouTube menu disabled; video/audio formats present, position advances, Next Up disabled")
+            log("PASS trailer resolves and plays with YouTube menu disabled; title metadata loaded, video/audio formats present, position advances, Next Up disabled")
             instrumentation.uiAutomation.takeScreenshot()?.let { bitmap ->
                 java.io.File(context.filesDir, "trailer-playback.png").outputStream().use { bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it) }
                 bitmap.recycle()

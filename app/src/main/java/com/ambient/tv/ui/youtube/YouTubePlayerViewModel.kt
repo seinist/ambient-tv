@@ -196,7 +196,6 @@ class YouTubePlayerViewModel @Inject constructor(@dagger.hilt.android.qualifiers
                 successorsLoading = fromBrowse && nextInSource == null,
                 liveRefreshGeneration = refreshGeneration,
             )
-            if (isTrailer) return@launch
             // Next Up uses only the originating feed/row, including continuation pages.
             // Never substitute Home or account recommendations at the end of the source.
             if (fromBrowse && nextInSource == null) {
@@ -218,30 +217,28 @@ class YouTubePlayerViewModel @Inject constructor(@dagger.hilt.android.qualifiers
                     }
                 }
             }
-            // SponsorBlock is optional; a slow/unavailable service must never hold the decoder.
-            launch {
-                val segments = suspendResult { engine.playbackSponsorSegments(videoId) }.getOrDefault(emptyList())
-                _uiState.update { current ->
-                    if (current.playback?.videoId == videoId) current.copy(playback = current.playback.copy(sponsorSegments = segments)) else current
+            if (!isTrailer) {
+                // SponsorBlock is optional; a slow/unavailable service must never hold the decoder.
+                launch {
+                    val segments = suspendResult { engine.playbackSponsorSegments(videoId) }.getOrDefault(emptyList())
+                    _uiState.update { current ->
+                        if (current.playback?.videoId == videoId) current.copy(playback = current.playback.copy(sponsorSegments = segments)) else current
+                    }
                 }
             }
-            val detail = suspendResult { engine.metadata(videoId) }.getOrNull()
-            val channel = detail?.let(engine::channelOf)
-            val signedIn = channel != null && suspendResult { engine.isSignedIn() }.getOrDefault(false)
-            _uiState.update { current ->
-                val playback = current.playback
-                val enriched = if (playback != null && detail != null) {
-                    // A still-unresolved start had no card/local progress at launch. Reports
-                    // from its first seconds must not replace the historical metadata now.
-                    com.ambient.tv.youtube.applyYouTubePlaybackMetadata(playback, detail, useCurrentProgress = false)
-                } else {
-                    playback
-                }
-                if (current.playback?.videoId == videoId) current.copy(
-                    playback = enriched,
-                    channel = channel?.let { if (signedIn) it else it.copy(subscribed = null) },
-                ) else current
-            }
+            // A trailer's stream may be ready before its title/details. Apply late metadata
+            // too, while keeping its zero resume position and omitting account controls.
+            updateYouTubePlayerMetadata(
+                videoId = videoId,
+                isTrailer = isTrailer,
+                state = _uiState,
+                loadMetadata = { engine.metadata(videoId) },
+                loadChannel = { detail ->
+                    val channel = engine.channelOf(detail)
+                    val signedIn = channel != null && suspendResult { engine.isSignedIn() }.getOrDefault(false)
+                    channel?.let { if (signedIn) it else it.copy(subscribed = null) }
+                },
+            )
         }
     }
     fun toggleSubscription() {

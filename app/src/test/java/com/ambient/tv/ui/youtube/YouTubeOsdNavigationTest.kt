@@ -4,10 +4,12 @@ import androidx.activity.ComponentActivity
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
+import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
@@ -32,6 +34,10 @@ import com.ambient.tv.ui.player.setOsdButtonVisible
 import com.ambient.tv.ui.player.videoImagePreferences
 import com.ambient.tv.ui.theme.AmbientTvTheme
 import com.ambient.tv.youtube.YouTubePlayback
+import com.ambient.tv.youtube.YouTubeMetadata
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -90,7 +96,7 @@ class YouTubeOsdNavigationTest {
         }
     }
 
-    private fun mount(): Fixture {
+    private fun mount(playerState: StateFlow<YouTubePlayerState>? = null): Fixture {
         val fixture = Fixture()
         rule.setContent {
             CompositionLocalProvider(
@@ -100,7 +106,10 @@ class YouTubeOsdNavigationTest {
             ) {
                 AmbientTvTheme {
                     Box(Modifier.fillMaxSize()) {
-                        fixture.model.value.Content(visible = true, panel = UnifiedPlayerPanel.NONE)
+                        val playback = playerState?.collectAsState()?.value?.playback
+                        val model = fixture.model.value
+                        (playback?.let { model.copy(playback = it) } ?: model)
+                            .Content(visible = true, panel = UnifiedPlayerPanel.NONE)
                     }
                 }
             }
@@ -112,6 +121,40 @@ class YouTubeOsdNavigationTest {
     private fun restartButton() = rule.onNodeWithContentDescription(rule.activity.getString(R.string.detail_restart))
     private fun previousButton() = rule.onNodeWithContentDescription(rule.activity.getString(R.string.player_previous_item))
     private fun nextButton() = rule.onNodeWithContentDescription(rule.activity.getString(R.string.player_next_item))
+
+    @Test fun lateTrailerMetadataReplacesThePlaceholderInTheVisibleOsd() {
+        val playback = YouTubePlayback(
+            videoId = "tmdb-trailer", title = "SmartTube", uri = "fixture://trailer",
+            resumeMs = 0L, resumeResolved = true,
+        )
+        val state = MutableStateFlow(YouTubePlayerState(loading = false, playback = playback))
+        mount(state)
+        // SmartTube is also a source badge, so it legitimately remains elsewhere in the OSD.
+        rule.onAllNodesWithText("SmartTube", useUnmergedTree = true)[0].assertIsDisplayed()
+        rule.onNodeWithText("Official Movie Trailer", useUnmergedTree = true).assertDoesNotExist()
+
+        runBlocking {
+            updateYouTubePlayerMetadata(
+                videoId = playback.videoId,
+                isTrailer = true,
+                state = state,
+                loadMetadata = {
+                    YouTubeMetadata(
+                        videoId = playback.videoId, title = "Official Movie Trailer",
+                        author = "Movie Studio", publishedDate = "vor 3 Tagen",
+                        durationMs = 120_000L, percentWatched = 80,
+                    )
+                },
+                loadChannel = { error("Trailers do not load account controls") },
+            )
+        }
+
+        rule.onNodeWithText("Official Movie Trailer", useUnmergedTree = true).assertIsDisplayed()
+        rule.onNodeWithText("Movie Studio", useUnmergedTree = true).assertIsDisplayed()
+        rule.onNodeWithText("· vor 3 Tagen", useUnmergedTree = true).assertIsDisplayed()
+        assertEquals(playback.uri, state.value.playback?.uri)
+        assertEquals(0L, state.value.playback?.resumeMs)
+    }
 
     @Test fun publicationShowsBesideChannelAndDisappearsForRunningLiveStreams() {
         val fixture = mount()
