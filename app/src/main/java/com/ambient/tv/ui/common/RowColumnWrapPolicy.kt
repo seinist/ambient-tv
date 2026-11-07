@@ -8,10 +8,4 @@ internal fun rowColumnWrapRightIndex(
     itemKeys: List<Any>,
     focusedItem: Any?,
     focusableItemKeys: List<Any> = itemKeys,
-): Int? {
-    if (focusedItem == null) return null
-    val focusable = focusableItemKeys.toHashSet()
-    val last = itemKeys.indexOfLast { it in focusable }
-    if (last < 0 || itemKeys[last] != focusedItem) return null
-    return itemKeys.indexOfFirst { it in focusable }.takeIf { it >= 0 }
-}
+): Int? = RowColumnItemIndex().wrapRightIndex(itemKeys, focusedItem, focusableItemKeys)

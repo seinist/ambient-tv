@@ -1286,10 +1286,10 @@ internal fun homeLastRowBottomPadding(viewport: Dp, parkOffset: Dp, minimum: Dp 
     (viewport - parkOffset).coerceAtLeast(minimum)
 
 @Composable
-private fun rememberLiveTileFocus(): Pair<androidx.compose.runtime.MutableState<Boolean>, Float> {
+private fun rememberLiveTileFocus(): Pair<androidx.compose.runtime.MutableState<Boolean>, androidx.compose.runtime.State<Float>> {
     val focused = remember { mutableStateOf(false) }
     val tokens = com.ambient.tv.ui.theme.LocalUiTokens.current
-    val scale by androidx.compose.animation.core.animateFloatAsState(if (focused.value) tokens.focusScale else 1f, label = "liveTileScale")
+    val scale = androidx.compose.animation.core.animateFloatAsState(if (focused.value) tokens.focusScale else 1f, label = "liveTileScale")
     return focused to scale
 }
 
@@ -1322,7 +1322,7 @@ private fun LiveChannelTile(
             .padding(vertical = 8.dp)
             .width(liveTileWidth())
             .aspectRatio(16f / 9f)
-            .graphicsLayer { scaleX = scale; scaleY = scale }
+            .graphicsLayer { scaleX = scale.value; scaleY = scale.value }
             .activateOnTvKey(onClick = onClick)
             .onFocusChanged {
                 focusState.value = it.isFocused
@@ -1397,7 +1397,7 @@ private fun LiveShortcutTile(
             .padding(vertical = 8.dp)
             .width(liveTileWidth())
             .aspectRatio(16f / 9f)
-            .graphicsLayer { scaleX = scale; scaleY = scale }
+            .graphicsLayer { scaleX = scale.value; scaleY = scale.value }
             .activateOnTvKey(onClick = onClick)
             .onFocusChanged { focusState.value = it.isFocused },
     ) {

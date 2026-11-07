@@ -127,7 +127,8 @@ fun RadioScreen(
     // anything reads the focus memory, so entry never starts from the old card or the first tile.
     val returnedFromPlayer = remember(viewModel) { viewModel.consumePlayerReturn() }
     val state by viewModel.state.collectAsState()
-    val playback by BackgroundPlaybackSession.snapshot.collectAsState()
+    val playback by remember { BackgroundPlaybackSession.snapshot.radioBrowsePlayback() }
+        .collectAsState(initial = BackgroundPlaybackSession.snapshot.value.radioBrowsePlayback())
     val selectSection = onSelectSection ?: viewModel::selectSection
     var showViewOptions by remember { mutableStateOf(false) }
     var restoreViewOptionsFocus by remember { mutableStateOf(false) }
@@ -189,11 +190,17 @@ fun RadioScreen(
     val showFacetAlphabet = radioFacetAlphabetAllowed(sortedFacets.size)
     // Senderlisten (auch Raster, Suche und Favoriten) verwenden denselben Index wie Kategorien.
     // Die Sender selbst sind bereits vom ViewModel alphabetisch in der angezeigten Reihenfolge.
-    val stationJumps = remember(state.stations) { radioStationAlphabetJumps(state.stations) }
+    val stationAlphabetAllowed = !showingFacets && !requestedPagePending &&
+        radioStationAlphabetAllowed(state.section, state.selectedFacet, state.submittedQuery)
+    val stationJumps = remember(state.stations, stationAlphabetAllowed) {
+        if (stationAlphabetAllowed) radioStationAlphabetJumps(state.stations) else emptyList()
+    }
     val stationLetters = remember(stationJumps) { stationJumps.mapNotNull { it.letter.singleOrNull() } }
     val effectiveViewMode = if (requestedPagePending && visibleSection.isFacetSection) RadioViewMode.LIST else state.effectiveViewMode()
-    val contentIds = if (showingFacets) sortedFacets.map { it.facet.id } else state.stations.map(RadioStation::id)
-    val playingStationId = playback.metadata?.takeIf { it.source == "radio" }?.mediaId
+    val contentIds = remember(showingFacets, sortedFacets, state.stations) {
+        if (showingFacets) sortedFacets.map { it.facet.id } else state.stations.map(RadioStation::id)
+    }
+    val playingStationId = playback.stationId
     // Hold the initial selection stable while browsing: paging and metadata updates must not
     // jump the list back to a previously focused card.
     val initialContentId = remember(
@@ -251,23 +258,19 @@ fun RadioScreen(
     val facetListFocus = remember(focusScope) { FocusRequester() }
     val stationContentFocus = remember(focusScope, effectiveViewMode) { FocusRequester() }
     var alphabetJumpTargetId by remember(focusScope) { mutableStateOf<String?>(null) }
-    var focusedStationId by remember(focusScope) { mutableStateOf<String?>(null) }
+    val focusedStationId = remember(focusScope) { mutableStateOf<String?>(null) }
     val scrollScope = rememberCoroutineScope()
-    // DPAD focus is authoritative on TV, but finger-scrolling does not move that focus.
-    // For handhelds follow the actual first visible row, even if an old tile stays focused.
-    var focusedFacetId by remember(focusScope) { mutableStateOf<String?>(null) }
-    val focusedFacetLetter = sortedFacets.firstOrNull { it.facet.id == (focusedFacetId ?: initialContentId) }
-        ?.letter?.singleOrNull()
-    val visibleFacetLetter = sortedFacets.getOrNull(listState.firstVisibleItemIndex)?.letter?.singleOrNull()
-    val visibleLetter = alphabetTrackedLetter(handheld, visibleFacetLetter, focusedFacetLetter)
-    val currentStationId = focusedStationId?.takeIf { id -> state.stations.any { it.id == id } } ?: initialContentId
-    val focusedStationLetter = state.stations.firstOrNull { it.id == currentStationId }?.let(::radioStationLetter)
-    val visibleStationLetter = state.stations.getOrNull(
-        if (effectiveViewMode == RadioViewMode.GRID) gridState.firstVisibleItemIndex else listState.firstVisibleItemIndex,
-    )?.let(::radioStationLetter)
-    val stationLetter = alphabetTrackedLetter(handheld, visibleStationLetter, focusedStationLetter)
-    val showStationAlphabet = !showingFacets && stationLetters.isNotEmpty() && !requestedPagePending &&
-        radioStationAlphabetAllowed(state.section, state.selectedFacet, state.submittedQuery)
+    // Only the alphabet child reads these holders. Moving focus must not recompose the grid.
+    val focusedFacetId = remember(focusScope) { mutableStateOf<String?>(null) }
+    val showStationAlphabet = stationAlphabetAllowed && stationLetters.isNotEmpty()
+    val facetLettersById = remember(sortedFacets, showFacetAlphabet, showingFacets) {
+        if (showingFacets && showFacetAlphabet) sortedFacets.associate { it.facet.id to it.letter.singleOrNull() }
+        else emptyMap()
+    }
+    val stationLettersById = remember(state.stations, showStationAlphabet) {
+        if (showStationAlphabet) state.stations.associate { it.id to radioStationLetter(it) }
+        else emptyMap()
+    }
 
     BrowseFocusContentIdentity(listOf(viewModel, focusScope, effectiveViewMode, state.sortDescending, state.returnFocusRevision),
         restoreInitialTarget = true)
@@ -500,7 +503,7 @@ fun RadioScreen(
                             state = listState,
                             onClick = selectFacet,
                             onFocused = { facet ->
-                                focusedFacetId = facet.id
+                                if (showFacetAlphabet) focusedFacetId.value = facet.id
                                 viewModel.onFacetFocused(facet.id)
                             },
                             initialFocusId = initialContentId,
@@ -512,14 +515,17 @@ fun RadioScreen(
                     }
                     if (showFacetAlphabet) {
                         // Shared component already used by the main library: no new A-Z widget.
-                        AlphabetBar(
+                        RadioAlphabetBar(
                             letters = alphabetLetters,
-                            selected = visibleLetter,
+                            focusedId = focusedFacetId,
+                            initialId = initialContentId,
+                            lettersById = facetLettersById,
+                            visibleLetter = { sortedFacets.getOrNull(listState.firstVisibleItemIndex)?.letter?.singleOrNull() },
                             onSelect = { letter ->
                                 val index = alphabetJumps.firstOrNull { it.letter == letter.toString() }?.index
-                                    ?: return@AlphabetBar
+                                    ?: return@RadioAlphabetBar
                                 alphabetJumpTargetId = sortedFacets.getOrNull(index)?.facet?.id
-                                focusedFacetId = alphabetJumpTargetId
+                                focusedFacetId.value = alphabetJumpTargetId
                                 scrollScope.launch { listState.scrollToItem(index) }
                             },
                             gridFocus = facetListFocus,
@@ -572,13 +578,12 @@ fun RadioScreen(
                                                     initialContentId -> Modifier.focusRequester(initialFocusRequester)
                                                     else -> Modifier
                                                 },
-                                                playing = playback.metadata?.source == "radio" &&
-                                                    playback.metadata?.mediaId == station.id && playback.wantsToPlay,
+                                                playing = playback.stationId == station.id && playback.wantsToPlay,
                                                 loading = state.startingStationId == station.id,
                                                 favorite = station.id in state.favoriteIds,
                                                 onClick = { viewModel.play(station, onOpenPlayer) },
                                                 onFocused = {
-                                                    focusedStationId = station.id
+                                                    if (showStationAlphabet) focusedStationId.value = station.id
                                                     viewModel.onStationFocused(station.id)
                                                 },
                                             )
@@ -608,7 +613,7 @@ fun RadioScreen(
                                     RadioStationList(
                                         stations = state.stations,
                                         listRows = state.listRows,
-                                        playbackId = playback.metadata?.mediaId.takeIf { playback.metadata?.source == "radio" },
+                                        playbackId = playback.stationId,
                                         playing = playback.wantsToPlay,
                                         startingStationId = state.startingStationId,
                                         favoriteIds = state.favoriteIds,
@@ -622,7 +627,7 @@ fun RadioScreen(
                                         onClick = { station -> viewModel.play(station, onOpenPlayer) },
                                         onFavorite = toggleStationFavorite,
                                         onFocused = { station ->
-                                            focusedStationId = station.id
+                                            if (showStationAlphabet) focusedStationId.value = station.id
                                             viewModel.onStationFocused(station.id)
                                         },
                                         initialFocusId = initialContentId,
@@ -636,15 +641,23 @@ fun RadioScreen(
                         }
                     }
                     if (showStationAlphabet) {
-                        AlphabetBar(
+                        RadioAlphabetBar(
                             letters = stationLetters,
-                            selected = stationLetter,
+                            focusedId = focusedStationId,
+                            initialId = initialContentId,
+                            lettersById = stationLettersById,
+                            visibleLetter = {
+                                state.stations.getOrNull(
+                                    if (effectiveViewMode == RadioViewMode.GRID) gridState.firstVisibleItemIndex
+                                    else listState.firstVisibleItemIndex,
+                                )?.let(::radioStationLetter)
+                            },
                             onSelect = { letter ->
                                 val index = stationJumps.firstOrNull { it.letter == letter.toString() }?.index
-                                    ?: return@AlphabetBar
-                                val target = state.stations.getOrNull(index) ?: return@AlphabetBar
+                                    ?: return@RadioAlphabetBar
+                                val target = state.stations.getOrNull(index) ?: return@RadioAlphabetBar
                                 alphabetJumpTargetId = target.id
-                                focusedStationId = target.id
+                                focusedStationId.value = target.id
                                 scrollScope.launch {
                                     if (state.viewMode == RadioViewMode.GRID) gridState.scrollToItem(index)
                                     else listState.scrollToItem(index)
@@ -713,6 +726,39 @@ private fun radioPageSubtitle(state: RadioUiState): String = when {
     state.submittedQuery.isNotBlank() -> state.submittedQuery
     state.selectedFacet != null -> radioFacetLabel(state.section, state.selectedFacet)
     else -> radioSectionLabel(state.section)
+}
+
+/** Focus and viewport reads belong to the index, not its sibling grid/list. */
+@Composable
+private fun RadioAlphabetBar(
+    letters: List<Char>,
+    focusedId: State<String?>,
+    initialId: String?,
+    lettersById: Map<String, Char?>,
+    visibleLetter: () -> Char?,
+    onSelect: (Char?) -> Unit,
+    gridFocus: FocusRequester,
+    modifier: Modifier = Modifier,
+    onReturnToContent: () -> Unit,
+    firstEntryFocusRequester: FocusRequester,
+    actionsFocus: FocusRequester,
+) {
+    val currentId = focusedId.value?.takeIf(lettersById::containsKey) ?: initialId
+    // D-pad focus is authoritative on TV; handheld finger scrolling follows the viewport.
+    AlphabetBar(
+        letters = letters,
+        selected = alphabetTrackedLetter(
+            com.ambient.tv.ui.mobile.LocalHandheldUi.current,
+            visibleLetter(),
+            currentId?.let(lettersById::get),
+        ),
+        onSelect = onSelect,
+        gridFocus = gridFocus,
+        modifier = modifier,
+        onReturnToContent = onReturnToContent,
+        firstEntryFocusRequester = firstEntryFocusRequester,
+        actionsFocus = actionsFocus,
+    )
 }
 
 @Composable

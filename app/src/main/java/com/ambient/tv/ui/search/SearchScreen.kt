@@ -24,6 +24,7 @@ import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import com.ambient.tv.ui.common.rememberBrowseListState as rememberLazyListState
+import com.ambient.tv.ui.common.rememberBrowseRowState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Delete
@@ -69,6 +70,7 @@ import com.ambient.tv.tvheadend.domain.TvhDvrEntry
 import com.ambient.tv.tvheadend.domain.TvhEpgEvent
 import com.ambient.tv.ui.common.BrowseFocusContentIdentity
 import com.ambient.tv.ui.common.BrowseFocusInitialTarget
+import com.ambient.tv.ui.common.BrowseFocusHoldEntry
 import com.ambient.tv.ui.common.BrowseFocusKey
 import com.ambient.tv.ui.common.BrowseFocusSlot
 import com.ambient.tv.ui.common.BrowseFocusRow
@@ -134,6 +136,10 @@ fun SearchScreen(
 ) {
     val uiState by viewModel.uiState.collectAsState()
     val filterFocusState = rememberFilterFocusState(viewModel)
+    // Capture once for this content identity. Ordinary focus only updates session memory.
+    val resultFocus = remember(viewModel, uiState.query, uiState.selectedSources, uiState.viewMode, uiState.resultResetRevision) {
+        viewModel.resultFocusRequest()
+    }
     val optionsFocus = remember { FocusRequester() }
     val queryFocus = remember { FocusRequester() }
     var showOptions by remember(viewModel) { mutableStateOf(false) }
@@ -181,18 +187,7 @@ fun SearchScreen(
         BackHandler(enabled = !showOptions) { onBack() }
     }
     CompositionLocalProvider(LocalFilterFocusState provides filterFocusState) {
-        BrowseFocusContentIdentity(listOf(uiState.query, uiState.selectedSources, uiState.viewMode))
-        val firstMedia = listOf(uiState.results, uiState.jellyfinResults, uiState.embyResults, uiState.trailerResults)
-            .firstNotNullOfOrNull { searchMediaGroups(it).firstOrNull()?.second?.firstOrNull()?.ratingKey }
-            ?: telegramSearchGroups(uiState.telegramResults).firstOrNull()?.second?.firstOrNull()?.ratingKey
-        val firstResult = firstMedia
-            ?: uiState.tvheadendResults.channels.firstOrNull()?.let { "search:tvh-channel:${it.sourceId}:${it.uuid}" }
-            ?: uiState.tvheadendResults.programs.firstOrNull()?.let { "search:tvh-program:${it.sourceId}:${it.eventId}" }
-            ?: uiState.tvheadendResults.recordings.firstOrNull()?.let { "search:tvh-recording:${it.sourceId}:${it.uuid}" }
-            ?: uiState.youtubeResults.firstOrNull()?.let { "search:youtube:${it.videoId}" }
-            ?: uiState.spotifyResults.firstOrNull()?.let { "search:spotify:${it.type}:${it.id}" }
-            ?: uiState.radioResults.firstOrNull()?.let { "search:radio:${it.id}" }
-        BrowseFocusInitialTarget(firstResult)
+        BrowseFocusContentIdentity(listOf(uiState.query, uiState.selectedSources, uiState.viewMode, uiState.resultResetRevision), restoreInitialTarget = true)
         Box(Modifier.fillMaxSize()) {
             val focusChain = com.ambient.tv.ui.common.rememberPageFocusChain()
             val queryStageFocus = remember { FocusRequester() }
@@ -257,7 +252,12 @@ fun SearchScreen(
                 // Up from the results: source chips, then the query field (no chips: straight to the field).
                 Box(Modifier.fillMaxSize()
                     .pageContentUp(focusChain) { if (uiState.availableSources.isEmpty()) queryFocus else focusChain.contentUp }
-                    .onFocusChanged { if (it.hasFocus && !showOptions) filterFocusState.enterContent() }
+                    .onFocusChanged {
+                        if (it.hasFocus) {
+                            resultFocus.contentFocused()
+                            if (!showOptions) filterFocusState.enterContent()
+                        }
+                    }
                     .focusGroup()) {
                     when {
                         !uiState.hasSearched -> RecentSearches(uiState.recentSearches, viewModel::useRecentSearch, viewModel::clearRecentSearches)
@@ -271,9 +271,7 @@ fun SearchScreen(
                         else -> SoftViewChange(uiState.viewMode, Modifier.fillMaxSize()) {
                             if (uiState.viewMode == SearchViewMode.ROWS) SearchRows(
                                 uiState,
-                                uiState.focusedRatingKey,
-                                uiState.restoreResultFocus,
-                                uiState.hasResults && !uiState.isSearching && !uiState.restoreResultFocus,
+                                resultFocus,
                                 onItemClick,
                                 onYouTubeClick,
                                 onSpotifyClick,
@@ -284,9 +282,7 @@ fun SearchScreen(
                                 viewModel::onItemFocused,
                             ) else SearchList(
                                 uiState,
-                                uiState.focusedRatingKey,
-                                uiState.restoreResultFocus,
-                                uiState.hasResults && !uiState.isSearching && !uiState.restoreResultFocus,
+                                resultFocus,
                                 onItemClick,
                                 onYouTubeClick,
                                 onSpotifyClick,
@@ -345,7 +341,7 @@ private fun RecentSearches(recent: List<String>, onSelect: (String) -> Unit, onC
             Text(stringResource(R.string.search_recent), style = MaterialTheme.typography.titleMedium)
             TvChip(text = stringResource(R.string.search_clear_recent), icon = Icons.Filled.Delete, onClick = onClear)
         }
-        LazyRow(state = rememberLazyListState(), modifier = Modifier.containRowFocusExit(), contentPadding = PaddingValues(top = 12.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+        LazyRow(state = rememberBrowseRowState(), modifier = Modifier.containRowFocusExit(), contentPadding = PaddingValues(top = 12.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             items(recent, key = { it }) { query -> TvChip(text = query, onClick = { onSelect(query) }) }
         }
     }
@@ -354,9 +350,7 @@ private fun RecentSearches(recent: List<String>, onSelect: (String) -> Unit, onC
 @Composable
 private fun SearchRows(
     state: SearchUiState,
-    focusedKey: String?,
-    restoreResultFocus: Boolean,
-    requestInitialResultFocus: Boolean,
+    resultFocus: SearchFocusRequest,
     onItemClick: (String) -> Unit,
     onYouTubeClick: (String) -> Unit,
     onSpotifyClick: (SpotifyBrowseItem) -> Unit,
@@ -366,29 +360,19 @@ private fun SearchRows(
     onTvheadendRecordingClick: (TvhDvrEntry) -> Unit,
     onFocused: (MediaItem) -> Unit,
 ) {
-    val plexGroups = listOf(
-        R.string.search_movies to state.results.filter { it.type == "movie" },
-        R.string.search_shows to state.results.filter { it.type == "show" },
-        R.string.search_episodes to state.results.filter { it.type == "episode" },
-        R.string.search_other to state.results.filter { it.type !in setOf("movie", "show", "episode") },
-    ).filter { it.second.isNotEmpty() }
-    val jellyfinGroups = listOf(
-        R.string.search_movies to state.jellyfinResults.filter { it.type == "movie" },
-        R.string.search_shows to state.jellyfinResults.filter { it.type == "show" },
-        R.string.search_episodes to state.jellyfinResults.filter { it.type == "episode" },
-        R.string.search_other to state.jellyfinResults.filter { it.type !in setOf("movie", "show", "episode") },
-    ).filter { it.second.isNotEmpty() }
-    val embyGroups = listOf(
-        R.string.search_movies to state.embyResults.filter { it.type == "movie" },
-        R.string.search_shows to state.embyResults.filter { it.type == "show" },
-        R.string.search_episodes to state.embyResults.filter { it.type == "episode" },
-        R.string.search_other to state.embyResults.filter { it.type !in setOf("movie", "show", "episode") },
-    ).filter { it.second.isNotEmpty() }
-    val trailerGroups = searchMediaGroups(state.trailerResults)
-    val telegramGroups = telegramSearchGroups(state.telegramResults)
-    val spotifyGroups = SpotifyEntityType.entries.mapNotNull { type ->
-        state.spotifyResults.filter { it.type == type }.takeIf { it.isNotEmpty() }?.let { type to it }
+    val plexGroups = remember(state.results) { searchMediaGroups(state.results) }
+    val jellyfinGroups = remember(state.jellyfinResults) { searchMediaGroups(state.jellyfinResults) }
+    val embyGroups = remember(state.embyResults) { searchMediaGroups(state.embyResults) }
+    val trailerGroups = remember(state.trailerResults) { searchMediaGroups(state.trailerResults) }
+    val telegramGroups = remember(state.telegramResults) { telegramSearchGroups(state.telegramResults) }
+    val spotifyGroups = remember(state.spotifyResults) {
+        SpotifyEntityType.entries.mapNotNull { type ->
+            state.spotifyResults.filter { it.type == type }.takeIf { it.isNotEmpty() }?.let { type to it }
+        }
     }
+    val channelsBySource = remember(state.tvheadendResults.channels) { state.tvheadendResults.channels.groupBy { it.sourceId } }
+    val programsBySource = remember(state.tvheadendResults.programs) { state.tvheadendResults.programs.groupBy { it.sourceId } }
+    val recordingsBySource = remember(state.tvheadendResults.recordings) { state.tvheadendResults.recordings.groupBy { it.sourceId } }
     val mediaTileStyle = MediaTileStyle.POSTER
     val firstMediaKey = plexGroups.firstOrNull()?.second?.firstOrNull()?.ratingKey
         ?: jellyfinGroups.firstOrNull()?.second?.firstOrNull()?.ratingKey
@@ -405,28 +389,16 @@ private fun SearchRows(
         state.radioResults.isNotEmpty() -> "radio"
         else -> null
     }
-    val allMediaGroups = plexGroups + jellyfinGroups + embyGroups + trailerGroups + telegramGroups
-    val restoreGroupIndex = remember(allMediaGroups, focusedKey) {
-        allMediaGroups.indexOfFirst { (_, items) -> focusedKey != null && items.any { focusedKey in it.allRatingKeys } }.coerceAtLeast(0)
-    }
-    val mediaGroupListIndices = buildList {
-        var index = 1 // Result count.
-        listOf(
-            state.plexState to plexGroups.size,
-            state.jellyfinState to jellyfinGroups.size,
-            state.embyState to embyGroups.size,
-            state.trailerState to trailerGroups.size,
-            state.telegramState to telegramGroups.size,
-        ).forEach { (sourceState, count) ->
-            if (sourceState == SearchSourceState.LOADING || sourceState == SearchSourceState.ERROR || sourceState == SearchSourceState.PARTIAL) index++
-            repeat(count) { add(index++) }
-        }
-    }
-    val restoreListIndex = mediaGroupListIndices.getOrNull(restoreGroupIndex) ?: 0
-    val rowsState = rememberLazyListState(initialFirstVisibleItemIndex = if (restoreResultFocus) restoreListIndex else 0)
+    val rowsState = rememberLazyListState()
     // The outer list spans all provider rows. It can locate the first remaining result even
     // when the row holding focus disappears and its nested LazyRow is no longer composed.
-    val focusSlots = buildList {
+    val focusSlots = remember(
+        plexGroups, jellyfinGroups, embyGroups, trailerGroups, telegramGroups, spotifyGroups,
+        channelsBySource, programsBySource, recordingsBySource, state.liveTvSources,
+        state.youtubeResults, state.radioResults,
+        state.plexState, state.jellyfinState, state.embyState, state.trailerState, state.telegramState,
+        state.tvheadendState, state.youtubeState, state.spotifyState, state.radioState,
+    ) { buildList {
         var index = 1 // Result count.
         fun status(source: SearchSourceState) {
             if (source == SearchSourceState.LOADING || source == SearchSourceState.ERROR ||
@@ -445,9 +417,9 @@ private fun SearchRows(
         status(state.telegramState); mediaGroups(telegramGroups, "telegram")
         status(state.tvheadendState)
         state.liveTvSources.values.forEach { source ->
-            val channels = state.tvheadendResults.channels.filter { it.sourceId == source.id }
-            val programs = state.tvheadendResults.programs.filter { it.sourceId == source.id }
-            val recordings = state.tvheadendResults.recordings.filter { it.sourceId == source.id }
+            val channels = channelsBySource[source.id].orEmpty()
+            val programs = programsBySource[source.id].orEmpty()
+            val recordings = recordingsBySource[source.id].orEmpty()
             if (channels.isNotEmpty()) {
                 channels.forEach { add(BrowseFocusSlot(BrowseFocusKey(
                     "search:tvh-channels:${source.id}", "search:tvh-channel:${it.sourceId}:${it.uuid}", true), index)) }
@@ -481,14 +453,20 @@ private fun SearchRows(
             state.radioResults.forEach { add(BrowseFocusSlot(BrowseFocusKey(
                 "search:radio", "search:radio:${it.id}", true), index)) }
         }
-    }
+    } }
     RegisterBrowseFocusSlots(rowsState, focusSlots)
+    val savedSlot = remember(focusSlots, resultFocus) {
+        focusSlots.firstOrNull { it.key.item == resultFocus.itemKey }
+    }
+    val focusedKey = savedSlot?.key?.item
+    val restoreResultFocus = resultFocus.pending && focusedKey != null
+    val requestInitialResultFocus = resultFocus.pending && !state.isSearching && focusedKey == null
+    val initialSlot = savedSlot ?: focusSlots.firstOrNull().takeUnless { resultFocus.itemKey != null && state.isSearching }
+    BrowseFocusInitialTarget(initialSlot?.key?.item, initialSlot?.key?.row)
+    BrowseFocusHoldEntry(resultFocus.pending && resultFocus.itemKey != null && savedSlot == null && state.isSearching)
     val rowFocus = rememberRowColumnFocus()
-    LaunchedEffect(focusedKey, allMediaGroups, restoreResultFocus, restoreListIndex) {
-        if (restoreResultFocus && focusedKey != null && restoreGroupIndex in allMediaGroups.indices) {
-            // Status rows are real lazy items too.
-            rowsState.scrollToItem(restoreListIndex)
-        }
+    LaunchedEffect(resultFocus, resultFocus.pending, focusSlots) {
+        resultFocus.restore(focusSlots) { rowsState.scrollToItem(it) }
     }
     LazyColumn(
         allowUpExit = true,
@@ -508,8 +486,8 @@ private fun SearchRows(
             ) {
                 SearchGroupTitle(MediaSystem.PLEX, titleRes)
                 val rowKey = "search:plex:$titleRes"
-                val keys = groupItems.map { it.ratingKey }
-                val rowState = rememberLazyListState(itemKeys = keys)
+                val keys = remember(groupItems) { groupItems.map { it.ratingKey } }
+                val rowState = rememberBrowseRowState()
                 RegisterRowColumnFocus(rowFocus, rowKey, rowState, keys)
                 BrowseFocusRow(rowKey) {
                 LazyRow(state = rowState, contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp), horizontalArrangement = Arrangement.spacedBy(18.dp), modifier = Modifier.containRowFocusExit()) {
@@ -525,8 +503,8 @@ private fun SearchRows(
             Column(modifier = Modifier.bringFocusedContextIntoView(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 SearchGroupTitle(MediaSystem.JELLYFIN, titleRes)
                 val rowKey = "search:jellyfin:$titleRes"
-                val keys = groupItems.map { it.ratingKey }
-                val rowState = rememberLazyListState(itemKeys = keys)
+                val keys = remember(groupItems) { groupItems.map { it.ratingKey } }
+                val rowState = rememberBrowseRowState()
                 RegisterRowColumnFocus(rowFocus, rowKey, rowState, keys)
                 BrowseFocusRow(rowKey) {
                 LazyRow(state = rowState, contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp), horizontalArrangement = Arrangement.spacedBy(18.dp), modifier = Modifier.containRowFocusExit()) {
@@ -542,8 +520,8 @@ private fun SearchRows(
             Column(modifier = Modifier.bringFocusedContextIntoView(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 SearchGroupTitle(MediaSystem.EMBY, titleRes)
                 val rowKey = "search:emby:$titleRes"
-                val keys = groupItems.map { it.ratingKey }
-                val rowState = rememberLazyListState(itemKeys = keys)
+                val keys = remember(groupItems) { groupItems.map { it.ratingKey } }
+                val rowState = rememberBrowseRowState()
                 RegisterRowColumnFocus(rowFocus, rowKey, rowState, keys)
                 BrowseFocusRow(rowKey) {
                 LazyRow(state = rowState, contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp), horizontalArrangement = Arrangement.spacedBy(18.dp), modifier = Modifier.containRowFocusExit()) {
@@ -559,8 +537,8 @@ private fun SearchRows(
             Column(modifier = Modifier.bringFocusedContextIntoView(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 SearchGroupTitle(MediaSystem.TRAILERS, titleRes)
                 val rowKey = "search:trailers:$titleRes"
-                val keys = groupItems.map { it.ratingKey }
-                val rowState = rememberLazyListState(itemKeys = keys)
+                val keys = remember(groupItems) { groupItems.map { it.ratingKey } }
+                val rowState = rememberBrowseRowState()
                 RegisterRowColumnFocus(rowFocus, rowKey, rowState, keys)
                 BrowseFocusRow(rowKey) {
                 LazyRow(state = rowState, contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp), horizontalArrangement = Arrangement.spacedBy(18.dp), modifier = Modifier.containRowFocusExit()) {
@@ -579,8 +557,8 @@ private fun SearchRows(
             Column(modifier = Modifier.bringFocusedContextIntoView(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 SearchGroupTitle(MediaSystem.TELEGRAM, titleRes)
                 val rowKey = "search:telegram:$titleRes"
-                val keys = groupItems.map { it.ratingKey }
-                val rowState = rememberLazyListState(itemKeys = keys)
+                val keys = remember(groupItems) { groupItems.map { it.ratingKey } }
+                val rowState = rememberBrowseRowState()
                 RegisterRowColumnFocus(rowFocus, rowKey, rowState, keys)
                 BrowseFocusRow(rowKey) {
                 LazyRow(state = rowState, contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp), horizontalArrangement = Arrangement.spacedBy(18.dp), modifier = Modifier.containRowFocusExit()) {
@@ -597,9 +575,9 @@ private fun SearchRows(
         }
         sourceStatusItem("tvheadend-status", MediaSystem.TVHEADEND, state.tvheadendState, labelOverride = state.liveTvSources.values.map { it.name }.distinct().joinToString(", ").ifBlank { null })
         state.liveTvSources.values.forEach { source ->
-            val channels = state.tvheadendResults.channels.filter { it.sourceId == source.id }
-            val programs = state.tvheadendResults.programs.filter { it.sourceId == source.id }
-            val recordings = state.tvheadendResults.recordings.filter { it.sourceId == source.id }
+            val channels = channelsBySource[source.id].orEmpty()
+            val programs = programsBySource[source.id].orEmpty()
+            val recordings = recordingsBySource[source.id].orEmpty()
             val headers = state.liveTvHeaders[source.id].orEmpty()
             val system = MediaSystem.fromKey(source.system) ?: MediaSystem.TVHEADEND
             if (channels.isNotEmpty()) item(key = "tv-channels:${source.id}") {
@@ -790,8 +768,8 @@ private fun SearchGroupTitle(system: MediaSystem, groupRes: Int) {
 @Composable
 private fun YouTubeSearchRow(youtubeItems: List<YouTubeItem>, onClick: (String) -> Unit, requestInitialFocus: Boolean = false, rowFocus: RowColumnFocus) {
     val rowKey = "search:youtube"
-    val keys = youtubeItems.map { "search:youtube:${it.videoId}" }
-    val rowState = rememberLazyListState(itemKeys = keys)
+    val keys = remember(youtubeItems) { youtubeItems.map { "search:youtube:${it.videoId}" } }
+    val rowState = rememberBrowseRowState()
     RegisterRowColumnFocus(rowFocus, rowKey, rowState, keys)
     Column(Modifier.padding(bottom = 8.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
         SearchGroupTitle(MediaSystem.YOUTUBE, R.string.search_videos)
@@ -840,8 +818,8 @@ private fun RadioSearchRow(
     rowFocus: RowColumnFocus,
 ) {
     val rowKey = "search:radio"
-    val keys = items.map { "search:radio:${it.id}" }
-    val rowState = rememberLazyListState(itemKeys = keys)
+    val keys = remember(items) { items.map { "search:radio:${it.id}" } }
+    val rowState = rememberBrowseRowState()
     RegisterRowColumnFocus(rowFocus, rowKey, rowState, keys)
     Column(Modifier.padding(bottom = 8.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
         SearchGroupTitle(MediaSystem.RADIO, R.string.radio_stations)
@@ -873,8 +851,8 @@ private fun RadioSearchRow(
 private fun SpotifySearchRow(type: SpotifyEntityType, items: List<SpotifyBrowseItem>, onClick: (SpotifyBrowseItem) -> Unit, requestInitialFocus: Boolean = false, rowFocus: RowColumnFocus) {
     val titleRes = spotifyTypeTitleRes(type)
     val rowKey = "search:spotify:$type"
-    val keys = items.map { "search:spotify:${it.type}:${it.id}" }
-    val rowState = rememberLazyListState(itemKeys = keys)
+    val keys = remember(items) { items.map { "search:spotify:${it.type}:${it.id}" } }
+    val rowState = rememberBrowseRowState()
     RegisterRowColumnFocus(rowFocus, rowKey, rowState, keys)
     Column(Modifier.padding(bottom = 8.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
         SearchGroupTitle(MediaSystem.SPOTIFY, titleRes)
@@ -918,8 +896,8 @@ private fun TvheadendChannelSearchRow(
     rowFocus: RowColumnFocus,
 ) {
     val rowKey = "search:tvh-channels:${channels.first().sourceId}"
-    val keys = channels.map { "search:tvh-channel:${it.sourceId}:${it.uuid}" }
-    val rowState = rememberLazyListState(itemKeys = keys)
+    val keys = remember(channels) { channels.map { "search:tvh-channel:${it.sourceId}:${it.uuid}" } }
+    val rowState = rememberBrowseRowState()
     RegisterRowColumnFocus(rowFocus, rowKey, rowState, keys)
     Column(Modifier.padding(bottom = 8.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
         Text(sourceName, style = MaterialTheme.typography.labelMedium)
@@ -954,8 +932,8 @@ private fun TvheadendProgramSearchRow(
     rowFocus: RowColumnFocus,
 ) {
     val rowKey = "search:tvh-programs:${programs.first().sourceId}"
-    val keys = programs.map { "search:tvh-program:${it.sourceId}:${it.eventId}" }
-    val rowState = rememberLazyListState(itemKeys = keys)
+    val keys = remember(programs) { programs.map { "search:tvh-program:${it.sourceId}:${it.eventId}" } }
+    val rowState = rememberBrowseRowState()
     RegisterRowColumnFocus(rowFocus, rowKey, rowState, keys)
     Column(Modifier.padding(bottom = 8.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
         Text(sourceName, style = MaterialTheme.typography.labelMedium)
@@ -990,8 +968,8 @@ private fun TvheadendRecordingSearchRow(
     rowFocus: RowColumnFocus,
 ) {
     val rowKey = "search:tvh-recordings:${recordings.first().sourceId}"
-    val keys = recordings.map { "search:tvh-recording:${it.sourceId}:${it.uuid}" }
-    val rowState = rememberLazyListState(itemKeys = keys)
+    val keys = remember(recordings) { recordings.map { "search:tvh-recording:${it.sourceId}:${it.uuid}" } }
+    val rowState = rememberBrowseRowState()
     RegisterRowColumnFocus(rowFocus, rowKey, rowState, keys)
     Column(Modifier.padding(bottom = 8.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
         Text(sourceName, style = MaterialTheme.typography.labelMedium)
@@ -1066,9 +1044,7 @@ private fun SearchArtworkCard(
 @Composable
 private fun SearchList(
     state: SearchUiState,
-    focusedKey: String?,
-    restoreResultFocus: Boolean,
-    requestInitialResultFocus: Boolean,
+    resultFocus: SearchFocusRequest,
     onItemClick: (String) -> Unit,
     onYouTubeClick: (String) -> Unit,
     onSpotifyClick: (SpotifyBrowseItem) -> Unit,
@@ -1078,20 +1054,24 @@ private fun SearchList(
     onTvheadendRecordingClick: (TvhDvrEntry) -> Unit,
     onFocused: (MediaItem) -> Unit,
 ) {
-    val plexGroups = searchMediaGroups(state.results)
-    val jellyfinGroups = searchMediaGroups(state.jellyfinResults)
-    val embyGroups = searchMediaGroups(state.embyResults)
-    val trailerGroups = searchMediaGroups(state.trailerResults)
-    val telegramGroups = telegramSearchGroups(state.telegramResults)
-    val spotifyGroups = SpotifyEntityType.entries.mapNotNull { type ->
-        state.spotifyResults.filter { it.type == type }.takeIf { it.isNotEmpty() }?.let { type to it }
+    val plexGroups = remember(state.results) { searchMediaGroups(state.results) }
+    val jellyfinGroups = remember(state.jellyfinResults) { searchMediaGroups(state.jellyfinResults) }
+    val embyGroups = remember(state.embyResults) { searchMediaGroups(state.embyResults) }
+    val trailerGroups = remember(state.trailerResults) { searchMediaGroups(state.trailerResults) }
+    val telegramGroups = remember(state.telegramResults) { telegramSearchGroups(state.telegramResults) }
+    val spotifyGroups = remember(state.spotifyResults) {
+        SpotifyEntityType.entries.mapNotNull { type ->
+            state.spotifyResults.filter { it.type == type }.takeIf { it.isNotEmpty() }?.let { type to it }
+        }
     }
+    val channelsBySource = remember(state.tvheadendResults.channels) { state.tvheadendResults.channels.groupBy { it.sourceId } }
+    val programsBySource = remember(state.tvheadendResults.programs) { state.tvheadendResults.programs.groupBy { it.sourceId } }
+    val recordingsBySource = remember(state.tvheadendResults.recordings) { state.tvheadendResults.recordings.groupBy { it.sourceId } }
     val firstMediaKey = plexGroups.firstOrNull()?.second?.firstOrNull()?.ratingKey
         ?: jellyfinGroups.firstOrNull()?.second?.firstOrNull()?.ratingKey
         ?: embyGroups.firstOrNull()?.second?.firstOrNull()?.ratingKey
         ?: trailerGroups.firstOrNull()?.second?.firstOrNull()?.ratingKey
         ?: telegramGroups.firstOrNull()?.second?.firstOrNull()?.ratingKey
-    val requestedMediaKey = focusedKey.takeIf { restoreResultFocus } ?: firstMediaKey.takeIf { requestInitialResultFocus }
     val firstExternalGroup = when {
         firstMediaKey != null -> null
         state.tvheadendResults.channels.isNotEmpty() -> "tvh-channels"
@@ -1105,7 +1085,13 @@ private fun SearchList(
 
     val listState = rememberLazyListState()
     // Include non-focusable headers/status rows in physical lazy indices.
-    val focusSlots = buildList {
+    val focusSlots = remember(
+        plexGroups, jellyfinGroups, embyGroups, trailerGroups, telegramGroups, spotifyGroups,
+        channelsBySource, programsBySource, recordingsBySource, state.liveTvSources,
+        state.youtubeResults, state.radioResults,
+        state.plexState, state.jellyfinState, state.embyState, state.trailerState, state.telegramState,
+        state.tvheadendState, state.youtubeState, state.spotifyState, state.radioState,
+    ) { buildList {
         var index = 0
         fun status(source: SearchSourceState) {
             if (source == SearchSourceState.LOADING || source == SearchSourceState.ERROR || source == SearchSourceState.PARTIAL) index++
@@ -1123,15 +1109,15 @@ private fun SearchList(
         status(state.telegramState); mediaGroups(telegramGroups)
         status(state.tvheadendState)
         state.liveTvSources.values.forEach { source ->
-            state.tvheadendResults.channels.filter { it.sourceId == source.id }.takeIf { it.isNotEmpty() }?.let { items ->
+            channelsBySource[source.id].orEmpty().takeIf { it.isNotEmpty() }?.let { items ->
                 index++
                 items.forEach { add(BrowseFocusSlot(BrowseFocusKey(null, "search:tvh-channel:${it.sourceId}:${it.uuid}", true), index++)) }
             }
-            state.tvheadendResults.programs.filter { it.sourceId == source.id }.takeIf { it.isNotEmpty() }?.let { items ->
+            programsBySource[source.id].orEmpty().takeIf { it.isNotEmpty() }?.let { items ->
                 index++
                 items.forEach { add(BrowseFocusSlot(BrowseFocusKey(null, "search:tvh-program:${it.sourceId}:${it.eventId}", true), index++)) }
             }
-            state.tvheadendResults.recordings.filter { it.sourceId == source.id }.takeIf { it.isNotEmpty() }?.let { items ->
+            recordingsBySource[source.id].orEmpty().takeIf { it.isNotEmpty() }?.let { items ->
                 index++
                 items.forEach { add(BrowseFocusSlot(BrowseFocusKey(null, "search:tvh-recording:${it.sourceId}:${it.uuid}", true), index++)) }
             }
@@ -1151,8 +1137,21 @@ private fun SearchList(
             index++
             state.radioResults.forEach { add(BrowseFocusSlot(BrowseFocusKey(null, "search:radio:${it.id}", true), index++)) }
         }
-    }
+    } }
     RegisterBrowseFocusSlots(listState, focusSlots)
+    val savedSlot = remember(focusSlots, resultFocus) {
+        focusSlots.firstOrNull { it.key.item == resultFocus.itemKey }
+    }
+    val focusedKey = savedSlot?.key?.item
+    val restoreResultFocus = resultFocus.pending && focusedKey != null
+    val requestInitialResultFocus = resultFocus.pending && !state.isSearching && focusedKey == null
+    val initialSlot = savedSlot ?: focusSlots.firstOrNull().takeUnless { resultFocus.itemKey != null && state.isSearching }
+    BrowseFocusInitialTarget(initialSlot?.key?.item, initialSlot?.key?.row)
+    BrowseFocusHoldEntry(resultFocus.pending && resultFocus.itemKey != null && savedSlot == null && state.isSearching)
+    val requestedMediaKey = focusedKey.takeIf { restoreResultFocus } ?: firstMediaKey.takeIf { requestInitialResultFocus }
+    LaunchedEffect(resultFocus, resultFocus.pending, focusSlots) {
+        resultFocus.restore(focusSlots) { listState.scrollToItem(it) }
+    }
     LazyColumn(
         allowUpExit = true,
         state = listState,
@@ -1227,9 +1226,9 @@ private fun SearchList(
 
         sourceListStatusItem("tvheadend-list-status", MediaSystem.TVHEADEND, state.tvheadendState, labelOverride = state.liveTvSources.values.map { it.name }.distinct().joinToString(", ").ifBlank { null })
         state.liveTvSources.values.forEach { source ->
-            val channels = state.tvheadendResults.channels.filter { it.sourceId == source.id }
-            val programs = state.tvheadendResults.programs.filter { it.sourceId == source.id }
-            val recordings = state.tvheadendResults.recordings.filter { it.sourceId == source.id }
+            val channels = channelsBySource[source.id].orEmpty()
+            val programs = programsBySource[source.id].orEmpty()
+            val recordings = recordingsBySource[source.id].orEmpty()
             val system = MediaSystem.fromKey(source.system) ?: MediaSystem.TVHEADEND
         if (channels.isNotEmpty()) {
             item(key = "tv-channel-header:${source.id}") { SearchListGroupHeader(system, R.string.search_channels) }
@@ -1469,9 +1468,11 @@ private fun initialFocusModifier(requestInitialFocus: Boolean): Modifier {
 
     val requester = remember { FocusRequester() }
     val filterFocus = LocalFilterFocusState.current
+    val browseFocus = com.ambient.tv.ui.common.LocalBrowseFocusReturnState.current
     // View changes remount the results behind the panel. Their old automatic focus
     // requests are consumed while toolbar controls own focus.
-    LaunchedEffect(requestInitialFocus, filterFocus) {
+    LaunchedEffect(requestInitialFocus, filterFocus, browseFocus) {
+        if (browseFocus?.managesInitialFocus == true) return@LaunchedEffect
         if (requestInitialFocus && filterFocus?.allowContentAutoFocus != false) {
             delay(120)
             repeat(4) {

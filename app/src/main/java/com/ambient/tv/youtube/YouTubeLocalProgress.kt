@@ -1,6 +1,7 @@
 package com.ambient.tv.youtube
 
 import android.content.Context
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateMapOf
 import org.json.JSONObject
 import org.json.JSONArray
@@ -28,6 +29,10 @@ object YouTubeLocalProgress {
     // Observable too: all cached cards must reflect a newer server value, not only the card
     // whose network request happened to return it.
     private val lastRemote = mutableStateMapOf<String, Int>()
+    private val progressRevision = mutableIntStateOf(0)
+    /** Observable invalidation for filtered browse snapshots; exact-time-only writes do not bump it. */
+    @get:Synchronized
+    val revision: Int get() = progressRevision.intValue
     @Volatile private var context: Context? = null
 
     @Synchronized
@@ -55,6 +60,7 @@ object YouTubeLocalProgress {
                 )
             }
         }
+        if (entries.isNotEmpty()) progressRevision.intValue++
     }
 
     /** Only fresh card responses are authoritative; watch-next often has no watch position. */
@@ -62,41 +68,51 @@ object YouTubeLocalProgress {
     fun observeRemote(videoId: String, remotePercent: Int) {
         if (videoId.isBlank() || remotePercent < 0) return
         val remote = remotePercent.coerceIn(0, 100)
+        val before = knownPercent(videoId)
         lastRemote[videoId] = remote
-        val entry = entries[videoId] ?: return
-        when {
-            // Acknowledgement must retain our exact milliseconds. Converting a server's
-            // whole percentage back into time would lose up to 1% of a long video's length.
-            entry.remoteAtSave == null || remote == entry.percent -> {
-                if (entry.remoteAtSave == remote) return
-                entries[videoId] = entry.copy(remoteAtSave = remote,
-                    pendingPercents = entry.pendingPercents + listOfNotNull(entry.remoteAtSave))
+        try {
+            val entry = entries[videoId] ?: return
+            when {
+                // Acknowledgement must retain our exact milliseconds. Converting a server's
+                // whole percentage back into time would lose up to 1% of a long video's length.
+                entry.remoteAtSave == null || remote == entry.percent -> {
+                    if (entry.remoteAtSave == remote) return
+                    entries[videoId] = entry.copy(remoteAtSave = remote,
+                        pendingPercents = entry.pendingPercents + listOfNotNull(entry.remoteAtSave))
+                }
+                youtubePendingProgressEcho(remote, entry.pendingPercents, entry.savedAt, System.currentTimeMillis()) -> return
+                entry.remoteAtSave != remote -> entries.remove(videoId)
+                else -> return
             }
-            youtubePendingProgressEcho(remote, entry.pendingPercents, entry.savedAt, System.currentTimeMillis()) -> return
-            entry.remoteAtSave != remote -> entries.remove(videoId)
-            else -> return
+            persist()
+        } finally {
+            publishPercentChange(videoId, before)
         }
-        persist()
     }
 
     /** A disk/in-memory card is a fallback, never evidence of a newer YouTube watch state. */
     @Synchronized
     fun observeCached(videoId: String, remotePercent: Int) {
         if (videoId.isBlank() || remotePercent < 0 || videoId in lastRemote) return
+        val before = knownPercent(videoId)
         lastRemote[videoId] = remotePercent.coerceIn(0, 100)
+        publishPercentChange(videoId, before)
     }
 
     /** Older versions could store a moving live-window clock as VOD watch progress. */
     @Synchronized
     fun discardLive(videoId: String) {
+        val before = knownPercent(videoId)
         lastRemote.remove(videoId)
         if (entries.remove(videoId) != null) persist()
+        publishPercentChange(videoId, before)
     }
 
     /** Position reached in this app's player. */
     @Synchronized
     fun record(videoId: String, positionMs: Long, durationMs: Long, completed: Boolean = false) {
         if (videoId.isBlank() || (durationMs <= 0L && !completed)) return
+        val before = knownPercent(videoId)
         val duration = durationMs.takeIf { it > 0L }
         val position = if (completed && duration != null) duration else
             positionMs.coerceAtLeast(0L).let { if (duration != null) it.coerceAtMost(duration) else it }
@@ -114,8 +130,17 @@ object YouTubeLocalProgress {
         if (entries.size > MAX_ENTRIES) {
             entries.entries.sortedBy { it.value.savedAt }.take(entries.size - MAX_ENTRIES)
                 .map { it.key }.forEach(entries::remove)
+            // Eviction can change another cached card's effective watch state too.
+            progressRevision.intValue++
         }
+        publishPercentChange(videoId, before)
         persist()
+    }
+
+    private fun knownPercent(videoId: String): Int? = entries[videoId]?.percent ?: lastRemote[videoId]
+
+    private fun publishPercentChange(videoId: String, before: Int?) {
+        if (knownPercent(videoId) != before) progressRevision.intValue++
     }
 
     /** Progress to show, with a cached card's value used only when no newer state is known. */

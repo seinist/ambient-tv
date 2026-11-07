@@ -131,9 +131,16 @@ class FilteredBrowseViewModel internal constructor(
     }
 
     fun onItemFocused(item: MediaItem) {
+        // Session memory is enough while browsing. Emitting Loaded here invalidates the
+        // whole result grid on every D-pad step, even though only two tiles change focus.
         preferences.setSectionFocus(stateKey, item.ratingKey)
+    }
+
+    /** A retained screen can return before its refresh finishes; publish its exit target once. */
+    fun captureFocusForReturn() {
         val current = _uiState.value as? FilteredBrowseUiState.Loaded ?: return
-        if (current.focusedRatingKey != item.ratingKey) _uiState.value = current.copy(focusedRatingKey = item.ratingKey)
+        val focused = preferences.sectionFocus(stateKey)
+        if (current.focusedRatingKey != focused) _uiState.value = current.copy(focusedRatingKey = focused)
     }
 
     private fun viewMode() = preferences.sectionViewMode(stateKey)?.let { runCatching { BrowseViewMode.valueOf(it) }.getOrNull() } ?: BrowseViewMode.GRID

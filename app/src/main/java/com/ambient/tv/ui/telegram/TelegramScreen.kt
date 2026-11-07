@@ -22,8 +22,9 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.grid.GridCells
-import androidx.compose.foundation.lazy.grid.items as gridItems
+import androidx.compose.foundation.lazy.grid.itemsIndexed as gridItemsIndexed
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
@@ -174,8 +175,7 @@ fun TelegramScreen(
         .ifEmpty { sections.take(1) }
     val canonical = sectionKey.takeIf { key -> shownTabs.any { it.first == key } }
         ?: shownTabs.first().first
-    var lastKey by rememberSaveable(sectionKey) { mutableStateOf<String?>(null) }
-    remember(returnedKey) { if (returnedKey != null) lastKey = returnedKey; Unit }
+    val focusMemory = rememberMonogramFocusMemory(sectionKey, returnedKey)
     var layoutKey by rememberSaveable(sectionKey) { mutableStateOf(viewModel.viewMode(sectionKey).name) }
     val layout = MonogramBrowseLayout.valueOf(layoutKey)
     var gridColumns by remember { mutableIntStateOf(viewModel.gridColumns) }
@@ -194,6 +194,7 @@ fun TelegramScreen(
         visibleMonogramRows(state.rows, query, channelFilter.takeUnless { it == "all" }, sort, descending)
     }
     val flat = remember(currentRows, sort, descending) { flatMonogramItems(currentRows, sort, descending) }
+    val focusIndex = remember(currentRows, flat) { MonogramBrowseFocusIndex(currentRows, flat) }
     val availableChannels = remember(state.rows) {
         state.rows.map { it.id to it.title }.distinctBy { it.first }
     }
@@ -253,7 +254,7 @@ fun TelegramScreen(
     BrowseFocusContentIdentity(listOf(sectionKey, layoutKey, sortKey, descending, channelFilter, query))
     // A post played after Next may not be loaded yet: load pages until it is, then focus it.
     // Entering the page waits meanwhile, so focus lands on that post and not on the first one.
-    val returnPending = returnedKey != null && flat.none { it.ratingKey == returnedKey }
+    val returnPending = returnedKey != null && !focusIndex.contains(returnedKey)
     var revealDone by remember(returnedKey) { mutableStateOf(returnedKey == null) }
     LaunchedEffect(returnedKey) {
         try {
@@ -263,20 +264,19 @@ fun TelegramScreen(
         }
     }
     BrowseFocusHoldEntry(returnPending && !revealDone)
-    val initialKey = lastKey ?: currentRows.firstOrNull()?.items?.firstOrNull()?.ratingKey
+    val initialKey = focusMemory.key ?: currentRows.firstOrNull()?.items?.firstOrNull()?.ratingKey
     BrowseFocusInitialTarget(
         initialKey.takeUnless { returnPending },
         if (layout == MonogramBrowseLayout.ROWS)
-            currentRows.firstOrNull { row -> row.items.any { it.ratingKey == initialKey } }?.id
+            focusIndex.rowForItem(initialKey)
                 ?: currentRows.firstOrNull()?.id
         else null,
     )
     when (layout) {
-        MonogramBrowseLayout.ROWS -> RegisterBrowseFocusRows(rowList,
-            currentRows.map { row -> row.id to row.items.map { it.ratingKey } })
-        MonogramBrowseLayout.GRID -> RegisterBrowseFocusGrid(grid, flat.map { it.ratingKey })
+        MonogramBrowseLayout.ROWS -> RegisterBrowseFocusRows(rowList, focusIndex.rowKeys)
+        MonogramBrowseLayout.GRID -> RegisterBrowseFocusGrid(grid, focusIndex.flatKeys)
         MonogramBrowseLayout.LIST, MonogramBrowseLayout.INFO_LIST, MonogramBrowseLayout.FILES ->
-            RegisterBrowseFocusList(flatList, flat.map { it.ratingKey })
+            RegisterBrowseFocusList(flatList, focusIndex.flatKeys)
     }
     LaunchedEffect(layout, grid, flatList, flat.size) {
         if (layout == MonogramBrowseLayout.ROWS) return@LaunchedEffect
@@ -491,13 +491,13 @@ fun TelegramScreen(
                                 CompositionLocalProvider(LocalMonogramRowCardWidth provides cardWidth) {
                                     ContentRow(
                                         row = row, columnFocus = focus,
-                                        restoreRatingKey = lastKey?.takeIf { key ->
-                                            row.items.any { it.ratingKey == key }
+                                        restoreRatingKey = focusMemory.key?.takeIf { key ->
+                                            focusIndex.indexInRow(row.id, key) >= 0
                                         },
                                         onItemFocused = { focused ->
-                                            lastKey = focused.ratingKey
-                                            val index = row.items.indexOfFirst { it.ratingKey == focused.ratingKey }
-                                            if (index >= row.items.size - 8) viewModel.loadMore()
+                                            focusMemory.key = focused.ratingKey
+                                            val index = focusIndex.indexInRow(row.id, focused.ratingKey)
+                                            if (index >= 0 && index >= row.items.size - 8) viewModel.loadMore()
                                         },
                                         onViewportNearEnd = { viewModel.loadMore() },
                                         onItemClick = { choose(it, row.items, row.id) },
@@ -524,15 +524,15 @@ fun TelegramScreen(
                         horizontalArrangement = Arrangement.spacedBy(16.dp),
                         verticalArrangement = Arrangement.spacedBy(16.dp),
                     ) {
-                        gridItems(flat, key = { it.ratingKey }) { item ->
+                        gridItemsIndexed(flat, key = { _, item -> item.ratingKey }) { index, item ->
                             MediaTile(
                                 item = item,
                                 style = com.ambient.tv.ui.common.MediaTileStyle.LANDSCAPE,
                                 fillCell = true,
                                 modifier = Modifier.browseFocusTarget(item.ratingKey),
                                 onFocused = {
-                                    lastKey = item.ratingKey
-                                    if (flat.indexOfFirst { it.ratingKey == item.ratingKey } >= flat.size - 10)
+                                    focusMemory.key = item.ratingKey
+                                    if (index >= flat.size - 10)
                                         viewModel.loadMore()
                                 },
                                 onClick = { choose(item, flat) },
@@ -555,20 +555,20 @@ fun TelegramScreen(
                         contentPadding = PaddingValues(screenGutter(), 10.dp, screenGutter(), 36.dp),
                         verticalArrangement = Arrangement.spacedBy(8.dp),
                     ) {
-                        items(flat, key = { it.ratingKey }) { item ->
+                        itemsIndexed(flat, key = { _, item -> item.ratingKey }) { index, item ->
                             if (layout == MonogramBrowseLayout.FILES) MonogramFileRow(item, viewModel.selected(item.ratingKey),
                                 onClick = { choose(item, flat) },
                                 onFocused = {
-                                    lastKey = item.ratingKey
-                                    if (flat.indexOfFirst { it.ratingKey == item.ratingKey } >= flat.size - 10)
+                                    focusMemory.key = item.ratingKey
+                                    if (index >= flat.size - 10)
                                         viewModel.loadMore()
                                 })
                             else MonogramListItem(item, listRows,
                                 detailed = layout == MonogramBrowseLayout.INFO_LIST,
                                 onClick = { choose(item, flat) },
                                 onFocused = {
-                                    lastKey = item.ratingKey
-                                    if (flat.indexOfFirst { it.ratingKey == item.ratingKey } >= flat.size - 10)
+                                    focusMemory.key = item.ratingKey
+                                    if (index >= flat.size - 10)
                                         viewModel.loadMore()
                                 })
                         }

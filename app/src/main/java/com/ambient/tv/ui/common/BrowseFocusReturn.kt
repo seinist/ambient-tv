@@ -407,6 +407,7 @@ fun Modifier.browseFocusTarget(key: Any, content: Boolean = true, rowKey: Any? =
 
 @Composable
 internal fun RegisterBrowseFocusGrid(state: LazyGridState, keys: List<Any>) {
+    if (LocalBrowseFocusReturnState.current == null) return
     val row = LocalBrowseFocusRow.current
     RegisterBrowseFocusCollection(state, remember(keys, row) { keys.mapIndexed { index, item ->
         BrowseFocusSlot(BrowseFocusKey(row, item, true), index)
@@ -415,6 +416,7 @@ internal fun RegisterBrowseFocusGrid(state: LazyGridState, keys: List<Any>) {
 
 @Composable
 internal fun RegisterBrowseFocusList(state: LazyListState, keys: List<Any>, rowKey: Any? = null) {
+    if (LocalBrowseFocusReturnState.current == null) return
     val row = rowKey ?: LocalBrowseFocusRow.current
     RegisterBrowseFocusCollection(state, remember(keys, row) { keys.mapIndexed { index, item ->
         BrowseFocusSlot(BrowseFocusKey(row, item, true), index)
@@ -424,6 +426,7 @@ internal fun RegisterBrowseFocusList(state: LazyListState, keys: List<Any>, rowK
 /** Outer row indices also resolve items whose inner LazyRow is not composed yet. */
 @Composable
 internal fun RegisterBrowseFocusRows(state: LazyListState, rows: List<Pair<Any, List<Any>>>) {
+    if (LocalBrowseFocusReturnState.current == null) return
     RegisterBrowseFocusCollection(state, remember(rows) { rows.flatMapIndexed { index, (row, items) ->
         items.map { BrowseFocusSlot(BrowseFocusKey(row, it, true), index) }
     } }, visible = { index -> state.layoutInfo.visibleItemsInfo.any { it.index == index } }) { state.scrollToItem(it) }
@@ -440,12 +443,14 @@ private fun sectionSlots(rows: List<Pair<Any, List<Any>>>): List<BrowseFocusSlot
 
 @Composable
 internal fun RegisterBrowseFocusSections(state: LazyListState, rows: List<Pair<Any, List<Any>>>) {
+    if (LocalBrowseFocusReturnState.current == null) return
     RegisterBrowseFocusCollection(state, remember(rows) { sectionSlots(rows) },
         visible = { index -> state.layoutInfo.visibleItemsInfo.any { it.index == index } }) { state.scrollToItem(it) }
 }
 
 @Composable
 internal fun RegisterBrowseFocusSections(state: LazyGridState, rows: List<Pair<Any, List<Any>>>) {
+    if (LocalBrowseFocusReturnState.current == null) return
     RegisterBrowseFocusCollection(state, remember(rows) { sectionSlots(rows) },
         visible = { index -> state.layoutInfo.visibleItemsInfo.any { it.index == index } }) { state.scrollToItem(it) }
 }
