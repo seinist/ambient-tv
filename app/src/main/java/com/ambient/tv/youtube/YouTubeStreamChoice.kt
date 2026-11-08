@@ -393,3 +393,18 @@ fun youtubeSameLanguage(a: String?, b: String?): Boolean {
  */
 fun youtubePreferredAudioLanguage(playbackAudioLanguage: String): String? =
     playbackAudioLanguage.takeUnless { it.isBlank() || it == com.ambient.tv.data.local.LanguagePreferences.ORIGINAL }
+
+/**
+ * Language Media3 should prefer before the first prepare. This mirrors the later SmartTube
+ * selection: an explicit playback language wins (excluding machine dubs), otherwise original.
+ * Null keeps the manifest default when no tagged language is known.
+ */
+fun youtubeStartupAudioLanguage(formats: List<YouTubeAdaptiveFormat>, playbackAudioLanguage: String): String? {
+    val options = youtubeAudioOptions(formats)
+    val preferred = youtubePreferredAudioLanguage(playbackAudioLanguage)?.let { tag ->
+        options.filter { youtubeSameLanguage(it.language, tag) && it.kind != "dubbed-auto" }
+            .sortedBy { if (it.original) 0 else 1 }
+            .firstOrNull()
+    }
+    return (preferred ?: options.firstOrNull { it.original })?.language
+}

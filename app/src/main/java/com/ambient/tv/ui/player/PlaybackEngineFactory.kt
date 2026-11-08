@@ -97,6 +97,8 @@ object PlaybackEngineFactory {
         streamUrlRenewer: ((String) -> String?)? = null,
         sourceHdrStandard: HdrStandard? = metadata?.handheldHdrStandard,
         preferOriginalAudio: Boolean = metadata?.source == "youtube",
+        /** Optional source-specific language already resolved before prepare (SmartTube). */
+        preferredAudioLanguage: String? = null,
         audioOnly: Boolean = metadata?.hasVideo == false,
         mpvAudioAllowed: Boolean = sourceHdrStandard != HdrStandard.DOLBY_VISION,
         /** YouTube only: center automatic captions that YouTube pins to the left edge. */
@@ -118,7 +120,7 @@ object PlaybackEngineFactory {
                 // holds one nor lets the next player open before its own stream is gone.
                 gatedMedia3Handle { deferPrepare ->
                     create(context.applicationContext, streamUrl, startPositionMs,
-                        subtitleTracks, streamHeaders, audioPassthroughEnabled, mimeType = mimeType, maxVideoHeight = maxVideoHeight, preferredVideoMimeType = preferredVideoMimeType, maxVideoFrameRate = maxVideoFrameRate, streamUrlRenewer = streamUrlRenewer, sourceHdrStandard = sourceHdrStandard, preferOriginalAudio = preferOriginalAudio, audioOnly = audioOnly, mpvAudioAllowed = mpvAudioAllowed, centerYouTubeCaptions = centerYouTubeCaptions,
+                        subtitleTracks, streamHeaders, audioPassthroughEnabled, mimeType = mimeType, maxVideoHeight = maxVideoHeight, preferredVideoMimeType = preferredVideoMimeType, maxVideoFrameRate = maxVideoFrameRate, streamUrlRenewer = streamUrlRenewer, sourceHdrStandard = sourceHdrStandard, preferOriginalAudio = preferOriginalAudio, preferredAudioLanguage = preferredAudioLanguage, audioOnly = audioOnly, mpvAudioAllowed = mpvAudioAllowed, centerYouTubeCaptions = centerYouTubeCaptions,
                         deferPrepare = deferPrepare, liveStream = liveStream, streamTuning = streamTuning,
                         dataSourceFactory = dataSourceFactory, profileMetadata = profileMetadata)
                 }
@@ -127,6 +129,12 @@ object PlaybackEngineFactory {
         val started = System.nanoTime()
         val spectrumAnalyzer = AudioSpectrumAnalyzer()
         val audioSession = AudioSession(videoImagePreferences(context), "media3", audioPassthroughEnabled, audioOnly = audioOnly)
+        // Seed the stable route and the saved profile before attach() installs callbacks that
+        // reopen a running player. Android may report the already-connected HDMI device shortly
+        // after callback registration; without this seed that normal initial report looks like a
+        // route change about 1.5 s into playback and causes stop()/prepare().
+        audioSession.refreshRoute(context)
+        profileMetadata?.let { primeMedia3AudioProfile(context, audioSession, it) }
         var createdPlayer: ExoPlayer? = null
         var audioReleased = false
         return initializePlaybackOrRelease(
@@ -207,8 +215,9 @@ object PlaybackEngineFactory {
                     // immediate headphone-unplug protection as well.
                     setHandleAudioBecomingNoisy(!com.ambient.tv.ui.mobile.isTelevision(context))
                     volume = 1f
-                    val languages = if (preferOriginalAudio) emptyList() else com.ambient.tv.data.local.LanguagePreferences.playbackLanguageTags(
-                        videoImagePreferences(context).playbackAudioLanguage)
+                    val languages = preferredAudioLanguage?.let(::listOf)
+                        ?: if (preferOriginalAudio) emptyList() else com.ambient.tv.data.local.LanguagePreferences.playbackLanguageTags(
+                            videoImagePreferences(context).playbackAudioLanguage)
                     trackSelectionParameters = trackSelectionParameters.buildUpon()
                         .setPreferredAudioLanguages(*languages.toTypedArray())
                         .setPreferredTextLanguages(*com.ambient.tv.data.local.LanguagePreferences.playbackLanguageTags(

@@ -25,6 +25,36 @@ class AutomaticPlaybackProfileTest {
         assertEquals(before, notifications.state.value)
     }
 
+    @Test fun primedMedia3AudioProfileIsNoopWhenUiRestoresSameProfile() {
+        val prefs = AppPreferences(memoryPreferences())
+        val profile = prefs.audioSettings.update(AudioOptions(output = "pcm", channels = "stereo"))
+        val title = TitleVideoSettings(audio = profile, audioDelayMs = 90)
+        val session = AudioSession(prefs, "media3", true)
+        assertTrue(session.restoreAutomaticProfile(profile))
+        session.titleScoped = true
+        session.restoreTitleDelay(90)
+
+        var liveApplies = 0
+        session.apply = { _, _ -> liveApplies++ }
+        restoreSavedPlaybackAudio(session, title, ResolutionVideoProfile("media3", audio = profile))
+
+        assertEquals(0, liveApplies)
+        assertEquals(90, session.options.delayMs)
+    }
+
+    @Test fun seededAudioRouteDoesNotLookLikeAStartupRouteChange() {
+        val prefs = AppPreferences(memoryPreferences())
+        val session = AudioSession(prefs, "media3", true)
+        val route = AudioRouteCapabilities(passthrough = setOf("ac3"), pcmChannels = 8, mpvAvailable = true)
+        session.updateRoute(route)
+        var restarts = 0
+        session.routeChanged = { _, _ -> restarts++ }
+
+        session.updateRoute(route)
+
+        assertEquals(0, restarts)
+    }
+
     @Test fun lateResolutionRefinesGlobalAudioWithoutWritingGlobals() {
         val prefs = AppPreferences(memoryPreferences())
         val defaults = prefs.audioSettings

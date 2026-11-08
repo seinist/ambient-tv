@@ -724,7 +724,10 @@ private fun YouTubeMedia3Playback(
     val target = remember(presetKey, maxVideoHeight) {
         com.ambient.tv.youtube.YouTubeDeviceVideo.videoTarget(context, presetKey, maxVideoHeight)
     }
-    val player = remember(playback.uri, playback.headers, startPositionMs, audioPassthroughEnabled, streamTuning, refreshGeneration) {
+    val startupAudioLanguage = remember(playback.adaptiveFormats, sponsorPrefs.playbackAudioLanguage) {
+        com.ambient.tv.youtube.youtubeStartupAudioLanguage(playback.adaptiveFormats, sponsorPrefs.playbackAudioLanguage)
+    }
+    val player = remember(playback.uri, playback.headers, startPositionMs, audioPassthroughEnabled, streamTuning, refreshGeneration, startupAudioLanguage) {
         BackgroundPlaybackSession.acquire(context, metadata, "media3",
             listOf(playback.uri, playback.headers, startPositionMs, audioPassthroughEnabled, streamTuning, refreshGeneration)) {
             val appContext = context.applicationContext
@@ -736,6 +739,7 @@ private fun YouTubeMedia3Playback(
                 profileMetadata = metadata,
                 streamHeaders = playback.headers, mimeType = playback.mimeType,
                 audioPassthroughEnabled = audioPassthroughEnabled,
+                preferredAudioLanguage = startupAudioLanguage,
                 maxVideoHeight = target.height,
                 preferredVideoMimeType = youtubeFamilyMimeType(target.family),
                 maxVideoFrameRate = target.fps,
@@ -2083,6 +2087,9 @@ private fun ytAudioLanguages(tracks: Tracks): List<YtAudioLanguage> {
 /** Plays [language], adaptive within its group; the group already playing keeps its codec. */
 private fun applyYtAudioLanguage(player: ExoPlayer, language: YtAudioLanguage) {
     val group = language.groups.firstOrNull { it.isSelected } ?: language.groups.first()
+    // Automatic/original selection frequently already picked this AdaptationSet. Re-applying an
+    // explicit override after onTracksChanged can briefly put Media3 back into BUFFERING.
+    if ((0 until group.length).any(group::isTrackSelected)) return
     val indices = (0 until group.length).filter(group::isTrackSupported)
     player.trackSelectionParameters = player.trackSelectionParameters.buildUpon()
         .setTrackTypeDisabled(C.TRACK_TYPE_AUDIO, false)

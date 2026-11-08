@@ -42,4 +42,19 @@ class YouTubePreferredAudioTest {
         org.junit.Assert.assertNull(youtubePreferredAudioLanguage("original"))
         org.junit.Assert.assertEquals("de", youtubePreferredAudioLanguage("de"))
     }
+
+    @org.junit.Test fun startupLanguageChoosesOriginalOrRequestedNonMachineDub() {
+        val formats = listOf(
+            YouTubeAdaptiveFormat("audio/mp4; codecs=\"mp4a.40.2\"", "https://a/de-auto",
+                xtags = "lang=de;acont=dubbed-auto"),
+            YouTubeAdaptiveFormat("audio/mp4; codecs=\"mp4a.40.2\"", "https://a/en",
+                xtags = "lang=en;acont=original"),
+            YouTubeAdaptiveFormat("audio/mp4; codecs=\"mp4a.40.2\"", "https://a/fr",
+                xtags = "lang=fr;acont=dubbed"),
+        )
+        org.junit.Assert.assertEquals("en", youtubeStartupAudioLanguage(formats, "original"))
+        org.junit.Assert.assertEquals("fr", youtubeStartupAudioLanguage(formats, "fr"))
+        // A requested language offered only as a machine dub falls back to original.
+        org.junit.Assert.assertEquals("en", youtubeStartupAudioLanguage(formats, "de"))
+    }
 }
