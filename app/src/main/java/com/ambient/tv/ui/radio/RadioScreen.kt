@@ -1089,7 +1089,7 @@ private fun RadioStationTile(
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 Box(Modifier.fillMaxWidth().aspectRatio(1f)) {
-                    RadioArtwork(station, Modifier.fillMaxSize())
+                    RadioArtwork(station, Modifier.fillMaxSize(), staggerUncached = !cardHasFocus)
                     // Same artwork-corner badge as the watched status on MediaTile.
                     // Favorite edits remain available from the player OSD or station list.
                     if (favorite) {
@@ -1221,7 +1221,7 @@ private fun RadioStationList(
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         Box(Modifier.size(72.dp * rowScale)) {
-                            RadioArtwork(station, Modifier.fillMaxSize())
+                            RadioArtwork(station, Modifier.fillMaxSize(), staggerUncached = !rowHasFocus)
                             if ((selected && playing) || startingStationId == station.id) {
                                 androidx.compose.material3.Icon(
                                     Icons.Default.PlayArrow,
@@ -1271,7 +1271,11 @@ private fun RadioStationList(
 }
 
 @Composable
-private fun RadioArtwork(station: RadioStation, modifier: Modifier) {
+private fun RadioArtwork(
+    station: RadioStation,
+    modifier: Modifier,
+    staggerUncached: Boolean = true,
+) {
     if (!station.artworkUrl.isNullOrBlank()) {
         ArtworkImage(
             station.artworkUrl,
@@ -1280,6 +1284,7 @@ private fun RadioArtwork(station: RadioStation, modifier: Modifier) {
                 .clip(RoundedCornerShape(8.dp))
                 .background(Color.DarkGray),
             contentScale = ContentScale.Crop,
+            staggerUncached = staggerUncached,
         )
     } else {
         Box(
