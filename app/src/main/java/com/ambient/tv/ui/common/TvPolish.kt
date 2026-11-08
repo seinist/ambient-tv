@@ -425,6 +425,12 @@ fun Modifier.uniformBorder(
     shape: Shape,
 ): Modifier = border(width = width, color = color, shape = shape)
 
+private class ArtworkRequestContinuity {
+    var model: Any? = null
+    var identity: Any? = null
+    var memoryKey: coil3.memory.MemoryCache.Key? = null
+}
+
 /** Last memory-cache key per artwork model; see the placeholder in [ArtworkImage]. */
 private val ArtworkMemoryKeys = object : java.util.LinkedHashMap<Any, coil3.memory.MemoryCache.Key>(256, 0.75f, true) {
     override fun removeEldestEntry(eldest: MutableMap.MutableEntry<Any, coil3.memory.MemoryCache.Key>?) = size > 512
@@ -468,17 +474,32 @@ fun ArtworkImage(
     var candidateIndex by remember(candidates) { mutableStateOf(0) }
     val currentModel = candidates.getOrNull(candidateIndex)
     val hasModel = currentModel != null
+    val continuity = remember { ArtworkRequestContinuity() }
+    val requestIdentity = remember(currentModel) {
+        com.ambient.tv.data.browse.artworkRequestIdentity(currentModel)
+    }
     var containerSize by remember { mutableStateOf(IntSize.Zero) }
     val constrainDecode = LocalPerformanceProfile.current.constrainImageDecodeSize
     // Coil only checks its memory cache after AsyncImage has been measured, which leaves a
     // freshly composed tile empty for a frame (e.g. every poster on Back to Home). The key of
     // the last successful load is served as placeholder before the size is resolved.
-    val cachedKey = remember(currentModel) { currentModel?.let { ArtworkMemoryKeys[it] } }
+    val imageLoader = coil3.SingletonImageLoader.get(context)
+    // A cold-start snapshot and the live response can describe the same provider image with
+    // different credential query strings. If this exact visible card already succeeded, link
+    // the live request to that memory entry so Coil returns it without fetch/decode or a blank frame.
+    val continuityKey = continuity.memoryKey?.takeIf { key ->
+        continuity.model != currentModel &&
+            continuity.identity == requestIdentity &&
+            imageLoader.memoryCache?.get(key) != null
+    }
+    val cachedKey = remember(currentModel, continuityKey) {
+        currentModel?.let { ArtworkMemoryKeys[it] } ?: continuityKey
+    }
     // The key can outlive the bitmap. A miss must still show the pulse; Coil's placeholder
     // only draws when the bitmap is actually still in memory.
     val shownFromMemory = remember(currentModel, cachedKey, context) {
         val key = cachedKey ?: return@remember false
-        coil3.SingletonImageLoader.get(context).memoryCache?.get(key) != null
+        imageLoader.memoryCache?.get(key) != null
     }
     val staggerThisLoad = staggerUncached && candidateIndex == 0 &&
         !com.ambient.tv.ui.mobile.LocalHandheldUi.current && hasModel && !shownFromMemory
@@ -505,6 +526,10 @@ fun ArtworkImage(
         ImageRequest.Builder(context).data(currentModel).crossfade(false)
             .placeholderMemoryCacheKey(cachedKey)
             .apply {
+                // Only reuse a full cache key inside the same composable/card. That guarantees
+                // identical layout constraints; global URL aliases could incorrectly reuse a
+                // small tile bitmap for a large detail/backdrop request.
+                if (continuityKey != null) memoryCacheKey(continuityKey)
                 requestHeaders(artworkHeadersForModel(currentModel, headers))
                 // AsyncImage's constraints resolver decodes at the measured view size.
                 // Do not wait for onSizeChanged/recomposition before creating the painter.
@@ -534,7 +559,12 @@ fun ArtworkImage(
                     loading = false
                     failed = false
                     val key = it.result.memoryCacheKey
-                    if (key != null) ArtworkMemoryKeys[currentModel] = key
+                    if (key != null) {
+                        ArtworkMemoryKeys[currentModel] = key
+                        continuity.model = currentModel
+                        continuity.identity = requestIdentity
+                        continuity.memoryKey = key
+                    }
                     if (focusCrop) visibleFraction = cropVisibleFraction(it.painter.intrinsicSize, containerSize) ?: 1f
                 },
                 onError = {
