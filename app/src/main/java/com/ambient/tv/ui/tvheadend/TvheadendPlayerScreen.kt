@@ -458,13 +458,16 @@ private fun TvheadendPlaybackSurface(
     val context = LocalContext.current
     val activity = remember(context) { context.findActivity() }
     val metadata = LocalPlaybackMetadata.current
-    val player = remember(source.url, source.startPositionMs) {
+    // Auto may replace the active engine while this screen stays open, including when two
+    // station IDs share one stream URL. Borrow its new handle instead of retaining the old one.
+    val player = remember(source.url, source.startPositionMs, metadata?.route, BackgroundPlaybackSession.activeHandle()) {
         PlaybackEngineFactory.create(
             context = context,
             streamUrl = source.url,
             startPositionMs = source.startPositionMs,
             streamHeaders = source.headers,
             audioPassthroughEnabled = audioPassthroughEnabled,
+            mimeType = liveTvMedia3MimeType(source.url),
             metadata = metadata,
         )
     }

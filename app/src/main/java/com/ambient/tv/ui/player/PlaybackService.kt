@@ -48,10 +48,16 @@ import com.ambient.tv.data.telegram.playerMetadata
 import com.ambient.tv.car.CarAudioCatalog
 import com.ambient.tv.car.CarAudioSelection
 import com.ambient.tv.car.PlaybackLibraryCallback
+import com.ambient.tv.car.applyCarRadioMetadata
+import com.ambient.tv.car.carLiveMediaId
+import com.ambient.tv.car.carLiveMetadataMatches
+import com.ambient.tv.car.carLiveNowPlayingMetadata
+import com.ambient.tv.car.playerMetadata
 import com.ambient.tv.data.dlna.DlnaKeys
 import com.ambient.tv.data.files.FileKeys
 import com.ambient.tv.data.jellyfin.JellyfinBackend
 import com.ambient.tv.data.emby.EmbyBackend
+import com.ambient.tv.data.radio.localizedLanguageNames
 import com.ambient.tv.spotify.SpotifyRepository
 import com.ambient.tv.spotify.SpotifyPlaybackState
 import com.ambient.tv.ui.navigation.Destinations
@@ -104,6 +110,7 @@ class PlaybackService : MediaLibraryService() {
     private val sponsorSkip = BackgroundSponsorSkipPolicy()
     private var carMusicQueue: List<String> = emptyList()
     private var carLiveQueue: List<String> = emptyList()
+    private var carLiveMetadataJob: Job? = null
     /** Car item IDs of the browsed Telegram audio posts; the playing post is found by mediaKey. */
     private var carTelegramQueue: List<String> = emptyList()
     private var foregroundStarted = false
@@ -493,7 +500,7 @@ class PlaybackService : MediaLibraryService() {
         return when (metadata.source) {
             "radio" -> CarAudioIds.stationId(id) == metadata.mediaId
             "telegram" -> CarAudioIds.telegramItemId(id) == com.ambient.tv.data.telegram.telegramMediaIds(metadata.mediaId)
-            "iptv", "tvheadend" -> id == metadata.mediaId
+            "iptv", "tvheadend" -> id == carLiveMediaId(metadata)
             "plex", "jellyfin", "emby", "dlna", "files" -> CarAudioIds.musicItemId(id) == metadata.mediaId
             else -> false
         }
@@ -531,9 +538,9 @@ class PlaybackService : MediaLibraryService() {
         BackgroundPlaybackSession.seekTo((positionMs - offset).coerceAtLeast(0L))
     }
 
-    private fun requestCarAudioPlayback(itemId: String) {
+    private fun requestCarAudioPlayback(itemId: String, liveQueue: List<String>? = null) {
         libraryCallback.cancelPendingSelections()
-        selectCarMediaItems(listOf(MediaItem.Builder().setMediaId(itemId).build()), 0, C.TIME_UNSET)
+        selectCarMediaItems(listOf(MediaItem.Builder().setMediaId(itemId).build()), 0, C.TIME_UNSET, liveQueue)
     }
 
     /** Real playback starts only on Play. The adapter keeps prepare-only selections silent. */
@@ -541,13 +548,18 @@ class PlaybackService : MediaLibraryService() {
         mediaItems: List<MediaItem>,
         startIndex: Int,
         startPositionMs: Long,
+        liveQueue: List<String>? = null,
     ): ListenableFuture<Void> {
         if (mediaItems.size != 1 || startIndex !in listOf(0, C.INDEX_UNSET)) {
             return Futures.immediateFailedFuture(IllegalArgumentException("Select one audio item"))
         }
         return launchCarSelection(mediaItems[0].mediaId) { version, generation ->
-            val selection = carCatalog.resolve(mediaItems[0].mediaId)
+            val resolved = carCatalog.resolve(mediaItems[0].mediaId)
                 ?: throw IllegalArgumentException("Unavailable audio item")
+            // Next/Previous retains the originating group even beyond the currently browsed page.
+            val selection = if (resolved is CarAudioSelection.Live && liveQueue != null &&
+                mediaItems[0].mediaId in liveQueue) resolved.copy(queue = liveQueue)
+                else resolved
             checkCarSelection(version, generation)
             startCarAudio(selection, version, generation)
             if (version != carSelectionVersion) throw CancellationException("Playback selection replaced")
@@ -604,6 +616,8 @@ class PlaybackService : MediaLibraryService() {
     }
 
     private suspend fun startCarAudio(selection: CarAudioSelection, version: Long, generation: Long) {
+        carLiveMetadataJob?.cancel()
+        carLiveMetadataJob = null
         when (selection) {
             is CarAudioSelection.Radio -> {
                 if (carSpotifySelected) spotify.pause()
@@ -706,27 +720,68 @@ class PlaybackService : MediaLibraryService() {
                 val playbackId = carLiveQueue.firstOrNull {
                     CarAudioIds.liveAudioSpec(it)?.second == channel.uuid
                 } ?: return
-                PlaybackEngineFactory.create(
+                val player = PlaybackEngineFactory.create(
                     context = this,
                     streamUrl = stream.url,
                     startPositionMs = 0L,
                     streamHeaders = stream.headers,
-                    mimeType = if (android.net.Uri.parse(stream.url).path.orEmpty().endsWith(".m3u8", true))
-                        androidx.media3.common.MimeTypes.APPLICATION_M3U8 else null,
-                    metadata = PlaybackMetadata(
-                        route = Destinations.LIVE_TV,
-                        title = channel.name,
-                        subtitle = channel.numberLabel.orEmpty(),
-                        source = selection.system,
-                        mediaId = playbackId,
-                        hasVideo = false,
-                        isLive = true,
-                        artworkUrl = channel.iconUrl,
-                        durationMs = 0L,
-                    ),
+                    mimeType = com.ambient.tv.ui.tvheadend.liveTvMedia3MimeType(stream.url),
+                    metadata = selection.playerMetadata(playbackId, preferences),
                     audioOnly = true,
                     liveStream = true,
                 )
+                observeCarLiveRadio(player, playbackId)
+            }
+        }
+    }
+
+    /** Enrich a service-started radio without delaying its tune or opening a second stream. */
+    private fun observeCarLiveRadio(player: androidx.media3.exoplayer.ExoPlayer, playbackId: String) {
+        val generation = BackgroundPlaybackSession.snapshot.value.generation
+        val stationName = BackgroundPlaybackSession.snapshot.value.metadata?.title.orEmpty()
+        var programmes = emptyList<com.ambient.tv.livetv.LiveTvProgramme>()
+        var streamTitle: String? = null
+        fun isCurrent(): Boolean {
+            val snapshot = BackgroundPlaybackSession.snapshot.value
+            return snapshot.active && carLiveMetadataMatches(snapshot.metadata, snapshot.generation, generation, playbackId)
+        }
+        fun publish() {
+            if (!isCurrent()) return
+            val metadata = BackgroundPlaybackSession.snapshot.value.metadata ?: return
+            val updated = carLiveNowPlayingMetadata(metadata, programmes, System.currentTimeMillis() / 1_000L, streamTitle)
+            if (updated != metadata) BackgroundPlaybackSession.refreshMetadata(updated)
+        }
+        val listener = object : androidx.media3.common.Player.Listener {
+            override fun onMediaMetadataChanged(mediaMetadata: MediaMetadata) {
+                if (!isCurrent()) return
+                streamTitle = com.ambient.tv.ui.radio.radioMetadataNowPlaying(
+                    mediaMetadata.title, mediaMetadata.artist, stationName,
+                )
+                publish()
+            }
+
+            override fun onMetadata(metadata: androidx.media3.common.Metadata) {
+                if (!isCurrent()) return
+                val icy = (0 until metadata.length())
+                    .mapNotNull { metadata.get(it) as? androidx.media3.extractor.metadata.icy.IcyInfo }
+                    .lastOrNull() ?: return
+                streamTitle = com.ambient.tv.ui.radio.radioNowPlayingTitle(icy.title, stationName)
+                publish()
+            }
+        }
+        player.addListener(listener)
+        listener.onMediaMetadataChanged(player.mediaMetadata)
+        carLiveMetadataJob = scope.launch {
+            try {
+                while (!destroying && isCurrent()) {
+                    programmes = com.ambient.tv.util.suspendResult {
+                        withContext(Dispatchers.IO) { carCatalog.liveProgrammes(playbackId) }
+                    }.getOrDefault(programmes)
+                    publish()
+                    delay(30_000L)
+                }
+            } finally {
+                player.removeListener(listener)
             }
         }
     }
@@ -748,10 +803,10 @@ class PlaybackService : MediaLibraryService() {
             playRadioAdjacent(next)
             return
         }
-        val liveIndex = carLiveQueue.indexOf(current?.mediaId)
+        val liveIndex = carLiveQueue.indexOf(carLiveMediaId(current))
         val liveTarget = if (next) liveIndex + 1 else liveIndex - 1
         if (liveIndex >= 0 && liveTarget in carLiveQueue.indices) {
-            requestCarAudioPlayback(carLiveQueue[liveTarget])
+            requestCarAudioPlayback(carLiveQueue[liveTarget], liveQueue = carLiveQueue)
             return
         }
         val telegramIndex = carTelegramIndex(current?.mediaId)
@@ -833,7 +888,8 @@ class PlaybackService : MediaLibraryService() {
         val hasNextRadio = metadata?.source == "radio" && radioQueue.next() != null
         val carIndex = carMusicQueue.indexOf(metadata?.mediaId)
         val carMusic = metadata?.source != "radio" && carIndex >= 0
-        val liveIndex = carLiveQueue.indexOf(metadata?.mediaId)
+        val liveMediaId = carLiveMediaId(metadata)
+        val liveIndex = carLiveQueue.indexOf(liveMediaId)
         val carLive = metadata?.source in setOf("iptv", "tvheadend") && liveIndex >= 0
         val telegramIndex = if (metadata?.source == "telegram") carTelegramIndex(metadata.mediaId) else -1
         val carTelegram = telegramIndex >= 0
@@ -842,6 +898,15 @@ class PlaybackService : MediaLibraryService() {
         val hasNext = hasNextRadio || (carMusic && carIndex < carMusicQueue.lastIndex) ||
             (carLive && liveIndex < carLiveQueue.lastIndex) ||
             (carTelegram && telegramIndex < carTelegramQueue.lastIndex)
+        val liveProgramme = (metadata?.resumeState as? com.ambient.tv.ui.tvheadend.TvheadendPlayerState.Ready)?.nowEvent
+        val radioStation = radioQueue.current()?.takeIf { metadata?.source == "radio" && it.id == metadata.mediaId }
+        val radioDescription = liveProgramme?.description?.takeIf(String::isNotBlank)
+            ?: liveProgramme?.summary?.takeIf(String::isNotBlank)
+            ?: liveProgramme?.subtitle?.takeIf(String::isNotBlank)
+            ?: radioStation?.let { station ->
+                (listOfNotNull(station.country, station.state) + station.localizedLanguageNames())
+                    .filter(String::isNotBlank).distinct().joinToString(" · ").takeIf(String::isNotBlank)
+            }
         val itemMetadata = MediaMetadata.Builder()
             .setTitle(metadata?.title.orEmpty())
             .setArtist(metadata?.subtitle.orEmpty())
@@ -853,12 +918,19 @@ class PlaybackService : MediaLibraryService() {
                 metadata?.hasVideo == true -> MediaMetadata.MEDIA_TYPE_MOVIE
                 else -> MediaMetadata.MEDIA_TYPE_MUSIC
             })
-            .apply { artworkData?.let { setArtworkData(it, MediaMetadata.PICTURE_TYPE_FRONT_COVER) } }
+            .applyCarRadioMetadata(metadata, description = radioDescription,
+                genre = radioStation?.tags?.joinToString(", "))
+            .apply {
+                artworkData?.let { setArtworkData(it, MediaMetadata.PICTURE_TYPE_FRONT_COVER) }
+                if (carLive && liveMediaId != null && !metadata?.artworkUrl.isNullOrBlank()) {
+                    setArtworkUri(com.ambient.tv.car.CarAudioArtwork.uri(this@PlaybackService, liveMediaId))
+                }
+            }
             .build()
         // Only opaque catalog/session IDs leave the app; authenticated stream URLs never do.
         val id = when {
             metadata?.source == "radio" -> CarAudioIds.station(metadata.mediaId)
-            carLive -> metadata?.mediaId.orEmpty()
+            carLive -> liveMediaId.orEmpty()
             carTelegram -> carTelegramQueue[telegramIndex]
             carMusic -> CarAudioIds.musicItem(metadata?.mediaId.orEmpty())
             else -> "playback:${state.generation}"

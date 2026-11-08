@@ -239,6 +239,12 @@
             android:authorities="${applicationId}.launcherart"
             android:exported="true"
             android:grantUriPermissions="false" />
+        <!-- Android Auto reads radio logos locally; remote addresses and login data stay here. -->
+        <provider
+            android:name=".car.CarAudioArtworkProvider"
+            android:authorities="${applicationId}.caraudioart"
+            android:exported="true"
+            android:grantUriPermissions="false" />
         <!-- Result of the in-app update's install session (status, confirmation, retry without profile). -->
         <receiver
             android:name=".update.UpdateInstallReceiver"

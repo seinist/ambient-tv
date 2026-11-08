@@ -44,7 +44,8 @@ internal sealed interface CarAudioSelection {
     data class Spotify(val uri: String) : CarAudioSelection
     data class Library(val item: MediaItem, val queue: List<String>) : CarAudioSelection
     data class Live(val channel: LiveTvChannel, val stream: LiveTvPlaybackSource,
-        val queue: List<String>, val system: String) : CarAudioSelection
+        val queue: List<String>, val system: String,
+        val artworkHeaders: Map<String, String> = emptyMap()) : CarAudioSelection
     /** [queue] holds car item IDs of the browsed Telegram audio posts. */
     data class Telegram(val media: TelegramMedia, val url: String, val queue: List<String>) : CarAudioSelection
 }
@@ -336,7 +337,13 @@ internal class CarAudioCatalog @Inject constructor(
 
     /** A selection is resolved through the authenticated repository, never a URI provided by a car client. */
     suspend fun resolve(id: String): CarAudioSelection? {
-        if (CarAudioIds.liveAudioSpec(id) != null) return auxiliary.resolveLive(id)
+        CarAudioIds.liveAudioSpec(id)?.let { (sourceId, _) ->
+            val parent = parents[id]
+            val folder = parent?.let { CarAudioIds.moreSpec(it)?.first ?: it }
+            val group = folder?.let(CarAudioIds::liveGroupSpec)
+                ?.takeIf { it.first == sourceId }?.second
+            return auxiliary.resolveLive(id, group)
+        }
         CarAudioIds.stationId(id)?.let { stationId ->
             if (!preferences.radioEnabled) return null
             val station = entriesById[id]?.radioStation
@@ -379,12 +386,16 @@ internal class CarAudioCatalog @Inject constructor(
         return null
     }
 
+    /** Optional programme metadata is loaded after the service has started the audio. */
+    suspend fun liveProgrammes(id: String) = auxiliary.liveProgrammes(id)
+
     suspend fun entry(id: String): CarAudioEntry? =
         entriesById[id] ?: when (val selection = resolve(id)) {
             is CarAudioSelection.Radio -> selection.station.asEntry()
             is CarAudioSelection.Library -> selection.item.asEntry()
             is CarAudioSelection.Live -> CarAudioEntry(id, selection.channel.name,
-                selection.channel.numberLabel, selection.channel.iconUrl, playable = true)
+                selection.channel.numberLabel, selection.channel.iconUrl?.takeIf(String::isNotBlank)
+                    ?.let { CarAudioArtwork.uri(context, id).toString() }, playable = true)
             is CarAudioSelection.Telegram -> selection.media.asCarEntry()
             else -> null
         }

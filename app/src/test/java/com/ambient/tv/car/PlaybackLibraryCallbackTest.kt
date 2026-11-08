@@ -309,4 +309,62 @@ class PlaybackLibraryCallbackTest {
         assertEquals(true, folder.mediaMetadata.isBrowsable)
         assertEquals(false, folder.mediaMetadata.isPlayable)
     }
+
+    @Test fun liveRadioArtworkSurvivesBrowseItemAndSearchForBothCarProtocols() {
+        val sourceId = "tvheadend:profile-scope"
+        val id = CarAudioIds.liveAudio(sourceId, "radio-1")
+        val artwork = CarAudioArtwork.uri(RuntimeEnvironment.getApplication(), id)
+        val entry = CarAudioEntry(id, "News Radio", "101", artwork.toString(), playable = true)
+        val parent = CarAudioIds.liveGroup(sourceId, "")
+        source.entries[id] = entry
+        source.folders[parent] = listOf(entry)
+        source.found = listOf(entry)
+
+        for (controller in listOf(browser, legacyBrowser)) {
+            val item = callback.onGetItem(session, controller, id).get().value!!
+            val children = callback.onGetChildren(session, controller, parent, 0, 40, null)
+                .get().value!!.single()
+            val search = callback.onGetSearchResult(session, controller, "News", 0, 40, null)
+                .get().value!!.single()
+            for (result in listOf(item, children, search)) {
+                assertEquals(id, result.mediaId)
+                assertEquals(artwork, result.mediaMetadata.artworkUri)
+                assertEquals("News Radio", result.mediaMetadata.title)
+                assertEquals(true, result.mediaMetadata.isPlayable)
+                assertEquals(false, result.mediaMetadata.isBrowsable)
+                assertNull(result.mediaMetadata.artworkData)
+                assertNull(result.localConfiguration)
+            }
+        }
+    }
+
+    @Test fun liveRadioSelectionKeepsCatalogArtworkAndDiscardsClientImageUrls() {
+        val id = CarAudioIds.liveAudio("iptv:playlist-scope", "radio-1")
+        val artwork = CarAudioArtwork.uri(RuntimeEnvironment.getApplication(), id)
+        source.entries[id] = CarAudioEntry(id, "Radio", artworkUrl = artwork.toString(), playable = true)
+        val requested = MediaItem.Builder().setMediaId(id)
+            .setMediaMetadata(MediaMetadata.Builder()
+                .setArtworkUri(android.net.Uri.parse("https://untrusted.test/logo?ticket=secret"))
+                .build())
+            .build()
+
+        val item = callback.onAddMediaItems(session, browser, listOf(requested)).get().single()
+        assertEquals(artwork, item.mediaMetadata.artworkUri)
+        assertEquals("Radio", item.mediaMetadata.title)
+        assertNull(item.localConfiguration)
+    }
+
+    @Test fun itemConversionDoesNotPublishForeignOrMalformedContentUris() {
+        val id = CarAudioIds.liveAudio("tvheadend:profile-scope", "radio-1")
+        val artwork = CarAudioArtwork.uri(RuntimeEnvironment.getApplication(), id)
+        for (uri in listOf(
+            artwork.buildUpon().authority("foreign.app.caraudioart").build(),
+            artwork.buildUpon().appendQueryParameter("url", "http://private.test/logo").build(),
+            artwork.buildUpon().appendPath("extra").build(),
+            android.net.Uri.parse("file:///data/user/0/com.ambient.tv/private-logo.png"),
+        )) {
+            val item = CarAudioEntry(id, "Radio", artworkUrl = uri.toString(), playable = true).toMedia3Item()
+            assertNull(item.mediaMetadata.artworkUri)
+        }
+    }
 }

@@ -1,6 +1,7 @@
 package com.ambient.tv.car
 
 import android.content.Context
+import android.os.SystemClock
 import com.ambient.tv.data.dlna.DlnaKeys
 import com.ambient.tv.data.dlna.DlnaNode
 import com.ambient.tv.data.dlna.DlnaRepository
@@ -16,8 +17,20 @@ import com.ambient.tv.data.local.AppPreferences
 import com.ambient.tv.livetv.LiveTvChannel
 import com.ambient.tv.livetv.LiveTvChannelKind
 import com.ambient.tv.livetv.LiveTvPlaybackSource
+import com.ambient.tv.livetv.LiveTvProgramme
 import com.ambient.tv.livetv.LiveTvRegistry
+import com.ambient.tv.livetv.LiveTvRepository
+import com.ambient.tv.util.suspendResult
 import dagger.hilt.android.qualifiers.ApplicationContext
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Deferred
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.async
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -58,13 +71,99 @@ internal class CarAuxiliaryAudio @Inject constructor(
     private val fileStore: FileStore,
     private val access: FileAccess,
 ) {
+    private data class LiveRadioSnapshot(
+        val loadedAt: Long,
+        val channels: CarLiveRadioChannels,
+        val programmes: List<LiveTvProgramme>,
+    )
+    private class LiveRadioState(val repository: LiveTvRepository) {
+        val lock = Mutex()
+        @Volatile var snapshot: LiveRadioSnapshot? = null
+        val guideJob = SupervisorJob()
+        val guideScope = CoroutineScope(guideJob + Dispatchers.IO)
+        @Volatile var epg: Deferred<List<LiveTvProgramme>?>? = null
+        var epgStartedAt = 0L
+    }
+    private val liveRadioStates = mutableMapOf<String, LiveRadioState>()
+
     fun hasStorage(): Boolean =
         (preferences.filesEnabled && fileStore.sources().isNotEmpty()) || dlnaStore.servers().isNotEmpty()
 
-    fun hasLive(system: String): Boolean = liveTv.configured().any { it.source.system == system }
+    fun hasLive(system: String): Boolean = liveRepositories().any { it.source.system == system }
 
-    private fun liveRepository(id: String) = liveTv.configured()
-        .firstOrNull { it.source.id == id && it.source.system in setOf("iptv", "tvheadend") }
+    private fun liveRepository(id: String) = liveRepositories().firstOrNull { it.source.id == id }
+
+    private fun liveRepositories(): List<LiveTvRepository> {
+        val repositories = liveTv.configured().filter { it.source.system in setOf("iptv", "tvheadend") }
+        val current = repositories.associateBy { it.source.id }
+        synchronized(liveRadioStates) {
+            liveRadioStates.entries.removeAll { (id, state) ->
+                (current[id] !== state.repository).also { stale -> if (stale) state.guideJob.cancel() }
+            }
+        }
+        return repositories
+    }
+
+    private suspend fun liveRadioChannels(repo: LiveTvRepository, waitForGuide: Boolean = true): CarLiveRadioChannels {
+        val state = synchronized(liveRadioStates) {
+            liveRadioStates[repo.source.id]?.takeIf { it.repository === repo }
+                ?: LiveRadioState(repo).also { liveRadioStates[repo.source.id] = it }
+        }
+        fun fresh() = state.snapshot?.takeIf {
+            SystemClock.elapsedRealtime() - it.loadedAt < LIVE_RADIO_TTL_MS
+        }?.channels
+        if (!waitForGuide) {
+            // A simultaneous browse may be awaiting EPG under the cache lock. Playback
+            // uses available evidence immediately and never queues behind that optional work.
+            return fresh() ?: loadLiveRadioSnapshot(state, waitForGuide = false).channels
+        }
+        return state.lock.withLock {
+            fresh() ?: loadLiveRadioSnapshot(state, waitForGuide = true).also { state.snapshot = it }.channels
+        }
+    }
+
+    private suspend fun loadLiveRadioSnapshot(state: LiveRadioState, waitForGuide: Boolean): LiveRadioSnapshot {
+        val repo = state.repository
+        val channels = repo.channels()
+        val now = System.currentTimeMillis() / 1000L
+        val withoutGuide = withContext(Dispatchers.Default) { CarLiveRadioChannels(channels, emptyList(), now) }
+        val programmes = if (withoutGuide.needsProgrammeEvidence) {
+            // The phone/TV browser already has the exact grouping evidence in most cases.
+            // Radio browsing remains available when the guide is missing or slow.
+            liveTv.browseState(repo).dashboard?.events
+                ?: optionalRadioGuide(state, waitForGuide)
+                ?: state.snapshot?.programmes.orEmpty()
+        } else emptyList()
+        return withContext(Dispatchers.Default) {
+            val radioIds = channels.filter(::carLiveAudioEligible).mapTo(HashSet()) { it.uuid }
+            val radioProgrammes = programmes.filter { it.channelUuid in radioIds }
+            val grouped = if (radioProgrammes.isEmpty()) withoutGuide else CarLiveRadioChannels(channels, radioProgrammes, now)
+            LiveRadioSnapshot(SystemClock.elapsedRealtime(), grouped, radioProgrammes)
+        }
+    }
+
+    private suspend fun optionalRadioGuide(state: LiveRadioState, waitForGuide: Boolean): List<LiveTvProgramme>? {
+        if (!waitForGuide) {
+            // Direct/voice playback must not wait for guide grouping on a cold catalog.
+            return state.epg?.takeIf { it.isCompleted && !it.isCancelled }?.await()
+        }
+        val now = SystemClock.elapsedRealtime()
+        // Demand-only work scoped to this repository fingerprint. Removing/reconfiguring
+        // a source cancels its job, including a load started after an older caller resumed.
+        val pending = state.epg?.takeUnless {
+            it.isCompleted && now - state.epgStartedAt >= RADIO_GUIDE_TTL_MS
+        } ?: state.guideScope.async {
+            suspendResult { state.repository.epgEvents(windowHours = 12) }.getOrNull()
+        }.also {
+            state.epg = it
+            state.epgStartedAt = now
+        }
+        // Only await is a child of this timeout: legacy repositories can use blocking HTTP.
+        // Cancellation of the caller still propagates, while the shared lookup remains usable.
+        val programmes = withTimeoutOrNull(RADIO_GUIDE_WAIT_MS) { pending.await() }
+        if (programmes == null && pending.isCompleted) state.epg = null
+        return programmes
+    }
 
     fun handles(folder: String): Boolean = when {
         folder in setOf(CarAudioIds.LIVE_RADIO_IPTV, CarAudioIds.LIVE_RADIO_TVH,
@@ -106,7 +205,7 @@ internal class CarAuxiliaryAudio @Inject constructor(
                 else emptyList())
             CarAudioIds.LIVE_RADIO_IPTV, CarAudioIds.LIVE_RADIO_TVH -> {
                 val system = if (parent == CarAudioIds.LIVE_RADIO_IPTV) "iptv" else "tvheadend"
-                slice(liveTv.configured().filter { it.source.system == system }.map {
+                slice(liveRepositories().filter { it.source.system == system }.map {
                     folder(CarAudioIds.liveSource(it.source.id), it.source.name)
                 })
             }
@@ -121,24 +220,16 @@ internal class CarAuxiliaryAudio @Inject constructor(
                 CarAudioIds.liveGroupsId(parent) != null -> {
                     val repo = liveRepository(requireNotNull(CarAudioIds.liveGroupsId(parent)))
                         ?: return CarAudioPage(emptyList())
-                    val tags = repo.channels().asSequence()
-                        .filter { carLiveAudioEligible(it) }
-                        .flatMap { it.tags.asSequence() }
-                        .map(String::trim).filter(String::isNotBlank).distinct()
-                        .sortedWith(String.CASE_INSENSITIVE_ORDER).toList()
+                    val tags = liveRadioChannels(repo).tags
                     slice(tags.map { folder(CarAudioIds.liveGroup(repo.source.id, it), it) })
                 }
                 CarAudioIds.liveGroupSpec(parent) != null -> {
                     val (id, tag) = requireNotNull(CarAudioIds.liveGroupSpec(parent))
                     val repo = liveRepository(id) ?: return CarAudioPage(emptyList())
-                    val channels = repo.channels().asSequence()
-                        .filter { carLiveAudioEligible(it) && (tag.isEmpty() || tag in it.tags) }
-                        .sortedWith(compareBy<LiveTvChannel> { it.number ?: Int.MAX_VALUE }.thenBy { it.name.lowercase() })
-                        .toList()
-                    slice(channels.map { ch ->
-                        CarAudioEntry(CarAudioIds.liveAudio(id, ch.uuid), ch.name,
-                            ch.numberLabel, ch.iconUrl, playable = true)
-                    })
+                    val radios = liveRadioChannels(repo)
+                    val channels = withContext(Dispatchers.Default) { radios.inGroup(tag) }
+                    CarAudioPage(channels.drop(offset).take(limit).map { channel -> liveEntry(id, channel) },
+                        channels.size > offset + limit)
                 }
                 CarAudioIds.dlnaServerId(parent) != null || CarAudioIds.dlnaFolderId(parent) != null -> {
                     val serverRoot = CarAudioIds.dlnaServerId(parent)
@@ -189,31 +280,68 @@ internal class CarAuxiliaryAudio @Inject constructor(
 
     private fun folder(id: String, label: String) = CarAudioEntry(id, label)
 
+    private fun liveEntry(sourceId: String, channel: LiveTvChannel, subtitle: String? = channel.numberLabel): CarAudioEntry {
+        val id = CarAudioIds.liveAudio(sourceId, channel.uuid)
+        return CarAudioEntry(id, channel.name, subtitle,
+            channel.iconUrl?.takeIf(String::isNotBlank)?.let { CarAudioArtwork.uri(context, id).toString() },
+            playable = true)
+    }
+
     private fun fileEntry(entry: FileEntry) =
         CarAudioEntry(CarAudioIds.musicItem(entry.id), entry.name, null,
             playable = carAudioFileEligible(entry))
 
     /** Only explicit radio-kind channels qualify; TV or unknown streams never enter Auto. */
-    suspend fun resolveLive(id: String): CarAudioSelection.Live? {
+    suspend fun resolveLive(id: String, group: String? = null): CarAudioSelection.Live? {
         val (sourceId, uuid) = CarAudioIds.liveAudioSpec(id) ?: return null
         val repo = liveRepository(sourceId) ?: return null
-        val radioChannels = repo.channels().filter { carLiveAudioEligible(it) }
-        val channel = radioChannels.firstOrNull { it.uuid == uuid } ?: return null
-        val siblings = radioChannels.map { CarAudioIds.liveAudio(sourceId, it.uuid) }
-        return CarAudioSelection.Live(channel, repo.liveStream(channel), siblings, repo.source.system)
+        val radios = liveRadioChannels(repo, waitForGuide = false)
+        val selection = withContext(Dispatchers.Default) { radios.selection(uuid, group) } ?: return null
+        val siblings = selection.queue.map { CarAudioIds.liveAudio(sourceId, it.uuid) }
+        return CarAudioSelection.Live(selection.channel, repo.liveStream(selection.channel), siblings,
+            repo.source.system, artworkHeaders = repo.authHeaders())
+    }
+
+    /** Called after playback starts; fetching programme details never gates stream selection. */
+    suspend fun liveProgrammes(id: String): List<LiveTvProgramme> {
+        val (sourceId, uuid) = CarAudioIds.liveAudioSpec(id) ?: return emptyList()
+        val repo = liveRepository(sourceId) ?: return emptyList()
+        if (repo.channels().none { it.uuid == uuid && carLiveAudioEligible(it) }) return emptyList()
+        val now = System.currentTimeMillis() / 1000L
+        val state = synchronized(liveRadioStates) {
+            liveRadioStates[sourceId]?.takeIf { it.repository === repo }
+        }
+        suspend fun matching(events: List<LiveTvProgramme>) = withContext(Dispatchers.Default) {
+            carLiveRadioProgrammes(events, sourceId, uuid, now)
+        }
+        var fallback = emptyList<LiveTvProgramme>()
+        val cached = listOfNotNull(liveTv.browseState(repo).dashboard?.events, state?.snapshot?.programmes)
+        for (events in cached) {
+            val matches = matching(events)
+            if (matches.any { it.isLive(now) }) return matches
+            if (fallback.isEmpty()) fallback = matches
+        }
+        // A full guide started for station grouping may already have completed meanwhile.
+        state?.epg?.takeIf { it.isCompleted && !it.isCancelled }?.await()?.let { events ->
+            val matches = matching(events)
+            if (matches.any { it.isLive(now) }) return matches
+            if (fallback.isEmpty()) fallback = matches
+        }
+        val fetched = suspendResult {
+            repo.channelEpgEvents(uuid, startEpochSeconds = now - 1800L, windowHours = 8)
+        }.getOrNull() ?: return fallback
+        return matching(fetched)
     }
 
     /** Search only explicit audio channel kinds, never general live TV programme titles. */
     suspend fun searchLive(query: String, limit: Int = 25): List<CarAudioEntry> {
         val results = mutableListOf<CarAudioEntry>()
-        for (repo in liveTv.configured().filter { it.source.system in setOf("iptv", "tvheadend") }) {
+        for (repo in liveRepositories()) {
             if (results.size >= limit) break
-            val channels = runCatching { repo.channels() }.getOrDefault(emptyList())
-            results += channels.filter { carLiveAudioEligible(it) &&
-                it.name.contains(query, ignoreCase = true) }
+            val channels = suspendResult { liveRadioChannels(repo).all }.getOrDefault(emptyList())
+            results += channels.filter { it.name.contains(query, ignoreCase = true) }
                 .take(limit - results.size)
-                .map { CarAudioEntry(CarAudioIds.liveAudio(repo.source.id, it.uuid), it.name,
-                    repo.source.name, it.iconUrl, playable = true) }
+                .map { liveEntry(repo.source.id, it, repo.source.name) }
         }
         return results
     }
@@ -223,5 +351,11 @@ internal class CarAuxiliaryAudio @Inject constructor(
         return (fileStore.favorites() + fileStore.history().map { it.entry })
             .filter { carAudioFileEligible(it) && it.name.contains(query, ignoreCase = true) }
             .distinctBy { it.id }.take(limit).map(::fileEntry)
+    }
+
+    private companion object {
+        const val LIVE_RADIO_TTL_MS = 45_000L
+        const val RADIO_GUIDE_TTL_MS = 5 * 60_000L
+        const val RADIO_GUIDE_WAIT_MS = 2_000L
     }
 }
