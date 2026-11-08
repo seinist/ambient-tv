@@ -47,6 +47,17 @@ private fun rememberBrowseCacheWindow(): LazyLayoutCacheWindow {
 internal val BrowseRowCacheAhead = 200.dp
 internal val BrowseRowCacheBehind = 100.dp
 
+/**
+ * Vertical columns whose items are themselves horizontal media rows need the next whole row
+ * prepared before D-pad focus moves into it. The generic 220 dp browse window is ideal for grids,
+ * but can stop halfway through a captioned/large TV row and force nested LazyRow composition
+ * during the vertical glide. Keep roughly one complete row ahead instead of enlarging every grid.
+ */
+internal val BrowseRowColumnCacheAhead = 420.dp
+internal val BrowseRowColumnCacheBehind = 160.dp
+internal val BrowseRowColumnCacheAheadReduced = 300.dp
+internal val BrowseRowColumnCacheBehindReduced = 120.dp
+
 /** [rememberBrowseListState] for a horizontal row inside a browse column; see [BrowseRowCacheAhead]. */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
@@ -63,6 +74,33 @@ fun rememberBrowseRowState(
 }).also { state ->
     ScrollToTopOnReselect { state.scrollToItem(0) }
     if (itemKeys.isNotEmpty()) RegisterBrowseFocusList(state, itemKeys)
+}
+
+/** Vertical stack of nested horizontal rows; see [BrowseRowColumnCacheAhead]. */
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+fun rememberBrowseRowColumnState(
+    initialFirstVisibleItemIndex: Int = 0,
+    initialFirstVisibleItemScrollOffset: Int = 0,
+    itemKeys: List<Any> = emptyList(),
+): LazyListState {
+    if (LocalHandheldUi.current) {
+        return rememberLazyListState(initialFirstVisibleItemIndex, initialFirstVisibleItemScrollOffset).also { state ->
+            ScrollToTopOnReselect { state.scrollToItem(0) }
+            if (itemKeys.isNotEmpty()) RegisterBrowseFocusList(state, itemKeys)
+        }
+    }
+    val reduced = LocalPerformanceProfile.current.reducedEffects
+    val window = remember(reduced) {
+        LazyLayoutCacheWindow(
+            ahead = if (reduced) BrowseRowColumnCacheAheadReduced else BrowseRowColumnCacheAhead,
+            behind = if (reduced) BrowseRowColumnCacheBehindReduced else BrowseRowColumnCacheBehind,
+        )
+    }
+    return rememberLazyListState(window, initialFirstVisibleItemIndex, initialFirstVisibleItemScrollOffset).also { state ->
+        ScrollToTopOnReselect { state.scrollToItem(0) }
+        if (itemKeys.isNotEmpty()) RegisterBrowseFocusList(state, itemKeys)
+    }
 }
 
 @OptIn(ExperimentalFoundationApi::class)
