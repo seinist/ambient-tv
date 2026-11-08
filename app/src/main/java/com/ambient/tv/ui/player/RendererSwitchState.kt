@@ -28,6 +28,14 @@ internal fun playbackPanelHasVideo(videoTracks: Int, audioTracks: Int, audioOnly
 }
 
 /**
+ * Preview shown on the root Video row. The running session wins over the saved/requested choice,
+ * so Auto and renderer fallbacks report the engine that is actually producing playback.
+ */
+internal fun playbackPanelRendererPreview(activeBackend: String, requestedRenderer: String?): String? =
+    activeBackend.takeIf { it in setOf("media3", "vlc", "mpv") }
+        ?: requestedRenderer?.takeIf { it.isNotBlank() }
+
+/**
  * The video area to show for the user's [selected] one. While the running engine has not
  * confirmed its capabilities ([confirmed] false, e.g. right after a renderer or output switch)
  * an area that is missing from [available] stays open instead of jumping to another area; the

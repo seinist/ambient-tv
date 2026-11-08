@@ -141,6 +141,10 @@ fun UnifiedBackendPlayerPanel(
     val toolMetadata by remember {
         com.ambient.tv.ui.player.BackgroundPlaybackSession.snapshot.map { it.metadata }.distinctUntilChanged()
     }.collectAsState(initial = com.ambient.tv.ui.player.BackgroundPlaybackSession.snapshot.value.metadata)
+    val activeRendererKey by remember {
+        com.ambient.tv.ui.player.BackgroundPlaybackSession.snapshot.map { it.backend }.distinctUntilChanged()
+    }.collectAsState(initial = com.ambient.tv.ui.player.BackgroundPlaybackSession.snapshot.value.backend)
+    val rendererPreviewKey = com.ambient.tv.ui.player.playbackPanelRendererPreview(activeRendererKey, rendererKey)
     val toolBookmarkKey = com.ambient.tv.ui.player.PlaybackBookmarks.keyFor(toolMetadata)
     val tools = availablePlayerTools(hasVideo, isLive, toolHandle != null, toolBookmarkKey != null)
     val preferences = remember(context) { videoImagePreferences(context) }
@@ -176,7 +180,7 @@ fun UnifiedBackendPlayerPanel(
                 PlayerPanelEntry(
                     icon = Icons.Filled.Movie,
                     title = stringResource(R.string.player_video),
-                    value = videoSummary(scalingKey, aspectKey, zoomFactor, speed, isLive),
+                    value = videoSummary(scalingKey, aspectKey, zoomFactor, speed, isLive, rendererPreviewKey),
                     onClick = { onPanelChange(UnifiedPlayerPanel.VIDEO) },
                 )
             }
@@ -727,14 +731,26 @@ private fun skipModeLabel(mode: String, intro: Boolean): String = skipModeOption
     ?: stringResource(if (intro) R.string.intro_skip_button else R.string.credits_skip_button)
 
 @Composable
-private fun videoSummary(scalingKey: String, aspectKey: String, zoom: Float, speed: Float, isLive: Boolean): String {
+private fun videoSummary(
+    scalingKey: String,
+    aspectKey: String,
+    zoom: Float,
+    speed: Float,
+    isLive: Boolean,
+    rendererKey: String?,
+): String {
     val scaling = when (if (aspectKey == "auto") scalingKey else "fit") {
         "zoom" -> stringResource(R.string.player_fill_screen)
         "stretch" -> stringResource(R.string.player_stretch)
         else -> stringResource(R.string.player_fit_screen)
     }
     val aspect = if (aspectKey == "auto") stringResource(R.string.player_aspect_auto) else aspectKey
+    val renderer = rendererKey?.let { com.ambient.tv.ui.player.rendererLabel(it) }
     return buildString {
+        renderer?.let {
+            append(it)
+            append(" · ")
+        }
         append(scaling)
         append(" · ")
         append(aspect)
