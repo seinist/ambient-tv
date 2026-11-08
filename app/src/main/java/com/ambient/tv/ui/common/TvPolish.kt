@@ -448,11 +448,12 @@ fun ArtworkImage(
     /** Optional caller-specific fallback, used after all URLs fail (or none is supplied). */
     fallbackContent: (@Composable () -> Unit)? = null,
     /**
-     * Browse cards opt in so uncached fetch/decode work is spread across the first frames.
-     * Known memory-cache hits still render immediately; a later focused card can disable the
-     * gate and is admitted at once.
+     * Browse cards opt in so uncached fetch/decode work waits for active scrolling to settle
+     * and is then spread across frames. Known memory-cache hits still render immediately.
      */
     staggerUncached: Boolean = false,
+    /** Focused browse cards skip the background admission wave once scrolling is quiet. */
+    prioritizeUncached: Boolean = false,
 ) {
     val context = LocalContext.current
     val candidates = remember(model, fallbackModels) {
@@ -481,15 +482,22 @@ fun ArtworkImage(
     }
     val staggerThisLoad = staggerUncached && candidateIndex == 0 &&
         !com.ambient.tv.ui.mobile.LocalHandheldUi.current && hasModel && !shownFromMemory
-    // Keep admission once granted. Focus may turn staggering off; losing focus must not restart
-    // an already running/successful request.
+    // Keep admission once granted. A focus change restarts only a request still waiting in the
+    // gate, which lets the newly focused card jump ahead without restarting an active load.
     var loadAdmitted by remember(currentModel) { mutableStateOf(!staggerThisLoad) }
-    LaunchedEffect(currentModel, staggerThisLoad) {
+    LaunchedEffect(currentModel, staggerThisLoad, prioritizeUncached) {
         if (!staggerThisLoad) {
             loadAdmitted = true
         } else if (!loadAdmitted) {
-            val waitMs = SharedBrowseArtworkStartLimiter.delayMs(android.os.SystemClock.elapsedRealtime())
+            awaitBrowseArtworkIdle()
+            val waitMs = browseArtworkAdmissionDelayMs(
+                prioritized = prioritizeUncached,
+                nowMs = android.os.SystemClock.elapsedRealtime(),
+            )
             if (waitMs > 0L) delay(waitMs)
+            // Another D-pad/touch move may have started while this card waited in its wave.
+            // Re-check once so decode/bitmap delivery never begins in the middle of a glide.
+            awaitBrowseArtworkIdle()
             loadAdmitted = true
         }
     }
