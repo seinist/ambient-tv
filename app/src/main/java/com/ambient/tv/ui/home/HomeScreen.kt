@@ -942,7 +942,7 @@ internal fun LibraryContent(
                     ) { state.rowKeys }
                     .clipToBounds()
                     .acceleratedDpadNavigation()
-                    .fadeRowsBehindHomeHero(maskRows && !rowListState.isScrollInProgress, heroHeight)
+                    .fadeRowsBehindHomeHero(maskRows, heroHeight) { rowListState.isScrollInProgress }
                     .graphicsLayer {
                         val progress = entrancePhase(entranceProgress(), 0.24f, 1f)
                         // Hidden for the one frame before the first row is measured (first open only;
@@ -964,7 +964,7 @@ internal fun LibraryContent(
                     }
                 }) { rowKey ->
                     val rowIndex = state.rowKeys.indexOf(rowKey)
-                    Box(Modifier.onlyActiveHeroRow(rowIndex, activeRowIndex, revealDuringScroll = rowListState.isScrollInProgress).then(
+                    Box(Modifier.onlyActiveHeroRow(rowIndex, activeRowIndex) { rowListState.isScrollInProgress }.then(
                         if (rowIndex == 0) Modifier.onSizeChanged {
                             val height = with(density) { it.height.toDp() }
                             firstRowHeight = height
@@ -1955,19 +1955,20 @@ private fun entrancePhase(progress: Float, start: Float, end: Float): Float =
 internal fun Modifier.onlyActiveHeroRow(
     index: Int,
     activeIndex: Int,
-    revealDuringScroll: Boolean = false,
+    revealDuringScroll: () -> Boolean = { false },
 ): Modifier {
     if (LocalHandheldUi.current) return this
-    // During a vertical glide the incoming row must already be visible. Keeping every other
-    // composed row at alpha 0 until focus lands made the list appear to hitch at the end.
-    val visible = revealDuringScroll || index == activeIndex
+    // Keep focus-driven fading cheap, but read the scroll flag only in the layer phase:
+    // entering/leaving a vertical glide must not recompose every nested LazyRow.
     val alpha by androidx.compose.animation.core.animateFloatAsState(
-        targetValue = if (visible) 1f else 0f,
-        animationSpec = if (revealDuringScroll) androidx.compose.animation.core.snap()
-            else androidx.compose.animation.core.tween(120),
+        targetValue = if (index == activeIndex) 1f else 0f,
+        animationSpec = androidx.compose.animation.core.tween(120),
         label = "heroRowInactive",
     )
-    return graphicsLayer { this.alpha = alpha }
+    return graphicsLayer {
+        // The incoming row is visible for the whole glide instead of appearing only after focus lands.
+        this.alpha = if (revealDuringScroll()) 1f else alpha
+    }
 }
 
 // Between the active row's bottom and the screen edge.
@@ -1992,7 +1993,11 @@ internal fun heroRowsTopPadding(viewport: Dp, firstRowHeight: Dp?, fallback: Dp)
     firstRowHeight?.let { (viewport - HeroRowBottomMargin - it).coerceAtLeast(fallback) } ?: fallback
 
 @Composable
-internal fun Modifier.fadeRowsBehindHomeHero(allowSaveLayer: Boolean, heroHeight: Dp): Modifier {
+internal fun Modifier.fadeRowsBehindHomeHero(
+    allowSaveLayer: Boolean,
+    heroHeight: Dp,
+    scrolling: () -> Boolean = { false },
+): Modifier {
     if (!allowSaveLayer) {
         // Reduced mode avoids the saveLayer with a hard cut where the mask would fade in. An
         // opaque veil over the hero instead also hid the backdrop behind it as a black band.
@@ -2015,6 +2020,12 @@ internal fun Modifier.fadeRowsBehindHomeHero(allowSaveLayer: Boolean, heroHeight
             endY = fadeHeight,
         )
         onDrawWithContent draw@{
+            // During vertical motion, avoid the hero saveLayer entirely. Reading this state in
+            // draw invalidates only drawing, not the nested rows' composition.
+            if (scrolling()) {
+                clipRect(top = fadeHeight * 0.96f) { this@draw.drawContent() }
+                return@draw
+            }
             // Record the child tree once. Replay its display list in the two clipped regions;
             // alpha=1/default Auto does not rasterize a second full-screen texture.
             contentLayer.record { this@draw.drawContent() }
