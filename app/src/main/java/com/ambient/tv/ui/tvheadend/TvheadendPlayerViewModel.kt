@@ -106,6 +106,14 @@ class TvheadendPlayerViewModel @Inject constructor(
     private val kind: String = savedStateHandle["kind"] ?: "channel"
     internal val startsWithLiveChannel: Boolean get() = kind == "channel"
     private val initialId: String = savedStateHandle["id"] ?: ""
+    /** Stable last-played address, also after Stop has replaced the visible player state. */
+    internal fun playbackReturnItemId(): String? = if (kind == "recording") {
+        initialId.takeIf(String::isNotBlank)?.let { "live-recording:$sourceId:$it" }
+    } else {
+        val channel = (uiState.value as? TvheadendPlayerState.Ready)?.channel?.uuid
+            ?: com.ambient.tv.livetv.LiveTvReturnFocus.pending.value[sourceId]?.channelUuid
+        channel?.let { "live-channel:$sourceId:$it" }
+    }
     private val savedResumeRequest = com.ambient.tv.ui.player.SavedResumeRequest()
     private val companionSource = runCatching {
         companionMapper.fromRoute(Destinations.tvhPlayer(kind, initialId, sourceId)).source

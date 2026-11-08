@@ -109,7 +109,16 @@ fun FilteredBrowseScreen(
     leftNavigatesBack: Boolean = true,
     viewModel: FilteredBrowseViewModel = hiltViewModel(),
 ) {
-    val state by viewModel.uiState.collectAsState()
+    val storedState by viewModel.uiState.collectAsState()
+    val navigationReturn = com.ambient.tv.ui.common.rememberNavigationPlaybackReturn()
+    val playbackReturn = remember(navigationReturn) {
+        navigationReturn.takeIf { event ->
+            (storedState as? FilteredBrowseUiState.Loaded)?.let { prepareFilteredBrowsePlaybackReturn(it, event) } != null
+        }
+    }
+    val state = (storedState as? FilteredBrowseUiState.Loaded)?.let {
+        prepareFilteredBrowsePlaybackReturn(it, playbackReturn)
+    } ?: storedState
     androidx.compose.runtime.DisposableEffect(viewModel) {
         onDispose { viewModel.captureFocusForReturn() }
     }
@@ -118,7 +127,7 @@ fun FilteredBrowseScreen(
     }
     val refreshing by viewModel.refreshing.collectAsState()
     val refreshError by viewModel.refreshError.collectAsState()
-    com.ambient.tv.ui.common.RefreshOnEnterAndReconnect(viewModel.reconnectSources, viewModel::load)
+    com.ambient.tv.ui.common.RefreshOnEnterAndReconnect(viewModel.reconnectSources) { viewModel.enter(playbackReturn) }
     val uhdScale = rememberUhdScale()
     val focusChain = com.ambient.tv.ui.common.rememberPageFocusChain()
     val filterFocusState = rememberFilterFocusState(viewModel)
@@ -251,14 +260,22 @@ fun FilteredBrowseScreen(
                         )
                     }
                     is FilteredBrowseUiState.Loaded -> {
-                        BrowseFocusContentIdentity(listOf(viewModel, value.viewMode, value.sort, value.sortDescending))
-                        BrowseFocusInitialTarget(remember(value.items, value.focusedRatingKey) {
+                        BrowseFocusContentIdentity(listOf(viewModel, value.viewMode, value.sort, value.sortDescending,
+                            value.playbackReturnRevision))
+                        val initialKey = remember(value.items, value.focusedRatingKey) {
                             value.focusedRatingKey?.takeIf { key -> value.items.any { it.ratingKey == key } }
                                 ?: value.items.firstOrNull()?.ratingKey
-                        })
+                        }
+                        BrowseFocusInitialTarget(initialKey)
+                        val playbackFocus = com.ambient.tv.ui.common.rememberBrowsePlaybackReturn(
+                            token = playbackReturn?.revision?.takeIf { it == value.playbackReturnRevision },
+                            target = initialKey?.let { com.ambient.tv.ui.common.BrowseFocusKey(row = null, item = it, content = true) },
+                            enabled = !showOptions,
+                        )
                         if (value.items.isEmpty()) Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                             com.ambient.tv.ui.common.BrowseStatusPanel(stringResource(R.string.library_empty_title), stringResource(R.string.library_empty_body))
                         } else Box(Modifier.fillMaxSize()
+                            .then(playbackFocus.modifier)
                             .focusRestorer()
                             .pageContentUp(focusChain) { if (filterBarShown) filterFocus else focusChain.actions }
                             .focusGroup()) {
@@ -266,9 +283,11 @@ fun FilteredBrowseScreen(
                                 if (!showOptions) filterFocusState.enterContent()
                                 viewModel.onItemFocused(it)
                             }
-                            SoftViewChange(value.viewMode, Modifier.fillMaxSize()) {
-                                if (value.viewMode == BrowseViewMode.GRID) BrowseGrid(value, { openItem(it, value.sort) }, onFocused)
-                                else BrowseList(value, { openItem(it, value.sort) }, onFocused)
+                            androidx.compose.runtime.key(value.playbackReturnRevision) {
+                                SoftViewChange(value.viewMode, Modifier.fillMaxSize()) {
+                                    if (value.viewMode == BrowseViewMode.GRID) BrowseGrid(value, { openItem(it, value.sort) }, onFocused)
+                                    else BrowseList(value, { openItem(it, value.sort) }, onFocused)
+                                }
                             }
                         }
                     }
@@ -350,7 +369,9 @@ private fun BrowseGrid(state: FilteredBrowseUiState.Loaded, onClick: (String) ->
     val gridState = rememberLazyGridState(initialFirstVisibleItemIndex = index)
     RegisterBrowseFocusGrid(gridState, remember(state.items) { state.items.map { it.ratingKey } })
     val filterFocus = LocalFilterFocusState.current
-    LaunchedEffect(restoreKey, state.items) {
+    val sharedFocusOwner = LocalBrowseFocusReturnState.current != null
+    LaunchedEffect(restoreKey, state.items, sharedFocusOwner) {
+        if (sharedFocusOwner) return@LaunchedEffect
         if (filterFocus?.allowContentAutoFocus != false && restoreKey != null && index in state.items.indices && state.items[index].ratingKey == restoreKey) {
             gridState.scrollToItem(index)
         }

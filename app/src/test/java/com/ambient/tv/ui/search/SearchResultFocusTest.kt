@@ -11,6 +11,15 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class SearchResultFocusTest {
+    @Test fun aPlaybackLayoutPreparedBeforeCompositionNeverSchedulesALateCorrection() = runTest {
+        val restore = SearchFocusRequest("last-played", initialLayoutPrepared = true)
+        assertTrue(restore.pending)
+        restore.restore(listOf(slot("last-played", 40))) { error("Prepared return must not scroll after its first layout") }
+        restore.restore(listOf(slot("last-played", 43))) { error("A provider update must not rearm return scrolling") }
+        restore.contentFocused()
+        assertFalse(restore.pending)
+    }
+
     @Test fun navigationOnlyChangesTheNextEntryRequestAndANewQueryForgetsIt() = runTest {
         val focus = SearchResultFocus("saved")
         val entry = focus.request()

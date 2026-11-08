@@ -713,7 +713,12 @@ internal fun TrailerTitleContent(
         trailerTitleFocusTarget(visibleVideos, serverTrailers, focusKey)
     }
     val handheld = com.ambient.tv.ui.mobile.LocalHandheldUi.current
-    key(layoutToken) {
+    // A loading skeleton must not permanently initialize the return viewports at zero.
+    // Latch readiness once per return so a later refresh cannot recreate a consumed layout.
+    var contentPrepared by remember(layoutToken) { mutableStateOf(false) }
+    val prepareLayout = contentPrepared || (!loading && target != null)
+    androidx.compose.runtime.SideEffect { if (prepareLayout) contentPrepared = true }
+    key(layoutToken, prepareLayout) {
     val focus = remember { FocusRequester() }
     // New return identity creates both viewports at their final indices before first measure.
     val columnState = rememberLazyListState(initialFirstVisibleItemIndex = target?.rowIndex ?: 0)
@@ -731,6 +736,7 @@ internal fun TrailerTitleContent(
     val targetRow = target?.let { if (it.server) "server-trailers" else "tmdb-trailers" }
     BrowseFocusContentIdentity(layoutToken ?: "trailer-title", restoreInitialTarget = true)
     BrowseFocusInitialTarget(target?.key, targetRow)
+    BrowseFocusHoldEntry(loading && target == null)
     val playbackReturn = rememberBrowsePlaybackReturn(returnToken,
         target?.let { BrowseFocusKey(targetRow, it.key, content = true) }, enabled = !loading && !handheld)
     LazyColumn(Modifier.fillMaxSize().then(playbackReturn.modifier), state = columnState, contentPadding = PaddingValues(start = 32.dp, end = 32.dp, bottom = 32.dp, top = com.ambient.tv.ui.common.pageHeaderTop(32.dp)), verticalArrangement = Arrangement.spacedBy(20.dp)) {

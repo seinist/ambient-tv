@@ -192,12 +192,22 @@ fun SectionScreen(
     onBack: (() -> Unit)? = null,
     viewModel: SectionViewModel = hiltViewModel(),
 ) {
+    val storedState by viewModel.uiState.collectAsState()
+    val navigationReturn = com.ambient.tv.ui.common.rememberNavigationPlaybackReturn()
+    // A missing return item must not become a new focus command when a later refresh adds it.
+    val playbackReturn = remember(navigationReturn) {
+        navigationReturn.takeIf { event ->
+            (storedState as? SectionUiState.Loaded)?.let { prepareSectionPlaybackReturn(it, event) } != null
+        }
+    }
+    val uiState = (storedState as? SectionUiState.Loaded)?.let {
+        prepareSectionPlaybackReturn(it, playbackReturn)
+    } ?: storedState
     com.ambient.tv.ui.common.RetryOfflineBrowse(viewModel::retryOffline)
     com.ambient.tv.ui.common.RefreshOnEnterAndReconnect(
         setOf(com.ambient.tv.data.browse.mediaProvider(viewModel.sectionKey)),
-    ) { viewModel.refreshAfterEntry() }
+    ) { viewModel.refreshAfterEntry(playbackReturn) }
     DisposableEffect(viewModel) { onDispose { viewModel.captureFocusForReturn() } }
-    val uiState by viewModel.uiState.collectAsState()
     val refreshing by viewModel.refreshing.collectAsState()
     ReportSidebarContentReady(uiState !is SectionUiState.Loading)
     val refreshGeneration by viewModel.refreshGeneration.collectAsState()
@@ -262,6 +272,7 @@ fun SectionScreen(
                 onSelectLetter = viewModel::selectLetter,
                 onRefresh = viewModel::reload,
                 refreshing = refreshing,
+                playbackReturnToken = playbackReturn?.revision?.takeIf { it == state.playbackReturnRevision },
             )
         }
 
@@ -291,12 +302,13 @@ internal fun SectionContent(
     sectionKey: String? = null,
     onRefresh: () -> Unit = {},
     refreshing: Boolean = false,
+    playbackReturnToken: Any? = null,
 ) {
     val filterFocusState = rememberFilterFocusState(sectionKey, state.page)
     var showOptions by remember { mutableStateOf(false) }
     var optionsOpened by remember { mutableStateOf(false) }
     val optionsFocusRequester = remember { FocusRequester() }
-    var initialContentFocusPending by remember(sectionKey, state.page) { mutableStateOf(true) }
+    var initialContentFocusPending by remember(sectionKey, state.page, state.playbackReturnRevision) { mutableStateOf(true) }
     val initialRecommendationRow = state.recommendationRows.firstOrNull { it.items.isNotEmpty() }
     val focusState = if (initialContentFocusPending) {
         when (state.page) {
@@ -323,10 +335,21 @@ internal fun SectionContent(
         state
     }
     com.ambient.tv.ui.common.BrowseFocusContentIdentity(listOf(sectionKey, state.page, state.viewMode,
-        state.sort, state.sortOrder, state.libraryFilters))
+        state.sort, state.sortOrder, state.libraryFilters, state.playbackReturnRevision))
     com.ambient.tv.ui.common.BrowseFocusInitialTarget(
         if (state.page == SectionPage.COLLECTIONS) focusState.focusedCollectionId else focusState.focusedRatingKey,
         focusState.focusedRecommendationRowId.takeIf { state.page == SectionPage.RECOMMENDATIONS },
+    )
+    val playbackFocus = com.ambient.tv.ui.common.rememberBrowsePlaybackReturn(
+        token = playbackReturnToken,
+        target = focusState.focusedRatingKey?.let {
+            com.ambient.tv.ui.common.BrowseFocusKey(
+                row = focusState.focusedRecommendationRowId.takeIf { state.page == SectionPage.RECOMMENDATIONS },
+                item = it,
+                content = true,
+            )
+        },
+        enabled = !showOptions,
     )
     val markInitialFocusHandled = {
         initialContentFocusPending = false
@@ -340,7 +363,8 @@ internal fun SectionContent(
     val alphabetHandheld = LocalHandheldUi.current
     // TV follows DPAD focus; touch scroll does not change focus, so handhelds follow the
     // first visible item instead. Keep both indicators independent to avoid scroll-to-focus loops.
-    val focusedLibraryLetter = remember(sectionKey, state.items, state.page, state.sortOrder, state.viewMode) {
+    val focusedLibraryLetter = remember(sectionKey, state.items, state.page, state.sortOrder, state.viewMode,
+        state.playbackReturnRevision) {
         mutableStateOf(libraryFocusedAlphabetLetter(state.items, state.focusedRatingKey))
     }
     val viewportLetterState = remember(state.items, state.page, state.sortOrder, state.viewMode) {
@@ -427,6 +451,7 @@ internal fun SectionContent(
                     Modifier
                         .weight(1f)
                         .fillMaxWidth()
+                        .then(playbackFocus.modifier)
                         .pageContentUp(focusChain) { if (filterBarShown) filterFocus else focusChain.contentUp }
                         .focusGroup()
                         .acceleratedDpadNavigation(enabled = !LocalHandheldUi.current),
@@ -445,6 +470,7 @@ internal fun SectionContent(
                         // The alphabet bar already shows the position; a scrollbar would sit under it.
                         CompositionLocalProvider(LocalAlphabetBarShown provides showAlphabetBar,
                             LocalBrowseRightIndexFocus provides alphabetRightFocusRequester.takeIf { showAlphabetBar }) {
+                            key(state.playbackReturnRevision) {
                                 SoftViewChange(state.viewMode, Modifier.fillMaxSize()) { when (state.page) {
                                 SectionPage.RECOMMENDATIONS -> RecommendationsPage(
                                     focusState,
@@ -481,6 +507,7 @@ internal fun SectionContent(
                                     }
                                 }
                             } }
+                            }
                         }
                     }
                     if (showAlphabetBar) {
@@ -834,11 +861,16 @@ private fun RecommendationRowsPage(
     RegisterBrowseFocusRows(rowsState, state.recommendationRows.map { it.id to it.items.map { item -> item.ratingKey } })
     val rowCentering = rememberRowCenteringState(rowsState)
     var centeredRowIndex by remember { mutableStateOf(-1) }
+    var returningRow by remember { mutableStateOf(state.playbackReturnRevision > 0L) }
     val handheld = LocalHandheldUi.current
     // TV rests the active row on the bottom edge; handheld keeps it under the banner.
     val bottomInsetPx = if (handheld) -1 else with(LocalDensity.current) { HeroRowBottomMargin.roundToPx() }
     val density = LocalDensity.current
     LaunchedEffect(centeredRowIndex) {
+        if (returningRow) {
+            if (centeredRowIndex == restoreRowIndex) returningRow = false
+            return@LaunchedEffect
+        }
         if (centeredRowIndex >= 0) rowCentering.centerItem(centeredRowIndex, alignTop = true, bottomInset = bottomInsetPx)
     }
     val rowScrollSpec = if (handheld) LocalBringIntoViewSpec.current else ExplicitRowScrollSpec
@@ -950,7 +982,8 @@ private fun RecommendationListPage(
             ?: state.recommendationRows.firstOrNull { row -> initialKey != null && row.items.any { initialKey in it.allRatingKeys } }?.id
     }
     val rowScale = (7f / state.listRows.coerceIn(4, 10)).coerceIn(0.72f, 1.75f) * rememberUhdScale()
-    val listState = rememberLazyListState()
+    val restoreIndex = recommendationItemLayoutIndex(state.recommendationRows, restoreRowId, initialKey)
+    val listState = rememberLazyListState(initialFirstVisibleItemIndex = restoreIndex)
     RegisterBrowseFocusSections(listState, state.recommendationRows.map { it.id to it.items.map { item -> item.ratingKey } })
     LazyColumn(
         allowUpExit = true,
@@ -1079,7 +1112,8 @@ private fun RecommendationWallPage(
         initialRowId?.takeIf { id -> state.recommendationRows.any { it.id == id && initialKey != null && it.items.any { item -> initialKey in item.allRatingKeys } } }
             ?: state.recommendationRows.firstOrNull { row -> initialKey != null && row.items.any { initialKey in it.allRatingKeys } }?.id
     }
-    val gridState = rememberLazyGridState()
+    val restoreIndex = recommendationItemLayoutIndex(state.recommendationRows, restoreRowId, initialKey)
+    val gridState = rememberLazyGridState(initialFirstVisibleItemIndex = restoreIndex)
     RegisterBrowseFocusSections(gridState, state.recommendationRows.map { it.id to it.items.map { item -> item.ratingKey } })
     LazyVerticalGrid(
         state = gridState,
@@ -1382,7 +1416,8 @@ private fun RecommendationCinematicSection(
     val heroAccent = if (LocalAccentModeKey.current == "artwork") sampledAccent else MaterialTheme.colorScheme.primary
     val handheld = LocalHandheldUi.current
     val itemKeys = remember(row.items) { row.items.map { it.ratingKey } }
-    val rowState = rememberLazyListState(itemKeys = itemKeys)
+    val restoreIndex = remember(itemKeys, focusedKey) { itemKeys.indexOf(focusedKey).coerceAtLeast(0) }
+    val rowState = rememberLazyListState(initialFirstVisibleItemIndex = restoreIndex, itemKeys = itemKeys)
     com.ambient.tv.ui.common.RegisterRowColumnFocus(rowFocus, row.id, rowState, itemKeys)
     BrowseFocusRow(row.id) {
     Column(modifier.fillMaxWidth()) {

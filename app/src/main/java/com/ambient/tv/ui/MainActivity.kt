@@ -2469,9 +2469,19 @@ private fun AmbientTvApp(
                             navArgument("chatId") { type = NavType.LongType },
                             navArgument("messageId") { type = NavType.IntType },
                             navArgument("queue") { type = NavType.LongType; defaultValue = -1L },
-                        )) {
+                        )) { entry ->
+                        val playerModel = androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel<com.ambient.tv.ui.telegram.TelegramPlayerViewModel>()
                         com.ambient.tv.ui.telegram.TelegramPlayerScreen(
-                            onBack = ::navigateBack,
+                            viewModel = playerModel,
+                            onBack = {
+                                if (navController.currentBackStackEntry === entry) {
+                                    val previous = navController.previousBackStackEntry
+                                    if (previous?.destination?.route == Destinations.SEARCH) {
+                                        com.ambient.tv.ui.common.NavigationPlaybackReturns.prepare(previous.id, playerModel.media.value?.mediaKey)
+                                    }
+                                    navigateBack()
+                                }
+                            },
                             onOpenChannel = { chat ->
                                 navController.navigate(Destinations.telegramSection("channel:$chat"))
                             },
@@ -2500,8 +2510,17 @@ private fun AmbientTvApp(
                             )
                         }
                     }
-                    composable(Destinations.RADIO_PLAYER) {
-                        com.ambient.tv.ui.radio.RadioPlayerScreen(onBack = ::navigateBack)
+                    composable(Destinations.RADIO_PLAYER) { entry ->
+                        val playerModel = androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel<com.ambient.tv.ui.radio.RadioPlayerViewModel>()
+                        com.ambient.tv.ui.radio.RadioPlayerScreen(viewModel = playerModel, onBack = {
+                            if (navController.currentBackStackEntry === entry) {
+                                com.ambient.tv.ui.common.NavigationPlaybackReturns.prepare(
+                                    navController.previousBackStackEntry?.id,
+                                    playerModel.currentStation()?.id?.let { com.ambient.tv.data.radio.RADIO_HOME_ITEM_PREFIX + it },
+                                )
+                                navigateBack()
+                            }
+                        })
                     }
                     composable(Destinations.SPOTIFY) {
                         RestorableSidebarContent {
@@ -2630,8 +2649,20 @@ private fun AmbientTvApp(
                             navArgument("trailer") { type = NavType.BoolType; defaultValue = false },
                             navArgument("browseSession") { type = NavType.LongType; defaultValue = -1L }),
                     ) { entry ->
+                        val playerModel = androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel<com.ambient.tv.ui.youtube.YouTubePlayerViewModel>()
                         YouTubePlayerScreen(
-                            onBack = { if (navController.currentBackStackEntry === entry) navController.popBackStack() },
+                            viewModel = playerModel,
+                            onBack = {
+                                if (navController.currentBackStackEntry === entry) {
+                                    val previous = navController.previousBackStackEntry
+                                    if (previous?.destination?.route == Destinations.SEARCH) {
+                                        com.ambient.tv.ui.common.NavigationPlaybackReturns.prepare(
+                                            previous.id, playerModel.uiState.value.playback?.videoId?.let { "youtube:$it" },
+                                        )
+                                    }
+                                    navController.popBackStack()
+                                }
+                            },
                             onOpenChannel = { channel -> if (navController.currentBackStackEntry === entry) openYouTubeChannel(channel) },
                         )
                     }
@@ -2938,7 +2969,15 @@ private fun AmbientTvApp(
                             navArgument("sourceId") { type = NavType.StringType; nullable = true; defaultValue = null },
                         ),
                     ) { entry ->
-                        TvheadendPlayerScreen(onBack = { if (navController.currentBackStackEntry === entry) navController.popBackStack() })
+                        val playerModel = androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel<com.ambient.tv.ui.tvheadend.TvheadendPlayerViewModel>()
+                        TvheadendPlayerScreen(viewModel = playerModel, onBack = {
+                            if (navController.currentBackStackEntry === entry) {
+                                com.ambient.tv.ui.common.NavigationPlaybackReturns.prepare(
+                                    navController.previousBackStackEntry?.id, playerModel.playbackReturnItemId(),
+                                )
+                                navController.popBackStack()
+                            }
+                        })
                     }
                     composable(
                         route = Destinations.PLAYER,

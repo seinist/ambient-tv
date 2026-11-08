@@ -574,14 +574,20 @@ class BrowseFocusReturnTest {
             rule.runOnIdle {
                 // Match animateItem's exit interval: the new displayed order has removed the
                 // item, while its old focused node and collection registration still exist.
-                fixture.focusSnapshot = fixture.itemIds.filterNot { it == "item-3" }
+                val displayed = fixture.itemIds.filterNot { it == "item-3" }
+                fixture.focusSnapshot = displayed
+                // Publish the data transaction while the frame clock is paused. Advancing one
+                // test frame is not a barrier for the recomposition's SideEffect; otherwise
+                // Confirm can arrive while the owner still correctly considers item-3 valid.
+                fixture.owners.getValue(fixture.destination).refreshContent(
+                    fixture, BrowseRefreshFocusSnapshot(listOf(null to displayed)),
+                )
             }
-            rule.mainClock.advanceTimeByFrame()
             focused(fixture.tileTag("item-3"))
             rule.onRoot().performKeyInput { pressKey(Key.Enter) }
-            rule.mainClock.advanceTimeBy(160)
-            rule.waitForIdle()
-            focused(fixture.tileTag("item-4"))
+            rule.runOnIdle { assertTrue(fixture.activations.isEmpty()) }
+            rule.mainClock.autoAdvance = true
+            awaitFocus(fixture.tileTag("item-4"))
             rule.onNodeWithTag(fixture.tileTag("item-3"), useUnmergedTree = true).assertExists()
             rule.runOnIdle { assertTrue(fixture.activations.isEmpty()) }
         } finally {

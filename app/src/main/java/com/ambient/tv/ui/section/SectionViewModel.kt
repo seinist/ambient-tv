@@ -55,6 +55,7 @@ sealed interface SectionUiState {
         val selectedLetter: Char? = null,
         val gridColumns: Int = 8,
         val listRows: Int = 7,
+        val playbackReturnRevision: Long = 0L,
     ) : SectionUiState {
         val libraryFilters: LibraryFilters
             get() = LibraryFilters(filter, qualityFilter, genreFilter, decadeFilter, contentRatingFilter)
@@ -102,6 +103,7 @@ class SectionViewModel @Inject constructor(
     /** Reloaded items whose shown collection tags are carried over until one enrichment pass. */
     private var staleCollectionSource: List<MediaItem>? = null
     private var rebuildVersion = 0
+    private var playbackReturnRevision = 0L
 
     fun retryOffline() { if (availability.hasNetwork() && availability.state(com.ambient.tv.data.browse.mediaProvider(sectionKey)) == com.ambient.tv.data.browse.SourceHealth.OFFLINE && loadJob?.isActive != true) load() }
 
@@ -110,7 +112,34 @@ class SectionViewModel @Inject constructor(
     }
 
     /** Entry already expired this source under the shared mutation guard. */
-    fun refreshAfterEntry() = load(force = true, invalidateCache = false)
+    internal fun refreshAfterEntry(returned: com.ambient.tv.ui.common.NavigationPlaybackReturn? = null) {
+        if (restorePlaybackReturn(returned)) return
+        load(force = true, invalidateCache = false)
+    }
+
+    private fun restorePlaybackReturn(returned: com.ambient.tv.ui.common.NavigationPlaybackReturn?): Boolean {
+        val current = _uiState.value as? SectionUiState.Loaded ?: return false
+        val prepared = prepareSectionPlaybackReturn(current, returned) ?: return false
+        // An entry return is a complete snapshot. A fetch that began before playback must not
+        // publish a different recommendation order immediately after its first frame.
+        loadGeneration++
+        loadJob?.cancel()
+        loadJob = null
+        rebuildVersion++
+        rebuildJob?.cancel()
+        collectionJob?.cancel()
+        collectionsLoading = false
+        _refreshing.value = false
+        playbackReturnRevision = prepared.playbackReturnRevision
+        selectedLetter = null
+        focusedRecommendationRowId = prepared.focusedRecommendationRowId
+        bufferFocus(checkNotNull(prepared.focusedRatingKey), prepared.focusedRecommendationRowId)
+        focusPersistenceJob?.cancel()
+        focusPersistenceJob = null
+        flushFocusWrites()
+        _uiState.value = prepared
+        return true
+    }
 
     fun reload() {
         if (_refreshing.value) return
@@ -454,6 +483,7 @@ class SectionViewModel @Inject constructor(
             selectedLetter = selectedLetter,
             gridColumns = preferences.libraryGridColumns,
             listRows = preferences.libraryListRows,
+            playbackReturnRevision = playbackReturnRevision,
         )
     }
 
@@ -468,6 +498,7 @@ class SectionViewModel @Inject constructor(
                     // Sorting may finish after another key press. Publish the latest target,
                     // including a not-yet-persisted one, instead of an older worker snapshot.
                     _uiState.value = loaded.withLatestBrowseFocus(focusBuffer.get(stateKey()))
+                        .copy(playbackReturnRevision = playbackReturnRevision)
                 }
             }
         }

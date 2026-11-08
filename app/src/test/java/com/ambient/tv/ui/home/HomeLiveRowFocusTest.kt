@@ -26,6 +26,10 @@ import androidx.compose.ui.unit.dp
 import com.ambient.tv.R
 import com.ambient.tv.livetv.LiveTvChannel
 import com.ambient.tv.ui.common.RowColumnFocus
+import com.ambient.tv.ui.common.BrowseFocusReturnScope
+import com.ambient.tv.ui.common.BrowseFocusInitialTarget
+import com.ambient.tv.ui.common.BrowseFocusKey
+import com.ambient.tv.ui.common.rememberBrowsePlaybackReturn
 import com.ambient.tv.ui.common.rowColumnFocusNavigation
 import com.ambient.tv.ui.common.rowColumnFocusTarget
 import com.ambient.tv.ui.mobile.LocalHandheldUi
@@ -122,4 +126,37 @@ class HomeLiveRowFocusTest {
     @Test fun guideTileRevealsTheLiveRowWithoutFocusingAChannel() = checkShortcutEntry(recent = false)
 
     @Test fun channelsTileRevealsTheRecentRowWithoutFocusingAChannel() = checkShortcutEntry(recent = true)
+
+    @Test fun explicitPlayerReturnToLaterChannelDoesNotGetPinnedBackToTheLeadingShortcut() {
+        val rowKey = "recent-tv:iptv"
+        val items = (1..16).map { number -> HomeLiveTvItem(
+            LiveTvChannel(number.toString(), "Return Channel $number", number, null, sourceId = "iptv:source:one"),
+            event = null,
+        ) }
+        val target = items[11]
+        val targetKey = homeLiveTvFocusKey(target)
+        rule.setContent {
+            CompositionLocalProvider(LocalHandheldUi provides false) {
+                AmbientTvTheme {
+                    BrowseFocusReturnScope {
+                        BrowseFocusInitialTarget(targetKey, rowKey)
+                        val playbackReturn = rememberBrowsePlaybackReturn(1, BrowseFocusKey(rowKey, targetKey, true))
+                        Box(playbackReturn.modifier) {
+                            HomeLiveTvRow(
+                                items = items, title = "IPTV", imageHeaders = emptyMap(), onWatch = {},
+                                requestInitialFocus = false, onItemFocused = {},
+                                columnFocus = remember { RowColumnFocus() }, rowKey = rowKey,
+                                onOpenChannels = {}, entry = remember { LiveRowEntry() },
+                                restoreChannelKey = targetKey,
+                            )
+                        }
+                    }
+                }
+            }
+        }
+        rule.waitForIdle()
+        rule.onNodeWithText(target.channel.name).assertIsFocused().assertIsDisplayed()
+        press(AndroidKeyEvent.KEYCODE_DPAD_LEFT)
+        rule.onNodeWithText(items[10].channel.name).assertIsFocused().assertIsDisplayed()
+    }
 }

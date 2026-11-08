@@ -64,6 +64,16 @@ internal class HomeTrailerPlaybackReturn {
         }
     }
 
+    /** Live channel rows have their own model, but share the same one-visit focus ownership. */
+    fun restoreSpecialTarget(focus: HomeFocusSnapshot, returnRevision: Int) {
+        source = null
+        origin = focus
+        target = focus
+        landed = false
+        preserveForNextEntry = true
+        revision = returnRevision
+    }
+
     /** A return can be consumed before composition or during enter; both own just this entry. */
     fun enter() {
         if (preserveForNextEntry) preserveForNextEntry = false else clear()

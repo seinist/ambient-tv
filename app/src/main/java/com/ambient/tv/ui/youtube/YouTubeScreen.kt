@@ -100,9 +100,10 @@ import androidx.lifecycle.repeatOnLifecycle
 ) {
     val storedState by viewModel.uiState.collectAsState()
     val pendingReturn by viewModel.pendingPlaybackReturn.collectAsState()
-    val entryReturn = rememberPlaybackReturnOnEntry(pendingReturn) { it.revision }
+    val preview = viewModel.preparePlaybackReturn(storedState, pendingReturn, pendingReturn?.revision)
+    val entryReturn = rememberPlaybackReturnOnEntry(pendingReturn.takeIf { preview != null }) { it.revision }
     val playbackVisitRevision = rememberPlaybackReturnVisitToken(entryReturn?.revision)
-    val preparedReturn = viewModel.preparePlaybackReturn(storedState, entryReturn, entryReturn?.revision)
+    val preparedReturn = preview.takeIf { entryReturn != null }
     // The player already knows the last item and any continuation pages. Use that immutable
     // visit before constructing a Lazy state; entry later commits exactly the same revision.
     val state = preparedReturn?.let {

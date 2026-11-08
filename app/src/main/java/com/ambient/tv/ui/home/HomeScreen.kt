@@ -185,7 +185,9 @@ fun HomeScreen(
     val pendingReturn = viewModel.pendingPlaybackReturn(focusStateKey, pendingYouTubeReturn, pendingTelegramReturn)
     val providerReturn = com.ambient.tv.ui.common.rememberPlaybackReturnOnEntry(pendingReturn) { it.key }
     val navigationReturn = com.ambient.tv.ui.common.rememberNavigationPlaybackReturn()
-    val mediaReturn = remember(navigationReturn) { homeNavigationPlaybackReturn(storedState, navigationReturn) }
+    val mediaReturn = remember(navigationReturn) {
+        homeNavigationPlaybackReturn(storedState, navigationReturn, viewModel.navigationPlaybackRowId)
+    }
     // The regular player that just closed outranks an older mini-player queue event.
     val entryReturn = if (navigationReturn != null) mediaReturn else providerReturn
     val preparedReturn = viewModel.preparePlaybackReturn(storedState, focusStateKey, entryReturn)
@@ -213,8 +215,8 @@ fun HomeScreen(
     val openItem: (String) -> Unit = remember(viewModel, onItemClick) {
         { key -> viewModel.captureFocusForReturn(); onItemClick(key) }
     }
-    val watchLiveChannel: (TvhChannel) -> Unit = remember(viewModel, onWatchLiveChannel) {
-        { channelId -> viewModel.captureFocusForReturn(); onWatchLiveChannel(channelId) }
+    val watchLiveChannel: (String, TvhChannel) -> Unit = remember(viewModel, onWatchLiveChannel) {
+        { rowId, channel -> viewModel.captureRowPlayback(rowId); onWatchLiveChannel(channel) }
     }
     val openHomeContent: (HomeRowDefinition) -> Unit = remember(viewModel, onOpenHomeContent) {
         { row -> viewModel.captureFocusForReturn(); onOpenHomeContent(row) }
@@ -396,7 +398,7 @@ fun HomeScreen(
                             onTrailerVideoClick(videoId, viewModel.trailerPlaybackToken(rowId, videoId))
                         },
                         onRadioHomeStationClick = { stationId, rowId, visibleIds ->
-                            viewModel.captureFocusForReturn()
+                            viewModel.captureRowPlayback(rowId)
                             onRadioHomeStationClick(HomeRadioPlaybackSelection(
                                 rowId = rowId,
                                 stationId = stationId,
@@ -669,8 +671,8 @@ internal fun LibraryContent(
     onTelegramRowItemClick: (String, String) -> Unit = { _, key -> onItemClick(key) },
     onItemFocused: (String, MediaItem) -> Unit,
     onOpenRelevantSettings: (String) -> Unit,
-    onWatchLiveChannel: (TvhChannel) -> Unit,
-    onLiveTvFocused: (HomeLiveTvItem) -> Unit,
+    onWatchLiveChannel: (String, TvhChannel) -> Unit,
+    onLiveTvFocused: (String, HomeLiveTvItem) -> Unit,
     onShortcutFocused: (HomeRowDefinition) -> Unit,
     onOpenHomeContent: (HomeRowDefinition) -> Unit,
     tvheadendImageHeaders: Map<String, String>,
@@ -733,9 +735,11 @@ internal fun LibraryContent(
                         HomeLiveTvRow(
                             items = state.tvRows[rowKey]?.items.orEmpty(),
                             title = state.tvRows[rowKey]?.title.orEmpty(),
-                            imageHeaders = tvheadendImageHeaders, onWatch = onWatchLiveChannel,
+                            imageHeaders = tvheadendImageHeaders, onWatch = { onWatchLiveChannel(rowKey, it) },
                             requestInitialFocus = false,
-                            onItemFocused = onLiveTvFocused,
+                            onItemFocused = { onLiveTvFocused(rowKey, it) },
+                            rowKey = rowKey,
+                            restoreChannelKey = focusSnapshot.ratingKey.takeIf { rowKey == focusSnapshot.rowId && returnToken != null },
                             onOpenChannels = if (recent) {
                                 { onOpenHomeContent(homeTvShortcut(rowKey, "live")) }
                             } else null,
@@ -810,10 +814,12 @@ internal fun LibraryContent(
         // scroll position and D-pad focus into that other row mid-browse.
         val initialFocusKey = remember(state.playbackReturnRevision) {
             focusSnapshot.ratingKey?.takeIf { key ->
-                state.rows.any { row -> row.items.any { key in it.allRatingKeys } }
+                homeFocusRowId(state.rows, state.tvRows, HomeFocusSnapshot(key, focusSnapshot.rowId)) != null
             }
         }
-        val initialFocusRowId = remember(state.playbackReturnRevision) { focusSnapshot.rowId }
+        val initialFocusRowId = remember(state.playbackReturnRevision) {
+            homeFocusRowId(state.rows, state.tvRows, focusSnapshot)
+        }
         var rowsHaveFocus by remember { mutableStateOf(false) }
         val refreshRecovery = remember(state.focusRecovery) { state.focusRecovery.takeIf { rowsHaveFocus } }
 
@@ -827,7 +833,7 @@ internal fun LibraryContent(
             }.takeIf { it >= 0 }
                 ?: state.rows.indexOfFirst { row -> initialFocusKey != null && row.items.any { initialFocusKey in it.allRatingKeys } }
         }
-        fun contentListIndex(index: Int): Int = state.rowKeys.indexOf(state.rows.getOrNull(index)?.id).coerceAtLeast(0)
+        val restoreListIndex = state.rowKeys.indexOf(initialFocusRowId).coerceAtLeast(0)
         val heroHeight = homeHeroHeight()
         // Same line the first row already occupies. Later rows, including a short live row at
         // the bottom, must be able to reach it or the hero mask cuts them in half.
@@ -837,9 +843,8 @@ internal fun LibraryContent(
         val firstRowHeightKey = "home:${state.rowKeys.firstOrNull()}:${listViewport.value}"
         var firstRowHeight by remember(firstRowHeightKey) { mutableStateOf(HeroRowHeights[firstRowHeightKey]) }
         val bottomInsetPx = with(density) { HeroRowBottomMargin.roundToPx() }
-        val focusedItemStillExists = focusSnapshot.ratingKey == null || state.rows.any { row ->
-            row.items.any { item -> focusSnapshot.ratingKey in item.allRatingKeys }
-        }
+        val focusedItemStillExists = focusSnapshot.ratingKey == null ||
+            homeFocusRowId(state.rows, state.tvRows, focusSnapshot) != null
         // While the selection from before Detail is still waiting to be restored, a transient
         // row list without it must not pull focus to the first tile instead.
         val missingFocusFallback = if (!focusedItemStillExists && !restoreArmed) {
@@ -848,7 +853,7 @@ internal fun LibraryContent(
             null
         }
         val rowListState = rememberLazyListState(
-            initialFirstVisibleItemIndex = if (restoreArmed) contentListIndex(restoreRowIndex) else 0,
+            initialFirstVisibleItemIndex = if (restoreArmed) restoreListIndex else 0,
         )
         com.ambient.tv.ui.common.RegisterBrowseFocusRows(rowListState, state.rowKeys.map { rowKey ->
             rowKey to when {
@@ -861,10 +866,11 @@ internal fun LibraryContent(
         })
         val initialRow = state.rows.getOrNull(restoreRowIndex)
         val initialItemKey = initialRow?.items?.firstOrNull { initialFocusKey != null && initialFocusKey in it.allRatingKeys }?.ratingKey
+            ?: initialFocusKey.takeIf { initialFocusRowId in state.tvRows }
         com.ambient.tv.ui.common.BrowseFocusContentIdentity(state.playbackReturnRevision, restoreInitialTarget = true)
         com.ambient.tv.ui.common.BrowseFocusInitialTarget(
             initialItemKey,
-            initialRow?.id,
+            initialFocusRowId,
         )
         val browseFocus = com.ambient.tv.ui.common.LocalBrowseFocusReturnState.current
         LaunchedEffect(rowListState) {
@@ -888,10 +894,10 @@ internal fun LibraryContent(
         val activeRowKey by centeredRowKey.collectAsState()
         // Until a row takes focus, the restored row is the active one: no fade from row 0 to it.
         val activeRowIndex = state.rowKeys.indexOf(activeRowKey).takeIf { it >= 0 }
-            ?: if (restoreArmed) contentListIndex(restoreRowIndex) else 0
+            ?: if (restoreArmed) restoreListIndex else 0
         LaunchedEffect(restoreArmed, state.rowKeys) {
-            if (restoreArmed && restoreRowIndex in state.rows.indices) {
-                rowListState.scrollToItem(contentListIndex(restoreRowIndex))
+            if (restoreArmed && initialFocusRowId in state.rowKeys) {
+                rowListState.scrollToItem(restoreListIndex)
             }
         }
         LaunchedEffect(state.initialFocusTarget, state.rowKeys.firstOrNull()) {
@@ -978,17 +984,18 @@ internal fun LibraryContent(
                                 items = state.tvRows[rowKey]?.items.orEmpty(),
                                 title = state.tvRows[rowKey]?.title.orEmpty(),
                                 imageHeaders = tvheadendImageHeaders,
-                                onWatch = onWatchLiveChannel,
+                                onWatch = { onWatchLiveChannel(rowKey, it) },
                                 requestInitialFocus = rowKey == state.rowKeys.firstOrNull() && state.initialFocusTarget ==
                                     if (recent) HomeInitialFocusTarget.RECENT_TV else HomeInitialFocusTarget.LIVE_TV,
                                 onRowFocused = {
                                     restoreArmed = false
                                     centeredRowKey.value = rowKey
                                 },
-                                onItemFocused = onLiveTvFocused,
+                                onItemFocused = { onLiveTvFocused(rowKey, it) },
                                 bringContextIntoView = false,
                                 columnFocus = columnFocus,
                                 rowKey = rowKey,
+                                restoreChannelKey = initialFocusKey.takeIf { rowKey == initialFocusRowId && returnToken != null },
                                 onOpenChannels = if (recent) {
                                     { onOpenHomeContent(homeTvShortcut(rowKey, "live")) }
                                 } else null,
@@ -1157,6 +1164,8 @@ internal fun HomeLiveTvRow(
     onOpenGuide: (() -> Unit)? = null,
     /** TV only. Keeps the first entry of this Home visit on card 0. */
     entry: LiveRowEntry? = null,
+    /** Explicit playback return, resolved before the horizontal Lazy state is constructed. */
+    restoreChannelKey: String? = null,
 ) {
     val tv = !LocalHandheldUi.current
     val firstItemFocusRequester = remember { FocusRequester() }
@@ -1166,10 +1175,12 @@ internal fun HomeLiveTvRow(
         else -> null
     }
     val channelKeys = remember(items) { items.map { "${it.channel.sourceId}:${it.channel.uuid}" } }
+    val restoredChannel = restoreChannelKey?.takeIf { it in channelKeys }
+    if (restoredChannel != null) entry?.choose(rowKey)
     // A saved landing on the last card is not a choice the user made. Drop it before the
     // row reads its start index, until they move left or right in the row.
     if (entry != null && columnFocus != null) entry.resetUnlessChosen(rowKey, columnFocus)
-    val remembered = columnFocus?.rememberedItem(rowKey) as? String
+    val remembered = restoredChannel ?: columnFocus?.rememberedItem(rowKey) as? String
     val entryIndex = when {
         entry == null || entry.chosen(rowKey) -> homeLiveRowEntryIndex(remembered, leadingKey, channelKeys)
         else -> 0
@@ -1267,7 +1278,7 @@ internal fun HomeLiveTvRow(
                         onExit = { if (requestedFocusDirection == androidx.compose.ui.focus.FocusDirection.Right) cancelFocusChange() }
                         // Default search into this row picks a visible card at the far end.
                         onEnter = {
-                            if (entry?.chosen(rowKey) != true &&
+                            if (restoredChannel == null && entry?.chosen(rowKey) != true &&
                                 runCatching { firstItemFocusRequester.requestFocus() }.getOrDefault(false)
                             ) cancelFocusChange()
                         }

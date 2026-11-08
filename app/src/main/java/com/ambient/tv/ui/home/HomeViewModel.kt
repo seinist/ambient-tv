@@ -69,9 +69,6 @@ import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
 import com.ambient.tv.ui.performance.PerformanceProfileResolver
 import com.ambient.tv.util.suspendResult
-import java.time.Instant
-import java.time.ZoneId
-import java.time.format.DateTimeFormatter
 
 data class HomeLiveTvItem(val channel: TvhChannel, val event: TvhEpgEvent?, val imageHeaders: Map<String, String> = emptyMap(), val sourceName: String = "")
 data class HomeTvRow(val items: List<HomeLiveTvItem>, val title: String)
@@ -263,6 +260,9 @@ class HomeViewModel @Inject constructor(
     private var trailerRows: List<ContentRowData> = emptyList()
     private val trailerPlaybackReturn = HomeTrailerPlaybackReturn()
     private var playbackOrigin: HomePlaybackOrigin? = null
+    private var liveTvPlaybackReturn: HomePlaybackReturnRequest? = null
+    internal var navigationPlaybackRowId: String? = null
+        private set
     internal val pendingYouTubePlaybackReturn = youtubePlaybackContext.pendingReturn
     internal val pendingTelegramPlaybackReturn = telegramPlaybackContext.pendingReturn
     private var radioRows: List<ContentRowData> = emptyList()
@@ -325,6 +325,7 @@ class HomeViewModel @Inject constructor(
 
     /** Commit the most recent D-pad target when leaving Home, without publishing on every step. */
     fun captureFocusForReturn() {
+        navigationPlaybackRowId = null
         // A new navigation also releases a touch/companion return with no D-pad focus event.
         // Trailer launches capture first and install their new source queue afterwards.
         trailerPlaybackReturn.clear()
@@ -347,6 +348,22 @@ class HomeViewModel @Inject constructor(
             focusedRowId = activeFocusedRowId,
             hero = hero,
         )
+    }
+
+    internal fun captureRowPlayback(rowId: String) {
+        captureFocusForReturn()
+        navigationPlaybackRowId = rowId
+    }
+
+    private fun livePlaybackReturnVisible(request: HomePlaybackReturnRequest): Boolean {
+        val rowId = request.target.rowId ?: return false
+        val item = request.liveTvSource?.items?.firstOrNull { homeLiveTvFocusKey(it) == request.target.ratingKey }
+            ?: return false
+        val system = rowId.substringAfter(':', HomeRowDefinition.SYSTEM_TVHEADEND)
+        val content = if (rowId.startsWith("recent-tv")) "recent_channels" else "live"
+        return hasEnabledRow(system, content) && liveTvRegistry.configured().any { it.source.id == item.channel.sourceId } &&
+            homeTvSourceVisible(item.channel.sourceId, unreachableServers.current().offline,
+                tvheadendConnectionManager.state.value is ServerConnectionState.Online)
     }
 
     private fun playbackRowEnabled(row: ContentRowData): Boolean = when {
@@ -392,7 +409,10 @@ class HomeViewModel @Inject constructor(
         val expected = request ?: return null
         if (expected.provider == HomePlaybackProvider.MEDIA) {
             if (current.playbackReturnToken == expected.key) return null
-            return prepareHomePlaybackReturn(current, expected.takeUnless { homeRowHidden(it.source.id) } ?: return null)
+            if (expected.liveTvSource != null) {
+                if (!livePlaybackReturnVisible(expected)) return null
+            } else if (expected.source?.let { homeRowHidden(it.id) } != false) return null
+            return prepareHomePlaybackReturn(current, expected)
         }
         val pending = pendingPlaybackReturn(focusStateKey, pendingYouTubePlaybackReturn.value,
             pendingTelegramPlaybackReturn.value)?.takeIf { it.key == expected.key } ?: return null
@@ -410,19 +430,25 @@ class HomeViewModel @Inject constructor(
             if (latest != null && latest.key == pending.key && ready != null) {
                 val source = latest.source
                 val itemKey = requireNotNull(ready.focusedRatingKey)
-                trailerPlaybackReturn.startItem(source, itemKey)
-                trailerPlaybackReturn.restoreItem(source.id, itemKey, ready.playbackReturnRevision)
-                when (latest.provider) {
-                    HomePlaybackProvider.TRAILERS -> trailerRows = trailerRows.filterNot { it.id == source.id } + source
-                    HomePlaybackProvider.YOUTUBE -> youtubeRows = youtubeRows.filterNot { it.id == source.id } + source
-                    HomePlaybackProvider.TELEGRAM -> telegramRows = telegramRows.filterNot { it.id == source.id } + source
-                    HomePlaybackProvider.MEDIA -> Unit
+                val rowId = requireNotNull(ready.focusedRowId)
+                if (source != null) {
+                    trailerPlaybackReturn.startItem(source, itemKey)
+                    trailerPlaybackReturn.restoreItem(source.id, itemKey, ready.playbackReturnRevision)
+                    when (latest.provider) {
+                        HomePlaybackProvider.TRAILERS -> trailerRows = trailerRows.filterNot { it.id == source.id } + source
+                        HomePlaybackProvider.YOUTUBE -> youtubeRows = youtubeRows.filterNot { it.id == source.id } + source
+                        HomePlaybackProvider.TELEGRAM -> telegramRows = telegramRows.filterNot { it.id == source.id } + source
+                        HomePlaybackProvider.MEDIA -> Unit
+                    }
+                } else {
+                    liveTvPlaybackReturn = latest
+                    trailerPlaybackReturn.restoreSpecialTarget(HomeFocusSnapshot(itemKey, rowId), ready.playbackReturnRevision)
                 }
                 activeFocusKnown = true
                 activeFocusedRatingKey = itemKey
-                activeFocusedRowId = source.id
+                activeFocusedRowId = rowId
                 _heroContent.value = ready.hero
-                queueHomeFocusPersistence(itemKey, source.id)
+                queueHomeFocusPersistence(itemKey, rowId)
                 _uiState.value = ready
             }
         }
@@ -2144,12 +2170,23 @@ class HomeViewModel @Inject constructor(
             }
         }
         // A system's own page keeps the order its rows were built in; only Home follows the editor.
-        val tvRows = appPreferences.homeRows.filter { it.enabled && it.contentKey in setOf("live", "recent_channels") }.mapNotNull { row ->
+        val refreshedTvRows = appPreferences.homeRows.filter { it.enabled && it.contentKey in setOf("live", "recent_channels") }.mapNotNull { row ->
             val recent = row.contentKey == "recent_channels"
             val items = (if (recent) recentTvItems else liveTvItems).filter { it.channel.sourceId.substringBefore(':') == row.system }
             val key = (if (recent) "recent-tv" else "live-tv") + if (row.system == "tvheadend") "" else ":${row.system}"
             if (items.isEmpty()) null else key to HomeTvRow(items, row.displayTitle(context))
         }.toMap()
+        val returnedTvRow = liveTvPlaybackReturn?.takeIf {
+            trailerPlaybackReturn.target?.rowId == it.target.rowId
+        }?.takeIf {
+            if (livePlaybackReturnVisible(it)) true else {
+                trailerPlaybackReturn.clear()
+                liveTvPlaybackReturn = null
+                false
+            }
+        }
+        val tvRows = if (returnedTvRow == null) refreshedTvRows else refreshedTvRows +
+            (checkNotNull(returnedTvRow.target.rowId) to checkNotNull(returnedTvRow.liveTvSource))
         val contentRowKeys = orderedHomeRowKeys(if (plexOnly || jellyfinOnly || embyOnly) emptyList() else appPreferences.homeRows, rows.map { it.id },
             shortcuts, tvRows.containsKey("live-tv"), tvRows.containsKey("recent-tv"), tvRows.keys.filter { ':' in it }.associateWith { key -> "${key.substringAfter(':')}.${if (key.startsWith("recent")) "recent_channels" else "live"}" })
         // An offline server whose rows are on Home keeps one entry there that wakes it. With no
@@ -2171,7 +2208,7 @@ class HomeViewModel @Inject constructor(
             )
         }
         var focusRecovery = previous?.focusRecovery
-        if (previous != null && savedFocus.ratingKey != null && rows.none { row -> (savedFocus.rowId == null || row.id == savedFocus.rowId) && row.items.any { savedFocus.ratingKey in it.allRatingKeys } }) {
+        if (previous != null && savedFocus.ratingKey != null && homeFocusRowId(rows, tvRows, savedFocus) == null) {
             val newRow = rows.firstOrNull { it.id == savedFocus.rowId && it.items.isNotEmpty() }
                 ?: rows.firstOrNull { it.items.isNotEmpty() }
             val firstRemaining = newRow?.items?.firstOrNull()?.ratingKey
@@ -2180,9 +2217,7 @@ class HomeViewModel @Inject constructor(
             activeFocusedRatingKey = firstRemaining
             activeFocusedRowId = newRow?.id
         }
-        val savedContentFocusExists = savedFocus.ratingKey != null && rows.any { row ->
-            row.items.any { savedFocus.ratingKey in it.allRatingKeys }
-        }
+        val savedContentFocusExists = homeFocusRowId(rows, tvRows, savedFocus) != null
         // A view with no snapshot starts at the top-left item. Once that concrete view has its
         // own snapshot, recreating its destination restores it instead of sharing Home's focus.
         val needsInitialTopLeft = (previous == null || previous.rowKeys.isEmpty()) && !savedContentFocusExists
@@ -2205,12 +2240,12 @@ class HomeViewModel @Inject constructor(
             HomeInitialFocusTarget.NONE -> savedFocus.ratingKey ?: defaultItem?.ratingKey
         }
         val focusedRowId = firstContentRow?.id?.takeIf { initialFocusTarget == HomeInitialFocusTarget.CONTENT }
-            ?: savedFocus.rowId
-            ?.takeIf { rowId -> rows.any { row -> row.id == rowId && focusedKey != null && row.items.any { focusedKey in it.allRatingKeys } } }
-            ?: rows.firstOrNull { row -> focusedKey != null && row.items.any { focusedKey in it.allRatingKeys } }?.id
+            ?: homeFocusRowId(rows, tvRows, HomeFocusSnapshot(focusedKey, savedFocus.rowId))
         val plexHero = focusedRowId?.let { rowId -> rows.firstOrNull { it.id == rowId } }
             ?.items?.firstOrNull { focusedKey in it.allRatingKeys }
             ?: rows.firstNotNullOfOrNull { it.items.firstOrNull() }
+        val focusedTvHero = tvRows[focusedRowId]?.items?.firstOrNull { homeLiveTvFocusKey(it) == focusedKey }
+            ?.toHeroContent()
         val refreshedProviderHero = (_heroContent.value?.key ?: previous?.hero?.key)?.let { previousHeroKey ->
             when {
                 previousHeroKey.startsWith("livetv:") -> (liveTvItems + recentTvItems).firstOrNull { item ->
@@ -2226,6 +2261,7 @@ class HomeViewModel @Inject constructor(
             initialFocusTarget == HomeInitialFocusTarget.LIVE_TV -> tvRows[rowKeys.firstOrNull()]?.items?.firstOrNull()?.toHeroContent()
             initialFocusTarget == HomeInitialFocusTarget.RECENT_TV -> tvRows[rowKeys.firstOrNull()]?.items?.firstOrNull()?.toHeroContent()
             initialFocusTarget == HomeInitialFocusTarget.SHORTCUT -> shortcuts.firstOrNull()?.toHeroContent()
+            initialFocusTarget == HomeInitialFocusTarget.NONE && focusedTvHero != null -> focusedTvHero
             initialFocusTarget == HomeInitialFocusTarget.NONE && refreshedProviderHero != null -> refreshedProviderHero
             plexHero != null -> plexHero.toHeroContent()
             liveTvItems.isNotEmpty() -> liveTvItems.first().toHeroContent()
@@ -2289,22 +2325,25 @@ class HomeViewModel @Inject constructor(
         }
     }
 
-    fun onLiveTvFocused(item: HomeLiveTvItem) {
-        trailerPlaybackReturn.focused(null, null)
+    fun onLiveTvFocused(rowId: String, item: HomeLiveTvItem) {
+        val key = homeLiveTvFocusKey(item)
+        trailerPlaybackReturn.focused(rowId, key)
+        val returned = trailerPlaybackReturn.target?.takeIf { it.rowId == rowId && it.ratingKey == key }
         val current = _uiState.value as? HomeUiState.Loaded ?: return
         val nextHero = item.toHeroContent()
         val mustReleaseInitialFocus = current.initialFocusTarget != HomeInitialFocusTarget.NONE
-        val focusChanged = !activeFocusKnown || activeFocusedRatingKey != null || activeFocusedRowId != null || _heroContent.value?.key != nextHero.key
+        val focusChanged = !activeFocusKnown || activeFocusedRatingKey != returned?.ratingKey ||
+            activeFocusedRowId != returned?.rowId || _heroContent.value?.key != nextHero.key
         if (!focusChanged && !mustReleaseInitialFocus) return
         activeFocusKnown = true
-        activeFocusedRatingKey = null
-        activeFocusedRowId = null
+        activeFocusedRatingKey = returned?.ratingKey
+        activeFocusedRowId = returned?.rowId
         homeFocusPersistenceJob?.cancel()
         _heroContent.value = nextHero
         if (mustReleaseInitialFocus) {
             _uiState.value = current.copy(
-                focusedRatingKey = null,
-                focusedRowId = null,
+                focusedRatingKey = returned?.ratingKey,
+                focusedRowId = returned?.rowId,
                 hero = nextHero,
                 initialFocusTarget = HomeInitialFocusTarget.NONE,
             )
@@ -2444,30 +2483,7 @@ class HomeViewModel @Inject constructor(
 
     private fun MediaItem.toHeroContent() = toHomeHeroContent()
 
-    private fun HomeLiveTvItem.toHeroContent(): HomeHeroContent {
-        val currentEvent = event
-        return HomeHeroContent(
-            key = "livetv:${channel.sourceId}:${channel.uuid}:${currentEvent?.eventId ?: "channel"}",
-            title = currentEvent?.title ?: channel.name,
-            artworkUrl = currentEvent?.imageUrl ?: channel.iconUrl,
-            thumbnailUrl = channel.iconUrl,
-            titleLogoUrl = channel.iconUrl,
-            artworkIsLogo = currentEvent?.imageUrl == null,
-            providerLabel = sourceName,
-            // Without guide data the channel name is already the title.
-            metadata = if (currentEvent == null) listOf(sourceName).filter { it.isNotBlank() } else emptyList(),
-            imageHeaders = imageHeaders,
-            subtitle = currentEvent?.let { it.subtitle?.takeIf { sub -> sub.isNotBlank() } ?: channel.name },
-            // DVB guide data often repeats the subtitle as the short summary; skip the echo.
-            summary = currentEvent?.let { event ->
-                listOfNotNull(event.summary, event.description)
-                    .firstOrNull { it.isNotBlank() && it.trim() != event.subtitle?.trim() }
-            },
-            live = currentEvent?.let {
-                HomeHeroLive("${formatClock(it.startEpochSeconds)}–${formatClock(it.stopEpochSeconds)}", it.startEpochSeconds, it.stopEpochSeconds)
-            },
-        )
-    }
+    private fun HomeLiveTvItem.toHeroContent() = toHomeHeroContent()
 
     private fun HomeRowDefinition.toHeroContent() = HomeHeroContent(
         key = "shortcut:$id",
@@ -2513,12 +2529,8 @@ class HomeViewModel @Inject constructor(
         /** Parallel Home metadata fetches (section/ranked/hubs) across backends. */
         const val HOME_FETCH_CONCURRENCY = 6
         const val HOME_LIVE_TV_LIMIT = 12
-        val HOME_CLOCK_FORMATTER: DateTimeFormatter = DateTimeFormatter.ofPattern("HH:mm")
-            .withZone(ZoneId.systemDefault())
     }
 
-    private fun formatClock(epochSeconds: Long): String =
-        HOME_CLOCK_FORMATTER.format(Instant.ofEpochSecond(epochSeconds))
 }
 
 /** Rows whose placeholders are drawn during cold cache hydration, in on-screen order. */

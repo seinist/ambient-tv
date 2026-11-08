@@ -15,10 +15,10 @@ internal class SearchResultFocus(initialKey: String? = null) {
 }
 
 /** One entry/view change captures a target; later navigation never rewrites that request. */
-internal class SearchFocusRequest(val itemKey: String?) {
+internal class SearchFocusRequest(val itemKey: String?, initialLayoutPrepared: Boolean = false) {
     var pending by mutableStateOf(true)
         private set
-    private var scrollPending = itemKey != null
+    private var scrollPending = itemKey != null && !initialLayoutPrepared
 
     fun contentFocused() {
         pending = false

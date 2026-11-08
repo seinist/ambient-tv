@@ -87,7 +87,7 @@ class HomeTrailerReturnFocusTest {
                             onItemClick = { fixture.unrelatedClicks++ },
                             onItemFocused = { row, item -> fixture.lastFocus = HomeFocusSnapshot(item.ratingKey, row) },
                             onTrailerHomeVideoClick = { video, row -> fixture.played = video to row },
-                            onOpenRelevantSettings = {}, onWatchLiveChannel = {}, onLiveTvFocused = {},
+                            onOpenRelevantSettings = {}, onWatchLiveChannel = { _, _ -> }, onLiveTvFocused = { _, _ -> },
                             onShortcutFocused = {}, onOpenHomeContent = {}, tvheadendImageHeaders = emptyMap(),
                             entranceProgress = { 1f },
                         )

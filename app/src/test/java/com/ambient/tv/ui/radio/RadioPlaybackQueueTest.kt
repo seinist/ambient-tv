@@ -46,7 +46,8 @@ class RadioPlaybackQueueTest {
         assertNull(prepareRadioPlaybackReturn(staleState, queue.pendingReturn.value, RadioSection.FAVORITES))
         // Refusing that route leaves the return available for its actual origin.
         assertEquals("last", queue.pendingReturn.value?.currentId)
-        assertEquals(listOf("shared", "last"),
+        // Popular keeps its configured alphabetical browse order after the queue merge.
+        assertEquals(listOf("last", "shared"),
             prepareRadioPlaybackReturn(staleState, queue.pendingReturn.value, RadioSection.POPULAR)!!.stations.map { it.id })
     }
 
