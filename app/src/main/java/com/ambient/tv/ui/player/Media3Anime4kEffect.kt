@@ -156,6 +156,9 @@ private class Media3Anime4kProgram(
     private val targetWidth: Int,
     private val targetHeight: Int,
 ) : BaseGlShaderProgram(false, /* texturePoolCapacity= */ 1) {
+    private val textureSlots = media3TextureSlotPlan(passes.map {
+        Media3TexturePass(it.bindings, it.save.takeUnless { name -> name == "MAIN" })
+    })
     private val programs: List<GlProgram> = passes.map { media3GlProgram(media3Anime4kFragment(it)) }
     private val finish = media3GlProgram(
         """#version 100
@@ -165,6 +168,7 @@ uniform highp sampler2D uImage;
 void main() { gl_FragColor = texture2D(uImage, vTexSamplingCoord); }
 """
     )
+    private val featureTargets = mutableListOf<Media3Intermediate>()
     private val saved = linkedMapOf<String, Media3Intermediate>()
     private var fitTarget: Media3Intermediate? = null
     private var inputWidth = 1
@@ -183,8 +187,11 @@ void main() { gl_FragColor = texture2D(uImage, vTexSamplingCoord); }
         this.inputHeight = inputHeight
         val (w, h) = media3FitSize(inputWidth, inputHeight, targetWidth, targetHeight)
         try {
-            passes.dropLast(1).forEach { pass ->
-                saved[pass.save] = media3SsimIntermediate(inputWidth, inputHeight)
+            repeat(textureSlots.slotCount) {
+                featureTargets += media3SsimIntermediate(inputWidth, inputHeight)
+            }
+            passes.dropLast(1).forEachIndexed { index, pass ->
+                saved[pass.save] = featureTargets[textureSlots.slotByPass[index]]
             }
             if (w != inputWidth * 2 || h != inputHeight * 2) {
                 // The model always predicts a 2x feature grid. Its result is fitted to the
@@ -244,8 +251,9 @@ void main() { gl_FragColor = texture2D(uImage, vTexSamplingCoord); }
     }
 
     private fun releaseTextures() {
-        saved.values.forEach(Media3Intermediate::release)
         saved.clear()
+        featureTargets.forEach(Media3Intermediate::release)
+        featureTargets.clear()
         fitTarget?.release()
         fitTarget = null
     }
