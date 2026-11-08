@@ -936,8 +936,15 @@ private fun YouTubeMedia3Playback(
         val requested = seekCoordinator.requestRelative(delta, position, limit)
         val landing = adjustedYouTubeSeekTarget(requested, playback, limit, sponsorPrefs, metadata.sponsorSkipEnabled, delta < 0L)
         position = if (landing != requested) seekCoordinator.requestAbsolute(landing) else requested
-        seekCoordinator.consumeCommit()?.let(player::seekToPlaybackPosition)
+        seekCoordinator.consumeCommit(force = com.ambient.tv.ui.player.isPlaybackEndSeek(requested, limit))
+            ?.let(player::seekToPlaybackPosition)
         seekCommitVersion++
+        // The decoder stops just before logical EOF to avoid a DASH/HLS buffering loop.
+        // A paused manual seek must play out that short tail for the real EOF/Next Up event.
+        val session = BackgroundPlaybackSession.snapshot.value
+        if (com.ambient.tv.ui.player.shouldPlayThroughPlaybackEnd(
+                requested, limit, session.wantsToPlay, session.status.ended
+            )) BackgroundPlaybackSession.play()
     }
     fun seekInMode(delta: Long) {
         if (playback.isLive) osd.reveal() else {
@@ -1289,8 +1296,15 @@ private fun YouTubeVlcPlayback(playback: YouTubePlayback, audioUri: String?, str
         val requested = seekCoordinator.requestRelative(delta, displayedPosition, limit)
         val landing = adjustedYouTubeSeekTarget(requested, playback, limit, preferences, sponsorSkipEnabled, delta < 0L)
         displayedPosition = if (landing != requested) seekCoordinator.requestAbsolute(landing) else requested
-        seekCoordinator.consumeCommit()?.let(controller::seekTo)
+        seekCoordinator.consumeCommit(force = com.ambient.tv.ui.player.isPlaybackEndSeek(requested, limit))
+            ?.let(controller::seekTo)
         seekCommitVersion++
+        // The decoder stops just before logical EOF to avoid a DASH/HLS buffering loop.
+        // A paused manual seek must play out that short tail for the real EOF/Next Up event.
+        val session = BackgroundPlaybackSession.snapshot.value
+        if (com.ambient.tv.ui.player.shouldPlayThroughPlaybackEnd(
+                requested, limit, session.wantsToPlay, session.status.ended
+            )) BackgroundPlaybackSession.play()
     }
     fun seekInMode(delta: Long) {
         if (playback.isLive) osd.reveal() else {
@@ -1584,8 +1598,15 @@ private fun YouTubeMpvPlayback(playback: YouTubePlayback, streams: YouTubeStream
         val requested = seekCoordinator.requestRelative(delta, displayedPosition, limit)
         val landing = adjustedYouTubeSeekTarget(requested, playback, limit, preferences, sponsorSkipEnabled, delta < 0L)
         displayedPosition = if (landing != requested) seekCoordinator.requestAbsolute(landing) else requested
-        seekCoordinator.consumeCommit()?.let(controller::seekTo)
+        seekCoordinator.consumeCommit(force = com.ambient.tv.ui.player.isPlaybackEndSeek(requested, limit))
+            ?.let(controller::seekTo)
         seekCommitVersion++
+        // The decoder stops just before logical EOF to avoid a DASH/HLS buffering loop.
+        // A paused manual seek must play out that short tail for the real EOF/Next Up event.
+        val session = BackgroundPlaybackSession.snapshot.value
+        if (com.ambient.tv.ui.player.shouldPlayThroughPlaybackEnd(
+                requested, limit, session.wantsToPlay, session.status.ended
+            )) BackgroundPlaybackSession.play()
     }
     fun seekInMode(delta: Long) {
         if (playback.isLive) osd.reveal() else {

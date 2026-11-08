@@ -112,6 +112,22 @@ class ChapterSeekRegressionTest {
         assertEquals(listOf(75_000L), session.commits)
     }
 
+    @Test fun aRapidFinalChapterStepCommitsEofWithoutWaitingForTheSeekDebounce() {
+        var now = 0L
+        val seek = PlaybackSeekCoordinator(nowMs = { now })
+        val length = 100_000L
+        val first = seek.requestRelative(20_000L, 30_000L, length)
+        assertEquals(50_000L, seek.consumeCommit())
+
+        // A second chapter key before debounce expires must not be left at the earlier
+        // keyframe: the logical EOF request goes straight to the decoder's safe end tail.
+        now = 30L
+        val end = seek.requestRelative(60_000L, first, length)
+        assertEquals(length, end)
+        assertEquals(length, seek.consumeCommit(force = isPlaybackEndSeek(end, length)))
+        assertNull(seek.consumeCommit())
+    }
+
     @Test fun chapterTargetsStayOnTheAbsoluteMediaClockAcrossATranscodeOffset() {
         val offset = 480_000L
         val session = Session(listOf(0, 120_000, 480_000, 600_000), 900_000, offset + 20_000)

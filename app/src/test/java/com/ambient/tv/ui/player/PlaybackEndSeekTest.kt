@@ -53,6 +53,17 @@ class PlaybackEndSeekTest {
         assertNull(safePlaybackEndSeekTarget(Long.MIN_VALUE, 1_500L))
     }
 
+    @Test fun explicitEndSeekPlaysOutTheDecoderTailOnlyWhenPaused() {
+        val end = 100_000L
+        assertTrue(shouldPlayThroughPlaybackEnd(end, end, wantsToPlay = false, ended = false))
+        assertTrue(shouldPlayThroughPlaybackEnd(end + 5_000L, end, wantsToPlay = false, ended = false))
+        assertFalse(shouldPlayThroughPlaybackEnd(end - 1L, end, wantsToPlay = false, ended = false))
+        assertFalse(shouldPlayThroughPlaybackEnd(end, end, wantsToPlay = true, ended = false))
+        assertFalse(shouldPlayThroughPlaybackEnd(end, end, wantsToPlay = false, ended = true))
+        assertFalse(shouldPlayThroughPlaybackEnd(end, 0L, wantsToPlay = false, ended = false))
+        assertFalse(shouldPlayThroughPlaybackEnd(end, Long.MAX_VALUE, wantsToPlay = false, ended = false))
+    }
+
     @Test fun largeFiniteDurationsAndPositionsDoNotOverflow() {
         val duration = Long.MAX_VALUE - 1L
         assertTrue(isPlaybackEndSeek(duration, duration))
