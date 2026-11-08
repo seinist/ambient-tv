@@ -2522,7 +2522,7 @@ private fun AmbientTvApp(
                             repository = radioBrowserRepository,
                             preferences = appPreferences,
                             onBack = ::navigateBack,
-                            onOpenSettings = { openSystemSettings(com.ambient.tv.ui.common.MediaSystem.RADIO) },
+                            onOpenSettings = { openSystemSettings(com.ambient.tv.ui.common.MediaSystem.RADIO.key) },
                             onPlay = { station ->
                                 mediaSelectionScope.launch {
                                     radioPlaybackLauncher.play(station, listOf(station)).onSuccess {
@@ -3056,7 +3056,7 @@ private fun AmbientTvApp(
                 // Detail pages hide the sidebar, which normally owns this indicator.
                 // Draw above their backgrounds without adding a new D-pad focus target.
                 if (!handheld && currentRoute in setOf(
-                        Destinations.DETAIL, Destinations.YOUTUBE_DETAIL, Destinations.YOUTUBE_CHANNEL, Destinations.SPOTIFY_DETAIL,
+                        Destinations.DETAIL, Destinations.YOUTUBE_DETAIL, Destinations.YOUTUBE_CHANNEL, Destinations.SPOTIFY_DETAIL, Destinations.RADIO_DETAIL,
                     )
                 ) {
                     val scale = com.ambient.tv.ui.common.rememberUhdScale()
