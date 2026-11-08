@@ -25,6 +25,7 @@ import com.ambient.tv.ui.sound.UiSound
 import com.ambient.tv.ui.sound.UiSoundFeedback
 import com.ambient.tv.ui.sound.uiSoundOnFocus
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -118,4 +119,13 @@ class RowColumnFocusTest {
         press(AndroidKeyEvent.KEYCODE_DPAD_DOWN)
         rule.onNodeWithTag("b:2").assertIsFocused()
     }
+    @Test fun pendingRowBecomesAnchorForRepeatedVerticalInput() {
+        val focus = RowColumnFocus()
+        val rows = listOf("a", "b", "c", "d")
+        assertEquals("c", focus.nextRow(rows, down = true, fromRow = "b"))
+        assertEquals("a", focus.nextRow(rows, down = false, fromRow = "b"))
+        assertTrue(focus.isFirstRow(rows, "a"))
+        assertTrue(focus.isLastRow(rows, "d"))
+    }
+
 }
