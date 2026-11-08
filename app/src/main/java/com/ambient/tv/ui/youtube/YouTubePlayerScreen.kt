@@ -733,6 +733,7 @@ private fun YouTubeMedia3Playback(
             com.ambient.tv.ui.player.PlaybackEngineFactory.gatedMedia3Handle { deferPrepare -> com.ambient.tv.ui.player.PlaybackEngineFactory.create(
                 appContext, playback.uri, if (playback.isLive) 0 else startPositionMs,
                 deferPrepare = deferPrepare,
+                profileMetadata = metadata,
                 streamHeaders = playback.headers, mimeType = playback.mimeType,
                 audioPassthroughEnabled = audioPassthroughEnabled,
                 maxVideoHeight = target.height,
