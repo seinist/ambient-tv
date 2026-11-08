@@ -135,7 +135,7 @@ internal class UiPerformanceAudit(private val instrumentation: Instrumentation, 
                                         hero.value = HomeHeroContent(media.ratingKey, media.title, artworkUrl = url, mediaItem = media)
                                         if (state.value.initialFocusTarget != HomeInitialFocusTarget.NONE) state.value = state.value.copy(
                                             initialFocusTarget = HomeInitialFocusTarget.NONE, focusedRatingKey = media.ratingKey, focusedRowId = row)
-                                    }, onOpenRelevantSettings = {}, onWatchLiveChannel = {}, onLiveTvFocused = {}, onShortcutFocused = {},
+                                    }, onOpenRelevantSettings = {}, onWatchLiveChannel = { _, _ -> }, onLiveTvFocused = { _, _ -> }, onShortcutFocused = {},
                                     onOpenHomeContent = {}, tvheadendImageHeaders = emptyMap(), entranceProgress = { 1f })
                             }
                         }
@@ -283,7 +283,7 @@ internal class UiPerformanceAudit(private val instrumentation: Instrumentation, 
                                     if (state.value.initialFocusTarget != HomeInitialFocusTarget.NONE) state.value = state.value.copy(
                                         initialFocusTarget = HomeInitialFocusTarget.NONE, focusedRatingKey = media.ratingKey, focusedRowId = row)
                                     if (enabled) prefetch.detail("focus-${sequence++}")
-                                }, onOpenRelevantSettings = {}, onWatchLiveChannel = {}, onLiveTvFocused = {}, onShortcutFocused = {},
+                                }, onOpenRelevantSettings = {}, onWatchLiveChannel = { _, _ -> }, onLiveTvFocused = { _, _ -> }, onShortcutFocused = {},
                                 onOpenHomeContent = {}, tvheadendImageHeaders = emptyMap(), entranceProgress = { 1f })
                         }
                     }
