@@ -11,7 +11,7 @@ import kotlinx.coroutines.delay
  * Admit a small group per display frame instead. A quiet gap starts a fresh burst so ordinary
  * incremental scrolling does not inherit old queue depth.
  */
-internal const val BROWSE_ARTWORK_STARTS_PER_FRAME = 2
+internal const val BROWSE_ARTWORK_STARTS_PER_FRAME = 1
 internal const val BROWSE_ARTWORK_INTERACTION_QUIET_MS = 48L
 internal const val BROWSE_ARTWORK_IDLE_POLL_MS = 16L
 internal const val BROWSE_ARTWORK_FRAME_MS = 16L
@@ -38,6 +38,11 @@ internal class BrowseArtworkStartLimiter {
 
 internal val SharedBrowseArtworkStartLimiter = BrowseArtworkStartLimiter()
 
+internal fun browseArtworkAdmissionDelayMs(
+    prioritized: Boolean,
+    nowMs: Long,
+    limiter: BrowseArtworkStartLimiter = SharedBrowseArtworkStartLimiter,
+): Long = if (prioritized) 0L else limiter.delayMs(nowMs)
 
 /**
  * Do not let uncached browse artwork compete with an active D-pad/touch scroll.
