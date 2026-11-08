@@ -19,7 +19,7 @@ class PlaybackTimelineTest {
         assertEquals(-25_000L, timeline.chapterStepDelta(25_000, -1))
         assertEquals(30_000L, timeline.chapterStepDelta(20_000, 1))
         assertEquals(-20_000L, timeline.chapterStepDelta(20_000, -1))
-        assertEquals(0L, timeline.chapterStepDelta(55_000, 1))
+        assertNull(timeline.chapterStepDelta(55_000, 1))
         assertEquals(-5_000L, timeline.chapterStepDelta(5_000, -1))
         assertEquals(0L, timeline.chapterStepDelta(0, -1))
         assertNull(PlaybackTimeline().chapterStepDelta(25_000, 1))
