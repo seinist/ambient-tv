@@ -131,7 +131,7 @@ class CarLivePlaybackTest {
                 val ready = BackgroundPlaybackSession.cached(metadata.route) as TvheadendPlayerState.Ready
                 val fullscreenKey = listOf(ready.source.url, ready.source.startPositionMs, ready.source.headers,
                     ready.audioPassthroughEnabled, liveTvMedia3MimeType(ready.source.url))
-                val reopened: Handle = BackgroundPlaybackSession.acquire(context,
+                val reopened: Handle = BackgroundPlaybackSession.acquire<Handle>(context,
                     metadata.copy(subtitle = "Current programme", resumeState = ready), ready.playbackBackendKey, fullscreenKey) {
                     error("Opening the phone player must not create another decoder")
                 }
@@ -196,7 +196,7 @@ class CarLivePlaybackTest {
             observedGeneration = snapshot.generation
             assertEquals(selection.channel.uuid, restored.channel?.uuid)
             assertEquals(listOf("radio", "next"), restored.channelOrder)
-            val presented: Handle = BackgroundPlaybackSession.acquire(context, metadata,
+            val presented: Handle = BackgroundPlaybackSession.acquire<Handle>(context, metadata,
                 restored.playbackBackendKey, key(restored)) {
                 error("The open phone player must attach Auto's newly selected stream")
             }
