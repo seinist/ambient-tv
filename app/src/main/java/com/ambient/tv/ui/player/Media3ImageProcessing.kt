@@ -119,8 +119,16 @@ internal class Media3ImageProcessing private constructor(context: Context, playe
         private set
     private val automaticOptions = AutomaticProfileValue(options)
     internal fun restoreAutomaticOptions(next: Media3ImageOptions) {
-        automaticOptions.apply(options, next) {
-            updateOptions(it)
+        automaticOptions.apply(options, next) { value ->
+            val normalized = value.normalized()
+            if (normalized != options) {
+                // Automatic title/resolution refinement is not a settings interaction. Marking it
+                // as one forces the "remove last effect" path through stop()/prepare(), which can
+                // produce a second startup spinner after the first frame already appeared.
+                effectsFailed = false
+                options = normalized
+                scheduleUpdate()
+            }
             options
         }
     }
