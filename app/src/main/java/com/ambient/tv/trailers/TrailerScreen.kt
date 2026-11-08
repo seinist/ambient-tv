@@ -469,7 +469,7 @@ private fun TrailerList(entries: List<TrailerEntry>, listRows: Int, focusedKey: 
     onOpenTitle: (String, Int) -> Unit, state: TrailerFeedUi, onLoadMore: () -> Unit) {
     val rowScale = (7f / listRows.coerceIn(4, 10)).coerceIn(0.72f, 1.75f)
     val index = entries.indexOfFirst { it.key == focusedKey }.coerceAtLeast(0)
-    val listState = androidx.compose.foundation.lazy.rememberLazyListState(initialFirstVisibleItemIndex = (index - 1).coerceAtLeast(0))
+    val listState = com.ambient.tv.ui.common.rememberBrowseListState(initialFirstVisibleItemIndex = (index - 1).coerceAtLeast(0))
     RegisterBrowseFocusList(listState, remember(entries) { entries.map { it.toMediaItem().ratingKey } })
     LaunchedEffect(listState, state.page, state.hasNextPage, state.loadingMore, state.refreshing, state.nextError) {
         snapshotFlow {
@@ -721,9 +721,9 @@ internal fun TrailerTitleContent(
     key(layoutToken, prepareLayout) {
     val focus = remember { FocusRequester() }
     // New return identity creates both viewports at their final indices before first measure.
-    val columnState = rememberLazyListState(initialFirstVisibleItemIndex = target?.rowIndex ?: 0)
-    val serverState = rememberLazyListState(initialFirstVisibleItemIndex = target?.takeIf { it.server }?.itemIndex ?: 0)
-    val videoState = rememberLazyListState(initialFirstVisibleItemIndex = target?.takeUnless { it.server }?.itemIndex ?: 0)
+    val columnState = com.ambient.tv.ui.common.rememberBrowseListState(initialFirstVisibleItemIndex = target?.rowIndex ?: 0)
+    val serverState = com.ambient.tv.ui.common.rememberBrowseRowState(initialFirstVisibleItemIndex = target?.takeIf { it.server }?.itemIndex ?: 0)
+    val videoState = com.ambient.tv.ui.common.rememberBrowseRowState(initialFirstVisibleItemIndex = target?.takeUnless { it.server }?.itemIndex ?: 0)
     val serverKeys = serverTrailers.map { it.ratingKey }
     val videoKeys = visibleVideos.map { "trailer-video:${it.key}" }
     RegisterBrowseFocusRows(columnState, buildList {
