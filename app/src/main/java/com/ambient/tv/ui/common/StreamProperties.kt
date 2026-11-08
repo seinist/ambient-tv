@@ -56,6 +56,7 @@ fun MediaArtworkWithStreamIcons(
     maxItems: Int = 3,
     showTechnicalOverlay: Boolean = false,
     staggerUncachedArtwork: Boolean = true,
+    prioritizeUncachedArtwork: Boolean = false,
 ) {
     Box(modifier = modifier) {
         ArtworkImage(
@@ -70,6 +71,7 @@ fun MediaArtworkWithStreamIcons(
                 else -> Icons.Default.VideoFile
             } else null,
             staggerUncached = staggerUncachedArtwork,
+            prioritizeUncached = prioritizeUncachedArtwork,
         )
         // Keep library artwork visually quiet. Technical metadata is shown on focus and on the
         // detail page instead of repeating the same codec icons on every cover in a row/grid.
