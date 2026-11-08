@@ -87,6 +87,8 @@ object PlaybackEngineFactory {
         streamHeaders: Map<String, String> = emptyMap(),
         audioPassthroughEnabled: Boolean = false,
         metadata: PlaybackMetadata? = null,
+        /** Saved image settings to prime before prepare; useful when session ownership is external. */
+        profileMetadata: PlaybackMetadata? = metadata,
         mimeType: String? = null,
         maxVideoHeight: Int = 0,
         /** SmartTube-style target codec and frame rate for adaptive sources (YouTube MPD). */
@@ -118,7 +120,7 @@ object PlaybackEngineFactory {
                     create(context.applicationContext, streamUrl, startPositionMs,
                         subtitleTracks, streamHeaders, audioPassthroughEnabled, mimeType = mimeType, maxVideoHeight = maxVideoHeight, preferredVideoMimeType = preferredVideoMimeType, maxVideoFrameRate = maxVideoFrameRate, streamUrlRenewer = streamUrlRenewer, sourceHdrStandard = sourceHdrStandard, preferOriginalAudio = preferOriginalAudio, audioOnly = audioOnly, mpvAudioAllowed = mpvAudioAllowed, centerYouTubeCaptions = centerYouTubeCaptions,
                         deferPrepare = deferPrepare, liveStream = liveStream, streamTuning = streamTuning,
-                        dataSourceFactory = dataSourceFactory)
+                        dataSourceFactory = dataSourceFactory, profileMetadata = profileMetadata)
                 }
             }.player
         }
@@ -255,6 +257,10 @@ object PlaybackEngineFactory {
                     if (initialSeek != null) seekTo(if (primeResume) 0L else initialSeek)
                     playWhenReady = true
                     Media3ImageProcessing.get(context, this)
+                    // Resolve title/resolution image settings before prepare. Input-format callbacks
+                    // can then build the initial effect chain while the ordinary startup buffer is
+                    // still in progress instead of restarting after a visible first frame.
+                    profileMetadata?.let { primeMedia3PlaybackProfile(context, this, it) }
                     if (primeResume) Media3ResumePrimer.start(this, initialSeek)
                     if (!deferPrepare) prepare()
                 }
