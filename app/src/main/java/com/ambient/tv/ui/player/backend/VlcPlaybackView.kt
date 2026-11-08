@@ -1340,10 +1340,13 @@ class VlcPlaybackController(
     }
 
     override fun seekTo(positionMs: Long) {
-        if (released || liveStream) return
+        // Live no longer means unseekable: YouTube HLS/DASH can advertise a real DVR window.
+        // Still reject streams without a native seek index (ordinary live channels).
+        if (released || (liveStream && !canSeekNow())) return
         val duration = player.length
         val length = duration.takeIf { it > 0L } ?: Long.MAX_VALUE
-        val endSeek = isPlaybackEndSeek(positionMs, duration)
+        // At the end of a live window, a seek is not VOD EOF.
+        val endSeek = !liveStream && isPlaybackEndSeek(positionMs, duration)
         if (endSeek && ended) {
             finishEndSeekWithoutJump()
             return
