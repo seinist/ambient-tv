@@ -346,6 +346,7 @@ fun Modifier.rowColumnFocusWrapRight(focus: RowColumnFocus): Modifier = composed
 private class VerticalRowMoveState {
     var job: Job? = null
     var pendingRow: Any? = null
+    var generation = 0L
 }
 
 fun Modifier.rowColumnFocusNavigation(
@@ -379,6 +380,7 @@ fun Modifier.rowColumnFocusNavigation(
     }
 
     fun launchMove(rowKey: Any, scroll: suspend () -> Unit) {
+        val generation = ++move.generation
         move.pendingRow = rowKey
         move.job = scope.launch {
             try {
@@ -394,7 +396,7 @@ fun Modifier.rowColumnFocusNavigation(
                 focusSettled(rowKey)
             } finally {
                 // A newer Up/Down may already have retargeted the same shared motion state.
-                if (move.pendingRow == rowKey) {
+                if (move.generation == generation) {
                     move.pendingRow = null
                     move.job = null
                 }
