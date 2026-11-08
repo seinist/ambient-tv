@@ -85,14 +85,21 @@ class RowColumnFocus(initialMemory: Map<String, String> = emptyMap()) {
     /** Next entry of [rowKey] starts at its first tile. */
     fun forget(rowKey: Any) { memory.remove(rowKey) }
 
-    internal fun nextRow(rowOrder: List<Any>, down: Boolean): Any? {
-        val index = rowOrder.indexOf(focusedRow ?: return null).takeIf { it >= 0 } ?: return null
+    internal fun nextRow(rowOrder: List<Any>, down: Boolean, fromRow: Any? = null): Any? {
+        val anchor = fromRow ?: focusedRow ?: return null
+        val index = rowOrder.indexOf(anchor).takeIf { it >= 0 } ?: return null
         return rowOrder.getOrNull(if (down) index + 1 else index - 1)
     }
 
-    internal fun isLastRow(rowOrder: List<Any>): Boolean = focusedRow != null && focusedRow == rowOrder.lastOrNull()
+    internal fun isLastRow(rowOrder: List<Any>, row: Any? = null): Boolean {
+        val anchor = row ?: focusedRow
+        return anchor != null && anchor == rowOrder.lastOrNull()
+    }
 
-    internal fun isFirstRow(rowOrder: List<Any>): Boolean = focusedRow != null && focusedRow == rowOrder.firstOrNull()
+    internal fun isFirstRow(rowOrder: List<Any>, row: Any? = null): Boolean {
+        val anchor = row ?: focusedRow
+        return anchor != null && anchor == rowOrder.firstOrNull()
+    }
 
     /** Remembered tile, the row's suggested first entry, or its first tile. */
     private fun entry(rowKey: Any): Pair<Any, Int>? {
@@ -336,6 +343,11 @@ fun Modifier.rowColumnFocusWrapRight(focus: RowColumnFocus): Modifier = composed
  * only prefetched (taller than the viewport, so nothing of it is placed) has no focus target yet;
  * scrolling the horizontal row alone would swallow Down.
  */
+private class VerticalRowMoveState {
+    var job: Job? = null
+    var pendingRow: Any? = null
+}
+
 fun Modifier.rowColumnFocusNavigation(
     focus: RowColumnFocus,
     scrollToTop: (suspend () -> Unit)? = null,
@@ -350,7 +362,11 @@ fun Modifier.rowColumnFocusNavigation(
     val view = LocalView.current
     val focusManager = LocalFocusManager.current
     val scope = rememberCoroutineScope()
-    var moveJob by remember { mutableStateOf<Job?>(null) }
+    val move = remember(focus) { VerticalRowMoveState() }
+    DisposableEffect(move) {
+        onDispose { move.job?.cancel() }
+    }
+
     // The target row composes and settles its tiles a few frames after a scroll.
     suspend fun focusSettled(rowKey: Any) {
         repeat(12) {
@@ -361,26 +377,12 @@ fun Modifier.rowColumnFocusNavigation(
             }
         }
     }
-    onPreviewKeyEvent { event ->
-        if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
-        val down = when (event.key) {
-            Key.DirectionDown -> true
-            Key.DirectionUp -> false
-            else -> return@onPreviewKeyEvent false
-        }
-        if (moveJob?.isActive == true) return@onPreviewKeyEvent true
-        val order = rowOrder()
-        val next = focus.nextRow(order, down)
-        if (next != null) {
-            if (focus.focusEntry(next)) {
-                // Exactly one tick per move: self-sounding tiles already play it on focus.
-                if (focus.lastMoveNeedsSound) uiSounds?.playFocus()
-                return@onPreviewKeyEvent true
-            }
-            if (scrollToRow == null && !focus.canScrollToEntry(next)) return@onPreviewKeyEvent false
-            val rowKey = next
-            moveJob = scope.launch {
-                scrollToRow?.invoke(rowKey)
+
+    fun launchMove(rowKey: Any, scroll: suspend () -> Unit) {
+        move.pendingRow = rowKey
+        move.job = scope.launch {
+            try {
+                scroll()
                 // The row's tiles compose after the vertical scroll. Wait for them before
                 // scrolling sideways to the remembered one.
                 var waited = 0
@@ -390,10 +392,53 @@ fun Modifier.rowColumnFocusNavigation(
                 }
                 if (focus.canScrollToEntry(rowKey)) focus.scrollToEntry(rowKey)
                 focusSettled(rowKey)
+            } finally {
+                // A newer Up/Down may already have retargeted the same shared motion state.
+                if (move.pendingRow == rowKey) {
+                    move.pendingRow = null
+                    move.job = null
+                }
             }
+        }
+    }
+
+    onPreviewKeyEvent { event ->
+        if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
+        val down = when (event.key) {
+            Key.DirectionDown -> true
+            Key.DirectionUp -> false
+            else -> return@onPreviewKeyEvent false
+        }
+
+        val order = rowOrder()
+        val hadActiveMove = move.job?.isActive == true
+        val pendingAnchor = move.pendingRow.takeIf { hadActiveMove }
+        // RowCenteringState deliberately preserves velocity when its coroutine is cancelled.
+        // Do not swallow a held/repeated direction; retarget from the row we were moving toward.
+        if (hadActiveMove) move.job?.cancel()
+
+        val next = focus.nextRow(order, down, pendingAnchor)
+        if (next != null) {
+            // During a retarget the old row may still own focus. Requesting it again would stop
+            // the list halfway through; finish the new vertical destination first.
+            if (!hadActiveMove && focus.focusEntry(next)) {
+                // Exactly one tick per move: self-sounding tiles already play it on focus.
+                if (focus.lastMoveNeedsSound) uiSounds?.playFocus()
+                return@onPreviewKeyEvent true
+            }
+            if (scrollToRow == null && !focus.canScrollToEntry(next)) return@onPreviewKeyEvent false
+            launchMove(next) { scrollToRow?.invoke(next) }
             return@onPreviewKeyEvent true
         }
-        if (!down && scrollToBottom != null && focus.isFirstRow(order)) {
+
+        // If a rapid reversal/repeat reaches an edge while the previous glide is still in
+        // flight, first finish parking that edge row. A following repeat can then wrap/exit.
+        if (hadActiveMove && pendingAnchor != null && scrollToRow != null) {
+            launchMove(pendingAnchor) { scrollToRow(pendingAnchor) }
+            return@onPreviewKeyEvent true
+        }
+
+        if (!down && scrollToBottom != null && focus.isFirstRow(order, pendingAnchor)) {
             val exited = if (actionFocus != null) runCatching { actionFocus.requestFocus() }.getOrDefault(false)
                 else scrollListActions?.requestUpFocus(view) == true
             // Anything focusable above the rows (the app home's update card) comes first; only
@@ -403,19 +448,15 @@ fun Modifier.rowColumnFocusNavigation(
                 return@onPreviewKeyEvent true
             }
             val last = order.lastOrNull() ?: return@onPreviewKeyEvent false
-            moveJob = scope.launch {
+            launchMove(last) {
                 scrollToBottom()
-                focus.scrollToEntry(last)
-                focusSettled(last)
             }
             return@onPreviewKeyEvent true
         }
-        if (scrollToTop == null || !down || !focus.isLastRow(order)) return@onPreviewKeyEvent false
+        if (scrollToTop == null || !down || !focus.isLastRow(order, pendingAnchor)) return@onPreviewKeyEvent false
         val first = order.firstOrNull() ?: return@onPreviewKeyEvent false
-        moveJob = scope.launch {
+        launchMove(first) {
             scrollToTop()
-            focus.scrollToEntry(first)
-            focusSettled(first)
         }
         true
     }
