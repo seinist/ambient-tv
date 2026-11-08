@@ -216,12 +216,50 @@ internal class Media3NeuralComputeEffect(
     }
 }
 
+/** Uniform locations belong to a linked program and remain valid until it is deleted. */
+internal class Media3ComputeUniformLocations(bindings: List<String>, find: (String) -> Int) {
+    val samplers = IntArray(bindings.size) { find("u" + bindings[it]) }
+    val inputSizes = IntArray(bindings.size) { find("uSize_" + bindings[it]) }
+    val outputSize = find("uOutputSize")
+}
+
+/** Texture IDs and dimensions are fixed until the program is configured again. */
+internal data class Media3ComputeTexture(val texture: Int, val width: Int, val height: Int)
+
+internal class Media3ComputeDispatch(
+    val inputs: Array<Media3ComputeTexture>,
+    val output: Media3ComputeTexture,
+    val groupsX: Int,
+    val groupsY: Int,
+)
+
+/** Resolve the model's names and dispatch geometry once for the newly allocated targets. */
+internal fun media3ComputeDispatches(
+    passes: List<Media3ComputePass>,
+    textures: Map<String, Media3ComputeTexture>,
+    finalImage: Media3ComputeTexture,
+): Array<Media3ComputeDispatch> = passes.map { pass ->
+    val output = pass.save?.let(textures::getValue) ?: finalImage
+    Media3ComputeDispatch(
+        pass.bindings.map(textures::getValue).toTypedArray(), output,
+        ceil(output.width.toDouble() / pass.tileWidth).toInt(),
+        ceil(output.height.toDouble() / pass.tileHeight).toInt(),
+    )
+}.toTypedArray()
+
+private class Media3LinkedComputeProgram(val id: Int, val uniforms: Media3ComputeUniformLocations)
+
 private class Media3NeuralComputeProgram(
     private val passes: List<Media3ComputePass>,
     private val targetWidth: Int,
     private val targetHeight: Int,
 ) : BaseGlShaderProgram(false, /* texturePoolCapacity= */ 1) {
-    private val compute = passes.map { pass -> compileCompute(media3ComputeShader(pass)) }
+    private val compute = passes.map { pass ->
+        val id = compileCompute(media3ComputeShader(pass))
+        Media3LinkedComputeProgram(id, Media3ComputeUniformLocations(pass.bindings) { name ->
+            GLES20.glGetUniformLocation(id, name)
+        })
+    }.toTypedArray()
     private val prepareLuma: GlProgram = media3GlProgram(
         """#version 100
 precision highp float;
@@ -250,9 +288,10 @@ void main() {
 }"""
     )
     private val targets = mutableMapOf<String, Media3Intermediate>()
-    private val sizes = mutableMapOf<String, Pair<Int, Int>>()
+    private var dispatches = emptyArray<Media3ComputeDispatch>()
     private var width = 1
     private var height = 1
+    private var luma: Media3Intermediate? = null
     private var finalImage: Media3Intermediate? = null
 
     override fun configure(inputWidth: Int, inputHeight: Int): Size {
@@ -269,20 +308,54 @@ void main() {
                 height.toLong() * it.heightMultiplier > maxSize })
             throw VideoFrameProcessingException("Insufficient neural compute GPU limits")
         try {
-            targets["LUMA"] = media3SsimIntermediate(width, height)
-            sizes["LUMA"] = width to height
+            val textures = mutableMapOf<String, Media3ComputeTexture>()
+            val lumaTarget = media3SsimIntermediate(width, height)
+            targets["LUMA"] = lumaTarget
+            luma = lumaTarget
+            textures["LUMA"] = Media3ComputeTexture(lumaTarget.texture, width, height)
+            var finalTexture: Media3ComputeTexture? = null
             passes.forEach { pass ->
                 val w = width * pass.widthMultiplier
                 val h = height * pass.heightMultiplier
                 val target = media3SsimIntermediate(w, h)
+                val texture = Media3ComputeTexture(target.texture, w, h)
                 pass.save?.let { name ->
                     targets[name] = target
-                    sizes[name] = w to h
-                } ?: run { finalImage = target }
+                    textures[name] = texture
+                } ?: run { finalImage = target; finalTexture = texture }
             }
+            val configured = media3ComputeDispatches(passes, textures, checkNotNull(finalTexture))
+            configureUniforms(configured)
+            dispatches = configured
         } catch (t: Throwable) { clearBuffers(); throw t }
         val (outW, outH) = media3FitSize(width, height, targetWidth, targetHeight)
         return Size(outW, outH)
+    }
+
+    /** Sampler units and sizes are program state; other programs cannot overwrite them. */
+    private fun configureUniforms(configured: Array<Media3ComputeDispatch>) {
+        val previousProgram = IntArray(1).also {
+            GLES20.glGetIntegerv(GLES20.GL_CURRENT_PROGRAM, it, 0)
+        }[0]
+        try {
+            for (i in configured.indices) {
+                val program = compute[i]
+                val dispatch = configured[i]
+                GLES31.glUseProgram(program.id)
+                for (unit in dispatch.inputs.indices) {
+                    val input = dispatch.inputs[unit]
+                    // A location of -1 is an optimized-out uniform; GLES ignores its upload.
+                    GLES20.glUniform1i(program.uniforms.samplers[unit], unit)
+                    GLES20.glUniform2f(program.uniforms.inputSizes[unit],
+                        input.width.toFloat(), input.height.toFloat())
+                }
+                GLES20.glUniform2f(program.uniforms.outputSize,
+                    dispatch.output.width.toFloat(), dispatch.output.height.toFloat())
+            }
+            GlUtil.checkGlError()
+        } finally {
+            GLES31.glUseProgram(previousProgram)
+        }
     }
 
     override fun drawFrame(inputTexId: Int, presentationTimeUs: Long) {
@@ -291,41 +364,31 @@ void main() {
         }[0]
         val viewport = IntArray(4).also { GLES20.glGetIntegerv(GLES20.GL_VIEWPORT, it, 0) }
         try {
-            val luma = checkNotNull(targets["LUMA"])
-            GlUtil.focusFramebufferUsingCurrentContext(luma.fbo, width, height)
+            val lumaTarget = checkNotNull(luma)
+            val prediction = checkNotNull(finalImage)
+            GlUtil.focusFramebufferUsingCurrentContext(lumaTarget.fbo, width, height)
             prepareLuma.use()
             prepareLuma.setSamplerTexIdUniform("uRgb", inputTexId, 0)
             media3DrawQuad(prepareLuma)
-            passes.forEachIndexed { i, pass ->
-                val output = pass.save?.let { checkNotNull(targets[it]) } ?: checkNotNull(finalImage)
-                val (outW, outH) = width * pass.widthMultiplier to height * pass.heightMultiplier
-                val id = compute[i]
-                GLES31.glUseProgram(id)
-                pass.bindings.forEachIndexed { unit, name ->
-                    val source = checkNotNull(targets[name])
+            for (i in dispatches.indices) {
+                val dispatch = dispatches[i]
+                GLES31.glUseProgram(compute[i].id)
+                for (unit in dispatch.inputs.indices) {
                     GLES20.glActiveTexture(GLES20.GL_TEXTURE0 + unit)
-                    GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, source.texture)
-                    GLES20.glUniform1i(GLES20.glGetUniformLocation(id, "u" + name), unit)
-                    val (w, h) = checkNotNull(sizes[name])
-                    GLES20.glUniform2f(GLES20.glGetUniformLocation(id, "uSize_" + name),
-                        w.toFloat(), h.toFloat())
+                    GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, dispatch.inputs[unit].texture)
                 }
-                GLES20.glUniform2f(GLES20.glGetUniformLocation(id, "uOutputSize"),
-                    outW.toFloat(), outH.toFloat())
-                GLES31.glBindImageTexture(0, output.texture, 0, false, 0,
+                GLES31.glBindImageTexture(0, dispatch.output.texture, 0, false, 0,
                     GLES31.GL_WRITE_ONLY, GLES30.GL_RGBA16F)
-                GLES31.glDispatchCompute(
-                    ceil(outW.toDouble() / pass.tileWidth).toInt(),
-                    ceil(outH.toDouble() / pass.tileHeight).toInt(), 1)
+                GLES31.glDispatchCompute(dispatch.groupsX, dispatch.groupsY, 1)
                 GLES31.glMemoryBarrier(GLES31.GL_SHADER_IMAGE_ACCESS_BARRIER_BIT or
                     GLES31.GL_TEXTURE_FETCH_BARRIER_BIT)
                 GlUtil.checkGlError()
             }
             GlUtil.focusFramebufferUsingCurrentContext(framebuffer, viewport[2], viewport[3])
-            media3LinearFilter(checkNotNull(finalImage).texture)
+            media3LinearFilter(prediction.texture)
             combineLuma.use()
             combineLuma.setSamplerTexIdUniform("uRgb", inputTexId, 0)
-            combineLuma.setSamplerTexIdUniform("uPrediction", checkNotNull(finalImage).texture, 1)
+            combineLuma.setSamplerTexIdUniform("uPrediction", prediction.texture, 1)
             media3DrawQuad(combineLuma)
         } catch (e: GlUtil.GlException) {
             throw VideoFrameProcessingException(e, presentationTimeUs)
@@ -336,9 +399,10 @@ void main() {
     }
 
     private fun clearBuffers() {
+        dispatches = emptyArray()
+        luma = null
         targets.values.forEach(Media3Intermediate::release)
         targets.clear()
-        sizes.clear()
         finalImage?.release()
         finalImage = null
     }
@@ -347,7 +411,7 @@ void main() {
         super.release()
         try {
             clearBuffers()
-            compute.forEach(GLES31::glDeleteProgram)
+            compute.forEach { GLES31.glDeleteProgram(it.id) }
             prepareLuma.delete()
             combineLuma.delete()
         } catch (e: GlUtil.GlException) { throw VideoFrameProcessingException(e) }

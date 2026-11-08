@@ -59,26 +59,26 @@ private abstract class Media3FragmentShaderProgram(
     private val outGamma: Float = 1f,
 ) : BaseGlShaderProgram(useHighPrecision, /* texturePoolCapacity= */ 1) {
     private val program = media3GlProgram(FRAGMENT_HEADER + fragmentBody, VERTEX_SHADER)
-    private var inputSize = floatArrayOf(1f, 1f)
-    /** Frame being drawn, for per-frame noise. */
-    protected var presentationTimeUs = 0L
 
     open fun outputSize(inputWidth: Int, inputHeight: Int): Size = Size(inputWidth, inputHeight)
     open fun setUniforms(program: GlProgram) {}
+    open fun setFrameUniforms(program: GlProgram, presentationTimeUs: Long) {}
 
     override fun configure(inputWidth: Int, inputHeight: Int): Size {
-        inputSize = floatArrayOf(inputWidth.toFloat(), inputHeight.toFloat())
+        // GlProgram copies these values into its own storage. Binding still uploads them for
+        // each draw, but dimensions, effect settings and gamma need no repeated CPU setup.
+        program.setFloatsUniformIfPresent("uInputSize",
+            floatArrayOf(inputWidth.toFloat(), inputHeight.toFloat()))
+        program.setFloatsUniformIfPresent("uOutGamma", floatArrayOf(outGamma))
+        setUniforms(program)
         return outputSize(inputWidth, inputHeight)
     }
 
     override fun drawFrame(inputTexId: Int, presentationTimeUs: Long) {
         try {
-            this.presentationTimeUs = presentationTimeUs
             program.use()
             program.setSamplerTexIdUniform("uTexSampler", inputTexId, /* texUnitIndex= */ 0)
-            program.setFloatsUniformIfPresent("uInputSize", inputSize)
-            program.setFloatsUniformIfPresent("uOutGamma", floatArrayOf(outGamma))
-            setUniforms(program)
+            setFrameUniforms(program, presentationTimeUs)
             program.bindAttributesAndUniforms()
             GLES20.glDrawArrays(GLES20.GL_TRIANGLE_STRIP, 0, 4)
             GlUtil.checkGlError()
@@ -217,9 +217,14 @@ internal class Media3SharpenEffect(private val kind: String, private val gamma: 
 internal class Media3FilmGrainEffect(private val strength: String, private val gamma: Int = 0) : GlEffect {
     override fun toGlShaderProgram(context: Context, useHdr: Boolean): GlShaderProgram =
         object : Media3FragmentShaderProgram(useHdr, FILM_GRAIN, media3GammaExponent(gamma)) {
-            override fun setUniforms(program: GlProgram) {
+            private val seed = FloatArray(1)
+
+            override fun setUniforms(program: GlProgram) =
                 program.float("uIntensity", media3GrainIntensity(strength))
-                program.float("uSeed", media3GrainSeed(presentationTimeUs))
+
+            override fun setFrameUniforms(program: GlProgram, presentationTimeUs: Long) {
+                seed[0] = media3GrainSeed(presentationTimeUs)
+                program.setFloatsUniformIfPresent("uSeed", seed)
             }
         }
 }
@@ -638,22 +643,14 @@ void main() {
   float sharpenVal = uCurveHeight / (uCurveHeight * 0.5 * edge + 0.625);
   float sharpdiff = (c0Y - negLaplace) * (lowthrsum * sharpenVal + 0.01);
 
-  // Local near min & max, partial sort.
-  float temp;
-  for (int i1 = 0; i1 < 24; i1 += 2) {
-    temp = luma[i1];
-    luma[i1] = min(luma[i1], luma[i1 + 1]);
-    luma[i1 + 1] = max(temp, luma[i1 + 1]);
+  // Only the local extrema are needed; no later step reads the sorted array.
+  float minLuma = luma[0];
+  float maxLuma = luma[0];
+  for (int i = 1; i < 25; i++) {
+    minLuma = min(minLuma, luma[i]);
+    maxLuma = max(maxLuma, luma[i]);
   }
-  for (int i2 = 24; i2 > 0; i2 -= 2) {
-    temp = luma[0];
-    luma[0] = min(luma[0], luma[i2]);
-    luma[i2] = max(temp, luma[i2]);
-    temp = luma[24];
-    luma[24] = max(luma[24], luma[i2 - 1]);
-    luma[i2 - 1] = min(temp, luma[i2 - 1]);
-  }
-  float minDist = min(abs(luma[24] - c0Y), abs(c0Y - luma[0]));
+  float minDist = min(abs(maxLuma - c0Y), abs(c0Y - minLuma));
   minDist = min(minDist, 0.1 * (1.0 - 0.056) + minDist * 0.056);
   if (minDist <= 1e-6) { gl_FragColor = finish(c[0]); return; }
 

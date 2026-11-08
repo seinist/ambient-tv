@@ -198,7 +198,6 @@ private class Media3RavuShaderProgram(
     private var inputWidth = 1
     private var inputHeight = 1
     private var ravuActive = false
-    private var fitWidth = 1
     private var intermediate: Media3Intermediate? = null
     private var luma: Media3Intermediate? = null
 
@@ -207,12 +206,24 @@ private class Media3RavuShaderProgram(
         this.inputWidth = inputWidth
         this.inputHeight = inputHeight
         val (width, height) = media3FitSize(inputWidth, inputHeight, outputWidth, outputHeight)
-        fitWidth = width
         ravuActive = minOf(width.toDouble() / inputWidth, height.toDouble() / inputHeight) >= MEDIA3_RAVU_MIN_SCALE
         if (ravuActive) {
             intermediate = media3Intermediate(inputWidth, inputHeight, useHighPrecision)
             luma = media3Intermediate(inputWidth * 2, inputHeight * 2, useHighPrecision)
+            step2.setSamplerTexIdUniform("uTexSampler", checkNotNull(intermediate).texture, 0)
         }
+        val inputSize = floatArrayOf(inputWidth.toFloat(), inputHeight.toFloat())
+        step1.setSamplerTexIdUniform("uLutHigh", lutHigh, 1)
+        step1.setSamplerTexIdUniform("uLutLow", lutLow, 2)
+        step1.setFloatsUniformIfPresent("uInputSize", inputSize)
+        step1.setFloatsUniformIfPresent("uLutMin", floatArrayOf(planes.min))
+        step1.setFloatsUniformIfPresent("uLutRange", floatArrayOf(planes.range))
+        step2.setFloatsUniformIfPresent("uInputSize", inputSize)
+        fit.setFloatsUniformIfPresent("uInputSize", inputSize)
+        fit.setFloatsUniformIfPresent("uRavu", floatArrayOf(if (ravuActive) 1f else 0f))
+        fit.setFloatsUniformIfPresent("uLumaSize", floatArrayOf(inputWidth * 2f, inputHeight * 2f))
+        // 2x grid texels per output pixel: above 1 the 2x luma is downscaled (MPV: dscale).
+        fit.setFloatsUniformIfPresent("uDownscale", floatArrayOf(maxOf(1f, inputWidth * 2f / width)))
         return Size(width, height)
     }
 
@@ -220,7 +231,6 @@ private class Media3RavuShaderProgram(
         try {
             val outputFbo = IntArray(1).also { GLES20.glGetIntegerv(GLES20.GL_FRAMEBUFFER_BINDING, it, 0) }[0]
             val viewport = IntArray(4).also { GLES20.glGetIntegerv(GLES20.GL_VIEWPORT, it, 0) }
-            val inputSize = floatArrayOf(inputWidth.toFloat(), inputHeight.toFloat())
             media3LinearFilter(inputTexId)
             val intermediate = intermediate
             val luma = luma
@@ -229,17 +239,10 @@ private class Media3RavuShaderProgram(
                 GlUtil.focusFramebufferUsingCurrentContext(intermediate.fbo, inputWidth, inputHeight)
                 step1.use()
                 step1.setSamplerTexIdUniform("uTexSampler", inputTexId, 0)
-                step1.setSamplerTexIdUniform("uLutHigh", lutHigh, 1)
-                step1.setSamplerTexIdUniform("uLutLow", lutLow, 2)
-                step1.setFloatsUniformIfPresent("uInputSize", inputSize)
-                step1.setFloatsUniformIfPresent("uLutMin", floatArrayOf(planes.min))
-                step1.setFloatsUniformIfPresent("uLutRange", floatArrayOf(planes.range))
                 media3DrawQuad(step1)
                 // Pass 2: each 2x pixel takes its quarter of the source pixel.
                 GlUtil.focusFramebufferUsingCurrentContext(luma.fbo, inputWidth * 2, inputHeight * 2)
                 step2.use()
-                step2.setSamplerTexIdUniform("uTexSampler", intermediate.texture, 0)
-                step2.setFloatsUniformIfPresent("uInputSize", inputSize)
                 media3DrawQuad(step2)
                 media3LinearFilter(luma.texture)
             }
@@ -248,11 +251,6 @@ private class Media3RavuShaderProgram(
             fit.use()
             fit.setSamplerTexIdUniform("uTexSampler", inputTexId, 0)
             fit.setSamplerTexIdUniform("uLuma", luma?.texture?.takeIf { ravuActive } ?: inputTexId, 1)
-            fit.setFloatsUniformIfPresent("uInputSize", inputSize)
-            fit.setFloatsUniformIfPresent("uRavu", floatArrayOf(if (ravuActive) 1f else 0f))
-            // 2x grid texels per output pixel: above 1 the 2x luma is downscaled (MPV: dscale).
-            fit.setFloatsUniformIfPresent("uLumaSize", floatArrayOf(inputWidth * 2f, inputHeight * 2f))
-            fit.setFloatsUniformIfPresent("uDownscale", floatArrayOf(maxOf(1f, inputWidth * 2f / fitWidth)))
             media3DrawQuad(fit)
         } catch (e: GlUtil.GlException) {
             throw VideoFrameProcessingException(e, presentationTimeUs)
@@ -282,6 +280,7 @@ private class Media3RavuShaderProgram(
 
 }
 
+/** Rebinds all cached uniforms/textures, including values prepared by configure(). */
 internal fun media3DrawQuad(program: GlProgram) {
     program.bindAttributesAndUniforms()
     GLES20.glDrawArrays(GLES20.GL_TRIANGLE_STRIP, 0, 4)
@@ -336,10 +335,13 @@ private class Media3RavuZoomShaderProgram(
         media3LutTexture(planesB.high, source.lutAr.width, source.lutAr.height, GLES20.GL_LINEAR),
         media3LutTexture(planesB.low, source.lutAr.width, source.lutAr.height, GLES20.GL_LINEAR),
     )
-    private var inputSize = floatArrayOf(1f, 1f)
-
     override fun configure(inputWidth: Int, inputHeight: Int): Size {
-        inputSize = floatArrayOf(inputWidth.toFloat(), inputHeight.toFloat())
+        listOf("uLutAHigh", "uLutALow", "uLutBHigh", "uLutBLow").forEachIndexed { i, name ->
+            zoom.setSamplerTexIdUniform(name, textures[i], i + 1)
+        }
+        zoom.setFloatsUniformIfPresent("uInputSize", floatArrayOf(inputWidth.toFloat(), inputHeight.toFloat()))
+        zoom.setFloatsUniformIfPresent("uLutA", floatArrayOf(planesA.min, planesA.range))
+        zoom.setFloatsUniformIfPresent("uLutB", floatArrayOf(planesB.min, planesB.range))
         return media3FitSize(inputWidth, inputHeight, outputWidth, outputHeight).let { Size(it.first, it.second) }
     }
 
@@ -348,12 +350,6 @@ private class Media3RavuZoomShaderProgram(
             media3LinearFilter(inputTexId)
             zoom.use()
             zoom.setSamplerTexIdUniform("uTexSampler", inputTexId, 0)
-            listOf("uLutAHigh", "uLutALow", "uLutBHigh", "uLutBLow").forEachIndexed { i, name ->
-                zoom.setSamplerTexIdUniform(name, textures[i], i + 1)
-            }
-            zoom.setFloatsUniformIfPresent("uInputSize", inputSize)
-            zoom.setFloatsUniformIfPresent("uLutA", floatArrayOf(planesA.min, planesA.range))
-            zoom.setFloatsUniformIfPresent("uLutB", floatArrayOf(planesB.min, planesB.range))
             media3DrawQuad(zoom)
         } catch (e: GlUtil.GlException) {
             throw VideoFrameProcessingException(e, presentationTimeUs)

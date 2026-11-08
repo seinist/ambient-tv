@@ -499,6 +499,12 @@ internal class MpvPlaybackEngine(
         // OpenGL, whose shader overloads cannot sample these textures. Keep Android on GLES,
         // including a later Vulkan-to-OpenGL recovery.
         setOption("opengl-es", "yes")
+        // libmpv starts with config=no, so it cannot discover a default persistent GPU cache.
+        // Reuse the same compiled programs across playback/VO restarts on OpenGL and Vulkan.
+        // Keep this optional: a missing/unwritable Android cache must not block initialization.
+        runCatching { mpvGpuShaderCacheDirectory(context.cacheDir) }.getOrNull()?.let {
+            setOption("gpu-shader-cache-dir", it.absolutePath)
+        }
         // Configure the Android VO up front but defer loadfile until a Surface exists. Starting
         // NVIDIA MediaCodec against vo=null leaves it permanently without a native window.
         // SurfaceView allows MediaCodec to feed the Android video plane directly. This preserves
@@ -1622,7 +1628,9 @@ internal class MpvPlaybackEngine(
         ?.takeIf { it.isNotBlank() } ?: getPropertyString(MPV_PROP_DEC_COLORLEVELS)
 
     /** CAS curve for the current source; HDR also follows the luma range (limited/full). */
-    private fun casTransferProfile(transfer: String?): MpvCasTransferProfile? = mpvCasTransferProfile(transfer, currentMpvLevels())
+    private fun casTransferProfile(transfer: String?): MpvCasTransferProfile? =
+        // SDR profiles do not use levels; avoid native metadata reads on every CAS refresh.
+        mpvCasTransferProfile(transfer, if (isMpvHdrTransfer(transfer)) currentMpvLevels() else null)
 
     private fun currentMpvTransfer(): String? = getPropertyString("video-params/gamma")
         ?.trim()?.lowercase()?.takeIf { it.isNotBlank() }
@@ -1736,11 +1744,6 @@ internal class MpvPlaybackEngine(
         getPropertyDouble("video-params/dw", 0.0), getPropertyDouble("video-params/dh", 0.0), surfaceWidth, surfaceHeight,
     )
 
-    private fun currentMpvImageGeometry(): String = mpvUpscalerGeometrySignature(
-        getPropertyDouble("video-params/dw", 0.0), getPropertyDouble("video-params/dh", 0.0),
-        surfaceWidth, surfaceHeight,
-    )
-
     private fun currentMpvUpscaling(): Boolean = currentMpvFittedScale() > MPV_ANY_UPSCALE_SCALE
 
     private fun desiredImageFilters(o: MpvImageOptions, sdr: Boolean): Map<String, String> =
@@ -1809,11 +1812,17 @@ internal class MpvPlaybackEngine(
         }
         // Geometry only matters once SDR (or HDR-safe) shaders can load; skip the reads otherwise.
         val sdrTransfer = transfer != null && (isMpvSdrTransfer(transfer) || isMpvHdrTransfer(transfer))
-        val upscaling = if (sdrTransfer) currentMpvUpscaling() else lastImageUpscaling
+        // Reuse one geometry snapshot for all three decisions instead of six JNI reads.
+        val decodedWidth = if (sdrTransfer) getPropertyDouble("video-params/dw", 0.0) else 0.0
+        val decodedHeight = if (sdrTransfer) getPropertyDouble("video-params/dh", 0.0) else 0.0
+        val fittedScale = if (sdrTransfer) {
+            mpvFittedScale(decodedWidth, decodedHeight, surfaceWidth, surfaceHeight)
+        } else 0.0
+        val upscaling = if (sdrTransfer) fittedScale > MPV_ANY_UPSCALE_SCALE else lastImageUpscaling
         val lumaEligible = if (sdrTransfer) {
             mpvLumaUpscalerWouldRun(
                 effectiveMpvImageOptions(imageOptions, reducedVideoEffects(context), svpAllowed(context), mpvCheapDefaults(context)).scaler,
-                currentMpvFittedScale(),
+                fittedScale,
             )
         } else lastLumaShaderEligible
         val svpSignature = if (imageOptions.svpMode == "off") "off" else
@@ -1828,7 +1837,9 @@ internal class MpvPlaybackEngine(
             (renderCheckSignature == null || renderCheckSignature != overloadSuspendedSignature)) {
             engageRenderOverload("plex-svp-bypass", 0L, 0.0, svpBypass, 0L, 0.0)
         }
-        val geometry = if (sdrTransfer) currentMpvImageGeometry() else null
+        val geometry = if (sdrTransfer) {
+            mpvUpscalerGeometrySignature(decodedWidth, decodedHeight, surfaceWidth, surfaceHeight)
+        } else null
         // Range metadata can settle after the first frame without changing gamma or geometry.
         // Rebuild a loaded CAS profile once it changes, respecting the normal retry backoff.
         val transferProfileChanged = mpvTransferAwareShaderLoaded(loadedShaderKeys) &&

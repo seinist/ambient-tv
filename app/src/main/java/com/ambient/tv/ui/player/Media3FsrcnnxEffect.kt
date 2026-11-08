@@ -18,7 +18,7 @@ import com.ambient.tv.ui.player.backend.fsrcnnxGlesSource
  * FSRCNNX (igv, GPL-3.0) uses learned coefficients from the existing MPV shader resources.
  * Unlike the MPV LUMA hook, Media3 receives linear RGB, so the model operates on encoded
  * Rec.709 luma and its 2x prediction is applied as a luminance correction to scaled RGB.
- * The 14/26 signed feature passes use separate FP16 textures, never normalized RGBA8.
+ * Signed feature maps use FP16 textures, reused only after their last reader has finished.
  */
 internal val MEDIA3_FSRCNNX_SCALERS: Set<String> = setOf("fsrcnnx8", "fsrcnnx16")
 
@@ -106,7 +106,7 @@ internal fun media3FsrcnnxBudgetAllows(
     if (scale <= 1.3 || scale > 2.0) return false
     val rate = fps.takeIf { it.isFinite() && it > 0f } ?: 30f
     // 8-feature: 640x360/30. 16-feature: 480x270/30. MPV's full 2x 4K load is unsafe
-    // with 25 FP16 feature buffers on many mobile GPUs; keep the budget deliberately low.
+    // with 12 simultaneous FP16 feature buffers on many mobile GPUs; keep the budget low.
     val sourcePixels = if (scaler == "fsrcnnx16") 480L * 270L else 640L * 360L
     return width.toLong() * height * rate <= sourcePixels * 30L &&
         w.toLong() * h * rate <= sourcePixels * 120L
@@ -138,6 +138,9 @@ private class Media3FsrcnnxShaderProgram(
     private val targetWidth: Int,
     private val targetHeight: Int,
 ) : BaseGlShaderProgram(false, /* texturePoolCapacity= */ 1) {
+    private val textureSlots = media3TextureSlotPlan(passes.map {
+        Media3TexturePass(it.bindings, it.save)
+    })
     private val programs: List<GlProgram> = passes.map { media3GlProgram(media3FsrcnnxFragment(it)) }
     private val compose = media3GlProgram(
         """#version 100
@@ -174,7 +177,7 @@ void main() {
         if (inputWidth.toLong() * 2L > maxTex || inputHeight.toLong() * 2L > maxTex)
             throw VideoFrameProcessingException("FSRCNNX prediction exceeds maximum texture size")
         try {
-            repeat(passes.size - 1) {
+            repeat(textureSlots.slotCount) {
                 targets += media3SsimIntermediate(width, height)
             }
             // SUBCONV1 predicts a true 2x luma plane; interpolation to the display happens
@@ -199,7 +202,7 @@ void main() {
             media3LinearFilter(inputTexId)
             passes.forEachIndexed { index, pass ->
                 val last = index == passes.lastIndex
-                val out = if (last) checkNotNull(prediction) else targets[index]
+                val out = if (last) checkNotNull(prediction) else targets[textureSlots.slotByPass[index]]
                 GlUtil.focusFramebufferUsingCurrentContext(out.fbo,
                     if (last) width * 2 else width, if (last) height * 2 else height)
                 val program = programs[index]

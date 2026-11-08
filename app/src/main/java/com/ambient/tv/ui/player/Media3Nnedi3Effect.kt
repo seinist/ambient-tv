@@ -183,6 +183,16 @@ void main() {
             targets += media3Intermediate(width, height * 2, false)   // interleaved Y
             targets += media3Intermediate(width, height * 2, false)   // predict missing X columns
             targets += media3Intermediate(width * 2, height * 2, false) // interleaved X
+            programs.forEachIndexed { i, program ->
+                val sourceHeight = if (i < 2) height else height * 2
+                program.setFloatsUniformIfPresent("uHookedSize", floatArrayOf(width.toFloat(), sourceHeight.toFloat()))
+                program.setFloatsUniformIfPresent("uEncodedRgb", floatArrayOf(if (i < 2) 1f else 0f))
+                if (i >= 2) program.setSamplerTexIdUniform("uHooked", targets[1].texture, 0)
+                if (i == 1 || i == 3) {
+                    program.setSamplerTexIdUniform("uPredict", targets[if (i == 1) 0 else 2].texture, 1)
+                }
+            }
+            composition.setSamplerTexIdUniform("uNnedi", targets[3].texture, 1)
         } catch (t: Throwable) {
             clearTargets()
             throw t
@@ -201,26 +211,18 @@ void main() {
         try {
             media3LinearFilter(inputTexId)
             targets.forEachIndexed { i, out ->
-                val src = if (i < 2) inputTexId else targets[1].texture
-                val h = if (i < 2) height else height * 2
                 val outWidth = if (i == 3) width * 2 else width
                 val outHeight = if (i == 0) height else height * 2
                 GlUtil.focusFramebufferUsingCurrentContext(out.fbo, outWidth, outHeight)
                 val p = programs[i]
                 p.use()
-                p.setSamplerTexIdUniform("uHooked", src, 0)
-                if (i == 1 || i == 3) {
-                    p.setSamplerTexIdUniform("uPredict", targets[if (i == 1) 0 else 2].texture, 1)
-                }
-                p.setFloatsUniformIfPresent("uHookedSize", floatArrayOf(width.toFloat(), h.toFloat()))
-                p.setFloatsUniformIfPresent("uEncodedRgb", floatArrayOf(if (i < 2) 1f else 0f))
+                if (i < 2) p.setSamplerTexIdUniform("uHooked", inputTexId, 0)
                 media3DrawQuad(p)
             }
             GlUtil.focusFramebufferUsingCurrentContext(originalFbo, viewport[2], viewport[3])
             media3LinearFilter(targets[3].texture)
             composition.use()
             composition.setSamplerTexIdUniform("uSource", inputTexId, 0)
-            composition.setSamplerTexIdUniform("uNnedi", targets[3].texture, 1)
             media3DrawQuad(composition)
         } catch (e: GlUtil.GlException) {
             throw VideoFrameProcessingException(e, presentationTimeUs)
