@@ -20,6 +20,24 @@ class MpvImageShaderCacheTest {
             R.raw.quality_adaptive_44e81f12 -> "quality_adaptive_44e81f12"
             R.raw.quality_ravu_lite_r2_cbbabe0a -> "quality_ravu_lite_r2_cbbabe0a"
             R.raw.quality_filmgrain_light_4aee719a -> "quality_filmgrain_light_4aee719a"
+            R.raw.quality_anime4k_4c53ec2e -> "quality_anime4k_4c53ec2e"
+            R.raw.quality_anime4k_denoise_1a45ad3a -> "quality_anime4k_denoise_1a45ad3a"
+            R.raw.quality_anime4k_m_9b8e956d -> "quality_anime4k_m_9b8e956d"
+            R.raw.quality_anime4k_denoise_m_967804d7 -> "quality_anime4k_denoise_m_967804d7"
+            R.raw.quality_fsrcnnx8_e800dbc5 -> "quality_fsrcnnx8_e800dbc5"
+            R.raw.quality_fsrcnnx16_d5a24a27 -> "quality_fsrcnnx16_d5a24a27"
+            R.raw.quality_artcnn16_03d0b3d3 -> "quality_artcnn16_03d0b3d3"
+            R.raw.quality_artcnn32_f773bce6 -> "quality_artcnn32_f773bce6"
+            R.raw.quality_artcnn16_ds_57df650f -> "quality_artcnn16_ds_57df650f"
+            R.raw.quality_artcnn16_dn_047f33cd -> "quality_artcnn16_dn_047f33cd"
+            R.raw.quality_artcnn32_ds_a04c9cba -> "quality_artcnn32_ds_a04c9cba"
+            R.raw.quality_artcnn32_dn_6b51a6f7 -> "quality_artcnn32_dn_6b51a6f7"
+            R.raw.quality_cunny_fast_ds_86681e39 -> "quality_cunny_fast_ds_86681e39"
+            R.raw.quality_cunny_faster_ds_bdb1fc57 -> "quality_cunny_faster_ds_bdb1fc57"
+            R.raw.quality_cunny_fast_soft_7f5077eb -> "quality_cunny_fast_soft_7f5077eb"
+            R.raw.quality_cunny_faster_soft_6166d08a -> "quality_cunny_faster_soft_6166d08a"
+            R.raw.quality_cunny_veryfast_soft_9c63e86e -> "quality_cunny_veryfast_soft_9c63e86e"
+            R.raw.quality_nis_nvscaler_bac778ec -> "quality_nis_nvscaler_bac778ec"
             else -> requireNotNull(resourceName) { "Unknown test resource $resourceId" }
         }
         return File("src/main/res/raw/$name.glsl").readText()
@@ -171,6 +189,44 @@ class MpvImageShaderCacheTest {
         assertEquals(bundledSource, file.readText())
     }
 
+    @Test fun oldAnime4kCacheIsUpgradedForBothGpuModesWithoutChangingItsPath() {
+        for (gpuNextVulkan in listOf(false, true)) {
+            val directory = temporary.newFolder("anime-$gpuNextVulkan")
+            val cache = MpvImageShaderCache(directory, ::raw)
+            for (key in listOf("anime4k", "anime4k_denoise", "anime4k_m", "anime4k_denoise_m")) {
+                val shader = MPV_IMAGE_SHADERS.getValue(key)
+                val original = raw(shader.resourceId, shader.resourceName)
+                val oldFile = File(directory, shader.fileName).apply { writeText(original) }
+
+                val upgraded = cache.materialize(shader, null, gpuNextVulkan)
+                assertEquals(oldFile, upgraded)
+                assertNotEquals(original, upgraded.readText())
+                assertEquals(anime4kGlesSource(original), upgraded.readText())
+                val markerTime = 1_600_000_000_000L
+                assertTrue(upgraded.setLastModified(markerTime))
+                assertEquals(upgraded, cache.materialize(shader, null, gpuNextVulkan))
+                assertEquals(markerTime, upgraded.lastModified())
+            }
+            assertFalse(directory.listFiles()!!.any { it.name.endsWith(".pending") })
+        }
+    }
+
+    @Test fun fsrcnnxCacheUsesPortableAggregationInBothGpuModes() {
+        for (gpuNextVulkan in listOf(false, true)) {
+            val directory = temporary.newFolder("fsrcnnx-$gpuNextVulkan")
+            val cache = MpvImageShaderCache(directory, ::raw)
+            for (key in listOf("fsrcnnx8", "fsrcnnx16")) {
+                val shader = MPV_IMAGE_SHADERS.getValue(key)
+                val original = raw(shader.resourceId, shader.resourceName)
+                val oldFile = File(directory, shader.fileName).apply { writeText(original) }
+                val upgraded = cache.materialize(shader, null, gpuNextVulkan)
+                assertEquals(oldFile, upgraded)
+                assertNotEquals(original, upgraded.readText())
+                assertEquals(fsrcnnxGlesSource(original), upgraded.readText())
+            }
+        }
+    }
+
     @Test fun mismatchedBundledProfileIsRejectedAndItsStagingFileIsRemoved() {
         val directory = temporary.newFolder("shaders")
         val shader = MPV_IMAGE_SHADERS.getValue("cas")
@@ -181,5 +237,45 @@ class MpvImageShaderCacheTest {
             cache.materialize(shader, mpvCasTransferProfile("bt.1886"), gpuNextVulkan = false)
         }
         assertTrue(directory.listFiles()!!.isEmpty())
+    }
+
+    @Test fun computeKernelsKeepSeparateRepairedOpenGlAndUnchangedVulkanFiles() {
+        val directory = temporary.newFolder("compute-shaders")
+        val cache = MpvImageShaderCache(directory, ::raw)
+        val shaders = MPV_IMAGE_SHADERS.values.filter { mpvOpenGlShaderAdapter(it) != null }
+        assertEquals(12, shaders.size)
+        for (shader in shaders) {
+            val original = raw(shader.resourceId, shader.resourceName)
+            val vulkan = cache.materialize(shader, null, gpuNextVulkan = true)
+            assertEquals(shader.fileName, vulkan.name)
+            assertEquals(original, vulkan.readText())
+
+            // An old/partly upgraded install may still contain unadapted code in this variant.
+            val staleOpenGl = File(directory, shader.fileName.removeSuffix(".glsl") + "_opengl.glsl")
+                .apply { writeText(original) }
+            val openGl = cache.materialize(shader, null, gpuNextVulkan = false)
+            assertEquals(staleOpenGl, openGl)
+            assertNotEquals(vulkan, openGl)
+            assertNotEquals(original, openGl.readText())
+            assertEquals(mpvOpenGlShaderAdapter(shader)!!(original), openGl.readText())
+            assertEquals(original, vulkan.readText())
+
+            val markerTime = 1_600_000_000_000L
+            assertTrue(openGl.setLastModified(markerTime))
+            assertEquals(openGl, cache.materialize(shader, null, gpuNextVulkan = false))
+            assertEquals(markerTime, openGl.lastModified())
+            assertEquals(vulkan, cache.materialize(shader, null, gpuNextVulkan = true))
+            assertEquals(original, vulkan.readText())
+        }
+        assertFalse(directory.listFiles()!!.any { it.name.endsWith(".pending") })
+    }
+
+    @Test fun everyBundledComputeKernelDeclaresItsRequirement() {
+        for ((key, shader) in MPV_IMAGE_SHADERS) {
+            val resource = File("src/main/res/raw/${shader.fileName}")
+            if (!resource.isFile) continue
+            val compute = resource.readLines().any { it.startsWith("//!COMPUTE ") }
+            assertEquals(key, compute, shader.requiresCompute)
+        }
     }
 }

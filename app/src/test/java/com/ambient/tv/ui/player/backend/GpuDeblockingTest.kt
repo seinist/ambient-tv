@@ -15,7 +15,7 @@ class GpuDeblockingTest {
             assertEquals("quality_deblock_gpu.glsl", descriptor.fileName)
             assertFalse(descriptor.requiresCopyBack)
             val raw = File("src/main/res/raw/quality_deblock_gpu.glsl").readText()
-            val source = mpvShaderSourceFor(descriptor, raw, transferProfile = null, artCnnOpenGl = false)
+            val source = mpvShaderSourceFor(descriptor, raw, transferProfile = null, openGl = false)
             assertTrue(source.contains("//!HOOK MAIN"))
             assertTrue(source.contains("#define DEBLOCK_STRENGTH $value"))
             assertEquals(listOf(key), mpvImageShaderKeys(MpvImageOptions(deblock = strength), sdr = true, upscaling = false))

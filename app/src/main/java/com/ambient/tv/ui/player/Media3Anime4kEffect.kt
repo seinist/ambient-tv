@@ -12,6 +12,7 @@ import androidx.media3.effect.BaseGlShaderProgram
 import androidx.media3.effect.GlEffect
 import androidx.media3.effect.GlShaderProgram
 import com.ambient.tv.ui.player.backend.MPV_IMAGE_SHADERS
+import com.ambient.tv.ui.player.backend.anime4kGlesSource
 
 /** The same four Anime4K v3.2 CNN models bundled for MPV (MIT, bloc97). */
 internal val MEDIA3_ANIME4K_SCALERS = setOf(
@@ -71,7 +72,9 @@ internal fun media3Anime4kPasses(source: String): List<Media3Anime4kPass>? {
 internal fun media3Anime4kFragment(pass: Media3Anime4kPass): String = buildString {
     append("#version 100\nprecision highp float;\n")
     append("varying vec2 vTexSamplingCoord;\nuniform vec2 uInputSize;\n")
-    pass.bindings.forEach { name -> append("uniform sampler2D u").append(name).append(";\n") }
+    // Float arithmetic precision does not set sampler precision. The signed FP16 feature
+    // maps must not be read through GLSL ES's default lowp sampler (or driver mediump path).
+    pass.bindings.forEach { name -> append("uniform highp sampler2D u").append(name).append(";\n") }
     if ("MAIN" in pass.bindings) {
         append(
             """
@@ -95,7 +98,7 @@ vec4 animeInput(vec2 uv) {
                 .append(", vTexSamplingCoord + (offset) / uInputSize)\n")
         }
     }
-    append(pass.body.replace("vec4 hook()", "vec4 animeHook()")).append('\n')
+    append(anime4kGlesSource(pass.body).replace("vec4 hook()", "vec4 animeHook()")).append('\n')
     if (pass.save == "MAIN") {
         append(
             """
@@ -158,7 +161,7 @@ private class Media3Anime4kProgram(
         """#version 100
 precision highp float;
 varying vec2 vTexSamplingCoord;
-uniform sampler2D uImage;
+uniform highp sampler2D uImage;
 void main() { gl_FragColor = texture2D(uImage, vTexSamplingCoord); }
 """
     )

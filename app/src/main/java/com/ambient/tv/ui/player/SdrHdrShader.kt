@@ -83,7 +83,7 @@ internal object SdrHdrShader {
     const val fragment = """
         #extension GL_OES_EGL_image_external : require
         precision highp float;
-        uniform samplerExternalOES video;
+        uniform highp samplerExternalOES video;
         uniform int transfer;
         uniform float peakNits;
         uniform float referenceWhite;

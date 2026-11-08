@@ -58,13 +58,7 @@ private abstract class Media3FragmentShaderProgram(
     /** Gamma exponent fused into this pass (1 = none), saving the separate gamma texture. */
     private val outGamma: Float = 1f,
 ) : BaseGlShaderProgram(useHighPrecision, /* texturePoolCapacity= */ 1) {
-    private val program: GlProgram = try {
-        GlProgram(VERTEX_SHADER, FRAGMENT_HEADER + fragmentBody).apply {
-            setBufferAttribute("aFramePosition", GlUtil.getNormalizedCoordinateBounds(), GlUtil.HOMOGENEOUS_COORDINATE_VECTOR_SIZE)
-        }
-    } catch (e: GlUtil.GlException) {
-        throw VideoFrameProcessingException(e)
-    }
+    private val program = media3GlProgram(FRAGMENT_HEADER + fragmentBody, VERTEX_SHADER)
     private var inputSize = floatArrayOf(1f, 1f)
     /** Frame being drawn, for per-frame noise. */
     protected var presentationTimeUs = 0L

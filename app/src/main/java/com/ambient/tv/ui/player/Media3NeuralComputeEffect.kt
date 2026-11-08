@@ -14,6 +14,7 @@ import androidx.media3.effect.BaseGlShaderProgram
 import androidx.media3.effect.GlEffect
 import androidx.media3.effect.GlShaderProgram
 import com.ambient.tv.ui.player.backend.MPV_IMAGE_SHADERS
+import com.ambient.tv.ui.player.backend.artCnnGlesSource
 import kotlin.math.ceil
 
 /**
@@ -131,11 +132,13 @@ internal fun media3ComputeShader(pass: Media3ComputePass): String = buildString 
     }
     // The packed weights are already float literals. Use fp32 arithmetic even if the
     // device exposes float16, so the same source compiles on normal GLES3.1 hardware.
-    val fragment = pass.source.replace(
+    val source = if (pass.description.startsWith("ArtCNN")) artCnnGlesSource(pass.source) else pass.source
+    val fragment = source.replace(
         Regex("""(?s)#extension GL_EXT_shader_explicit_arithmetic_types_float16\s*:\s*enable\s*#ifdef GL_EXT_shader_explicit_arithmetic_types_float16.*?#endif"""),
         "#define V4 vec4\n#define M4 mat4\n#define F float",
     )
     append(if ("GL_EXT_spirv_intrinsics" in fragment) media3CuNnyDotProductFallback(fragment) else fragment)
+    append("\nvoid main() { hook(); }\n")
 }
 
 /**
@@ -151,8 +154,8 @@ internal fun media3CuNnyDotProductFallback(body: String): String {
     if (directive !in body || !instruction.containsMatchIn(body))
         throw IllegalArgumentException("Unknown CuNNy packed dot product encoding")
     val fallback = """
-int cunnySignedByte(int packed, int shift) {
-    int v = (packed >> shift) & 255;
+int cunnySignedByte(int packedValue, int shift) {
+    int v = (packedValue >> shift) & 255;
     return v >= 128 ? v - 256 : v;
 }
 int dp4(int a, int b, int fmt) {
