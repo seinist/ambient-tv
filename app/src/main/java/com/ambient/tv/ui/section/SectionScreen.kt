@@ -920,7 +920,7 @@ private fun RecommendationRowsPage(
                             },
                         ) { state.recommendationRows.map { it.id } }
                         .clipToBounds()
-                        .then(if (handheld) Modifier else Modifier.fadeRowsBehindHomeHero(performance.allowRowFadeSaveLayer && !rowsState.isScrollInProgress, heroHeight))
+                        .then(if (handheld) Modifier else Modifier.fadeRowsBehindHomeHero(performance.allowRowFadeSaveLayer, heroHeight) { rowsState.isScrollInProgress })
                         // Hidden for the one frame before the first row is measured (first open only;
                         // a list restored further down never composes row 0 and shows at once).
                         .then(if (handheld) Modifier else Modifier.graphicsLayer {
@@ -937,8 +937,7 @@ private fun RecommendationRowsPage(
                             modifier = Modifier.onlyActiveHeroRow(
                                 index,
                                 if (centeredRowIndex >= 0) centeredRowIndex else restoreRowIndex,
-                                revealDuringScroll = rowsState.isScrollInProgress,
-                            ).then(
+                            ) { rowsState.isScrollInProgress }.then(
                                 if (index == 0) Modifier.onSizeChanged { size ->
                                     val height = with(density) { size.height.toDp() }
                                     firstRowHeight = height
