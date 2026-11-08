@@ -956,8 +956,19 @@ private fun YouTubeMedia3Playback(
         val requested = seekCoordinator.requestRelative(delta, position, limit)
         val landing = adjustedYouTubeSeekTarget(requested, playback, limit, sponsorPrefs, metadata.sponsorSkipEnabled, delta < 0L)
         position = if (landing != requested) seekCoordinator.requestAbsolute(landing) else requested
-        seekCoordinator.consumeCommit()?.let(::commitSeek)
+        // Live DVR edge != VOD EOF: preserve #307's terminal VOD handling without
+        // forcing completion when a running live broadcast reaches its current edge.
+        val terminalVodSeek = !playback.isLive &&
+            com.ambient.tv.ui.player.isPlaybackEndSeek(requested, limit)
+        val immediateSeek = terminalVodSeek || liveDvrWindow?.targetsLiveEdge(requested) == true
+        seekCoordinator.consumeCommit(force = immediateSeek)?.let(::commitSeek)
         seekCommitVersion++
+        if (terminalVodSeek) {
+            val session = BackgroundPlaybackSession.snapshot.value
+            if (com.ambient.tv.ui.player.shouldPlayThroughPlaybackEnd(
+                    requested, limit, session.wantsToPlay, session.status.ended
+                )) BackgroundPlaybackSession.play()
+        }
     }
     fun seekInMode(delta: Long) {
         if (playback.isLive && liveDvrWindow == null) osd.reveal() else {
@@ -1323,8 +1334,19 @@ private fun YouTubeVlcPlayback(playback: YouTubePlayback, audioUri: String?, str
         val requested = seekCoordinator.requestRelative(delta, displayedPosition, limit)
         val landing = adjustedYouTubeSeekTarget(requested, playback, limit, preferences, sponsorSkipEnabled, delta < 0L)
         displayedPosition = if (landing != requested) seekCoordinator.requestAbsolute(landing) else requested
-        seekCoordinator.consumeCommit()?.let(::commitSeek)
+        // Live DVR edge != VOD EOF: preserve #307's terminal VOD handling without
+        // forcing completion when a running live broadcast reaches its current edge.
+        val terminalVodSeek = !playback.isLive &&
+            com.ambient.tv.ui.player.isPlaybackEndSeek(requested, limit)
+        val immediateSeek = terminalVodSeek || liveDvrWindow?.targetsLiveEdge(requested) == true
+        seekCoordinator.consumeCommit(force = immediateSeek)?.let(::commitSeek)
         seekCommitVersion++
+        if (terminalVodSeek) {
+            val session = BackgroundPlaybackSession.snapshot.value
+            if (com.ambient.tv.ui.player.shouldPlayThroughPlaybackEnd(
+                    requested, limit, session.wantsToPlay, session.status.ended
+                )) BackgroundPlaybackSession.play()
+        }
     }
     fun seekInMode(delta: Long) {
         if (playback.isLive && liveDvrWindow == null) osd.reveal() else {
@@ -1555,7 +1577,7 @@ private fun YouTubeMpvPlayback(playback: YouTubePlayback, streams: YouTubeStream
     val panelNavigation = rememberPlayerPanelNavigation(playback.videoId)
     val panelOpen = panelNavigation.panel != UnifiedPlayerPanel.NONE
     val snapshot = rememberMpvPlaybackSnapshot(controller, controller.audioSession.performanceHint || controller.audioSession.showFpsOverlay)
-    val liveDvrWindow = youtubeLiveDvrWindow(playback.isLive, snapshot.seekable && controller.canSeekNow(), snapshot.durationMs)
+    val liveDvrWindow = youtubeLiveDvrWindow(playback.isLive, controller.canSeekNow(), snapshot.durationMs)
     // A failure the MPV controller could not recover from itself: continue in Media3 at the
     // same position instead of leaving a black picture (YouTube always plays there).
     LaunchedEffect(controller.errorMessage) {
@@ -1632,8 +1654,19 @@ private fun YouTubeMpvPlayback(playback: YouTubePlayback, streams: YouTubeStream
         val requested = seekCoordinator.requestRelative(delta, displayedPosition, limit)
         val landing = adjustedYouTubeSeekTarget(requested, playback, limit, preferences, sponsorSkipEnabled, delta < 0L)
         displayedPosition = if (landing != requested) seekCoordinator.requestAbsolute(landing) else requested
-        seekCoordinator.consumeCommit()?.let(::commitSeek)
+        // Live DVR edge != VOD EOF: preserve #307's terminal VOD handling without
+        // forcing completion when a running live broadcast reaches its current edge.
+        val terminalVodSeek = !playback.isLive &&
+            com.ambient.tv.ui.player.isPlaybackEndSeek(requested, limit)
+        val immediateSeek = terminalVodSeek || liveDvrWindow?.targetsLiveEdge(requested) == true
+        seekCoordinator.consumeCommit(force = immediateSeek)?.let(::commitSeek)
         seekCommitVersion++
+        if (terminalVodSeek) {
+            val session = BackgroundPlaybackSession.snapshot.value
+            if (com.ambient.tv.ui.player.shouldPlayThroughPlaybackEnd(
+                    requested, limit, session.wantsToPlay, session.status.ended
+                )) BackgroundPlaybackSession.play()
+        }
     }
     fun seekInMode(delta: Long) {
         if (playback.isLive && liveDvrWindow == null) osd.reveal() else {

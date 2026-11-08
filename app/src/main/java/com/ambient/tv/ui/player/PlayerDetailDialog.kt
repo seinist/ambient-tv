@@ -634,7 +634,7 @@ private fun PlayerDetailYouTubeLinks(
                                 onClose()
                                 com.ambient.tv.launcher.LauncherIntents.post(
                                     com.ambient.tv.ui.navigation.Destinations.youtubeChannel(
-                                        channelId, channel.title, channel.imageUrl))
+                                        channelId, channel?.title, channel?.imageUrl))
                             }
                         }
                     }
