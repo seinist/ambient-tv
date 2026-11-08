@@ -624,7 +624,7 @@ private fun SectionedYouTubeContent(
     when (mode) {
         YouTubeViewMode.LANDSCAPE -> {
             val rowKeys = remember(rows) { rows.mapIndexed { index, row -> youtubeRowId(index, row) } }
-            val listState = com.ambient.tv.ui.common.rememberBrowseListState(
+            val listState = com.ambient.tv.ui.common.rememberBrowseRowColumnState(
                 initialFirstVisibleItemIndex = rowKeys.indexOf(focusTarget.rowId).coerceAtLeast(0),
             )
             KeepYouTubeLeadingInsertVisible(listState, rowKeys) { rowKeys.indexOf(it.row) }
@@ -632,15 +632,16 @@ private fun SectionedYouTubeContent(
                 rows.map { row -> row.id to row.items.map { it.videoId } }
             })
             val rowFocus = rememberRowColumnFocus()
+            val rowCentering = com.ambient.tv.ui.common.rememberRowCenteringState(listState)
             LazyColumn(
                 allowUpExit = true,
                 modifier = Modifier.fillMaxSize().rowColumnFocusWrapRight(rowFocus).rowColumnFocusNavigation(
                     rowFocus,
-                    scrollToTop = { listState.scrollToItem(0) },
-                    scrollToBottom = { listState.scrollToItem(rows.lastIndex) },
+                    scrollToTop = { listState.glideToItem(!com.ambient.tv.ui.performance.LocalPerformanceProfile.current.reducedEffects, 0) },
+                    scrollToBottom = { listState.glideToItem(!com.ambient.tv.ui.performance.LocalPerformanceProfile.current.reducedEffects, rows.lastIndex) },
                     scrollToRow = { rowKey ->
                         val index = rowKeys.indexOf(rowKey)
-                        if (index >= 0) listState.scrollToItem(index)
+                        if (index >= 0) rowCentering.centerItem(index)
                     },
                 ) { rowKeys },
                 state = listState,
