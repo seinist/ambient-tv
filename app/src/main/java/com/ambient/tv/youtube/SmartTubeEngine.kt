@@ -228,7 +228,10 @@ class SmartTubeEngine @Inject constructor(
         "getHistoryObserve", "getHistoryRowObserve", "getHistory", onRows = onRows,
     )
     suspend fun playlists(onRows: suspend (List<YouTubeRow>) -> Unit = {}): List<YouTubeRow> = contentRows(
-        "getPlaylistsObserve", "getPlaylistsRowObserve", "getPlaylists", onRows = onRows,
+        // Current MediaServiceCore resolves every playlist (including Watch Later) to a video row
+        // through getPlaylistRowsObserve(). Keep the older plural spelling as a compatibility
+        // fallback, then fall back to the raw playlist-card feed on revisions without row support.
+        "getPlaylistRowsObserve", "getPlaylistsRowObserve", "getPlaylistsObserve", "getPlaylists", onRows = onRows,
     )
     suspend fun search(query: String, onRows: suspend (List<YouTubeRow>) -> Unit = {}): List<YouTubeRow> = contentRowsWithArgs(
         arrayOf("getSearchObserve", "getSearch"),
@@ -330,7 +333,7 @@ class SmartTubeEngine @Inject constructor(
             if (signedIn && content.hasAnyMethod("getSubscriptions", "getSubscriptionsObserve", "getSubscriptionsRowObserve")) add("subscriptions")
             if (signedIn && content.hasAnyMethod("getSubscribedChannelsByNewContentObserve", "getSubscribedChannelsObserve", "getSubscribedChannels")) add("channels")
             if (signedIn && content.hasAnyMethod("getHistory", "getHistoryObserve", "getHistoryRowObserve")) add("history")
-            if (signedIn && content.hasAnyMethod("getPlaylists", "getPlaylistsObserve", "getPlaylistsRowObserve")) add("playlists")
+            if (signedIn && content.hasAnyMethod("getPlaylistRowsObserve", "getPlaylistsRowObserve", "getPlaylistsObserve", "getPlaylists")) add("playlists")
             if (content.hasAnyMethod("getShorts", "getShortsObserve")) add("shorts")
             if (content.hasAnyMethod("getMusic", "getMusicObserve")) add("music")
             if (content.hasAnyMethod("getNews", "getNewsObserve")) add("news")
@@ -895,19 +898,22 @@ class SmartTubeEngine @Inject constructor(
             try {
                 val stream = invocation.value?.let(::reactiveContent)
                 if (stream != null) {
-                    val subscriptionsFeed = method.contains("Subscriptions") ||
-                        method.contains("SubscribedChannels")
+                    val progressiveRowsFeed = method.contains("Subscriptions") ||
+                        method.contains("SubscribedChannels") ||
+                        method.contains("PlaylistRows") ||
+                        method.contains("PlaylistsRow")
+                    val emissionLimit = if (progressiveRowsFeed) 128 else 16
                     var emissions = 0
                     val finished = stream.collectBoundedSnapshot(
                         timeoutMs = 30_000L,
-                        maxEmissions = if (subscriptionsFeed) 128 else 16,
+                        maxEmissions = emissionLimit,
                     ) { emissions++; publish(it) }
-                    if (subscriptionsFeed) {
-                        // Subscription observables may stay open indefinitely after receiving
-                        // all current groups. A timed-out but populated snapshot is usable;
-                        // the next explicit visit still performs a fresh upstream request.
+                    if (progressiveRowsFeed) {
+                        // Subscription and playlist-row observables can emit one row at a time
+                        // and may stay open after useful content. Keep a populated snapshot if
+                        // the observation window ends instead of discarding already loaded rows.
                         if (!finished && accumulated.isEmpty()) throw IncompleteYouTubeFeedException()
-                    } else if (!finished || emissions >= 16) {
+                    } else if (!finished || emissions >= emissionLimit) {
                         throw IncompleteYouTubeFeedException()
                     }
                 } else {
