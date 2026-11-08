@@ -56,6 +56,7 @@ import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.Dp
@@ -89,6 +90,10 @@ import com.ambient.tv.ui.mobile.LocalHandheldUi
 import com.ambient.tv.ui.mobile.deviceDp
 import com.ambient.tv.ui.theme.LocalUiTokens
 import com.ambient.tv.domain.model.dedupeCastMembers
+import dagger.hilt.EntryPoint
+import dagger.hilt.InstallIn
+import dagger.hilt.components.SingletonComponent
+import dagger.hilt.android.EntryPointAccessors
 
 /** What a remote key does inside the details dialog. */
 internal enum class PlayerDetailKeyAction { SCROLL_UP, SCROLL_DOWN, FOCUS_CLOSE, FOCUS_TEXT, FOCUS_SCROLLBAR, CONSUME, PASS }
@@ -196,6 +201,7 @@ internal fun PlayerDetailDialog(
     val scrollbarFocus = remember { FocusRequester() }
     val closeFocus = remember { FocusRequester() }
     var closeFocused by remember { mutableStateOf(false) }
+    var linkFocused by remember { mutableStateOf(false) }
     var scrollbarFocused by remember { mutableStateOf(false) }
     var pressedKey by remember { mutableStateOf<Key?>(null) }
     var pressedAction by remember { mutableStateOf<PlayerDetailKeyAction?>(null) }
@@ -254,6 +260,9 @@ internal fun PlayerDetailDialog(
         // Cancelling the old scroll mutation is not enough: another native repeat could
         // restart it on the new item. That held direction belongs to the previous item until
         // released; Back, media keys and other gestures keep their normal route.
+        if (linkFocused && event.key !in setOf(Key.Back, Key.Escape)) {
+            return@onPreviewKeyEvent false
+        }
         if (previousItemHeldKey == event.key) {
             if (event.type == KeyEventType.KeyUp) {
                 previousItemHeldKey = null
@@ -357,7 +366,8 @@ internal fun PlayerDetailDialog(
                         PlayerDetailArtwork(detail, compact = handheld)
                         Box(Modifier.weight(1f)) {
                             PlayerDetailScrollableText(detail, scroll, textFocus, scrollbarFocus,
-                                closeFocus, onTextFocusChanged, onScrollbarFocusChanged)
+                                closeFocus, onTextFocusChanged, onScrollbarFocusChanged,
+                                onLinkFocusChanged = { linkFocused = it }, onClose = onClose)
                         }
                     }
                 } else {
@@ -365,7 +375,8 @@ internal fun PlayerDetailDialog(
                         PlayerDetailArtwork(detail, compact = true)
                         Box(Modifier.weight(1f, fill = false).fillMaxWidth()) {
                             PlayerDetailScrollableText(detail, scroll, textFocus, scrollbarFocus,
-                                closeFocus, onTextFocusChanged, onScrollbarFocusChanged)
+                                closeFocus, onTextFocusChanged, onScrollbarFocusChanged,
+                                onLinkFocusChanged = { linkFocused = it }, onClose = onClose)
                         }
                     }
                 }
@@ -405,6 +416,8 @@ private fun PlayerDetailScrollableText(
     closeFocus: FocusRequester,
     onTextFocusChanged: (Boolean) -> Unit,
     onScrollbarFocusChanged: (Boolean) -> Unit,
+    onLinkFocusChanged: (Boolean) -> Unit,
+    onClose: () -> Unit,
 ) {
     Box(Modifier.fillMaxWidth()) {
         Column(
@@ -423,7 +436,7 @@ private fun PlayerDetailScrollableText(
                 // A stable gutter prevents line reflow when a scrollbar appears on enrichment.
                 .padding(end = 16.dp),
         ) {
-            PlayerDetailText(detail)
+            PlayerDetailText(detail, onLinkFocusChanged, onClose)
         }
         OverlayEdgeFades(scroll.canScrollBackward, scroll.canScrollForward)
         if (scroll.maxValue > 0) {
@@ -480,7 +493,11 @@ private fun PlayerDetailArtwork(detail: PlayerDetailInfo, compact: Boolean) {
 }
 
 @Composable
-private fun PlayerDetailText(detail: PlayerDetailInfo) {
+private fun PlayerDetailText(
+    detail: PlayerDetailInfo,
+    onLinkFocusChanged: (Boolean) -> Unit,
+    onClose: () -> Unit,
+) {
     val item = detail.item
     Column(verticalArrangement = Arrangement.spacedBy(13.dp)) {
         DetailEyebrow(detail.eyebrow ?: item?.let { detailEyebrow(it) }.orEmpty())
@@ -504,6 +521,7 @@ private fun PlayerDetailText(detail: PlayerDetailInfo) {
         )
         DetailTagline(detail.tagline)
         DetailSummary(detail.overview, maxLines = Int.MAX_VALUE)
+        PlayerDetailYouTubeLinks(detail.youtubeLinks, onLinkFocusChanged, onClose)
         detail.lines.forEach { line ->
             Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
                 Text(stringResource(line.label), style = MaterialTheme.typography.labelMedium,
@@ -556,4 +574,77 @@ private fun Chip(text: String) {
             .border(1.dp, Color.White.copy(alpha = 0.18f), RoundedCornerShape(6.dp))
             .padding(horizontal = 8.dp, vertical = 4.dp),
     )
+}
+
+
+@EntryPoint
+@InstallIn(SingletonComponent::class)
+internal interface PlayerDetailYouTubeEntryPoint {
+    fun engine(): com.ambient.tv.youtube.SmartTubeEngine
+}
+
+@Composable
+private fun PlayerDetailYouTubeLinks(
+    links: List<PlayerDetailYouTubeLink>,
+    onLinkFocusChanged: (Boolean) -> Unit,
+    onClose: () -> Unit,
+) {
+    if (links.isEmpty()) return
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val engine = remember(context) {
+        EntryPointAccessors.fromApplication(
+            context.applicationContext,
+            PlayerDetailYouTubeEntryPoint::class.java,
+        ).engine()
+    }
+    Column(verticalArrangement = Arrangement.spacedBy(7.dp)) {
+        links.take(16).forEach { link ->
+            TvActionButton(
+                text = link.label,
+                onClick = {
+                    when (link.kind) {
+                        PlayerDetailYouTubeLinkKind.VIDEO -> {
+                            onClose()
+                            com.ambient.tv.launcher.LauncherIntents.post(
+                                com.ambient.tv.ui.navigation.Destinations.youtubePlayer(link.value))
+                        }
+                        PlayerDetailYouTubeLinkKind.CHANNEL_ID -> {
+                            onClose()
+                            com.ambient.tv.launcher.LauncherIntents.post(
+                                com.ambient.tv.ui.navigation.Destinations.youtubeChannel(link.value))
+                        }
+                        PlayerDetailYouTubeLinkKind.CHANNEL_QUERY -> scope.launch {
+                            val channel = runCatching {
+                                engine.search(link.value).asSequence().flatMap { it.items.asSequence() }
+                                    .firstOrNull { item ->
+                                        item.isChannel && (
+                                            item.title.equals(link.value, true) ||
+                                            item.title.equals("@" + link.value, true) ||
+                                            item.subtitle?.contains(link.value, true) == true
+                                        )
+                                    }
+                                    ?: engine.search("@" + link.value).asSequence().flatMap { it.items.asSequence() }
+                                        .firstOrNull { it.isChannel }
+                            }.getOrNull()
+                            val channelId = channel?.let { com.ambient.tv.youtube.youtubeChannelIdOf(it.videoId) }
+                                ?: channel?.channelId
+                            if (!channelId.isNullOrBlank()) {
+                                onClose()
+                                com.ambient.tv.launcher.LauncherIntents.post(
+                                    com.ambient.tv.ui.navigation.Destinations.youtubeChannel(
+                                        channelId, channel.title, channel.imageUrl))
+                            }
+                        }
+                    }
+                },
+                modifier = Modifier
+                    .onFocusChanged { onLinkFocusChanged(it.isFocused) }
+                    .focusProperties {
+                        left = FocusRequester.Cancel
+                        right = FocusRequester.Cancel
+                    },
+            )
+        }
+    }
 }
