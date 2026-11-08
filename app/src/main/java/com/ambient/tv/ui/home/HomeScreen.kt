@@ -852,7 +852,7 @@ internal fun LibraryContent(
         } else {
             null
         }
-        val rowListState = rememberLazyListState(
+        val rowListState = com.ambient.tv.ui.common.rememberBrowseRowColumnState(
             initialFirstVisibleItemIndex = if (restoreArmed) restoreListIndex else 0,
         )
         com.ambient.tv.ui.common.RegisterBrowseFocusRows(rowListState, state.rowKeys.map { rowKey ->
@@ -942,7 +942,7 @@ internal fun LibraryContent(
                     ) { state.rowKeys }
                     .clipToBounds()
                     .acceleratedDpadNavigation()
-                    .fadeRowsBehindHomeHero(maskRows, heroHeight)
+                    .fadeRowsBehindHomeHero(maskRows && !rowListState.isScrollInProgress, heroHeight)
                     .graphicsLayer {
                         val progress = entrancePhase(entranceProgress(), 0.24f, 1f)
                         // Hidden for the one frame before the first row is measured (first open only;
@@ -964,7 +964,7 @@ internal fun LibraryContent(
                     }
                 }) { rowKey ->
                     val rowIndex = state.rowKeys.indexOf(rowKey)
-                    Box(Modifier.onlyActiveHeroRow(rowIndex, activeRowIndex).then(
+                    Box(Modifier.onlyActiveHeroRow(rowIndex, activeRowIndex, revealDuringScroll = rowListState.isScrollInProgress).then(
                         if (rowIndex == 0) Modifier.onSizeChanged {
                             val height = with(density) { it.height.toDp() }
                             firstRowHeight = height
@@ -1952,9 +1952,21 @@ private fun entrancePhase(progress: Float, start: Float, end: Float): Float =
  * others fade out, as they would otherwise show in the gap above it or below it.
  */
 @Composable
-internal fun Modifier.onlyActiveHeroRow(index: Int, activeIndex: Int): Modifier {
+internal fun Modifier.onlyActiveHeroRow(
+    index: Int,
+    activeIndex: Int,
+    revealDuringScroll: Boolean = false,
+): Modifier {
     if (LocalHandheldUi.current) return this
-    val alpha by androidx.compose.animation.core.animateFloatAsState(if (index != activeIndex) 0f else 1f, label = "heroRowInactive")
+    // During a vertical glide the incoming row must already be visible. Keeping every other
+    // composed row at alpha 0 until focus lands made the list appear to hitch at the end.
+    val visible = revealDuringScroll || index == activeIndex
+    val alpha by androidx.compose.animation.core.animateFloatAsState(
+        targetValue = if (visible) 1f else 0f,
+        animationSpec = if (revealDuringScroll) androidx.compose.animation.core.snap()
+            else androidx.compose.animation.core.tween(120),
+        label = "heroRowInactive",
+    )
     return graphicsLayer { this.alpha = alpha }
 }
 
