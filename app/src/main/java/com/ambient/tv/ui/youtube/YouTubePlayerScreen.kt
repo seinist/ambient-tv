@@ -100,6 +100,7 @@ import androidx.media3.common.Tracks
 import androidx.media3.common.VideoSize
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.SeekParameters
+import com.ambient.tv.ui.player.seekToPlaybackPosition
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.datasource.okhttp.OkHttpDataSource
 import androidx.media3.datasource.DefaultDataSource
@@ -935,7 +936,7 @@ private fun YouTubeMedia3Playback(
         val requested = seekCoordinator.requestRelative(delta, position, limit)
         val landing = adjustedYouTubeSeekTarget(requested, playback, limit, sponsorPrefs, metadata.sponsorSkipEnabled, delta < 0L)
         position = if (landing != requested) seekCoordinator.requestAbsolute(landing) else requested
-        seekCoordinator.consumeCommit()?.let(player::seekTo)
+        seekCoordinator.consumeCommit()?.let(player::seekToPlaybackPosition)
         seekCommitVersion++
     }
     fun seekInMode(delta: Long) {
@@ -946,7 +947,7 @@ private fun YouTubeMedia3Playback(
     }
     fun heldSeekStep(baseMs: Long, e: androidx.compose.ui.input.key.KeyEvent) =
         com.ambient.tv.ui.player.acceleratedSeekStepMs(baseMs, e.nativeKeyEvent.repeatCount, duration.takeIf { it > 0L } ?: playback.durationMs)
-    YouTubeSeekCommit(seekCommitVersion, seekCoordinator, player::seekTo)
+    YouTubeSeekCommit(seekCommitVersion, seekCoordinator) { player.seekToPlaybackPosition(it) }
     LaunchedEffect(playback.resumeMs, playback.resumeResolved) {
         if (!playback.resumeResolved) return@LaunchedEffect
         val target = lateYouTubeResumeTarget(playback.isLive, startPositionMs, playback.resumeMs, userSeeked,
@@ -955,7 +956,7 @@ private fun YouTubeMedia3Playback(
         lateResumeApplied = true
         if (target == null) return@LaunchedEffect
         position = seekCoordinator.requestAbsolute(target)
-        seekCoordinator.consumeCommit()?.let(player::seekTo)
+        seekCoordinator.consumeCommit()?.let(player::seekToPlaybackPosition)
     }
     val videoChoices = remember(tracks, context) { tracks?.let { ytTrackChoices(context, it, C.TRACK_TYPE_VIDEO) }.orEmpty() }
     val audioChoices = remember(tracks, context) { tracks?.let { ytTrackChoices(context, it, C.TRACK_TYPE_AUDIO) }.orEmpty() }
@@ -992,7 +993,10 @@ private fun YouTubeMedia3Playback(
             OsdKeyState(OsdContent.VIDEO, controls && !osd.seekFeedback && !osd.closing, panelOpen, osd.seekFeedback, closing = osd.closing),
             OsdSeekSteps(BackgroundPlaybackSession.seekJumpMs(bigSeekSeconds * 1000L), held = { heldSeekStep(it, e) }),
             object : OsdKeyTarget {
-                override fun chapterSeekDelta(direction: Int) = chapterNavigation?.chapterStep(position, direction)
+                override fun chapterSeekDelta(direction: Int): Long? {
+                    val base = seekCoordinator.pendingTarget ?: position
+                    return chapterNavigation?.chapterStep(base, direction, seekCoordinator.chapterPositionMs(base))
+                }
                 override fun isPlaying() = player.isPlaying
                 override fun togglePlayback() { BackgroundPlaybackSession.userToggle() }
                 override fun play() { BackgroundPlaybackSession.userPlay() }
@@ -1331,7 +1335,10 @@ private fun YouTubeVlcPlayback(playback: YouTubePlayback, audioUri: String?, str
             OsdKeyState(OsdContent.VIDEO, controls && !osd.seekFeedback && !osd.closing, panelOpen, osd.seekFeedback, closing = osd.closing),
             OsdSeekSteps(BackgroundPlaybackSession.seekJumpMs(bigSeekSeconds * 1000L), held = { heldSeekStep(it, e) }),
             object : OsdKeyTarget {
-                override fun chapterSeekDelta(direction: Int) = chapterNavigation?.chapterStep(displayedPosition, direction)
+                override fun chapterSeekDelta(direction: Int): Long? {
+                    val base = seekCoordinator.pendingTarget ?: displayedPosition
+                    return chapterNavigation?.chapterStep(base, direction, seekCoordinator.chapterPositionMs(base))
+                }
                 override fun isPlaying() = snapshot.isPlaying
                 override fun togglePlayback() { BackgroundPlaybackSession.userToggle() }
                 override fun play() { BackgroundPlaybackSession.userPlay() }
@@ -1623,7 +1630,10 @@ private fun YouTubeMpvPlayback(playback: YouTubePlayback, streams: YouTubeStream
             OsdKeyState(OsdContent.VIDEO, controls && !osd.seekFeedback && !osd.closing, panelOpen, osd.seekFeedback, closing = osd.closing),
             OsdSeekSteps(BackgroundPlaybackSession.seekJumpMs(bigSeekSeconds * 1000L), held = { heldSeekStep(it, e) }),
             object : OsdKeyTarget {
-                override fun chapterSeekDelta(direction: Int) = chapterNavigation?.chapterStep(displayedPosition, direction)
+                override fun chapterSeekDelta(direction: Int): Long? {
+                    val base = seekCoordinator.pendingTarget ?: displayedPosition
+                    return chapterNavigation?.chapterStep(base, direction, seekCoordinator.chapterPositionMs(base))
+                }
                 override fun isPlaying() = snapshot.isPlaying
                 override fun togglePlayback() { BackgroundPlaybackSession.userToggle() }
                 override fun play() { BackgroundPlaybackSession.userPlay() }

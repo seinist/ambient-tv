@@ -842,6 +842,9 @@ object BackgroundPlaybackSession {
                 backward = requested < snapshot.value.status.positionMs)
         } else requested
         handle?.seekTo(target)
+        if (handle != null && seekOwner === handle) {
+            seekState?.followExternalSeek(target + (metadata?.timelineOffsetMs ?: 0L))
+        }
         committedSeekPositionMs = target
         committedSeekVersion++
         tick()
