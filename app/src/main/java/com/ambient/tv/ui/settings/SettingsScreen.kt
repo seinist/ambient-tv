@@ -1687,9 +1687,10 @@ private fun aboutServiceComponents() = listOf(
     AboutComponent("ST", "SmartTube", BuildConfig.SMARTTUBE_VERSION, R.string.settings_about_role_youtube, "yuliskov / GitHub", BuildConfig.SMARTTUBE_REF.shortRef()),
     AboutComponent("MSC", "MediaServiceCore", BuildConfig.MEDIA_SERVICE_CORE_REF.shortRef(), R.string.settings_about_role_youtube_core, "yuliskov / GitHub", BuildConfig.MEDIA_SERVICE_CORE_REF.shortRef()),
     AboutComponent("SM", "SharedModules", BuildConfig.SHARED_MODULES_REF.shortRef(), R.string.settings_about_role_shared, "yuliskov / GitHub", BuildConfig.SHARED_MODULES_REF.shortRef()),
-    AboutComponent("SP", "Spotify Rusty", BuildConfig.SPOTIFY_RUSTY_VERSION, R.string.settings_about_role_spotify, "SerafiniJose/rusty / GitHub"),
 ) + listOfNotNull(
-    // Only builds with the native Telegram client ship it.
+    // Optional native integrations belong in About only when this APK actually ships them.
+    AboutComponent("SP", "Spotify Rusty", BuildConfig.SPOTIFY_RUSTY_VERSION, R.string.settings_about_role_spotify,
+        "SerafiniJose/rusty / GitHub").takeIf { BuildConfig.SPOTIFY_ENABLED },
     AboutComponent("MG", "Monogram", BuildConfig.MONOGRAM_VERSION, R.string.settings_about_role_telegram,
         "monogram-android / GitHub", BuildConfig.MONOGRAM_REF.shortRef()).takeIf { BuildConfig.MONOGRAM_NATIVE },
 )
