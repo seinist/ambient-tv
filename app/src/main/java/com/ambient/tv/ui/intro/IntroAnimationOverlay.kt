@@ -725,20 +725,21 @@ private fun DrawScope.prismRibbon(
 ) {
     if (opacity <= 0.002f || bottom <= top || width <= 0f) return
     val height = bottom - top
-    val left = ArrayList<Offset>(PRISM_RIBBON_SEGMENTS + 1)
-    val right = ArrayList<Offset>(PRISM_RIBBON_SEGMENTS + 1)
-    for (index in 0..PRISM_RIBBON_SEGMENTS) {
-        val u = index / PRISM_RIBBON_SEGMENTS.toFloat()
-        val centerX = x + slant * (u - 0.5f)
-        val y = top + height * u
-        val half = width * 0.5f * prismRibbonEnvelope(u)
-        left += Offset(centerX - half, y)
-        right += Offset(centerX + half, y)
-    }
     val ribbon = Path().apply {
-        moveTo(left.first().x, left.first().y)
-        for (index in 1 until left.size) lineTo(left[index].x, left[index].y)
-        for (index in right.indices.reversed()) lineTo(right[index].x, right[index].y)
+        for (index in 0..PRISM_RIBBON_SEGMENTS) {
+            val u = index / PRISM_RIBBON_SEGMENTS.toFloat()
+            val centerX = x + slant * (u - 0.5f)
+            val y = top + height * u
+            val half = width * 0.5f * prismRibbonEnvelope(u)
+            if (index == 0) moveTo(centerX - half, y) else lineTo(centerX - half, y)
+        }
+        for (index in PRISM_RIBBON_SEGMENTS downTo 0) {
+            val u = index / PRISM_RIBBON_SEGMENTS.toFloat()
+            val centerX = x + slant * (u - 0.5f)
+            val y = top + height * u
+            val half = width * 0.5f * prismRibbonEnvelope(u)
+            lineTo(centerX + half, y)
+        }
         close()
     }
 
