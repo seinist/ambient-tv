@@ -1202,6 +1202,8 @@ fun SettingsScreen(
                                     onPauseRewindChanged = viewModel::onPauseRewindChanged,
                                     onMinPauseChanged = viewModel::onPauseRewindMinPauseChanged,
                                     onResumeRewindChanged = viewModel::onResumeRewindChanged,
+                                    onWatchedThresholdChanged = viewModel::onWatchedThresholdChanged,
+                                    onResumeIgnoreEndChanged = viewModel::onResumeIgnoreEndChanged,
                                 )
                             }
                         }
