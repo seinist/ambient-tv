@@ -12,17 +12,28 @@ import androidx.compose.ui.unit.dp
 import com.ambient.tv.ui.mobile.LocalHandheldUi
 import com.ambient.tv.ui.performance.LocalPerformanceProfile
 
-/** A bounded viewport window prepares new cards before D-pad focus reaches the visible edge.
- * Keeping a smaller window behind the viewport also makes quick reversals reuse their layouts.
- * The amount scales with the actual viewport, not library size or the number of rows. */
+/**
+ * Vertical browse lists/grids prepare only about the next visual row. A viewport-fraction
+ * window used to precompose up to 0.75 screens on entry; grids therefore created many
+ * MediaTiles at once, while a prefetched ContentRow also started its own nested LazyRow.
+ * That multiplied composition plus Coil request/decode work in the first frames of a page.
+ *
+ * A small fixed window keeps the next D-pad target warm without tying startup work to screen
+ * height or grid density. Reduced-effects devices use an even smaller window.
+ */
+internal val BrowseVerticalCacheAhead = 220.dp
+internal val BrowseVerticalCacheBehind = 80.dp
+internal val BrowseVerticalCacheAheadReduced = 96.dp
+internal val BrowseVerticalCacheBehindReduced = 48.dp
+
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun rememberBrowseCacheWindow(): LazyLayoutCacheWindow {
     val reduced = LocalPerformanceProfile.current.reducedEffects
     return remember(reduced) {
         LazyLayoutCacheWindow(
-            aheadFraction = if (reduced) 0.25f else 0.75f,
-            behindFraction = if (reduced) 0.25f else 0.5f,
+            ahead = if (reduced) BrowseVerticalCacheAheadReduced else BrowseVerticalCacheAhead,
+            behind = if (reduced) BrowseVerticalCacheBehindReduced else BrowseVerticalCacheBehind,
         )
     }
 }
