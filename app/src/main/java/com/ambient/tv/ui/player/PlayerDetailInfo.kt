@@ -52,18 +52,12 @@ internal data class PlayerDetailInfo(
     val chips: List<String> = emptyList(),
     val item: MediaItem? = null,
     val system: MediaSystem? = null,
+    /** Stable playing-content identity; metadata enrichment must not reset the reading position. */
+    val contentKey: String? = null,
 )
 
-/** YouTube descriptions can be very long; the dialog shows the beginning. */
-internal const val PLAYER_DETAIL_OVERVIEW_MAX_CHARS = 3_000
-
-internal fun capPlayerDetailText(text: String?, max: Int = PLAYER_DETAIL_OVERVIEW_MAX_CHARS): String? {
-    val trimmed = text?.trim()?.takeIf { it.isNotEmpty() } ?: return null
-    if (trimmed.length <= max) return trimmed
-    val cut = trimmed.substring(0, max)
-    val space = cut.lastIndexOf(' ').takeIf { it > max * 3 / 4 } ?: cut.length
-    return cut.substring(0, space).trimEnd() + " …"
-}
+/** The OSD has a bounded scroll viewport, so preserve every source paragraph and URL. */
+internal fun normalizePlayerDetailText(text: String?): String? = text?.trim()?.takeIf { it.isNotEmpty() }
 
 private val MUSIC_TYPES = setOf("track", "album", "artist", "audio")
 
@@ -156,10 +150,12 @@ internal fun playerDetailForMedia(
             formatDuration(item?.durationMs ?: fallback.durationMs),
         ),
         tagline = (item?.tagline ?: fallback.tagline)?.takeIf { it.isNotBlank() },
-        overview = capPlayerDetailText(item?.summary ?: fallback.summary),
+        overview = normalizePlayerDetailText(item?.summary) ?: normalizePlayerDetailText(fallback.summary),
         genres = item?.genres.orEmpty().take(5),
         item = playing,
         system = mediaSystemForDetail(sourceRatingKey),
+        contentKey = (normalizePlayerDetailText(sourceRatingKey) ?: normalizePlayerDetailText(item?.ratingKey))
+            ?.let { "media:$it" },
     )
 }
 
@@ -183,21 +179,35 @@ internal fun playerDetailForYouTube(
     fallbackImageUrls: List<String>,
     isLive: Boolean,
     durationMs: Long,
+    publishedDate: String? = null,
+    publishedAtMs: Long? = null,
+    formatDate: (Long) -> String = { com.ambient.tv.ui.common.relativePublishedLabel(it) },
+    videoId: String? = null,
 ): PlayerDetailInfo {
-    val cover = imageUrl?.takeIf { it.isNotBlank() } ?: fallbackImageUrls.firstOrNull()
+    val fallbackCovers = fallbackImageUrls.mapNotNull(::normalizePlayerDetailText).distinct()
+    val cover = normalizePlayerDetailText(imageUrl) ?: fallbackCovers.firstOrNull()
+    // A genuine source timestamp can be localized; a relative provider label stays relative.
+    // Never turn a raw epoch string or an unknown date into a visible publication label.
+    val publication = if (isLive) null else
+        com.ambient.tv.youtube.youtubePublicationEpochMs(publishedAtMs)?.let(formatDate)
+            ?: com.ambient.tv.youtube.youtubePublicationText(publishedDate)
     return PlayerDetailInfo(
         osdPlayer = OsdPlayer.YOUTUBE,
         title = title,
         artworkUrl = cover,
-        artworkFallbackUrls = fallbackImageUrls.filter { it != cover },
+        artworkFallbackUrls = fallbackCovers.filter { it != cover },
         artShape = PlayerDetailArtShape.WIDE,
-        eyebrow = (channelTitle ?: author)?.takeIf { it.isNotBlank() },
-        meta = if (isLive) emptyList() else listOfNotNull(formatDuration(durationMs)),
+        eyebrow = normalizePlayerDetailText(channelTitle) ?: normalizePlayerDetailText(author),
+        meta = if (isLive) emptyList() else listOfNotNull(publication, formatDuration(durationMs)),
         live = isLive,
-        overview = capPlayerDetailText(description),
+        overview = normalizePlayerDetailText(description),
         system = MediaSystem.YOUTUBE,
+        contentKey = normalizePlayerDetailText(videoId)?.takeIf { YOUTUBE_DETAIL_VIDEO_ID.matches(it) }
+            ?.let { "youtube:$it" },
     )
 }
+
+private val YOUTUBE_DETAIL_VIDEO_ID = Regex("[A-Za-z0-9_-]{11}")
 
 private fun timeRange(start: Long, stop: Long, zone: ZoneId): String {
     val format = DateTimeFormatter.ofPattern("HH:mm")
@@ -217,7 +227,7 @@ internal fun playerDetailForLiveTv(
     val channelLine = channel?.let { listOfNotNull(it.numberLabel, it.name).joinToString("  ") }
         ?.takeIf { it.isNotBlank() }
     if (recording != null) {
-        val image = recording.imageUrl ?: recording.fanartUrl
+        val image = normalizePlayerDetailText(recording.imageUrl) ?: normalizePlayerDetailText(recording.fanartUrl)
         return PlayerDetailInfo(
             osdPlayer = OsdPlayer.LIVE_TV,
             title = recording.title,
@@ -229,8 +239,9 @@ internal fun playerDetailForLiveTv(
                 formatDuration((recording.stopEpochSeconds - recording.startEpochSeconds) * 1000L),
             ),
             tagline = recording.subtitle?.takeIf { it.isNotBlank() },
-            overview = capPlayerDetailText(recording.description),
+            overview = normalizePlayerDetailText(recording.description),
             system = MediaSystem.TVHEADEND,
+            contentKey = normalizePlayerDetailText(recording.uuid)?.let { "recording:$it" },
         )
     }
     if (channel == null && now == null) return null
@@ -250,13 +261,25 @@ internal fun playerDetailForLiveTv(
         }.orEmpty(),
         live = true,
         tagline = now?.subtitle?.takeIf { it.isNotBlank() },
-        overview = capPlayerDetailText(now?.description ?: now?.summary),
+        overview = normalizePlayerDetailText(now?.description) ?: normalizePlayerDetailText(now?.summary),
         lines = listOfNotNull(next?.let {
             PlayerDetailLine(R.string.player_detail_next,
                 "${timeRange(it.startEpochSeconds, it.stopEpochSeconds, zone)}  ${it.title}")
         }),
         system = MediaSystem.TVHEADEND,
+        contentKey = liveTvDetailContentKey(channel, now),
     )
+}
+
+private fun liveTvDetailContentKey(channel: LiveTvChannel?, programme: LiveTvProgramme?): String? {
+    val channelId = normalizePlayerDetailText(channel?.uuid) ?: normalizePlayerDetailText(programme?.channelUuid)
+    val eventId = normalizePlayerDetailText(programme?.eventId)
+    return when {
+        channelId != null && eventId != null -> "live:$channelId:event:$eventId"
+        channelId != null -> "live:$channelId"
+        eventId != null -> "live:event:$eventId"
+        else -> null
+    }
 }
 
 /**
@@ -285,6 +308,7 @@ internal fun playerDetailForRadio(
     tags: List<String>,
     codec: String?,
     bitrateKbps: Int?,
+    stationId: String? = null,
 ): PlayerDetailInfo = PlayerDetailInfo(
     osdPlayer = OsdPlayer.RADIO,
     title = stationName,
@@ -303,6 +327,7 @@ internal fun playerDetailForRadio(
         bitrateKbps?.takeIf { it > 0 }?.let { "$it kbps" },
     ),
     system = MediaSystem.RADIO,
+    contentKey = normalizePlayerDetailText(stationId)?.let { "radio:$it" },
 )
 
 /** Short post texts that fit the title line are not repeated as a description. */
@@ -353,12 +378,13 @@ internal fun playerDetailForTelegram(
         artworkUrl = cover ?: channelImage,
         artworkFallbackUrls = listOfNotNull(channelImage).filter { cover != null && it != cover },
         artShape = shape,
-        eyebrow = (channel?.takeIf { it.chatId == media.chatId }?.title ?: media.channel).takeIf { it.isNotBlank() },
+        eyebrow = normalizePlayerDetailText(channel?.takeIf { it.chatId == media.chatId }?.title)
+            ?: normalizePlayerDetailText(media.channel),
         meta = listOfNotNull(
             media.publishedAtMs.takeIf { it > 0 }?.let(formatDate),
             formatDuration(duration),
         ),
-        overview = capPlayerDetailText(overview),
+        overview = normalizePlayerDetailText(overview),
         lines = listOfNotNull(fileName?.let { PlayerDetailLine(R.string.photos_info_file, it) }),
         chips = listOfNotNull(
             resolution,
@@ -367,5 +393,6 @@ internal fun playerDetailForTelegram(
             media.fileSize.takeIf { it > 0 }?.let(formatSize),
         ),
         system = MediaSystem.TELEGRAM,
+        contentKey = media.mediaKey,
     )
 }

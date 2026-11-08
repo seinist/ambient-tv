@@ -6,6 +6,7 @@ import com.ambient.tv.data.telegram.TelegramMedia
 import com.ambient.tv.data.telegram.TelegramMediaKind
 import com.ambient.tv.ui.common.MediaSystem
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -81,6 +82,27 @@ class PlayerDetailTelegramTest {
         val detail = playerDetailForTelegram(video(), TelegramChannel(99, "Fremd", thumbnailUrl = "other"), date, size)
         assertEquals("Kanal A", detail.eyebrow)
         assertTrue(detail.artworkFallbackUrls.isEmpty())
+    }
+
+    @Test fun postIdentitySurvivesEnrichmentAndBlankChannelNamesUseThePostSource() {
+        val original = video()
+        val initial = playerDetailForTelegram(original, null, date, size)
+        val enriched = playerDetailForTelegram(original.copy(title = "Updated title", thumbnailUrl = "new-thumb"),
+            TelegramChannel(7, " "), date, size)
+        assertEquals(original.mediaKey, initial.contentKey)
+        assertEquals(initial.contentKey, enriched.contentKey)
+        assertEquals("Kanal A", enriched.eyebrow)
+        assertNotEquals(initial.contentKey,
+            playerDetailForTelegram(original.copy(messageId = 43), null, date, size).contentKey)
+        assertNotEquals(initial.contentKey,
+            playerDetailForTelegram(original.copy(chatId = 8), null, date, size).contentKey)
+    }
+
+    @Test fun theFullPostTextAndItsLinksRemainReadable() {
+        val complete = (1..100).joinToString("\n\n") { "Paragraph $it with details of this video and its source." } +
+            "\n\nhttps://example.invalid/full-post"
+        val detail = playerDetailForTelegram(video(summary = "  $complete  "), null, date, size)
+        assertEquals(complete, detail.overview)
     }
 
     @Test fun portraitVideoUsesTheUprightFrameAndAudioTheSquareCover() {

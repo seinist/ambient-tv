@@ -1,15 +1,16 @@
 package com.ambient.tv.ui.player
 
+import androidx.compose.foundation.MutatePriority
 import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.focusable
-import androidx.compose.foundation.gestures.animateScrollBy
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
@@ -31,6 +32,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.outlined.Info
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import com.ambient.tv.ui.common.dispatchBackOnRelease
 import androidx.compose.runtime.getValue
@@ -42,6 +44,7 @@ import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
@@ -53,7 +56,7 @@ import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -67,13 +70,15 @@ import com.ambient.tv.ui.common.DetailGenres
 import com.ambient.tv.ui.common.DetailPrimaryMetaRow
 import com.ambient.tv.ui.common.DetailSummary
 import com.ambient.tv.ui.common.DetailTagline
-import com.ambient.tv.ui.common.DetailTitleRow
 import com.ambient.tv.ui.common.LocalPlayerPanelNavigation
 import com.ambient.tv.ui.common.OverlayAccentStrip
 import com.ambient.tv.ui.common.OverlayEdgeFades
 import com.ambient.tv.ui.common.OverlayScrollbar
 import com.ambient.tv.ui.common.PlayerIconButton
+import com.ambient.tv.ui.common.ScrollbarKeyScroller
 import com.ambient.tv.ui.common.StreamPropertyAdaptiveRows
+import com.ambient.tv.ui.common.SystemBadge
+import com.ambient.tv.ui.common.TitleLogo
 import com.ambient.tv.ui.common.TvActionButton
 import com.ambient.tv.ui.common.UnifiedPlayerPanel
 import com.ambient.tv.ui.common.detailEyebrow
@@ -84,7 +89,6 @@ import com.ambient.tv.ui.mobile.LocalHandheldUi
 import com.ambient.tv.ui.mobile.deviceDp
 import com.ambient.tv.ui.theme.LocalUiTokens
 import com.ambient.tv.domain.model.dedupeCastMembers
-import kotlinx.coroutines.launch
 
 /** What a remote key does inside the details dialog. */
 internal enum class PlayerDetailKeyAction { SCROLL_UP, SCROLL_DOWN, FOCUS_CLOSE, FOCUS_TEXT, FOCUS_SCROLLBAR, CONSUME, PASS }
@@ -193,18 +197,50 @@ internal fun PlayerDetailDialog(
     val closeFocus = remember { FocusRequester() }
     var closeFocused by remember { mutableStateOf(false) }
     var scrollbarFocused by remember { mutableStateOf(false) }
-    val density = LocalDensity.current
-    // New channel, episode or SmartTube item starts at the beginning of its own details.
-    LaunchedEffect(detail.title, detail.artworkUrl) { scroll.scrollTo(0) }
-    // If enrichment makes a long description short while the scrollbar had focus, it
-    // disappears. Do not leave the outer key handler thinking the scrollbar still owns input.
-    LaunchedEffect(scroll.maxValue) {
-        if (scroll.maxValue <= 0) scrollbarFocused = false
+    var pressedKey by remember { mutableStateOf<Key?>(null) }
+    var pressedAction by remember { mutableStateOf<PlayerDetailKeyAction?>(null) }
+    var scrollbarPressedKey by remember { mutableStateOf<Key?>(null) }
+    var previousItemHeldKey by remember { mutableStateOf<Key?>(null) }
+    val scrolling = remember(scope, scroll) {
+        ScrollbarKeyScroller(scope, scroll, { scroll.viewportSize.toFloat() }, { false })
     }
-    val step = with(density) { 160.dp.toPx() }
+    fun cancelTextGesture() {
+        scrolling.stop()
+        pressedKey = null
+        pressedAction = null
+    }
+    DisposableEffect(scrolling) {
+        onDispose { scrolling.stop() }
+    }
+    // Only a different playing item resets reading. Enriched titles and replacement artwork
+    // belong to the same item and must not jump a reader back to the first paragraph.
+    val contentKey = detail.contentKey ?: (detail.osdPlayer to detail.title)
+    LaunchedEffect(contentKey) {
+        val textScrollKey = pressedKey?.takeIf {
+            it == Key.DirectionUp || it == Key.DirectionDown || it == Key.PageUp || it == Key.PageDown
+        }
+        previousItemHeldKey = textScrollKey ?: scrollbarPressedKey ?: previousItemHeldKey
+        cancelTextGesture()
+        // A held scrollbar/touch gesture must not prevent a genuinely new item starting at
+        // the top. Its old scroll mutation is cancelled along with the text gesture above.
+        scroll.scroll(MutatePriority.PreventUserInput) { scrollBy(-scroll.value.toFloat()) }
+    }
+    // If enrichment makes a long description short while the scrollbar had focus, it
+    // disappears. Recover the owned target, without stealing focus from the Close action.
+    LaunchedEffect(scroll.maxValue, interactive) {
+        if (scroll.maxValue <= 0 && scrollbarFocused) {
+            if (interactive && !closeFocused) runCatching { textFocus.requestFocus() }
+            scrollbarFocused = false
+        }
+    }
 
     LaunchedEffect(interactive) {
-        if (!interactive) return@LaunchedEffect
+        if (!interactive) {
+            cancelTextGesture()
+            scrollbarPressedKey = null
+            previousItemHeldKey = null
+            return@LaunchedEffect
+        }
         // The level appears with the OSD's hide; claim focus once it is laid out.
         repeat(5) {
             withFrameNanos { }
@@ -213,21 +249,61 @@ internal fun PlayerDetailDialog(
     }
 
     val keys = Modifier.onPreviewKeyEvent { event ->
+        if (!interactive) return@onPreviewKeyEvent true
+        if (event.type == KeyEventType.KeyUp && scrollbarPressedKey == event.key) scrollbarPressedKey = null
+        // Cancelling the old scroll mutation is not enough: another native repeat could
+        // restart it on the new item. That held direction belongs to the previous item until
+        // released; Back, media keys and other gestures keep their normal route.
+        if (previousItemHeldKey == event.key) {
+            if (event.type == KeyEventType.KeyUp) {
+                previousItemHeldKey = null
+                // Let an attached scrollbar finish its own press/release bookkeeping.
+                return@onPreviewKeyEvent !(scrollbarFocused && scroll.maxValue > 0)
+            }
+            return@onPreviewKeyEvent true
+        }
         // The interactive scrollbar owns its own Left/Right and Page/Arrow events.
-        if (scrollbarFocused && scroll.maxValue > 0) return@onPreviewKeyEvent false
+        if (scrollbarFocused && scroll.maxValue > 0) {
+            if (event.type == KeyEventType.KeyDown && (event.key == Key.DirectionUp || event.key == Key.DirectionDown ||
+                    event.key == Key.PageUp || event.key == Key.PageDown)) scrollbarPressedKey = event.key
+            return@onPreviewKeyEvent false
+        }
+        if (event.type == KeyEventType.KeyUp && pressedKey == event.key) {
+            val action = pressedAction
+            pressedKey = null
+            pressedAction = null
+            when (action) {
+                PlayerDetailKeyAction.SCROLL_DOWN, PlayerDetailKeyAction.SCROLL_UP -> scrolling.onKeyEvent(event)
+                PlayerDetailKeyAction.FOCUS_CLOSE -> runCatching { closeFocus.requestFocus() }
+                PlayerDetailKeyAction.FOCUS_TEXT -> runCatching { textFocus.requestFocus() }
+                PlayerDetailKeyAction.FOCUS_SCROLLBAR -> runCatching { scrollbarFocus.requestFocus() }
+                else -> Unit
+            }
+            return@onPreviewKeyEvent true
+        }
         val action = playerDetailKeyAction(event.key, closeFocused,
             scroll.canScrollBackward, scroll.canScrollForward,
             hasScrollbar = scroll.maxValue > 0 && !handheld)
         if (action == PlayerDetailKeyAction.PASS) return@onPreviewKeyEvent false
-        if (event.type == KeyEventType.KeyDown) when (action) {
-            PlayerDetailKeyAction.SCROLL_DOWN -> scope.launch { scroll.animateScrollBy(step) }
-            PlayerDetailKeyAction.SCROLL_UP -> scope.launch { scroll.animateScrollBy(-step) }
-            PlayerDetailKeyAction.FOCUS_CLOSE -> runCatching { closeFocus.requestFocus() }
-            PlayerDetailKeyAction.FOCUS_TEXT -> runCatching { textFocus.requestFocus() }
-            PlayerDetailKeyAction.FOCUS_SCROLLBAR -> runCatching { scrollbarFocus.requestFocus() }
-            else -> Unit
+        if (event.type == KeyEventType.KeyDown) {
+            // A held press stays in its initial region, even after reaching the end. A new
+            // deliberate press then reaches Close, rather than a native repeat doing so.
+            if (pressedKey == event.key) return@onPreviewKeyEvent true
+            cancelTextGesture()
+            pressedKey = event.key
+            pressedAction = action
+            if (action == PlayerDetailKeyAction.SCROLL_DOWN || action == PlayerDetailKeyAction.SCROLL_UP) {
+                scrolling.onKeyEvent(event)
+            }
         }
         true
+    }
+    val onTextFocusChanged: (Boolean) -> Unit = { focused -> if (!focused) cancelTextGesture() }
+    val onScrollbarFocusChanged: (Boolean) -> Unit = { focused ->
+        if (!focused) scrollbarPressedKey = null
+        // Disposal reports lost focus too. Retain ownership until the recovery effect above
+        // can move it to the text; an ordinary move while the bar exists releases ownership.
+        if (focused || scroll.maxValue > 0) scrollbarFocused = focused
     }
 
     BoxWithConstraints(
@@ -281,7 +357,7 @@ internal fun PlayerDetailDialog(
                         PlayerDetailArtwork(detail, compact = handheld)
                         Box(Modifier.weight(1f)) {
                             PlayerDetailScrollableText(detail, scroll, textFocus, scrollbarFocus,
-                                closeFocus, { scrollbarFocused = it })
+                                closeFocus, onTextFocusChanged, onScrollbarFocusChanged)
                         }
                     }
                 } else {
@@ -289,7 +365,7 @@ internal fun PlayerDetailDialog(
                         PlayerDetailArtwork(detail, compact = true)
                         Box(Modifier.weight(1f, fill = false).fillMaxWidth()) {
                             PlayerDetailScrollableText(detail, scroll, textFocus, scrollbarFocus,
-                                closeFocus, { scrollbarFocused = it })
+                                closeFocus, onTextFocusChanged, onScrollbarFocusChanged)
                         }
                     }
                 }
@@ -300,7 +376,15 @@ internal fun PlayerDetailDialog(
                     text = stringResource(R.string.action_close),
                     icon = Icons.Filled.Close,
                     onClick = { if (interactive) onClose() },
-                    modifier = Modifier.focusRequester(closeFocus).onFocusChanged { closeFocused = it.isFocused },
+                    modifier = Modifier.focusRequester(closeFocus).onFocusChanged { closeFocused = it.isFocused }
+                        .focusProperties {
+                            // Directional gestures are routed above, including accelerated
+                            // repeats; they must not jump into the player behind the dialog.
+                            up = FocusRequester.Cancel
+                            down = FocusRequester.Cancel
+                            left = FocusRequester.Cancel
+                            right = FocusRequester.Cancel
+                        },
                 )
             }
         }
@@ -319,15 +403,25 @@ private fun PlayerDetailScrollableText(
     textFocus: FocusRequester,
     scrollbarFocus: FocusRequester,
     closeFocus: FocusRequester,
+    onTextFocusChanged: (Boolean) -> Unit,
     onScrollbarFocusChanged: (Boolean) -> Unit,
 ) {
     Box(Modifier.fillMaxWidth()) {
         Column(
             Modifier.fillMaxWidth()
+                .testTag("player-detail-text")
                 .focusRequester(textFocus)
+                .onFocusChanged { onTextFocusChanged(it.isFocused) }
+                .focusProperties {
+                    up = FocusRequester.Cancel
+                    down = FocusRequester.Cancel
+                    left = FocusRequester.Cancel
+                    right = FocusRequester.Cancel
+                }
                 .focusable()
                 .verticalScroll(scroll)
-                .padding(end = if (scroll.maxValue > 0) 16.dp else 0.dp),
+                // A stable gutter prevents line reflow when a scrollbar appears on enrichment.
+                .padding(end = 16.dp),
         ) {
             PlayerDetailText(detail)
         }
@@ -339,6 +433,7 @@ private fun PlayerDetailScrollableText(
                     .fillMaxHeight()
                     .padding(vertical = 10.dp, horizontal = 4.dp)
                     .focusRequester(scrollbarFocus)
+                    .focusProperties { left = textFocus; right = closeFocus }
                     // This observer wraps the scrollbar's internal focus group.
                     .onFocusChanged { onScrollbarFocusChanged(it.hasFocus) },
                 contentFocus = textFocus,
@@ -389,26 +484,43 @@ private fun PlayerDetailText(detail: PlayerDetailInfo) {
     val item = detail.item
     Column(verticalArrangement = Arrangement.spacedBy(13.dp)) {
         DetailEyebrow(detail.eyebrow ?: item?.let { detailEyebrow(it) }.orEmpty())
-        DetailTitleRow(detail.title, detail.logoUrl, detail.system, maxLogoWidth = deviceDp(440.dp, 240.dp))
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+            detail.system?.let { SystemBadge(it) }
+            // OSD details have room for a readable second title line. Keep the normal detail
+            // page's shared title component unchanged.
+            TitleLogo(
+                title = detail.title,
+                logoUrl = detail.logoUrl,
+                textStyle = MaterialTheme.typography.headlineLarge,
+                maxLines = 2,
+                maxLogoWidth = deviceDp(440.dp, 240.dp),
+                modifier = Modifier.weight(1f, fill = false),
+            )
+        }
         DetailPrimaryMetaRow(
             primaryMeta = detail.meta,
             item = item,
             leading = if (detail.live) ({ LiveBadge() }) else null,
         )
-        if (item != null) {
-            StreamPropertyAdaptiveRows(item, maxItems = 5, itemsPerRow = 3)
-        } else if (detail.chips.isNotEmpty()) {
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) { detail.chips.forEach { Chip(it) } }
-        }
         DetailTagline(detail.tagline)
         DetailSummary(detail.overview, maxLines = Int.MAX_VALUE)
-        DetailGenres(detail.genres)
         detail.lines.forEach { line ->
             Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
                 Text(stringResource(line.label), style = MaterialTheme.typography.labelMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant)
                 Text(line.value, style = MaterialTheme.typography.bodyMedium)
             }
+        }
+        DetailGenres(detail.genres)
+        // Like SmartTube, lead with the playing content. File, codec and picture properties
+        // support that description instead of pushing it below a block of technical badges.
+        if (item != null) {
+            StreamPropertyAdaptiveRows(item, maxItems = 5, itemsPerRow = 3)
+        } else if (detail.chips.isNotEmpty()) {
+            FlowRow(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) { detail.chips.forEach { Chip(it) } }
         }
         // Cast as plain text: the dialog has no rows or carousels of the detail page.
         playerDetailCastText(item)?.let { cast ->

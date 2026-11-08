@@ -15,6 +15,7 @@ import com.ambient.tv.ui.common.UnifiedPlayerPanel
 import java.time.ZoneOffset
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -106,13 +107,24 @@ class PlayerDetailInfoTest {
         assertEquals(listOf("b.mkv"), detail.item?.mediaVersions?.map { it.fileName })
     }
 
+    @Test fun mediaIdentitySurvivesMetadataEnrichmentButDistinguishesPlayingItems() {
+        val initial = playerDetailForMedia(null, fallback, sourceRatingKey = "jellyfin:first")
+        val enriched = playerDetailForMedia(item("movie"), fallback, sourceRatingKey = "jellyfin:first")
+        assertEquals("media:jellyfin:first", initial.contentKey)
+        assertEquals(initial.contentKey, enriched.contentKey)
+        assertNotEquals(enriched.contentKey,
+            playerDetailForMedia(item("movie"), fallback, sourceRatingKey = "jellyfin:second").contentKey)
+        assertEquals("media:123", playerDetailForMedia(item("movie"), fallback, sourceRatingKey = " ").contentKey)
+        assertNull(playerDetailForMedia(null, fallback).contentKey)
+    }
+
     @Test fun castIsPlainTextWithRoles() {
         val cast = listOf(CastMember("1", "Anna", "Ella", null), CastMember("2", "Ben", null, null))
         assertEquals("Anna (Ella), Ben", playerDetailCastText(item("movie", cast = cast)))
         assertNull(playerDetailCastText(item("movie")))
     }
 
-    @Test fun youtubeShowsTheThumbnailChannelAndCappedDescription() {
+    @Test fun youtubeShowsTheThumbnailChannelAndCompleteDescription() {
         val long = "word ".repeat(2_000)
         val detail = playerDetailForYouTube("Video", "Author", "Channel", long, null,
             listOf("t1", "t2"), isLive = false, durationMs = 600_000L)
@@ -121,12 +133,40 @@ class PlayerDetailInfoTest {
         assertEquals(PlayerDetailArtShape.WIDE, detail.artShape)
         assertEquals("Channel", detail.eyebrow)
         assertEquals(listOf("10min"), detail.meta)
-        assertTrue(detail.overview!!.length <= PLAYER_DETAIL_OVERVIEW_MAX_CHARS + 2)
-        assertTrue(detail.overview!!.endsWith("…"))
+        assertEquals(long.trim(), detail.overview)
         val live = playerDetailForYouTube("Live", "Author", null, null, "img", emptyList(), isLive = true, durationMs = 0L)
         assertTrue(live.live)
         assertEquals("Author", live.eyebrow)
         assertNull(live.overview)
+    }
+
+    @Test fun youtubeIdentityAndFallbacksDoNotDependOnLateChannelOrArtwork() {
+        fun detail(id: String?, title: String = "Video", channelTitle: String? = " ", image: String? = null) =
+            playerDetailForYouTube(title, " Author ", channelTitle, null, image,
+                listOf(" ", "fallback", "fallback"), isLive = false, durationMs = 0L, videoId = id)
+        val initial = detail("abcdefghijk")
+        val enriched = detail("abcdefghijk", title = "Full title", channelTitle = "Channel", image = "image")
+        assertEquals("Author", initial.eyebrow)
+        assertEquals("fallback", initial.artworkUrl)
+        assertTrue(initial.artworkFallbackUrls.isEmpty())
+        assertEquals("youtube:abcdefghijk", initial.contentKey)
+        assertEquals(initial.contentKey, enriched.contentKey)
+        assertNotEquals(initial.contentKey, detail("lmnopqrstuv").contentKey)
+        listOf(null, " ", "invalid", "abcdefghij!").forEach { assertNull(detail(it).contentKey) }
+    }
+
+    @Test fun youtubePublicationKeepsTheSourcePrecisionAndPrecedesRuntime() {
+        fun detail(label: String?, timestamp: Long? = null, live: Boolean = false) = playerDetailForYouTube(
+            "Video", null, null, null, null, emptyList(), isLive = live, durationMs = 600_000L,
+            publishedDate = label, publishedAtMs = timestamp, formatDate = { "date:$it" },
+        )
+        assertEquals(listOf("2 days ago", "10min"), detail(" 2 days ago ").meta)
+        assertEquals(listOf("date:1794124800000", "10min"), detail("yesterday", 1_794_124_800_000L).meta)
+        assertEquals(listOf("2025", "10min"), detail("2025").meta)
+        listOf("unknown", "null", "-", "1794124800000", " ").forEach { unknown ->
+            assertEquals(listOf("10min"), detail(unknown, -1L).meta)
+        }
+        assertTrue(detail("yesterday", 1_794_124_800_000L, live = true).meta.isEmpty())
     }
 
     private val channel = LiveTvChannel(uuid = "c", name = "Das Erste", number = 1, iconUrl = "logo")
@@ -158,15 +198,45 @@ class PlayerDetailInfoTest {
     }
 
     @Test fun recordingsUseTheirOwnArtwork() {
+        val fullDescription = "Complete recording description. ".repeat(200).trim()
         val recording = LiveTvRecording(
-            uuid = "r", channelUuid = "c", channelName = "Das Erste", title = "Film", description = "Text",
+            uuid = "r", channelUuid = "c", channelName = "Das Erste", title = "Film", description = fullDescription,
             startEpochSeconds = 0, stopEpochSeconds = 5_400, status = null, scheduleStatus = null, url = null,
-            imageUrl = null, fanartUrl = "fanart", fileSizeBytes = null,
+            imageUrl = " ", fanartUrl = "fanart", fileSizeBytes = null,
         )
         val detail = playerDetailForLiveTv(channel, null, null, recording, ZoneOffset.UTC)!!
         assertEquals("Film", detail.title)
         assertEquals("fanart", detail.artworkUrl)
-        assertEquals("Text", detail.overview)
+        assertEquals(fullDescription, detail.overview)
+        assertEquals("recording:r", detail.contentKey)
+        assertEquals(detail.contentKey, playerDetailForLiveTv(channel, null, null,
+            recording.copy(title = "Full title", imageUrl = "new-image"), ZoneOffset.UTC)?.contentKey)
+        assertNotEquals(detail.contentKey, playerDetailForLiveTv(channel, null, null,
+            recording.copy(uuid = "another-recording"), ZoneOffset.UTC)?.contentKey)
+    }
+
+    @Test fun fullMediaAndEpgDescriptionsRemainReadableAndBlankValuesUseTheirFallback() {
+        val complete = "An entire source paragraph with all details. ".repeat(200).trim()
+        assertEquals(complete, playerDetailForMedia(item("movie", summary = " $complete "), fallback).overview)
+        assertEquals(complete, playerDetailForMedia(item("movie", summary = " "),
+            fallback.copy(summary = complete)).overview)
+        val now = programme("Programme", 72_000, 72_900).copy(description = complete)
+        assertEquals(complete, playerDetailForLiveTv(channel, now, null, null, ZoneOffset.UTC)?.overview)
+        assertEquals(complete, playerDetailForLiveTv(channel, now.copy(description = " ", summary = complete),
+            null, null, ZoneOffset.UTC)?.overview)
+    }
+
+    @Test fun liveIdentityChangesForChannelsAndProgrammesButNotMetadata() {
+        val now = programme("Programme", 72_000, 72_900)
+        val initial = playerDetailForLiveTv(channel, now, null, null, ZoneOffset.UTC)!!
+        assertEquals(initial.contentKey, playerDetailForLiveTv(channel.copy(name = "Channel renamed"),
+            now.copy(title = "Full programme title", imageUrl = "new-image"), null, null, ZoneOffset.UTC)?.contentKey)
+        assertNotEquals(initial.contentKey, playerDetailForLiveTv(channel,
+            now.copy(eventId = "next-event"), null, null, ZoneOffset.UTC)?.contentKey)
+        assertNotEquals(initial.contentKey, playerDetailForLiveTv(channel.copy(uuid = "other-channel"),
+            now.copy(channelUuid = "other-channel"), null, null, ZoneOffset.UTC)?.contentKey)
+        assertEquals("live:c", playerDetailForLiveTv(channel, null, null, null, ZoneOffset.UTC)?.contentKey)
+        assertEquals(initial.contentKey, playerDetailForLiveTv(null, now, null, null, ZoneOffset.UTC)?.contentKey)
     }
 
     @Test fun radioShowsTheStationLogoNowPlayingAndBitrate() {
@@ -183,9 +253,21 @@ class PlayerDetailInfoTest {
         assertTrue(quiet.chips.isEmpty())
     }
 
-    @Test fun shortTextsAreNotCapped() {
-        assertEquals("kurz", capPlayerDetailText("  kurz "))
-        assertNull(capPlayerDetailText("   "))
+    @Test fun radioIdentityKeepsTheStationWhenNowPlayingMetadataChanges() {
+        fun detail(stationId: String?, song: String) = playerDetailForRadio(
+            "Station", song, null, emptyList(), emptyMap(), null, emptyList(), null, null, stationId)
+        val initial = detail("station-id", "First song")
+        assertEquals("radio:station-id", initial.contentKey)
+        assertEquals(initial.contentKey, detail("station-id", "Second song").contentKey)
+        assertNotEquals(initial.contentKey, detail("other-station", "First song").contentKey)
+        assertNull(detail(" ", "Song").contentKey)
+        assertNull(detail(null, "Song").contentKey)
+    }
+
+    @Test fun emptyAndPaddedTextsAreNormalizedWithoutChangingParagraphs() {
+        assertEquals("kurz\n\nhttps://example.invalid/path", normalizePlayerDetailText("  kurz\n\nhttps://example.invalid/path "))
+        assertNull(normalizePlayerDetailText("   "))
+        assertNull(normalizePlayerDetailText(null))
     }
 
     @Test fun detailsButtonIsOptInForTheFourPlayersButNotSpotify() {
