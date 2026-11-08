@@ -43,6 +43,20 @@ data class ContentRowData(
     val showDescription: Boolean = true,
 )
 
+private class ContentRowFocusMemory {
+    var hasFocus = false
+    var lastFocusedKey: String? = null
+}
+
+@Composable
+private fun ContentRowHeader(title: String, sectionKey: String, focused: androidx.compose.runtime.State<Boolean>) {
+    ContentSectionHeader(
+        title = title,
+        sectionKey = sectionKey,
+        focused = focused.value,
+    )
+}
+
 @Composable
 @OptIn(ExperimentalFoundationApi::class)
 fun ContentRow(
@@ -76,11 +90,16 @@ fun ContentRow(
         }
     }
     RegisterRowColumnFocus(columnFocus, row.id, rowState, remember(row.items) { row.items.map { it.ratingKey } })
-    var rowHadFocus by remember(row.id) { mutableStateOf(false) }
-    var lastFocusedKey by remember(row.id) { mutableStateOf<String?>(null) }
+    // Focus changes are extremely frequent while moving vertically. Keep them out of the
+    // ContentRow composition so the nested LazyRow and its visible MediaTiles are not recomposed
+    // just to animate the section heading.
+    val focusMemory = remember(row.id) { ContentRowFocusMemory() }
+    val headerFocused = remember(row.id) { mutableStateOf(false) }
     val recoveryKey = remember(row.items) {
         val keys = row.items.map { it.ratingKey }
-        if (rowHadFocus && lastFocusedKey != null && lastFocusedKey !in keys) keys.firstOrNull() else null
+        if (focusMemory.hasFocus && focusMemory.lastFocusedKey != null &&
+            focusMemory.lastFocusedKey !in keys
+        ) keys.firstOrNull() else null
     }
     androidx.compose.runtime.LaunchedEffect(recoveryKey) {
         val index = row.items.indexOfFirst { it.ratingKey == recoveryKey }
@@ -103,16 +122,14 @@ fun ContentRow(
             // heading: 8 dp below MediaTile's surface plus 8 dp above the following row.
             .padding(top = 8.dp)
             .onFocusChanged { focus ->
-                if (focus.hasFocus && !rowHadFocus) onRowFocused()
-                rowHadFocus = focus.hasFocus
+                val hadFocus = focusMemory.hasFocus
+                focusMemory.hasFocus = focus.hasFocus
+                if (focus.hasFocus && !hadFocus) onRowFocused()
+                headerFocused.value = focus.hasFocus
             }
             .clipToBounds(),
     ) {
-        ContentSectionHeader(
-            title = row.title,
-            sectionKey = row.id,
-            focused = rowHadFocus,
-        )
+        ContentRowHeader(row.title, row.id, headerFocused)
         BrowseFocusRow(row.id) {
             CompositionLocalProvider(LocalBringIntoViewSpec provides horizontalScrollSpec) {
                 LazyRow(
@@ -128,7 +145,7 @@ fun ContentRow(
                             item = item,
                             onClick = { onItemClick(item) },
                             modifier = Modifier.rowColumnFocusTarget(columnFocus, row.id, item.ratingKey, soundsOnFocus = true),
-                            onFocused = { lastFocusedKey = item.ratingKey; onItemFocused(item) },
+                            onFocused = { focusMemory.lastFocusedKey = item.ratingKey; onItemFocused(item) },
                             requestInitialFocus = item.ratingKey == restoreRatingKey || item.ratingKey == recoveryKey,
                             style = row.style,
                             showDescription = row.showDescription,
