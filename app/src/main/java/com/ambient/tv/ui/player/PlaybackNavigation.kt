@@ -7,6 +7,7 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -285,8 +286,18 @@ internal fun ChapterStrip() {
                 ) {
                     if (frame != null) TimelineImage(frame, Modifier.fillMaxWidth().aspectRatio(16f / 9f))
                     Column(Modifier.padding(horizontal = 10.dp, vertical = 7.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                        Text(title, color = Color.White, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
-                            style = MaterialTheme.typography.bodyMedium)
+                        Text(
+                            title,
+                            color = Color.White,
+                            maxLines = 1,
+                            overflow = if (focused) androidx.compose.ui.text.style.TextOverflow.Clip
+                                else androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                            style = MaterialTheme.typography.bodyMedium,
+                            modifier = if (focused) Modifier.basicMarquee(
+                                iterations = Int.MAX_VALUE,
+                                initialDelayMillis = 1_500,
+                            ) else Modifier,
+                        )
                         Text(timelineTime(chapter.startMs), color = Color.White.copy(alpha = if (focused) 0.85f else 0.6f),
                             style = MaterialTheme.typography.labelMedium)
                     }
