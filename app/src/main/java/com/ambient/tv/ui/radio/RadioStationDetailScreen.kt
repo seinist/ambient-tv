@@ -13,6 +13,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.tv.material3.MaterialTheme
@@ -134,7 +135,7 @@ fun RadioStationDetailScreen(
                                     item.bitrateKbps?.let { "${it} kbps" },
                                     "HLS".takeIf { item.isHls },
                                 ).forEach { MetaBadge(it) }
-                                item.tags.take(5).forEach { TvChip(text = it, selected = false, onClick = {}) }
+                                item.tags.take(5).forEach { MetaBadge(it) }
                             }
                             Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                                 TvActionButton(
