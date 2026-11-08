@@ -1115,6 +1115,7 @@ private fun RecommendationListItem(
                     Modifier.width(deviceDp(if (detailed) 190.dp else 128.dp, 104.dp) * rowScale).aspectRatio(16f / 9f).clip(RoundedCornerShape(9.dp))
                 },
                 maxItems = if (detailed) 4 else 2,
+                prioritizeUncachedArtwork = focused,
             )
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(5.dp)) {
                 Text(item.title, style = MaterialTheme.typography.titleMedium, maxLines = if (detailed) 2 else 1, overflow = TextOverflow.Ellipsis)
@@ -1229,6 +1230,7 @@ private fun WallTile(
                 model = if (poster) item.posterArtUrl else item.landscapeArtUrl,
                 modifier = Modifier.fillMaxSize().clip(RoundedCornerShape(8.dp)),
                 maxItems = 3,
+                prioritizeUncachedArtwork = focused,
             )
             if (focused) {
                 Box(Modifier.fillMaxWidth().align(Alignment.BottomCenter).background(Color.Black.copy(alpha = 0.72f)).padding(7.dp)) {
@@ -1718,6 +1720,7 @@ private fun StylishMediaList(
                         modifier = (if (poster) Modifier.width(deviceDp(76.dp, 52.dp) * rowScale).aspectRatio(2f / 3f) else Modifier.width(deviceDp(166.dp, 96.dp) * rowScale).aspectRatio(16f / 9f))
                             .clip(RoundedCornerShape(if (poster) 7.dp else 10.dp))
                             .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f)),
+                        prioritizeUncachedArtwork = isFocused,
                     )
                     Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(5.dp)) {
                         MarqueeTitle(item.title, focused = isFocused, style = MaterialTheme.typography.titleMedium)
@@ -1915,6 +1918,7 @@ private fun InfoList(
                                 Modifier.width(96.dp * rowScale).aspectRatio(16f / 9f).clip(RoundedCornerShape(8.dp))
                             },
                             maxItems = 2,
+                            prioritizeUncachedArtwork = focused,
                         )
                         Column(Modifier.weight(1f)) {
                             MarqueeTitle(item.title, focused = focused, style = MaterialTheme.typography.titleSmall)
@@ -1936,6 +1940,7 @@ private fun InfoList(
                     model = preview.posterArtUrl,
                     modifier = Modifier.fillMaxHeight(0.92f).aspectRatio(2f / 3f, matchHeightConstraintsFirst = true).clip(RoundedCornerShape(10.dp)),
                     maxItems = 4,
+                    prioritizeUncachedArtwork = true,
                 )
                 Column(Modifier.weight(1f).fillMaxHeight(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     InfoListPreviewDetails(preview, summaryLines = 10)
@@ -1948,6 +1953,7 @@ private fun InfoList(
                     model = preview.landscapeBackdropUrl,
                     modifier = Modifier.fillMaxWidth().aspectRatio(16f / 9f).clip(RoundedCornerShape(10.dp)),
                     maxItems = 4,
+                    prioritizeUncachedArtwork = true,
                 )
                 InfoListPreviewDetails(preview, summaryLines = 6)
             }
@@ -2027,6 +2033,7 @@ private fun WallGrid(
                         model = if (poster) item.posterArtUrl else item.landscapeArtUrl,
                         modifier = Modifier.fillMaxSize().clip(RoundedCornerShape(8.dp)),
                         maxItems = 3,
+                        prioritizeUncachedArtwork = focused,
                     )
                     if (focused) {
                         Box(Modifier.fillMaxWidth().align(Alignment.BottomCenter).background(Color.Black.copy(alpha = 0.72f)).padding(7.dp)) {
