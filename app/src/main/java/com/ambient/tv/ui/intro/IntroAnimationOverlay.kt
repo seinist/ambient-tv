@@ -13,6 +13,9 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.safeDrawing
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -290,7 +293,14 @@ fun IntroAnimationOverlay(styleKey: String, onFinished: () -> Unit, modifier: Mo
         }
         if (holding) {
             Column(
-                Modifier.align(Alignment.BottomCenter).fillMaxWidth().padding(bottom = 56.dp)
+                Modifier.align(Alignment.BottomCenter)
+                    .fillMaxWidth()
+                    .then(
+                        if (com.ambient.tv.ui.mobile.LocalHandheldUi.current) {
+                            Modifier.windowInsetsPadding(WindowInsets.safeDrawing)
+                        } else Modifier
+                    )
+                    .padding(bottom = 56.dp)
                     .graphicsLayer { alpha = statusAlpha.value },
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.spacedBy(12.dp),
@@ -684,7 +694,26 @@ private fun DrawScope.drawSignature(frame: IntroFrame) {
     drawWordmark(frame, stage, width, start = 0.4f, fromIcon = false, signature = true)
 }
 
-/** A transparent diagonal light band. No bitmap/video/shader dependency; cheap in lite mode. */
+/**
+ * Soft envelope for a Prism beam. The old four-corner polygon kept full width right up to
+ * [top]/[bottom], so its horizontal end cap was visible — especially on portrait phones and on
+ * the backdrop facets that deliberately stop above the connection-status area.
+ */
+internal fun prismRibbonEnvelope(progress: Float): Float {
+    val u = progress.coerceIn(0f, 1f)
+    val edge = minOf(u, 1f - u)
+    return soft((edge / 0.18f).coerceIn(0f, 1f))
+}
+
+private const val PRISM_RIBBON_SEGMENTS = 10
+
+/**
+ * A translucent diagonal beam with feathered sides and tapered ends.
+ *
+ * The path narrows smoothly to a point instead of ending on a rectangular cap. The colour
+ * gradient is perpendicular to the beam's centre line rather than screen-horizontal, so a
+ * strongly slanted beam keeps the same soft cross-section on TV and portrait phones.
+ */
 private fun DrawScope.prismRibbon(
     x: Float,
     top: Float,
@@ -694,25 +723,40 @@ private fun DrawScope.prismRibbon(
     color: Color,
     opacity: Float,
 ) {
-    if (opacity <= 0.002f) return
+    if (opacity <= 0.002f || bottom <= top || width <= 0f) return
+    val height = bottom - top
+    val left = ArrayList<Offset>(PRISM_RIBBON_SEGMENTS + 1)
+    val right = ArrayList<Offset>(PRISM_RIBBON_SEGMENTS + 1)
+    for (index in 0..PRISM_RIBBON_SEGMENTS) {
+        val u = index / PRISM_RIBBON_SEGMENTS.toFloat()
+        val centerX = x + slant * (u - 0.5f)
+        val y = top + height * u
+        val half = width * 0.5f * prismRibbonEnvelope(u)
+        left += Offset(centerX - half, y)
+        right += Offset(centerX + half, y)
+    }
     val ribbon = Path().apply {
-        moveTo(x - width / 2f - slant / 2f, top)
-        lineTo(x + width / 2f - slant / 2f, top)
-        lineTo(x + width / 2f + slant / 2f, bottom)
-        lineTo(x - width / 2f + slant / 2f, bottom)
+        moveTo(left.first().x, left.first().y)
+        for (index in 1 until left.size) lineTo(left[index].x, left[index].y)
+        for (index in right.indices.reversed()) lineTo(right[index].x, right[index].y)
         close()
     }
-    val reach = (width + kotlin.math.abs(slant)) / 2f
+
+    // Perpendicular gradient: normal = (height, -slant), normalized.
+    val length = kotlin.math.sqrt(height * height + slant * slant).coerceAtLeast(1f)
+    val normal = Offset(height / length, -slant / length)
+    val middle = Offset(x, (top + bottom) * 0.5f)
+    val gradientHalf = width * 0.62f
     drawPath(
         ribbon,
-        Brush.horizontalGradient(
+        Brush.linearGradient(
             0f to Color.Transparent,
-            0.25f to color.copy(alpha = opacity * 0.12f),
+            0.24f to color.copy(alpha = opacity * 0.10f),
             0.5f to color.copy(alpha = opacity),
-            0.75f to color.copy(alpha = opacity * 0.12f),
+            0.76f to color.copy(alpha = opacity * 0.10f),
             1f to Color.Transparent,
-            startX = x - reach,
-            endX = x + reach,
+            start = middle - normal * gradientHalf,
+            end = middle + normal * gradientHalf,
         ),
         blendMode = BlendMode.Plus,
     )
