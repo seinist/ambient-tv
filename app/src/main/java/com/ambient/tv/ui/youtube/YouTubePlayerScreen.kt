@@ -81,6 +81,7 @@ import androidx.compose.material.icons.filled.FastForward
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.FastRewind
+import androidx.compose.material.icons.filled.LiveTv
 import androidx.compose.material.icons.filled.SkipPrevious
 import androidx.compose.material.icons.filled.SkipNext
 import androidx.compose.material.icons.filled.Settings
@@ -760,6 +761,7 @@ private fun YouTubeMedia3Playback(
             } }
         }.player
     }
+    var liveDvrWindow by remember(player) { mutableStateOf<YouTubeLiveDvrWindow?>(null) }
     com.ambient.tv.ui.player.RestoreMedia3PlaybackProfile(player, metadata)
     com.ambient.tv.ui.player.Media3RenderOverloadDialog(player, panelNavigation) { panelNavigation.openVideoSettings() }
     com.ambient.tv.ui.player.ObserveMedia3DisplayFormat(player, onVideoFormatChanged)
@@ -917,44 +919,70 @@ private fun YouTubeMedia3Playback(
             currentOnCompleted()
         }
     }
-    LaunchedEffect(player) {
+    LaunchedEffect(player, playback.isLive) {
         while (true) {
-            duration = player.duration.takeIf { it > 0 } ?: duration
-            position = seekCoordinator.displayedPosition(player.currentPosition.coerceAtLeast(0))
+            // A YouTube live manifest may expose a sliding, seekable DVR window. Its default
+            // position is the safe live edge, rather than the playlist's final timestamp.
+            val timeline = player.currentTimeline
+            val currentWindow = player.currentMediaItemIndex.takeIf { it in 0 until timeline.windowCount }
+                ?.let { timeline.getWindow(it, androidx.media3.common.Timeline.Window()) }
+            liveDvrWindow = youtubeLiveDvrWindow(
+                playback.isLive,
+                player.isCurrentMediaItemSeekable && currentWindow?.isSeekable == true,
+                currentWindow?.durationMs?.takeIf { it > 0L } ?: player.duration,
+                currentWindow?.defaultPositionMs,
+            )
+            duration = if (playback.isLive) liveDvrWindow?.livePositionMs ?: 0L
+                else player.duration.takeIf { it > 0L } ?: duration
+            position = seekCoordinator.displayedPosition(player.currentPosition.coerceAtLeast(0L))
             delay(250)
         }
     }
     com.ambient.tv.ui.player.PlayerControlsAutoHide(
         controls, playing, panelOpen, changingItem,
     ) { controls = it }
+    fun commitSeek(targetMs: Long) {
+        // A decoder seek to the end of a live manifest is not an EOF seek. Media3 knows the
+        // current default live position even while the manifest's window keeps moving.
+        if (playback.isLive && liveDvrWindow?.targetsLiveEdge(targetMs) == true) player.seekToDefaultPosition()
+        else player.seekToPlaybackPosition(targetMs)
+    }
     fun seek(delta: Long) {
-        if (playback.isLive) return
+        if (playback.isLive && liveDvrWindow == null) return
         BackgroundPlaybackSession.userSeek()
         osd.interact()
         userSeeked = true
-        val limit = duration.takeIf { it > 0L } ?: playback.durationMs
+        val limit = liveDvrWindow?.livePositionMs ?: duration.takeIf { it > 0L } ?: playback.durationMs
         val requested = seekCoordinator.requestRelative(delta, position, limit)
         val landing = adjustedYouTubeSeekTarget(requested, playback, limit, sponsorPrefs, metadata.sponsorSkipEnabled, delta < 0L)
         position = if (landing != requested) seekCoordinator.requestAbsolute(landing) else requested
-        seekCoordinator.consumeCommit(force = com.ambient.tv.ui.player.isPlaybackEndSeek(requested, limit))
-            ?.let(player::seekToPlaybackPosition)
+        // Live DVR edge != VOD EOF: preserve #307's terminal VOD handling without
+        // forcing completion when a running live broadcast reaches its current edge.
+        val terminalVodSeek = !playback.isLive &&
+            com.ambient.tv.ui.player.isPlaybackEndSeek(requested, limit)
+        val immediateSeek = terminalVodSeek || liveDvrWindow?.targetsLiveEdge(requested) == true
+        seekCoordinator.consumeCommit(force = immediateSeek)?.let(::commitSeek)
         seekCommitVersion++
-        // The decoder stops just before logical EOF to avoid a DASH/HLS buffering loop.
-        // A paused manual seek must play out that short tail for the real EOF/Next Up event.
-        val session = BackgroundPlaybackSession.snapshot.value
-        if (com.ambient.tv.ui.player.shouldPlayThroughPlaybackEnd(
-                requested, limit, session.wantsToPlay, session.status.ended
-            )) BackgroundPlaybackSession.play()
+        if (terminalVodSeek) {
+            val session = BackgroundPlaybackSession.snapshot.value
+            if (com.ambient.tv.ui.player.shouldPlayThroughPlaybackEnd(
+                    requested, limit, session.wantsToPlay, session.status.ended
+                )) BackgroundPlaybackSession.play()
+        }
     }
     fun seekInMode(delta: Long) {
-        if (playback.isLive) osd.reveal() else {
+        if (playback.isLive && liveDvrWindow == null) osd.reveal() else {
             seek(delta)
             osd.showSeekFeedback()
         }
     }
+    fun jumpToLive() {
+        val window = liveDvrWindow ?: return
+        seek((window.livePositionMs - (seekCoordinator.pendingTarget ?: position)).coerceAtLeast(0L))
+    }
     fun heldSeekStep(baseMs: Long, e: androidx.compose.ui.input.key.KeyEvent) =
         com.ambient.tv.ui.player.acceleratedSeekStepMs(baseMs, e.nativeKeyEvent.repeatCount, duration.takeIf { it > 0L } ?: playback.durationMs)
-    YouTubeSeekCommit(seekCommitVersion, seekCoordinator) { player.seekToPlaybackPosition(it) }
+    YouTubeSeekCommit(seekCommitVersion, seekCoordinator, ::commitSeek)
     LaunchedEffect(playback.resumeMs, playback.resumeResolved) {
         if (!playback.resumeResolved) return@LaunchedEffect
         val target = lateYouTubeResumeTarget(playback.isLive, startPositionMs, playback.resumeMs, userSeeked,
@@ -1039,8 +1067,8 @@ private fun YouTubeMedia3Playback(
         PlayerTouchLayer(
             onToggleControls = { if (!panelOpen) { if (!controls || osd.closing) osd.reveal() else osd.close() } },
             onTogglePlayback = { BackgroundPlaybackSession.userToggle() },
-            onSeekBack = if (playback.isLive) null else {{ seek(-BackgroundPlaybackSession.seekJumpMs(bigSeekSeconds * 1000L)) }},
-            onSeekForward = if (playback.isLive) null else {{ seek(BackgroundPlaybackSession.seekJumpMs(bigSeekSeconds * 1000L)) }},
+            onSeekBack = if (playback.isLive && liveDvrWindow == null) null else {{ seek(-BackgroundPlaybackSession.seekJumpMs(bigSeekSeconds * 1000L)) }},
+            onSeekForward = if (playback.isLive && liveDvrWindow == null) null else {{ seek(BackgroundPlaybackSession.seekJumpMs(bigSeekSeconds * 1000L)) }},
             pinchZoom = PlayerPinchZoom(
                 key = player,
                 enabled = !panelOpen && ytAudio?.audioOnly != true,
@@ -1188,6 +1216,8 @@ private fun YouTubeMedia3Playback(
                     },
                 ),
                 panelNavigation = panelNavigation,
+                liveDvrWindow = liveDvrWindow,
+                onGoLive = ::jumpToLive,
             )
         }
         error?.let { Text(it, color = MaterialTheme.colorScheme.error, modifier = Modifier.align(Alignment.TopCenter).padding(24.dp)) }
@@ -1216,6 +1246,7 @@ private fun YouTubeVlcPlayback(playback: YouTubePlayback, audioUri: String?, str
     val panelNavigation = rememberPlayerPanelNavigation(playback.videoId)
     val panelOpen = panelNavigation.panel != UnifiedPlayerPanel.NONE
     val snapshot = rememberVlcPlaybackSnapshot(controller, controller.audioSession.performanceHint || controller.audioSession.showFpsOverlay)
+    val liveDvrWindow = youtubeLiveDvrWindow(playback.isLive, controller.canSeekNow(), snapshot.durationMs)
     // A failure the VLC controller could not recover from itself: continue in Media3 at the
     // same position instead of leaving a black picture (YouTube always plays there).
     LaunchedEffect(controller.errorMessage) {
@@ -1287,34 +1318,49 @@ private fun YouTubeVlcPlayback(playback: YouTubePlayback, audioUri: String?, str
     }
     LaunchedEffect(controller.ended) { if (!playback.isLive && controller.ended) onCompleted() }
     val sponsorSkipEnabled = LocalPlaybackMetadata.current?.sponsorSkipEnabled == true
+    fun commitSeek(targetMs: Long) {
+        val edge = liveDvrWindow
+        // libVLC can mistake an exact seek to the end of a live buffer for EOF.
+        val decoderTarget = if (playback.isLive && edge?.targetsLiveEdge(targetMs) == true)
+            (edge.livePositionMs - 1_000L).coerceAtLeast(0L) else targetMs
+        controller.seekTo(decoderTarget)
+    }
     fun seek(delta: Long) {
-        if (playback.isLive) return
+        if (playback.isLive && liveDvrWindow == null) return
         BackgroundPlaybackSession.userSeek()
         osd.interact()
         userSeeked = true
-        val limit = snapshot.durationMs.takeIf { it > 0L } ?: playback.durationMs
+        val limit = liveDvrWindow?.livePositionMs ?: snapshot.durationMs.takeIf { it > 0L } ?: playback.durationMs
         val requested = seekCoordinator.requestRelative(delta, displayedPosition, limit)
         val landing = adjustedYouTubeSeekTarget(requested, playback, limit, preferences, sponsorSkipEnabled, delta < 0L)
         displayedPosition = if (landing != requested) seekCoordinator.requestAbsolute(landing) else requested
-        seekCoordinator.consumeCommit(force = com.ambient.tv.ui.player.isPlaybackEndSeek(requested, limit))
-            ?.let(controller::seekTo)
+        // Live DVR edge != VOD EOF: preserve #307's terminal VOD handling without
+        // forcing completion when a running live broadcast reaches its current edge.
+        val terminalVodSeek = !playback.isLive &&
+            com.ambient.tv.ui.player.isPlaybackEndSeek(requested, limit)
+        val immediateSeek = terminalVodSeek || liveDvrWindow?.targetsLiveEdge(requested) == true
+        seekCoordinator.consumeCommit(force = immediateSeek)?.let(::commitSeek)
         seekCommitVersion++
-        // The decoder stops just before logical EOF to avoid a DASH/HLS buffering loop.
-        // A paused manual seek must play out that short tail for the real EOF/Next Up event.
-        val session = BackgroundPlaybackSession.snapshot.value
-        if (com.ambient.tv.ui.player.shouldPlayThroughPlaybackEnd(
-                requested, limit, session.wantsToPlay, session.status.ended
-            )) BackgroundPlaybackSession.play()
+        if (terminalVodSeek) {
+            val session = BackgroundPlaybackSession.snapshot.value
+            if (com.ambient.tv.ui.player.shouldPlayThroughPlaybackEnd(
+                    requested, limit, session.wantsToPlay, session.status.ended
+                )) BackgroundPlaybackSession.play()
+        }
     }
     fun seekInMode(delta: Long) {
-        if (playback.isLive) osd.reveal() else {
+        if (playback.isLive && liveDvrWindow == null) osd.reveal() else {
             seek(delta)
             osd.showSeekFeedback()
         }
     }
+    fun jumpToLive() {
+        val window = liveDvrWindow ?: return
+        seek((window.livePositionMs - (seekCoordinator.pendingTarget ?: displayedPosition)).coerceAtLeast(0L))
+    }
     fun heldSeekStep(baseMs: Long, e: androidx.compose.ui.input.key.KeyEvent) =
         com.ambient.tv.ui.player.acceleratedSeekStepMs(baseMs, e.nativeKeyEvent.repeatCount, snapshot.durationMs.takeIf { it > 0L } ?: playback.durationMs)
-    YouTubeSeekCommit(seekCommitVersion, seekCoordinator, controller::seekTo)
+    YouTubeSeekCommit(seekCommitVersion, seekCoordinator, ::commitSeek)
     LaunchedEffect(playback.resumeMs, playback.resumeResolved) {
         if (!playback.resumeResolved) return@LaunchedEffect
         val target = lateYouTubeResumeTarget(playback.isLive, startPositionMs, playback.resumeMs, userSeeked,
@@ -1382,8 +1428,8 @@ private fun YouTubeVlcPlayback(playback: YouTubePlayback, audioUri: String?, str
         PlayerTouchLayer(
             onToggleControls = { if (!panelOpen) { if (!controls || osd.closing) osd.reveal() else osd.close() } },
             onTogglePlayback = { BackgroundPlaybackSession.userToggle() },
-            onSeekBack = if (playback.isLive) null else {{ seek(-BackgroundPlaybackSession.seekJumpMs(bigSeekSeconds * 1000L)) }},
-            onSeekForward = if (playback.isLive) null else {{ seek(BackgroundPlaybackSession.seekJumpMs(bigSeekSeconds * 1000L)) }},
+            onSeekBack = if (playback.isLive && liveDvrWindow == null) null else {{ seek(-BackgroundPlaybackSession.seekJumpMs(bigSeekSeconds * 1000L)) }},
+            onSeekForward = if (playback.isLive && liveDvrWindow == null) null else {{ seek(BackgroundPlaybackSession.seekJumpMs(bigSeekSeconds * 1000L)) }},
             pinchZoom = if (controller.audioSession.audioOnly) null else PlayerPinchZoom(
                 key = controller,
                 enabled = !panelOpen,
@@ -1506,6 +1552,8 @@ private fun YouTubeVlcPlayback(playback: YouTubePlayback, audioUri: String?, str
                     },
                 ),
                 panelNavigation = panelNavigation,
+                liveDvrWindow = liveDvrWindow,
+                onGoLive = ::jumpToLive,
             )
         }
     }
@@ -1529,6 +1577,7 @@ private fun YouTubeMpvPlayback(playback: YouTubePlayback, streams: YouTubeStream
     val panelNavigation = rememberPlayerPanelNavigation(playback.videoId)
     val panelOpen = panelNavigation.panel != UnifiedPlayerPanel.NONE
     val snapshot = rememberMpvPlaybackSnapshot(controller, controller.audioSession.performanceHint || controller.audioSession.showFpsOverlay)
+    val liveDvrWindow = youtubeLiveDvrWindow(playback.isLive, controller.canSeekNow(), snapshot.durationMs)
     // A failure the MPV controller could not recover from itself: continue in Media3 at the
     // same position instead of leaving a black picture (YouTube always plays there).
     LaunchedEffect(controller.errorMessage) {
@@ -1589,34 +1638,49 @@ private fun YouTubeMpvPlayback(playback: YouTubePlayback, streams: YouTubeStream
     }
     LaunchedEffect(controller.ended) { if (!playback.isLive && controller.ended) onCompleted() }
     val sponsorSkipEnabled = LocalPlaybackMetadata.current?.sponsorSkipEnabled == true
+    fun commitSeek(targetMs: Long) {
+        val edge = liveDvrWindow
+        // mpv's live timeline ends at the current window edge, not the end of the video.
+        val decoderTarget = if (playback.isLive && edge?.targetsLiveEdge(targetMs) == true)
+            (edge.livePositionMs - 1_000L).coerceAtLeast(0L) else targetMs
+        controller.seekTo(decoderTarget)
+    }
     fun seek(delta: Long) {
-        if (playback.isLive) return
+        if (playback.isLive && liveDvrWindow == null) return
         BackgroundPlaybackSession.userSeek()
         osd.interact()
         userSeeked = true
-        val limit = snapshot.durationMs.takeIf { it > 0L } ?: playback.durationMs
+        val limit = liveDvrWindow?.livePositionMs ?: snapshot.durationMs.takeIf { it > 0L } ?: playback.durationMs
         val requested = seekCoordinator.requestRelative(delta, displayedPosition, limit)
         val landing = adjustedYouTubeSeekTarget(requested, playback, limit, preferences, sponsorSkipEnabled, delta < 0L)
         displayedPosition = if (landing != requested) seekCoordinator.requestAbsolute(landing) else requested
-        seekCoordinator.consumeCommit(force = com.ambient.tv.ui.player.isPlaybackEndSeek(requested, limit))
-            ?.let(controller::seekTo)
+        // Live DVR edge != VOD EOF: preserve #307's terminal VOD handling without
+        // forcing completion when a running live broadcast reaches its current edge.
+        val terminalVodSeek = !playback.isLive &&
+            com.ambient.tv.ui.player.isPlaybackEndSeek(requested, limit)
+        val immediateSeek = terminalVodSeek || liveDvrWindow?.targetsLiveEdge(requested) == true
+        seekCoordinator.consumeCommit(force = immediateSeek)?.let(::commitSeek)
         seekCommitVersion++
-        // The decoder stops just before logical EOF to avoid a DASH/HLS buffering loop.
-        // A paused manual seek must play out that short tail for the real EOF/Next Up event.
-        val session = BackgroundPlaybackSession.snapshot.value
-        if (com.ambient.tv.ui.player.shouldPlayThroughPlaybackEnd(
-                requested, limit, session.wantsToPlay, session.status.ended
-            )) BackgroundPlaybackSession.play()
+        if (terminalVodSeek) {
+            val session = BackgroundPlaybackSession.snapshot.value
+            if (com.ambient.tv.ui.player.shouldPlayThroughPlaybackEnd(
+                    requested, limit, session.wantsToPlay, session.status.ended
+                )) BackgroundPlaybackSession.play()
+        }
     }
     fun seekInMode(delta: Long) {
-        if (playback.isLive) osd.reveal() else {
+        if (playback.isLive && liveDvrWindow == null) osd.reveal() else {
             seek(delta)
             osd.showSeekFeedback()
         }
     }
+    fun jumpToLive() {
+        val window = liveDvrWindow ?: return
+        seek((window.livePositionMs - (seekCoordinator.pendingTarget ?: displayedPosition)).coerceAtLeast(0L))
+    }
     fun heldSeekStep(baseMs: Long, e: androidx.compose.ui.input.key.KeyEvent) =
         com.ambient.tv.ui.player.acceleratedSeekStepMs(baseMs, e.nativeKeyEvent.repeatCount, snapshot.durationMs.takeIf { it > 0L } ?: playback.durationMs)
-    YouTubeSeekCommit(seekCommitVersion, seekCoordinator, controller::seekTo)
+    YouTubeSeekCommit(seekCommitVersion, seekCoordinator, ::commitSeek)
     LaunchedEffect(playback.resumeMs, playback.resumeResolved) {
         if (!playback.resumeResolved) return@LaunchedEffect
         val target = lateYouTubeResumeTarget(playback.isLive, startPositionMs, playback.resumeMs, userSeeked,
@@ -1684,8 +1748,8 @@ private fun YouTubeMpvPlayback(playback: YouTubePlayback, streams: YouTubeStream
         PlayerTouchLayer(
             onToggleControls = { if (!panelOpen) { if (!controls || osd.closing) osd.reveal() else osd.close() } },
             onTogglePlayback = { BackgroundPlaybackSession.userToggle() },
-            onSeekBack = if (playback.isLive) null else {{ seek(-BackgroundPlaybackSession.seekJumpMs(bigSeekSeconds * 1000L)) }},
-            onSeekForward = if (playback.isLive) null else {{ seek(BackgroundPlaybackSession.seekJumpMs(bigSeekSeconds * 1000L)) }},
+            onSeekBack = if (playback.isLive && liveDvrWindow == null) null else {{ seek(-BackgroundPlaybackSession.seekJumpMs(bigSeekSeconds * 1000L)) }},
+            onSeekForward = if (playback.isLive && liveDvrWindow == null) null else {{ seek(BackgroundPlaybackSession.seekJumpMs(bigSeekSeconds * 1000L)) }},
             pinchZoom = if (controller.audioOnly) null else PlayerPinchZoom(
                 key = controller,
                 enabled = !panelOpen,
@@ -1797,6 +1861,8 @@ private fun YouTubeMpvPlayback(playback: YouTubePlayback, streams: YouTubeStream
                     },
                 ),
                 panelNavigation = panelNavigation,
+                liveDvrWindow = liveDvrWindow,
+                onGoLive = ::jumpToLive,
             )
         }
     }
@@ -1820,6 +1886,8 @@ internal data class YouTubeOsdModel(
     val audioBadge: String? = null,
     val channel: YouTubeChannelOsd? = null,
     val itemControls: PlaybackItemControls? = null,
+    val liveDvrWindow: YouTubeLiveDvrWindow? = null,
+    val onGoLive: (() -> Unit)? = null,
 ) : com.ambient.tv.ui.player.PlayerOsdSpec {
     @Composable
     override fun Content(visible: Boolean, panel: UnifiedPlayerPanel) {
@@ -1827,6 +1895,8 @@ internal data class YouTubeOsdModel(
         val osd = com.ambient.tv.ui.player.rememberPlayerOsdController()
         val playFocusRequester = com.ambient.tv.ui.player.rememberPlayerPlayFocus()
         val navigation = LocalPlayerPanelNavigation.current
+        val seekable = !playback.isLive || liveDvrWindow != null
+        val seekDurationMs = if (playback.isLive) liveDvrWindow?.livePositionMs ?: 0L else duration
         val publication = if (playback.isLive) null else playback.publishedAtMs?.let {
             com.ambient.tv.ui.common.relativePublishedLabel(it)
         } ?: com.ambient.tv.youtube.youtubePublicationText(playback.publishedDate)
@@ -1847,18 +1917,27 @@ internal data class YouTubeOsdModel(
                     // Keep publication metadata below the title, also while the channel
                     // name is still missing. System and renderer belong to diagnostics.
                     subtitleTrailingText = publication,
-                    showPaused = playback.isLive && paused,
+                    showPaused = playback.isLive && paused && liveDvrWindow == null,
                 )
-                if (!playback.isLive && duration > 0L) {
+                if (seekable && seekDurationMs > 0L) {
                     TvPlayerSeekBar(
-                        positionMs = position,
-                        durationMs = duration,
+                        positionMs = position.coerceIn(0L, seekDurationMs),
+                        durationMs = seekDurationMs,
                         paused = paused,
                         onSeekBy = onSeek,
                         onInteraction = osd::interact,
                         onTogglePlayback = onToggle,
                         onPlay = { if (!playing) onToggle() },
+                        showEndTime = !playback.isLive,
                         modifier = Modifier.focusRequester(seekFocusRequester),
+                    )
+                } else if (playback.isLive) {
+                    // Like Radio Browser, non-DVR live streams have a passive LIVE indicator,
+                    // never a misleading interactive bar with an invented duration.
+                    androidx.compose.material3.LinearProgressIndicator(
+                        progress = { 1f },
+                        color = com.ambient.tv.ui.theme.LocalPlaybackAccent.current.indicator,
+                        modifier = Modifier.fillMaxWidth(),
                     )
                 }
                 PlayerTechBadgeRow {
@@ -1877,7 +1956,7 @@ internal data class YouTubeOsdModel(
                                 osd = com.ambient.tv.ui.player.OsdButton.NEXT)
                         }
                         val seekJumpSeconds = (BackgroundPlaybackSession.seekJumpMs(seekJumpMs) / 1000L).toInt().coerceAtLeast(1)
-                        if (!playback.isLive) PlayerIconButton(Icons.Filled.FastRewind, stringResource(R.string.player_seek_back, seekJumpSeconds), { onSeek(-BackgroundPlaybackSession.seekJumpMs(seekJumpMs)) }, osd = com.ambient.tv.ui.player.OsdButton.SEEK)
+                        if (seekable) PlayerIconButton(Icons.Filled.FastRewind, stringResource(R.string.player_seek_back, seekJumpSeconds), { onSeek(-BackgroundPlaybackSession.seekJumpMs(seekJumpMs)) }, osd = com.ambient.tv.ui.player.OsdButton.SEEK)
                         PlayerIconButton(
                             if (playing) Icons.Filled.Pause else Icons.Filled.PlayArrow,
                             stringResource(if (playing) R.string.player_pause else R.string.player_play),
@@ -1887,7 +1966,13 @@ internal data class YouTubeOsdModel(
                             loading = loading,
                         )
                         PlayerIconButton(Icons.Filled.Stop, stringResource(R.string.player_stop), BackgroundPlaybackSession::stop, osd = com.ambient.tv.ui.player.OsdButton.STOP)
-                        if (!playback.isLive) PlayerIconButton(Icons.Filled.FastForward, stringResource(R.string.player_seek_forward, seekJumpSeconds), { onSeek(BackgroundPlaybackSession.seekJumpMs(seekJumpMs)) }, osd = com.ambient.tv.ui.player.OsdButton.SEEK)
+                        if (seekable) PlayerIconButton(Icons.Filled.FastForward, stringResource(R.string.player_seek_forward, seekJumpSeconds), { onSeek(BackgroundPlaybackSession.seekJumpMs(seekJumpMs)) }, osd = com.ambient.tv.ui.player.OsdButton.SEEK)
+                        if (liveDvrWindow != null && onGoLive != null) {
+                            // Keep the button mounted while at the live edge so TV focus does not jump.
+                            PlayerIconButton(Icons.Filled.LiveTv, stringResource(R.string.timeshift_go_live),
+                                onGoLive, enabled = liveDvrWindow.canJumpToLive(position),
+                                osd = com.ambient.tv.ui.player.OsdButton.GO_LIVE)
+                        }
                         itemControls?.let { actions ->
                             PlayerIconButton(Icons.Filled.SkipNext, stringResource(R.string.player_next_item),
                                 { actions.next?.invoke() }, enabled = actions.next != null,
@@ -1943,6 +2028,8 @@ private fun YouTubeControls(
     info: List<String>,
     panelConfig: YouTubePanelConfig,
     panelNavigation: com.ambient.tv.ui.common.PlayerPanelNavigation,
+    liveDvrWindow: YouTubeLiveDvrWindow? = null,
+    onGoLive: (() -> Unit)? = null,
 ) {
     val primaryFocusRequester = com.ambient.tv.ui.player.rememberPlayerPlayFocus()
     val panel by panelNavigation
@@ -1970,6 +2057,8 @@ private fun YouTubeControls(
         audioBadge = com.ambient.tv.ui.player.audioOutputBadge(panelConfig.audioSession),
         channel = LocalYouTubeChannelOsd.current,
         itemControls = LocalPlaybackItemControls.current,
+        liveDvrWindow = liveDvrWindow,
+        onGoLive = onGoLive,
     ), visible = controlsVisible)
     com.ambient.tv.ui.player.PublishPlayerPanel(com.ambient.tv.ui.player.PlayerPanelModel(
         scrimAlpha = 0.32f,
