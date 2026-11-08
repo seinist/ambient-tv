@@ -306,7 +306,7 @@ import androidx.lifecycle.repeatOnLifecycle
                     Loading(state.viewMode, state.gridColumns, state.listRows,
                         sectioned = (state.query.isBlank() && state.feed == YouTubeFeed.HOME && state.channel == null) ||
                             populatedRows.hasSubsections())
-                state.error != null -> Message(state.error!!, error = true)
+                state.error != null -> Message(state.error, error = true)
                 visibleRows.none { it.items.isNotEmpty() } -> if (filterModel.activeCount > 0) {
                     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                         com.ambient.tv.ui.common.BrowseStatusPanel(

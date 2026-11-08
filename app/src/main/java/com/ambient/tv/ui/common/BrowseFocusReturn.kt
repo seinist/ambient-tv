@@ -160,7 +160,7 @@ internal class BrowseFocusReturnState(
                 break
             }
             if (selected == null) selected = candidate
-            if (candidate.key.row != null && selected?.key?.row == null) {
+            if (candidate.key.row != null && selected.key?.row == null) {
                 selected = candidate
             }
         }
