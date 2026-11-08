@@ -1,5 +1,8 @@
 package com.ambient.tv.ui.spotify
 
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.distinctUntilChanged
+
 import com.ambient.tv.ui.player.PlayerPanelVisibility
 import com.ambient.tv.ui.player.PlayerOverlayVisibility
 import com.ambient.tv.ui.common.rememberPlayerPanelNavigation
@@ -69,9 +72,16 @@ import com.ambient.tv.ui.player.OsdSeekSteps
 import com.ambient.tv.ui.player.OsdKeyTarget
 
 @Composable
-fun SpotifyPlayerScreen(onBack: () -> Unit, viewModel: SpotifyPlayerViewModel = hiltViewModel()) {
+fun SpotifyPlayerScreen(onBack: (String?) -> Unit, viewModel: SpotifyPlayerViewModel = hiltViewModel()) {
+    // Stop can clear the engine snapshot before navigation. Keep the last actual track so
+    // returning after Stop, Next or Previous has the same precise destination as Back.
+    val trackId by remember(viewModel) {
+        viewModel.state.map { it.current?.id }.distinctUntilChanged()
+    }.collectAsState(initial = viewModel.state.value.current?.id)
+    var lastTrackId by remember { mutableStateOf(trackId) }
+    SideEffect { if (trackId != null) lastTrackId = trackId }
     com.ambient.tv.ui.player.PersistentPlayerChrome(viewModel) {
-        SpotifyPlayerContent(onBack, viewModel)
+        SpotifyPlayerContent({ onBack(lastTrackId) }, viewModel)
     }
 }
 

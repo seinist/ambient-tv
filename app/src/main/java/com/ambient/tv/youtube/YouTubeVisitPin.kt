@@ -41,6 +41,18 @@ internal fun youtubeRowsAfterRefresh(
 ): List<YouTubeRow> = if (pinned && visible.isNotEmpty()) visible else stored
 
 /**
+ * A player can return pages beyond the bounded cache. Only a complete refresh owns removal:
+ * partial batches and an incomplete final response reconcile with the actual visible visit,
+ * so cache eviction or its item limit cannot remove the last played card prematurely.
+ */
+internal fun youtubeRowsAfterPartialRefresh(
+    visible: List<YouTubeRow>,
+    incoming: List<YouTubeRow>,
+    pinned: Boolean,
+): List<YouTubeRow> = if (pinned && visible.isNotEmpty()) visible
+    else sourceOrderedYouTubeRows(visible, incoming, complete = false)
+
+/**
  * A row continuation page extends the rows the user is looking at. A pinned visit appends it to
  * its own visible rows, so pagination keeps working without pulling in the deferred refresh.
  */

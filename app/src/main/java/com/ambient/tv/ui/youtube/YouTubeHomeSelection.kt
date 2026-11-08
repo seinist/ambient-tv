@@ -27,4 +27,6 @@ internal fun youtubeShouldRefreshOnEntry(
     firstEntry: Boolean,
     channelPage: Boolean,
     explicitHomeSelection: Boolean,
-): Boolean = firstEntry || channelPage || feed != YouTubeFeed.HOME || explicitHomeSelection
+    playbackReturn: Boolean = false,
+): Boolean = explicitHomeSelection ||
+    (!playbackReturn && (firstEntry || channelPage || feed != YouTubeFeed.HOME))

@@ -36,6 +36,87 @@ class YouTubeContentCacheTest {
         assertEquals(listOf("a", "b", "fresh"), completed.first().items.map { it.videoId })
     }
 
+    @Test fun explicitRefreshInsertsInSourceOrderAndRetainsMissingIdsUntilCompletion() {
+        val cache = YouTubeContentCache()
+        cache.replace("home", listOf(
+            YouTubeRow("Recommended", listOf(item("a"), item("b"), item("c"))),
+            YouTubeRow("Still pending", listOf(item("pending"))),
+        ))
+        val incoming = listOf(
+            YouTubeRow("New section", listOf(item("section-video"))),
+            YouTubeRow("Recommended", listOf(item("new"), item("b"), item("a").copy(title = "Updated A"))),
+        )
+
+        val partial = cache.merge("home", incoming, preferIncomingOrder = true)
+        assertEquals(listOf("New section", "Recommended", "Still pending"), partial.map { it.id })
+        assertEquals(listOf("new", "b", "a", "c"), partial[1].items.map { it.videoId })
+        assertEquals("Updated A", partial[1].items[2].title)
+        // Reopening during a partial refresh cannot resurrect the earlier deferred ordering.
+        cache.adoptFreshOrder("home")
+        assertEquals(partial, cache.get("home"))
+
+        val completed = cache.replace("home", incoming, preferIncomingOrder = true)
+        assertEquals(listOf("New section", "Recommended"), completed.map { it.id })
+        assertEquals(listOf("new", "b", "a"), completed[1].items.map { it.videoId })
+    }
+
+    @Test fun explicitSourceOrderKeepsNewlyLoadedPagesOnReopening() {
+        val cache = YouTubeContentCache()
+        cache.replace("subscriptions", listOf(YouTubeRow("Subscriptions", listOf(item("a"), item("b")))))
+        cache.replace("subscriptions", listOf(YouTubeRow("Subscriptions", listOf(item("new"), item("a")))),
+            preferIncomingOrder = true)
+        cache.appendItems("subscriptions", "Subscriptions", listOf(item("a"), item("page-two")))
+
+        cache.adoptFreshOrder("subscriptions")
+
+        assertEquals(listOf("new", "a", "page-two"), cache.get("subscriptions")!!.single().items.map { it.videoId })
+    }
+
+    @Test fun deferredSourceOrderAlsoRetainsPagesLoadedAfterItsSnapshot() {
+        val cache = YouTubeContentCache()
+        cache.replace("home", listOf(YouTubeRow("Recommended", listOf(item("a"), item("b")))))
+        cache.replace("home", listOf(YouTubeRow("Recommended", listOf(item("new"), item("a")))))
+        cache.appendItems("home", "Recommended", listOf(item("a"), item("continued")))
+
+        cache.adoptFreshOrder("home")
+
+        assertEquals(listOf("new", "a", "continued"), cache.get("home")!!.single().items.map { it.videoId })
+    }
+
+    @Test fun retainedPartialSnapshotSupersedesAnOlderDeferredCompleteSnapshot() {
+        val cache = YouTubeContentCache()
+        cache.replace("home", listOf(YouTubeRow("Recommended", listOf(item("a"), item("b")))))
+        val partial = cache.persistPartial("home", listOf(YouTubeRow("Recommended", listOf(item("new"), item("a")))),
+            preferIncomingOrder = true)
+
+        cache.adoptFreshOrder("home")
+
+        assertEquals(listOf("new", "a", "b"), partial.single().items.map { it.videoId })
+        assertEquals(partial, cache.get("home"))
+    }
+
+    @Test fun partialInsertionAtCapacityCannotEvictPendingRowsOrVideos() {
+        val cache = YouTubeContentCache()
+        val oldRows = (0 until YouTubeContentCache.MAX_ROWS).map { row ->
+            YouTubeRow("row-$row", (0 until YouTubeContentCache.MAX_ITEMS_PER_ROW).map { item("$row-$it") })
+        }
+        cache.replace("home", oldRows)
+        val incoming = listOf(
+            YouTubeRow("new-row", listOf(item("new-row-video"))),
+            YouTubeRow("row-0", listOf(item("new-video"), item("0-1"), item("0-0"))),
+        )
+
+        val partial = cache.merge("home", incoming, preferIncomingOrder = true)
+
+        assertEquals(oldRows.map { it.id }.toSet(), partial.map { it.id }.toSet())
+        assertEquals(oldRows.first().items.map { it.videoId }.toSet(), partial.first().items.map { it.videoId }.toSet())
+        assertEquals(listOf("0-1", "0-0"), partial.first().items.take(2).map { it.videoId })
+
+        val completed = cache.replace("home", incoming, preferIncomingOrder = true)
+        assertEquals(listOf("new-row", "row-0"), completed.map { it.id })
+        assertEquals(listOf("new-video", "0-1", "0-0"), completed[1].items.map { it.videoId })
+    }
+
     @Test
     fun cacheEvictsLeastRecentlyUsedEntryAtCapacity() {
         val cache = YouTubeContentCache()

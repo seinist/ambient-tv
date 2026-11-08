@@ -37,22 +37,30 @@ internal class HomeTrailerPlaybackReturn {
     val pendingTarget: HomeFocusSnapshot? get() = target.takeUnless { landed }
 
     fun start(row: ContentRowData, videoId: String) {
+        startItem(row, HOME_TRAILER_ITEM_PREFIX + videoId)
+    }
+
+    /** Other direct-play Home providers use their existing media keys unchanged. */
+    fun startItem(row: ContentRowData, itemKey: String) {
         source = row
-        origin = HomeFocusSnapshot(HOME_TRAILER_ITEM_PREFIX + videoId, row.id)
+        origin = HomeFocusSnapshot(itemKey, row.id)
         target = null
         landed = false
         preserveForNextEntry = false
     }
 
     fun restore(rowId: String, videoId: String): HomeFocusSnapshot? {
+        return restoreItem(rowId, HOME_TRAILER_ITEM_PREFIX + videoId)
+    }
+
+    fun restoreItem(rowId: String, itemKey: String, returnRevision: Int = revision + 1): HomeFocusSnapshot? {
         val row = source?.takeIf { it.id == rowId } ?: return null
-        val key = HOME_TRAILER_ITEM_PREFIX + videoId
-        if (row.items.none { it.ratingKey == key }) return null
-        return HomeFocusSnapshot(key, rowId).also {
+        if (row.items.none { itemKey in it.allRatingKeys }) return null
+        return HomeFocusSnapshot(itemKey, rowId).also {
             target = it
             landed = false
             preserveForNextEntry = true
-            revision++
+            revision = returnRevision
         }
     }
 

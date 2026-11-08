@@ -68,12 +68,15 @@ fun SpotifyHomeScreen(
     viewModel: SpotifyHomeViewModel = hiltViewModel(),
 ) {
     val state by viewModel.state.collectAsState()
+    val navigationReturn = com.ambient.tv.ui.common.rememberNavigationPlaybackReturn()
     com.ambient.tv.ui.common.RefreshOnEnterAndReconnect(setOf("spotify")) { viewModel.enter(initialSectionKey) }
     val expectedSectionKey = initialSectionKey ?: "home"
     val focusStateKey = remember(expectedSectionKey) { "spotify:$expectedSectionKey" }
-    val focusItemId = remember(focusStateKey, state.items) {
+    val focusItemId = remember(focusStateKey, state.items, navigationReturn?.revision) {
+        val played = navigationReturn?.itemId?.removePrefix("spotify:track:")
+        val returnedId = state.items.firstOrNull { it.type == SpotifyEntityType.TRACK && it.id == played }?.let(::spotifyFocusId)
         resolveContentFocusTarget(
-            savedItemId = viewModel.focusedItemId(focusStateKey),
+            savedItemId = returnedId ?: viewModel.focusedItemId(focusStateKey),
             savedRowId = null,
             rows = listOf(null to state.items.map(::spotifyFocusId)),
         ).itemId
@@ -86,13 +89,18 @@ fun SpotifyHomeScreen(
     val nowPlayingFocusRequester = remember { FocusRequester() }
     val firstItemFocusRequester = remember { FocusRequester() }
     var initialContentFocusPending by remember(expectedSectionKey) { mutableStateOf(true) }
-    val gridState = androidx.compose.foundation.lazy.grid.rememberLazyGridState(
+    val gridState = androidx.compose.runtime.key(navigationReturn?.revision) { androidx.compose.foundation.lazy.grid.rememberLazyGridState(
         initialFirstVisibleItemIndex = state.items.indexOfFirst { spotifyFocusId(it) == focusItemId }.coerceAtLeast(0),
-    )
-    BrowseFocusContentIdentity(listOf(expectedSectionKey, state.sectionKey, state.query))
+    ) }
+    BrowseFocusContentIdentity(listOf(expectedSectionKey, state.sectionKey, state.query, navigationReturn?.revision))
     RegisterBrowseFocusGrid(gridState, remember(state.items) { state.items.map(::spotifyFocusId) })
     val failed = state.error != null || state.errorRes != null
     if (!state.loading && state.sectionKey == expectedSectionKey && !failed) BrowseFocusInitialTarget(focusItemId)
+    val playbackReturn = com.ambient.tv.ui.common.rememberBrowsePlaybackReturn(
+        token = navigationReturn?.revision,
+        target = focusItemId?.let { com.ambient.tv.ui.common.BrowseFocusKey(null, it, true) },
+        enabled = !state.loading && state.sectionKey == expectedSectionKey && !failed,
+    )
     RegisterBrowseFocusFallback {
         if (state.awaitingInitialContent(expectedSectionKey)) null
         else if (failed || state.items.isEmpty()) {
@@ -184,7 +192,7 @@ fun SpotifyHomeScreen(
                     title = com.ambient.tv.ui.common.systemString(com.ambient.tv.ui.common.MediaSystem.SPOTIFY, R.string.spotify_empty),
                 )
             }
-            else -> LazyVerticalGrid(columns = GridCells.Adaptive(deviceDp(190.dp, 144.dp)), modifier = Modifier.fillMaxSize().overlayLazyGridScrollbar(gridState).pageContentUp(focusChain).focusGroup(), state = gridState, contentPadding = PaddingValues(bottom = 40.dp), horizontalArrangement = Arrangement.spacedBy(14.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+            else -> LazyVerticalGrid(columns = GridCells.Adaptive(deviceDp(190.dp, 144.dp)), modifier = Modifier.fillMaxSize().then(playbackReturn.modifier).overlayLazyGridScrollbar(gridState).pageContentUp(focusChain).focusGroup(), state = gridState, contentPadding = PaddingValues(bottom = 40.dp), horizontalArrangement = Arrangement.spacedBy(14.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
                 items(state.items, key = { "${it.type}:${it.id}" }) { item ->
                     SpotifyTile(
                         item,

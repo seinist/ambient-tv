@@ -38,6 +38,7 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -95,6 +96,9 @@ import com.ambient.tv.ui.common.bringFocusedContextIntoView
 import com.ambient.tv.ui.common.BrowseFocusContentIdentity
 import com.ambient.tv.ui.common.BrowseFocusHoldEntry
 import com.ambient.tv.ui.common.BrowseFocusInitialTarget
+import com.ambient.tv.ui.common.BrowseFocusKey
+import com.ambient.tv.ui.common.rememberBrowsePlaybackReturn
+import com.ambient.tv.ui.common.rememberPlaybackReturnOnEntry
 import com.ambient.tv.ui.common.RegisterBrowseFocusGrid
 import com.ambient.tv.ui.common.RegisterBrowseFocusList
 import com.ambient.tv.ui.common.browseFocusTarget
@@ -115,7 +119,6 @@ import com.ambient.tv.ui.navigation.ReportSidebarContentReady
 import com.ambient.tv.ui.player.BackgroundPlaybackSession
 import com.ambient.tv.ui.theme.screenGutter
 import kotlinx.coroutines.launch
-import androidx.lifecycle.repeatOnLifecycle
 
 @Composable
 fun RadioScreen(
@@ -125,10 +128,16 @@ fun RadioScreen(
     onSelectSection: ((RadioSection) -> Unit)? = null,
     viewModel: RadioViewModel = hiltViewModel(),
 ) {
-    // Back from the player recreates this page: take its station (also one reached by zapping) before
-    // anything reads the focus memory, so entry never starts from the old card or the first tile.
-    val returnedFromPlayer = remember(viewModel) { viewModel.consumePlayerReturn() }
-    val state by viewModel.state.collectAsState()
+    val requestedSection = RadioSection.fromKey(initialSectionKey) ?: RadioSection.POPULAR
+    val storedState by viewModel.state.collectAsState()
+    val pendingReturn by viewModel.pendingPlaybackReturn.collectAsState()
+    val returnCandidate = pendingReturn?.takeIf {
+        storedState.section == requestedSection && it.source?.focusScope == storedState.focusScope()
+    }
+    val entryReturn = rememberPlaybackReturnOnEntry(returnCandidate) { it.returnRevision }
+    val playbackVisitRevision = com.ambient.tv.ui.common.rememberPlaybackReturnVisitToken(entryReturn?.returnRevision)
+    val preparedReturn = prepareRadioPlaybackReturn(storedState, entryReturn, requestedSection)
+    val state = preparedReturn ?: storedState
     val playback by remember { BackgroundPlaybackSession.snapshot.radioBrowsePlayback() }
         .collectAsState(initial = BackgroundPlaybackSession.snapshot.value.radioBrowsePlayback())
     val selectSection = onSelectSection ?: viewModel::selectSection
@@ -145,7 +154,6 @@ fun RadioScreen(
     var showSearch by remember { mutableStateOf(false) }
     val searchVisible = showSearch || state.query.isNotBlank() || state.submittedQuery.isNotBlank()
     val handheld = com.ambient.tv.ui.mobile.LocalHandheldUi.current
-    val requestedSection = RadioSection.fromKey(initialSectionKey) ?: RadioSection.POPULAR
     val lifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
     // NavHost paints before its first RESUMED callback. A reused VM can still hold an
     // old confirmed-empty error; shield the first frame with the requested route's layout.
@@ -165,7 +173,7 @@ fun RadioScreen(
     }
     com.ambient.tv.ui.common.RefreshOnEnterAndReconnect(setOf("radio")) {
         // PR #151 redirects disabled category routes; don't fetch that hidden category.
-        if (requestedSection in viewModel.state.value.visibleSections) viewModel.enter(requestedSection)
+        if (requestedSection in viewModel.state.value.visibleSections) viewModel.enter(requestedSection, entryReturn?.returnRevision)
         entryPending = false
     }
     // A category disabled in Settings must not strand a deep link on a hidden tab.
@@ -174,7 +182,7 @@ fun RadioScreen(
         val requested = RadioSection.fromKey(initialSectionKey) ?: RadioSection.POPULAR
         if (requested !in state.visibleSections) selectSection(state.visibleSections.first())
     }
-    val requestedPagePending = state.awaitingRequestedPage(requestedSection, entryPending)
+    val requestedPagePending = state.awaitingRequestedPage(requestedSection, entryPending && preparedReturn == null)
     val visibleSection = if (entryPending || state.section != requestedSection) requestedSection else state.section
     ReportSidebarContentReady(!requestedPagePending && state.contentReady)
 
@@ -210,34 +218,19 @@ fun RadioScreen(
     ) {
         if (requestedPagePending || !state.contentReady) null
         else radioInitialFocusId(
-            viewModel.lastFocusedContent(focusScope),
+            entryReturn?.currentId?.takeIf { preparedReturn != null } ?: viewModel.lastFocusedContent(focusScope),
             playingStationId.takeUnless { showingFacets },
             contentIds,
         )
     }
-    var pendingContentFocus by remember(viewModel) {
-        mutableStateOf(if (returnedFromPlayer) viewModel.state.value.focusScope() else null)
-    }
-    // Until that station has focus, the app's page entry waits instead of falling back to the first tile.
+    var pendingContentFocus by remember(viewModel) { mutableStateOf<RadioFocusScope?>(null) }
+    // Facet/search changes retain their existing explicit handoff. Playback returns are prepared
+    // separately before layout and must not hold the shell's exact entry request.
     BrowseFocusHoldEntry(pendingContentFocus != null && pendingContentFocus == focusScope && !handheld)
-    // Never hold entry for good (list still loading after a network error): then the page decides.
-    LaunchedEffect(returnedFromPlayer) {
-        if (!returnedFromPlayer) return@LaunchedEffect
-        kotlinx.coroutines.delay(3_000)
-        pendingContentFocus = null
-    }
-    LaunchedEffect(lifecycleOwner, viewModel) {
-        lifecycleOwner.lifecycle.repeatOnLifecycle(androidx.lifecycle.Lifecycle.State.RESUMED) {
-            if (viewModel.consumePlayerReturn()) {
-                // Re-enter the actually playing station, not the old clicked card.
-                pendingContentFocus = viewModel.state.value.focusScope()
-            }
-            kotlinx.coroutines.awaitCancellation()
-        }
-    }
     var focusAfterViewOptions by remember(viewModel) { mutableStateOf(false) }
-    val gridState = rememberBrowseGridState()
-    val listState = rememberBrowseListState()
+    val initialContentIndex = contentIds.indexOf(initialContentId).coerceAtLeast(0)
+    val gridState = key(state.playbackReturnRevision) { rememberBrowseGridState(initialFirstVisibleItemIndex = initialContentIndex) }
+    val listState = key(state.playbackReturnRevision) { rememberBrowseListState(initialFirstVisibleItemIndex = initialContentIndex) }
     // Both D-pad focus and visible scroll position can extend pageable radio station results.
     ObserveRadioViewportPaging(
         scope = focusScope,
@@ -281,6 +274,11 @@ fun RadioScreen(
         if (effectiveViewMode == RadioViewMode.GRID) RegisterBrowseFocusGrid(gridState, contentIds)
         else RegisterBrowseFocusList(listState, contentIds)
     }
+    val playbackReturn = rememberBrowsePlaybackReturn(
+        token = playbackVisitRevision,
+        target = initialContentId?.let { BrowseFocusKey(null, it, true) },
+        enabled = !requestedPagePending && state.contentReady && !showViewOptions,
+    )
     LaunchedEffect(focusScope, effectiveViewMode, state.contentReady, requestedPagePending, state.sortDescending) {
         if (requestedPagePending || !state.contentReady || initialContentId == null) return@LaunchedEffect
         val index = contentIds.indexOf(initialContentId).takeIf { it >= 0 } ?: return@LaunchedEffect
@@ -561,7 +559,7 @@ fun RadioScreen(
                         androidx.compose.runtime.CompositionLocalProvider(
                             LocalBrowseRightIndexFocus provides alphabetRightFocusRequester.takeIf { showStationAlphabet },
                         ) {
-                            com.ambient.tv.ui.common.SoftViewChange(state.viewMode, Modifier.fillMaxSize()) {
+                            com.ambient.tv.ui.common.SoftViewChange(state.viewMode, Modifier.fillMaxSize().then(playbackReturn.modifier)) {
                                 if (state.viewMode == RadioViewMode.GRID) {
                                     TvLazyVerticalGrid(
                                         columns = deviceDensityGridCells(state.gridColumns, 160.dp, 8),

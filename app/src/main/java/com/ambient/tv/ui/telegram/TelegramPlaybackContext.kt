@@ -8,9 +8,13 @@ import com.ambient.tv.data.telegram.TelegramRepository
 import com.ambient.tv.data.telegram.telegramFloodWaitSeconds
 import com.ambient.tv.data.telegram.telegramMediaIds
 import com.ambient.tv.domain.model.MediaItem
+import com.ambient.tv.ui.common.ContentRowData
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 
@@ -59,12 +63,14 @@ class TelegramPlaybackContext internal constructor(
     private val loadPage: suspend (section: String, cursor: String) -> TelegramMediaPage,
     private val nowMs: () -> Long,
     firstToken: Long,
+    private val sourceRevisionProvider: () -> Long = { 0L },
 ) {
     @Inject constructor(repository: TelegramRepository) : this(
         loadPage = { section, cursor -> repository.browsePage(section, cursor) },
         nowMs = { System.nanoTime() / 1_000_000L },
         // Tokens of a previous process (restored routes) never match a new session.
         firstToken = java.util.concurrent.ThreadLocalRandom.current().nextLong(1L, Long.MAX_VALUE / 4),
+        sourceRevisionProvider = repository::playbackRevision,
     )
 
     /** Where the page returns to after playback, plus the pages the player loaded meanwhile. */
@@ -76,6 +82,17 @@ class TelegramPlaybackContext internal constructor(
         val nextCursor: String?,
     )
 
+    /** Immutable visit available before the destination creates any scroll or focus state. */
+    data class ReturnSnapshot(
+        val scope: String,
+        val revision: Long,
+        val sourceRevision: Long,
+        val target: ReturnTarget,
+        val rows: List<ContentRowData>,
+        val media: Map<String, TelegramMedia>,
+        val sessionToken: Long = 0L,
+    )
+
     private class Session(
         val token: Long,
         val scope: String,
@@ -84,6 +101,9 @@ class TelegramPlaybackContext internal constructor(
         val items: MutableList<MediaItem>,
         val startCursor: String?,
         var cursor: String?,
+        val sourceRevision: Long,
+        var returnRows: List<ContentRowData>,
+        var returnMedia: Map<String, TelegramMedia>,
         val loadedMedia: MutableList<TelegramMedia> = mutableListOf(),
         var pagesLoaded: Int = 0,
         var lastPlayed: String? = null,
@@ -91,9 +111,14 @@ class TelegramPlaybackContext internal constructor(
     )
 
     private var nextToken = firstToken
+    private var nextReturnRevision = 0L
     private var current: Session? = null
     private var blockedUntilMs = 0L
     private val pageMutex = Mutex()
+    private val mutablePendingReturn = MutableStateFlow<ReturnSnapshot?>(null)
+    val pendingReturn: StateFlow<ReturnSnapshot?> = mutablePendingReturn.asStateFlow()
+
+    internal fun sourceRevision(): Long = sourceRevisionProvider()
 
     /**
      * [origin] is the row or flattened grid/list exactly as shown. [section] and [cursor] let
@@ -108,6 +133,7 @@ class TelegramPlaybackContext internal constructor(
         section: String? = null,
         cursor: String? = null,
         view: TelegramQueueView = TelegramQueueView(),
+        sourceRows: List<ContentRowData> = emptyList(),
     ): Long? {
         val items = origin.distinctBy(MediaItem::ratingKey)
             .filter { telegramQueuePlayable(it, media[it.ratingKey]) }
@@ -118,42 +144,74 @@ class TelegramPlaybackContext internal constructor(
             token = token, scope = scope, section = section, view = view,
             items = items.toMutableList(), startCursor = cursor,
             cursor = cursor.takeIf { section != null },
+            sourceRevision = sourceRevision(),
+            returnRows = sourceRows.map { it.copy(items = it.items.toList()) },
+            returnMedia = media.toMap(),
         )
+        mutablePendingReturn.value = null
         return token
     }
 
     @Synchronized
     fun contains(token: Long, mediaKey: String): Boolean =
-        current?.takeIf { it.token == token }?.items?.any { it.ratingKey == mediaKey } == true
+        current?.takeIf { it.token == token && it.sourceRevision == sourceRevision() }
+            ?.items?.any { it.ratingKey == mediaKey } == true
 
     @Synchronized
     fun played(token: Long, mediaKey: String) {
-        val session = current?.takeIf { it.token == token } ?: return
+        val session = current?.takeIf { it.token == token && it.sourceRevision == sourceRevision() } ?: return
         if (session.items.none { it.ratingKey == mediaKey }) return
         session.lastPlayed = mediaKey
         session.returnPending = true
+        mutablePendingReturn.value = returnSnapshot(session, ++nextReturnRevision)
     }
 
     /** Claimed once, and only by the exact page ([scope]) the queue came from. */
     @Synchronized
     fun consumeReturn(scope: String): ReturnTarget? {
+        val snapshot = mutablePendingReturn.value?.takeIf {
+            it.scope == scope && it.sourceRevision == sourceRevision()
+        } ?: return null
         val session = current?.takeIf { it.scope == scope && it.returnPending } ?: return null
-        val key = session.lastPlayed ?: return null
         session.returnPending = false
-        return ReturnTarget(key, session.view.rowId, session.loadedMedia.toList(),
-            session.startCursor, session.cursor)
+        mutablePendingReturn.value = null
+        return snapshot.target
+    }
+
+    /** Commit the matching visit before clearing its preview; never claim a newer Next event. */
+    @Synchronized
+    internal fun commitReturn(scope: String, revision: Long, commit: (ReturnSnapshot) -> Unit): Boolean {
+        val snapshot = mutablePendingReturn.value?.takeIf {
+            it.scope == scope && it.revision == revision && it.sourceRevision == sourceRevision()
+        } ?: return false
+        val session = current?.takeIf { it.scope == scope && it.returnPending } ?: return false
+        commit(snapshot)
+        session.returnPending = false
+        mutablePendingReturn.value = null
+        return true
+    }
+
+    private fun returnSnapshot(session: Session, revision: Long): ReturnSnapshot {
+        val key = requireNotNull(session.lastPlayed)
+        val rowId = session.returnRows.firstOrNull { row ->
+            row.id == session.view.rowId && row.items.any { it.ratingKey == key }
+        }?.id ?: session.returnRows.firstOrNull { row -> row.items.any { it.ratingKey == key } }?.id
+            ?: session.view.rowId
+        return ReturnSnapshot(session.scope, revision, session.sourceRevision,
+            ReturnTarget(key, rowId, session.loadedMedia.toList(), session.startCursor, session.cursor),
+            session.returnRows, session.returnMedia, session.token)
     }
 
     @Synchronized
     fun previousLoaded(token: Long, mediaKey: String): MediaItem? {
-        val items = current?.takeIf { it.token == token }?.items ?: return null
+        val items = current?.takeIf { it.token == token && it.sourceRevision == sourceRevision() }?.items ?: return null
         val index = items.indexOfFirst { it.ratingKey == mediaKey }
         return if (index > 0) items[index - 1] else null
     }
 
     @Synchronized
     fun nextLoaded(token: Long, mediaKey: String): MediaItem? {
-        val items = current?.takeIf { it.token == token }?.items ?: return null
+        val items = current?.takeIf { it.token == token && it.sourceRevision == sourceRevision() }?.items ?: return null
         val index = items.indexOfFirst { it.ratingKey == mediaKey }
         return if (index >= 0) items.getOrNull(index + 1) else null
     }
@@ -166,7 +224,8 @@ class TelegramPlaybackContext internal constructor(
         repeat(MAX_CONTINUATION_PAGES) {
             nextLoaded(token, mediaKey)?.let { return@withLock it }
             val (section, cursor) = synchronized(this) {
-                val session = current?.takeIf { s -> s.token == token && s.items.any { it.ratingKey == mediaKey } }
+                val session = current?.takeIf { s -> s.token == token && s.sourceRevision == sourceRevision() &&
+                    s.items.any { it.ratingKey == mediaKey } }
                     ?: return@withLock null
                 if (session.pagesLoaded >= MAX_CONTINUATION_PAGES || session.items.size >= MAX_QUEUE_ITEMS ||
                     nowMs() < blockedUntilMs) return@withLock null
@@ -192,19 +251,40 @@ class TelegramPlaybackContext internal constructor(
 
     @Synchronized
     internal fun appendPage(token: Long, requestCursor: String, page: TelegramMediaPage) {
-        val session = current?.takeIf { it.token == token && it.cursor == requestCursor } ?: return
+        val session = current?.takeIf { it.token == token && it.cursor == requestCursor &&
+            it.sourceRevision == sourceRevision() } ?: return
         val section = session.section ?: return
         session.pagesLoaded++
         session.cursor = page.nextCursor?.takeUnless { it == requestCursor }
         session.loadedMedia += page.items
+        session.returnRows = mergeTelegramReturnRows(session.returnRows, telegramRows(section, page.items))
+        session.returnMedia = session.returnMedia + page.items.associateBy(TelegramMedia::mediaKey)
         val known = session.items.mapTo(HashSet()) { it.ratingKey }
         session.items += telegramQueuePageItems(section, page.items, session.view)
             .filter { known.add(it.ratingKey) }
             .take((MAX_QUEUE_ITEMS - session.items.size).coerceAtLeast(0))
+        mutablePendingReturn.value?.takeIf { session.returnPending }?.let { pending ->
+            mutablePendingReturn.value = returnSnapshot(session, pending.revision)
+        }
     }
 
     internal companion object {
         const val MAX_QUEUE_ITEMS = 500
         const val MAX_CONTINUATION_PAGES = 4
     }
+}
+
+/** Preserve the loaded visit and append whole player pages with stable row/card identities. */
+internal fun mergeTelegramReturnRows(
+    previous: List<ContentRowData>,
+    incoming: List<ContentRowData>,
+): List<ContentRowData> {
+    val rows = LinkedHashMap<String, ContentRowData>()
+    (previous + incoming).forEach { row ->
+        val before = rows[row.id]
+        rows[row.id] = if (before == null) row else before.copy(
+            items = (before.items + row.items).distinctBy(MediaItem::ratingKey),
+        )
+    }
+    return rows.values.toList()
 }

@@ -164,6 +164,8 @@ sealed interface HomeUiState {
         val focusRecovery: HomeFocusSnapshot? = null,
         /** Only a player return replaces this visit's initial focus; ordinary D-pad moves do not. */
         val playbackReturnRevision: Int = 0,
+        /** Namespaces context revisions from SmartTube, TMDB and Monogram. */
+        val playbackReturnToken: String? = null,
     ) : HomeUiState
     data class Offline(val serverName: String) : HomeUiState
     data class Error(val message: String) : HomeUiState
@@ -260,6 +262,9 @@ class HomeViewModel @Inject constructor(
     private var tvPreviewGeneration = 0
     private var trailerRows: List<ContentRowData> = emptyList()
     private val trailerPlaybackReturn = HomeTrailerPlaybackReturn()
+    private var playbackOrigin: HomePlaybackOrigin? = null
+    internal val pendingYouTubePlaybackReturn = youtubePlaybackContext.pendingReturn
+    internal val pendingTelegramPlaybackReturn = telegramPlaybackContext.pendingReturn
     private var radioRows: List<ContentRowData> = emptyList()
     /** The actual stations behind each displayed Radio Browser Home row. */
     private val radioSourceRows = java.util.concurrent.ConcurrentHashMap<String, List<RadioStation>>()
@@ -344,27 +349,88 @@ class HomeViewModel @Inject constructor(
         )
     }
 
-    /** Called before the returning Home tree restores its old selection, and again on resume. */
-    fun restoreTrailerPlaybackFocus(focusStateKey: String = homeFocusStateKey) {
-        if (focusStateKey != homeFocusStateKey) return
-        val returned = youtubePlaybackContext.consumeReturn("home-trailers:$focusStateKey") ?: return
-        val current = _uiState.value as? HomeUiState.Loaded ?: return
-        val source = trailerPlaybackReturn.source ?: return
-        if (!appPreferences.trailersEnabled || !appPreferences.homeRows.any {
-                it.enabled && it.system == HomeRowDefinition.SYSTEM_TRAILERS && "trailers.${it.contentKey}" == source.id
-            }) {
-            trailerPlaybackReturn.clear()
-            return
+    private fun playbackRowEnabled(row: ContentRowData): Boolean = when {
+        row.id.startsWith("trailers.") -> appPreferences.trailersEnabled
+        row.id.startsWith("youtube.") -> appPreferences.youtubeEnabled
+        row.id.startsWith("telegram.") -> appPreferences.telegramEnabled && telegramRepository.available
+        else -> false
+    } && appPreferences.homeRows.any { it.enabled && "${it.system}.${it.contentKey}" == row.id }
+
+    /** Preview only the queue launched by this exact Home instance, without claiming it. */
+    internal fun pendingPlaybackReturn(
+        focusStateKey: String,
+        youtube: YouTubeBrowsePlaybackContext.ReturnSnapshot?,
+        telegram: com.ambient.tv.ui.telegram.TelegramPlaybackContext.ReturnSnapshot?,
+    ): HomePlaybackReturnRequest? {
+        val origin = playbackOrigin?.takeIf {
+            it.focusStateKey == focusStateKey && homeFocusStateKey == focusStateKey && playbackRowEnabled(it.source)
+        } ?: return null
+        if (origin.provider == HomePlaybackProvider.TELEGRAM) {
+            val snapshot = telegram?.takeIf { it.scope == origin.scope && it.sessionToken == origin.sessionToken &&
+                it.sourceRevision == telegramPlaybackContext.sourceRevision() } ?: return null
+            val source = snapshot.rows.firstOrNull { it.id == origin.source.id } ?: origin.source
+            return HomePlaybackReturnRequest(origin.provider, snapshot.scope, snapshot.revision, source,
+                HomeFocusSnapshot(snapshot.target.mediaKey, source.id))
         }
-        val target = trailerPlaybackReturn.restore(returned.rowId, returned.videoId) ?: return
-        val item = source.items.first { it.ratingKey == target.ratingKey }
-        trailerRows = trailerRows.filterNot { it.id == source.id } + source
-        activeFocusKnown = true
-        activeFocusedRatingKey = target.ratingKey
-        activeFocusedRowId = target.rowId
-        _heroContent.value = item.toHeroContent()
-        queueHomeFocusPersistence(item.ratingKey, source.id)
-        publishRows(current.rows)
+        val snapshot = youtube?.takeIf { it.scope == origin.scope && it.sessionToken == origin.sessionToken }
+            ?: return null
+        if (origin.provider == HomePlaybackProvider.YOUTUBE && snapshot.cacheRevision != youtubeContentCache.revision()) return null
+        val source = if (origin.provider == HomePlaybackProvider.YOUTUBE) origin.source.copy(
+            items = snapshot.rows.flatMap { row -> row.items }.distinctBy { it.videoId }.map { it.asHomeMediaItem() },
+        ) else origin.source
+        val prefix = if (origin.provider == HomePlaybackProvider.TRAILERS) HOME_TRAILER_ITEM_PREFIX else HOME_YOUTUBE_ITEM_PREFIX
+        return HomePlaybackReturnRequest(origin.provider, snapshot.scope, snapshot.revision.toLong(), source,
+            HomeFocusSnapshot(prefix + snapshot.target.videoId, source.id))
+    }
+
+    internal fun preparePlaybackReturn(
+        state: HomeUiState,
+        focusStateKey: String,
+        request: HomePlaybackReturnRequest?,
+    ): HomeUiState.Loaded? {
+        val current = state as? HomeUiState.Loaded ?: return null
+        val expected = request ?: return null
+        if (expected.provider == HomePlaybackProvider.MEDIA) {
+            if (current.playbackReturnToken == expected.key) return null
+            return prepareHomePlaybackReturn(current, expected.takeUnless { homeRowHidden(it.source.id) } ?: return null)
+        }
+        val pending = pendingPlaybackReturn(focusStateKey, pendingYouTubePlaybackReturn.value,
+            pendingTelegramPlaybackReturn.value)?.takeIf { it.key == expected.key } ?: return null
+        return prepareHomePlaybackReturn(current, pending)
+    }
+
+    /** Only the return accepted at navigation entry may change this already-visible page. */
+    private fun restorePlaybackFocus(focusStateKey: String, request: HomePlaybackReturnRequest?): Boolean {
+        val pending = request ?: return false
+        if (preparePlaybackReturn(_uiState.value, focusStateKey, pending) == null) return false
+        val commit = {
+            val latest = if (pending.provider == HomePlaybackProvider.MEDIA) pending else
+                pendingPlaybackReturn(focusStateKey, pendingYouTubePlaybackReturn.value, pendingTelegramPlaybackReturn.value)
+            val ready = preparePlaybackReturn(_uiState.value, focusStateKey, latest)
+            if (latest != null && latest.key == pending.key && ready != null) {
+                val source = latest.source
+                val itemKey = requireNotNull(ready.focusedRatingKey)
+                trailerPlaybackReturn.startItem(source, itemKey)
+                trailerPlaybackReturn.restoreItem(source.id, itemKey, ready.playbackReturnRevision)
+                when (latest.provider) {
+                    HomePlaybackProvider.TRAILERS -> trailerRows = trailerRows.filterNot { it.id == source.id } + source
+                    HomePlaybackProvider.YOUTUBE -> youtubeRows = youtubeRows.filterNot { it.id == source.id } + source
+                    HomePlaybackProvider.TELEGRAM -> telegramRows = telegramRows.filterNot { it.id == source.id } + source
+                    HomePlaybackProvider.MEDIA -> Unit
+                }
+                activeFocusKnown = true
+                activeFocusedRatingKey = itemKey
+                activeFocusedRowId = source.id
+                _heroContent.value = ready.hero
+                queueHomeFocusPersistence(itemKey, source.id)
+                _uiState.value = ready
+            }
+        }
+        return when (pending.provider) {
+            HomePlaybackProvider.MEDIA -> { commit(); true }
+            HomePlaybackProvider.TELEGRAM -> telegramPlaybackContext.commitReturn(pending.scope, pending.contextRevision) { commit() }
+            else -> youtubePlaybackContext.commitReturn(pending.scope, pending.contextRevision.toInt()) { commit() }
+        }
     }
 
     init {
@@ -466,13 +532,14 @@ class HomeViewModel @Inject constructor(
     }
 
     /** The entry hook expires caches first; adopt this page's context before starting any reads. */
-    fun enter(
+    internal fun enter(
         plexOnly: Boolean = false,
         jellyfinOnly: Boolean = false,
         embyOnly: Boolean = false,
         focusStateKey: String = HOME_FOCUS_STATE_KEY,
+        playbackReturn: HomePlaybackReturnRequest? = null,
     ) {
-        restoreTrailerPlaybackFocus(focusStateKey)
+        restorePlaybackFocus(focusStateKey, playbackReturn)
         trailerPlaybackReturn.enter()
         hasEntered = true
         start(plexOnly, jellyfinOnly, embyOnly, focusStateKey, refreshing = false, youtubeMode = HomeYouTubeLoadMode.OPEN)
@@ -1390,15 +1457,23 @@ class HomeViewModel @Inject constructor(
     fun youtubePlaybackToken(rowId: String, videoId: String): Long? {
         val key = rowId.takeIf { it.startsWith("youtube.") }?.removePrefix("youtube.") ?: return null
         val original = youtubeSourceRows[key]?.takeIf { source -> source.items.any { it.videoId == videoId } } ?: return null
-        return youtubePlaybackContext.start("feed:$key", original, videoId)
+        val source = (_uiState.value as? HomeUiState.Loaded)?.rows?.firstOrNull { it.id == rowId } ?: return null
+        val scope = "feed:$key"
+        return youtubePlaybackContext.start(scope, original, videoId)?.also { token ->
+            playbackOrigin = HomePlaybackOrigin(HomePlaybackProvider.YOUTUBE, homeFocusStateKey, scope, token, source)
+            trailerPlaybackReturn.startItem(source, HOME_YOUTUBE_ITEM_PREFIX + videoId)
+        }
     }
 
     /** TMDB Home cards play directly and keep manual Next/Previous inside their exact row. */
     fun trailerPlaybackToken(rowId: String, videoId: String): Long? {
         val source = (_uiState.value as? HomeUiState.Loaded)?.rows?.firstOrNull { it.id == rowId } ?: return null
         val queue = homeTrailerPlaybackRow(source, videoId) ?: return null
-        return youtubePlaybackContext.start("home-trailers:$homeFocusStateKey", queue, videoId, isTrailer = true)
-            ?.also { trailerPlaybackReturn.start(source, videoId) }
+        val scope = "home-trailers:$homeFocusStateKey"
+        return youtubePlaybackContext.start(scope, queue, videoId, isTrailer = true)?.also { token ->
+            playbackOrigin = HomePlaybackOrigin(HomePlaybackProvider.TRAILERS, homeFocusStateKey, scope, token, source)
+            trailerPlaybackReturn.start(source, videoId)
+        }
     }
 
     /** SmartTube feeds are regular video rows on Home, not one large category action button. */
@@ -1569,7 +1644,11 @@ class HomeViewModel @Inject constructor(
      */
     fun telegramPlaybackToken(rowId: String, itemKey: String): Long? {
         val source = telegramRows.firstOrNull { it.id == rowId } ?: return null
-        return telegramPlaybackContext.start("home:$rowId", source.items, itemKey)
+        val scope = "home:$rowId"
+        return telegramPlaybackContext.start(scope, source.items, itemKey, sourceRows = listOf(source))?.also { token ->
+            playbackOrigin = HomePlaybackOrigin(HomePlaybackProvider.TELEGRAM, homeFocusStateKey, scope, token, source)
+            trailerPlaybackReturn.startItem(source, itemKey)
+        }
     }
 
     /** Monogram's YouTube link posts play through SmartTube: without it they are left out. */
@@ -2035,10 +2114,17 @@ class HomeViewModel @Inject constructor(
             }
         }
         @Suppress("NAME_SHADOWING")
-        val rows = rows.filterNot {
+        val combinedRows = rows.filterNot {
             it.id == PHOTO_ROW_ID || it.id.startsWith("trailers.") || it.id.startsWith("radio.") ||
                 it.id.startsWith("youtube.") || it.id.startsWith("telegram.") || homeRowHidden(it.id)
         } + listOfNotNull(photoRow?.takeUnless { homeRowHidden(it.id) }) + trailerRows + radioRows + youtubeRows + telegramRows
+        val playedRow = trailerPlaybackReturn.source?.takeIf {
+            playbackRowEnabled(it) || (it.items.none { item -> homeTrailerVideoId(item.ratingKey) != null ||
+                homeYouTubeVideoId(item.ratingKey) != null || item.ratingKey.startsWith(com.ambient.tv.data.telegram.TELEGRAM_MEDIA_PREFIX) } &&
+                !homeRowHidden(it.id))
+        }
+        val rows = if (playedRow == null) combinedRows else combinedRows
+            .filterNot { it.id == playedRow.id } + playedRow
         // Re-evaluate on every publish, not just when the preview was fetched: the server
         // can go offline while Home is still open and its cached preview is still in memory.
         val offlineTvSystems = unreachableServers.current().offline
@@ -2153,6 +2239,7 @@ class HomeViewModel @Inject constructor(
         _uiState.value = HomeUiState.Loaded(
             rows = rows,
             playbackReturnRevision = trailerPlaybackReturn.revision,
+            playbackReturnToken = previous?.playbackReturnToken,
             focusRecovery = focusRecovery, focusedRatingKey = focusedKey, focusedRowId = focusedRowId, hero = hero,
             tvRows = tvRows, liveTvItems = liveTvItems, shortcuts = shortcuts, recentTvItems = recentTvItems, rowKeys = rowKeys,
             liveTvTitle = configuredRow(HomeRowDefinition.SYSTEM_TVHEADEND, "live")?.displayTitle(context).orEmpty(),

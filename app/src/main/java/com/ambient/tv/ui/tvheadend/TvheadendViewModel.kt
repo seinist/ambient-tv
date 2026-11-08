@@ -59,6 +59,7 @@ data class TvheadendUiState(
     val error: OperationFeedback? = null,
     /** Cached or channels-only snapshots do not prove the initial optional sections are empty. */
     val initialDashboardSettled: Boolean = false,
+    val playbackReturnRevision: Long = 0L,
 )
 
 @HiltViewModel
@@ -136,17 +137,17 @@ class TvheadendViewModel @Inject constructor(
         preferences.setSectionFocusRow(focusStateKey(tab), rowId)
     }
 
-    /**
-     * The channel watched last (start or zap) becomes the Live TV and Guide selection once,
-     * when this screen is entered again. Returns it, or null if none or hidden by the filters.
-     */
-    fun consumeReturnFocus(nowEpochSeconds: Long = System.currentTimeMillis() / 1000L): String? {
-        val channelUuid = LiveTvReturnFocus.take(repository.source.id) ?: return null
-        val state = _uiState.value
-        val selections = returnFocusSelections(channelUuid, state.dashboard, state.guideOptions, nowEpochSeconds) ?: return null
-        selections.forEach { (tab, target) -> target.contentId?.let { onContentFocused(tab, it, target.rowId) } }
-        return channelUuid
-    }
+    // uiState combines availability asynchronously. The return preview/commit must keep one
+    // synchronous layout revision even while that combined stream catches up.
+    val playbackReturnRevision: Long get() = _uiState.value.playbackReturnRevision
+
+    fun commitReturnFocus(revision: Long, nowEpochSeconds: Long = System.currentTimeMillis() / 1000L): Boolean =
+        LiveTvReturnFocus.commit(repository.source.id, revision) { returned ->
+            val state = _uiState.value
+            returnFocusSelections(returned.channelUuid, state.dashboard, state.guideOptions, nowEpochSeconds)
+                ?.forEach { (tab, target) -> target.contentId?.let { onContentFocused(tab, it, target.rowId) } }
+            _uiState.update { it.copy(playbackReturnRevision = revision) }
+        }
 
     private var preparedTab: TvheadendTab? = null
 

@@ -39,6 +39,7 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -70,6 +71,7 @@ import com.ambient.tv.domain.model.MediaItem
 import com.ambient.tv.ui.common.ArtworkImage
 import com.ambient.tv.ui.common.BrowseFocusContentIdentity
 import com.ambient.tv.ui.common.BrowseFocusInitialTarget
+import com.ambient.tv.ui.common.BrowseFocusKey
 import com.ambient.tv.ui.common.BrowseStatusKind
 import com.ambient.tv.ui.common.BrowseStatusPanel
 import com.ambient.tv.ui.common.ContentRow
@@ -117,6 +119,9 @@ import com.ambient.tv.ui.common.pageContentUp
 import com.ambient.tv.ui.common.pageHeaderTop
 import com.ambient.tv.ui.common.rememberBrowseGridState
 import com.ambient.tv.ui.common.rememberBrowseListState
+import com.ambient.tv.ui.common.rememberBrowsePlaybackReturn
+import com.ambient.tv.ui.common.rememberPlaybackReturnOnEntry
+import com.ambient.tv.ui.common.rememberPlaybackReturnVisitToken
 import com.ambient.tv.ui.common.rememberPageFocusChain
 import com.ambient.tv.ui.common.rememberRowColumnFocus
 import com.ambient.tv.ui.common.sortDirectionOptions
@@ -147,10 +152,15 @@ fun TelegramScreen(
     onOpenPost: (Long, Int, Long?) -> Unit,
     viewModel: TelegramViewModel = hiltViewModel(),
 ) {
-    // Back from the player: the last played post of this page's queue (it may come from a page
-    // the player loaded). Claimed before the state is read, so those pages are already here.
-    val returnedKey = remember(sectionKey) { viewModel.consumePlaybackReturn(sectionKey) }
-    val state by viewModel.state.collectAsState()
+    val storedState by viewModel.state.collectAsState()
+    val pendingReturn by viewModel.pendingPlaybackReturn.collectAsState()
+    val preview = viewModel.preparePlaybackReturn(sectionKey, pendingReturn)
+    val entryReturn = rememberPlaybackReturnOnEntry(pendingReturn.takeIf { preview != null }) { it.revision }
+    val returnVisit = rememberPlaybackReturnVisitToken(entryReturn?.revision)
+    // The originating visit and every page loaded by the player are available before any
+    // lazy state is created. The matching revision is committed by open(), never during render.
+    val state = if (entryReturn != null) checkNotNull(preview) else storedState
+    val returnedKey = state.playbackReturnKey.takeIf { returnVisit != null && state.section == sectionKey }
     val login by viewModel.login.collectAsState()
     val activeChannelId = remember(sectionKey) {
         sectionKey.takeIf { it.startsWith("channel:") }?.substringAfter(':')?.toLongOrNull()
@@ -167,15 +177,12 @@ fun TelegramScreen(
     }
     val chain = rememberPageFocusChain()
     val focus = rememberRowColumnFocus()
-    val rowList = rememberBrowseListState()
-    val flatList = rememberBrowseListState()
-    val grid = rememberBrowseGridState()
     val shownTabs = sections.filter { it.first in viewModel.visibleSections ||
         (it.first == sectionKey && (it.first != "youtube" || viewModel.smartTubeUsable)) }
         .ifEmpty { sections.take(1) }
     val canonical = sectionKey.takeIf { key -> shownTabs.any { it.first == key } }
         ?: shownTabs.first().first
-    val focusMemory = rememberMonogramFocusMemory(sectionKey, returnedKey)
+    val focusMemory = rememberMonogramFocusMemory(sectionKey, returnedKey, state.playbackReturnRevision)
     var layoutKey by rememberSaveable(sectionKey) { mutableStateOf(viewModel.viewMode(sectionKey).name) }
     val layout = MonogramBrowseLayout.valueOf(layoutKey)
     var gridColumns by remember { mutableIntStateOf(viewModel.gridColumns) }
@@ -195,6 +202,20 @@ fun TelegramScreen(
     }
     val flat = remember(currentRows, sort, descending) { flatMonogramItems(currentRows, sort, descending) }
     val focusIndex = remember(currentRows, flat) { MonogramBrowseFocusIndex(currentRows, flat) }
+    val initialKey = focusMemory.key?.takeIf(focusIndex::contains)
+        ?: currentRows.firstOrNull()?.items?.firstOrNull()?.ratingKey
+    val initialRow = focusIndex.rowForItem(initialKey)
+    val initialRowIndex = currentRows.indexOfFirst { it.id == initialRow }.coerceAtLeast(0)
+    val initialFlatIndex = focusIndex.flatKeys.indexOf(initialKey).coerceAtLeast(0)
+    val rowList = key(sectionKey, state.playbackReturnRevision) {
+        rememberBrowseListState(initialFirstVisibleItemIndex = initialRowIndex)
+    }
+    val flatList = key(sectionKey, state.playbackReturnRevision) {
+        rememberBrowseListState(initialFirstVisibleItemIndex = initialFlatIndex)
+    }
+    val grid = key(sectionKey, state.playbackReturnRevision) {
+        rememberBrowseGridState(initialFirstVisibleItemIndex = initialFlatIndex)
+    }
     val availableChannels = remember(state.rows) {
         state.rows.map { it.id to it.title }.distinctBy { it.first }
     }
@@ -230,7 +251,9 @@ fun TelegramScreen(
             query = ""
         }) else null,
     )
-    LaunchedEffect(sectionKey) { viewModel.open(sectionKey) }
+    LaunchedEffect(sectionKey, entryReturn?.revision) {
+        viewModel.open(sectionKey, playbackReturnRevision = entryReturn?.revision)
+    }
     // Like SmartTube: a page left in an error (offline, server refused) reloads by itself once
     // the network is back. A healthy page keeps its rows; open() returns early for it.
     com.ambient.tv.ui.common.RefreshOnEnterAndReconnect(setOf("telegram")) {
@@ -251,32 +274,34 @@ fun TelegramScreen(
     BackHandler(enabled = searchVisible && !showViewOptions) {
         if (query.isNotBlank()) query = "" else searchVisible = false
     }
-    BrowseFocusContentIdentity(listOf(sectionKey, layoutKey, sortKey, descending, channelFilter, query))
-    // A post played after Next may not be loaded yet: load pages until it is, then focus it.
-    // Entering the page waits meanwhile, so focus lands on that post and not on the first one.
-    val returnPending = returnedKey != null && !focusIndex.contains(returnedKey)
-    var revealDone by remember(returnedKey) { mutableStateOf(returnedKey == null) }
-    LaunchedEffect(returnedKey) {
-        try {
-            returnedKey?.let { viewModel.revealAfterPlayback(sectionKey, it) }
-        } finally {
-            revealDone = true
-        }
-    }
-    BrowseFocusHoldEntry(returnPending && !revealDone)
-    val initialKey = focusMemory.key ?: currentRows.firstOrNull()?.items?.firstOrNull()?.ratingKey
+    BrowseFocusContentIdentity(listOf(sectionKey, layoutKey, sortKey, descending, channelFilter, query,
+        state.playbackReturnRevision), restoreInitialTarget = true)
+    BrowseFocusHoldEntry(state.loading && state.rows.isEmpty())
     BrowseFocusInitialTarget(
-        initialKey.takeUnless { returnPending },
-        if (layout == MonogramBrowseLayout.ROWS)
-            focusIndex.rowForItem(initialKey)
-                ?: currentRows.firstOrNull()?.id
-        else null,
+        initialKey,
+        initialRow.takeIf { layout == MonogramBrowseLayout.ROWS },
+    )
+    val returnTarget = returnedKey?.takeIf(focusIndex::contains) ?: initialKey
+    val playbackReturn = rememberBrowsePlaybackReturn(
+        token = returnVisit,
+        target = returnTarget?.let { BrowseFocusKey(
+            focusIndex.rowForItem(it).takeIf { layout == MonogramBrowseLayout.ROWS }, it, true,
+        ) },
+        enabled = state.available && !state.loading && !showViewOptions && !LocalHandheldUi.current,
     )
     when (layout) {
         MonogramBrowseLayout.ROWS -> RegisterBrowseFocusRows(rowList, focusIndex.rowKeys)
         MonogramBrowseLayout.GRID -> RegisterBrowseFocusGrid(grid, focusIndex.flatKeys)
         MonogramBrowseLayout.LIST, MonogramBrowseLayout.INFO_LIST, MonogramBrowseLayout.FILES ->
             RegisterBrowseFocusList(flatList, focusIndex.flatKeys)
+    }
+    fun loadMoreVisible() {
+        val committed = viewModel.state.value
+        if (committed.section == sectionKey && committed.playbackReturnRevision == state.playbackReturnRevision)
+            viewModel.loadMore()
+    }
+    fun rememberFocused(key: String) {
+        if (!playbackReturn.pending || key == returnTarget) focusMemory.key = key
     }
     LaunchedEffect(layout, grid, flatList, flat.size) {
         if (layout == MonogramBrowseLayout.ROWS) return@LaunchedEffect
@@ -285,7 +310,7 @@ fun TelegramScreen(
                 grid.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: -1
             else flatList.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: -1
         }.distinctUntilChanged().collect { last ->
-            if (last >= 0 && last >= flat.size - 10) viewModel.loadMore()
+            if (last >= 0 && last >= flat.size - 10) loadMoreVisible()
         }
     }
     com.ambient.tv.ui.navigation.ReportSidebarContentReady(
@@ -434,154 +459,158 @@ fun TelegramScreen(
                 FilterBar(filterModel, focusChain = chain,
                     modifier = Modifier.padding(horizontal = screenGutter(), vertical = 6.dp))
             }
-            when {
-                !state.available -> BrowseStatusPanel(
-                    title = stringResource(
-                        if (login.step == MonogramLoginStep.UNAVAILABLE) R.string.telegram_error
-                        else R.string.monogram_login_signed_out,
-                    ),
-                    body = stringResource(
-                        when {
-                            login.step == MonogramLoginStep.UNAVAILABLE ->
-                                R.string.settings_telegram_native_missing
-                            !viewModel.apiCredentialsReady -> R.string.monogram_api_required
-                            else -> R.string.monogram_login_signed_out
-                        },
-                    ),
-                    kind = BrowseStatusKind.INFO,
-                    actionLabel = stringResource(
-                        if (login.step == MonogramLoginStep.UNAVAILABLE || !viewModel.apiCredentialsReady)
-                            R.string.nav_settings else R.string.action_sign_in,
-                    ),
-                    onAction = onOpenSettings,
-                    modifier = Modifier.weight(1f),
-                )
-                // Placeholders follow the selected view, density and list rows, so the first
-                // page replaces them in place (same as YouTube and the library screens).
-                state.loading && state.rows.isEmpty() -> MonogramLoadingState(
-                    layout = layout.placeholderLayout(),
-                    gridColumns = gridColumns, listRows = listRows,
-                    modifier = Modifier.weight(1f),
-                )
-                state.error != null && state.rows.isEmpty() -> BrowseStatusPanel(
-                    title = stringResource(R.string.telegram_error),
-                    body = state.error, kind = BrowseStatusKind.ERROR,
-                    actionLabel = stringResource(R.string.tvh_refresh),
-                    onAction = { viewModel.open(sectionKey, refresh = true) },
-                    modifier = Modifier.weight(1f),
-                )
-                currentRows.isEmpty() -> BrowseStatusPanel(
-                    title = stringResource(R.string.telegram_no_results),
-                    kind = BrowseStatusKind.EMPTY,
-                    actionLabel = if (state.nextCursor != null) stringResource(R.string.action_reload) else null,
-                    onAction = if (state.nextCursor != null) viewModel::loadMore else null,
-                    modifier = Modifier.weight(1f),
-                )
-                layout == MonogramBrowseLayout.ROWS ->
-                    androidx.compose.foundation.lazy.LazyColumn(
-                        state = rowList, modifier = Modifier.weight(1f).pageContentUp(chain),
-                        verticalArrangement = Arrangement.spacedBy(16.dp),
-                    ) {
-                        items(currentRows, key = { it.id }) { row ->
-                            // SmartTube computes row-card widths from the viewport and the same
-                            // density setting, rather than using a fixed TV poster width on phones.
-                            BoxWithConstraints(Modifier.fillMaxWidth()) {
-                                // Shared with MonogramLoadingState so placeholders have the same width.
-                                val cardWidth = monogramRowCardWidth(maxWidth, monogramRowVisibleColumns(gridColumns))
-                                CompositionLocalProvider(LocalMonogramRowCardWidth provides cardWidth) {
-                                    ContentRow(
-                                        row = row, columnFocus = focus,
-                                        restoreRatingKey = focusMemory.key?.takeIf { key ->
-                                            focusIndex.indexInRow(row.id, key) >= 0
-                                        },
-                                        onItemFocused = { focused ->
-                                            focusMemory.key = focused.ratingKey
-                                            val index = focusIndex.indexInRow(row.id, focused.ratingKey)
-                                            if (index >= 0 && index >= row.items.size - 8) viewModel.loadMore()
-                                        },
-                                        onViewportNearEnd = { viewModel.loadMore() },
-                                        onItemClick = { choose(it, row.items, row.id) },
-                                    )
+            Box(Modifier.weight(1f).then(playbackReturn.modifier)) {
+                key(sectionKey, state.playbackReturnRevision) {
+                    when {
+                        !state.available -> BrowseStatusPanel(
+                            title = stringResource(
+                                if (login.step == MonogramLoginStep.UNAVAILABLE) R.string.telegram_error
+                                else R.string.monogram_login_signed_out,
+                            ),
+                            body = stringResource(
+                                when {
+                                    login.step == MonogramLoginStep.UNAVAILABLE ->
+                                        R.string.settings_telegram_native_missing
+                                    !viewModel.apiCredentialsReady -> R.string.monogram_api_required
+                                    else -> R.string.monogram_login_signed_out
+                                },
+                            ),
+                            kind = BrowseStatusKind.INFO,
+                            actionLabel = stringResource(
+                                if (login.step == MonogramLoginStep.UNAVAILABLE || !viewModel.apiCredentialsReady)
+                                    R.string.nav_settings else R.string.action_sign_in,
+                            ),
+                            onAction = onOpenSettings,
+                            modifier = Modifier.fillMaxSize(),
+                        )
+                        // Placeholders follow the selected view, density and list rows, so the first
+                        // page replaces them in place (same as YouTube and the library screens).
+                        state.loading && state.rows.isEmpty() -> MonogramLoadingState(
+                            layout = layout.placeholderLayout(),
+                            gridColumns = gridColumns, listRows = listRows,
+                            modifier = Modifier.fillMaxSize(),
+                        )
+                        state.error != null && state.rows.isEmpty() -> BrowseStatusPanel(
+                            title = stringResource(R.string.telegram_error),
+                            body = state.error, kind = BrowseStatusKind.ERROR,
+                            actionLabel = stringResource(R.string.tvh_refresh),
+                            onAction = { viewModel.open(sectionKey, refresh = true) },
+                            modifier = Modifier.fillMaxSize(),
+                        )
+                        currentRows.isEmpty() -> BrowseStatusPanel(
+                            title = stringResource(R.string.telegram_no_results),
+                            kind = BrowseStatusKind.EMPTY,
+                            actionLabel = if (state.nextCursor != null) stringResource(R.string.action_reload) else null,
+                            onAction = if (state.nextCursor != null) viewModel::loadMore else null,
+                            modifier = Modifier.fillMaxSize(),
+                        )
+                        layout == MonogramBrowseLayout.ROWS ->
+                            androidx.compose.foundation.lazy.LazyColumn(
+                                state = rowList, modifier = Modifier.fillMaxSize().pageContentUp(chain),
+                                verticalArrangement = Arrangement.spacedBy(16.dp),
+                            ) {
+                                items(currentRows, key = { it.id }) { row ->
+                                    // SmartTube computes row-card widths from the viewport and the same
+                                    // density setting, rather than using a fixed TV poster width on phones.
+                                    BoxWithConstraints(Modifier.fillMaxWidth()) {
+                                        // Shared with MonogramLoadingState so placeholders have the same width.
+                                        val cardWidth = monogramRowCardWidth(maxWidth, monogramRowVisibleColumns(gridColumns))
+                                        CompositionLocalProvider(LocalMonogramRowCardWidth provides cardWidth) {
+                                            ContentRow(
+                                                row = row, columnFocus = focus,
+                                                restoreRatingKey = focusMemory.key?.takeIf { key ->
+                                                    focusIndex.indexInRow(row.id, key) >= 0
+                                                },
+                                                onItemFocused = { focused ->
+                                                    rememberFocused(focused.ratingKey)
+                                                    val index = focusIndex.indexInRow(row.id, focused.ratingKey)
+                                                    if (index >= 0 && index >= row.items.size - 8) loadMoreVisible()
+                                                },
+                                                onViewportNearEnd = { loadMoreVisible() },
+                                                onItemClick = { choose(it, row.items, row.id) },
+                                            )
+                                        }
+                                    }
+                                }
+                                if (state.pageError != null) item(key = MONOGRAM_PAGE_ERROR_KEY) {
+                                    MonogramPageRetry(viewModel::loadMore)
                                 }
                             }
-                        }
-                        if (state.pageError != null) item(key = MONOGRAM_PAGE_ERROR_KEY) {
-                            MonogramPageRetry(viewModel::loadMore)
-                        }
-                    }
-                layout == MonogramBrowseLayout.GRID ->
-                    // Audio: square cards in the Radio Browser's denser grid.
-                    androidx.compose.runtime.CompositionLocalProvider(
-                        com.ambient.tv.ui.common.LocalMonogramSquareCards provides (sectionKey == "audio")) {
-                    TvLazyVerticalGrid(
-                        columns = if (sectionKey == "audio") deviceDensityGridCells(gridColumns, 160.dp, 8)
-                            else deviceDensityGridCells(
-                            com.ambient.tv.ui.common.landscapeGridColumns(gridColumns), 260.dp, 4),
+                        layout == MonogramBrowseLayout.GRID ->
+                            // Audio: square cards in the Radio Browser's denser grid.
+                            androidx.compose.runtime.CompositionLocalProvider(
+                                com.ambient.tv.ui.common.LocalMonogramSquareCards provides (sectionKey == "audio")) {
+                            TvLazyVerticalGrid(
+                                columns = if (sectionKey == "audio") deviceDensityGridCells(gridColumns, 160.dp, 8)
+                                    else deviceDensityGridCells(
+                                    com.ambient.tv.ui.common.landscapeGridColumns(gridColumns), 260.dp, 4),
 
-                        state = grid,
-                        modifier = Modifier.weight(1f).pageContentUp(chain).focusGroup(),
-                        contentPadding = PaddingValues(screenGutter(), 10.dp, screenGutter(), 36.dp),
-                        horizontalArrangement = Arrangement.spacedBy(16.dp),
-                        verticalArrangement = Arrangement.spacedBy(16.dp),
-                    ) {
-                        gridItemsIndexed(flat, key = { _, item -> item.ratingKey }) { index, item ->
-                            MediaTile(
-                                item = item,
-                                style = com.ambient.tv.ui.common.MediaTileStyle.LANDSCAPE,
-                                fillCell = true,
-                                modifier = Modifier.browseFocusTarget(item.ratingKey),
-                                onFocused = {
-                                    focusMemory.key = item.ratingKey
-                                    if (index >= flat.size - 10)
-                                        viewModel.loadMore()
-                                },
-                                onClick = { choose(item, flat) },
-                            )
-                        }
-                        if (state.loadingMore) {
-                            items(MONOGRAM_PAGE_END_PLACEHOLDERS, key = ::monogramPageEndPlaceholderKey) {
-                                MonogramCardPlaceholder(fillCell = true)
+                                state = grid,
+                                modifier = Modifier.fillMaxSize().pageContentUp(chain).focusGroup(),
+                                contentPadding = PaddingValues(screenGutter(), 10.dp, screenGutter(), 36.dp),
+                                horizontalArrangement = Arrangement.spacedBy(16.dp),
+                                verticalArrangement = Arrangement.spacedBy(16.dp),
+                            ) {
+                                gridItemsIndexed(flat, key = { _, item -> item.ratingKey }) { index, item ->
+                                    MediaTile(
+                                        item = item,
+                                        style = com.ambient.tv.ui.common.MediaTileStyle.LANDSCAPE,
+                                        fillCell = true,
+                                        modifier = Modifier.browseFocusTarget(item.ratingKey),
+                                        onFocused = {
+                                            rememberFocused(item.ratingKey)
+                                            if (index >= flat.size - 10)
+                                                loadMoreVisible()
+                                        },
+                                        onClick = { choose(item, flat) },
+                                    )
+                                }
+                                if (state.loadingMore) {
+                                    items(MONOGRAM_PAGE_END_PLACEHOLDERS, key = ::monogramPageEndPlaceholderKey) {
+                                        MonogramCardPlaceholder(fillCell = true)
+                                    }
+                                }
+                                if (state.pageError != null) item(key = MONOGRAM_PAGE_ERROR_KEY,
+                                    span = { androidx.compose.foundation.lazy.grid.GridItemSpan(maxLineSpan) }) {
+                                    MonogramPageRetry(viewModel::loadMore)
+                                }
                             }
-                        }
-                        if (state.pageError != null) item(key = MONOGRAM_PAGE_ERROR_KEY,
-                            span = { androidx.compose.foundation.lazy.grid.GridItemSpan(maxLineSpan) }) {
-                            MonogramPageRetry(viewModel::loadMore)
-                        }
-                    }
-                    }
-                else ->
-                    androidx.compose.foundation.lazy.LazyColumn(
-                        state = flatList, modifier = Modifier.weight(1f).pageContentUp(chain).focusGroup(),
-                        contentPadding = PaddingValues(screenGutter(), 10.dp, screenGutter(), 36.dp),
-                        verticalArrangement = Arrangement.spacedBy(8.dp),
-                    ) {
-                        itemsIndexed(flat, key = { _, item -> item.ratingKey }) { index, item ->
-                            if (layout == MonogramBrowseLayout.FILES) MonogramFileRow(item, viewModel.selected(item.ratingKey),
-                                onClick = { choose(item, flat) },
-                                onFocused = {
-                                    focusMemory.key = item.ratingKey
-                                    if (index >= flat.size - 10)
-                                        viewModel.loadMore()
-                                })
-                            else MonogramListItem(item, listRows,
-                                detailed = layout == MonogramBrowseLayout.INFO_LIST,
-                                onClick = { choose(item, flat) },
-                                onFocused = {
-                                    focusMemory.key = item.ratingKey
-                                    if (index >= flat.size - 10)
-                                        viewModel.loadMore()
-                                })
-                        }
-                        if (state.loadingMore) {
-                            items(MONOGRAM_PAGE_END_PLACEHOLDERS, key = ::monogramPageEndPlaceholderKey) {
-                                MonogramListItemPlaceholder(listRows,
-                                    detailed = layout == MonogramBrowseLayout.INFO_LIST)
                             }
-                        }
-                        if (state.pageError != null) item(key = MONOGRAM_PAGE_ERROR_KEY) {
-                            MonogramPageRetry(viewModel::loadMore)
-                        }
+                        else ->
+                            androidx.compose.foundation.lazy.LazyColumn(
+                                state = flatList, modifier = Modifier.fillMaxSize().pageContentUp(chain).focusGroup(),
+                                contentPadding = PaddingValues(screenGutter(), 10.dp, screenGutter(), 36.dp),
+                                verticalArrangement = Arrangement.spacedBy(8.dp),
+                            ) {
+                                itemsIndexed(flat, key = { _, item -> item.ratingKey }) { index, item ->
+                                    if (layout == MonogramBrowseLayout.FILES) MonogramFileRow(item, state.media[item.ratingKey],
+                                        onClick = { choose(item, flat) },
+                                        onFocused = {
+                                            rememberFocused(item.ratingKey)
+                                            if (index >= flat.size - 10)
+                                                loadMoreVisible()
+                                        })
+                                    else MonogramListItem(item, listRows,
+                                        detailed = layout == MonogramBrowseLayout.INFO_LIST,
+                                        onClick = { choose(item, flat) },
+                                        onFocused = {
+                                            rememberFocused(item.ratingKey)
+                                            if (index >= flat.size - 10)
+                                                loadMoreVisible()
+                                        })
+                                }
+                                if (state.loadingMore) {
+                                    items(MONOGRAM_PAGE_END_PLACEHOLDERS, key = ::monogramPageEndPlaceholderKey) {
+                                        MonogramListItemPlaceholder(listRows,
+                                            detailed = layout == MonogramBrowseLayout.INFO_LIST)
+                                    }
+                                }
+                                if (state.pageError != null) item(key = MONOGRAM_PAGE_ERROR_KEY) {
+                                    MonogramPageRetry(viewModel::loadMore)
+                                }
+                            }
                     }
+                }
             }
             // Next pages show card-shaped placeholders and a failed page its retry button as the
             // last item inside the grid/list; anything below the list would shrink the viewport

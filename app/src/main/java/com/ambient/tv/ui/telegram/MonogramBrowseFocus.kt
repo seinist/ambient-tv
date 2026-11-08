@@ -16,10 +16,10 @@ internal val MonogramFocusMemorySaver = Saver<MonogramFocusMemory, String>(
 )
 
 @Composable
-internal fun rememberMonogramFocusMemory(sectionKey: String, returnedKey: String?): MonogramFocusMemory {
+internal fun rememberMonogramFocusMemory(sectionKey: String, returnedKey: String?, returnRevision: Long = 0L): MonogramFocusMemory {
     val memory = rememberSaveable(sectionKey, saver = MonogramFocusMemorySaver) { MonogramFocusMemory() }
     // A queue return overrides the old page selection once, before the initial focus pass.
-    remember(memory, returnedKey) { if (returnedKey != null) memory.key = returnedKey; Unit }
+    remember(memory, returnedKey, returnRevision) { if (returnedKey != null) memory.key = returnedKey; Unit }
     return memory
 }
 

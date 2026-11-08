@@ -1,6 +1,14 @@
 package com.ambient.tv.ui.files
 
 import com.ambient.tv.ui.common.leftKeyAction
+import com.ambient.tv.ui.common.BrowseFocusKey
+import com.ambient.tv.ui.common.BrowseFocusSlot
+import com.ambient.tv.ui.common.BrowseFocusContentIdentity
+import com.ambient.tv.ui.common.BrowseFocusInitialTarget
+import com.ambient.tv.ui.common.RegisterBrowseFocusSlots
+import com.ambient.tv.ui.common.browseFocusTarget
+import com.ambient.tv.ui.common.rememberBrowsePlaybackReturn
+import com.ambient.tv.ui.common.rememberNavigationPlaybackReturn
 import com.ambient.tv.ui.theme.screenGutter
 import androidx.compose.foundation.clickable
 import com.ambient.tv.ui.mobile.LocalHandheldUi
@@ -74,6 +82,7 @@ fun FilesScreen(onPlay: (String, Boolean) -> Unit, onBack: () -> Unit, contentAc
     val handheld = LocalHandheldUi.current
     LaunchedEffect(viewModel) { viewModel.applyViewerReturn() }
     val state by viewModel.state.collectAsState()
+    val navigationReturn = rememberNavigationPlaybackReturn()
     val sourceId = state.folders.lastOrNull()?.sourceId
     val sources = if (state.sources.firstOrNull { it.id == sourceId }?.kind == "local") emptySet()
         else setOf(sourceId?.let { "files:$it" } ?: "files")
@@ -90,9 +99,6 @@ fun FilesScreen(onPlay: (String, Boolean) -> Unit, onBack: () -> Unit, contentAc
     }
     val locationKey = state.folders.lastOrNull()?.let { "${it.sourceId}:${it.path}" } ?: viewModel.tab
     var keepHeaderFocus by remember(locationKey, contentActive) { mutableStateOf(false) }
-    val initialScroll = remember(locationKey) { viewModel.scroll(locationKey) }
-    val list = remember(locationKey) { LazyListState(initialScroll.first, initialScroll.second) }
-    DisposableEffect(list) { onDispose { viewModel.saveScroll(locationKey, list.firstVisibleItemIndex, list.firstVisibleItemScrollOffset) } }
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
         if (uri != null) viewModel.addLocal(uri, replaceLocalId)
         replaceLocalId = null
@@ -116,16 +122,44 @@ fun FilesScreen(onPlay: (String, Boolean) -> Unit, onBack: () -> Unit, contentAc
     ReportSidebarContentReady(!emptyPending && !state.loading)
     // Same condition as FilesViewModel.up(): a pinned share's root has no parent inside this page.
     val canUp = state.folders.isNotEmpty() && !(viewModel.pinnedSource && state.folders.size == 1)
+    val album = remember(state.tags) {
+        state.tags.values.mapNotNull { it.album }.groupingBy { it }.eachCount().maxByOrNull { it.value }?.key
+    }
+    val albumHeader = !sourceList && (state.folderCover != null || album != null)
+    val rememberedId = navigationReturn?.itemId?.takeIf { it in ids } ?: viewModel.focusedContentId()
+    val targetId = rememberedId?.takeIf { it in ids || (canUp && it == UP_ID) }
+        ?: ids.firstOrNull() ?: UP_ID.takeIf { canUp }
+    val focusSlots = remember(ids, canUp, albumHeader) {
+        buildList {
+            if (canUp) add(BrowseFocusSlot(BrowseFocusKey(null, UP_ID, true), 0))
+            val prefix = (if (canUp) 1 else 0) + (if (albumHeader) 1 else 0)
+            ids.forEachIndexed { index, id -> add(BrowseFocusSlot(BrowseFocusKey(null, id, true), prefix + index)) }
+        }
+    }
+    val targetIndex = focusSlots.firstOrNull { it.key.item == targetId }?.index ?: 0
+    val list = remember(locationKey, navigationReturn?.revision) {
+        val (index, offset) = viewModel.scroll(locationKey)
+        if (navigationReturn != null) LazyListState(targetIndex, 0) else LazyListState(index, offset)
+    }
+    DisposableEffect(list) { onDispose { viewModel.saveScroll(locationKey, list.firstVisibleItemIndex, list.firstVisibleItemScrollOffset) } }
+    BrowseFocusContentIdentity(listOf(locationKey, navigationReturn?.revision), restoreInitialTarget = true)
+    BrowseFocusInitialTarget(targetId)
+    RegisterBrowseFocusSlots(list, focusSlots)
+    val playbackReturn = rememberBrowsePlaybackReturn(
+        token = navigationReturn?.revision,
+        target = targetId?.let { BrowseFocusKey(null, it, true) },
+        enabled = contentActive && !dialogOpen && !emptyPending && !state.loading,
+    )
     val upFocus = remember { FocusRequester() }
     val retryFocus = remember { FocusRequester() }
     LaunchedEffect(state.revision, locationKey, contentActive, dialogOpen, ids, state.loading, state.error.takeIf { ids.isEmpty() }, keepHeaderFocus) {
-        if (handheld || !contentActive || dialogOpen || state.loading || keepHeaderFocus) return@LaunchedEffect
+        if (handheld || !contentActive || dialogOpen || state.loading || keepHeaderFocus || playbackReturn.pending) return@LaunchedEffect
         // Read the latest session target only for a real restoration, not in composition.
         val remembered = viewModel.focusedContentId()
         val id = remembered?.takeIf { it in ids } ?: ids.firstOrNull()
         // The ".." row leads the list: it shifts the entry indices and is the focus of an empty folder.
         val onUp = canUp && (id == null || remembered == UP_ID)
-        val index = if (onUp) 0 else ids.indexOf(id).let { if (it >= 0 && canUp) it + 1 else it }
+        val index = if (onUp) 0 else focusSlots.firstOrNull { it.key.item == id }?.index ?: -1
         if (index >= 0 && list.layoutInfo.visibleItemsInfo.none { it.index == index }) list.scrollToItem(index)
         delay(60)
         val requester = if (state.error != null && ids.isEmpty()) retryFocus else if (onUp) upFocus else id?.let { requesters[it] } ?: top
@@ -178,7 +212,7 @@ fun FilesScreen(onPlay: (String, Boolean) -> Unit, onBack: () -> Unit, contentAc
                 FullscreenSpinner(Modifier.align(Alignment.Center))
             } else {
                 val context = LocalContext.current
-                LazyColumn(allowUpExit = true, state = list, modifier = Modifier.fillMaxSize().overlayLazyScrollbar(list), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                LazyColumn(allowUpExit = true, state = list, modifier = Modifier.fillMaxSize().then(playbackReturn.modifier).overlayLazyScrollbar(list), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     if (canUp) item(UP_ID) {
                         FilesBrowserRow(
                             title = "..",
@@ -186,7 +220,7 @@ fun FilesScreen(onPlay: (String, Boolean) -> Unit, onBack: () -> Unit, contentAc
                             meta = state.folders.getOrNull(state.folders.size - 2)?.name ?: rootLabel,
                             icon = Icons.Default.ArrowUpward,
                             onOpen = { if (!viewModel.up()) onBack() },
-                            focusModifier = Modifier.focusRequester(upFocus).onFocusChanged { if (it.isFocused) viewModel.focus(UP_ID) },
+                            focusModifier = Modifier.focusRequester(upFocus).browseFocusTarget(UP_ID).onFocusChanged { if (it.isFocused) viewModel.focus(UP_ID) },
                             // Same width as the favorite action, so all rows end on one edge.
                             trailing = { if (!handheld) Spacer(Modifier.width(48.dp)) },
                         )
@@ -200,6 +234,7 @@ fun FilesScreen(onPlay: (String, Boolean) -> Unit, onBack: () -> Unit, contentAc
                             icon = if (source.kind == "local") Icons.Default.Folder else Icons.Default.Storage,
                             onOpen = { viewModel.openSource(source) },
                             focusModifier = Modifier.focusRequester(remember(id, requesters) { requesters.getOrPut(id) { FocusRequester() } })
+                                .browseFocusTarget(id)
                                 .onFocusChanged { if (it.isFocused) viewModel.focus(id) },
                             trailing = {
                                 TvChip(stringResource(R.string.files_edit), icon = Icons.Default.Edit, iconOnly = handheld) {
@@ -214,7 +249,6 @@ fun FilesScreen(onPlay: (String, Boolean) -> Unit, onBack: () -> Unit, contentAc
                     } else {
                     // Album folders: cover and album/artist above the tracks.
                     // LazyListScope is not composable: plain value, recomputed with the list content.
-                    val album = state.tags.values.mapNotNull { it.album }.groupingBy { it }.eachCount().maxByOrNull { it.value }?.key
                     if (state.folderCover != null || album != null) item("album-header") {
                         val artist = remember(state.tags) {
                             state.tags.values.mapNotNull { it.albumArtist ?: it.artist }.groupingBy { it }.eachCount().maxByOrNull { it.value }?.key
@@ -251,6 +285,7 @@ fun FilesScreen(onPlay: (String, Boolean) -> Unit, onBack: () -> Unit, contentAc
                             },
                             onOpen = { viewModel.open(entry, onPlay, openPhotos = onOpenPhotos) },
                             focusModifier = Modifier.focusRequester(remember(entry.id, requesters) { requesters.getOrPut(entry.id) { FocusRequester() } })
+                                .browseFocusTarget(entry.id)
                                 .onFocusChanged { if (it.isFocused) viewModel.focus(entry.id) },
                             trailing = {
                                 FilesRowAction(

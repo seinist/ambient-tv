@@ -22,4 +22,15 @@ class YouTubeHomeSelectionTest {
         assertTrue(youtubeShouldRefreshOnEntry(YouTubeFeed.SUBSCRIPTIONS, false, false, false))
         assertTrue(youtubeShouldRefreshOnEntry(YouTubeFeed.HOME, false, true, false))
     }
+
+    @Test fun aPreparedPlaybackReturnIsAlreadyACompleteEntryForEveryFeedAndChannel() {
+        YouTubeFeed.entries.forEach { feed ->
+            assertFalse(youtubeShouldRefreshOnEntry(feed, false, false, false, playbackReturn = true))
+            assertFalse(youtubeShouldRefreshOnEntry(feed, true, true, false, playbackReturn = true))
+        }
+    }
+
+    @Test fun anExplicitHomeSelectionStillRefreshesAfterPlayback() {
+        assertTrue(youtubeShouldRefreshOnEntry(YouTubeFeed.HOME, false, false, true, playbackReturn = true))
+    }
 }

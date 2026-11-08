@@ -48,6 +48,18 @@ import com.ambient.tv.ui.common.mediaFocusMotion
 import com.ambient.tv.ui.common.noSurfaceScale
 import com.ambient.tv.ui.common.overlayLazyScrollbar
 import com.ambient.tv.ui.common.transparentSurfaceColors
+import com.ambient.tv.ui.common.BrowseFocusKey
+import com.ambient.tv.ui.common.BrowseFocusSlot
+import com.ambient.tv.ui.common.BrowseFocusContentIdentity
+import com.ambient.tv.ui.common.BrowseFocusInitialTarget
+import com.ambient.tv.ui.common.RegisterBrowseFocusSlots
+import com.ambient.tv.ui.common.RegisterBrowseFocusList
+import com.ambient.tv.ui.common.browseFocusTarget
+import com.ambient.tv.ui.common.rememberBrowsePlaybackReturn
+import com.ambient.tv.ui.common.rememberNavigationPlaybackReturn
+
+private const val SPOTIFY_PRIMARY_FOCUS = "spotify-primary"
+private const val SPOTIFY_ALBUM_ROW = "spotify-albums"
 
 /**
  * Spotify album, playlist and artist pages in the shared detail look: an atmospheric backdrop
@@ -63,6 +75,7 @@ fun SpotifyDetailScreen(
     viewModel: SpotifyDetailViewModel = hiltViewModel(),
 ) {
     val state by viewModel.state.collectAsState()
+    val navigationReturn = rememberNavigationPlaybackReturn()
     com.ambient.tv.ui.common.RetryOfflineBrowse(viewModel::retryOffline)
     com.ambient.tv.ui.common.RefreshOnEnterAndReconnect(setOf("spotify"), viewModel::load)
     val handheld = com.ambient.tv.ui.mobile.LocalHandheldUi.current
@@ -79,15 +92,45 @@ fun SpotifyDetailScreen(
         viewModel.id,
         saver = SpotifyFocusMemorySaver,
     ) { SpotifyFocusMemory() }
-    var restoreFocusPending by remember(viewModel.type, viewModel.id) { mutableStateOf(focusMemory.key != null) }
-    var initialFocusRequested by remember(viewModel.type, viewModel.id) { mutableStateOf(false) }
-    val restoreFocusKey = focusMemory.key.takeIf { restoreFocusPending }
+    val initialKey = remember(viewModel.type, viewModel.id, navigationReturn?.revision, state.loading) {
+        val playedId = navigationReturn?.itemId?.removePrefix("spotify:track:")
+        state.tracks.firstOrNull { it.id == playedId }?.let { "track:${it.id}" }
+            ?: focusMemory.key
+    }
+    var restoreFocusPending by remember(viewModel.type, viewModel.id, navigationReturn?.revision) { mutableStateOf(initialKey != null) }
+    var initialFocusRequested by remember(viewModel.type, viewModel.id, navigationReturn?.revision) { mutableStateOf(false) }
+    val restoreFocusKey = initialKey.takeIf { restoreFocusPending }
+    val trackKeys = remember(state.tracks) { state.tracks.map { "track:${it.id}" } }
+    val albumKeys = remember(state.albums) { state.albums.map { "album:${it.id}" } }
+    val selectedKey = initialKey?.takeIf { it in trackKeys || it in albumKeys } ?: SPOTIFY_PRIMARY_FOCUS
+    val selectedRow = SPOTIFY_ALBUM_ROW.takeIf { selectedKey in albumKeys }
+    val albumsIndex = 2 + state.tracks.size + if (state.tracks.isNotEmpty()) 1 else 0
+    val focusSlots = remember(trackKeys, albumKeys, albumsIndex) {
+        listOf(BrowseFocusSlot(BrowseFocusKey(null, SPOTIFY_PRIMARY_FOCUS, true), 0)) +
+            trackKeys.mapIndexed { index, id -> BrowseFocusSlot(BrowseFocusKey(null, id, true), index + 2) } +
+            albumKeys.map { BrowseFocusSlot(BrowseFocusKey(SPOTIFY_ALBUM_ROW, it, true), albumsIndex) }
+    }
+    val initialIndex = focusSlots.firstOrNull { it.key.item == selectedKey }?.index ?: 0
+    val listState = key(navigationReturn?.revision, state.loading) {
+        androidx.compose.foundation.lazy.rememberLazyListState(initialFirstVisibleItemIndex = initialIndex)
+    }
+    BrowseFocusContentIdentity(listOf(viewModel.type, viewModel.id, navigationReturn?.revision), restoreInitialTarget = true)
+    BrowseFocusInitialTarget(selectedKey, selectedRow)
+    RegisterBrowseFocusSlots(listState, focusSlots)
+    val playbackReturn = rememberBrowsePlaybackReturn(
+        token = navigationReturn?.revision,
+        target = BrowseFocusKey(selectedRow, selectedKey, true),
+        enabled = !state.loading && (!state.offline || state.error != null),
+    )
     fun rememberFocused(key: String?) {
         focusMemory.key = key
         initialFocusRequested = true
         if (restoreFocusPending) restoreFocusPending = false
     }
-    LaunchedEffect(state.loading, state.offline, state.error, restoreFocusPending) {
+    val destinationActive = com.ambient.tv.ui.common.isActiveNavigationDestination()
+    val sharedInitialFocus = com.ambient.tv.ui.common.LocalBrowseFocusReturnState.current != null
+    LaunchedEffect(state.loading, state.offline, state.error, restoreFocusPending, destinationActive) {
+        if (!destinationActive || sharedInitialFocus) return@LaunchedEffect
         if (handheld || initialFocusRequested || state.loading || (state.offline && state.error == null) || restoreFocusPending) return@LaunchedEffect
         withFrameNanos { }
         initialFocusRequested = runCatching { primaryFocus.requestFocus() }.getOrDefault(false)
@@ -96,12 +139,11 @@ fun SpotifyDetailScreen(
 
     Box(Modifier.fillMaxSize()) {
         SpotifyDetailBackdrop(state)
-        val listState = androidx.compose.foundation.lazy.rememberLazyListState()
         LazyColumn(
             allowUpExit = true,
             wrapVerticalFocus = false,
             state = listState,
-            modifier = Modifier.fillMaxSize().overlayLazyScrollbar(listState),
+            modifier = Modifier.fillMaxSize().then(playbackReturn.modifier).overlayLazyScrollbar(listState),
             contentPadding = PaddingValues(bottom = 32.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
@@ -128,7 +170,7 @@ fun SpotifyDetailScreen(
                     val playingTrack = playbackIndicator(CompanionMedia("spotify:track", track.id))
                     val focusKey = "track:${track.id}"
                     val requester = remember(track.id) { FocusRequester() }
-                    RestoreSpotifyFocus(restoreFocusKey == focusKey, requester)
+                    RestoreSpotifyFocus(navigationReturn == null && restoreFocusKey == focusKey, requester)
                     SpotifyTrackRow(
                         index = index,
                         track = track,
@@ -136,24 +178,32 @@ fun SpotifyDetailScreen(
                         showAlbum = viewModel.type != "album",
                         enabled = !state.offline,
                         onClick = { if (playingTrack != null) openCurrent(playingTrack) else viewModel.playTrack(track, onNowPlaying) },
-                        modifier = Modifier.focusRequester(requester).onFocusChanged { if (it.isFocused) rememberFocused(focusKey) },
+                        modifier = Modifier.focusRequester(requester).browseFocusTarget(focusKey).onFocusChanged { if (it.isFocused) rememberFocused(focusKey) },
                     )
                 }
                 if (state.albums.isNotEmpty()) {
                     item("albums-heading") { SpotifySectionHeading(stringResource(R.string.nav_spotify_albums)) }
                     item("albums") {
+                        val albumState = key(navigationReturn?.revision) {
+                            androidx.compose.foundation.lazy.rememberLazyListState(
+                                initialFirstVisibleItemIndex = albumKeys.indexOf(selectedKey).coerceAtLeast(0),
+                            )
+                        }
+                        RegisterBrowseFocusList(albumState, albumKeys, rowKey = SPOTIFY_ALBUM_ROW)
                         LazyRow(
+                            state = albumState,
                             contentPadding = PaddingValues(horizontal = screenGutter()),
                             horizontalArrangement = Arrangement.spacedBy(14.dp),
                         ) {
                             items(state.albums, key = { "album:${it.id}" }) { album ->
                                 val focusKey = "album:${album.id}"
                                 val requester = remember(album.id) { FocusRequester() }
-                                RestoreSpotifyFocus(restoreFocusKey == focusKey, requester)
+                                RestoreSpotifyFocus(navigationReturn == null && restoreFocusKey == focusKey, requester)
                                 SpotifyAlbumCard(
                                     album = album,
                                     onClick = { onOpenAlbum(album.id) },
-                                    modifier = Modifier.focusRequester(requester).onFocusChanged { if (it.isFocused) rememberFocused(focusKey) },
+                                    modifier = Modifier.focusRequester(requester).browseFocusTarget(focusKey, rowKey = SPOTIFY_ALBUM_ROW)
+                                        .onFocusChanged { if (it.isFocused) rememberFocused(focusKey) },
                                 )
                             }
                         }
@@ -244,7 +294,8 @@ private fun SpotifyDetailHero(
             }
             state.error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                val focus = Modifier.focusRequester(primaryFocus).onFocusChanged { if (it.isFocused) onActionFocused() }
+                val focus = Modifier.focusRequester(primaryFocus).browseFocusTarget(SPOTIFY_PRIMARY_FOCUS)
+                    .onFocusChanged { if (it.isFocused) onActionFocused() }
                 when {
                     state.error != null -> TvActionButton(stringResource(R.string.home_retry), onRetry, modifier = focus)
                     !state.offline -> TvActionButton(playLabel, onPlay, modifier = focus, enabled = !state.loading,
@@ -422,8 +473,9 @@ private val SpotifyFocusMemorySaver = androidx.compose.runtime.saveable.Saver<Sp
 
 @Composable
 private fun RestoreSpotifyFocus(requested: Boolean, requester: FocusRequester) {
-    LaunchedEffect(requested) {
-        if (!requested) return@LaunchedEffect
+    val active = com.ambient.tv.ui.common.isActiveNavigationDestination()
+    LaunchedEffect(requested, active) {
+        if (!requested || !active) return@LaunchedEffect
         repeat(3) {
             withFrameNanos { }
             if (runCatching { requester.requestFocus() }.getOrDefault(false)) return@LaunchedEffect

@@ -60,6 +60,7 @@ internal fun Guide(
     controls: LiveTvBrowseControls,
     refreshing: Boolean = false,
     restoreFocus: Boolean = false,
+    preparedPlaybackReturn: Boolean = false,
     onFocusRestored: () -> Unit = {},
     pageFocusChain: PageFocusChain? = null,
     listing: LiveTvChannelListing = rememberLiveTvChannelListing(channels, events, options),
@@ -68,7 +69,8 @@ internal fun Guide(
     artworkUpdates: StateFlow<Map<String, String>>? = null,
 ) = LiveTvChannelBrowser(browseState, channels, events, imageHeaders, onEvent,
     firstContentFocusRequester, focusTarget, onFocused, options, onOptions, onWatch, canWatch, controls,
-    refreshing = refreshing, restoreFocus = restoreFocus, onFocusRestored = onFocusRestored,
+    refreshing = refreshing, restoreFocus = restoreFocus, preparedPlaybackReturn = preparedPlaybackReturn,
+    onFocusRestored = onFocusRestored,
     pageFocusChain = pageFocusChain, listing = listing, titleArt = titleArt, onArtworkNeeded = onArtworkNeeded,
     artworkUpdates = artworkUpdates)
 
@@ -94,6 +96,7 @@ internal fun LiveTvChannelBrowser(
     refreshing: Boolean = false,
     /** Entering the tab (also back from the player): scroll to [focusTarget], then focus it. */
     restoreFocus: Boolean = false,
+    preparedPlaybackReturn: Boolean = false,
     onFocusRestored: () -> Unit = {},
     pageFocusChain: PageFocusChain? = null,
     listing: LiveTvChannelListing = rememberLiveTvChannelListing(channels, events, options),
@@ -110,7 +113,9 @@ internal fun LiveTvChannelBrowser(
     val browsePending = refreshing || listing.building
     val positionKey = if (channelList) "channels" else "guide"
     val filterFocusState = controls.filterFocusState
-    val savedPosition = remember(browseState, positionKey) { browseState.position(positionKey) }
+    val savedPosition = remember(browseState, positionKey, preparedPlaybackReturn) {
+        browseState.position(positionKey).takeUnless { preparedPlaybackReturn }
+    }
     val initialChannelIndex = remember(visibleChannels, savedPosition, channelList, focusTarget) {
         visibleChannels.indexOfFirst {
             it.uuid == (savedPosition?.itemId ?: if (channelList) focusTarget.contentId else focusTarget.rowId)
@@ -140,6 +145,8 @@ internal fun LiveTvChannelBrowser(
     val centerGuideRows = !handheld && !channelList
     val rowCentering = rememberRowCenteringState(listState)
     val focusedGuideRow = remember(listState) { MutableStateFlow<String?>(null) }
+    val returnCenteringRow by rememberUpdatedState(focusTarget.rowId)
+    var skipReturnCentering by remember(listState, preparedPlaybackReturn) { mutableStateOf(preparedPlaybackReturn) }
     val channelIndices = remember(listing.visibleChannelIds) {
         listing.visibleChannelIds.withIndex().associate { it.value to it.index }
     }
@@ -152,7 +159,13 @@ internal fun LiveTvChannelBrowser(
         // lateral moves between its header and programmes must not start another vertical move.
         focusedGuideRow.collectLatest { id ->
             val index = id?.let(channelIndices::get)
-            if (index != null) rowCentering.centerItem(index)
+            if (index != null) {
+                if (skipReturnCentering && id == returnCenteringRow) {
+                    // This row is already placed before the return is revealed. Keep that first
+                    // frame still; subsequent D-pad moves retain the normal centering glide.
+                    skipReturnCentering = false
+                } else rowCentering.centerItem(index)
+            }
         }
     }
     val inheritedScrollSpec = LocalBringIntoViewSpec.current
@@ -352,7 +365,7 @@ internal fun LiveTvChannelBrowser(
                             val rowEventIds = remember(rowEvents) { rowEvents.map { "event:${it.eventId}" } }
                             RegisterRowColumnFocus(epgRowFocus, channel.uuid, rowState, rowEventIds)
                             // The row may keep an old saved position: show the current programme again.
-                            if (channelTarget && restoreFocus) LaunchedEffect(filterFocusState) {
+                            if (channelTarget && restoreFocus && !preparedPlaybackReturn) LaunchedEffect(filterFocusState) {
                                 if (filterFocusState.allowContentAutoFocus && rowEvents.isNotEmpty()) rowState.scrollToItem(guideLiveIndex(rowEvents, now))
                             }
                             DisposableEffect(rowState, rowEvents) {

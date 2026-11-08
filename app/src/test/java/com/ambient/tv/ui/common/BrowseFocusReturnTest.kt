@@ -67,12 +67,15 @@ import org.robolectric.annotation.Config
 class BrowseFocusReturnTest {
     @get:Rule val rule = createAndroidComposeRule<ComponentActivity>()
 
-    private class Fixture {
+    private class Fixture(val refreshNeighbours: Boolean = false) {
         var destination by mutableStateOf(Destinations.HOME)
         var itemIds by mutableStateOf((0 until 90).map { "item-$it" })
         var contentReady by mutableStateOf(true)
         var hold by mutableStateOf(false)
+        var playbackReturn by mutableStateOf<Pair<Long, BrowseFocusKey>?>(null)
+        var playbackController: BrowsePlaybackReturn? = null
         val sidebar = FocusRequester()
+        val firstChip = FocusRequester()
         val owners = mutableMapOf<String, BrowseFocusReturnState>()
         val grids = mutableMapOf<String, LazyGridState>()
         var sidebarOwnsFocus = false
@@ -100,11 +103,22 @@ class BrowseFocusReturnTest {
         NavReselect.restoreTop.value = false
     }
 
-    private fun mount(initialTarget: String = "item-0", enterContent: Boolean = true, hold: Boolean = false): Fixture {
-        val fixture = Fixture().also { it.hold = hold }
+    private fun mount(
+        initialTarget: String = "item-0",
+        enterContent: Boolean = true,
+        hold: Boolean = false,
+        refreshNeighbours: Boolean = false,
+    ): Fixture {
+        val fixture = Fixture(refreshNeighbours).also { it.hold = hold }
         currentFixture = fixture
         rule.setContent {
-            CompositionLocalProvider(LocalHandheldUi provides false) {
+            CompositionLocalProvider(
+                LocalHandheldUi provides false,
+                LocalPlaybackFocusRequest provides { request ->
+                    fixture.contentFocusPermit = true
+                    try { request() } finally { fixture.contentFocusPermit = false }
+                },
+            ) {
                 AmbientTvTheme {
                     Row(Modifier.fillMaxSize()) {
                         SidebarContent(
@@ -174,12 +188,15 @@ class BrowseFocusReturnTest {
             destination == Destinations.HOME -> initialTarget
             else -> ids.firstOrNull()
         })
+        if (fixture.refreshNeighbours) BrowseFocusRefreshRecovery(listOf(null to ids))
         BrowseFocusHoldEntry(fixture.hold)
+        val playback = rememberBrowsePlaybackReturn(fixture.playbackReturn?.first, fixture.playbackReturn?.second)
         SideEffect {
             fixture.owners[destination] = owner
             fixture.grids[destination] = grid
+            fixture.playbackController = playback
         }
-        Box(Modifier.fillMaxSize().focusRestorer().focusGroup()) {
+        Box(Modifier.fillMaxSize().then(playback.modifier).cancelBrowseRefreshRecoveryOnInput().focusRestorer().focusGroup()) {
             Column(
                 Modifier.fillMaxSize().padding(24.dp).focusGroup(),
                 verticalArrangement = Arrangement.spacedBy(12.dp),
@@ -198,6 +215,7 @@ class BrowseFocusReturnTest {
                             text = label,
                             selected = index == 0,
                             modifier = Modifier.testTag("$destination:chip:$label")
+                                .then(if (index == 0) Modifier.focusRequester(fixture.firstChip) else Modifier)
                                 .then(if (index == 0) Modifier.focusRequester(chain.selectedChip) else Modifier),
                             onClick = {},
                         )
@@ -421,5 +439,120 @@ class BrowseFocusReturnTest {
         focused(fixture.chipTag("All"))
     }
 
+    private fun awaitFocus(tag: String) {
+        rule.waitUntil(timeoutMillis = 2_000) {
+            runCatching { rule.onNodeWithTag(tag, useUnmergedTree = true).assertIsFocused() }.isSuccess
+        }
+        focused(tag)
+    }
+
+    @Test fun optedInRefreshKeepsFocusedIdentityAcrossLeadingInsertions() {
+        val fixture = mount(initialTarget = "item-3", refreshNeighbours = true)
+        rule.runOnIdle { fixture.itemIds = listOf("new-0", "new-1") + fixture.itemIds }
+        rule.waitForIdle()
+        focused(fixture.tileTag("item-3"))
+    }
+
+    @Test fun optedInRefreshChoosesOldImmediateNext() {
+        val fixture = mount(initialTarget = "item-3", refreshNeighbours = true)
+        rule.runOnIdle { fixture.itemIds = fixture.itemIds.filterNot { it == "item-3" } }
+        awaitFocus(fixture.tileTag("item-4"))
+    }
+
+    @Test fun optedInRefreshChoosesOldImmediatePreviousWhenNextIsGone() {
+        val fixture = mount(initialTarget = "item-3", refreshNeighbours = true)
+        rule.runOnIdle { fixture.itemIds = fixture.itemIds.filterNot { it in setOf("item-3", "item-4") } }
+        awaitFocus(fixture.tileTag("item-2"))
+    }
+
+    @Test fun optedInRefreshResetsToZeroWhenBothImmediateNeighboursAreGone() {
+        val fixture = mount(initialTarget = "item-3", refreshNeighbours = true)
+        rule.runOnIdle { fixture.itemIds = fixture.itemIds.filterNot { it in setOf("item-2", "item-3", "item-4") } }
+        awaitFocus(fixture.tileTag("item-0"))
+    }
+
+    @Test fun optedInRefreshKeepsTheChipAndUsesNeighbourOnlyOnContentReentry() {
+        val fixture = mount(refreshNeighbours = true)
+        press(Key.DirectionUp)
+        focused(fixture.chipTag("All"))
+        rule.runOnIdle { fixture.itemIds = fixture.itemIds.filterNot { it == "item-0" } }
+        rule.waitForIdle()
+        focused(fixture.chipTag("All"))
+        press(Key.DirectionDown)
+        awaitFocus(fixture.tileTag("item-1"))
+    }
+
+    @Test fun optedInSidebarReturnUsesTheOldImmediateNeighbour() {
+        val fixture = mount(refreshNeighbours = true)
+        enterSidebarFromThirdRow(fixture)
+        rule.runOnIdle { fixture.itemIds = fixture.itemIds.filterNot { it == "item-6" } }
+        rule.waitForIdle()
+        returnFromSidebar(fixture)
+        awaitFocus(fixture.tileTag("item-7"))
+    }
+
+    @Test fun realNavigationCancelsRefreshRecoveryWaitingForLayout() {
+        val fixture = mount(initialTarget = "item-3", refreshNeighbours = true)
+        rule.mainClock.autoAdvance = false
+        try {
+            rule.runOnIdle { fixture.itemIds = fixture.itemIds.filterNot { it == "item-3" } }
+            rule.mainClock.advanceTimeByFrame()
+            // The removed tile may temporarily hand focus to a header while the new lazy
+            // tree is measured. A real Right press there owns the resulting selection.
+            rule.runOnIdle { assertTrue(fixture.firstChip.requestFocus()) }
+            rule.onRoot().performKeyInput { pressKey(Key.DirectionRight) }
+            rule.mainClock.advanceTimeBy(300)
+            rule.waitForIdle()
+            focused(fixture.chipTag("Unwatched"))
+        } finally {
+            rule.mainClock.autoAdvance = true
+        }
+    }
+
+    @Test fun explicitPlaybackReturnOverridesRememberedHeaderBeforeSidebarEntry() {
+        val fixture = mount()
+        press(Key.DirectionUp)
+        focused(fixture.chipTag("All"))
+        rule.runOnIdle {
+            val owner = fixture.owners.getValue(fixture.destination)
+            owner.preparePlaybackReturn(1L, BrowseFocusKey(null, "item-3", true))
+            assertTrue(SidebarContentEntry.requestFocus() == true)
+        }
+        focused(fixture.tileTag("item-3"))
+    }
+
+    @Test fun playbackReturnRequestsExactTileThroughTheShellPermit() {
+        val fixture = mount(enterContent = false)
+        rule.runOnIdle {
+            fixture.playbackReturn = 1L to BrowseFocusKey(null, "item-6", true)
+        }
+        awaitFocus(fixture.tileTag("item-6"))
+        rule.runOnIdle {
+            assertFalse(checkNotNull(fixture.playbackController).pending)
+            assertFalse(fixture.contentFocusPermit)
+        }
+    }
+
+    @Test fun actualFocusedContentIsNullWhileHeaderOwnsFocus() {
+        val fixture = mount(initialTarget = "item-3")
+        rule.runOnIdle {
+            assertEquals(BrowseFocusKey(null, "item-3", true), fixture.owners.getValue(fixture.destination).focusedContentKey)
+            fixture.firstChip.requestFocus()
+        }
+        focused(fixture.chipTag("All"))
+        rule.runOnIdle { assertNull(fixture.owners.getValue(fixture.destination).focusedContentKey) }
+    }
+
+    @Test fun completedPlaybackRevisionDoesNotRearmWhenItsResolvedTargetChanges() {
+        val fixture = mount()
+        rule.runOnIdle { fixture.playbackReturn = 1L to BrowseFocusKey(null, "item-3", true) }
+        awaitFocus(fixture.tileTag("item-3"))
+        rule.runOnIdle { fixture.firstChip.requestFocus() }
+        focused(fixture.chipTag("All"))
+        rule.runOnIdle { fixture.playbackReturn = 1L to BrowseFocusKey(null, "item-6", true) }
+        rule.waitForIdle()
+        focused(fixture.chipTag("All"))
+        rule.runOnIdle { assertFalse(checkNotNull(fixture.playbackController).pending) }
+    }
 
 }

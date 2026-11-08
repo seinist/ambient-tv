@@ -550,26 +550,66 @@ private fun TrailerTitleScreen(onBack: () -> Unit, onPlay: (String, Long?) -> Un
     var serverTrailers by snapshot.serverTrailers
     val playbackContext = dependencies.playbackContext()
     val playbackScope = "trailer-title:$ratingKey:$tmdbType:$tmdbId"
+    val pendingReturn by playbackContext.pendingReturn.collectAsState()
+    val pendingTitleReturn = prepareTrailerTitleReturn(playbackScope, requestKey,
+        snapshot.playbackOrigin.value, pendingReturn,
+        dependencies.trailers().configured && dependencies.preferences().trailersEnabled)
+    val entryReturn = rememberPlaybackReturnOnEntry(pendingTitleReturn) { it.token }
+    val navigationReturn = rememberNavigationPlaybackReturn()
+    val returnedServerKey = remember(navigationReturn) {
+        navigationReturn?.itemId?.takeIf { key -> serverTrailers.any { it.ratingKey == key } }
+    }
+    val serverReturnToken = returnedServerKey?.let { "media:${navigationReturn?.revision}" }
+    val previewFocusKey = if (navigationReturn != null) returnedServerKey else entryReturn?.focusKey
+    val previewToken = if (navigationReturn != null) serverReturnToken else entryReturn?.token
+    val returnVisitToken = rememberPlaybackReturnVisitToken(previewToken)
+    val shownTitle = entryReturn?.title ?: title
+    val shownVideos = entryReturn?.videos ?: videos
+    val shownLoading = loading && entryReturn == null && returnedServerKey == null
     val sources = setOfNotNull("trailers", ratingKey?.let { com.ambient.tv.data.browse.mediaProvider(it) })
     com.ambient.tv.ui.common.RefreshOnEnterAndReconnect(sources) {
-        // Resolve the player's last successful selection before restoring any old focus.
-        // This also runs when navigation keeps this destination composed behind the player.
-        val returned = playbackContext.consumeReturn(playbackScope)
-        if (returned != null) selectedKey = "trailer-video:${returned.videoId}"
-        if (focusRequest == 0 || returned != null) {
+        val returned = entryReturn.takeIf { navigationReturn == null }
+        var committed = returned != null && playbackContext.commitReturn(playbackScope, returned.snapshot.revision) {
+            title = returned.title
+            videos = returned.videos
+            loadedKey = requestKey
+            loading = false
+            error = null
+            selectedKey = returned.focusKey
+            requestedFocusKey = returned.focusKey
+            snapshot.returnFocusToken.value = returned.token
+            focusRequest++
+        }
+        if (returnedServerKey != null && snapshot.returnFocusToken.value != serverReturnToken) {
+            selectedKey = returnedServerKey
+            requestedFocusKey = returnedServerKey
+            snapshot.returnFocusToken.value = serverReturnToken
+            loading = false
+            error = null
+            loadedKey = requestKey
+            focusRequest++
+            committed = true
+        }
+        if (focusRequest == 0) {
             requestedFocusKey = selectedKey
             focusRequest++
         }
-        retry++
+        // A prepared return already has the complete source list. It must not immediately
+        // load another ordering behind the freshly restored viewport.
+        if (!committed) retry++
     }
     BackHandler { onBack() }
     LaunchedEffect(ratingKey, retry) {
         if (retry == 0) return@LaunchedEffect
+        val returnTokenAtLoad = snapshot.returnFocusToken.value
         if (ratingKey == null) serverTrailers = emptyList()
-        else dependencies.media().getServerTrailers(ratingKey).onSuccess { serverTrailers = it }
+        else dependencies.media().getServerTrailers(ratingKey).onSuccess {
+            if (snapshot.returnFocusToken.value == returnTokenAtLoad) serverTrailers = it
+        }
     }
     LaunchedEffect(ratingKey, tmdbType, tmdbId, language, retry, version) {
         if (retry == 0) return@LaunchedEffect
+        val returnTokenAtLoad = snapshot.returnFocusToken.value
         val keepContent = loadedKey == requestKey
         loading = !keepContent; error = null
         if (!keepContent) videos = emptyList()
@@ -584,20 +624,24 @@ private fun TrailerTitleScreen(onBack: () -> Unit, onPlay: (String, Long?) -> Un
                 item.title to dependencies.trailers().forItem(item, language).getOrThrow()
             }
         }.onSuccess { (freshTitle, freshVideos) ->
-            title = freshTitle; videos = freshVideos; loadedKey = requestKey
-        }.onFailure { if (!keepContent) error = it }
-        loading = false
+            if (snapshot.returnFocusToken.value == returnTokenAtLoad) {
+                title = freshTitle; videos = freshVideos; loadedKey = requestKey
+            }
+        }.onFailure { if (!keepContent && snapshot.returnFocusToken.value == returnTokenAtLoad) error = it }
+        if (snapshot.returnFocusToken.value == returnTokenAtLoad) loading = false
     }
-    ReportSidebarContentReady(!loading)
+    ReportSidebarContentReady(!shownLoading)
     TrailerTitleContent(
-        title = title,
-        videos = videos,
+        title = shownTitle,
+        videos = shownVideos,
         serverTrailers = serverTrailers,
         configured = dependencies.trailers().configured && dependencies.preferences().trailersEnabled,
-        loading = loading,
-        error = error,
-        focusKey = requestedFocusKey,
+        loading = shownLoading,
+        error = error.takeIf { entryReturn == null },
+        focusKey = previewFocusKey ?: requestedFocusKey ?: selectedKey,
         focusRequest = focusRequest,
+        layoutToken = previewToken ?: snapshot.returnFocusToken.value ?: focusRequest,
+        returnToken = returnVisitToken ?: focusRequest.takeIf { snapshot.returnFocusToken.value == null && it > 0 },
         onBack = onBack,
         onOpenSettings = onOpenSettings,
         onRetry = { retry++ },
@@ -605,16 +649,24 @@ private fun TrailerTitleScreen(onBack: () -> Unit, onPlay: (String, Long?) -> Un
             selectedKey = "trailer-video:$videoId"
             val row = com.ambient.tv.youtube.YouTubeRow(
                 id = playbackScope,
-                title = title,
-                items = videos.map { video ->
+                title = shownTitle,
+                items = shownVideos.map { video ->
                     com.ambient.tv.youtube.YouTubeItem(videoId = video.key,
                         title = video.name.ifBlank { video.type },
                         imageUrl = "https://i.ytimg.com/vi/${video.key}/hqdefault.jpg")
                 },
             )
-            onPlay(videoId, playbackContext.start(playbackScope, row, videoId, isTrailer = true))
+            val token = playbackContext.start(playbackScope, row, videoId, isTrailer = true)
+            snapshot.playbackOrigin.value = token?.let {
+                TrailerTitlePlaybackOrigin(it, requestKey, shownTitle, shownVideos.toList())
+            }
+            onPlay(videoId, token)
         },
-        onPlayServerTrailer = { key -> selectedKey = key; onPlayServerTrailer(key) },
+        onPlayServerTrailer = { key ->
+            selectedKey = key
+            snapshot.playbackOrigin.value = null
+            onPlayServerTrailer(key)
+        },
         onFocused = { selectedKey = it },
     )
 }
@@ -652,36 +704,45 @@ internal fun TrailerTitleContent(
     onPlay: (String) -> Unit,
     onPlayServerTrailer: (String) -> Unit,
     onFocused: (String) -> Unit,
+    layoutToken: Any? = focusRequest,
+    returnToken: Any? = focusRequest.takeIf { it > 0 },
 ) {
-    val focus = remember { FocusRequester() }
-    val columnState = rememberLazyListState()
-    val serverState = rememberLazyListState()
-    val videoState = rememberLazyListState()
+    val content: @Composable () -> Unit = {
     val visibleVideos = if (configured && !loading && error == null) videos else emptyList()
     val target = remember(visibleVideos, serverTrailers, focusKey) {
         trailerTitleFocusTarget(visibleVideos, serverTrailers, focusKey)
     }
-    var appliedFocusRequest by remember { mutableIntStateOf(0) }
     val handheld = com.ambient.tv.ui.mobile.LocalHandheldUi.current
-    LaunchedEffect(focusRequest, target, loading, handheld) {
-        if (focusRequest <= appliedFocusRequest || loading || target == null) return@LaunchedEffect
-        // Both lazy layouts may have restored an older viewport. Make the actual returned
-        // video exist before requesting focus, including a TMDB row below server trailers.
-        columnState.scrollToItem(target.rowIndex)
-        val rowState = if (target.server) serverState else videoState
-        rowState.scrollToItem(target.itemIndex)
-        if (handheld || retryFocusFor { runCatching { focus.requestFocus() }.getOrDefault(false) }) {
-            appliedFocusRequest = focusRequest
-        }
-    }
-    LazyColumn(Modifier.fillMaxSize(), state = columnState, contentPadding = PaddingValues(start = 32.dp, end = 32.dp, bottom = 32.dp, top = com.ambient.tv.ui.common.pageHeaderTop(32.dp)), verticalArrangement = Arrangement.spacedBy(20.dp)) {
+    key(layoutToken) {
+    val focus = remember { FocusRequester() }
+    // New return identity creates both viewports at their final indices before first measure.
+    val columnState = rememberLazyListState(initialFirstVisibleItemIndex = target?.rowIndex ?: 0)
+    val serverState = rememberLazyListState(initialFirstVisibleItemIndex = target?.takeIf { it.server }?.itemIndex ?: 0)
+    val videoState = rememberLazyListState(initialFirstVisibleItemIndex = target?.takeUnless { it.server }?.itemIndex ?: 0)
+    val serverKeys = serverTrailers.map { it.ratingKey }
+    val videoKeys = visibleVideos.map { "trailer-video:${it.key}" }
+    RegisterBrowseFocusRows(columnState, buildList {
+        add("trailer-title-header" to emptyList())
+        if (serverKeys.isNotEmpty()) add("server-trailers" to serverKeys)
+        if (videoKeys.isNotEmpty()) add("tmdb-trailers" to videoKeys)
+    })
+    RegisterBrowseFocusList(serverState, serverKeys, rowKey = "server-trailers")
+    RegisterBrowseFocusList(videoState, videoKeys, rowKey = "tmdb-trailers")
+    val targetRow = target?.let { if (it.server) "server-trailers" else "tmdb-trailers" }
+    BrowseFocusContentIdentity(layoutToken ?: "trailer-title", restoreInitialTarget = true)
+    BrowseFocusInitialTarget(target?.key, targetRow)
+    val playbackReturn = rememberBrowsePlaybackReturn(returnToken,
+        target?.let { BrowseFocusKey(targetRow, it.key, content = true) }, enabled = !loading && !handheld)
+    LazyColumn(Modifier.fillMaxSize().then(playbackReturn.modifier), state = columnState, contentPadding = PaddingValues(start = 32.dp, end = 32.dp, bottom = 32.dp, top = com.ambient.tv.ui.common.pageHeaderTop(32.dp)), verticalArrangement = Arrangement.spacedBy(20.dp)) {
         item(key = "trailer-title-header") { PageHeader(actions = {
             TvChip(stringResource(R.string.trailers_back), modifier = Modifier.leftKeyAction(onBack), icon = Icons.AutoMirrored.Filled.ArrowBack, iconOnly = true, onClick = onBack)
         }) {
             Text(title.ifBlank { stringResource(R.string.trailers_title) }, style = MaterialTheme.typography.headlineLarge)
         } }
         if (serverTrailers.isNotEmpty()) item(key = "server-trailers") {
-            ServerTrailerRow(serverTrailers, onPlayServerTrailer, focus, target?.key, serverState, onFocused)
+            BrowseFocusRow("server-trailers") {
+                ServerTrailerRow(serverTrailers, onPlayServerTrailer, focus, target?.key, serverState, onFocused)
+            }
         }
         when {
             !configured ->
@@ -692,10 +753,15 @@ internal fun TrailerTitleContent(
                 StatePanel(stringResource(R.string.trailers_empty), stringResource(R.string.trailers_empty_title))
             } else Unit
             else -> item(key = "tmdb-trailers") {
-                TrailerVideoRow(videos, onPlay, focus, target?.key, videoState, onFocused)
+                BrowseFocusRow("tmdb-trailers") {
+                    TrailerVideoRow(videos, onPlay, focus, target?.key, videoState, onFocused)
+                }
             }
         }
     }
+    }
+    }
+    if (LocalBrowseFocusReturnState.current == null) BrowseFocusReturnScope { content() } else content()
 }
 
 /** Trailers stored with the title on the media server; played by the regular player. */
@@ -710,6 +776,7 @@ private fun ServerTrailerRow(trailers: List<MediaItem>, onPlay: (String) -> Unit
                     text = trailer.title.ifBlank { stringResource(R.string.trailers_title) },
                     onClick = { onPlay(trailer.ratingKey) },
                     modifier = (if (trailer.ratingKey == focusKey) Modifier.focusRequester(focus) else Modifier)
+                        .browseFocusTarget(trailer.ratingKey)
                         .onFocusChanged { if (it.isFocused) onFocused(trailer.ratingKey) },
                 )
             }

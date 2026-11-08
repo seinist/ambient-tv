@@ -52,11 +52,13 @@ class DetailRowFocusTest {
 
     @Test fun rememberingOneRowDoesNotOverwriteOtherRowsOrClearThemAtTheHero() {
         val memory = DetailFocusMemory()
+        assertFalse(memory.hasRecordedFocus)
         memory.record("children:plex:episode:4")
         memory.record("cast:actor:7")
         memory.record("similar:movie:2")
         memory.record(null)
         assertNull(memory.key)
+        assertTrue(memory.hasRecordedFocus)
         assertEquals(mapOf("children" to "children:plex:episode:4", "cast" to "cast:actor:7", "similar" to "similar:movie:2"), memory.rowItems())
     }
 
@@ -110,6 +112,75 @@ class DetailRowFocusTest {
             assertFalse(type, detailShowsMissingPlaybackSource(type, hasMediaVersions = true, hasActivePlayback = false))
             assertFalse(type, detailShowsMissingPlaybackSource(type, hasMediaVersions = false, hasActivePlayback = true))
         }
+    }
+
+    @Test fun aPlaybackReturnSeedsBothAxesAtTheActualEpisodeBeforeLayout() {
+        val episode = media("episode:8").copy(linkedRatingKeys = listOf("server-b:episode:8"))
+        val siblings = (1..7).map { media("episode:$it") } + episode
+        val returned = DetailPlaybackReturn("season:2", "server-b:episode:8", 1L)
+        val requested = detailPlaybackFocusKey(media("season:2", "season"), siblings, returned, "children:episode:2")
+        val target = detailEntryFocusTarget(requested, listOf(
+            DetailFocusRow("hero", 0, listOf("hero")),
+            DetailFocusRow("season-strip", 1, listOf("season-strip:series", "season-strip:season:2")),
+            DetailFocusRow("children", 2, siblings.map { "children:${it.ratingKey}" }, "children:episode:1"),
+        ))
+        assertEquals(DetailEntryFocusTarget("children", "children:episode:8", 2, 7), target)
+    }
+
+    @Test fun removedSavedCardUsesItsRowDefaultBeforeConstructingTheLazyState() {
+        val rows = listOf(
+            DetailFocusRow("hero", 0, listOf("hero")),
+            DetailFocusRow("children", 2, listOf("children:a", "children:c"), "children:c"),
+        )
+        assertEquals(DetailEntryFocusTarget("children", "children:c", 2, 1), detailEntryFocusTarget("children:removed", rows))
+        assertEquals(DetailEntryFocusTarget("hero", "hero", 0, 0), detailEntryFocusTarget("cast:removed-row", rows))
+        assertNull(detailEntryFocusTarget("children:a", emptyList()))
+    }
+
+    @Test fun missingReturnEpisodeWaitsForItsSiblingsButCachedExactEpisodeDoesNot() {
+        val episode = media("episode:8")
+        val returned = DetailPlaybackReturn(episode.ratingKey, episode.ratingKey, 1L)
+        assertEquals("children:episode:8", detailPlaybackFocusKey(episode, emptyList(), returned, null))
+        assertTrue(detailEntryWaitsForChildren(episode, emptyList(), true, returned, null))
+        assertTrue(detailEntryWaitsForChildren(episode, listOf(media("episode:1")), true, returned, null))
+        assertFalse(detailEntryWaitsForChildren(episode, listOf(episode), true, returned, null))
+        assertFalse(detailEntryWaitsForChildren(episode, emptyList(), false, returned, null))
+    }
+
+    @Test fun normalSeasonEntryWaitsOnlyUntilItsInitialEpisodeRowExists() {
+        val season = media("season:2", "season")
+        assertTrue(detailEntryWaitsForChildren(season, emptyList(), true, null, null))
+        assertFalse(detailEntryWaitsForChildren(season, listOf(media("episode:1")), true, null, null))
+        assertFalse(detailEntryWaitsForChildren(season, emptyList(), true, null, "cast:actor:1"))
+        assertFalse(detailEntryWaitsForChildren(season, emptyList(), false, null, null))
+        // A recorded null means the hero was selected, rather than an unvisited season.
+        assertFalse(detailEntryWaitsForChildren(season, emptyList(), true, null, null, hasRecordedFocus = true))
+    }
+
+    @Test fun playbackReturnIsRecordedBeforeNavigationAndConsumesOnlyItsOwnRevision() {
+        val session = DetailFocusSessionStore()
+        session.preparePlaybackReturn("season:2", "episode:8")
+        val first = checkNotNull(session.pendingPlaybackReturn("season:2"))
+        session.preparePlaybackReturn("season:2", "episode:9")
+        val second = checkNotNull(session.pendingPlaybackReturn("season:2"))
+        assertTrue(second.revision > first.revision)
+        session.consumePlaybackReturn(first)
+        assertEquals(second, session.pendingPlaybackReturn("season:2"))
+        session.consumePlaybackReturn(second)
+        assertNull(session.pendingPlaybackReturn("season:2"))
+        session.preparePlaybackReturn("episode:9", "episode:9")
+        session.clear()
+        assertNull(session.pendingPlaybackReturn("episode:9"))
+    }
+
+    @Test fun entryGenerationChangesOnlyOnActualReentry() {
+        val entry = DetailFocusEntry()
+        assertEquals(0L, entry.enter(false))
+        assertEquals(1L, entry.enter(true))
+        assertEquals(1L, entry.enter(true))
+        assertEquals(1L, entry.enter(false))
+        assertEquals(1L, entry.enter(false))
+        assertEquals(2L, entry.enter(true))
     }
 
     private fun media(key: String, type: String = "episode") = MediaItem(

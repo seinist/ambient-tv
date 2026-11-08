@@ -41,8 +41,8 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.shape.RoundedCornerShape
 import com.ambient.tv.ui.common.TvLazyColumn as LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.platform.LocalConfiguration
@@ -61,6 +61,7 @@ import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.gestures.BringIntoViewSpec
 import androidx.compose.foundation.gestures.LocalBringIntoViewSpec
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
@@ -141,6 +142,18 @@ import com.ambient.tv.ui.common.formatDuration
 import com.ambient.tv.ui.common.formatResolution
 import com.ambient.tv.ui.common.resolutionPixelCount
 import com.ambient.tv.ui.common.rememberArtworkAccent
+import com.ambient.tv.ui.common.BrowseFocusReturnScope
+import com.ambient.tv.ui.common.BrowseFocusContentIdentity
+import com.ambient.tv.ui.common.BrowseFocusInitialTarget
+import com.ambient.tv.ui.common.BrowseFocusHoldEntry
+import com.ambient.tv.ui.common.BrowseFocusKey
+import com.ambient.tv.ui.common.BrowseFocusSlot
+import com.ambient.tv.ui.common.RegisterBrowseFocusSlots
+import com.ambient.tv.ui.common.LocalBrowseFocusReturnState
+import com.ambient.tv.ui.common.rememberBrowsePlaybackReturn
+import com.ambient.tv.ui.common.rememberPlaybackReturnOnEntry
+import com.ambient.tv.ui.common.isActiveNavigationDestination
+import com.ambient.tv.ui.navigation.ReportSidebarContentReady
 import com.ambient.tv.ui.theme.LocalAccentModeKey
 import com.ambient.tv.trailers.rememberTrailerAvailable
 import kotlinx.coroutines.delay
@@ -166,10 +179,17 @@ fun DetailScreen(
     com.ambient.tv.ui.common.RefreshOnEnterAndReconnect(viewModel.reconnectSources, viewModel::load)
     val uiState by viewModel.uiState.collectAsState()
     ThemeMusicEffect(viewModel.themeMusicPlayer, (uiState as? DetailUiState.Loaded)?.themeMusic)
+    BrowseFocusReturnScope {
     Box(modifier = Modifier.fillMaxSize()) {
         when (val state = uiState) {
-            DetailUiState.Loading -> DetailLoadingSkeleton(onBack = onBack, onOpenSettings = onOpenSettings)
+            DetailUiState.Loading -> {
+                BrowseFocusHoldEntry(true)
+                ReportSidebarContentReady(false)
+                DetailLoadingSkeleton(onBack = onBack, onOpenSettings = onOpenSettings, requestInitialFocus = false)
+            }
             is DetailUiState.Error -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                BrowseFocusHoldEntry(false)
+                ReportSidebarContentReady(true)
                 StatePanel(
                     title = stringResource(R.string.detail_load_failed),
                     body = state.messageRes?.let { stringResource(it) } ?: state.message.ifBlank { stringResource(R.string.error_generic) },
@@ -185,12 +205,38 @@ fun DetailScreen(
             }
             is DetailUiState.Loaded -> {
                 val focusScope = viewModel.focusScope
-                androidx.compose.runtime.key(focusScope, state.item.ratingKey) {
+                val active = isActiveNavigationDestination()
+                val entry = remember(focusScope, state.item.ratingKey) { DetailFocusEntry() }
+                val entryToken = entry.enter(active)
+                val acceptedReturn = rememberPlaybackReturnOnEntry(DetailFocusSessions.pendingPlaybackReturn(state.item.ratingKey)) { it.revision }
+                var committedReturn by remember(focusScope, state.item.ratingKey) { mutableStateOf<DetailPlaybackReturn?>(null) }
+                val returned = acceptedReturn ?: committedReturn.takeIf { active }
+                SideEffect {
+                    if (!active) committedReturn = null
+                    else if (acceptedReturn != null) {
+                        committedReturn = acceptedReturn
+                        DetailFocusSessions.consumePlaybackReturn(acceptedReturn)
+                    }
+                }
+                var entryPrepared by remember(focusScope, state.item.ratingKey, entryToken, returned?.revision) { mutableStateOf(false) }
+                val pageMemory = remember(focusScope, state.item.ratingKey) { DetailFocusSessions.page(focusScope, state.item.ratingKey) }
+                val waitingForEntry = !entryPrepared && !LocalHandheldUi.current && detailEntryWaitsForChildren(
+                    state.item, state.children, state.childrenLoading, returned,
+                    pageMemory.key, pageMemory.hasRecordedFocus,
+                )
+                SideEffect { if (!waitingForEntry) entryPrepared = true }
+                BrowseFocusHoldEntry(waitingForEntry)
+                ReportSidebarContentReady(!waitingForEntry)
+                if (waitingForEntry) {
+                    DetailLoadingSkeleton(onBack, onOpenSettings, requestInitialFocus = false)
+                } else androidx.compose.runtime.key(focusScope, state.item.ratingKey, returned?.revision) {
                     DetailContent(
                         fallbackBackdrop = viewModel.fallbackBackdrop.collectAsState().value,
                         onTrailer = onTrailer,
                         item = state.item,
                         focusScope = focusScope,
+                        entryToken = entryToken,
+                        playbackReturn = returned,
                         playbackAvailable = !state.offline && !state.removed,
                         availabilityMessage = if (state.removed) R.string.browse_item_removed else if (state.offline) R.string.browse_offline else null,
                         children = state.children,
@@ -223,6 +269,7 @@ fun DetailScreen(
             }
         }
     }
+    }
 }
 
 /** Theme music follows the page: it stops when the page is left or the app goes to the background. */
@@ -240,6 +287,7 @@ private fun ThemeMusicEffect(player: ThemeMusicPlayer, music: ThemeMusic?) {
 private fun DetailLoadingSkeleton(
     onBack: () -> Unit,
     onOpenSettings: () -> Unit,
+    requestInitialFocus: Boolean = true,
 ) {
     val visibleBackgroundVideo = LocalVisibleBackgroundVideo.current
     Box(modifier = Modifier.fillMaxSize().background(if (visibleBackgroundVideo) Color.Transparent else MaterialTheme.colorScheme.background)) {
@@ -287,7 +335,7 @@ private fun DetailLoadingSkeleton(
         PageUtilityBar(
             onBack = onBack,
             onSettings = onOpenSettings,
-            requestInitialFocus = true,
+            requestInitialFocus = requestInitialFocus,
             leftNavigatesBack = false,
             modifier = Modifier.align(Alignment.TopCenter),
         )
@@ -304,6 +352,8 @@ internal fun DetailContent(
     onTrailer: ((MediaItem) -> Unit)?,
     item: MediaItem,
     focusScope: String,
+    entryToken: Any = Unit,
+    playbackReturn: DetailPlaybackReturn? = null,
     children: List<MediaItem>,
     childrenLoading: Boolean,
     childrenLoadFailed: Boolean,
@@ -329,27 +379,38 @@ internal fun DetailContent(
     editSupport: com.ambient.tv.domain.model.MetadataEditSupport,
     onMetadataEdited: (Boolean) -> Unit,
 ) {
+    val handheld = LocalHandheldUi.current
+    val active = isActiveNavigationDestination()
+    val browseFocus = LocalBrowseFocusReturnState.current
     var showMore by remember(item.ratingKey) { mutableStateOf(false) }
     var showEdit by remember(item.ratingKey) { mutableStateOf(false) }
     // One process-session memory per source and detail. Only string identifiers survive a
     // popped route; the controller and its requesters remain owned by this composition.
     val focusMemory = remember(focusScope, item.ratingKey) { DetailFocusSessions.page(focusScope, item.ratingKey) }
-    val columnFocus = remember(focusScope, item.ratingKey) { RowColumnFocus(focusMemory.rowItems()) }
-    var restoreFocusPending by remember(focusScope, item.ratingKey) { mutableStateOf(focusMemory.key != null) }
-    var childFocusPending by remember(focusScope, item.ratingKey) {
-        mutableStateOf(item.type in setOf("season", "collection") && focusMemory.key == null)
+    val savedFocusKey = detailPlaybackFocusKey(item, children, playbackReturn, focusMemory.key)
+    val columnFocus = remember(focusScope, item.ratingKey, entryToken) {
+        RowColumnFocus(focusMemory.rowItems() + listOfNotNull(savedFocusKey?.let { key ->
+            detailRowForFocusKey(key)?.let { it to key }
+        }).toMap())
+    }
+    var restoreFocusPending by remember(focusScope, item.ratingKey, entryToken) { mutableStateOf(savedFocusKey != null) }
+    var childFocusPending by remember(focusScope, item.ratingKey, entryToken) {
+        mutableStateOf(item.type in setOf("season", "collection") && savedFocusKey == null && !focusMemory.hasRecordedFocus)
     }
     val preferredChild = remember(item, children, nextEpisode) { detailPreferredChildKey(item, children, nextEpisode) }
     val childKeys = remember(children) { children.map { "children:${it.ratingKey}" } }
     val childFocusKey = if (childFocusPending) {
         (columnFocus.rememberedItem("children") as? String)?.takeIf { it in childKeys } ?: preferredChild
     } else null
-    val restoreFocusKey = focusMemory.key.takeIf { restoreFocusPending } ?: childFocusKey
-    var enterPrimaryPending by remember(focusScope, item.ratingKey) { mutableStateOf(false) }
-    var initialFocusHandled by remember(focusScope, item.ratingKey) { mutableStateOf(false) }
-    var requestUtilityFocus by remember(focusScope, item.ratingKey) { mutableStateOf(false) }
-    var focusedVersionKey by remember(focusScope, item.ratingKey) { mutableStateOf<String?>(null) }
+    val requestedFocusKey = savedFocusKey.takeIf { restoreFocusPending } ?: childFocusKey
+    var enterPrimaryPending by remember(focusScope, item.ratingKey, entryToken) { mutableStateOf(false) }
+    var initialFocusHandled by remember(focusScope, item.ratingKey, entryToken) { mutableStateOf(false) }
+    var requestUtilityFocus by remember(focusScope, item.ratingKey, entryToken) { mutableStateOf(false) }
+    var focusedVersionKey by remember(focusScope, item.ratingKey, entryToken) { mutableStateOf<String?>(null) }
+    val entryFocusAddress = remember(entryToken) { arrayOfNulls<String>(1) }
+    val entryController = remember(entryToken) { arrayOfNulls<com.ambient.tv.ui.common.BrowsePlaybackReturn>(1) }
     fun rememberFocused(key: String?) {
+        if (entryController[0]?.pending == true && (key ?: "hero") != entryFocusAddress[0]) return
         initialFocusHandled = true
         requestUtilityFocus = false
         focusMemory.record(key)
@@ -359,7 +420,11 @@ internal fun DetailContent(
         enterPrimaryPending = false
     }
     var restoreTrailer by androidx.compose.runtime.saveable.rememberSaveable(item.ratingKey) { mutableStateOf(false) }
-    val trailerAvailable = if (playbackAvailable && onTrailer != null) rememberTrailerAvailable(item, true) else false
+    val detectedTrailer = if (playbackAvailable && onTrailer != null) rememberTrailerAvailable(item, true) else false
+    // The return address itself proves that this button existed when playback opened. Keep
+    // it while availability is revalidated, so returning does not briefly focus Play instead.
+    val trailerAvailable = detectedTrailer || (playbackAvailable && onTrailer != null &&
+        (restoreTrailer || (restoreFocusPending && savedFocusKey == "hero:trailer")))
     val activePlayback = com.ambient.tv.companion.playbackIndicator(item)
     val heroHasFocusTarget = remember(
         item.type, item.mediaVersions, item.progressFraction, nextEpisode?.ratingKey,
@@ -389,7 +454,7 @@ internal fun DetailContent(
         }
     }
     LaunchedEffect(item.ratingKey, trailerAvailable, restoreTrailer) {
-        if (trailerAvailable && restoreTrailer) {
+        if (active && browseFocus == null && trailerAvailable && restoreTrailer) {
             withFrameNanos { }
             runCatching { initialActionFocus.requestFocus() }
         }
@@ -445,7 +510,6 @@ internal fun DetailContent(
             ),
         )
 
-        val listState = rememberLazyListState()
         val childrenSectionVisible = children.isNotEmpty() || detailShowsChildrenSection(item.type)
         val seasonStripVisible = item.type in setOf("season", "episode") && seasons.isNotEmpty() &&
             seriesKeyForSeasonStrip(item.type, item.parentRatingKey, item.grandparentRatingKey) != null
@@ -487,6 +551,44 @@ internal fun DetailContent(
             if (similar.isNotEmpty()) add("similar")
             actorRows.filter { it.items.isNotEmpty() }.forEach { add("actor:${it.actorId}") }
             if (item.collections.any { it.id != null }) add("collections")
+        }
+        val focusRows = buildList {
+            if (heroHasFocusTarget) add(DetailFocusRow("hero", 0,
+                listOf("hero") + if (trailerAvailable) listOf("hero:trailer") else emptyList()))
+            versionRowKeys.forEach { add(DetailFocusRow(it, 0, listOf(it))) }
+            if (seasonStripVisible) add(DetailFocusRow("season-strip", rowSectionIndices.getValue("season-strip"),
+                listOf("season-strip:series") + seasons.map { "season-strip:${it.ratingKey}" }))
+            if ("children" in rowOrder) add(DetailFocusRow("children", rowSectionIndices.getValue("children"),
+                childKeys.ifEmpty { listOf("children:retry") }, preferredChild))
+            if ("cast" in rowOrder) add(DetailFocusRow("cast", rowSectionIndices.getValue("cast"),
+                castItems.filter { it.id != null }.map { "cast:${it.id ?: it.name}" }, rowDefaults["cast"]))
+            if ("similar" in rowOrder) add(DetailFocusRow("similar", rowSectionIndices.getValue("similar"),
+                similar.map { "similar:${it.ratingKey}" }))
+            actorRows.filter { it.items.isNotEmpty() }.forEach { row ->
+                val rowKey = "actor:${row.actorId}"
+                add(DetailFocusRow(rowKey, rowSectionIndices.getValue(rowKey), row.items.map { "$rowKey\u0000${it.ratingKey}" }))
+            }
+            if ("collections" in rowOrder) add(DetailFocusRow("collections", rowSectionIndices.getValue("collections"),
+                item.collections.filter { it.id != null }.map { "collection:${it.id ?: it.name}" }, rowDefaults["collections"]))
+        }
+        val entryTarget = detailEntryFocusTarget(
+            if (restoreTrailer && trailerAvailable) "hero:trailer" else requestedFocusKey, focusRows,
+        )
+        val restoreFocusKey = entryTarget?.item.takeUnless { initialFocusHandled }
+        // Session row memory is the source of truth. Saved LazyListState indices can describe
+        // a different episode/order, so construct both axes from the prepared address on entry.
+        val listState = remember(entryToken) { LazyListState(entryTarget?.sectionIndex ?: 0) }
+        BrowseFocusContentIdentity(listOf(focusScope, item.ratingKey, entryToken, playbackReturn?.revision), restoreInitialTarget = true)
+        BrowseFocusInitialTarget(entryTarget?.item, entryTarget?.row)
+        RegisterBrowseFocusSlots(listState, focusRows.flatMap { row ->
+            row.items.map { BrowseFocusSlot(BrowseFocusKey(row.key, it, true), row.sectionIndex) }
+        })
+        val handoffToken = remember(entryToken, playbackReturn?.revision) { Any() }
+        val playbackEntry = rememberBrowsePlaybackReturn(handoffToken,
+            entryTarget?.let { BrowseFocusKey(it.row, it.item, true) }, enabled = !handheld && !showMore && !showEdit)
+        SideEffect {
+            entryFocusAddress[0] = entryTarget?.item
+            entryController[0] = playbackEntry
         }
         val scrollScope = rememberCoroutineScope()
         suspend fun focusRow(rowKey: String, stillRequested: () -> Boolean): Boolean {
@@ -537,8 +639,9 @@ internal fun DetailContent(
         }
         // Resolve initial focus once per page, waiting for asynchronous rows when needed.
         // Later metadata updates must not steal focus from Back/Settings or another row.
-        LaunchedEffect(focusScope, item.ratingKey, childFocusKey, childrenLoading, childrenLoadFailed, similarLoading, sectionKeys, rowOrder) {
-            if (initialFocusHandled) return@LaunchedEffect
+        LaunchedEffect(focusScope, item.ratingKey, entryToken, active, childFocusKey, childrenLoading, childrenLoadFailed, similarLoading, sectionKeys, rowOrder) {
+            if (!active || initialFocusHandled) return@LaunchedEffect
+            if (!handheld && browseFocus != null && entryTarget != null) return@LaunchedEffect
             if (childFocusPending && childFocusKey != null) {
                 // Compose the child row before its tile requests focus (it may be below
                 // a tall hero). The row starts with the destination already visible.
@@ -663,7 +766,7 @@ internal fun DetailContent(
             CompositionLocalProvider(LocalBringIntoViewSpec provides baseBringIntoViewSpec) {
                 Box(
                     Modifier.onFocusChanged { focus ->
-                        if (focus.hasFocus && !hadFocus.value) alignSection(key)
+                        if (focus.hasFocus && !hadFocus.value && !playbackEntry.pending) alignSection(key)
                         hadFocus.value = focus.hasFocus
                     },
                 ) { content() }
@@ -671,7 +774,7 @@ internal fun DetailContent(
         }
         CompositionLocalProvider(
             LocalBringIntoViewSpec provides detailBringIntoViewSpec,
-            LocalDetailRowFocus provides DetailRowFocusContext(columnFocus, rowDefaults),
+            LocalDetailRowFocus provides DetailRowFocusContext(columnFocus, rowDefaults, entryToken),
         ) {
         LazyColumn(
             wrapVerticalFocus = false,
@@ -679,6 +782,7 @@ internal fun DetailContent(
             focusActionsOnRight = false,
             state = listState,
             modifier = Modifier.fillMaxSize()
+                .then(playbackEntry.modifier)
                 .onPreviewKeyEvent { event ->
                     if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
                     if (event.key == Key.DirectionDown && heroHasFocus.value &&
@@ -721,13 +825,21 @@ internal fun DetailContent(
                         DetailHero(
                             playbackAvailable = playbackAvailable,
                             availabilityMessage = availabilityMessage,
-                            onTrailer = onTrailer?.let { action -> { media -> restoreTrailer = true; action(media) } },
+                            onTrailer = onTrailer?.let { action -> { media ->
+                                restoreTrailer = true
+                                focusMemory.record("hero:trailer")
+                                action(media)
+                            } },
                             restoreTrailer = restoreTrailer && trailerAvailable,
                             trailerAvailable = trailerAvailable,
                             item = item,
                             nextEpisode = nextEpisode,
                             autoSelectDisplayVersion = autoSelectDisplayVersion,
-                            onPlay = { media, version, restart -> restoreTrailer = false; onPlay(media, version, restart) },
+                            onPlay = { media, version, restart ->
+                                restoreTrailer = false
+                                if (focusMemory.key == "hero:trailer") focusMemory.record(null)
+                                onPlay(media, version, restart)
+                            },
                             onMore = {
                                 moreOpened = true
                                 showMore = true
@@ -887,7 +999,7 @@ private class DetailBringIntoViewSpec(
         distance(offset, size, containerSize)
 }
 
-private data class DetailRowFocusContext(val focus: RowColumnFocus, val defaults: Map<String, String>)
+private data class DetailRowFocusContext(val focus: RowColumnFocus, val defaults: Map<String, String>, val entryToken: Any)
 private val LocalDetailRowFocus = staticCompositionLocalOf<DetailRowFocusContext?> { null }
 
 @Composable
@@ -1056,7 +1168,9 @@ private fun DetailHero(
                         TvActionButton(
                             text = stringResource(R.string.trailers_play),
                             onClick = { onTrailer(item) },
-                            modifier = if (restoreTrailer) Modifier.focusRequester(initialActionFocus) else Modifier,
+                            modifier = Modifier.detailRowTarget("hero", "hero:trailer", columnFocus)
+                                .onFocusChanged { if (it.isFocused) onVersionFocused("hero:trailer") }
+                                .then(if (restoreTrailer) Modifier.focusRequester(initialActionFocus) else Modifier),
                         )
                     }
                 }
@@ -1193,8 +1307,9 @@ private val VERSION_ROW_HEIGHT = 56.dp
 @Composable
 private fun RestoreDetailFocus(requested: Boolean, requester: FocusRequester) {
     val handheld = LocalHandheldUi.current
-    LaunchedEffect(requested, handheld) {
-        if (!requested || handheld) return@LaunchedEffect
+    val browseFocus = LocalBrowseFocusReturnState.current
+    LaunchedEffect(requested, handheld, browseFocus) {
+        if (!requested || handheld || browseFocus != null) return@LaunchedEffect
         repeat(3) {
             withFrameNanos { }
             if (runCatching { requester.requestFocus() }.getOrDefault(false)) return@LaunchedEffect
@@ -1219,20 +1334,16 @@ private fun rememberDetailRowState(
             focusKeys.forEachIndexed { index, key -> if (key !in this) put(key, index) }
         }
     }
-    val entryKey = remembered?.takeIf { it in focusable }
-        ?: restoreFocusKey?.takeIf { it in focusable }
+    val entryKey = restoreFocusKey?.takeIf { it in focusable }
+        ?: remembered?.takeIf { it in focusable }
         ?: defaultKey?.takeIf { it in focusable }
         ?: focusableKeys.firstOrNull()
     val initialIndex = entryKey?.let(indices::get) ?: 0
-    val state = rememberLazyListState(initialFirstVisibleItemIndex = initialIndex)
+    val state = remember(navigation?.entryToken, rowKey) { LazyListState(initialIndex) }
     RegisterRowColumnFocus(
         navigation?.focus, rowKey, state, focusKeys,
         defaultItemKey = defaultKey, focusableItemKeys = focusableKeys,
     )
-    LaunchedEffect(restoreFocusKey, focusKeys, focusableKeys) {
-        val targetIndex = restoreFocusKey?.takeIf { it in focusable }?.let(indices::get) ?: -1
-        if (targetIndex >= 0) state.scrollToItem(targetIndex)
-    }
     return state
 }
 
