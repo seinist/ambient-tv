@@ -279,6 +279,46 @@ class YouTubeOsdNavigationTest {
         }
     }
 
+    @Test fun seekableLiveDvrShowsGoLiveActionAndRewindControls() {
+        val fixture = mount()
+        var goLiveRequests = 0
+        val seekDeltas = mutableListOf<Long>()
+        rule.runOnIdle {
+            fixture.model.value = fixture.model.value.copy(
+                playback = fixture.model.value.playback.copy(isLive = true),
+                position = 45_000L,
+                duration = 120_000L,
+                liveDvrWindow = YouTubeLiveDvrWindow(120_000L),
+                onGoLive = { goLiveRequests++ },
+                onSeek = { seekDeltas += it },
+            )
+        }
+        rule.onNodeWithContentDescription(rule.activity.getString(R.string.timeshift_go_live))
+            .assertIsDisplayed().performClick()
+        rule.runOnIdle { assertEquals(1, goLiveRequests) }
+        // The rewind buttons are gated by actual DVR support, not by !isLive.
+        rule.onNodeWithContentDescription(rule.activity.getString(R.string.player_seek_back, 10))
+            .assertIsDisplayed().performClick()
+        rule.runOnIdle { assertTrue(seekDeltas.any { it < 0L }) }
+    }
+
+    @Test fun ordinaryLiveStreamNeverExposesFalseSeekingOrGoLiveAction() {
+        val fixture = mount()
+        rule.runOnIdle {
+            fixture.model.value = fixture.model.value.copy(
+                playback = fixture.model.value.playback.copy(isLive = true),
+                position = 45_000L,
+                duration = 120_000L,
+                liveDvrWindow = null,
+                onGoLive = {},
+            )
+        }
+        rule.onNodeWithContentDescription(rule.activity.getString(R.string.timeshift_go_live))
+            .assertDoesNotExist()
+        rule.onNodeWithContentDescription(rule.activity.getString(R.string.player_seek_back, 10))
+            .assertDoesNotExist()
+    }
+
     @Test fun contentWithoutVideoItemControlsDoesNotAdvertiseNavigationButtons() {
         val fixture = mount()
         rule.runOnIdle { fixture.model.value = fixture.model.value.copy(itemControls = null) }
