@@ -30,6 +30,10 @@ import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.focusRestorer
 import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onKeyEvent
+import androidx.compose.ui.input.key.type
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.test.ExperimentalTestApi
 import androidx.compose.ui.test.assertIsDisplayed
@@ -70,6 +74,8 @@ class BrowseFocusReturnTest {
     private class Fixture(val refreshNeighbours: Boolean = false) {
         var destination by mutableStateOf(Destinations.HOME)
         var itemIds by mutableStateOf((0 until 90).map { "item-$it" })
+        var focusSnapshot by mutableStateOf<List<String>?>(null)
+        val activations = mutableListOf<String>()
         var contentReady by mutableStateOf(true)
         var hold by mutableStateOf(false)
         var playbackReturn by mutableStateOf<Pair<Long, BrowseFocusKey>?>(null)
@@ -188,7 +194,7 @@ class BrowseFocusReturnTest {
             destination == Destinations.HOME -> initialTarget
             else -> ids.firstOrNull()
         })
-        if (fixture.refreshNeighbours) BrowseFocusRefreshRecovery(listOf(null to ids))
+        if (fixture.refreshNeighbours) BrowseFocusRefreshRecovery(listOf(null to (fixture.focusSnapshot ?: ids)))
         BrowseFocusHoldEntry(fixture.hold)
         val playback = rememberBrowsePlaybackReturn(fixture.playbackReturn?.first, fixture.playbackReturn?.second)
         SideEffect {
@@ -235,6 +241,12 @@ class BrowseFocusReturnTest {
                                 Modifier.fillMaxWidth().height(88.dp)
                                     .testTag("$destination:tile:$id")
                                     .browseFocusTarget(id)
+                                    .onKeyEvent { event ->
+                                        if (event.key == Key.Enter && event.type == KeyEventType.KeyUp) {
+                                            fixture.activations += id
+                                            true
+                                        } else false
+                                    }
                                     .focusable(),
                             ) { Text(id) }
                         }
@@ -553,6 +565,31 @@ class BrowseFocusReturnTest {
         rule.waitForIdle()
         focused(fixture.chipTag("All"))
         rule.runOnIdle { assertFalse(checkNotNull(fixture.playbackController).pending) }
+    }
+
+    @Test fun exitingFocusedNodeRecoversBeforeDisposalAndCannotActivateItsRemovedItem() {
+        val fixture = mount(initialTarget = "item-3", refreshNeighbours = true)
+        rule.mainClock.autoAdvance = false
+        try {
+            rule.runOnIdle {
+                // Match animateItem's exit interval: the new displayed order has removed the
+                // item, while its old focused node and collection registration still exist.
+                fixture.focusSnapshot = fixture.itemIds.filterNot { it == "item-3" }
+            }
+            rule.mainClock.advanceTimeByFrame()
+            focused(fixture.tileTag("item-3"))
+            rule.onRoot().performKeyInput { pressKey(Key.Enter) }
+            rule.mainClock.advanceTimeBy(160)
+            rule.waitForIdle()
+            focused(fixture.tileTag("item-4"))
+            rule.onNodeWithTag(fixture.tileTag("item-3"), useUnmergedTree = true).assertExists()
+            rule.runOnIdle { assertTrue(fixture.activations.isEmpty()) }
+        } finally {
+            rule.mainClock.autoAdvance = true
+        }
+        // Confirm remains a normal activation once the selected item belongs to the snapshot.
+        press(Key.Enter)
+        rule.runOnIdle { assertEquals(listOf("item-4"), fixture.activations) }
     }
 
 }

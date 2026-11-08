@@ -47,6 +47,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 
 internal data class BrowseFocusSlot(val key: BrowseFocusKey, val index: Int)
+private val BrowseConfirmKeys = setOf(Key.DirectionCenter, Key.Enter, Key.NumPadEnter, Key.Spacebar)
 
 /**
  * Registrations publish immutable slot snapshots. Build their lookup once per snapshot, not on
@@ -292,6 +293,13 @@ internal class BrowseFocusReturnState(
         refreshAnchor = key?.let(snapshot::anchor) ?: before
         // A reappearing tile starts a new removal transaction if it disappears again later.
         if (cancelledRefreshKey?.let(snapshot::anchor) != null) cancelledRefreshKey = null
+        // animateItem can keep an exiting card (or a whole old row) composed and focused
+        // until its fade ends. The displayed snapshot is already authoritative: do not wait
+        // for that node's eventual focus-loss/disposal before moving to its surviving neighbour.
+        val removedFocus = focusedContentKey?.takeIf { snapshot.anchor(it) == null }
+        if (removedFocus != null && collections.values.all { it.allowRecovery() } &&
+            (recoveringKey != removedFocus || recovery?.isActive != true)
+        ) recoverMissingContent(removedFocus)
     }
 
     fun clearRefreshContent(owner: Any) {
@@ -322,11 +330,30 @@ internal class BrowseFocusReturnState(
         }
     }
 
-    /** Only a content tile losing its actual focus can trigger recovery. Leaving for controls,
+    /** An exiting, removed card must not play if Confirm arrives before the recovery frame. */
+    fun blockRemovedContentActivation(): Boolean {
+        if (!active) return false
+        val snapshot = refreshSnapshot ?: return false
+        val lost = focusedContentKey?.takeIf { snapshot.anchor(it) == null } ?: return false
+        // A later Confirm on an invalid address can retry a recovery that earlier navigation
+        // cancelled. Ordinary D-pad input still cancels this new attempt in the usual way.
+        cancelledRefreshKey = null
+        refreshInput?.cancel()
+        refreshInput = null
+        refreshInputPending = false
+        if (recoveringKey != lost || recovery?.isActive != true) recoverMissingContent(lost)
+        return true
+    }
+
+    private fun contentStillPresent(key: BrowseFocusKey): Boolean =
+        refreshSnapshot?.let { it.anchor(key) != null } ?: collections.values.any { it.slot(key) != null }
+
+    /** Only a removed, actually focused content tile can trigger recovery. Leaving for controls,
      * scrolling a still-present item out of composition, and changing pages must not steal focus. */
     private fun recoverMissingContent(lost: BrowseFocusKey) {
+        if (recoveringKey == lost && recovery?.isActive == true) return
         cancelRecovery()
-        if (!active || holdEntry || refreshInputPending || cancelledRefreshKey == lost) return
+        if (!active || holdEntry || playbackReturnTarget != null || refreshInputPending || cancelledRefreshKey == lost) return
         val generation = recoveryGeneration
         val identity = contentIdentity
         // Capture before composition publishes the replacement order. Keep these exact two
@@ -345,12 +372,12 @@ internal class BrowseFocusReturnState(
             // A page may register many independent Rows (Search) or an outer list plus
             // nested Rows (Home/SmartTube). Ordinary focus moves retain the old item, so check
             // cached membership before allocating/scanning a full merged fallback list.
-            if (sources.any { it.slot(lost) != null } || sources.any { !it.allowRecovery() }) return@launch
+            if (contentStillPresent(lost) || sources.any { !it.allowRecovery() }) return@launch
             val defaultDestination = if (anchor == null) missingBrowseFocusFallback(lost, sources.flatMap { it.slots() }) else null
             repeat(12) {
                 if (!active || holdEntry || generation != recoveryGeneration || identity != contentIdentity ||
                     NavReselect.restoreTop.value || collections.values.any { !it.allowRecovery() } ||
-                    collections.values.any { it.slot(lost) != null }
+                    contentStillPresent(lost)
                 ) return@launch
                 val destination = if (anchor != null) refreshSnapshot?.resolve(anchor) else defaultDestination
                 if (destination == null) return@launch
@@ -665,12 +692,24 @@ internal fun BrowseFocusRefreshRecovery(rows: List<Pair<Any?, List<Any>>>) {
     DisposableEffect(owner, token) { onDispose { owner.clearRefreshContent(token) } }
 }
 
-/** Observe input above the page's focus groups without consuming navigation or activation. */
+/** User navigation wins; only Confirm on a removed, still-fading focused tile is consumed. */
 internal fun Modifier.cancelBrowseRefreshRecoveryOnInput(): Modifier = composed {
     val owner = LocalBrowseFocusReturnState.current ?: return@composed this
+    val blockedConfirms = remember(owner) { mutableSetOf<Key>() }
     onPreviewKeyEvent { event ->
-        if (event.type == KeyEventType.KeyDown) owner.cancelRefreshRecoveryOnInput()
-        false
+        if (event.key in blockedConfirms) {
+            if (event.type == KeyEventType.KeyUp) blockedConfirms.remove(event.key)
+            true
+        } else if (event.type == KeyEventType.KeyDown &&
+            event.key in BrowseConfirmKeys &&
+            owner.blockRemovedContentActivation()
+        ) {
+            blockedConfirms += event.key
+            true
+        } else {
+            if (event.type == KeyEventType.KeyDown) owner.cancelRefreshRecoveryOnInput()
+            false
+        }
     }
 }
 

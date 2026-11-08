@@ -1,5 +1,7 @@
 package com.ambient.tv.ui.spotify
 
+import com.ambient.tv.spotify.SpotifyEntityType
+
 import com.ambient.tv.ui.theme.animatedFocusSurface
 import com.ambient.tv.ui.theme.screenGutter
 import androidx.activity.compose.BackHandler
