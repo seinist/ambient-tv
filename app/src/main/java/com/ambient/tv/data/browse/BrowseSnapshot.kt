@@ -18,6 +18,37 @@ data class BrowseSnapshot(
     )
 }
 
+private val artworkCredentialQueryNames = setOf(
+    "x-plex-token",
+    "apikey",
+    "api_key",
+    "access_token",
+    "token",
+)
+
+/**
+ * In-memory request identity for artwork that may cross the disk-snapshot -> live-response seam.
+ *
+ * A persisted snapshot intentionally removes provider credentials. The first live response then
+ * often contains the exact same image URL plus a token, which must not make a visible card reload
+ * the bitmap. Unlike [displayArtworkUrl], this removes only credential fields: unknown/semantic
+ * query parameters remain part of the identity, so a real artwork revision still reloads.
+ */
+internal fun artworkRequestIdentity(value: Any?): Any? {
+    val text = value as? String ?: return value
+    if (!(text.startsWith("https://", ignoreCase = true) || text.startsWith("http://", ignoreCase = true))) return value
+    val url = text.toHttpUrlOrNull() ?: return value
+    val builder = url.newBuilder().username("").password("")
+    url.queryParameterNames
+        .filter { it.lowercase() in artworkCredentialQueryNames }
+        .forEach(builder::removeAllQueryParameters)
+    // Plex transcode URLs can contain a nested absolute image URL with its own credential.
+    url.queryParameter("url")?.takeIf { it.contains("://") }?.let { nested ->
+        (artworkRequestIdentity(nested) as? String)?.let { builder.setQueryParameter("url", it) }
+    }
+    return builder.build().toString()
+}
+
 /** Allow only known artwork parameters; never persist URL user-info, tokens or signed streams. */
 internal fun displayArtworkUrl(value: String?): String? {
     if (value == null || !(value.startsWith("https://", ignoreCase = true) || value.startsWith("http://", ignoreCase = true))) return null
