@@ -197,6 +197,19 @@ class Media3FilterRuntimeTest {
         }
     }
 
+    @Test fun automaticProfileRestoreUpdatesRunningChainWithoutSecondPrepare() {
+        val fixture = start(sdr(), Media3ImageOptions(enabled = true, sharpening = "cas"))
+        assertEquals(1, fixture.prepareCount)
+        assertTrue(fixture.processing.effectsActive)
+
+        fixture.processing.restoreAutomaticOptions(Media3ImageOptions())
+        shadowOf(Looper.getMainLooper()).idle()
+
+        assertEquals(1, fixture.prepareCount)
+        assertFalse(fixture.processing.effectsActive)
+        assertTrue(fixture.effects.last().isEmpty())
+    }
+
     @Test fun adaptiveStreamFormatChangeReevaluatesTheRunningChainWithoutChangingSettings() {
         val options = Media3ImageOptions(enabled = true, sharpening = "adaptive",
             deband = "light", filmGrain = "light")
