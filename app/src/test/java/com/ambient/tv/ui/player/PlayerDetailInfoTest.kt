@@ -353,4 +353,22 @@ class PlayerDetailInfoTest {
         assertEquals(PlayerDetailKeyAction.PASS, playerDetailKeyAction(Key.Back, false, false, false))
         assertEquals(PlayerDetailKeyAction.PASS, playerDetailKeyAction(Key.MediaPlayPause, false, false, false))
     }
+    @Test fun youtubeLinksInDescriptionsBecomeSmartTubeTargets() {
+        val links = playerDetailYouTubeLinks(
+            "Video https://youtu.be/dQw4w9WgXcQ channel https://youtube.com/channel/UC_x5XG1OV2P6uZZ5FSM9Ttw handle https://youtube.com/@GoogleDevelopers")
+        assertEquals(PlayerDetailYouTubeLinkKind.VIDEO, links[0].kind)
+        assertEquals("dQw4w9WgXcQ", links[0].value)
+        assertEquals(PlayerDetailYouTubeLinkKind.CHANNEL_ID, links[1].kind)
+        assertEquals("UC_x5XG1OV2P6uZZ5FSM9Ttw", links[1].value)
+        assertEquals(PlayerDetailYouTubeLinkKind.CHANNEL_QUERY, links[2].kind)
+        assertEquals("GoogleDevelopers", links[2].value)
+    }
+
+    @Test fun youtubeLinkParserRejectsLookalikeHostsAndDeduplicates() {
+        val links = playerDetailYouTubeLinks(
+            "https://evil-youtube.com/watch?v=dQw4w9WgXcQ https://youtube.com/watch?v=dQw4w9WgXcQ https://youtu.be/dQw4w9WgXcQ")
+        assertEquals(1, links.size)
+        assertEquals("dQw4w9WgXcQ", links.single().value)
+    }
+
 }

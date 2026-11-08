@@ -513,6 +513,7 @@ fun YouTubePlayerScreen(
                     publishedDate = playback.publishedDate,
                     publishedAtMs = playback.publishedAtMs,
                     videoId = playback.videoId,
+                    channelId = state.channel?.channelId,
                 )
             })
             com.ambient.tv.ui.player.PersistentPlayerOverlays()

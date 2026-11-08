@@ -27,6 +27,13 @@ internal enum class PlayerDetailArtShape {
 /** One labelled text line below the description (e.g. "Als Nächstes"). */
 internal data class PlayerDetailLine(@StringRes val label: Int, val value: String)
 
+internal enum class PlayerDetailYouTubeLinkKind { VIDEO, CHANNEL_ID, CHANNEL_QUERY }
+internal data class PlayerDetailYouTubeLink(
+    val label: String,
+    val value: String,
+    val kind: PlayerDetailYouTubeLinkKind,
+)
+
 /**
  * Everything the details dialog over the player shows. Built from data the player already has;
  * nothing here triggers a request. [item] carries the full metadata of films, episodes and music
@@ -48,6 +55,7 @@ internal data class PlayerDetailInfo(
     val overview: String? = null,
     val genres: List<String> = emptyList(),
     val lines: List<PlayerDetailLine> = emptyList(),
+    val youtubeLinks: List<PlayerDetailYouTubeLink> = emptyList(),
     /** Simple technical chips for sources without an [item] (radio codec and bitrate). */
     val chips: List<String> = emptyList(),
     val item: MediaItem? = null,
@@ -183,6 +191,7 @@ internal fun playerDetailForYouTube(
     publishedAtMs: Long? = null,
     formatDate: (Long) -> String = { com.ambient.tv.ui.common.relativePublishedLabel(it) },
     videoId: String? = null,
+    channelId: String? = null,
 ): PlayerDetailInfo {
     val fallbackCovers = fallbackImageUrls.mapNotNull(::normalizePlayerDetailText).distinct()
     val cover = normalizePlayerDetailText(imageUrl) ?: fallbackCovers.firstOrNull()
@@ -201,6 +210,17 @@ internal fun playerDetailForYouTube(
         meta = if (isLive) emptyList() else listOfNotNull(publication, formatDuration(durationMs)),
         live = isLive,
         overview = normalizePlayerDetailText(description),
+        youtubeLinks = buildList {
+            channelId?.takeIf(String::isNotBlank)?.let {
+                add(PlayerDetailYouTubeLink(
+                    normalizePlayerDetailText(channelTitle) ?: normalizePlayerDetailText(author) ?: it,
+                    it, PlayerDetailYouTubeLinkKind.CHANNEL_ID))
+            }
+            addAll(playerDetailYouTubeLinks(description).filterNot { link ->
+                link.kind == PlayerDetailYouTubeLinkKind.VIDEO && link.value == videoId ||
+                    link.kind == PlayerDetailYouTubeLinkKind.CHANNEL_ID && link.value == channelId
+            })
+        }.distinctBy { it.kind to it.value },
         system = MediaSystem.YOUTUBE,
         contentKey = normalizePlayerDetailText(videoId)?.takeIf { YOUTUBE_DETAIL_VIDEO_ID.matches(it) }
             ?.let { "youtube:$it" },
@@ -385,6 +405,7 @@ internal fun playerDetailForTelegram(
             formatDuration(duration),
         ),
         overview = normalizePlayerDetailText(overview),
+        youtubeLinks = playerDetailYouTubeLinks(overview),
         lines = listOfNotNull(fileName?.let { PlayerDetailLine(R.string.photos_info_file, it) }),
         chips = listOfNotNull(
             resolution,
@@ -396,3 +417,43 @@ internal fun playerDetailForTelegram(
         contentKey = media.mediaKey,
     )
 }
+
+
+private val PLAYER_DETAIL_YOUTUBE_URL = Regex("""(?i)(?<![a-z0-9_.-])(?:https?://)?(?:www\.|m\.)?(?:youtube\.com|youtu\.be)/[^\s<>"']+""")
+private val PLAYER_DETAIL_YOUTUBE_VIDEO_ID = Regex("[A-Za-z0-9_-]{11}")
+private val PLAYER_DETAIL_YOUTUBE_CHANNEL_ID = Regex("UC[A-Za-z0-9_-]{20,}")
+
+/** YouTube URLs in SmartTube descriptions and Monogram post text, safe against lookalike hosts. */
+internal fun playerDetailYouTubeLinks(text: String?): List<PlayerDetailYouTubeLink> =
+    PLAYER_DETAIL_YOUTUBE_URL.findAll(text.orEmpty()).mapNotNull { match ->
+        val raw = match.value.trimEnd('.', ',', ';', ':', ')', ']', '}')
+        val value = if (raw.startsWith("http", ignoreCase = true)) raw else "https://$raw"
+        val uri = runCatching { java.net.URI(value) }.getOrNull() ?: return@mapNotNull null
+        val host = uri.host?.lowercase() ?: return@mapNotNull null
+        if (host !in setOf("youtube.com", "www.youtube.com", "m.youtube.com", "youtu.be", "www.youtu.be")) return@mapNotNull null
+        val path = uri.path.orEmpty().trim('/')
+        val videoId = when {
+            host.endsWith("youtu.be") -> path.substringBefore('/')
+            path == "watch" -> uri.rawQuery.orEmpty().split('&')
+                .firstOrNull { it.startsWith("v=") }?.substringAfter('=')
+            path.startsWith("shorts/") || path.startsWith("live/") || path.startsWith("embed/") ->
+                path.substringAfter('/').substringBefore('/')
+            else -> null
+        }?.takeIf(PLAYER_DETAIL_YOUTUBE_VIDEO_ID::matches)
+        if (videoId != null) {
+            PlayerDetailYouTubeLink(raw, videoId, PlayerDetailYouTubeLinkKind.VIDEO)
+        } else {
+            val channelId = path.takeIf { it.startsWith("channel/") }?.substringAfter("channel/")
+                ?.substringBefore('/')?.takeIf(PLAYER_DETAIL_YOUTUBE_CHANNEL_ID::matches)
+            if (channelId != null) PlayerDetailYouTubeLink(raw, channelId, PlayerDetailYouTubeLinkKind.CHANNEL_ID)
+            else {
+                val query = when {
+                    path.startsWith("@") -> path.substringBefore('/').removePrefix("@")
+                    path.startsWith("c/") || path.startsWith("user/") ->
+                        path.substringAfter('/').substringBefore('/')
+                    else -> null
+                }?.takeIf(String::isNotBlank)
+                query?.let { PlayerDetailYouTubeLink(raw, it, PlayerDetailYouTubeLinkKind.CHANNEL_QUERY) }
+            }
+        }
+    }.distinctBy { it.kind to it.value }.toList()
