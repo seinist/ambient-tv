@@ -20,4 +20,18 @@ class BrowseRowCacheWindowTest {
         assertTrue(BrowseRowCacheBehind > 0.dp)
         assertTrue(BrowseRowCacheBehind < BrowseRowCacheAhead)
     }
+    @Test fun verticalAheadWindowIsBoundedToAboutOneVisualRow() {
+        assertTrue(BrowseVerticalCacheAhead >= posterStep)
+        assertTrue(BrowseVerticalCacheAhead < 300.dp)
+        assertTrue(BrowseVerticalCacheBehind > 0.dp)
+        assertTrue(BrowseVerticalCacheBehind < BrowseVerticalCacheAhead)
+    }
+
+    @Test fun reducedVerticalWindowDoesLessEntryWork() {
+        assertTrue(BrowseVerticalCacheAheadReduced > 0.dp)
+        assertTrue(BrowseVerticalCacheBehindReduced > 0.dp)
+        assertTrue(BrowseVerticalCacheAheadReduced < BrowseVerticalCacheAhead)
+        assertTrue(BrowseVerticalCacheBehindReduced < BrowseVerticalCacheBehind)
+    }
+
 }

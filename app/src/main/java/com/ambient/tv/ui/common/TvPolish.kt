@@ -447,6 +447,12 @@ fun ArtworkImage(
     placeholder: Boolean = true,
     /** Optional caller-specific fallback, used after all URLs fail (or none is supplied). */
     fallbackContent: (@Composable () -> Unit)? = null,
+    /**
+     * Browse cards opt in so uncached fetch/decode work is spread across the first frames.
+     * Known memory-cache hits still render immediately; a later focused card can disable the
+     * gate and is admitted at once.
+     */
+    staggerUncached: Boolean = false,
 ) {
     val context = LocalContext.current
     val candidates = remember(model, fallbackModels) {
@@ -473,6 +479,20 @@ fun ArtworkImage(
         val key = cachedKey ?: return@remember false
         coil3.SingletonImageLoader.get(context).memoryCache?.get(key) != null
     }
+    val staggerThisLoad = staggerUncached && candidateIndex == 0 &&
+        !com.ambient.tv.ui.mobile.LocalHandheldUi.current && hasModel && !shownFromMemory
+    // Keep admission once granted. Focus may turn staggering off; losing focus must not restart
+    // an already running/successful request.
+    var loadAdmitted by remember(currentModel) { mutableStateOf(!staggerThisLoad) }
+    LaunchedEffect(currentModel, staggerThisLoad) {
+        if (!staggerThisLoad) {
+            loadAdmitted = true
+        } else if (!loadAdmitted) {
+            val waitMs = SharedBrowseArtworkStartLimiter.delayMs(android.os.SystemClock.elapsedRealtime())
+            if (waitMs > 0L) delay(waitMs)
+            loadAdmitted = true
+        }
+    }
     val request = remember(currentModel, context, headers, constrainDecode) {
         ImageRequest.Builder(context).data(currentModel).crossfade(false)
             .placeholderMemoryCacheKey(cachedKey)
@@ -494,7 +514,7 @@ fun ArtworkImage(
     val hdrFilter = com.ambient.tv.ui.display.rememberUiHdrBitmapColorFilter()
     Box(modifier = if (focusCrop) modifier.onSizeChanged { containerSize = it } else modifier) {
         if (hasModel) {
-            AsyncImage(
+            if (loadAdmitted) AsyncImage(
                 model = request,
                 contentDescription = title,
                 contentScale = contentScale,

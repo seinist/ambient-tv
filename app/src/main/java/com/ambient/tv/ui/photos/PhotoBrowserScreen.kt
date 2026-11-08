@@ -19,7 +19,7 @@ import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.GridItemSpan
 import com.ambient.tv.ui.common.TvLazyVerticalGrid as LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
-import androidx.compose.foundation.lazy.grid.rememberLazyGridState
+import com.ambient.tv.ui.common.rememberBrowseGridState as rememberLazyGridState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -352,14 +352,14 @@ private fun PhotoTile(entry: PhotoEntry, modifier: Modifier, onClick: () -> Unit
     ) {
         val model = entry.thumbModel()
         if (model != null) {
-            AsyncImage(
+            com.ambient.tv.ui.common.ArtworkImage(
                 model = model,
-                contentDescription = entry.title,
+                title = entry.title,
                 modifier = Modifier.fillMaxSize(),
                 contentScale = ContentScale.Crop,
-                colorFilter = com.ambient.tv.ui.display.uiHdrBitmapColorFilter(
-                    com.ambient.tv.ui.display.LocalUiHdrState.current?.headroom ?: 1f,
-                ),
+                // Keep the old quiet background while waiting; only the request start is staggered.
+                placeholder = false,
+                staggerUncached = !focused,
             )
         } else if (entry.kind == PhotoKind.FOLDER) {
             Icon(Icons.Filled.Folder, null, Modifier.size(56.dp).align(Alignment.Center), tint = MaterialTheme.colorScheme.onSurfaceVariant)

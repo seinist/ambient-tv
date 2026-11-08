@@ -87,7 +87,7 @@ internal fun PaddingValues.withTvFocusInsets(): PaddingValues {
 @Composable
 fun TvLazyColumn(
     modifier: Modifier = Modifier,
-    state: LazyListState = rememberLazyListState(),
+    state: LazyListState = rememberBrowseListState(),
     contentPadding: PaddingValues = PaddingValues(0.dp),
     reverseLayout: Boolean = false,
     verticalArrangement: Arrangement.Vertical = if (!reverseLayout) Arrangement.Top else Arrangement.Bottom,
@@ -143,7 +143,7 @@ fun TvLazyColumn(
 fun TvLazyVerticalGrid(
     columns: GridCells,
     modifier: Modifier = Modifier,
-    state: LazyGridState = rememberLazyGridState(),
+    state: LazyGridState = rememberBrowseGridState(),
     contentPadding: PaddingValues = PaddingValues(0.dp),
     reverseLayout: Boolean = false,
     verticalArrangement: Arrangement.Vertical = if (!reverseLayout) Arrangement.Top else Arrangement.Bottom,

@@ -91,7 +91,7 @@ fun SpotifyHomeScreen(
     val nowPlayingFocusRequester = remember { FocusRequester() }
     val firstItemFocusRequester = remember { FocusRequester() }
     var initialContentFocusPending by remember(expectedSectionKey) { mutableStateOf(true) }
-    val gridState = androidx.compose.runtime.key(navigationReturn?.revision) { androidx.compose.foundation.lazy.grid.rememberLazyGridState(
+    val gridState = androidx.compose.runtime.key(navigationReturn?.revision) { com.ambient.tv.ui.common.rememberBrowseGridState(
         initialFirstVisibleItemIndex = state.items.indexOfFirst { spotifyFocusId(it) == focusItemId }.coerceAtLeast(0),
     ) }
     BrowseFocusContentIdentity(listOf(expectedSectionKey, state.sectionKey, state.query, navigationReturn?.revision))
@@ -247,7 +247,13 @@ private fun SpotifyTile(
         ) {
             Box(Modifier.fillMaxWidth().aspectRatio(1f)) {
                 if (item.artworkUrl != null) {
-                    ArtworkImage(item.artworkUrl, item.title, modifier = Modifier.fillMaxSize().clip(RoundedCornerShape(8.dp)).background(Color.DarkGray), contentScale = ContentScale.Crop)
+                    ArtworkImage(
+                        item.artworkUrl,
+                        item.title,
+                        modifier = Modifier.fillMaxSize().clip(RoundedCornerShape(8.dp)).background(Color.DarkGray),
+                        contentScale = ContentScale.Crop,
+                        staggerUncached = !focused,
+                    )
                 } else Box(Modifier.fillMaxSize().background(Color.DarkGray, RoundedCornerShape(8.dp)), contentAlignment = Alignment.Center) { androidx.compose.material3.Icon(Icons.Default.MusicNote, null) }
                 com.ambient.tv.companion.PlaybackBadge(com.ambient.tv.companion.playbackIndicator(com.ambient.tv.companion.CompanionMedia("spotify:${item.type.name.lowercase()}", item.id)), Modifier.align(Alignment.TopStart).padding(5.dp))
                 if (focused) {
