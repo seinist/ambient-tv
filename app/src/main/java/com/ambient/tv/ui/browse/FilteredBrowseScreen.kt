@@ -22,9 +22,9 @@ import com.ambient.tv.ui.common.TvLazyColumn as LazyColumn
 import androidx.compose.foundation.lazy.grid.GridCells
 import com.ambient.tv.ui.common.TvLazyVerticalGrid as LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.itemsIndexed
-import androidx.compose.foundation.lazy.grid.rememberLazyGridState
+import com.ambient.tv.ui.common.rememberBrowseGridState as rememberLazyGridState
 import androidx.compose.foundation.lazy.itemsIndexed
-import androidx.compose.foundation.lazy.rememberLazyListState
+import com.ambient.tv.ui.common.rememberBrowseListState as rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
