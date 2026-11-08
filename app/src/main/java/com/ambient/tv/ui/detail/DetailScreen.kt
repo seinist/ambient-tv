@@ -80,6 +80,7 @@ import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.onKeyEvent
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
@@ -462,6 +463,8 @@ internal fun DetailContent(
         // Versions are vertical focus destinations even though they share the hero's lazy item.
         // Registering only the whole hero made Down skip straight past every version.
         val allVersionKeys = remember(item.ratingKey, item.mediaVersions) { detailVersionFocusKeys(item) }
+        val descriptionVisible = !item.summary.isNullOrBlank()
+        val descriptionHasFocus = remember(item.ratingKey) { mutableStateOf(false) }
         val versionRowKeys = if (playbackAvailable && item.type !in setOf("show", "season") && item.mediaVersions.size > 1) {
             item.mediaVersions.mapIndexedNotNull { index, version ->
                 allVersionKeys[index].takeIf { version.streamUrl != null }
@@ -470,6 +473,7 @@ internal fun DetailContent(
         val rowSectionIndices = buildMap {
             sectionKeys.forEachIndexed { index, key -> put(key, index) }
             versionRowKeys.forEach { put(it, 0) }
+            if (descriptionVisible) put("description", 0)
         }
         val castItems = item.cast.dedupeCastMembers().take(16)
         val rowDefaults = buildMap {
@@ -481,6 +485,7 @@ internal fun DetailContent(
         val rowOrder = buildList {
             if (heroHasFocusTarget) add("hero")
             addAll(versionRowKeys)
+            if (descriptionVisible) add("description")
             if (seasonStripVisible) add("season-strip")
             if (childrenSectionVisible && (children.isNotEmpty() || (childrenLoadFailed && !childrenLoading))) add("children")
             if (castItems.any { it.id != null }) add("cast")
@@ -506,6 +511,20 @@ internal fun DetailContent(
                 if (columnFocus.focusEntry(rowKey)) return true
             }
             return false
+        }
+        var descriptionMoveJob by remember(item.ratingKey) { mutableStateOf<Job?>(null) }
+        fun leaveDescription(down: Boolean): Boolean {
+            val destination = columnFocus.nextRow(rowOrder, down) as? String ?: return false
+            if (descriptionMoveJob?.isActive == true) return true
+            if (!columnFocus.focusEntry(destination)) {
+                descriptionMoveJob = scrollScope.launch {
+                    // Scrolling the next lazy row into composition can dispose the text's
+                    // focus node. The explicit navigation intent survives that disposal;
+                    // a new user key below cancels this job instead.
+                    focusRow(destination) { true }
+                }
+            }
+            return true
         }
         LaunchedEffect(focusScope, item.ratingKey, item.mediaVersions, playbackAvailable) {
             val previous = focusedVersionKey ?: return@LaunchedEffect
@@ -680,9 +699,17 @@ internal fun DetailContent(
             state = listState,
             modifier = Modifier.fillMaxSize()
                 .onPreviewKeyEvent { event ->
+                    if (event.type == KeyEventType.KeyDown && event.nativeKeyEvent.repeatCount == 0) {
+                        descriptionMoveJob?.cancel()
+                        descriptionMoveJob = null
+                    }
+                    // The nested reading viewport owns scrolling until its boundary. Its
+                    // bubbling handler below rejoins the page's normal row order afterwards.
+                    if (descriptionHasFocus.value) return@onPreviewKeyEvent false
                     if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
                     if (event.key == Key.DirectionDown && heroHasFocus.value &&
-                        columnFocus.nextRow(rowOrder, down = true) !in versionRowKeys
+                        columnFocus.nextRow(rowOrder, down = true) !in versionRowKeys &&
+                        columnFocus.nextRow(rowOrder, down = true) != "description"
                     ) {
                         enterPrimaryPending = true
                         true
@@ -692,12 +719,12 @@ internal fun DetailContent(
                     }
                 }
                 .rowColumnFocusWrapRight(columnFocus)
-                .rowColumnFocusNavigation(
+                .then(if (descriptionHasFocus.value) Modifier else Modifier.rowColumnFocusNavigation(
                     columnFocus,
                     scrollToRow = { rowKey ->
                         rowSectionIndices[rowKey]?.let { listState.scrollToItem(it) }
                     },
-                ) { rowOrder }
+                ) { rowOrder })
                 .focusProperties {
                 onExit = {
                     if (requestedFocusDirection == FocusDirection.Left || requestedFocusDirection == FocusDirection.Right) cancelFocusChange()
@@ -735,6 +762,11 @@ internal fun DetailContent(
                             canEdit = editSupport.any,
                             onHeroFocused = { rememberFocused(null) },
                             onVersionFocused = { rememberFocused(it) },
+                            onDescriptionFocusChanged = { focused ->
+                                descriptionHasFocus.value = focused
+                                if (focused) rememberFocused("description")
+                            },
+                            onLeaveDescription = ::leaveDescription,
                             initialActionFocus = initialActionFocus,
                             moreActionFocus = moreActionFocus,
                         )
@@ -905,6 +937,8 @@ private fun DetailHero(
     canEdit: Boolean,
     onHeroFocused: () -> Unit,
     onVersionFocused: (String) -> Unit,
+    onDescriptionFocusChanged: (Boolean) -> Unit,
+    onLeaveDescription: (Boolean) -> Boolean,
     initialActionFocus: FocusRequester,
     moreActionFocus: FocusRequester,
 ) {
@@ -956,9 +990,8 @@ private fun DetailHero(
                 .widthIn(max = 860.dp),
             verticalArrangement = Arrangement.spacedBy(13.dp),
         ) {
-            // This is one semantic focus context: when focus returns to Play/Continue after the
-            // user has browsed sections below, keep the synopsis and metadata visible with the
-            // action instead of allowing Compose to expose only the button at the top edge.
+            // Keep the compact title, metadata and actions together. Long descriptions and
+            // technical details below must never move the primary action out of this group.
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -978,11 +1011,6 @@ private fun DetailHero(
 
                 com.ambient.tv.ui.common.DetailPrimaryMetaRow(com.ambient.tv.ui.common.detailPrimaryMeta(item), item)
 
-                // Technical information belongs on the detail page rather than being repeated as
-                // permanent top-right icons on every library cover. Keep the most useful flags
-                // immediately below the human metadata so they are easy to scan without
-                // competing with the title or synopsis.
-                StreamPropertyAdaptiveRows(item, maxItems = 5, itemsPerRow = 3)
                 val activePlayback = com.ambient.tv.companion.playbackIndicator(item)
                 com.ambient.tv.companion.PlaybackStatusSection(activePlayback)
                 if (isPlayable && activePlayback == null) {
@@ -1001,10 +1029,6 @@ private fun DetailHero(
                         }
                     }
                 }
-
-                com.ambient.tv.ui.common.DetailTagline(item.tagline)
-                com.ambient.tv.ui.common.DetailSummary(item.summary)
-                com.ambient.tv.ui.common.DetailGenres(item.genres)
 
                 availabilityMessage?.let { Text(stringResource(it), style = MaterialTheme.typography.bodyMedium) }
                 DeviceActionRow(
@@ -1064,6 +1088,26 @@ private fun DetailHero(
             if (isPlayable && item.mediaVersions.size > 1) {
                 MediaVersionPicker(item, optimalIndex, onPlay, onVersionFocused)
             }
+            StreamPropertyAdaptiveRows(item, maxItems = 5, itemsPerRow = 3)
+            com.ambient.tv.ui.common.DetailTagline(item.tagline)
+            com.ambient.tv.ui.common.DetailDescriptionSection(
+                text = item.summary,
+                // Up at the first line rejoins the row order: the last playable version,
+                // when present, precedes this text. Other detail pages go straight to Play.
+                modifier = Modifier
+                    .rowColumnFocusTarget(columnFocus, "description", "description")
+                    .onFocusChanged { onDescriptionFocusChanged(it.hasFocus) }
+                    .focusGroup()
+                    .onKeyEvent { event ->
+                        if (event.type != KeyEventType.KeyDown) return@onKeyEvent false
+                        when (event.key) {
+                            Key.DirectionDown -> onLeaveDescription(true)
+                            Key.DirectionUp -> onLeaveDescription(false)
+                            else -> false
+                        }
+                    },
+            )
+            com.ambient.tv.ui.common.DetailGenres(item.genres)
         }
     }
 }

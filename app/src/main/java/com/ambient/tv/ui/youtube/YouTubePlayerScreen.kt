@@ -499,7 +499,8 @@ fun YouTubePlayerScreen(
             }
             // Outside the engine branch: a renderer switch replaces the engine, not OSD and panel.
             val channelTitle = state.channel?.title
-            com.ambient.tv.ui.player.PublishPlayerDetail(androidx.compose.runtime.remember(playback, channelTitle) {
+            val detailLocale = androidx.compose.ui.platform.LocalConfiguration.current.locales[0]
+            com.ambient.tv.ui.player.PublishPlayerDetail(androidx.compose.runtime.remember(playback, channelTitle, detailLocale) {
                 com.ambient.tv.ui.player.playerDetailForYouTube(
                     title = playback.title,
                     author = playback.author,
@@ -509,6 +510,8 @@ fun YouTubePlayerScreen(
                     fallbackImageUrls = com.ambient.tv.youtube.youtubePanelThumbnailUrls(playback.videoId),
                     isLive = playback.isLive,
                     durationMs = playback.durationMs,
+                    publishedDate = playback.publishedDate,
+                    publishedAtMs = playback.publishedAtMs,
                 )
             })
             com.ambient.tv.ui.player.PersistentPlayerOverlays()

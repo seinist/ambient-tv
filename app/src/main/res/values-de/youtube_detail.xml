@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="youtube_detail_video">YouTube-Video</string>
+    <string name="youtube_detail_play_smarttube">In SmartTube abspielen</string>
+    <string name="youtube_detail_original_post">Originalbeitrag</string>
+    <string name="youtube_detail_shared_in">Geteilt in %1$s</string>
+    <string name="youtube_detail_shared_monogram">Über Monogram geteilt</string>
+    <string name="youtube_detail_metadata_unavailable">Die Videodetails konnten nicht geladen werden.</string>
+</resources>

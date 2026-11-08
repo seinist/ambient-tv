@@ -129,6 +129,20 @@ class PlayerDetailInfoTest {
         assertNull(live.overview)
     }
 
+    @Test fun youtubePublicationKeepsTheSourcePrecisionAndPrecedesRuntime() {
+        fun detail(label: String?, timestamp: Long? = null, live: Boolean = false) = playerDetailForYouTube(
+            "Video", null, null, null, null, emptyList(), isLive = live, durationMs = 600_000L,
+            publishedDate = label, publishedAtMs = timestamp, formatDate = { "date:$it" },
+        )
+        assertEquals(listOf("2 days ago", "10min"), detail(" 2 days ago ").meta)
+        assertEquals(listOf("date:1794124800000", "10min"), detail("yesterday", 1_794_124_800_000L).meta)
+        assertEquals(listOf("2025", "10min"), detail("2025").meta)
+        listOf("unknown", "null", "-", "1794124800000", " ").forEach { unknown ->
+            assertEquals(listOf("10min"), detail(unknown, -1L).meta)
+        }
+        assertTrue(detail("yesterday", 1_794_124_800_000L, live = true).meta.isEmpty())
+    }
+
     private val channel = LiveTvChannel(uuid = "c", name = "Das Erste", number = 1, iconUrl = "logo")
 
     private fun programme(title: String, start: Long, stop: Long, image: String? = null) = LiveTvProgramme(

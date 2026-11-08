@@ -183,8 +183,16 @@ internal fun playerDetailForYouTube(
     fallbackImageUrls: List<String>,
     isLive: Boolean,
     durationMs: Long,
+    publishedDate: String? = null,
+    publishedAtMs: Long? = null,
+    formatDate: (Long) -> String = { com.ambient.tv.ui.common.relativePublishedLabel(it) },
 ): PlayerDetailInfo {
     val cover = imageUrl?.takeIf { it.isNotBlank() } ?: fallbackImageUrls.firstOrNull()
+    // A genuine source timestamp can be localized; a relative provider label stays relative.
+    // Never turn a raw epoch string or an unknown date into a visible publication label.
+    val publication = if (isLive) null else
+        com.ambient.tv.youtube.youtubePublicationEpochMs(publishedAtMs)?.let(formatDate)
+            ?: com.ambient.tv.youtube.youtubePublicationText(publishedDate)
     return PlayerDetailInfo(
         osdPlayer = OsdPlayer.YOUTUBE,
         title = title,
@@ -192,7 +200,7 @@ internal fun playerDetailForYouTube(
         artworkFallbackUrls = fallbackImageUrls.filter { it != cover },
         artShape = PlayerDetailArtShape.WIDE,
         eyebrow = (channelTitle ?: author)?.takeIf { it.isNotBlank() },
-        meta = if (isLive) emptyList() else listOfNotNull(formatDuration(durationMs)),
+        meta = if (isLive) emptyList() else listOfNotNull(publication, formatDuration(durationMs)),
         live = isLive,
         overview = capPlayerDetailText(description),
         system = MediaSystem.YOUTUBE,

@@ -28,6 +28,42 @@ import org.robolectric.annotation.Config
 class YouTubeBrowseNavigationTest {
     class ChannelPageState : ViewModel()
 
+    @Test fun monogramDetailsKeepTheSelectedVideoPostAndOptionalBrowseSession() {
+        val nav = controller()
+        nav.navigate(Destinations.youtubeDetail("9bZkp7q19f0", 27L, -1001234567890L, 42))
+        val args = requireNotNull(nav.currentBackStackEntry?.arguments)
+        assertEquals("9bZkp7q19f0", args.getString("videoId"))
+        assertEquals(27L, args.getLong("browseSession"))
+        assertEquals(-1001234567890L, args.getLong("originChatId"))
+        assertEquals(42, args.getInt("originMessageId"))
+
+        nav.popBackStack()
+        nav.navigate(Destinations.youtubeDetail("dQw4w9WgXcQ",
+            originChatId = -1001234567890L, originMessageId = 42))
+        val second = requireNotNull(nav.currentBackStackEntry?.arguments)
+        assertEquals("dQw4w9WgXcQ", second.getString("videoId"))
+        assertEquals(-1L, second.getLong("browseSession"))
+        assertEquals(-1001234567890L, second.getLong("originChatId"))
+        assertEquals(42, second.getInt("originMessageId"))
+    }
+
+    @Test fun ordinaryAndIncompleteOriginRoutesHaveNoMonogramSource() {
+        val nav = controller()
+        val routes = listOf(
+            Destinations.youtubeDetail("ordinary"),
+            Destinations.youtubeDetail("chat-only", originChatId = -17L),
+            Destinations.youtubeDetail("message-only", originMessageId = 8),
+            Destinations.youtubeDetail("zero-chat", originChatId = 0L, originMessageId = 8),
+        )
+        routes.forEach { route ->
+            nav.navigate(route)
+            val args = requireNotNull(nav.currentBackStackEntry?.arguments)
+            assertEquals(0L, args.getLong("originChatId"))
+            assertEquals(0, args.getInt("originMessageId"))
+            nav.popBackStack()
+        }
+    }
+
     @Test fun trailerRouteCarriesBothTrailerModeAndItsSourceSession() {
         val nav = controller()
         nav.navigate(Destinations.trailerPlayer("trailer-id", 42L))
@@ -150,6 +186,8 @@ class YouTubeBrowseNavigationTest {
                     arguments = listOf(
                         navArgument("videoId") { type = NavType.StringType },
                         navArgument("browseSession") { type = NavType.LongType; defaultValue = -1L },
+                        navArgument("originChatId") { type = NavType.LongType; defaultValue = 0L },
+                        navArgument("originMessageId") { type = NavType.IntType; defaultValue = 0 },
                     ),
                 ) {}
                 composable(

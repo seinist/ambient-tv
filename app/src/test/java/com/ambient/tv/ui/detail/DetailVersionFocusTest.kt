@@ -6,6 +6,7 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.MutableState
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.ExperimentalTestApi
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsFocused
@@ -26,6 +27,7 @@ import com.ambient.tv.ui.common.LocalClockSettings
 import com.ambient.tv.ui.mobile.LocalHandheldUi
 import com.ambient.tv.ui.theme.AmbientTvTheme
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
@@ -193,6 +195,36 @@ class DetailVersionFocusTest {
         }
         press(Key.DirectionUp)
         playAction().assertIsFocused().assertIsDisplayed()
+    }
+
+    @Test fun descriptionOwnsScrollingBetweenVersionPickerAndFollowingRows() {
+        val itemState = mount(longSummary = true, withFollowingSection = true)
+        repeat(6) { press(Key.DirectionDown) }
+        action("#6").assertIsFocused()
+        press(Key.DirectionDown)
+        val summary = checkNotNull(itemState.value.summary).trim()
+        val description = rule.onNode(hasText(summary))
+        description.assertIsFocused()
+
+        press(Key.DirectionDown)
+        description.assertIsFocused()
+        assertTrue(description.fetchSemanticsNode().config[SemanticsProperties.VerticalScrollAxisRange].value() > 0f)
+
+        // Page-level row navigation must wait until the reading viewport is at its end.
+        repeat(20) {
+            val range = description.fetchSemanticsNode().config[SemanticsProperties.VerticalScrollAxisRange]
+            if (range.value() < range.maxValue()) press(Key.PageDown)
+        }
+        press(Key.DirectionDown)
+        action("Following film").assertIsFocused()
+        press(Key.DirectionUp)
+        description.assertIsFocused()
+        repeat(20) {
+            val range = description.fetchSemanticsNode().config[SemanticsProperties.VerticalScrollAxisRange]
+            if (range.value() > 0f) press(Key.PageUp)
+        }
+        press(Key.DirectionUp)
+        action("#6").assertIsFocused()
     }
 
     @Test fun newlyDiscoveredAndReorderedVersionsKeepTheFocusedPhysicalSource() {

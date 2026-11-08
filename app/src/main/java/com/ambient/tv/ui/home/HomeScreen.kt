@@ -723,7 +723,7 @@ internal fun LibraryContent(
                                     onRadioHomeStationClick(radioId, row.id,
                                         row.items.mapNotNull { homeRadioStationId(it.ratingKey) })
                                 } else {
-                                    if (item.ratingKey.startsWith(com.ambient.tv.data.telegram.TELEGRAM_MEDIA_PREFIX))
+                                    if (com.ambient.tv.data.telegram.telegramPostIds(item.ratingKey) != null)
                                         onTelegramRowItemClick(row.id, item.ratingKey)
                                     else onItemClick(item.ratingKey)
                                 }
@@ -982,7 +982,7 @@ internal fun LibraryContent(
                                                 onRadioHomeStationClick(radioId, row.id,
                                                     row.items.mapNotNull { homeRadioStationId(it.ratingKey) })
                                             } else {
-                                                if (item.ratingKey.startsWith(com.ambient.tv.data.telegram.TELEGRAM_MEDIA_PREFIX))
+                                                if (com.ambient.tv.data.telegram.telegramPostIds(item.ratingKey) != null)
                                                     onTelegramRowItemClick(row.id, item.ratingKey)
                                                 else onItemClick(item.ratingKey)
                                             }

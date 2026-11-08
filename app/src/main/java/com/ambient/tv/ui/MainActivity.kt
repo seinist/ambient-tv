@@ -1060,6 +1060,7 @@ private fun AmbientTvApp(
     var pendingYouTubeVideoId by remember { mutableStateOf<String?>(null) }
     var pendingTelegramPost by remember { mutableStateOf<Triple<Long, Int, Long?>?>(null) }
     var pendingYouTubeBrowseSession by remember { mutableStateOf<Long?>(null) }
+    var pendingYouTubeOrigin by remember { mutableStateOf<com.ambient.tv.data.telegram.TelegramYouTubeSelection?>(null) }
 
     fun navigateToDetails(ratingKey: String, collectionId: String? = null, collectionSort: String? = null) {
         navController.navigate(Destinations.detail(ratingKey, collectionId, collectionSort))
@@ -1150,6 +1151,11 @@ private fun AmbientTvApp(
                 }
             return
         }
+        com.ambient.tv.data.telegram.telegramYouTubeSelection(ratingKey)?.let { source ->
+            navController.navigate(Destinations.youtubeDetail(source.videoId,
+                originChatId = source.chatId, originMessageId = source.messageId))
+            return
+        }
         com.ambient.tv.data.telegram.telegramPostIds(ratingKey)?.let { (chatId, messageId) ->
             // A private post has a detail page with full text and every linked YouTube video.
             navController.navigate(Destinations.telegramDetail(chatId, messageId))
@@ -1233,7 +1239,8 @@ private fun AmbientTvApp(
     /**
      * A Monogram post selected on a browse page or Home. Like SmartTube, its own setting decides:
      * post page, play, or ask. Only posts with a playback queue ([queue], i.e. Telegram's own
-     * video/audio) can play directly; YouTube link posts and photos keep the post page.
+     * video/audio) can play directly; photos keep the post page. YouTube link tiles use
+     * handleYouTubeSelection with their exact video and original-post identity.
      */
     fun openTelegramPost(chatId: Long, messageId: Int, queue: Long?) {
         val behavior = appPreferences.telegramMediaSelectionBehaviorKey
@@ -1247,18 +1254,27 @@ private fun AmbientTvApp(
         }
     }
 
-    fun handleYouTubeSelection(videoId: String, browseSession: Long? = null) {
+    fun handleYouTubeSelection(
+        videoId: String,
+        browseSession: Long? = null,
+        monogramOrigin: com.ambient.tv.data.telegram.TelegramYouTubeSelection? = null,
+    ) {
         // Channel tiles open the channel page whatever the selection behavior says.
         com.ambient.tv.youtube.youtubeChannelIdOf(videoId)?.let { channelId ->
             navController.navigate(Destinations.youtubeChannel(channelId))
             return
         }
-        when (val route = youtubeSelectionRoute(appPreferences.youtubeMediaSelectionBehaviorKey, videoId)) {
-            is YouTubeSelectionRoute.Details -> navController.navigate(Destinations.youtubeDetail(route.videoId, browseSession))
+        val origin = monogramOrigin?.takeIf { it.videoId == videoId }
+        val behavior = if (origin != null) appPreferences.telegramMediaSelectionBehaviorKey
+            else appPreferences.youtubeMediaSelectionBehaviorKey
+        when (val route = youtubeSelectionRoute(behavior, videoId)) {
+            is YouTubeSelectionRoute.Details -> navController.navigate(Destinations.youtubeDetail(
+                route.videoId, browseSession, origin?.chatId, origin?.messageId))
             is YouTubeSelectionRoute.Play -> playYouTubeFromBrowse(route.videoId, browseSession)
             is YouTubeSelectionRoute.Ask -> {
                 pendingYouTubeVideoId = route.videoId
                 pendingYouTubeBrowseSession = browseSession
+                pendingYouTubeOrigin = origin
             }
         }
     }
@@ -2269,9 +2285,14 @@ private fun AmbientTvApp(
                                 onYouTubeVideoClick = { videoId, session -> handleYouTubeSelection(videoId, session) },
                                 onTrailerVideoClick = { videoId, session -> playOnSelectedTarget(Destinations.trailerPlayer(videoId, session)) },
                                 onTelegramPostClick = { key, queue ->
-                                    com.ambient.tv.data.telegram.telegramPostIds(key)?.let { (chatId, messageId) ->
-                                        openTelegramPost(chatId, messageId, queue)
-                                    } ?: handleMediaSelection(key)
+                                    val youtube = com.ambient.tv.data.telegram.telegramYouTubeSelection(key)
+                                    if (youtube != null) {
+                                        handleYouTubeSelection(youtube.videoId, monogramOrigin = youtube)
+                                    } else {
+                                        com.ambient.tv.data.telegram.telegramPostIds(key)?.let { (chatId, messageId) ->
+                                            openTelegramPost(chatId, messageId, queue)
+                                        } ?: handleMediaSelection(key)
+                                    }
                                 },
                                 onRadioHomeStationClick = ::handleHomeRadioSelection,
                                 onWatchLiveChannel = { channel -> playOnSelectedTarget(Destinations.tvhPlayer("channel", channel.uuid, channel.sourceId)) },
@@ -2399,6 +2420,9 @@ private fun AmbientTvApp(
                                 onOpenPost = { chatId, messageId, queue ->
                                     openTelegramPost(chatId, messageId, queue)
                                 },
+                                onOpenYouTube = { source ->
+                                    handleYouTubeSelection(source.videoId, monogramOrigin = source)
+                                },
                             )
                         }
                     }
@@ -2412,6 +2436,9 @@ private fun AmbientTvApp(
                                 onOpenChannel = { chatId -> navigateToSection(Destinations.telegramSection("channel:$chatId")) },
                                 onOpenPost = { chatId, messageId, queue ->
                                     openTelegramPost(chatId, messageId, queue)
+                                },
+                                onOpenYouTube = { source ->
+                                    handleYouTubeSelection(source.videoId, monogramOrigin = source)
                                 },
                             )
                         }
@@ -2440,7 +2467,8 @@ private fun AmbientTvApp(
                                 playOnSelectedTarget(Destinations.telegramPlayer(chat, message, queue),
                                     navigate = { route -> navController.navigateToTelegramPlayer(route) })
                             },
-                            onOpenYouTube = { videoId -> handleYouTubeSelection(videoId) },
+                            // An explicitly labelled Play action never opens another detail/choice page.
+                            onOpenYouTube = { videoId -> playYouTubeFromBrowse(videoId, null) },
                             onOpenPhoto = { media ->
                                 val (entries, start) = com.ambient.tv.ui.telegram.TelegramPhotoGallery.open(media)
                                 com.ambient.tv.ui.photos.PhotoLaunch.deps(photoContext).photoSession().request = com.ambient.tv.data.photos.PhotoViewerSession.Request(
@@ -2531,6 +2559,8 @@ private fun AmbientTvApp(
                         arguments = listOf(
                             navArgument("videoId") { type = NavType.StringType },
                             navArgument("browseSession") { type = NavType.LongType; defaultValue = -1L },
+                            navArgument("originChatId") { type = NavType.LongType; defaultValue = 0L },
+                            navArgument("originMessageId") { type = NavType.IntType; defaultValue = 0 },
                         ),
                     ) { entry ->
                         YouTubeDetailScreen(
@@ -2541,6 +2571,9 @@ private fun AmbientTvApp(
                             },
                             onOpenChannel = ::openYouTubeChannel,
                             onOpenItem = { videoId -> handleYouTubeSelection(videoId) },
+                            onOpenOriginalPost = { chatId, messageId ->
+                                navController.navigate(Destinations.telegramDetail(chatId, messageId))
+                            },
                         )
                     }
                     composable(
@@ -2953,6 +2986,7 @@ private fun AmbientTvApp(
                 // Draw above their backgrounds without adding a new D-pad focus target.
                 if (!handheld && currentRoute in setOf(
                         Destinations.DETAIL, Destinations.YOUTUBE_DETAIL, Destinations.YOUTUBE_CHANNEL, Destinations.SPOTIFY_DETAIL,
+                        Destinations.TELEGRAM_DETAIL,
                     )
                 ) {
                     val scale = com.ambient.tv.ui.common.rememberUhdScale()
@@ -2982,18 +3016,23 @@ private fun AmbientTvApp(
                         onDismiss = {
                             pendingYouTubeVideoId = null
                             pendingYouTubeBrowseSession = null
+                            pendingYouTubeOrigin = null
                         },
                         onPlay = {
                             val session = pendingYouTubeBrowseSession
                             pendingYouTubeVideoId = null
                             pendingYouTubeBrowseSession = null
+                            pendingYouTubeOrigin = null
                             playYouTubeFromBrowse(videoId, session)
                         },
                         onDetails = {
                             val session = pendingYouTubeBrowseSession
+                            val origin = pendingYouTubeOrigin
                             pendingYouTubeVideoId = null
                             pendingYouTubeBrowseSession = null
-                            navController.navigate(Destinations.youtubeDetail(videoId, session))
+                            pendingYouTubeOrigin = null
+                            navController.navigate(Destinations.youtubeDetail(videoId, session,
+                                origin?.chatId, origin?.messageId))
                         },
                     )
                 }

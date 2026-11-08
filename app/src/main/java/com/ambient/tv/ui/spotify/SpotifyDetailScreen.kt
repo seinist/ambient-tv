@@ -239,10 +239,6 @@ private fun SpotifyDetailHero(
             com.ambient.tv.ui.common.DetailPrimaryMetaRow(spotifyPrimaryMeta(state), item = null)
             PlaybackStatusSection(current)
             if (state.offline) Text(stringResource(R.string.browse_offline), color = MaterialTheme.colorScheme.onSurfaceVariant)
-            state.description?.takeIf { it.isNotBlank() }?.let {
-                Text(it, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 3, overflow = TextOverflow.Ellipsis)
-            }
-            state.error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 val focus = Modifier.focusRequester(primaryFocus).onFocusChanged { if (it.isFocused) onActionFocused() }
                 when {
@@ -252,6 +248,11 @@ private fun SpotifyDetailHero(
                 }
             }
             if (current != null && !state.offline) CompanionChooseDeviceAction(onChooseDevice)
+            state.error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+            com.ambient.tv.ui.common.DetailDescriptionSection(
+                text = state.description,
+                actionFocus = primaryFocus.takeIf { state.error != null || (!state.offline && !state.loading) },
+            )
         }
     }
 }
