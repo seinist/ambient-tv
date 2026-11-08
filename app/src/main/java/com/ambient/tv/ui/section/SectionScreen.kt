@@ -862,7 +862,7 @@ private fun RecommendationRowsPage(
         }.takeIf { it >= 0 }
             ?: state.recommendationRows.indexOfFirst { row -> key != null && row.items.any { key in it.allRatingKeys } }.coerceAtLeast(0)
     }
-    val rowsState = rememberLazyListState(initialFirstVisibleItemIndex = restoreRowIndex)
+    val rowsState = com.ambient.tv.ui.common.rememberBrowseRowColumnState(initialFirstVisibleItemIndex = restoreRowIndex)
     RegisterBrowseFocusRows(rowsState, state.recommendationRows.map { it.id to it.items.map { item -> item.ratingKey } })
     val rowCentering = rememberRowCenteringState(rowsState)
     var centeredRowIndex by remember { mutableStateOf(-1) }
@@ -920,7 +920,7 @@ private fun RecommendationRowsPage(
                             },
                         ) { state.recommendationRows.map { it.id } }
                         .clipToBounds()
-                        .then(if (handheld) Modifier else Modifier.fadeRowsBehindHomeHero(performance.allowRowFadeSaveLayer, heroHeight))
+                        .then(if (handheld) Modifier else Modifier.fadeRowsBehindHomeHero(performance.allowRowFadeSaveLayer && !rowsState.isScrollInProgress, heroHeight))
                         // Hidden for the one frame before the first row is measured (first open only;
                         // a list restored further down never composes row 0 and shows at once).
                         .then(if (handheld) Modifier else Modifier.graphicsLayer {
@@ -934,7 +934,11 @@ private fun RecommendationRowsPage(
                     itemsIndexed(state.recommendationRows, key = { _, row -> row.id }) { index, row ->
                         ContentRow(
                             // Until a row takes focus, the restored row is the active one.
-                            modifier = Modifier.onlyActiveHeroRow(index, if (centeredRowIndex >= 0) centeredRowIndex else restoreRowIndex).then(
+                            modifier = Modifier.onlyActiveHeroRow(
+                                index,
+                                if (centeredRowIndex >= 0) centeredRowIndex else restoreRowIndex,
+                                revealDuringScroll = rowsState.isScrollInProgress,
+                            ).then(
                                 if (index == 0) Modifier.onSizeChanged { size ->
                                     val height = with(density) { size.height.toDp() }
                                     firstRowHeight = height
