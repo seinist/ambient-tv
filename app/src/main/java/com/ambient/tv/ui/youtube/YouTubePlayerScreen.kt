@@ -724,7 +724,10 @@ private fun YouTubeMedia3Playback(
     val target = remember(presetKey, maxVideoHeight) {
         com.ambient.tv.youtube.YouTubeDeviceVideo.videoTarget(context, presetKey, maxVideoHeight)
     }
-    val player = remember(playback.uri, playback.headers, startPositionMs, audioPassthroughEnabled, streamTuning, refreshGeneration) {
+    val startupAudioLanguage = remember(playback.adaptiveFormats, sponsorPrefs.playbackAudioLanguage) {
+        com.ambient.tv.youtube.youtubeStartupAudioLanguage(playback.adaptiveFormats, sponsorPrefs.playbackAudioLanguage)
+    }
+    val player = remember(playback.uri, playback.headers, startPositionMs, audioPassthroughEnabled, streamTuning, refreshGeneration, startupAudioLanguage) {
         BackgroundPlaybackSession.acquire(context, metadata, "media3",
             listOf(playback.uri, playback.headers, startPositionMs, audioPassthroughEnabled, streamTuning, refreshGeneration)) {
             val appContext = context.applicationContext
@@ -736,6 +739,7 @@ private fun YouTubeMedia3Playback(
                 profileMetadata = metadata,
                 streamHeaders = playback.headers, mimeType = playback.mimeType,
                 audioPassthroughEnabled = audioPassthroughEnabled,
+                preferredAudioLanguage = startupAudioLanguage,
                 maxVideoHeight = target.height,
                 preferredVideoMimeType = youtubeFamilyMimeType(target.family),
                 maxVideoFrameRate = target.fps,
