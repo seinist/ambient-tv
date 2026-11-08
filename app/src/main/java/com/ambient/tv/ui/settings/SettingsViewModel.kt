@@ -528,6 +528,7 @@ class SettingsViewModel @Inject constructor(
         seekPlayback = com.ambient.tv.data.local.SeekPlaybackSettings(
             appPreferences.bigSeekJumpSeconds, appPreferences.pauseRewindSeconds,
             appPreferences.pauseRewindMinPauseSeconds, appPreferences.resumeRewindSeconds,
+            appPreferences.watchedThresholdPercent, appPreferences.resumeIgnoreEndPercent,
         ),
         creditsSkipMode = appPreferences.creditsSkipMode,
         introSkipMode = appPreferences.introSkipMode,
@@ -2594,6 +2595,14 @@ class SettingsViewModel @Inject constructor(
     fun onResumeRewindChanged(value: Int) = _uiState.update {
         it.copy(seekPlayback = it.seekPlayback.copy(resumeRewindSeconds = value.takeIf { seconds -> seconds in com.ambient.tv.data.local.RESUME_REWIND_SECONDS } ?: 0))
     }
+    fun onWatchedThresholdChanged(value: Int) = _uiState.update {
+        it.copy(seekPlayback = it.seekPlayback.copy(watchedThresholdPercent =
+            value.takeIf { percent -> percent in com.ambient.tv.data.local.WATCHED_THRESHOLD_PERCENT } ?: 90))
+    }
+    fun onResumeIgnoreEndChanged(value: Int) = _uiState.update {
+        it.copy(seekPlayback = it.seekPlayback.copy(resumeIgnoreEndPercent =
+            value.takeIf { percent -> percent in com.ambient.tv.data.local.RESUME_IGNORE_END_PERCENT } ?: 8))
+    }
     fun onCreditsSkipModeChanged(value: String) = _uiState.update { it.copy(creditsSkipMode = value) }
 
     fun onIntroSkipModeChanged(value: String) = _uiState.update { it.copy(introSkipMode = value) }
@@ -3061,6 +3070,8 @@ class SettingsViewModel @Inject constructor(
         appPreferences.pauseRewindSeconds = state.pauseRewindSeconds
         appPreferences.pauseRewindMinPauseSeconds = state.pauseRewindMinPauseSeconds
         appPreferences.resumeRewindSeconds = state.resumeRewindSeconds
+        appPreferences.watchedThresholdPercent = state.watchedThresholdPercent
+        appPreferences.resumeIgnoreEndPercent = state.resumeIgnoreEndPercent
         appPreferences.creditsSkipMode = state.creditsSkipMode
         appPreferences.introSkipMode = state.introSkipMode
         appPreferences.nextUpEnabled = state.nextUpEnabled

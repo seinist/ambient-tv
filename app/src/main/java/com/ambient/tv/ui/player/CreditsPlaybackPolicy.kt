@@ -13,9 +13,16 @@ internal fun finalCreditsAt(positionMs: Long, durationMs: Long, segments: List<P
 }
 
 internal fun playbackIsComplete(positionMs: Long, durationMs: Long, ended: Boolean,
-    segments: List<PlaybackSegment>): Boolean = ended ||
-    (durationMs > 0 && positionMs.toDouble() / durationMs >= .9) ||
+    segments: List<PlaybackSegment>, watchedThresholdPercent: Int = 90): Boolean = ended ||
+    (durationMs > 0 && positionMs.toDouble() / durationMs >= watchedThresholdPercent.coerceIn(1, 100) / 100.0) ||
     finalCreditsAt(positionMs, durationMs, segments) != null
+
+/** Kodi-style resume rule: positions in the final N percent are treated as complete for resume only. */
+internal fun shouldClearResumeAtEnd(positionMs: Long, durationMs: Long, ignoreEndPercent: Int): Boolean {
+    if (durationMs <= 0 || positionMs < 0 || ignoreEndPercent <= 0) return false
+    val boundary = 1.0 - ignoreEndPercent.coerceIn(0, 99) / 100.0
+    return positionMs.toDouble() / durationMs >= boundary
+}
 
 /** Count only observed playback time. Seeking restarts the countdown; rewinding cancels it. */
 internal class CreditsCountdown {

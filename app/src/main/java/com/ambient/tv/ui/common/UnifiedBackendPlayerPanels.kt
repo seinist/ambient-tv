@@ -308,6 +308,8 @@ fun UnifiedBackendPlayerPanel(
                 onPauseRewindChanged = { preferences.pauseRewindSeconds = it },
                 onMinPauseChanged = { preferences.pauseRewindMinPauseSeconds = it },
                 onResumeRewindChanged = { preferences.resumeRewindSeconds = it },
+                onWatchedThresholdChanged = { preferences.watchedThresholdPercent = it },
+                onResumeIgnoreEndChanged = { preferences.resumeIgnoreEndPercent = it },
                 playbackPanel = true,
                 showPauseRewind = resumeCapabilities.pauseRewind,
                 showSavedResumeRewind = resumeCapabilities.savedResumeRewind,

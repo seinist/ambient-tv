@@ -251,6 +251,10 @@
     <string name="settings_resume_rewind">Rewind when resuming a video</string>
     <string name="settings_resume_rewind_hint">Starts a previously watched video a little before its saved position.</string>
     <string name="settings_resume_rewind_active_hint">Starts a previously watched video %1$d seconds before its saved position.</string>
+    <string name="settings_watched_threshold">Mark watched from</string>
+    <string name="settings_watched_threshold_hint">Marks a video watched once playback reaches this percentage. Kodi default: 90%.</string>
+    <string name="settings_resume_ignore_end">Discard resume near the end</string>
+    <string name="settings_resume_ignore_end_hint">Does not retain a resume point within the final percentage of a video. Kodi default: final 8%.</string>
     <string name="settings_rewind_seconds">%1$d s</string>
     <string name="settings_seek_jump_summary">Seek: %1$d s</string>
     <string name="settings_pause_rewind_summary">Pause: %1$d s</string>

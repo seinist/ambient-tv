@@ -142,6 +142,8 @@ data class SettingsBackup(
     val pauseRewindSeconds: Int? = null,
     val pauseRewindMinPauseSeconds: Int? = null,
     val resumeRewindSeconds: Int? = null,
+    val watchedThresholdPercent: Int? = null,
+    val resumeIgnoreEndPercent: Int? = null,
     val youtubeSponsorBlockEnabled: Boolean = true,
     /** SponsorBlock action per category ("sponsor=auto,…"); null in older backups. */
     val youtubeSponsorBlockModes: String? = null,
@@ -480,6 +482,8 @@ class SettingsBackupManager @Inject constructor(
             pauseRewindSeconds = preferences.pauseRewindSeconds,
             pauseRewindMinPauseSeconds = preferences.pauseRewindMinPauseSeconds,
             resumeRewindSeconds = preferences.resumeRewindSeconds,
+            watchedThresholdPercent = preferences.watchedThresholdPercent,
+            resumeIgnoreEndPercent = preferences.resumeIgnoreEndPercent,
             youtubeSponsorBlockEnabled = preferences.youtubeSponsorBlockEnabled,
             youtubeSponsorBlockModes = com.ambient.tv.youtube.SponsorBlockCategories.format(preferences.youtubeSponsorBlockModes),
             youtubeSponsorBlockShowSegments = preferences.youtubeSponsorBlockShowSegments,
@@ -869,6 +873,8 @@ class SettingsBackupManager @Inject constructor(
         backup.pauseRewindSeconds?.let { preferences.pauseRewindSeconds = it }
         backup.pauseRewindMinPauseSeconds?.let { preferences.pauseRewindMinPauseSeconds = it }
         backup.resumeRewindSeconds?.let { preferences.resumeRewindSeconds = it }
+        backup.watchedThresholdPercent?.let { preferences.watchedThresholdPercent = it }
+        backup.resumeIgnoreEndPercent?.let { preferences.resumeIgnoreEndPercent = it }
         preferences.youtubeSponsorBlockEnabled = backup.youtubeSponsorBlockEnabled
         preferences.youtubeSponsorBlockShowSegments = backup.youtubeSponsorBlockShowSegments
         backup.youtubeAutoCaptions?.let { preferences.youtubeAutoCaptions = it }

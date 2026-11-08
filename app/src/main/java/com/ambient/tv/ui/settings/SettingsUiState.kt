@@ -308,6 +308,8 @@ data class SettingsUiState(
     val pauseRewindSeconds: Int get() = seekPlayback.pauseRewindSeconds
     val pauseRewindMinPauseSeconds: Int get() = seekPlayback.pauseRewindMinPauseSeconds
     val resumeRewindSeconds: Int get() = seekPlayback.resumeRewindSeconds
+    val watchedThresholdPercent: Int get() = seekPlayback.watchedThresholdPercent
+    val resumeIgnoreEndPercent: Int get() = seekPlayback.resumeIgnoreEndPercent
 }
 
 /** Only editable values participate: auth, discovery, progress and errors are not drafts. */
@@ -619,6 +621,8 @@ internal fun mergeStoredSettings(draft: SettingsUiState, baseline: SettingsUiSta
         pauseRewindSeconds = if (draft.pauseRewindSeconds != baseline.pauseRewindSeconds) draft.pauseRewindSeconds else stored.pauseRewindSeconds,
         pauseRewindMinPauseSeconds = if (draft.pauseRewindMinPauseSeconds != baseline.pauseRewindMinPauseSeconds) draft.pauseRewindMinPauseSeconds else stored.pauseRewindMinPauseSeconds,
         resumeRewindSeconds = if (draft.resumeRewindSeconds != baseline.resumeRewindSeconds) draft.resumeRewindSeconds else stored.resumeRewindSeconds,
+        watchedThresholdPercent = if (draft.watchedThresholdPercent != baseline.watchedThresholdPercent) draft.watchedThresholdPercent else stored.watchedThresholdPercent,
+        resumeIgnoreEndPercent = if (draft.resumeIgnoreEndPercent != baseline.resumeIgnoreEndPercent) draft.resumeIgnoreEndPercent else stored.resumeIgnoreEndPercent,
     ),
     creditsSkipMode = if (draft.creditsSkipMode != baseline.creditsSkipMode) draft.creditsSkipMode else stored.creditsSkipMode,
     introSkipMode = if (draft.introSkipMode != baseline.introSkipMode) draft.introSkipMode else stored.introSkipMode,

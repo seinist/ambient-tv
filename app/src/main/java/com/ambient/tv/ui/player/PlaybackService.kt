@@ -380,7 +380,10 @@ class PlaybackService : MediaLibraryService() {
         val duration = metadata.durationMs.takeIf { it > 0 }
             ?: state.status.durationMs.takeIf { it > 0 }?.plus(metadata.timelineOffsetMs) ?: 0L
         val completed = metadata.hasVideo && !metadata.isLive && playbackIsComplete(
-            position, duration, state.status.ended && state.status.error == null, metadata.playbackSegments)
+            position, duration, state.status.ended && state.status.error == null, metadata.playbackSegments,
+            preferences.watchedThresholdPercent)
+        val clearResume = metadata.hasVideo && !metadata.isLive &&
+            shouldClearResumeAtEnd(position, duration, preferences.resumeIgnoreEndPercent)
         try {
             metadata.liveTvSession?.let {
                 it.report(position, state.playing, stopped)
@@ -388,7 +391,8 @@ class PlaybackService : MediaLibraryService() {
             }
             when (metadata.source) {
                 "plex", "jellyfin", "emby", "dlna" -> {
-                    val reported = repository.reportProgress(metadata.mediaId, position,
+                    val reportedPosition = if (stopped && clearResume) 0L else position
+                    val reported = repository.reportProgress(metadata.mediaId, reportedPosition,
                         if (stopped) "stopped" else if (state.playing) "playing" else "paused")
                     if (stopped && reported.isFailure) notifyNotSaved(metadata)
                     // Launcher "Continue watching": updated when playback stops, not on every report.
@@ -403,7 +407,7 @@ class PlaybackService : MediaLibraryService() {
                             episode = metadata.subtitle.isNotBlank(),
                             landscapeArtwork = metadata.artworkAspectRatio > 1f,
                             durationMs = duration,
-                            positionMs = position,
+                            positionMs = if (clearResume) 0L else position,
                         ),
                         finished = completed,
                     )

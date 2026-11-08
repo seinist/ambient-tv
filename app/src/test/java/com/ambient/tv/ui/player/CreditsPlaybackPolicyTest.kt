@@ -10,6 +10,16 @@ class CreditsPlaybackPolicyTest {
         assertFalse(playbackIsComplete(89_999, 100_000, false, emptyList()))
         assertTrue(playbackIsComplete(90_000, 100_000, false, emptyList()))
         assertFalse(playbackIsComplete(1, 0, false, emptyList()))
+        assertFalse(playbackIsComplete(94_999, 100_000, false, emptyList(), 95))
+        assertTrue(playbackIsComplete(95_000, 100_000, false, emptyList(), 95))
+    }
+
+    @Test fun kodiResumeEndThresholdIsIndependentFromWatchedThreshold() {
+        assertFalse(shouldClearResumeAtEnd(91_999, 100_000, 8))
+        assertTrue(shouldClearResumeAtEnd(92_000, 100_000, 8))
+        assertTrue(shouldClearResumeAtEnd(99_999, 100_000, 8))
+        assertFalse(shouldClearResumeAtEnd(100_000, 100_000, 0))
+        assertFalse(shouldClearResumeAtEnd(1, 0, 8))
     }
     @Test fun finalCreditsCompleteEarlyButKnownLaterScenesDoNot() {
         assertTrue(playbackIsComplete(70_000, 100_000, false, listOf(credits)))

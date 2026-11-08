@@ -252,6 +252,10 @@
     <string name="settings_resume_rewind">Beim Fortsetzen zurückspringen</string>
     <string name="settings_resume_rewind_hint">Startet ein begonnenes Video etwas vor der zuletzt gespeicherten Position.</string>
     <string name="settings_resume_rewind_active_hint">Startet ein begonnenes Video %1$d Sekunden vor der zuletzt gespeicherten Position.</string>
+    <string name="settings_watched_threshold">Als gesehen markieren ab</string>
+    <string name="settings_watched_threshold_hint">Ab diesem Wiedergabestand wird ein Video als gesehen markiert. Kodi-Standard: 90 %.</string>
+    <string name="settings_resume_ignore_end">Resume am Ende verwerfen</string>
+    <string name="settings_resume_ignore_end_hint">Speichert in den letzten Prozent des Videos keinen Resume-Punkt mehr. Kodi-Standard: letzte 8 %.</string>
     <string name="settings_rewind_seconds">%1$d s</string>
     <string name="settings_seek_jump_summary">Sprung: %1$d s</string>
     <string name="settings_pause_rewind_summary">Pause: %1$d s</string>

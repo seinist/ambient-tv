@@ -15,6 +15,8 @@ import com.ambient.tv.data.local.PAUSE_REWIND_MIN_PAUSE_SECONDS
 import com.ambient.tv.data.local.PAUSE_REWIND_SECONDS
 import com.ambient.tv.data.local.RESUME_REWIND_SECONDS
 import com.ambient.tv.data.local.SEEK_JUMP_SECONDS
+import com.ambient.tv.data.local.WATCHED_THRESHOLD_PERCENT
+import com.ambient.tv.data.local.RESUME_IGNORE_END_PERCENT
 import com.ambient.tv.data.local.SeekPlaybackSettings
 import com.ambient.tv.ui.settings.SettingsGroup
 import com.ambient.tv.ui.settings.SettingsSelect
@@ -28,6 +30,8 @@ internal fun SeekPlaybackSettingsControls(
     onPauseRewindChanged: (Int) -> Unit,
     onMinPauseChanged: (Int) -> Unit,
     onResumeRewindChanged: (Int) -> Unit,
+    onWatchedThresholdChanged: (Int) -> Unit = {},
+    onResumeIgnoreEndChanged: (Int) -> Unit = {},
     playbackPanel: Boolean = false,
     showPauseRewind: Boolean = true,
     showSavedResumeRewind: Boolean = true,
@@ -78,6 +82,21 @@ internal fun SeekPlaybackSettingsControls(
                     icon = Icons.Filled.Replay,
                     onChanged = onResumeRewindChanged,
                 )
+                PercentPlaybackOption(
+                    title = stringResource(R.string.settings_watched_threshold),
+                    description = stringResource(R.string.settings_watched_threshold_hint),
+                    value = settings.watchedThresholdPercent,
+                    options = WATCHED_THRESHOLD_PERCENT,
+                    onChanged = onWatchedThresholdChanged,
+                )
+                PercentPlaybackOption(
+                    title = stringResource(R.string.settings_resume_ignore_end),
+                    description = stringResource(R.string.settings_resume_ignore_end_hint),
+                    value = settings.resumeIgnoreEndPercent,
+                    options = RESUME_IGNORE_END_PERCENT,
+                    zeroLabel = stringResource(R.string.player_off),
+                    onChanged = onResumeIgnoreEndChanged,
+                )
             }
         }
     }
@@ -125,6 +144,29 @@ private fun SeekPlaybackOption(
         icon = icon,
         options = labels.map { (seconds, label) ->
             SettingsSelectOption(label, seconds == value, onClick = { onChanged(seconds) })
+        },
+    )
+}
+
+
+@Composable
+private fun PercentPlaybackOption(
+    title: String,
+    description: String,
+    value: Int,
+    options: List<Int>,
+    zeroLabel: String? = null,
+    onChanged: (Int) -> Unit,
+) {
+    SettingsSelect(
+        label = title,
+        description = description,
+        options = options.map { percent ->
+            SettingsSelectOption(
+                text = if (percent == 0 && zeroLabel != null) zeroLabel else "$percent %",
+                selected = percent == value,
+                onClick = { onChanged(percent) },
+            )
         },
     )
 }
