@@ -73,6 +73,8 @@ sealed interface TvheadendPlayerState {
         val projectmTransitionSeconds: Int = 2,
         val projectmQualityKey: String = "balanced",
         val projectmPresetCategoryKey: String = "all",
+        /** Browse order, including a radio-only Auto queue restored by the handheld player. */
+        val channelOrder: List<String>? = null,
     ) : TvheadendPlayerState
     data class Error(
         val message: String,
@@ -116,9 +118,13 @@ class TvheadendPlayerViewModel @Inject constructor(
     val expectedChannel: TvhChannel? get() = channels.firstOrNull { it.uuid == currentChannelUuid }
     private var channels: List<TvhChannel> = emptyList()
     /** Started from Live TV or the Guide: zapping stays within that view's filtered channels. */
-    private val zapOrder: List<String>? =
-        if (kind != "channel") null else com.ambient.tv.livetv.LiveTvZapOrder.forPlayer(sourceId, initialId,
-            reopened = BackgroundPlaybackSession.cached(Destinations.tvhPlayer(kind, initialId, sourceId)) != null)
+    private var zapOrder: List<String>? = if (kind != "channel") null else {
+        val cached = BackgroundPlaybackSession.cached(Destinations.tvhPlayer(kind, initialId, sourceId))
+            as? TvheadendPlayerState.Ready
+        val offered = com.ambient.tv.livetv.LiveTvZapOrder.forPlayer(sourceId, initialId, reopened = cached != null)
+        cached?.channelOrder ?: offered
+    }
+    private var lastSessionGeneration = BackgroundPlaybackSession.snapshot.value.generation
     var changingChannel by androidx.compose.runtime.mutableStateOf(false)
         private set
     private var fallbackAttempted = false
@@ -236,6 +242,38 @@ class TvheadendPlayerViewModel @Inject constructor(
         com.ambient.tv.livetv.LiveTimeshift.resumeSeekHandler = timeshiftResumeSeekHandler
         if (kind == "channel") com.ambient.tv.livetv.LiveTvReturnFocus.watched(repository.source.id, initialId)
         load()
+        viewModelScope.launch {
+            BackgroundPlaybackSession.snapshot.map { Triple(it.generation, it.replacingSource, it.metadata) }
+                .distinctUntilChanged().collect { (generation, replacing, metadata) ->
+                    val snapshot = BackgroundPlaybackSession.snapshot.value
+                    // A queued observation must never reinstall a station already replaced again.
+                    if (snapshot.generation != generation || snapshot.replacingSource != replacing ||
+                        snapshot.metadata !== metadata) return@collect
+                    if (generation == lastSessionGeneration) {
+                        val current = _uiState.value as? TvheadendPlayerState.Ready ?: return@collect
+                        val updated = liveRadioSessionMetadata(snapshot, sourceId, sourceSystem, kind, generation, current)
+                            ?: return@collect
+                        zapOrder = updated.channelOrder
+                        _uiState.value = withProgrammeArtwork(updated)
+                        return@collect
+                    }
+                    val restored = liveRadioSessionRestore(snapshot, sourceId, sourceSystem, kind, lastSessionGeneration)
+                    lastSessionGeneration = maxOf(lastSessionGeneration, generation)
+                    if (restored == null || snapshot.metadata?.resumeState === _uiState.value) return@collect
+                    loadingJob?.cancel()
+                    seekJob?.cancel()
+                    pendingSourceReplacement = null
+                    currentChannelUuid = requireNotNull(restored.channel).uuid
+                    zapOrder = restored.channelOrder
+                    ownedSession = restored.source.session
+                    changingChannel = false
+                    fallbackAttempted = false
+                    localFallbackBackends.clear()
+                    videoFailureConfirmed = false
+                    _uiState.value = withProgrammeArtwork(restored)
+                    com.ambient.tv.livetv.LiveTvReturnFocus.watched(sourceId, currentChannelUuid)
+                }
+        }
         viewModelScope.launch {
             artwork.titleArt.collectLatest {
                 val ready = _uiState.value as? TvheadendPlayerState.Ready ?: return@collectLatest
@@ -874,6 +912,7 @@ class TvheadendPlayerViewModel @Inject constructor(
                     projectmTransitionSeconds = preferences.projectmTransitionSeconds,
                     projectmQualityKey = preferences.projectmQualityKey,
                     projectmPresetCategoryKey = preferences.projectmPresetCategoryKey,
+                    channelOrder = zapOrder,
                 ).withSelectedRenderer(restorePosition = false)
                 // Live TV and the Guide focus this channel when the player is left.
                 com.ambient.tv.livetv.LiveTvReturnFocus.watched(repository.source.id, channel.uuid)

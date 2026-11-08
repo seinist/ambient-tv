@@ -244,6 +244,78 @@ class SessionPlaybackPlayerTest {
         player.release()
     }
 
+    @Test fun unseekableLiveRadioDispatchesBothGenericAndMediaItemSkipCommands() {
+        val actions = RecordingActions()
+        val player = SessionPlaybackPlayer(Looper.getMainLooper(), actions)
+        player.update(playing("radio").copy(isLive = true, canSeek = false,
+            hasPrevious = true, hasNext = true))
+        assertTrue(player.isCurrentMediaItemLive)
+        assertFalse(player.isCurrentMediaItemSeekable)
+        assertFalse(player.isCommandAvailable(Player.COMMAND_SEEK_IN_CURRENT_MEDIA_ITEM))
+        for (command in listOf(Player.COMMAND_SEEK_TO_PREVIOUS, Player.COMMAND_SEEK_TO_PREVIOUS_MEDIA_ITEM,
+            Player.COMMAND_SEEK_TO_NEXT, Player.COMMAND_SEEK_TO_NEXT_MEDIA_ITEM)) {
+            assertTrue(player.isCommandAvailable(command))
+        }
+
+        // The actual source queue lives in the service. Media3 must still forward these
+        // commands even though the adapter publishes only the current station in its timeline.
+        assertEquals(1, player.mediaItemCount)
+        player.seekToPrevious()
+        player.seekToNext()
+        player.seekToPreviousMediaItem()
+        player.seekToNextMediaItem()
+        player.seekTo(10_000)
+        assertEquals(listOf("previous", "next", "previous", "next"), actions.events)
+        player.release()
+    }
+
+    @Test fun liveRadioQueueEdgesExposeOnlyTheAvailableNeighbour() {
+        val actions = RecordingActions()
+        val player = SessionPlaybackPlayer(Looper.getMainLooper(), actions)
+        player.update(playing("first").copy(isLive = true, hasNext = true))
+        assertFalse(player.isCommandAvailable(Player.COMMAND_SEEK_TO_PREVIOUS))
+        assertFalse(player.isCommandAvailable(Player.COMMAND_SEEK_TO_PREVIOUS_MEDIA_ITEM))
+        assertTrue(player.isCommandAvailable(Player.COMMAND_SEEK_TO_NEXT))
+        player.seekToPrevious()
+        player.seekToPreviousMediaItem()
+        player.seekToNext()
+
+        player.update(playing("last").copy(isLive = true, hasPrevious = true))
+        assertTrue(player.isCommandAvailable(Player.COMMAND_SEEK_TO_PREVIOUS))
+        assertFalse(player.isCommandAvailable(Player.COMMAND_SEEK_TO_NEXT))
+        assertFalse(player.isCommandAvailable(Player.COMMAND_SEEK_TO_NEXT_MEDIA_ITEM))
+        player.seekToNext()
+        player.seekToNextMediaItem()
+        player.seekToPrevious()
+        assertEquals(listOf("next", "previous"), actions.events)
+
+        player.update(playing("only").copy(isLive = true))
+        assertFalse(player.isCommandAvailable(Player.COMMAND_SEEK_TO_PREVIOUS))
+        assertFalse(player.isCommandAvailable(Player.COMMAND_SEEK_TO_NEXT))
+        player.release()
+    }
+
+    @Test fun pendingRadioSelectionNeverSkipsTheOutgoingStationsQueue() {
+        val actions = RecordingActions()
+        val player = SessionPlaybackPlayer(Looper.getMainLooper(), actions)
+        player.update(playing("old-radio").copy(isLive = true, hasPrevious = true, hasNext = true))
+        player.setMediaItem(item("selected-radio"))
+        player.seekToPrevious()
+        player.seekToNext()
+        player.seekToPreviousMediaItem()
+        player.seekToNextMediaItem()
+        assertEquals(listOf("select:selected-radio"), actions.events)
+        assertFalse(player.isCommandAvailable(Player.COMMAND_SEEK_TO_PREVIOUS))
+        assertFalse(player.isCommandAvailable(Player.COMMAND_SEEK_TO_NEXT))
+
+        player.update(playing("selected-radio").copy(isLive = true, hasNext = true))
+        actions.requests.single().future.set(null)
+        assertTrue(player.isCommandAvailable(Player.COMMAND_SEEK_TO_NEXT))
+        player.seekToNextMediaItem()
+        assertEquals(listOf("select:selected-radio", "play", "next"), actions.events)
+        player.release()
+    }
+
     private fun item(id: String) = MediaItem.Builder().setMediaId(id).build()
     private fun playing(id: String) = SessionPlaybackState(mediaItem = item(id), uid = id, playWhenReady = true)
 
