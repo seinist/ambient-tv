@@ -226,7 +226,7 @@ fun YouTubeDetailScreen(
                             item(channelItem.videoId) {
                                 YouTubeItemCard(
                                     channelItem,
-                                    { onOpenChannel(channel) },
+                                    { _ -> onOpenChannel(channel) },
                                     youtubeItemMotionModifier().width(deviceDp(300.dp, 240.dp))
                                         .rowColumnFocusTarget(rowFocus, rowKey, channelItem.videoId),
                                 )
