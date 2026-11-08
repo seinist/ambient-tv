@@ -45,6 +45,7 @@ import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.size
@@ -891,10 +892,15 @@ internal fun LibraryContent(
         val glideWrap = !com.ambient.tv.ui.performance.LocalPerformanceProfile.current.reducedEffects
         val centeredRowKey = remember { MutableStateFlow<String?>(null) }
         var returningRow by remember { mutableStateOf(returnToken != null) }
-        val activeRowKey by centeredRowKey.collectAsState()
-        // Until a row takes focus, the restored row is the active one: no fade from row 0 to it.
-        val activeRowIndex = state.rowKeys.indexOf(activeRowKey).takeIf { it >= 0 }
-            ?: if (restoreArmed) restoreListIndex else 0
+        // Keep active-row visual state out of the parent composition. Each row's tiny layer
+        // modifier observes this state independently, so a vertical focus change cannot rebuild
+        // the whole Home row column.
+        val activeRowIndex = remember(state.playbackReturnRevision) {
+            mutableIntStateOf(if (restoreArmed) restoreListIndex else 0)
+        }
+        // Covers the few frames between scroll completion and the target tile taking focus.
+        // Read only from draw/layer lambdas below.
+        val pendingVisualRow = remember { mutableStateOf<String?>(null) }
         LaunchedEffect(restoreArmed, state.rowKeys) {
             if (restoreArmed && initialFocusRowId in state.rowKeys) {
                 rowListState.scrollToItem(restoreListIndex)
@@ -909,6 +915,8 @@ internal fun LibraryContent(
             // Row-entry events do not invalidate the whole Home composition.
             centeredRowKey.collectLatest { key ->
                 val index = state.rowKeys.indexOf(key)
+                if (index >= 0) activeRowIndex.intValue = index
+                if (pendingVisualRow.value == key) pendingVisualRow.value = null
                 // The return viewport is already placed at its initial row before drawing.
                 // Do not start a centering glide as that same row receives its first focus.
                 if (returningRow) {
@@ -933,16 +941,25 @@ internal fun LibraryContent(
                     .rowColumnFocusWrapRight(columnFocus)
                     .rowColumnFocusNavigation(
                         columnFocus,
-                        scrollToTop = { rowListState.glideToItem(glideWrap, 0) },
-                        scrollToBottom = { rowListState.glideToItem(glideWrap, state.rowKeys.lastIndex) },
+                        scrollToTop = {
+                            pendingVisualRow.value = state.rowKeys.firstOrNull()
+                            rowListState.glideToItem(glideWrap, 0)
+                        },
+                        scrollToBottom = {
+                            pendingVisualRow.value = state.rowKeys.lastOrNull()
+                            rowListState.glideToItem(glideWrap, state.rowKeys.lastIndex)
+                        },
                         scrollToRow = { rowKey ->
+                            pendingVisualRow.value = rowKey as? String
                             val index = state.rowKeys.indexOfFirst { it == rowKey }
                             if (index >= 0) rowCentering.centerItem(index, bottomInset = bottomInsetPx)
                         },
                     ) { state.rowKeys }
                     .clipToBounds()
                     .acceleratedDpadNavigation()
-                    .fadeRowsBehindHomeHero(maskRows, heroHeight) { rowListState.isScrollInProgress }
+                    .fadeRowsBehindHomeHero(maskRows, heroHeight) {
+                        rowListState.isScrollInProgress || pendingVisualRow.value != null
+                    }
                     .graphicsLayer {
                         val progress = entrancePhase(entranceProgress(), 0.24f, 1f)
                         // Hidden for the one frame before the first row is measured (first open only;
@@ -964,7 +981,13 @@ internal fun LibraryContent(
                     }
                 }) { rowKey ->
                     val rowIndex = state.rowKeys.indexOf(rowKey)
-                    Box(Modifier.onlyActiveHeroRow(rowIndex, activeRowIndex) { rowListState.isScrollInProgress }.then(
+                    Box(Modifier.onlyActiveHeroRow(
+                        rowIndex,
+                        activeIndex = { activeRowIndex.intValue },
+                        revealDuringScroll = {
+                            rowListState.isScrollInProgress || pendingVisualRow.value != null
+                        },
+                    ).then(
                         if (rowIndex == 0) Modifier.onSizeChanged {
                             val height = with(density) { it.height.toDp() }
                             firstRowHeight = height
@@ -1952,21 +1975,25 @@ private fun entrancePhase(progress: Float, start: Float, end: Float): Float =
  * others fade out, as they would otherwise show in the gap above it or below it.
  */
 @Composable
+internal fun Modifier.onlyActiveHeroRow(index: Int, activeIndex: Int): Modifier =
+    onlyActiveHeroRow(index, activeIndex = { activeIndex })
+
+@Composable
 internal fun Modifier.onlyActiveHeroRow(
     index: Int,
-    activeIndex: Int,
+    activeIndex: () -> Int,
     revealDuringScroll: () -> Boolean = { false },
 ): Modifier {
     if (LocalHandheldUi.current) return this
-    // Keep focus-driven fading cheap, but read the scroll flag only in the layer phase:
-    // entering/leaving a vertical glide must not recompose every nested LazyRow.
+    // activeIndex is read in this small modifier composable, not by the row-column parent.
+    // Only the affected alpha layers recompose when focus moves vertically.
     val alpha by androidx.compose.animation.core.animateFloatAsState(
-        targetValue = if (index == activeIndex) 1f else 0f,
+        targetValue = if (index == activeIndex()) 1f else 0f,
         animationSpec = androidx.compose.animation.core.tween(120),
         label = "heroRowInactive",
     )
     return graphicsLayer {
-        // The incoming row is visible for the whole glide instead of appearing only after focus lands.
+        // The incoming row is visible for the whole glide and until its tile actually takes focus.
         this.alpha = if (revealDuringScroll()) 1f else alpha
     }
 }
