@@ -91,7 +91,7 @@ fun SpotifyHomeScreen(
     val nowPlayingFocusRequester = remember { FocusRequester() }
     val firstItemFocusRequester = remember { FocusRequester() }
     var initialContentFocusPending by remember(expectedSectionKey) { mutableStateOf(true) }
-    val gridState = androidx.compose.runtime.key(navigationReturn?.revision) { androidx.compose.foundation.lazy.grid.rememberLazyGridState(
+    val gridState = androidx.compose.runtime.key(navigationReturn?.revision) { com.ambient.tv.ui.common.rememberBrowseGridState(
         initialFirstVisibleItemIndex = state.items.indexOfFirst { spotifyFocusId(it) == focusItemId }.coerceAtLeast(0),
     ) }
     BrowseFocusContentIdentity(listOf(expectedSectionKey, state.sectionKey, state.query, navigationReturn?.revision))
