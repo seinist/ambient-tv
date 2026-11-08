@@ -2,6 +2,7 @@ package com.ambient.tv.ui.player
 
 import com.ambient.tv.data.local.Media3ImageOptions
 import com.ambient.tv.data.local.VideoImageCatalog
+import java.io.File
 import kotlinx.serialization.json.Json
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -48,12 +49,12 @@ class Media3Anime4kTest {
             val cnn = media3Anime4kFragment(stages.first())
             assertTrue(cnn.startsWith("#version 100"))
             assertTrue(cnn.contains("precision highp float"))
-            assertTrue(cnn.contains("uniform sampler2D uMAIN;"))
+            assertTrue(cnn.contains("uniform highp sampler2D uMAIN;"))
             assertTrue(cnn.contains("vec4 animeHook()"))
             assertTrue(cnn.contains("gl_FragColor = animeHook()"))
             assertFalse(cnn.contains("//!BIND"))
             val final = media3Anime4kFragment(stages.last())
-            assertTrue(final.contains("uniform sampler2D uconv2d_last_tf;"))
+            assertTrue(final.contains("uniform highp sampler2D uconv2d_last_tf;"))
             assertTrue(final.contains("vec3(2.2)"))
             assertEquals(count, stages.map { it.save }.distinct().size)
             if (medium) {
@@ -72,6 +73,22 @@ class Media3Anime4kTest {
         assertNull(media3Anime4kPasses(good.replace("vec4 hook()", "float hook()")))
         assertNull(media3Anime4kPasses(good.substringBefore("//!DESC Anime4K-v3.2-Depth-to-Space")))
         assertNull(media3Anime4kPasses(""))
+    }
+
+    @Test fun shippedModelsUsePortableHooksAndHighPrecisionTextureReadsInEveryPass() {
+        val files = File("src/main/res/raw").listFiles()!!.filter { it.name.startsWith("quality_anime4k_") }
+        assertEquals(4, files.size)
+        for (file in files) {
+            val passes = requireNotNull(media3Anime4kPasses(file.readText()))
+            for (pass in passes) {
+                val fragment = media3Anime4kFragment(pass)
+                for (binding in pass.bindings) {
+                    assertTrue(file.name, fragment.contains("uniform highp sampler2D u$binding;"))
+                }
+                assertFalse(file.name, fragment.contains("[i0.y * 2 + i0.x]"))
+                assertFalse(file.name, fragment.contains("), 0.0))"))
+            }
+        }
     }
 
     @Test fun anime4kBudgetUsesMpvsOnePointTwoTimesGateAndPerformanceLimits() {

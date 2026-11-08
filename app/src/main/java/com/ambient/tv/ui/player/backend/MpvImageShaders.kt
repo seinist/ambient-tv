@@ -233,7 +233,8 @@ internal fun mpvCasSourceValid(source: String, profile: MpvCasTransferProfile, b
 
 /**
  * Text written to the shader cache: CAS gets its transfer curve (and Light/Medium blend; the HDR
- * single-pass variant also its range), ArtCNN its OpenGL variant, OUTPUT grain its hook change.
+ * single-pass variant also its range), ArtCNN its OpenGL variant, Anime4K its portable GLES
+ * hooks, OUTPUT grain its hook change.
  * Other sources stay byte-identical.
  */
 internal fun mpvShaderSourceFor(
@@ -249,6 +250,7 @@ internal fun mpvShaderSourceFor(
         .let { if (transferProfile.singlePassHdr && transferProfile.fullRange) it.replace("#define LIMITED_RANGE 1", "#define LIMITED_RANGE 0") else it }
         .let { cas -> shader.casBlend?.let { mpvCasBlendSource(cas, it) } ?: cas }
     artCnnOpenGl -> artCnnOpenGlSource(source)
+    shader.fileName.startsWith("quality_anime4k_") -> anime4kGlesSource(source)
     shader.outputHook -> mpvOutputGrainSource(source)
     shader.deblockStrength != null -> source.replace(
         "#define DEBLOCK_STRENGTH 0.50", "#define DEBLOCK_STRENGTH ${shader.deblockStrength}",

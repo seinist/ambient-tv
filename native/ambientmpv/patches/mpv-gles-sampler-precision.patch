@@ -1,0 +1,28 @@
+Ambient TV: preserve signed CNN feature texture reads on GLES.
+
+Anime4K stores learned features in RGBA16F targets. NVIDIA GLES can corrupt
+low-precision sampling/arithmetic on these textures even though the render
+target is floating point (mpv-player/mpv#18566). Use highp sampler2D wherever
+fragment highp is supported; retain mediump for GLES 2 devices without it.
+sampler3D and samplerExternalOES are unchanged.
+
+Reference: https://github.com/mpv-player/mpv/issues/18566
+
+diff --git a/video/out/gpu/shader_cache.c b/video/out/gpu/shader_cache.c
+--- a/video/out/gpu/shader_cache.c
++++ b/video/out/gpu/shader_cache.c
+@@ -788,7 +788,14 @@ static void gl_sc_generate(struct gl_shader_cache *sc,
+         ADD(header, "precision mediump float;\n");
+         ADD(header, "#endif\n");
+ 
++        // Signed CNN feature maps need high-precision reads as well as FP16
++        // storage. NVIDIA GLES can otherwise corrupt small-weight arithmetic.
++        // Preserve the fallback for GLES 2 implementations without highp.
++        ADD(header, "#if __VERSION__ >= 300 || defined(GL_FRAGMENT_PRECISION_HIGH)\n");
++        ADD(header, "precision highp sampler2D;\n");
++        ADD(header, "#else\n");
+         ADD(header, "precision mediump sampler2D;\n");
++        ADD(header, "#endif\n");
+         if (sc->ra->caps & RA_CAP_TEX_3D)
+             ADD(header, "precision mediump sampler3D;\n");
+     }

@@ -20,6 +20,10 @@ class MpvImageShaderCacheTest {
             R.raw.quality_adaptive_44e81f12 -> "quality_adaptive_44e81f12"
             R.raw.quality_ravu_lite_r2_cbbabe0a -> "quality_ravu_lite_r2_cbbabe0a"
             R.raw.quality_filmgrain_light_4aee719a -> "quality_filmgrain_light_4aee719a"
+            R.raw.quality_anime4k_4c53ec2e -> "quality_anime4k_4c53ec2e"
+            R.raw.quality_anime4k_denoise_1a45ad3a -> "quality_anime4k_denoise_1a45ad3a"
+            R.raw.quality_anime4k_m_9b8e956d -> "quality_anime4k_m_9b8e956d"
+            R.raw.quality_anime4k_denoise_m_967804d7 -> "quality_anime4k_denoise_m_967804d7"
             else -> requireNotNull(resourceName) { "Unknown test resource $resourceId" }
         }
         return File("src/main/res/raw/$name.glsl").readText()
@@ -169,6 +173,28 @@ class MpvImageShaderCacheTest {
         bundledSource += "\n// Updated bundled shader revision.\n"
         assertEquals(file, cache.materialize(shader, profile, gpuNextVulkan = false))
         assertEquals(bundledSource, file.readText())
+    }
+
+    @Test fun oldAnime4kCacheIsUpgradedForBothGpuModesWithoutChangingItsPath() {
+        for (gpuNextVulkan in listOf(false, true)) {
+            val directory = temporary.newFolder("anime-$gpuNextVulkan")
+            val cache = MpvImageShaderCache(directory, ::raw)
+            for (key in listOf("anime4k", "anime4k_denoise", "anime4k_m", "anime4k_denoise_m")) {
+                val shader = MPV_IMAGE_SHADERS.getValue(key)
+                val original = raw(shader.resourceId, shader.resourceName)
+                val oldFile = File(directory, shader.fileName).apply { writeText(original) }
+
+                val upgraded = cache.materialize(shader, null, gpuNextVulkan)
+                assertEquals(oldFile, upgraded)
+                assertNotEquals(original, upgraded.readText())
+                assertEquals(anime4kGlesSource(original), upgraded.readText())
+                val markerTime = 1_600_000_000_000L
+                assertTrue(upgraded.setLastModified(markerTime))
+                assertEquals(upgraded, cache.materialize(shader, null, gpuNextVulkan))
+                assertEquals(markerTime, upgraded.lastModified())
+            }
+            assertFalse(directory.listFiles()!!.any { it.name.endsWith(".pending") })
+        }
     }
 
     @Test fun mismatchedBundledProfileIsRejectedAndItsStagingFileIsRemoved() {
