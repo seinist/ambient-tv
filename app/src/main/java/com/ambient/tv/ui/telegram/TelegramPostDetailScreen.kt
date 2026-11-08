@@ -243,7 +243,7 @@ fun TelegramPostDetailScreen(
                                         val id = found?.let { com.ambient.tv.youtube.youtubeChannelIdOf(it.videoId) } ?: found?.channelId
                                         if (!id.isNullOrBlank()) {
                                             com.ambient.tv.launcher.LauncherIntents.post(
-                                                com.ambient.tv.ui.navigation.Destinations.youtubeChannel(id, found.title, found.imageUrl))
+                                                com.ambient.tv.ui.navigation.Destinations.youtubeChannel(id, found?.title, found?.imageUrl))
                                         }
                                     }
                                 }
