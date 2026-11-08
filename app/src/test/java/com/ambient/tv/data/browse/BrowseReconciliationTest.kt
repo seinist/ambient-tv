@@ -23,6 +23,22 @@ class BrowseReconciliationTest {
         assertNull(survivingFocus(old, emptyList(), "b"))
         assertNull(survivingFocus(old, listOf("a"), null))
     }
+    @Test fun artworkRequestIdentityIgnoresCredentialsButKeepsRealImageParameters() {
+        val cached = "http://plex.local:32400/photo/:/transcode?width=360&height=540&url=%2Flibrary%2Fmetadata%2F42%2Fthumb"
+        val live = "$cached&X-Plex-Token=fresh-secret"
+        assertEquals(artworkRequestIdentity(cached), artworkRequestIdentity(live))
+
+        val jellyCached = "https://jf.local:8096/Items/42/Images/Primary?tag=revision1&maxWidth=640"
+        val jellyLive = "$jellyCached&ApiKey=secret"
+        assertEquals(artworkRequestIdentity(jellyCached), artworkRequestIdentity(jellyLive))
+
+        // Unknown query values can alter CDN transforms/revisions and therefore must not alias.
+        assertNotEquals(
+            artworkRequestIdentity("https://cdn.example/poster.jpg?width=640&revision=1"),
+            artworkRequestIdentity("https://cdn.example/poster.jpg?width=640&revision=2"),
+        )
+    }
+
     @Test fun artworkPersistenceStripsCredentialsAndNestedTokens() {
         val value = displayArtworkUrl("https://user:password@server/photo/:/transcode?width=400&X-Plex-Token=secret&url=https%3A%2F%2Fserver%2Fthumb%3Ftoken%3Dnested")!!
         assertFalse(value.contains("password"))
