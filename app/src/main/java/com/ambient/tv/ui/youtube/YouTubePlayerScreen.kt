@@ -1884,7 +1884,7 @@ internal data class YouTubeOsdModel(
                     // Keep publication metadata below the title, also while the channel
                     // name is still missing. System and renderer belong to diagnostics.
                     subtitleTrailingText = publication,
-                    showPaused = playback.isLive && paused,
+                    showPaused = playback.isLive && paused && liveDvrWindow == null,
                 )
                 if (seekable && seekDurationMs > 0L) {
                     TvPlayerSeekBar(
