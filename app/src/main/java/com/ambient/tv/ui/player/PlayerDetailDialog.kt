@@ -94,6 +94,7 @@ import dagger.hilt.EntryPoint
 import dagger.hilt.InstallIn
 import dagger.hilt.components.SingletonComponent
 import dagger.hilt.android.EntryPointAccessors
+import kotlinx.coroutines.launch
 
 /** What a remote key does inside the details dialog. */
 internal enum class PlayerDetailKeyAction { SCROLL_UP, SCROLL_DOWN, FOCUS_CLOSE, FOCUS_TEXT, FOCUS_SCROLLBAR, CONSUME, PASS }
