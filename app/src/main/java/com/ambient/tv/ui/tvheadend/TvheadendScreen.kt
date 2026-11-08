@@ -145,6 +145,7 @@ fun TvheadendScreen(
     onOpenSourceSettings: (String) -> Unit = { onOpenSettings() },
 ) {
     val state by viewModel.uiState.collectAsState()
+    val navigationReturn = com.ambient.tv.ui.common.rememberNavigationPlaybackReturn()
     // Guide cards observe artwork by title below; avoid invalidating the entire programme grid
     // on each TMDb response. Event/recording dialogs continue using full resolution art.
     val titleArt = if (state.tab == TvheadendTab.GUIDE &&
@@ -212,17 +213,46 @@ fun TvheadendScreen(
         } else com.ambient.tv.livetv.LiveTvZapOrder.clear()
         onWatchChannel(channelUuid)
     }
-    // Back from the player: the channel watched last (also after zapping) becomes the selection.
-    val returnedChannel = remember { viewModel.consumeReturnFocus() }
-    val contentFocusTarget = remember(state.tab, state.dashboard, state.guideOptions, returnedChannel, channelListing) {
+    val pendingReturns by com.ambient.tv.livetv.LiveTvReturnFocus.pending.collectAsState()
+    val entryReturn = com.ambient.tv.ui.common.rememberPlaybackReturnOnEntry(pendingReturns[state.source.id]) { it.revision }
+    val playbackVisitRevision = com.ambient.tv.ui.common.rememberPlaybackReturnVisitToken(entryReturn?.revision)
+    val returnedTarget = entryReturn?.let {
+        returnFocusSelections(it.channelUuid, state.dashboard, state.guideOptions, channelListing.now)?.get(state.tab)
+    }
+    // Only admit a recording present when this navigation entry becomes active. A later
+    // dashboard fetch or tab change must not turn an old event into a new focus command.
+    val recordingPlaybackReturn = remember(navigationReturn) {
+        if (state.tab == TvheadendTab.RECORDINGS) {
+            (state.dashboard?.recordings.orEmpty() + state.dashboard?.failedRecordings.orEmpty()).firstOrNull {
+                navigationReturn?.itemId == "live-recording:${state.source.id}:${it.uuid}"
+            }?.uuid
+        } else null
+    }
+    val returnedRecording = recordingPlaybackReturn.takeIf { state.tab == TvheadendTab.RECORDINGS }
+    val returnRevision = entryReturn?.revision ?: viewModel.playbackReturnRevision
+    val layoutReturnKey: Any = navigationReturn?.revision?.takeIf { recordingPlaybackReturn != null }
+        ?.let { "recording:$it" } ?: returnRevision
+    val contentFocusTarget = remember(state.tab, state.dashboard, state.guideOptions, returnedTarget, layoutReturnKey, channelListing) {
         liveTvFocusTarget(state.tab, state.dashboard, state.guideOptions,
-            viewModel.focusedContentId(state.tab), viewModel.focusedRowId(state.tab),
+            returnedRecording ?: returnedTarget?.contentId ?: viewModel.focusedContentId(state.tab),
+            returnedTarget?.rowId ?: viewModel.focusedRowId(state.tab),
             channelListing.now, listing = channelListing.takeIf { channelBrowser })
     }
-    var initialContentFocusPending by remember(initialTab) { mutableStateOf(true) }
-    com.ambient.tv.ui.common.BrowseFocusContentIdentity(listOf(state.source.id, state.tab, state.guideOptions))
+    LaunchedEffect(entryReturn) {
+        entryReturn?.let { viewModel.commitReturnFocus(it.revision, channelListing.now) }
+    }
+    var initialContentFocusPending by remember(initialTab, layoutReturnKey) { mutableStateOf(true) }
+    com.ambient.tv.ui.common.BrowseFocusContentIdentity(listOf(state.source.id, state.tab, state.guideOptions, layoutReturnKey))
     com.ambient.tv.ui.common.BrowseFocusInitialTarget(contentFocusTarget.contentId,
         contentFocusTarget.rowId.takeIf { state.tab == TvheadendTab.GUIDE })
+    val playbackReturn = com.ambient.tv.ui.common.rememberBrowsePlaybackReturn(
+        token = if (recordingPlaybackReturn != null) layoutReturnKey else playbackVisitRevision,
+        target = contentFocusTarget.contentId?.let {
+            com.ambient.tv.ui.common.BrowseFocusKey(contentFocusTarget.rowId.takeIf { state.tab == TvheadendTab.GUIDE }, it, true)
+        },
+        enabled = !state.awaitingInitialContent() && !channelListing.building && !showBrowseOptions &&
+            state.selectedEvent == null && state.selectedRecording == null && state.editing == null,
+    )
     LaunchedEffect(initialTab) {
         viewModel.prepareTab(initialTab)
     }
@@ -328,10 +358,12 @@ fun TvheadendScreen(
                 centered = true,
                 modifier = Modifier.align(Alignment.Center).widthIn(max = 680.dp),
             )
-            else -> Crossfade(state.tab, modifier = Modifier.fillMaxSize(), animationSpec = tween(tokens.animationNormalMs), label = "tvhTab") { tab ->
+            else -> androidx.compose.runtime.key(layoutReturnKey) {
+            Crossfade(state.tab, modifier = Modifier.fillMaxSize().then(playbackReturn.modifier), animationSpec = tween(tokens.animationNormalMs), label = "tvhTab") { tab ->
                 val dashboard = state.dashboard
                 when (tab) {
                     TvheadendTab.LIVE -> LiveTvChannelBrowser(
+                        preparedPlaybackReturn = playbackVisitRevision != null,
                         browseState = viewModel.browseState,
                         options = state.guideOptions,
                         onOptions = viewModel::setGuideOptions,
@@ -356,6 +388,7 @@ fun TvheadendScreen(
                         onFocusRestored = { initialContentFocusPending = false },
                     )
                     TvheadendTab.GUIDE -> Guide(
+                        preparedPlaybackReturn = playbackVisitRevision != null,
                         options = state.guideOptions,
                         onOptions = viewModel::setGuideOptions,
                         controls = guideControls,
@@ -425,6 +458,7 @@ fun TvheadendScreen(
                         onFocused = { id -> viewModel.onContentFocused(tab, id) },
                     )
                 }
+            }
             }
         }
         }

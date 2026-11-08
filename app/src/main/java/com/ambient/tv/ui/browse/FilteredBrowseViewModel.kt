@@ -28,6 +28,7 @@ sealed interface FilteredBrowseUiState {
         val sort: BrowseSort,
         val sortDescending: Boolean = false,
         val focusedRatingKey: String? = null,
+        val playbackReturnRevision: Long = 0L,
     ) : FilteredBrowseUiState
     data class Error(val message: String) : FilteredBrowseUiState
 }
@@ -71,9 +72,27 @@ class FilteredBrowseViewModel internal constructor(
 
     private var loadJob: Job? = null
     private var loadRevision = 0L
+    private var playbackReturnRevision = 0L
 
     /** Entry/reconnect callers already prepared this source's caches. */
     fun load() = load(refreshCaches = false)
+
+    internal fun enter(returned: com.ambient.tv.ui.common.NavigationPlaybackReturn?) {
+        val current = _uiState.value as? FilteredBrowseUiState.Loaded
+        val prepared = current?.let { prepareFilteredBrowsePlaybackReturn(it, returned) }
+        if (prepared == null) {
+            load()
+            return
+        }
+        loadRevision++
+        loadJob?.cancel()
+        loadJob = null
+        _refreshing.value = false
+        _refreshError.value = null
+        playbackReturnRevision = prepared.playbackReturnRevision
+        preferences.setSectionFocus(stateKey, checkNotNull(prepared.focusedRatingKey))
+        _uiState.value = prepared
+    }
 
     fun refresh() {
         if (_refreshing.value) return
@@ -162,6 +181,7 @@ class FilteredBrowseViewModel internal constructor(
                     .thenBy { it.title.lowercase() },
             )
         }
-        return FilteredBrowseUiState.Loaded(title, items, viewMode(), sort, descending, preferences.sectionFocus(stateKey))
+        return FilteredBrowseUiState.Loaded(title, items, viewMode(), sort, descending,
+            preferences.sectionFocus(stateKey), playbackReturnRevision)
     }
 }

@@ -1,6 +1,7 @@
 package com.ambient.tv.livetv
 
-import java.util.concurrent.ConcurrentHashMap
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.asStateFlow
 
 /**
  * The channel last watched per live source (start and every successful zap). Live TV and the
@@ -8,13 +9,33 @@ import java.util.concurrent.ConcurrentHashMap
  * player stops - never while the user is browsing next to a running mini-player.
  */
 object LiveTvReturnFocus {
-    private val watched = ConcurrentHashMap<String, String>()
+    data class ReturnTarget(val channelUuid: String, val revision: Long)
+    private var nextRevision = 0L
+    private val watched = MutableStateFlow<Map<String, ReturnTarget>>(emptyMap())
+    val pending = watched.asStateFlow()
 
+    @Synchronized
     fun watched(sourceId: String, channelUuid: String) {
-        if (sourceId.isNotBlank() && channelUuid.isNotBlank()) watched[sourceId] = channelUuid
+        if (sourceId.isNotBlank() && channelUuid.isNotBlank()) {
+            watched.value = watched.value + (sourceId to ReturnTarget(channelUuid, ++nextRevision))
+        }
     }
 
-    fun take(sourceId: String): String? = watched.remove(sourceId)
+    @Synchronized
+    fun take(sourceId: String): String? {
+        val saved = watched.value[sourceId] ?: return null
+        watched.value = watched.value - sourceId
+        return saved.channelUuid
+    }
 
-    fun clear() = watched.clear()
+    @Synchronized
+    fun commit(sourceId: String, revision: Long, apply: (ReturnTarget) -> Unit): Boolean {
+        val saved = watched.value[sourceId]?.takeIf { it.revision == revision } ?: return false
+        apply(saved)
+        watched.value = watched.value - sourceId
+        return true
+    }
+
+    @Synchronized
+    fun clear() { watched.value = emptyMap() }
 }

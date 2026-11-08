@@ -40,6 +40,39 @@ internal fun stableYouTubeRows(
     }
 }
 
+/**
+ * An explicitly refreshed view follows the source's new order. A partial response only owns its
+ * delivered prefix: rows and videos that have not arrived yet stay behind it until completion.
+ */
+internal fun sourceOrderedYouTubeRows(
+    previous: List<YouTubeRow>,
+    incoming: List<YouTubeRow>,
+    complete: Boolean,
+): List<YouTubeRow> {
+    val freshRows = incoming.distinctBy { it.id }
+    if (complete) return freshRows
+    val previousById = previous.associateBy { it.id }
+    // At capacity, a partial insertion must not evict a still-pending cached row or video.
+    // Additional new IDs wait for completion, which is allowed to replace membership.
+    val newRowIds = freshRows.filter { it.id !in previousById }
+        .take((YouTubeContentCache.MAX_ROWS - previousById.size).coerceAtLeast(0))
+        .mapTo(HashSet()) { it.id }
+    val availableRows = freshRows.filter { it.id in previousById || it.id in newRowIds }
+    val freshIds = availableRows.mapTo(HashSet()) { it.id }
+    return availableRows.map { row ->
+        val oldItems = previousById[row.id]?.items.orEmpty()
+        val oldVideoIds = oldItems.mapTo(HashSet()) { it.videoId }
+        val incomingItems = row.items.distinctBy { it.videoId }
+        val newVideoIds = incomingItems.filter { it.videoId !in oldVideoIds }
+            .take((YouTubeContentCache.MAX_ITEMS_PER_ROW - oldVideoIds.size).coerceAtLeast(0))
+            .mapTo(HashSet()) { it.videoId }
+        val freshItems = incomingItems.filter { it.videoId in oldVideoIds || it.videoId in newVideoIds }
+        val freshVideoIds = freshItems.mapTo(HashSet()) { it.videoId }
+        row.copy(items = (freshItems + oldItems
+            .filter { it.videoId !in freshVideoIds }).distinctBy { it.videoId })
+    } + previous.filter { it.id !in freshIds }
+}
+
 /** Only a completed feed replaces disk membership. Partial responses remain process-local. */
 @Singleton
 class YouTubeContentCache() {
@@ -66,7 +99,7 @@ class YouTubeContentCache() {
             synchronized(this@YouTubeContentCache) {
                 source?.let { disk?.remove(it) }
                 generation++
-                entries.clear(); details.clear(); source = next
+                entries.clear(); details.clear(); freshOrder.clear(); source = next
             }
             val expected = generation
             val stored = disk?.read(next).orEmpty()
@@ -89,10 +122,20 @@ class YouTubeContentCache() {
     @Synchronized fun revision(): Long = generation
 
     /** Partial response updates existing videos, retaining absent rows/items until completion. */
-    @Synchronized fun merge(key: String, incoming: List<YouTubeRow>, expected: Long = generation): List<YouTubeRow> {
+    @Synchronized fun merge(
+        key: String,
+        incoming: List<YouTubeRow>,
+        expected: Long = generation,
+        preferIncomingOrder: Boolean = false,
+    ): List<YouTubeRow> {
         if (expected != generation) return emptyList()
         val previous = get(key).orEmpty()
-        return storeRows(key, stableYouTubeRows(previous, incoming, complete = false))
+        val rows = if (preferIncomingOrder) {
+            // This newer visible update supersedes an older deferred completed ordering.
+            freshOrder.remove(key)
+            sourceOrderedYouTubeRows(previous, incoming, complete = false)
+        } else stableYouTubeRows(previous, incoming, complete = false)
+        return storeRows(key, rows)
     }
 
     /**
@@ -103,17 +146,26 @@ class YouTubeContentCache() {
         if (expected != generation) return null
         val current = get(key) ?: return null
         val appended = appendYouTubeRowItems(current, rowId, items)
+        // Reopening a deferred refresh must not discard pages loaded after that refresh.
+        freshOrder[key]?.let { freshOrder[key] = appendYouTubeRowItems(it, rowId, items) }
         return if (appended === current) current else storeRows(key, appended)
     }
 
-    @Synchronized fun replace(key: String, incoming: List<YouTubeRow>, expected: Long = generation): List<YouTubeRow> {
+    @Synchronized fun replace(
+        key: String,
+        incoming: List<YouTubeRow>,
+        expected: Long = generation,
+        preferIncomingOrder: Boolean = false,
+    ): List<YouTubeRow> {
         if (expected != generation) return emptyList()
         val previous = get(key).orEmpty()
-        val rows = storeRows(key, reconcileComplete(previous, stableYouTubeRows(previous, incoming, complete = true)) { it.id })
+        val ordered = if (preferIncomingOrder) sourceOrderedYouTubeRows(previous, incoming, complete = true)
+            else stableYouTubeRows(previous, incoming, complete = true)
+        val rows = storeRows(key, reconcileComplete(previous, ordered) { it.id })
         // Persist the server's current ordering for the next cold start; the active view
-        // uses stable ordering until the user leaves, avoiding a reflow under focus.
+        // keeps stable ordering unless its caller explicitly applies the new source order.
         persist(key, incoming, expected)
-        freshOrder[key] = incoming
+        if (preferIncomingOrder) freshOrder.remove(key) else freshOrder[key] = incoming
         return rows
     }
 
@@ -122,10 +174,17 @@ class YouTubeContentCache() {
      * display state for the next opening: merged like a partial response, so nothing that is
      * already cached gets deleted, and written to disk unlike other partial responses.
      */
-    @Synchronized fun persistPartial(key: String, incoming: List<YouTubeRow>, expected: Long = generation): List<YouTubeRow> {
+    @Synchronized fun persistPartial(
+        key: String,
+        incoming: List<YouTubeRow>,
+        expected: Long = generation,
+        preferIncomingOrder: Boolean = false,
+    ): List<YouTubeRow> {
         if (expected != generation) return emptyList()
         if (incoming.isEmpty()) return get(key).orEmpty()
-        val rows = merge(key, incoming, expected)
+        val rows = merge(key, incoming, expected, preferIncomingOrder)
+        // An older completed snapshot must not replace the newer retained partial state.
+        freshOrder.remove(key)
         persist(key, rows, expected)
         return rows
     }

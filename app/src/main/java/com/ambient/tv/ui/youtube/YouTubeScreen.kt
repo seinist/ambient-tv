@@ -53,7 +53,6 @@ import androidx.compose.material.icons.filled.SmartDisplay
 import androidx.compose.material.icons.filled.SportsEsports
 import androidx.compose.material.icons.filled.Subscriptions
 import androidx.compose.runtime.*
-import androidx.compose.animation.core.VisibilityThreshold
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -99,10 +98,22 @@ import androidx.lifecycle.repeatOnLifecycle
     onSelectFeed:((YouTubeFeed)->Unit)?=null,
     viewModel:YouTubeViewModel=hiltViewModel(),
 ) {
-    val state by viewModel.uiState.collectAsState()
+    val storedState by viewModel.uiState.collectAsState()
+    val pendingReturn by viewModel.pendingPlaybackReturn.collectAsState()
+    val preview = viewModel.preparePlaybackReturn(storedState, pendingReturn, pendingReturn?.revision)
+    val entryReturn = rememberPlaybackReturnOnEntry(pendingReturn.takeIf { preview != null }) { it.revision }
+    val playbackVisitRevision = rememberPlaybackReturnVisitToken(entryReturn?.revision)
+    val preparedReturn = preview.takeIf { entryReturn != null }
+    // The player already knows the last item and any continuation pages. Use that immutable
+    // visit before constructing a Lazy state; entry later commits exactly the same revision.
+    val state = preparedReturn?.let {
+        storedState.copy(rows = it.rows, loading = false, error = null, returnFocusRevision = it.revision)
+    } ?: storedState
     val selectFeed = onSelectFeed ?: viewModel::selectFeed
     val filterFocusState = rememberFilterFocusState(initialFeedKey, state.feed, state.channel?.channelId)
-    com.ambient.tv.ui.common.RefreshOnEnterAndReconnect(setOf("youtube")) { viewModel.enter(initialFeedKey) }
+    com.ambient.tv.ui.common.RefreshOnEnterAndReconnect(setOf("youtube")) {
+        viewModel.enter(initialFeedKey, entryReturn?.revision)
+    }
     val lifecycleOwner = LocalLifecycleOwner.current
     // A menu/chip re-selection need not create a destination or resume its lifecycle.
     // Observe explicit requests only while this screen is actually on top.
@@ -114,11 +125,16 @@ import androidx.lifecycle.repeatOnLifecycle
     // The paging callbacks and screen share one immutable order, including local watch-state filters.
     val visibleRows = viewModel.displayedContent(state).rows
     val populatedRows = remember(visibleRows) { visibleRows.filter { it.items.isNotEmpty() } }
-    val browseSectioned = (state.query.isBlank() && state.feed == YouTubeFeed.HOME &&
+    // Removing/filtering a row must not replace a sectioned layout with a different flat tree.
+    // Once this visit has sections, keep their stable row identities through later snapshots.
+    var retainedSections by rememberSaveable(state.feed, state.channel?.channelId, state.query) { mutableStateOf(false) }
+    val browseSectioned = retainedSections || (state.query.isBlank() && state.feed == YouTubeFeed.HOME &&
         state.channel == null) || populatedRows.hasSubsections()
-    // Error/unavailable states still expose stable header actions. Only the transient loading
-    // tree must hold the sidebar handoff.
+    SideEffect { if (browseSectioned) retainedSections = true }
+    // A prepared return already has usable content. Its exact focus handoff has its own gate;
+    // reporting it as loading would prevent the shell from ever entering the prepared target.
     ReportSidebarContentReady(!state.loading)
+    BrowseFocusHoldEntry(state.loading)
     var showViewOptions by remember { mutableStateOf(false) }
     var viewOptionsOpened by remember { mutableStateOf(false) }
     var showSearch by remember { mutableStateOf(false) }
@@ -131,20 +147,31 @@ import androidx.lifecycle.repeatOnLifecycle
     val viewportContinuation = remember(viewModel) {
         { rowId: String?, index: Int, grid: Boolean -> viewModel.onViewportNearEnd(rowId, index, grid) }
     }
-    val contentFocusTarget = remember(state.feed, populatedRows, state.returnFocusRevision) {
-        resolveContentFocusTarget(
-            savedItemId = viewModel.focusedVideoId(state.feed),
-            savedRowId = viewModel.focusedRowId(state.feed),
-            rows = populatedRows.mapIndexed { index, row ->
-                youtubeRowId(index, row) to row.items.map { it.videoId }
-            },
+    val flatFocusRow = "youtube-cinematic".takeIf { !browseSectioned && state.viewMode == YouTubeViewMode.CINEMATIC }
+    val focusRows = remember(populatedRows, browseSectioned, flatFocusRow) {
+        if (browseSectioned) populatedRows.map { row -> row.id to row.items.map { it.videoId } }
+        else listOf(flatFocusRow to populatedRows.flatMap { it.items }.map { it.videoId }.distinct())
+    }
+    val focusMemory = remember(state.feed, state.channel?.channelId, state.query, state.filter,
+        state.sort, state.sortDescending, state.viewMode, state.returnFocusRevision) { ContentRefreshFocusMemory() }
+    val contentFocusTarget = remember(focusMemory, focusRows, preparedReturn?.target) {
+        focusMemory.resolve(
+            savedItemId = preparedReturn?.target?.itemId ?: viewModel.focusedVideoId(state.feed),
+            savedRowId = if (browseSectioned) preparedReturn?.target?.rowId ?: viewModel.focusedRowId(state.feed)
+                else flatFocusRow,
+            rows = focusRows,
         )
     }
     com.ambient.tv.ui.common.BrowseFocusContentIdentity(listOf(state.feed, state.channel?.channelId,
         state.query, state.filter, state.sort, state.sortDescending, state.viewMode, state.returnFocusRevision),
         restoreInitialTarget = true)
-    com.ambient.tv.ui.common.BrowseFocusInitialTarget(contentFocusTarget.itemId,
-        contentFocusTarget.rowId.takeIf { populatedRows.hasSubsections() })
+    com.ambient.tv.ui.common.BrowseFocusInitialTarget(contentFocusTarget.itemId, contentFocusTarget.rowId)
+    BrowseFocusRefreshRecovery(focusRows)
+    val playbackReturn = rememberBrowsePlaybackReturn(
+        token = playbackVisitRevision,
+        target = contentFocusTarget.itemId?.let { BrowseFocusKey(contentFocusTarget.rowId, it, true) },
+        enabled = !state.loading && !showViewOptions && populatedRows.isNotEmpty(),
+    )
     // The search row is also shown for a restored query; Back closes it before leaving the page.
     val searchVisible = showSearch || state.query.isNotBlank()
     BackHandler(enabled=searchVisible&&!showViewOptions) {
@@ -154,11 +181,7 @@ import androidx.lifecycle.repeatOnLifecycle
     if (onBack != null) {
         BackHandler(enabled = !showViewOptions && !searchVisible) { viewOptionsOpened = false; onBack() }
     }
-    var initialContentFocusPending by remember(initialFeedKey) { mutableStateOf(true) }
-    // Channel pages have no sidebar focus-restorer: a player return needs a fresh target.
-    LaunchedEffect(state.returnFocusRevision) {
-        if (state.returnFocusRevision > 0) initialContentFocusPending = true
-    }
+    var initialContentFocusPending by remember(initialFeedKey, state.returnFocusRevision) { mutableStateOf(true) }
     var handledSignInId by rememberSaveable { mutableIntStateOf(0) }
     LaunchedEffect(state.completedSignInId) {
         if (state.completedSignInId <= handledSignInId) return@LaunchedEffect
@@ -169,20 +192,20 @@ import androidx.lifecycle.repeatOnLifecycle
         }
     }
     val sharedInitialFocus = com.ambient.tv.ui.common.LocalBrowseFocusReturnState.current != null
-    LaunchedEffect(state.loading, visibleRows, state.feed, initialFeedKey, initialContentFocusPending, contentFocusTarget, filterFocusState.allowContentAutoFocus, state.returnFocusRevision) {
-        // The shared sidebar restorer owns ordinary entries. A player return, however, may
-        // arrive after its first focus pass; explicitly retarget the LAST played video then.
-        if (sharedInitialFocus && state.returnFocusRevision == 0) return@LaunchedEffect
+    val destinationActive = isActiveNavigationDestination()
+    LaunchedEffect(state.loading, visibleRows, state.feed, initialFeedKey, initialContentFocusPending,
+        contentFocusTarget, filterFocusState.allowContentAutoFocus, showViewOptions, destinationActive) {
+        if (!destinationActive || sharedInitialFocus) return@LaunchedEffect
         val requestedFeedIsReady = initialFeedKey == null || state.feed.key == initialFeedKey
         if (filterFocusState.allowContentAutoFocus && !showViewOptions && initialContentFocusPending && requestedFeedIsReady && !state.loading && visibleRows.any { it.items.isNotEmpty() }) {
-            delay(120)
-            repeat(4) {
+            withFrameNanos { }
+            repeat(12) {
                 if (!initialContentFocusPending || !filterFocusState.allowContentAutoFocus) return@LaunchedEffect
                 if (runCatching { contentItemFocusRequester.requestFocus() }.getOrDefault(false)) {
                     initialContentFocusPending = false
                     return@LaunchedEffect
                 }
-                delay(32)
+                withFrameNanos { }
             }
         }
     }
@@ -208,7 +231,7 @@ import androidx.lifecycle.repeatOnLifecycle
     val filterModel = youtubeFilterModel(state, viewModel)
     val filterBarShown = com.ambient.tv.ui.common.LocalFilterBarSetting.current.shown
     CompositionLocalProvider(LocalFilterFocusState provides filterFocusState) {
-    Box(Modifier.fillMaxSize()) { Column(Modifier.fillMaxSize().focusProperties { onEnter = { if (showViewOptions) cancelFocusChange() } }.focusGroup()) {
+    Box(Modifier.fillMaxSize().cancelBrowseRefreshRecoveryOnInput()) { Column(Modifier.fillMaxSize().focusProperties { onEnter = { if (showViewOptions) cancelFocusChange() } }.focusGroup()) {
         Header(
             focusChain = focusChain,
             state,
@@ -301,13 +324,16 @@ import androidx.lifecycle.repeatOnLifecycle
                         )
                     }
                 } else Message(com.ambient.tv.ui.common.systemString(com.ambient.tv.ui.common.MediaSystem.YOUTUBE, R.string.youtube_empty))
-                else -> SoftViewChange(state.viewMode, Modifier.fillMaxSize()) {
+                else -> SoftViewChange(state.viewMode, Modifier.fillMaxSize().then(playbackReturn.modifier)) {
+                    // A retained destination can still hold the old saved Lazy state. A new
+                    // playback return gets new states with their correct initial indices.
+                    key(state.returnFocusRevision) {
                     CompositionLocalProvider(LocalYouTubeViewportContinuation provides viewportContinuation) {
                     Content(
                         rows = visibleRows,
                         // A feed is sectioned from its FIRST partial emission, not only once
                         // a second row happens to arrive and replaces the whole grid.
-                        keepSections = state.query.isBlank() && state.feed == YouTubeFeed.HOME && state.channel == null,
+                        keepSections = browseSectioned,
                         mode = state.viewMode,
                         gridColumns = state.gridColumns,
                         listRows = state.listRows,
@@ -315,12 +341,17 @@ import androidx.lifecycle.repeatOnLifecycle
                         initialFocusRequester = contentItemFocusRequester,
                         focusTarget = contentFocusTarget,
                         onItemFocused = { rowId, videoId ->
-                            initialContentFocusPending = false
-                            filterFocusState.enterContent()
-                            viewModel.onItemFocused(state.feed, rowId, videoId)
+                            val requestedReturnItem = videoId == contentFocusTarget.itemId &&
+                                (!browseSectioned || rowId == contentFocusTarget.rowId)
+                            if (!playbackReturn.pending || requestedReturnItem) {
+                                initialContentFocusPending = false
+                                filterFocusState.enterContent()
+                                viewModel.onItemFocused(state.feed, rowId, videoId)
+                            }
                         },
                         loadingRows = state.loadingRows,
                     )
+                    }
                     }
                 }
             }
@@ -538,8 +569,10 @@ private fun Content(
             val targetIndex = remember(videos, focusTarget.itemId) {
                 videos.indexOfFirst { it.videoId == focusTarget.itemId }.coerceAtLeast(0)
             }
+            val itemKeys = remember(videos) { videos.map { it.videoId } }
             val gridState = com.ambient.tv.ui.common.rememberBrowseGridState(initialFirstVisibleItemIndex = targetIndex,
-                itemKeys = remember(videos) { videos.map { it.videoId } })
+                itemKeys = itemKeys)
+            KeepYouTubeLeadingInsertVisible(gridState, itemKeys)
             ObserveYouTubeGridViewport(null, gridState)
             LazyVerticalGrid(
                 deviceVideoGridCells((gridColumns + 2).coerceIn(6, 14)),
@@ -551,8 +584,8 @@ private fun Content(
             ) {
                 gridItemsIndexed(videos, key = { _, it -> it.videoId }) { _, item ->
                     Card(
-                        item, click, Modifier.fillMaxWidth(), false,
-                    focusRequester = if (item.videoId == focusTarget.itemId) initialFocusRequester else null,
+                        item, click, youtubeItemMotionModifier().fillMaxWidth(), false,
+                        focusRequester = if (item.videoId == focusTarget.itemId) initialFocusRequester else null,
                         onFocused = { onItemFocused(null, item.videoId) },
                     )
                 }
@@ -582,6 +615,7 @@ private fun SectionedYouTubeContent(
             val listState = com.ambient.tv.ui.common.rememberBrowseListState(
                 initialFirstVisibleItemIndex = rowKeys.indexOf(focusTarget.rowId).coerceAtLeast(0),
             )
+            KeepYouTubeLeadingInsertVisible(listState, rowKeys) { rowKeys.indexOf(it.row) }
             RegisterBrowseFocusRows(listState, remember(rows) {
                 rows.map { row -> row.id to row.items.map { it.videoId } }
             })
@@ -602,8 +636,10 @@ private fun SectionedYouTubeContent(
             ) {
                 itemsIndexed(rows, key = { _, row -> "youtube-section:${row.id}" }) { index, row ->
                     val rowId = youtubeRowId(index, row)
-                    RowMode(row, rowId, gridColumns, click, initialFocusRequester, focusTarget, onItemFocused,
-                        rowId in loadingRows, rowFocus)
+                    Box(youtubeItemMotionModifier()) {
+                        RowMode(row, rowId, gridColumns, click, initialFocusRequester, focusTarget, onItemFocused,
+                            rowId in loadingRows, rowFocus)
+                    }
                 }
             }
         }
@@ -644,7 +680,9 @@ private fun RowMode(
                     row.items.indexOfFirst { it.videoId == focusTarget.itemId }.coerceAtLeast(0) else 0
             },
         )
-        RegisterRowColumnFocus(rowFocus, rowId, rowState, remember(row.items) { row.items.map { it.videoId } })
+        val itemKeys = remember(row.items) { row.items.map { it.videoId } }
+        KeepYouTubeLeadingInsertVisible(rowState, itemKeys)
+        RegisterRowColumnFocus(rowFocus, rowId, rowState, itemKeys)
         ObserveYouTubeListViewport(rowId, rowState)
         LazyRow(
             state = rowState,
@@ -674,12 +712,14 @@ private fun LandscapeGrid(
     focusTarget: ContentFocusTarget,
     onItemFocused: (String?, String) -> Unit,
 ) {
+    val itemKeys = remember(items) { items.map { it.videoId } }
     val gridState = com.ambient.tv.ui.common.rememberBrowseGridState(
         initialFirstVisibleItemIndex = remember(items, focusTarget.itemId) {
             items.indexOfFirst { it.videoId == focusTarget.itemId }.coerceAtLeast(0)
         },
-        itemKeys = remember(items) { items.map { it.videoId } },
+        itemKeys = itemKeys,
     )
+    KeepYouTubeLeadingInsertVisible(gridState, itemKeys)
     ObserveYouTubeGridViewport(null, gridState)
     LazyVerticalGrid(
     columns = deviceDensityGridCells(landscapeGridColumns(gridColumns), 260.dp, 4),
@@ -691,7 +731,7 @@ private fun LandscapeGrid(
 ) {
     gridItemsIndexed(items, key = { _, it -> it.videoId }) { _, item ->
         Card(
-            item, click, Modifier.fillMaxWidth(), true,
+            item, click, youtubeItemMotionModifier().fillMaxWidth(), true,
             focusRequester = if (item.videoId == focusTarget.itemId) initialFocusRequester else null,
             onFocused = { onItemFocused(null, item.videoId) },
         )
@@ -710,12 +750,14 @@ private fun ListMode(
     onItemFocused: (String?, String) -> Unit,
 ) {
     val rowScale = (7f / listRows.coerceIn(4, 10)).coerceIn(.72f, 1.35f)
+    val itemKeys = remember(items) { items.map { it.videoId } }
     val listState = com.ambient.tv.ui.common.rememberBrowseListState(
         initialFirstVisibleItemIndex = remember(items, focusTarget.itemId) {
             items.indexOfFirst { it.videoId == focusTarget.itemId }.coerceAtLeast(0)
         },
-        itemKeys = remember(items) { items.map { it.videoId } },
+        itemKeys = itemKeys,
     )
+    KeepYouTubeLeadingInsertVisible(listState, itemKeys)
     ObserveYouTubeListViewport(null, listState)
     LazyColumn(
         allowUpExit = true,
@@ -749,6 +791,8 @@ private fun SectionedYouTubeList(
     val rowScale = (7f / listRows.coerceIn(4, 10)).coerceIn(.72f, 1.35f)
     val targetListIndex = remember(rows, focusTarget) { youtubeSectionFocusIndex(rows, focusTarget) }
     val listState = com.ambient.tv.ui.common.rememberBrowseListState(initialFirstVisibleItemIndex = targetListIndex)
+    val motionKeys = remember(rows) { youtubeSectionMotionKeys(rows, "youtube-list") }
+    KeepYouTubeLeadingInsertVisible(listState, motionKeys) { motionKeys.indexOf("youtube-list:${it.row}:${it.item}") }
     RegisterBrowseFocusSections(listState, remember(rows) { rows.map { row -> row.id to row.items.map { it.videoId } } })
     ObserveYouTubeListViewport(null, listState, remember(rows) { youtubeViewportItemKeys(rows, "youtube-list") })
     LazyColumn(
@@ -762,7 +806,7 @@ private fun SectionedYouTubeList(
             item(key = "youtube-list-header:${row.id}") {
                 ContentSectionHeader(
                     title = row.title,
-                    modifier = Modifier.padding(top = if (sectionIndex == 0) 0.dp else 12.dp),
+                    modifier = youtubeItemMotionModifier().padding(top = if (sectionIndex == 0) 0.dp else 12.dp),
                     startPadding = 0.dp,
                     bottomPadding = 2.dp,
                 )
@@ -863,6 +907,8 @@ private fun SectionedYouTubeWall(
 ) {
     val targetGridIndex = remember(rows, focusTarget) { youtubeSectionFocusIndex(rows, focusTarget) }
     val gridState = com.ambient.tv.ui.common.rememberBrowseGridState(initialFirstVisibleItemIndex = targetGridIndex)
+    val motionKeys = remember(rows) { youtubeSectionMotionKeys(rows, "youtube-wall") }
+    KeepYouTubeLeadingInsertVisible(gridState, motionKeys) { motionKeys.indexOf("youtube-wall:${it.row}:${it.item}") }
     RegisterBrowseFocusSections(gridState, remember(rows) { rows.map { row -> row.id to row.items.map { it.videoId } } })
     ObserveYouTubeGridViewport(null, gridState, remember(rows) { youtubeViewportItemKeys(rows, "youtube-wall") })
     LazyVerticalGrid(
@@ -880,7 +926,7 @@ private fun SectionedYouTubeWall(
             ) {
                 ContentSectionHeader(
                     title = row.title,
-                    modifier = Modifier.padding(top = if (sectionIndex == 0) 0.dp else 14.dp),
+                    modifier = youtubeItemMotionModifier().padding(top = if (sectionIndex == 0) 0.dp else 14.dp),
                     startPadding = 0.dp,
                     bottomPadding = 4.dp,
                 )
@@ -891,7 +937,7 @@ private fun SectionedYouTubeWall(
                 Card(
                     item,
                     { tapped -> onItemFocused(rowId, tapped); click(tapped) },
-                    Modifier.fillMaxWidth(),
+                    youtubeItemMotionModifier().fillMaxWidth(),
                     false,
                     focusRequester = if (rowId == focusTarget.rowId && item.videoId == focusTarget.itemId) initialFocusRequester else null,
                     onFocused = { onItemFocused(rowId, item.videoId) },
@@ -911,7 +957,7 @@ private fun Cinematic(
     onItemFocused: (String?, String) -> Unit,
 ) {
     if (items.isEmpty()) return
-    val hero = remember(items) { mutableStateOf(items.first()) }
+    val hero = rememberYouTubeCinematicHero(items, focusTarget.itemId)
     val rowFocus = rememberRowColumnFocus()
     val itemKeys = remember(items) { items.map { it.videoId } }
     val rowState = com.ambient.tv.ui.common.rememberBrowseListState(
@@ -921,6 +967,7 @@ private fun Cinematic(
         itemKeys = itemKeys,
     )
     RegisterRowColumnFocus(rowFocus, "youtube-cinematic", rowState, itemKeys)
+    KeepYouTubeLeadingInsertVisible(rowState, itemKeys)
     ObserveYouTubeListViewport(null, rowState)
     Box(Modifier.fillMaxSize().rowColumnFocusWrapRight(rowFocus)) {
         if (!com.ambient.tv.ui.common.LocalHomeBackgroundVisible.current && com.ambient.tv.ui.common.LocalFocusArtworkBackdrop.current) {
@@ -965,6 +1012,7 @@ private fun SectionedYouTubeCinematic(
     val listState = com.ambient.tv.ui.common.rememberBrowseListState(
         initialFirstVisibleItemIndex = rowKeys.indexOf(focusTarget.rowId).coerceAtLeast(0),
     )
+    KeepYouTubeLeadingInsertVisible(listState, rowKeys) { rowKeys.indexOf(it.row) }
     RegisterBrowseFocusRows(listState, remember(rows) { rows.map { row -> row.id to row.items.map { it.videoId } } })
     val rowFocus = rememberRowColumnFocus()
     LazyColumn(
@@ -982,7 +1030,8 @@ private fun SectionedYouTubeCinematic(
         contentPadding = PaddingValues(bottom = 36.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
-        itemsIndexed(rows, key = { index, row -> "youtube-cinematic:$index:${row.title}" }) { sectionIndex, row ->
+        itemsIndexed(rows, key = { _, row -> "youtube-cinematic:${row.id}" }) { sectionIndex, row ->
+            Box(youtubeItemMotionModifier()) {
             YouTubeCinematicSection(
                 row = row,
                 click = click,
@@ -993,6 +1042,7 @@ private fun SectionedYouTubeCinematic(
                 loadingMore = youtubeRowId(sectionIndex, row) in loadingRows,
                 rowFocus = rowFocus,
             )
+            }
         }
     }
 }
@@ -1009,7 +1059,7 @@ private fun YouTubeCinematicSection(
     rowFocus: RowColumnFocus,
 ) {
     if (row.items.isEmpty()) return
-    val hero = remember(row.title, row.items) { mutableStateOf(row.items.first()) }
+    val hero = rememberYouTubeCinematicHero(row.items, focusTarget.itemId.takeIf { focusTarget.rowId == rowId })
     val placeholderModifier = Modifier.width(landscapeCardWidth())
     BrowseFocusRow(rowId) {
     Column(Modifier.fillMaxWidth()) {
@@ -1026,7 +1076,9 @@ private fun YouTubeCinematicSection(
                             row.items.indexOfFirst { it.videoId == focusTarget.itemId }.coerceAtLeast(0) else 0
                     },
                 )
-                RegisterRowColumnFocus(rowFocus, rowId, rowState, remember(row.items) { row.items.map { it.videoId } })
+                val itemKeys = remember(row.items) { row.items.map { it.videoId } }
+                KeepYouTubeLeadingInsertVisible(rowState, itemKeys)
+                RegisterRowColumnFocus(rowFocus, rowId, rowState, itemKeys)
                 ObserveYouTubeListViewport(rowId, rowState)
                 LazyRow(
                     state = rowState,
@@ -1052,6 +1104,17 @@ private fun YouTubeCinematicSection(
         }
     }
     }
+}
+
+/** Inserting a different card must not replace the selected cinematic artwork with item zero. */
+@Composable
+private fun rememberYouTubeCinematicHero(items: List<YouTubeItem>, initialId: String?): MutableState<YouTubeItem> {
+    val hero = remember { mutableStateOf(items.firstOrNull { it.videoId == initialId } ?: items.first()) }
+    SideEffect {
+        hero.value = items.firstOrNull { it.videoId == hero.value.videoId }
+            ?: items.firstOrNull { it.videoId == initialId } ?: items.first()
+    }
+    return hero
 }
 
 /** Read live hero state only in the small consumers, keeping list setup out of focus changes. */
@@ -1471,20 +1534,3 @@ internal fun rememberDeArrowItem(item: YouTubeItem): YouTubeItem {
             ?.let { com.ambient.tv.youtube.DeArrow.thumbnailUrl(item.videoId, it) } ?: item.imageUrl,
     )
 }
-
-/**
- * New items from a refresh slide in and push the existing cards aside instead of making them
- * jump. Only with full interface effects; reduced effects keep the instant layout.
- */
-@Composable
-private fun androidx.compose.foundation.lazy.LazyItemScope.youtubeItemMotionModifier(): Modifier =
-    if (com.ambient.tv.ui.performance.LocalPerformanceProfile.current.reducedEffects) Modifier
-    else Modifier.animateItem(
-        fadeInSpec = androidx.compose.animation.core.tween(260),
-        placementSpec = androidx.compose.animation.core.spring(
-            dampingRatio = androidx.compose.animation.core.Spring.DampingRatioNoBouncy,
-            stiffness = androidx.compose.animation.core.Spring.StiffnessMediumLow,
-            visibilityThreshold = androidx.compose.ui.unit.IntOffset.VisibilityThreshold,
-        ),
-        fadeOutSpec = androidx.compose.animation.core.tween(180),
-    )

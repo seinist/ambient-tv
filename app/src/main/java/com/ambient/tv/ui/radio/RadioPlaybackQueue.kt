@@ -4,6 +4,8 @@ import com.ambient.tv.data.radio.RadioStation
 import com.ambient.tv.data.radio.RadioSearchPage
 import javax.inject.Inject
 import javax.inject.Singleton
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.asStateFlow
 
 /**
  * Captured when a station starts from Radio Browser. The Player requests more only from this
@@ -24,12 +26,16 @@ data class RadioBrowseQueueSource(
 @Singleton
 class RadioPlaybackQueue @Inject constructor() {
     @Volatile private var state = State()
+    private var nextReturnRevision = 0
+    private val _pendingReturn = MutableStateFlow<State?>(null)
+    val pendingReturn = _pendingReturn.asStateFlow()
 
     data class State(
         val stations: List<RadioStation> = emptyList(),
         val currentId: String? = null,
         val source: RadioBrowseQueueSource? = null,
         val returnPending: Boolean = false,
+        val returnRevision: Int = 0,
     )
 
     @Synchronized
@@ -38,14 +44,17 @@ class RadioPlaybackQueue @Inject constructor() {
             .filter { it.id.isNotBlank() }
             .distinctBy { it.id }
         val normalized = if (unique.any { it.id == currentId }) unique else unique + stations.firstOrNull { it.id == currentId }.orEmpty()
-        state = State(normalized, currentId, source, returnPending = source != null)
+        state = State(normalized, currentId, source, returnPending = source != null,
+            returnRevision = ++nextReturnRevision)
+        _pendingReturn.value = state.takeIf { it.returnPending }
     }
 
     @Synchronized
     fun select(currentId: String) {
         if (state.stations.any { it.id == currentId }) state = state.copy(
-            currentId = currentId, returnPending = state.source != null,
+            currentId = currentId, returnPending = state.source != null, returnRevision = ++nextReturnRevision,
         )
+        _pendingReturn.value = state.takeIf { it.returnPending }
     }
 
     fun snapshot(): State = state
@@ -53,6 +62,7 @@ class RadioPlaybackQueue @Inject constructor() {
     /** Keep the playing radio queue, but do not restore an old player-return selection on cold UI start. */
     @Synchronized fun clearReturnFocus() {
         if (state.returnPending) state = state.copy(returnPending = false)
+        _pendingReturn.value = null
     }
 
     /** Append one API page without replacing the running queue or changing its current UUID. */
@@ -65,6 +75,7 @@ class RadioPlaybackQueue @Inject constructor() {
             stations = merged,
             source = source.copy(nextOffset = page.offset + page.limit, hasMore = page.hasMore),
         )
+        _pendingReturn.value = state.takeIf { it.returnPending }
         return true
     }
 
@@ -74,7 +85,19 @@ class RadioPlaybackQueue @Inject constructor() {
         val saved = state
         if (!saved.returnPending || saved.currentId == null || saved.source?.focusScope != scope) return null
         state = saved.copy(returnPending = false)
+        _pendingReturn.value = null
         return saved
+    }
+
+    /** Commit the prepared browse state before withdrawing its read-only preview. */
+    @Synchronized
+    internal fun commitReturn(scope: RadioFocusScope, revision: Int, commit: (State) -> Unit): Boolean {
+        val saved = state
+        if (!saved.returnPending || saved.returnRevision != revision || saved.source?.focusScope != scope) return false
+        commit(saved)
+        state = saved.copy(returnPending = false)
+        _pendingReturn.value = null
+        return true
     }
 
     fun current(): RadioStation? {

@@ -45,4 +45,6 @@ internal class TrailerTitleSnapshotViewModel : ViewModel() {
     val videos = mutableStateOf<List<TrailerVideo>>(emptyList())
     val serverTrailers = mutableStateOf<List<MediaItem>>(emptyList())
     val loadedKey = mutableStateOf<String?>(null)
+    val playbackOrigin = mutableStateOf<TrailerTitlePlaybackOrigin?>(null)
+    val returnFocusToken = mutableStateOf<String?>(null)
 }

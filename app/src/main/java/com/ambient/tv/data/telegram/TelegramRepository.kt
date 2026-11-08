@@ -301,6 +301,8 @@ class TelegramRepository @Inject constructor(
     val authorized: StateFlow<Boolean> = mutableAuthorized.asStateFlow()
     val available: Boolean get() = client != null
     val accountName: String? get() = client?.accountName
+    /** Frozen browse returns are invalid after logout, account replacement or channel exit. */
+    internal fun playbackRevision(): Long = streamEpoch.get()
 
     /** Install only an already authenticated Monogram client, never a partially signed-in one. */
     fun installAuthorized(port: TelegramClientPort) {

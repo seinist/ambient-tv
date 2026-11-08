@@ -33,6 +33,9 @@ data class TelegramBrowseState(
     val nextCursor: String? = null,
     val loadingMore: Boolean = false,
     val pageError: String? = null,
+    /** The exact playback visit used to construct this page's first return layout. */
+    val playbackReturnRevision: Long = 0L,
+    val playbackReturnKey: String? = null,
 )
 
 fun TelegramChannel.toBrowseItem(): MediaItem = MediaItem(
@@ -131,7 +134,9 @@ class TelegramViewModel @Inject constructor(
 
     private val mutableState = MutableStateFlow(TelegramBrowseState())
     val state: StateFlow<TelegramBrowseState> = mutableState.asStateFlow()
+    val pendingPlaybackReturn: StateFlow<TelegramPlaybackContext.ReturnSnapshot?> = playbackContext.pendingReturn
     private var loadJob: Job? = null
+    private var playbackSessionToken: Long? = null
 
     private var pageGeneration = 0
 
@@ -158,7 +163,30 @@ class TelegramViewModel @Inject constructor(
     /** When the visible section was last fetched from Telegram (elapsedRealtime). */
     private var lastFreshLoadMs = 0L
 
-    fun open(section: String, refresh: Boolean = false) {
+    internal fun preparePlaybackReturn(
+        section: String,
+        pending: TelegramPlaybackContext.ReturnSnapshot?,
+    ): TelegramBrowseState? = if (repository.available && pending?.sessionToken == playbackSessionToken)
+        prepareTelegramBrowseReturn(section, playbackContext.sourceRevision(), pending, smartTubeUsable) else null
+
+    /** Commit the prepared visit before clearing the event; an entry is not a stale-feed refresh. */
+    private fun restorePlaybackReturn(section: String, revision: Long): Boolean {
+        val pending = pendingPlaybackReturn.value ?: return false
+        if (pending.revision != revision) return false
+        if (preparePlaybackReturn(section, pending) == null) return false
+        return playbackContext.commitReturn(playbackScope(section), revision) { snapshot ->
+            // A continuation may have enriched this revision since the preview was read.
+            val prepared = checkNotNull(prepareTelegramBrowseReturn(section, snapshot.sourceRevision,
+                snapshot, smartTubeUsable))
+            loadJob?.cancel()
+            pageGeneration++
+            lastFreshLoadMs = android.os.SystemClock.elapsedRealtime()
+            mutableState.value = prepared
+        }
+    }
+
+    fun open(section: String, refresh: Boolean = false, playbackReturnRevision: Long? = null) {
+        if (!refresh && playbackReturnRevision != null && restorePlaybackReturn(section, playbackReturnRevision)) return
         val key = section.takeIf { it != "youtube" || smartTubeUsable }?.takeIf { it in setOf("recent", "channels", "videos", "youtube", "audio") ||
             (it.startsWith("channel:") && it.substringAfter(':').toLongOrNull() != null) } ?: "recent"
         val current = mutableState.value
@@ -177,6 +205,8 @@ class TelegramViewModel @Inject constructor(
             rows = if (current.section == key) current.rows else emptyList(),
             media = if (current.section == key) current.media else emptyMap(),
             error = null,
+            playbackReturnRevision = if (current.section == key) current.playbackReturnRevision else 0L,
+            playbackReturnKey = current.playbackReturnKey.takeIf { current.section == key },
         )
         if (!repository.available) return
         // Paint last authorized-account snapshot first; a live refresh replaces it.
@@ -276,10 +306,13 @@ class TelegramViewModel @Inject constructor(
         }
         repository.prefetchThumbnails(pageMedia)
         val earlier = if (append) mutableState.value.media else emptyMap()
+        val previousState = mutableState.value
         mutableState.value = TelegramBrowseState(
             section = section, available = true, rows = merged.values.toList(),
             media = earlier + pageMedia.associateBy(TelegramMedia::mediaKey),
             nextCursor = next,
+            playbackReturnRevision = previousState.playbackReturnRevision.takeIf { previousState.section == section } ?: 0L,
+            playbackReturnKey = previousState.playbackReturnKey.takeIf { previousState.section == section },
         )
     }
 
@@ -296,40 +329,12 @@ class TelegramViewModel @Inject constructor(
             scope = playbackScope(current.section), origin = origin, selected = selected,
             media = current.media, section = current.section,
             cursor = current.nextCursor.takeIf { current.error == null }, view = view,
-        )
-    }
-
-    /**
-     * After the player: the last played post of this page's queue, once. Pages the player
-     * loaded at the end of the queue are added to this page, so that post is shown.
-     */
-    internal fun consumePlaybackReturn(section: String): String? {
-        val returned = playbackContext.consumeReturn(playbackScope(section)) ?: return null
-        val current = mutableState.value
-        if (current.section == section && returned.loadedMedia.isNotEmpty() && !current.loadingMore &&
-            current.nextCursor == returned.startCursor && returned.mediaKey !in current.media) {
-            publishPage(section, append = true, telegramRows(section, returned.loadedMedia, smartTubeUsable),
-                returned.loadedMedia, returned.nextCursor)
-        }
-        return returned.mediaKey
-    }
-
-    /** Loads further pages (a few at most) until [key] is part of this page. */
-    internal suspend fun revealAfterPlayback(section: String, key: String) {
-        repeat(MAX_REVEAL_PAGES) {
-            loadJob?.join()
-            val current = mutableState.value
-            if (current.section != section || key in current.media || current.nextCursor == null || current.error != null ||
-                current.pageError != null) return
-            loadMore()
-            loadJob?.join()
-        }
+            sourceRows = current.rows,
+        ).also { playbackSessionToken = it }
     }
 
     fun selected(key: String): TelegramMedia? = mutableState.value.media[key]
 }
-
-private const val MAX_REVEAL_PAGES = 8
 
 /** Rows of a section re-entered after this long are fetched again. */
 private const val SECTION_STALE_MS = 5 * 60_000L

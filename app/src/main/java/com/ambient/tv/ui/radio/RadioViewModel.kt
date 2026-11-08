@@ -143,6 +143,7 @@ data class RadioUiState(
     /** Raw API cursor, never the number of mapped/deduplicated stations. */
     val nextOffset: Int = 0,
     val returnFocusRevision: Int = 0,
+    val playbackReturnRevision: Int = 0,
     val error: Boolean = false,
     val startingStationId: String? = null,
     val favoriteIds: Set<String> = emptySet(),
@@ -166,6 +167,7 @@ class RadioViewModel @Inject constructor(
         sortDescending = preferences.sectionSortOrder(RADIO_VIEW_STATE_KEY) == "DESCENDING",
     ))
     val state: StateFlow<RadioUiState> = _state.asStateFlow()
+    val pendingPlaybackReturn = playbackQueue.pendingReturn
 
     private var loadJob: Job? = null
     private var playJob: Job? = null
@@ -174,24 +176,17 @@ class RadioViewModel @Inject constructor(
     private val stationIndex = RadioStationIndex()
     internal fun lastFocusedContent(scope: RadioFocusScope): String? = RadioFocusMemory.last(scope)
 
-    /** Synchronize pages loaded by the Player and prefer its last station on returning. */
-    fun consumePlayerReturn(): Boolean {
+    /** Synchronize player pages once, without letting a second entry refresh replace them. */
+    private fun commitPlayerReturn(revision: Int?): Boolean {
+        if (revision == null) return false
         val scope = _state.value.focusScope()
-        val returned = playbackQueue.consumeReturn(scope) ?: return false
-        val currentId = returned.currentId ?: return false
-        RadioFocusMemory.save(scope, currentId)
-        val before = _state.value
-        val merged = radioAppendPagedStations(before.stations, returned.stations)
-        val stations = if (radioStationAlphabetAllowed(before.section, before.selectedFacet, before.submittedQuery)) {
-            radioAlphabeticalStations(merged, before.sortDescending)
-        } else merged
-        _state.value = before.copy(
-            stations = stations,
-            nextOffset = returned.source?.nextOffset ?: before.nextOffset,
-            hasMore = returned.source?.hasMore ?: before.hasMore,
-            returnFocusRevision = before.returnFocusRevision + 1,
-        )
-        return true
+        val preview = prepareRadioPlaybackReturn(_state.value, pendingPlaybackReturn.value) ?: return false
+        return playbackQueue.commitReturn(scope, revision) { returned ->
+            loadJob?.cancel()
+            resetFocusPaging()
+            RadioFocusMemory.save(scope, returned.currentId!!)
+            _state.value = prepareRadioPlaybackReturn(_state.value, returned) ?: preview
+        }
     }
 
     fun onFacetFocused(facetId: String) {
@@ -228,7 +223,11 @@ class RadioViewModel @Inject constructor(
         }
     }
 
-    fun enter(initialSection: RadioSection? = null) {
+    fun enter(initialSection: RadioSection? = null, returnRevision: Int? = null) {
+        if ((initialSection == null || initialSection == _state.value.section) && commitPlayerReturn(returnRevision)) {
+            entered = true
+            return
+        }
         if (entered) {
             // Reopening an existing NavHost destination must revalidate its empty/error
             // result instead of returning without a request. Keep the active facet/search.

@@ -195,6 +195,7 @@ private fun SavedDlnaServer(server: DlnaServer, onOpen: () -> Unit, onRemove: ()
 fun DlnaBrowserScreen(onPlay: (String) -> Unit, onManage: () -> Unit, onBack: () -> Unit, viewModel: DlnaBrowserViewModel = hiltViewModel()) {
     OperationFeedbackScope(viewModel.feedback, "browse")
     val state by viewModel.state.collectAsState()
+    val navigationReturn = rememberNavigationPlaybackReturn()
     com.ambient.tv.ui.common.RefreshOnEnterAndReconnect(
         setOf(state.server?.id?.let { "dlna:$it" } ?: "dlna"), viewModel::refreshOnReconnect,
     )
@@ -203,14 +204,15 @@ fun DlnaBrowserScreen(onPlay: (String) -> Unit, onManage: () -> Unit, onBack: ()
     val context = LocalContext.current
     val locationKey = com.ambient.tv.data.dlna.DlnaKeys.key(state.server?.id.orEmpty(), state.path.lastOrNull()?.objectId ?: "0")
     var keepHeaderFocus by remember(locationKey) { mutableStateOf(false) }
-    val contentGrid = remember(locationKey) {
+    val contentGrid = remember(locationKey, navigationReturn?.revision) {
         val (index, offset) = viewModel.scroll(locationKey)
-        LazyGridState(index, offset)
+        val returnIndex = nodes.indexOfFirst { it.key == navigationReturn?.itemId }
+        if (returnIndex >= 0) LazyGridState(returnIndex, 0) else LazyGridState(index, offset)
     }
     var focusLocation by remember { mutableStateOf(locationKey) }
     BrowseFocusContentIdentity(
-        listOf(locationKey, state.viewMode),
-        restoreInitialTarget = focusLocation != locationKey,
+        listOf(locationKey, state.viewMode, navigationReturn?.revision),
+        restoreInitialTarget = focusLocation != locationKey || navigationReturn != null,
     )
     SideEffect { focusLocation = locationKey }
     RegisterBrowseFocusGrid(contentGrid, remember(nodes) { nodes.map { it.key } })
@@ -227,7 +229,9 @@ fun DlnaBrowserScreen(onPlay: (String) -> Unit, onManage: () -> Unit, onBack: ()
             restoreOptionsFocus = false
         }
     }
-    var focusedKey by remember(locationKey) { mutableStateOf(viewModel.focus(locationKey)) }
+    var focusedKey by remember(locationKey, navigationReturn?.revision) {
+        mutableStateOf(navigationReturn?.itemId?.takeIf { key -> nodes.any { it.key == key } } ?: viewModel.focus(locationKey))
+    }
     var restoreRevision by remember(locationKey) { mutableStateOf(0) }
     var restoreAfterRetry by remember(locationKey) { mutableStateOf(false) }
     LaunchedEffect(state.pageError, state.loadingMore) {
@@ -249,6 +253,11 @@ fun DlnaBrowserScreen(onPlay: (String) -> Unit, onManage: () -> Unit, onBack: ()
     BackHandler(enabled = !showOptions) { restoreOptionsFocus = false; if (!viewModel.up()) onBack() }
     val targetKey = focusedKey?.takeIf { key -> nodes.any { it.key == key } } ?: nodes.firstOrNull()?.key
     if (!state.loading) BrowseFocusInitialTarget(targetKey)
+    val playbackReturn = rememberBrowsePlaybackReturn(
+        token = navigationReturn?.revision,
+        target = targetKey?.let { BrowseFocusKey(null, it, true) },
+        enabled = !state.loading && !emptyPending && !showOptions,
+    )
     val sharedFocusOwner = LocalBrowseFocusReturnState.current != null
     LaunchedEffect(state.loading, initialContentFocusPending, focusKey, showOptions, state.viewMode, restoreRevision, sharedFocusOwner, keepHeaderFocus) {
         if (showOptions || keepHeaderFocus || state.loading || nodes.isEmpty() || !initialContentFocusPending) return@LaunchedEffect
@@ -330,7 +339,7 @@ fun DlnaBrowserScreen(onPlay: (String) -> Unit, onManage: () -> Unit, onBack: ()
                 LazyVerticalGrid(
                     columns = columns,
                     state = contentGrid,
-                    modifier = Modifier.fillMaxSize().overlayLazyGridScrollbar(contentGrid),
+                    modifier = Modifier.fillMaxSize().then(playbackReturn.modifier).overlayLazyGridScrollbar(contentGrid),
                     contentPadding = PaddingValues(end = 12.dp, bottom = 24.dp),
                     verticalArrangement = Arrangement.spacedBy(4.dp),
                 ) {

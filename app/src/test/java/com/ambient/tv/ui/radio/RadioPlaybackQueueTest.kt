@@ -8,6 +8,49 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class RadioPlaybackQueueTest {
+    @Test fun returnPreviewContainsTheLastStationBeforeItIsConsumed() {
+        val queue = RadioPlaybackQueue()
+        val scope = RadioFocusScope(RadioSection.POPULAR, null, "")
+        queue.replace(listOf(station("a"), station("b")), "a", RadioBrowseQueueSource(scope))
+        queue.select("b")
+        val snapshot = queue.pendingReturn.value!!
+        val prepared = prepareRadioPlaybackReturn(RadioUiState(stations = listOf(station("a"))), snapshot)!!
+        assertEquals(listOf("a", "b"), prepared.stations.map { it.id })
+        assertEquals(snapshot.returnRevision, prepared.playbackReturnRevision)
+        assertTrue(prepared.contentReady)
+        assertFalse(prepared.loading)
+        assertEquals("b", queue.pendingReturn.value?.currentId)
+        assertTrue(queue.commitReturn(scope, snapshot.returnRevision) {
+            assertEquals(snapshot, queue.pendingReturn.value)
+        })
+        assertNull(queue.pendingReturn.value)
+        assertFalse(queue.commitReturn(scope, snapshot.returnRevision) { error("already consumed") })
+    }
+
+    @Test fun aLaterMiniPlayerEventCannotBeConsumedByAnEarlierEntry() {
+        val queue = RadioPlaybackQueue()
+        val scope = RadioFocusScope(RadioSection.POPULAR, null, "")
+        queue.replace(listOf(station("a"), station("b")), "a", RadioBrowseQueueSource(scope))
+        val earlier = queue.pendingReturn.value!!
+        queue.select("b")
+        assertFalse(queue.commitReturn(scope, earlier.returnRevision) { error("stale entry") })
+        assertEquals("b", queue.pendingReturn.value?.currentId)
+        assertNull(prepareRadioPlaybackReturn(RadioUiState(section = RadioSection.FAVORITES), queue.pendingReturn.value))
+    }
+
+    @Test fun aNewRouteCannotPreviewThePreviousSectionsQueueWhileItsStateCatchesUp() {
+        val queue = RadioPlaybackQueue()
+        val scope = RadioFocusScope(RadioSection.POPULAR, null, "")
+        queue.replace(listOf(station("shared"), station("last")), "last", RadioBrowseQueueSource(scope))
+        val staleState = RadioUiState(section = RadioSection.POPULAR, stations = listOf(station("shared")))
+        assertNull(prepareRadioPlaybackReturn(staleState, queue.pendingReturn.value, RadioSection.FAVORITES))
+        // Refusing that route leaves the return available for its actual origin.
+        assertEquals("last", queue.pendingReturn.value?.currentId)
+        // Popular keeps its configured alphabetical browse order after the queue merge.
+        assertEquals(listOf("last", "shared"),
+            prepareRadioPlaybackReturn(staleState, queue.pendingReturn.value, RadioSection.POPULAR)!!.stations.map { it.id })
+    }
+
     private fun station(id: String) = RadioStation(
         id = id,
         name = "Station $id",

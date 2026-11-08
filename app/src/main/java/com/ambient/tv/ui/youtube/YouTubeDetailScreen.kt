@@ -63,6 +63,7 @@ private fun YouTubeDetailRow(
     val rowFocus = rememberRowColumnFocus()
     val rowKey = "youtube-detail:$title"
     val rowState = rememberLazyListState()
+    KeepYouTubeLeadingInsertVisible(rowState, itemKeys)
     RegisterRowColumnFocus(rowFocus, rowKey, rowState, itemKeys)
     Column(Modifier.fillMaxWidth().padding(top = 18.dp).rowColumnFocusWrapRight(rowFocus),
         verticalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -89,7 +90,7 @@ private fun YouTubeDetailChapters(chapters: List<com.ambient.tv.domain.model.Vid
                 colors = com.ambient.tv.ui.common.transparentSurfaceColors(),
                 scale = com.ambient.tv.ui.common.noSurfaceScale(),
                 shape = androidx.tv.material3.ClickableSurfaceDefaults.shape(shape),
-                modifier = Modifier
+                modifier = youtubeItemMotionModifier()
                     .rowColumnFocusTarget(rowFocus, rowKey, chapter.startMs)
                     .width(deviceDp(220.dp, 180.dp))
                     .mediaFocusMotion(focused)
@@ -227,7 +228,7 @@ fun YouTubeDetailScreen(
                         YouTubeDetailRow(row.title.takeUnless { it == "SmartTube" } ?: stringResource(R.string.youtube_suggestions),
                             row.items.map { it.videoId }) { rowFocus, rowKey ->
                             items(row.items, key = { it.videoId }) { item ->
-                                YouTubeItemCard(item, onOpenItem, Modifier.width(deviceDp(300.dp, 240.dp))
+                                YouTubeItemCard(item, onOpenItem, youtubeItemMotionModifier().width(deviceDp(300.dp, 240.dp))
                                     .rowColumnFocusTarget(rowFocus, rowKey, item.videoId))
                             }
                         }

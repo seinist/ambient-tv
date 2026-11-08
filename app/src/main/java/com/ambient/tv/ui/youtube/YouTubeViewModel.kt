@@ -17,7 +17,9 @@ import com.ambient.tv.youtube.IncompleteYouTubeFeedException
 import com.ambient.tv.youtube.YouTubeVisitPin
 import com.ambient.tv.youtube.youtubeRowsAfterContinuation
 import com.ambient.tv.youtube.youtubeRowsAfterRefresh
+import com.ambient.tv.youtube.youtubeRowsAfterPartialRefresh
 import com.ambient.tv.youtube.refreshYouTubeRowExtents
+import com.ambient.tv.youtube.withYouTubeRefreshBatches
 import com.ambient.tv.data.browse.BrowseWorkBudget
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.coroutineScope
@@ -102,9 +104,29 @@ class YouTubeViewModel @Inject constructor(
     // Persisted selection may belong to an earlier app session. Start a fresh feed at the
     // first card; only restore an item after it has actually held focus on this screen.
     private val visitedFocusKeys = mutableSetOf<String>()
+    private var playbackSessionToken: Long? = null
     private val displaySnapshots = YouTubeDisplaySnapshotCache()
     internal fun displayedContent(state: YouTubeUiState = _uiState.value): YouTubeDisplaySnapshot =
         displaySnapshots.get(state.rows, state.sort, state.filter, state.sortDescending)
+    /** Available before enter(): reading a return never consumes it or changes preferences. */
+    val pendingPlaybackReturn: StateFlow<YouTubeBrowsePlaybackContext.ReturnSnapshot?> = playbackContext.pendingReturn
+    internal fun preparePlaybackReturn(
+        state: YouTubeUiState = _uiState.value,
+        pending: YouTubeBrowsePlaybackContext.ReturnSnapshot? = pendingPlaybackReturn.value,
+        returnRevision: Int?,
+    ): PreparedYouTubeBrowseReturn? {
+        val snapshot = pending ?: return null
+        if (returnRevision == null || snapshot.revision != returnRevision ||
+            snapshot.sessionToken != playbackSessionToken) return null
+        return prepareYouTubeBrowseReturn(
+            scope = youtubeBrowseReturnScope(state.feed.key, channelId, state.query),
+            cacheRevision = contentCache.revision(),
+            pending = snapshot,
+            sort = state.sort,
+            filter = state.filter,
+            descending = state.sortDescending,
+        )
+    }
     fun focusedVideoId(feed: YouTubeFeed): String? = stateKey(feed).takeIf { it in visitedFocusKeys }
         ?.let(preferences::sectionFocus)
     fun focusedRowId(feed: YouTubeFeed): String? = stateKey(feed).takeIf { it in visitedFocusKeys }
@@ -131,15 +153,41 @@ class YouTubeViewModel @Inject constructor(
             continuationRowIds = if (sectioned) listOfNotNull(row?.id) else rows.map { it.id },
             returnRowId = sourceRowId,
             sort = state.sort, filter = state.filter, descending = state.sortDescending,
-        )
+            sourceRows = state.rows,
+        ).also { playbackSessionToken = it }
     }
 
-    private fun restorePlayedFocus() {
-        val key = displayedContentKey ?: return
-        val returned = playbackContext.consumeReturn(key) ?: return
-        visitedFocusKeys += stateKey(_uiState.value.feed)
-        preferences.setSectionFocusSnapshot(stateKey(_uiState.value.feed), returned.videoId, returned.rowId)
-        _uiState.value = _uiState.value.copy(returnFocusRevision = _uiState.value.returnFocusRevision + 1)
+    private fun restorePlayedFocus(returnRevision: Int?): Boolean {
+        val current = _uiState.value
+        val pending = pendingPlaybackReturn.value ?: return false
+        val prepared = preparePlaybackReturn(current, pending, returnRevision) ?: return false
+        return playbackContext.commitReturn(pending.scope, prepared.revision) { snapshot ->
+            // A request started before playback must not replace this visit afterwards or
+            // release its pin as a first-load result. The return is already a complete entry.
+            contentGeneration++
+            contentJob?.cancel()
+            contentJob = null
+            visibleViewportEnds.clear()
+            val key = stateKey(current.feed)
+            visitedFocusKeys += key
+            preferences.setSectionFocusSnapshot(key, snapshot.target.videoId, snapshot.target.rowId)
+            displayedContentKey = snapshot.scope
+            // Player-loaded pages and the final selection are ready before removing the
+            // non-consuming preview. Later background results keep this exact visit.
+            visitPin.begin(snapshot.scope, snapshot.cacheRevision, snapshot.rows, explicit = false)
+            _uiState.value = current.copy(
+                rows = snapshot.rows,
+                loading = false,
+                refreshing = false,
+                refreshError = null,
+                loadingRows = emptySet(),
+                error = null,
+                returnFocusRevision = prepared.revision,
+            )
+            // Scrolling after return still continues the original source; reset any work
+            // whose paging token belonged to the pre-player snapshot.
+            armPaging(snapshot.scope, snapshot.cacheRevision)
+        }
     }
 
     // --- Row continuation (SmartTube loads rows page by page, like its BrowsePresenter) -------
@@ -354,14 +402,14 @@ class YouTubeViewModel @Inject constructor(
         }
     }
 
-    fun enter(initialFeedKey: String?) {
+    fun enter(initialFeedKey: String?, returnRevision: Int? = null) {
         val firstEntry = !entered
         if (firstEntry) {
             entered = true
             val feed = initialFeedKey?.let(YouTubeFeed::fromKey)?.takeIf { it in configuredFeeds }
             if (feed != null && feed != _uiState.value.feed) { selectFeed(feed); return }
         }
-        restorePlayedFocus()
+        val playbackReturn = restorePlayedFocus(returnRevision)
         val current = _uiState.value
         val request = YouTubeHomeSelection.requests.value
         val homeSelection = channelId == null && current.feed == YouTubeFeed.HOME &&
@@ -375,7 +423,7 @@ class YouTubeViewModel @Inject constructor(
                 return
             }
         }
-        if (youtubeShouldRefreshOnEntry(current.feed, firstEntry, channelId != null, homeSelection)) {
+        if (youtubeShouldRefreshOnEntry(current.feed, firstEntry, channelId != null, homeSelection, playbackReturn)) {
             refresh(manual = homeSelection)
         }
     }
@@ -605,11 +653,21 @@ class YouTubeViewModel @Inject constructor(
         _uiState.value = _uiState.value.copy(loading = rows.isEmpty(), error = null, rows = rows)
     }
 
-    private suspend fun showRows(key: String, rows: List<YouTubeRow>, revision: Long, generation: Long) = withContext(Dispatchers.Main.immediate) {
+    private suspend fun showRows(
+        key: String,
+        rows: List<YouTubeRow>,
+        revision: Long,
+        generation: Long,
+        preferIncomingOrder: Boolean = false,
+    ) = withContext(Dispatchers.Main.immediate) {
         if (generation == contentGeneration && displayedContentKey == key && rows.isNotEmpty() && contentCache.revision() == revision) {
-            val merged = contentCache.merge(key, rows, revision)
+            val merged = contentCache.merge(key, rows, revision, preferIncomingOrder)
             // A pinned visit keeps its tiles; the merged rows wait in the cache for the next opening.
-            if (!pinned(key)) _uiState.value = _uiState.value.copy(loading = false, error = null, rows = merged)
+            if (!pinned(key)) {
+                val visible = if (preferIncomingOrder) youtubeRowsAfterPartialRefresh(_uiState.value.rows, rows, pinned = false)
+                    else merged
+                _uiState.value = _uiState.value.copy(loading = false, error = null, rows = visible)
+            }
         }
     }
 
@@ -646,7 +704,10 @@ class YouTubeViewModel @Inject constructor(
         if (error !is IncompleteYouTubeFeedException || partial.isEmpty()) return false
         if (generation != contentGeneration || contentCache.revision() != revision) return true
         Timber.tag("youtube-rows").i(error, "%s stopped early; keeping %d partial rows as display state", cacheKey, partial.size)
-        applyRefreshed(cacheKey, contentCache.persistPartial(cacheKey, partial, revision), revision)
+        val keep = pinned(cacheKey)
+        contentCache.persistPartial(cacheKey, partial, revision, preferIncomingOrder = !keep)
+        val visible = youtubeRowsAfterPartialRefresh(_uiState.value.rows, partial, pinned = keep)
+        applyRefreshed(cacheKey, visible, revision)
         return true
     }
 
@@ -675,6 +736,9 @@ class YouTubeViewModel @Inject constructor(
         // Re-entering a pinned visit (e.g. back from the player) keeps its tiles exactly.
         val keepVisible = !manual && pinned(requestedKey)
         val previousRows = refreshSnapshot(requestedKey, preserveExtent || keepVisible)
+        // A manual reload keeps the current snapshot until a coherent fresh update is ready.
+        // Adopting a previously deferred cache here would create an extra reorder before it.
+        val retainForRefresh = manual && previousRows.isNotEmpty()
         // First opening since the app started: the cache is from an earlier run. Show loading
         // and then the fresh list, not the old list followed by a completely different one.
         val coldOpen = !keepVisible && previousRows.isEmpty() && YouTubeFreshThisRun.first(requestedKey)
@@ -683,7 +747,7 @@ class YouTubeViewModel @Inject constructor(
         if (coldOpen) {
             displayedContentKey = requestedKey
             _uiState.value = _uiState.value.copy(loading = true, error = null, rows = emptyList())
-        } else if (!keepVisible) {
+        } else if (!keepVisible && !retainForRefresh) {
             contentCache.adoptFreshOrder(requestedKey)
             showCachedContent(requestedKey, previousRows)
         }
@@ -692,7 +756,8 @@ class YouTubeViewModel @Inject constructor(
                 contentCache.restore()
                 if (generation != contentGeneration) return@launch
                 val cacheRevision = contentCache.revision()
-                val explicit = cacheScopeChanged(cacheRevision) || manual
+                val scopeChanged = cacheScopeChanged(cacheRevision)
+                val explicit = scopeChanged || manual
                 if (!engine.available) {
                     _uiState.value = _uiState.value.copy(available = false, loading = false, error = null)
                     return@launch
@@ -715,33 +780,45 @@ class YouTubeViewModel @Inject constructor(
                     )
                 }
                 val cacheKey = "feed:${selectedFeed.key}"
-                val retainedRows = previousRows.takeIf { selectedFeed == feed }.orEmpty()
+                val retainedRows = previousRows.takeIf { selectedFeed == feed && !scopeChanged }.orEmpty()
                 // Kept only to fall back to when the cold-start load fails.
                 val coldStale = if (coldOpen && cacheKey == requestedKey && retainedRows.isEmpty()) contentCache.forget(cacheKey) else null
-                if (!(keepVisible && cacheKey == requestedKey && !explicit && pinned(cacheKey))) {
+                val retainCurrent = retainForRefresh && retainedRows.isNotEmpty() && displayedContentKey == cacheKey
+                if (!retainCurrent && !(keepVisible && cacheKey == requestedKey && !explicit && pinned(cacheKey))) {
                     showCachedContent(cacheKey, retainedRows)
                 }
                 // The player may have appended additional continuation pages to the cache.
                 // Use that expanded snapshot as the refresh extent, not the stale pre-player rows.
                 val refreshRows = _uiState.value.rows.takeIf { displayedContentKey == cacheKey }.orEmpty()
+                // Deferred background results may have removed a still-visible tail. Seed that
+                // tail without displaying the cache so partial results cannot drop it early.
+                if (retainCurrent) contentCache.merge(cacheKey, refreshRows, cacheRevision)
                 // Cached tiles on screen stay still; the refresh below only updates the cache.
                 // Except the first opening of a category since the app started: the cache is
                 // from an earlier run, so its fresh content replaces the tiles right away.
                 val firstSinceStart = YouTubeFreshThisRun.first(cacheKey)
                 visitPin.begin(cacheKey, cacheRevision, refreshRows, explicit || firstSinceStart)
+                val preferIncomingOrder = !pinned(cacheKey)
                 var partialRows = emptyList<YouTubeRow>()
                 suspendResult {
                     val signed = engine.isSignedIn()
                     val profile = if (signed) suspendResult { engine.accountProfile() }.getOrNull() else null
                     if (generation != contentGeneration) return@launch
                     _uiState.value = _uiState.value.copy(signedIn = signed, accountProfile = profile)
-                    var rows = engine.feed(selectedFeed.key) { rows ->
-                        partialRows = rows
-                        // Subscription observables may remain open. Publish newly arrived items
-                        // against the retained cache without waiting for the final snapshot.
-                        if (refreshRows.isEmpty() || selectedFeed == YouTubeFeed.SUBSCRIPTIONS ||
-                            selectedFeed == YouTubeFeed.CHANNELS) {
-                            showRows(cacheKey, rows, cacheRevision, generation)
+                    val streamingFeed = selectedFeed == YouTubeFeed.SUBSCRIPTIONS || selectedFeed == YouTubeFeed.CHANNELS
+                    var rows = if (refreshRows.isNotEmpty() && preferIncomingOrder && streamingFeed) {
+                        withYouTubeRefreshBatches(onBatch = { batch ->
+                            showRows(cacheKey, batch, cacheRevision, generation, preferIncomingOrder = true)
+                        }) { publish ->
+                            engine.feed(selectedFeed.key) { partial ->
+                                partialRows = partial
+                                publish(partial)
+                            }
+                        }
+                    } else engine.feed(selectedFeed.key) { partial ->
+                        partialRows = partial
+                        if (refreshRows.isEmpty() || streamingFeed) {
+                            showRows(cacheKey, partial, cacheRevision, generation, preferIncomingOrder)
                         }
                     }
                     // MediaServiceCore can report an empty Home feed while its services are still
@@ -758,7 +835,8 @@ class YouTubeViewModel @Inject constructor(
                 }.onSuccess { (signed, rows) ->
                     if (generation != contentGeneration || contentCache.revision() != cacheRevision) return@onSuccess
                     YouTubeFreshThisRun.loaded(cacheKey)
-                    applyRefreshed(cacheKey, contentCache.replace(cacheKey, rows, cacheRevision), cacheRevision, signed)
+                    applyRefreshed(cacheKey, contentCache.replace(cacheKey, rows, cacheRevision,
+                        preferIncomingOrder = preferIncomingOrder), cacheRevision, signed)
                 }.onFailure { e ->
                     if (coldStale != null && partialRows.isEmpty() && generation == contentGeneration &&
                         contentCache.get(cacheKey) == null) {
@@ -779,21 +857,27 @@ class YouTubeViewModel @Inject constructor(
         // Re-entering a pinned visit (e.g. back from the player) keeps its tiles exactly.
         val keepVisible = !manual && pinned(cacheKey)
         val previousRows = refreshSnapshot(cacheKey, preserveExtent || keepVisible)
+        val retainForRefresh = manual && previousRows.isNotEmpty()
         val generation = beginContentLoad()
         resetPaging(null)
-        if (!keepVisible) showCachedContent(cacheKey, previousRows)
+        if (!keepVisible && !retainForRefresh) showCachedContent(cacheKey, previousRows)
         contentJob = viewModelScope.launch {
             try {
                 contentCache.restore()
                 if (generation != contentGeneration) return@launch
                 val cacheRevision = contentCache.revision()
-                val explicit = cacheScopeChanged(cacheRevision) || manual
+                val scopeChanged = cacheScopeChanged(cacheRevision)
+                val explicit = scopeChanged || manual
                 if (!engine.available) {
                     _uiState.value = _uiState.value.copy(available = false, loading = false, error = null)
                     return@launch
                 }
-                if (!(keepVisible && !explicit && pinned(cacheKey))) showCachedContent(cacheKey, previousRows)
+                val retainCurrent = retainForRefresh && !scopeChanged && displayedContentKey == cacheKey
+                if (!retainCurrent && !(keepVisible && !explicit && pinned(cacheKey))) {
+                    showCachedContent(cacheKey, previousRows.takeUnless { scopeChanged }.orEmpty())
+                }
                 val refreshRows = _uiState.value.rows.takeIf { displayedContentKey == cacheKey }.orEmpty()
+                if (retainCurrent) contentCache.merge(cacheKey, refreshRows, cacheRevision)
                 visitPin.begin(cacheKey, cacheRevision, refreshRows, explicit)
                 var partialRows = emptyList<YouTubeRow>()
                 suspendResult {
@@ -807,7 +891,8 @@ class YouTubeViewModel @Inject constructor(
                     refreshYouTubeRowExtents(rows, refreshRows) { rowId -> engine.continueRow(cacheKey, rowId) }
                 }.onSuccess { rows ->
                     if (generation != contentGeneration || contentCache.revision() != cacheRevision) return@onSuccess
-                    applyRefreshed(cacheKey, contentCache.replace(cacheKey, rows, cacheRevision), cacheRevision)
+                    applyRefreshed(cacheKey, contentCache.replace(cacheKey, rows, cacheRevision,
+                        preferIncomingOrder = !pinned(cacheKey)), cacheRevision)
                     resolveChannelHeader(channelId, rows, generation)
                 }.onFailure { e ->
                     if (!keepPartialFeed(e, cacheKey, partialRows, cacheRevision, generation)) contentLoadFailed(e, manual, generation)
@@ -854,7 +939,9 @@ class YouTubeViewModel @Inject constructor(
                 val cacheRevision = contentCache.revision()
                 if (!manual) delay(350)
                 if (generation != contentGeneration) return@launch
-                showCachedContent(cacheKey, previousRows)
+                if (manual && previousRows.isNotEmpty() && displayedContentKey == cacheKey) {
+                    contentCache.merge(cacheKey, previousRows, cacheRevision)
+                } else showCachedContent(cacheKey, previousRows)
                 val refreshRows = _uiState.value.rows.takeIf { displayedContentKey == cacheKey }.orEmpty()
                 suspendResult {
                     val onRows: suspend (List<YouTubeRow>) -> Unit = { rows ->
@@ -866,7 +953,8 @@ class YouTubeViewModel @Inject constructor(
                 }
                     .onSuccess { rows ->
                         if (generation == contentGeneration && _uiState.value.query == query && contentCache.revision() == cacheRevision) {
-                            _uiState.value = _uiState.value.copy(loading = false, rows = contentCache.replace(cacheKey, rows, cacheRevision))
+                            _uiState.value = _uiState.value.copy(loading = false, rows = contentCache.replace(cacheKey, rows, cacheRevision,
+                                preferIncomingOrder = true))
                             if (displayedContentKey == cacheKey) armPaging(cacheKey, cacheRevision)
                         }
                     }

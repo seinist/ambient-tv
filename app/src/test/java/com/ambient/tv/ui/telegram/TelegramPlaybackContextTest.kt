@@ -9,6 +9,7 @@ import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -167,5 +168,81 @@ class TelegramPlaybackContextTest {
         fresh.start("telegram:videos", items, "telegram:1:2")
         assertFalse(fresh.contains(restored, "telegram:1:2"))
         assertNull(fresh.nextLoaded(restored, "telegram:1:2"))
+    }
+
+    @Test fun previewDoesNotConsumeAndCommitMustMatchTheLatestPlayedRevision() {
+        val entries = listOf(video(3), video(2))
+        val ctx = context()
+        val token = ctx.start("telegram:videos", entries.map(TelegramMedia::toMediaItem), entries[0].mediaKey,
+            media = entries.associateBy(TelegramMedia::mediaKey), sourceRows = telegramRows("videos", entries))!!
+        ctx.played(token, entries[0].mediaKey)
+        val first = checkNotNull(ctx.pendingReturn.value)
+        assertSame(first, ctx.pendingReturn.value)
+        assertEquals(token, first.sessionToken)
+        ctx.played(token, entries[1].mediaKey)
+        val latest = checkNotNull(ctx.pendingReturn.value)
+        assertTrue(latest.revision > first.revision)
+        assertFalse(ctx.commitReturn("telegram:videos", first.revision) { error("stale commit") })
+        assertFalse(ctx.commitReturn("telegram:recent", latest.revision) { error("wrong page") })
+        var committed: String? = null
+        assertTrue(ctx.commitReturn("telegram:videos", latest.revision) { snapshot ->
+            assertSame(latest, ctx.pendingReturn.value)
+            committed = snapshot.target.mediaKey
+        })
+        assertEquals(entries[1].mediaKey, committed)
+        assertNull(ctx.pendingReturn.value)
+        assertFalse(ctx.commitReturn("telegram:videos", latest.revision) { error("second commit") })
+    }
+
+    @Test fun returnSnapshotKeepsUnrelatedRowsAndEntirePlayerPages() = runTest {
+        val source = listOf(video(9), video(8, chat = 2))
+        val page = listOf(video(7), video(6, chat = 2))
+        val ctx = context(FakePages(mapOf("next" to TelegramMediaPage(page, "after"))))
+        val rows = telegramRows("recent", source)
+        val token = ctx.start("telegram:recent", rows[0].items, source[0].mediaKey,
+            media = source.associateBy(TelegramMedia::mediaKey), section = "recent", cursor = "next",
+            view = TelegramQueueView(rowId = rows[0].id), sourceRows = rows)!!
+        ctx.played(token, source[0].mediaKey)
+        val before = checkNotNull(ctx.pendingReturn.value)
+        assertEquals(page[0].mediaKey, ctx.next(token, source[0].mediaKey)?.ratingKey)
+        ctx.played(token, page[0].mediaKey)
+        val snapshot = checkNotNull(ctx.pendingReturn.value)
+        assertEquals(rows, before.rows)
+        assertEquals(listOf(source[0].mediaKey, page[0].mediaKey), snapshot.rows[0].items.map { it.ratingKey })
+        assertEquals(listOf(source[1].mediaKey, page[1].mediaKey), snapshot.rows[1].items.map { it.ratingKey })
+        assertEquals((source + page).map { it.mediaKey }.toSet(), snapshot.media.keys)
+        assertEquals(rows[0].id, snapshot.target.rowId)
+        assertEquals("after", snapshot.target.nextCursor)
+    }
+
+    @Test fun changedSourceRejectsThePreviewQueueAndLateContinuation() {
+        var epoch = 4L
+        val ctx = TelegramPlaybackContext({ _, _ -> error("unexpected fetch") }, { 0L }, 100L) { epoch }
+        val initial = video(2)
+        val token = ctx.start("telegram:videos", listOf(initial.toMediaItem()), initial.mediaKey,
+            section = "videos", cursor = "next", sourceRows = telegramRows("videos", listOf(initial)))!!
+        ctx.played(token, initial.mediaKey)
+        val before = checkNotNull(ctx.pendingReturn.value)
+        epoch++
+        ctx.appendPage(token, "next", TelegramMediaPage(listOf(video(1)), null))
+        assertSame(before, ctx.pendingReturn.value)
+        assertFalse(ctx.contains(token, initial.mediaKey))
+        assertNull(ctx.nextLoaded(token, initial.mediaKey))
+        assertNull(ctx.consumeReturn("telegram:videos"))
+        assertFalse(ctx.commitReturn("telegram:videos", before.revision) { error("revoked source") })
+        assertNull(prepareTelegramBrowseReturn("videos", epoch, before))
+    }
+
+    @Test fun replayingTheSamePostCreatesANewReturnVisit() {
+        val post = video(1)
+        val ctx = context()
+        val token = ctx.start("telegram:videos", listOf(post.toMediaItem()), post.mediaKey)!!
+        ctx.played(token, post.mediaKey)
+        val first = checkNotNull(ctx.pendingReturn.value)
+        assertTrue(ctx.commitReturn("telegram:videos", first.revision) { })
+        ctx.played(token, post.mediaKey)
+        val second = checkNotNull(ctx.pendingReturn.value)
+        assertTrue(second.revision > first.revision)
+        assertEquals(first.target.mediaKey, second.target.mediaKey)
     }
 }

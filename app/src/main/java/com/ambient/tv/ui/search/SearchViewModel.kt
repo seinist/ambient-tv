@@ -105,6 +105,7 @@ data class SearchUiState(
     val viewMode: SearchViewMode = SearchViewMode.ROWS,
     /** Repeating the same external/recent query still starts a fresh content-focus request. */
     val resultResetRevision: Long = 0,
+    val playbackReturnRevision: Long = 0,
 ) {
     val resultCount: Int get() = results.size + jellyfinResults.size + embyResults.size + trailerResults.size + telegramResults.size + youtubeResults.size + spotifyResults.size + radioResults.size + tvheadendResults.size
     val hasResults: Boolean get() = resultCount > 0
@@ -255,7 +256,16 @@ class SearchViewModel @Inject constructor(
 
     fun submitSearch() = startSearch(preserveResults = false)
 
-    fun refreshAfterReconnect() {
+    internal fun refreshAfterReconnect(returned: com.ambient.tv.ui.common.NavigationPlaybackReturn? = null) {
+        val prepared = prepareSearchPlaybackReturn(_uiState.value, returned)
+        if (prepared != null) {
+            searchRevision++
+            searchJob?.cancel()
+            searchJob = null
+            onResultFocused(prepared.target.item as String)
+            _uiState.value = prepared.state
+            return
+        }
         if (_uiState.value.hasSearched) startSearch(preserveResults = true)
         else refreshSources()
     }
@@ -281,8 +291,12 @@ class SearchViewModel @Inject constructor(
     }
 
     fun onItemFocused(item: MediaItem) {
-        resultFocus.focused(item.ratingKey)
-        preferences.setSectionFocus(SEARCH_STATE_KEY, item.ratingKey)
+        onResultFocused(item.ratingKey)
+    }
+
+    internal fun onResultFocused(itemKey: String) {
+        resultFocus.focused(itemKey)
+        preferences.setSectionFocus(SEARCH_STATE_KEY, itemKey)
     }
 
     internal fun resultFocusRequest(): SearchFocusRequest = resultFocus.request()

@@ -12,6 +12,7 @@ import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
+import org.junit.Assert.assertFalse
 import org.junit.Test
 
 class LiveTvReturnFocusTest {
@@ -43,6 +44,21 @@ class LiveTvReturnFocusTest {
         LiveTvReturnFocus.watched("tvh", "")
         assertNull(LiveTvReturnFocus.take("tvh"))
         assertNull(LiveTvReturnFocus.take(""))
+    }
+
+    @Test fun previewIsReadableBeforeCommitAndAStaleEntryCannotConsumeANewerZap() {
+        LiveTvReturnFocus.watched("tvh", "a")
+        val earlier = LiveTvReturnFocus.pending.value.getValue("tvh")
+        LiveTvReturnFocus.watched("tvh", "c")
+        assertFalse(LiveTvReturnFocus.commit("tvh", earlier.revision) { error("stale return") })
+        val preview = LiveTvReturnFocus.pending.value.getValue("tvh")
+        assertEquals("c", preview.channelUuid)
+        assertEquals(TvhFocusTarget("channel:c", "c"),
+            returnFocusSelections(preview.channelUuid, dashboard, GuideOptions(), now)?.get(TvheadendTab.GUIDE))
+        assertTrue(LiveTvReturnFocus.commit("tvh", preview.revision) {
+            assertEquals(preview, LiveTvReturnFocus.pending.value["tvh"])
+        })
+        assertNull(LiveTvReturnFocus.pending.value["tvh"])
     }
 
     @Test fun returnedChannelBecomesLiveAndGuideSelection() {
@@ -109,8 +125,6 @@ class LiveTvReturnFocusTest {
         assertTrue(guide.contains(marker))
         val restore = guide.substringAfter(marker)
         assertTrue(restore.indexOf("scrollToItem") in 0 until restore.indexOf("firstContentFocusRequester.requestFocus()"))
-        val screen = File("src/main/java/com/ambient/tv/ui/tvheadend/TvheadendScreen.kt").readText()
-        assertTrue(screen.contains("viewModel.consumeReturnFocus()"))
     }
 
     @Test fun channelWatchedThroughAMergedDuplicateSelectsTheShownRow() {

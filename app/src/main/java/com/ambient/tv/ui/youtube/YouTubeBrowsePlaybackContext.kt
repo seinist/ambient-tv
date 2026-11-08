@@ -4,8 +4,12 @@ import com.ambient.tv.youtube.SmartTubeEngine
 import com.ambient.tv.youtube.YouTubeContentCache
 import com.ambient.tv.youtube.YouTubeItem
 import com.ambient.tv.youtube.YouTubeRow
+import com.ambient.tv.youtube.appendYouTubeRowItems
 import javax.inject.Inject
 import javax.inject.Singleton
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 
@@ -37,6 +41,19 @@ class YouTubeBrowsePlaybackContext @Inject constructor(
 ) {
     data class ReturnTarget(val rowId: String, val videoId: String)
 
+    /**
+     * Read without claiming the return, so the destination can build its first layout at the
+     * last played item. Rows belong to this playback visit, not a newer background refresh.
+     */
+    data class ReturnSnapshot(
+        val scope: String,
+        val revision: Int,
+        val cacheRevision: Long,
+        val target: ReturnTarget,
+        val rows: List<YouTubeRow>,
+        val sessionToken: Long = 0L,
+    )
+
     private class Session(
         val token: Long,
         val scope: String,
@@ -49,14 +66,19 @@ class YouTubeBrowsePlaybackContext @Inject constructor(
         val filter: YouTubeFilter,
         val descending: Boolean,
         val isTrailer: Boolean,
+        val cacheRevision: Long,
+        var returnRows: List<YouTubeRow>,
         val exhaustedRows: MutableSet<String> = mutableSetOf(),
         var lastPlayed: String? = null,
         var returnPending: Boolean = false,
     )
 
     private var nextToken = 0L
+    private var nextReturnRevision = 0
     private var current: Session? = null
     private val continuationMutex = Mutex()
+    private val _pendingReturn = MutableStateFlow<ReturnSnapshot?>(null)
+    val pendingReturn: StateFlow<ReturnSnapshot?> = _pendingReturn.asStateFlow()
 
     @Synchronized
     fun start(
@@ -69,6 +91,7 @@ class YouTubeBrowsePlaybackContext @Inject constructor(
         filter: YouTubeFilter = YouTubeFilter.ALL,
         descending: Boolean = false,
         isTrailer: Boolean = false,
+        sourceRows: List<YouTubeRow> = listOfNotNull(row),
     ): Long? {
         if (scope.isNullOrBlank() || row == null || row.items.none { it.videoId == videoId }) return null
         current?.let { engine.discardRowContinuation(it.playerScope) }
@@ -76,15 +99,19 @@ class YouTubeBrowsePlaybackContext @Inject constructor(
         val playerScope = "youtube-player-row:$token"
         // TMDB supplies a complete, finite row. Never ask SmartTube for a continuation
         // or borrow a YouTube feed's paging handle for this trailer session.
-        val sourceRows = if (isTrailer) emptyList() else continuationRowIds.filter(String::isNotBlank).distinct()
+        val continuationSources = if (isTrailer) emptyList() else continuationRowIds.filter(String::isNotBlank).distinct()
             .ifEmpty { listOf(row.id) }
-        val forked = sourceRows.filter { engine.forkRowContinuation(scope, playerScope, it) }.toMutableSet()
+        val forked = continuationSources.filter { engine.forkRowContinuation(scope, playerScope, it) }.toMutableSet()
         current = Session(
             token = token, scope = scope, rowId = returnRowId ?: row.id,
             items = row.items.distinctBy { it.videoId }.toMutableList(),
-            playerScope = playerScope, continuationRows = sourceRows, forkedRows = forked,
+            playerScope = playerScope, continuationRows = continuationSources, forkedRows = forked,
             sort = sort, filter = filter, descending = descending, isTrailer = isTrailer,
+            cacheRevision = cache.revision(),
+            returnRows = sourceRows.ifEmpty { listOf(row) }.distinctBy { it.id }
+                .map { it.copy(items = it.items.toList()) },
         )
+        _pendingReturn.value = null
         return token
     }
 
@@ -102,15 +129,43 @@ class YouTubeBrowsePlaybackContext @Inject constructor(
         if (session.items.none { it.videoId == videoId }) return
         session.lastPlayed = videoId
         session.returnPending = true
+        _pendingReturn.value = returnSnapshot(session, ++nextReturnRevision)
     }
 
     /** A return address is claimed only by the exact original feed/channel/search scope. */
     @Synchronized
     fun consumeReturn(scope: String): ReturnTarget? {
+        val snapshot = _pendingReturn.value?.takeIf { it.scope == scope } ?: return null
         val session = current?.takeIf { it.scope == scope && it.returnPending } ?: return null
-        val videoId = session.lastPlayed ?: return null
         session.returnPending = false
-        return ReturnTarget(session.rowId, videoId)
+        _pendingReturn.value = null
+        return snapshot.target
+    }
+
+    /**
+     * Commit the prepared destination before removing its preview. A stale composition must
+     * not claim a later Next/Previous event, even when the video and source scope are the same.
+     */
+    @Synchronized
+    internal fun commitReturn(scope: String, revision: Int, commit: (ReturnSnapshot) -> Unit): Boolean {
+        val snapshot = _pendingReturn.value?.takeIf { it.scope == scope && it.revision == revision }
+            ?: return false
+        val session = current?.takeIf { it.scope == scope && it.returnPending } ?: return false
+        commit(snapshot)
+        session.returnPending = false
+        _pendingReturn.value = null
+        return true
+    }
+
+    private fun returnSnapshot(session: Session, revision: Int): ReturnSnapshot {
+        val videoId = requireNotNull(session.lastPlayed)
+        // A flattened view can continue into a different source row. Preserve that actual
+        // return address instead of always reusing the row of the original click.
+        val row = session.returnRows.firstOrNull { row ->
+            row.id == session.rowId && row.items.any { it.videoId == videoId }
+        } ?: session.returnRows.firstOrNull { row -> row.items.any { it.videoId == videoId } }
+        return ReturnSnapshot(session.scope, revision, session.cacheRevision,
+            ReturnTarget(row?.id ?: session.rowId, videoId), session.returnRows, session.token)
     }
 
     @Synchronized
@@ -169,8 +224,17 @@ class YouTubeBrowsePlaybackContext @Inject constructor(
         val known = session.items.mapTo(HashSet()) { it.videoId }
         val visible = youtubePlayableContinuationItems(page.items, session.sort, session.filter, session.descending)
         session.items += visible.filter { known.add(it.videoId) }
-        // Put raw continuation items back in their actual source row on return.
-        if (page.items.isNotEmpty()) cache.appendItems(session.scope, rowId, page.items)
+        // Make every played page available before the returning destination's first measure,
+        // even if its cache entry was evicted or a background refresh changed its order.
+        session.returnRows = appendYouTubeRowItems(session.returnRows, rowId, page.items, maxItems = Int.MAX_VALUE)
+        if (session.returnPending) {
+            _pendingReturn.value?.let { pending ->
+                _pendingReturn.value = returnSnapshot(session, pending.revision)
+            }
+        }
+        // Put raw continuation items back in their actual source row on return. A queue from
+        // the previous account/language may never append into a newer cache generation.
+        if (page.items.isNotEmpty()) cache.appendItems(session.scope, rowId, page.items, session.cacheRevision)
     }
 
     private companion object {
