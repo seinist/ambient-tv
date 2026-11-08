@@ -210,9 +210,10 @@ fun ReferencePlayerHeader(
                     fontSize = if (LocalHandheldUi.current) 20.sp else 27.sp,
                     fontWeight = FontWeight.SemiBold,
                     maxLines = 1,
-                    // Handheld: scroll a title wider than the screen instead of cutting it off.
-                    overflow = if (LocalHandheldUi.current) TextOverflow.Clip else TextOverflow.Ellipsis,
-                    modifier = if (LocalHandheldUi.current) Modifier.basicMarquee(iterations = Int.MAX_VALUE, initialDelayMillis = 1_500) else Modifier,
+                    // basicMarquee stays static when the title fits, so long titles can scroll
+                    // without changing the appearance or height of normal OSD headers.
+                    overflow = TextOverflow.Clip,
+                    modifier = Modifier.basicMarquee(iterations = Int.MAX_VALUE, initialDelayMillis = 1_500),
                 )
                 if (subtitleValue != null || subtitleTrailing != null) {
                     Row(
