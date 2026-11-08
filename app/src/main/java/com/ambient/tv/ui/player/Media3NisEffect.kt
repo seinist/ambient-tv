@@ -122,10 +122,12 @@ private class Media3NisShaderProgram(
     private val planes = media3RavuLutPlanes(coefficients.values)
     private val coefHigh = media3LutTexture(planes.high, coefficients.width, coefficients.height)
     private val coefLow = media3LutTexture(planes.low, coefficients.width, coefficients.height)
-    private var inputSize = floatArrayOf(1f, 1f)
 
     override fun configure(inputWidth: Int, inputHeight: Int): Size {
-        inputSize = floatArrayOf(inputWidth.toFloat(), inputHeight.toFloat())
+        program.setSamplerTexIdUniform("uCoefHigh", coefHigh, 1)
+        program.setSamplerTexIdUniform("uCoefLow", coefLow, 2)
+        program.setFloatsUniformIfPresent("uInputSize", floatArrayOf(inputWidth.toFloat(), inputHeight.toFloat()))
+        program.setFloatsUniformIfPresent("uCoef", floatArrayOf(planes.min, planes.range))
         return media3FitSize(inputWidth, inputHeight, outputWidth, outputHeight).let { Size(it.first, it.second) }
     }
 
@@ -134,10 +136,6 @@ private class Media3NisShaderProgram(
             media3LinearFilter(inputTexId)
             program.use()
             program.setSamplerTexIdUniform("uTexSampler", inputTexId, 0)
-            program.setSamplerTexIdUniform("uCoefHigh", coefHigh, 1)
-            program.setSamplerTexIdUniform("uCoefLow", coefLow, 2)
-            program.setFloatsUniformIfPresent("uInputSize", inputSize)
-            program.setFloatsUniformIfPresent("uCoef", floatArrayOf(planes.min, planes.range))
             media3DrawQuad(program)
         } catch (e: GlUtil.GlException) {
             throw VideoFrameProcessingException(e, presentationTimeUs)

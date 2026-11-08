@@ -1628,7 +1628,9 @@ internal class MpvPlaybackEngine(
         ?.takeIf { it.isNotBlank() } ?: getPropertyString(MPV_PROP_DEC_COLORLEVELS)
 
     /** CAS curve for the current source; HDR also follows the luma range (limited/full). */
-    private fun casTransferProfile(transfer: String?): MpvCasTransferProfile? = mpvCasTransferProfile(transfer, currentMpvLevels())
+    private fun casTransferProfile(transfer: String?): MpvCasTransferProfile? =
+        // SDR profiles do not use levels; avoid native metadata reads on every CAS refresh.
+        mpvCasTransferProfile(transfer, if (isMpvHdrTransfer(transfer)) currentMpvLevels() else null)
 
     private fun currentMpvTransfer(): String? = getPropertyString("video-params/gamma")
         ?.trim()?.lowercase()?.takeIf { it.isNotBlank() }

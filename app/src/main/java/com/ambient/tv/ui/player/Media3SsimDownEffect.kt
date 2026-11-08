@@ -42,7 +42,6 @@ private class Media3SsimDownShaderProgram(
     private var outWidth = 1
     private var outHeight = 1
     private lateinit var horizontal: Media3Intermediate
-    private lateinit var squareHorizontal: Media3Intermediate
     private lateinit var baseline: Media3Intermediate
     private lateinit var moment: Media3Intermediate
     private lateinit var localStats: Media3Intermediate
@@ -55,7 +54,6 @@ private class Media3SsimDownShaderProgram(
         outWidth = width
         outHeight = height
         horizontal = newTarget(outWidth, inputHeight)
-        squareHorizontal = newTarget(outWidth, inputHeight)
         baseline = newTarget(outWidth, outHeight)
         moment = newTarget(outWidth, outHeight)
         localStats = newTarget(outWidth, outHeight)
@@ -67,12 +65,13 @@ private class Media3SsimDownShaderProgram(
         val (finalWidth, finalHeight) = currentViewport()
         try {
             // Catmull-Rom second moment of the original source, horizontal then vertical.
-            resizePass(inputTexId, inputWidth, inputHeight, squareHorizontal,
+            resizePass(inputTexId, inputWidth, inputHeight, horizontal,
                 outWidth, inputHeight, horizontalAxis = true, catmull = true, squareInput = true)
-            resizePass(squareHorizontal.texture, outWidth, inputHeight, moment,
+            resizePass(horizontal.texture, outWidth, inputHeight, moment,
                 outWidth, outHeight, horizontalAxis = false, catmull = true, squareInput = false)
 
             // MPV SSimDownscaler assumes the baseline dscale=Mitchell; compute it explicitly.
+            // The moment is complete, so its horizontal scratch texture can be reused.
             resizePass(inputTexId, inputWidth, inputHeight, horizontal,
                 outWidth, inputHeight, horizontalAxis = true, catmull = false, squareInput = false)
             resizePass(horizontal.texture, outWidth, inputHeight, baseline,

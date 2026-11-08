@@ -178,6 +178,15 @@ internal class Media3KernelEffect(
     }
 }
 
+/** Parameters for one configured pass; the two separable axes share one GL program. */
+private class Media3KernelPassUniforms(
+    val inputSize: FloatArray,
+    val direction: FloatArray,
+    val sigmoid: FloatArray,
+    val filterScale: FloatArray,
+    val antiRing: FloatArray,
+)
+
 private class Media3KernelShaderProgram(
     useHighPrecision: Boolean,
     private val kernel: Media3Kernel,
@@ -200,6 +209,8 @@ private class Media3KernelShaderProgram(
     private var fitWidth = 1
     private var fitHeight = 1
     private var mid: Media3Intermediate? = null
+    private lateinit var firstPass: Media3KernelPassUniforms
+    private var secondPass: Media3KernelPassUniforms? = null
 
     override fun configure(inputWidth: Int, inputHeight: Int): Size {
         releaseIntermediate()
@@ -211,6 +222,13 @@ private class Media3KernelShaderProgram(
         fitHeight = height
         // Horizontal pass result: output width, source height.
         if (!kernel.polar) mid = media3Intermediate(fitWidth, inputHeight, useHighPrecision)
+        program.setSamplerTexIdUniform("uLut", lut, 1)
+        program.setFloatsUniformIfPresent("uLutValue", floatArrayOf(planes.min, planes.range))
+        firstPass = passUniforms(inputWidth, inputHeight,
+            if (kernel.polar) floatArrayOf(1f, 1f) else floatArrayOf(1f, 0f),
+            pre = true, post = kernel.polar)
+        secondPass = if (kernel.polar) null else
+            passUniforms(fitWidth, inputHeight, floatArrayOf(0f, 1f), pre = false, post = true)
         return Size(width, height)
     }
 
@@ -218,37 +236,44 @@ private class Media3KernelShaderProgram(
         try {
             val mid = mid
             if (kernel.polar || mid == null) {
-                pass(inputTexId, inputWidth, inputHeight, floatArrayOf(1f, 1f), pre = true, post = true)
+                pass(inputTexId, firstPass)
                 return
             }
             val outputFbo = IntArray(1).also { android.opengl.GLES20.glGetIntegerv(android.opengl.GLES20.GL_FRAMEBUFFER_BINDING, it, 0) }[0]
             GlUtil.focusFramebufferUsingCurrentContext(mid.fbo, fitWidth, inputHeight)
-            pass(inputTexId, inputWidth, inputHeight, floatArrayOf(1f, 0f), pre = true, post = false)
+            pass(inputTexId, firstPass)
             GlUtil.focusFramebufferUsingCurrentContext(outputFbo, fitWidth, fitHeight)
-            pass(mid.texture, fitWidth, inputHeight, floatArrayOf(0f, 1f), pre = false, post = true)
+            pass(mid.texture, checkNotNull(secondPass))
         } catch (e: GlUtil.GlException) {
             throw VideoFrameProcessingException(e, presentationTimeUs)
         }
     }
 
     /**
-     * One pass reading [texture] of [width]x[height]; [direction] (1,0)/(0,1) separable, (1,1)
+     * One pass reading [width]x[height]; [direction] (1,0)/(0,1) separable, (1,1)
      * polar. [pre] converts samples into sigmoid space, [post] converts the result back.
      */
-    private fun pass(texture: Int, width: Int, height: Int, direction: FloatArray, pre: Boolean, post: Boolean) {
+    private fun passUniforms(width: Int, height: Int, direction: FloatArray, pre: Boolean, post: Boolean): Media3KernelPassUniforms {
+        val scale = if (kernel.polar) minOf(fitWidth.toFloat() / inputWidth, fitHeight.toFloat() / inputHeight)
+            else if (direction[0] > 0f) fitWidth.toFloat() / inputWidth else fitHeight.toFloat() / inputHeight
+        return Media3KernelPassUniforms(
+            floatArrayOf(width.toFloat(), height.toFloat()),
+            direction,
+            floatArrayOf(if (pre && sigmoid) 1f else 0f, if (post && sigmoid) 1f else 0f),
+            floatArrayOf(if (downscaling) scale.coerceIn(0.01f, 1f) else 1f),
+            floatArrayOf(if (post) antiring.coerceIn(0, 100) / 100f else 0f),
+        )
+    }
+
+    private fun pass(texture: Int, uniforms: Media3KernelPassUniforms) {
         // Taps sit on texel centers, so the image's own filtering does not change them.
         program.use()
         program.setSamplerTexIdUniform("uTexSampler", texture, 0)
-        program.setSamplerTexIdUniform("uLut", lut, 1)
-        program.setFloatsUniformIfPresent("uInputSize", floatArrayOf(width.toFloat(), height.toFloat()))
-        program.setFloatsUniformIfPresent("uDir", direction)
-        program.setFloatsUniformIfPresent("uLutValue", floatArrayOf(planes.min, planes.range))
-        program.setFloatsUniformIfPresent("uSigmoid", floatArrayOf(
-            if (pre && sigmoid) 1f else 0f, if (post && sigmoid) 1f else 0f))
-        val scale = if (kernel.polar) minOf(fitWidth.toFloat() / inputWidth, fitHeight.toFloat() / inputHeight)
-            else if (direction[0] > 0f) fitWidth.toFloat() / inputWidth else fitHeight.toFloat() / inputHeight
-        program.setFloatsUniformIfPresent("uFilterScale", floatArrayOf(if (downscaling) scale.coerceIn(0.01f, 1f) else 1f))
-        program.setFloatsUniformIfPresent("uAntiRing", floatArrayOf(if (post) antiring.coerceIn(0, 100) / 100f else 0f))
+        program.setFloatsUniformIfPresent("uInputSize", uniforms.inputSize)
+        program.setFloatsUniformIfPresent("uDir", uniforms.direction)
+        program.setFloatsUniformIfPresent("uSigmoid", uniforms.sigmoid)
+        program.setFloatsUniformIfPresent("uFilterScale", uniforms.filterScale)
+        program.setFloatsUniformIfPresent("uAntiRing", uniforms.antiRing)
         media3DrawQuad(program)
     }
 
@@ -276,13 +301,11 @@ private class Media3OversampleShaderProgram(
     private val outputHeight: Int,
 ) : BaseGlShaderProgram(useHighPrecision, /* texturePoolCapacity= */ 1) {
     private val program = media3GlProgram(MEDIA3_OVERSAMPLE)
-    private var inputSize = floatArrayOf(1f, 1f)
-    private var scale = floatArrayOf(1f, 1f)
 
     override fun configure(inputWidth: Int, inputHeight: Int): Size {
         val (width, height) = media3FitSize(inputWidth, inputHeight, outputWidth, outputHeight)
-        inputSize = floatArrayOf(inputWidth.toFloat(), inputHeight.toFloat())
-        scale = floatArrayOf(width.toFloat() / inputWidth, height.toFloat() / inputHeight)
+        program.setFloatsUniformIfPresent("uInputSize", floatArrayOf(inputWidth.toFloat(), inputHeight.toFloat()))
+        program.setFloatsUniformIfPresent("uScale", floatArrayOf(width.toFloat() / inputWidth, height.toFloat() / inputHeight))
         return Size(width, height)
     }
 
@@ -291,8 +314,6 @@ private class Media3OversampleShaderProgram(
             media3LinearFilter(inputTexId)
             program.use()
             program.setSamplerTexIdUniform("uTexSampler", inputTexId, 0)
-            program.setFloatsUniformIfPresent("uInputSize", inputSize)
-            program.setFloatsUniformIfPresent("uScale", scale)
             media3DrawQuad(program)
         } catch (e: GlUtil.GlException) {
             throw VideoFrameProcessingException(e, presentationTimeUs)
