@@ -56,7 +56,7 @@ object Destinations {
 
     /** NavDestination route patterns, not the concrete URLs passed to navigate(). */
     fun isDetailRoute(route: String?): Boolean =
-        route == DETAIL || route == YOUTUBE_DETAIL || route == SPOTIFY_DETAIL || route == TELEGRAM_DETAIL
+        route == DETAIL || route == YOUTUBE_DETAIL || route == SPOTIFY_DETAIL || route == TELEGRAM_DETAIL || route == RADIO_DETAIL
 
     fun setupSettings(category: String) = "setup_settings/${Uri.encode(category)}"
     fun detail(ratingKey: String, collectionId: String? = null, collectionSort: String? = null) = buildString {
