@@ -297,7 +297,8 @@ class YouTubeOsdNavigationTest {
             .assertIsDisplayed().performClick()
         rule.runOnIdle { assertEquals(1, goLiveRequests) }
         // The rewind buttons are gated by actual DVR support, not by !isLive.
-        rule.onNodeWithContentDescription(rule.activity.getString(R.string.player_seek_back, 10))
+        rule.onNodeWithContentDescription(rule.activity.getString(R.string.player_seek_back,
+            (com.ambient.tv.ui.player.BackgroundPlaybackSession.seekJumpMs(10_000L) / 1_000L).toInt().coerceAtLeast(1)))
             .assertIsDisplayed().performClick()
         rule.runOnIdle { assertTrue(seekDeltas.any { it < 0L }) }
     }
@@ -315,7 +316,8 @@ class YouTubeOsdNavigationTest {
         }
         rule.onNodeWithContentDescription(rule.activity.getString(R.string.timeshift_go_live))
             .assertDoesNotExist()
-        rule.onNodeWithContentDescription(rule.activity.getString(R.string.player_seek_back, 10))
+        rule.onNodeWithContentDescription(rule.activity.getString(R.string.player_seek_back,
+            (com.ambient.tv.ui.player.BackgroundPlaybackSession.seekJumpMs(10_000L) / 1_000L).toInt().coerceAtLeast(1)))
             .assertDoesNotExist()
     }
 
