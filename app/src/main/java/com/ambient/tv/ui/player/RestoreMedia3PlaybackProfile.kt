@@ -6,6 +6,22 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.platform.LocalContext
 import androidx.media3.exoplayer.ExoPlayer
 
+/**
+ * Select the saved image profile before the first prepare whenever the source geometry is already
+ * known. Media3 otherwise starts with the global defaults and can show a first frame before the
+ * Compose restore enables the GPU sink, forcing a visible stop/prepare cycle.
+ */
+internal fun primeMedia3PlaybackProfile(
+    context: android.content.Context,
+    player: ExoPlayer,
+    metadata: PlaybackMetadata?,
+) {
+    val title = TitleVideoSettingsStore.load(context, metadata)
+    val resolution = ResolutionVideoProfileStore.load(context, metadata)
+    val image = title?.media3 ?: resolution?.media3 ?: videoImagePreferences(context).media3ImageOptions
+    Media3ImageProcessing.get(context, player).restoreAutomaticOptions(image)
+}
+
 /** Shared by library, YouTube and live TV, including geometry discovered after startup. */
 @Composable
 internal fun RestoreMedia3PlaybackProfile(player: ExoPlayer, metadata: PlaybackMetadata?) {
