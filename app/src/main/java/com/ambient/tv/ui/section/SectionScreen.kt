@@ -865,18 +865,25 @@ private fun RecommendationRowsPage(
     val rowsState = com.ambient.tv.ui.common.rememberBrowseRowColumnState(initialFirstVisibleItemIndex = restoreRowIndex)
     RegisterBrowseFocusRows(rowsState, state.recommendationRows.map { it.id to it.items.map { item -> item.ratingKey } })
     val rowCentering = rememberRowCenteringState(rowsState)
-    var centeredRowIndex by remember { mutableStateOf(-1) }
+    // Row selection is consumed only by the tiny alpha modifiers and this coroutine; keeping it
+    // out of the parent composition avoids rebuilding all nested LazyRows on every Up/Down.
+    val centeredRowIndex = remember { mutableIntStateOf(-1) }
+    val pendingVisualRowIndex = remember { mutableIntStateOf(-1) }
     var returningRow by remember { mutableStateOf(state.playbackReturnRevision > 0L) }
     val handheld = LocalHandheldUi.current
     // TV rests the active row on the bottom edge; handheld keeps it under the banner.
     val bottomInsetPx = if (handheld) -1 else with(LocalDensity.current) { HeroRowBottomMargin.roundToPx() }
     val density = LocalDensity.current
-    LaunchedEffect(centeredRowIndex) {
-        if (returningRow) {
-            if (centeredRowIndex == restoreRowIndex) returningRow = false
-            return@LaunchedEffect
+    LaunchedEffect(rowCentering, restoreRowIndex, bottomInsetPx) {
+        snapshotFlow { centeredRowIndex.intValue }.collectLatest { index ->
+            if (index < 0) return@collectLatest
+            if (pendingVisualRowIndex.intValue == index) pendingVisualRowIndex.intValue = -1
+            if (returningRow) {
+                if (index == restoreRowIndex) returningRow = false
+                return@collectLatest
+            }
+            rowCentering.centerItem(index, alignTop = true, bottomInset = bottomInsetPx)
         }
-        if (centeredRowIndex >= 0) rowCentering.centerItem(centeredRowIndex, alignTop = true, bottomInset = bottomInsetPx)
     }
     val rowScrollSpec = if (handheld) LocalBringIntoViewSpec.current else ExplicitRowScrollSpec
     val columnFocus = com.ambient.tv.ui.common.rememberRowColumnFocus()
@@ -912,15 +919,26 @@ private fun RecommendationRowsPage(
                         .rowColumnFocusWrapRight(columnFocus)
                         .rowColumnFocusNavigation(
                             columnFocus,
-                            scrollToTop = { rowsState.glideToItem(!performance.reducedEffects, 0) },
-                            scrollToBottom = { rowsState.glideToItem(!performance.reducedEffects, state.recommendationRows.lastIndex) },
+                            scrollToTop = {
+                                pendingVisualRowIndex.intValue = 0
+                                rowsState.glideToItem(!performance.reducedEffects, 0)
+                            },
+                            scrollToBottom = {
+                                pendingVisualRowIndex.intValue = state.recommendationRows.lastIndex
+                                rowsState.glideToItem(!performance.reducedEffects, state.recommendationRows.lastIndex)
+                            },
                             scrollToRow = { rowKey ->
                                 val index = state.recommendationRows.indexOfFirst { it.id == rowKey }
-                                if (index >= 0) rowCentering.centerItem(index, topInset = heroInsetPx, alignTop = true, bottomInset = bottomInsetPx)
+                                if (index >= 0) {
+                                    pendingVisualRowIndex.intValue = index
+                                    rowCentering.centerItem(index, topInset = heroInsetPx, alignTop = true, bottomInset = bottomInsetPx)
+                                }
                             },
                         ) { state.recommendationRows.map { it.id } }
                         .clipToBounds()
-                        .then(if (handheld) Modifier else Modifier.fadeRowsBehindHomeHero(performance.allowRowFadeSaveLayer, heroHeight) { rowsState.isScrollInProgress })
+                        .then(if (handheld) Modifier else Modifier.fadeRowsBehindHomeHero(performance.allowRowFadeSaveLayer, heroHeight) {
+                            rowsState.isScrollInProgress || pendingVisualRowIndex.intValue >= 0
+                        })
                         // Hidden for the one frame before the first row is measured (first open only;
                         // a list restored further down never composes row 0 and shows at once).
                         .then(if (handheld) Modifier else Modifier.graphicsLayer {
@@ -936,8 +954,13 @@ private fun RecommendationRowsPage(
                             // Until a row takes focus, the restored row is the active one.
                             modifier = Modifier.onlyActiveHeroRow(
                                 index,
-                                if (centeredRowIndex >= 0) centeredRowIndex else restoreRowIndex,
-                            ) { rowsState.isScrollInProgress }.then(
+                                activeIndex = {
+                                    centeredRowIndex.intValue.takeIf { it >= 0 } ?: restoreRowIndex
+                                },
+                                revealDuringScroll = {
+                                    rowsState.isScrollInProgress || pendingVisualRowIndex.intValue >= 0
+                                },
+                            ).then(
                                 if (index == 0) Modifier.onSizeChanged { size ->
                                     val height = with(density) { size.height.toDp() }
                                     firstRowHeight = height
@@ -951,7 +974,10 @@ private fun RecommendationRowsPage(
                                 heroContent.value = item.toHomeHeroContent()
                                 onRecommendationItemFocused(row.id, item)
                             },
-                            onRowFocused = { centeredRowIndex = index },
+                            onRowFocused = {
+                                centeredRowIndex.intValue = index
+                                if (pendingVisualRowIndex.intValue == index) pendingVisualRowIndex.intValue = -1
+                            },
                             restoreRatingKey = if (restoreArmed && index == restoreRowIndex) initialFocusKey else null,
                             columnFocus = columnFocus,
                         )
