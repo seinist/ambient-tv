@@ -6,6 +6,14 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class IntroBrandMarkMotionTest {
+    @Test fun prismRibbonTapersCleanlyAtBothEnds() {
+        assertEquals(0f, prismRibbonEnvelope(0f), 0.0001f)
+        assertEquals(1f, prismRibbonEnvelope(0.5f), 0.0001f)
+        assertEquals(0f, prismRibbonEnvelope(1f), 0.0001f)
+        assertEquals(prismRibbonEnvelope(0.08f), prismRibbonEnvelope(0.92f), 0.0001f)
+        assertTrue(prismRibbonEnvelope(0.08f) < prismRibbonEnvelope(0.16f))
+    }
+
     @Test fun ambientBackgroundStaysVisibleAfterRevealAndDuringServerWake() {
         // Low-power rendering uses the settled 60-second frame; the 3-minute wake hold
         // must never fade these new backgrounds back to a blank screen.

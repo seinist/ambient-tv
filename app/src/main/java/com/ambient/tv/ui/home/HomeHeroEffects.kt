@@ -15,6 +15,14 @@ import kotlin.math.PI
 import kotlin.math.cos
 import kotlin.math.sin
 
+/** Smoothly tapers Home Prism beams to zero before the top/bottom canvas edges. */
+internal fun homePrismBeamEnvelope(progress: Float): Float {
+    val s = sin(progress.coerceIn(0f, 1f) * PI).toFloat()
+    return s * s
+}
+
+private const val HOME_PRISM_BEAM_SEGMENTS = 12
+
 /** Draw-only motion in the hero's own layer: no bitmap reloads, blur surfaces or row recomposition. */
 internal fun Modifier.fancyHeroAmbient(
     style: String,
@@ -175,8 +183,29 @@ internal fun Modifier.fancyHeroAmbient(
                 }
                 HomeHeroStyle.PRISM -> {
                     fun sweep(progress: Float, opacity: Float, halfWidth: Float, brush: Brush) {
-                        withTransform({ translate(width * (-0.25f + progress * 1.6f), 0f); rotate(18f, Offset.Zero) }) {
-                            drawRect(brush, Offset(-halfWidth, -height), Size(halfWidth * 2f, height * 3f), alpha = opacity)
+                        // The old rotated rectangle stayed fully bright at the canvas edge and
+                        // was then hard-clipped by clipRect. On portrait phones that looked like
+                        // a beam chopped off at the bottom. Draw a tapered vertical ribbon instead:
+                        // it reaches zero naturally just before both screen edges.
+                        ribbon.reset()
+                        for (index in 0..HOME_PRISM_BEAM_SEGMENTS) {
+                            val u = index / HOME_PRISM_BEAM_SEGMENTS.toFloat()
+                            val y = height * (u - 0.5f)
+                            val half = halfWidth * homePrismBeamEnvelope(u)
+                            if (index == 0) ribbon.moveTo(-half, y) else ribbon.lineTo(-half, y)
+                        }
+                        for (index in HOME_PRISM_BEAM_SEGMENTS downTo 0) {
+                            val u = index / HOME_PRISM_BEAM_SEGMENTS.toFloat()
+                            val y = height * (u - 0.5f)
+                            val half = halfWidth * homePrismBeamEnvelope(u)
+                            ribbon.lineTo(half, y)
+                        }
+                        ribbon.close()
+                        withTransform({
+                            translate(width * (-0.25f + progress * 1.6f), height * 0.5f)
+                            rotate(18f, Offset.Zero)
+                        }) {
+                            drawPath(ribbon, brush, alpha = opacity)
                         }
                     }
                     sweep(t, 0.4f, prismWidth * 2.1f, prismWide)
