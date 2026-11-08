@@ -127,6 +127,12 @@ object PlaybackEngineFactory {
         val started = System.nanoTime()
         val spectrumAnalyzer = AudioSpectrumAnalyzer()
         val audioSession = AudioSession(videoImagePreferences(context), "media3", audioPassthroughEnabled, audioOnly = audioOnly)
+        // Seed the stable route and the saved profile before attach() installs callbacks that
+        // reopen a running player. Android may report the already-connected HDMI device shortly
+        // after callback registration; without this seed that normal initial report looks like a
+        // route change about 1.5 s into playback and causes stop()/prepare().
+        audioSession.refreshRoute(context)
+        profileMetadata?.let { primeMedia3AudioProfile(context, audioSession, it) }
         var createdPlayer: ExoPlayer? = null
         var audioReleased = false
         return initializePlaybackOrRelease(
