@@ -2083,6 +2083,9 @@ private fun ytAudioLanguages(tracks: Tracks): List<YtAudioLanguage> {
 /** Plays [language], adaptive within its group; the group already playing keeps its codec. */
 private fun applyYtAudioLanguage(player: ExoPlayer, language: YtAudioLanguage) {
     val group = language.groups.firstOrNull { it.isSelected } ?: language.groups.first()
+    // Automatic/original selection frequently already picked this AdaptationSet. Re-applying an
+    // explicit override after onTracksChanged can briefly put Media3 back into BUFFERING.
+    if ((0 until group.length).any(group::isTrackSelected)) return
     val indices = (0 until group.length).filter(group::isTrackSupported)
     player.trackSelectionParameters = player.trackSelectionParameters.buildUpon()
         .setTrackTypeDisabled(C.TRACK_TYPE_AUDIO, false)
