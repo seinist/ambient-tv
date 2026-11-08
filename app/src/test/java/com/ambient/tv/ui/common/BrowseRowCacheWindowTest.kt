@@ -34,4 +34,18 @@ class BrowseRowCacheWindowTest {
         assertTrue(BrowseVerticalCacheBehindReduced < BrowseVerticalCacheBehind)
     }
 
+    @Test fun rowColumnWindowPreparesAWholeNextRow() {
+        assertTrue(BrowseRowColumnCacheAhead > BrowseVerticalCacheAhead)
+        assertTrue(BrowseRowColumnCacheAhead >= 360.dp)
+        assertTrue(BrowseRowColumnCacheBehind > BrowseVerticalCacheBehind)
+        assertTrue(BrowseRowColumnCacheBehind < BrowseRowColumnCacheAhead)
+    }
+
+    @Test fun reducedRowColumnWindowStillExceedsTheGridWindow() {
+        assertTrue(BrowseRowColumnCacheAheadReduced > BrowseVerticalCacheAheadReduced)
+        assertTrue(BrowseRowColumnCacheBehindReduced > BrowseVerticalCacheBehindReduced)
+        assertTrue(BrowseRowColumnCacheAheadReduced < BrowseRowColumnCacheAhead)
+        assertTrue(BrowseRowColumnCacheBehindReduced < BrowseRowColumnCacheBehind)
+    }
+
 }
