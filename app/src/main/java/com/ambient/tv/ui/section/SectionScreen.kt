@@ -181,6 +181,7 @@ import com.ambient.tv.ui.theme.LocalAccentModeKey
 import com.ambient.tv.ui.common.transparentSurfaceColors
 import com.ambient.tv.ui.navigation.ReportSidebarContentReady
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.collectLatest
 
 
 @Composable
