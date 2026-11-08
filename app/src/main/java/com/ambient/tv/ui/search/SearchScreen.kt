@@ -823,7 +823,14 @@ private fun YouTubeSearchRow(youtubeItems: List<YouTubeItem>, onClick: (String) 
                             .padding(8.dp),
                         verticalArrangement = Arrangement.spacedBy(7.dp),
                     ) {
-                        ArtworkImage(model = item.imageUrl, title = item.title, modifier = Modifier.fillMaxWidth().aspectRatio(16f / 9f).clip(RoundedCornerShape(10.dp)), contentScale = ContentScale.Crop)
+                        ArtworkImage(
+                            model = item.imageUrl,
+                            title = item.title,
+                            modifier = Modifier.fillMaxWidth().aspectRatio(16f / 9f).clip(RoundedCornerShape(10.dp)),
+                            contentScale = ContentScale.Crop,
+                            staggerUncached = true,
+                            prioritizeUncached = focused,
+                        )
                         CenteredMarqueeTitle(item.title, focused = focused, style = MaterialTheme.typography.titleSmall)
                         val info = com.ambient.tv.ui.youtube.youtubeCardInfo(item)
                         listOfNotNull(info.channel, info.details.joinToString("  ·  ").takeIf(String::isNotBlank)).forEach {
@@ -911,7 +918,14 @@ private fun SpotifySearchRow(type: SpotifyEntityType, items: List<SpotifyBrowseI
                             .padding(8.dp),
                         verticalArrangement = Arrangement.spacedBy(7.dp),
                     ) {
-                        ArtworkImage(model = item.artworkUrl, title = item.title, modifier = Modifier.fillMaxWidth().aspectRatio(1f).clip(RoundedCornerShape(10.dp)), contentScale = ContentScale.Crop)
+                        ArtworkImage(
+                            model = item.artworkUrl,
+                            title = item.title,
+                            modifier = Modifier.fillMaxWidth().aspectRatio(1f).clip(RoundedCornerShape(10.dp)),
+                            contentScale = ContentScale.Crop,
+                            staggerUncached = true,
+                            prioritizeUncached = focused,
+                        )
                         CenteredMarqueeTitle(item.title, focused = focused, style = MaterialTheme.typography.titleSmall)
                         item.subtitle?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis, textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth()) }
                     }
@@ -1074,6 +1088,8 @@ private fun SearchArtworkCard(
                 headers = imageHeaders,
                 modifier = Modifier.fillMaxWidth().aspectRatio(if (squareArtwork) 1f else 16f / 9f).clip(RoundedCornerShape(10.dp)),
                 contentScale = ContentScale.Crop,
+                staggerUncached = true,
+                prioritizeUncached = focused,
             )
             Text(title, style = MaterialTheme.typography.titleSmall, maxLines = 2, overflow = TextOverflow.Ellipsis, textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth())
             subtitle?.takeIf(String::isNotBlank)?.let {
@@ -1436,6 +1452,7 @@ private fun SearchMediaListItem(
                 item = item,
                 model = item.landscapeArtUrl,
                 modifier = Modifier.width(166.dp).aspectRatio(16f / 9f).clip(RoundedCornerShape(10.dp)),
+                prioritizeUncachedArtwork = isFocused,
             )
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(5.dp)) {
                 MarqueeTitle(item.title, focused = isFocused, style = MaterialTheme.typography.titleMedium)
@@ -1497,6 +1514,8 @@ private fun ExternalSearchListItem(
                     Modifier.width(132.dp).aspectRatio(16f / 9f).clip(RoundedCornerShape(9.dp))
                 },
                 contentScale = ContentScale.Crop,
+                staggerUncached = true,
+                prioritizeUncached = focused,
             )
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(5.dp)) {
                 MarqueeTitle(title, focused = focused, style = MaterialTheme.typography.titleMedium)
