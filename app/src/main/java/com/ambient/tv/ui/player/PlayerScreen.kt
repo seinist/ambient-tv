@@ -666,7 +666,11 @@ private fun PlayerContent(
                 panel != UnifiedPlayerPanel.NONE, osd.seekFeedback, closing = osd.closing),
             OsdSeekSteps(BackgroundPlaybackSession.seekJumpMs(state.seekJumpMs), held = { heldSeekStep(it, event) }),
             object : OsdKeyTarget {
-                override fun chapterSeekDelta(direction: Int) = chapterNavigation?.chapterStep(seek.positionMs, direction, seek.chapterPositionMs)
+                override fun chapterSeekDelta(direction: Int): Long? {
+                    // Performance mode can suspend the hidden OSD clock; sample only on input.
+                    seek.sync(exoPlayer.currentPosition.coerceAtLeast(0L) + state.timelineOffsetMs)
+                    return chapterNavigation?.chapterStep(seek.positionMs, direction, seek.chapterPositionMs)
+                }
                 // Buffering counts as playing for the explicit play/pause action.
                 override fun isPlaying() = media3PauseOnToggle(exoPlayer.playWhenReady, exoPlayer.playbackState)
                 override fun togglePlayback() {
