@@ -199,7 +199,6 @@ fun YouTubeDetailScreen(
                             DeviceActionRow(horizontalArrangement=Arrangement.spacedBy(12.dp)){
                                 if (!state.offline) TvActionButton(if (current != null) stringResource(R.string.playback_open) else if(!m.isLive && (com.ambient.tv.youtube.YouTubeLocalProgress.resumePositionMs(m.videoId, m.durationMs, m.percentWatched) ?: 0L)>0) stringResource(R.string.common_resume) else stringResource(R.string.common_play), onClick={ if (current != null) openCurrent(current) else onPlay(m.videoId) }, modifier=Modifier.focusRequester(primaryFocusRequester))
                                 state.channel?.takeIf { !state.offline }?.let { channel ->
-                                    TvActionButton(channel.title ?: stringResource(R.string.youtube_channel_open), onClick={ onOpenChannel(channel) }, icon=androidx.compose.material.icons.Icons.Filled.AccountCircle)
                                     channel.subscribed?.let { subscribed ->
                                         TvActionButton(stringResource(if (subscribed) R.string.youtube_subscribed else R.string.youtube_subscribe), onClick=viewModel::toggleSubscription, selected=subscribed, icon=androidx.compose.material.icons.Icons.Filled.Subscriptions)
                                     }
@@ -209,6 +208,28 @@ fun YouTubeDetailScreen(
                                     TvActionButton(m.likeCount ?: stringResource(R.string.youtube_like), onClick={ viewModel.rate(YouTubeLikeStatus.LIKE) }, selected=liked, icon=androidx.compose.material.icons.Icons.Filled.ThumbUp)
                                     TvActionButton(stringResource(R.string.youtube_dislike), onClick={ viewModel.rate(YouTubeLikeStatus.DISLIKE) }, selected=state.likeStatus == YouTubeLikeStatus.DISLIKE, icon=androidx.compose.material.icons.Icons.Filled.ThumbDown)
                                 }
+                            }
+                        }
+                    }
+                    state.channel?.takeIf { !state.offline }?.let { channel ->
+                        val channelItem = com.ambient.tv.youtube.YouTubeItem(
+                            videoId = com.ambient.tv.youtube.youtubeChannelKey(channel.channelId),
+                            title = channel.title ?: m.author.orEmpty().ifBlank { stringResource(R.string.youtube_channel_open) },
+                            subtitle = stringResource(R.string.youtube_channel_open),
+                            imageUrl = channel.avatarUrl,
+                            channelId = channel.channelId,
+                        )
+                        YouTubeDetailRow(
+                            stringResource(R.string.youtube_channel_open),
+                            listOf(channelItem.videoId),
+                        ) { rowFocus, rowKey ->
+                            item(channelItem.videoId) {
+                                YouTubeItemCard(
+                                    channelItem,
+                                    { _ -> onOpenChannel(channel) },
+                                    youtubeItemMotionModifier().width(deviceDp(300.dp, 240.dp))
+                                        .rowColumnFocusTarget(rowFocus, rowKey, channelItem.videoId),
+                                )
                             }
                         }
                     }

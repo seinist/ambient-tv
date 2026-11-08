@@ -2240,6 +2240,8 @@
     <string name="radio_countries">Länder</string>
     <string name="radio_languages">Sprachen</string>
     <string name="radio_stations">Sender</string>
+    <string name="radio_station_detail">Senderdetails</string>
+    <string name="radio_similar_stations">Ähnliche Sender</string>
     <string name="radio_station_count">%1$d Sender</string>
     <string name="radio_browse_back">Zurück zu %1$s</string>
     <string name="offline_host_online">Servergerät erreichbar, aber der Mediendienst ist noch nicht bereit.</string>

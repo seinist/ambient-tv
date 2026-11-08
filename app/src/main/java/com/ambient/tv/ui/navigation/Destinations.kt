@@ -40,6 +40,7 @@ object Destinations {
     const val RADIO = "radio"
     const val RADIO_SECTION = "radio_section/{sectionKey}"
     const val RADIO_PLAYER = "radio_player"
+    const val RADIO_DETAIL = "radio_detail/{stationId}"
     const val SPOTIFY_SECTION = "spotify_section/{sectionKey}"
     const val SPOTIFY_DETAIL = "spotify_detail/{type}/{id}"
     const val SPOTIFY_PLAYER = "spotify_player?uri={uri}"
@@ -55,7 +56,7 @@ object Destinations {
 
     /** NavDestination route patterns, not the concrete URLs passed to navigate(). */
     fun isDetailRoute(route: String?): Boolean =
-        route == DETAIL || route == YOUTUBE_DETAIL || route == SPOTIFY_DETAIL || route == TELEGRAM_DETAIL
+        route == DETAIL || route == YOUTUBE_DETAIL || route == SPOTIFY_DETAIL || route == TELEGRAM_DETAIL || route == RADIO_DETAIL
 
     fun setupSettings(category: String) = "setup_settings/${Uri.encode(category)}"
     fun detail(ratingKey: String, collectionId: String? = null, collectionSort: String? = null) = buildString {
@@ -80,6 +81,7 @@ object Destinations {
     fun spotifySection(sectionKey: String) = "spotify_section/${Uri.encode(sectionKey)}"
     fun radioSection(sectionKey: String) =
         if (sectionKey == "popular") RADIO else "radio_section/${Uri.encode(sectionKey)}"
+    fun radioDetail(stationId: String) = "radio_detail/${Uri.encode(stationId)}"
     fun youtubeDetail(videoId: String, browseSession: Long? = null) =
         "youtube_detail/${Uri.encode(videoId)}" + browseSession?.let { "?browseSession=$it" }.orEmpty()
     fun youtubeChannel(channelId: String, title: String? = null, avatarUrl: String? = null) =
