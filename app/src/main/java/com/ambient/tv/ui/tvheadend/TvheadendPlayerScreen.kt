@@ -1456,6 +1456,7 @@ private fun tvhTrackOptions(tracks: Tracks, type: Int, displayLocale: java.util.
 }
 
 private fun selectTvhTrack(player: ExoPlayer, type: Int, option: TvhTrackOption?) {
+    if (option != null && option.group.isTrackSelected(option.trackIndex)) return
     val builder = player.trackSelectionParameters.buildUpon().clearOverridesOfType(type)
     if (option == null) {
         builder.setTrackTypeDisabled(type, true)
