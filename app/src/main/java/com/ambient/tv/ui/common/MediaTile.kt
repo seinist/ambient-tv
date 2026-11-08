@@ -268,6 +268,7 @@ fun MediaTile(
                             model = imageUrl, title = item.title,
                             modifier = Modifier.fillMaxHeight(.82f).aspectRatio(1f).clip(CircleShape),
                             contentScale = ContentScale.Crop,
+                            staggerUncached = !focused,
                         ) else Icon(
                             Icons.Filled.AccountCircle, contentDescription = item.title,
                             tint = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -280,6 +281,7 @@ fun MediaTile(
                     title = item.title,
                     contentScale = ContentScale.Crop,
                     modifier = Modifier.fillMaxSize().clip(tileShape),
+                    staggerUncachedArtwork = !focused,
                 )
 
                 val progress = item.progressFraction?.takeIf { it > 0f && it < 1f }
