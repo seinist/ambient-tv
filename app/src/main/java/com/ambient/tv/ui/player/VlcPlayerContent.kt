@@ -246,7 +246,7 @@ internal fun VlcPlayerContent(
                 panel != UnifiedPlayerPanel.NONE, osd.seekFeedback, closing = osd.closing),
             OsdSeekSteps(BackgroundPlaybackSession.seekJumpMs(state.seekJumpMs), held = { heldSeekStep(it, event) }),
             object : OsdKeyTarget {
-                override fun chapterSeekDelta(direction: Int) = chapterNavigation?.chapterStep(seek.positionMs, direction)
+                override fun chapterSeekDelta(direction: Int) = chapterNavigation?.chapterStep(seek.positionMs, direction, seek.chapterPositionMs)
                 override fun isPlaying() = snapshot.isPlaying
                 override fun togglePlayback() { BackgroundPlaybackSession.userToggle() }
                 override fun play() { BackgroundPlaybackSession.userPlay() }

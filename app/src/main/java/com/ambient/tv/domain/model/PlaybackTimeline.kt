@@ -33,17 +33,25 @@ data class PlaybackTimeline(val chapters: List<VideoChapter> = emptyList(), val 
         .sortedBy { it.startMs }.distinctBy { it.startMs }.take(2_000),
         preview = if (preview is TimelinePreview.Sprite && durationMs > 0 && preview.intervalMs > 0)
             preview.copy(count = minOf(preview.count, (durationMs - 1) / preview.intervalMs + 1)) else preview)
-    /** Adjacent chapter on a normalized timeline. Null falls back to a time jump; zero stays at an edge. */
-    fun chapterStepDelta(positionMs: Long, direction: Int): Long? {
+    /**
+     * Adjacent chapter on a normalized timeline; forward from the last chapter reaches EOF.
+     * Null falls back to a time jump; zero stays at an edge or an unknown media end.
+     * [navigationPositionMs] retains a requested chapter across an earlier keyframe landing,
+     * while the returned delta is relative to the actual seek base [positionMs].
+     */
+    fun chapterStepDelta(positionMs: Long, direction: Int, durationMs: Long = 0L,
+                         navigationPositionMs: Long = positionMs): Long? {
         if (chapters.isEmpty()) return null
-        val current = chapters.indexOfLast { it.startMs <= positionMs }
+        if (direction == 0) return 0L
+        val current = chapters.indexOfLast { it.startMs <= navigationPositionMs }
         if (direction < 0 && current < 0) return 0L
         val next = if (direction > 0) current + 1 else (current - 1).coerceAtLeast(0)
-        // At the forward edge there is no adjacent chapter. Let the shared key handler
-        // fall back to its normal forward seek instead of treating the end as a hard
-        // chapter boundary. This also avoids repeatedly targeting the last chapter start
-        // while a backend is still settling a previous chapter seek.
-        val chapter = chapters.getOrNull(next) ?: return if (direction > 0) null else 0L
+        val chapter = chapters.getOrNull(next) ?: run {
+            if (direction <= 0 || durationMs <= chapters.last().startMs || durationMs == Long.MAX_VALUE ||
+                navigationPositionMs >= durationMs) return 0L
+            return (durationMs - positionMs).coerceAtLeast(0L)
+        }
+        if (chapter.startMs == navigationPositionMs) return 0L
         return chapter.startMs - positionMs
     }
     fun chapterAt(positionMs: Long): VideoChapter? = chapters.lastOrNull { it.startMs <= positionMs }

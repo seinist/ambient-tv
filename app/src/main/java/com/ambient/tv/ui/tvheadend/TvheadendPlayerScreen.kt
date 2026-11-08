@@ -142,6 +142,7 @@ import com.ambient.tv.ui.player.HdrSupport
 import com.ambient.tv.ui.player.PlayerResizeMode
 import com.ambient.tv.ui.player.PlayerAspectPreset
 import com.ambient.tv.ui.player.TvPlayerSeekBar
+import com.ambient.tv.ui.player.seekToPlaybackPosition
 import com.ambient.tv.ui.player.SleepTimerConfig
 import com.ambient.tv.ui.player.SleepTimerKind
 import androidx.media3.ui.AspectRatioFrameLayout
@@ -503,11 +504,22 @@ private fun TvheadendPlaybackSurface(
         // Handheld: swipe Back leaves the player instead of only hiding the OSD.
         if (controlsVisible && !handheldUi) controlsVisible = false else exitOnBack()
     }
+    val seek = com.ambient.tv.ui.player.rememberPlaybackSeekState(
+        key = player,
+        enginePositionMs = { player.currentPosition.coerceAtLeast(0L) },
+        commit = { player.seekToPlaybackPosition(it) },
+        pollEnabled = !source.isLive,
+        registerWithSession = !source.isLive,
+    )
     fun userSeekBy(deltaMs: Long) {
-        BackgroundPlaybackSession.userSeek()
-        val target = player.currentPosition + deltaMs
-        val max = player.duration.takeIf { it > 0L } ?: Long.MAX_VALUE
-        player.seekTo(target.coerceIn(0L, max))
+        if (source.isLive) {
+            BackgroundPlaybackSession.userSeek()
+            val target = player.currentPosition + deltaMs
+            val max = player.duration.takeIf { it > 0L } ?: Long.MAX_VALUE
+            player.seekTo(target.coerceIn(0L, max))
+        } else {
+            seek.seekBy(deltaMs, player.duration)
+        }
     }
     fun heldSeekStep(baseMs: Long, event: androidx.compose.ui.input.key.KeyEvent) =
         com.ambient.tv.ui.player.acceleratedSeekStepMs(baseMs, event.nativeKeyEvent.repeatCount, player.duration.takeIf { it > 0 } ?: 0L)
@@ -675,9 +687,9 @@ private fun TvheadendPlaybackSurface(
     }
 
 
-    LaunchedEffect(player) {
+    LaunchedEffect(player, source.isLive) {
         while (true) {
-            positionMs = player.currentPosition.coerceAtLeast(0L)
+            if (source.isLive) positionMs = player.currentPosition.coerceAtLeast(0L)
             durationMs = player.duration.coerceAtLeast(0L)
             delay(500)
         }
@@ -730,7 +742,7 @@ private fun TvheadendPlaybackSurface(
             ),
             OsdSeekSteps(BackgroundPlaybackSession.seekJumpMs(seekJumpMs), held = { heldSeekStep(it, event) }),
             object : OsdKeyTarget {
-                override fun chapterSeekDelta(direction: Int) = chapterNavigation?.chapterStep(player.currentPosition, direction)
+                override fun chapterSeekDelta(direction: Int) = chapterNavigation?.chapterStep(seek.positionMs, direction, seek.chapterPositionMs)
                 override fun isPlaying() = player.isPlaying
                 override fun togglePlayback() { BackgroundPlaybackSession.userToggle() }
                 override fun play() { BackgroundPlaybackSession.userPlay() }
@@ -742,7 +754,10 @@ private fun TvheadendPlaybackSurface(
                 }
                 override fun showOsd() { osd.reveal() }
                 override fun hideSeekFeedback() { osd.reveal() }
-                override fun restart() { BackgroundPlaybackSession.userSeek(); player.seekTo(0L) }
+                override fun restart() {
+                    if (source.isLive) { BackgroundPlaybackSession.userSeek(); player.seekTo(0L) }
+                    else seek.seekTo(0L)
+                }
                 override fun next() = Unit
                 override fun previousTrack() = Unit
                 override fun zap(delta: Int) { onZap(delta) }
@@ -864,7 +879,7 @@ private fun TvheadendPlaybackSurface(
             artworkFallbackUrls = panelArtworkFallbackUrls,
             nowEvent = nowEvent,
             nextEvent = nextEvent,
-            positionMs = positionMs,
+            positionMs = if (source.isLive) positionMs else seek.positionMs,
             durationMs = durationMs,
             playing = isPlaying,
             loading = media3WaitingForPlaybackPicture(playbackState, playWhenReady),
@@ -961,7 +976,7 @@ private fun TvheadendPlaybackSurface(
                 sleepTimer = sleepTimer,
                 onSleepChanged = { sleepTimer = it },
                 rendererKey = rendererKey,
-                onRendererSelected = { key, global -> onRendererSelected(key, player.currentPosition, global) },
+                onRendererSelected = { key, global -> onRendererSelected(key, if (source.isLive) player.currentPosition else seek.positionMs, global) },
                 infoLines = buildList {
                     add(stringResource(R.string.player_nerd_image_pipeline) to com.ambient.tv.ui.player.Media3ImageProcessing.get(context, player).diagnosticSummary())
                     add(stringResource(R.string.player_nerd_backend) to "Media3")

@@ -33,6 +33,8 @@ import timber.log.Timber
 import com.ambient.tv.ui.player.HdrStandard
 import com.ambient.tv.ui.player.PlaybackHandle
 import com.ambient.tv.ui.player.PlaybackStatus
+import com.ambient.tv.ui.player.isPlaybackEndSeek
+import com.ambient.tv.ui.player.safePlaybackEndSeekTarget
 import com.ambient.tv.ui.player.VideoPresentation
 import com.ambient.tv.ui.player.VideoPresentationTarget
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -247,14 +249,14 @@ internal class MpvPlaybackEngine(
     private var dvPrimeTask: Runnable? = null
     private var dvSurfaceRestart = false
 
-    private fun finishDvPrime() {
+    private fun finishDvPrime(restorePlayIntent: Boolean = true) {
         dvPrimeTask?.let(workerHandler::removeCallbacks)
         dvPrimeTask = null
         dvPrimeTarget = null
         dvPrimeSeeking = false
         if (!released) {
             dvPrimeMute?.let { setProperty("mute", it) }
-            setProperty("pause", if (nativePlayWanted) "no" else "yes")
+            if (restorePlayIntent) setProperty("pause", if (nativePlayWanted) "no" else "yes")
         }
         dvPrimeMute = null
     }
@@ -882,6 +884,25 @@ internal class MpvPlaybackEngine(
     }
 
     override fun seekTo(positionMs: Long) {
+        if (released) return
+        val duration = durationMs()
+        val endSeek = !liveStream && isPlaybackEndSeek(positionMs, duration)
+        if (endSeek && ended) {
+            // Retire a stale priming task without releasing mpv's automatic EOF pause.
+            finishDvPrime(restorePlayIntent = false)
+            return
+        }
+        val target = if (endSeek) {
+            // Priming publishes its pending target, not the decoder's current clock.
+            val current = if (dvPrimeTarget != null)
+                (getPropertyDouble("time-pos", 0.0).coerceAtLeast(0.0) * 1000.0).toLong()
+            else this.positionMs()
+            safePlaybackEndSeekTarget(current, duration) ?: run {
+                // The tail can play out; an older priming seek must not run afterwards.
+                if (dvPrimeTarget != null || dvPrimeTask != null || dvPrimeMute != null) finishDvPrime()
+                return
+            }
+        } else positionMs.coerceAtLeast(0L)
         conversionSampleStarted = 0L
         val wasEnded = ended
         val reopenEndedFile = ended && !fileReady
@@ -889,16 +910,17 @@ internal class MpvPlaybackEngine(
         ended = false
         observed["eof-reached"] = false
         if (reopenEndedFile) {
-            reopenStream(positionMs.coerceAtLeast(0))
+            reopenStream(target)
             return
         }
         if (dvPrimeTarget != null) {
-            dvPrimeTarget = positionMs.coerceAtLeast(0)
+            dvPrimeTarget = target
             if (dvPrimeSeeking) command("seek", (dvPrimeTarget!! / 1000.0).toString(), "absolute+exact")
             return
         }
         // Prefer a keyframe seek for the Android hardware decoder for the same reason as seekBy().
-        command("seek", (positionMs.coerceAtLeast(0L) / 1000.0).toString(), "absolute+keyframes")
+        // The final tail must be exact so a preceding keyframe cannot replay the last chapter.
+        command("seek", (target / 1000.0).toString(), if (endSeek) "absolute+exact" else "absolute+keyframes")
         // keep-open pauses mpv internally at EOF without changing the user's play intent.
         // Seeking back must release that automatic pause, while preserving an explicit Pause.
         if (wasEnded) setProperty("pause", if (nativePlayWanted) "no" else "yes")

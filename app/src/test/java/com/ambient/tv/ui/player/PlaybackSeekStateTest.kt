@@ -95,4 +95,36 @@ class PlaybackSeekStateTest {
         seek.flushPending()
         assertEquals(listOf(480_000L, 120_000L), commits)
     }
+
+    @Test fun finalChapterSkipUsesItsRequestedChapterAfterAnEarlierKeyframeLanding() {
+        val timeline = com.ambient.tv.domain.model.PlaybackTimeline(listOf(
+            com.ambient.tv.domain.model.VideoChapter(0),
+            com.ambient.tv.domain.model.VideoChapter(20_000),
+            com.ambient.tv.domain.model.VideoChapter(50_000),
+        ))
+        val seek = seekState(25_000)
+        seek.seekBy(checkNotNull(timeline.chapterStepDelta(seek.positionMs, 1, 90_000, seek.chapterPositionMs)), 90_000)
+        now = 800
+        seek.sync(48_000)
+        now += PlaybackSeekCoordinator.ACK_STABILITY_MS
+        seek.sync(48_600)
+        assertEquals(48_600L, seek.positionMs)
+        assertEquals(50_000L, seek.chapterPositionMs)
+        seek.seekBy(checkNotNull(timeline.chapterStepDelta(seek.positionMs, 1, 90_000, seek.chapterPositionMs)), 90_000)
+        assertEquals(90_000L, seek.positionMs)
+        assertEquals(listOf(50_000L, 90_000L), commits)
+        assertEquals(0L, timeline.chapterStepDelta(seek.positionMs, 1, 90_000, seek.chapterPositionMs))
+    }
+
+    @Test fun anExternalSeekSupersedesPendingChapterNavigationWithoutAnotherCommit() {
+        val seek = seekState(25_000)
+        seek.seekTo(50_000)
+        now = 40
+        seek.seekTo(75_000)
+        seek.followExternalSeek(10_000)
+        assertEquals(10_000L, seek.positionMs)
+        assertEquals(10_000L, seek.chapterPositionMs)
+        seek.flushPending()
+        assertEquals(listOf(50_000L), commits)
+    }
 }

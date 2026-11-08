@@ -44,6 +44,8 @@ import com.ambient.tv.ui.player.HdrSupport
 import com.ambient.tv.ui.player.nativeHdrSurfacePreferred
 import com.ambient.tv.ui.player.PlaybackHandle
 import com.ambient.tv.ui.player.PlaybackStatus
+import com.ambient.tv.ui.player.isPlaybackEndSeek
+import com.ambient.tv.ui.player.safePlaybackEndSeekTarget
 import com.ambient.tv.ui.player.VideoPresentation
 import com.ambient.tv.ui.player.VideoPresentationTarget
 import com.ambient.tv.ui.player.VideoSurfaceLayout
@@ -306,6 +308,14 @@ class VlcPlaybackController(
     private var dvPrimeWaiting = false
     private var dvPrimeActive = false
     private var dvSurfacePosition: Long? = null
+
+    private fun finishDvPrime() {
+        dvPrimeTask?.let(pendingSeekHandler::removeCallbacks)
+        dvPrimeTask = null
+        dvPrimeWaiting = false
+        dvPrimeActive = false
+        restorePausedSeekVolume()
+    }
 
     private fun beginDvPrime() {
         dvPrimeTask?.let(pendingSeekHandler::removeCallbacks)
@@ -860,11 +870,7 @@ class VlcPlaybackController(
             pendingImageTrackSelection = pendingImageTrackSelection ?:
                 Triple(trackAccess.audioTrack, trackAccess.spuTrack, player.rate)
         }
-        dvPrimeTask?.let(pendingSeekHandler::removeCallbacks)
-        dvPrimeTask = null
-        dvPrimeWaiting = false
-        dvPrimeActive = false
-        restorePausedSeekVolume()
+        finishDvPrime()
         hdrOutput.detach()
         view.holder.removeCallback(surfaceSizeCallback)
         videoRestoreTask?.let(view::removeCallbacks)
@@ -1335,15 +1341,29 @@ class VlcPlaybackController(
 
     override fun seekTo(positionMs: Long) {
         if (released || liveStream) return
+        val duration = player.length
+        val length = duration.takeIf { it > 0L } ?: Long.MAX_VALUE
+        val endSeek = isPlaybackEndSeek(positionMs, duration)
+        if (endSeek && ended) {
+            finishEndSeekWithoutJump()
+            return
+        }
+        val target = if (endSeek) {
+            // A pending tail/restore target is not proof the decoder already reached it.
+            val current = if (dvPrimeActive || pendingRestorePositionMs != null) player.time.coerceAtLeast(0L)
+            else confirmedPlaybackTimeMs()
+            safePlaybackEndSeekTarget(current, duration) ?: run {
+                finishEndSeekWithoutJump()
+                return
+            }
+        } else positionMs.coerceIn(0L, length)
         frameDropSamples.discontinuity()
         if (ended) {
             ended = false
-            prepare(positionMs.coerceAtLeast(0), desiredPlayWhenReady)
+            prepare(target, desiredPlayWhenReady)
             return
         }
-        if (dvPrimeWaiting) { pendingRestorePositionMs = positionMs.coerceAtLeast(0); return }
-        val length = player.length.takeIf { it > 0L } ?: Long.MAX_VALUE
-        val target = positionMs.coerceIn(0L, length)
+        if (dvPrimeWaiting) { pendingRestorePositionMs = target; return }
         hdrOutput.discontinuity()
         lastPlaybackTimeMs = target
         pendingSeekTask?.let(pendingSeekHandler::removeCallbacks)
@@ -1354,6 +1374,17 @@ class VlcPlaybackController(
         if (!desiredPlayWhenReady) pauseAfterRestorePositionMs = target
         submitPendingSeek()
         retryPendingSeekWhenReady()
+    }
+
+    /** Retire old seek work so a no-op at the tail can still emit its natural EOF. */
+    private fun finishEndSeekWithoutJump() {
+        pendingSeekTask?.let(pendingSeekHandler::removeCallbacks)
+        pendingSeekTask = null
+        pendingRestorePositionMs = null
+        pauseAfterRestorePositionMs = null
+        resumeVideoSeekMs = null
+        finishDvPrime()
+        if (!ended && !desiredPlayWhenReady) player.pause()
     }
 
     private fun submitPendingSeek() {

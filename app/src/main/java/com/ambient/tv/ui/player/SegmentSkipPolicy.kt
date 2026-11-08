@@ -28,14 +28,11 @@ internal class SegmentSkipPolicy {
  */
 internal fun safeSegmentSkipTarget(endMs: Long, currentMs: Long, durationMs: Long): Long? {
     if (endMs < 0) return null // Open-ended credits are handled by Next Up, not a seek.
-    if (durationMs <= 0 || endMs < durationMs - SEGMENT_END_PROXIMITY_MS) return endMs
-    val safe = (durationMs - SEGMENT_END_TAIL_MS).coerceAtLeast(0L)
-    return safe.takeIf { it > currentMs + SEGMENT_MIN_FORWARD_MS }
+    if (durationMs <= 0 || durationMs == Long.MAX_VALUE || endMs < durationMs - SEGMENT_END_PROXIMITY_MS) return endMs
+    return safePlaybackEndSeekTarget(currentMs, durationMs)
 }
 
 private const val SEGMENT_END_PROXIMITY_MS = 750L
-private const val SEGMENT_END_TAIL_MS = 1_500L
-private const val SEGMENT_MIN_FORWARD_MS = 250L
 private const val SEGMENT_REWIND_LEAD_MS = 1_000L
 /** End-near skips must never be re-armed by a decoder briefly reporting an older keyframe. */
 private const val SPONSOR_NEAR_EOF_REARM_GUARD_MS = 5_000L
