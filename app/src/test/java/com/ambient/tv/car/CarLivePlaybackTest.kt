@@ -29,7 +29,7 @@ import org.robolectric.annotation.Config
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [35], application = PlaybackSeekStopTest.PreferencesApplication::class)
 class CarLivePlaybackTest {
-    private val context get() = RuntimeEnvironment.getApplication<PlaybackSeekStopTest.PreferencesApplication>()
+    private val context get() = RuntimeEnvironment.getApplication()
     private val preferences get() = AppPreferences(context.getSharedPreferences("car-live", 0))
 
     private class Handle(private val playing: Boolean) : PlaybackHandle {

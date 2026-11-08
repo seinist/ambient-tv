@@ -25,7 +25,7 @@ import org.robolectric.annotation.Config
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [35], application = Application::class)
 class CarAudioArtworkTest {
-    private val context = RuntimeEnvironment.getApplication<Application>()
+    private val appContext = RuntimeEnvironment.getApplication()
     private val id = CarAudioIds.liveAudio("tvheadend:profile-scope", "radio-1")
 
     private class Repository(
@@ -57,14 +57,14 @@ class CarAudioArtworkTest {
 
     private fun uncheckedUri(mediaId: String): Uri = Uri.Builder()
         .scheme("content")
-        .authority("${context.packageName}.caraudioart")
+        .authority("${appContext.packageName}.caraudioart")
         .appendPath("live")
         .appendPath(mediaId)
         .build()
 
     private fun provider() = CarAudioArtworkProvider().apply {
-        attachInfo(context, ProviderInfo().apply {
-            authority = "${context.packageName}.caraudioart"
+        attachInfo(appContext, ProviderInfo().apply {
+            authority = "${appContext.packageName}.caraudioart"
             name = CarAudioArtworkProvider::class.java.name
             exported = true
         })
@@ -81,7 +81,7 @@ class CarAudioArtworkTest {
         assertEquals(1, repository.channelReads)
         assertEquals(1, repository.authReads)
         // The public URI contains only the opaque catalog ID, never the HTTP logo or its ticket.
-        val published = CarAudioArtwork.uri(context, id).toString()
+        val published = CarAudioArtwork.uri(appContext, id).toString()
         assertFalse(published.contains("tvheadend.test"))
         assertFalse(published.contains("ticket"))
         assertFalse(published.contains("test-credential"))
@@ -151,11 +151,11 @@ class CarAudioArtworkTest {
     @Test fun liveRadioIdsRoundTripWithoutPublishingServerAddresses() {
         for (source in listOf("tvheadend:profile-scope", "iptv:playlist-scope")) {
             val mediaId = CarAudioIds.liveAudio(source, "radio / Süd #1")
-            val uri = CarAudioArtwork.uri(context, mediaId)
+            val uri = CarAudioArtwork.uri(appContext, mediaId)
             assertEquals("content", uri.scheme)
-            assertEquals("${context.packageName}.caraudioart", uri.authority)
+            assertEquals("${appContext.packageName}.caraudioart", uri.authority)
             assertEquals(listOf("live", mediaId), uri.pathSegments)
-            assertEquals(mediaId, CarAudioArtwork.mediaId(uri, context.packageName))
+            assertEquals(mediaId, CarAudioArtwork.mediaId(uri, appContext.packageName))
             assertNull(uri.query)
             assertNull(uri.fragment)
         }
@@ -163,7 +163,7 @@ class CarAudioArtworkTest {
 
     @Test fun packageVariantsUseTheirOwnProviderAuthority() {
         val variantPackage = "${BuildConfig.APPLICATION_ID}.audit"
-        val variant = object : ContextWrapper(context) {
+        val variant = object : ContextWrapper(appContext) {
             override fun getPackageName() = variantPackage
         }
         val uri = CarAudioArtwork.uri(variant, id)
@@ -186,17 +186,17 @@ class CarAudioArtworkTest {
             "car:live:audio:invalid%base64",
         )
         for (mediaId in invalidIds) {
-            assertThrows(IllegalArgumentException::class.java) { CarAudioArtwork.uri(context, mediaId) }
-            assertNull(CarAudioArtwork.mediaId(uncheckedUri(mediaId), context.packageName))
+            assertThrows(IllegalArgumentException::class.java) { CarAudioArtwork.uri(appContext, mediaId) }
+            assertNull(CarAudioArtwork.mediaId(uncheckedUri(mediaId), appContext.packageName))
         }
     }
 
     @Test fun foreignAuthoritiesPathsAndUriParametersAreRejectedBeforeLoading() {
-        val valid = CarAudioArtwork.uri(context, id)
+        val valid = CarAudioArtwork.uri(appContext, id)
         val invalidUris = listOf(
             valid.buildUpon().scheme("https").build(),
             valid.buildUpon().authority("foreign.app.caraudioart").build(),
-            valid.buildUpon().authority("${context.packageName}.caraudioart.evil").build(),
+            valid.buildUpon().authority("${appContext.packageName}.caraudioart.evil").build(),
             valid.buildUpon().path("/live").build(),
             valid.buildUpon().path("/other/$id").build(),
             valid.buildUpon().appendPath("extra").build(),
@@ -206,7 +206,7 @@ class CarAudioArtworkTest {
         )
         val provider = provider()
         for (uri in invalidUris) {
-            assertNull(CarAudioArtwork.mediaId(uri, context.packageName))
+            assertNull(CarAudioArtwork.mediaId(uri, appContext.packageName))
             assertNull(provider.getType(uri))
             // The plain test Application has no Hilt dependencies. Invalid requests must be
             // rejected before resolving repositories or attempting any image/network work.
@@ -216,7 +216,7 @@ class CarAudioArtworkTest {
 
     @Test fun providerAdvertisesPngAndRejectsAllWriteOperations() {
         val provider = provider()
-        val uri = CarAudioArtwork.uri(context, id)
+        val uri = CarAudioArtwork.uri(appContext, id)
         assertEquals("image/png", provider.getType(uri))
         assertNull(provider.query(uri, null, null, null, null))
         for (mode in listOf("w", "wa", "rw", "rwt")) {
