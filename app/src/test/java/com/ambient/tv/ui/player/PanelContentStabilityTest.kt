@@ -23,6 +23,15 @@ class PanelContentStabilityTest {
         assertTrue(playbackPanelHasVideo(videoTracks = 1, audioTracks = 1, audioOnly = true))
     }
 
+    @Test fun playbackPanelPreviewUsesTheActuallyRunningRenderer() {
+        assertEquals("vlc", playbackPanelRendererPreview(activeBackend = "vlc", requestedRenderer = "auto"))
+    }
+
+    @Test fun playbackPanelPreviewFallsBackUntilTheEngineIsKnown() {
+        assertEquals("mpv", playbackPanelRendererPreview(activeBackend = "", requestedRenderer = "mpv"))
+        assertNull(playbackPanelRendererPreview(activeBackend = "", requestedRenderer = null))
+    }
+
     @Test fun selectedSectionStaysWhileAvailable() {
         assertEquals("filters", resolveVideoSection("filters", listOf("renderer", "filters"), confirmed = true))
     }
