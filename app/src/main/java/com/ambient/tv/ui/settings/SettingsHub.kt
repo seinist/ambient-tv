@@ -540,8 +540,11 @@ internal fun SettingsHub(
                     icon = Icons.AutoMirrored.Filled.ArrowBack, iconOnly = true) { goBack() }
                 TvChip(stringResource(R.string.action_search), modifier = Modifier.focusRequester(searchButtonFocus).onFocusChanged { if (it.isFocused) lastRegionFocus = searchButtonFocus }
                     .onPreviewKeyEvent { event ->
-                        // Left from the leftmost header chip stays put; only Back leaves Settings.
-                        !showBack && event.key == Key.DirectionLeft && event.type == KeyEventType.KeyDown
+                        // The parent view's leftmost header action can return to the app menu.
+                        if (!showBack && event.key == Key.DirectionLeft && event.type == KeyEventType.KeyDown) {
+                            if (event.nativeKeyEvent.repeatCount == 0) onFocusMenu()
+                            true
+                        } else false
                     },
                     icon = Icons.Filled.Search, iconOnly = true) { openSearch() }
                 if (area.groupsMediaSources() && page != SettingsCategory.NOTIFICATIONS) {
@@ -613,7 +616,7 @@ internal fun SettingsHub(
                                 }
                                 .onPreviewKeyEvent { event ->
                                 // Vertical wrapping (both ends) belongs to the list shell. Right enters
-                                // the selected area; Left stays put (only Back opens the main navigation).
+                                // the selected area; a fresh Left returns to the app menu.
                                 if (event.key == Key.DirectionRight && event.type == KeyEventType.KeyDown) {
                                     if (event.nativeKeyEvent.repeatCount == 0) uiSounds?.playSelect()
                                     if (area != target) selectArea(target)
@@ -622,7 +625,10 @@ internal fun SettingsHub(
                                         requestPanelContentFocus()
                                     }
                                     true
-                                } else event.key == Key.DirectionLeft && event.type == KeyEventType.KeyDown
+                                } else if (event.key == Key.DirectionLeft && event.type == KeyEventType.KeyDown) {
+                                    if (event.nativeKeyEvent.repeatCount == 0) onFocusMenu()
+                                    true
+                                } else false
                             }, onClick = {
                                 selectArea(target)
                                 scope.launch {
