@@ -16,8 +16,8 @@ internal class MpvImageShaderCache(
         val transferProfile = if (shader.transferAware) {
             requireNotNull(casProfile) { "No captured transfer profile available for ${shader.fileName}" }
         } else null
-        val artCnnOpenGl = shader.fileName.startsWith("quality_artcnn") && !gpuNextVulkan
-        val cacheBaseName = if (artCnnOpenGl) shader.fileName.removeSuffix(".glsl") + "_opengl.glsl"
+        val openGlVariant = !gpuNextVulkan && mpvOpenGlShaderAdapter(shader) != null
+        val cacheBaseName = if (openGlVariant) shader.fileName.removeSuffix(".glsl") + "_opengl.glsl"
             else shader.cacheFileName ?: shader.fileName
         val fileName = transferProfile?.let {
             cacheBaseName.removeSuffix(".glsl") + "_" + it.suffix + ".glsl"
@@ -25,7 +25,7 @@ internal class MpvImageShaderCache(
         val shaderFile = File(shaderDir, fileName)
         val resourceId = if (transferProfile?.singlePassHdr == true) MPV_CAS_HDR_RESOURCE else shader.resourceId
         val source = readSource(resourceId, shader.resourceName)
-        val transformed = mpvShaderSourceFor(shader, source, transferProfile, artCnnOpenGl)
+        val transformed = mpvShaderSourceFor(shader, source, transferProfile, openGl = !gpuNextVulkan)
         fun valid(file: File): Boolean = shader.nnedi3Preset?.let { preset ->
             runCatching { validateNnedi3ShaderSource(file.readText(), preset) }.getOrDefault(false)
         } ?: if (transferProfile != null) {

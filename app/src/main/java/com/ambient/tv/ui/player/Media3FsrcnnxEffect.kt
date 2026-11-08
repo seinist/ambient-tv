@@ -12,6 +12,7 @@ import androidx.media3.effect.BaseGlShaderProgram
 import androidx.media3.effect.GlEffect
 import androidx.media3.effect.GlShaderProgram
 import com.ambient.tv.ui.player.backend.MPV_IMAGE_SHADERS
+import com.ambient.tv.ui.player.backend.fsrcnnxGlesSource
 
 /**
  * FSRCNNX (igv, GPL-3.0) uses learned coefficients from the existing MPV shader resources.
@@ -81,15 +82,15 @@ float inputLuma(vec2 uv) {
         append("#define ").append(name).append("_size uInputSize\n")
         append("#define ").append(name).append("_pt (1.0 / uInputSize)\n")
         if (name == "LUMA") {
-            append("#define LUMA_texOff(offset) inputLuma(vTexSamplingCoord + (offset) / uInputSize)\n")
+            append("#define LUMA_texOff(offset) inputLuma(vTexSamplingCoord + vec2(offset) / uInputSize)\n")
         } else {
             append("#define ").append(name).append("_texOff(offset) texture2D(u")
-                .append(name).append(", clamp(vTexSamplingCoord + (offset) / uInputSize, vec2(0.0), vec2(1.0)))\n")
+                .append(name).append(", clamp(vTexSamplingCoord + vec2(offset) / uInputSize, vec2(0.0), vec2(1.0)))\n")
             append("#define ").append(name).append("_tex(uv) texture2D(u")
                 .append(name).append(", clamp((uv), vec2(0.0), vec2(1.0)))\n")
         }
     }
-    append(pass.body.replace(Regex("\\bmat4x4\\b"), "mat4")
+    append(fsrcnnxGlesSource(pass.body).replace(Regex("\\bmat4x4\\b"), "mat4")
         .replace("vec4 hook()", "vec4 cnnHook()")).append('\n')
     append("void main() { gl_FragColor = cnnHook(); }\n")
 }

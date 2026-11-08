@@ -59,11 +59,15 @@ void main() {
 }
 """
 
-/** The original NNEDI3 inference body is unchanged; only MPV hook sampling is adapted. */
+/**
+ * The original NNEDI3 inference body is unchanged; only MPV hook sampling is adapted.
+ * Packed 32-bit weight literals must not inherit the fragment shader's mediump int default.
+ */
 internal fun media3Nnedi3Fragment(stage: Media3Nnedi3Stage): String = buildString {
     append(
         """#version 300 es
 precision highp float;
+precision highp int;
 in vec2 vTexSamplingCoord;
 uniform sampler2D uHooked;
 uniform sampler2D uPredict;
@@ -146,15 +150,9 @@ private class Media3Nnedi3Program(
     private val targetHeight: Int,
 ) : BaseGlShaderProgram(false, /* texturePoolCapacity= */ 1) {
     private val programs: List<GlProgram> = stages.map { stage ->
-        try {
-            GlProgram(NNEDI3_VERTEX_ES3, media3Nnedi3Fragment(stage)).apply {
-                setBufferAttribute("aFramePosition", GlUtil.getNormalizedCoordinateBounds(),
-                    GlUtil.HOMOGENEOUS_COORDINATE_VECTOR_SIZE)
-            }
-        } catch (e: GlUtil.GlException) { throw VideoFrameProcessingException(e) }
+        media3GlProgram(media3Nnedi3Fragment(stage), NNEDI3_VERTEX_ES3)
     }
-    private val composition = try {
-        GlProgram(NNEDI3_VERTEX_ES3, """#version 300 es
+    private val composition = media3GlProgram("""#version 300 es
 precision highp float;
 in vec2 vTexSamplingCoord;
 uniform sampler2D uSource;
@@ -167,11 +165,7 @@ void main() {
     float prediction = texture(uNnedi, vTexSamplingCoord).r;
     nnColor = vec4(pow(clamp(encoded + vec3(prediction - base), 0.0, 1.0), vec3(2.2)), 1.0);
 }
-""").apply {
-            setBufferAttribute("aFramePosition", GlUtil.getNormalizedCoordinateBounds(),
-                GlUtil.HOMOGENEOUS_COORDINATE_VECTOR_SIZE)
-        }
-    } catch (e: GlUtil.GlException) { throw VideoFrameProcessingException(e) }
+""", NNEDI3_VERTEX_ES3)
 
     private val targets = mutableListOf<Media3Intermediate>()
     private var width = 1

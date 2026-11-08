@@ -108,20 +108,20 @@ internal val MPV_IMAGE_SHADERS = mapOf(
     "anime4k_denoise" to MpvShaderAsset(R.raw.quality_anime4k_denoise_1a45ad3a, "quality_anime4k_denoise_1a45ad3a.glsl", false),
     "anime4k_m" to MpvShaderAsset(R.raw.quality_anime4k_m_9b8e956d, "quality_anime4k_m_9b8e956d.glsl", false),
     "anime4k_denoise_m" to MpvShaderAsset(R.raw.quality_anime4k_denoise_m_967804d7, "quality_anime4k_denoise_m_967804d7.glsl", false),
-    "artcnn16" to MpvShaderAsset(R.raw.quality_artcnn16_03d0b3d3, "quality_artcnn16_03d0b3d3.glsl", true),
-    "artcnn32" to MpvShaderAsset(R.raw.quality_artcnn32_f773bce6, "quality_artcnn32_f773bce6.glsl", true),
-    "artcnn16_ds" to MpvShaderAsset(R.raw.quality_artcnn16_ds_57df650f, "quality_artcnn16_ds_57df650f.glsl", true),
-    "artcnn16_dn" to MpvShaderAsset(R.raw.quality_artcnn16_dn_047f33cd, "quality_artcnn16_dn_047f33cd.glsl", true),
-    "artcnn32_ds" to MpvShaderAsset(R.raw.quality_artcnn32_ds_a04c9cba, "quality_artcnn32_ds_a04c9cba.glsl", true),
-    "artcnn32_dn" to MpvShaderAsset(R.raw.quality_artcnn32_dn_6b51a6f7, "quality_artcnn32_dn_6b51a6f7.glsl", true),
-    "cunny_fast_ds" to MpvShaderAsset(R.raw.quality_cunny_fast_ds_86681e39, "quality_cunny_fast_ds_86681e39.glsl", true),
-    "cunny_faster_ds" to MpvShaderAsset(R.raw.quality_cunny_faster_ds_bdb1fc57, "quality_cunny_faster_ds_bdb1fc57.glsl", true),
-    "cunny_fast_soft" to MpvShaderAsset(R.raw.quality_cunny_fast_soft_7f5077eb, "quality_cunny_fast_soft_7f5077eb.glsl", true),
-    "cunny_faster_soft" to MpvShaderAsset(R.raw.quality_cunny_faster_soft_6166d08a, "quality_cunny_faster_soft_6166d08a.glsl", true),
-    "cunny_veryfast_soft" to MpvShaderAsset(R.raw.quality_cunny_veryfast_soft_9c63e86e, "quality_cunny_veryfast_soft_9c63e86e.glsl", true),
-    "cunny_fast_soft_q" to MpvShaderAsset(R.raw.quality_cunny_fast_soft_q_96af5170, "quality_cunny_fast_soft_q_96af5170.glsl", true, requiresGpuNext = true),
-    "cunny_faster_soft_q" to MpvShaderAsset(R.raw.quality_cunny_faster_soft_q_9caf1113, "quality_cunny_faster_soft_q_9caf1113.glsl", true, requiresGpuNext = true),
-    "cunny_veryfast_soft_q" to MpvShaderAsset(R.raw.quality_cunny_veryfast_soft_q_aff8624c, "quality_cunny_veryfast_soft_q_aff8624c.glsl", true, requiresGpuNext = true),
+    "artcnn16" to MpvShaderAsset(R.raw.quality_artcnn16_03d0b3d3, "quality_artcnn16_03d0b3d3.glsl", true, requiresCompute = true),
+    "artcnn32" to MpvShaderAsset(R.raw.quality_artcnn32_f773bce6, "quality_artcnn32_f773bce6.glsl", true, requiresCompute = true),
+    "artcnn16_ds" to MpvShaderAsset(R.raw.quality_artcnn16_ds_57df650f, "quality_artcnn16_ds_57df650f.glsl", true, requiresCompute = true),
+    "artcnn16_dn" to MpvShaderAsset(R.raw.quality_artcnn16_dn_047f33cd, "quality_artcnn16_dn_047f33cd.glsl", true, requiresCompute = true),
+    "artcnn32_ds" to MpvShaderAsset(R.raw.quality_artcnn32_ds_a04c9cba, "quality_artcnn32_ds_a04c9cba.glsl", true, requiresCompute = true),
+    "artcnn32_dn" to MpvShaderAsset(R.raw.quality_artcnn32_dn_6b51a6f7, "quality_artcnn32_dn_6b51a6f7.glsl", true, requiresCompute = true),
+    "cunny_fast_ds" to MpvShaderAsset(R.raw.quality_cunny_fast_ds_86681e39, "quality_cunny_fast_ds_86681e39.glsl", true, requiresCompute = true),
+    "cunny_faster_ds" to MpvShaderAsset(R.raw.quality_cunny_faster_ds_bdb1fc57, "quality_cunny_faster_ds_bdb1fc57.glsl", true, requiresCompute = true),
+    "cunny_fast_soft" to MpvShaderAsset(R.raw.quality_cunny_fast_soft_7f5077eb, "quality_cunny_fast_soft_7f5077eb.glsl", true, requiresCompute = true),
+    "cunny_faster_soft" to MpvShaderAsset(R.raw.quality_cunny_faster_soft_6166d08a, "quality_cunny_faster_soft_6166d08a.glsl", true, requiresCompute = true),
+    "cunny_veryfast_soft" to MpvShaderAsset(R.raw.quality_cunny_veryfast_soft_9c63e86e, "quality_cunny_veryfast_soft_9c63e86e.glsl", true, requiresCompute = true),
+    "cunny_fast_soft_q" to MpvShaderAsset(R.raw.quality_cunny_fast_soft_q_96af5170, "quality_cunny_fast_soft_q_96af5170.glsl", true, requiresCompute = true, requiresGpuNext = true),
+    "cunny_faster_soft_q" to MpvShaderAsset(R.raw.quality_cunny_faster_soft_q_9caf1113, "quality_cunny_faster_soft_q_9caf1113.glsl", true, requiresCompute = true, requiresGpuNext = true),
+    "cunny_veryfast_soft_q" to MpvShaderAsset(R.raw.quality_cunny_veryfast_soft_q_aff8624c, "quality_cunny_veryfast_soft_q_aff8624c.glsl", true, requiresCompute = true, requiresGpuNext = true),
     "fsrcnnx8" to MpvShaderAsset(R.raw.quality_fsrcnnx8_e800dbc5, "quality_fsrcnnx8_e800dbc5.glsl", true),
     "fsrcnnx16" to MpvShaderAsset(R.raw.quality_fsrcnnx16_d5a24a27, "quality_fsrcnnx16_d5a24a27.glsl", true),
     "krig" to MpvShaderAsset(R.raw.quality_krig_8a4798ab, "quality_krig_8a4798ab.glsl", true),
@@ -233,27 +233,40 @@ internal fun mpvCasSourceValid(source: String, profile: MpvCasTransferProfile, b
 
 /**
  * Text written to the shader cache: CAS gets its transfer curve (and Light/Medium blend; the HDR
- * single-pass variant also its range), ArtCNN its OpenGL variant, Anime4K its portable GLES
- * hooks, OUTPUT grain its hook change.
+ * single-pass variant also its range), ArtCNN/CuNNy/NIS their OpenGL variants, Anime4K/FSRCNNX their portable
+ * GLES hooks, OUTPUT grain its hook change.
  * Other sources stay byte-identical.
  */
 internal fun mpvShaderSourceFor(
     shader: MpvShaderAsset,
     source: String,
     transferProfile: MpvCasTransferProfile?,
-    artCnnOpenGl: Boolean,
-): String = when {
-    transferProfile != null -> source
-        .replace("#define SOURCE_TRC 4", "#define SOURCE_TRC " + transferProfile.sourceTrc)
-        .replace("#define TARGET_TRC 4", "#define TARGET_TRC " + transferProfile.targetTrc)
-        .replace("#define CUSTOM_GAMMA 2.2", "#define CUSTOM_GAMMA " + transferProfile.customGamma)
-        .let { if (transferProfile.singlePassHdr && transferProfile.fullRange) it.replace("#define LIMITED_RANGE 1", "#define LIMITED_RANGE 0") else it }
-        .let { cas -> shader.casBlend?.let { mpvCasBlendSource(cas, it) } ?: cas }
-    artCnnOpenGl -> artCnnOpenGlSource(source)
-    shader.fileName.startsWith("quality_anime4k_") -> anime4kGlesSource(source)
-    shader.outputHook -> mpvOutputGrainSource(source)
-    shader.deblockStrength != null -> source.replace(
-        "#define DEBLOCK_STRENGTH 0.50", "#define DEBLOCK_STRENGTH ${shader.deblockStrength}",
-    )
-    else -> source
+    openGl: Boolean,
+): String {
+    val openGlAdapter = if (openGl) mpvOpenGlShaderAdapter(shader) else null
+    return when {
+        transferProfile != null -> source
+            .replace("#define SOURCE_TRC 4", "#define SOURCE_TRC " + transferProfile.sourceTrc)
+            .replace("#define TARGET_TRC 4", "#define TARGET_TRC " + transferProfile.targetTrc)
+            .replace("#define CUSTOM_GAMMA 2.2", "#define CUSTOM_GAMMA " + transferProfile.customGamma)
+            .let { if (transferProfile.singlePassHdr && transferProfile.fullRange) it.replace("#define LIMITED_RANGE 1", "#define LIMITED_RANGE 0") else it }
+            .let { cas -> shader.casBlend?.let { mpvCasBlendSource(cas, it) } ?: cas }
+        openGlAdapter != null -> openGlAdapter(source)
+        shader.fileName.startsWith("quality_anime4k_") -> anime4kGlesSource(source)
+        shader.fileName.startsWith("quality_fsrcnnx") -> fsrcnnxGlesSource(source)
+        shader.outputHook -> mpvOutputGrainSource(source)
+        shader.deblockStrength != null -> source.replace(
+            "#define DEBLOCK_STRENGTH 0.50", "#define DEBLOCK_STRENGTH ${shader.deblockStrength}",
+        )
+        else -> source
+    }
+}
+
+/** A separate cache variant keeps gpu-next's original precision/extensions intact. */
+internal fun mpvOpenGlShaderAdapter(shader: MpvShaderAsset): ((String) -> String)? = when {
+    shader.requiresGpuNext -> null
+    shader.fileName.startsWith("quality_artcnn") -> ::artCnnOpenGlSource
+    shader.fileName.startsWith("quality_cunny_") -> ::cunnyOpenGlSource
+    shader.fileName.startsWith("quality_nis_") -> ::nisOpenGlSource
+    else -> null
 }

@@ -5,6 +5,8 @@ package com.ambient.tv.ui.player
 import android.content.Context
 import android.opengl.EGL14
 import android.opengl.GLES20
+import android.opengl.GLES30
+import android.opengl.GLES31
 import androidx.media3.common.util.GlUtil
 import androidx.media3.effect.BaseGlShaderProgram
 import androidx.media3.effect.GlEffect
@@ -90,6 +92,18 @@ internal fun auditMedia3NeuralComputeShaders(context: Context, log: (String) -> 
             (!version.contains("OpenGL ES 3.1") && !version.contains("OpenGL ES 3.2"))) {
             log("SKIP neural compute GL: requires GLES3.1, FP16 and highp")
             return
+        }
+        // Compile-only checks miss mutable textures, which GLES rejects as writable images.
+        val image = media3SsimIntermediate(4, 4)
+        try {
+            GLES31.glBindImageTexture(0, image.texture, 0, false, 0,
+                GLES31.GL_WRITE_ONLY, GLES30.GL_RGBA16F)
+            GlUtil.checkGlError()
+            log("PASS neural compute FP16 image binding")
+        } finally {
+            GLES31.glBindImageTexture(0, 0, 0, false, 0,
+                GLES31.GL_WRITE_ONLY, GLES30.GL_RGBA16F)
+            image.release()
         }
         execute("ArtCNN C4F16", Media3NeuralComputeEffect("artcnn16", 32, 32), 16, 32)
         execute("CuNNy Veryfast SOFT", Media3NeuralComputeEffect("cunny_veryfast_soft", 32, 32), 16, 32)

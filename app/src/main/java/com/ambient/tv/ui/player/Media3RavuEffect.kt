@@ -288,8 +288,8 @@ internal fun media3DrawQuad(program: GlProgram) {
     GlUtil.checkGlError()
 }
 
-internal fun media3GlProgram(fragment: String): GlProgram = try {
-    GlProgram(RAVU_VERTEX, fragment).apply {
+internal fun media3GlProgram(fragment: String, vertex: String = RAVU_VERTEX): GlProgram = try {
+    GlProgram(vertex, media3FragmentSamplerPrecision(fragment)).apply {
         setBufferAttribute("aFramePosition", GlUtil.getNormalizedCoordinateBounds(), GlUtil.HOMOGENEOUS_COORDINATE_VECTOR_SIZE)
     }
 } catch (e: GlUtil.GlException) {

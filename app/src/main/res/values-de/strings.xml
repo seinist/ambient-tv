@@ -1249,7 +1249,7 @@
     <string name="image_scaler_shader_hdr">GPU-Shader · HDR (experimentell)</string>
     <string name="image_vlc_scaler_bypassed">Die Android-Surface umgeht diesen Scaler.</string>
     <string name="hdr_plays_through_media3">HDR läuft über Media3.</string>
-    <string name="image_nis_compute_unsupported">NIS ist mit dieser Videoausgabe nicht verfügbar. Der Standard-Skalierer wird verwendet.</string>
+    <string name="image_nis_compute_unsupported">Der gewählte Filter ist mit dieser Videoausgabe nicht verfügbar. Der Standard-Skalierer wird verwendet.</string>
     <string name="image_shader_needs_vulkan">Einige ausgewählte Filter benötigen die Vulkan-Ausgabe.</string>
     <string name="image_rejected">Renderer hat diese optionalen Einstellungen abgelehnt: %1$s</string>
     <string name="image_processing">Bildverarbeitung</string>

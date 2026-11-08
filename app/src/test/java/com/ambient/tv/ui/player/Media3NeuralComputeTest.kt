@@ -53,8 +53,9 @@ class Media3NeuralComputeTest {
             assertTrue(shader.startsWith("#version 310 es"))
             assertTrue(shader.contains("layout(local_size_x = 12, local_size_y = 16"))
             assertTrue(shader.contains("layout(rgba16f, binding = 0)"))
-            assertTrue(shader.contains("#define V4 vec4"))
+            assertTrue(Regex("""#\s*define\s+V4\s+vec4""").containsMatchIn(shader))
             assertTrue(shader.contains("imageStore(out_image"))
+            assertTrue(shader.contains("void main() { hook(); }"))
             assertFalse(shader.contains("GL_EXT_shader_explicit_arithmetic_types_float16"))
             if (key in MEDIA3_CUNNY_QUANTIZED_SCALERS) {
                 val qShader = media3ComputeShader(passes[1])

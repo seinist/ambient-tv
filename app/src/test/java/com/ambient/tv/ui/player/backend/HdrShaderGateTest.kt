@@ -61,7 +61,7 @@ class HdrShaderGateTest {
         val cas = MPV_IMAGE_SHADERS.getValue("cas")
         val pqFile = mpvCasSourceFile(cas, mpvCasTransferProfile("pq"))
         assertEquals(MPV_CAS_HDR_FILE, pqFile)
-        val pq = mpvShaderSourceFor(cas, raw(pqFile), mpvCasTransferProfile("pq"), artCnnOpenGl = false)
+        val pq = mpvShaderSourceFor(cas, raw(pqFile), mpvCasTransferProfile("pq"), openGl = false)
         assertTrue(pq.contains("#define SOURCE_TRC 2"))
         assertTrue(pq.contains("#define TARGET_TRC 2"))
         assertFalse(pq.contains("#define SOURCE_TRC 4"))
@@ -69,9 +69,9 @@ class HdrShaderGateTest {
         assertTrue(pq.contains("#define CAS_BLEND 1.0"))
         assertTrue(mpvCasSourceValid(pq, mpvCasTransferProfile("pq")!!, null))
         assertFalse(mpvCasSourceValid(pq, mpvCasTransferProfile("pq", "full")!!, null))
-        val hlg = mpvShaderSourceFor(cas, raw(mpvCasSourceFile(cas, mpvCasTransferProfile("hlg"))), mpvCasTransferProfile("hlg"), artCnnOpenGl = false)
+        val hlg = mpvShaderSourceFor(cas, raw(mpvCasSourceFile(cas, mpvCasTransferProfile("hlg"))), mpvCasTransferProfile("hlg"), openGl = false)
         assertTrue(hlg.contains("#define SOURCE_TRC 5") && hlg.contains("#define TARGET_TRC 5"))
-        val full = mpvShaderSourceFor(cas, raw(MPV_CAS_HDR_FILE), mpvCasTransferProfile("pq", "full"), artCnnOpenGl = false)
+        val full = mpvShaderSourceFor(cas, raw(MPV_CAS_HDR_FILE), mpvCasTransferProfile("pq", "full"), openGl = false)
         assertTrue(full.contains("#define LIMITED_RANGE 0") && mpvCasSourceValid(full, mpvCasTransferProfile("pq", "full")!!, null))
         // SDR keeps the pinned two-pass upstream source.
         assertEquals(cas.fileName, mpvCasSourceFile(cas, mpvCasTransferProfile("bt.1886")))
@@ -104,7 +104,7 @@ class HdrShaderGateTest {
             val keys = mpvImageShaderKeys(MpvImageOptions(filmGrain = level), sdr = false, hdr = true)
             assertEquals(listOf("filmgrain_${level}_output"), keys)
             val asset = MPV_IMAGE_SHADERS.getValue(keys.single())
-            val text = mpvShaderSourceFor(asset, raw(asset.fileName), null, artCnnOpenGl = false)
+            val text = mpvShaderSourceFor(asset, raw(asset.fileName), null, openGl = false)
             assertTrue(text.contains("//!HOOK OUTPUT"))
             assertFalse(text.contains("//!HOOK LUMA"))
             assertTrue(text.contains("color.rgb += vec3(INTENSITY * 2.0 * g);"))
@@ -114,7 +114,7 @@ class HdrShaderGateTest {
         }
         // SDR keeps the unchanged LUMA hook.
         val sdr = MPV_IMAGE_SHADERS.getValue("filmgrain_light")
-        assertEquals(raw(sdr.fileName), mpvShaderSourceFor(sdr, raw(sdr.fileName), null, artCnnOpenGl = false))
+        assertEquals(raw(sdr.fileName), mpvShaderSourceFor(sdr, raw(sdr.fileName), null, openGl = false))
     }
 
     @Test fun builtinSharpenBecomesCasOnGpuNext() {
@@ -134,10 +134,10 @@ class HdrShaderGateTest {
 
         val light = MPV_IMAGE_SHADERS.getValue("cas_light")
         val medium = MPV_IMAGE_SHADERS.getValue("cas_medium")
-        val lightPq = mpvShaderSourceFor(light, raw(MPV_CAS_HDR_FILE), mpvCasTransferProfile("pq"), artCnnOpenGl = false)
+        val lightPq = mpvShaderSourceFor(light, raw(MPV_CAS_HDR_FILE), mpvCasTransferProfile("pq"), openGl = false)
         assertTrue(lightPq.contains("#define CAS_BLEND $MPV_CAS_LIGHT_BLEND") && lightPq.contains("#define SOURCE_TRC 2"))
         assertTrue(mpvCasSourceValid(lightPq, mpvCasTransferProfile("pq")!!, MPV_CAS_LIGHT_BLEND))
-        val mediumSdr = mpvShaderSourceFor(medium, raw(medium.fileName), mpvCasTransferProfile("bt.1886"), artCnnOpenGl = false)
+        val mediumSdr = mpvShaderSourceFor(medium, raw(medium.fileName), mpvCasTransferProfile("bt.1886"), openGl = false)
         assertTrue(mediumSdr.contains("#define CAS_BLEND $MPV_CAS_MEDIUM_BLEND") && mediumSdr.contains("#define SOURCE_TRC 4"))
         assertTrue(mediumSdr.contains("\tpix.r = mix(e, pix.r, float(CAS_BLEND));\n\tpix.r = clamp(pix.r, 0.0, 1.0);"))
         // CAS strength stays at the upstream 0.0: Light < Medium < plain "AMD CAS" (blend 1.0).
