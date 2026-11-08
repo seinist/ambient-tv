@@ -604,10 +604,14 @@ private fun DlnaNodeRow(
             horizontalArrangement = Arrangement.spacedBy(12.dp * rowScale),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            DlnaRowArtwork(node, Modifier.size(
-                if (node.container) 20.dp * rowScale else 64.dp * rowScale,
-                if (node.container) 20.dp * rowScale else 40.dp * rowScale,
-            ))
+            DlnaRowArtwork(
+                node,
+                Modifier.size(
+                    if (node.container) 20.dp * rowScale else 64.dp * rowScale,
+                    if (node.container) 20.dp * rowScale else 40.dp * rowScale,
+                ),
+                prioritizeUncached = focused,
+            )
             MarqueeTitle(
                 node.title,
                 focused = focused,
@@ -657,11 +661,20 @@ private fun DlnaLoadingRow(pulse: androidx.compose.runtime.State<Float>?, rowSca
 }
 
 @Composable
-private fun DlnaRowArtwork(node: DlnaNode, modifier: Modifier) {
+private fun DlnaRowArtwork(
+    node: DlnaNode,
+    modifier: Modifier,
+    prioritizeUncached: Boolean = false,
+) {
     if (node.container) {
         androidx.compose.material3.Icon(Icons.Default.Folder, null, modifier)
     } else {
         val item = remember(node) { node.toMediaItem() }
-        MediaArtworkWithStreamIcons(item, item.thumbUrl, modifier = modifier)
+        MediaArtworkWithStreamIcons(
+            item,
+            item.thumbUrl,
+            modifier = modifier,
+            prioritizeUncachedArtwork = prioritizeUncached,
+        )
     }
 }

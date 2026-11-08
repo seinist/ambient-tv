@@ -26,6 +26,8 @@ import okhttp3.ConnectionPool
 import okhttp3.Dispatcher
 import okhttp3.OkHttpClient
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.Executors
+import kotlinx.coroutines.asCoroutineDispatcher
 
 @HiltAndroidApp
 class AmbientTvApplication : Application(), coil3.SingletonImageLoader.Factory {
@@ -46,6 +48,20 @@ class AmbientTvApplication : Application(), coil3.SingletonImageLoader.Factory {
     @Inject lateinit var performanceProfileResolver: PerformanceProfileResolver
     @Inject @SharedOkHttp lateinit var sharedConnectionPool: ConnectionPool
     @Inject @SharedOkHttp lateinit var sharedDispatcher: Dispatcher
+
+    /**
+     * Artwork decoding is CPU work, but it must yield to Compose/RenderThread while the user is
+     * moving through a browse view. Keep Coil's two decoder slots on Android background-priority
+     * threads instead of the normal-priority Dispatchers.IO pool.
+     */
+    private val artworkDecoderDispatcher by lazy {
+        Executors.newFixedThreadPool(2) { work ->
+            Thread({
+                android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_BACKGROUND)
+                work.run()
+            }, "artwork-decode")
+        }.asCoroutineDispatcher()
+    }
 
     /**
      * Default Coil loader plus Files images (local/SMB/NFS) for the photo viewer.
@@ -69,7 +85,7 @@ class AmbientTvApplication : Application(), coil3.SingletonImageLoader.Factory {
                 if (com.ambient.tv.ui.mobile.isTelevision(this@AmbientTvApplication)) {
                     // Visible cards and the ahead window share this budget. A burst of entering
                     // artwork must leave CPU cores available for Compose and RenderThread.
-                    decoderCoroutineContext(kotlinx.coroutines.Dispatchers.IO.limitedParallelism(2))
+                    decoderCoroutineContext(artworkDecoderDispatcher)
                 }
             }
             .memoryCache {

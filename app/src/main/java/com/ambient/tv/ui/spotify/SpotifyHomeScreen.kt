@@ -252,7 +252,8 @@ private fun SpotifyTile(
                         item.title,
                         modifier = Modifier.fillMaxSize().clip(RoundedCornerShape(8.dp)).background(Color.DarkGray),
                         contentScale = ContentScale.Crop,
-                        staggerUncached = !focused,
+                        staggerUncached = true,
+                        prioritizeUncached = focused,
                     )
                 } else Box(Modifier.fillMaxSize().background(Color.DarkGray, RoundedCornerShape(8.dp)), contentAlignment = Alignment.Center) { androidx.compose.material3.Icon(Icons.Default.MusicNote, null) }
                 com.ambient.tv.companion.PlaybackBadge(com.ambient.tv.companion.playbackIndicator(com.ambient.tv.companion.CompanionMedia("spotify:${item.type.name.lowercase()}", item.id)), Modifier.align(Alignment.TopStart).padding(5.dp))

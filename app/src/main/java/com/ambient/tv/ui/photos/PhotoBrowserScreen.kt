@@ -359,7 +359,8 @@ private fun PhotoTile(entry: PhotoEntry, modifier: Modifier, onClick: () -> Unit
                 contentScale = ContentScale.Crop,
                 // Keep the old quiet background while waiting; only the request start is staggered.
                 placeholder = false,
-                staggerUncached = !focused,
+                staggerUncached = true,
+                prioritizeUncached = focused,
             )
         } else if (entry.kind == PhotoKind.FOLDER) {
             Icon(Icons.Filled.Folder, null, Modifier.size(56.dp).align(Alignment.Center), tint = MaterialTheme.colorScheme.onSurfaceVariant)

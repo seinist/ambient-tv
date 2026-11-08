@@ -721,7 +721,11 @@ internal fun ChannelRow(
                 Modifier.size(84.dp, 48.dp).clip(RoundedCornerShape(8.dp)).background(Color.Black.copy(alpha = 0.35f)),
                 contentAlignment = Alignment.Center,
             ) {
-                if (art != null) LiveTvArtBox(art, channel.name, imageHeaders, Modifier.fillMaxSize())
+                if (art != null) LiveTvArtBox(
+                    art, channel.name, imageHeaders, Modifier.fillMaxSize(),
+                    staggerUncached = true,
+                    prioritizeUncached = rowHasFocus,
+                )
                 else if (channel.iconUrl != null) ArtworkImage(
                     model = channel.iconUrl,
                     title = channel.name,
@@ -729,6 +733,8 @@ internal fun ChannelRow(
                     contentScale = ContentScale.Fit,
                     headers = imageHeaders,
                     fallbackText = channel.numberLabel.orEmpty().ifBlank { channel.name.take(3) },
+                    staggerUncached = true,
+                    prioritizeUncached = rowHasFocus,
                 )
                 else Text(channel.numberLabel.orEmpty(), style = MaterialTheme.typography.titleMedium)
             }
@@ -827,8 +833,13 @@ internal fun GuideEventCard(
                 focusedBorder = MaterialTheme.colorScheme.primary,
                 unfocusedBorder = Color.White.copy(alpha = .08f),
                 borderWidth = tokens.focusBorder)) {
-            if (previewArt != null) LiveTvArtBox(previewArt, event.title, imageHeaders,
-                Modifier.fillMaxSize(), artworkPlaceholder = false, cornerRadius = tokens.cardRadius)
+            if (previewArt != null) LiveTvArtBox(
+                previewArt, event.title, imageHeaders, Modifier.fillMaxSize(),
+                artworkPlaceholder = false,
+                cornerRadius = tokens.cardRadius,
+                staggerUncached = true,
+                prioritizeUncached = focused,
+            )
             if (previewArt != null) {
                 Box(Modifier.matchParentSize().background(Brush.verticalGradient(
                     listOf(Color.Black.copy(alpha = .50f), Color.Black.copy(alpha = .82f)))))
@@ -1068,7 +1079,11 @@ private fun DvrRow(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(14.dp),
             ) {
-                LiveTvArtBox(art, entry.title, imageHeaders, Modifier.size(126.dp, 71.dp))
+                LiveTvArtBox(
+                    art, entry.title, imageHeaders, Modifier.size(126.dp, 71.dp),
+                    staggerUncached = true,
+                    prioritizeUncached = rowHasFocus,
+                )
                 Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
                         MetaBadge(
@@ -1102,6 +1117,8 @@ internal fun LiveTvArtBox(
     logoPadding: Dp = 10.dp,
     artworkPlaceholder: Boolean = true,
     cornerRadius: Dp = 9.dp,
+    staggerUncached: Boolean = false,
+    prioritizeUncached: Boolean = false,
 ) {
     Box(modifier.clip(RoundedCornerShape(cornerRadius)).background(Color.Black.copy(alpha = 0.36f)), contentAlignment = Alignment.Center) {
         if (art != null) ArtworkImage(
@@ -1110,6 +1127,8 @@ internal fun LiveTvArtBox(
             contentScale = if (art.logo) ContentScale.Fit else ContentScale.Crop,
             headers = art.headers(imageHeaders),
             placeholder = artworkPlaceholder,
+            staggerUncached = staggerUncached,
+            prioritizeUncached = prioritizeUncached,
         )
     }
 }

@@ -476,6 +476,7 @@ private fun YouTubeItemArtwork(
     item: YouTubeItem,
     modifier: Modifier,
     staggerUncached: Boolean = true,
+    prioritizeUncached: Boolean = false,
 ) {
     if (!item.isChannel) {
         // A DeArrow frame that cannot be generated falls back to YouTube's own thumbnail.
@@ -484,6 +485,7 @@ private fun YouTubeItemArtwork(
             item.imageUrl, item.title, modifier, ContentScale.Crop,
             fallbackModels = if (item.imageUrl != original) listOf(original) else emptyList(),
             staggerUncached = staggerUncached,
+            prioritizeUncached = prioritizeUncached,
         )
         return
     }
@@ -493,6 +495,7 @@ private fun YouTubeItemArtwork(
             Modifier.fillMaxHeight(.82f).aspectRatio(1f).clip(CircleShape),
             ContentScale.Crop,
             staggerUncached = staggerUncached,
+            prioritizeUncached = prioritizeUncached,
         )
         if (item.hasNewContent) {
             MetaBadge(
@@ -891,7 +894,12 @@ private fun YouTubeListItem(
         ) {
             Box(Modifier.width(deviceDp(if (detailed) 190.dp else 128.dp, 104.dp) * rowScale)
                 .aspectRatio(16f / 9f).clip(RoundedCornerShape(7.dp))) {
-                YouTubeItemArtwork(item, Modifier.fillMaxSize(), staggerUncached = !focused)
+                YouTubeItemArtwork(
+                    item,
+                    Modifier.fillMaxSize(),
+                    staggerUncached = true,
+                    prioritizeUncached = focused,
+                )
                 YouTubeWatchProgress(item)
             }
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -1242,7 +1250,12 @@ private fun Card(
             verticalArrangement = Arrangement.spacedBy(7.dp),
         ) {
             Box(Modifier.fillMaxWidth().aspectRatio(16f / 9f).clip(RoundedCornerShape(7.dp))) {
-                YouTubeItemArtwork(item, Modifier.fillMaxSize(), staggerUncached = !focused)
+                YouTubeItemArtwork(
+                    item,
+                    Modifier.fillMaxSize(),
+                    staggerUncached = true,
+                    prioritizeUncached = focused,
+                )
                 com.ambient.tv.companion.PlaybackBadge(com.ambient.tv.companion.playbackIndicator(com.ambient.tv.companion.CompanionMedia("youtube", item.videoId)),
                     Modifier.align(Alignment.TopStart).padding(5.dp))
                 YouTubeWatchProgress(item)

@@ -77,6 +77,7 @@ internal fun MonogramArtwork(
     style: MediaTileStyle,
     modifier: Modifier = Modifier,
     staggerUncached: Boolean = true,
+    prioritizeUncached: Boolean = false,
 ) {
     val imageUrl = mediaTileImageUrl(item, style)
     if (item.ratingKey.startsWith("telegram-channel:")) {
@@ -87,6 +88,7 @@ internal fun MonogramArtwork(
                 Modifier.fillMaxHeight(.82f).aspectRatio(1f).clip(CircleShape),
                 ContentScale.Crop,
                 staggerUncached = staggerUncached,
+                prioritizeUncached = prioritizeUncached,
             ) else Icon(
                 Icons.Filled.AccountCircle, contentDescription = item.title,
                 tint = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -108,6 +110,7 @@ internal fun MonogramArtwork(
         if (inline == null) ArtworkImage(
             imageUrl, item.title, modifier, ContentScale.Crop,
             staggerUncached = staggerUncached,
+            prioritizeUncached = prioritizeUncached,
         ) else Box(modifier) {
             // Inline preview is already local: never defer it. Only the sharper remote/native
             // thumbnail is admitted through the browse limiter.
@@ -116,6 +119,7 @@ internal fun MonogramArtwork(
                 imageUrl, item.title, Modifier.matchParentSize(), ContentScale.Crop,
                 placeholder = false,
                 staggerUncached = staggerUncached,
+                prioritizeUncached = prioritizeUncached,
             )
         }
     }
@@ -208,7 +212,8 @@ internal fun MonogramMediaCard(
                 item = item,
                 style = resolvedStyle,
                 modifier = Modifier.fillMaxWidth().aspectRatio(aspect).clip(artworkShape),
-                staggerUncached = !focused,
+                staggerUncached = true,
+                prioritizeUncached = focused,
             )
             if (!heroRow) {
                 Box(Modifier.fillMaxWidth().height(44.dp), contentAlignment = Alignment.Center) {

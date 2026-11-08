@@ -1452,6 +1452,8 @@ private fun LiveChannelTile(
                     contentScale = ContentScale.Fit,
                     headers = item.imageHeaders,
                     modifier = Modifier.align(Alignment.Center).fillMaxWidth(0.46f).fillMaxHeight(0.42f).padding(bottom = 10.dp),
+                    staggerUncached = true,
+                    prioritizeUncached = focused,
                 )
             } ?: Text(item.channel.name, style = MaterialTheme.typography.titleMedium, maxLines = 1, modifier = Modifier.align(Alignment.Center))
             if (event != null) {
