@@ -39,7 +39,11 @@ data class PlaybackTimeline(val chapters: List<VideoChapter> = emptyList(), val 
         val current = chapters.indexOfLast { it.startMs <= positionMs }
         if (direction < 0 && current < 0) return 0L
         val next = if (direction > 0) current + 1 else (current - 1).coerceAtLeast(0)
-        val chapter = chapters.getOrNull(next) ?: return 0L
+        // At the forward edge there is no adjacent chapter. Let the shared key handler
+        // fall back to its normal forward seek instead of treating the end as a hard
+        // chapter boundary. This also avoids repeatedly targeting the last chapter start
+        // while a backend is still settling a previous chapter seek.
+        val chapter = chapters.getOrNull(next) ?: return if (direction > 0) null else 0L
         return chapter.startMs - positionMs
     }
     fun chapterAt(positionMs: Long): VideoChapter? = chapters.lastOrNull { it.startMs <= positionMs }
