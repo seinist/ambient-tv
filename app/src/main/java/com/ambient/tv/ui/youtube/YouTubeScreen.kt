@@ -633,12 +633,13 @@ private fun SectionedYouTubeContent(
             })
             val rowFocus = rememberRowColumnFocus()
             val rowCentering = com.ambient.tv.ui.common.rememberRowCenteringState(listState)
+            val glideRows = !com.ambient.tv.ui.performance.LocalPerformanceProfile.current.reducedEffects
             LazyColumn(
                 allowUpExit = true,
                 modifier = Modifier.fillMaxSize().rowColumnFocusWrapRight(rowFocus).rowColumnFocusNavigation(
                     rowFocus,
-                    scrollToTop = { listState.glideToItem(!com.ambient.tv.ui.performance.LocalPerformanceProfile.current.reducedEffects, 0) },
-                    scrollToBottom = { listState.glideToItem(!com.ambient.tv.ui.performance.LocalPerformanceProfile.current.reducedEffects, rows.lastIndex) },
+                    scrollToTop = { listState.glideToItem(glideRows, 0) },
+                    scrollToBottom = { listState.glideToItem(glideRows, rows.lastIndex) },
                     scrollToRow = { rowKey ->
                         val index = rowKeys.indexOf(rowKey)
                         if (index >= 0) rowCentering.centerItem(index)
