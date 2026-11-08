@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -46,10 +47,17 @@ import com.ambient.tv.ui.common.SystemBadge
 import com.ambient.tv.ui.common.MediaSystem
 import com.ambient.tv.ui.common.TvActionButton
 import com.ambient.tv.ui.common.skeletonPulseAlpha
+import com.ambient.tv.ui.common.RowColumnFocus
+import com.ambient.tv.ui.common.rememberRowColumnFocus
+import com.ambient.tv.ui.common.RegisterRowColumnFocus
+import com.ambient.tv.ui.common.rowColumnFocusTarget
+import com.ambient.tv.ui.common.rowColumnFocusWrapRight
+import com.ambient.tv.ui.common.containRowFocusExit
 import com.ambient.tv.ui.theme.screenGutter
 import java.text.DateFormat
 import java.util.Date
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.launch
 
 /**
  * A normal Ambient TV detail destination, not a second player overlay.
@@ -74,6 +82,13 @@ fun TelegramPostDetailScreen(
     var retry by remember(chatId, messageId) { mutableIntStateOf(0) }
     val unavailable = stringResource(R.string.monogram_error_post_unavailable)
     val context = androidx.compose.ui.platform.LocalContext.current
+    val scope = rememberCoroutineScope()
+    val smartTube = remember(context) {
+        dagger.hilt.android.EntryPointAccessors.fromApplication(
+            context.applicationContext,
+            TelegramDetailYouTubeEntryPoint::class.java,
+        ).engine()
+    }
 
     LaunchedEffect(chatId, messageId, retry) {
         loading = true
@@ -124,7 +139,15 @@ fun TelegramPostDetailScreen(
                 modifier = Modifier.fillMaxSize(),
             )
             else -> {
-                val videos = remember(selected.mediaKey, selected.summary) { selected.youtubeIds }
+                val youtubeLinks = remember(selected.mediaKey, selected.summary) {
+                    com.ambient.tv.ui.player.playerDetailYouTubeLinks(selected.summary)
+                }
+                val videos = remember(selected.mediaKey, selected.summary) {
+                    (selected.youtubeIds + youtubeLinks.filter { it.kind == com.ambient.tv.ui.player.PlayerDetailYouTubeLinkKind.VIDEO }.map { it.value }).distinct()
+                }
+                val channels = remember(selected.mediaKey, selected.summary) {
+                    youtubeLinks.filter { it.kind != com.ambient.tv.ui.player.PlayerDetailYouTubeLinkKind.VIDEO }
+                }
                 Column(
                     Modifier.fillMaxSize().verticalScroll(rememberScrollState())
                         .padding(start = screenGutter(), end = screenGutter(), top = 94.dp, bottom = 36.dp),
@@ -178,23 +201,53 @@ fun TelegramPostDetailScreen(
                         }
                     }
                     if (videos.isNotEmpty()) {
-                        Text(stringResource(R.string.telegram_youtube),
-                            style = MaterialTheme.typography.titleMedium)
-                        LazyRow(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-                            items(videos, key = { it }) { id ->
-                                Column(Modifier.width(220.dp),
-                                    verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                                    ArtworkImage(
-                                        com.ambient.tv.youtube.youtubeThumbnailUrl(id),
-                                        "YouTube", Modifier.fillMaxWidth().height(124.dp)
-                                            .clip(RoundedCornerShape(10.dp)),
-                                        contentScale = ContentScale.Crop,
-                                    )
-                                    TvActionButton(stringResource(R.string.monogram_open_youtube),
-                                        onClick = { onOpenYouTube(id) })
+                        TelegramDetailYouTubeRow(
+                            title = stringResource(R.string.telegram_youtube),
+                            items = videos.map { id ->
+                                com.ambient.tv.youtube.YouTubeItem(
+                                    videoId = id,
+                                    title = stringResource(R.string.monogram_open_youtube),
+                                    subtitle = selected.channel,
+                                    imageUrl = com.ambient.tv.youtube.youtubeThumbnailUrl(id),
+                                )
+                            },
+                            onOpen = onOpenYouTube,
+                        )
+                    }
+                    if (channels.isNotEmpty()) {
+                        TelegramDetailYouTubeRow(
+                            title = stringResource(R.string.youtube_channel_open),
+                            items = channels.map { link ->
+                                com.ambient.tv.youtube.YouTubeItem(
+                                    videoId = when (link.kind) {
+                                        com.ambient.tv.ui.player.PlayerDetailYouTubeLinkKind.CHANNEL_ID ->
+                                            com.ambient.tv.youtube.youtubeChannelKey(link.value)
+                                        else -> "channel-query:" + link.value
+                                    },
+                                    title = link.value,
+                                    subtitle = link.label,
+                                )
+                            },
+                            onOpen = { key ->
+                                com.ambient.tv.youtube.youtubeChannelIdOf(key)?.let {
+                                    com.ambient.tv.launcher.LauncherIntents.post(
+                                        com.ambient.tv.ui.navigation.Destinations.youtubeChannel(it))
+                                } ?: key.removePrefix("channel-query:").takeIf { key.startsWith("channel-query:") }?.let { query ->
+                                    scope.launch {
+                                        val found = runCatching {
+                                            smartTube.search("@" + query).asSequence()
+                                                .flatMap { it.items.asSequence() }
+                                                .firstOrNull { it.isChannel }
+                                        }.getOrNull()
+                                        val id = found?.let { com.ambient.tv.youtube.youtubeChannelIdOf(it.videoId) } ?: found?.channelId
+                                        if (!id.isNullOrBlank()) {
+                                            com.ambient.tv.launcher.LauncherIntents.post(
+                                                com.ambient.tv.ui.navigation.Destinations.youtubeChannel(id, found.title, found.imageUrl))
+                                        }
+                                    }
                                 }
-                            }
-                        }
+                            },
+                        )
                     }
                 }
             }
@@ -223,5 +276,45 @@ private fun TelegramPostDetailSkeleton() {
         Box(Modifier.width(140.dp).height(14.dp).bar(4.dp))                      // date
         Box(Modifier.fillMaxWidth().height(230.dp).bar(12.dp))                   // thumbnail
         Box(Modifier.width(140.dp).height(48.dp).bar(24.dp))                     // play button
+    }
+}
+
+
+@dagger.hilt.EntryPoint
+@dagger.hilt.InstallIn(dagger.hilt.components.SingletonComponent::class)
+internal interface TelegramDetailYouTubeEntryPoint {
+    fun engine(): com.ambient.tv.youtube.SmartTubeEngine
+}
+
+@Composable
+private fun TelegramDetailYouTubeRow(
+    title: String,
+    items: List<com.ambient.tv.youtube.YouTubeItem>,
+    onOpen: (String) -> Unit,
+) {
+    if (items.isEmpty()) return
+    val focus = rememberRowColumnFocus()
+    val rowKey = "telegram-detail:" + title
+    val state = rememberLazyListState()
+    RegisterRowColumnFocus(focus, rowKey, state, items.map { it.videoId })
+    Column(
+        Modifier.fillMaxWidth().rowColumnFocusWrapRight(focus),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        Text(title, style = MaterialTheme.typography.titleMedium)
+        LazyRow(
+            state = state,
+            modifier = Modifier.containRowFocusExit(),
+            horizontalArrangement = Arrangement.spacedBy(16.dp),
+        ) {
+            items(items, key = { it.videoId }) { item ->
+                com.ambient.tv.ui.youtube.YouTubeItemCard(
+                    item,
+                    onOpen,
+                    Modifier.width(com.ambient.tv.ui.mobile.deviceDp(300.dp, 240.dp))
+                        .rowColumnFocusTarget(focus, rowKey, item.videoId),
+                )
+            }
+        }
     }
 }
