@@ -59,6 +59,7 @@ import kotlin.math.roundToInt
 
 class PlaybackNavigationState {
     var timeline by mutableStateOf(PlaybackTimeline())
+    var durationMs by mutableLongStateOf(0L)
     var chromeVisible by mutableStateOf(false)
     var skipOverlayBlocked by mutableStateOf(false)
     /** One transient skip action, even while it moves from the video to the OSD. */
@@ -78,9 +79,13 @@ class PlaybackNavigationState {
     fun interact() { interactionVersion++; BackgroundPlaybackSession.registerUserInteraction() }
     /** Chapter the last chapter key jumped to; shown briefly even while the OSD is hidden. */
     var chapterNotice by mutableStateOf<VideoChapter?>(null)
-    fun chapterStep(positionMs: Long, direction: Int): Long? = timeline.chapterStepDelta(positionMs, direction)?.also { delta ->
-        if (delta != 0L) chapterNotice = timeline.chapterAt(positionMs + delta)
-    }
+    fun chapterStep(positionMs: Long, direction: Int, navigationPositionMs: Long = positionMs): Long? =
+        timeline.chapterStepDelta(positionMs, direction, durationMs, navigationPositionMs)?.also { delta ->
+            if (delta != 0L) {
+                val target = positionMs + delta
+                chapterNotice = timeline.chapterAt(target).takeUnless { durationMs > 0L && target >= durationMs }
+            }
+        }
 }
 val LocalPlaybackNavigation = staticCompositionLocalOf<PlaybackNavigationState?> { null }
 
@@ -100,6 +105,12 @@ fun PlaybackNavigationProvider(
 ) {
     val state = navigationState ?: remember(key) { PlaybackNavigationState() }
     val snapshot by BackgroundPlaybackSession.snapshot.collectAsState()
+    val rendererDurationMs = snapshot.takeIf { it.metadata?.route == metadata.route }?.status?.durationMs
+        ?.takeIf { it > 0L }?.plus(metadata.timelineOffsetMs)
+    // YouTube's initial metadata is rounded to whole seconds; use the same precise duration as
+    // its seek handlers once the renderer knows it. Library metadata owns transcode timelines.
+    state.durationMs = if (metadata.source == "youtube") rendererDurationMs ?: metadata.durationMs
+        else metadata.durationMs.takeIf { it > 0L } ?: rendererDurationMs ?: 0L
     val enabled = metadata.hasVideo && !metadata.isLive
     val currentLoader by rememberUpdatedState(loader)
     val handheld = LocalHandheldUi.current

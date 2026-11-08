@@ -56,6 +56,7 @@ import androidx.tv.material3.Surface
 import androidx.tv.material3.Text
 import com.ambient.tv.R
 import com.ambient.tv.domain.model.MediaItem
+import com.ambient.tv.data.browse.browsePresentationKey
 import com.ambient.tv.ui.theme.LocalUiTokens
 import com.ambient.tv.ui.theme.animatedFocusBorder
 import com.ambient.tv.ui.common.activateOnTvKey
@@ -148,11 +149,16 @@ fun MediaTile(
     /** Menu, Info, or a long press. OK and a short tap stay [onClick]. */
     onInfo: (() -> Unit)? = null,
 ) {
+    // Keep the visual card stable when a refresh only changes provider/playback internals.
+    // A visible-field change gets a new key and therefore a new presentation object.
+    val presentationKey = remember(item) { item.browsePresentationKey() }
+    val visualItem = remember(item.ratingKey, presentationKey) { item }
+
     // Monogram mirrors SmartTube's single-surface cards in Home, rows and grids.
     // All non-Monogram sources keep the existing MediaTile presentation unchanged.
-    if (isMonogramMediaTile(item)) {
+    if (isMonogramMediaTile(visualItem)) {
         MonogramMediaCard(
-            item = item,
+            item = visualItem,
             onClick = onClick,
             modifier = modifier,
             onFocused = onFocused,
@@ -165,7 +171,7 @@ fun MediaTile(
     }
     val handheld = LocalHandheldUi.current
     val heroRowTiles = LocalHeroRowTiles.current
-    val resolvedStyle = resolveMediaTileStyle(style, item.type, handheld)
+    val resolvedStyle = resolveMediaTileStyle(style, visualItem.type, handheld)
     val width = mediaTileWidth(resolvedStyle)
     val aspectRatio = when (resolvedStyle) {
         MediaTileStyle.POSTER, MediaTileStyle.AUTO -> 2f / 3f
@@ -236,7 +242,7 @@ fun MediaTile(
                     } else Modifier
                 )
                 .focusRequester(focusRequester)
-                .browseFocusTarget(item.ratingKey)
+                .browseFocusTarget(visualItem.ratingKey)
                 .onFocusChanged { state ->
                     focused = state.isFocused
                     if (state.isFocused) {
@@ -256,41 +262,41 @@ fun MediaTile(
                     )
                     .padding(2.dp),
             ) {
-                val imageUrl = mediaTileImageUrl(item, resolvedStyle)
+                val imageUrl = mediaTileImageUrl(visualItem, resolvedStyle)
                 // Monogram channel cards follow SmartTube's round-avatar treatment.
                 // Content remains the normal shared card/focus component on TV and phone.
-                if (item.ratingKey.startsWith("telegram-channel:")) {
+                if (visualItem.ratingKey.startsWith("telegram-channel:")) {
                     Box(
                         Modifier.fillMaxSize().background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = .45f)),
                         contentAlignment = Alignment.Center,
                     ) {
                         if (imageUrl != null) ArtworkImage(
-                            model = imageUrl, title = item.title,
+                            model = imageUrl, title = visualItem.title,
                             modifier = Modifier.fillMaxHeight(.82f).aspectRatio(1f).clip(CircleShape),
                             contentScale = ContentScale.Crop,
                             staggerUncached = true,
                             prioritizeUncached = focused,
                         ) else Icon(
-                            Icons.Filled.AccountCircle, contentDescription = item.title,
+                            Icons.Filled.AccountCircle, contentDescription = visualItem.title,
                             tint = MaterialTheme.colorScheme.onSurfaceVariant,
                             modifier = Modifier.fillMaxHeight(.64f).aspectRatio(1f),
                         )
                     }
                 } else MediaArtworkWithStreamIcons(
-                    item = item,
+                    item = visualItem,
                     model = imageUrl,
-                    title = item.title,
+                    title = visualItem.title,
                     contentScale = ContentScale.Crop,
                     modifier = Modifier.fillMaxSize().clip(tileShape),
                     staggerUncachedArtwork = true,
                     prioritizeUncachedArtwork = focused,
                 )
 
-                val progress = item.progressFraction?.takeIf { it > 0f && it < 1f }
+                val progress = visualItem.progressFraction?.takeIf { it > 0f && it < 1f }
 
                 // Only while focused, so unfocused posters stay clean.
                 if (!heroRowTiles) MediaMetadataOverlay(
-                    item = item,
+                    item = visualItem,
                     focused = focused,
                     // The progress bar runs along the bottom edge; the text stays clear of it.
                     bottomInset = if (progress != null) PlaybackStatusBarHeight else 0.dp,
@@ -302,12 +308,12 @@ fun MediaTile(
 
                 // One spot for the watch state on every tile: a check once seen, otherwise the
                 // number of episodes still to watch.
-                val watchBadge = if (item.isWatched) "✓" else item.unwatchedLeafCount?.takeIf { it > 0 }?.toString()
+                val watchBadge = if (visualItem.isWatched) "✓" else visualItem.unwatchedLeafCount?.takeIf { it > 0 }?.toString()
                 watchBadge?.let {
                     MetaBadge(text = it, emphasized = true, modifier = Modifier.align(Alignment.TopEnd).padding(7.dp))
                 }
                 // Resolution mirrors it in the opposite corner instead of crowding the metadata banner.
-                if (remember(item) { isUhd(item) }) {
+                if (remember(visualItem) { isUhd(visualItem) }) {
                     MetaBadge(text = UHD_LABEL, emphasized = true, modifier = Modifier.align(Alignment.TopStart).padding(7.dp))
                 }
 
@@ -327,9 +333,9 @@ fun MediaTile(
             Spacer(modifier = Modifier.height(6.dp))
             when (resolvedStyle) {
                 // A season's own episode list already sits under the series; only feed rows repeat it.
-                MediaTileStyle.LANDSCAPE, MediaTileStyle.CONTINUE -> EpisodeLabels(item, focused, showDescription, showSeriesTitle = true, reserveEpisodeLines = reserveEpisodeLines)
-                MediaTileStyle.EPISODE -> EpisodeLabels(item, focused, showDescription)
-                else -> PosterLabels(item, focused, reserveEpisodeLines)
+                MediaTileStyle.LANDSCAPE, MediaTileStyle.CONTINUE -> EpisodeLabels(visualItem, focused, showDescription, showSeriesTitle = true, reserveEpisodeLines = reserveEpisodeLines)
+                MediaTileStyle.EPISODE -> EpisodeLabels(visualItem, focused, showDescription)
+                else -> PosterLabels(visualItem, focused, reserveEpisodeLines)
             }
         }
     }

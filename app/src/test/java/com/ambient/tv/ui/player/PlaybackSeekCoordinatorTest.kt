@@ -53,6 +53,117 @@ class PlaybackSeekCoordinatorTest {
         assertNull(seek.pendingTarget)
     }
 
+    @Test fun chapterNavigationKeepsTheTargetAfterAPrecedingKeyframeLanding() {
+        var now = 0L
+        val seek = PlaybackSeekCoordinator(nowMs = { now })
+        seek.displayedPosition(25_000)
+        seek.requestAbsolute(50_000)
+        seek.consumeCommit()
+        now = 800
+        assertEquals(50_000L, seek.displayedPosition(48_000))
+        now = 1_400
+        val displayed = seek.displayedPosition(48_600)
+        assertEquals(48_600L, displayed)
+        assertNull(seek.pendingTarget)
+        assertEquals(50_000L, seek.chapterPositionMs(displayed))
+        // Subsequent samples remain ordinary engine time; only chapter selection uses the anchor.
+        now += 250
+        assertEquals(48_850L, seek.displayedPosition(48_850))
+        assertEquals(50_000L, seek.chapterPositionMs(48_850))
+    }
+
+    @Test fun naturalPlaybackBeforeAChapterHasNoInventedSeekAnchor() {
+        val seek = PlaybackSeekCoordinator(nowMs = { 0L })
+        for (position in listOf(0L, 48_600L, 49_999L, 50_000L, 50_100L)) {
+            assertEquals(position, seek.displayedPosition(position))
+            assertEquals(position, seek.chapterPositionMs(position))
+        }
+    }
+
+    @Test fun chapterNavigationUsesTheLatestPendingTargetDuringRapidSeeks() {
+        var now = 0L
+        val seek = PlaybackSeekCoordinator(nowMs = { now })
+        seek.requestAbsolute(50_000)
+        assertEquals(50_000L, seek.chapterPositionMs(25_000))
+        now = 40
+        seek.requestRelative(30_000, 25_000, 90_000)
+        assertEquals(80_000L, seek.chapterPositionMs(25_000))
+        now = 80
+        seek.requestRelative(-30_000, 25_000, 90_000)
+        assertEquals(50_000L, seek.chapterPositionMs(25_000))
+    }
+
+    @Test fun backwardAndExternalSeeksReplaceTheChapterAnchor() {
+        var now = 0L
+        val seek = PlaybackSeekCoordinator(nowMs = { now })
+        seek.requestAbsolute(50_000)
+        seek.consumeCommit()
+        now = 800
+        seek.displayedPosition(48_000)
+        now = 1_400
+        val displayed = seek.displayedPosition(48_600)
+        assertEquals(50_000L, seek.chapterPositionMs(displayed))
+
+        assertEquals(38_600L, seek.requestRelative(-10_000, displayed, 90_000))
+        assertEquals(38_600L, seek.chapterPositionMs(displayed))
+        seek.requestAbsolute(20_000)
+        assertEquals(20_000L, seek.chapterPositionMs(displayed))
+        seek.followExternalSeek(10_000)
+        assertEquals(10_000L, seek.chapterPositionMs(displayed))
+        assertNull(seek.consumeCommit()) // The external seek already reached the renderer.
+    }
+
+    @Test fun playingPastTheTargetRetiresTheAnchorBeforeALaterBackwardJump() {
+        var now = 0L
+        val seek = PlaybackSeekCoordinator(nowMs = { now })
+        seek.requestAbsolute(50_000)
+        seek.consumeCommit()
+        now = 800
+        seek.displayedPosition(48_000)
+        now = 1_400
+        seek.displayedPosition(48_600)
+        now = 2_800
+        assertEquals(50_000L, seek.displayedPosition(50_000))
+        now = 3_050
+        assertEquals(50_250L, seek.displayedPosition(50_250))
+        // No chapter query was needed while passing the target to retire its anchor.
+        now += 250
+        assertEquals(48_000L, seek.displayedPosition(48_000))
+        assertEquals(48_000L, seek.chapterPositionMs(48_000))
+    }
+
+    @Test fun anOptimisticTargetReportDoesNotRetireTheChapterAnchorTooEarly() {
+        var now = 0L
+        val seek = PlaybackSeekCoordinator(nowMs = { now })
+        seek.requestAbsolute(50_000)
+        seek.consumeCommit()
+        now = 800
+        seek.displayedPosition(50_000)
+        now = 1_400
+        assertEquals(50_000L, seek.displayedPosition(50_000))
+        assertEquals(50_000L, seek.chapterPositionMs(50_000))
+        now += 250
+        assertEquals(48_000L, seek.displayedPosition(48_000))
+        assertEquals(50_000L, seek.chapterPositionMs(48_000))
+    }
+
+    @Test fun anAcknowledgedAnchorDoesNotCoverPositionsOutsideItsKeyframeWindow() {
+        var now = 0L
+        val seek = PlaybackSeekCoordinator(nowMs = { now })
+        seek.requestAbsolute(50_000)
+        seek.consumeCommit()
+        now = 800
+        seek.displayedPosition(48_000)
+        now = 1_400
+        seek.displayedPosition(48_600)
+        now += 250
+        seek.displayedPosition(48_850) // Confirm the optimistic handover first.
+        assertNull(seek.pendingTarget)
+        assertEquals(50_000L, seek.chapterPositionMs(45_000))
+        assertEquals(44_999L, seek.chapterPositionMs(44_999))
+        assertEquals(48_000L, seek.chapterPositionMs(48_000))
+    }
+
     @Test fun aFrozenClockDoesNotPullTheOsdBackToAKeyframeBehindTheTarget() {
         var now = 0L
         val seek = PlaybackSeekCoordinator(nowMs = { now })

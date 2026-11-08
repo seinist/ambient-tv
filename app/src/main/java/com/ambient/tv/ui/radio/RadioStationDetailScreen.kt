@@ -66,9 +66,10 @@ fun RadioStationDetailScreen(
         }
     }
 
-    val handheldUi = com.ambient.tv.ui.mobile.LocalHandheldUi.current
-    LaunchedEffect(station?.id) {
-        if (station == null || handheldUi) return@LaunchedEffect
+    // Read the composition local outside the coroutine effect.
+    val handheld = com.ambient.tv.ui.mobile.LocalHandheldUi.current
+    LaunchedEffect(station?.id, handheld) {
+        if (station == null || handheld) return@LaunchedEffect
         repeat(4) {
             androidx.compose.runtime.withFrameNanos { }
             if (runCatching { primaryFocus.requestFocus() }.getOrDefault(false)) return@LaunchedEffect

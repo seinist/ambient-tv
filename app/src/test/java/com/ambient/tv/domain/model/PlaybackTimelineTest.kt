@@ -28,6 +28,42 @@ class PlaybackTimelineTest {
         assertEquals(0L, lateFirst.chapterStepDelta(5_000, -1))
     }
 
+    @Test fun skippingTheFinalChapterReachesTheKnownMediaEnd() {
+        val timeline = PlaybackTimeline(listOf(VideoChapter(0), VideoChapter(20_000), VideoChapter(50_000)))
+        assertEquals(30_000L, timeline.chapterStepDelta(20_000, 1, 90_000))
+        assertEquals(40_000L, timeline.chapterStepDelta(50_000, 1, 90_000))
+        assertEquals(35_000L, timeline.chapterStepDelta(55_000, 1, 90_000))
+        assertEquals(0L, timeline.chapterStepDelta(90_000, 1, 90_000))
+        assertEquals(0L, timeline.chapterStepDelta(91_000, 1, 90_000))
+    }
+
+    @Test fun aSingleChapterCanBeSkippedWithoutInventingAnUnknownEnd() {
+        val timeline = PlaybackTimeline(listOf(VideoChapter(0)))
+        assertEquals(60_000L, timeline.chapterStepDelta(0, 1, 60_000))
+        assertEquals(50_000L, timeline.chapterStepDelta(10_000, 1, 60_000))
+        for (unknown in listOf(0L, -1L, Long.MAX_VALUE)) {
+            assertEquals(0L, timeline.chapterStepDelta(10_000, 1, unknown))
+        }
+        assertEquals(0L, PlaybackTimeline(listOf(VideoChapter(50_000))).chapterStepDelta(55_000, 1, 40_000))
+        assertNull(PlaybackTimeline().chapterStepDelta(10_000, 1, 60_000))
+    }
+
+    @Test fun anEarlierKeyframeDoesNotSelectTheRequestedChapterAgain() {
+        val timeline = PlaybackTimeline(listOf(VideoChapter(0), VideoChapter(20_000), VideoChapter(50_000)))
+        // The chapter choice uses the requested 50s, but the delta must still start at 48.6s.
+        assertEquals(41_400L, timeline.chapterStepDelta(48_600, 1, 90_000, navigationPositionMs = 50_000))
+        assertEquals(-28_600L, timeline.chapterStepDelta(48_600, -1, 90_000, navigationPositionMs = 50_000))
+        assertEquals(0L, timeline.chapterStepDelta(48_600, 1, navigationPositionMs = 50_000))
+        // Ordinary playback just before a chapter must still go to that chapter.
+        assertEquals(1_400L, timeline.chapterStepDelta(48_600, 1, 90_000))
+    }
+
+    @Test fun keyframeCorrectionKeepsAnIntermediateChapterTargetExact() {
+        val timeline = PlaybackTimeline(listOf(VideoChapter(0), VideoChapter(20_000), VideoChapter(50_000), VideoChapter(75_000)))
+        assertEquals(26_400L, timeline.chapterStepDelta(48_600, 1, 90_000, navigationPositionMs = 50_000))
+        assertEquals(0L, timeline.chapterStepDelta(88_000, 1, 90_000, navigationPositionMs = 90_000))
+    }
+
     @Test fun plexPreviewUsesMillisecondsAndRetainsQuery() {
         val preview = TimelinePreview.Plex("https://server/library/parts/9/indexes/sd/__TIME__?X-Plex-Token=test")
         assertTrue(preview.frameAt(123_456).url.contains("/122000?")); assertTrue(preview.frameAt(-5).url.contains("/0?"))

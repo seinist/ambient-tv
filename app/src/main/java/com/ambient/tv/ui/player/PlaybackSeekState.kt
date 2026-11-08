@@ -28,6 +28,8 @@ class PlaybackSeekState internal constructor(
     /** What the OSD shows: the requested target while a seek is in flight, else the engine. */
     var positionMs by mutableLongStateOf(initialPositionMs.coerceAtLeast(0L))
         private set
+    /** Chapter membership follows the requested target even when the decoder lands just before it. */
+    val chapterPositionMs: Long get() = coordinator.chapterPositionMs(positionMs)
     internal var requestVersion by mutableIntStateOf(0)
         private set
 
@@ -44,6 +46,12 @@ class PlaybackSeekState internal constructor(
     }
 
     internal val pendingTargetMs: Long? get() = coordinator.pendingTarget
+
+    /** A session/remote seek supersedes the local target without sending it to the decoder again. */
+    internal fun followExternalSeek(targetMs: Long) {
+        coordinator.followExternalSeek(targetMs)
+        positionMs = targetMs.coerceAtLeast(0L)
+    }
 
     internal fun flushPending() {
         coordinator.consumeCommit(force = true)?.let(commit)
@@ -72,6 +80,8 @@ fun rememberPlaybackSeekState(
     pollIntervalMs: Long = 250L,
     /** When false, timeline position is not polled (used with PerformanceProfile OSD gate). */
     pollEnabled: Boolean = true,
+    /** Live/Timeshift keeps its own seek owner; recording-only states must not take it over. */
+    registerWithSession: Boolean = true,
 ): PlaybackSeekState {
     val currentEngine by rememberUpdatedState(enginePositionMs)
     val currentCommit by rememberUpdatedState(commit)
@@ -79,8 +89,8 @@ fun rememberPlaybackSeekState(
         PlaybackSeekState(PlaybackSeekCoordinator(), currentEngine(),
             commit = { currentCommit(it) }, onSeekRequested = BackgroundPlaybackSession::userSeek)
     }
-    androidx.compose.runtime.DisposableEffect(state) {
-        val owner = BackgroundPlaybackSession.activeHandle()
+    androidx.compose.runtime.DisposableEffect(state, registerWithSession) {
+        val owner = BackgroundPlaybackSession.activeHandle().takeIf { registerWithSession }
         BackgroundPlaybackSession.registerSeekState(owner, state)
         onDispose {
             if (owner != null && BackgroundPlaybackSession.owns(owner)) state.flushPending()

@@ -203,9 +203,20 @@ internal fun MpvTvheadendPlaybackSurface(
         // Handheld: swipe Back leaves the player instead of only hiding the OSD.
         if (controlsVisible && !handheldUi) controlsVisible = false else exitOnBack()
     }
+    val seek = com.ambient.tv.ui.player.rememberPlaybackSeekState(
+        key = controller,
+        enginePositionMs = controller::positionMs,
+        commit = controller::seekTo,
+        pollEnabled = !source.isLive,
+        registerWithSession = !source.isLive,
+    )
     fun userSeekBy(deltaMs: Long) {
-        BackgroundPlaybackSession.userSeek()
-        controller.seekBy(deltaMs)
+        if (source.isLive) {
+            BackgroundPlaybackSession.userSeek()
+            controller.seekBy(deltaMs)
+        } else {
+            seek.seekBy(deltaMs, snapshot.durationMs)
+        }
     }
     fun heldSeekStep(baseMs: Long, event: androidx.compose.ui.input.key.KeyEvent) =
         com.ambient.tv.ui.player.acceleratedSeekStepMs(baseMs, event.nativeKeyEvent.repeatCount, snapshot.durationMs)
@@ -291,7 +302,7 @@ internal fun MpvTvheadendPlaybackSurface(
             ),
             OsdSeekSteps(BackgroundPlaybackSession.seekJumpMs(seekJumpMs), held = { heldSeekStep(it, event) }),
             object : OsdKeyTarget {
-                override fun chapterSeekDelta(direction: Int) = chapterNavigation?.chapterStep(controller.positionMs(), direction)
+                override fun chapterSeekDelta(direction: Int) = chapterNavigation?.chapterStep(seek.positionMs, direction, seek.chapterPositionMs)
                 override fun isPlaying() = snapshot.isPlaying
                 override fun togglePlayback() { BackgroundPlaybackSession.userToggle() }
                 override fun play() { BackgroundPlaybackSession.userPlay() }
@@ -303,7 +314,10 @@ internal fun MpvTvheadendPlaybackSurface(
                 }
                 override fun showOsd() { osd.reveal() }
                 override fun hideSeekFeedback() { osd.reveal() }
-                override fun restart() { BackgroundPlaybackSession.userSeek(); controller.seekTo(0L) }
+                override fun restart() {
+                    if (source.isLive) { BackgroundPlaybackSession.userSeek(); controller.seekTo(0L) }
+                    else seek.seekTo(0L)
+                }
                 override fun next() = Unit
                 override fun previousTrack() = Unit
                 override fun zap(delta: Int) { onZap(delta) }
@@ -373,7 +387,7 @@ internal fun MpvTvheadendPlaybackSurface(
             artworkFallbackUrls = panelArtworkFallbackUrls,
             nowEvent = nowEvent,
             nextEvent = nextEvent,
-            positionMs = snapshot.positionMs,
+            positionMs = if (source.isLive) snapshot.positionMs else seek.positionMs,
             durationMs = snapshot.durationMs,
             playing = snapshot.isPlaying,
             loading = waitingForPlaybackPicture(snapshot.wantsToPlay, snapshot.isPlaying),
@@ -436,7 +450,7 @@ internal fun MpvTvheadendPlaybackSurface(
                 sleepTimer = sleepTimer,
                 onSleepChanged = { sleepTimer = it },
                 rendererKey = rendererKey,
-                onRendererSelected = { key, global -> onRendererSelected(key, snapshot.positionMs, global) },
+                onRendererSelected = { key, global -> onRendererSelected(key, if (source.isLive) snapshot.positionMs else seek.positionMs, global) },
                 infoLines = buildList {
                     add(stringResource(R.string.player_nerd_backend) to "MPV")
                     add(stringResource(R.string.player_playback_info) to (source.streamProfile ?: if (source.isLive) "Live TV" else "Recording"))

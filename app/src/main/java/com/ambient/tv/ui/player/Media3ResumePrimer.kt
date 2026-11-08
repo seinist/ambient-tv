@@ -33,7 +33,7 @@ internal object Media3ResumePrimer {
         private val timeout = Runnable {
             Timber.w("Dolby Vision resume priming timed out; applying requested position")
             internalSeek = true
-            player.seekTo(target)
+            player.seekToPlaybackPosition(target)
             finish()
         }
         fun start() {
@@ -45,8 +45,10 @@ internal object Media3ResumePrimer {
             if (primed) return
             primed = true
             internalSeek = true
-            player.seekTo(target)
+            val seeking = player.seekToPlaybackPosition(target)
             internalSeek = false
+            // Already inside the final tail: no seek means no new READY callback to unmute us.
+            if (!seeking) finish()
         }
         override fun onPositionDiscontinuity(oldPosition: Player.PositionInfo, newPosition: Player.PositionInfo, reason: Int) {
             // A direct user seek supersedes the pending initialization target.

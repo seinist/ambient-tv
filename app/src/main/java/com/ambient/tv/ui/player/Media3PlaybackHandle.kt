@@ -188,7 +188,7 @@ class Media3PlaybackHandle(
         }
     }
     override fun seekTo(positionMs: Long) {
-        if (!Media3ResumePrimer.retarget(player, positionMs)) player.seekTo(positionMs)
+        if (!Media3ResumePrimer.retarget(player, positionMs)) player.seekToPlaybackPosition(positionMs)
     }
     override fun restoreAfterRendererSwitch(positionMs: Long, playWhenReady: Boolean, isLive: Boolean) {
         if (!isLive) seekTo(positionMs.coerceAtLeast(0L))

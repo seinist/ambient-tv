@@ -33,8 +33,26 @@ class PlaybackSeekCoordinator(
     private var optimisticAckStopped = false
     /** Engine position and time of the latest request, to tell a landing from the old clock. */
     private var requestEngineMs: Long = -1L
+    /** Keep chapter navigation on the requested boundary while its preceding keyframe plays. */
+    private var chapterTargetMs: Long? = null
 
     val pendingTarget: Long? get() = pendingTargetMs
+
+    /**
+     * The OSD follows a confirmed keyframe landing, but chapter selection must not move back to
+     * the previous chapter just because that keyframe precedes the requested marker. Pending
+     * requests always win; afterwards the anchor only covers the normal keyframe window.
+     */
+    fun chapterPositionMs(positionMs: Long): Long {
+        pendingTargetMs?.let { return it }
+        val position = positionMs.coerceAtLeast(0L)
+        val target = chapterTargetMs ?: return position
+        if (position in (target - ALIGN_BEFORE_MS).coerceAtLeast(0L)..target) return target
+        // A native renderer may still replace an optimistic target report with its keyframe.
+        // Retire the anchor once the following position poll confirms playback passed it.
+        if (optimisticAckTargetMs == null) chapterTargetMs = null
+        return position
+    }
 
     fun requestRelative(deltaMs: Long, enginePositionMs: Long, durationMs: Long): Long {
         val limit = durationMs.takeIf { it > 0L } ?: Long.MAX_VALUE
@@ -45,6 +63,7 @@ class PlaybackSeekCoordinator(
     fun requestAbsolute(targetMs: Long): Long {
         val target = targetMs.coerceAtLeast(0L)
         pendingTargetMs = target
+        chapterTargetMs = target
         lastRequestAtMs = nowMs()
         requestEngineMs = lastEngineMs
         // A freshly prepared Media3 player (and a native player opening a long GOP stream) can
@@ -76,7 +95,11 @@ class PlaybackSeekCoordinator(
             engineMovedAtMs = now
         }
         recoverFromOptimisticAck(engine)
-        val pending = pendingTargetMs ?: return engine
+        val pending = pendingTargetMs ?: run {
+            // Retire passed anchors even when no chapter key is pressed during normal playback.
+            chapterPositionMs(engine)
+            return engine
+        }
         observeAlignment(pending, engine, now, movedNow)
         val sinceRequest = now - lastRequestAtMs
         // A held key pauses ~400 ms before it repeats; until then the engine is only on its way
