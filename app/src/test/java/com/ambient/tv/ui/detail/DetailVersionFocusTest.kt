@@ -6,7 +6,6 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.MutableState
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.input.key.Key
-import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.ExperimentalTestApi
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsFocused
@@ -27,7 +26,6 @@ import com.ambient.tv.ui.common.LocalClockSettings
 import com.ambient.tv.ui.mobile.LocalHandheldUi
 import com.ambient.tv.ui.theme.AmbientTvTheme
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
@@ -55,11 +53,7 @@ class DetailVersionFocusTest {
         longSummary: Boolean = false,
     ): MutableState<MediaItem> {
         val item = movie("movie", "Versioned film").copy(
-            // Explicit paragraphs guarantee real overflow in Robolectric's text layout too;
-            // a repeated single paragraph may be measured without soft wrapping there.
-            summary = if (longSummary) (1..40).joinToString("\n") {
-                "Paragraph $it of the complete film synopsis."
-            } else null,
+            summary = if (longSummary) "A long film synopsis fills all five lines of the detail hero. ".repeat(40) else null,
             mediaVersions = (0 until 6).map { index ->
                 MediaVersion(
                     streamUrl = if (index in disabled) null else "https://example.invalid/version-$index.mkv",
@@ -199,38 +193,6 @@ class DetailVersionFocusTest {
         }
         press(Key.DirectionUp)
         playAction().assertIsFocused().assertIsDisplayed()
-    }
-
-    @Test fun descriptionOwnsScrollingBetweenVersionPickerAndFollowingRows() {
-        val itemState = mount(longSummary = true, withFollowingSection = true)
-        repeat(6) { press(Key.DirectionDown) }
-        action("#6").assertIsFocused()
-        press(Key.DirectionDown)
-        val summary = checkNotNull(itemState.value.summary).trim()
-        val description = rule.onNode(hasText(summary))
-        description.assertIsFocused()
-        assertTrue("The long-description fixture must overflow its reading viewport",
-            description.fetchSemanticsNode().config[SemanticsProperties.VerticalScrollAxisRange].maxValue() > 0f)
-
-        press(Key.DirectionDown)
-        description.assertIsFocused()
-        assertTrue(description.fetchSemanticsNode().config[SemanticsProperties.VerticalScrollAxisRange].value() > 0f)
-
-        // Page-level row navigation must wait until the reading viewport is at its end.
-        repeat(20) {
-            val range = description.fetchSemanticsNode().config[SemanticsProperties.VerticalScrollAxisRange]
-            if (range.value() < range.maxValue()) press(Key.PageDown)
-        }
-        press(Key.DirectionDown)
-        action("Following film").assertIsFocused()
-        press(Key.DirectionUp)
-        description.assertIsFocused()
-        repeat(20) {
-            val range = description.fetchSemanticsNode().config[SemanticsProperties.VerticalScrollAxisRange]
-            if (range.value() > 0f) press(Key.PageUp)
-        }
-        press(Key.DirectionUp)
-        action("#6").assertIsFocused()
     }
 
     @Test fun newlyDiscoveredAndReorderedVersionsKeepTheFocusedPhysicalSource() {

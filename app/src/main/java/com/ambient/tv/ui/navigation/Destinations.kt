@@ -43,7 +43,7 @@ object Destinations {
     const val SPOTIFY_SECTION = "spotify_section/{sectionKey}"
     const val SPOTIFY_DETAIL = "spotify_detail/{type}/{id}"
     const val SPOTIFY_PLAYER = "spotify_player?uri={uri}"
-    const val YOUTUBE_DETAIL = "youtube_detail/{videoId}?browseSession={browseSession}&originChatId={originChatId}&originMessageId={originMessageId}"
+    const val YOUTUBE_DETAIL = "youtube_detail/{videoId}?browseSession={browseSession}"
     const val YOUTUBE_CHANNEL = "youtube_channel/{channelId}?title={title}&avatar={avatar}"
     const val YOUTUBE_PLAYER = "youtube_player/{videoId}?trailer={trailer}&browseSession={browseSession}"
     const val TVH_PLAYER = "tvh_player/{kind}/{id}?sourceId={sourceId}"
@@ -80,22 +80,8 @@ object Destinations {
     fun spotifySection(sectionKey: String) = "spotify_section/${Uri.encode(sectionKey)}"
     fun radioSection(sectionKey: String) =
         if (sectionKey == "popular") RADIO else "radio_section/${Uri.encode(sectionKey)}"
-    fun youtubeDetail(
-        videoId: String,
-        browseSession: Long? = null,
-        originChatId: Long? = null,
-        originMessageId: Int? = null,
-    ): String {
-        val query = buildList {
-            browseSession?.let { add("browseSession=$it") }
-            if (originChatId != null && originChatId != 0L && originMessageId != null && originMessageId > 0) {
-                add("originChatId=$originChatId")
-                add("originMessageId=$originMessageId")
-            }
-        }
-        return "youtube_detail/${Uri.encode(videoId)}" +
-            if (query.isEmpty()) "" else query.joinToString("&", prefix = "?")
-    }
+    fun youtubeDetail(videoId: String, browseSession: Long? = null) =
+        "youtube_detail/${Uri.encode(videoId)}" + browseSession?.let { "?browseSession=$it" }.orEmpty()
     fun youtubeChannel(channelId: String, title: String? = null, avatarUrl: String? = null) =
         "youtube_channel/${Uri.encode(channelId)}?title=${Uri.encode(title.orEmpty())}&avatar=${Uri.encode(avatarUrl.orEmpty())}"
     fun spotifyDetail(type: String, id: String) = "spotify_detail/${Uri.encode(type)}/${Uri.encode(id)}"

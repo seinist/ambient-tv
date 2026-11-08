@@ -416,6 +416,7 @@ private fun RadioPlayerContent(
                         tags = current?.tags.orEmpty(),
                         codec = current?.codec,
                         bitrateKbps = current?.bitrateKbps,
+                        stationId = shown.stationId,
                     )
                 }
             })

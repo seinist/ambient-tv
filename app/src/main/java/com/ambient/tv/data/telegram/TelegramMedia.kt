@@ -100,17 +100,6 @@ fun telegramPostIds(key: String): Pair<Long, Int>? {
     }
 }
 
-/** A YouTube tile identifies both the selected video and the post that shared it. */
-data class TelegramYouTubeSelection(val chatId: Long, val messageId: Int, val videoId: String)
-
-/** Keep the video id when leaving a Monogram row; a post may contain several different links. */
-fun telegramYouTubeSelection(key: String): TelegramYouTubeSelection? {
-    val videoId = telegramYouTubeItemId(key) ?: return null
-    val (chatId, messageId) = telegramPostIds(key) ?: return null
-    if (chatId == 0L) return null
-    return TelegramYouTubeSelection(chatId, messageId, videoId)
-}
-
 /** Expand one Telegram post into a distinct card per URL without downloading YouTube streams via MTProto. */
 fun TelegramMedia.youtubePosts(): List<TelegramMedia> = youtubeIds.map { id ->
     copy(kind = TelegramMediaKind.YOUTUBE, youtubeVideoId = id,

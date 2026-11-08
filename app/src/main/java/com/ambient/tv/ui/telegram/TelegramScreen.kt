@@ -145,7 +145,6 @@ fun TelegramScreen(
     onOpenChannel: (Long) -> Unit,
     /** chat, message and the player queue token of the page as shown (null: no queue). */
     onOpenPost: (Long, Int, Long?) -> Unit,
-    onOpenYouTube: (com.ambient.tv.data.telegram.TelegramYouTubeSelection) -> Unit,
     viewModel: TelegramViewModel = hiltViewModel(),
 ) {
     // Back from the player: the last played post of this page's queue (it may come from a page
@@ -293,8 +292,6 @@ fun TelegramScreen(
         state.section == sectionKey && (!state.loading || state.rows.isNotEmpty()),
     )
     fun choose(item: MediaItem, origin: List<MediaItem>, rowId: String? = null) {
-        // Touch and remote selection preserve the same exact tile on return.
-        focusMemory.key = item.ratingKey
         // The photo viewer steps through this page's photos in the order shown.
         if (item.type == "photo") TelegramPhotoGallery.offer(origin.mapNotNull { viewModel.selected(it.ratingKey) })
         if (item.ratingKey.startsWith(TELEGRAM_CHANNEL_ITEM_PREFIX)) {
@@ -302,13 +299,8 @@ fun TelegramScreen(
                 .toLongOrNull()?.let(onOpenChannel)
             return
         }
-        // A virtual YouTube card belongs to one video, even if its source post has an
-        // attachment or several links. Keep the post only as the video's provenance.
-        com.ambient.tv.data.telegram.telegramYouTubeSelection(item.ratingKey)?.let {
-            onOpenYouTube(it)
-            return
-        }
-        // Native media keeps the original post and its Telegram playback queue.
+        // A short click opens the post detail, where its full caption, linked YouTube
+        // videos and (when allowed) the local media player are separate actions.
         val token = if (telegramQueuePlayable(item, viewModel.selected(item.ratingKey))) {
             viewModel.playbackToken(item.ratingKey, origin, TelegramQueueView(
                 query = query, channelRowId = channelFilter.takeUnless { it == "all" },

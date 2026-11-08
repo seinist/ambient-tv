@@ -512,6 +512,7 @@ fun YouTubePlayerScreen(
                     durationMs = playback.durationMs,
                     publishedDate = playback.publishedDate,
                     publishedAtMs = playback.publishedAtMs,
+                    videoId = playback.videoId,
                 )
             })
             com.ambient.tv.ui.player.PersistentPlayerOverlays()

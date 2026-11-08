@@ -74,23 +74,6 @@ class TelegramMediaTest {
         assertNull(telegramPostIds("telegram-youtube:1:2:invalid"))
     }
 
-    @Test fun selectingSecondLinkRetainsItsVideoAndTheOriginalPost() {
-        val post = video.copy(linkedYouTubeVideoIds = listOf("dQw4w9WgXcQ", "9bZkp7q19f0"))
-        val selected = telegramYouTubeSelection(post.youtubePosts()[1].mediaKey)
-
-        assertEquals(TelegramYouTubeSelection(video.chatId, video.messageId, "9bZkp7q19f0"), selected)
-        assertNotEquals(telegramYouTubeSelection(post.youtubePosts()[0].mediaKey), selected)
-        // The video's Telegram attachment remains a different action from either YouTube link.
-        assertNull(telegramYouTubeSelection(post.mediaKey))
-    }
-
-    @Test fun youtubeSelectionRejectsIncompleteOrInvalidSourceIdentities() {
-        assertNull(telegramYouTubeSelection("telegram-youtube:0:42:dQw4w9WgXcQ"))
-        assertNull(telegramYouTubeSelection("telegram-youtube:1:0:dQw4w9WgXcQ"))
-        assertNull(telegramYouTubeSelection("telegram-youtube:1:42:invalid"))
-        assertNull(telegramYouTubeSelection("telegram-youtube:1:42:dQw4w9WgXcQ:extra"))
-    }
-
     @Test fun youtubeLinksMustBeFromRealYoutubeHost() {
         val text = """
             https://maliciousyoutube.com/watch?v=dQw4w9WgXcQ
