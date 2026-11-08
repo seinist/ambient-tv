@@ -1924,6 +1924,10 @@ private fun displayLanguage(code: String, displayLocale: java.util.Locale): Stri
 }.getOrDefault(code.uppercase())
 
 private fun selectTrack(player: ExoPlayer, trackType: Int, option: PlayerTrackOption?) {
+    // Saved preferences are applied after Media3 exposes its track groups. If the desired track
+    // is already the manifest/default selection, do not turn that identical choice into a fresh
+    // override: a renderer can briefly rebuffer even though the audible track does not change.
+    if (option != null && option.group.isTrackSelected(option.trackIndex)) return
     val builder = player.trackSelectionParameters.buildUpon()
     if (option == null) {
         builder.setTrackTypeDisabled(trackType, true)
