@@ -472,16 +472,28 @@ private fun YouTubeChannelTitle(channel: com.ambient.tv.youtube.YouTubeChannelIn
  * tile. Label the provider's new-content hint explicitly so it cannot look like online presence.
  */
 @Composable
-private fun YouTubeItemArtwork(item: YouTubeItem, modifier: Modifier) {
+private fun YouTubeItemArtwork(
+    item: YouTubeItem,
+    modifier: Modifier,
+    staggerUncached: Boolean = true,
+) {
     if (!item.isChannel) {
         // A DeArrow frame that cannot be generated falls back to YouTube's own thumbnail.
         val original = com.ambient.tv.youtube.youtubeThumbnailUrl(item.videoId)
-        ArtworkImage(item.imageUrl, item.title, modifier, ContentScale.Crop,
-            fallbackModels = if (item.imageUrl != original) listOf(original) else emptyList())
+        ArtworkImage(
+            item.imageUrl, item.title, modifier, ContentScale.Crop,
+            fallbackModels = if (item.imageUrl != original) listOf(original) else emptyList(),
+            staggerUncached = staggerUncached,
+        )
         return
     }
     Box(modifier.background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = .4f)), contentAlignment = Alignment.Center) {
-        ArtworkImage(item.imageUrl, item.title, Modifier.fillMaxHeight(.82f).aspectRatio(1f).clip(CircleShape), ContentScale.Crop)
+        ArtworkImage(
+            item.imageUrl, item.title,
+            Modifier.fillMaxHeight(.82f).aspectRatio(1f).clip(CircleShape),
+            ContentScale.Crop,
+            staggerUncached = staggerUncached,
+        )
         if (item.hasNewContent) {
             MetaBadge(
                 text = stringResource(R.string.youtube_channel_new_content),
@@ -877,7 +889,7 @@ private fun YouTubeListItem(
         ) {
             Box(Modifier.width(deviceDp(if (detailed) 190.dp else 128.dp, 104.dp) * rowScale)
                 .aspectRatio(16f / 9f).clip(RoundedCornerShape(7.dp))) {
-                YouTubeItemArtwork(item, Modifier.fillMaxSize())
+                YouTubeItemArtwork(item, Modifier.fillMaxSize(), staggerUncached = !focused)
                 YouTubeWatchProgress(item)
             }
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -1228,7 +1240,7 @@ private fun Card(
             verticalArrangement = Arrangement.spacedBy(7.dp),
         ) {
             Box(Modifier.fillMaxWidth().aspectRatio(16f / 9f).clip(RoundedCornerShape(7.dp))) {
-                YouTubeItemArtwork(item, Modifier.fillMaxSize())
+                YouTubeItemArtwork(item, Modifier.fillMaxSize(), staggerUncached = !focused)
                 com.ambient.tv.companion.PlaybackBadge(com.ambient.tv.companion.playbackIndicator(com.ambient.tv.companion.CompanionMedia("youtube", item.videoId)),
                     Modifier.align(Alignment.TopStart).padding(5.dp))
                 YouTubeWatchProgress(item)
