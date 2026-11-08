@@ -76,6 +76,7 @@ internal fun MonogramArtwork(
     item: MediaItem,
     style: MediaTileStyle,
     modifier: Modifier = Modifier,
+    staggerUncached: Boolean = true,
 ) {
     val imageUrl = mediaTileImageUrl(item, style)
     if (item.ratingKey.startsWith("telegram-channel:")) {
@@ -85,6 +86,7 @@ internal fun MonogramArtwork(
                 imageUrl, item.title,
                 Modifier.fillMaxHeight(.82f).aspectRatio(1f).clip(CircleShape),
                 ContentScale.Crop,
+                staggerUncached = staggerUncached,
             ) else Icon(
                 Icons.Filled.AccountCircle, contentDescription = item.title,
                 tint = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -103,11 +105,18 @@ internal fun MonogramArtwork(
         val inline = remember(imageUrl) {
             imageUrl?.let { com.ambient.tv.data.telegram.parseMonogramThumbModel(it) }?.fallback
         }
-        if (inline == null) ArtworkImage(imageUrl, item.title, modifier, ContentScale.Crop)
-        else Box(modifier) {
+        if (inline == null) ArtworkImage(
+            imageUrl, item.title, modifier, ContentScale.Crop,
+            staggerUncached = staggerUncached,
+        ) else Box(modifier) {
+            // Inline preview is already local: never defer it. Only the sharper remote/native
+            // thumbnail is admitted through the browse limiter.
             ArtworkImage(inline, item.title, Modifier.matchParentSize(), ContentScale.Crop)
-            ArtworkImage(imageUrl, item.title, Modifier.matchParentSize(), ContentScale.Crop,
-                placeholder = false)
+            ArtworkImage(
+                imageUrl, item.title, Modifier.matchParentSize(), ContentScale.Crop,
+                placeholder = false,
+                staggerUncached = staggerUncached,
+            )
         }
     }
 }
@@ -199,6 +208,7 @@ internal fun MonogramMediaCard(
                 item = item,
                 style = resolvedStyle,
                 modifier = Modifier.fillMaxWidth().aspectRatio(aspect).clip(artworkShape),
+                staggerUncached = !focused,
             )
             if (!heroRow) {
                 Box(Modifier.fillMaxWidth().height(44.dp), contentAlignment = Alignment.Center) {
