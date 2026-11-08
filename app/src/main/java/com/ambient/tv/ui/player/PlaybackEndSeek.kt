@@ -16,5 +16,18 @@ internal fun safePlaybackEndSeekTarget(currentMs: Long, durationMs: Long): Long?
     return target.takeIf { it - current > PLAYBACK_END_MIN_FORWARD_MS }
 }
 
+/**
+ * A deliberate jump to logical EOF must also finish a paused item. Decoders intentionally
+ * land a little before EOF (and may refuse another seek while already in that tail), so the
+ * remaining frames need to play to deliver the real ended event and normal completion/Next Up.
+ * This applies only to explicit user seeks; background SponsorBlock stays hands-off.
+ */
+internal fun shouldPlayThroughPlaybackEnd(
+    requestedMs: Long,
+    durationMs: Long,
+    wantsToPlay: Boolean,
+    ended: Boolean,
+): Boolean = isPlaybackEndSeek(requestedMs, durationMs) && !wantsToPlay && !ended
+
 private const val PLAYBACK_END_TAIL_MS = 1_500L
 private const val PLAYBACK_END_MIN_FORWARD_MS = 250L
