@@ -211,9 +211,14 @@ fun SectionScreen(
     val refreshing by viewModel.refreshing.collectAsState()
     ReportSidebarContentReady(uiState !is SectionUiState.Loading)
     val refreshGeneration by viewModel.refreshGeneration.collectAsState()
-    val entryRefreshGeneration = remember(viewModel) { refreshGeneration }
-    LaunchedEffect(refreshGeneration) {
-        if (refreshGeneration != entryRefreshGeneration) viewModel.load(force = true)
+    val activeDestination = com.ambient.tv.ui.common.isActiveNavigationDestination()
+    // Entry already refreshes or commits its playback snapshot. A player-exit bus event must
+    // not start a second fetch; only newer mutations during this active visit should reload.
+    val entryRefreshGeneration = remember(viewModel, activeDestination, playbackReturn?.revision) {
+        viewModel.refreshGeneration.value
+    }
+    LaunchedEffect(refreshGeneration, activeDestination, entryRefreshGeneration) {
+        if (activeDestination && refreshGeneration > entryRefreshGeneration) viewModel.load(force = true)
     }
     val lifecycleOwner = LocalLifecycleOwner.current
     LaunchedEffect(lifecycleOwner, viewModel.autoRefreshIntervalSeconds) {

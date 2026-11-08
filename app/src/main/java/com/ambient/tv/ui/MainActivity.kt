@@ -2947,18 +2947,20 @@ private fun AmbientTvApp(
                         val kind = entry.arguments?.getString("kind").orEmpty()
                         val filterId = entry.arguments?.getString("filterId").orEmpty()
                         com.ambient.tv.ui.common.HoldHomeBackgroundWhileLeaving {
-                            FilteredBrowseScreen(
-                                onBack = ::navigateBack,
-                                onOpenSettings = { openMediaSettings(filterId) },
-                                leftNavigatesBack = false,
-                                onItemClick = { ratingKey, sort ->
-                                    handleMediaSelection(
-                                        ratingKey = ratingKey,
-                                        collectionId = filterId.takeIf { kind == "collection" },
-                                        collectionSort = sort.name,
-                                    )
-                                },
-                            )
+                            RestorableSidebarContent {
+                                FilteredBrowseScreen(
+                                    onBack = ::navigateBack,
+                                    onOpenSettings = { openMediaSettings(filterId) },
+                                    leftNavigatesBack = false,
+                                    onItemClick = { ratingKey, sort ->
+                                        handleMediaSelection(
+                                            ratingKey = ratingKey,
+                                            collectionId = filterId.takeIf { kind == "collection" },
+                                            collectionSort = sort.name,
+                                        )
+                                    },
+                                )
+                            }
                         }
                     }
                     composable(

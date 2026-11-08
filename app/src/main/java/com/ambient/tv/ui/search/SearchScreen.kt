@@ -1461,13 +1461,17 @@ private fun ExternalSearchListItem(
     focusKey: String,
 ) {
     var focused by remember(title, imageUrl) { mutableStateOf(false) }
+    val onResultFocused = LocalSearchResultFocused.current
     val rowShape = RoundedCornerShape(10.dp)
     Surface(
         onClick = onClick,
         colors = transparentSurfaceColors(),
         scale = noSurfaceScale(),
         shape = ClickableSurfaceDefaults.shape(shape = rowShape),
-        modifier = initialFocusModifier(requestInitialFocus).fillMaxWidth().browseFocusTarget(focusKey).mediaFocusMotion(focused, focusedScale = 1.012f).activateOnTvKey(onClick = onClick).bringFocusedContextIntoView().onFocusChanged { focused = it.isFocused },
+        modifier = initialFocusModifier(requestInitialFocus).fillMaxWidth().browseFocusTarget(focusKey).mediaFocusMotion(focused, focusedScale = 1.012f).activateOnTvKey(onClick = onClick).bringFocusedContextIntoView().onFocusChanged {
+            focused = it.isFocused
+            if (it.isFocused) onResultFocused(focusKey)
+        },
     ) {
         Row(
             Modifier.fillMaxWidth()
