@@ -124,6 +124,7 @@ import kotlinx.coroutines.launch
 fun RadioScreen(
     onBack: (() -> Unit)? = null,
     onOpenPlayer: () -> Unit = {},
+    onOpenStation: ((RadioStation) -> Unit)? = null,
     initialSectionKey: String? = null,
     onSelectSection: ((RadioSection) -> Unit)? = null,
     viewModel: RadioViewModel = hiltViewModel(),
@@ -581,7 +582,7 @@ fun RadioScreen(
                                                 playing = playback.stationId == station.id && playback.wantsToPlay,
                                                 loading = state.startingStationId == station.id,
                                                 favorite = station.id in state.favoriteIds,
-                                                onClick = { viewModel.play(station, onOpenPlayer) },
+                                                onClick = { onOpenStation?.invoke(station) ?: viewModel.play(station, onOpenPlayer) },
                                                 onFocused = {
                                                     if (showStationAlphabet) focusedStationId.value = station.id
                                                     viewModel.onStationFocused(station.id)
@@ -624,7 +625,7 @@ fun RadioScreen(
                                         loading = state.loading,
                                         onLoadMore = viewModel::loadMore,
                                         state = listState,
-                                        onClick = { station -> viewModel.play(station, onOpenPlayer) },
+                                        onClick = { station -> onOpenStation?.invoke(station) ?: viewModel.play(station, onOpenPlayer) },
                                         onFavorite = toggleStationFavorite,
                                         onFocused = { station ->
                                             if (showStationAlphabet) focusedStationId.value = station.id
@@ -1044,7 +1045,7 @@ private fun RadioFavoriteAction(
 }
 
 @Composable
-private fun RadioStationTile(
+internal fun RadioStationTile(
     station: RadioStation,
     modifier: Modifier = Modifier,
     playing: Boolean,
