@@ -243,26 +243,36 @@ class TvheadendPlayerViewModel @Inject constructor(
         if (kind == "channel") com.ambient.tv.livetv.LiveTvReturnFocus.watched(repository.source.id, initialId)
         load()
         viewModelScope.launch {
-            BackgroundPlaybackSession.snapshot.map { it.generation }.distinctUntilChanged().collect { generation ->
-                val snapshot = BackgroundPlaybackSession.snapshot.value
-                // A queued observation must never reinstall a station already replaced again.
-                if (snapshot.generation != generation) return@collect
-                val restored = liveRadioSessionRestore(snapshot, sourceId, sourceSystem, kind, lastSessionGeneration)
-                lastSessionGeneration = maxOf(lastSessionGeneration, generation)
-                if (restored == null || snapshot.metadata?.resumeState === _uiState.value) return@collect
-                loadingJob?.cancel()
-                seekJob?.cancel()
-                pendingSourceReplacement = null
-                currentChannelUuid = requireNotNull(restored.channel).uuid
-                zapOrder = restored.channelOrder
-                ownedSession = restored.source.session
-                changingChannel = false
-                fallbackAttempted = false
-                localFallbackBackends.clear()
-                videoFailureConfirmed = false
-                _uiState.value = withProgrammeArtwork(restored)
-                com.ambient.tv.livetv.LiveTvReturnFocus.watched(sourceId, currentChannelUuid)
-            }
+            BackgroundPlaybackSession.snapshot.map { Triple(it.generation, it.replacingSource, it.metadata) }
+                .distinctUntilChanged().collect { (generation, replacing, metadata) ->
+                    val snapshot = BackgroundPlaybackSession.snapshot.value
+                    // A queued observation must never reinstall a station already replaced again.
+                    if (snapshot.generation != generation || snapshot.replacingSource != replacing ||
+                        snapshot.metadata !== metadata) return@collect
+                    if (generation == lastSessionGeneration) {
+                        val current = _uiState.value as? TvheadendPlayerState.Ready ?: return@collect
+                        val updated = liveRadioSessionMetadata(snapshot, sourceId, sourceSystem, kind, generation, current)
+                            ?: return@collect
+                        zapOrder = updated.channelOrder
+                        _uiState.value = withProgrammeArtwork(updated)
+                        return@collect
+                    }
+                    val restored = liveRadioSessionRestore(snapshot, sourceId, sourceSystem, kind, lastSessionGeneration)
+                    lastSessionGeneration = maxOf(lastSessionGeneration, generation)
+                    if (restored == null || snapshot.metadata?.resumeState === _uiState.value) return@collect
+                    loadingJob?.cancel()
+                    seekJob?.cancel()
+                    pendingSourceReplacement = null
+                    currentChannelUuid = requireNotNull(restored.channel).uuid
+                    zapOrder = restored.channelOrder
+                    ownedSession = restored.source.session
+                    changingChannel = false
+                    fallbackAttempted = false
+                    localFallbackBackends.clear()
+                    videoFailureConfirmed = false
+                    _uiState.value = withProgrammeArtwork(restored)
+                    com.ambient.tv.livetv.LiveTvReturnFocus.watched(sourceId, currentChannelUuid)
+                }
         }
         viewModelScope.launch {
             artwork.titleArt.collectLatest {

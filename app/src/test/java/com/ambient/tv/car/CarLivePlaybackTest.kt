@@ -5,6 +5,7 @@ import com.ambient.tv.livetv.LiveTvChannel
 import com.ambient.tv.livetv.LiveTvChannelKind
 import com.ambient.tv.livetv.LiveTvPlaybackSession
 import com.ambient.tv.livetv.LiveTvPlaybackSource
+import com.ambient.tv.livetv.LiveTvProgramme
 import com.ambient.tv.livetv.LiveTvZapOrder
 import com.ambient.tv.ui.navigation.Destinations
 import com.ambient.tv.ui.player.BackgroundPlaybackSession
@@ -14,6 +15,7 @@ import com.ambient.tv.ui.player.PlaybackStatus
 import com.ambient.tv.ui.tvheadend.TvheadendPlayerState
 import com.ambient.tv.ui.tvheadend.liveTvMedia3MimeType
 import com.ambient.tv.ui.tvheadend.liveRadioSessionRestore
+import com.ambient.tv.ui.tvheadend.liveRadioSessionMetadata
 import com.ambient.tv.ui.tvheadend.zapChannels
 import org.junit.After
 import org.junit.Assert.*
@@ -227,5 +229,70 @@ class CarLivePlaybackTest {
             metadata.copy(resumeState = ready.copy(channelOrder = null)),
             metadata.copy(resumeState = ready.copy(channel = selection.channel.copy(kind = LiveTvChannelKind.TV))),
         )) assertNull(restore(snapshot.copy(metadata = other)))
+    }
+
+    @Test fun sameGenerationSongAndProgrammeUpdatesReachThePhoneWithoutResettingItsControlsOrLooping() {
+        val selection = selection()
+        val metadata = selection.playerMetadata(selection.queue.first(), preferences)
+        val original = metadata.resumeState as TvheadendPlayerState.Ready
+        val current = original.copy(
+            source = original.source.copy(subtitle = "Old song"),
+            manualRendererKey = "vlc", sourceWidth = 1280, sourceHeight = 720,
+            audioVisualizerModeKey = "off", projectmQualityKey = "high",
+        )
+        val programme = LiveTvProgramme("now", "radio", "News", "Morning show",
+            startEpochSeconds = 900, stopEpochSeconds = 1100, sourceId = "tvheadend:test")
+        val next = programme.copy(eventId = "next", title = "News at noon", startEpochSeconds = 1100, stopEpochSeconds = 1200)
+        val updated = carLiveNowPlayingMetadata(metadata, listOf(programme, next), 1000, "New song")
+        val snapshot = BackgroundPlaybackSession.Snapshot(updated, "media3", generation = 31)
+        val merged = liveRadioSessionMetadata(snapshot, "tvheadend:test", "tvheadend", "channel", 31, current)!!
+        assertEquals("New song", merged.source.subtitle)
+        assertEquals(programme, merged.nowEvent)
+        assertEquals(next, merged.nextEvent)
+        assertEquals(current.manualRendererKey, merged.manualRendererKey)
+        assertEquals(current.sourceWidth, merged.sourceWidth)
+        assertEquals(current.sourceHeight, merged.sourceHeight)
+        assertEquals(current.audioVisualizerModeKey, merged.audioVisualizerModeKey)
+        assertEquals(current.projectmQualityKey, merged.projectmQualityKey)
+        assertEquals(current.source.copy(subtitle = "New song"), merged.source)
+        assertEquals(current.channelOrder, merged.channelOrder)
+
+        // Both the exact Ready emitted by the UI and an equivalent service copy are stable.
+        assertNull(liveRadioSessionMetadata(snapshot.copy(metadata = updated.copy(resumeState = merged)),
+            "tvheadend:test", "tvheadend", "channel", 31, merged))
+        assertNull(liveRadioSessionMetadata(snapshot, "tvheadend:test", "tvheadend", "channel", 31, merged))
+    }
+
+    @Test fun sameGenerationMetadataCannotOverrideAnotherStreamOrAPendingTune() {
+        val selection = selection()
+        val metadata = selection.playerMetadata(selection.queue.first(), preferences)
+        val current = metadata.resumeState as TvheadendPlayerState.Ready
+        val updated = carLiveNowPlayingMetadata(metadata, emptyList(), 1000, "New song")
+        val snapshot = BackgroundPlaybackSession.Snapshot(updated, "media3", generation = 31)
+        fun merge(state: TvheadendPlayerState.Ready = current, expected: Long = 31,
+            observed: BackgroundPlaybackSession.Snapshot = snapshot) =
+            liveRadioSessionMetadata(observed, "tvheadend:test", "tvheadend", "channel", expected, state)
+        assertNotNull(merge())
+        assertNull(merge(expected = 30))
+        assertNull(merge(expected = 32))
+        assertNull(merge(observed = snapshot.copy(replacingSource = true)))
+        assertNull(merge(current.copy(channel = selection.channel.copy(uuid = "next"))))
+        assertNull(merge(current.copy(source = current.source.copy(url = "http://server.test/replacement"))))
+        assertNull(merge(current.copy(source = current.source.copy(headers = emptyMap()))))
+        assertNull(merge(current.copy(source = current.source.copy(session = null))))
+        assertNull(merge(current.copy(source = current.source.copy(startPositionMs = 1000))))
+    }
+
+    @Test fun selectingTheSameStationFromAnotherGroupUpdatesThePhoneQueueWithoutRetuning() {
+        val selection = selection()
+        val metadata = selection.playerMetadata(selection.queue.first(), preferences)
+        val current = metadata.resumeState as TvheadendPlayerState.Ready
+        val otherGroup = metadata.copy(resumeState = current.copy(channelOrder = listOf("radio")))
+        val snapshot = BackgroundPlaybackSession.Snapshot(otherGroup, "media3", generation = 31)
+        val merged = liveRadioSessionMetadata(snapshot, "tvheadend:test", "tvheadend", "channel", 31, current)!!
+        assertEquals(listOf("radio"), merged.channelOrder)
+        assertEquals(current.source.url, merged.source.url)
+        assertSame(current.source.session, merged.source.session)
+        assertNull(liveRadioSessionMetadata(snapshot, "tvheadend:test", "tvheadend", "channel", 31, merged))
     }
 }

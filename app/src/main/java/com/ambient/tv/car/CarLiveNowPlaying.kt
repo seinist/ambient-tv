@@ -23,7 +23,10 @@ internal fun carLiveNowPlayingMetadata(
     val channel = ready.channel ?: return metadata
     if (channel.uuid != metadata.mediaId || carLiveMediaId(metadata) == null ||
         (channel.sourceId.isNotBlank() && channel.sourceId != metadata.liveTvSourceId)) return metadata
-    val events = programmes.filter {
+    // A pending/empty guide lookup must not erase EPG already supplied by the open phone
+    // player. Reuse it only through the same channel/source/time checks as fetched events.
+    val available = programmes.ifEmpty { listOfNotNull(ready.nowEvent, ready.nextEvent) }
+    val events = available.filter {
         it.channelUuid == channel.uuid &&
             (it.sourceId.isBlank() || it.sourceId == metadata.liveTvSourceId)
     }.sortedBy { it.startEpochSeconds }

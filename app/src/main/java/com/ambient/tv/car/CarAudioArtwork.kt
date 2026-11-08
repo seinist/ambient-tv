@@ -119,7 +119,7 @@ class CarAudioArtworkProvider : ContentProvider() {
         return openPipeHelper(uri, "image/png", null, bitmap) { output, _, _, _, image ->
             try {
                 ParcelFileDescriptor.AutoCloseOutputStream(output).use { stream ->
-                    image.compress(Bitmap.CompressFormat.PNG, 100, stream)
+                    image?.compress(Bitmap.CompressFormat.PNG, 100, stream)
                 }
             } catch (_: IOException) {
                 // A car client may close its end when the visible page changes.

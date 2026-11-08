@@ -102,9 +102,38 @@ class CarLiveNowPlayingTest {
 
         val cleared = carLiveNowPlayingMetadata(updated, listOf(current, next), 150, " ")
         assertEquals("Programme current · Episode current", cleared.subtitle)
-        val noProgramme = carLiveNowPlayingMetadata(cleared, emptyList(), 150, null)
+        val noProgramme = carLiveNowPlayingMetadata(cleared, emptyList(), 300, null)
         assertEquals("101", noProgramme.subtitle)
         assertNull((noProgramme.resumeState as TvheadendPlayerState.Ready).nowEvent)
+    }
+
+    @Test fun pendingOrEmptyGuideKeepsValidPhoneProgrammesAndExpiresThemNormally() {
+        val current = event("current", 100, 200)
+        val next = event("next", 200, 300)
+        val known = carLiveNowPlayingMetadata(playback(), listOf(current, next), 150, null)
+        val pending = carLiveNowPlayingMetadata(known, emptyList(), 160, "Artist - Song")
+        val ready = pending.resumeState as TvheadendPlayerState.Ready
+        assertEquals("Artist - Song", pending.subtitle)
+        assertEquals(current, ready.nowEvent)
+        assertEquals(next, ready.nextEvent)
+
+        val offline = carLiveNowPlayingMetadata(pending, emptyList(), 210, null)
+        assertEquals(next, (offline.resumeState as TvheadendPlayerState.Ready).nowEvent)
+        assertEquals("Programme next · Episode next", offline.subtitle)
+        val expired = carLiveNowPlayingMetadata(offline, emptyList(), 300, null)
+        assertEquals("101", expired.subtitle)
+        assertNull((expired.resumeState as TvheadendPlayerState.Ready).nowEvent)
+        assertNull(expired.liveProgramStartMs)
+        assertNull(expired.liveProgramEndMs)
+
+        val unrelated = known.copy(resumeState = ready.copy(
+            nowEvent = current.copy(channelUuid = "radio-2"),
+            nextEvent = next.copy(sourceId = "tvheadend:other"),
+        ))
+        val filtered = carLiveNowPlayingMetadata(unrelated, emptyList(), 160, null)
+        assertEquals("101", filtered.subtitle)
+        assertNull((filtered.resumeState as TvheadendPlayerState.Ready).nowEvent)
+        assertNull((filtered.resumeState as TvheadendPlayerState.Ready).nextEvent)
     }
 
     @Test fun generationAndSourceIdentityRejectLateUpdatesAfterAnyStationSwitch() {

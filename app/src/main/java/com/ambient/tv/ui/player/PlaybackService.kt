@@ -904,7 +904,7 @@ class PlaybackService : MediaLibraryService() {
             ?: liveProgramme?.summary?.takeIf(String::isNotBlank)
             ?: liveProgramme?.subtitle?.takeIf(String::isNotBlank)
             ?: radioStation?.let { station ->
-                (listOfNotNull(station.country, station.state) + station.localizedLanguageNames())
+                (listOfNotNull(station.country, station.state) + station.localizedLanguageNames(resources.configuration.locales[0]))
                     .filter(String::isNotBlank).distinct().joinToString(" · ").takeIf(String::isNotBlank)
             }
         val itemMetadata = MediaMetadata.Builder()

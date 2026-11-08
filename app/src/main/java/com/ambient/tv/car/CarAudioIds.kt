@@ -11,8 +11,10 @@ internal object CarAudioIds {
     const val RADIO_GENRES = "car:radio:genres"
     const val RADIO_COUNTRIES = "car:radio:countries"
     const val RADIO_LANGUAGES = "car:radio:languages"
+    const val LIVE_ROOT = "car:live:root"
     const val LIVE_RADIO_IPTV = "car:live:iptv"
     const val LIVE_RADIO_TVH = "car:live:tvheadend"
+    const val LIBRARY_ROOT = "car:library:root"
     const val STORAGE_ROOT = "car:storage:root"
     const val DLNA_ROOT = "car:storage:dlna"
     const val FILES_ROOT = "car:storage:files"
@@ -151,7 +153,7 @@ internal object CarAudioIds {
 
     private fun isFolderBase(id: String): Boolean =
         id in setOf(ROOT, RADIO_ROOT, RADIO_ALL, RADIO_GENRES, RADIO_COUNTRIES, RADIO_LANGUAGES,
-            LIVE_RADIO_IPTV, LIVE_RADIO_TVH, STORAGE_ROOT, DLNA_ROOT, FILES_ROOT,
+            LIVE_ROOT, LIVE_RADIO_IPTV, LIVE_RADIO_TVH, LIBRARY_ROOT, STORAGE_ROOT, DLNA_ROOT, FILES_ROOT,
             FILE_FAVORITES, FILE_RECENT, SPOTIFY_ROOT, RADIO_FAVORITES, RADIO_RECENT, RADIO_POPULAR,
             SPOTIFY_HOME, SPOTIFY_LIKED, SPOTIFY_PLAYLISTS, SPOTIFY_ALBUMS,
             SPOTIFY_ARTISTS, MUSIC_LIBRARIES, TELEGRAM_ROOT, TELEGRAM_AUDIO, TELEGRAM_CHANNELS) ||

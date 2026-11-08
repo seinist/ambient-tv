@@ -104,16 +104,34 @@ internal class CarAudioCatalog @Inject constructor(
         return result
     }
 
-    private fun root(): List<CarAudioEntry> = buildList {
-        // Android Auto normally allows <= 4 root tabs. Nest providers' categories instead.
-        if (preferences.radioEnabled || auxiliary.hasLive("iptv") || auxiliary.hasLive("tvheadend"))
-            add(folder(CarAudioIds.RADIO_ROOT, context.getString(R.string.car_audio_radio)))
-        if (preferences.spotifyEnabled && spotify.webAuthorized)
-            add(folder(CarAudioIds.SPOTIFY_ROOT, context.getString(R.string.car_audio_spotify)))
-        add(folder(CarAudioIds.MUSIC_LIBRARIES, context.getString(R.string.car_audio_music_libraries)))
-        if (auxiliary.hasStorage())
-            add(folder(CarAudioIds.STORAGE_ROOT, context.getString(R.string.car_audio_storage)))
-    }
+    private fun hierarchy() = carAudioHierarchy(
+        radioEnabled = preferences.radioEnabled,
+        iptvAvailable = auxiliary.hasLive("iptv"),
+        tvheadendAvailable = auxiliary.hasLive("tvheadend"),
+        spotifyAvailable = spotifyEnabled(),
+        storageAvailable = auxiliary.hasStorage(),
+    )
+
+    private fun root(): List<CarAudioEntry> = hierarchy().roots.map(::navigationFolder)
+
+    private fun navigationFolder(id: String): CarAudioEntry = folder(id, context.getString(when (id) {
+        CarAudioIds.RADIO_ROOT -> R.string.car_audio_radio
+        CarAudioIds.LIVE_ROOT -> R.string.tvh_title
+        CarAudioIds.SPOTIFY_ROOT -> R.string.car_audio_spotify
+        CarAudioIds.LIBRARY_ROOT -> R.string.library_default_title
+        CarAudioIds.MUSIC_LIBRARIES -> R.string.car_audio_music_libraries
+        CarAudioIds.STORAGE_ROOT -> R.string.car_audio_storage
+        CarAudioIds.RADIO_FAVORITES -> R.string.car_audio_favorites
+        CarAudioIds.RADIO_RECENT -> R.string.car_audio_recent
+        CarAudioIds.RADIO_POPULAR -> R.string.car_audio_popular
+        CarAudioIds.RADIO_ALL -> R.string.car_audio_all
+        CarAudioIds.RADIO_GENRES -> R.string.car_audio_genres
+        CarAudioIds.RADIO_COUNTRIES -> R.string.car_audio_countries
+        CarAudioIds.RADIO_LANGUAGES -> R.string.car_audio_languages
+        CarAudioIds.LIVE_RADIO_IPTV -> R.string.car_audio_iptv_radio
+        CarAudioIds.LIVE_RADIO_TVH -> R.string.car_audio_tvh_radio
+        else -> error("Unknown car navigation folder")
+    }))
 
     private fun folder(id: String, title: String, subtitle: String? = null) =
         CarAudioEntry(id, title, subtitle)
@@ -235,21 +253,11 @@ internal class CarAudioCatalog @Inject constructor(
     }
 
     private suspend fun loadPage(parentId: String): List<CarAudioEntry> = when (parentId) {
-        CarAudioIds.RADIO_ROOT -> buildList {
-            if (preferences.radioEnabled) {
-                add(folder(CarAudioIds.RADIO_FAVORITES, context.getString(R.string.car_audio_favorites)))
-                add(folder(CarAudioIds.RADIO_RECENT, context.getString(R.string.car_audio_recent)))
-                add(folder(CarAudioIds.RADIO_POPULAR, context.getString(R.string.car_audio_popular)))
-                add(folder(CarAudioIds.RADIO_ALL, context.getString(R.string.car_audio_all)))
-                add(folder(CarAudioIds.RADIO_GENRES, context.getString(R.string.car_audio_genres)))
-                add(folder(CarAudioIds.RADIO_COUNTRIES, context.getString(R.string.car_audio_countries)))
-                add(folder(CarAudioIds.RADIO_LANGUAGES, context.getString(R.string.car_audio_languages)))
-            }
-            if (auxiliary.hasLive("iptv"))
-                add(folder(CarAudioIds.LIVE_RADIO_IPTV, context.getString(R.string.car_audio_iptv_radio)))
-            if (auxiliary.hasLive("tvheadend"))
-                add(folder(CarAudioIds.LIVE_RADIO_TVH, context.getString(R.string.car_audio_tvh_radio)))
-        }
+        CarAudioIds.RADIO_ROOT -> hierarchy().radioFolders.map(::navigationFolder)
+        CarAudioIds.LIVE_ROOT -> hierarchy().liveFolders.map(::navigationFolder)
+        // This container is intentionally local: unavailable media servers cannot prevent
+        // opening DLNA/files when both library sources share the fourth navigation tab.
+        CarAudioIds.LIBRARY_ROOT -> hierarchy().libraryFolders.map(::navigationFolder)
         CarAudioIds.SPOTIFY_ROOT -> if (spotifyEnabled()) listOf(
             folder(CarAudioIds.SPOTIFY_HOME, context.getString(R.string.car_audio_home)),
             folder(CarAudioIds.SPOTIFY_LIKED, context.getString(R.string.car_audio_liked)),
