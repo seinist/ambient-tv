@@ -55,7 +55,11 @@ class DetailVersionFocusTest {
         longSummary: Boolean = false,
     ): MutableState<MediaItem> {
         val item = movie("movie", "Versioned film").copy(
-            summary = if (longSummary) "A long film synopsis fills all five lines of the detail hero. ".repeat(40) else null,
+            // Explicit paragraphs guarantee real overflow in Robolectric's text layout too;
+            // a repeated single paragraph may be measured without soft wrapping there.
+            summary = if (longSummary) (1..40).joinToString("\n") {
+                "Paragraph $it of the complete film synopsis."
+            } else null,
             mediaVersions = (0 until 6).map { index ->
                 MediaVersion(
                     streamUrl = if (index in disabled) null else "https://example.invalid/version-$index.mkv",
@@ -205,6 +209,8 @@ class DetailVersionFocusTest {
         val summary = checkNotNull(itemState.value.summary).trim()
         val description = rule.onNode(hasText(summary))
         description.assertIsFocused()
+        assertTrue("The long-description fixture must overflow its reading viewport",
+            description.fetchSemanticsNode().config[SemanticsProperties.VerticalScrollAxisRange].maxValue() > 0f)
 
         press(Key.DirectionDown)
         description.assertIsFocused()
