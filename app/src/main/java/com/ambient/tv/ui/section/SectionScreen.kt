@@ -917,7 +917,7 @@ private fun RecommendationRowsPage(
                     state = rowsState,
                     modifier = Modifier
                         .fillMaxSize()
-                        .rowColumnFocusWrapRight(columnFocus)
+                        .rowColumnFocusWrapRight(columnFocus, wrapLeft = !handheld)
                         .rowColumnFocusNavigation(
                             columnFocus,
                             scrollToTop = {
@@ -956,10 +956,10 @@ private fun RecommendationRowsPage(
                             modifier = Modifier.onlyActiveHeroRow(
                                 index,
                                 activeIndex = {
-                                    centeredRowIndex.intValue.takeIf { it >= 0 } ?: restoreRowIndex
-                                },
-                                revealDuringScroll = {
-                                    rowsState.isScrollInProgress || pendingVisualRowIndex.intValue >= 0
+                                    // Show only the destination row while its vertical scroll is in flight.
+                                    pendingVisualRowIndex.intValue.takeIf { it >= 0 }
+                                        ?: centeredRowIndex.intValue.takeIf { it >= 0 }
+                                        ?: restoreRowIndex
                                 },
                             ).then(
                                 if (index == 0) Modifier.onSizeChanged { size ->
