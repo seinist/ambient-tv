@@ -47,7 +47,7 @@ internal fun youtubeLiveDvrWindow(
     if (!isLive || !seekable || durationMs <= windowStartMs ||
         durationMs <= 0L || durationMs == Long.MAX_VALUE || windowStartMs < 0L) return null
     // The default player position is the SAFE live playback point, *not* the DVR duration.
-    val safeLive = livePositionMs?.takeIf { it in windowStartMs..durationMs } ?: durationMs
+    val safeLive = livePositionMs?.takeIf { it > windowStartMs && it <= durationMs } ?: durationMs
     return YouTubeLiveDvrWindow(safeLive, durationMs, windowStartMs)
 }
 
