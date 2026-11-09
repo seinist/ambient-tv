@@ -932,7 +932,9 @@ private fun YouTubeMedia3Playback(
                 currentWindow?.durationMs?.takeIf { it > 0L } ?: player.duration,
                 currentWindow?.defaultPositionMs,
             )
-            duration = if (playback.isLive) liveDvrWindow?.livePositionMs ?: 0L
+            // The LIVE player default is a safe *position* behind the end, never the
+            // length of its constantly refreshed HLS/DASH seekable window.
+            duration = if (playback.isLive) liveDvrWindow?.durationMs ?: 0L
                 else player.duration.takeIf { it > 0L } ?: duration
             position = seekCoordinator.displayedPosition(player.currentPosition.coerceAtLeast(0L))
             delay(250)
@@ -952,15 +954,19 @@ private fun YouTubeMedia3Playback(
         BackgroundPlaybackSession.userSeek()
         osd.interact()
         userSeeked = true
-        val limit = liveDvrWindow?.livePositionMs ?: duration.takeIf { it > 0L } ?: playback.durationMs
-        val requested = seekCoordinator.requestRelative(delta, position, limit)
+        val window = liveDvrWindow
+        val limit = if (playback.isLive) window?.windowEndMs ?: return
+            else duration.takeIf { it > 0L } ?: playback.durationMs
+        val initial = seekCoordinator.requestRelative(delta, position, limit)
+        val requested = window?.clampDecoderPositionMs(initial) ?: initial
         val landing = adjustedYouTubeSeekTarget(requested, playback, limit, sponsorPrefs, metadata.sponsorSkipEnabled, delta < 0L)
-        position = if (landing != requested) seekCoordinator.requestAbsolute(landing) else requested
+        position = if (landing != initial) seekCoordinator.requestAbsolute(landing) else initial
         // Live DVR edge != VOD EOF: preserve #307's terminal VOD handling without
         // forcing completion when a running live broadcast reaches its current edge.
         val terminalVodSeek = !playback.isLive &&
             com.ambient.tv.ui.player.isPlaybackEndSeek(requested, limit)
-        val immediateSeek = terminalVodSeek || liveDvrWindow?.targetsLiveEdge(requested) == true
+        val immediateSeek = terminalVodSeek || window?.targetsLiveEdge(requested) == true ||
+            window?.targetsWindowStart(requested) == true
         seekCoordinator.consumeCommit(force = immediateSeek)?.let(::commitSeek)
         seekCommitVersion++
         if (terminalVodSeek) {
@@ -978,10 +984,13 @@ private fun YouTubeMedia3Playback(
     }
     fun jumpToLive() {
         val window = liveDvrWindow ?: return
-        seek((window.livePositionMs - (seekCoordinator.pendingTarget ?: position)).coerceAtLeast(0L))
+        // Right edge is the latest DVR boundary; commitSeek chooses the player's current
+        // default live position at execution time, even when the window has just slid.
+        seek((window.windowEndMs - (seekCoordinator.pendingTarget ?: position)).coerceAtLeast(0L))
     }
     fun heldSeekStep(baseMs: Long, e: androidx.compose.ui.input.key.KeyEvent) =
-        com.ambient.tv.ui.player.acceleratedSeekStepMs(baseMs, e.nativeKeyEvent.repeatCount, duration.takeIf { it > 0L } ?: playback.durationMs)
+        com.ambient.tv.ui.player.acceleratedSeekStepMs(baseMs, e.nativeKeyEvent.repeatCount,
+            liveDvrWindow?.durationMs ?: duration.takeIf { it > 0L } ?: playback.durationMs)
     YouTubeSeekCommit(seekCommitVersion, seekCoordinator, ::commitSeek)
     LaunchedEffect(playback.resumeMs, playback.resumeResolved) {
         if (!playback.resumeResolved) return@LaunchedEffect
@@ -1330,15 +1339,19 @@ private fun YouTubeVlcPlayback(playback: YouTubePlayback, audioUri: String?, str
         BackgroundPlaybackSession.userSeek()
         osd.interact()
         userSeeked = true
-        val limit = liveDvrWindow?.livePositionMs ?: snapshot.durationMs.takeIf { it > 0L } ?: playback.durationMs
-        val requested = seekCoordinator.requestRelative(delta, displayedPosition, limit)
+        val window = liveDvrWindow
+        val limit = if (playback.isLive) window?.windowEndMs ?: return
+            else snapshot.durationMs.takeIf { it > 0L } ?: playback.durationMs
+        val initial = seekCoordinator.requestRelative(delta, displayedPosition, limit)
+        val requested = window?.clampDecoderPositionMs(initial) ?: initial
         val landing = adjustedYouTubeSeekTarget(requested, playback, limit, preferences, sponsorSkipEnabled, delta < 0L)
-        displayedPosition = if (landing != requested) seekCoordinator.requestAbsolute(landing) else requested
+        displayedPosition = if (landing != initial) seekCoordinator.requestAbsolute(landing) else initial
         // Live DVR edge != VOD EOF: preserve #307's terminal VOD handling without
         // forcing completion when a running live broadcast reaches its current edge.
         val terminalVodSeek = !playback.isLive &&
             com.ambient.tv.ui.player.isPlaybackEndSeek(requested, limit)
-        val immediateSeek = terminalVodSeek || liveDvrWindow?.targetsLiveEdge(requested) == true
+        val immediateSeek = terminalVodSeek || window?.targetsLiveEdge(requested) == true ||
+            window?.targetsWindowStart(requested) == true
         seekCoordinator.consumeCommit(force = immediateSeek)?.let(::commitSeek)
         seekCommitVersion++
         if (terminalVodSeek) {
@@ -1356,10 +1369,11 @@ private fun YouTubeVlcPlayback(playback: YouTubePlayback, audioUri: String?, str
     }
     fun jumpToLive() {
         val window = liveDvrWindow ?: return
-        seek((window.livePositionMs - (seekCoordinator.pendingTarget ?: displayedPosition)).coerceAtLeast(0L))
+        seek((window.windowEndMs - (seekCoordinator.pendingTarget ?: displayedPosition)).coerceAtLeast(0L))
     }
     fun heldSeekStep(baseMs: Long, e: androidx.compose.ui.input.key.KeyEvent) =
-        com.ambient.tv.ui.player.acceleratedSeekStepMs(baseMs, e.nativeKeyEvent.repeatCount, snapshot.durationMs.takeIf { it > 0L } ?: playback.durationMs)
+        com.ambient.tv.ui.player.acceleratedSeekStepMs(baseMs, e.nativeKeyEvent.repeatCount,
+            liveDvrWindow?.durationMs ?: snapshot.durationMs.takeIf { it > 0L } ?: playback.durationMs)
     YouTubeSeekCommit(seekCommitVersion, seekCoordinator, ::commitSeek)
     LaunchedEffect(playback.resumeMs, playback.resumeResolved) {
         if (!playback.resumeResolved) return@LaunchedEffect
@@ -1650,15 +1664,19 @@ private fun YouTubeMpvPlayback(playback: YouTubePlayback, streams: YouTubeStream
         BackgroundPlaybackSession.userSeek()
         osd.interact()
         userSeeked = true
-        val limit = liveDvrWindow?.livePositionMs ?: snapshot.durationMs.takeIf { it > 0L } ?: playback.durationMs
-        val requested = seekCoordinator.requestRelative(delta, displayedPosition, limit)
+        val window = liveDvrWindow
+        val limit = if (playback.isLive) window?.windowEndMs ?: return
+            else snapshot.durationMs.takeIf { it > 0L } ?: playback.durationMs
+        val initial = seekCoordinator.requestRelative(delta, displayedPosition, limit)
+        val requested = window?.clampDecoderPositionMs(initial) ?: initial
         val landing = adjustedYouTubeSeekTarget(requested, playback, limit, preferences, sponsorSkipEnabled, delta < 0L)
-        displayedPosition = if (landing != requested) seekCoordinator.requestAbsolute(landing) else requested
+        displayedPosition = if (landing != initial) seekCoordinator.requestAbsolute(landing) else initial
         // Live DVR edge != VOD EOF: preserve #307's terminal VOD handling without
         // forcing completion when a running live broadcast reaches its current edge.
         val terminalVodSeek = !playback.isLive &&
             com.ambient.tv.ui.player.isPlaybackEndSeek(requested, limit)
-        val immediateSeek = terminalVodSeek || liveDvrWindow?.targetsLiveEdge(requested) == true
+        val immediateSeek = terminalVodSeek || window?.targetsLiveEdge(requested) == true ||
+            window?.targetsWindowStart(requested) == true
         seekCoordinator.consumeCommit(force = immediateSeek)?.let(::commitSeek)
         seekCommitVersion++
         if (terminalVodSeek) {
@@ -1676,10 +1694,11 @@ private fun YouTubeMpvPlayback(playback: YouTubePlayback, streams: YouTubeStream
     }
     fun jumpToLive() {
         val window = liveDvrWindow ?: return
-        seek((window.livePositionMs - (seekCoordinator.pendingTarget ?: displayedPosition)).coerceAtLeast(0L))
+        seek((window.windowEndMs - (seekCoordinator.pendingTarget ?: displayedPosition)).coerceAtLeast(0L))
     }
     fun heldSeekStep(baseMs: Long, e: androidx.compose.ui.input.key.KeyEvent) =
-        com.ambient.tv.ui.player.acceleratedSeekStepMs(baseMs, e.nativeKeyEvent.repeatCount, snapshot.durationMs.takeIf { it > 0L } ?: playback.durationMs)
+        com.ambient.tv.ui.player.acceleratedSeekStepMs(baseMs, e.nativeKeyEvent.repeatCount,
+            liveDvrWindow?.durationMs ?: snapshot.durationMs.takeIf { it > 0L } ?: playback.durationMs)
     YouTubeSeekCommit(seekCommitVersion, seekCoordinator, ::commitSeek)
     LaunchedEffect(playback.resumeMs, playback.resumeResolved) {
         if (!playback.resumeResolved) return@LaunchedEffect
@@ -1896,7 +1915,8 @@ internal data class YouTubeOsdModel(
         val playFocusRequester = com.ambient.tv.ui.player.rememberPlayerPlayFocus()
         val navigation = LocalPlayerPanelNavigation.current
         val seekable = !playback.isLive || liveDvrWindow != null
-        val seekDurationMs = if (playback.isLive) liveDvrWindow?.livePositionMs ?: 0L else duration
+        val seekDurationMs = if (playback.isLive) liveDvrWindow?.durationMs ?: 0L else duration
+        val seekPositionMs = if (playback.isLive) liveDvrWindow?.displayPositionMs(position) ?: 0L else position
         val publication = if (playback.isLive) null else playback.publishedAtMs?.let {
             com.ambient.tv.ui.common.relativePublishedLabel(it)
         } ?: com.ambient.tv.youtube.youtubePublicationText(playback.publishedDate)
@@ -1921,7 +1941,7 @@ internal data class YouTubeOsdModel(
                 )
                 if (seekable && seekDurationMs > 0L) {
                     TvPlayerSeekBar(
-                        positionMs = position.coerceIn(0L, seekDurationMs),
+                        positionMs = seekPositionMs.coerceIn(0L, seekDurationMs),
                         durationMs = seekDurationMs,
                         paused = paused,
                         onSeekBy = onSeek,
