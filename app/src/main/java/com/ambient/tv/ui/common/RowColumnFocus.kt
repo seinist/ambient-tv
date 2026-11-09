@@ -158,10 +158,13 @@ class RowColumnFocus(initialMemory: Map<String, String> = emptyMap()) {
         // Moving between distant LazyRow endpoints disposes the original tile. This is the
         // *expected* focus-loss generation; do not abort the pending wrap just because the
         // source left composition. Another tile/row taking focus still invalidates it.
+        val sourceDetachedByScroll = afterScroll && activeTarget != null &&
+            activeTarget?.coordinates?.isAttached == false && activeRow == request.rowKey &&
+            activeItem == request.sourceItemKey && focusGeneration == request.focusGeneration
         val sourceDisposedByScroll = afterScroll && activeTarget == null && focused == null &&
             focusedRow == request.rowKey && memory[request.rowKey] == request.sourceItemKey &&
             focusGeneration == request.focusGeneration + 1
-        if (!onSource && !sourceDisposedByScroll) return null
+        if (!onSource && !sourceDetachedByScroll && !sourceDisposedByScroll) return null
         val handle = handles[request.rowKey]?.takeIf { it === request.rowHandle } ?: return null
         val keys = handle.itemKeys()
         val index = (if (request.right) handle.index.wrapRightIndex(keys, request.sourceItemKey, handle.focusableItemKeys())
