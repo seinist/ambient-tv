@@ -279,6 +279,44 @@ class YouTubeOsdNavigationTest {
         }
     }
 
+    @Test fun seekbarUsesFullMovingDvrWindowAndShowsZeroAtOldestBufferedFrame() {
+        val fixture = mount()
+        rule.runOnIdle {
+            fixture.model.value = fixture.model.value.copy(
+                playback = fixture.model.value.playback.copy(
+                    isLive = true, durationMs = 850_000L, resumeMs = 850_000L,
+                ),
+                position = 0L,
+                duration = 850_000L, // stale metadata must never become the OSD's limit
+                liveDvrWindow = YouTubeLiveDvrWindow(livePositionMs = 110_000L, windowEndMs = 120_000L),
+            )
+        }
+        rule.onNodeWithText("0:00 / 2:00", useUnmergedTree = true).assertIsDisplayed()
+
+        // Updating the manifest length must update the right edge, even when its safe
+        // default position (the actual playback point) remains behind it.
+        rule.runOnIdle {
+            fixture.model.value = fixture.model.value.copy(
+                position = 85_000L,
+                liveDvrWindow = YouTubeLiveDvrWindow(livePositionMs = 130_000L, windowEndMs = 145_000L),
+            )
+        }
+        rule.onNodeWithText("1:25 / 2:25", useUnmergedTree = true).assertIsDisplayed()
+
+        // An absolute decoder timeline must show its seekable subrange, not the
+        // entire elapsed broadcast or a saved watch position.
+        rule.runOnIdle {
+            fixture.model.value = fixture.model.value.copy(
+                position = 10_000_000L,
+                liveDvrWindow = YouTubeLiveDvrWindow(
+                    livePositionMs = 10_085_000L, windowEndMs = 10_090_000L,
+                    windowStartMs = 10_000_000L,
+                ),
+            )
+        }
+        rule.onNodeWithText("0:00 / 1:30", useUnmergedTree = true).assertIsDisplayed()
+    }
+
     @Test fun seekableLiveDvrShowsGoLiveActionAndRewindControls() {
         val fixture = mount()
         var goLiveRequests = 0
