@@ -1268,12 +1268,15 @@ private fun RecommendationCinematicPage(
     val restoreIndex = remember(state.recommendationRows, restoreRowId) { state.recommendationRows.indexOfFirst { it.id == restoreRowId }.coerceAtLeast(0) }
     val listState = rememberLazyListState(initialFirstVisibleItemIndex = restoreIndex)
     val rowFocus = com.ambient.tv.ui.common.rememberRowColumnFocus()
+    val cinematicCenteringGate = remember(listState) { com.ambient.tv.ui.common.RowFocusCenteringGate() }
     RegisterBrowseFocusRows(listState, state.recommendationRows.map { it.id to it.items.map { item -> item.ratingKey } })
     // On TV each section fills the viewport and the list snaps to the section that holds focus,
     // so header, hero and tile row are always shown whole, in both scroll directions.
     var focusedSectionIndex by remember { mutableStateOf(-1) }
     LaunchedEffect(focusedSectionIndex) {
-        if (focusedSectionIndex >= 0 && !handheld) listState.animateTvScrollToItem(focusedSectionIndex)
+        if (focusedSectionIndex >= 0 && !handheld && !cinematicCenteringGate.consume(focusedSectionIndex)) {
+            listState.animateTvScrollToItem(focusedSectionIndex)
+        }
     }
     LazyColumn(
         allowUpExit = true,
@@ -1282,10 +1285,20 @@ private fun RecommendationCinematicPage(
             .rowColumnFocusWrapRight(rowFocus, wrapLeft = !handheld)
             .rowColumnFocusNavigation(
                 rowFocus,
-                scrollToTop = { listState.scrollToItem(0) },
-                scrollToBottom = { listState.scrollToItem(state.recommendationRows.lastIndex) },
+                scrollToTop = {
+                    cinematicCenteringGate.beginMove()
+                    listState.scrollToItem(0)
+                },
+                scrollToBottom = {
+                    cinematicCenteringGate.beginMove()
+                    listState.scrollToItem(state.recommendationRows.lastIndex)
+                },
                 scrollToRow = { rowKey ->
-                    state.recommendationRows.indexOfFirst { it.id == rowKey }.takeIf { it >= 0 }?.let { listState.scrollToItem(it) }
+                    state.recommendationRows.indexOfFirst { it.id == rowKey }.takeIf { it >= 0 }?.let { index ->
+                        cinematicCenteringGate.beginMove()
+                        listState.animateTvScrollToItem(index)
+                        cinematicCenteringGate.markCentered(index)
+                    }
                 },
             ) { state.recommendationRows.map { it.id } },
         contentPadding = PaddingValues(bottom = if (handheld) 36.dp else 0.dp),
