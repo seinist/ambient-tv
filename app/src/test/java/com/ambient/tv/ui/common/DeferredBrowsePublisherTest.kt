@@ -10,7 +10,7 @@ class DeferredBrowsePublisherTest {
     @Test fun backgroundRowsConflateWhileNavigatingAndPublishTheNewestOnIdle() = runBlocking {
         var moving = true
         val published = mutableListOf<Int>()
-        val queue = DeferredBrowsePublisher(this, deferWhile = { moving }) { published += it }
+        val queue = DeferredBrowsePublisher<Int>(this, deferWhile = { moving }) { published += it }
 
         (1..60).forEach(queue::submit)
         delay(90L)
@@ -26,7 +26,7 @@ class DeferredBrowsePublisherTest {
     @Test fun immediateFirstResultInvalidatesOlderDeferredSnapshots() = runBlocking {
         var moving = true
         val published = mutableListOf<String>()
-        val queue = DeferredBrowsePublisher(this, deferWhile = { moving }) { published += it }
+        val queue = DeferredBrowsePublisher<String>(this, deferWhile = { moving }) { published += it }
 
         queue.submit("obsolete background response")
         moving = false
@@ -39,7 +39,7 @@ class DeferredBrowsePublisherTest {
     @Test fun navigationAwayCancelsAnyPendingPublication() = runBlocking {
         var moving = true
         val published = mutableListOf<Int>()
-        val queue = DeferredBrowsePublisher(this, deferWhile = { moving }) { published += it }
+        val queue = DeferredBrowsePublisher<Int>(this, deferWhile = { moving }) { published += it }
 
         queue.submit(1)
         queue.cancelPending()
