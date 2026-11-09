@@ -885,6 +885,7 @@ internal fun LibraryContent(
         // a plain bring-into-view would count the hero-covered top as visible and park the
         // row's heading behind the banner.
         val rowCentering = rememberRowCenteringState(rowListState)
+        val rowCenteringGate = remember(rowListState) { com.ambient.tv.ui.common.RowFocusCenteringGate() }
         val columnFocus = com.ambient.tv.ui.common.rememberRowColumnFocus()
         // Survives a live row leaving the lazy list, so the first entry of this visit
         // still starts on card 0 after the row is scrolled away and back.
@@ -914,16 +915,21 @@ internal fun LibraryContent(
         LaunchedEffect(centeredRowKey, state.rowKeys, rowListState) {
             // Row-entry events do not invalidate the whole Home composition.
             centeredRowKey.collectLatest { key ->
+                // Ignore an old row grabbing focus during a rapid D-pad retarget; its
+                // centering request must not cancel the glide to the new destination.
+                val pending = pendingVisualRow.value
+                if (pending != null && pending != key) return@collectLatest
                 val index = state.rowKeys.indexOf(key)
+                val alreadyCentered = rowCenteringGate.consume(key)
                 if (index >= 0) activeRowIndex.intValue = index
-                if (pendingVisualRow.value == key) pendingVisualRow.value = null
+                if (pending == key) pendingVisualRow.value = null
                 // The return viewport is already placed at its initial row before drawing.
                 // Do not start a centering glide as that same row receives its first focus.
                 if (returningRow) {
                     if (key == initialFocusRowId) returningRow = false
                     return@collectLatest
                 }
-                if (index >= 0) {
+                if (index >= 0 && !alreadyCentered) {
                     rowCentering.centerItem(index, bottomInset = bottomInsetPx)
                 }
             }
@@ -942,17 +948,23 @@ internal fun LibraryContent(
                     .rowColumnFocusNavigation(
                         columnFocus,
                         scrollToTop = {
+                            rowCenteringGate.beginMove()
                             pendingVisualRow.value = state.rowKeys.firstOrNull()
                             rowListState.glideToItem(glideWrap, 0)
                         },
                         scrollToBottom = {
+                            rowCenteringGate.beginMove()
                             pendingVisualRow.value = state.rowKeys.lastOrNull()
                             rowListState.glideToItem(glideWrap, state.rowKeys.lastIndex)
                         },
                         scrollToRow = { rowKey ->
+                            rowCenteringGate.beginMove()
                             pendingVisualRow.value = rowKey as? String
                             val index = state.rowKeys.indexOfFirst { it == rowKey }
-                            if (index >= 0) rowCentering.centerItem(index, bottomInset = bottomInsetPx)
+                            if (index >= 0) {
+                                rowCentering.centerItem(index, bottomInset = bottomInsetPx)
+                                rowCenteringGate.markCentered(rowKey)
+                            }
                         },
                     ) { state.rowKeys }
                     .clipToBounds()
