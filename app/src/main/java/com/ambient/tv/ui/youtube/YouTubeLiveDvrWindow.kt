@@ -1,21 +1,40 @@
 package com.ambient.tv.ui.youtube
 
 /**
- * The seekable part of a YouTube live timeline, in the decoder's window-relative clock.
+ * A live DVR window in the decoder's own time base, not a saved watch position.
  *
- * The metadata flag `isLive` alone is not enough: many live broadcasts have no DVR buffer.
- * For Media3, `livePositionMs` is the manifest's default live position, which is usually
- * slightly before the end of the window to allow for the target live latency.
+ * HLS/DASH in Media3 normally starts the current window at zero. Other decoders and
+ * SmartTube's SABR sources can use an absolute timeline with a nonzero first seekable
+ * position; keep the origin explicit rather than pretending that stream time zero is
+ * necessarily available. The right edge is the window END, never the preferred start
+ * position (which deliberately sits behind live to allow buffering).
  */
-internal data class YouTubeLiveDvrWindow(val livePositionMs: Long) {
+internal data class YouTubeLiveDvrWindow(
+    val livePositionMs: Long,
+    val windowEndMs: Long = livePositionMs,
+    val windowStartMs: Long = 0L,
+) {
+    val durationMs: Long get() = (windowEndMs - windowStartMs).coerceAtLeast(0L)
+
+    fun displayPositionMs(decoderPositionMs: Long): Long =
+        (decoderPositionMs.coerceIn(windowStartMs, windowEndMs) - windowStartMs)
+
+    fun clampDecoderPositionMs(targetMs: Long): Long = targetMs.coerceIn(windowStartMs, windowEndMs)
+
+    /** Relative control jumps still use decoder time; the OSD shows window-relative time. */
+    fun decoderPositionMs(displayPositionMs: Long): Long =
+        windowStartMs + displayPositionMs.coerceIn(0L, durationMs)
+
     fun behindLiveMs(positionMs: Long): Long =
-        (livePositionMs - positionMs.coerceAtLeast(0L)).coerceAtLeast(0L)
+        (livePositionMs - positionMs.coerceAtLeast(windowStartMs)).coerceAtLeast(0L)
 
     fun canJumpToLive(positionMs: Long): Boolean = behindLiveMs(positionMs) > LIVE_BEHIND_TOLERANCE_MS
 
-    /** Scrubbing to the right edge should go to the current live position, not to VOD EOF. */
+    /** Rightmost scrub and Go Live target the latest live point, not VOD EOF. */
     fun targetsLiveEdge(positionMs: Long): Boolean =
-        positionMs >= (livePositionMs - LIVE_EDGE_SEEK_TOLERANCE_MS).coerceAtLeast(0L)
+        positionMs >= (windowEndMs - LIVE_EDGE_SEEK_TOLERANCE_MS).coerceAtLeast(windowStartMs)
+
+    fun targetsWindowStart(positionMs: Long): Boolean = positionMs <= windowStartMs
 }
 
 internal fun youtubeLiveDvrWindow(
@@ -23,10 +42,13 @@ internal fun youtubeLiveDvrWindow(
     seekable: Boolean,
     durationMs: Long,
     livePositionMs: Long? = null,
+    windowStartMs: Long = 0L,
 ): YouTubeLiveDvrWindow? {
-    if (!isLive || !seekable || durationMs <= 0L) return null
-    val edge = livePositionMs?.takeIf { it > 0L }?.coerceAtMost(durationMs) ?: durationMs
-    return edge.takeIf { it > 0L }?.let(::YouTubeLiveDvrWindow)
+    if (!isLive || !seekable || durationMs <= windowStartMs ||
+        durationMs <= 0L || durationMs == Long.MAX_VALUE || windowStartMs < 0L) return null
+    // The default player position is the SAFE live playback point, *not* the DVR duration.
+    val safeLive = livePositionMs?.takeIf { it in windowStartMs..durationMs } ?: durationMs
+    return YouTubeLiveDvrWindow(safeLive, durationMs, windowStartMs)
 }
 
 private const val LIVE_BEHIND_TOLERANCE_MS = 5_000L
