@@ -18,6 +18,8 @@ class RowColumnItemIndexTest {
             assertEquals(1, index.entryIndex(items, "removed", "disabled", enabled))
             assertNull(index.wrapRightIndex(items, "item-3", enabled))
             assertEquals(1, index.wrapRightIndex(items, "item-9999", enabled))
+            assertEquals(9_999, index.wrapLeftIndex(items, "item-1", enabled))
+            assertNull(index.wrapLeftIndex(items, "item-3", enabled))
         }
         assertEquals(itemReads, items.reads)
         assertEquals(enabledReads, enabled.reads)
@@ -29,17 +31,22 @@ class RowColumnItemIndexTest {
         var enabled = listOf("a", "b", "c")
         assertEquals(2, index.entryIndex(items, "b", "a", enabled))
         assertEquals(1, index.wrapRightIndex(items, "c", enabled))
+        assertEquals(3, index.wrapLeftIndex(items, "a", enabled))
+        assertNull(index.wrapLeftIndex(items, "b", enabled))
         items = listOf("c", "disabled", "a", "b")
         assertEquals(3, index.entryIndex(items, "b", "a", enabled))
         assertNull(index.wrapRightIndex(items, "c", enabled))
         assertEquals(0, index.wrapRightIndex(items, "b", enabled))
+        assertEquals(3, index.wrapLeftIndex(items, "c", enabled))
         enabled = listOf("a")
         assertEquals(2, index.entryIndex(items, "b", "a", enabled))
         assertNull(index.wrapRightIndex(items, "b", enabled))
         assertEquals(2, index.wrapRightIndex(items, "a", enabled))
+        assertEquals(2, index.wrapLeftIndex(items, "a", enabled))
         items = listOf("c", "disabled")
         assertNull(index.entryIndex(items, "a", "b", enabled))
         assertNull(index.wrapRightIndex(items, "a", enabled))
+        assertNull(index.wrapLeftIndex(items, "a", enabled))
         enabled = emptyList()
         assertNull(index.entryIndex(items, "c", null, enabled))
     }
@@ -51,6 +58,8 @@ class RowColumnItemIndexTest {
         assertEquals(1, index.entryIndex(items, "b", "a"))
         assertEquals(0, index.wrapRightIndex(items, "b"))
         assertNull(index.wrapRightIndex(items, "a"))
+        assertEquals(4, index.wrapLeftIndex(items, "a"))
+        assertNull(index.wrapLeftIndex(items, "b"))
     }
 
     private class CountingKeys(private val values: List<String>) : AbstractList<Any>() {

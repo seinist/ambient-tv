@@ -938,7 +938,7 @@ internal fun LibraryContent(
                 state = rowListState,
                 modifier = Modifier.onFocusChanged { rowsHaveFocus = it.hasFocus }.then(Modifier
                     .fillMaxSize()
-                    .rowColumnFocusWrapRight(columnFocus)
+                    .rowColumnFocusWrapRight(columnFocus, wrapLeft = true)
                     .rowColumnFocusNavigation(
                         columnFocus,
                         scrollToTop = {
@@ -983,9 +983,11 @@ internal fun LibraryContent(
                     val rowIndex = state.rowKeys.indexOf(rowKey)
                     Box(Modifier.onlyActiveHeroRow(
                         rowIndex,
-                        activeIndex = { activeRowIndex.intValue },
-                        revealDuringScroll = {
-                            rowListState.isScrollInProgress || pendingVisualRow.value != null
+                        activeIndex = {
+                            // Change the only visible row at the start of a vertical glide,
+                            // not after the destination tile finally acquires focus.
+                            pendingVisualRow.value?.let(state.rowKeys::indexOf)?.takeIf { it >= 0 }
+                                ?: activeRowIndex.intValue
                         },
                     ).then(
                         if (rowIndex == 0) Modifier.onSizeChanged {
@@ -1984,19 +1986,13 @@ internal fun Modifier.onlyActiveHeroRow(index: Int, activeIndex: Int): Modifier 
 internal fun Modifier.onlyActiveHeroRow(
     index: Int,
     activeIndex: () -> Int,
-    revealDuringScroll: () -> Boolean = { false },
 ): Modifier {
     if (LocalHandheldUi.current) return this
-    // activeIndex is read in this small modifier composable, not by the row-column parent.
-    // Only the affected alpha layers recompose when focus moves vertically.
-    val alpha by androidx.compose.animation.core.animateFloatAsState(
-        targetValue = if (index == activeIndex()) 1f else 0f,
-        animationSpec = androidx.compose.animation.core.tween(120),
-        label = "heroRowInactive",
-    )
+    // Read the active row in the drawing layer, not by the lazy column's composition.
+    // Never reveal sibling rows during a vertical glide: they can peek above/below the
+    // parked row for several frames and then disappear when scrolling stops.
     return graphicsLayer {
-        // The incoming row is visible for the whole glide and until its tile actually takes focus.
-        this.alpha = if (revealDuringScroll()) 1f else alpha
+        alpha = if (index == activeIndex()) 1f else 0f
     }
 }
 

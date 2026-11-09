@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -171,4 +172,43 @@ class PageFocusTraversalTest {
         press(AndroidKeyEvent.KEYCODE_DPAD_RIGHT)
         rule.onNodeWithTag("a").assertIsFocused()
     }
+
+    @Test fun leftAtStartOfHeroRowWrapsToOffscreenLastCardInsteadOfSidebar() {
+        val first = FocusRequester()
+        val keys = (0..39).map { "card-$it" }
+        rule.setContent {
+            AmbientTvTheme {
+                val rowFocus = rememberRowColumnFocus()
+                val state = rememberLazyListState()
+                RegisterRowColumnFocus(rowFocus, "hero", state, keys)
+                Row {
+                    Box(Modifier.size(64.dp).testTag("sidebar").focusable())
+                    Column(Modifier.rowColumnFocusWrapRight(rowFocus, wrapLeft = true)) {
+                        LazyRow(
+                            state = state,
+                            modifier = Modifier.width(192.dp).containRowFocusExit(),
+                        ) {
+                            items(keys) { key ->
+                                Box(Modifier.size(96.dp)
+                                    .rowColumnFocusTarget(rowFocus, "hero", key)
+                                    .then(if (key == "card-0") Modifier.focusRequester(first) else Modifier)
+                                    .testTag(key).focusable())
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        rule.waitForIdle()
+        rule.runOnIdle { first.requestFocus() }
+        rule.waitForIdle()
+        rule.onNodeWithTag("card-0").assertIsFocused()
+
+        press(AndroidKeyEvent.KEYCODE_DPAD_LEFT)
+        rule.onNodeWithTag("card-39").assertIsFocused()
+        // The ordinary Right wrap remains symmetrical even after a long horizontal scroll.
+        press(AndroidKeyEvent.KEYCODE_DPAD_RIGHT)
+        rule.onNodeWithTag("card-0").assertIsFocused()
+    }
+
 }

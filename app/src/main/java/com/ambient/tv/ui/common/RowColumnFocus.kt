@@ -55,11 +55,12 @@ class RowColumnFocus(initialMemory: Map<String, String> = emptyMap()) {
         val index = RowColumnItemIndex()
     }
 
-    /** A single Right press, invalidated by a different focus transaction or row registration. */
-    internal class RightWrapRequest(
+    /** An endpoint wrap press, invalidated by a different focus transaction or row registration. */
+    internal class HorizontalWrapRequest(
         val rowKey: Any,
         val sourceItemKey: Any,
         val targetItemKey: Any,
+        val right: Boolean,
         val focusGeneration: Long,
         val rowHandle: Any,
     )
@@ -134,35 +135,54 @@ class RowColumnFocus(initialMemory: Map<String, String> = emptyMap()) {
     }
 
     /** Only registered horizontal rows can wrap; headers and retry actions are not rows. */
-    internal fun rightWrapRequest(): RightWrapRequest? {
+    internal fun horizontalWrapRequest(right: Boolean): HorizontalWrapRequest? {
         if (activeTarget?.coordinates?.isAttached != true) return null
         val rowKey = activeRow ?: return null
         val itemKey = activeItem ?: return null
         val handle = handles[rowKey] ?: return null
         val keys = handle.itemKeys()
-        val index = handle.index.wrapRightIndex(keys, itemKey, handle.focusableItemKeys()) ?: return null
-        return RightWrapRequest(rowKey, itemKey, keys[index], focusGeneration, handle)
+        val index = if (right) handle.index.wrapRightIndex(keys, itemKey, handle.focusableItemKeys())
+            else handle.index.wrapLeftIndex(keys, itemKey, handle.focusableItemKeys())
+        index ?: return null
+        return HorizontalWrapRequest(rowKey, itemKey, keys[index], right, focusGeneration, handle)
     }
 
-    private fun rightWrapIndex(request: RightWrapRequest): Int? {
-        if (activeTarget?.coordinates?.isAttached != true) return null
-        if (request.focusGeneration != focusGeneration || activeRow != request.rowKey || activeItem != request.sourceItemKey) return null
+    /** Home shortcut/offline rows have one ordinary button rather than a LazyRow. */
+    internal fun isInUnregisteredRow(): Boolean =
+        activeTarget?.coordinates?.isAttached == true && activeRow != null && handles[activeRow] == null
+
+    private fun horizontalWrapIndex(request: HorizontalWrapRequest, afterScroll: Boolean = false): Int? {
+        val onSource = activeTarget?.coordinates?.isAttached == true &&
+            request.focusGeneration == focusGeneration && activeRow == request.rowKey &&
+            activeItem == request.sourceItemKey
+        // Moving between distant LazyRow endpoints disposes the original tile. This is the
+        // *expected* focus-loss generation; do not abort the pending wrap just because the
+        // source left composition. Another tile/row taking focus still invalidates it.
+        val sourceDetachedByScroll = afterScroll && activeTarget != null &&
+            activeTarget?.coordinates?.isAttached == false && activeRow == request.rowKey &&
+            activeItem == request.sourceItemKey && focusGeneration == request.focusGeneration
+        val sourceDisposedByScroll = afterScroll && activeTarget == null && focused == null &&
+            focusedRow == request.rowKey && memory[request.rowKey] == request.sourceItemKey &&
+            focusGeneration == request.focusGeneration + 1
+        if (!onSource && !sourceDetachedByScroll && !sourceDisposedByScroll) return null
         val handle = handles[request.rowKey]?.takeIf { it === request.rowHandle } ?: return null
         val keys = handle.itemKeys()
-        val index = handle.index.wrapRightIndex(keys, request.sourceItemKey, handle.focusableItemKeys()) ?: return null
+        val index = (if (request.right) handle.index.wrapRightIndex(keys, request.sourceItemKey, handle.focusableItemKeys())
+            else handle.index.wrapLeftIndex(keys, request.sourceItemKey, handle.focusableItemKeys())) ?: return null
         return index.takeIf { keys[it] == request.targetItemKey }
     }
 
-    internal fun isRightWrapCurrent(request: RightWrapRequest): Boolean = rightWrapIndex(request) != null
+    internal fun isHorizontalWrapCurrent(request: HorizontalWrapRequest, afterScroll: Boolean = false): Boolean =
+        horizontalWrapIndex(request, afterScroll) != null
 
-    internal fun focusRightWrap(request: RightWrapRequest): Boolean =
-        isRightWrapCurrent(request) && focusItem(request.rowKey, request.targetItemKey)
+    internal fun focusHorizontalWrap(request: HorizontalWrapRequest, afterScroll: Boolean = false): Boolean =
+        isHorizontalWrapCurrent(request, afterScroll) && focusItem(request.rowKey, request.targetItemKey)
 
-    internal suspend fun scrollToRightWrap(request: RightWrapRequest): Boolean {
-        val index = rightWrapIndex(request) ?: return false
+    internal suspend fun scrollToHorizontalWrap(request: HorizontalWrapRequest): Boolean {
+        val index = horizontalWrapIndex(request) ?: return false
         val handle = handles[request.rowKey] ?: return false
         handle.state.scrollToItem(index)
-        return isRightWrapCurrent(request)
+        return isHorizontalWrapCurrent(request, afterScroll = true)
     }
 
     private fun clearActiveTarget(target: Target) {
@@ -270,57 +290,68 @@ fun Modifier.rowColumnFocusTarget(focus: RowColumnFocus?, rowKey: Any, itemKey: 
     if (focus == null) this else with(focus) { target(rowKey, itemKey, soundsOnFocus) }
 
 /**
- * Right at a horizontal row's last enabled card returns to its first enabled card. This is
- * independent of the remembered/default vertical entry and never searches a page header.
+ * On a horizontal row's last enabled card, Right returns to its first card.
+ * Hero pages also opt into Left at the first enabled card returning to the last. Key events
+ * are consumed before geometric focus search can move into the sidebar; Back still does that.
+ * Other browse views retain their existing Left-to-sidebar navigation by default.
  */
-fun Modifier.rowColumnFocusWrapRight(focus: RowColumnFocus): Modifier = composed {
+fun Modifier.rowColumnFocusWrapRight(focus: RowColumnFocus, wrapLeft: Boolean = false): Modifier = composed {
     if (LocalHandheldUi.current) return@composed Modifier
     val uiSounds = LocalUiSoundPlayer.current
     val scope = rememberCoroutineScope()
     var wrapJob by remember(focus) { mutableStateOf<Job?>(null) }
-    var pending by remember(focus) { mutableStateOf<RowColumnFocus.RightWrapRequest?>(null) }
-    var consumedRightDown by remember(focus) { mutableStateOf(false) }
+    var pending by remember(focus) { mutableStateOf<RowColumnFocus.HorizontalWrapRequest?>(null) }
+    var consumedWrapDown by remember(focus) { mutableStateOf(false) }
     DisposableEffect(focus) {
         onDispose { wrapJob?.cancel() }
     }
     onPreviewKeyEvent { event ->
-        if (event.key != Key.DirectionRight) {
+        val right = event.key == Key.DirectionRight
+        val left = wrapLeft && event.key == Key.DirectionLeft
+        if (!right && !left) {
             if (event.type == KeyEventType.KeyDown) {
                 wrapJob?.cancel()
                 pending = null
-                consumedRightDown = false
+                consumedWrapDown = false
             }
             return@onPreviewKeyEvent false
         }
         if (event.type == KeyEventType.KeyUp) {
-            val consumed = consumedRightDown
-            consumedRightDown = false
+            val consumed = consumedWrapDown
+            consumedWrapDown = false
             return@onPreviewKeyEvent consumed
         }
         if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
         if (wrapJob?.isActive == true) {
-            if (pending?.let(focus::isRightWrapCurrent) == true) {
-                consumedRightDown = true
+            if (pending?.right == right) {
+                consumedWrapDown = true
                 return@onPreviewKeyEvent true
             }
             wrapJob?.cancel()
             pending = null
         }
-        val request = focus.rightWrapRequest() ?: return@onPreviewKeyEvent false
-        consumedRightDown = true
+        val request = focus.horizontalWrapRequest(right) ?: run {
+            // One-button Home rows still belong to content, not the sidebar.
+            if (left && focus.isInUnregisteredRow()) {
+                consumedWrapDown = true
+                return@onPreviewKeyEvent true
+            }
+            return@onPreviewKeyEvent false
+        }
+        consumedWrapDown = true
         if (request.sourceItemKey == request.targetItemKey) return@onPreviewKeyEvent true
-        if (focus.focusRightWrap(request)) {
+        if (focus.focusHorizontalWrap(request)) {
             if (focus.lastMoveNeedsSound) uiSounds?.playFocus()
             return@onPreviewKeyEvent true
         }
         pending = request
         wrapJob = scope.launch {
             try {
-                if (!focus.scrollToRightWrap(request)) return@launch
+                if (!focus.scrollToHorizontalWrap(request)) return@launch
                 repeat(12) {
                     withFrameNanos { }
-                    if (!focus.isRightWrapCurrent(request)) return@launch
-                    if (focus.focusRightWrap(request)) {
+                    if (!focus.isHorizontalWrapCurrent(request, afterScroll = true)) return@launch
+                    if (focus.focusHorizontalWrap(request, afterScroll = true)) {
                         if (focus.lastMoveNeedsSound) uiSounds?.playFocus()
                         return@launch
                     }
