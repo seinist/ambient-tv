@@ -866,6 +866,7 @@ private fun RecommendationRowsPage(
     val rowsState = com.ambient.tv.ui.common.rememberBrowseRowColumnState(initialFirstVisibleItemIndex = restoreRowIndex)
     RegisterBrowseFocusRows(rowsState, state.recommendationRows.map { it.id to it.items.map { item -> item.ratingKey } })
     val rowCentering = rememberRowCenteringState(rowsState)
+    val rowCenteringGate = remember(rowsState) { com.ambient.tv.ui.common.RowFocusCenteringGate() }
     // Row selection is consumed only by the tiny alpha modifiers and this coroutine; keeping it
     // out of the parent composition avoids rebuilding all nested LazyRows on every Up/Down.
     val centeredRowIndex = remember { mutableIntStateOf(-1) }
@@ -878,12 +879,16 @@ private fun RecommendationRowsPage(
     LaunchedEffect(rowCentering, restoreRowIndex, bottomInsetPx) {
         snapshotFlow { centeredRowIndex.intValue }.collectLatest { index ->
             if (index < 0) return@collectLatest
-            if (pendingVisualRowIndex.intValue == index) pendingVisualRowIndex.intValue = -1
+            // A previous row must not restart an old centering during a rapid retarget.
+            val pending = pendingVisualRowIndex.intValue
+            if (pending >= 0 && pending != index) return@collectLatest
+            val alreadyCentered = rowCenteringGate.consume(index)
+            if (pending == index) pendingVisualRowIndex.intValue = -1
             if (returningRow) {
                 if (index == restoreRowIndex) returningRow = false
                 return@collectLatest
             }
-            rowCentering.centerItem(index, alignTop = true, bottomInset = bottomInsetPx)
+            if (!alreadyCentered) rowCentering.centerItem(index, alignTop = true, bottomInset = bottomInsetPx)
         }
     }
     val rowScrollSpec = if (handheld) LocalBringIntoViewSpec.current else ExplicitRowScrollSpec
@@ -921,18 +926,22 @@ private fun RecommendationRowsPage(
                         .rowColumnFocusNavigation(
                             columnFocus,
                             scrollToTop = {
+                                rowCenteringGate.beginMove()
                                 pendingVisualRowIndex.intValue = 0
                                 rowsState.glideToItem(!performance.reducedEffects, 0)
                             },
                             scrollToBottom = {
+                                rowCenteringGate.beginMove()
                                 pendingVisualRowIndex.intValue = state.recommendationRows.lastIndex
                                 rowsState.glideToItem(!performance.reducedEffects, state.recommendationRows.lastIndex)
                             },
                             scrollToRow = { rowKey ->
                                 val index = state.recommendationRows.indexOfFirst { it.id == rowKey }
                                 if (index >= 0) {
+                                    rowCenteringGate.beginMove()
                                     pendingVisualRowIndex.intValue = index
                                     rowCentering.centerItem(index, topInset = heroInsetPx, alignTop = true, bottomInset = bottomInsetPx)
+                                    rowCenteringGate.markCentered(index)
                                 }
                             },
                         ) { state.recommendationRows.map { it.id } }
