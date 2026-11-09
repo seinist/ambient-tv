@@ -1270,7 +1270,7 @@ private fun RecommendationCinematicPage(
         allowUpExit = true,
         state = listState,
         modifier = Modifier.fillMaxSize()
-            .rowColumnFocusWrapRight(rowFocus)
+            .rowColumnFocusWrapRight(rowFocus, wrapLeft = !handheld)
             .rowColumnFocusNavigation(
                 rowFocus,
                 scrollToTop = { listState.scrollToItem(0) },
