@@ -151,28 +151,35 @@ class RowColumnFocus(initialMemory: Map<String, String> = emptyMap()) {
     internal fun isInUnregisteredRow(): Boolean =
         activeTarget?.coordinates?.isAttached == true && activeRow != null && handles[activeRow] == null
 
-    private fun horizontalWrapIndex(request: HorizontalWrapRequest): Int? {
-        if (activeTarget?.coordinates?.isAttached != true) return null
-        if (request.focusGeneration != focusGeneration || activeRow != request.rowKey ||
-            activeItem != request.sourceItemKey) return null
+    private fun horizontalWrapIndex(request: HorizontalWrapRequest, afterScroll: Boolean = false): Int? {
+        val onSource = activeTarget?.coordinates?.isAttached == true &&
+            request.focusGeneration == focusGeneration && activeRow == request.rowKey &&
+            activeItem == request.sourceItemKey
+        // Moving between distant LazyRow endpoints disposes the original tile. This is the
+        // *expected* focus-loss generation; do not abort the pending wrap just because the
+        // source left composition. Another tile/row taking focus still invalidates it.
+        val sourceDisposedByScroll = afterScroll && activeTarget == null && focused == null &&
+            focusedRow == request.rowKey && memory[request.rowKey] == request.sourceItemKey &&
+            focusGeneration == request.focusGeneration + 1
+        if (!onSource && !sourceDisposedByScroll) return null
         val handle = handles[request.rowKey]?.takeIf { it === request.rowHandle } ?: return null
         val keys = handle.itemKeys()
-        val index = if (request.right) handle.index.wrapRightIndex(keys, request.sourceItemKey, handle.focusableItemKeys())
-            else handle.index.wrapLeftIndex(keys, request.sourceItemKey, handle.focusableItemKeys())
-        index ?: return null
+        val index = (if (request.right) handle.index.wrapRightIndex(keys, request.sourceItemKey, handle.focusableItemKeys())
+            else handle.index.wrapLeftIndex(keys, request.sourceItemKey, handle.focusableItemKeys())) ?: return null
         return index.takeIf { keys[it] == request.targetItemKey }
     }
 
-    internal fun isHorizontalWrapCurrent(request: HorizontalWrapRequest): Boolean = horizontalWrapIndex(request) != null
+    internal fun isHorizontalWrapCurrent(request: HorizontalWrapRequest, afterScroll: Boolean = false): Boolean =
+        horizontalWrapIndex(request, afterScroll) != null
 
-    internal fun focusHorizontalWrap(request: HorizontalWrapRequest): Boolean =
-        isHorizontalWrapCurrent(request) && focusItem(request.rowKey, request.targetItemKey)
+    internal fun focusHorizontalWrap(request: HorizontalWrapRequest, afterScroll: Boolean = false): Boolean =
+        isHorizontalWrapCurrent(request, afterScroll) && focusItem(request.rowKey, request.targetItemKey)
 
     internal suspend fun scrollToHorizontalWrap(request: HorizontalWrapRequest): Boolean {
         val index = horizontalWrapIndex(request) ?: return false
         val handle = handles[request.rowKey] ?: return false
         handle.state.scrollToItem(index)
-        return isHorizontalWrapCurrent(request)
+        return isHorizontalWrapCurrent(request, afterScroll = true)
     }
 
     private fun clearActiveTarget(target: Target) {
@@ -340,8 +347,8 @@ fun Modifier.rowColumnFocusWrapRight(focus: RowColumnFocus, wrapLeft: Boolean = 
                 if (!focus.scrollToHorizontalWrap(request)) return@launch
                 repeat(12) {
                     withFrameNanos { }
-                    if (!focus.isHorizontalWrapCurrent(request)) return@launch
-                    if (focus.focusHorizontalWrap(request)) {
+                    if (!focus.isHorizontalWrapCurrent(request, afterScroll = true)) return@launch
+                    if (focus.focusHorizontalWrap(request, afterScroll = true)) {
                         if (focus.lastMoveNeedsSound) uiSounds?.playFocus()
                         return@launch
                     }
