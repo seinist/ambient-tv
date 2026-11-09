@@ -770,7 +770,7 @@ class YouTubeViewModel @Inject constructor(
 
     private fun contentLoadFailed(error: Throwable, manual: Boolean, generation: Long) {
         if (generation != contentGeneration) return
-        rowPublisher.cancelPending()
+        // Keep already received partial rows; a transient refresh error must not erase them.
         val empty = _uiState.value.rows.isEmpty()
         _uiState.value = _uiState.value.copy(loading = false,
             error = error.userMessage().takeIf { empty },
