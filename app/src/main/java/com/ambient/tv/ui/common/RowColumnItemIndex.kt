@@ -6,6 +6,7 @@ internal class RowColumnItemIndex {
     private var indexedFocusableItems: List<Any>? = null
     private var enabledIndices: Map<Any, Int> = emptyMap()
     private var firstEnabledIndex: Int? = null
+    private var lastEnabledIndex: Int? = null
     private var lastEnabledKey: Any? = null
 
     private fun update(itemKeys: List<Any>, focusableItemKeys: List<Any>) {
@@ -13,17 +14,20 @@ internal class RowColumnItemIndex {
         val enabled = if (focusableItemKeys === itemKeys) null else focusableItemKeys.toHashSet()
         val indices = HashMap<Any, Int>(itemKeys.size)
         var first: Int? = null
+        var lastIndex: Int? = null
         var last: Any? = null
         itemKeys.forEachIndexed { index, key ->
             if (enabled == null || key in enabled) {
                 // Duplicate identities keep indexOf's first physical match for row entry.
                 indices.putIfAbsent(key, index)
                 if (first == null) first = index
+                lastIndex = index
                 last = key
             }
         }
         enabledIndices = indices
         firstEnabledIndex = first
+        lastEnabledIndex = lastIndex
         lastEnabledKey = last
         indexedItems = itemKeys
         indexedFocusableItems = focusableItemKeys
@@ -39,6 +43,16 @@ internal class RowColumnItemIndex {
         return rememberedItem?.let(enabledIndices::get)
             ?: defaultItem?.let(enabledIndices::get)
             ?: firstEnabledIndex
+    }
+
+    fun wrapLeftIndex(
+        itemKeys: List<Any>,
+        focusedItem: Any?,
+        focusableItemKeys: List<Any> = itemKeys,
+    ): Int? {
+        if (focusedItem == null) return null
+        update(itemKeys, focusableItemKeys)
+        return lastEnabledIndex?.takeIf { firstEnabledIndex?.let(itemKeys::get) == focusedItem }
     }
 
     fun wrapRightIndex(
