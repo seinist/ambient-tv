@@ -10,6 +10,7 @@ import com.ambient.tv.domain.model.MediaItem
 import com.ambient.tv.domain.model.MediaTag
 import com.ambient.tv.domain.repository.MediaRepository
 import com.ambient.tv.ui.common.PlexRefreshBus
+import com.ambient.tv.data.browse.BrowseWorkBudget
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import javax.inject.Inject
@@ -166,7 +167,7 @@ class SectionViewModel @Inject constructor(
             val libraryHeaders = launch {
                 mediaRepository.getProviderLibrarySections(sectionKey).onSuccess {
                     if (generation != loadGeneration) return@onSuccess
-                    if (sourceItems.isNotEmpty() || _uiState.value is SectionUiState.Loaded) rebuild()
+                    if (sourceItems.isNotEmpty() || _uiState.value is SectionUiState.Loaded) rebuild(background = true)
                 }
             }
             // Independent of library pagination: a slow feed must not hold back the library.
@@ -174,13 +175,13 @@ class SectionViewModel @Inject constructor(
                 mediaRepository.getProviderOnDeck(sectionKey).onSuccess {
                     if (generation != loadGeneration) return@onSuccess
                     onDeck = it
-                    if (sourceItems.isNotEmpty()) rebuild()
+                    if (sourceItems.isNotEmpty()) rebuild(background = true)
                 }
                 // Failures retain the cached/visible feed; successful empty answers clear it.
             }
             if (sourceItems.isEmpty()) {
                 sourceItems = mediaRepository.cachedSectionItems(sectionKey).orEmpty()
-                if (sourceItems.isNotEmpty()) rebuild()
+                if (sourceItems.isNotEmpty()) rebuild(background = true)
             }
             if (_uiState.value !is SectionUiState.Loaded) _uiState.value = SectionUiState.Loading
             val showPagesWhileLoading = sourceItems.isEmpty()
@@ -197,7 +198,7 @@ class SectionViewModel @Inject constructor(
                         withContext(Dispatchers.Main.immediate) {
                             if (generation == loadGeneration) {
                                 sourceItems = snapshot
-                                rebuild()
+                                rebuild(background = true)
                             }
                         }
                     }
@@ -222,7 +223,7 @@ class SectionViewModel @Inject constructor(
                         val next = com.ambient.tv.data.browse.survivingFocus(previousItems.map { it.ratingKey }, sourceItems.map { it.ratingKey }, focused.itemKey)
                         if (next != null) focusBuffer.update(stateKey(), next, focused.rowId)
                     }
-                    rebuild()
+                    rebuild(background = true)
                     if (page == SectionPage.COLLECTIONS) ensureCollectionsLoaded()
                 },
                 onFailure = { error ->
@@ -258,7 +259,7 @@ class SectionViewModel @Inject constructor(
         if (sourceItems.isEmpty() || (stale == null && sourceItems.any { it.collections.isNotEmpty() }) || collectionJob?.isActive == true) return
         collectionJob = viewModelScope.launch {
             collectionsLoading = stale == null
-            if (collectionsLoading) rebuild()
+            if (collectionsLoading) rebuild(background = true)
             mediaRepository.enrichCollections(stale ?: sourceItems).onSuccess { enriched ->
                 staleCollectionSource = null
                 if (enriched !== sourceItems) {
@@ -266,7 +267,7 @@ class SectionViewModel @Inject constructor(
                 }
             }
             collectionsLoading = false
-            rebuild()
+            rebuild(background = true)
         }
     }
 
@@ -488,10 +489,17 @@ class SectionViewModel @Inject constructor(
     }
 
     /** Sorting and collection grouping can touch tens of thousands of entries; keep it off Compose's main thread. */
-    private fun rebuild() {
+    private fun rebuild(background: Boolean = false) {
         val version = ++rebuildVersion
         rebuildJob?.cancel()
         rebuildJob = viewModelScope.launch(Dispatchers.Default) {
+            // Home defers full row snapshots during D-pad navigation. Recommendation/overview
+            // pages also receive independent source/on-deck/collection responses; do not
+            // recompute thousands of items and publish an entire tree between two key presses.
+            // First usable content and explicit filter/view changes always remain immediate.
+            if (background && _uiState.value is SectionUiState.Loaded) {
+                while (BrowseWorkBudget.recentlyInteracting(160L)) delay(32L)
+            }
             val loaded = buildLoaded()
             withContext(Dispatchers.Main.immediate) {
                 if (version == rebuildVersion) {
