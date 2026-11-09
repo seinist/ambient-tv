@@ -130,7 +130,11 @@ class RowColumnFocus(initialMemory: Map<String, String> = emptyMap()) {
     internal suspend fun scrollToEntry(rowKey: Any) {
         val handle = handles[rowKey] ?: return
         val (_, index) = entry(rowKey) ?: return
-        // One tile of context to the left, as ContentRow's own restore does.
+        // A prefetched destination may already be in the horizontal viewport. A redundant
+        // scrollToItem cancels active focus relocation and causes a visible sideways twitch.
+        // Only scroll if the remembered entry is actually outside the laid-out viewport.
+        if (handle.state.layoutInfo.visibleItemsInfo.any { it.index == index }) return
+        // Keep one tile of context on entry from outside the row's viewport.
         handle.state.scrollToItem((index - 1).coerceAtLeast(0))
     }
 
