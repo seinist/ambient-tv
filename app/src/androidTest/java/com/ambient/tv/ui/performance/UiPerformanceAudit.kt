@@ -338,6 +338,28 @@ internal class UiPerformanceAudit(private val instrumentation: Instrumentation, 
             }
             phase.set("idle")
             log("PASS 12 authoritative list updates retain media focus=${focus.get()}")
+            // Earlier audits measured snapshot rebuilds and D-pad traversal in separate
+            // phases. Reproduce the reported hitch: network replies replace row snapshots
+            // while the remote is actively moving between visible and offscreen rows.
+            val overlapUpdates = Thread {
+                Thread.sleep(1_650L) // walk() excludes its 1.5 s entrance/warmup before keys.
+                repeat(20) { update ->
+                    main {
+                        val incoming = rows.map { row -> row.copy(items = row.items.map { item ->
+                            if (item.ratingKey.endsWith(":4")) item.copy(title = "Live update $update") else item
+                        }) }
+                        state.value = state.value.copy(rows = incoming)
+                    }
+                    Thread.sleep(240L)
+                }
+            }
+            overlapUpdates.start()
+            try {
+                walk("browse-responses-during-dpad", true, keys)
+            } finally {
+                overlapUpdates.join()
+            }
+            log("PASS background row publications overlapped real D-pad travel; frame p95/dropped counts captured")
             Thread.sleep(2_500)
             val persisted = kotlinx.coroutines.runBlocking { disk.read("perf-fixture", "section:large-${if (mode == "split") 5 else 2}") }
             check(persisted.isNotEmpty()) { "Queued disk snapshot never persisted" }
