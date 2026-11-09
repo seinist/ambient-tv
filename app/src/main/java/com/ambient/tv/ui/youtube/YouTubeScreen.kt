@@ -15,6 +15,7 @@ import com.ambient.tv.ui.mobile.deviceHeroHeight
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.LocalBringIntoViewSpec
 import androidx.compose.foundation.focusGroup
 import androidx.compose.ui.focus.focusProperties
 import com.ambient.tv.ui.common.pageContentUp
@@ -85,6 +86,8 @@ import com.ambient.tv.youtube.YouTubeItem
 import com.ambient.tv.youtube.YouTubeRow
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.MutableStateFlow
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.repeatOnLifecycle
@@ -612,6 +615,7 @@ private fun Content(
 }
 
 /** The feed's section structure is independent of the chosen item presentation. */
+@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
 private fun SectionedYouTubeContent(
     rows: List<YouTubeRow>,
@@ -635,27 +639,72 @@ private fun SectionedYouTubeContent(
                 rows.map { row -> row.id to row.items.map { it.videoId } }
             })
             val rowFocus = rememberRowColumnFocus()
-            val rowCentering = com.ambient.tv.ui.common.rememberRowCenteringState(listState)
-            val glideRows = !com.ambient.tv.ui.performance.LocalPerformanceProfile.current.reducedEffects
-            LazyColumn(
-                allowUpExit = true,
-                modifier = Modifier.fillMaxSize().rowColumnFocusWrapRight(rowFocus).rowColumnFocusNavigation(
-                    rowFocus,
-                    scrollToTop = { listState.glideToItem(glideRows, 0) },
-                    scrollToBottom = { listState.glideToItem(glideRows, rows.lastIndex) },
-                    scrollToRow = { rowKey ->
-                        val index = rowKeys.indexOf(rowKey)
-                        if (index >= 0) rowCentering.centerItem(index)
-                    },
-                ) { rowKeys },
-                state = listState,
-                contentPadding = PaddingValues(bottom = 36.dp),
-            ) {
-                itemsIndexed(rows, key = { _, row -> "youtube-section:${row.id}" }) { index, row ->
-                    val rowId = youtubeRowId(index, row)
-                    Box(youtubeItemMotionModifier()) {
-                        RowMode(row, rowId, gridColumns, click, initialFocusRequester, focusTarget, onItemFocused,
-                            rowId in loadingRows, rowFocus)
+            val rowCentering = rememberRowCenteringState(listState)
+            val centeringGate = remember(listState) { RowFocusCenteringGate() }
+            // A row's focus can change independently of D-pad navigation (search/header,
+            // playback return and offscreen focus). Do not compose the entire feed on entry.
+            val focusedRowEvents = remember(listState) { MutableStateFlow<String?>(null) }
+            val pendingDpadRow = remember(listState) { mutableStateOf<String?>(null) }
+            val initialRowFocus = remember(listState) { mutableStateOf(true) }
+            LaunchedEffect(listState, rowKeys) {
+                focusedRowEvents.collectLatest { key ->
+                    if (key == null) return@collectLatest
+                    val pending = pendingDpadRow.value
+                    if (pending != null && key != pending) return@collectLatest
+                    val index = rowKeys.indexOf(key)
+                    if (index < 0) return@collectLatest
+                    val alreadyCentered = centeringGate.consume(key)
+                    if (pending == key) pendingDpadRow.value = null
+                    if (initialRowFocus.value) {
+                        initialRowFocus.value = false
+                        // The initial/returned viewport was parked before the first focus.
+                        if (listState.layoutInfo.visibleItemsInfo.any { it.index == index }) return@collectLatest
+                    }
+                    if (!alreadyCentered) rowCentering.centerItem(index)
+                }
+            }
+            val glideRows = !LocalPerformanceProfile.current.reducedEffects
+            val verticalScrollSpec = if (LocalHandheldUi.current) LocalBringIntoViewSpec.current else ExplicitRowScrollSpec
+            CompositionLocalProvider(LocalBringIntoViewSpec provides verticalScrollSpec) {
+                LazyColumn(
+                    allowUpExit = true,
+                    modifier = Modifier.fillMaxSize().rowColumnFocusWrapRight(rowFocus).rowColumnFocusNavigation(
+                        rowFocus,
+                        scrollToTop = {
+                            centeringGate.beginMove()
+                            pendingDpadRow.value = rowKeys.firstOrNull()
+                            listState.glideToItem(glideRows, 0)
+                        },
+                        scrollToBottom = {
+                            centeringGate.beginMove()
+                            pendingDpadRow.value = rowKeys.lastOrNull()
+                            listState.glideToItem(glideRows, rows.lastIndex)
+                        },
+                        scrollToRow = { rowKey ->
+                            val index = rowKeys.indexOf(rowKey)
+                            if (index >= 0) {
+                                centeringGate.beginMove()
+                                pendingDpadRow.value = rowKey as? String
+                                rowCentering.centerItem(index)
+                                centeringGate.markCentered(rowKey)
+                            }
+                        },
+                    ) { rowKeys },
+                    state = listState,
+                    contentPadding = PaddingValues(bottom = 36.dp),
+                ) {
+                    itemsIndexed(rows, key = { _, row -> "youtube-section:${row.id}" },
+                        contentType = { _, _ -> "youtube-section-row" }) { index, row ->
+                        val rowId = youtubeRowId(index, row)
+                        Box(youtubeItemMotionModifier()) {
+                            RowMode(row, rowId, gridColumns, click, initialFocusRequester, focusTarget,
+                                onItemFocused = { focusedRow, videoId ->
+                                    if (focusedRow != null) focusedRowEvents.value = focusedRow
+                                    onItemFocused(focusedRow, videoId)
+                                },
+                                loadingMore = rowId in loadingRows,
+                                rowFocus = rowFocus)
+                        }
                     }
                 }
             }
@@ -670,6 +719,7 @@ private fun SectionedYouTubeContent(
 private fun List<YouTubeRow>.hasSubsections(): Boolean =
     hasMultipleNamedContentSections(map { it.title to it.items.size })
 
+@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
 private fun RowMode(
     row: YouTubeRow,
@@ -701,6 +751,7 @@ private fun RowMode(
         KeepYouTubeLeadingInsertVisible(rowState, itemKeys)
         RegisterRowColumnFocus(rowFocus, rowId, rowState, itemKeys)
         ObserveYouTubeListViewport(rowId, rowState)
+        CompositionLocalProvider(LocalBringIntoViewSpec provides TvBringIntoViewSpec) {
         LazyRow(
             state = rowState,
             contentPadding = PaddingValues(horizontal = horizontalPadding),
@@ -715,6 +766,7 @@ private fun RowMode(
                 )
             }
             if (loadingMore) rowEndPlaceholders(rowId, Modifier.width(cardWidth), showText = true)
+        }
         }
     }
     }
@@ -1021,6 +1073,7 @@ private fun Cinematic(
     }
 }
 
+@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
 private fun SectionedYouTubeCinematic(
     rows: List<YouTubeRow>,
@@ -1037,38 +1090,81 @@ private fun SectionedYouTubeCinematic(
     KeepYouTubeLeadingInsertVisible(listState, rowKeys) { rowKeys.indexOf(it.row) }
     RegisterBrowseFocusRows(listState, remember(rows) { rows.map { row -> row.id to row.items.map { it.videoId } } })
     val rowFocus = rememberRowColumnFocus()
-    LazyColumn(
-        allowUpExit = true,
-        modifier = Modifier.fillMaxSize().rowColumnFocusWrapRight(rowFocus).rowColumnFocusNavigation(
-            rowFocus,
-            scrollToTop = { listState.scrollToItem(0) },
-            scrollToBottom = { listState.scrollToItem(rows.lastIndex) },
-            scrollToRow = { rowKey ->
-                val index = rowKeys.indexOf(rowKey)
-                if (index >= 0) listState.scrollToItem(index)
-            },
-        ) { rowKeys },
-        state = listState,
-        contentPadding = PaddingValues(bottom = 36.dp),
-        verticalArrangement = Arrangement.spacedBy(16.dp),
-    ) {
-        itemsIndexed(rows, key = { _, row -> "youtube-cinematic:${row.id}" }) { sectionIndex, row ->
-            Box(youtubeItemMotionModifier()) {
-            YouTubeCinematicSection(
-                row = row,
-                click = click,
-                rowId = youtubeRowId(sectionIndex, row),
-                initialFocusRequester = initialFocusRequester,
-                focusTarget = focusTarget,
-                onItemFocused = onItemFocused,
-                loadingMore = youtubeRowId(sectionIndex, row) in loadingRows,
-                rowFocus = rowFocus,
-            )
+    val handheld = LocalHandheldUi.current
+    val reducedEffects = LocalPerformanceProfile.current.reducedEffects
+    val centeringGate = remember(listState) { RowFocusCenteringGate() }
+    val focusedRowEvents = remember(listState) { MutableStateFlow<String?>(null) }
+    val pendingDpadRow = remember(listState) { mutableStateOf<String?>(null) }
+    val initialRowFocus = remember(listState) { mutableStateOf(true) }
+    LaunchedEffect(listState, rowKeys, handheld) {
+        focusedRowEvents.collectLatest { key ->
+            if (key == null || handheld) return@collectLatest
+            val pending = pendingDpadRow.value
+            if (pending != null && key != pending) return@collectLatest
+            val index = rowKeys.indexOf(key)
+            if (index < 0) return@collectLatest
+            val alreadyCentered = centeringGate.consume(key)
+            if (pending == key) pendingDpadRow.value = null
+            if (initialRowFocus.value) {
+                initialRowFocus.value = false
+                if (listState.layoutInfo.visibleItemsInfo.any { it.index == index }) return@collectLatest
+            }
+            if (!alreadyCentered) listState.animateTvScrollToItem(index)
+        }
+    }
+    val verticalScrollSpec = if (handheld) LocalBringIntoViewSpec.current else ExplicitRowScrollSpec
+    CompositionLocalProvider(LocalBringIntoViewSpec provides verticalScrollSpec) {
+        LazyColumn(
+            allowUpExit = true,
+            modifier = Modifier.fillMaxSize().rowColumnFocusWrapRight(rowFocus).rowColumnFocusNavigation(
+                rowFocus,
+                scrollToTop = {
+                    centeringGate.beginMove()
+                    pendingDpadRow.value = rowKeys.firstOrNull()
+                    listState.glideToItem(!reducedEffects, 0)
+                },
+                scrollToBottom = {
+                    centeringGate.beginMove()
+                    pendingDpadRow.value = rowKeys.lastOrNull()
+                    listState.glideToItem(!reducedEffects, rows.lastIndex)
+                },
+                scrollToRow = { rowKey ->
+                    val index = rowKeys.indexOf(rowKey)
+                    if (index >= 0) {
+                        centeringGate.beginMove()
+                        pendingDpadRow.value = rowKey as? String
+                        if (reducedEffects) listState.scrollToItem(index) else listState.animateTvScrollToItem(index)
+                        centeringGate.markCentered(rowKey)
+                    }
+                },
+            ) { rowKeys },
+            state = listState,
+            contentPadding = PaddingValues(bottom = 36.dp),
+            verticalArrangement = Arrangement.spacedBy(16.dp),
+        ) {
+            itemsIndexed(rows, key = { _, row -> "youtube-cinematic:${row.id}" },
+                contentType = { _, _ -> "youtube-cinematic-row" }) { sectionIndex, row ->
+                Box(youtubeItemMotionModifier()) {
+                    YouTubeCinematicSection(
+                        row = row,
+                        click = click,
+                        rowId = youtubeRowId(sectionIndex, row),
+                        initialFocusRequester = initialFocusRequester,
+                        focusTarget = focusTarget,
+                        onItemFocused = { focusedRow, videoId ->
+                            if (focusedRow != null) focusedRowEvents.value = focusedRow
+                            onItemFocused(focusedRow, videoId)
+                        },
+                        loadingMore = youtubeRowId(sectionIndex, row) in loadingRows,
+                        rowFocus = rowFocus,
+                    )
+                }
             }
         }
     }
 }
 
+@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
 private fun YouTubeCinematicSection(
     row: YouTubeRow,
@@ -1102,6 +1198,7 @@ private fun YouTubeCinematicSection(
                 KeepYouTubeLeadingInsertVisible(rowState, itemKeys)
                 RegisterRowColumnFocus(rowFocus, rowId, rowState, itemKeys)
                 ObserveYouTubeListViewport(rowId, rowState)
+                CompositionLocalProvider(LocalBringIntoViewSpec provides TvBringIntoViewSpec) {
                 LazyRow(
                     state = rowState,
                     contentPadding = PaddingValues(horizontal = screenGutter(), vertical = 14.dp),
@@ -1121,6 +1218,7 @@ private fun YouTubeCinematicSection(
                         )
                     }
                     if (loadingMore) rowEndPlaceholders(rowId, placeholderModifier, showText = false)
+                }
                 }
             }
         }
