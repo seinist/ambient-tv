@@ -21,6 +21,7 @@ import com.ambient.tv.youtube.youtubeRowsAfterPartialRefresh
 import com.ambient.tv.youtube.refreshYouTubeRowExtents
 import com.ambient.tv.youtube.withYouTubeRefreshBatches
 import com.ambient.tv.data.browse.BrowseWorkBudget
+import com.ambient.tv.ui.common.DeferredBrowsePublisher
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.sync.Semaphore
@@ -165,6 +166,7 @@ class YouTubeViewModel @Inject constructor(
             // A request started before playback must not replace this visit afterwards or
             // release its pin as a first-load result. The return is already a complete entry.
             contentGeneration++
+            rowPublisher.cancelPending()
             contentJob?.cancel()
             contentJob = null
             visibleViewportEnds.clear()
@@ -317,8 +319,11 @@ class YouTubeViewModel @Inject constructor(
                 page = engine.continueRow(session, rowId)
             }
             if (paging.token != token) return
-            // A page for a row the user already left lands once input settles, not mid-scroll.
-            if (focusedRowId != rowId) awaitQuietInput(maxWaitMs = 3_000L)
+            // Even a focused row can receive a large continuation while the user is rapidly
+            // navigating across sections. Append as one update only after the input quiets.
+            if (_uiState.value.rows.isNotEmpty()) {
+                while (BrowseWorkBudget.recentlyInteracting(160L)) delay(32L)
+            }
             if (paging.token != token || displayedContentKey != session) return
             val before = _uiState.value.rows.firstOrNull { it.id == rowId }?.items?.size ?: 0
             val pageItems = page?.items?.takeIf { it.isNotEmpty() }
@@ -391,6 +396,44 @@ class YouTubeViewModel @Inject constructor(
     private var entered = false
     private var lastHandledHomeSelection = YouTubeHomeSelection.requests.value
     val uiState: StateFlow<YouTubeUiState> = _uiState.asStateFlow()
+
+    private data class RowPublication(
+        val key: String,
+        val generation: Long,
+        val revision: Long,
+        val rows: List<YouTubeRow>,
+        val signedIn: Boolean? = null,
+        val final: Boolean = false,
+    )
+
+    // The cached first result is immediate. Once tiles are visible, incoming feed batches
+    // and the final response use one conflated publication at the next D-pad idle window.
+    // Never mutate Compose rows repeatedly while a LazyColumn is gliding between sections.
+    private val rowPublisher = DeferredBrowsePublisher(
+        scope = viewModelScope,
+        deferWhile = { _uiState.value.rows.isNotEmpty() && BrowseWorkBudget.recentlyInteracting(160L) },
+        onPublish = ::applyRowPublication,
+    )
+
+    private fun applyRowPublication(update: RowPublication) {
+        if (update.generation != contentGeneration || displayedContentKey != update.key ||
+            contentCache.revision() != update.revision) return
+
+        val current = _uiState.value
+        // Reuse the old list when the response only changed loading/sign-in flags. This also
+        // prevents identical cached items from disappearing/reappearing after every refresh.
+        val unchangedRows = current.rows === update.rows || current.rows == update.rows
+        val signed = update.signedIn ?: current.signedIn
+        if (!unchangedRows || current.loading || current.error != null || current.signedIn != signed) {
+            _uiState.value = current.copy(
+                rows = if (unchangedRows) current.rows else update.rows,
+                signedIn = signed,
+                loading = false,
+                error = null,
+            )
+        }
+        if (update.final) armPaging(update.key, update.revision)
+    }
 
     init {
         viewModelScope.launch {
@@ -666,7 +709,7 @@ class YouTubeViewModel @Inject constructor(
             if (!pinned(key)) {
                 val visible = if (preferIncomingOrder) youtubeRowsAfterPartialRefresh(_uiState.value.rows, rows, pinned = false)
                     else merged
-                _uiState.value = _uiState.value.copy(loading = false, error = null, rows = visible)
+                rowPublisher.submit(RowPublication(key, generation, revision, visible))
             }
         }
     }
@@ -688,12 +731,14 @@ class YouTubeViewModel @Inject constructor(
         if (keep) {
             Timber.tag("youtube-rows").d("%s refreshed in background (%d rows); visible tiles stay until the next opening", cacheKey, stored.size)
         }
-        _uiState.value = _uiState.value.copy(
-            loading = false,
-            signedIn = signed ?: _uiState.value.signedIn,
+        rowPublisher.submit(RowPublication(
+            key = cacheKey,
+            generation = contentGeneration,
+            revision = revision,
             rows = youtubeRowsAfterRefresh(_uiState.value.rows, stored, keep),
-        )
-        if (displayedContentKey == cacheKey) armPaging(cacheKey, revision)
+            signedIn = signed,
+            final = true,
+        ))
     }
 
     /**
@@ -715,6 +760,7 @@ class YouTubeViewModel @Inject constructor(
         _uiState.value.rows.takeIf { preserveExtent && displayedContentKey == key }.orEmpty()
 
     private fun beginContentLoad(): Long {
+        rowPublisher.cancelPending()
         visibleViewportEnds.clear()
         val generation = ++contentGeneration
         contentJob?.cancel()
@@ -724,6 +770,7 @@ class YouTubeViewModel @Inject constructor(
 
     private fun contentLoadFailed(error: Throwable, manual: Boolean, generation: Long) {
         if (generation != contentGeneration) return
+        rowPublisher.cancelPending()
         val empty = _uiState.value.rows.isEmpty()
         _uiState.value = _uiState.value.copy(loading = false,
             error = error.userMessage().takeIf { empty },
