@@ -42,7 +42,7 @@ internal class DeferredBrowsePublisher<T : Any>(
         }
     }
 
-    /** A new feed, account, playback return or failed refresh invalidates old publications. */
+    /** A new feed, account or playback return invalidates old publications. */
     fun cancelPending() {
         pending = null
         worker?.cancel()
