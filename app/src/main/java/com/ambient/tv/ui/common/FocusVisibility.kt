@@ -172,6 +172,29 @@ class RowCenteringState internal constructor(private val listState: LazyListStat
     }
 }
 
+/**
+ * A D-pad row move centers its destination before transferring focus. The row's own
+ * onFocusChanged also requests centering; running both requests re-enters LazyListState.scroll
+ * and can visibly interrupt the glide, especially while a new row is being composed.
+ *
+ * Only the completed explicit request is skipped. Normal focus entry, pointer navigation,
+ * playback restores and edge wraps still center their rows.
+ * Deliberately plain state: the gate is input bookkeeping, not a Compose invalidation.
+ */
+internal class RowFocusCenteringGate {
+    private var centeredRow: Any? = null
+
+    fun beginMove() { centeredRow = null }
+
+    fun markCentered(rowKey: Any) { centeredRow = rowKey }
+
+    fun consume(rowKey: Any?): Boolean {
+        val alreadyCentered = rowKey != null && centeredRow == rowKey
+        centeredRow = null
+        return alreadyCentered
+    }
+}
+
 /** One-shot centering for callers without an ongoing focus stream. */
 suspend fun LazyListState.centerItemInViewport(index: Int, topInset: Int = 0) =
     RowCenteringState(this).centerItem(index, topInset)

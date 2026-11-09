@@ -75,6 +75,9 @@ internal object CompanionBackupPolicy {
         "jellyfinHiddenSectionKeys", "embyHiddenSectionKeys", "localNetworkOnly", "wolRetryCount", "svpAvailable",
         "plexAudioPassthroughEnabled", "tvheadendAudioPassthroughEnabled", "screensaverPhotoAlbumKey",
         "screensaverPhotoAlbumTitle", "homeRows", "systemHomeHiddenRows", "libraryPreferences", "recentSearches",
+        // Existing completion/resume thresholds were never part of Companion transfers.
+        // Classify without silently expanding the synchronization allowlist.
+        "watchedThresholdPercent", "resumeIgnoreEndPercent",
         "wireGuardEnabled", "wireGuardPlexEnabled", "wireGuardJellyfinEnabled", "wireGuardEmbyEnabled",
         "wireGuardTvheadendEnabled",
     )

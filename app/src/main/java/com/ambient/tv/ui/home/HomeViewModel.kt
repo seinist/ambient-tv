@@ -951,6 +951,20 @@ class HomeViewModel @Inject constructor(
         loadEmbyRows()
     }
 
+    /**
+     * Source responses can arrive while the user is still moving between cached Home rows.
+     * Their row merge and snapshot publication run on Main; hold only background publications
+     * until the D-pad/scroll is quiet so they do not compete with an active LazyColumn glide.
+     * An empty/cold Home must still display its first usable response immediately.
+     */
+    private fun shouldDeferBackgroundHomeRows(): Boolean =
+        (_uiState.value as? HomeUiState.Loaded)?.rowKeys?.isNotEmpty() == true &&
+            com.ambient.tv.data.browse.BrowseWorkBudget.recentlyInteracting(160L)
+
+    private suspend fun awaitBackgroundHomePublishWindow() {
+        while (shouldDeferBackgroundHomeRows()) delay(32L)
+    }
+
     /** Each response updates its rows immediately; slow recommendations never hold back titles. */
     private suspend fun loadProviderRows(
         repository: MediaRepository,
@@ -996,7 +1010,9 @@ class HomeViewModel @Inject constructor(
         // Conflate bursts of independent server replies. First results appear immediately,
         // while later replies share publications instead of rebuilding every row each time.
         // Producer and publisher stay on Main, so the row maps remain single-threaded.
-        val partialPublisher = HomePartialPublishQueue(this) { publishPartial() }
+        val partialPublisher = HomePartialPublishQueue(this, deferWhile = ::shouldDeferBackgroundHomeRows) {
+            publishPartial()
+        }
         coroutineScope {
             if (hasEnabledRow(system, "continue") || (allContinueRow() != null && system in appPreferences.allContinueSystems)) launch {
                 val result = repository.getOnDeck()
@@ -1066,6 +1082,9 @@ class HomeViewModel @Inject constructor(
             val ids = fetchedRows.mapTo(hashSetOf()) { it.id }
             fetchedRows + oldRows.filterNot { it.id in ids }
         }
+        // The last authoritative response must not bypass the same navigation budget as
+        // partial responses; otherwise its full snapshot causes exactly one late hitch.
+        awaitBackgroundHomePublishWindow()
         val retained = (_uiState.value as? HomeUiState.Loaded)?.rows.orEmpty().filterNot { it.id.startsWith("$system.") }
         publishRows(sortCombinedRows(completed + retained))
         completed
