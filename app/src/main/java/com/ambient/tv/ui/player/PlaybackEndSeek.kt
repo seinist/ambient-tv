@@ -31,3 +31,15 @@ internal fun shouldPlayThroughPlaybackEnd(
 
 private const val PLAYBACK_END_TAIL_MS = 1_500L
 private const val PLAYBACK_END_MIN_FORWARD_MS = 250L
+
+/**
+ * A forward seek that stops within [PLAYBACK_END_SNAP_MS] of EOF targets the end itself. Chapter
+ * navigation can step to a duration a few hundred ms shorter than the decoder's (rounded metadata,
+ * session snapshot); without the snap that request is an ordinary seek which replays the tail
+ * (keyframe seeks land seconds earlier) instead of finishing the item.
+ */
+internal fun snapForwardSeekToPlaybackEnd(requestedMs: Long, durationMs: Long, forward: Boolean): Long =
+    if (forward && durationMs in 1 until Long.MAX_VALUE && requestedMs < durationMs &&
+        durationMs - requestedMs <= PLAYBACK_END_SNAP_MS) durationMs else requestedMs
+
+private const val PLAYBACK_END_SNAP_MS = 1_500L

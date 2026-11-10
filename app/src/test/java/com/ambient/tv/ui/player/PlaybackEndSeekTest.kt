@@ -70,4 +70,17 @@ class PlaybackEndSeekTest {
         assertEquals(duration - 1_500L, safePlaybackEndSeekTarget(0L, duration))
         assertNull(safePlaybackEndSeekTarget(Long.MAX_VALUE, duration))
     }
+
+    @Test fun forwardSeekJustShortOfEofSnapsToTheEnd() {
+        // Last-chapter step against a rounded duration (600_000 vs decoder 600_480).
+        assertEquals(600_480L, snapForwardSeekToPlaybackEnd(600_000L, 600_480L, forward = true))
+        assertTrue(isPlaybackEndSeek(snapForwardSeekToPlaybackEnd(599_000L, 600_480L, true), 600_480L))
+    }
+
+    @Test fun snapLeavesBackwardFarAndUnknownSeeksAlone() {
+        assertEquals(600_000L, snapForwardSeekToPlaybackEnd(600_000L, 600_480L, forward = false))
+        assertEquals(590_000L, snapForwardSeekToPlaybackEnd(590_000L, 600_480L, forward = true))
+        assertEquals(600_000L, snapForwardSeekToPlaybackEnd(600_000L, Long.MAX_VALUE, forward = true))
+        assertEquals(600_000L, snapForwardSeekToPlaybackEnd(600_000L, 0L, forward = true))
+    }
 }

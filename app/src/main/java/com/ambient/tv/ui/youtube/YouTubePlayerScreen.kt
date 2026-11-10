@@ -958,8 +958,13 @@ private fun YouTubeMedia3Playback(
         val limit = if (playback.isLive) window?.windowEndMs ?: return
             else duration.takeIf { it > 0L } ?: playback.durationMs
         val initial = seekCoordinator.requestRelative(delta, position, limit)
-        val requested = window?.clampDecoderPositionMs(initial) ?: initial
-        val landing = adjustedYouTubeSeekTarget(requested, playback, limit, sponsorPrefs, metadata.sponsorSkipEnabled, delta < 0L)
+        // Chapter navigation may know a slightly shorter (rounded/session) duration than the
+        // decoder; a forward step that stops just short of EOF still means "finish the video".
+        val requested = (window?.clampDecoderPositionMs(initial) ?: initial).let {
+            if (playback.isLive) it else com.ambient.tv.ui.player.snapForwardSeekToPlaybackEnd(it, limit, delta > 0L)
+        }
+        val landing = if (!playback.isLive && com.ambient.tv.ui.player.isPlaybackEndSeek(requested, limit)) requested
+            else adjustedYouTubeSeekTarget(requested, playback, limit, sponsorPrefs, metadata.sponsorSkipEnabled, delta < 0L)
         position = if (landing != initial) seekCoordinator.requestAbsolute(landing) else initial
         // Live DVR edge != VOD EOF: preserve #307's terminal VOD handling without
         // forcing completion when a running live broadcast reaches its current edge.
@@ -1343,8 +1348,13 @@ private fun YouTubeVlcPlayback(playback: YouTubePlayback, audioUri: String?, str
         val limit = if (playback.isLive) window?.windowEndMs ?: return
             else snapshot.durationMs.takeIf { it > 0L } ?: playback.durationMs
         val initial = seekCoordinator.requestRelative(delta, displayedPosition, limit)
-        val requested = window?.clampDecoderPositionMs(initial) ?: initial
-        val landing = adjustedYouTubeSeekTarget(requested, playback, limit, preferences, sponsorSkipEnabled, delta < 0L)
+        // Chapter navigation may know a slightly shorter (rounded/session) duration than the
+        // decoder; a forward step that stops just short of EOF still means "finish the video".
+        val requested = (window?.clampDecoderPositionMs(initial) ?: initial).let {
+            if (playback.isLive) it else com.ambient.tv.ui.player.snapForwardSeekToPlaybackEnd(it, limit, delta > 0L)
+        }
+        val landing = if (!playback.isLive && com.ambient.tv.ui.player.isPlaybackEndSeek(requested, limit)) requested
+            else adjustedYouTubeSeekTarget(requested, playback, limit, preferences, sponsorSkipEnabled, delta < 0L)
         displayedPosition = if (landing != initial) seekCoordinator.requestAbsolute(landing) else initial
         // Live DVR edge != VOD EOF: preserve #307's terminal VOD handling without
         // forcing completion when a running live broadcast reaches its current edge.
@@ -1668,8 +1678,13 @@ private fun YouTubeMpvPlayback(playback: YouTubePlayback, streams: YouTubeStream
         val limit = if (playback.isLive) window?.windowEndMs ?: return
             else snapshot.durationMs.takeIf { it > 0L } ?: playback.durationMs
         val initial = seekCoordinator.requestRelative(delta, displayedPosition, limit)
-        val requested = window?.clampDecoderPositionMs(initial) ?: initial
-        val landing = adjustedYouTubeSeekTarget(requested, playback, limit, preferences, sponsorSkipEnabled, delta < 0L)
+        // Chapter navigation may know a slightly shorter (rounded/session) duration than the
+        // decoder; a forward step that stops just short of EOF still means "finish the video".
+        val requested = (window?.clampDecoderPositionMs(initial) ?: initial).let {
+            if (playback.isLive) it else com.ambient.tv.ui.player.snapForwardSeekToPlaybackEnd(it, limit, delta > 0L)
+        }
+        val landing = if (!playback.isLive && com.ambient.tv.ui.player.isPlaybackEndSeek(requested, limit)) requested
+            else adjustedYouTubeSeekTarget(requested, playback, limit, preferences, sponsorSkipEnabled, delta < 0L)
         displayedPosition = if (landing != initial) seekCoordinator.requestAbsolute(landing) else initial
         // Live DVR edge != VOD EOF: preserve #307's terminal VOD handling without
         // forcing completion when a running live broadcast reaches its current edge.
