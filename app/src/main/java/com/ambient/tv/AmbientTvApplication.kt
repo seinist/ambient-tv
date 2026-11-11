@@ -90,7 +90,7 @@ class AmbientTvApplication : Application(), coil3.SingletonImageLoader.Factory {
             }
             .memoryCache {
                 MemoryCache.Builder()
-                    .maxSizePercent(this, if (lowRam) 0.12 else 0.18)
+                    .maxSizePercent(this, if (lowRam) 0.12 else 0.22)
                     .build()
             }
             .diskCache {

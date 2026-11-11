@@ -641,6 +641,11 @@ fun CrossfadeBackdropImage(
                     ImageRequest.Builder(context).data(layer.model).crossfade(false)
                         .apply {
                             requestHeaders(artworkHeadersForModel(layer.model, headers))
+                            // A full-screen backdrop is several card bitmaps in size. Kept in the
+                            // shared memory cache, a few focus changes evict the row cards, which
+                            // then visibly reload when they scroll back in. Backdrops reuse what is
+                            // already cached but are not added; the disk cache still serves them.
+                            memoryCachePolicy(coil3.request.CachePolicy.READ_ONLY)
                             if (decodeSize != null) {
                                 size(decodeSize.width, decodeSize.height)
                                 scale(if (contentScale == ContentScale.Fit || contentScale == ContentScale.Inside) coil3.size.Scale.FIT else coil3.size.Scale.FILL)
