@@ -460,6 +460,8 @@ fun ArtworkImage(
     staggerUncached: Boolean = false,
     /** Focused browse cards skip the background admission wave once scrolling is quiet. */
     prioritizeUncached: Boolean = false,
+    /** Opaque photos (video thumbnails): half the memory per bitmap, so more cards stay cached. */
+    opaque: Boolean = false,
 ) {
     val context = LocalContext.current
     val candidates = remember(model, fallbackModels) {
@@ -501,7 +503,11 @@ fun ArtworkImage(
         val key = cachedKey ?: return@remember false
         imageLoader.memoryCache?.get(key) != null
     }
-    val staggerThisLoad = staggerUncached && candidateIndex == 0 &&
+    // A card that already loaded once but whose bitmap was evicted from memory is a disk-cache
+    // hit: it reloads at once instead of waiting for scrolling to settle, which made cards
+    // scrolling back into view visibly blank and pop in again.
+    val loadedBefore = cachedKey != null
+    val staggerThisLoad = staggerUncached && candidateIndex == 0 && !loadedBefore &&
         !com.ambient.tv.ui.mobile.LocalHandheldUi.current && hasModel && !shownFromMemory
     // Keep admission once granted. A focus change restarts only a request still waiting in the
     // gate, which lets the newly focused card jump ahead without restarting an active load.
@@ -522,7 +528,7 @@ fun ArtworkImage(
             loadAdmitted = true
         }
     }
-    val request = remember(currentModel, context, headers, constrainDecode) {
+    val request = remember(currentModel, context, headers, constrainDecode, opaque) {
         ImageRequest.Builder(context).data(currentModel).crossfade(false)
             .placeholderMemoryCacheKey(cachedKey)
             .apply {
@@ -533,7 +539,7 @@ fun ArtworkImage(
                 requestHeaders(artworkHeadersForModel(currentModel, headers))
                 // AsyncImage's constraints resolver decodes at the measured view size.
                 // Do not wait for onSizeChanged/recomposition before creating the painter.
-                if (constrainDecode) {
+                if (constrainDecode || opaque) {
                     bitmapConfig(android.graphics.Bitmap.Config.RGB_565)
                 }
             }
