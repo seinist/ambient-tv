@@ -387,7 +387,9 @@ private fun NotificationCard(notice: AppNotice, reduced: Boolean, grouped: Boole
         }
         Crossfade(notice.phase, animationSpec = tween(if (reduced) 0 else 160), label = "noticeStatus") { phase ->
             Box(Modifier.size(24.dp), contentAlignment = Alignment.Center) {
-                if (phase == NoticePhase.WORKING && !reduced) CircularProgressIndicator(Modifier.size(22.dp), color = statusColor, strokeWidth = 2.dp)
+                // A timed bar already shows progress. The endless spinner redraws every frame and, on TV,
+                // forces the whole screen (backdrop included) to be composited continuously.
+                if (phase == NoticePhase.WORKING && !reduced && notice.progressTotalMs <= 0) CircularProgressIndicator(Modifier.size(22.dp), color = statusColor, strokeWidth = 2.dp)
                 else Icon(when (phase) {
                     NoticePhase.WORKING -> Icons.Filled.HourglassEmpty
                     NoticePhase.SUCCESS -> Icons.Filled.CheckCircle
