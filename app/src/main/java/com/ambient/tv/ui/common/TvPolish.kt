@@ -460,8 +460,6 @@ fun ArtworkImage(
     staggerUncached: Boolean = false,
     /** Focused browse cards skip the background admission wave once scrolling is quiet. */
     prioritizeUncached: Boolean = false,
-    /** Opaque photos (video thumbnails): half the memory per bitmap, so more cards stay cached. */
-    opaque: Boolean = false,
 ) {
     val context = LocalContext.current
     val candidates = remember(model, fallbackModels) {
@@ -503,11 +501,7 @@ fun ArtworkImage(
         val key = cachedKey ?: return@remember false
         imageLoader.memoryCache?.get(key) != null
     }
-    // A card that already loaded once but whose bitmap was evicted from memory is a disk-cache
-    // hit: it reloads at once instead of waiting for scrolling to settle, which made cards
-    // scrolling back into view visibly blank and pop in again.
-    val loadedBefore = cachedKey != null
-    val staggerThisLoad = staggerUncached && candidateIndex == 0 && !loadedBefore &&
+    val staggerThisLoad = staggerUncached && candidateIndex == 0 &&
         !com.ambient.tv.ui.mobile.LocalHandheldUi.current && hasModel && !shownFromMemory
     // Keep admission once granted. A focus change restarts only a request still waiting in the
     // gate, which lets the newly focused card jump ahead without restarting an active load.
@@ -528,7 +522,7 @@ fun ArtworkImage(
             loadAdmitted = true
         }
     }
-    val request = remember(currentModel, context, headers, constrainDecode, opaque) {
+    val request = remember(currentModel, context, headers, constrainDecode) {
         ImageRequest.Builder(context).data(currentModel).crossfade(false)
             .placeholderMemoryCacheKey(cachedKey)
             .apply {
@@ -539,7 +533,7 @@ fun ArtworkImage(
                 requestHeaders(artworkHeadersForModel(currentModel, headers))
                 // AsyncImage's constraints resolver decodes at the measured view size.
                 // Do not wait for onSizeChanged/recomposition before creating the painter.
-                if (constrainDecode || opaque) {
+                if (constrainDecode) {
                     bitmapConfig(android.graphics.Bitmap.Config.RGB_565)
                 }
             }
@@ -647,11 +641,6 @@ fun CrossfadeBackdropImage(
                     ImageRequest.Builder(context).data(layer.model).crossfade(false)
                         .apply {
                             requestHeaders(artworkHeadersForModel(layer.model, headers))
-                            // A full-screen backdrop is several card bitmaps in size. Kept in the
-                            // shared memory cache, a few focus changes evict the row cards, which
-                            // then visibly reload when they scroll back in. Backdrops reuse what is
-                            // already cached but are not added; the disk cache still serves them.
-                            memoryCachePolicy(coil3.request.CachePolicy.READ_ONLY)
                             if (decodeSize != null) {
                                 size(decodeSize.width, decodeSize.height)
                                 scale(if (contentScale == ContentScale.Fit || contentScale == ContentScale.Inside) coil3.size.Scale.FIT else coil3.size.Scale.FILL)

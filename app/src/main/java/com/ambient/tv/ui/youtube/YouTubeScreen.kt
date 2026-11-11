@@ -488,7 +488,6 @@ private fun YouTubeItemArtwork(
             item.imageUrl, item.title, modifier, ContentScale.Crop,
             fallbackModels = if (item.imageUrl != original) listOf(original) else emptyList(),
             staggerUncached = staggerUncached,
-            opaque = true,
             prioritizeUncached = prioritizeUncached,
         )
         return
