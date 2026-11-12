@@ -59,7 +59,7 @@ object VideoImageCatalog {
      */
     val media3Scalers = linkedMapOf(
         "bilinear" to "Bilinear", "bicubic" to "Bicubic", "catmull_rom" to "Catmull-Rom",
-        "lanczos" to "Lanczos · 3", "fsr" to "FSR · EASU + RCAS",
+        "lanczos" to "Lanczos", "fsr" to "FSR · EASU + RCAS",
         // MPV's other built-in kernels, sampled like MPV does (Media3KernelScalers).
         "mitchell" to "Mitchell", "hermite" to "Hermite", "robidoux" to "Robidoux",
         "robidouxsharp" to "RobidouxSharp", "spline16" to "Spline16", "spline36" to "Spline36",
@@ -105,7 +105,7 @@ object VideoImageCatalog {
      * Lanczos uses Media3's own effect; the other options use band-limited separable kernels.
      */
     val media3Downscalers = linkedMapOf(
-        "display" to "Display", "lanczos" to "Lanczos · 3",
+        "display" to "Display", "lanczos" to "Lanczos",
         "mitchell" to "Mitchell", "spline36" to "Spline36", "spline64" to "Spline64",
         "ssim_down" to "SSimDownscaler",
     )

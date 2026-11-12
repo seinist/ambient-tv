@@ -89,7 +89,7 @@ class Media3SsimProcessingTest {
         assertEquals("off", downStats.videoFilters)
         val downgraded = media3AppliedProcessing(true, null,
             listOf(Media3Stage.Downscale("lanczos")))
-        assertEquals("Down: Lanczos · 3", downgraded.upscaler)
+        assertEquals("Down: Lanczos", downgraded.upscaler)
     }
 
     @Test fun overloadingRemovesSsimSuperBeforeDestroyingTheSelectedScaler() {
