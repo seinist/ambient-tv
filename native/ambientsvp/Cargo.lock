@@ -779,7 +779,7 @@ dependencies = [
 [[package]]
 name = "svpflow-core"
 version = "0.1.3"
-source = "git+https://github.com/Z1xus/open-svpflow?rev=badc0de392ac528fb2802279164ad9f016cff9cb#badc0de392ac528fb2802279164ad9f016cff9cb"
+source = "git+https://github.com/Z1xus/open-svpflow?rev=badc0de4cd7131dff8a6a61ba205f9c64e30d162#badc0de4cd7131dff8a6a61ba205f9c64e30d162"
 dependencies = [
  "rayon",
 ]
@@ -787,7 +787,7 @@ dependencies = [
 [[package]]
 name = "svpflow-host"
 version = "0.1.3"
-source = "git+https://github.com/Z1xus/open-svpflow?rev=badc0de392ac528fb2802279164ad9f016cff9cb#badc0de392ac528fb2802279164ad9f016cff9cb"
+source = "git+https://github.com/Z1xus/open-svpflow?rev=badc0de4cd7131dff8a6a61ba205f9c64e30d162#badc0de4cd7131dff8a6a61ba205f9c64e30d162"
 dependencies = [
  "libloading 0.9.0",
 ]
@@ -795,7 +795,7 @@ dependencies = [
 [[package]]
 name = "svpflow-wasm"
 version = "0.1.3"
-source = "git+https://github.com/Z1xus/open-svpflow?rev=badc0de392ac528fb2802279164ad9f016cff9cb#badc0de392ac528fb2802279164ad9f016cff9cb"
+source = "git+https://github.com/Z1xus/open-svpflow?rev=badc0de4cd7131dff8a6a61ba205f9c64e30d162#badc0de4cd7131dff8a6a61ba205f9c64e30d162"
 dependencies = [
  "rayon",
  "svpflow-core",
@@ -807,7 +807,7 @@ dependencies = [
 [[package]]
 name = "svpflow1"
 version = "0.1.3"
-source = "git+https://github.com/Z1xus/open-svpflow?rev=badc0de392ac528fb2802279164ad9f016cff9cb#badc0de392ac528fb2802279164ad9f016cff9cb"
+source = "git+https://github.com/Z1xus/open-svpflow?rev=badc0de4cd7131dff8a6a61ba205f9c64e30d162#badc0de4cd7131dff8a6a61ba205f9c64e30d162"
 dependencies = [
  "rayon",
  "svpflow-core",
