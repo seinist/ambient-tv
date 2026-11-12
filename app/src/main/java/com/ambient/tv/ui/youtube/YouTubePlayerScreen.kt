@@ -983,6 +983,9 @@ private fun YouTubeMedia3Playback(
             window?.targetsWindowStart(requested) == true
         seekCoordinator.consumeCommit(force = immediateSeek)?.let(::commitSeek)
         seekCommitVersion++
+        // Finish at once instead of waiting for the decoder tail (userSeek() above took an
+        // earlier request back).
+        if (terminalVodSeek) BackgroundPlaybackSession.markUserEndSeek()
         if (terminalVodSeek) {
             val session = BackgroundPlaybackSession.snapshot.value
             if (com.ambient.tv.ui.player.shouldPlayThroughPlaybackEnd(
@@ -1375,6 +1378,9 @@ private fun YouTubeVlcPlayback(playback: YouTubePlayback, audioUri: String?, str
             window?.targetsWindowStart(requested) == true
         seekCoordinator.consumeCommit(force = immediateSeek)?.let(::commitSeek)
         seekCommitVersion++
+        // Finish at once instead of waiting for the decoder tail (userSeek() above took an
+        // earlier request back).
+        if (terminalVodSeek) BackgroundPlaybackSession.markUserEndSeek()
         if (terminalVodSeek) {
             val session = BackgroundPlaybackSession.snapshot.value
             if (com.ambient.tv.ui.player.shouldPlayThroughPlaybackEnd(
@@ -1710,6 +1716,9 @@ private fun YouTubeMpvPlayback(playback: YouTubePlayback, streams: YouTubeStream
             window?.targetsWindowStart(requested) == true
         seekCoordinator.consumeCommit(force = immediateSeek)?.let(::commitSeek)
         seekCommitVersion++
+        // Finish at once instead of waiting for the decoder tail (userSeek() above took an
+        // earlier request back).
+        if (terminalVodSeek) BackgroundPlaybackSession.markUserEndSeek()
         if (terminalVodSeek) {
             val session = BackgroundPlaybackSession.snapshot.value
             if (com.ambient.tv.ui.player.shouldPlayThroughPlaybackEnd(
