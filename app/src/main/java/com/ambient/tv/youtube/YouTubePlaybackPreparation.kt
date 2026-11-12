@@ -27,9 +27,14 @@ internal fun youtubeVodStreamPolicy(isEmulator: Boolean): YouTubeVodStreamPolicy
  * SmartTube clients sometimes return isLive=false for an already-running live broadcast.
  * A live HLS manifest with no finite video length is authoritative; an archived broadcast
  * with a finite length remains seekable VOD and must keep its normal resume point.
+ *
+ * [liveContent] (videoDetails.isLiveContent) must agree: the iOS-family clients that the
+ * format upgrade switches to also hand out HLS manifests for ordinary uploads. One of those
+ * with a missing length used to be played as live, without seeking, resume or chapters.
  */
-internal fun youtubeCurrentlyLive(providerLive: Boolean, hls: String?, lengthSeconds: Double?): Boolean =
-    providerLive || (!hls.isNullOrBlank() && (lengthSeconds == null || !lengthSeconds.isFinite() || lengthSeconds <= 0.0))
+internal fun youtubeCurrentlyLive(providerLive: Boolean, hls: String?, lengthSeconds: Double?, liveContent: Boolean = true): Boolean =
+    providerLive || (liveContent && !hls.isNullOrBlank() &&
+        (lengthSeconds == null || !lengthSeconds.isFinite() || lengthSeconds <= 0.0))
 
 /** No historical seek (including a chapter or an old background session) may reach a live source. */
 internal fun youtubeAtLiveEdge(playback: YouTubePlayback): YouTubePlayback =

@@ -806,6 +806,13 @@ private fun YouTubeMedia3Playback(
         tracks = player.currentTracks
         speed = player.playbackParameters.speed
         val listener = object : Player.Listener {
+                override fun onPositionDiscontinuity(old: Player.PositionInfo, new: Player.PositionInfo, reason: Int) {
+                    // Pairs with the "commit" line: a commit without this line never reached the decoder.
+                    if (reason == Player.DISCONTINUITY_REASON_SEEK || reason == Player.DISCONTINUITY_REASON_SEEK_ADJUSTMENT) {
+                        com.ambient.tv.diagnostics.DiagnosticLog.info("seek",
+                            "youtube media3 applied ${old.positionMs}->${new.positionMs} reason=$reason")
+                    }
+                }
                 override fun onIsPlayingChanged(value: Boolean) { playing = value }
                 override fun onPlayWhenReadyChanged(ready: Boolean, reason: Int) { playWhenReady = ready }
                 override fun onPlayerError(e: PlaybackException) {
@@ -946,6 +953,8 @@ private fun YouTubeMedia3Playback(
     fun commitSeek(targetMs: Long) {
         // A decoder seek to the end of a live manifest is not an EOF seek. Media3 knows the
         // current default live position even while the manifest's window keeps moving.
+        com.ambient.tv.diagnostics.DiagnosticLog.info("seek",
+            "youtube media3 commit target=$targetMs shown=$position engine=${player.currentPosition} duration=$duration seekable=${player.isCurrentMediaItemSeekable}")
         if (playback.isLive && liveDvrWindow?.targetsLiveEdge(targetMs) == true) player.seekToDefaultPosition()
         else player.seekToPlaybackPosition(targetMs)
     }
@@ -1337,6 +1346,8 @@ private fun YouTubeVlcPlayback(playback: YouTubePlayback, audioUri: String?, str
         // libVLC can mistake an exact seek to the end of a live buffer for EOF.
         val decoderTarget = if (playback.isLive && edge?.targetsLiveEdge(targetMs) == true)
             (edge.livePositionMs - 1_000L).coerceAtLeast(0L) else targetMs
+        com.ambient.tv.diagnostics.DiagnosticLog.info("seek",
+            "youtube vlc commit target=$decoderTarget shown=$displayedPosition engine=${snapshot.positionMs} duration=${snapshot.durationMs} seekable=${controller.canSeekNow()}")
         controller.seekTo(decoderTarget)
     }
     fun seek(delta: Long) {
@@ -1601,7 +1612,10 @@ private fun YouTubeMpvPlayback(playback: YouTubePlayback, streams: YouTubeStream
     val panelNavigation = rememberPlayerPanelNavigation(playback.videoId)
     val panelOpen = panelNavigation.panel != UnifiedPlayerPanel.NONE
     val snapshot = rememberMpvPlaybackSnapshot(controller, controller.audioSession.performanceHint || controller.audioSession.showFpsOverlay)
-    val liveDvrWindow = youtubeLiveDvrWindow(playback.isLive, controller.canSeekNow(), snapshot.durationMs)
+    // mpv reports no duration for many live HLS playlists although it can seek inside them.
+    // The played clock is then the known right edge: everything behind it stays reachable.
+    val liveDvrWindow = youtubeLiveDvrWindow(playback.isLive, controller.canSeekNow(),
+        snapshot.durationMs.takeIf { it > 0L } ?: snapshot.positionMs)
     // A failure the MPV controller could not recover from itself: continue in Media3 at the
     // same position instead of leaving a black picture (YouTube always plays there).
     LaunchedEffect(controller.errorMessage) {
@@ -1667,6 +1681,8 @@ private fun YouTubeMpvPlayback(playback: YouTubePlayback, streams: YouTubeStream
         // mpv's live timeline ends at the current window edge, not the end of the video.
         val decoderTarget = if (playback.isLive && edge?.targetsLiveEdge(targetMs) == true)
             (edge.livePositionMs - 1_000L).coerceAtLeast(0L) else targetMs
+        com.ambient.tv.diagnostics.DiagnosticLog.info("seek",
+            "youtube mpv commit target=$decoderTarget shown=$displayedPosition engine=${snapshot.positionMs} duration=${snapshot.durationMs} seekable=${controller.canSeekNow()}")
         controller.seekTo(decoderTarget)
     }
     fun seek(delta: Long) {
@@ -2176,7 +2192,9 @@ private fun YouTubeSeekCommit(
     LaunchedEffect(generation) {
         if (generation == 0) return@LaunchedEffect
         delay(coordinator.debounceMs)
-        coordinator.consumeCommit()?.let { commitState.value(it) }
+        // This effect is the debounce: a newer request restarted it. Do not let clock rounding
+        // (delay vs. elapsedRealtime) re-apply the window and drop the only commit of this burst.
+        coordinator.consumeCommit(force = true)?.let { commitState.value(it) }
     }
 }
 

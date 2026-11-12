@@ -222,7 +222,11 @@ class ChunkedStreamRelay(
             }
             if (!answered) {
                 if (response.code == 200) {
-                    // Upstream ignores ranges: pass the whole body through unchanged.
+                    // Upstream ignores ranges: pass the whole body through unchanged. Without
+                    // Accept-Ranges/Content-Range the player's demuxer treats this stream as
+                    // unseekable (ffmpeg, VLC), so leave a trace for seek diagnostics (no URL).
+                    com.ambient.tv.diagnostics.DiagnosticLog.warn("relay",
+                        "upstream ignored Range (200 at offset $position); player cannot seek this stream")
                     val head = StringBuilder("HTTP/1.1 200 OK\r\nConnection: close\r\n")
                     response.header("Content-Type")?.let { head.append("Content-Type: ").append(it).append("\r\n") }
                     response.header("Content-Length")?.let { head.append("Content-Length: ").append(it).append("\r\n") }

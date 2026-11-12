@@ -921,6 +921,17 @@ internal class MpvPlaybackEngine(
         // Prefer a keyframe seek for the Android hardware decoder for the same reason as seekBy().
         // The final tail must be exact so a preceding keyframe cannot replay the last chapter.
         command("seek", (target / 1000.0).toString(), if (endSeek) "absolute+exact" else "absolute+keyframes")
+        // mpv queues the seek and returns success; "Cannot seek in this file" is only a playloop
+        // warning later. Report it here so playback can move to a renderer that seeks this source.
+        val seekable = getPropertyString("seekable")
+        com.ambient.tv.diagnostics.DiagnosticLog.info("seek",
+            "mpv seek target=$target time-pos=${lastPlaybackPositionMs} seekable=$seekable duration=$duration")
+        if (!liveStream && fileReady && seekable == "no") {
+            Timber.w("MPV cannot seek this file (seekable=no); target=%d", target)
+            com.ambient.tv.diagnostics.DiagnosticLog.warn("seek", "mpv source is not seekable; seek to $target dropped")
+            errorMessage = context.getString(com.ambient.tv.R.string.player_seek_failed)
+            return
+        }
         // keep-open pauses mpv internally at EOF without changing the user's play intent.
         // Seeking back must release that automatic pause, while preserving an explicit Pause.
         if (wasEnded) setProperty("pause", if (nativePlayWanted) "no" else "yes")

@@ -69,6 +69,7 @@ object DiagnosticLog {
         runCatching { writer.execute { runCatching { files.append(line) } } }
     }
 
+    fun info(tag: String, message: String) = log(DiagnosticLevel.INFO, tag, message)
     fun warn(tag: String, message: String, error: Throwable? = null) = log(DiagnosticLevel.WARN, tag, message, error)
     fun error(tag: String, message: String, error: Throwable? = null) = log(DiagnosticLevel.ERROR, tag, message, error)
 

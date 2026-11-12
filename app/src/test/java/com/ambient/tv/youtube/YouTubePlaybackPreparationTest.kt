@@ -193,6 +193,13 @@ class YouTubePlaybackPreparationTest {
         assertFalse(youtubeCurrentlyLive(providerLive = false,
             hls = "https://manifest.googlevideo.com/archive.m3u8", lengthSeconds = 4_800.0))
         assertFalse(youtubeCurrentlyLive(providerLive = false, hls = null, lengthSeconds = null))
+        // An ordinary upload from an HLS-capable client with a missing length is not live.
+        assertFalse(youtubeCurrentlyLive(providerLive = false,
+            hls = "https://manifest.googlevideo.com/upload.m3u8", lengthSeconds = null, liveContent = false))
+        assertFalse(youtubeCurrentlyLive(providerLive = false,
+            hls = "https://manifest.googlevideo.com/upload.m3u8", lengthSeconds = 0.0, liveContent = false))
+        // The provider's own live flag still wins over a missing live-content marker.
+        assertTrue(youtubeCurrentlyLive(providerLive = true, hls = null, lengthSeconds = null, liveContent = false))
     }
 
     @Test fun livePlaybackStillPrefersHlsRegardlessOfVodPolicy() {

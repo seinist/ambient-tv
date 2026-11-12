@@ -524,7 +524,8 @@ class SmartTubeEngine @Inject constructor(
 
         val hls = info.callString("getHlsManifestUrl")?.takeIf(String::isNotBlank)
         val lengthSeconds = info.callString("getLengthSeconds")?.toDoubleOrNull()
-        val isLive = youtubeCurrentlyLive(info.callBool("isLive") == true, hls, lengthSeconds)
+        val isLive = youtubeCurrentlyLive(info.callBool("isLive") == true, hls, lengthSeconds,
+            liveContent = info.callBool("isLiveContent") != false)
         // Playback clocks of active broadcasts are sliding-window positions, never saved VOD
         // resume points. Discard values written by earlier versions when live is identified.
         if (isLive) YouTubeLocalProgress.discardLive(videoId)
@@ -669,7 +670,8 @@ class SmartTubeEngine @Inject constructor(
     private fun formatInfoScore(info: Any): Int = youtubePlayableFormatScore(
         unplayable = info.callBool("isUnplayable") == true,
         live = youtubeCurrentlyLive(info.callBool("isLive") == true,
-            info.callString("getHlsManifestUrl"), info.callString("getLengthSeconds")?.toDoubleOrNull()),
+            info.callString("getHlsManifestUrl"), info.callString("getLengthSeconds")?.toDoubleOrNull(),
+            liveContent = info.callBool("isLiveContent") != false),
         hasHls = !info.callString("getHlsManifestUrl").isNullOrBlank(),
         formats = if (info.callBool("containsDashFormats") == true) adaptiveFormats(info) else emptyList(),
         preferLiveHls = appPreferences.playbackBackendKey != "vlc",
