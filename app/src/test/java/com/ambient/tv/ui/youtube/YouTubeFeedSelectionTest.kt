@@ -43,7 +43,7 @@ class YouTubeFeedSelectionTest {
         YouTubeFeedSelection.request("history")
         YouTubeFeedSelection.request("history")
         val latest = checkNotNull(YouTubeFeedSelection.requests.value)
-        assertEquals("history", latest.feedKey)
+        assertEquals("history", latest.key)
         assertEquals(before + 2L, latest.serial)
     }
 }

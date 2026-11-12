@@ -1372,19 +1372,25 @@ private fun AmbientTvApp(
     val liveYouTubeFeedKey = com.ambient.tv.ui.youtube.YouTubeFeedSelection.displayed.collectAsState().value?.second
         ?.takeIf { currentRoute == Destinations.YOUTUBE || currentRoute == Destinations.YOUTUBE_FEED }
     val currentFeedKey = liveYouTubeFeedKey ?: currentBackStackEntry?.arguments?.getString("feedKey")
+    val liveTelegramSectionKey = com.ambient.tv.ui.common.TelegramSectionSelection.displayed.collectAsState().value?.second
+        ?.takeIf { currentRoute in com.ambient.tv.ui.common.TELEGRAM_SECTION_ROUTES }
+    val liveRadioSectionKey = com.ambient.tv.ui.common.RadioSectionSelection.displayed.collectAsState().value?.second
+        ?.takeIf { currentRoute in com.ambient.tv.ui.common.RADIO_SECTION_ROUTES }
     val sidebarRoute = when {
-        liveYouTubeFeedKey == null -> currentRoute
-        liveYouTubeFeedKey == appPreferences.youtubeStartFeedKey -> Destinations.YOUTUBE
-        else -> Destinations.YOUTUBE_FEED
+        liveYouTubeFeedKey != null ->
+            if (liveYouTubeFeedKey == appPreferences.youtubeStartFeedKey) Destinations.YOUTUBE else Destinations.YOUTUBE_FEED
+        liveTelegramSectionKey != null -> if (liveTelegramSectionKey == "recent") Destinations.TELEGRAM else Destinations.TELEGRAM_SECTION
+        liveRadioSectionKey != null -> if (liveRadioSectionKey == "popular") Destinations.RADIO else Destinations.RADIO_SECTION
+        else -> currentRoute
     }
     val currentTrailerFeedKey = if (currentRoute == Destinations.TRAILER_FEED) currentFeedKey else null
     val currentSpotifySectionKey = if (currentRoute == Destinations.SPOTIFY_SECTION) currentBackStackEntry?.arguments?.getString("sectionKey") else null
-    val currentRadioSectionKey = when (currentRoute) {
+    val currentRadioSectionKey = liveRadioSectionKey ?: when (currentRoute) {
         Destinations.RADIO -> "popular"
         Destinations.RADIO_SECTION -> currentBackStackEntry?.arguments?.getString("sectionKey")
         else -> null
     }
-    val currentTelegramSectionKey = when (currentRoute) {
+    val currentTelegramSectionKey = liveTelegramSectionKey ?: when (currentRoute) {
         Destinations.TELEGRAM -> "recent"
         Destinations.TELEGRAM_SECTION -> currentBackStackEntry?.arguments?.getString("sectionKey")
         else -> null
@@ -1827,6 +1833,23 @@ private fun AmbientTvApp(
         if (com.ambient.tv.ui.youtube.youtubeFeedSwitchesInPlace(currentRoute, liveYouTubeFeedKey, targetYouTubeFeed)) {
             guardedSettingsExit {
                 com.ambient.tv.ui.youtube.YouTubeFeedSelection.request(checkNotNull(targetYouTubeFeed))
+                com.ambient.tv.ui.common.NavReselect.fire()
+            }
+            return
+        }
+        // Telegram and Radio sections: the same in-place switch on their live screens.
+        val targetTelegramSection = com.ambient.tv.ui.common.telegramSectionKeyOfRoute(route)
+        if (com.ambient.tv.ui.common.sectionSwitchesInPlace(currentRoute, com.ambient.tv.ui.common.TELEGRAM_SECTION_ROUTES, liveTelegramSectionKey, targetTelegramSection)) {
+            guardedSettingsExit {
+                com.ambient.tv.ui.common.TelegramSectionSelection.request(checkNotNull(targetTelegramSection))
+                com.ambient.tv.ui.common.NavReselect.fire()
+            }
+            return
+        }
+        val targetRadioSection = com.ambient.tv.ui.common.radioSectionKeyOfRoute(route)
+        if (com.ambient.tv.ui.common.sectionSwitchesInPlace(currentRoute, com.ambient.tv.ui.common.RADIO_SECTION_ROUTES, liveRadioSectionKey, targetRadioSection)) {
+            guardedSettingsExit {
+                com.ambient.tv.ui.common.RadioSectionSelection.request(checkNotNull(targetRadioSection))
                 com.ambient.tv.ui.common.NavReselect.fire()
             }
             return

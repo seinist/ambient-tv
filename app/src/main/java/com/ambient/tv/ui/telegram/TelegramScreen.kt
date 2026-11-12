@@ -152,6 +152,13 @@ fun TelegramScreen(
     onOpenPost: (Long, Int, Long?) -> Unit,
     viewModel: TelegramViewModel = hiltViewModel(),
 ) {
+    // Sidebar section selections reach this screen while it is on top and switch the section in
+    // place (see InPlaceSectionSelection); a new route still resets it to the route's section.
+    val liveSectionKey = androidx.compose.runtime.saveable.rememberSaveable(sectionKey) { mutableStateOf(sectionKey) }
+    com.ambient.tv.ui.common.InPlaceSectionHost(com.ambient.tv.ui.common.TelegramSectionSelection, liveSectionKey.value) {
+        liveSectionKey.value = it
+    }
+    @Suppress("NAME_SHADOWING") val sectionKey = liveSectionKey.value
     val storedState by viewModel.state.collectAsState()
     val pendingReturn by viewModel.pendingPlaybackReturn.collectAsState()
     val preview = viewModel.preparePlaybackReturn(sectionKey, pendingReturn)

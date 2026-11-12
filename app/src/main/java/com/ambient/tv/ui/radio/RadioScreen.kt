@@ -129,7 +129,17 @@ fun RadioScreen(
     onSelectSection: ((RadioSection) -> Unit)? = null,
     viewModel: RadioViewModel = hiltViewModel(),
 ) {
-    val requestedSection = RadioSection.fromKey(initialSectionKey) ?: RadioSection.POPULAR
+    // Sidebar section selections reach this screen while it is on top and switch the section in
+    // place (see InPlaceSectionSelection); a new route still resets it to the route's section.
+    val liveSectionKey = androidx.compose.runtime.saveable.rememberSaveable(initialSectionKey) {
+        mutableStateOf(initialSectionKey ?: RadioSection.POPULAR.key)
+    }
+    com.ambient.tv.ui.common.InPlaceSectionHost(com.ambient.tv.ui.common.RadioSectionSelection, liveSectionKey.value) { key ->
+        val section = RadioSection.fromKey(key) ?: return@InPlaceSectionHost
+        liveSectionKey.value = section.key
+        viewModel.selectSection(section)
+    }
+    val requestedSection = RadioSection.fromKey(liveSectionKey.value) ?: RadioSection.POPULAR
     val storedState by viewModel.state.collectAsState()
     val pendingReturn by viewModel.pendingPlaybackReturn.collectAsState()
     val returnCandidate = pendingReturn?.takeIf {
