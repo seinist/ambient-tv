@@ -19,7 +19,7 @@ class AudioSession(
     var audioOnly by mutableStateOf(audioOnly)
         private set
     /** User's explicit frame-drop overlay choice when this session temporarily becomes audio-only. */
-    private var videoFrameDropBeforeAudioOnly = audioOnly && preferences.frameDropOverlayAlways
+    private var videoFrameDropBeforeAudioOnly = false
 
     /** Content policy, independent of saved output profiles and visualizer selection. */
     fun updateAudioOnly(value: Boolean) {
@@ -31,10 +31,9 @@ class AudioSession(
             videoFrameDropBeforeAudioOnly = showFrameDropOverlay
             performanceHint = false
             showFpsOverlay = false
-            // Hidden for audio only; the saved choice is untouched.
-            frameDropOverlayShown = false
+            showFrameDropOverlay = false
         } else {
-            if (videoFrameDropBeforeAudioOnly) frameDropOverlayShown = true
+            if (videoFrameDropBeforeAudioOnly) showFrameDropOverlay = true
             videoFrameDropBeforeAudioOnly = false
         }
         renderOptions = optionsForPcm()
@@ -141,20 +140,13 @@ class AudioSession(
      * Closing the player drops the flag with the session.
      */
     var showFpsOverlay by mutableStateOf(false)
-    private var frameDropOverlayShown by mutableStateOf(!audioOnly && preferences.frameDropOverlayAlways)
+    /** Keep frame-drop diagnostics visible outside video panels for this playback only. */
+    var showFrameDropOverlay by mutableStateOf(false)
     private var frameDropHistoryShown by mutableStateOf(preferences.frameDropOverlayHistory)
     /**
-     * Keep frame-drop diagnostics visible outside video panels. Saved, unlike the other
-     * diagnostics overlays: the next playback shows it the way it was left.
+     * Presentation of the overlay (compact bar or history graph). Saved, unlike its visibility:
+     * the next playback shows the graph the way it was left.
      */
-    var showFrameDropOverlay: Boolean
-        get() = frameDropOverlayShown
-        set(value) {
-            frameDropOverlayShown = value
-            // Audio-only hides it temporarily; that is not the viewer's choice.
-            if (!audioOnly) preferences.frameDropOverlayAlways = value
-        }
-    /** Presentation of the overlay (compact bar or history graph), saved with it. */
     var showFrameDropHistory: Boolean
         get() = frameDropHistoryShown
         set(value) {
