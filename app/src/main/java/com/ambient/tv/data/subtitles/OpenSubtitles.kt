@@ -72,8 +72,11 @@ class OpenSubtitlesException(message: String, val kind: Kind) : IOException(mess
 class OpenSubtitlesClient @Inject constructor(
     @ApplicationContext private val context: Context,
     private val tokens: TokenStore,
+    @com.ambient.tv.di.SharedOkHttp connectionPool: okhttp3.ConnectionPool,
+    @com.ambient.tv.di.SharedOkHttp dispatcher: okhttp3.Dispatcher,
 ) {
     private val http = OkHttpClient.Builder()
+        .connectionPool(connectionPool).dispatcher(dispatcher)
         .connectTimeout(10, TimeUnit.SECONDS).readTimeout(20, TimeUnit.SECONDS).callTimeout(40, TimeUnit.SECONDS)
         .build()
     private val json = Json { ignoreUnknownKeys = true }

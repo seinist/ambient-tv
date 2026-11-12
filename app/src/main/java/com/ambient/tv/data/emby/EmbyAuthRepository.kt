@@ -30,8 +30,13 @@ class EmbyAuthRepository @Inject constructor(
     private val preferences: AppPreferences,
     private val tokenStore: TokenStore,
     private val json: Json,
+    @com.ambient.tv.di.SharedOkHttp private val connectionPool: okhttp3.ConnectionPool,
+    @com.ambient.tv.di.SharedOkHttp private val dispatcher: okhttp3.Dispatcher,
 ) {
+    // Short API calls: they share the app's connection pool and dispatcher threads instead of
+    // owning a pool, a cleanup thread and an executor each.
     private val connectClient = OkHttpClient.Builder()
+        .connectionPool(connectionPool).dispatcher(dispatcher)
         .connectTimeout(10, TimeUnit.SECONDS)
         .readTimeout(20, TimeUnit.SECONDS)
         .writeTimeout(20, TimeUnit.SECONDS)
@@ -41,6 +46,7 @@ class EmbyAuthRepository @Inject constructor(
         .build()
 
     private val localExchangeClient = OkHttpClient.Builder()
+        .connectionPool(connectionPool).dispatcher(dispatcher)
         .connectTimeout(10, TimeUnit.SECONDS)
         .readTimeout(20, TimeUnit.SECONDS)
         .writeTimeout(20, TimeUnit.SECONDS)
@@ -300,7 +306,8 @@ class EmbyAuthRepository @Inject constructor(
             append(preferences.clientIdentifier)
             append("\", Version=\"").append(BuildConfig.VERSION_NAME).append('"')
         }
-        val client = OkHttpClient.Builder()
+        // Per sign-in, but never a fresh pool and executor per call: derived from the shared client.
+        val client = localExchangeClient.newBuilder().apply { interceptors().clear() }
             .addInterceptor { chain ->
                 chain.proceed(
                     chain.request().newBuilder()

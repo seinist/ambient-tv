@@ -64,6 +64,8 @@ class TvheadendRepository @Inject constructor(
     private val wireGuardRoute: WireGuardRouteController,
     browseDisk: com.ambient.tv.data.browse.BrowseDiskStore,
     private val browseScopes: com.ambient.tv.data.browse.BrowseScopes,
+    @com.ambient.tv.di.SharedOkHttp private val sharedConnectionPool: okhttp3.ConnectionPool,
+    @com.ambient.tv.di.SharedOkHttp private val sharedDispatcher: okhttp3.Dispatcher,
     /** Runs the one TVHeadend wake (state, card, gate); a Provider because it uses this repository. */
     private val connection: javax.inject.Provider<com.ambient.tv.server.TvheadendConnectionManager>,
     private val browseReconnects: javax.inject.Provider<com.ambient.tv.data.browse.BrowseReconnects>,
@@ -98,7 +100,9 @@ class TvheadendRepository @Inject constructor(
     private val authenticator = TvheadendAuthenticator { preferences.tvheadendUsername to tokenStore.tvheadendPassword }
 
     private val client: OkHttpClient by lazy {
+        // API JSON only (streams go through AuthenticatedStreamProxy with its own pool).
         OkHttpClient.Builder()
+            .connectionPool(sharedConnectionPool).dispatcher(sharedDispatcher)
             .addInterceptor(hosts.interceptor())
             .dns(com.ambient.tv.network.LanOnlyDns({ preferences.localNetworkOnly }))
             .connectTimeout(8, TimeUnit.SECONDS)

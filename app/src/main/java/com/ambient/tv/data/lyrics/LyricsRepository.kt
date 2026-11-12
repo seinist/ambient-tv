@@ -33,8 +33,11 @@ data class LyricsRequest(
 class LyricsRepository @Inject constructor(
     private val media: MediaRepository,
     private val preferences: AppPreferences,
+    @com.ambient.tv.di.SharedOkHttp connectionPool: okhttp3.ConnectionPool,
+    @com.ambient.tv.di.SharedOkHttp dispatcher: okhttp3.Dispatcher,
 ) {
     private val http = OkHttpClient.Builder()
+        .connectionPool(connectionPool).dispatcher(dispatcher)
         .connectTimeout(8, TimeUnit.SECONDS).readTimeout(12, TimeUnit.SECONDS).callTimeout(20, TimeUnit.SECONDS)
         .build()
     private val json = Json { ignoreUnknownKeys = true }

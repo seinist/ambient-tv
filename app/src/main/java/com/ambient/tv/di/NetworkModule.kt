@@ -46,7 +46,8 @@ object NetworkModule {
     }
 
     /**
-     * Shared connection pool for Plex/JF/Emby API + plex.tv + health probes.
+     * Shared connection pool for the short API calls: Plex/JF/Emby, plex.tv, Emby Connect,
+     * TVHeadend JSON, lyrics, OpenSubtitles, TMDB and health probes.
      * Streaming / auth-proxy clients intentionally keep their own pools.
      */
     @Provides

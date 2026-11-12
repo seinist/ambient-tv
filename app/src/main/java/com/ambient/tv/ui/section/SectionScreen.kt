@@ -864,7 +864,7 @@ private fun RecommendationRowsPage(
             ?: state.recommendationRows.indexOfFirst { row -> key != null && row.items.any { key in it.allRatingKeys } }.coerceAtLeast(0)
     }
     val rowsState = com.ambient.tv.ui.common.rememberBrowseRowColumnState(initialFirstVisibleItemIndex = restoreRowIndex)
-    RegisterBrowseFocusRows(rowsState, state.recommendationRows.map { it.id to it.items.map { item -> item.ratingKey } })
+    RegisterBrowseFocusRows(rowsState, remember(state.recommendationRows) { state.recommendationRows.map { it.id to it.items.map { item -> item.ratingKey } } })
     val rowCentering = rememberRowCenteringState(rowsState)
     val rowCenteringGate = remember(rowsState) { com.ambient.tv.ui.common.RowFocusCenteringGate() }
     // Row selection is consumed only by the tiny alpha modifiers and this coroutine; keeping it
@@ -1028,7 +1028,7 @@ private fun RecommendationListPage(
     val rowScale = (7f / state.listRows.coerceIn(4, 10)).coerceIn(0.72f, 1.75f) * rememberUhdScale()
     val restoreIndex = recommendationItemLayoutIndex(state.recommendationRows, restoreRowId, initialKey)
     val listState = rememberLazyListState(initialFirstVisibleItemIndex = restoreIndex)
-    RegisterBrowseFocusSections(listState, state.recommendationRows.map { it.id to it.items.map { item -> item.ratingKey } })
+    RegisterBrowseFocusSections(listState, remember(state.recommendationRows) { state.recommendationRows.map { it.id to it.items.map { item -> item.ratingKey } } })
     LazyColumn(
         allowUpExit = true,
         state = listState,
@@ -1159,7 +1159,7 @@ private fun RecommendationWallPage(
     }
     val restoreIndex = recommendationItemLayoutIndex(state.recommendationRows, restoreRowId, initialKey)
     val gridState = rememberLazyGridState(initialFirstVisibleItemIndex = restoreIndex)
-    RegisterBrowseFocusSections(gridState, state.recommendationRows.map { it.id to it.items.map { item -> item.ratingKey } })
+    RegisterBrowseFocusSections(gridState, remember(state.recommendationRows) { state.recommendationRows.map { it.id to it.items.map { item -> item.ratingKey } } })
     LazyVerticalGrid(
         state = gridState,
         columns = deviceGridCells(wallColumns, if (poster) 96.dp else 144.dp),
@@ -1269,7 +1269,7 @@ private fun RecommendationCinematicPage(
     val listState = rememberLazyListState(initialFirstVisibleItemIndex = restoreIndex)
     val rowFocus = com.ambient.tv.ui.common.rememberRowColumnFocus()
     val cinematicCenteringGate = remember(listState) { com.ambient.tv.ui.common.RowFocusCenteringGate() }
-    RegisterBrowseFocusRows(listState, state.recommendationRows.map { it.id to it.items.map { item -> item.ratingKey } })
+    RegisterBrowseFocusRows(listState, remember(state.recommendationRows) { state.recommendationRows.map { it.id to it.items.map { item -> item.ratingKey } } })
     // On TV each section fills the viewport and the list snaps to the section that holds focus,
     // so header, hero and tile row are always shown whole, in both scroll directions.
     var focusedSectionIndex by remember { mutableStateOf(-1) }
