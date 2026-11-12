@@ -144,11 +144,15 @@ private const val MIB = 1024L * 1024L
  * classification: bitmap pixels live outside the Dalvik heap since Android 8, and a percentage
  * of memoryClass (192 MB on most TVs) held fewer card images than one Home screen shows, so
  * cards reloaded visibly on every scroll back. Only genuinely small-RAM devices get less.
+ *
+ * From 2.5 GiB on the budget grows with RAM (3.5 %, at most 128 MB): a 2.8 GiB TV holds about
+ * 100 MB of cards, several SmartTube rows in each direction instead of barely one screen.
  */
 internal fun imageMemoryCacheBudgetBytes(lowRamDevice: Boolean, totalMemBytes: Long): Long = when {
     lowRamDevice -> 24L * MIB
     totalMemBytes in 1 until 1536L * MIB -> 32L * MIB
-    else -> 64L * MIB
+    totalMemBytes in 1 until 2560L * MIB || totalMemBytes <= 0L -> 64L * MIB
+    else -> (totalMemBytes * 35L / 1000L).coerceIn(64L * MIB, 128L * MIB)
 }
 
 /** Full-screen backdrops get their own small cache so a few focus moves cannot evict the cards. */

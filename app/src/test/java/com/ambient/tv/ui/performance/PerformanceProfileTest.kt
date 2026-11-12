@@ -9,8 +9,10 @@ class PerformanceProfileTest {
     @Test
     fun imageCacheBudgetFollowsRamNotAbi() {
         val mib = 1024L * 1024L
-        // A 32-bit TV with 2.8 GiB (Philips TA1) keeps the full card budget.
-        assertEquals(64L * mib, imageMemoryCacheBudgetBytes(lowRamDevice = false, totalMemBytes = 2_800L * mib))
+        // A 32-bit TV with 2.8 GiB (Philips TA1) gets the RAM-scaled card budget (~98 MiB).
+        assertEquals(2_800L * mib * 35L / 1000L, imageMemoryCacheBudgetBytes(lowRamDevice = false, totalMemBytes = 2_800L * mib))
+        assertEquals(64L * mib, imageMemoryCacheBudgetBytes(lowRamDevice = false, totalMemBytes = 2_000L * mib))
+        assertEquals(128L * mib, imageMemoryCacheBudgetBytes(lowRamDevice = false, totalMemBytes = 8_192L * mib))
         assertEquals(64L * mib, imageMemoryCacheBudgetBytes(lowRamDevice = false, totalMemBytes = 0L))
         assertEquals(32L * mib, imageMemoryCacheBudgetBytes(lowRamDevice = false, totalMemBytes = 1_024L * mib))
         assertEquals(24L * mib, imageMemoryCacheBudgetBytes(lowRamDevice = true, totalMemBytes = 2_800L * mib))
