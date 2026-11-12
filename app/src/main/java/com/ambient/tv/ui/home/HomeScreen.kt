@@ -1858,6 +1858,8 @@ private fun HomeStaticImage(
                     .build()
             }
             AsyncImage(
+                // Follows hero focus like the backdrop; must not evict the row cards.
+                imageLoader = com.ambient.tv.backdropImageLoader(context),
                 model = request,
                 contentDescription = null,
                 contentScale = contentScale,

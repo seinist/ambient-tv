@@ -155,11 +155,17 @@ internal fun imageMemoryCacheBudgetBytes(lowRamDevice: Boolean, totalMemBytes: L
     else -> (totalMemBytes * 35L / 1000L).coerceIn(64L * MIB, 128L * MIB)
 }
 
-/** Full-screen backdrops get their own small cache so a few focus moves cannot evict the cards. */
+/**
+ * Everything that is not a browse card gets its own cache so it cannot evict the cards:
+ * backdrops, hero logos, detail backgrounds, screensaver and photo-viewer images, seek sprites.
+ * From 2.5 GiB on it grows with RAM (1.2 %, at most 48 MB), enough for the current and both
+ * neighbouring photos of the viewer at 1080p.
+ */
 internal fun backdropMemoryCacheBudgetBytes(lowRamDevice: Boolean, totalMemBytes: Long): Long = when {
     lowRamDevice -> 8L * MIB
     totalMemBytes in 1 until 1536L * MIB -> 12L * MIB
-    else -> 24L * MIB
+    totalMemBytes in 1 until 2560L * MIB || totalMemBytes <= 0L -> 24L * MIB
+    else -> (totalMemBytes * 12L / 1000L).coerceIn(24L * MIB, 48L * MIB)
 }
 
 /** [totalMemBytes] <= 0 means unknown and does not classify the device. */

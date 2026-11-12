@@ -81,7 +81,6 @@ import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
 import coil3.compose.AsyncImage
-import coil3.imageLoader
 import coil3.request.ImageRequest
 import coil3.size.Scale
 import com.ambient.tv.R
@@ -153,7 +152,8 @@ fun PhotoViewerScreen(
     LaunchedEffect(state.position, state.order) {
         listOf(1, -1).mapNotNull { state.neighbour(it) }.forEach { entry ->
             val model = entry.imageModel(widthPx, heightPx) ?: entry.thumbModel() ?: return@forEach
-            context.imageLoader.enqueue(ImageRequest.Builder(context).data(model).size(widthPx, heightPx).scale(Scale.FIT).build())
+            // Full-screen photos live in the backdrop cache; the album's thumbnails stay put.
+            com.ambient.tv.backdropImageLoader(context).enqueue(ImageRequest.Builder(context).data(model).size(widthPx, heightPx).scale(Scale.FIT).build())
         }
     }
 
@@ -451,6 +451,7 @@ private fun PhotoStage(
     AsyncImage(
         model = request,
         contentDescription = entry.title,
+        imageLoader = com.ambient.tv.backdropImageLoader(context),
         contentScale = ContentScale.Fit,
         colorFilter = com.ambient.tv.ui.display.uiHdrBitmapColorFilter(
             com.ambient.tv.ui.display.LocalUiHdrState.current?.headroom ?: 1f,

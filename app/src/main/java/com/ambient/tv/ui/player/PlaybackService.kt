@@ -31,7 +31,6 @@ import android.os.Build
 import android.os.PowerManager
 import android.os.SystemClock
 import androidx.core.content.ContextCompat
-import coil3.imageLoader
 import coil3.request.ImageRequest
 import coil3.request.SuccessResult
 import coil3.toBitmap
@@ -1002,7 +1001,8 @@ class PlaybackService : MediaLibraryService() {
                 .allowHardware(false)
                 .requestHeaders(headers)
                 .build()
-            val result = imageLoader.execute(request)
+            // One-off bitmap for the session; kept out of the browse card cache.
+            val result = com.ambient.tv.backdropImageLoader(this).execute(request)
             // Coil 3 hands back an Image; toBitmap() returns its own bitmap or draws it into one.
             (result as? SuccessResult)?.image?.toBitmap()
         }.onFailure { Timber.w(it, "Playback notification artwork failed") }.getOrNull()

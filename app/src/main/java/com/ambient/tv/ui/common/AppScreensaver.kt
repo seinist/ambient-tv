@@ -194,6 +194,7 @@ private fun MediaBackground(useArtwork: Boolean, intervalSeconds: Int, brightnes
         }
     }
     val model = artwork.getOrNull(index % artwork.size)
+    val context = androidx.compose.ui.platform.LocalContext.current
     Crossfade(targetState = model, animationSpec = tween(2400), label = "screensaverArtwork") { url ->
         var loaded by remember(url) { mutableStateOf(false) }
         Box(Modifier.fillMaxSize()) {
@@ -202,6 +203,8 @@ private fun MediaBackground(useArtwork: Boolean, intervalSeconds: Int, brightnes
             AsyncImage(
                 model = url,
                 contentDescription = null,
+                // Full-screen art cycles for minutes; it must not empty the card cache meanwhile.
+                imageLoader = com.ambient.tv.backdropImageLoader(context),
                 contentScale = ContentScale.Crop,
                 colorFilter = com.ambient.tv.ui.display.uiHdrBitmapColorFilter(hdrHeadroom),
                 onSuccess = { loaded = true },
@@ -255,6 +258,7 @@ private fun PhotoBackground(intervalSeconds: Int, brightness: Float, hdrHeadroom
         AsyncImage(
             model = coil3.request.ImageRequest.Builder(context).data(entry.imageModel(widthPx, heightPx)).size(widthPx, heightPx).build(),
             contentDescription = null,
+            imageLoader = com.ambient.tv.backdropImageLoader(context),
             contentScale = ContentScale.Crop,
             colorFilter = com.ambient.tv.ui.display.uiHdrBitmapColorFilter(hdrHeadroom),
             modifier = Modifier.fillMaxSize().graphicsLayer {

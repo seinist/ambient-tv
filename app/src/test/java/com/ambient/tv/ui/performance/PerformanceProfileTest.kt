@@ -16,8 +16,11 @@ class PerformanceProfileTest {
         assertEquals(64L * mib, imageMemoryCacheBudgetBytes(lowRamDevice = false, totalMemBytes = 0L))
         assertEquals(32L * mib, imageMemoryCacheBudgetBytes(lowRamDevice = false, totalMemBytes = 1_024L * mib))
         assertEquals(24L * mib, imageMemoryCacheBudgetBytes(lowRamDevice = true, totalMemBytes = 2_800L * mib))
+        assertEquals(24L * mib, backdropMemoryCacheBudgetBytes(lowRamDevice = false, totalMemBytes = 2_000L * mib))
+        assertEquals(2_800L * mib * 12L / 1000L, backdropMemoryCacheBudgetBytes(lowRamDevice = false, totalMemBytes = 2_800L * mib))
+        assertEquals(48L * mib, backdropMemoryCacheBudgetBytes(lowRamDevice = false, totalMemBytes = 8_192L * mib))
         // Backdrops always stay far below the card budget.
-        for (lowRam in listOf(false, true)) for (mem in listOf(0L, 1_024L * mib, 3_000L * mib)) {
+        for (lowRam in listOf(false, true)) for (mem in listOf(0L, 1_024L * mib, 3_000L * mib, 8_192L * mib)) {
             assertTrue(backdropMemoryCacheBudgetBytes(lowRam, mem) < imageMemoryCacheBudgetBytes(lowRam, mem))
         }
     }

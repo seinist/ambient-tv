@@ -74,7 +74,8 @@ fun TitleLogo(
             ImageRequest.Builder(context).data(url).size(maxWidthPx, maxHeightPx).crossfade(false).build()
         }
     }
-    val painter = rememberAsyncImagePainter(model = request)
+    // Hero logos follow focus like backdrops; they share the backdrop cache, not the cards'.
+    val painter = rememberAsyncImagePainter(model = request, imageLoader = com.ambient.tv.backdropImageLoader(context))
     val painterState by painter.state.collectAsState()
     val intrinsic = painter.intrinsicSize
     val aspect = if (

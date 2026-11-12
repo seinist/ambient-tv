@@ -43,7 +43,6 @@ import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
-import coil3.imageLoader
 import coil3.request.ImageRequest
 import coil3.request.SuccessResult
 import com.ambient.tv.R
@@ -382,7 +381,8 @@ private fun TimelineImage(frame: PreviewFrame, modifier: Modifier) {
         delay(90)
         val request = ImageRequest.Builder(context).data(frame.url).allowHardware(false)
             .size(if (frame.sheetWidth > 0) frame.sheetWidth else 320, if (frame.sheetHeight > 0) frame.sheetHeight else 180).build()
-        val result = context.imageLoader.execute(request)
+        // Sprite sheets are large and many per seek; they must not evict the browse cards.
+        val result = com.ambient.tv.backdropImageLoader(context).execute(request)
         value = ((result as? SuccessResult)?.image as? coil3.BitmapImage)?.bitmap
     }
     Box(modifier.background(Color.Black.copy(alpha = 0.3f))) {

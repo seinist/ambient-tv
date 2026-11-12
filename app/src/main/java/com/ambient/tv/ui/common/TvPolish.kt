@@ -431,10 +431,9 @@ private class ArtworkRequestContinuity {
     var memoryKey: coil3.memory.MemoryCache.Key? = null
 }
 
-/** Last memory-cache key per artwork model; see the placeholder in [ArtworkImage]. */
-private val ArtworkMemoryKeys = object : java.util.LinkedHashMap<Any, coil3.memory.MemoryCache.Key>(256, 0.75f, true) {
-    override fun removeEldestEntry(eldest: MutableMap.MutableEntry<Any, coil3.memory.MemoryCache.Key>?) = size > 512
-}
+/** Recent memory-cache keys per artwork model, one index per loader; see [ArtworkMemoryKeyIndex]. */
+private val CardArtworkKeys = ArtworkMemoryKeyIndex()
+private val BackdropArtworkKeys = ArtworkMemoryKeyIndex(maxModels = 64)
 
 @Composable
 fun ArtworkImage(
@@ -460,6 +459,11 @@ fun ArtworkImage(
     staggerUncached: Boolean = false,
     /** Focused browse cards skip the background admission wave once scrolling is quiet. */
     prioritizeUncached: Boolean = false,
+    /**
+     * Full-screen art (detail backdrops) loads through the backdrop loader: one such bitmap
+     * weighs as much as dozens of cards and must not push them out of the card cache.
+     */
+    backdrop: Boolean = focusCrop,
 ) {
     val context = LocalContext.current
     val candidates = remember(model, fallbackModels) {
@@ -483,7 +487,7 @@ fun ArtworkImage(
     // Coil only checks its memory cache after AsyncImage has been measured, which leaves a
     // freshly composed tile empty for a frame (e.g. every poster on Back to Home). The key of
     // the last successful load is served as placeholder before the size is resolved.
-    val imageLoader = coil3.SingletonImageLoader.get(context)
+    val imageLoader = if (backdrop) com.ambient.tv.backdropImageLoader(context) else coil3.SingletonImageLoader.get(context)
     // A cold-start snapshot and the live response can describe the same provider image with
     // different credential query strings. If this exact visible card already succeeded, link
     // the live request to that memory entry so Coil returns it without fetch/decode or a blank frame.
@@ -492,8 +496,10 @@ fun ArtworkImage(
             continuity.identity == requestIdentity &&
             imageLoader.memoryCache?.get(key) != null
     }
-    val cachedKey = remember(currentModel, continuityKey) {
-        currentModel?.let { ArtworkMemoryKeys[it] } ?: continuityKey
+    val keyIndex = if (backdrop) BackdropArtworkKeys else CardArtworkKeys
+    val cachedKey = remember(currentModel, continuityKey, backdrop) {
+        currentModel?.let { model -> keyIndex.cachedKey(model) { imageLoader.memoryCache?.get(it) != null } }
+            ?: continuityKey
     }
     // The key can outlive the bitmap. A miss must still show the pulse; Coil's placeholder
     // only draws when the bitmap is actually still in memory.
@@ -550,6 +556,7 @@ fun ArtworkImage(
             if (loadAdmitted) AsyncImage(
                 model = request,
                 contentDescription = title,
+                imageLoader = imageLoader,
                 contentScale = contentScale,
                 alignment = focus?.alignment ?: alignment,
                 colorFilter = hdrFilter,
@@ -560,7 +567,7 @@ fun ArtworkImage(
                     failed = false
                     val key = it.result.memoryCacheKey
                     if (key != null) {
-                        ArtworkMemoryKeys[currentModel] = key
+                        currentModel?.let { keyIndex.remember(it, key) }
                         continuity.model = currentModel
                         continuity.identity = requestIdentity
                         continuity.memoryKey = key

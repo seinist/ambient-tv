@@ -7,7 +7,6 @@ import android.database.Cursor
 import android.graphics.Bitmap
 import android.net.Uri
 import android.os.ParcelFileDescriptor
-import coil3.imageLoader
 import coil3.request.ImageRequest
 import coil3.request.SuccessResult
 import coil3.request.allowHardware
@@ -107,7 +106,7 @@ class CarAudioArtworkProvider : ContentProvider() {
                         .allowHardware(false)
                         .requestHeaders(artwork.headers)
                         .build()
-                    (context.imageLoader.execute(request) as? SuccessResult)?.image?.toBitmap()
+                    (com.ambient.tv.backdropImageLoader(context).execute(request) as? SuccessResult)?.image?.toBitmap()
                 }
             } catch (cancelled: CancellationException) {
                 throw cancelled
