@@ -59,7 +59,7 @@ object VideoImageCatalog {
      */
     val media3Scalers = linkedMapOf(
         "bilinear" to "Bilinear", "bicubic" to "Bicubic", "catmull_rom" to "Catmull-Rom",
-        "lanczos" to "Lanczos · 3", "fsr" to "FSR · EASU + RCAS",
+        "lanczos" to "Lanczos", "fsr" to "FSR · EASU + RCAS",
         // MPV's other built-in kernels, sampled like MPV does (Media3KernelScalers).
         "mitchell" to "Mitchell", "hermite" to "Hermite", "robidoux" to "Robidoux",
         "robidouxsharp" to "RobidouxSharp", "spline16" to "Spline16", "spline36" to "Spline36",
@@ -105,7 +105,7 @@ object VideoImageCatalog {
      * Lanczos uses Media3's own effect; the other options use band-limited separable kernels.
      */
     val media3Downscalers = linkedMapOf(
-        "display" to "Display", "lanczos" to "Lanczos · 3",
+        "display" to "Display", "lanczos" to "Lanczos",
         "mitchell" to "Mitchell", "spline36" to "Spline36", "spline64" to "Spline64",
         "ssim_down" to "SSimDownscaler",
     )
@@ -278,6 +278,24 @@ data class Media3ImageOptions(
     /** SSimSuperRes retains both original and upscaled RGB for the reconstruction. */
     val superResolution: Boolean = false,
 ) {
+    /**
+     * A setting that runs a GPU stage is chosen. Anti-ringing, sigmoid and SSimSuperRes only
+     * modify the scaler and do not count on their own.
+     */
+    fun hasProcessing(): Boolean = scaler != "bilinear" || downscaler != "display" ||
+        sharpening != "off" || deband != "off" || filmGrain != "off" || denoise != "off" || deblock != "off" ||
+        brightness != 0 || contrast != 0 || saturation != 0 || gamma != 0
+
+    /**
+     * What the controls show. [enabled] is no user switch any more (as in MPV, a chosen setting
+     * simply runs): options stored with the old master switch off read as nothing chosen, so
+     * leftovers behind that switch cannot come back with the first change.
+     */
+    fun shown(): Media3ImageOptions = if (enabled) this else Media3ImageOptions()
+
+    /** [enabled] follows the choices: the direct path stays in use while nothing is chosen. */
+    fun withProcessingFromChoices(): Media3ImageOptions = copy(enabled = hasProcessing())
+
     fun normalized() = copy(
         scaler = scaler.takeIf { it in VideoImageCatalog.media3Scalers } ?: "bilinear",
         superResolution = superResolution && !scaler.startsWith("nnedi3") &&

@@ -810,6 +810,7 @@ object BackgroundPlaybackSession {
     fun userSeek() {
         checkThread()
         clearPauseRewind()
+        clearUserEndSeek()
         externalSeekVersion++
         registerUserInteraction()
     }
@@ -817,6 +818,33 @@ object BackgroundPlaybackSession {
     /** User seeks, including previews, invalidate late resume. Automatic sponsor skips do not. */
     var externalSeekVersion by mutableIntStateOf(0)
         private set
+
+    /**
+     * Generation of the item the user deliberately sought to the end of (last-chapter skip, seek
+     * past EOF), else -1. The decoders only seek into the last 1.5 s and play that tail, which
+     * looks like a jump back and can repeat on a keyframe-seeking backend; with this set the
+     * session content finishes the item at once, like a real EOF. See [userEndSeekRequested].
+     */
+    private var userEndSeekGeneration by mutableStateOf(-1L)
+    fun markUserEndSeek() {
+        checkThread()
+        val current = snapshot.value
+        if (current.metadata == null || current.replacingSource) return
+        userEndSeekGeneration = current.generation
+        // Reported as watched to the end, like an autoplay hand-over.
+        mutableSnapshot.value = current.copy(completedByNavigation = true)
+    }
+    /** Any later seek away from the end takes the request back. */
+    fun clearUserEndSeek() {
+        checkThread()
+        if (userEndSeekGeneration == -1L) return
+        val current = snapshot.value
+        if (current.generation == userEndSeekGeneration && !current.replacingSource) {
+            mutableSnapshot.value = current.copy(completedByNavigation = false)
+        }
+        userEndSeekGeneration = -1L
+    }
+    fun userEndSeekRequested(generation: Long): Boolean = userEndSeekGeneration == generation
     /** Committed decoder seeks (also background SponsorBlock), used to align the OSD clock. */
     var committedSeekVersion by mutableIntStateOf(0)
         private set
@@ -826,7 +854,7 @@ object BackgroundPlaybackSession {
     fun seekTo(positionMs: Long, automatic: Boolean = false) {
         checkThread()
         clearPauseRewind()
-        if (!automatic) externalSeekVersion++
+        if (!automatic) { externalSeekVersion++; clearUserEndSeek() }
         val metadata = snapshot.value.metadata
         val prefs = subtitlePreferences
         val youtube = metadata?.resumeState as? com.ambient.tv.youtube.YouTubePlayback

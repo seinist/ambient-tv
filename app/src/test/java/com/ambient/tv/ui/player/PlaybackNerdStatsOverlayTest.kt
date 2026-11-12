@@ -148,7 +148,7 @@ class PlaybackNerdStatsOverlayTest {
             ),
         )
         assertEquals("brightness -5, saturation 10", active.video.first { it.label == "Video filters" }.value)
-        assertEquals("Lanczos · 3", active.video.first { it.label == "Upscaler" }.value)
+        assertEquals("Lanczos", active.video.first { it.label == "Upscaler" }.value)
         assertEquals("n/a", active.video.first { it.label == "Deinterlacer" }.value)
         assertEquals("n/a", active.video.first { it.label == "Frame interpolation" }.value)
 

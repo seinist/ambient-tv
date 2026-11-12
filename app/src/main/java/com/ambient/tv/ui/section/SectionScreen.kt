@@ -182,6 +182,7 @@ import com.ambient.tv.ui.common.transparentSurfaceColors
 import com.ambient.tv.ui.navigation.ReportSidebarContentReady
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.first
 
 
 @Composable
@@ -871,6 +872,18 @@ private fun RecommendationRowsPage(
     // out of the parent composition avoids rebuilding all nested LazyRows on every Up/Down.
     val centeredRowIndex = remember { mutableIntStateOf(-1) }
     val pendingVisualRowIndex = remember { mutableIntStateOf(-1) }
+    // The row that really holds focus is always drawn; see the same guard on Home.
+    val focusedRowIndex = remember { mutableIntStateOf(-1) }
+    LaunchedEffect(rowsState) {
+        // A vertical move that never lands must not keep its destination as the only visible row.
+        snapshotFlow { pendingVisualRowIndex.intValue }.collectLatest { pending ->
+            if (pending < 0) return@collectLatest
+            delay(250)
+            snapshotFlow { rowsState.isScrollInProgress }.first { !it }
+            delay(600)
+            if (pendingVisualRowIndex.intValue == pending) pendingVisualRowIndex.intValue = -1
+        }
+    }
     var returningRow by remember { mutableStateOf(state.playbackReturnRevision > 0L) }
     val handheld = LocalHandheldUi.current
     // TV rests the active row on the bottom edge; handheld keeps it under the banner.
@@ -922,7 +935,7 @@ private fun RecommendationRowsPage(
                     state = rowsState,
                     modifier = Modifier
                         .fillMaxSize()
-                        .rowColumnFocusWrapRight(columnFocus, wrapLeft = !handheld)
+                        .rowColumnFocusWrapRight(columnFocus)
                         .rowColumnFocusNavigation(
                             columnFocus,
                             scrollToTop = {
@@ -962,11 +975,15 @@ private fun RecommendationRowsPage(
                     itemsIndexed(state.recommendationRows, key = { _, row -> row.id }) { index, row ->
                         ContentRow(
                             // Until a row takes focus, the restored row is the active one.
-                            modifier = Modifier.onlyActiveHeroRow(
+                            modifier = Modifier.onFocusChanged {
+                                if (it.hasFocus) focusedRowIndex.intValue = index
+                                else if (focusedRowIndex.intValue == index) focusedRowIndex.intValue = -1
+                            }.onlyActiveHeroRow(
                                 index,
                                 activeIndex = {
                                     // Show only the destination row while its vertical scroll is in flight.
                                     pendingVisualRowIndex.intValue.takeIf { it >= 0 }
+                                        ?: focusedRowIndex.intValue.takeIf { it >= 0 }
                                         ?: centeredRowIndex.intValue.takeIf { it >= 0 }
                                         ?: restoreRowIndex
                                 },
@@ -1282,7 +1299,7 @@ private fun RecommendationCinematicPage(
         allowUpExit = true,
         state = listState,
         modifier = Modifier.fillMaxSize()
-            .rowColumnFocusWrapRight(rowFocus, wrapLeft = !handheld)
+            .rowColumnFocusWrapRight(rowFocus)
             .rowColumnFocusNavigation(
                 rowFocus,
                 scrollToTop = {

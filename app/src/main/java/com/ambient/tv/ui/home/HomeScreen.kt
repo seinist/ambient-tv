@@ -145,6 +145,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import androidx.compose.runtime.snapshotFlow
 import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.first
 import androidx.compose.ui.graphics.rememberGraphicsLayer
 import androidx.compose.ui.graphics.layer.drawLayer
 import kotlinx.coroutines.flow.StateFlow
@@ -902,6 +903,21 @@ internal fun LibraryContent(
         // Covers the few frames between scroll completion and the target tile taking focus.
         // Read only from draw/layer lambdas below.
         val pendingVisualRow = remember { mutableStateOf<String?>(null) }
+        // The row that really holds focus. activeRowIndex only follows row-entry events, and a
+        // row whose focus never left (cancelled Up/Down, return from live TV) sends none: the
+        // index then pointed elsewhere and the focused row stayed invisible under the hero.
+        val focusedRowKey = remember { mutableStateOf<String?>(null) }
+        LaunchedEffect(rowListState) {
+            // A vertical move that never lands (target row not focusable in time) must not
+            // keep its destination as the only visible row forever.
+            snapshotFlow { pendingVisualRow.value }.collectLatest { pending ->
+                if (pending == null) return@collectLatest
+                delay(250)
+                snapshotFlow { rowListState.isScrollInProgress }.first { !it }
+                delay(600)
+                if (pendingVisualRow.value == pending) pendingVisualRow.value = null
+            }
+        }
         LaunchedEffect(restoreArmed, state.rowKeys) {
             if (restoreArmed && initialFocusRowId in state.rowKeys) {
                 rowListState.scrollToItem(restoreListIndex)
@@ -944,7 +960,7 @@ internal fun LibraryContent(
                 state = rowListState,
                 modifier = Modifier.onFocusChanged { rowsHaveFocus = it.hasFocus }.then(Modifier
                     .fillMaxSize()
-                    .rowColumnFocusWrapRight(columnFocus, wrapLeft = true)
+                    .rowColumnFocusWrapRight(columnFocus)
                     .rowColumnFocusNavigation(
                         columnFocus,
                         scrollToTop = {
@@ -993,12 +1009,19 @@ internal fun LibraryContent(
                     }
                 }) { rowKey ->
                     val rowIndex = state.rowKeys.indexOf(rowKey)
-                    Box(Modifier.onlyActiveHeroRow(
+                    Box(Modifier.onFocusChanged {
+                        if (it.hasFocus) {
+                            focusedRowKey.value = rowKey
+                            // Also what stays visible once focus moves on to the sidebar.
+                            if (pendingVisualRow.value == null && rowIndex >= 0) activeRowIndex.intValue = rowIndex
+                        } else if (focusedRowKey.value == rowKey) focusedRowKey.value = null
+                    }.onlyActiveHeroRow(
                         rowIndex,
                         activeIndex = {
                             // Change the only visible row at the start of a vertical glide,
                             // not after the destination tile finally acquires focus.
                             pendingVisualRow.value?.let(state.rowKeys::indexOf)?.takeIf { it >= 0 }
+                                ?: focusedRowKey.value?.let(state.rowKeys::indexOf)?.takeIf { it >= 0 }
                                 ?: activeRowIndex.intValue
                         },
                     ).then(
@@ -1858,6 +1881,8 @@ private fun HomeStaticImage(
                     .build()
             }
             AsyncImage(
+                // Follows hero focus like the backdrop; must not evict the row cards.
+                imageLoader = com.ambient.tv.backdropImageLoader(context),
                 model = request,
                 contentDescription = null,
                 contentScale = contentScale,

@@ -116,9 +116,11 @@ class AmbientTvApplication : Application(), coil3.SingletonImageLoader.Factory {
                 }
             }
             .memoryCache {
-                MemoryCache.Builder()
-                    .maxSizeBytes(memoryCacheBytes)
-                    .build()
+                com.ambient.tv.ui.performance.ForegroundTrimMemoryCache(
+                    MemoryCache.Builder()
+                        .maxSizeBytes(memoryCacheBytes)
+                        .build(),
+                ) { lastTrimLevel }
             }
             .diskCache { imageDiskCache }
             .allowRgb565(lowRam || performanceProfileResolver.current().constrainImageDecodeSize)
@@ -132,6 +134,20 @@ class AmbientTvApplication : Application(), coil3.SingletonImageLoader.Factory {
                 add(com.ambient.tv.data.telegram.MonogramThumbFetcher.Factory { telegramRepository.get() })
             }
             .build()
+    }
+
+    /** Read by [com.ambient.tv.ui.performance.ForegroundTrimMemoryCache] during Coil's trim callback. */
+    @Volatile private var lastTrimLevel: Int = 0
+
+    override fun onTrimMemory(level: Int) {
+        // Set before super: Application.onTrimMemory dispatches to Coil's registered callback.
+        lastTrimLevel = level
+        if (level < android.content.ComponentCallbacks2.TRIM_MEMORY_UI_HIDDEN) {
+            Timber.i("Memory warning in foreground: level=%d, artwork cache %d/%d KiB", level,
+                (coil3.SingletonImageLoader.get(this).memoryCache?.size ?: 0L) / 1024L,
+                (coil3.SingletonImageLoader.get(this).memoryCache?.maxSize ?: 0L) / 1024L)
+        }
+        super.onTrimMemory(level)
     }
 
     private fun systemLowRamDevice(): Boolean =

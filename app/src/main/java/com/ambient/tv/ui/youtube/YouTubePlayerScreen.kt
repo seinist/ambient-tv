@@ -983,6 +983,9 @@ private fun YouTubeMedia3Playback(
             window?.targetsWindowStart(requested) == true
         seekCoordinator.consumeCommit(force = immediateSeek)?.let(::commitSeek)
         seekCommitVersion++
+        // Finish at once instead of waiting for the decoder tail (userSeek() above took an
+        // earlier request back).
+        if (terminalVodSeek) BackgroundPlaybackSession.markUserEndSeek()
         if (terminalVodSeek) {
             val session = BackgroundPlaybackSession.snapshot.value
             if (com.ambient.tv.ui.player.shouldPlayThroughPlaybackEnd(
@@ -1048,7 +1051,7 @@ private fun YouTubeMedia3Playback(
         val seekWithBar: (Long) -> Unit = { seekInMode(it) }
         handlePlayerOsdKey(
             e.key, e.type == KeyEventType.KeyDown,
-            OsdKeyState(OsdContent.VIDEO, controls && !osd.seekFeedback && !osd.closing, panelOpen, osd.seekFeedback, closing = osd.closing),
+            OsdKeyState(OsdContent.VIDEO, controls && !osd.seekFeedback && !osd.closing, panelOpen, osd.seekFeedback, closing = osd.closing, seekBarFocused = osd.seekBarFocused),
             OsdSeekSteps(BackgroundPlaybackSession.seekJumpMs(bigSeekSeconds * 1000L), held = { heldSeekStep(it, e) }),
             object : OsdKeyTarget {
                 override fun chapterSeekDelta(direction: Int): Long? {
@@ -1375,6 +1378,9 @@ private fun YouTubeVlcPlayback(playback: YouTubePlayback, audioUri: String?, str
             window?.targetsWindowStart(requested) == true
         seekCoordinator.consumeCommit(force = immediateSeek)?.let(::commitSeek)
         seekCommitVersion++
+        // Finish at once instead of waiting for the decoder tail (userSeek() above took an
+        // earlier request back).
+        if (terminalVodSeek) BackgroundPlaybackSession.markUserEndSeek()
         if (terminalVodSeek) {
             val session = BackgroundPlaybackSession.snapshot.value
             if (com.ambient.tv.ui.player.shouldPlayThroughPlaybackEnd(
@@ -1427,7 +1433,7 @@ private fun YouTubeVlcPlayback(playback: YouTubePlayback, audioUri: String?, str
         val seekWithBar: (Long) -> Unit = { seekInMode(it) }
         handlePlayerOsdKey(
             e.key, e.type == KeyEventType.KeyDown,
-            OsdKeyState(OsdContent.VIDEO, controls && !osd.seekFeedback && !osd.closing, panelOpen, osd.seekFeedback, closing = osd.closing),
+            OsdKeyState(OsdContent.VIDEO, controls && !osd.seekFeedback && !osd.closing, panelOpen, osd.seekFeedback, closing = osd.closing, seekBarFocused = osd.seekBarFocused),
             OsdSeekSteps(BackgroundPlaybackSession.seekJumpMs(bigSeekSeconds * 1000L), held = { heldSeekStep(it, e) }),
             object : OsdKeyTarget {
                 override fun chapterSeekDelta(direction: Int): Long? {
@@ -1710,6 +1716,9 @@ private fun YouTubeMpvPlayback(playback: YouTubePlayback, streams: YouTubeStream
             window?.targetsWindowStart(requested) == true
         seekCoordinator.consumeCommit(force = immediateSeek)?.let(::commitSeek)
         seekCommitVersion++
+        // Finish at once instead of waiting for the decoder tail (userSeek() above took an
+        // earlier request back).
+        if (terminalVodSeek) BackgroundPlaybackSession.markUserEndSeek()
         if (terminalVodSeek) {
             val session = BackgroundPlaybackSession.snapshot.value
             if (com.ambient.tv.ui.player.shouldPlayThroughPlaybackEnd(
@@ -1762,7 +1771,7 @@ private fun YouTubeMpvPlayback(playback: YouTubePlayback, streams: YouTubeStream
         val seekWithBar: (Long) -> Unit = { seekInMode(it) }
         handlePlayerOsdKey(
             e.key, e.type == KeyEventType.KeyDown,
-            OsdKeyState(OsdContent.VIDEO, controls && !osd.seekFeedback && !osd.closing, panelOpen, osd.seekFeedback, closing = osd.closing),
+            OsdKeyState(OsdContent.VIDEO, controls && !osd.seekFeedback && !osd.closing, panelOpen, osd.seekFeedback, closing = osd.closing, seekBarFocused = osd.seekBarFocused),
             OsdSeekSteps(BackgroundPlaybackSession.seekJumpMs(bigSeekSeconds * 1000L), held = { heldSeekStep(it, e) }),
             object : OsdKeyTarget {
                 override fun chapterSeekDelta(direction: Int): Long? {

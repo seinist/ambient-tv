@@ -271,7 +271,7 @@ internal fun MpvPlayerContent(
         handlePlayerOsdKey(
             event.key, event.type == KeyEventType.KeyDown,
             OsdKeyState(OsdContent.VIDEO, controlsVisible && !osd.seekFeedback && !osd.closing,
-                panel != UnifiedPlayerPanel.NONE, osd.seekFeedback, closing = osd.closing),
+                panel != UnifiedPlayerPanel.NONE, osd.seekFeedback, closing = osd.closing, seekBarFocused = osd.seekBarFocused),
             OsdSeekSteps(BackgroundPlaybackSession.seekJumpMs(state.seekJumpMs), held = { heldSeekStep(it, event) }),
             object : OsdKeyTarget {
                 override fun chapterSeekDelta(direction: Int): Long? {

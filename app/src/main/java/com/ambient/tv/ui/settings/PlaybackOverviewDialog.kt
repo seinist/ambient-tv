@@ -180,7 +180,9 @@ private fun VlcOverview(o: VlcImageOptions) {
 }
 
 @Composable
-private fun Media3Overview(o: Media3ImageOptions) {
+private fun Media3Overview(stored: Media3ImageOptions) {
+    // Same values the controls show; settings behind the former master switch read as not chosen.
+    val o = stored.shown()
     OverviewLine(stringResource(R.string.settings_playback_overview_enabled), yesNo(o.enabled))
     OverviewLine(stringResource(R.string.settings_playback_overview_scaler), VideoImageCatalog.media3Scalers[o.scaler] ?: o.scaler)
     OverviewLine(stringResource(R.string.settings_playback_overview_denoise), strength(o.denoise))

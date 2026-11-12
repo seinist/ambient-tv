@@ -715,6 +715,7 @@ private fun TelegramPlaybackContent(
                             controlsVisible && !osd.seekFeedback && !osd.closing,
                             panel != UnifiedPlayerPanel.NONE, osd.seekFeedback,
                             canSeekForward = !photo && length > 0, closing = osd.closing,
+                            seekBarFocused = osd.seekBarFocused,
                         ),
                         com.ambient.tv.ui.player.OsdSeekSteps(BackgroundPlaybackSession.seekJumpMs(10_000L)),
                         object : com.ambient.tv.ui.player.OsdKeyTarget {

@@ -315,34 +315,31 @@ internal fun Media3ImageOptionsEditor(
         ImageHint(stringResource(R.string.image_filters_sparsam_hint))
         return
     }
-    ImageChoice(R.string.image_processing, if (o.enabled) "on" else "off", imageOnOff()) { change(o.copy(enabled = it == "on")) }
-    ImageHint(stringResource(R.string.image_media3_hint))
-    if (o.enabled) {
-        // As in MPV: scaling controls share one group, before filters and color controls.
-        GroupedImageChoice(R.string.player_upscaler, o.scaler, listOf(
-            PlayerDropUpSection(stringResource(R.string.image_scaler_builtin), media3BuiltinScalerChoices()),
-            PlayerDropUpSection(stringResource(R.string.image_scaler_shader), media3ShaderScalerChoices()),
-        )) { change(o.copy(scaler = it)) }
-        ImageChoice(R.string.image_downscaler, o.downscaler,
-            VideoImageCatalog.media3Downscalers.toList()) { change(o.copy(downscaler = it)) }
-        if (media3AntiRingRowVisible(o, upscalerVisible = true, downscalerVisible = true)) {
-            ImageLevelSlider(R.string.image_antiring, o.antiring, range = 0..100, step = 1,
-                valueLabel = "${o.antiring} %") { change(o.copy(antiring = it)) }
-        }
-        if (media3SigmoidRowVisible(o, upscalerVisible = true)) {
-            ImageChoice(R.string.image_sigmoid, if (o.sigmoid) "on" else "off", imageOnOff()) {
-                change(o.copy(sigmoid = it == "on"))
-            }
-        }
-        Media3FilterRows(o, fsrSharpens = integratedSharpening != null,
-            integratedSharpening = integratedSharpening,
-            superResolutionVisible = media3SuperResRowVisible(o, upscalerVisible = true),
-            change = change)
-        ImageLevel(R.string.image_brightness, o.brightness) { change(o.copy(brightness = it)) }
-        ImageLevel(R.string.image_contrast, o.contrast) { change(o.copy(contrast = it)) }
-        ImageLevel(R.string.image_saturation, o.saturation) { change(o.copy(saturation = it)) }
-        ImageLevel(R.string.image_gamma, o.gamma) { change(o.copy(gamma = it)) }
+    // No master switch, as in MPV: every control is offered and a chosen setting runs.
+    // As in MPV: scaling controls share one group, before filters and color controls.
+    GroupedImageChoice(R.string.player_upscaler, o.scaler, listOf(
+        PlayerDropUpSection(stringResource(R.string.image_scaler_builtin), media3BuiltinScalerChoices()),
+        PlayerDropUpSection(stringResource(R.string.image_scaler_shader), media3ShaderScalerChoices()),
+    )) { change(o.copy(scaler = it)) }
+    ImageChoice(R.string.image_downscaler, o.downscaler,
+        VideoImageCatalog.media3Downscalers.toList()) { change(o.copy(downscaler = it)) }
+    if (media3AntiRingRowVisible(o, upscalerVisible = true, downscalerVisible = true)) {
+        ImageLevelSlider(R.string.image_antiring, o.antiring, range = 0..100, step = 1,
+            valueLabel = "${o.antiring} %") { change(o.copy(antiring = it)) }
     }
+    if (media3SigmoidRowVisible(o, upscalerVisible = true)) {
+        ImageChoice(R.string.image_sigmoid, if (o.sigmoid) "on" else "off", imageOnOff()) {
+            change(o.copy(sigmoid = it == "on"))
+        }
+    }
+    Media3FilterRows(o, fsrSharpens = integratedSharpening != null,
+        integratedSharpening = integratedSharpening,
+        superResolutionVisible = media3SuperResRowVisible(o, upscalerVisible = true),
+        change = change)
+    ImageLevel(R.string.image_brightness, o.brightness) { change(o.copy(brightness = it)) }
+    ImageLevel(R.string.image_contrast, o.contrast) { change(o.copy(contrast = it)) }
+    ImageLevel(R.string.image_saturation, o.saturation) { change(o.copy(saturation = it)) }
+    ImageLevel(R.string.image_gamma, o.gamma) { change(o.copy(gamma = it)) }
 }
 
 /**

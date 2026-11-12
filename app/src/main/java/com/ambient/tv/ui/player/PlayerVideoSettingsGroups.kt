@@ -115,7 +115,7 @@ internal fun PlayerVideoSettingsGroups(
             vlcScalerApplies = !com.ambient.tv.ui.player.backend.vlcSurfaceBypassesSwscale(
                 handle.usesAndroidSurfaceOutput, handle.imageOptions.softwareProcessing))
         is Media3PlaybackHandle -> playerPanelVideoVisibility("media3", false, false,
-            media3Processing?.gpuEffectsSupported == true && media3Processing.options.enabled && media3Processing.sdrEffectsAllowed,
+            media3Processing?.gpuEffectsSupported == true && media3Processing.sdrEffectsAllowed,
             media3SdrAllowed = media3Processing?.gpuEffectsSupported == true && media3Processing.sdrEffectsAllowed,
             scale = media3Processing?.scaleRelation ?: scale)
         else -> null
@@ -592,22 +592,21 @@ private fun Media3VideoGroups(player: ExoPlayer, section: String) {
     val context = LocalContext.current
     val processing = remember(player) { Media3ImageProcessing.get(context, player) }
     val preferences = remember(context) { videoImagePreferences(context) }
-    val options = processing.options
+    // No master switch, as in MPV: every control is offered and a chosen setting runs.
+    val options = processing.options.shown()
     val visibility = playerPanelVideoVisibility(
         engine = "media3",
         gpuFilters = false,
         shadersApply = false,
         // Shield Android 11 bypasses the GPU effect sink; its controls would do nothing there.
-        media3ScalerApplies = processing.gpuEffectsSupported && processing.sdrEffectsAllowed && options.enabled,
+        media3ScalerApplies = processing.gpuEffectsSupported && processing.sdrEffectsAllowed,
         media3SdrAllowed = processing.gpuEffectsSupported && processing.sdrEffectsAllowed,
         scale = processing.scaleRelation,
     ).sparsam(LocalPerformanceProfile.current.gateExpensiveVideoVisuals, media3 = true)
     fun change(next: com.ambient.tv.data.local.Media3ImageOptions) {
-        processing.updateOptions(next)
+        processing.updateOptions(next.withProcessingFromChoices())
         if (processing.saveDefaults) preferences.media3ImageOptions = processing.options
     }
-    // The default is OFF. Keep Filters reachable so enabling it does not require finding
-    // the master switch under Scaling, and turning it off does not navigate out of this page.
     if (section == "filters") {
         val blocked = media3FiltersUnavailableReason(processing.gpuEffectsSupported, processing.sdrEffectsAllowed,
             LocalPerformanceProfile.current.gateExpensiveVideoVisuals)
@@ -617,13 +616,6 @@ private fun Media3VideoGroups(player: ExoPlayer, section: String) {
                 Media3FiltersUnavailableReason.PERFORMANCE -> stringResource(R.string.image_filters_sparsam_hint)
                 Media3FiltersUnavailableReason.SOURCE -> media3SourceRestrictionText(processing.sourceRestriction)
             })
-            return
-        }
-        ImageChoice(R.string.image_processing, if (options.enabled) "on" else "off", imageOnOff()) {
-            change(options.copy(enabled = it == "on"))
-        }
-        if (!options.enabled) {
-            ImageHint(stringResource(R.string.image_media3_enable_filters_hint))
             return
         }
         Media3FilterRows(options, fsrSharpens = processing.integratedSharpening != null,
@@ -636,20 +628,12 @@ private fun Media3VideoGroups(player: ExoPlayer, section: String) {
     }
     if (!visibility.media3Processing && !visibility.upscaler && !visibility.downscaler && !visibility.picture) return
     if (section == "scaling" && (visibility.media3Processing || visibility.upscaler || visibility.downscaler)) {
-        if (visibility.media3Processing) {
-            ImageChoice(R.string.image_processing, if (options.enabled) "on" else "off", imageOnOff()) {
-                change(options.copy(enabled = it == "on"))
-            }
-            ImageHint(stringResource(R.string.image_media3_hint))
+        // Same order as MPV: upscaler, downscaler, anti-ringing, sigmoid.
+        Media3ScalingRows(options, visibility, ::change)
+        if (!visibility.upscaler && !visibility.downscaler) {
+            upscalerNotNeededHint(processing.scaleRelation)?.let { ImageHint(stringResource(it)) }
         }
-        if (options.enabled) {
-            // Same order as MPV: upscaler, downscaler, anti-ringing, sigmoid.
-            Media3ScalingRows(options, visibility, ::change)
-            if (!visibility.upscaler && !visibility.downscaler) {
-                upscalerNotNeededHint(processing.scaleRelation)?.let { ImageHint(stringResource(it)) }
-            }
-            Media3ImageProcessingFeedback(processing)
-        }
+        Media3ImageProcessingFeedback(processing)
     }
     if (section == "color" && visibility.picture) {
         ImageLevel(R.string.image_brightness, options.brightness) { change(options.copy(brightness = it)) }

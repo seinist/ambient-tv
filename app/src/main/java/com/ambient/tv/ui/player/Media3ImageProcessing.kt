@@ -601,9 +601,9 @@ internal fun Media3ImageControls(player: ExoPlayer) {
         appliedVideoVisualGate = gate
         processing.refreshPerformanceOverrides()
     }
-    val o = processing.options
+    val o = processing.options.shown()
     fun change(next: Media3ImageOptions) {
-        processing.updateOptions(next)
+        processing.updateOptions(next.withProcessingFromChoices())
         if (processing.saveDefaults) preferences.media3ImageOptions = processing.options
     }
     if (!processing.gpuEffectsSupported) {

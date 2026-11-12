@@ -21,6 +21,8 @@ internal data class OsdKeyState(
     val canSeekForward: Boolean = true,
     /** The OSD is still drawn; navigation reverses its close instead of acting on hidden video. */
     val closing: Boolean = false,
+    /** The interactive OSD is open with the focus on its seek bar. */
+    val seekBarFocused: Boolean = false,
 )
 
 /** Jump sizes; [held] accelerates a base step while the key is held (repeat count). */
@@ -74,7 +76,8 @@ private val PASS_KEYS = setOf(
  * Rules: media keys always act, also with a panel open; every other key goes to an open panel.
  * With the OSD hidden, OK opens it, Left/Right seek, and Up/Down change chapters or make a
  * large jump (change channels in live TV). Any other key opens the OSD. With the
- * OSD visible, navigation keys move the focus inside it.
+ * OSD visible, navigation keys move the focus inside it; only Up on its seek bar makes the
+ * same chapter or large jump and continues in seek mode.
  */
 internal fun handlePlayerOsdKey(
     key: Key,
@@ -112,7 +115,11 @@ internal fun handlePlayerOsdKey(
         }
         Key.DirectionUp, Key.DirectionDown -> {
             val delta = if (key == Key.DirectionUp) 1 else -1
-            if (state.osdVisible && !(live && state.zapOsd)) return false
+            // Up on the seek bar of the open OSD jumps exactly as with the OSD hidden, and the
+            // passive seek feedback it shows takes over: nobody has to know which mode is active
+            // to skip a chapter. Down still opens the buttons.
+            val seekBarUp = key == Key.DirectionUp && state.osdVisible && state.seekBarFocused && !live
+            if (state.osdVisible && !(live && state.zapOsd) && !seekBarUp) return false
             if (live) target.zap(delta) else {
                 val jump = (if (!music) target.chapterSeekDelta(delta) else null) ?: (delta * steps.jumpMs)
                 if (jump != 0L) target.seek(jump, revealOsd = false)

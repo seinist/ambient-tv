@@ -142,8 +142,17 @@ class AudioSession(
     var showFpsOverlay by mutableStateOf(false)
     /** Keep frame-drop diagnostics visible outside video panels for this playback only. */
     var showFrameDropOverlay by mutableStateOf(false)
-    /** Presentation of this playback's overlay; compact by default, independent of visibility. */
-    var showFrameDropHistory by mutableStateOf(false)
+    private var frameDropHistoryShown by mutableStateOf(preferences.frameDropOverlayHistory)
+    /**
+     * Presentation of the overlay (compact bar or history graph). Saved, unlike its visibility:
+     * the next playback shows the graph the way it was left.
+     */
+    var showFrameDropHistory: Boolean
+        get() = frameDropHistoryShown
+        set(value) {
+            frameDropHistoryShown = value
+            preferences.frameDropOverlayHistory = value
+        }
     var route by mutableStateOf(AudioRouteCapabilities())
     var mpvAllowed by mutableStateOf(true)
         private set

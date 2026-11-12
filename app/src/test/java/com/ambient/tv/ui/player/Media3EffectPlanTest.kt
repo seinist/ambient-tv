@@ -154,4 +154,29 @@ class Media3EffectPlanTest {
         assertEquals(listOf(Media3EffectReduction(requested, applied)),
             media3EffectReductions(listOf(requested), listOf(applied)))
     }
+
+    @Test fun scalerMenusFollowMpvOrder() {
+        // All of MPV's built-in kernels exist in Media3: the built-in group is MPV's list.
+        assertEquals(VideoImageCatalog.mpvBuiltins.keys.toList(), media3BuiltinScalerChoices().map { it.first })
+        val mpvShaderOrder = VideoImageCatalog.mpvShaders.keys.toList()
+        val shared = media3ShaderScalerChoices().map { it.first }.filter { it in mpvShaderOrder }
+        assertEquals(mpvShaderOrder.filter { it in shared }, shared)
+    }
+
+    @Test fun processingFollowsTheChosenSettingsWithoutAMasterSwitch() {
+        assertFalse(Media3ImageOptions().withProcessingFromChoices().enabled)
+        assertTrue(Media3ImageOptions(scaler = "fsr").withProcessingFromChoices().enabled)
+        assertTrue(Media3ImageOptions(gamma = 2).withProcessingFromChoices().enabled)
+        // Modifiers of the scaler alone start nothing.
+        assertFalse(Media3ImageOptions(antiring = 50, sigmoid = false, superResolution = true).withProcessingFromChoices().enabled)
+        // Back to nothing chosen returns to the direct path.
+        assertFalse(Media3ImageOptions(enabled = true).withProcessingFromChoices().enabled)
+        // Leftovers behind the former switch are not shown and cannot return with the first change.
+        val legacyOff = Media3ImageOptions(enabled = false, deband = "strong", scaler = "nis")
+        assertEquals(Media3ImageOptions(), legacyOff.shown())
+        assertEquals(Media3ImageOptions(enabled = true, sharpening = "light"),
+            legacyOff.shown().copy(sharpening = "light").withProcessingFromChoices())
+        val active = Media3ImageOptions(enabled = true, deband = "light")
+        assertEquals(active, active.shown())
+    }
 }

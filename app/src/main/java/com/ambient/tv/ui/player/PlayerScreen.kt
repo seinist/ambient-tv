@@ -663,7 +663,7 @@ private fun PlayerContent(
         handlePlayerOsdKey(
             event.key, event.type == KeyEventType.KeyDown,
             OsdKeyState(OsdContent.VIDEO, controlsVisible && !osd.seekFeedback && !osd.closing,
-                panel != UnifiedPlayerPanel.NONE, osd.seekFeedback, closing = osd.closing),
+                panel != UnifiedPlayerPanel.NONE, osd.seekFeedback, closing = osd.closing, seekBarFocused = osd.seekBarFocused),
             OsdSeekSteps(BackgroundPlaybackSession.seekJumpMs(state.seekJumpMs), held = { heldSeekStep(it, event) }),
             object : OsdKeyTarget {
                 override fun chapterSeekDelta(direction: Int): Long? {
@@ -1109,7 +1109,10 @@ internal fun TvPlayerSeekBar(
     val timelineOwner = remember { Any() }
     androidx.compose.runtime.DisposableEffect(controlFocus, seekable) {
         if (seekable) controlFocus?.register("seek-bar", timelineFocus, timelineOwner)
-        onDispose { if (seekable) controlFocus?.unregister("seek-bar", timelineOwner) }
+        onDispose {
+            if (seekable) controlFocus?.unregister("seek-bar", timelineOwner)
+            osd?.seekBarFocus(timelineOwner, false)
+        }
     }
     // Resolve on each focus search so moving onto the timeline does not lose the originating button.
     val verticalReturn = if (seekable && playPauseFocus != null) {
@@ -1192,6 +1195,7 @@ internal fun TvPlayerSeekBar(
             .onFocusChanged {
                 focused = it.isFocused
                 controlFocus?.focused("seek-bar", timelineOwner, it.isFocused)
+                osd?.seekBarFocus(timelineOwner, it.isFocused)
                 if (it.isFocused && osd?.expanded == true) osd.collapse()
                 if (!it.isFocused) { pendingTarget = null; pendingDirection = 0; lastPreview = null }
             }

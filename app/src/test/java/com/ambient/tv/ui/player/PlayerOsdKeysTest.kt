@@ -64,6 +64,22 @@ class PlayerOsdKeysTest {
         assertEquals(true to listOf("seek:-120000:bar"), press(Key.DirectionLeft, state(OsdContent.RECORDING)))
     }
 
+    @Test fun upOnTheSeekBarOfTheOpenOsdJumpsAndContinuesInSeekMode() {
+        val onSeekBar = state(visible = true).copy(seekBarFocused = true)
+        // Same jump as with the OSD hidden, shown with the passive seek bar.
+        assertEquals(true to listOf("seek:60000:bar"), press(Key.DirectionUp, onSeekBar))
+        assertEquals(true to listOf("seek:25000:bar"), press(Key.DirectionUp, onSeekBar, Recorder(chapterDelta = 25_000)))
+        assertEquals(true to listOf("seek:60000:bar"), press(Key.DirectionUp, onSeekBar.copy(content = OsdContent.MUSIC), Recorder(chapterDelta = 25_000)))
+        // Everything else in the open OSD stays focus navigation.
+        assertEquals(false to emptyList<String>(), press(Key.DirectionDown, onSeekBar))
+        assertEquals(false to emptyList<String>(), press(Key.DirectionLeft, onSeekBar))
+        assertEquals(false to emptyList<String>(), press(Key.DirectionCenter, onSeekBar))
+        assertEquals(false to emptyList<String>(), press(Key.DirectionUp, state(visible = true)))
+        assertEquals(false to emptyList<String>(), press(Key.DirectionUp, onSeekBar.copy(content = OsdContent.LIVE)))
+        // An open panel keeps its keys.
+        assertEquals(false to emptyList<String>(), press(Key.DirectionUp, onSeekBar.copy(panelOpen = true)))
+    }
+
     @Test fun firstOkClaimsAutomaticChannelInformationWithoutPausing() {
         for (key in listOf(Key.Enter, Key.NumPadEnter, Key.DirectionCenter)) {
             assertEquals(true to listOf("osd"), press(key, state(OsdContent.LIVE, visible = true, zapOsd = true)))

@@ -1,6 +1,5 @@
 package com.ambient.tv.companion
 
-import coil3.SingletonImageLoader
 import coil3.toBitmap
 import com.ambient.tv.ui.common.requestHeaders
 import coil3.request.allowHardware
@@ -29,7 +28,7 @@ internal class CompanionPlaybackArtwork(private val context: Context, private va
                 runCatching {
                     val request = ImageRequest.Builder(context).data(url).size(128).allowHardware(false)
                     request.requestHeaders(headers)
-                    val image = (SingletonImageLoader.get(context).execute(request.build()) as? SuccessResult)?.image ?: return@launch
+                    val image = (com.ambient.tv.backdropImageLoader(context).execute(request.build()) as? SuccessResult)?.image ?: return@launch
                     val width = image.width.coerceAtLeast(1)
                     val height = image.height.coerceAtLeast(1)
                     val ratio = 128f / maxOf(width, height)

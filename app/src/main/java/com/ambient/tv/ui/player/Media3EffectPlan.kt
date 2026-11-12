@@ -204,9 +204,16 @@ internal val MEDIA3_SHADER_SCALERS: Set<String> =
     MEDIA3_ANIME4K_SCALERS + MEDIA3_FSRCNNX_SCALERS + MEDIA3_NNEDI3_SCALERS +
         MEDIA3_NEURAL_COMPUTE_SCALERS + MEDIA3_RAVU_SCALERS + setOf("fsr", "nis")
 internal fun media3BuiltinScalerChoices(): List<Pair<String, String>> =
-    media3ScalerChoices().filterNot { it.first in MEDIA3_SHADER_SCALERS }
+    media3ScalerChoices().filterNot { it.first in MEDIA3_SHADER_SCALERS }.inMpvOrder(VideoImageCatalog.mpvBuiltins.keys)
 internal fun media3ShaderScalerChoices(): List<Pair<String, String>> =
-    media3ScalerChoices().filter { it.first in MEDIA3_SHADER_SCALERS }
+    media3ScalerChoices().filter { it.first in MEDIA3_SHADER_SCALERS }.inMpvOrder(VideoImageCatalog.mpvShaders.keys)
+
+/** Same position as in MPV's list, so a scaler is found in the same place in both players. */
+private fun List<Pair<String, String>>.inMpvOrder(mpvKeys: Set<String>): List<Pair<String, String>> {
+    val order = mpvKeys.withIndex().associate { (index, key) -> key to index }
+    // Stable: scalers MPV does not list keep their own order at the end.
+    return sortedBy { order[it.first] ?: Int.MAX_VALUE }
+}
 
 /** A planned stage plus the gamma fused into its pass (0 = none). */
 internal data class Media3FusedStage(val stage: Media3Stage, val gamma: Int = 0)

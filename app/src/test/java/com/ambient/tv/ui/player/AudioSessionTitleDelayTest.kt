@@ -72,4 +72,17 @@ class AudioSessionTitleDelayTest {
         assertEquals(true, session.options.night)
         assertEquals(defaults, preferences.audioSettings)
     }
+
+    @Test fun frameDropGraphIsRememberedButAlwaysOnBelongsToThePlayback() {
+        val preferences = AppPreferences(memoryPreferences())
+        val first = AudioSession(preferences, "mpv", sourcePassthrough = false)
+        first.showFrameDropOverlay = true
+        first.showFrameDropHistory = true
+        // The next playback keeps the graph presentation; "always on" starts off again.
+        val next = AudioSession(preferences, "media3", sourcePassthrough = false)
+        assertEquals(false, next.showFrameDropOverlay)
+        assertEquals(true, next.showFrameDropHistory)
+        next.showFrameDropHistory = false
+        assertEquals(false, AudioSession(preferences, "vlc", sourcePassthrough = false).showFrameDropHistory)
+    }
 }

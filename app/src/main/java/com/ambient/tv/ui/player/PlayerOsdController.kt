@@ -29,6 +29,13 @@ internal class PlayerOsdController(initialZapOsd: Boolean = false) {
      */
     internal var onScreen: Boolean = false
 
+    private var seekBarOwner: Any? = null
+    /** The seek bar of the interactive OSD holds the focus; Up then jumps like in seek mode. */
+    val seekBarFocused: Boolean get() = seekBarOwner != null
+    fun seekBarFocus(owner: Any, focused: Boolean) {
+        if (focused) seekBarOwner = owner else if (seekBarOwner === owner) seekBarOwner = null
+    }
+
     /** Compatibility with engine callbacks; visibility includes the closing phase. */
     val visible: MutableState<Boolean> = object : MutableState<Boolean> {
         override var value: Boolean

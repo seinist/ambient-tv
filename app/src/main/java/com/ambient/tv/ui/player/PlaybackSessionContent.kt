@@ -146,7 +146,11 @@ fun PlaybackSessionContent(
     val secondsRemaining = ceil((creditsRemainingMs ?: timing.remainingMs) / 1_000.0).toInt()
     // Metadata duration is only a countdown hint. A seek/restart can temporarily leave the
     // old clock at that value; only the current engine may declare an actual EOF.
-    val atEnd = snapshot.status.ended
+    // A deliberate seek to the end of a YouTube video counts as its end at once; the engine's
+    // own EOF after the 1.5 s decoder tail stays the fallback (see markUserEndSeek).
+    val userEnded = metadata.source == "youtube" && !metadata.isLive &&
+        BackgroundPlaybackSession.userEndSeekRequested(snapshot.generation)
+    val atEnd = snapshot.status.ended || userEnded
     val stillWatching = config.autoplay &&
         BackgroundPlaybackSession.shouldConfirmNextUp(config.stillWatchingEvery)
     // Content without a known final end (live, open-ended streams) must never offer Next Up.
@@ -212,7 +216,7 @@ fun PlaybackSessionContent(
         handledKey = candidateKey
         if (automatic) BackgroundPlaybackSession.recordAutomaticNextUp(next,
             completed = metadata.source == "youtube" && current.status.error == null &&
-                (current.status.ended || terminalSponsorHandoff))
+                (current.status.ended || terminalSponsorHandoff || userEnded))
         else {
             BackgroundPlaybackSession.registerUserInteraction()
             BackgroundPlaybackSession.recordManualNextUp(next)
