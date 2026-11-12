@@ -173,7 +173,7 @@ private fun SpotifyPlayerContent(onBack: () -> Unit, viewModel: SpotifyPlayerVie
         // Shared remote handling (PlayerOsdKeys) for music: −10 s / +30 s jumps, tracks for next/previous.
         handlePlayerOsdKey(
             event.key, event.type == KeyEventType.KeyDown,
-            OsdKeyState(OsdContent.MUSIC, controlsVisible && !osd.seekFeedback && !osd.closing, panel != UnifiedPlayerPanel.NONE, osd.seekFeedback, closing = osd.closing),
+            OsdKeyState(OsdContent.MUSIC, controlsVisible && !osd.seekFeedback && !osd.closing, panel != UnifiedPlayerPanel.NONE, osd.seekFeedback, closing = osd.closing, seekBarFocused = osd.seekBarFocused),
             OsdSeekSteps(viewModel.seekJumpMs, backMs = 10_000, forwardMs = 30_000, held = { heldSeekStep(it, event) }),
             object : OsdKeyTarget {
                 override fun isPlaying() = state.playing

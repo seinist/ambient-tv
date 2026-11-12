@@ -1048,7 +1048,7 @@ private fun YouTubeMedia3Playback(
         val seekWithBar: (Long) -> Unit = { seekInMode(it) }
         handlePlayerOsdKey(
             e.key, e.type == KeyEventType.KeyDown,
-            OsdKeyState(OsdContent.VIDEO, controls && !osd.seekFeedback && !osd.closing, panelOpen, osd.seekFeedback, closing = osd.closing),
+            OsdKeyState(OsdContent.VIDEO, controls && !osd.seekFeedback && !osd.closing, panelOpen, osd.seekFeedback, closing = osd.closing, seekBarFocused = osd.seekBarFocused),
             OsdSeekSteps(BackgroundPlaybackSession.seekJumpMs(bigSeekSeconds * 1000L), held = { heldSeekStep(it, e) }),
             object : OsdKeyTarget {
                 override fun chapterSeekDelta(direction: Int): Long? {
@@ -1427,7 +1427,7 @@ private fun YouTubeVlcPlayback(playback: YouTubePlayback, audioUri: String?, str
         val seekWithBar: (Long) -> Unit = { seekInMode(it) }
         handlePlayerOsdKey(
             e.key, e.type == KeyEventType.KeyDown,
-            OsdKeyState(OsdContent.VIDEO, controls && !osd.seekFeedback && !osd.closing, panelOpen, osd.seekFeedback, closing = osd.closing),
+            OsdKeyState(OsdContent.VIDEO, controls && !osd.seekFeedback && !osd.closing, panelOpen, osd.seekFeedback, closing = osd.closing, seekBarFocused = osd.seekBarFocused),
             OsdSeekSteps(BackgroundPlaybackSession.seekJumpMs(bigSeekSeconds * 1000L), held = { heldSeekStep(it, e) }),
             object : OsdKeyTarget {
                 override fun chapterSeekDelta(direction: Int): Long? {
@@ -1762,7 +1762,7 @@ private fun YouTubeMpvPlayback(playback: YouTubePlayback, streams: YouTubeStream
         val seekWithBar: (Long) -> Unit = { seekInMode(it) }
         handlePlayerOsdKey(
             e.key, e.type == KeyEventType.KeyDown,
-            OsdKeyState(OsdContent.VIDEO, controls && !osd.seekFeedback && !osd.closing, panelOpen, osd.seekFeedback, closing = osd.closing),
+            OsdKeyState(OsdContent.VIDEO, controls && !osd.seekFeedback && !osd.closing, panelOpen, osd.seekFeedback, closing = osd.closing, seekBarFocused = osd.seekBarFocused),
             OsdSeekSteps(BackgroundPlaybackSession.seekJumpMs(bigSeekSeconds * 1000L), held = { heldSeekStep(it, e) }),
             object : OsdKeyTarget {
                 override fun chapterSeekDelta(direction: Int): Long? {

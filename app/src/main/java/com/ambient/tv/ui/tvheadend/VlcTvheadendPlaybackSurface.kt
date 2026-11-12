@@ -327,6 +327,7 @@ internal fun VlcTvheadendPlaybackSurface(
                 osdVisible = controlsVisible && !osd.seekFeedback && !osd.closing,
                 panelOpen = panel != UnifiedPlayerPanel.NONE,
                 seekFeedbackVisible = osd.seekFeedback,
+                seekBarFocused = osd.seekBarFocused,
                 zapOsd = chromeState?.shownByZap?.value == true,
                 canSeekForward = true,
                 closing = osd.closing,
