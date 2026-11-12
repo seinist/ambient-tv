@@ -39,6 +39,19 @@ class SmartTubeEngine @Inject constructor(
     @Volatile private var initialized = false
     private val initLock = Any()
     private val playbackMetadata = YouTubePlaybackMetadataCache()
+    /**
+     * Format infos of recently resolved streams, for history reports. MediaServiceCore caches
+     * only the last loaded video; a report for any other video (the final position of the
+     * previous video arrives after Next Up loaded the next one) would otherwise run a complete
+     * player request and evict the current video from that cache, every 10 s in turn.
+     */
+    private val playbackFormatInfos = object : java.util.LinkedHashMap<String, Any>(16, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, Any>?) = size > 8
+    }
+    /** Click-tracking parameters of browsed cards; SmartTube passes them with the player request. */
+    private val clickTrackingParams = object : java.util.LinkedHashMap<String, String>(256, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, String>?) = size > 512
+    }
     /** scope (feed/search key) -> row title -> latest SmartTube MediaGroup of that row. */
     private val rowContinuations = java.util.concurrent.ConcurrentHashMap<String, java.util.concurrent.ConcurrentHashMap<String, Any>>()
     private val rowContinuationLocks = java.util.concurrent.ConcurrentHashMap<String, Mutex>()
@@ -512,6 +525,7 @@ class SmartTubeEngine @Inject constructor(
         val media = service("getMediaItemService")
         com.ambient.tv.ui.player.logPlaybackStartup("youtube", "service_ready", started)
         val info = loadPlayableFormatInfo(media, videoId)
+        synchronized(playbackFormatInfos) { playbackFormatInfos[videoId] = info }
         if (info.callBool("isLiveOffline") == true) {
             throw YouTubeLiveOfflineException(YouTubeLiveEvent(
                 info.callString("getTitle").orEmpty(),
@@ -684,7 +698,11 @@ class SmartTubeEngine @Inject constructor(
         com.ambient.tv.ui.player.backend.PlaybackBackend.MEDIA3
 
     private fun loadFormatInfo(media: Any, videoId: String, allowInnertube: Boolean = true): Any {
-        val primary = media.invokeDetailed("getFormatInfo", videoId)
+        // Like SmartTube: the card's click-tracking parameters go with the player request, so
+        // YouTube attributes the view to the recommendation it came from.
+        val tracking = synchronized(clickTrackingParams) { clickTrackingParams[videoId] }
+        val primary = if (tracking != null) media.invokeDetailed("getFormatInfo", videoId, tracking)
+            else media.invokeDetailed("getFormatInfo", videoId)
         if (primary.error != null) {
             android.util.Log.w("AmbientYouTube", "getFormatInfo failed for $videoId: ${primary.error.message}", primary.error)
             Timber.w(primary.error, "SmartTube getFormatInfo failed for %s", videoId)
@@ -782,11 +800,59 @@ class SmartTubeEngine @Inject constructor(
                 ?.toDoubleOrNull()?.takeIf { it.isFinite() && it > 0.0 }
                 ?.times(1_000.0)?.toLong() ?: return@io
         } else position
-        // Method names changed across MediaServiceCore revisions; try the public variants.
         val seconds = remotePosition / 1000f
-        val first = media.invokeCompatible("updateHistoryPosition", videoId, seconds)
-        if (!first.invoked) {
-            media.invokeCompatible("updateHistoryPosition", videoId, remotePosition)
+        val info = synchronized(playbackFormatInfos) { playbackFormatInfos[videoId] }
+        val reported = if (info != null) reportWatchTime(videoId, info, seconds) else false
+        if (reported) return@io
+        // No format info of our own (resolved before this process started): MediaServiceCore's
+        // own path, which reloads the video when it is not the last one it cached.
+        val invocation = media.invokeDetailed("updateHistoryPosition", videoId, seconds)
+        if (!invocation.found) Timber.w("SmartTube has no updateHistoryPosition(String, float)")
+        invocation.error?.let { error ->
+            Timber.w(error, "SmartTube history update failed for %s", videoId)
+            com.ambient.tv.diagnostics.DiagnosticLog.warn("youtube", "history update failed: ${error.message}", error)
+        }
+    }
+
+    /**
+     * What MediaServiceCore's updateHistoryPosition does, with the format info this engine
+     * resolved instead of its single-entry cache: the signed-in check, the one-time sync with
+     * the account's player response (its tracking params), then the watch-time call.
+     * False when the service lacks that path; an error is logged and counts as reported.
+     */
+    private fun reportWatchTime(videoId: String, info: Any, positionSec: Float): Boolean {
+        val signIn = service("getSignInService")
+        if (signIn.callBool("isSigned") != true) return true
+        return try {
+            val formatInfoClass = Class.forName("com.liskovsoft.mediaserviceinterfaces.data.MediaItemFormatInfo")
+            Class.forName("com.liskovsoft.youtubeapi.service.internal.FormatInfoWrapper")
+                .getMethod("syncWithAuthInfoIfNeeded", formatInfoClass).invoke(null, info)
+            val tracking = Class.forName("com.liskovsoft.youtubeapi.track.TrackingService")
+                .getMethod("instance").invoke(null) ?: return false
+            val invocation = tracking.invokeDetailed("updateWatchTime",
+                info.callString("getVideoId") ?: videoId, positionSec,
+                info.callString("getLengthSeconds")?.toFloatOrNull() ?: 0f,
+                info.callString("getEventId"), info.callString("getVisitorMonitoringData"), info.callString("getOfParam"))
+            if (!invocation.found) return false
+            invocation.error?.let { throw it }
+            true
+        } catch (error: java.lang.reflect.InvocationTargetException) {
+            // Thrown inside the service (e.g. "the format should be synced first"): the
+            // service's own path would fail the same way, so report it instead of retrying.
+            val cause = error.targetException ?: error
+            if (cause is InterruptedException) throw cause
+            Timber.w(cause, "SmartTube history update failed for %s", videoId)
+            com.ambient.tv.diagnostics.DiagnosticLog.warn("youtube", "history update failed: ${cause.message}", cause)
+            true
+        } catch (error: ReflectiveOperationException) {
+            Timber.d(error, "SmartTube tracking path unavailable")
+            false
+        } catch (error: InterruptedException) {
+            throw error
+        } catch (error: Exception) {
+            Timber.w(error, "SmartTube history update failed for %s", videoId)
+            com.ambient.tv.diagnostics.DiagnosticLog.warn("youtube", "history update failed: ${error.message}", error)
+            true
         }
     }
 
@@ -1130,6 +1196,9 @@ class SmartTubeEngine @Inject constructor(
         val percentWatched = raw.callInt("getPercentWatched")?.takeIf { it >= 0 }?.coerceAtMost(100) ?: -1
         if (!isLive && !isUpcoming && percentWatched >= 0) {
             YouTubeLocalProgress.observeRemote(videoId, percentWatched)
+        }
+        raw.callString("getClickTrackingParams")?.takeIf(String::isNotBlank)?.let { params ->
+            synchronized(clickTrackingParams) { clickTrackingParams[videoId] = params }
         }
         return YouTubeItem(
             videoId = videoId,
