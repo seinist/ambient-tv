@@ -703,10 +703,11 @@ internal fun SettingsHub(
                         onExit = {
                             when {
                                 requestedFocusDirection != FocusDirection.Left -> Unit
-                                // A page opened straight from outside (sidebar or system shortcut) has
-                                // no index behind it: Left returns to its area in the settings menu.
-                                page != null && directEntry -> areaFocus.getValue(area).requestFocus()
-                                page != null || addingSystems -> cancelFocusChange()
+                                // Touch layouts have no area list to return to.
+                                handheld && (page != null || addingSystems) -> cancelFocusChange()
+                                handheld -> Unit
+                                // Left out of the panel always lands on the current area in the
+                                // settings menu: from an area's index, a page or the add catalog.
                                 else -> areaFocus.getValue(area).requestFocus()
                             }
                         }
@@ -724,11 +725,13 @@ internal fun SettingsHub(
                             return@onKeyEvent moved
                         }
                         if (event.key != Key.DirectionLeft) return@onKeyEvent false
-                        if (page == null && !addingSystems) return@onKeyEvent false
-                        // On a page, Left only moves within the focused row; it never leaves the
-                        // page (Back does that). onExit already blocks leaving the panel. Only a
-                        // directly entered page goes on to its area in the settings menu.
-                        val toAreaMenu = page != null && directEntry
+                        if (handheld && page == null && !addingSystems) return@onKeyEvent false
+                        // Left first moves within the focused row (steppers, button pairs). At the
+                        // row's left edge it returns to the current area in the settings menu, on
+                        // every view of the panel; Back still closes a page.
+                        fun focusAreaMenu() {
+                            if (!handheld) runCatching { areaFocus.getValue(area).requestFocus() }
+                        }
                         val before = focusedRect.rect()
                         runCatching { contentFocus.saveFocusedChild() }
                         if (focusManager.moveFocus(FocusDirection.Left)) {
@@ -738,11 +741,10 @@ internal fun SettingsHub(
                                 withFrameNanos { }
                                 val after = focusedRect.rect()
                                 if (panelHasFocus && before != null && after != null && (after.top >= before.bottom || after.bottom <= before.top)) {
-                                    if (toAreaMenu) runCatching { areaFocus.getValue(area).requestFocus() }
-                                    else runCatching { contentFocus.restoreFocusedChild() }
+                                    if (handheld) runCatching { contentFocus.restoreFocusedChild() } else focusAreaMenu()
                                 }
                             }
-                        }
+                        } else if (panelHasFocus) focusAreaMenu()
                         true
                     }
                     .then(focusedRect.modifier)
