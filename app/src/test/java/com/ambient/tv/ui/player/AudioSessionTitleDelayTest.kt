@@ -72,4 +72,27 @@ class AudioSessionTitleDelayTest {
         assertEquals(true, session.options.night)
         assertEquals(defaults, preferences.audioSettings)
     }
+
+    @Test fun frameDropOverlayChoiceIsRememberedForTheNextPlayback() {
+        val preferences = AppPreferences(memoryPreferences())
+        val first = AudioSession(preferences, "mpv", sourcePassthrough = false)
+        assertEquals(false, first.showFrameDropOverlay)
+        assertEquals(false, first.showFrameDropHistory)
+        first.showFrameDropOverlay = true
+        first.showFrameDropHistory = true
+        // A new playback, also on another renderer, opens the way the last one was left.
+        val next = AudioSession(preferences, "media3", sourcePassthrough = false)
+        assertEquals(true, next.showFrameDropOverlay)
+        assertEquals(true, next.showFrameDropHistory)
+        // Audio-only hides the overlay without forgetting the choice.
+        next.updateAudioOnly(true)
+        assertEquals(false, next.showFrameDropOverlay)
+        assertEquals(true, preferences.frameDropOverlayAlways)
+        next.updateAudioOnly(false)
+        assertEquals(true, next.showFrameDropOverlay)
+        val music = AudioSession(preferences, "mpv", sourcePassthrough = false, audioOnly = true)
+        assertEquals(false, music.showFrameDropOverlay)
+        next.showFrameDropOverlay = false
+        assertEquals(false, AudioSession(preferences, "vlc", sourcePassthrough = false).showFrameDropOverlay)
+    }
 }

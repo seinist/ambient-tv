@@ -952,6 +952,16 @@ class AppPreferences @Inject constructor(
         get() = prefs.getInt("frame_drop_test_seconds", 0).let { if (it in 2..60) it else 0 }
         set(value) = prefs.edit { putInt("frame_drop_test_seconds", if (value in 2..60) value else 0) }
 
+    /** Frame-drop overlay kept on screen during playback (OSD & Info); remembered across playbacks. */
+    var frameDropOverlayAlways: Boolean
+        get() = prefs.getBoolean("frame_drop_overlay_always", false)
+        set(value) = prefs.edit { putBoolean("frame_drop_overlay_always", value) }
+
+    /** The frame-drop overlay shows its history graph instead of the compact bar. */
+    var frameDropOverlayHistory: Boolean
+        get() = prefs.getBoolean("frame_drop_overlay_history", false)
+        set(value) = prefs.edit { putBoolean("frame_drop_overlay_history", value) }
+
     fun effectiveUiPerformanceModeKey(): String = uiPerformanceModeKey ?: performanceModeKey
 
     fun effectivePlaybackPerformanceModeKey(): String = playbackPerformanceModeKey ?: performanceModeKey
