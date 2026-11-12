@@ -109,7 +109,17 @@ class SectionViewModel @Inject constructor(
     fun retryOffline() { if (availability.hasNetwork() && availability.state(com.ambient.tv.data.browse.mediaProvider(sectionKey)) == com.ambient.tv.data.browse.SourceHealth.OFFLINE && loadJob?.isActive != true) load() }
 
     init {
-        if (sourceItems.isNotEmpty()) rebuild()
+        if (sourceItems.isNotEmpty()) {
+            // Every section visit creates a new model, and the first rebuild sorts the whole
+            // library on a worker: the page showed its loading skeleton for those frames even
+            // with a warm cache. A page built on the last visit is shown from the first frame;
+            // the rebuild then replaces it with the current data.
+            SectionLoadedSnapshots.get(stateKey())?.let { snapshot ->
+                _uiState.value = snapshot.withLatestBrowseFocus(focusBuffer.get(stateKey()))
+                    .copy(playbackReturnRevision = playbackReturnRevision)
+            }
+            rebuild()
+        }
     }
 
     /** Entry already expired this source under the shared mutation guard. */
@@ -503,6 +513,7 @@ class SectionViewModel @Inject constructor(
             val loaded = buildLoaded()
             withContext(Dispatchers.Main.immediate) {
                 if (version == rebuildVersion) {
+                    SectionLoadedSnapshots.put(stateKey(), loaded)
                     // Sorting may finish after another key press. Publish the latest target,
                     // including a not-yet-persisted one, instead of an older worker snapshot.
                     _uiState.value = loaded.withLatestBrowseFocus(focusBuffer.get(stateKey()))
@@ -581,4 +592,19 @@ internal fun SectionUiState.Loaded.withLatestBrowseFocus(snapshot: BrowseFocusSn
         focusedRecommendationRowId = row,
         focusedCollectionId = snapshot.itemKey.removePrefix("collection:").takeIf { collection },
     )
+}
+
+/**
+ * Last built page per section and page kind, for the first frame of the next visit (see the
+ * view model's init). Only consulted while the section's items are still in the memory cache,
+ * so a cleared cache (server switch, logout) never revives a page of another account.
+ */
+internal object SectionLoadedSnapshots {
+    private val snapshots = object : LinkedHashMap<String, SectionUiState.Loaded>(16, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, SectionUiState.Loaded>?) = size > 12
+    }
+
+    @Synchronized fun get(stateKey: String): SectionUiState.Loaded? = snapshots[stateKey]
+    @Synchronized fun put(stateKey: String, loaded: SectionUiState.Loaded) { snapshots[stateKey] = loaded }
+    @Synchronized fun clear() = snapshots.clear()
 }
