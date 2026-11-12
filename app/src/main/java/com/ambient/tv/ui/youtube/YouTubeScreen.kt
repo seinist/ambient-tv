@@ -125,6 +125,25 @@ import androidx.lifecycle.repeatOnLifecycle
             YouTubeHomeSelection.requests.collect(viewModel::onHomeSelected)
         }
     }
+    // Sidebar/chip category selections reach this screen while it is on top: the view model
+    // switches the feed in place (header, focus tree and model survive; see YouTubeFeedSelection).
+    if (state.channel == null) {
+        val feedOwner = remember { Any() }
+        androidx.compose.runtime.DisposableEffect(feedOwner, state.feed) {
+            YouTubeFeedSelection.show(feedOwner, state.feed.key)
+            onDispose { YouTubeFeedSelection.hide(feedOwner) }
+        }
+        var handledFeedRequest by remember { androidx.compose.runtime.mutableLongStateOf(YouTubeFeedSelection.requests.value?.serial ?: 0L) }
+        LaunchedEffect(viewModel, lifecycleOwner) {
+            lifecycleOwner.lifecycle.repeatOnLifecycle(Lifecycle.State.RESUMED) {
+                YouTubeFeedSelection.requests.collect { request ->
+                    if (request == null || request.serial <= handledFeedRequest) return@collect
+                    handledFeedRequest = request.serial
+                    viewModel.selectFeedKey(request.feedKey)
+                }
+            }
+        }
+    }
     // The paging callbacks and screen share one immutable order, including local watch-state filters.
     val visibleRows = viewModel.displayedContent(state).rows
     val populatedRows = remember(visibleRows) { visibleRows.filter { it.items.isNotEmpty() } }

@@ -1367,7 +1367,16 @@ private fun AmbientTvApp(
         onDispose { companionVm.manager.detach() }
     }
     val currentSectionKey = currentBackStackEntry?.arguments?.getString("sectionKey")
-    val currentFeedKey = currentBackStackEntry?.arguments?.getString("feedKey")
+    // SmartTube categories switch inside the live screen (YouTubeFeedSelection): the sidebar
+    // highlight and the remembered route follow the shown feed, not the route it was opened with.
+    val liveYouTubeFeedKey = com.ambient.tv.ui.youtube.YouTubeFeedSelection.displayed.collectAsState().value?.second
+        ?.takeIf { currentRoute == Destinations.YOUTUBE || currentRoute == Destinations.YOUTUBE_FEED }
+    val currentFeedKey = liveYouTubeFeedKey ?: currentBackStackEntry?.arguments?.getString("feedKey")
+    val sidebarRoute = when {
+        liveYouTubeFeedKey == null -> currentRoute
+        liveYouTubeFeedKey == appPreferences.youtubeStartFeedKey -> Destinations.YOUTUBE
+        else -> Destinations.YOUTUBE_FEED
+    }
     val currentTrailerFeedKey = if (currentRoute == Destinations.TRAILER_FEED) currentFeedKey else null
     val currentSpotifySectionKey = if (currentRoute == Destinations.SPOTIFY_SECTION) currentBackStackEntry?.arguments?.getString("sectionKey") else null
     val currentRadioSectionKey = when (currentRoute) {
@@ -1403,7 +1412,7 @@ private fun AmbientTvApp(
         currentRoute == Destinations.LIVE_TV ||
         currentRoute == Destinations.LIVE_TV_SECTION
     val sidebarDestinationKey = sidebarConcreteRoute(
-        currentRoute, currentSectionKey, currentFeedKey, currentTrailerFeedKey, currentSpotifySectionKey, currentTvheadendTab,
+        sidebarRoute, currentSectionKey, currentFeedKey, currentTrailerFeedKey, currentSpotifySectionKey, currentTvheadendTab,
         currentLiveTvSourceId, currentFileSourceId, currentDlnaServerId, currentRadioSectionKey, currentTelegramSectionKey,
     )
     // Key readiness to the destination itself: a parent effect must not overwrite a child
@@ -1727,9 +1736,9 @@ private fun AmbientTvApp(
         }
     }
 
-    LaunchedEffect(currentRoute, currentSectionKey, currentFeedKey, currentTrailerFeedKey, currentSpotifySectionKey, currentRadioSectionKey, currentTelegramSectionKey, currentTvheadendTab, currentLiveTvSourceId, currentFileSourceId, currentDlnaServerId) {
-        if (currentRoute in SIDEBAR_ROUTES && currentRoute != Destinations.SETTINGS) {
-            lastTopLevelRoute = when (currentRoute) {
+    LaunchedEffect(sidebarRoute, currentSectionKey, currentFeedKey, currentTrailerFeedKey, currentSpotifySectionKey, currentRadioSectionKey, currentTelegramSectionKey, currentTvheadendTab, currentLiveTvSourceId, currentFileSourceId, currentDlnaServerId) {
+        if (sidebarRoute in SIDEBAR_ROUTES && sidebarRoute != Destinations.SETTINGS) {
+            lastTopLevelRoute = when (sidebarRoute) {
                 Destinations.YOUTUBE_FEED -> currentFeedKey?.let(Destinations::youtubeFeed) ?: Destinations.YOUTUBE
                 Destinations.TRAILER_FEED -> currentTrailerFeedKey?.let(Destinations::trailerFeed) ?: Destinations.TRAILERS
                 Destinations.SPOTIFY_SECTION -> currentSpotifySectionKey?.let(Destinations::spotifySection) ?: Destinations.SPOTIFY
@@ -1811,6 +1820,17 @@ private fun AmbientTvApp(
     val providerNavigationViewModel: com.ambient.tv.ui.navigation.SidebarViewModel = androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel()
 
     fun navigateSidebar(route: String) {
+        // A SmartTube category while the feed screen is on top: switch inside that screen.
+        // No new destination, no new view model; header and focus tree stay, rows come from
+        // the content cache at once. The route stays the same, so Back behaves as before.
+        val targetYouTubeFeed = com.ambient.tv.ui.youtube.youtubeFeedKeyOfRoute(route, appPreferences.youtubeStartFeedKey)
+        if (com.ambient.tv.ui.youtube.youtubeFeedSwitchesInPlace(currentRoute, liveYouTubeFeedKey, targetYouTubeFeed)) {
+            guardedSettingsExit {
+                com.ambient.tv.ui.youtube.YouTubeFeedSelection.request(checkNotNull(targetYouTubeFeed))
+                com.ambient.tv.ui.common.NavReselect.fire()
+            }
+            return
+        }
         // Only selecting SmartTube Start in the menu or the feed chips requests a Home update.
         // Navigation back from playback must not be confused with this explicit action.
         val refreshYouTubeHome = route == Destinations.youtubeSection("home", appPreferences.youtubeStartFeedKey)
@@ -1831,7 +1851,7 @@ private fun AmbientTvApp(
             return
         }
         val activeSidebarRoute = sidebarConcreteRoute(
-            currentRoute, currentSectionKey, currentFeedKey, currentTrailerFeedKey, currentSpotifySectionKey, currentTvheadendTab,
+            sidebarRoute, currentSectionKey, currentFeedKey, currentTrailerFeedKey, currentSpotifySectionKey, currentTvheadendTab,
             currentLiveTvSourceId, currentFileSourceId, currentDlnaServerId, currentRadioSectionKey, currentTelegramSectionKey,
         )
         // Selecting the already active destination is only a focus handoff. Re-navigating a
@@ -2072,7 +2092,7 @@ private fun AmbientTvApp(
                 // Nested browse pages keep the menu reachable. Detail pages are fullscreen so
                 // focus cannot escape into the sidebar while viewing an item.
                 Sidebar(
-                    currentRoute = if (currentRoute in SIDEBAR_ROUTES) currentRoute else lastTopLevelRoute,
+                    currentRoute = if (sidebarRoute in SIDEBAR_ROUTES) sidebarRoute else lastTopLevelRoute,
                     currentSectionKey = if (currentRoute == Destinations.SECTION) currentSectionKey else lastSectionKey,
                     currentYouTubeFeedKey = currentFeedKey,
                     currentTrailerFeedKey = currentTrailerFeedKey,
