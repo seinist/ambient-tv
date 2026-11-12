@@ -152,13 +152,13 @@ private fun Media3PanelVideoGroup(player: ExoPlayer) {
         engine = "media3",
         gpuFilters = false,
         shadersApply = false,
-        media3ScalerApplies = processing.gpuEffectsSupported && processing.sdrEffectsAllowed && processing.options.enabled,
+        media3ScalerApplies = processing.gpuEffectsSupported && processing.sdrEffectsAllowed,
         scale = processing.scaleRelation,
     )
     if (!visibility.upscaler) return
     val preferences = androidx.compose.runtime.remember(context) { videoImagePreferences(context) }
     val choices = media3ScalerChoices()
-    val selected = processing.options.scaler
+    val selected = processing.options.shown().scaler
     RightPanelSectionTitle(stringResource(R.string.player_video))
     PlayerDropUpSelector(
         label = stringResource(R.string.player_upscaler),
@@ -166,8 +166,8 @@ private fun Media3PanelVideoGroup(player: ExoPlayer) {
         options = choices,
         selectedKey = selected,
         onSelected = { key ->
-            if (key == processing.options.scaler) return@PlayerDropUpSelector
-            processing.updateOptions(processing.options.copy(scaler = key))
+            if (key == selected) return@PlayerDropUpSelector
+            processing.updateOptions(processing.options.shown().copy(scaler = key).withProcessingFromChoices())
             if (processing.saveDefaults) preferences.media3ImageOptions = processing.options
         },
     )

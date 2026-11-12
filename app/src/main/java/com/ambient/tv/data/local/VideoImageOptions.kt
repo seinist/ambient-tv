@@ -278,6 +278,24 @@ data class Media3ImageOptions(
     /** SSimSuperRes retains both original and upscaled RGB for the reconstruction. */
     val superResolution: Boolean = false,
 ) {
+    /**
+     * A setting that runs a GPU stage is chosen. Anti-ringing, sigmoid and SSimSuperRes only
+     * modify the scaler and do not count on their own.
+     */
+    fun hasProcessing(): Boolean = scaler != "bilinear" || downscaler != "display" ||
+        sharpening != "off" || deband != "off" || filmGrain != "off" || denoise != "off" || deblock != "off" ||
+        brightness != 0 || contrast != 0 || saturation != 0 || gamma != 0
+
+    /**
+     * What the controls show. [enabled] is no user switch any more (as in MPV, a chosen setting
+     * simply runs): options stored with the old master switch off read as nothing chosen, so
+     * leftovers behind that switch cannot come back with the first change.
+     */
+    fun shown(): Media3ImageOptions = if (enabled) this else Media3ImageOptions()
+
+    /** [enabled] follows the choices: the direct path stays in use while nothing is chosen. */
+    fun withProcessingFromChoices(): Media3ImageOptions = copy(enabled = hasProcessing())
+
     fun normalized() = copy(
         scaler = scaler.takeIf { it in VideoImageCatalog.media3Scalers } ?: "bilinear",
         superResolution = superResolution && !scaler.startsWith("nnedi3") &&
