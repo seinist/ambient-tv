@@ -703,6 +703,9 @@ internal fun SettingsHub(
                         onExit = {
                             when {
                                 requestedFocusDirection != FocusDirection.Left -> Unit
+                                // A page opened straight from outside (sidebar or system shortcut) has
+                                // no index behind it: Left returns to its area in the settings menu.
+                                page != null && directEntry -> areaFocus.getValue(area).requestFocus()
                                 page != null || addingSystems -> cancelFocusChange()
                                 else -> areaFocus.getValue(area).requestFocus()
                             }
@@ -723,7 +726,9 @@ internal fun SettingsHub(
                         if (event.key != Key.DirectionLeft) return@onKeyEvent false
                         if (page == null && !addingSystems) return@onKeyEvent false
                         // On a page, Left only moves within the focused row; it never leaves the
-                        // page (Back does that). onExit already blocks leaving the panel.
+                        // page (Back does that). onExit already blocks leaving the panel. Only a
+                        // directly entered page goes on to its area in the settings menu.
+                        val toAreaMenu = page != null && directEntry
                         val before = focusedRect.rect()
                         runCatching { contentFocus.saveFocusedChild() }
                         if (focusManager.moveFocus(FocusDirection.Left)) {
@@ -732,8 +737,9 @@ internal fun SettingsHub(
                             scope.launch {
                                 withFrameNanos { }
                                 val after = focusedRect.rect()
-                                if (before != null && after != null && (after.top >= before.bottom || after.bottom <= before.top)) {
-                                    runCatching { contentFocus.restoreFocusedChild() }
+                                if (panelHasFocus && before != null && after != null && (after.top >= before.bottom || after.bottom <= before.top)) {
+                                    if (toAreaMenu) runCatching { areaFocus.getValue(area).requestFocus() }
+                                    else runCatching { contentFocus.restoreFocusedChild() }
                                 }
                             }
                         }
