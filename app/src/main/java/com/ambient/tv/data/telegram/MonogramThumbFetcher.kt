@@ -23,9 +23,13 @@ class MonogramThumbFetcher(
     private val repository: () -> TelegramRepository,
 ) : Fetcher {
     override suspend fun fetch(): FetchResult? {
+        // A card thumbnail that is unavailable right now (FLOOD_WAIT, offline) must fail: the
+        // card composable draws the inline preview itself and ArtworkImage retries the inline
+        // model as its next candidate. Returning the preview here would cache the pixelated
+        // image under the sharp thumbnail's key, and the sharp one would not be tried again.
         val uri = (if (fullPhoto) runCatching { repository().photoFile(ref.chatId, ref.messageId) }
-                .getOrElse { if (it is kotlinx.coroutines.CancellationException) throw it; null }
-            else repository().thumbnailFile(ref.chatId, ref.messageId)) ?: ref.fallback ?: return null
+                .getOrElse { if (it is kotlinx.coroutines.CancellationException) throw it; null } ?: ref.fallback
+            else repository().thumbnailFile(ref.chatId, ref.messageId)) ?: return null
         val file = runCatching { java.io.File(java.net.URI(uri)) }.getOrNull()?.takeIf { it.isFile } ?: return null
         return SourceFetchResult(
             source = ImageSource(file.toOkioPath(), options.fileSystem),

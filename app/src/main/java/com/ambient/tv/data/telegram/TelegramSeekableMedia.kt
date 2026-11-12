@@ -16,6 +16,15 @@ internal class TelegramSeekableMedia(
     override val size: Long = media.fileSize
     private var partStart = -1L
     private var part = ByteArray(0)
+    /**
+     * Read-ahead like the Media3 transport: the next MTProto part downloads while this one is
+     * served. Without it VLC/MPV got one part per round trip (the file server's parallel readers
+     * serialised on the single part above), a few MB/s at most for a large file.
+     */
+    private val prefetcher = java.util.concurrent.Executors.newSingleThreadExecutor { work ->
+        Thread(work, "monogram-media-prefetch").apply { isDaemon = true }
+    }
+    private var prefetch: Pair<Long, java.util.concurrent.Future<ByteArray>>? = null
 
     init {
         require(size > 0L && media.playableOnTelegram) { "Unavailable Monogram media" }
@@ -34,13 +43,14 @@ internal class TelegramSeekableMedia(
             if (partStart < 0 || at < partStart || at >= partStart + part.size) {
                 partStart = telegramPartOffset(at)
                 part = try {
-                    partLoader(partStart)
+                    loadPart(partStart)
                 } catch (error: Exception) {
                     throw IOException("Authenticated Monogram read failed", error)
                 }
                 if (part.isEmpty() || part.size > TELEGRAM_MEDIA_PART_BYTES) {
                     throw IOException("Incomplete Monogram media range")
                 }
+                schedulePrefetch(partStart + TELEGRAM_MEDIA_PART_BYTES)
             }
             val within = (at - partStart).toInt()
             val amount = minOf(wanted - copied, part.size - within)
@@ -52,8 +62,28 @@ internal class TelegramSeekableMedia(
         return copied
     }
 
+    /** The prefetched part when it is the wanted one; a failed read-ahead is simply loaded again. */
+    private fun loadPart(offset: Long): ByteArray {
+        val pending = prefetch
+        prefetch = null
+        if (pending != null && pending.first == offset) {
+            runCatching { pending.second.get() }.getOrNull()?.let { return it }
+        } else {
+            pending?.second?.cancel(true)
+        }
+        return partLoader(offset)
+    }
+
+    private fun schedulePrefetch(offset: Long) {
+        if (offset >= size || prefetcher.isShutdown) return
+        prefetch = offset to prefetcher.submit(java.util.concurrent.Callable { partLoader(offset) })
+    }
+
     @Synchronized
     override fun close() {
+        prefetch?.second?.cancel(true)
+        prefetch = null
+        prefetcher.shutdownNow()
         part = ByteArray(0)
         partStart = -1L
     }

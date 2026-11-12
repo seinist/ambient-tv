@@ -650,6 +650,9 @@ class TelegramRepository @Inject constructor(
      */
     private val thumbnailPermits = kotlinx.coroutines.sync.Semaphore(6)
 
+    /** Of those six, the page prefetch may hold two: the cards being drawn always get the rest. */
+    private val prefetchPermits = kotlinx.coroutines.sync.Semaphore(2)
+
     /** One download per card, shared by the prefetch and the card's own image request. */
     private val thumbnailLoads = java.util.concurrent.ConcurrentHashMap<String, kotlinx.coroutines.Deferred<String?>>()
 
@@ -670,7 +673,13 @@ class TelegramRepository @Inject constructor(
         media.asSequence()
             .filter { it.cardImageUrl?.startsWith(MONOGRAM_THUMB_SCHEME) == true }
             .take(limit)
-            .forEach { item -> scope.launch { runCatching { thumbnailFile(item.chatId, item.messageId) } } }
+            .forEach { item ->
+                scope.launch {
+                    // A card already loading this image shares its download without the permit.
+                    if (thumbnailLoads.containsKey("${item.chatId}:${item.messageId}")) return@launch
+                    prefetchPermits.withPermit { runCatching { thumbnailFile(item.chatId, item.messageId) } }
+                }
+            }
     }
 
     private suspend fun loadThumbnailFile(chatId: Long, messageId: Int): String? {
