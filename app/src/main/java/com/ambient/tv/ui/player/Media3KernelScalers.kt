@@ -195,8 +195,8 @@ private class Media3KernelShaderProgram(
     private val antiring: Int,
     private val sigmoid: Boolean,
     private val downscaling: Boolean,
-) : BaseGlShaderProgram(useHighPrecision, /* texturePoolCapacity= */ 1) {
-    private val useHighPrecision = useHighPrecision
+) : BaseGlShaderProgram(media3IntermediatePrecision(useHighPrecision), /* texturePoolCapacity= */ 1) {
+    private val useHighPrecision = media3IntermediatePrecision(useHighPrecision)
     private val program = media3GlProgram(media3KernelShader(kernel, downscaling))
     private val planes = media3RavuLutPlanes(media3KernelLut(kernel))
     /** r = high byte, g = low byte; LINEAR stays exact because the decode is linear in both. */
@@ -299,7 +299,7 @@ private class Media3OversampleShaderProgram(
     useHighPrecision: Boolean,
     private val outputWidth: Int,
     private val outputHeight: Int,
-) : BaseGlShaderProgram(useHighPrecision, /* texturePoolCapacity= */ 1) {
+) : BaseGlShaderProgram(media3IntermediatePrecision(useHighPrecision), /* texturePoolCapacity= */ 1) {
     private val program = media3GlProgram(MEDIA3_OVERSAMPLE)
 
     override fun configure(inputWidth: Int, inputHeight: Int): Size {

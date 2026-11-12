@@ -57,7 +57,7 @@ private abstract class Media3FragmentShaderProgram(
     fragmentBody: String,
     /** Gamma exponent fused into this pass (1 = none), saving the separate gamma texture. */
     private val outGamma: Float = 1f,
-) : BaseGlShaderProgram(useHighPrecision, /* texturePoolCapacity= */ 1) {
+) : BaseGlShaderProgram(media3IntermediatePrecision(useHighPrecision), /* texturePoolCapacity= */ 1) {
     private val program = media3GlProgram(FRAGMENT_HEADER + fragmentBody, VERTEX_SHADER)
 
     open fun outputSize(inputWidth: Int, inputHeight: Int): Size = Size(inputWidth, inputHeight)

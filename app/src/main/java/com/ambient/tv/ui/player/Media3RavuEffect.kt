@@ -187,8 +187,8 @@ private class Media3RavuShaderProgram(
     source: Media3RavuSource,
     private val outputWidth: Int,
     private val outputHeight: Int,
-) : BaseGlShaderProgram(useHighPrecision, /* texturePoolCapacity= */ 1) {
-    private val useHighPrecision = useHighPrecision
+) : BaseGlShaderProgram(media3IntermediatePrecision(useHighPrecision), /* texturePoolCapacity= */ 1) {
+    private val useHighPrecision = media3IntermediatePrecision(useHighPrecision)
     private val step1 = media3GlProgram(RAVU_HEADER + RAVU_LUT_HEADER + source.step1 + RAVU_STEP1_MAIN)
     private val step2 = media3GlProgram(RAVU_HEADER + RAVU_STEP2)
     private val fit = media3GlProgram(RAVU_HEADER + RAVU_FIT)
@@ -325,7 +325,7 @@ private class Media3RavuZoomShaderProgram(
     source: Media3RavuZoomSource,
     private val outputWidth: Int,
     private val outputHeight: Int,
-) : BaseGlShaderProgram(useHighPrecision, /* texturePoolCapacity= */ 1) {
+) : BaseGlShaderProgram(media3IntermediatePrecision(useHighPrecision), /* texturePoolCapacity= */ 1) {
     private val zoom = media3GlProgram(RAVU_HEADER + RAVU_ZOOM_LUT_HEADER + source.glsl + RAVU_ZOOM_MAIN)
     private val planesA = media3RavuLutPlanes(source.lut.values)
     private val planesB = media3RavuLutPlanes(source.lutAr.values)

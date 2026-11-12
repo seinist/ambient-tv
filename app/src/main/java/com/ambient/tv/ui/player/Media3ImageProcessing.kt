@@ -448,6 +448,9 @@ internal class Media3ImageProcessing private constructor(context: Context, playe
         if (signature == applied && stages == appliedStages) return
         val scaler = stages.firstNotNullOfOrNull { (it as? Media3Stage.Scale)?.scaler }
         val effects = media3FusedStages(stages).map { media3Effect(it.stage, outputWidth, outputHeight, it.gamma) }
+        // Programs are created on the GL thread after setVideoEffects; they read this flag then.
+        val profile = performanceProfile(appContext)
+        Media3ChainPrecision.halfFloatPasses = media3HalfFloatPasses(effects.size, profile.lowEndDevice, profile.reducedPlayback)
         applied = signature
         appliedStages = stages
         when (media3ChainTransition(prevActive = effectsActive, nextEmpty = effects.isEmpty(),
@@ -485,6 +488,7 @@ internal class Media3ImageProcessing private constructor(context: Context, playe
         rendererScalingRequested = false
         applied = Triple(Media3ImageOptions(), outputWidth, outputHeight)
         appliedStages = emptyList()
+        Media3ChainPrecision.halfFloatPasses = false
         restartWithEffects(player, emptyList())
         effectsActive = false
         scalerInChain = null

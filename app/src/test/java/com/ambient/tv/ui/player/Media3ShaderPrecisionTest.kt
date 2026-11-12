@@ -7,6 +7,18 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class Media3ShaderPrecisionTest {
+    @Test fun halfFloatPassesOnlyForMultiPassChainsOnFullDevices() {
+        assertFalse(media3HalfFloatPasses(passCount = 0, lowEndDevice = false, reducedPlayback = false))
+        assertFalse(media3HalfFloatPasses(passCount = 1, lowEndDevice = false, reducedPlayback = false))
+        assertTrue(media3HalfFloatPasses(passCount = 2, lowEndDevice = false, reducedPlayback = false))
+        assertTrue(media3HalfFloatPasses(passCount = 4, lowEndDevice = false, reducedPlayback = false))
+        assertFalse(media3HalfFloatPasses(passCount = 3, lowEndDevice = true, reducedPlayback = false))
+        assertFalse(media3HalfFloatPasses(passCount = 3, lowEndDevice = false, reducedPlayback = true))
+        // Media3's own HDR request always wins, whatever the chain flag says.
+        Media3ChainPrecision.halfFloatPasses = false
+        assertTrue(media3IntermediatePrecision(useHdr = true))
+    }
+
     @Test fun lightGles2ShadersKeepTheMediumpFallbackAndSamplerParametersFollowIt() {
         val source = """#version 100
 #ifdef GL_FRAGMENT_PRECISION_HIGH

@@ -29,6 +29,39 @@ internal fun media3RequireFragmentHighp(what: String) {
 internal fun media3MaxTextureSize(): Int =
     IntArray(1).also { GLES20.glGetIntegerv(GLES20.GL_MAX_TEXTURE_SIZE, it, 0) }[0]
 
+/** Set per applied chain by Media3ImageProcessing; read by every pass on the GL thread. */
+internal object Media3ChainPrecision {
+    @Volatile var halfFloatPasses: Boolean = false
+}
+
+/**
+ * Chains of two or more passes keep 16 bit between passes like MPV: Media3 hands SDR passes
+ * RGBA8 output textures, so deband, gamma, scaler and sharpen each quantise their result and
+ * the sum bands visibly. Single passes write straight to the 8-bit output anyway. Low-end and
+ * Sparsam playback keep RGBA8: half-float doubles the bandwidth of every pass.
+ */
+internal fun media3HalfFloatPasses(passCount: Int, lowEndDevice: Boolean, reducedPlayback: Boolean): Boolean =
+    passCount >= 2 && !lowEndDevice && !reducedPlayback
+
+/**
+ * Precision of a pass's output texture. [useHdr] is Media3's own request (HDR chains); SDR
+ * multi-pass chains upgrade where the context can render to RGBA16F through Media3's pool
+ * (ES3 context, which DefaultVideoFrameProcessor creates first and only falls back from).
+ */
+internal fun media3IntermediatePrecision(useHdr: Boolean): Boolean =
+    useHdr || (Media3ChainPrecision.halfFloatPasses && media3HalfFloatRenderable())
+
+@Volatile private var halfFloatRenderable: Boolean? = null
+
+/** GL thread only; one GPU per process, so the answer is cached. */
+internal fun media3HalfFloatRenderable(): Boolean = halfFloatRenderable ?: run {
+    val version = GLES20.glGetString(GLES20.GL_VERSION).orEmpty()
+    val extensions = GLES20.glGetString(GLES20.GL_EXTENSIONS).orEmpty()
+    val es3 = version.contains("OpenGL ES 3")
+    (es3 && ("GL_EXT_color_buffer_half_float" in extensions || "GL_EXT_color_buffer_float" in extensions))
+        .also { halfFloatRenderable = it }
+}
+
 /** A render target between passes: texture and its framebuffer. */
 internal class Media3Intermediate(val texture: Int, val fbo: Int) {
     fun release() {

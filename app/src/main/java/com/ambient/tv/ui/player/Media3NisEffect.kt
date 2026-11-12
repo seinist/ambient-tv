@@ -117,7 +117,7 @@ private class Media3NisShaderProgram(
     coefficients: Media3NisCoefficients,
     private val outputWidth: Int,
     private val outputHeight: Int,
-) : BaseGlShaderProgram(useHighPrecision, /* texturePoolCapacity= */ 1) {
+) : BaseGlShaderProgram(media3IntermediatePrecision(useHighPrecision), /* texturePoolCapacity= */ 1) {
     private val program = media3GlProgram(media3NisFragmentShader(media3NisConstants()))
     private val planes = media3RavuLutPlanes(coefficients.values)
     private val coefHigh = media3LutTexture(planes.high, coefficients.width, coefficients.height)
