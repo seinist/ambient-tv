@@ -29,6 +29,11 @@ import java.util.concurrent.TimeUnit
 import java.util.concurrent.Executors
 import kotlinx.coroutines.asCoroutineDispatcher
 
+/** Loader for full-screen backdrops and hero art (own small memory cache, shared disk cache). */
+fun backdropImageLoader(context: Context): coil3.ImageLoader =
+    (context.applicationContext as? AmbientTvApplication)?.backdropImageLoader
+        ?: coil3.SingletonImageLoader.get(context)
+
 @HiltAndroidApp
 class AmbientTvApplication : Application(), coil3.SingletonImageLoader.Factory {
     override fun attachBaseContext(base: Context) {
@@ -63,15 +68,9 @@ class AmbientTvApplication : Application(), coil3.SingletonImageLoader.Factory {
         }.asCoroutineDispatcher()
     }
 
-    /**
-     * Default Coil loader plus Files images (local/SMB/NFS) for the photo viewer.
-     * Shares the API [ConnectionPool]/[Dispatcher] so artwork cannot unbounded-parallel
-     * with Retrofit. TV/low-RAM memory + disk caps. Keeps
-     * [MediaImageAuthInterceptor] for JF/Emby/Plex header auth.
-     */
-    override fun newImageLoader(context: coil3.PlatformContext): coil3.ImageLoader {
-        val lowRam = isLowRamDevice()
-        val imageClient = OkHttpClient.Builder()
+    /** One OkHttp client for both image loaders; shared with the API pool and dispatcher. */
+    private val imageClient: OkHttpClient by lazy {
+        OkHttpClient.Builder()
             .connectionPool(sharedConnectionPool)
             .dispatcher(sharedDispatcher)
             .addInterceptor(mediaImageAuthInterceptor)
@@ -80,6 +79,34 @@ class AmbientTvApplication : Application(), coil3.SingletonImageLoader.Factory {
             // Artwork tokens stay on their server even when it redirects elsewhere.
             .let(com.ambient.tv.network.CredentialRedirectGuard::install)
             .build()
+    }
+
+    /** One disk cache for both loaders: a backdrop fetched once is a card thumbnail's neighbour on disk. */
+    private val imageDiskCache: DiskCache by lazy {
+        DiskCache.Builder()
+            .directory(cacheDir.resolve("image_cache").toOkioPath())
+            .maxSizePercent(if (systemLowRamDevice()) 0.02 else 0.04)
+            .build()
+    }
+
+    /**
+     * Default Coil loader plus Files images (local/SMB/NFS) for the photo viewer.
+     * Shares the API [ConnectionPool]/[Dispatcher] so artwork cannot unbounded-parallel
+     * with Retrofit. Keeps [MediaImageAuthInterceptor] for JF/Emby/Plex header auth.
+     *
+     * Its memory cache holds browse cards only. Full-screen backdrops load through
+     * [backdropImageLoader]: a few focus moves on Home used to push every visible card out of
+     * the shared cache, and the cards then reloaded visibly on the way back.
+     */
+    override fun newImageLoader(context: coil3.PlatformContext): coil3.ImageLoader =
+        buildImageLoader(com.ambient.tv.ui.performance.imageMemoryCacheBudgetBytes(systemLowRamDevice(), totalMemoryBytes()))
+
+    val backdropImageLoader: coil3.ImageLoader by lazy {
+        buildImageLoader(com.ambient.tv.ui.performance.backdropMemoryCacheBudgetBytes(systemLowRamDevice(), totalMemoryBytes()))
+    }
+
+    private fun buildImageLoader(memoryCacheBytes: Long): coil3.ImageLoader {
+        val lowRam = isLowRamDevice()
         return coil3.ImageLoader.Builder(this)
             .apply {
                 if (com.ambient.tv.ui.mobile.isTelevision(this@AmbientTvApplication)) {
@@ -90,15 +117,10 @@ class AmbientTvApplication : Application(), coil3.SingletonImageLoader.Factory {
             }
             .memoryCache {
                 MemoryCache.Builder()
-                    .maxSizePercent(this, if (lowRam) 0.12 else 0.22)
+                    .maxSizeBytes(memoryCacheBytes)
                     .build()
             }
-            .diskCache {
-                DiskCache.Builder()
-                    .directory(cacheDir.resolve("image_cache").toOkioPath())
-                    .maxSizePercent(if (lowRam) 0.02 else 0.04)
-                    .build()
-            }
+            .diskCache { imageDiskCache }
             .allowRgb565(lowRam || performanceProfileResolver.current().constrainImageDecodeSize)
             .components {
                 // Coil 3 has no built-in network loading; the shared client keeps auth headers.
@@ -112,10 +134,16 @@ class AmbientTvApplication : Application(), coil3.SingletonImageLoader.Factory {
             .build()
     }
 
-    private fun isLowRamDevice(): Boolean {
-        val am = getSystemService(ACTIVITY_SERVICE) as? ActivityManager ?: return false
-        return am.isLowRamDevice || performanceProfileResolver.isLowEndDevice()
+    private fun systemLowRamDevice(): Boolean =
+        (getSystemService(ACTIVITY_SERVICE) as? ActivityManager)?.isLowRamDevice == true
+
+    private fun totalMemoryBytes(): Long {
+        val am = getSystemService(ACTIVITY_SERVICE) as? ActivityManager ?: return 0L
+        return runCatching { ActivityManager.MemoryInfo().also(am::getMemoryInfo).totalMem }.getOrDefault(0L)
     }
+
+    /** Decode format and effects only; the cache budgets above do not follow this classification. */
+    private fun isLowRamDevice(): Boolean = systemLowRamDevice() || performanceProfileResolver.isLowEndDevice()
 
     override fun onCreate() {
         super.onCreate()

@@ -137,6 +137,27 @@ fun detectLowEndDevice(context: Context): Boolean {
 
 internal const val LOW_END_TOTAL_RAM_BYTES = 2L * 1024L * 1024L * 1024L
 
+private const val MIB = 1024L * 1024L
+
+/**
+ * Bitmap memory cache for browse artwork, in bytes. Independent of the 32-bit low-end
+ * classification: bitmap pixels live outside the Dalvik heap since Android 8, and a percentage
+ * of memoryClass (192 MB on most TVs) held fewer card images than one Home screen shows, so
+ * cards reloaded visibly on every scroll back. Only genuinely small-RAM devices get less.
+ */
+internal fun imageMemoryCacheBudgetBytes(lowRamDevice: Boolean, totalMemBytes: Long): Long = when {
+    lowRamDevice -> 24L * MIB
+    totalMemBytes in 1 until 1536L * MIB -> 32L * MIB
+    else -> 64L * MIB
+}
+
+/** Full-screen backdrops get their own small cache so a few focus moves cannot evict the cards. */
+internal fun backdropMemoryCacheBudgetBytes(lowRamDevice: Boolean, totalMemBytes: Long): Long = when {
+    lowRamDevice -> 8L * MIB
+    totalMemBytes in 1 until 1536L * MIB -> 12L * MIB
+    else -> 24L * MIB
+}
+
 /** [totalMemBytes] <= 0 means unknown and does not classify the device. */
 internal fun isLowEndDevice(lowRamDevice: Boolean, totalMemBytes: Long, supports64Bit: Boolean = true): Boolean =
     lowRamDevice || !supports64Bit || totalMemBytes in 1 until LOW_END_TOTAL_RAM_BYTES

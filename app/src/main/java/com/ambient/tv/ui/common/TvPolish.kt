@@ -667,6 +667,8 @@ fun CrossfadeBackdropImage(
                 AsyncImage(
                     model = request,
                     contentDescription = contentDescription,
+                    // Own memory budget: backdrops must never evict the browse cards' bitmaps.
+                    imageLoader = com.ambient.tv.backdropImageLoader(context),
                     contentScale = contentScale,
                     alignment = focus?.alignment ?: alignment,
                     colorFilter = hdrFilter,
