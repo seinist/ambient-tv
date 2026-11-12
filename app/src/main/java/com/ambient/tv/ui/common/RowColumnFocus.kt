@@ -295,9 +295,8 @@ fun Modifier.rowColumnFocusTarget(focus: RowColumnFocus?, rowKey: Any, itemKey: 
 
 /**
  * On a horizontal row's last enabled card, Right returns to its first card.
- * Hero pages also opt into Left at the first enabled card returning to the last. Key events
- * are consumed before geometric focus search can move into the sidebar; Back still does that.
- * Other browse views retain their existing Left-to-sidebar navigation by default.
+ * Left at the first card opens the sidebar on every browse view, Home and the hero pages
+ * included. [wrapLeft] makes Left wrap to the last card instead; no screen uses it at present.
  */
 fun Modifier.rowColumnFocusWrapRight(focus: RowColumnFocus, wrapLeft: Boolean = false): Modifier = composed {
     if (LocalHandheldUi.current) return@composed Modifier
