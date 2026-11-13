@@ -53,13 +53,13 @@ fun DetailSkeletonParagraph(
 
 /** Keep the primary and secondary button footprints without creating disabled focus targets. */
 @Composable
-fun DetailSkeletonActions(modifier: Modifier = Modifier, stack: Boolean = false) {
+fun DetailSkeletonActions(modifier: Modifier = Modifier, stack: Boolean = false, secondary: Boolean = true) {
     DeviceActionRow(
         modifier = modifier,
         stack = stack,
         horizontalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         DetailSkeletonBlock(Modifier.width(176.dp).height(48.dp), radius = 10.dp, accent = true)
-        DetailSkeletonBlock(Modifier.width(132.dp).height(48.dp), radius = 10.dp)
+        if (secondary) DetailSkeletonBlock(Modifier.width(132.dp).height(48.dp), radius = 10.dp)
     }
 }
