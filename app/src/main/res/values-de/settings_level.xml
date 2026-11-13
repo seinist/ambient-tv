@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="settings_level">Einstellungsumfang</string>
+    <string name="settings_level_simple">Einfach</string>
+    <string name="settings_level_advanced">Erweitert</string>
+    <string name="settings_level_expert">Experte</string>
+    <string name="settings_level_hint">Einfach zeigt nur, was man zum Abspielen braucht. Ausgeblendete Einstellungen wirken weiter.</string>
+</resources>

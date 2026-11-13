@@ -119,6 +119,11 @@ internal fun SettingsHub(
     SideEffect { companionVm.manager.settingsDirty = dirty; companionVm.manager.saveSettingsBeforeTransfer = onSave }
     DisposableEffect(companionVm) { onDispose { companionVm.manager.settingsDirty = false; companionVm.manager.saveSettingsBeforeTransfer = null } }
     val areaFocus = remember { SettingsArea.entries.associateWith { FocusRequester() } }
+    val levelContext = androidx.compose.ui.platform.LocalContext.current
+    val levelPreferences = remember(levelContext) { com.ambient.tv.ui.player.videoImagePreferences(levelContext) }
+    val settingsLevel = com.ambient.tv.ui.common.SettingsLevels.current(levelPreferences)
+    // The open area stays listed even when the level no longer shows any of its pages.
+    val shownAreas = settingsAreasFor(settingsLevel).let { areas -> SettingsArea.entries.filter { it in areas || it == area } }
     val pageFocus = remember { SettingsCategory.entries.associateWith { FocusRequester() } }
     val addRowFocus = remember { FocusRequester() }
     val searchFocus = remember { FocusRequester() }
@@ -342,8 +347,9 @@ internal fun SettingsHub(
             if (category == SettingsCategory.RECEIVER) append(" upnp dlna receiver empfänger handy cast zuspielen")
             if (category == SettingsCategory.SPOTIFY) append(" advanced developer client id entwickler")
         }
+        // Search reaches every page; the area index only those of the chosen settings level.
         if (search) settingsSearchMatches(query, haystack)
-        else showsInAreaIndex(category, area, systemListed(category, state))
+        else showsInAreaIndex(category, area, systemListed(category, state)) && settingsLevel.shows(category.level)
     }.sortedBy { (category, _, _) ->
         if (search) {
             if (category.isMediaSource() && sourceConfigured(category, state)) 0 else 1
@@ -547,6 +553,14 @@ internal fun SettingsHub(
                         } else false
                     },
                     icon = Icons.Filled.Search, iconOnly = true) { openSearch() }
+                // Simple / Advanced / Expert: OK steps to the next level.
+                if (page == null) TvChip(
+                    stringResource(R.string.settings_level) + ": " + stringResource(settingsLevel.labelRes),
+                    icon = Icons.Filled.Tune,
+                ) {
+                    val levels = com.ambient.tv.ui.common.SettingsLevel.entries
+                    com.ambient.tv.ui.common.SettingsLevels.set(levelPreferences, levels[(settingsLevel.ordinal + 1) % levels.size])
+                }
                 if (area.groupsMediaSources() && page != SettingsCategory.NOTIFICATIONS) {
                     TvChip(stringResource(R.string.notice_history), icon = Icons.Filled.Notifications, iconOnly = true) {
                         openPage(SettingsCategory.NOTIFICATIONS)
@@ -567,7 +581,7 @@ internal fun SettingsHub(
         }
         if (showAreaTabs) {
             androidx.compose.foundation.lazy.LazyRow(state = areaTabsState, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                items(SettingsArea.entries) { target -> TvChip(stringResource(target.titleRes), target == area, onClick = { selectArea(target) }) }
+                items(shownAreas) { target -> TvChip(stringResource(target.titleRes), target == area, onClick = { selectArea(target) }) }
             }
         }
         Row(Modifier.weight(1f).fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(18.dp)) {
@@ -581,7 +595,7 @@ internal fun SettingsHub(
                         .verticalScroll(areaScroll),
                     verticalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
-                    SettingsArea.entries.forEach { target ->
+                    shownAreas.forEach { target ->
                         TvChip(
                             text = stringResource(target.titleRes),
                             selected = target == area,
@@ -602,7 +616,7 @@ internal fun SettingsHub(
                     .wrapVerticalScrollFocus(areaScroll, wrapOnRepeat = false)
                     .verticalScroll(areaScroll).background(MaterialTheme.colorScheme.surface.copy(alpha = 0.65f), RoundedCornerShape(14.dp)).padding(8.dp),
                     verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    SettingsArea.entries.forEach { target ->
+                    shownAreas.forEach { target ->
                         SettingsHubRow(stringResource(target.titleRes), null, target == area, areaIcon(target), singleLine = false,
                             modifier = Modifier.focusRequester(areaFocus.getValue(target))
                                 .onFocusChanged {
@@ -661,7 +675,7 @@ internal fun SettingsHub(
                                 else -> 0
                             }
                             if (step != 0) {
-                                SettingsArea.entries.getOrNull(area.ordinal + step)?.let(::selectArea)
+                                shownAreas.getOrNull(shownAreas.indexOf(area) + step)?.let(::selectArea)
                             }
                             dragDistance = 0f
                         },

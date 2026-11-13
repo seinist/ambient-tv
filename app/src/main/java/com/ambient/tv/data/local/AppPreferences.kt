@@ -555,7 +555,24 @@ class AppPreferences @Inject constructor(
 
     var initialSetupCompleted: Boolean
         get() = prefs.getBoolean(KEY_INITIAL_SETUP_COMPLETED, false)
-        set(value) = prefs.edit { putBoolean(KEY_INITIAL_SETUP_COMPLETED, value) }
+        set(value) {
+            // The moment a fresh installation finishes its first setup.
+            if (value && !initialSetupCompleted) startSimpleSettingsLevelIfUnset()
+            prefs.edit { putBoolean(KEY_INITIAL_SETUP_COMPLETED, value) }
+        }
+
+    /**
+     * Settings level (simple, advanced, expert; see SettingsLevel). Without a stored choice
+     * everything is shown, so installations from before the levels do not change.
+     */
+    var settingsLevelKey: String
+        get() = prefs.getString("settings_level", null) ?: "expert"
+        set(value) = prefs.edit { putString("settings_level", value) }
+
+    /** A fresh installation starts simple: called when its first setup completes. */
+    fun startSimpleSettingsLevelIfUnset() {
+        if (!prefs.contains("settings_level")) prefs.edit { putString("settings_level", "simple") }
+    }
 
     val needsInitialSetup: Boolean
         get() = !initialSetupCompleted && !filesEnabled && !radioEnabled && !(com.ambient.tv.BuildConfig.MONOGRAM_NATIVE && telegramEnabled) && !isConfigured && !isJellyfinConfigured && !isEmbyConfigured && !isTvheadendConfigured

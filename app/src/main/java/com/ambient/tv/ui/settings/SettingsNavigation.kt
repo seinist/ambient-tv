@@ -60,6 +60,28 @@ internal enum class SettingsArea(val titleRes: Int) {
 internal fun SettingsArea.groupsMediaSources(): Boolean =
     this == SettingsArea.SYSTEMS || this == SettingsArea.TELEVISION || this == SettingsArea.STREAMING
 
+/**
+ * The settings level a page belongs to. Simple: language, look, signing in to sources, Home,
+ * subtitles. Expert: picture processing, diagnostics and other specialist pages. The rest is
+ * Advanced.
+ */
+internal val SettingsCategory.level: com.ambient.tv.ui.common.SettingsLevel get() = when {
+    isMediaSource() -> com.ambient.tv.ui.common.SettingsLevel.SIMPLE
+    this in setOf(SettingsCategory.LANGUAGE, SettingsCategory.APPEARANCE, SettingsCategory.HOME,
+        SettingsCategory.SUBTITLES, SettingsCategory.NOTIFICATIONS, SettingsCategory.ABOUT) ->
+        com.ambient.tv.ui.common.SettingsLevel.SIMPLE
+    this in setOf(SettingsCategory.IMAGE, SettingsCategory.VISUALIZER, SettingsCategory.WIREGUARD,
+        SettingsCategory.DIAGNOSTICS, SettingsCategory.ADVANCED) ->
+        com.ambient.tv.ui.common.SettingsLevel.EXPERT
+    else -> com.ambient.tv.ui.common.SettingsLevel.ADVANCED
+}
+
+/** Areas with at least one page at [level]; source areas always stay (their systems and the add row). */
+internal fun settingsAreasFor(level: com.ambient.tv.ui.common.SettingsLevel): List<SettingsArea> =
+    SettingsArea.entries.filter { area ->
+        area.groupsMediaSources() || SettingsCategory.entries.any { it.area == area && level.shows(it.level) }
+    }
+
 /** Declaration order is the display order within each area. */
 internal enum class SettingsCategory(val area: SettingsArea, val titleRes: Int, val hintRes: Int) {
     LANGUAGE(SettingsArea.START, R.string.settings_language_title, R.string.settings_page_language_hint),

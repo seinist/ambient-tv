@@ -6,6 +6,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.QueueMusic
 import androidx.compose.material.icons.filled.Sync
+import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material.icons.filled.Public
 import androidx.compose.material.icons.automirrored.filled.Subject
 import androidx.compose.material.icons.filled.Bedtime
@@ -158,6 +159,8 @@ fun UnifiedBackendPlayerPanel(
         ) { _, _ -> com.ambient.tv.ui.player.BackgroundPlaybackSession.resumeCapabilities() }.distinctUntilChanged()
     }.collectAsState(initial = com.ambient.tv.ui.player.BackgroundPlaybackSession.resumeCapabilities())
     val canConfigureSeek = resumeCapabilities.pauseRewind || resumeCapabilities.savedResumeRewind
+    val settingsLevel = com.ambient.tv.ui.common.SettingsLevels.current(preferences)
+    val advancedLevel = settingsLevel.shows(com.ambient.tv.ui.common.SettingsLevel.ADVANCED)
     val navigation = LocalPlayerPanelNavigation.current
     val segmentSkip = LocalSegmentSkipControls.current
     // Back follows the click path: a level opened straight from the action bar closes the panel.
@@ -221,7 +224,7 @@ fun UnifiedBackendPlayerPanel(
             if (isLive) {
                 LiveTvPlayerPanelEntry(onOpen = { onPanelChange(UnifiedPlayerPanel.LIVE_TV) })
             }
-            if (canConfigureSeek) {
+            if (canConfigureSeek && advancedLevel) {
                 PlayerPanelEntry(
                     icon = Icons.Filled.Replay,
                     title = stringResource(R.string.settings_seek_page_title),
@@ -229,7 +232,7 @@ fun UnifiedBackendPlayerPanel(
                     onClick = { onPanelChange(UnifiedPlayerPanel.SEEK) },
                 )
             }
-            if (tools.isNotEmpty()) {
+            if (tools.isNotEmpty() && advancedLevel) {
                 PlayerPanelEntry(
                     icon = Icons.Filled.Build,
                     title = stringResource(R.string.player_tools),
@@ -237,12 +240,12 @@ fun UnifiedBackendPlayerPanel(
                     onClick = { onPanelChange(UnifiedPlayerPanel.TOOLS) },
                 )
             }
-            PlayerOsdInfoPanelEntry(
+            if (advancedLevel) PlayerOsdInfoPanelEntry(
                 audioSession = audioSession,
                 hasVideo = hasVideo && audioSession?.audioOnly != true,
                 onOpen = { onPanelChange(UnifiedPlayerPanel.OSD_INFO) },
             )
-            if (hasVideo) {
+            if (hasVideo && settingsLevel == com.ambient.tv.ui.common.SettingsLevel.EXPERT) {
                 PlayerPanelEntry(
                     icon = Icons.Filled.Save,
                     title = stringResource(R.string.playback_profile_actions),
@@ -270,7 +273,7 @@ fun UnifiedBackendPlayerPanel(
                     onSelected = onChanged,
                 )
             }
-            if (showVisualizer) {
+            if (showVisualizer && advancedLevel) {
                 PlayerPanelEntry(
                     icon = Icons.Filled.GraphicEq,
                     title = stringResource(R.string.player_visualizer),
@@ -296,6 +299,17 @@ fun UnifiedBackendPlayerPanel(
                     onClick = { onPanelChange(UnifiedPlayerPanel.DETAILS) },
                 )
             }
+            // Last row: how much this panel and Settings show. Hidden settings keep working.
+            PlayerDropUpSelector(
+                icon = Icons.Filled.Tune,
+                label = stringResource(R.string.settings_level),
+                value = stringResource(settingsLevel.labelRes),
+                options = com.ambient.tv.ui.common.SettingsLevel.entries.map { it.key to stringResource(it.labelRes) },
+                selectedKey = settingsLevel.key,
+                onSelected = { key ->
+                    com.ambient.tv.ui.common.SettingsLevels.set(preferences, com.ambient.tv.ui.common.SettingsLevel.fromKey(key))
+                },
+            )
         }
         UnifiedPlayerPanel.SEEK -> UnifiedPlayerSidePanel(
             title = stringResource(R.string.settings_seek_page_title),

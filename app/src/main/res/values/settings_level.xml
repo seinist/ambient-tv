@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="settings_level">Settings shown</string>
+    <string name="settings_level_simple">Simple</string>
+    <string name="settings_level_advanced">Advanced</string>
+    <string name="settings_level_expert">Expert</string>
+    <string name="settings_level_hint">Simple shows only what playback needs. Hidden settings keep working.</string>
+</resources>

@@ -129,6 +129,9 @@ internal fun PlayerVideoSettingsGroups(
     val hasOutputControls = rememberAvailableDisplayModes(context).size > 1 ||
         (handle is MpvPlaybackController && handle.supportsGpuFilters) || hasOutputExtras || hasSdrToHdrControl ||
         com.ambient.tv.ui.display.LocalUiHdrState.current?.conversionExperiment?.available == true
+    val settingsLevel = com.ambient.tv.ui.common.rememberSettingsLevel()
+    // Simple shows picture format and speed only: no scalers, no SVP.
+    val engineRows = settingsLevel.shows(com.ambient.tv.ui.common.SettingsLevel.ADVANCED)
     val available = buildList {
         if (showRenderer && onRendererSelected != null && rendererKey != null) add("renderer" to R.string.player_renderer)
         if (hasPresentationControls || (handle is MpvPlaybackController && handle.supportsGpuFilters) ||
@@ -138,6 +141,13 @@ internal fun PlayerVideoSettingsGroups(
         if (hasPlaybackControls || svpEntryVisible) add("motion" to R.string.image_motion)
         if (visible?.picture == true) add("color" to R.string.image_color)
         if (hasOutputControls) add("output" to R.string.image_output)
+    }.filter { (key, _) ->
+        settingsLevel.shows(com.ambient.tv.ui.common.videoSectionLevel(key)) && when (key) {
+            // Without the engine's rows these two areas need their own controls to be worth listing.
+            "scaling" -> engineRows || hasPresentationControls
+            "motion" -> hasPlaybackControls || (svpEntryVisible && settingsLevel == com.ambient.tv.ui.common.SettingsLevel.EXPERT)
+            else -> true
+        }
     }
     val videoState = com.ambient.tv.ui.common.LocalPlayerPanelNavigation.current?.videoState
         ?: remember { com.ambient.tv.ui.common.VideoPanelState() }
@@ -198,7 +208,7 @@ internal fun PlayerVideoSettingsGroups(
             backend?.let { PlayerVideoOutputControls(it) }
         }
         val openSvpAdvanced = { onOpenSubPage?.invoke("svp_advanced"); Unit }
-        when (handle) {
+        if (engineRows) when (handle) {
             is MpvPlaybackController -> if (activeSection != "renderer") MpvVideoGroups(handle, onDeinterlaceChanged, activeSection, scale, openSvpAdvanced)
             is VlcPlaybackController -> if (activeSection != "renderer") VlcVideoGroups(handle, isLive, onDeinterlaceChanged, activeSection, scale, openSvpAdvanced)
             is Media3PlaybackHandle -> if (activeSection != "renderer") Media3VideoGroups(handle.player, activeSection)
@@ -215,7 +225,7 @@ internal fun PlayerVideoSettingsGroups(
         }
         if (activeSection == "motion") {
             // SVP gets its own level; playback speed stays directly under Motion.
-            if (svpEntryVisible) {
+            if (svpEntryVisible && settingsLevel == com.ambient.tv.ui.common.SettingsLevel.EXPERT) {
                 SettingsHint(playbackProfileScopeSummary())
                 SvpPanelEntry(handle) { onOpenSubPage?.invoke("svp") }
             }
