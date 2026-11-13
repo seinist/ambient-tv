@@ -846,7 +846,9 @@ private fun TelegramPlaybackContent(
             // request it while the OSD or right panel is visible.
             if (controlsVisible || panel != UnifiedPlayerPanel.NONE) {
                 val trackControls = monogramRendererControls(
-                    if (ownsSession) BackgroundPlaybackSession.activeHandle() else null)
+                    if (ownsSession) BackgroundPlaybackSession.activeHandle() else null,
+                    offLabel = stringResource(R.string.player_subtitles_off),
+                    autoLabel = stringResource(R.string.player_automatic))
                 PublishPlayerPanel(
                     PlayerPanelModel(
                     scrimAlpha = 0.32f,

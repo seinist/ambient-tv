@@ -17,12 +17,13 @@ internal data class MonogramRendererControls(
     val audio: List<Pair<String, String>> = emptyList(),
     val selectedAudio: String = "",
     val selectAudio: (String) -> Unit = {},
-    val subtitles: List<Pair<String, String>> = listOf("off" to "Off"),
+    val subtitles: List<Pair<String, String>> = emptyList(),
     val selectedSubtitle: String = "off",
     val selectSubtitle: (String) -> Unit = {},
 )
 
-internal fun monogramRendererControls(handle: PlaybackHandle?): MonogramRendererControls = when (handle) {
+/** [offLabel] and [autoLabel] are the localized names of the "no subtitles" and "automatic audio" entries. */
+internal fun monogramRendererControls(handle: PlaybackHandle?, offLabel: String, autoLabel: String): MonogramRendererControls = when (handle) {
     is Media3PlaybackHandle -> {
         val player = handle.player
         val audio = player.currentTracks.groups.filter { it.type == C.TRACK_TYPE_AUDIO }
@@ -57,12 +58,12 @@ internal fun monogramRendererControls(handle: PlaybackHandle?): MonogramRenderer
             speed = player.playbackParameters.speed,
             onSpeedChanged = if (com.ambient.tv.ui.player.Media3AudioProcessing.session(player)?.bitstreamPermitted == true) null
                 else player::setPlaybackSpeed,
-            audio = listOf("auto" to "Auto") +
+            audio = listOf("auto" to autoLabel) +
                 audio.mapIndexed { index, value -> index.toString() to label(value, "Audio") },
             selectedAudio = audio.indexOfFirst { (group, index) -> group.isTrackSelected(index) }
                 .takeIf { it >= 0 }?.toString() ?: "auto",
             selectAudio = { apply(C.TRACK_TYPE_AUDIO, audio, it) },
-            subtitles = listOf("off" to "Off") +
+            subtitles = listOf("off" to offLabel) +
                 subtitles.mapIndexed { index, value -> index.toString() to label(value, "Subtitle") },
             selectedSubtitle = subtitles.indexOfFirst { (group, index) -> group.isTrackSelected(index) }
                 .takeIf { it >= 0 }?.toString() ?: "off",
@@ -75,7 +76,7 @@ internal fun monogramRendererControls(handle: PlaybackHandle?): MonogramRenderer
         audio = handle.audioTracks().map { (id, label) -> id.toString() to label },
         selectedAudio = handle.currentAudioTrackId().toString(),
         selectAudio = { it.toIntOrNull()?.let(handle::selectAudioTrack) },
-        subtitles = listOf("off" to "Off") +
+        subtitles = listOf("off" to offLabel) +
             handle.subtitleTracks().map { (id, label) -> id.toString() to label },
         selectedSubtitle = handle.currentSubtitleTrackId().takeIf { it >= 0 }?.toString() ?: "off",
         selectSubtitle = { key -> handle.selectSubtitleTrack(key.toIntOrNull()) },
@@ -83,14 +84,14 @@ internal fun monogramRendererControls(handle: PlaybackHandle?): MonogramRenderer
     is MpvPlaybackController -> MonogramRendererControls(
         speed = handle.currentSpeed(),
         onSpeedChanged = if (handle.bitstreamPermitted) null else handle::setSpeed,
-        audio = listOf("auto" to "Auto") +
+        audio = listOf("auto" to autoLabel) +
             handle.audioTracks().map { it.id.toString() to it.label },
         selectedAudio = handle.audioTracks().firstOrNull { it.selected }?.id?.toString() ?: "auto",
         selectAudio = { key -> handle.selectAudio(key.toIntOrNull()) },
-        subtitles = listOf("off" to "Off") +
+        subtitles = listOf("off" to offLabel) +
             handle.subtitleTracks().map { it.id.toString() to it.label },
         selectedSubtitle = handle.subtitleTracks().firstOrNull { it.selected }?.id?.toString() ?: "off",
         selectSubtitle = { key -> handle.selectSubtitle(key.toIntOrNull()) },
     )
-    else -> MonogramRendererControls()
+    else -> MonogramRendererControls(subtitles = listOf("off" to offLabel))
 }
