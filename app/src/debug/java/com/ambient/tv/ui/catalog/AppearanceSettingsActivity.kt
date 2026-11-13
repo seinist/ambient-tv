@@ -1,5 +1,7 @@
 package com.ambient.tv.ui.catalog
 
+import com.ambient.tv.ui.settings.accentStyleKey
+
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
