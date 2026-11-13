@@ -17,11 +17,22 @@ import coil3.memory.MemoryCache
  * [trimLevel] is the last level the application received; it is read when Coil calls
  * [trimToSize] from its own callback for the same event.
  */
-@OptIn(coil3.annotation.ExperimentalCoilApi::class) // initialMaxSize is delegated unchanged.
+@OptIn(coil3.annotation.ExperimentalCoilApi::class) // initialMaxSize follows the configured size.
 internal class ForegroundTrimMemoryCache(
     private val delegate: MemoryCache,
     private val trimLevel: () -> Int,
 ) : MemoryCache by delegate {
+    private var configuredMaxSize = delegate.maxSize
+
+    /** Coil restores this size when the app returns from the background. */
+    override val initialMaxSize: Long get() = configuredMaxSize
+
+    /** New budget from Settings, effective at once and kept across background trims. */
+    fun resize(bytes: Long) {
+        configuredMaxSize = bytes
+        delegate.maxSize = bytes
+    }
+
     override fun trimToSize(size: Long) {
         delegate.trimToSize(foregroundTrimTarget(size, trimLevel(), delegate.maxSize))
     }

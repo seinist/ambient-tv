@@ -732,7 +732,13 @@ internal fun SidebarContent(
                     when (event.key) {
                         // Right closes the panel and hands focus back to the element that had it.
                         Key.DirectionRight -> {
-                            if (lastFocusedId == "settings" && expanded && hasEditor) return@onPreviewKeyEvent false
+                            // Right walks the bottom row (settings › editor › quit) before it closes the panel.
+                            val nextInRow = when (lastFocusedId) {
+                                "settings" -> hasEditor || onExitApp != null
+                                "order" -> onExitApp != null
+                                else -> false
+                            }
+                            if (expanded && nextInRow) return@onPreviewKeyEvent false
                             closePanel(); true
                         }
                         // Left: from the editor button back to the settings row, on a system page back
@@ -898,58 +904,47 @@ internal fun SidebarContent(
                     }
                     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                         // On a system page the row carries that system's logo/icon, tinted like its text.
-                        // Icon-only buttons; the row names the focused one (Settings when none is),
-                        // so three buttons fit without cutting the Settings label off.
-                        val bottomLabel = when (lastFocusedId) {
-                            "order" -> stringResource(R.string.sidebar_customize)
-                            "exit" -> stringResource(R.string.settings_exit_app_action)
-                            else -> settingsRow.label
-                        }
-                        SidebarItem(levelSystem?.icon ?: Icons.Filled.Settings, settingsRow.label, currentRoute == Destinations.SETTINGS && levelSystem == null, false,
+                        // The two icon buttons are compact so the Settings label keeps the room
+                        // it had next to the single editor button.
+                        SidebarItem(levelSystem?.icon ?: Icons.Filled.Settings, settingsRow.label, currentRoute == Destinations.SETTINGS && levelSystem == null, true,
                             { navigate(settingsRow) }, requester("settings"),
+                            padH = 10.dp, iconGap = 10.dp,
                             focusable = expanded,
                             onFocused = { markFocus("settings") }, onWrapKey = { wrapFocus("settings", it) },
                             logo = levelSystem?.system?.takeIf { it.hasBrandMark },
                             testTag = "sidebar:settings",
-                            modifier = Modifier.onPreviewKeyEvent { event ->
+                            modifier = Modifier.weight(1f).onPreviewKeyEvent { event ->
                                 val next = if (hasEditor) "order" else if (onExitApp != null) "exit" else null
                                 if (next != null && event.type == KeyEventType.KeyDown && event.key == Key.DirectionRight) {
                                     pendingFocus = next; true
                                 } else false
                             })
-                        if (hasEditor && expanded) {
+                        if (hasEditor) {
                             SidebarItem(Icons.Filled.Tune, stringResource(R.string.sidebar_customize), false, false,
                                 { showOrderDialog = true }, requester("order"),
+                                padH = 5.dp,
                                 focusable = expanded,
                                 onFocused = { markFocus("order") }, onWrapKey = { wrapFocus("order", it) },
                                 testTag = "sidebar:order",
-                                modifier = Modifier.padding(start = 6.dp).onPreviewKeyEvent { event ->
+                                modifier = Modifier.padding(start = 4.dp).onPreviewKeyEvent { event ->
                                     if (onExitApp != null && event.type == KeyEventType.KeyDown && event.key == Key.DirectionRight) {
                                         pendingFocus = "exit"; true
                                     } else false
                                 })
                         }
                         // Rightmost: quit the app, with the same confirmation as Settings › App.
-                        if (onExitApp != null && expanded) {
+                        if (onExitApp != null) {
                             SidebarItem(Icons.Filled.PowerSettingsNew, stringResource(R.string.settings_exit_app_action), false, false,
                                 { showExitConfirmation = true }, requester("exit"),
+                                padH = 5.dp,
                                 focusable = expanded,
                                 onFocused = { markFocus("exit") }, onWrapKey = { wrapFocus("exit", it) },
                                 testTag = "sidebar:exit",
-                                modifier = Modifier.padding(start = 6.dp).onPreviewKeyEvent { event ->
+                                modifier = Modifier.padding(start = 4.dp).onPreviewKeyEvent { event ->
                                     // Right end of the row: stay put.
                                     event.type == KeyEventType.KeyDown && event.key == Key.DirectionRight
                                 })
                         }
-                        Text(
-                            bottomLabel,
-                            style = SIDEBAR_ROW_TEXT,
-                            color = MaterialTheme.colorScheme.onSurface,
-                            maxLines = 1,
-                            overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
-                            modifier = Modifier.weight(1f).padding(start = 10.dp)
-                                .graphicsLayer { alpha = if (expanded) 1f else 0f },
-                        )
                     }
                     BackgroundPlaybackBar(
                         onOpen = onOpenPlayback, onPlayNext = onPlayNext,
@@ -1071,6 +1066,9 @@ private fun SidebarItem(
     logo: com.ambient.tv.ui.common.MediaSystem? = null,
     stateDescription: String? = null,
     testTag: String? = null,
+    /** Horizontal padding and icon/label gap; smaller for the compact buttons of the bottom row. */
+    padH: androidx.compose.ui.unit.Dp = SIDEBAR_ROW_PAD_H,
+    iconGap: androidx.compose.ui.unit.Dp = SIDEBAR_ROW_ICON_GAP,
 ) {
     var isFocused by remember { mutableStateOf(false) }
     val uiSounds = LocalUiSoundPlayer.current
@@ -1107,7 +1105,7 @@ private fun SidebarItem(
     Row(
         modifier = modifier
             .then(if (showLabel) Modifier.fillMaxWidth() else Modifier.wrapContentWidth())
-            .sizeIn(minWidth = 40.dp * uiScale, minHeight = SIDEBAR_ROW_MIN_HEIGHT * uiScale)
+            .sizeIn(minWidth = minOf(40.dp, 20.dp + padH * 2) * uiScale, minHeight = SIDEBAR_ROW_MIN_HEIGHT * uiScale)
             .activateOnTvKey(onClick = activate)
             .focusRequester(focusRequester)
             .onPreviewKeyEvent { event ->
@@ -1135,9 +1133,9 @@ private fun SidebarItem(
             .graphicsLayer { scaleX = lift; scaleY = lift }
             .clip(RoundedCornerShape(LocalUiTokens.current.controlRadius * uiScale))
             .background(fill)
-            .padding(horizontal = SIDEBAR_ROW_PAD_H * uiScale, vertical = 6.dp * uiScale),
+            .padding(horizontal = padH * uiScale, vertical = 6.dp * uiScale),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(SIDEBAR_ROW_ICON_GAP * uiScale),
+        horizontalArrangement = Arrangement.spacedBy(iconGap * uiScale),
     ) {
         // Active (not focused) rows carry the accent on their icon, like selected rows elsewhere.
         val iconTint = if (selected && !isFocused) com.ambient.tv.ui.theme.accessibleAccent(scheme.primary, scheme.surface) else content

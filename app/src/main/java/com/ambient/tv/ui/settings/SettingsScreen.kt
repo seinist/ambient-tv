@@ -507,6 +507,9 @@ fun SettingsScreen(
                                     )
                                 }
                             }
+                            // Above the check button: a narrow button between two full-width rows
+                            // is skipped by Up/Down.
+                            item(key = "appearance:image-cache") { ImageCacheSettings(uiState, viewModel) }
                             item {
                                 TvActionButton(
                                     text = stringResource(R.string.settings_check_ui),
@@ -515,7 +518,6 @@ fun SettingsScreen(
                                     modifier = Modifier.focusRequester(checkUiFocus),
                                 )
                             }
-                            item(key = "appearance:image-cache") { ImageCacheSettings(uiState, viewModel) }
                         }
 
                         SettingsCategory.LANGUAGE -> {
@@ -2369,6 +2371,8 @@ private fun ImageCacheSettings(uiState: SettingsUiState, viewModel: SettingsView
         }
     }
     val mib = 1024L * 1024L
+    // Effective at once; the running loaders are resized instead of waiting for a restart.
+    LaunchedEffect(uiState.imageCacheMb) { app?.applyImageCacheMb(uiState.imageCacheMb) }
     SettingsGroup {
         SettingsSelect(
             label = stringResource(R.string.settings_image_cache),

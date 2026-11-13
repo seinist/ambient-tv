@@ -150,6 +150,16 @@ class AmbientTvApplication : Application(), coil3.SingletonImageLoader.Factory {
         super.onTrimMemory(level)
     }
 
+    /** Applies the card memory chosen in Settings (0 = automatic) to both running loaders. */
+    fun applyImageCacheMb(chosenMb: Int) {
+        val lowRam = systemLowRamDevice()
+        val total = totalMemoryBytes()
+        (coil3.SingletonImageLoader.get(this).memoryCache as? com.ambient.tv.ui.performance.ForegroundTrimMemoryCache)
+            ?.resize(com.ambient.tv.ui.performance.imageMemoryCacheBudgetBytes(lowRam, total, chosenMb))
+        (backdropImageLoader.memoryCache as? com.ambient.tv.ui.performance.ForegroundTrimMemoryCache)
+            ?.resize(com.ambient.tv.ui.performance.backdropMemoryCacheBudgetBytes(lowRam, total, chosenMb))
+    }
+
     /** Automatic card budget of this device, shown next to the choices in Settings. */
     fun automaticImageCacheMb(): Int =
         (com.ambient.tv.ui.performance.imageMemoryCacheBudgetBytes(systemLowRamDevice(), totalMemoryBytes()) / (1024L * 1024L)).toInt()
