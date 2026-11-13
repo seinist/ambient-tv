@@ -17,5 +17,5 @@
     <string name="settings_accent_style_glass">Glass</string>
     <string name="settings_accent_style_glow">Soft Glow</string>
     <string name="settings_accent_style_pearl">Pearl</string>
-    <string name="settings_accent_style_light">Light (bisher)</string>
+    <string name="settings_accent_style_light">Light</string>
 </resources>
