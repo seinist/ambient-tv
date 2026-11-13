@@ -29,6 +29,7 @@ import androidx.compose.material.icons.filled.ArrowUpward
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Headphones
 import androidx.compose.material.icons.filled.Movie
+import androidx.compose.material.icons.filled.PowerSettingsNew
 import androidx.compose.material.icons.filled.SmartDisplay
 import androidx.compose.material.icons.filled.Subscriptions
 import androidx.compose.material.icons.filled.Tv
@@ -144,6 +145,8 @@ internal fun MenuOrderDialog(
     /** False for a system's entries (library/sub-page names come from the source). */
     renamable: Boolean = true,
     title: String? = null,
+    /** Main menu only: quits the app (the caller asks for confirmation first). */
+    onExitApp: (() -> Unit)? = null,
 ) {
     // Each field starts with the name the menu shows; one left empty or set back to the
     // provider's name stores no override.
@@ -202,6 +205,11 @@ internal fun MenuOrderDialog(
         // short. Keep enough vertical room for all of them.
         maxHeightFraction = 0.9f,
         footer = {
+            if (onExitApp != null) TvActionButton(
+                text = stringResource(R.string.settings_exit_app_action),
+                icon = Icons.Filled.PowerSettingsNew,
+                onClick = onExitApp,
+            )
             TvActionButton(text = stringResource(R.string.settings_home_genre_done), onClick = applyAndClose)
         },
     ) {
