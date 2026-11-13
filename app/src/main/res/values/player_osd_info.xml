@@ -4,6 +4,10 @@
     <string name="player_osd_info_controls">Controls</string>
     <string name="player_osd_info_information">Information</string>
     <string name="player_osd_info_buttons_summary">Buttons</string>
+    <string name="player_osd_navigation_indicator">Navigation icon</string>
+    <string name="player_osd_navigation_seek">Seeking</string>
+    <string name="player_osd_navigation_buttons">Controls</string>
+    <string name="player_osd_navigation_chapters">Chapters</string>
     <string name="player_osd_info_duration">Display time</string>
     <string name="player_osd_info_codecs_summary">Codec strip</string>
     <string name="player_osd_info_fps_summary">FPS</string>
