@@ -4,6 +4,9 @@ import androidx.compose.animation.core.tween
 import androidx.compose.foundation.MarqueeSpacing
 import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsDraggedAsState
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
@@ -253,11 +256,22 @@ private fun TvBadgeRow(modifier: Modifier, content: @Composable RowScope.() -> U
 @Composable
 private fun HandheldBadgeRow(modifier: Modifier, content: @Composable RowScope.() -> Unit) {
     val scroll = rememberScrollState()
+    val interactionSource = remember { MutableInteractionSource() }
+    val dragging by interactionSource.collectIsDraggedAsState()
     val overflowing = scroll.maxValue > 0
     var hinted by rememberSaveable { mutableStateOf(false) }
-    LaunchedEffect(overflowing) {
+    LaunchedEffect(overflowing, dragging) {
         if (!overflowing || hinted) return@LaunchedEffect
+        // The one-time discovery animation must never fight a person's touch swipe.
+        if (dragging) {
+            hinted = true
+            return@LaunchedEffect
+        }
         delay(1_200)
+        if (scroll.value != 0 || dragging) {
+            hinted = true
+            return@LaunchedEffect
+        }
         hinted = true
         val millis = (scroll.maxValue * 4).coerceIn(600, 3_000)
         scroll.animateScrollTo(scroll.maxValue, tween(millis))
@@ -267,8 +281,11 @@ private fun HandheldBadgeRow(modifier: Modifier, content: @Composable RowScope.(
     val (fadeStart, fadeEnd) = playerBadgeRowFades(overflowing, marquee = false, scroll.value, scroll.maxValue)
     Row(
         modifier = modifier
+            // A finite viewport is essential: otherwise the row measures to its entire
+            // badge content and a touch drag has no scrollable overflow.
+            .fillMaxWidth()
             .badgeEdgeFade(fadeStart, fadeEnd, BadgeRowFade)
-            .horizontalScroll(scroll),
+            .horizontalScroll(scroll, interactionSource = interactionSource),
         horizontalArrangement = Arrangement.spacedBy(7.dp),
         verticalAlignment = Alignment.CenterVertically,
         content = content,
