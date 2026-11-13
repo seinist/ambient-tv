@@ -265,9 +265,10 @@ fun PlaybackSessionContent(
 
     // Keep the manual Next Up action available briefly after EOF. If no one confirms it,
     // close the outgoing playback instead of retaining a frozen video and focus-trapping card.
-    // This effect is keyed by the title/session, not position ticks, so progress polls cannot
-    // restart the deadline. A seek back, dismissal or item handoff cancels or invalidates it.
-    LaunchedEffect(metadata.route, snapshot.generation, candidateKey, confirmationNeedsTimeout, atEnd) {
+    // This effect is keyed by the title/session and terminal eligibility, not position ticks
+    // or the sometimes-flapping native ended flag. A real seek back, dismissal or source
+    // handoff cancels or invalidates the deadline.
+    LaunchedEffect(metadata.route, snapshot.generation, candidateKey, confirmationNeedsTimeout) {
         if (!confirmationNeedsTimeout) return@LaunchedEffect
         if (!atEnd) kotlinx.coroutines.delay(NEXT_UP_EOF_GRACE_MS)
         kotlinx.coroutines.delay(NEXT_UP_CONFIRMATION_TIMEOUT_MS)
