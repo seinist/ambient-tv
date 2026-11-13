@@ -36,7 +36,7 @@ class AppearanceSettingsActivity : ComponentActivity() {
                 uiScale = state.uiScale, accentColorKey = state.accentColorKey,
                 accentStyleKey = state.accentStyleKey,
                 customAccentHex = state.customAccentHex, customPlaybackAccentHex = state.customPlaybackAccentHex,
-                themeModeKey = state.themeModeKey,
+                themeModeKey = state.themeModeKey.substringBefore("~"),
             ) {
                 CompositionLocalProvider(
                     androidx.tv.material3.LocalContentColor provides MaterialTheme.colorScheme.onSurface,

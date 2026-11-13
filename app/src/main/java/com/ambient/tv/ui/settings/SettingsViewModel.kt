@@ -485,11 +485,10 @@ class SettingsViewModel @Inject constructor(
         forcedSubtitlesEnabled = appPreferences.forcedSubtitlesEnabled,
         uiScale = appPreferences.uiScale,
         accentColorKey = appPreferences.accentColorKey,
-        accentStyleKey = appPreferences.accentStyleKey,
         customAccentHex = appPreferences.customAccentHex,
         customPlaybackAccentHex = appPreferences.customPlaybackAccentHex,
         dualAccentEnabled = appPreferences.dualAccentEnabled,
-        themeModeKey = appPreferences.themeModeKey,
+        themeModeKey = packThemeAndAccentStyle(appPreferences.themeModeKey, appPreferences.accentStyleKey),
         uiHdrModeKey = appPreferences.uiHdrModeKey,
         sdrToHdrEnabled = appPreferences.sdrToHdrEnabled,
         sdrToHdrPeakNits = appPreferences.sdrToHdrPeakNits,
@@ -2383,7 +2382,7 @@ class SettingsViewModel @Inject constructor(
     }
 
     fun onAccentStyleChanged(value: String) {
-        _uiState.update { it.copy(accentStyleKey = com.ambient.tv.ui.theme.AccentStyle.fromKey(value).key) }
+        _uiState.update { it.withAccentStyleKey(value) }
     }
 
     fun onAccentColorChanged(value: String) {
@@ -2408,7 +2407,7 @@ class SettingsViewModel @Inject constructor(
     }
 
     fun onThemeModeChanged(value: String) {
-        _uiState.update { it.copy(themeModeKey = value) }
+        _uiState.update { it.withThemeModeKey(value) }
     }
 
     fun onUiHdrModeChanged(value: String) {
@@ -3035,7 +3034,7 @@ class SettingsViewModel @Inject constructor(
             customAccentHex = appPreferences.customAccentHex,
             customPlaybackAccentHex = appPreferences.customPlaybackAccentHex,
         ) }
-        appPreferences.themeModeKey = state.themeModeKey
+        appPreferences.themeModeKey = state.displayThemeModeKey
         appPreferences.uiHdrModeKey = state.uiHdrModeKey
         appPreferences.sdrToHdrEnabled = state.sdrToHdrEnabled
         appPreferences.sdrToHdrPeakNits = state.sdrToHdrPeakNits

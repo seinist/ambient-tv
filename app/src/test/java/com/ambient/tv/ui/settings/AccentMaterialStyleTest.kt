@@ -44,13 +44,14 @@ class AccentMaterialStyleTest {
 
     @Test fun styleIsDirtyAndUnrelatedStoredRefreshPreservesEditedDraft() {
         val baseline = SettingsUiState()
-        val draft = baseline.copy(accentStyleKey = "glow")
+        val draft = baseline.withAccentStyleKey("glow")
         val stored = baseline.copy(accentColorKey = "purple")
         assertNotEquals(baseline.editableValues(), draft.editableValues())
         val merged = mergeStoredSettings(draft, baseline, stored)
         assertEquals("glow", merged.accentStyleKey)
         assertEquals("purple", merged.accentColorKey)
-        assertEquals("light", mergeStoredSettings(baseline, baseline, baseline.copy(accentStyleKey = "light")).accentStyleKey)
+        assertEquals("dark", merged.displayThemeModeKey)
+        assertEquals("light", mergeStoredSettings(baseline, baseline, baseline.withAccentStyleKey("light")).accentStyleKey)
     }
 
     @Test fun companionSettingsIncludeStyleButAccountsOnlyDoNotOverrideIt() {
