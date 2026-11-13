@@ -522,7 +522,7 @@ private fun PlayerDetailText(
         )
         DetailTagline(detail.tagline)
         DetailSummary(detail.overview, maxLines = Int.MAX_VALUE)
-        PlayerDetailYouTubeLinks(detail.youtubeLinks, onLinkFocusChanged, onClose)
+        DescriptionLinkButtons(detail.youtubeLinks, playerDetailTelegramLinks(detail.overview), onLinkFocusChanged, onClose)
         detail.lines.forEach { line ->
             Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
                 Text(stringResource(line.label), style = MaterialTheme.typography.labelMedium,
@@ -584,13 +584,21 @@ internal interface PlayerDetailYouTubeEntryPoint {
     fun engine(): com.ambient.tv.youtube.SmartTubeEngine
 }
 
+/**
+ * Focusable buttons for the YouTube and Telegram links of a description: each opens its video,
+ * channel or post inside the app. Shared by the player's details dialog, the SmartTube detail
+ * page and Monogram's post page. [onClose] runs before navigating (closes a dialog).
+ */
 @Composable
-private fun PlayerDetailYouTubeLinks(
+internal fun DescriptionLinkButtons(
     links: List<PlayerDetailYouTubeLink>,
-    onLinkFocusChanged: (Boolean) -> Unit,
-    onClose: () -> Unit,
+    telegramLinks: List<PlayerDetailTelegramLink> = emptyList(),
+    onLinkFocusChanged: (Boolean) -> Unit = {},
+    onClose: () -> Unit = {},
+    /** The dialog keeps Left/Right on the button; a page lets them move on. */
+    lockHorizontal: Boolean = true,
 ) {
-    if (links.isEmpty()) return
+    if (links.isEmpty() && telegramLinks.isEmpty()) return
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val engine = remember(context) {
@@ -642,8 +650,29 @@ private fun PlayerDetailYouTubeLinks(
                 modifier = Modifier
                     .onFocusChanged { onLinkFocusChanged(it.isFocused) }
                     .focusProperties {
-                        left = FocusRequester.Cancel
-                        right = FocusRequester.Cancel
+                        if (lockHorizontal) {
+                            left = FocusRequester.Cancel
+                            right = FocusRequester.Cancel
+                        }
+                    },
+            )
+        }
+        telegramLinks.take(8).forEach { link ->
+            TvActionButton(
+                text = link.label,
+                onClick = {
+                    onClose()
+                    com.ambient.tv.launcher.LauncherIntents.post(
+                        if (link.messageId != null) com.ambient.tv.ui.navigation.Destinations.telegramDetail(link.chatId, link.messageId)
+                        else com.ambient.tv.ui.navigation.Destinations.telegramSection("channel:${link.chatId}"))
+                },
+                modifier = Modifier
+                    .onFocusChanged { onLinkFocusChanged(it.isFocused) }
+                    .focusProperties {
+                        if (lockHorizontal) {
+                            left = FocusRequester.Cancel
+                            right = FocusRequester.Cancel
+                        }
                     },
             )
         }

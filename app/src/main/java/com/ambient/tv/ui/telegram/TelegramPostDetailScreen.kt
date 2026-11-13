@@ -201,6 +201,12 @@ fun TelegramPostDetailScreen(
                                     .focusable())
                         }
                     }
+                    // Links to other Telegram posts and channels, openable in Monogram.
+                    val telegramLinks = remember(selected.mediaKey, selected.summary) {
+                        com.ambient.tv.ui.player.playerDetailTelegramLinks(selected.summary)
+                            .filterNot { it.chatId == selected.chatId && it.messageId == selected.messageId }
+                    }
+                    com.ambient.tv.ui.player.DescriptionLinkButtons(emptyList(), telegramLinks, lockHorizontal = false)
                     if (videos.isNotEmpty()) {
                         TelegramDetailYouTubeRow(
                             title = stringResource(R.string.telegram_youtube),

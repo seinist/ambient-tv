@@ -188,13 +188,28 @@ fun YouTubeDetailScreen(
                             m.author?.let {
                                 Row(horizontalArrangement=Arrangement.spacedBy(10.dp), verticalAlignment=Alignment.CenterVertically) {
                                     m.authorImageUrl?.let { url -> ArtworkImage(model=url, title=it, modifier=Modifier.size(deviceDp(32.dp, 28.dp)).clip(CircleShape), contentScale=ContentScale.Crop) }
-                                    Text(it, style=MaterialTheme.typography.titleMedium, color=MaterialTheme.colorScheme.primary)
+                                    val channelId = m.channelId?.takeIf(String::isNotBlank)
+                                    // The channel name opens its channel page.
+                                    if (channelId != null) TvActionButton(it, onClick = {
+                                        com.ambient.tv.launcher.LauncherIntents.post(
+                                            com.ambient.tv.ui.navigation.Destinations.youtubeChannel(channelId, it, m.authorImageUrl))
+                                    })
+                                    else Text(it, style=MaterialTheme.typography.titleMedium, color=MaterialTheme.colorScheme.primary)
                                 }
                             }
                             listOfNotNull(m.viewCount, m.publishedDate).takeIf { it.isNotEmpty() }?.let {
                                 Text(it.joinToString("  ·  "), style=MaterialTheme.typography.bodySmall, color=MaterialTheme.colorScheme.onSurfaceVariant)
                             }
                             m.description?.let { Text(it, style=MaterialTheme.typography.bodyMedium, color=MaterialTheme.colorScheme.onSurfaceVariant, maxLines=8, overflow=TextOverflow.Ellipsis) }
+                            // Videos, channels and Telegram posts linked in the description, openable in the app.
+                            val descriptionLinks = remember(m.videoId, m.description) {
+                                com.ambient.tv.ui.player.playerDetailYouTubeLinks(m.description).filterNot { link ->
+                                    link.kind == com.ambient.tv.ui.player.PlayerDetailYouTubeLinkKind.VIDEO && link.value == m.videoId ||
+                                        link.kind == com.ambient.tv.ui.player.PlayerDetailYouTubeLinkKind.CHANNEL_ID && link.value == m.channelId
+                                }.take(6)
+                            }
+                            val telegramLinks = remember(m.videoId, m.description) { com.ambient.tv.ui.player.playerDetailTelegramLinks(m.description) }
+                            com.ambient.tv.ui.player.DescriptionLinkButtons(descriptionLinks, telegramLinks, lockHorizontal = false)
                             if (state.offline) Text(stringResource(R.string.browse_offline))
                             DeviceActionRow(horizontalArrangement=Arrangement.spacedBy(12.dp)){
                                 if (!state.offline) TvActionButton(if (current != null) stringResource(R.string.playback_open) else if(!m.isLive && (com.ambient.tv.youtube.YouTubeLocalProgress.resumePositionMs(m.videoId, m.durationMs, m.percentWatched) ?: 0L)>0) stringResource(R.string.common_resume) else stringResource(R.string.common_play), onClick={ if (current != null) openCurrent(current) else onPlay(m.videoId) }, modifier=Modifier.focusRequester(primaryFocusRequester))
