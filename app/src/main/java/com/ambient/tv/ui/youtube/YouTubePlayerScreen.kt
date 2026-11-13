@@ -236,11 +236,16 @@ fun YouTubePlayerScreen(
             val profileMetadata = PlaybackMetadata(route, playback.title, source = "youtube", mediaId = playback.videoId,
                 sourceWidth = initialFormat?.width, sourceHeight = initialFormat?.height,
                 isLive = playback.isLive, isTrailer = isTrailer)
-            fun preferredRenderer(metadata: PlaybackMetadata): String = com.ambient.tv.ui.player.savedPlaybackRenderer(
-                prefs.playbackBackendKey,
-                com.ambient.tv.ui.player.TitleVideoSettingsStore.load(context, metadata),
-                com.ambient.tv.ui.player.ResolutionVideoProfileStore.load(context, metadata),
-                MpvBackendAvailability.isAvailable,
+            fun preferredRenderer(metadata: PlaybackMetadata): String = com.ambient.tv.ui.player.preferredSourcePlaybackRenderer(
+                source = "youtube",
+                globalDefault = prefs.playbackBackendKey,
+                title = com.ambient.tv.ui.player.TitleVideoSettingsStore.load(context, metadata),
+                // The "all" profile mirrors the global Media3 setting, not an explicit width choice.
+                resolution = com.ambient.tv.ui.player.ResolutionVideoProfileStore
+                    .matchedKey(context, metadata)
+                    ?.let { com.ambient.tv.ui.player.ResolutionVideoProfileStore.load(context, metadata) },
+                mpvAvailable = MpvBackendAvailability.isAvailable,
+                isTrailer = isTrailer,
             )
             var rendererKey by remember(route) { mutableStateOf(
                 BackgroundPlaybackSession.snapshot.value.takeIf { it.metadata?.route == route }?.backend
@@ -288,16 +293,20 @@ fun YouTubePlayerScreen(
             fun switchRenderer(key: String, positionMs: Long, global: Boolean) {
                 val normalized = key.takeIf { it in setOf("auto", "media3", "vlc", "mpv") } ?: "auto"
                 if (normalized == "mpv" && !MpvBackendAvailability.isAvailable) return
-                if (!com.ambient.tv.ui.player.currentPlayerRendererAvailability(profileMetadata).canSelect(normalized)) return
+                val effective = com.ambient.tv.ui.player.resolveSourceAutoRenderer(
+                    "youtube", normalized, MpvBackendAvailability.isAvailable, isTrailer = isTrailer,
+                )
+                if (!com.ambient.tv.ui.player.currentPlayerRendererAvailability(profileMetadata).canSelect(effective)) return
                 BackgroundPlaybackSession.cancelResumeRewind()
-                val change = PlaybackBackendResolver.resolve(rendererKey) != PlaybackBackendResolver.resolve(normalized)
+                val change = PlaybackBackendResolver.resolve(rendererKey) != PlaybackBackendResolver.resolve(effective)
                 if (change) allowLateResume = false
                 if (change) resumePosition = com.ambient.tv.ui.player.rendererReopenPositionMs(playback.isLive,
                     com.ambient.tv.ui.player.rendererSwitchPositionMs(BackgroundPlaybackSession.currentStatus()?.positionMs, positionMs,
                         com.ambient.tv.ui.player.rendererZeroPositionReady(BackgroundPlaybackSession.activeHandle())))
                 rendererPinned = true
-                rendererKey = normalized
-                if (global) prefs.playbackBackendKey = normalized
+                rendererKey = effective
+                // Source-local Auto must not silently overwrite Plex/Live TV defaults.
+                if (global && normalized != "auto") prefs.playbackBackendKey = normalized
             }
             val formatChanged: (Float, Int?, Int?) -> Unit = { fps, width, height ->
                 requestDisplayMode(fps, width, height)

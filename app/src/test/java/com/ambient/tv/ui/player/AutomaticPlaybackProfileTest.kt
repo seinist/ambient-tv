@@ -172,4 +172,35 @@ class AutomaticPlaybackProfileTest {
         assertEquals("media3", savedPlaybackRenderer("media3", null, null, true))
         assertEquals("vlc", savedPlaybackRenderer("media3", TitleVideoSettings(rendererKey = "invalid"), resolution, true))
     }
+    @Test fun sourceAutoPrefersMpvOnlyForSmartTubeAndMonogram() {
+        for (source in listOf("youtube", "telegram")) {
+            assertEquals("mpv", preferredSourcePlaybackRenderer(source, "media3", null, null, true))
+            assertEquals("media3", preferredSourcePlaybackRenderer(source, "media3", null, null, false))
+            assertEquals("mpv", preferredSourcePlaybackRenderer(source, "auto", null, null, true))
+            assertEquals("vlc", preferredSourcePlaybackRenderer(source, "vlc", null, null, true))
+            assertEquals("mpv", resolveSourceAutoRenderer(source, "auto", true))
+            assertEquals("media3", resolveSourceAutoRenderer(source, "auto", false))
+        }
+        // Neither legacy AUTO nor global defaults are changed for unrelated sources.
+        assertEquals("media3", preferredSourcePlaybackRenderer("plex", "media3", null, null, true))
+        assertEquals("auto", preferredSourcePlaybackRenderer("plex", "auto", null, null, true))
+        assertEquals("media3", preferredSourcePlaybackRenderer("youtube", "media3", null, null, true, isTrailer = true))
+        assertEquals("media3", resolveSourceAutoRenderer("youtube", "auto", true, isTrailer = true))
+    }
+
+    @Test fun explicitRendererAndWidthProfilesBeatSourceAuto() {
+        val media3Title = TitleVideoSettings(rendererKey = "media3")
+        val vlcTitle = TitleVideoSettings(rendererKey = "vlc")
+        val autoTitle = TitleVideoSettings(rendererKey = "auto")
+        val vlcWidth = ResolutionVideoProfile("vlc")
+        assertEquals("media3", preferredSourcePlaybackRenderer("youtube", "media3", media3Title, vlcWidth, true))
+        assertEquals("vlc", preferredSourcePlaybackRenderer("youtube", "media3", vlcTitle, null, true))
+        assertEquals("vlc", preferredSourcePlaybackRenderer("youtube", "media3", null, vlcWidth, true))
+        assertEquals("mpv", preferredSourcePlaybackRenderer("youtube", "media3", autoTitle, vlcWidth, true))
+        assertEquals("mpv", preferredSourcePlaybackRenderer("youtube", "media3", null, ResolutionVideoProfile("auto"), true))
+        assertEquals("media3", preferredSourcePlaybackRenderer("telegram", "media3", media3Title, null, true))
+        // Auto falls back to Media3 only if the native MPV runtime cannot be loaded.
+        assertEquals("media3", preferredSourcePlaybackRenderer("youtube", "media3", autoTitle, null, false))
+        assertEquals("media3", preferredSourcePlaybackRenderer("youtube", "mpv", null, null, false))
+    }
 }

@@ -142,7 +142,11 @@ class TelegramPlayerViewModel @Inject constructor(
     private var loadJob: Job? = null
     private var successorJob: Job? = null
     private var transitionToken: Long? = null
-    private val mutableRenderer = MutableStateFlow(PlaybackBackendResolver.resolve(preferences.playbackBackendKey).key)
+    private val mutableRenderer = MutableStateFlow(com.ambient.tv.ui.player.resolveSourceAutoRenderer(
+        "telegram",
+        com.ambient.tv.ui.player.sourceAutoDefaultRenderer("telegram", preferences.playbackBackendKey),
+        MpvBackendAvailability.isAvailable,
+    ))
     val renderer = mutableRenderer.asStateFlow()
 
     /** Same user setting as every other player: passthrough applies to Media3, VLC and MPV. */
@@ -156,13 +160,16 @@ class TelegramPlayerViewModel @Inject constructor(
     val startPositionMs = mutableStartPosition.asStateFlow()
 
     fun chooseRenderer(key: String, makeGlobal: Boolean) {
-        val requested = key.takeIf { it in setOf("media3", "vlc", "mpv") } ?: "media3"
-        if (requested == "mpv" && !MpvBackendAvailability.isAvailable) return
+        val selected = key.takeIf { it in setOf("auto", "media3", "vlc", "mpv") } ?: "media3"
+        if (selected == "mpv" && !MpvBackendAvailability.isAvailable) return
+        val requested = com.ambient.tv.ui.player.resolveSourceAutoRenderer(
+            "telegram", selected, MpvBackendAvailability.isAvailable,
+        )
         val metadata = mutableMedia.value?.playerMetadata()
         if (!com.ambient.tv.ui.player.currentPlayerRendererAvailability(metadata).canSelect(requested)) return
-        if (makeGlobal) preferences.playbackBackendKey = requested
+        if (makeGlobal && selected != "auto") preferences.playbackBackendKey = requested
         TitleVideoSettingsStore.rememberRenderer(context, metadata,
-            if (makeGlobal || key == "auto") null else requested)
+            if (makeGlobal || selected == "auto") null else requested)
         if (requested == mutableRenderer.value) return
         // Capture before the old renderer is released: the new one continues from here.
         mutableMedia.value?.let { media ->
@@ -348,8 +355,13 @@ class TelegramPlayerViewModel @Inject constructor(
         messageId = selected.messageId
         savedStateHandle["chatId"] = selected.chatId
         savedStateHandle["messageId"] = selected.messageId
-        mutableRenderer.value = PlaybackBackendResolver.resolve(TitleVideoSettingsStore.rendererFor(
-            context, selected.playerMetadata(), preferences.playbackBackendKey)).key
+        mutableRenderer.value = com.ambient.tv.ui.player.preferredSourcePlaybackRenderer(
+            source = "telegram",
+            globalDefault = preferences.playbackBackendKey,
+            title = TitleVideoSettingsStore.load(context, selected.playerMetadata()),
+            resolution = null, // Monogram has no resolution-based renderer selection.
+            mpvAvailable = MpvBackendAvailability.isAvailable,
+        )
         // Still playing in the background: keep the original start so the running
         // session is reattached, not reopened. Otherwise continue where it stopped.
         setStartPosition(selected,
