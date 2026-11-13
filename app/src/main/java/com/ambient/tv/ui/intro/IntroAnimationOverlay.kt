@@ -695,9 +695,8 @@ private fun DrawScope.drawSignature(frame: IntroFrame) {
 }
 
 /**
- * Soft envelope for a Prism beam. The old four-corner polygon kept full width right up to
- * [top]/[bottom], so its horizontal end cap was visible — especially on portrait phones and on
- * the backdrop facets that deliberately stop above the connection-status area.
+ * Soft timing envelope for a sweeping Prism light. The gradient itself now fades to zero
+ * around its elliptical footprint instead of ending on a polygon silhouette.
  */
 internal fun prismRibbonEnvelope(progress: Float): Float {
     val u = progress.coerceIn(0f, 1f)
@@ -705,14 +704,12 @@ internal fun prismRibbonEnvelope(progress: Float): Float {
     return soft((edge / 0.18f).coerceIn(0f, 1f))
 }
 
-private const val PRISM_RIBBON_SEGMENTS = 10
-
 /**
- * A translucent diagonal beam with feathered sides and tapered ends.
+ * GPU-friendly soft light beam with Gaussian-style radial falloff.
  *
- * The path narrows smoothly to a point instead of ending on a rectangular cap. The colour
- * gradient is perpendicular to the beam's centre line rather than screen-horizontal, so a
- * strongly slanted beam keeps the same soft cross-section on TV and portrait phones.
+ * Rotating and stretching a shaded ellipse avoids tessellated cone polygons: no triangular
+ * facets, clipped end caps or sharp silhouette, even on portrait/4K surfaces. One gradient
+ * draw per beam also reduces fill/geometry work relative to the old 20-segment path.
  */
 private fun DrawScope.prismRibbon(
     x: Float,
@@ -725,42 +722,24 @@ private fun DrawScope.prismRibbon(
 ) {
     if (opacity <= 0.002f || bottom <= top || width <= 0f) return
     val height = bottom - top
-    val ribbon = Path().apply {
-        for (index in 0..PRISM_RIBBON_SEGMENTS) {
-            val u = index / PRISM_RIBBON_SEGMENTS.toFloat()
-            val centerX = x + slant * (u - 0.5f)
-            val y = top + height * u
-            val half = width * 0.5f * prismRibbonEnvelope(u)
-            if (index == 0) moveTo(centerX - half, y) else lineTo(centerX - half, y)
-        }
-        for (index in PRISM_RIBBON_SEGMENTS downTo 0) {
-            val u = index / PRISM_RIBBON_SEGMENTS.toFloat()
-            val centerX = x + slant * (u - 0.5f)
-            val y = top + height * u
-            val half = width * 0.5f * prismRibbonEnvelope(u)
-            lineTo(centerX + half, y)
-        }
-        close()
-    }
-
-    // Perpendicular gradient: normal = (height, -slant), normalized.
     val length = kotlin.math.sqrt(height * height + slant * slant).coerceAtLeast(1f)
-    val normal = Offset(height / length, -slant / length)
-    val middle = Offset(x, (top + bottom) * 0.5f)
-    val gradientHalf = width * 0.62f
-    drawPath(
-        ribbon,
-        Brush.linearGradient(
-            0f to Color.Transparent,
-            0.24f to color.copy(alpha = opacity * 0.10f),
-            0.5f to color.copy(alpha = opacity),
-            0.76f to color.copy(alpha = opacity * 0.10f),
-            1f to Color.Transparent,
-            start = middle - normal * gradientHalf,
-            end = middle + normal * gradientHalf,
-        ),
-        blendMode = BlendMode.Plus,
+    val radius = length * 0.5f
+    val angle = -kotlin.math.atan2(slant, height) * (180f / PI.toFloat())
+    val beam = Brush.radialGradient(
+        0f to color.copy(alpha = opacity * 0.82f),
+        0.22f to color.copy(alpha = opacity * 0.55f),
+        0.50f to color.copy(alpha = opacity * 0.20f),
+        0.78f to color.copy(alpha = opacity * 0.045f),
+        1f to Color.Transparent,
+        center = Offset.Zero, radius = radius,
     )
+    withTransform({
+        translate(x, (top + bottom) * 0.5f)
+        rotate(angle, pivot = Offset.Zero)
+        scale(width / length, 1f, pivot = Offset.Zero)
+    }) {
+        drawCircle(beam, radius = radius, center = Offset.Zero, blendMode = BlendMode.Plus)
+    }
 }
 
 /**
@@ -834,17 +813,18 @@ private fun DrawScope.drawPrism(frame: IntroFrame) {
     if (!IntroDraw.lite && !IntroDraw.still) {
         val intensity = soft(phase(t, 0f, 0.9f)) * (1f - soft(phase(t, 3.5f, 5.15f)))
         val crossing = soft(phase(t, 0.2f, 4.4f))
+        val sweepFade = prismRibbonEnvelope(crossing)
         prismRibbon(
             x = size.width * (-0.18f + 1.25f * crossing),
             top = 0f, bottom = size.height,
             width = size.width * 0.32f, slant = size.width * 0.28f,
-            color = frame.accent, opacity = 0.15f * intensity,
+            color = frame.accent, opacity = 0.15f * intensity * sweepFade,
         )
         prismRibbon(
             x = size.width * (1.15f - 1.04f * crossing),
             top = 0f, bottom = size.height,
             width = size.width * 0.25f, slant = -size.width * 0.17f,
-            color = frame.second, opacity = 0.12f * intensity,
+            color = frame.second, opacity = 0.12f * intensity * sweepFade,
         )
     }
 
@@ -860,7 +840,7 @@ private fun DrawScope.drawPrism(frame: IntroFrame) {
             bottom = stage.y + wordWidth * 0.11f,
             width = wordWidth * 0.09f, slant = wordWidth * 0.075f,
             color = lerp(frame.second, Color.White, 0.35f),
-            opacity = 0.10f * sheen,
+            opacity = 0.10f * sheen * prismRibbonEnvelope(sweep),
         )
         val idle = soft(phase(t, 5.1f, 5.7f))
         lightPool(lerp(frame.accent, frame.second, frame.breath), stage, wordWidth * 0.65f,
