@@ -243,7 +243,10 @@ fun YouTubeDetailScreen(
                             listOfNotNull(m.viewCount, m.publishedDate).takeIf { it.isNotEmpty() }?.let {
                                 Text(it.joinToString("  ·  "), style=MaterialTheme.typography.bodySmall, color=MaterialTheme.colorScheme.onSurfaceVariant)
                             }
-                            m.description?.let { Text(it, style=MaterialTheme.typography.bodyMedium, color=MaterialTheme.colorScheme.onSurfaceVariant, maxLines=8, overflow=TextOverflow.Ellipsis) }
+                            m.description?.takeIf(String::isNotBlank)?.let { Text(it, style=MaterialTheme.typography.bodyMedium, color=MaterialTheme.colorScheme.onSurfaceVariant, maxLines=8, overflow=TextOverflow.Ellipsis) }
+                            // Cached metadata can arrive before the network description is enriched.
+                            // Reserve its height instead of inserting paragraphs above the buttons later.
+                            if (state.enriching && m.description.isNullOrBlank()) DetailSkeletonParagraph(lines = 4)
                             // Videos, channels and Telegram posts linked in the description, openable in the app.
                             val descriptionLinks = remember(m.videoId, m.description) {
                                 com.ambient.tv.ui.player.playerDetailYouTubeLinks(m.description).filterNot { link ->
@@ -256,15 +259,19 @@ fun YouTubeDetailScreen(
                             if (state.offline) Text(stringResource(R.string.browse_offline))
                             DeviceActionRow(horizontalArrangement=Arrangement.spacedBy(12.dp)){
                                 if (!state.offline) TvActionButton(if (current != null) stringResource(R.string.playback_open) else if(!m.isLive && (com.ambient.tv.youtube.YouTubeLocalProgress.resumePositionMs(m.videoId, m.durationMs, m.percentWatched) ?: 0L)>0) stringResource(R.string.common_resume) else stringResource(R.string.common_play), onClick={ if (current != null) openCurrent(current) else onPlay(m.videoId) }, modifier=Modifier.focusRequester(primaryFocusRequester))
-                                state.channel?.takeIf { !state.offline }?.let { channel ->
-                                    channel.subscribed?.let { subscribed ->
-                                        TvActionButton(stringResource(if (subscribed) R.string.youtube_subscribed else R.string.youtube_subscribe), onClick=viewModel::toggleSubscription, selected=subscribed, icon=androidx.compose.material.icons.Icons.Filled.Subscriptions)
-                                    }
+                                val subscribed = state.channel?.takeIf { !state.offline }?.subscribed
+                                if (subscribed != null) {
+                                    TvActionButton(stringResource(if (subscribed) R.string.youtube_subscribed else R.string.youtube_subscribe), onClick=viewModel::toggleSubscription, selected=subscribed, icon=androidx.compose.material.icons.Icons.Filled.Subscriptions)
+                                } else if (state.enriching && !state.offline) {
+                                    DetailSkeletonBlock(Modifier.width(144.dp).height(48.dp), radius = 10.dp)
                                 }
                                 if (state.signedIn && !state.offline) {
                                     val liked = state.likeStatus == YouTubeLikeStatus.LIKE
                                     TvActionButton(m.likeCount ?: stringResource(R.string.youtube_like), onClick={ viewModel.rate(YouTubeLikeStatus.LIKE) }, selected=liked, icon=androidx.compose.material.icons.Icons.Filled.ThumbUp)
                                     TvActionButton(stringResource(R.string.youtube_dislike), onClick={ viewModel.rate(YouTubeLikeStatus.DISLIKE) }, selected=state.likeStatus == YouTubeLikeStatus.DISLIKE, icon=androidx.compose.material.icons.Icons.Filled.ThumbDown)
+                                } else if (state.enriching && !state.offline) {
+                                    DetailSkeletonBlock(Modifier.width(106.dp).height(48.dp), radius = 10.dp)
+                                    DetailSkeletonBlock(Modifier.width(106.dp).height(48.dp), radius = 10.dp)
                                 }
                             }
                         }
