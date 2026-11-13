@@ -116,6 +116,8 @@ data class SettingsBackup(
     val navSoundBank: String = "",
     val playbackBackendKey: String = "media3",
     val playerTechBadgesVisible: Boolean = true,
+    /** Nullable so importing an older backup keeps the device's current OSD indicator choice. */
+    val playerOsdModeIconVisible: Boolean? = null,
     val osdHiddenButtons: List<String> = emptyList(),
     val tvheadendPlaybackBackendKey: String? = null,
     val mpvVideoOutputModeKey: String = "direct",
@@ -463,6 +465,7 @@ class SettingsBackupManager @Inject constructor(
             navSoundBank = preferences.navSoundBank,
             playbackBackendKey = preferences.playbackBackendKey,
             playerTechBadgesVisible = preferences.playerTechBadgesVisible,
+            playerOsdModeIconVisible = preferences.playerOsdModeIconVisible,
             osdHiddenButtons = preferences.osdHiddenButtons.sorted(),
             tvheadendPlaybackBackendKey = preferences.tvheadendPlaybackBackendKey,
             mpvVideoOutputModeKey = preferences.mpvVideoOutputModeKey,
@@ -848,6 +851,7 @@ class SettingsBackupManager @Inject constructor(
         if (backup.schemaVersion >= 50) preferences.navSoundBank = backup.navSoundBank
         preferences.playbackBackendKey = backup.playbackBackendKey
         preferences.playerTechBadgesVisible = backup.playerTechBadgesVisible
+        backup.playerOsdModeIconVisible?.let { preferences.playerOsdModeIconVisible = it }
         preferences.osdHiddenButtons = backup.osdHiddenButtons.toSet()
         preferences.tvheadendPlaybackBackendKey = backup.tvheadendPlaybackBackendKey ?: backup.playbackBackendKey
         preferences.mpvVideoOutputModeKey = backup.mpvVideoOutputModeKey
