@@ -2386,7 +2386,8 @@ private fun ImageCacheSettings(uiState: SettingsUiState, viewModel: SettingsView
                 )
             },
         )
-        TvSettingRow(
+        // Only a denser (4K) interface has larger card images to limit.
+        if (androidx.compose.ui.platform.LocalDensity.current.density > com.ambient.tv.ui.common.CARD_IMAGE_1080_DENSITY) TvSettingRow(
             title = stringResource(R.string.settings_card_images_1080),
             body = stringResource(R.string.settings_card_images_1080_hint),
             checked = uiState.cardImages1080,
