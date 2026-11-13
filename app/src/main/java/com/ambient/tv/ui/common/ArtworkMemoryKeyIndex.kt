@@ -25,6 +25,20 @@ internal class ArtworkMemoryKeyIndex(
         keys[model] = (listOf(key) + known.filter { it != key }).take(keysPerModel)
     }
 
+    /** Every remembered key for [model], newest first (diagnostics). */
+    fun keys(model: Any): List<MemoryCache.Key> = keys[model].orEmpty()
+
+    private val modelByIdentity = object : java.util.LinkedHashMap<Any, Any>(256, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<Any, Any>?) = size > maxModels
+    }
+
+    /** True when the same picture ([identity]) was last loaded under another model (changed URL). */
+    fun modelChanged(identity: Any?, model: Any): Boolean {
+        if (identity == null) return false
+        val previous = modelByIdentity.put(identity, model)
+        return previous != null && previous != model
+    }
+
     /** Newest key for [model] whose bitmap [isCached] still reports, or null. */
     fun cachedKey(model: Any, isCached: (MemoryCache.Key) -> Boolean): MemoryCache.Key? =
         keys[model]?.firstOrNull(isCached)

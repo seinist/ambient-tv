@@ -573,6 +573,27 @@ fun ArtworkImage(
                     loading = false
                     failed = false
                     val key = it.result.memoryCacheKey
+                    // Diagnostics: why a picture that was loaded before had to load again.
+                    val source = it.result.dataSource
+                    // Without the query: signed thumbnail URLs differ only there between two fetches.
+                    val pictureIdentity = (currentModel as? String)?.substringBefore('?') ?: requestIdentity
+                    if (!backdrop && currentModel != null && source != coil3.decode.DataSource.MEMORY_CACHE &&
+                        source != coil3.decode.DataSource.MEMORY) {
+                        val known = keyIndex.keys(currentModel)
+                        val urlChanged = keyIndex.modelChanged(pictureIdentity, currentModel)
+                        if (known.isNotEmpty() || urlChanged) {
+                            val cache = imageLoader.memoryCache
+                            val reason = when {
+                                urlChanged && known.isEmpty() -> "url-changed"
+                                key != null && key !in known -> "size-changed"
+                                else -> "evicted"
+                            }
+                            com.ambient.tv.diagnostics.DiagnosticLog.info("artwork",
+                                "reload reason=$reason source=$source id=${currentModel.hashCode().toUInt().toString(16)} " +
+                                    "key=${key?.extras} known=${known.map { k -> k.extras }} " +
+                                    "cache=${(cache?.size ?: 0L) / 1024}/${(cache?.maxSize ?: 0L) / 1024} KiB")
+                        }
+                    } else if (currentModel != null) keyIndex.modelChanged(pictureIdentity, currentModel)
                     if (key != null) {
                         currentModel?.let { keyIndex.remember(it, key) }
                         continuity.model = currentModel
