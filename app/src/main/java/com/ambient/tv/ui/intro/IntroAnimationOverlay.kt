@@ -143,7 +143,8 @@ private const val GLYPH_SCALE = 0.022f
 private const val LABEL_SCALE = 0.01f
 private val BADGE_TOP_LEFT = Offset(110.526f, -16f)
 private val BADGE_SIZE = Size(25f, 18f)
-private val LABEL_ORIGIN = Offset(115.526f, -3.5f)
+/** Center the TV glyph's 13.32-unit ink bounds inside the 25-unit badge. */
+private val LABEL_ORIGIN = Offset(116.326f, -3.5f)
 /** Ink bounds of the wordmark, Λ stroke and badge included. */
 private const val WORDMARK_LEFT = 0.5f
 private const val WORDMARK_RIGHT = 135.6f

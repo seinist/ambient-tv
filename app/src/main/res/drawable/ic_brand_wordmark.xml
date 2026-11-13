@@ -41,7 +41,7 @@
             </group>
         </group>
         <path android:pathData="M163.526,12.0H180.526A4.0,4.0 0 0 1 184.526,16.0V26.0A4.0,4.0 0 0 1 180.526,30.0H163.526A4.0,4.0 0 0 1 159.526,26.0V16.0A4.0,4.0 0 0 1 163.526,12.0Z" android:fillColor="#F0B441" android:strokeColor="#00000000" />
-        <group android:translateX="164.526" android:translateY="24.5">
+        <group android:translateX="165.326" android:translateY="24.5">
             <group android:scaleX="1.0" android:scaleY="1.0">
                 <group android:translateX="0.0" android:translateY="0.0">
                     <group android:scaleX="0.01" android:scaleY="-0.01">
