@@ -145,7 +145,7 @@ Changing filters, sort or layout keeps focus on the control being edited while r
 | --- | --- | --- | --- | --- |
 | Appearance | Dark · OLED black · Dim | Dark | All | Theme. Live preview at the top. |
 | Interface size | Slider 50–150 % | 100 %; on TVs 90 % at 1440p and 70 % at 4K | All | Size of text, cards and controls. The TV default is set once from the display resolution. |
-| Accent style | Satin / Metallic · Glass · Soft Glow · Pearl · Light (original) | Satin / Metallic | All | Static material treatment for focused cards, chips, buttons, playback progress and scrollbars. Light keeps the original solid colors; low UI performance removes extra glow layers. |
+| Accent style | Satin / Metallic · Glass · Soft Glow · Pearl · Light | Satin / Metallic | All | Static material treatment for focused cards, chips, buttons, playback progress and scrollbars. Light keeps the original solid colors; low UI performance removes extra glow layers. |
 | Accent color | Gold, Orange, Blue, Teal, Green, Purple, Pink, Red, Artwork, Custom | Gold | All | Artwork tints detail pages from the cover; elsewhere gold. Custom opens a color picker (default `#E5A00D`). |
 | Separate playback color | On / Off | Off | All | Second color for playback status and progress. |
 | Swap main and playback colors | Action | — | All | Shown with a separate playback color. |
