@@ -6,6 +6,7 @@ import androidx.compose.material.icons.automirrored.filled.ShowChart
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Speed
 import androidx.compose.material.icons.filled.Timer
+import androidx.compose.material.icons.filled.SwapHoriz
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material.icons.filled.ViewWeek
 import androidx.compose.material.icons.filled.Visibility
@@ -22,6 +23,7 @@ import com.ambient.tv.ui.common.RightPanelSectionTitle
 private enum class OsdInfoEntry(@StringRes val summary: Int, @StringRes val section: Int) {
     BUTTONS(R.string.player_osd_info_buttons_summary, R.string.player_osd_info_controls),
     DURATION(R.string.player_osd_info_duration, R.string.player_osd_info_controls),
+    NAVIGATION_MODE(R.string.player_osd_navigation_indicator, R.string.player_osd_info_controls),
     CODECS(R.string.player_osd_info_codecs_summary, R.string.player_osd_info_information),
     FPS(R.string.player_osd_info_fps_summary, R.string.player_osd_info_information),
     FRAME_DROPS(R.string.player_osd_info_frame_drops_summary, R.string.player_osd_info_information),
@@ -86,6 +88,15 @@ internal fun PlayerOsdInfoPanelControls(audioSession: AudioSession?, hasVideo: B
                             preferences.playerOsdSeconds = it
                         }
                     },
+                )
+            }
+            OsdInfoEntry.NAVIGATION_MODE -> {
+                val visible = preferences.playerOsdModeIconVisible
+                PlayerPanelEntry(
+                    icon = Icons.Filled.SwapHoriz,
+                    title = stringResource(R.string.player_osd_navigation_indicator),
+                    value = stringResource(if (visible) R.string.player_on else R.string.player_off),
+                    onClick = { preferences.playerOsdModeIconVisible = !visible },
                 )
             }
             OsdInfoEntry.CODECS -> {
