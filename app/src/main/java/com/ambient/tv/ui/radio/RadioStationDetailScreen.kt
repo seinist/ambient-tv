@@ -79,13 +79,7 @@ fun RadioStationDetailScreen(
     Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
         PageBackground(Modifier.fillMaxSize())
         when {
-            loading -> Column(
-                Modifier.fillMaxSize().padding(start = screenGutter(), end = screenGutter(), top = 94.dp),
-                verticalArrangement = Arrangement.spacedBy(16.dp),
-            ) {
-                SkeletonRow(title = "", style = MediaTileStyle.LANDSCAPE, itemCount = 1)
-                SkeletonRow(title = "", style = MediaTileStyle.POSTER, itemCount = 5)
-            }
+            loading -> RadioDetailLoadingSkeleton()
             station == null -> StatePanel(
                 title = stringResource(R.string.radio_station_detail),
                 body = error,
@@ -174,6 +168,39 @@ fun RadioStationDetailScreen(
             leftNavigatesBack = false,
             modifier = Modifier.align(Alignment.TopCenter),
         )
+    }
+}
+
+/**
+ * The initial station detail reserves the same square artwork, metadata/chip line and two
+ * actions as the loaded hero; decorative blocks cannot take focus before Play is available.
+ */
+@Composable
+private fun RadioDetailLoadingSkeleton() {
+    Column(
+        Modifier.fillMaxSize().verticalScroll(rememberScrollState())
+            .padding(start = screenGutter(), end = screenGutter(), top = 94.dp, bottom = 40.dp),
+        verticalArrangement = Arrangement.spacedBy(18.dp),
+    ) {
+        Row(
+            Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(deviceDp(36.dp, 18.dp)),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            DetailSkeletonBlock(Modifier.width(deviceDp(280.dp, 160.dp)).aspectRatio(1f), radius = 14.dp)
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                DetailSkeletonBlock(Modifier.width(95.dp).height(24.dp), radius = 7.dp)
+                DetailSkeletonBlock(Modifier.fillMaxWidth(0.82f).height(36.dp))
+                DetailSkeletonBlock(Modifier.fillMaxWidth(0.55f).height(16.dp), radius = 5.dp)
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    repeat(3) { index ->
+                        DetailSkeletonBlock(Modifier.width(if (index == 0) 75.dp else 55.dp).height(24.dp), radius = 6.dp)
+                    }
+                }
+                DetailSkeletonActions()
+            }
+        }
+        SkeletonRow(title = "", style = MediaTileStyle.LANDSCAPE, itemCount = 5)
     }
 }
 
