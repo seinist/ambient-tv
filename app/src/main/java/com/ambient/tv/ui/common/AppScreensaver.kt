@@ -173,8 +173,31 @@ private fun AmbientBackground(brightness: Float) {
         drawRect(Color(0xFF080B10).copy(alpha = brightness))
         val p1 = Offset(size.width * (0.28f + 0.14f * sin(t)), size.height * (0.42f + 0.18f * cos(t)))
         val p2 = Offset(size.width * (0.72f + 0.12f * cos(t)), size.height * (0.56f + 0.15f * sin(t * 2)))
-        drawRect(Brush.radialGradient(listOf(primary.copy(alpha = 0.20f * brightness), Color.Transparent), p1, size.minDimension * 0.72f))
-        drawRect(Brush.radialGradient(listOf(secondary.copy(alpha = 0.13f * brightness), Color.Transparent), p2, size.minDimension * 0.66f))
+        // Draw the light only inside its soft circular footprint rather than shading the
+        // full-screen rect with a small off-centre radial shader. This avoids diagonal
+        // primitive artefacts on some Android GPU drivers and shades fewer pixels.
+        val radius1 = (size.minDimension * 0.85f).coerceAtLeast(1f)
+        val radius2 = (size.minDimension * 0.78f).coerceAtLeast(1f)
+        drawCircle(
+            Brush.radialGradient(
+                0f to primary.copy(alpha = 0.24f * brightness),
+                0.35f to primary.copy(alpha = 0.14f * brightness),
+                0.7f to primary.copy(alpha = 0.045f * brightness),
+                1f to Color.Transparent,
+                center = p1, radius = radius1,
+            ),
+            radius = radius1, center = p1,
+        )
+        drawCircle(
+            Brush.radialGradient(
+                0f to secondary.copy(alpha = 0.19f * brightness),
+                0.38f to secondary.copy(alpha = 0.10f * brightness),
+                0.72f to secondary.copy(alpha = 0.025f * brightness),
+                1f to Color.Transparent,
+                center = p2, radius = radius2,
+            ),
+            radius = radius2, center = p2,
+        )
         drawRect(Brush.verticalGradient(0f to Color.Transparent, 1f to Color.Black.copy(alpha = 0.40f)))
     }
 }
