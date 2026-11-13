@@ -31,7 +31,8 @@ class PlaybackDiagnosticsTransferTest {
                     assertFalse(fresh.performanceHint)
                     assertFalse(fresh.showFpsOverlay)
                     assertFalse(fresh.showFrameDropOverlay)
-                    assertFalse(fresh.showFrameDropHistory)
+                    // Only the graph presentation is a saved choice.
+                    assertEquals(history, fresh.showFrameDropHistory)
                 }
             }
         }
@@ -58,7 +59,8 @@ class PlaybackDiagnosticsTransferTest {
             assertFalse(fresh.performanceHint)
             assertFalse(fresh.showFpsOverlay)
             assertFalse(fresh.showFrameDropOverlay)
-            assertFalse(fresh.showFrameDropHistory)
+            // Only the graph presentation is a saved choice.
+            assertEquals(history, fresh.showFrameDropHistory)
         }
     }
 }
