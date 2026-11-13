@@ -515,6 +515,7 @@ fun SettingsScreen(
                                     modifier = Modifier.focusRequester(checkUiFocus),
                                 )
                             }
+                            item(key = "appearance:image-cache") { ImageCacheSettings(uiState, viewModel) }
                         }
 
                         SettingsCategory.LANGUAGE -> {
@@ -2349,4 +2350,47 @@ private fun SubtitleLanguageChoice(selected: String, fallback: Boolean, onSelect
         value = options.first { it.first == selected }.second,
         options = options, selectedKey = selected, onSelected = onSelected,
     )
+}
+
+/** Card image memory (applies after a restart), its live fill level and the 1080p card limit. */
+@Composable
+private fun ImageCacheSettings(uiState: SettingsUiState, viewModel: SettingsViewModel) {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val app = context.applicationContext as? com.ambient.tv.AmbientTvApplication
+    val automaticMb = remember(app) { app?.automaticImageCacheMb() ?: 0 }
+    // Only sizes above the automatic budget are offered: a choice never shrinks the cache.
+    val choices = listOf(0) + com.ambient.tv.data.local.AppPreferences.IMAGE_CACHE_CHOICES_MB.sorted().filter { it > automaticMb }
+    val cache = coil3.SingletonImageLoader.get(context).memoryCache
+    var usage by remember { mutableStateOf((cache?.size ?: 0L) to (cache?.maxSize ?: 0L)) }
+    LaunchedEffect(cache) {
+        while (true) {
+            usage = (cache?.size ?: 0L) to (cache?.maxSize ?: 0L)
+            kotlinx.coroutines.delay(1_000)
+        }
+    }
+    val mib = 1024L * 1024L
+    SettingsGroup {
+        SettingsSelect(
+            label = stringResource(R.string.settings_image_cache),
+            description = listOfNotNull(
+                stringResource(R.string.settings_image_cache_hint),
+                stringResource(R.string.settings_image_cache_usage, (usage.first / mib).toInt(), (usage.second / mib).toInt()),
+                stringResource(R.string.settings_image_cache_large_warning).takeIf { uiState.imageCacheMb >= 256 },
+            ).joinToString("\n"),
+            options = choices.map { mb ->
+                SettingsSelectOption(
+                    text = if (mb == 0) stringResource(R.string.settings_image_cache_auto, automaticMb)
+                        else stringResource(R.string.settings_image_cache_mb, mb),
+                    selected = uiState.imageCacheMb == mb,
+                    onClick = { viewModel.onImageCacheMbChanged(mb) },
+                )
+            },
+        )
+        TvSettingRow(
+            title = stringResource(R.string.settings_card_images_1080),
+            body = stringResource(R.string.settings_card_images_1080_hint),
+            checked = uiState.cardImages1080,
+            onCheckedChange = viewModel::onCardImages1080Changed,
+        )
+    }
 }

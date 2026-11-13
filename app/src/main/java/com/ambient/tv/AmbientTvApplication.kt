@@ -99,10 +99,10 @@ class AmbientTvApplication : Application(), coil3.SingletonImageLoader.Factory {
      * the shared cache, and the cards then reloaded visibly on the way back.
      */
     override fun newImageLoader(context: coil3.PlatformContext): coil3.ImageLoader =
-        buildImageLoader(com.ambient.tv.ui.performance.imageMemoryCacheBudgetBytes(systemLowRamDevice(), totalMemoryBytes()))
+        buildImageLoader(com.ambient.tv.ui.performance.imageMemoryCacheBudgetBytes(systemLowRamDevice(), totalMemoryBytes(), preferences.imageCacheMb))
 
     val backdropImageLoader: coil3.ImageLoader by lazy {
-        buildImageLoader(com.ambient.tv.ui.performance.backdropMemoryCacheBudgetBytes(systemLowRamDevice(), totalMemoryBytes()))
+        buildImageLoader(com.ambient.tv.ui.performance.backdropMemoryCacheBudgetBytes(systemLowRamDevice(), totalMemoryBytes(), preferences.imageCacheMb))
     }
 
     private fun buildImageLoader(memoryCacheBytes: Long): coil3.ImageLoader {
@@ -149,6 +149,10 @@ class AmbientTvApplication : Application(), coil3.SingletonImageLoader.Factory {
         }
         super.onTrimMemory(level)
     }
+
+    /** Automatic card budget of this device, shown next to the choices in Settings. */
+    fun automaticImageCacheMb(): Int =
+        (com.ambient.tv.ui.performance.imageMemoryCacheBudgetBytes(systemLowRamDevice(), totalMemoryBytes()) / (1024L * 1024L)).toInt()
 
     private fun systemLowRamDevice(): Boolean =
         (getSystemService(ACTIVITY_SERVICE) as? ActivityManager)?.isLowRamDevice == true

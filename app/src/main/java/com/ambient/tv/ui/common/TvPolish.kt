@@ -528,7 +528,12 @@ fun ArtworkImage(
             loadAdmitted = true
         }
     }
-    val request = remember(currentModel, context, headers, constrainDecode) {
+    // Settings › Appearance: card images decode at a 1080p interface's size on 4K interfaces.
+    val density = androidx.compose.ui.platform.LocalDensity.current.density
+    val cap1080 = !backdrop && density > CARD_IMAGE_1080_DENSITY &&
+        remember(context) { com.ambient.tv.ui.player.videoImagePreferences(context).cardImages1080 }
+    val cardSize = remember(cap1080, density) { if (cap1080) CardImage1080SizeResolver(density) else null }
+    val request = remember(currentModel, context, headers, constrainDecode, cardSize) {
         ImageRequest.Builder(context).data(currentModel).crossfade(false)
             .placeholderMemoryCacheKey(cachedKey)
             .apply {
@@ -542,6 +547,8 @@ fun ArtworkImage(
                 if (constrainDecode) {
                     bitmapConfig(android.graphics.Bitmap.Config.RGB_565)
                 }
+                // Inexact like AsyncImage's own resolver: never upscale a smaller source.
+                cardSize?.let { size(it); precision(coil3.size.Precision.INEXACT) }
             }
             .build()
     }
@@ -560,7 +567,7 @@ fun ArtworkImage(
                 contentScale = contentScale,
                 alignment = focus?.alignment ?: alignment,
                 colorFilter = hdrFilter,
-                modifier = Modifier.fillMaxSize(),
+                modifier = Modifier.fillMaxSize().then(cardSize?.modifier() ?: Modifier),
                 onLoading = { loading = !shownFromMemory; failed = false },
                 onSuccess = {
                     loading = false

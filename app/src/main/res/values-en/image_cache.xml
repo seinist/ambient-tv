@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="settings_image_cache">Image memory</string>
+    <string name="settings_image_cache_hint">Room for cover images in memory. More keeps images loaded while scrolling back. Takes effect after restarting the app.</string>
+    <string name="settings_image_cache_mb">%1$d MB</string>
+    <string name="settings_image_cache_auto">Automatic (%1$d MB)</string>
+    <string name="settings_image_cache_large_warning">Very large values can make the app unstable on weaker TVs.</string>
+    <string name="settings_image_cache_usage">In use: %1$d of %2$d MB</string>
+    <string name="settings_card_images_1080">Cover images in 1080p</string>
+    <string name="settings_card_images_1080_hint">On 4K screens, keeps up to four times as many covers in memory. Covers become slightly less sharp.</string>
+</resources>

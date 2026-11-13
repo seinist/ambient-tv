@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="settings_image_cache">Bild-Speicher</string>
+    <string name="settings_image_cache_hint">Platz für Cover im Arbeitsspeicher. Mehr hält Bilder beim Zurückscrollen geladen. Gilt nach einem Neustart der App.</string>
+    <string name="settings_image_cache_mb">%1$d MB</string>
+    <string name="settings_image_cache_auto">Automatisch (%1$d MB)</string>
+    <string name="settings_image_cache_large_warning">Sehr große Werte können die App auf schwächeren TVs instabil machen.</string>
+    <string name="settings_image_cache_usage">Belegt: %1$d von %2$d MB</string>
+    <string name="settings_card_images_1080">Cover in 1080p</string>
+    <string name="settings_card_images_1080_hint">Hält auf 4K-Bildschirmen bis zu viermal so viele Cover im Speicher. Cover werden minimal weniger scharf.</string>
+</resources>

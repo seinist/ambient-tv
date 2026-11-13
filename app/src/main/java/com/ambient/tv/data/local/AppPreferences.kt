@@ -856,6 +856,16 @@ class AppPreferences @Inject constructor(
         get() = prefs.getBoolean(KEY_HIGH_QUALITY_ASSETS, false)
         set(value) = prefs.edit { putBoolean(KEY_HIGH_QUALITY_ASSETS, value) }
 
+    /** Card image memory in MB; 0 keeps the automatic budget. Read once when the app starts. */
+    var imageCacheMb: Int
+        get() = prefs.getInt("image_cache_mb", 0).takeIf { it in IMAGE_CACHE_CHOICES_MB } ?: 0
+        set(value) = prefs.edit { putInt("image_cache_mb", value.takeIf { it in IMAGE_CACHE_CHOICES_MB } ?: 0) }
+
+    /** Card images decode at most at a 1080p UI's pixel size, also on 4K UIs. */
+    var cardImages1080: Boolean
+        get() = prefs.getBoolean("card_images_1080", false)
+        set(value) = prefs.edit { putBoolean("card_images_1080", value) }
+
     /** Seed once before composition; explicit and restored values always win. */
     fun initializeUiScale(isTelevision: Boolean, displayWidth: Int, displayHeight: Int) {
         if (!prefs.contains(KEY_UI_SCALE)) {
@@ -2412,6 +2422,7 @@ class AppPreferences @Inject constructor(
         const val KEY_LIBRARY_GRID_COLUMNS = "library_grid_columns"
         const val KEY_LIBRARY_LIST_ROWS = "library_list_rows"
         const val KEY_HIGH_QUALITY_ASSETS = "high_quality_assets_enabled"
+        val IMAGE_CACHE_CHOICES_MB = setOf(128, 192, 256)
         const val KEY_UI_SCALE = "ui_scale"
         const val KEY_OVERSCAN_PERCENT = "overscan_percent"
         const val KEY_ACCENT_COLOR = "accent_color"

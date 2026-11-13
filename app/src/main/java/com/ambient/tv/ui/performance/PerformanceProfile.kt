@@ -156,6 +156,16 @@ internal fun imageMemoryCacheBudgetBytes(lowRamDevice: Boolean, totalMemBytes: L
 }
 
 /**
+ * Card budget with the user's choice from Settings (0 = automatic). A chosen size never lowers
+ * the automatic one; the backdrop cache grows with it to 3/8, so non-card art keeps its room.
+ */
+internal fun imageMemoryCacheBudgetBytes(lowRamDevice: Boolean, totalMemBytes: Long, chosenMb: Int): Long =
+    maxOf(imageMemoryCacheBudgetBytes(lowRamDevice, totalMemBytes), chosenMb.coerceAtLeast(0) * MIB)
+
+internal fun backdropMemoryCacheBudgetBytes(lowRamDevice: Boolean, totalMemBytes: Long, chosenMb: Int): Long =
+    maxOf(backdropMemoryCacheBudgetBytes(lowRamDevice, totalMemBytes), chosenMb.coerceAtLeast(0) * MIB * 3 / 8)
+
+/**
  * Everything that is not a browse card gets its own cache so it cannot evict the cards:
  * backdrops, hero logos, detail backgrounds, screensaver and photo-viewer images, seek sprites.
  * From 2.5 GiB on it grows with RAM (1.2 %, at most 48 MB), enough for the current and both
