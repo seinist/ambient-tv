@@ -145,6 +145,7 @@ Beim Ändern von Filtern, Sortierung oder Ansicht bleibt der Fokus auf dem bearb
 | --- | --- | --- | --- | --- |
 | Design | Dunkel · OLED Schwarz · Gedimmt | Dunkel | Alle | Theme. Live-Vorschau oben. |
 | Oberflächengröße | Regler 50–150 % | 100 %; am TV 90 % bei 1440p und 70 % bei 4K | Alle | Größe von Texten, Karten und Bedienelementen. Der TV-Standard wird einmal anhand der Display-Auflösung gesetzt. |
+| Accent-Darstellung | Satin / Metallic · Glass · Soft Glow · Pearl · Light (bisher) | Satin / Metallic | Alle | Materialwirkung für Fokusrahmen, Chips, Buttons, Wiedergabefortschritt und Scrollbars. Light bleibt einfarbig; Sparsam lässt zusätzliche Glow-Lagen weg. |
 | Akzentfarbe | Gold, Orange, Blau, Türkis, Grün, Violett, Pink, Rot, Artwork, Benutzerdefiniert | Gold | Alle | Artwork färbt Detailseiten nach dem Cover, sonst Gold. Benutzerdefiniert öffnet einen Farbwähler (Standard `#E5A00D`). |
 | Eigene Wiedergabefarbe | An / Aus | Aus | Alle | Zweite Farbe für Wiedergabestatus und Fortschritt. |
 | Haupt- und Wiedergabefarbe tauschen | Aktion | — | Alle | Sichtbar mit eigener Wiedergabefarbe. |

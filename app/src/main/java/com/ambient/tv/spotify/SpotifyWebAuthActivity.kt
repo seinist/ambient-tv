@@ -95,6 +95,7 @@ class SpotifyWebAuthActivity : ComponentActivity() {
             AmbientTvTheme(
                 uiScale = preferences.uiScale,
                 accentColorKey = preferences.accentColorKey,
+                accentStyleKey = preferences.accentStyleKey,
                 customAccentHex = preferences.customAccentHex,
                 customPlaybackAccentHex = preferences.customPlaybackAccentHex,
                 complementaryPlayback = preferences.dualAccentEnabled,

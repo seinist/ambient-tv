@@ -11,4 +11,11 @@
     <string name="settings_accent_single_hint">Eine Farbe für Aktionen, Auswahl, Wiedergabestatus und Fortschritt.</string>
     <string name="settings_dual_accent">Eigene Wiedergabefarbe</string>
     <string name="settings_dual_accent_hint">Nutzt eine zweite Farbe für Wiedergabestatus und Fortschritt. Aus: Alles nutzt die Hauptfarbe.</string>
+    <string name="settings_accent_style">Accent-Darstellung</string>
+    <string name="settings_accent_style_hint">Verändert Fokus, Chips, Buttons, Wiedergabefortschritt und Scrollbars. Light verwendet die bisherigen Vollfarben.</string>
+    <string name="settings_accent_style_satin">Satin / Metallic</string>
+    <string name="settings_accent_style_glass">Glass</string>
+    <string name="settings_accent_style_glow">Soft Glow</string>
+    <string name="settings_accent_style_pearl">Pearl</string>
+    <string name="settings_accent_style_light">Light (bisher)</string>
 </resources>

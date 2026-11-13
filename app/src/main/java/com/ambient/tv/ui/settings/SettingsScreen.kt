@@ -120,7 +120,7 @@ fun SettingsScreen(
     onDone: () -> Unit,
     initialCategoryKey: String? = null,
     onExitGuardChanged: (SettingsExitGuard?) -> Unit = {},
-    onUiPreferencesPreview: (Float, String, String, String, Boolean, String, String, Boolean, Int, Int) -> Unit = { _, _, _, _, _, _, _, _, _, _ -> },
+    onUiPreferencesPreview: (Float, String, String, String, Boolean, String, String, Boolean, Int, Int, String) -> Unit = { _, _, _, _, _, _, _, _, _, _, _ -> },
     onPerformanceModePreview: (String, String) -> Unit = { _, _ -> },
     onVisibleBackgroundVideoPlaybackPreview: (Boolean, Int) -> Unit = { _, _ -> },
     onUiLanguageSaved: () -> Unit = {},
@@ -135,8 +135,8 @@ fun SettingsScreen(
     val displayContext = LocalContext.current
     val supportedDisplayModes = com.ambient.tv.ui.player.rememberAvailableDisplayModes(displayContext)
     LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { viewModel.refreshStoredSettings() }
-    LaunchedEffect(uiState.uiScale, uiState.accentColorKey, uiState.customAccentHex, uiState.customPlaybackAccentHex, uiState.dualAccentEnabled, uiState.themeModeKey, uiState.uiHdrModeKey, uiState.sdrToHdrEnabled, uiState.sdrToHdrPeakNits, uiState.sdrToHdrReferenceWhiteNits) {
-        onUiPreferencesPreview(uiState.uiScale, uiState.accentColorKey, uiState.customAccentHex, uiState.customPlaybackAccentHex, uiState.dualAccentEnabled, uiState.themeModeKey, uiState.uiHdrModeKey, uiState.sdrToHdrEnabled, uiState.sdrToHdrPeakNits, uiState.sdrToHdrReferenceWhiteNits)
+    LaunchedEffect(uiState.uiScale, uiState.accentColorKey, uiState.accentStyleKey, uiState.customAccentHex, uiState.customPlaybackAccentHex, uiState.dualAccentEnabled, uiState.displayThemeModeKey, uiState.uiHdrModeKey, uiState.sdrToHdrEnabled, uiState.sdrToHdrPeakNits, uiState.sdrToHdrReferenceWhiteNits) {
+        onUiPreferencesPreview(uiState.uiScale, uiState.accentColorKey, uiState.customAccentHex, uiState.customPlaybackAccentHex, uiState.dualAccentEnabled, uiState.displayThemeModeKey, uiState.uiHdrModeKey, uiState.sdrToHdrEnabled, uiState.sdrToHdrPeakNits, uiState.sdrToHdrReferenceWhiteNits, uiState.accentStyleKey)
     }
     LaunchedEffect(uiState.uiPerformanceModeKey, uiState.playbackPerformanceModeKey) {
         onPerformanceModePreview(uiState.uiPerformanceModeKey, uiState.playbackPerformanceModeKey)
@@ -144,7 +144,7 @@ fun SettingsScreen(
     androidx.compose.runtime.DisposableEffect(viewModel) {
         onDispose {
             val saved = viewModel.savedAppearance
-            onUiPreferencesPreview(saved.uiScale, saved.accentColorKey, saved.customAccentHex, saved.customPlaybackAccentHex, saved.dualAccentEnabled, saved.themeModeKey, saved.uiHdrModeKey, saved.sdrToHdrEnabled, saved.sdrToHdrPeakNits, saved.sdrToHdrReferenceWhiteNits)
+            onUiPreferencesPreview(saved.uiScale, saved.accentColorKey, saved.customAccentHex, saved.customPlaybackAccentHex, saved.dualAccentEnabled, saved.displayThemeModeKey, saved.uiHdrModeKey, saved.sdrToHdrEnabled, saved.sdrToHdrPeakNits, saved.sdrToHdrReferenceWhiteNits, saved.accentStyleKey)
             onPerformanceModePreview(saved.uiPerformanceModeKey, saved.playbackPerformanceModeKey)
             onVisibleBackgroundVideoPlaybackPreview(saved.visibleBackgroundVideoPlayback, saved.backgroundVideoDimPercent)
         }
@@ -380,7 +380,7 @@ fun SettingsScreen(
                             notificationHistoryItems(uiState, viewModel)
                         }
                         SettingsCategory.APPEARANCE -> {
-                            item { AppearancePreview(uiScale = uiState.uiScale, themeModeKey = uiState.themeModeKey) }
+                            item { AppearancePreview(uiScale = uiState.uiScale, themeModeKey = uiState.displayThemeModeKey) }
                             item { SettingsSubheader(stringResource(R.string.settings_section_general_design)) }
                             item(key = "appearance:hdr") {
                                 UiHdrSettings(
@@ -394,11 +394,27 @@ fun SettingsScreen(
                                     listOf("dark", "oled", "dim").forEach { mode ->
                                         add(SettingsSelectOption(
                                             text = themeModeLabel(mode),
-                                            selected = uiState.themeModeKey == mode,
+                                            selected = uiState.displayThemeModeKey == mode,
                                             onClick = { viewModel.onThemeModeChanged(mode) },
                                         ))
                                     }
                                 })
+                            }
+                            item(key = "appearance:accent-style") {
+                                SettingsGroup {
+                                    SettingsSelect(
+                                        label = stringResource(R.string.settings_accent_style),
+                                        description = stringResource(R.string.settings_accent_style_hint),
+                                        options = com.ambient.tv.ui.theme.AccentStyle.entries.map { style ->
+                                            SettingsSelectOption(
+                                                text = accentStyleLabel(style),
+                                                selected = uiState.accentStyleKey == style.key,
+                                                onClick = { viewModel.onAccentStyleChanged(style.key) },
+                                            )
+                                        },
+                                    )
+                                    AccentStylePreview(uiState.accentStyleKey, uiState.accentColorKey, uiState.customAccentHex)
+                                }
                             }
                             item(key = "appearance:accent") {
                                 SettingsGroup {

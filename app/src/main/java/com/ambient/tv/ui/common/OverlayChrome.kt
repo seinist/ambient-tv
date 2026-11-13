@@ -50,6 +50,9 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.tv.material3.MaterialTheme
 import com.ambient.tv.ui.theme.LocalUiTokens
+import com.ambient.tv.ui.theme.AccentStyle
+import com.ambient.tv.ui.theme.LocalAccentStyle
+import com.ambient.tv.ui.theme.accentBrush
 
 @Composable
 internal fun overlayPanelBrush(): Brush = Brush.verticalGradient(
@@ -97,7 +100,7 @@ internal fun OverlayHairline(modifier: Modifier = Modifier) {
 
 private val OverlayScrollbarWidth = 5.dp
 
-private fun DrawScope.drawOverlayScrollbar(scroll: Int, max: Int, topLeft: Offset, barSize: Size, focused: Boolean = false, accent: Color = Color.White) {
+private fun DrawScope.drawOverlayScrollbar(scroll: Int, max: Int, topLeft: Offset, barSize: Size, focused: Boolean = false, accent: Color = Color.White, thumbBrush: Brush? = null) {
     val radius = CornerRadius(barSize.width / 2)
     drawRoundRect(if (focused) accent.copy(alpha = 0.3f) else Color.White.copy(alpha = 0.10f), topLeft = topLeft, size = barSize, cornerRadius = radius)
     if (max <= 0) return
@@ -107,12 +110,17 @@ private fun DrawScope.drawOverlayScrollbar(scroll: Int, max: Int, topLeft: Offse
     val thumbHeight = (viewport * viewport / content).coerceIn(minThumb, viewport)
     val travel = (viewport - thumbHeight).coerceAtLeast(0f)
     val thumbY = travel * (scroll.toFloat() / max.toFloat())
-    drawRoundRect(
-        color = if (focused) accent else Color.White.copy(alpha = 0.42f),
-        topLeft = topLeft + Offset(0f, thumbY),
-        size = Size(barSize.width, thumbHeight),
-        cornerRadius = radius,
-    )
+    if (focused && thumbBrush != null) {
+        drawRoundRect(thumbBrush, topLeft = topLeft + Offset(0f, thumbY),
+            size = Size(barSize.width, thumbHeight), cornerRadius = radius)
+    } else {
+        drawRoundRect(
+            color = if (focused) accent else Color.White.copy(alpha = 0.42f),
+            topLeft = topLeft + Offset(0f, thumbY),
+            size = Size(barSize.width, thumbHeight),
+            cornerRadius = radius,
+        )
+    }
 }
 
 /** Horizontal entry only: Left returns to content, Right reaches adjacent or registered actions. */
@@ -140,6 +148,10 @@ private fun InteractiveScrollbar(
         onDispose { scrolling.stop() }
     }
     val accent = MaterialTheme.colorScheme.primary
+    val accentStyle = LocalAccentStyle.current
+    val thumbBrush = remember(accent, accentStyle) {
+        if (accentStyle == AccentStyle.LIGHT) null else accentBrush(accent, accentStyle)
+    }
     val handheld = LocalHandheldUi.current
     val focusManager = LocalFocusManager.current
     val localActions = LocalScrollListActionFocus.current
@@ -208,7 +220,7 @@ private fun InteractiveScrollbar(
         }
         .semantics { contentDescription = scrollbarDescription }
         .focusable(enabled = max > 0 && !handheld)
-    ) { drawOverlayScrollbar(scroll, max, Offset.Zero, size, focused, accent) }
+    ) { drawOverlayScrollbar(scroll, max, Offset.Zero, size, focused, accent, thumbBrush) }
 }
 
 @Composable

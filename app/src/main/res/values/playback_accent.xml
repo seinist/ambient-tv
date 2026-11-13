@@ -11,4 +11,11 @@
     <string name="settings_accent_single_hint">One color for actions, selection, playback status and progress.</string>
     <string name="settings_dual_accent">Separate playback color</string>
     <string name="settings_dual_accent_hint">Use a second color for playback status and progress. Off: everything uses the main color.</string>
+    <string name="settings_accent_style">Accent style</string>
+    <string name="settings_accent_style_hint">Changes focus, chips, buttons, playback progress and scrollbars. Light uses the previous solid color.</string>
+    <string name="settings_accent_style_satin">Satin / Metallic</string>
+    <string name="settings_accent_style_glass">Glass</string>
+    <string name="settings_accent_style_glow">Soft Glow</string>
+    <string name="settings_accent_style_pearl">Pearl</string>
+    <string name="settings_accent_style_light">Light (original)</string>
 </resources>

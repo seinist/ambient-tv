@@ -7,6 +7,9 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
+import com.ambient.tv.ui.theme.LocalAccentStyle
+import com.ambient.tv.ui.theme.accentBrush
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
@@ -23,6 +26,9 @@ fun PlaybackStatusBar(
     trackColor: Color = Color.Black.copy(alpha = 0.58f),
 ) {
     val fraction = progress.coerceIn(0f, 1f)
+    val accent = LocalPlaybackAccent.current.indicator
+    val style = LocalAccentStyle.current
+    val progressBrush = remember(accent, style) { accentBrush(accent, style) }
     val shape = RoundedCornerShape(1.dp)
     Box(
         modifier
@@ -34,7 +40,7 @@ fun PlaybackStatusBar(
             Modifier
                 .fillMaxHeight()
                 .fillMaxWidth(fraction)
-                .background(LocalPlaybackAccent.current.indicator),
+                .background(progressBrush),
         )
     }
 }

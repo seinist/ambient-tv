@@ -102,6 +102,9 @@ fun Modifier.appControlSurface(
     focusedAccent: Boolean = false,
 ): Modifier = composed {
     val colors = rememberInteractionColorState(focused, selected, enabled, animate, focusedAccent)
+    val materialStyle = LocalAccentStyle.current
+    val primaryAccent = MaterialTheme.colorScheme.primary
+    val reducedEffects = LocalPerformanceProfile.current.reducedEffects
     val borderWidth = LocalUiTokens.current.focusBorder
     this.drawWithCache {
         val strokePx = borderWidth.toPx()
@@ -113,11 +116,25 @@ fun Modifier.appControlSurface(
             this,
         )
         val stroke = Stroke(strokePx)
+        val material = accentBrush(primaryAccent, materialStyle)
         onDrawBehind {
             drawOutline(fill, colors.container.value)
+            if (materialStyle != AccentStyle.LIGHT && (focused || selected)) {
+                drawOutline(fill, material, alpha = accentWashOpacity(materialStyle))
+            }
             val outline = colors.outline()
             if (outline.alpha > 0f && strokePx > 0f) {
-                translate(inset, inset) { drawOutline(strokeOutline, outline, style = stroke) }
+                translate(inset, inset) {
+                    if (materialStyle == AccentStyle.LIGHT) {
+                        drawOutline(strokeOutline, outline, style = stroke)
+                    } else {
+                        if (materialStyle == AccentStyle.GLOW && !reducedEffects && focused) {
+                            drawOutline(strokeOutline, material, alpha = outline.alpha * .12f,
+                                style = Stroke(strokePx * 2.5f))
+                        }
+                        drawOutline(strokeOutline, material, alpha = outline.alpha, style = stroke)
+                    }
+                }
             }
         }
     }
@@ -168,6 +185,7 @@ fun Modifier.animatedFocusBorder(
 ): Modifier = composed {
     val strokeWidth = width ?: LocalUiTokens.current.focusBorder
     val reduced = LocalPerformanceProfile.current.reducedEffects
+    val materialStyle = LocalAccentStyle.current
     // The outline's opacity fades on focus hops; its hue also crossfades when the user
     // changes the configured accent while a card is already focused.
     val accent = animateColorAsState(
@@ -193,12 +211,23 @@ fun Modifier.animatedFocusBorder(
             this,
         )
         val stroke = Stroke(strokePx)
+        val material = accentBrush(focusedColor, materialStyle)
         onDrawWithContent {
             drawContent()
             if (strokePx > 0f) {
                 val color = lerp(unfocusedColor, accent.value, reveal.value)
                 if (color.alpha > 0f) {
-                    translate(inset, inset) { drawOutline(outline, color, style = stroke) }
+                    translate(inset, inset) {
+                        if (materialStyle == AccentStyle.LIGHT) {
+                            drawOutline(outline, color, style = stroke)
+                        } else {
+                            if (materialStyle == AccentStyle.GLOW && !reduced) {
+                                drawOutline(outline, material, alpha = color.alpha * .13f,
+                                    style = Stroke(strokePx * 2.6f))
+                            }
+                            drawOutline(outline, material, alpha = color.alpha, style = stroke)
+                        }
+                    }
                 }
             }
         }
@@ -221,6 +250,8 @@ fun Modifier.animatedFocusSurface(
     borderWidth: Dp = 2.dp,
 ): Modifier = composed {
     val reduced = LocalPerformanceProfile.current.reducedEffects
+    val materialStyle = LocalAccentStyle.current
+    val primaryAccent = MaterialTheme.colorScheme.primary
     val fade = tween<Color>(
         durationMillis = focusBorderFadeDurationMs(focused, reduced),
         easing = LinearOutSlowInEasing,
@@ -247,12 +278,24 @@ fun Modifier.animatedFocusSurface(
             layoutDirection,
             this,
         )
+        val material = accentBrush(primaryAccent, materialStyle)
         onDrawWithContent {
             drawOutline(full, fill.value)
+            if (materialStyle != AccentStyle.LIGHT && focused) {
+                drawOutline(full, material, alpha = accentWashOpacity(materialStyle))
+            }
             drawContent()
             if (strokePx > 0f && strokeColor.value.alpha > 0f) {
                 translate(inset, inset) {
-                    drawOutline(inner, strokeColor.value, style = Stroke(strokePx))
+                    if (materialStyle == AccentStyle.LIGHT) {
+                        drawOutline(inner, strokeColor.value, style = Stroke(strokePx))
+                    } else {
+                        if (materialStyle == AccentStyle.GLOW && !reduced) {
+                            drawOutline(inner, material, alpha = strokeColor.value.alpha * .12f,
+                                style = Stroke(strokePx * 2.5f))
+                        }
+                        drawOutline(inner, material, alpha = strokeColor.value.alpha, style = Stroke(strokePx))
+                    }
                 }
             }
         }

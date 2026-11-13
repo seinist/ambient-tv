@@ -1,5 +1,7 @@
 package com.ambient.tv.ui.catalog
 
+import com.ambient.tv.ui.settings.accentStyleKey
+
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -34,8 +36,9 @@ class AppearanceSettingsActivity : ComponentActivity() {
             val state by settingsViewModel.uiState.collectAsState()
             AmbientTvTheme(
                 uiScale = state.uiScale, accentColorKey = state.accentColorKey,
+                accentStyleKey = state.accentStyleKey,
                 customAccentHex = state.customAccentHex, customPlaybackAccentHex = state.customPlaybackAccentHex,
-                themeModeKey = state.themeModeKey,
+                themeModeKey = state.themeModeKey.substringBefore("~"),
             ) {
                 CompositionLocalProvider(
                     androidx.tv.material3.LocalContentColor provides MaterialTheme.colorScheme.onSurface,

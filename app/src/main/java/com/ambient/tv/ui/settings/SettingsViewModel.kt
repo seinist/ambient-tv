@@ -488,7 +488,7 @@ class SettingsViewModel @Inject constructor(
         customAccentHex = appPreferences.customAccentHex,
         customPlaybackAccentHex = appPreferences.customPlaybackAccentHex,
         dualAccentEnabled = appPreferences.dualAccentEnabled,
-        themeModeKey = appPreferences.themeModeKey,
+        themeModeKey = packThemeAndAccentStyle(appPreferences.themeModeKey, appPreferences.accentStyleKey),
         uiHdrModeKey = appPreferences.uiHdrModeKey,
         sdrToHdrEnabled = appPreferences.sdrToHdrEnabled,
         sdrToHdrPeakNits = appPreferences.sdrToHdrPeakNits,
@@ -2381,6 +2381,10 @@ class SettingsViewModel @Inject constructor(
         _uiState.update { it.copy(uiScale = normalized) }
     }
 
+    fun onAccentStyleChanged(value: String) {
+        _uiState.update { it.withAccentStyleKey(value) }
+    }
+
     fun onAccentColorChanged(value: String) {
         _uiState.update { it.copy(accentColorKey = value) }
     }
@@ -2403,7 +2407,7 @@ class SettingsViewModel @Inject constructor(
     }
 
     fun onThemeModeChanged(value: String) {
-        _uiState.update { it.copy(themeModeKey = value) }
+        _uiState.update { it.withThemeModeKey(value) }
     }
 
     fun onUiHdrModeChanged(value: String) {
@@ -3021,6 +3025,7 @@ class SettingsViewModel @Inject constructor(
         }
         appPreferences.uiScale = state.uiScale
         appPreferences.accentColorKey = state.accentColorKey
+        appPreferences.accentStyleKey = state.accentStyleKey
         appPreferences.customAccentHex = state.customAccentHex
         appPreferences.customPlaybackAccentHex = state.customPlaybackAccentHex
         appPreferences.dualAccentEnabled = state.dualAccentEnabled
@@ -3029,7 +3034,7 @@ class SettingsViewModel @Inject constructor(
             customAccentHex = appPreferences.customAccentHex,
             customPlaybackAccentHex = appPreferences.customPlaybackAccentHex,
         ) }
-        appPreferences.themeModeKey = state.themeModeKey
+        appPreferences.themeModeKey = state.displayThemeModeKey
         appPreferences.uiHdrModeKey = state.uiHdrModeKey
         appPreferences.sdrToHdrEnabled = state.sdrToHdrEnabled
         appPreferences.sdrToHdrPeakNits = state.sdrToHdrPeakNits
