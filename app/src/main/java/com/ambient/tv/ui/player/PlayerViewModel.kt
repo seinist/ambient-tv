@@ -1063,7 +1063,16 @@ class PlayerViewModel @Inject constructor(
             "Audio plan: mode=%s spdif=%s needsMpv=%s requested=%s resolved=%s",
             audioPlan.mode, audioPlan.spdifCodecs, audioPlan.needsMpv, requested, resolved,
         )
-        return RendererCapabilityPolicy.effectiveBackend(resolved, videoCodec, dynamicRange, videoProfile,
+        val toneMapped = RendererCapabilityPolicy.hdrOnSdrDisplayBackend(
+            resolved,
+            source = HdrSupport.sourceStandard(videoCodec, dynamicRange),
+            displayStandards = runCatching { HdrSupport.displayStandards(context) }.getOrDefault(emptySet()),
+            mpvAvailable = MpvBackendAvailability.isAvailable,
+            audioOnly = audioOnly,
+            videoTranscoded = videoTranscoded,
+        )
+        if (toneMapped != resolved) Timber.i("HDR source on an SDR display: %s -> %s for tone mapping", resolved, toneMapped)
+        return RendererCapabilityPolicy.effectiveBackend(toneMapped, videoCodec, dynamicRange, videoProfile,
             videoTranscoded = videoTranscoded)
             .let { if (it == "mpv" && !MpvBackendAvailability.isAvailable) "media3" else it }
     }

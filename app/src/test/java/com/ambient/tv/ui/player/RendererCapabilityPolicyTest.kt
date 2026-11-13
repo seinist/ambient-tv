@@ -102,4 +102,23 @@ class RendererCapabilityPolicyTest {
                 detectedDolbyVision = true, videoTranscoded = true))
         }
     }
+
+    @Test
+    fun `hdr on a display without hdr plays in mpv for tone mapping`() {
+        val sdrDisplay = emptySet<HdrStandard>()
+        fun route(resolved: String, source: HdrStandard?, display: Set<HdrStandard> = sdrDisplay, mpv: Boolean = true,
+            audioOnly: Boolean = false, transcoded: Boolean = false) =
+            RendererCapabilityPolicy.hdrOnSdrDisplayBackend(resolved, source, display, mpv, audioOnly, transcoded)
+        assertEquals("mpv", route("media3", HdrStandard.HDR10))
+        assertEquals("mpv", route("auto", HdrStandard.HLG))
+        assertEquals("mpv", route("media3", HdrStandard.HDR10_PLUS))
+        // Unchanged: SDR, an HDR display, VLC (tone-maps itself), no MPV, Dolby Vision, transcode, audio only.
+        assertEquals("media3", route("media3", null))
+        assertEquals("media3", route("media3", HdrStandard.HDR10, display = setOf(HdrStandard.HDR10)))
+        assertEquals("vlc", route("vlc", HdrStandard.HDR10))
+        assertEquals("media3", route("media3", HdrStandard.HDR10, mpv = false))
+        assertEquals("media3", route("media3", HdrStandard.DOLBY_VISION))
+        assertEquals("media3", route("media3", HdrStandard.HDR10, transcoded = true))
+        assertEquals("media3", route("media3", HdrStandard.HDR10, audioOnly = true))
+    }
 }

@@ -34,6 +34,24 @@ object RendererCapabilityPolicy {
         return if (dolbyVision && normalized in setOf("vlc", "mpv")) "media3" else normalized
     }
 
+    /**
+     * HDR10/HLG on a display without HDR: Media3 hands the picture to the system unconverted
+     * and has no tone mapping of its own, so colours come out wrong on many devices. MPV
+     * converts to SDR with a selectable curve (Video › Output). A renderer the user picked in
+     * the player panel is not routed through here and stays possible. Dolby Vision keeps
+     * Media3 (see [effectiveBackend]); a server transcode already delivers SDR.
+     */
+    fun hdrOnSdrDisplayBackend(
+        resolved: String,
+        source: HdrStandard?,
+        displayStandards: Set<HdrStandard>,
+        mpvAvailable: Boolean,
+        audioOnly: Boolean = false,
+        videoTranscoded: Boolean = false,
+    ): String =
+        if (resolved in setOf("auto", "media3") && mpvAvailable && !audioOnly && !videoTranscoded &&
+            source != null && source != HdrStandard.DOLBY_VISION && displayStandards.isEmpty()) "mpv" else resolved
+
     fun isDolbyVision(
         videoCodec: String?,
         dynamicRange: String?,
