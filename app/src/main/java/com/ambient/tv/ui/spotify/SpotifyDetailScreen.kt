@@ -38,6 +38,9 @@ import com.ambient.tv.R
 import com.ambient.tv.spotify.SpotifyAlbum
 import com.ambient.tv.spotify.SpotifyTrack
 import com.ambient.tv.ui.common.ArtworkImage
+import com.ambient.tv.ui.common.DetailSkeletonBlock
+import com.ambient.tv.ui.common.DetailSkeletonParagraph
+import com.ambient.tv.ui.common.DetailSkeletonActions
 import com.ambient.tv.ui.common.CenteredMarqueeTitle
 import com.ambient.tv.ui.common.MediaSystem
 import com.ambient.tv.ui.common.PageUtilityBar
@@ -161,7 +164,35 @@ fun SpotifyDetailScreen(
                 )
             }
             if (state.loading) {
+                item("tracks-heading-skeleton") {
+                    DetailSkeletonBlock(
+                        Modifier.padding(start = screenGutter(), top = 12.dp, bottom = 4.dp)
+                            .width(180.dp).height(23.dp),
+                    )
+                }
                 items(8, key = { "skeleton:$it" }) { SpotifyTrackRowSkeleton() }
+                if (viewModel.type == "artist") {
+                    item("albums-heading-skeleton") {
+                        DetailSkeletonBlock(
+                            Modifier.padding(start = screenGutter(), top = 12.dp, bottom = 4.dp)
+                                .width(160.dp).height(23.dp),
+                        )
+                    }
+                    item("albums-skeleton") {
+                        LazyRow(
+                            contentPadding = PaddingValues(horizontal = screenGutter()),
+                            horizontalArrangement = Arrangement.spacedBy(14.dp),
+                            userScrollEnabled = false,
+                        ) {
+                            items(5) {
+                                DetailSkeletonBlock(
+                                    Modifier.width(deviceDp(170.dp, 140.dp)).aspectRatio(1f),
+                                    radius = 10.dp,
+                                )
+                            }
+                        }
+                    }
+                }
             } else {
                 if (state.tracks.isNotEmpty()) item("tracks-heading") {
                     SpotifySectionHeading(stringResource(if (viewModel.type == "artist") R.string.spotify_top_tracks else R.string.search_tracks))
@@ -284,25 +315,35 @@ private fun SpotifyDetailHero(
             com.ambient.tv.ui.common.DetailArtworkFrame(model = cover, title = state.title, aspectRatio = 1f, width = coverWidth)
         }
         Column(Modifier.weight(1f, fill = false).widthIn(max = 860.dp), verticalArrangement = Arrangement.spacedBy(13.dp)) {
-            com.ambient.tv.ui.common.DetailEyebrow(spotifyEyebrow(type, state))
-            com.ambient.tv.ui.common.DetailTitleRow(title = state.title, logoUrl = null, system = MediaSystem.SPOTIFY)
-            com.ambient.tv.ui.common.DetailPrimaryMetaRow(spotifyPrimaryMeta(state), item = null)
-            PlaybackStatusSection(current)
-            if (state.offline) Text(stringResource(R.string.browse_offline), color = MaterialTheme.colorScheme.onSurfaceVariant)
-            state.description?.takeIf { it.isNotBlank() }?.let {
-                Text(it, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 3, overflow = TextOverflow.Ellipsis)
-            }
-            state.error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
-            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                val focus = Modifier.focusRequester(primaryFocus).browseFocusTarget(SPOTIFY_PRIMARY_FOCUS)
-                    .onFocusChanged { if (it.isFocused) onActionFocused() }
-                when {
-                    state.error != null -> TvActionButton(stringResource(R.string.home_retry), onRetry, modifier = focus)
-                    !state.offline -> TvActionButton(playLabel, onPlay, modifier = focus, enabled = !state.loading,
-                        icon = Icons.Default.PlayArrow)
+            if (state.loading) {
+                // The title, metadata, summary and actions occupy their final positions while
+                // the provider resolves them. Skeletons cannot steal the primary TV focus.
+                DetailSkeletonBlock(Modifier.width(128.dp).height(16.dp), radius = 5.dp)
+                DetailSkeletonBlock(Modifier.fillMaxWidth(0.76f).height(36.dp))
+                DetailSkeletonBlock(Modifier.fillMaxWidth(0.45f).height(16.dp), radius = 5.dp)
+                DetailSkeletonParagraph(lines = 3)
+                DetailSkeletonActions()
+            } else {
+                com.ambient.tv.ui.common.DetailEyebrow(spotifyEyebrow(type, state))
+                com.ambient.tv.ui.common.DetailTitleRow(title = state.title, logoUrl = null, system = MediaSystem.SPOTIFY)
+                com.ambient.tv.ui.common.DetailPrimaryMetaRow(spotifyPrimaryMeta(state), item = null)
+                PlaybackStatusSection(current)
+                if (state.offline) Text(stringResource(R.string.browse_offline), color = MaterialTheme.colorScheme.onSurfaceVariant)
+                state.description?.takeIf { it.isNotBlank() }?.let {
+                    Text(it, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 3, overflow = TextOverflow.Ellipsis)
                 }
+                state.error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    val focus = Modifier.focusRequester(primaryFocus).browseFocusTarget(SPOTIFY_PRIMARY_FOCUS)
+                        .onFocusChanged { if (it.isFocused) onActionFocused() }
+                    when {
+                        state.error != null -> TvActionButton(stringResource(R.string.home_retry), onRetry, modifier = focus)
+                        !state.offline -> TvActionButton(playLabel, onPlay, modifier = focus, enabled = !state.loading,
+                            icon = Icons.Default.PlayArrow)
+                    }
+                }
+                if (current != null && !state.offline) CompanionChooseDeviceAction(onChooseDevice)
             }
-            if (current != null && !state.offline) CompanionChooseDeviceAction(onChooseDevice)
         }
     }
 }
