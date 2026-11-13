@@ -584,6 +584,12 @@ internal interface PlayerDetailYouTubeEntryPoint {
     fun engine(): com.ambient.tv.youtube.SmartTubeEngine
 }
 
+@EntryPoint
+@InstallIn(SingletonComponent::class)
+internal interface PlayerDetailTelegramEntryPoint {
+    fun telegram(): com.ambient.tv.data.telegram.TelegramRepository
+}
+
 /**
  * Focusable buttons for the YouTube and Telegram links of a description: each opens its video,
  * channel or post inside the app. Shared by the player's details dialog, the SmartTube detail
@@ -657,14 +663,29 @@ internal fun DescriptionLinkButtons(
                     },
             )
         }
-        telegramLinks.take(8).forEach { link ->
+        // Public names need a signed-in Monogram to resolve; without it they stay text.
+        val telegram = remember(context) {
+            if (!com.ambient.tv.BuildConfig.MONOGRAM_NATIVE) null else EntryPointAccessors.fromApplication(
+                context.applicationContext, PlayerDetailTelegramEntryPoint::class.java).telegram()
+        }
+        val notFound = stringResource(com.ambient.tv.R.string.monogram_link_not_found)
+        telegramLinks.filter { it.chatId != null || telegram != null }.take(8).forEach { link ->
             TvActionButton(
                 text = link.label,
                 onClick = {
-                    onClose()
-                    com.ambient.tv.launcher.LauncherIntents.post(
-                        if (link.messageId != null) com.ambient.tv.ui.navigation.Destinations.telegramDetail(link.chatId, link.messageId)
-                        else com.ambient.tv.ui.navigation.Destinations.telegramSection("channel:${link.chatId}"))
+                    fun open(chatId: Long) {
+                        onClose()
+                        com.ambient.tv.launcher.LauncherIntents.post(
+                            if (link.messageId != null) com.ambient.tv.ui.navigation.Destinations.telegramDetail(chatId, link.messageId)
+                            else com.ambient.tv.ui.navigation.Destinations.telegramSection("channel:$chatId"))
+                    }
+                    val known = link.chatId
+                    if (known != null) open(known)
+                    else if (telegram != null && link.username != null) scope.launch {
+                        val channel = telegram.resolveChannel(link.username)
+                        if (channel != null) open(channel.chatId)
+                        else android.widget.Toast.makeText(context, notFound, android.widget.Toast.LENGTH_SHORT).show()
+                    }
                 },
                 modifier = Modifier
                     .onFocusChanged { onLinkFocusChanged(it.isFocused) }

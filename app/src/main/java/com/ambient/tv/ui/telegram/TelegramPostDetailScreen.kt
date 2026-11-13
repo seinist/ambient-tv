@@ -55,6 +55,7 @@ import com.ambient.tv.ui.common.rowColumnFocusTarget
 import com.ambient.tv.ui.common.rowColumnFocusWrapRight
 import com.ambient.tv.ui.common.containRowFocusExit
 import com.ambient.tv.ui.theme.screenGutter
+import androidx.compose.ui.layout.layout
 import java.text.DateFormat
 import java.util.Date
 import kotlinx.coroutines.CancellationException
@@ -309,9 +310,13 @@ private fun TelegramDetailYouTubeRow(
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
         Text(title, style = MaterialTheme.typography.titleMedium)
+        // The page is inset by the gutter. The row reaches into it on both sides and insets its
+        // cards again, so a focused (scaled, outlined) card is not cut off at the row's edges.
+        val gutter = screenGutter()
         LazyRow(
             state = state,
-            modifier = Modifier.containRowFocusExit(),
+            modifier = Modifier.bleedHorizontally(gutter).containRowFocusExit(),
+            contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = gutter, vertical = 10.dp),
             horizontalArrangement = Arrangement.spacedBy(16.dp),
         ) {
             items(items, key = { it.videoId }) { item ->
@@ -325,3 +330,16 @@ private fun TelegramDetailYouTubeRow(
         }
     }
 }
+
+/** Widens the element by [amount] on both sides, beyond its parent's padding. */
+private fun Modifier.bleedHorizontally(amount: androidx.compose.ui.unit.Dp): Modifier =
+    this.then(Modifier.layout { measurable, constraints ->
+        val extra = amount.roundToPx()
+        if (!constraints.hasBoundedWidth) {
+            val placeable = measurable.measure(constraints)
+            return@layout layout(placeable.width, placeable.height) { placeable.place(0, 0) }
+        }
+        val width = constraints.maxWidth + 2 * extra
+        val placeable = measurable.measure(constraints.copy(minWidth = width, maxWidth = width))
+        layout(constraints.maxWidth, placeable.height) { placeable.place(-extra, 0) }
+    })

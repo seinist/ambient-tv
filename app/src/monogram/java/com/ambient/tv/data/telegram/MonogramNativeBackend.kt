@@ -73,6 +73,8 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
     @Volatile private var chatsExhausted = false
     private val recentFeeds = LinkedHashMap<String, MonogramRecentTimeline>()
     private val leftChannels = java.util.concurrent.ConcurrentHashMap.newKeySet<Long>()
+    /** Public channels resolved from t.me/<name> links, so their page has a title before joining. */
+    private val resolvedChannels = java.util.concurrent.ConcurrentHashMap<Long, String>()
     private var nextRecentFeed = 0L
     private var phone: String? = null
     private var codeHash: String? = null
@@ -584,10 +586,33 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
             // getChats per lookup returned the same page and ran into FLOOD_WAIT at start.
             val found = chats.firstOrNull { it.id == chatId && it.isChannel }
                 ?: knownChannels(h, 1).firstOrNull { it.id == chatId }
-                ?: return@nativeCall null
+                ?: return@nativeCall resolvedChannels[chatId]?.let { title ->
+                    // Opened from a link: membership is unknown until the catalog lists it.
+                    TelegramChannel(chatId, title, thumbnailUrl = preview(h, chatId, 0, true))
+                }
             TelegramChannel(found.id, found.title,
                 thumbnailUrl = preview(h, found.id, 0, true),
                 subscribed = !found.left && found.id !in leftChannels)
+        } }
+
+    override suspend fun resolveChannel(username: String): TelegramChannel? =
+        browseMutex.withLock { nativeCall { h ->
+            requireAuthorized(h)
+            val peer = try {
+                native.resolveUsername(h, username)
+            } catch (failure: MtprotoException) {
+                telegramFloodWaitSeconds(failure.message)?.let { throw TelegramFloodWaitException(it) }
+                // USERNAME_NOT_OCCUPIED / USERNAME_INVALID: no such public name.
+                return@nativeCall null
+            }
+            // Users and bots have positive ids, basic groups small negative ones: only channels open here.
+            if (peer.isBot || peer.peerId > TELEGRAM_CHANNEL_ID_MAX) return@nativeCall null
+            val title = peer.title.ifBlank { peer.username ?: username }
+            resolvedChannels[peer.peerId] = title
+            val known = chats.firstOrNull { it.id == peer.peerId }
+            TelegramChannel(peer.peerId, known?.title ?: title,
+                thumbnailUrl = preview(h, peer.peerId, 0, true),
+                subscribed = known?.let { !it.left && it.id !in leftChannels })
         } }
 
     override suspend fun joinChannel(chatId: Long): Boolean =
@@ -1157,3 +1182,6 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
         const val SEARCH_CHANNEL_LIMIT = 20
     }
 }
+
+/** Channel and supergroup chat ids are -(10^12 + channel id); anything above is a user or basic group. */
+private const val TELEGRAM_CHANNEL_ID_MAX = -1_000_000_000_000L

@@ -423,22 +423,36 @@ private val PLAYER_DETAIL_YOUTUBE_URL = Regex("""(?i)(?<![a-z0-9_.-])(?:https?:/
 private val PLAYER_DETAIL_YOUTUBE_VIDEO_ID = Regex("[A-Za-z0-9_-]{11}")
 private val PLAYER_DETAIL_YOUTUBE_CHANNEL_ID = Regex("UC[A-Za-z0-9_-]{20,}")
 
-internal data class PlayerDetailTelegramLink(val label: String, val chatId: Long, val messageId: Int?)
+/** A Telegram link: by chat id ([chatId]) or by public name ([username], resolved when opened). */
+internal data class PlayerDetailTelegramLink(
+    val label: String,
+    val chatId: Long?,
+    val messageId: Int?,
+    val username: String? = null,
+)
 
 private val PLAYER_DETAIL_TELEGRAM_URL =
     Regex("""(?i)(?<![a-z0-9_.-])(?:https?://)?(?:t\.me|telegram\.me)/c/(\d{5,15})(?:/(\d{1,10}))?(?![\w-])""")
+// t.me/<name>[/<post>] and the web preview t.me/s/<name>; invite, sticker and share paths are no channels.
+private val PLAYER_DETAIL_TELEGRAM_NAME_URL =
+    Regex("""(?i)(?<![a-z0-9_.-])(?:https?://)?(?:t\.me|telegram\.me)/(?:s/)?([a-z][a-z0-9_]{3,31})(?:/(\d{1,10}))?(?![\w/+-])""")
+private val TELEGRAM_RESERVED_PATHS = setOf("joinchat", "addstickers", "addemoji", "share", "proxy", "socks",
+    "iv", "login", "setlanguage", "addtheme", "confirmphone", "contact", "invoice", "boost", "addlist")
 
 /**
- * Telegram links that name their chat by id (t.me/c/<id>[/<post>]): these open in Monogram
- * without a lookup. Public @name links need a username search the Monogram backend does not
- * offer and are left as text.
+ * Telegram links in a description: by chat id (t.me/c/<id>[/<post>]), opened directly, and
+ * public channels (t.me/<name>[/<post>]), whose name Monogram resolves when the link is opened.
  */
 internal fun playerDetailTelegramLinks(text: String?): List<PlayerDetailTelegramLink> =
     PLAYER_DETAIL_TELEGRAM_URL.findAll(text.orEmpty()).mapNotNull { match ->
         // Channel ids in links lack the -100 prefix TDLib uses for supergroups and channels.
         val chatId = "-100${match.groupValues[1]}".toLongOrNull() ?: return@mapNotNull null
         PlayerDetailTelegramLink(match.value, chatId, match.groupValues[2].toIntOrNull())
-    }.distinctBy { it.chatId to it.messageId }.toList()
+    }.plus(PLAYER_DETAIL_TELEGRAM_NAME_URL.findAll(text.orEmpty()).mapNotNull { match ->
+        val name = match.groupValues[1]
+        if (name.lowercase() in TELEGRAM_RESERVED_PATHS) return@mapNotNull null
+        PlayerDetailTelegramLink(match.value, null, match.groupValues[2].toIntOrNull(), username = name)
+    }).distinctBy { Triple(it.chatId, it.username?.lowercase(), it.messageId) }.toList()
 
 /** YouTube URLs in SmartTube descriptions and Monogram post text, safe against lookalike hosts. */
 internal fun playerDetailYouTubeLinks(text: String?): List<PlayerDetailYouTubeLink> =

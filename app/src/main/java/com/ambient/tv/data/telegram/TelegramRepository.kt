@@ -83,6 +83,9 @@ interface TelegramClientPort {
      * submitted search; throws [TelegramFloodWaitException] when Telegram asks to wait.
      */
     suspend fun search(query: String, limit: Int = TELEGRAM_SEARCH_LIMIT): List<TelegramMedia> = emptyList()
+
+    /** A public channel by its @username (contacts.resolveUsername), or null for users, bots and unknown names. */
+    suspend fun resolveChannel(username: String): TelegramChannel? = null
 }
 
 @Singleton
@@ -457,6 +460,18 @@ class TelegramRepository @Inject constructor(
             chatId !in blockedChannels }
     }
 
+    /** Opens t.me/<name> links: the public channel behind [username], if Telegram knows one. */
+    suspend fun resolveChannel(username: String): TelegramChannel? {
+        val account = client ?: return null
+        val name = telegramUsernameOrNull(username) ?: return null
+        val found = try {
+            account.resolveChannel(name)
+        } catch (cancelled: kotlinx.coroutines.CancellationException) {
+            throw cancelled
+        } catch (_: Exception) { null }
+        return found?.takeIf { it.chatId !in blockedChannels }
+    }
+
     suspend fun joinChannel(chatId: Long): Boolean {
         val account = client ?: return false
         val joined = account.joinChannel(chatId)
@@ -728,3 +743,7 @@ internal fun monogramResumeWorthKeeping(positionMs: Long, durationMs: Long): Boo
 
 /** The search screen stops waiting for Telegram after this long. */
 internal const val TELEGRAM_SEARCH_TIMEOUT_MS = 15_000L
+
+/** Telegram usernames: 4–32 letters, digits and underscores, starting with a letter; an @ is dropped. */
+internal fun telegramUsernameOrNull(value: String): String? =
+    value.trim().removePrefix("@").takeIf { Regex("[A-Za-z][A-Za-z0-9_]{3,31}").matches(it) }
