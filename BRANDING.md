@@ -57,7 +57,7 @@ Die Systemnamen und -zeichen gehören weiterhin den jeweiligen Anbietern.
 Die gemeinsame Quelle ist `branding/svg/ambient-tv-combo.svg`. Mit
 `rtk proxy /usr/bin/python3 scripts/export_branding.py` werden zuerst Icon,
 Wortmarke, Banner und Launcher als eigenständige SVGs abgeleitet und danach alle
-PNGs unter `branding/png/` exportiert. Die bestehenden Dateinamen bleiben erhalten.
+PNGs unter `branding/png/` exportiert. Die bestehenden Dateinamen bleiben erhalten. Auch die README-Version auf dunklem Hintergrund und die Variante mit dunkler Schrift werden aus dem SVG-Master erzeugt.
 Der gleiche Lauf erzeugt die Android-Plattformvektoren für Launcher und Banner
 sowie die verbleibenden Ressourcen-Aliase aus diesen SVGs.
 

@@ -264,6 +264,34 @@ def render_png(source, destination, width):
     print(f"  {destination.relative_to(ROOT)} ({width} × {height})")
 
 
+
+def render_extra_wordmark_pngs():
+    """Keep README and light-background exports tied to the same SVG master.
+
+    These historical variants were previously one-off PNGs; unlike the standard
+    exports, they could be left with outdated badge lettering after an SVG fix.
+    """
+    from tempfile import TemporaryDirectory
+
+    source = ET.parse(SVG / "ambient-tv-wordmark.svg").getroot()
+    with TemporaryDirectory() as directory:
+        temp = Path(directory)
+        dark = deepcopy(source)
+        for node in dark.iter():
+            if node.get("fill", "").lower() == "#f3f3f6":
+                node.set("fill", "#171A1F")
+        dark_path = temp / "wordmark-dark.svg"
+        ET.ElementTree(dark).write(dark_path, encoding="utf-8", xml_declaration=True)
+        render_png(dark_path, PNG / "wordmark/ambient-tv-wordmark-dark-800.png", 800)
+
+        readme = document(800, 222, "Ambient TV README wordmark")
+        readme.append(rectangle(0, 0, 800, 222, "#14171A", 34))
+        embed(readme, source, 0, 27, 800, 168)
+        readme_path = temp / "wordmark-readme.svg"
+        ET.ElementTree(readme).write(readme_path, encoding="utf-8", xml_declaration=True)
+        render_png(readme_path, PNG / "wordmark/ambient-tv-wordmark-readme.png", 800)
+
+
 def export_png_kit():
     exports = {
         "icon": (24, 48, 96, 192, 512),
@@ -277,6 +305,7 @@ def export_png_kit():
         source = SVG / f"ambient-tv-{kind}.svg"
         for size in sizes:
             render_png(source, PNG / kind / f"ambient-tv-{kind}-{size}.png", size)
+    render_extra_wordmark_pngs()
     render_png(BRANDING / "preview/branding-overview.svg",
                BRANDING / "preview/branding-overview.png", 1200)
     # Phone launcher samples this bitmap (adaptive foreground). Keep only the

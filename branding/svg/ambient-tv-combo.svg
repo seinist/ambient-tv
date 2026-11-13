@@ -19,7 +19,7 @@
     <path d="M283 -7C328 -7 373 5 403 29L368 118C349 103 324 96 298 96C250 96 224 124 224 176V434H367V534H224V652H99V534H11V434H99V173C99 55 166 -7 283 -7Z" transform="translate(93.198000000 0) scale(0.022 -0.022)" fill="#f3f3f6" />
   </g>
   <rect x="159.526000000" y="12" width="25" height="18" rx="4" fill="#F0B441" stroke="none" id="brand-tv-badge" />
-  <g transform="translate(164.526000000 24.5) scale(1)" id="brand-tv-label">
+  <g transform="translate(165.326000000 24.5) scale(1)" id="brand-tv-label">
     <path d="M236 0H366V590H598V700H4V590H236Z" transform="translate(0.0 0) scale(0.01 -0.01)" fill="#181511" />
     <path d="M301 0H429L734 700H604L369 161L136 700H-5Z" transform="translate(6.0200000000000005 0) scale(0.01 -0.01)" fill="#181511" />
   </g>

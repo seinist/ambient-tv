@@ -1,0 +1,41 @@
+name: Sync generated branding
+
+# Source of truth is branding/svg/ambient-tv-combo.svg. Keep platform
+# vectors and exported PNGs from drifting after a wordmark correction.
+on:
+  push:
+    paths:
+      - 'branding/svg/ambient-tv-combo.svg'
+      - 'scripts/export_branding.py'
+      - '.github/workflows/sync-branding.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+      - name: Install Rsvg/Cairo renderer
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y python3-gi python3-cairo python3-gi-cairo gir1.2-rsvg-2.0
+      - name: Regenerate all SVGs, Android vectors, PNGs and previews
+        run: /usr/bin/python3 scripts/export_branding.py
+      - name: Verify TV badge alignment and derived assets
+        run: /usr/bin/python3 -m unittest discover -s scripts/tests -p 'test_brand_tv_badge_alignment.py'
+      - name: Commit refreshed generated art
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add branding/svg/ branding/png/ branding/preview/ app/src/main/assets/branding/
+          git add app/src/main/res/drawable/app_banner.xml app/src/main/res/drawable/ic_brand_wordmark.xml
+          git add app/src/main/res/drawable/ic_ambient_tv.xml app/src/main/res/drawable/ic_ambient_tv_lg.xml
+          git add app/src/main/res/drawable/ic_launcher_foreground.xml
+          if ! git diff --cached --quiet; then
+            git commit -m "Regenerate branding variants from centered TV badge"
+            git push origin "HEAD:$GITHUB_REF_NAME"
+          fi
