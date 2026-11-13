@@ -322,7 +322,7 @@ private fun SpotifyDetailHero(
                 DetailSkeletonBlock(Modifier.fillMaxWidth(0.76f).height(36.dp))
                 DetailSkeletonBlock(Modifier.fillMaxWidth(0.45f).height(16.dp), radius = 5.dp)
                 DetailSkeletonParagraph(lines = 3)
-                DetailSkeletonActions()
+                DetailSkeletonActions(secondary = false)
             } else {
                 com.ambient.tv.ui.common.DetailEyebrow(spotifyEyebrow(type, state))
                 com.ambient.tv.ui.common.DetailTitleRow(title = state.title, logoUrl = null, system = MediaSystem.SPOTIFY)
