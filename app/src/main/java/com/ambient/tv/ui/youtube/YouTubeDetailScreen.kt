@@ -42,6 +42,9 @@ import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
 import com.ambient.tv.ui.common.ArtworkImage
+import com.ambient.tv.ui.common.DetailSkeletonBlock
+import com.ambient.tv.ui.common.DetailSkeletonParagraph
+import com.ambient.tv.ui.common.DetailSkeletonActions
 import com.ambient.tv.ui.common.TvActionButton
 import com.ambient.tv.ui.common.PageUtilityBar
 import com.ambient.tv.ui.common.StatePanel
@@ -118,6 +121,64 @@ private fun YouTubeDetailChapters(chapters: List<com.ambient.tv.domain.model.Vid
         }
     }
 
+/**
+ * Uses the same centered hero width, insets and action order as YouTubeDetailScreen after
+ * metadata arrives. Below-the-fold cards can be laid out without forcing the page to jump.
+ */
+@Composable
+private fun YouTubeDetailLoadingSkeleton() {
+    val screenHeight = LocalConfiguration.current.screenHeightDp.dp
+    Column(
+        Modifier.fillMaxSize().verticalScroll(rememberScrollState())
+            .padding(bottom = deviceDp(46.dp, 16.dp)),
+    ) {
+        DeviceActionRow(
+            Modifier.fillMaxWidth()
+                .heightIn(min = if (LocalHandheldUi.current) 0.dp else screenHeight * .86f)
+                .padding(
+                    start = deviceDp(46.dp, 16.dp), end = deviceDp(46.dp, 16.dp),
+                    top = deviceDp(82.dp, 72.dp), bottom = deviceDp(24.dp, 16.dp),
+                ),
+            stack = handheldDetailStacks(LocalConfiguration.current.screenWidthDp),
+            horizontalArrangement = Arrangement.spacedBy(36.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            DetailSkeletonBlock(
+                Modifier.width(deviceDp(420.dp, 320.dp)).aspectRatio(16f / 9f),
+                radius = 12.dp,
+            )
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                DetailSkeletonBlock(Modifier.width(110.dp).height(25.dp), radius = 6.dp)
+                DetailSkeletonBlock(Modifier.fillMaxWidth(0.88f).height(40.dp))
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    DetailSkeletonBlock(Modifier.size(deviceDp(32.dp, 28.dp)), radius = 16.dp)
+                    DetailSkeletonBlock(Modifier.width(190.dp).height(21.dp), radius = 5.dp)
+                }
+                DetailSkeletonBlock(Modifier.fillMaxWidth(0.52f).height(15.dp), radius = 5.dp)
+                DetailSkeletonParagraph(lines = 4)
+                DetailSkeletonActions()
+            }
+        }
+        Column(Modifier.fillMaxWidth().padding(top = 18.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            DetailSkeletonBlock(
+                Modifier.padding(horizontal = deviceDp(46.dp, 16.dp)).width(160.dp).height(22.dp),
+            )
+            LazyRow(
+                contentPadding = PaddingValues(horizontal = deviceDp(46.dp, 16.dp)),
+                horizontalArrangement = Arrangement.spacedBy(16.dp),
+                userScrollEnabled = false,
+            ) {
+                items(4) {
+                    Column(Modifier.width(deviceDp(300.dp, 240.dp)), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        DetailSkeletonBlock(Modifier.fillMaxWidth().aspectRatio(16f / 9f), radius = 10.dp)
+                        DetailSkeletonBlock(Modifier.fillMaxWidth(0.75f).height(13.dp), radius = 5.dp)
+                    }
+                }
+            }
+        }
+    }
+}
+
 @Composable
 fun YouTubeDetailScreen(
     onBack: () -> Unit,
@@ -142,25 +203,7 @@ fun YouTubeDetailScreen(
     }
     Box(Modifier.fillMaxSize()) {
         when {
-            state.loading -> DeviceActionRow(stack = handheldDetailStacks(LocalConfiguration.current.screenWidthDp),
-                modifier = Modifier.fillMaxSize().padding(deviceDp(46.dp, 16.dp)),
-                horizontalArrangement=Arrangement.spacedBy(36.dp),
-                verticalAlignment=Alignment.CenterVertically,
-            ) {
-                Box(
-                    Modifier
-                        .width(deviceDp(420.dp, 320.dp))
-                        .aspectRatio(16f/9f)
-                        .clip(RoundedCornerShape(12.dp))
-                        .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha=.62f)),
-                )
-                Column(Modifier.weight(1f), verticalArrangement=Arrangement.spacedBy(14.dp)) {
-                    Box(Modifier.fillMaxWidth(.78f).height(34.dp).background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha=.72f), RoundedCornerShape(999.dp)))
-                    Box(Modifier.fillMaxWidth(.36f).height(18.dp).background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha=.56f), RoundedCornerShape(999.dp)))
-                    repeat(4) { Box(Modifier.fillMaxWidth(if (it == 3) .52f else .92f).height(13.dp).background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha=.42f), RoundedCornerShape(999.dp))) }
-                    DeviceActionRow(horizontalArrangement=Arrangement.spacedBy(12.dp)) { Box(Modifier.width(150.dp).height(48.dp).background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha=.62f), RoundedCornerShape(10.dp))); Box(Modifier.width(120.dp).height(48.dp).background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha=.52f), RoundedCornerShape(10.dp))) }
-                }
-            }
+            state.loading -> YouTubeDetailLoadingSkeleton()
             state.metadata == null -> StatePanel(
                 title = stringResource(R.string.youtube_video_unavailable),
                 body = state.error,
@@ -200,7 +243,10 @@ fun YouTubeDetailScreen(
                             listOfNotNull(m.viewCount, m.publishedDate).takeIf { it.isNotEmpty() }?.let {
                                 Text(it.joinToString("  ·  "), style=MaterialTheme.typography.bodySmall, color=MaterialTheme.colorScheme.onSurfaceVariant)
                             }
-                            m.description?.let { Text(it, style=MaterialTheme.typography.bodyMedium, color=MaterialTheme.colorScheme.onSurfaceVariant, maxLines=8, overflow=TextOverflow.Ellipsis) }
+                            m.description?.takeIf(String::isNotBlank)?.let { Text(it, style=MaterialTheme.typography.bodyMedium, color=MaterialTheme.colorScheme.onSurfaceVariant, maxLines=8, overflow=TextOverflow.Ellipsis) }
+                            // Cached metadata can arrive before the network description is enriched.
+                            // Reserve its height instead of inserting paragraphs above the buttons later.
+                            if (state.enriching && m.description.isNullOrBlank()) DetailSkeletonParagraph(lines = 4)
                             // Videos, channels and Telegram posts linked in the description, openable in the app.
                             val descriptionLinks = remember(m.videoId, m.description) {
                                 com.ambient.tv.ui.player.playerDetailYouTubeLinks(m.description).filterNot { link ->
@@ -213,15 +259,19 @@ fun YouTubeDetailScreen(
                             if (state.offline) Text(stringResource(R.string.browse_offline))
                             DeviceActionRow(horizontalArrangement=Arrangement.spacedBy(12.dp)){
                                 if (!state.offline) TvActionButton(if (current != null) stringResource(R.string.playback_open) else if(!m.isLive && (com.ambient.tv.youtube.YouTubeLocalProgress.resumePositionMs(m.videoId, m.durationMs, m.percentWatched) ?: 0L)>0) stringResource(R.string.common_resume) else stringResource(R.string.common_play), onClick={ if (current != null) openCurrent(current) else onPlay(m.videoId) }, modifier=Modifier.focusRequester(primaryFocusRequester))
-                                state.channel?.takeIf { !state.offline }?.let { channel ->
-                                    channel.subscribed?.let { subscribed ->
-                                        TvActionButton(stringResource(if (subscribed) R.string.youtube_subscribed else R.string.youtube_subscribe), onClick=viewModel::toggleSubscription, selected=subscribed, icon=androidx.compose.material.icons.Icons.Filled.Subscriptions)
-                                    }
+                                val subscribed = state.channel?.takeIf { !state.offline }?.subscribed
+                                if (subscribed != null) {
+                                    TvActionButton(stringResource(if (subscribed) R.string.youtube_subscribed else R.string.youtube_subscribe), onClick=viewModel::toggleSubscription, selected=subscribed, icon=androidx.compose.material.icons.Icons.Filled.Subscriptions)
+                                } else if (state.enriching && !state.offline) {
+                                    DetailSkeletonBlock(Modifier.width(144.dp).height(48.dp), radius = 10.dp)
                                 }
                                 if (state.signedIn && !state.offline) {
                                     val liked = state.likeStatus == YouTubeLikeStatus.LIKE
                                     TvActionButton(m.likeCount ?: stringResource(R.string.youtube_like), onClick={ viewModel.rate(YouTubeLikeStatus.LIKE) }, selected=liked, icon=androidx.compose.material.icons.Icons.Filled.ThumbUp)
                                     TvActionButton(stringResource(R.string.youtube_dislike), onClick={ viewModel.rate(YouTubeLikeStatus.DISLIKE) }, selected=state.likeStatus == YouTubeLikeStatus.DISLIKE, icon=androidx.compose.material.icons.Icons.Filled.ThumbDown)
+                                } else if (state.enriching && !state.offline) {
+                                    DetailSkeletonBlock(Modifier.width(106.dp).height(48.dp), radius = 10.dp)
+                                    DetailSkeletonBlock(Modifier.width(106.dp).height(48.dp), radius = 10.dp)
                                 }
                             }
                         }

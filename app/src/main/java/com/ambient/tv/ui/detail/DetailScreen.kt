@@ -137,6 +137,9 @@ import com.ambient.tv.ui.common.StreamPropertyRow
 import com.ambient.tv.ui.common.TvActionButton
 import com.ambient.tv.ui.common.StatePanel
 import com.ambient.tv.ui.common.SkeletonRow
+import com.ambient.tv.ui.common.DetailSkeletonBlock
+import com.ambient.tv.ui.common.DetailSkeletonParagraph
+import com.ambient.tv.ui.common.DetailSkeletonActions
 import com.ambient.tv.ui.common.TvChip
 import com.ambient.tv.ui.common.formatDuration
 import com.ambient.tv.ui.common.formatResolution
@@ -290,47 +293,68 @@ private fun DetailLoadingSkeleton(
     requestInitialFocus: Boolean = true,
 ) {
     val visibleBackgroundVideo = LocalVisibleBackgroundVideo.current
-    Box(modifier = Modifier.fillMaxSize().background(if (visibleBackgroundVideo) Color.Transparent else MaterialTheme.colorScheme.background)) {
+    Box(
+        Modifier.fillMaxSize().background(
+            if (visibleBackgroundVideo) Color.Transparent else MaterialTheme.colorScheme.background,
+        ),
+    ) {
         Box(
-            Modifier
-                .fillMaxSize()
-                .background(
-                    Brush.horizontalGradient(
-                        listOf(
-                            MaterialTheme.colorScheme.background,
-                            MaterialTheme.colorScheme.surface.copy(alpha = 0.84f),
-                            MaterialTheme.colorScheme.background.copy(alpha = 0.35f),
-                        ),
+            Modifier.fillMaxSize().background(
+                Brush.horizontalGradient(
+                    listOf(
+                        MaterialTheme.colorScheme.background,
+                        MaterialTheme.colorScheme.surface.copy(alpha = 0.84f),
+                        MaterialTheme.colorScheme.background.copy(alpha = 0.35f),
                     ),
                 ),
+            ),
         )
+        // Mirror DetailContent's lazy-list inset and DetailHero geometry: the poster, title,
+        // metadata, synopsis and actions occupy their final positions before data is available.
         Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(start = screenGutter(), end = screenGutter(), top = screenGutter() + 80.dp),
-            verticalArrangement = Arrangement.spacedBy(13.dp),
+            Modifier.fillMaxSize().verticalScroll(rememberScrollState())
+                .padding(top = 72.dp, bottom = 36.dp),
         ) {
-            Box(Modifier.width(180.dp).height(14.dp).clip(androidx.compose.foundation.shape.RoundedCornerShape(999.dp)).background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.72f)))
-            Box(Modifier.fillMaxWidth(0.46f).height(38.dp).clip(androidx.compose.foundation.shape.RoundedCornerShape(999.dp)).background(MaterialTheme.colorScheme.surfaceVariant))
-            Box(Modifier.fillMaxWidth(0.31f).height(15.dp).clip(androidx.compose.foundation.shape.RoundedCornerShape(999.dp)).background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.74f)))
-            Spacer(Modifier.height(5.dp))
-            repeat(3) { index ->
-                Box(
-                    Modifier
-                        .fillMaxWidth(if (index == 2) 0.60f else 0.74f)
-                        .height(14.dp)
-                        .clip(androidx.compose.foundation.shape.RoundedCornerShape(999.dp))
-                        .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.62f)),
+            DeviceActionRow(
+                stack = handheldDetailStacks(LocalConfiguration.current.screenWidthDp),
+                modifier = Modifier.fillMaxWidth().padding(
+                    start = screenGutter(), end = screenGutter(),
+                    top = com.ambient.tv.ui.common.pageHeaderTop(18.dp), bottom = 40.dp,
+                ),
+                horizontalArrangement = Arrangement.spacedBy(28.dp),
+                verticalAlignment = Alignment.Top,
+            ) {
+                DetailSkeletonBlock(
+                    Modifier.width(deviceDp(190.dp, 144.dp)).aspectRatio(2f / 3f),
+                    radius = 14.dp,
                 )
+                Column(
+                    Modifier.weight(1f).widthIn(max = 860.dp),
+                    verticalArrangement = Arrangement.spacedBy(13.dp),
+                ) {
+                    DetailSkeletonBlock(Modifier.width(130.dp).height(16.dp), radius = 5.dp)
+                    Row(
+                        Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    ) {
+                        DetailSkeletonBlock(Modifier.width(92.dp).height(25.dp), radius = 5.dp)
+                        DetailSkeletonBlock(Modifier.fillMaxWidth(0.72f).height(36.dp), radius = 8.dp)
+                    }
+                    DetailSkeletonBlock(Modifier.fillMaxWidth(0.35f).height(15.dp), radius = 5.dp)
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        repeat(3) { index ->
+                            DetailSkeletonBlock(Modifier.width(if (index == 0) 72.dp else 52.dp).height(24.dp), radius = 7.dp)
+                        }
+                    }
+                    DetailSkeletonParagraph(lines = 4)
+                    DetailSkeletonActions(modifier = Modifier.padding(top = 8.dp))
+                }
             }
-            Spacer(Modifier.height(5.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                Box(Modifier.width(176.dp).height(48.dp).clip(androidx.compose.foundation.shape.RoundedCornerShape(10.dp)).background(MaterialTheme.colorScheme.primary.copy(alpha = 0.35f)))
-                Box(Modifier.width(132.dp).height(48.dp).clip(androidx.compose.foundation.shape.RoundedCornerShape(10.dp)).background(MaterialTheme.colorScheme.surfaceVariant))
-            }
-            Spacer(Modifier.height(18.dp))
+            // Possible shelves are below the hero, not stacked inside its action column.
+            SkeletonRow(title = "", style = MediaTileStyle.POSTER, itemCount = 5)
+            Spacer(Modifier.height(16.dp))
             SkeletonRow(title = "", style = MediaTileStyle.LANDSCAPE, itemCount = 4)
-            SkeletonRow(title = "", style = MediaTileStyle.POSTER, itemCount = 7)
         }
         PageUtilityBar(
             onBack = onBack,
@@ -1482,9 +1506,14 @@ private fun ChildrenSection(
     val columnFocus = LocalDetailRowFocus.current?.focus
     Column(modifier = Modifier.fillMaxWidth().bringFocusedContextIntoView()) {
         if (item.type == "show" && children.isEmpty() && loading) {
-            Box(Modifier.fillMaxWidth().height(160.dp).padding(horizontal = screenGutter()), contentAlignment = Alignment.CenterStart) {
-                Text(stringResource(R.string.player_loading), color = MaterialTheme.colorScheme.onSurfaceVariant)
-            }
+            // A real season shelf takes this space once it arrives; a text-only loading box
+            // otherwise makes the entire section pop in and shifts the rows below it.
+            Text(
+                stringResource(R.string.detail_seasons),
+                style = MaterialTheme.typography.titleLarge,
+                modifier = Modifier.padding(start = screenGutter(), end = screenGutter(), bottom = 12.dp),
+            )
+            DetailSkeletonTiles(MediaTileStyle.POSTER)
             return@Column
         }
         val seasons = children.firstOrNull()?.type == "season"

@@ -47,7 +47,8 @@ import com.ambient.tv.ui.common.PageUtilityBar
 import com.ambient.tv.ui.common.SystemBadge
 import com.ambient.tv.ui.common.MediaSystem
 import com.ambient.tv.ui.common.TvActionButton
-import com.ambient.tv.ui.common.skeletonPulseAlpha
+import com.ambient.tv.ui.common.DetailSkeletonBlock
+import com.ambient.tv.ui.common.DetailSkeletonParagraph
 import com.ambient.tv.ui.common.RowColumnFocus
 import com.ambient.tv.ui.common.rememberRowColumnFocus
 import com.ambient.tv.ui.common.RegisterRowColumnFocus
@@ -269,21 +270,29 @@ fun TelegramPostDetailScreen(
 /** Same column, paddings and block sizes as the loaded post, so content replaces it in place. */
 @Composable
 private fun TelegramPostDetailSkeleton() {
-    val pulse = com.ambient.tv.ui.common.rememberSkeletonPulseOrNull()
-    val fill = MaterialTheme.colorScheme.surfaceVariant
-    fun Modifier.bar(radius: androidx.compose.ui.unit.Dp) =
-        skeletonPulseAlpha(pulse).background(fill, RoundedCornerShape(radius))
     Column(
-        Modifier.fillMaxSize()
+        Modifier.fillMaxSize().verticalScroll(rememberScrollState())
             .padding(start = screenGutter(), end = screenGutter(), top = 94.dp, bottom = 36.dp),
         verticalArrangement = Arrangement.spacedBy(18.dp),
     ) {
-        Box(Modifier.width(96.dp).height(24.dp).bar(12.dp))                      // SystemBadge
-        Box(Modifier.fillMaxWidth(.6f).height(34.dp).bar(8.dp))                  // headlineLarge title
-        Box(Modifier.width(180.dp).height(48.dp).bar(24.dp))                     // channel button
-        Box(Modifier.width(140.dp).height(14.dp).bar(4.dp))                      // date
-        Box(Modifier.fillMaxWidth().height(230.dp).bar(12.dp))                   // thumbnail
-        Box(Modifier.width(140.dp).height(48.dp).bar(24.dp))                     // play button
+        DetailSkeletonBlock(Modifier.width(96.dp).height(24.dp), radius = 12.dp) // system badge
+        DetailSkeletonBlock(Modifier.fillMaxWidth(0.6f).height(34.dp)) // headline
+        DetailSkeletonBlock(Modifier.width(180.dp).height(48.dp), radius = 10.dp) // channel
+        DetailSkeletonBlock(Modifier.width(140.dp).height(14.dp), radius = 5.dp) // date
+        DetailSkeletonBlock(Modifier.fillMaxWidth().height(230.dp), radius = 12.dp) // media
+        DetailSkeletonBlock(Modifier.width(140.dp).height(48.dp), radius = 10.dp) // primary action
+        DetailSkeletonBlock(Modifier.width(160.dp).height(22.dp), radius = 6.dp) // post-text heading
+        DetailSkeletonParagraph(lines = 5, lineHeight = 16.dp)
+        // Posts can contain linked videos/channels, with cards below the text.
+        LazyRow(horizontalArrangement = Arrangement.spacedBy(16.dp), userScrollEnabled = false) {
+            items(3) {
+                Column(Modifier.width(com.ambient.tv.ui.mobile.deviceDp(300.dp, 240.dp)),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    DetailSkeletonBlock(Modifier.fillMaxWidth().height(135.dp), radius = 10.dp)
+                    DetailSkeletonBlock(Modifier.fillMaxWidth(0.65f).height(13.dp), radius = 5.dp)
+                }
+            }
+        }
     }
 }
 
