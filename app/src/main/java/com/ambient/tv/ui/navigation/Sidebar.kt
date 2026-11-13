@@ -159,6 +159,8 @@ fun Sidebar(
     viewModel: SidebarViewModel = hiltViewModel(),
     currentRadioSectionKey: String? = null,
     currentTelegramSectionKey: String? = null,
+    /** Quit button at the end of the bottom row, after a confirmation like in Settings › App. */
+    onExitApp: (() -> Unit)? = null,
 ) {
     val state by viewModel.uiState.collectAsState()
     com.ambient.tv.ui.common.RefreshOnReconnect(viewModel.reconnectSources, viewModel::refreshAfterReconnect)
@@ -177,7 +179,7 @@ fun Sidebar(
         state, actions, currentRoute, currentSectionKey, currentYouTubeFeedKey, currentTrailerFeedKey, currentSpotifySectionKey,
         currentTvheadendTab, currentLiveTvSourceId, currentFileSourceId, currentDlnaServerId, onNavigate, onOpenSystemSettings,
         onOpenPlayback, onPlayNext, requestContentFocus, contentReady, isEntryRequested, onEntryRequestConsumed,
-        onFocusOwnershipChanged, modifier, currentRadioSectionKey, currentTelegramSectionKey,
+        onFocusOwnershipChanged, modifier, currentRadioSectionKey, currentTelegramSectionKey, onExitApp,
     )
 }
 
@@ -217,8 +219,10 @@ internal fun SidebarContent(
     modifier: Modifier = Modifier,
     currentRadioSectionKey: String? = null,
     currentTelegramSectionKey: String? = null,
+    onExitApp: (() -> Unit)? = null,
 ) {
     val uiScale = rememberUhdScale()
+    var showExitConfirmation by remember { mutableStateOf(false) }
     val menuMotionEnabled = LocalPerformanceProfile.current.allowSpringFocus
     val plexEnabled = sidebarState.plexEnabled
     val jellyfinEnabled = sidebarState.jellyfinEnabled
@@ -542,7 +546,7 @@ internal fun SidebarContent(
     val hasEditor = if (editorSystem != null) editorSystem.entries.size > 1 else menuEditorAvailable(systems.size)
     fun wrapFocus(id: String, key: Key): Boolean {
         val order = navItemIds + "settings"
-        val rowId = if (id == "order") "settings" else id
+        val rowId = if (id == "order" || id == "exit") "settings" else id
         // Wrap-around at both ends; with the mini player below, Down from the last row reaches it.
         val target = sidebarWrapTarget(order, rowId, key == Key.DirectionUp, miniPlayerVisible) ?: return false
         if (target != rowId) pendingFocus = target
@@ -741,6 +745,7 @@ internal fun SidebarContent(
                                 restoreEntry()
                             } else when {
                                 lastFocusedId == "order" -> pendingFocus = "settings"
+                                lastFocusedId == "exit" -> pendingFocus = if (hasEditor) "order" else "settings"
                                 openGroup != null -> leaveLevel()
                             }
                             true
@@ -900,8 +905,9 @@ internal fun SidebarContent(
                             logo = levelSystem?.system?.takeIf { it.hasBrandMark },
                             testTag = "sidebar:settings",
                             modifier = Modifier.weight(1f).onPreviewKeyEvent { event ->
-                                if (hasEditor && event.type == KeyEventType.KeyDown && event.key == Key.DirectionRight) {
-                                    pendingFocus = "order"; true
+                                val next = if (hasEditor) "order" else if (onExitApp != null) "exit" else null
+                                if (next != null && event.type == KeyEventType.KeyDown && event.key == Key.DirectionRight) {
+                                    pendingFocus = next; true
                                 } else false
                             })
                         if (hasEditor) {
@@ -910,7 +916,23 @@ internal fun SidebarContent(
                                 focusable = expanded,
                                 onFocused = { markFocus("order") }, onWrapKey = { wrapFocus("order", it) },
                                 testTag = "sidebar:order",
-                                modifier = Modifier.padding(start = 6.dp))
+                                modifier = Modifier.padding(start = 6.dp).onPreviewKeyEvent { event ->
+                                    if (onExitApp != null && event.type == KeyEventType.KeyDown && event.key == Key.DirectionRight) {
+                                        pendingFocus = "exit"; true
+                                    } else false
+                                })
+                        }
+                        // Rightmost: quit the app, with the same confirmation as Settings › App.
+                        if (onExitApp != null) {
+                            SidebarItem(Icons.Filled.PowerSettingsNew, stringResource(R.string.settings_exit_app_action), false, false,
+                                { showExitConfirmation = true }, requester("exit"),
+                                focusable = expanded,
+                                onFocused = { markFocus("exit") }, onWrapKey = { wrapFocus("exit", it) },
+                                testTag = "sidebar:exit",
+                                modifier = Modifier.padding(start = 6.dp).onPreviewKeyEvent { event ->
+                                    // Right end of the row: stay put.
+                                    event.type == KeyEventType.KeyDown && event.key == Key.DirectionRight
+                                })
                         }
                     }
                     BackgroundPlaybackBar(
@@ -925,6 +947,23 @@ internal fun SidebarContent(
                 }
             }
         }
+    }
+    if (showExitConfirmation && onExitApp != null) {
+        val close = { showExitConfirmation = false; pendingFocus = "exit"; expanded = true }
+        com.ambient.tv.ui.common.AppDialog(
+            onDismiss = close,
+            title = stringResource(R.string.settings_exit_app_confirm_title),
+            hint = stringResource(R.string.settings_exit_app_confirm_hint),
+            scrollable = false,
+            footer = {
+                TvActionButton(text = stringResource(R.string.settings_link_cancel), onClick = close)
+                TvActionButton(
+                    text = stringResource(R.string.settings_exit_app_action),
+                    icon = Icons.Filled.PowerSettingsNew,
+                    onClick = onExitApp,
+                )
+            },
+        )
     }
     if (showOrderDialog) {
         val close = { showOrderDialog = false; pendingFocus = "order"; expanded = true }

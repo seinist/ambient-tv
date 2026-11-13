@@ -2135,6 +2135,7 @@ private fun AmbientTvApp(
                     isEntryRequested = { sidebarEntryRequested.value },
                     onEntryRequestConsumed = { sidebarEntryRequested.value = false },
                     onFocusOwnershipChanged = { sidebarHasFocus = it },
+                    onExitApp = ::exitApp,
                     modifier = Modifier.focusRequester(sidebarFocusRequester),
                 )
             }
