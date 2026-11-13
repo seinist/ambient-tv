@@ -6,7 +6,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class IntroBrandMarkMotionTest {
-    @Test fun prismRibbonTapersCleanlyAtBothEnds() {
+    @Test fun prismSweepFadesCleanlyAtBothEnds() {
         assertEquals(0f, prismRibbonEnvelope(0f), 0.0001f)
         assertEquals(1f, prismRibbonEnvelope(0.5f), 0.0001f)
         assertEquals(0f, prismRibbonEnvelope(1f), 0.0001f)

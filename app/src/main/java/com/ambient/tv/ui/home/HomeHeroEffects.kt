@@ -15,13 +15,11 @@ import kotlin.math.PI
 import kotlin.math.cos
 import kotlin.math.sin
 
-/** Smoothly tapers Home Prism beams to zero before the top/bottom canvas edges. */
+/** Fades moving Home Prism lights smoothly as they enter and leave the hero. */
 internal fun homePrismBeamEnvelope(progress: Float): Float {
     val s = sin(progress.coerceIn(0f, 1f) * PI).toFloat()
     return s * s
 }
-
-private const val HOME_PRISM_BEAM_SEGMENTS = 12
 
 /** Draw-only motion in the hero's own layer: no bitmap reloads, blur surfaces or row recomposition. */
 internal fun Modifier.fancyHeroAmbient(
@@ -70,23 +68,20 @@ internal fun Modifier.fancyHeroAmbient(
         startX = -beamWidth, endX = beamWidth,
     )
     val prismWidth = width * 0.13f * spread
-    val prismWide = Brush.horizontalGradient(
-        listOf(
-            Color.Transparent,
-            cool.copy(alpha = 0.07f * strength),
-            color.copy(alpha = 0.10f * strength),
-            Color.Transparent,
-        ),
-        startX = -prismWidth * 2.1f, endX = prismWidth * 2.1f,
+    val prismRadius = (height * 0.64f).coerceAtLeast(1f)
+    val prismWide = Brush.radialGradient(
+        0f to color.copy(alpha = 0.14f * strength),
+        0.34f to cool.copy(alpha = 0.07f * strength),
+        0.70f to cool.copy(alpha = 0.012f * strength),
+        1f to Color.Transparent,
+        center = Offset.Zero, radius = prismRadius,
     )
-    val prismCore = Brush.horizontalGradient(
-        listOf(
-            Color.Transparent,
-            Color.White.copy(alpha = 0.20f * strength),
-            color.copy(alpha = 0.28f * strength),
-            Color.Transparent,
-        ),
-        startX = -prismWidth * 0.42f, endX = prismWidth * 0.42f,
+    val prismCore = Brush.radialGradient(
+        0f to Color.White.copy(alpha = 0.24f * strength),
+        0.20f to color.copy(alpha = 0.18f * strength),
+        0.60f to color.copy(alpha = 0.032f * strength),
+        1f to Color.Transparent,
+        center = Offset.Zero, radius = prismRadius,
     )
     val wash = Brush.radialGradient(
         listOf(color.copy(alpha = 0.12f * strength), Color.Transparent),
@@ -183,29 +178,16 @@ internal fun Modifier.fancyHeroAmbient(
                 }
                 HomeHeroStyle.PRISM -> {
                     fun sweep(progress: Float, opacity: Float, halfWidth: Float, brush: Brush) {
-                        // The old rotated rectangle stayed fully bright at the canvas edge and
-                        // was then hard-clipped by clipRect. On portrait phones that looked like
-                        // a beam chopped off at the bottom. Draw a tapered vertical ribbon instead:
-                        // it reaches zero naturally just before both screen edges.
-                        ribbon.reset()
-                        for (index in 0..HOME_PRISM_BEAM_SEGMENTS) {
-                            val u = index / HOME_PRISM_BEAM_SEGMENTS.toFloat()
-                            val y = height * (u - 0.5f)
-                            val half = halfWidth * homePrismBeamEnvelope(u)
-                            if (index == 0) ribbon.moveTo(-half, y) else ribbon.lineTo(-half, y)
-                        }
-                        for (index in HOME_PRISM_BEAM_SEGMENTS downTo 0) {
-                            val u = index / HOME_PRISM_BEAM_SEGMENTS.toFloat()
-                            val y = height * (u - 0.5f)
-                            val half = halfWidth * homePrismBeamEnvelope(u)
-                            ribbon.lineTo(half, y)
-                        }
-                        ribbon.close()
+                        // Smooth, pathless light volume: no tapered polygon tips or diagonal
+                        // facets. The radial shader is prepared once in drawWithCache.
+                        val fade = homePrismBeamEnvelope(progress)
+                        if (fade <= 0.001f) return
                         withTransform({
                             translate(width * (-0.25f + progress * 1.6f), height * 0.5f)
-                            rotate(18f, Offset.Zero)
+                            rotate(-18f, Offset.Zero)
+                            scale(halfWidth / prismRadius, 1f, pivot = Offset.Zero)
                         }) {
-                            drawPath(ribbon, brush, alpha = opacity)
+                            drawCircle(brush, prismRadius, Offset.Zero, alpha = opacity * fade)
                         }
                     }
                     sweep(t, 0.4f, prismWidth * 2.1f, prismWide)
