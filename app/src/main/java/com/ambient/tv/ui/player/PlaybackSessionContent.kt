@@ -182,6 +182,16 @@ fun PlaybackSessionContent(
         (atEnd || timing.offer || terminalSponsorHandoff)
     // A hidden overlay still has to ask the still-watching question at the end.
     val showNextUp = nextUpDue && (config.showOverlay || (atEnd && stillWatching))
+    // Once the outgoing title finishes, a still-watching prompt is a bounded choice, not a
+    // replacement for ending the player. A few native renderers miss EOF after their clock
+    // reaches duration; give those decoders the usual EOF grace before starting the timeout.
+    val confirmationNeedsTimeout = nextUpConfirmationNeedsTimeout(
+        promptVisible = showNextUp,
+        autoplay = config.autoplay,
+        stillWatching = stillWatching,
+        atEnd = atEnd,
+        clockReachedEnd = durationMs > 0L && timing.remainingMs <= 0L && creditsRemainingMs == null,
+    )
 
     // A new title (autoplay, Next Up, Next/Previous, gapless music) shows the OSD briefly once
     // it is ready; the normal auto-hide timeout follows. The chrome outlives items and
@@ -253,6 +263,31 @@ fun PlaybackSessionContent(
         previous()
     }
 
+    // Keep the manual Next Up action available briefly after EOF. If no one confirms it,
+    // close the outgoing playback instead of retaining a frozen video and focus-trapping card.
+    // This effect is keyed by the title/session and terminal eligibility, not position ticks
+    // or the sometimes-flapping native ended flag. A real seek back, dismissal or source
+    // handoff cancels or invalidates the deadline.
+    LaunchedEffect(metadata.route, snapshot.generation, candidateKey, confirmationNeedsTimeout) {
+        if (!confirmationNeedsTimeout) return@LaunchedEffect
+        if (!atEnd) kotlinx.coroutines.delay(NEXT_UP_EOF_GRACE_MS)
+        kotlinx.coroutines.delay(NEXT_UP_CONFIRMATION_TIMEOUT_MS)
+        val current = BackgroundPlaybackSession.snapshot.value
+        if (current.metadata?.route != metadata.route ||
+            current.generation != snapshot.generation || current.replacingSource ||
+            current.metadata?.mediaId != metadata.mediaId ||
+            handledKey == candidateKey || dismissedKey == candidateKey ||
+            com.ambient.tv.companion.CompanionQueuePlayback.pending) return@LaunchedEffect
+        val endedNow = current.status.ended ||
+            (metadata.source == "youtube" && BackgroundPlaybackSession.userEndSeekRequested(current.generation))
+        // A native backend may clear play intent at EOF without ever setting ended.
+        val reachedDurationNow = durationMs > 0L &&
+            current.status.positionMs + metadata.timelineOffsetMs >= durationMs
+        if (endedNow || reachedDurationNow) {
+            BackgroundPlaybackSession.stopIfCurrent(metadata.route, snapshot.generation)
+        }
+    }
+
     val itemActionsReady = ownsSnapshot && !changingItem && !queuePending
     val restartAction = if (itemActionsReady && (onTimelineSeek != null || BackgroundPlaybackSession.activeHandle()?.canSeekNow() == true)) ::restart else null
     val hasTrailerNavigation = candidate != null || onPlayPrevious != null
@@ -299,11 +334,12 @@ fun PlaybackSessionContent(
         when {
             audioSuccessor != null && BackgroundPlaybackSession.sleepTimer.kind != SleepTimerKind.END_OF_ITEM -> playNext(automatic = true)
             nextUpDue && config.autoplay && !stillWatching -> playNext(automatic = true)
-            // Only the still-watching question waits at EOF (it needs an answer to continue).
-            // Without autoplay the card had its time before the end: playback just stops,
-            // instead of the ended title waiting until the card is closed.
+            // This manual choice is kept only for NEXT_UP_CONFIRMATION_TIMEOUT_MS after EOF,
+            // then the dedicated effect above closes the ended player if no key was pressed.
             showNextUp && config.autoplay && stillWatching -> Unit
-            candidateKey == dismissedKey || !canOfferNext || nextUpDue -> BackgroundPlaybackSession.stopIfCurrent(metadata.route, snapshot.generation)
+            // A focused chapter/skip overlay can suppress Next Up, but cannot suppress
+            // the actual end of playback.
+            atEnd -> BackgroundPlaybackSession.stopIfCurrent(metadata.route, snapshot.generation)
         }
     }
 
@@ -381,3 +417,20 @@ fun PlaybackSessionContent(
 
 /** How long Next Up waits at a countdown of 0 for the engine's own end before handing over. */
 internal const val NEXT_UP_EOF_GRACE_MS = 2_000L
+
+/** Never retain an unanswered Still Watching prompt indefinitely over an ended player. */
+internal const val NEXT_UP_CONFIRMATION_TIMEOUT_MS = 10_000L
+
+/**
+ * Only confirmation prompts may hold a finished item; the deadline starts at actual EOF
+ * (or after the decoder's EOF grace if its timeline reached the duration without signalling).
+ * In particular, the normal pre-credits card must not time out while video is playing.
+ */
+internal fun nextUpConfirmationNeedsTimeout(
+    promptVisible: Boolean,
+    autoplay: Boolean,
+    stillWatching: Boolean,
+    atEnd: Boolean,
+    clockReachedEnd: Boolean,
+): Boolean = promptVisible && autoplay && stillWatching &&
+    (atEnd || clockReachedEnd)

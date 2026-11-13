@@ -355,6 +355,58 @@ class PlaybackItemControlsTest {
         }
     }
 
+    @Test fun unansweredStillWatchingPromptClosesTheEndedPlayerAfterItsDeadline() {
+        val fixture = mount(metadata().copy(nextUpConfig = NextUpConfig(
+            enabled = true, autoplay = true, stillWatchingEvery = 1,
+        )))
+        rule.mainClock.autoAdvance = false
+        rule.runOnIdle {
+            BackgroundPlaybackSession.recordAutomaticNextUp(successor)
+            fixture.clock.position = 120_000L
+            fixture.clock.ended = true
+            fixture.clock.playing = false
+            BackgroundPlaybackSession.tick()
+        }
+        rule.mainClock.advanceTimeByFrame()
+        rule.waitForIdle()
+        rule.runOnIdle {
+            assertTrue("Manual confirmation must remain briefly actionable after EOF",
+                BackgroundPlaybackSession.snapshot.value.active)
+            assertTrue(fixture.advances.isEmpty())
+        }
+        rule.mainClock.advanceTimeBy(NEXT_UP_CONFIRMATION_TIMEOUT_MS + 1_000L)
+        rule.waitForIdle()
+        rule.runOnIdle {
+            assertFalse("Unanswered confirmation must not retain an ended player",
+                BackgroundPlaybackSession.snapshot.value.active)
+            assertTrue(fixture.advances.isEmpty())
+        }
+    }
+
+    @Test fun manualNextUpSelectionCancelsTheDelayedEofStop() {
+        val fixture = mount(metadata().copy(nextUpConfig = NextUpConfig(
+            enabled = true, autoplay = true, stillWatchingEvery = 1,
+        )))
+        rule.mainClock.autoAdvance = false
+        rule.runOnIdle {
+            BackgroundPlaybackSession.recordAutomaticNextUp(successor)
+            fixture.clock.position = 120_000L
+            fixture.clock.ended = true
+            fixture.clock.playing = false
+            BackgroundPlaybackSession.tick()
+        }
+        rule.mainClock.advanceTimeByFrame()
+        rule.waitForIdle()
+        rule.runOnIdle { requireNotNull(fixture.controls?.next).invoke() }
+        rule.mainClock.advanceTimeBy(NEXT_UP_CONFIRMATION_TIMEOUT_MS + 1_000L)
+        rule.waitForIdle()
+        rule.runOnIdle {
+            assertEquals(listOf(successor), fixture.advances)
+            assertTrue("A chosen successor must not be stopped by the old prompt's timer",
+                BackgroundPlaybackSession.snapshot.value.active)
+        }
+    }
+
     @Test fun trailerSourceQueueStopsAtEofEvenIfTheGlobalAutoplayPreferenceIsOn() {
         val fixture = mount(metadata().copy(
             isTrailer = true,
