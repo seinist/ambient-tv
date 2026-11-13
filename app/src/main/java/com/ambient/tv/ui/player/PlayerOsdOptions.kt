@@ -4,7 +4,6 @@ import androidx.compose.animation.core.tween
 import androidx.compose.foundation.MarqueeSpacing
 import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.horizontalScroll
-import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsDraggedAsState
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.Arrangement
@@ -256,8 +255,7 @@ private fun TvBadgeRow(modifier: Modifier, content: @Composable RowScope.() -> U
 @Composable
 private fun HandheldBadgeRow(modifier: Modifier, content: @Composable RowScope.() -> Unit) {
     val scroll = rememberScrollState()
-    val interactionSource = remember { MutableInteractionSource() }
-    val dragging by interactionSource.collectIsDraggedAsState()
+    val dragging by scroll.interactionSource.collectIsDraggedAsState()
     val overflowing = scroll.maxValue > 0
     var hinted by rememberSaveable { mutableStateOf(false) }
     LaunchedEffect(overflowing, dragging) {
@@ -285,7 +283,7 @@ private fun HandheldBadgeRow(modifier: Modifier, content: @Composable RowScope.(
             // badge content and a touch drag has no scrollable overflow.
             .fillMaxWidth()
             .badgeEdgeFade(fadeStart, fadeEnd, BadgeRowFade)
-            .horizontalScroll(scroll, interactionSource = interactionSource),
+            .horizontalScroll(scroll),
         horizontalArrangement = Arrangement.spacedBy(7.dp),
         verticalAlignment = Alignment.CenterVertically,
         content = content,
