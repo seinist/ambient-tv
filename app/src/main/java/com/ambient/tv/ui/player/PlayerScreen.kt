@@ -25,6 +25,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.aspectRatio
@@ -1781,7 +1782,7 @@ private fun OsdSettingsRow(
 
 @Composable
 private fun PlaybackMediaFlags(state: PlayerUiState.Ready, player: ExoPlayer) {
-    Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+    val badges: @Composable RowScope.() -> Unit = {
         val modeLabel = when (state.playbackMode) {
             PlaybackMode.DIRECT_PLAY -> "DIRECT"
             PlaybackMode.DIRECT_STREAM -> "STREAM"
@@ -1804,6 +1805,13 @@ private fun PlaybackMediaFlags(state: PlayerUiState.Ready, player: ExoPlayer) {
         }
         audioOutputBadge(Media3AudioProcessing.session(player), state.serverAudioConversionCodec)
             ?.let { PlayerMediaFlag(Icons.AutoMirrored.Filled.VolumeUp, it) }
+    }
+    // All engines use the same swipeable viewport on phones. Preserve Media3's
+    // existing non-scrolling TV row instead of changing TV playback chrome.
+    if (com.ambient.tv.ui.mobile.LocalHandheldUi.current) {
+        PlayerTechBadgeRow(content = badges)
+    } else {
+        Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically, content = badges)
     }
 }
 
