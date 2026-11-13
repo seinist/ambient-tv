@@ -29,6 +29,7 @@ import androidx.compose.ui.unit.dp
 import androidx.tv.material3.Icon
 import com.ambient.tv.R
 import com.ambient.tv.ui.performance.LocalPerformanceProfile
+import com.ambient.tv.ui.mobile.LocalHandheldUi
 
 /** One fixed slot in the timeline readout. Pause wins over every navigation mode. */
 internal enum class PlayerOsdNavigationMode { PAUSE, CHAPTERS, BUTTONS, SEEK }
@@ -48,12 +49,18 @@ internal fun playerOsdNavigationMode(
 }
 
 /**
- * Small circular badge before position/duration, shared by all TV/phone seekbars.
- * With the setting off, retain the original animated pause-only indicator.
- * Its 20dp footprint never changes during a mode switch, so time cannot jump.
+ * Small circular badge before the TV timeline readout. Handhelds always retain the
+ * animated pause-only indicator, which slides the clock without showing remote navigation
+ * modes. The TV setting still controls the TV badge as before.
  */
 @Composable
 internal fun PlayerOsdNavigationIndicator(paused: Boolean) {
+    // Touch navigation has no remote-control mode to indicate. Keep pause feedback and
+    // its animated, width-changing clock spacing even when the TV badge is enabled.
+    if (LocalHandheldUi.current) {
+        PlayerPausedIndicator(paused, trailingSpacing = 6.dp)
+        return
+    }
     val context = LocalContext.current
     // Preview and Robolectric seekbar tests can host the shared component without the
     // application's Hilt graph. In that case the portable default is to show the icon.
