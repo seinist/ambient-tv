@@ -159,7 +159,7 @@ fun Sidebar(
     viewModel: SidebarViewModel = hiltViewModel(),
     currentRadioSectionKey: String? = null,
     currentTelegramSectionKey: String? = null,
-    /** "App beenden" in the main menu editor, after a confirmation like in Settings › App. */
+    /** Quit button at the end of the bottom row, after a confirmation like in Settings › App. */
     onExitApp: (() -> Unit)? = null,
 ) {
     val state by viewModel.uiState.collectAsState()
@@ -467,10 +467,10 @@ internal fun SidebarContent(
     // On a system page the back header is the first focusable row.
     val navItemIds = (if (inSubmenu) listOf(PAGE_BACK_ID) else emptyList()) + navRows.map { it.destination.id }
     val konfigurationShown = openGroup != null && openGroup.id !in settingsShortcutHidden
-    val visibleIds = navItemIds + "settings" + "order" + "pill"
+    val visibleIds = navItemIds + "settings" + "order" + "exit" + "pill"
     val allRowIds = remember(mainRows, pageRowsById) { (mainRows + pageRowsById.values.flatten()).map { it.destination.id }.toSet() }
     // Drop requesters of rows that no longer exist anywhere.
-    SideEffect { requesters.keys.retainAll(allRowIds + setOf("settings", "order", "pill", PAGE_BACK_ID)) }
+    SideEffect { requesters.keys.retainAll(allRowIds + setOf("settings", "order", "exit", "pill", PAGE_BACK_ID)) }
     val safeAnchor = globals.firstOrNull()?.id ?: "settings"
     fun childTarget(system: MenuSystem): String = chooseSidebarChild(
         system.entries.map { it.id },
@@ -546,7 +546,7 @@ internal fun SidebarContent(
     val hasEditor = if (editorSystem != null) editorSystem.entries.size > 1 else menuEditorAvailable(systems.size)
     fun wrapFocus(id: String, key: Key): Boolean {
         val order = navItemIds + "settings"
-        val rowId = if (id == "order") "settings" else id
+        val rowId = if (id == "order" || id == "exit") "settings" else id
         // Wrap-around at both ends; with the mini player below, Down from the last row reaches it.
         val target = sidebarWrapTarget(order, rowId, key == Key.DirectionUp, miniPlayerVisible) ?: return false
         if (target != rowId) pendingFocus = target
@@ -745,6 +745,7 @@ internal fun SidebarContent(
                                 restoreEntry()
                             } else when {
                                 lastFocusedId == "order" -> pendingFocus = "settings"
+                                lastFocusedId == "exit" -> pendingFocus = if (hasEditor) "order" else "settings"
                                 openGroup != null -> leaveLevel()
                             }
                             true
@@ -897,25 +898,58 @@ internal fun SidebarContent(
                     }
                     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                         // On a system page the row carries that system's logo/icon, tinted like its text.
-                        SidebarItem(levelSystem?.icon ?: Icons.Filled.Settings, settingsRow.label, currentRoute == Destinations.SETTINGS && levelSystem == null, true,
+                        // Icon-only buttons; the row names the focused one (Settings when none is),
+                        // so three buttons fit without cutting the Settings label off.
+                        val bottomLabel = when (lastFocusedId) {
+                            "order" -> stringResource(R.string.sidebar_customize)
+                            "exit" -> stringResource(R.string.settings_exit_app_action)
+                            else -> settingsRow.label
+                        }
+                        SidebarItem(levelSystem?.icon ?: Icons.Filled.Settings, settingsRow.label, currentRoute == Destinations.SETTINGS && levelSystem == null, false,
                             { navigate(settingsRow) }, requester("settings"),
                             focusable = expanded,
                             onFocused = { markFocus("settings") }, onWrapKey = { wrapFocus("settings", it) },
                             logo = levelSystem?.system?.takeIf { it.hasBrandMark },
                             testTag = "sidebar:settings",
-                            modifier = Modifier.weight(1f).onPreviewKeyEvent { event ->
-                                if (hasEditor && event.type == KeyEventType.KeyDown && event.key == Key.DirectionRight) {
-                                    pendingFocus = "order"; true
+                            modifier = Modifier.onPreviewKeyEvent { event ->
+                                val next = if (hasEditor) "order" else if (onExitApp != null) "exit" else null
+                                if (next != null && event.type == KeyEventType.KeyDown && event.key == Key.DirectionRight) {
+                                    pendingFocus = next; true
                                 } else false
                             })
-                        if (hasEditor) {
+                        if (hasEditor && expanded) {
                             SidebarItem(Icons.Filled.Tune, stringResource(R.string.sidebar_customize), false, false,
                                 { showOrderDialog = true }, requester("order"),
                                 focusable = expanded,
                                 onFocused = { markFocus("order") }, onWrapKey = { wrapFocus("order", it) },
                                 testTag = "sidebar:order",
-                                modifier = Modifier.padding(start = 6.dp))
+                                modifier = Modifier.padding(start = 6.dp).onPreviewKeyEvent { event ->
+                                    if (onExitApp != null && event.type == KeyEventType.KeyDown && event.key == Key.DirectionRight) {
+                                        pendingFocus = "exit"; true
+                                    } else false
+                                })
                         }
+                        // Rightmost: quit the app, with the same confirmation as Settings › App.
+                        if (onExitApp != null && expanded) {
+                            SidebarItem(Icons.Filled.PowerSettingsNew, stringResource(R.string.settings_exit_app_action), false, false,
+                                { showExitConfirmation = true }, requester("exit"),
+                                focusable = expanded,
+                                onFocused = { markFocus("exit") }, onWrapKey = { wrapFocus("exit", it) },
+                                testTag = "sidebar:exit",
+                                modifier = Modifier.padding(start = 6.dp).onPreviewKeyEvent { event ->
+                                    // Right end of the row: stay put.
+                                    event.type == KeyEventType.KeyDown && event.key == Key.DirectionRight
+                                })
+                        }
+                        Text(
+                            bottomLabel,
+                            style = SIDEBAR_ROW_TEXT,
+                            color = MaterialTheme.colorScheme.onSurface,
+                            maxLines = 1,
+                            overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f).padding(start = 10.dp)
+                                .graphicsLayer { alpha = if (expanded) 1f else 0f },
+                        )
                     }
                     BackgroundPlaybackBar(
                         onOpen = onOpenPlayback, onPlayNext = onPlayNext,
@@ -931,7 +965,7 @@ internal fun SidebarContent(
         }
     }
     if (showExitConfirmation && onExitApp != null) {
-        val close = { showExitConfirmation = false; pendingFocus = "order"; expanded = true }
+        val close = { showExitConfirmation = false; pendingFocus = "exit"; expanded = true }
         com.ambient.tv.ui.common.AppDialog(
             onDismiss = close,
             title = stringResource(R.string.settings_exit_app_confirm_title),
@@ -971,8 +1005,6 @@ internal fun SidebarContent(
                 onDismiss = close,
                 dividersAfter = sidebarState.dividersAfter,
                 onToggleDivider = viewModel::toggleDivider,
-                // Quitting lives here instead of a third button that cut off the Settings label.
-                onExitApp = onExitApp?.let { { showOrderDialog = false; showExitConfirmation = true } },
             )
         }
     }
