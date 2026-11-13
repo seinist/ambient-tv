@@ -191,7 +191,6 @@ fun PlaybackSessionContent(
         stillWatching = stillWatching,
         atEnd = atEnd,
         clockReachedEnd = durationMs > 0L && timing.remainingMs <= 0L && creditsRemainingMs == null,
-        wantsToPlay = snapshot.wantsToPlay,
     )
 
     // A new title (autoplay, Next Up, Next/Previous, gapless music) shows the OSD briefly once
@@ -280,8 +279,9 @@ fun PlaybackSessionContent(
             com.ambient.tv.companion.CompanionQueuePlayback.pending) return@LaunchedEffect
         val endedNow = current.status.ended ||
             (metadata.source == "youtube" && BackgroundPlaybackSession.userEndSeekRequested(current.generation))
+        // A native backend may clear play intent at EOF without ever setting ended.
         val reachedDurationNow = durationMs > 0L &&
-            current.status.positionMs + metadata.timelineOffsetMs >= durationMs && current.wantsToPlay
+            current.status.positionMs + metadata.timelineOffsetMs >= durationMs
         if (endedNow || reachedDurationNow) {
             BackgroundPlaybackSession.stopIfCurrent(metadata.route, snapshot.generation)
         }
@@ -431,6 +431,5 @@ internal fun nextUpConfirmationNeedsTimeout(
     stillWatching: Boolean,
     atEnd: Boolean,
     clockReachedEnd: Boolean,
-    wantsToPlay: Boolean,
 ): Boolean = promptVisible && autoplay && stillWatching &&
-    (atEnd || (clockReachedEnd && wantsToPlay))
+    (atEnd || clockReachedEnd)
