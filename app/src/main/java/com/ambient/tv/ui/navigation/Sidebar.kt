@@ -467,10 +467,10 @@ internal fun SidebarContent(
     // On a system page the back header is the first focusable row.
     val navItemIds = (if (inSubmenu) listOf(PAGE_BACK_ID) else emptyList()) + navRows.map { it.destination.id }
     val konfigurationShown = openGroup != null && openGroup.id !in settingsShortcutHidden
-    val visibleIds = navItemIds + "settings" + "order" + "pill"
+    val visibleIds = navItemIds + "settings" + "order" + "exit" + "pill"
     val allRowIds = remember(mainRows, pageRowsById) { (mainRows + pageRowsById.values.flatten()).map { it.destination.id }.toSet() }
     // Drop requesters of rows that no longer exist anywhere.
-    SideEffect { requesters.keys.retainAll(allRowIds + setOf("settings", "order", "pill", PAGE_BACK_ID)) }
+    SideEffect { requesters.keys.retainAll(allRowIds + setOf("settings", "order", "exit", "pill", PAGE_BACK_ID)) }
     val safeAnchor = globals.firstOrNull()?.id ?: "settings"
     fun childTarget(system: MenuSystem): String = chooseSidebarChild(
         system.entries.map { it.id },
