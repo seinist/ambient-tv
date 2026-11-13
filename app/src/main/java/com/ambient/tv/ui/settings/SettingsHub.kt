@@ -515,6 +515,16 @@ internal fun SettingsHub(
                 SettingsPageTitle(page?.let { settingsCategoryTitle(it) } ?: stringResource(if (addingSystems) R.string.settings_add_system else R.string.settings_title), modifier = Modifier.weight(1f))
                 androidx.compose.material3.IconButton(onClick = ::openSearch) { Icon(Icons.Default.Search, stringResource(R.string.settings_search)) }
             }
+            // The TV overview has an Einstellungsumfang control; phones need the same
+            // discoverable choice, but below the narrow header so it cannot crowd Search.
+            // A tap cycles Einfach -> Erweitert -> Experte, shared with playback panels.
+            if (page == null && !addingSystems) TvChip(
+                stringResource(R.string.settings_level) + ": " + stringResource(settingsLevel.labelRes),
+                icon = Icons.Filled.Tune,
+            ) {
+                val levels = com.ambient.tv.ui.common.SettingsLevel.entries
+                com.ambient.tv.ui.common.SettingsLevels.set(levelPreferences, levels[(settingsLevel.ordinal + 1) % levels.size])
+            }
         } else {
             Row(
                 Modifier
