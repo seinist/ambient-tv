@@ -163,7 +163,7 @@ fun HandheldSeekBar(
             // Same readout as the TV player: position / duration, remaining time and end time.
             val remaining = (durationMs - shownPosition).coerceAtLeast(0L)
             Row(verticalAlignment = Alignment.CenterVertically) {
-                com.ambient.tv.ui.player.PlayerPausedIndicator(paused, trailingSpacing = 6.dp)
+                com.ambient.tv.ui.player.PlayerOsdNavigationIndicator(paused)
                 Text(
                     if (durationMs > 0L) "${elapsedLabel(shownPosition)} / ${elapsedLabel(durationMs)}" else elapsedLabel(shownPosition),
                     color = Color.White.copy(alpha = 0.82f), fontSize = 13.sp,

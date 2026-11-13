@@ -22,7 +22,7 @@ internal object CompanionBackupPolicy {
         "spotifySubmenuKeys", "radioSubmenuKeys", "telegramSubmenuKeys", "tvheadendSubmenuKeys", "sidebarSettingsShortcutHidden",
         "homeHeroIntensityPercent", "homeHeroSpreadKey", "homeBackgroundEverywhere", "focusArtworkBackdrop", "chooseServerOnStartup", "themeMusicVolume", "plexAutoRefreshIntervalSeconds",
         "plexThemeMusicEnabled", "jellyfinThemeMusicEnabled", "embyThemeMusicEnabled", "tvheadendShowOnHome",
-        "playerTechBadgesVisible", "osdHiddenButtons", "visibleBackgroundVideoPlayback", "backgroundVideoDimPercent",
+        "playerTechBadgesVisible", "playerOsdModeIconVisible", "osdHiddenButtons", "visibleBackgroundVideoPlayback", "backgroundVideoDimPercent",
         "audioVisualizerModeKey", "projectmPresetIntervalSeconds", "projectmTransitionSeconds", "projectmPresetCategoryKey",
         "screensaverEnabled", "screensaverTimeoutMinutes", "screensaverModeKey", "screensaverShowClock", "screensaverShowDate",
         "screensaverUse24HourClock", "clock", "subtitleAppearance", "nightSchedule", "screensaverUseArtwork", "screensaverArtworkIntervalSeconds", "screensaverDimPercent",
@@ -183,6 +183,7 @@ internal object CompanionBackupPolicy {
                 .filter { it != "clock" || source.clock != null }
                 .filter { it != "subtitleAppearance" || source.subtitleAppearance != null }
                 .filter { it != "nightSchedule" || source.nightSchedule != null }
+                .filter { it != "playerOsdModeIconVisible" || source.playerOsdModeIconVisible != null }
                 // Profiles left out by the sender (too large) arrive empty: the TV keeps its own.
                 .filter { it !in profileKeys || !profilesOmittedIn(source) }.forEach { key -> incoming[key]?.let { result[key] = it } }
         }

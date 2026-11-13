@@ -71,6 +71,21 @@ class SettingsBackupRegressionTest {
         assertEquals(MediaSelectionPreferences.DETAILS, prefs.youtubeMediaSelectionBehaviorKey)
     }
 
+    @Test fun osdNavigationIconSettingRoundTripsAndLegacyBackupKeepsCurrentChoice() {
+        val (source, _, exporter) = store()
+        assertTrue(source.playerOsdModeIconVisible)
+        source.playerOsdModeIconVisible = false
+        val raw = exporter.exportJson()
+        assertEquals("false", Json.parseToJsonElement(raw).jsonObject["playerOsdModeIconVisible"].toString())
+
+        val (target, _, importer) = store()
+        importer.importJson(raw)
+        assertFalse(target.playerOsdModeIconVisible)
+        target.playerOsdModeIconVisible = false
+        importer.importJson("""{"schemaVersion":76,"exportedAtEpochMs":0}""")
+        assertFalse(target.playerOsdModeIconVisible)
+    }
+
     @Test fun rewindDefaultsStayOffAndOlderBackupsKeepTheDevicesCurrentChoice() {
         val (preferences, _, importer) = store()
         assertEquals(0, preferences.pauseRewindSeconds)

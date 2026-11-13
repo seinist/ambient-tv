@@ -4,6 +4,10 @@
     <string name="player_osd_info_controls">Bedienleiste</string>
     <string name="player_osd_info_information">Informationen</string>
     <string name="player_osd_info_buttons_summary">Tasten</string>
+    <string name="player_osd_navigation_indicator">Navigationssymbol</string>
+    <string name="player_osd_navigation_seek">Spulen</string>
+    <string name="player_osd_navigation_buttons">Bedienleiste</string>
+    <string name="player_osd_navigation_chapters">Kapitel</string>
     <string name="player_osd_info_duration">Anzeigedauer</string>
     <string name="player_osd_info_codecs_summary">Codec-Leiste</string>
     <string name="player_osd_info_fps_summary">FPS</string>

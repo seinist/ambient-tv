@@ -1074,6 +1074,18 @@ class AppPreferences @Inject constructor(
         get() = prefs.getString(KEY_PLAYBACK_BACKEND, null).takeIf { it in PLAYBACK_BACKENDS } ?: "media3"
         set(value) = prefs.edit { putString(KEY_PLAYBACK_BACKEND, value.takeIf { it in PLAYBACK_BACKENDS } ?: "media3") }
 
+    /** Reactive across the shared TV/phone player and the OSD & Info side panel. */
+    private val playerOsdModeIconRevision = androidx.compose.runtime.mutableIntStateOf(0)
+    var playerOsdModeIconVisible: Boolean
+        get() {
+            playerOsdModeIconRevision.intValue
+            return prefs.getBoolean("player_osd_mode_icon_visible", true)
+        }
+        set(value) {
+            prefs.edit { putBoolean("player_osd_mode_icon_visible", value) }
+            playerOsdModeIconRevision.intValue++
+        }
+
     /** OSD row with renderer, codec, HDR and similar stream badges. */
     var playerTechBadgesVisible: Boolean
         get() = prefs.getBoolean(KEY_PLAYER_TECH_BADGES_VISIBLE, true)
