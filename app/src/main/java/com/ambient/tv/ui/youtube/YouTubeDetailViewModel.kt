@@ -22,6 +22,8 @@ data class YouTubeDetailState(
     /** Signed in: the page offers the rating buttons. */
     val signedIn: Boolean = false,
     val likeStatus: com.ambient.tv.youtube.YouTubeLikeStatus = com.ambient.tv.youtube.YouTubeLikeStatus.NONE,
+    /** Cached metadata is on screen while account, channel and richer details are refreshing. */
+    val enriching: Boolean = false,
 )
 
 @HiltViewModel
@@ -82,11 +84,11 @@ class YouTubeDetailViewModel @Inject constructor(savedStateHandle: SavedStateHan
     private fun load(forceRefresh: Boolean) {
         loadJob?.cancel()
         loadJob = viewModelScope.launch {
-            _uiState.value = _uiState.value.copy(loading = _uiState.value.metadata == null, error = null)
+            _uiState.value = _uiState.value.copy(loading = _uiState.value.metadata == null, enriching = true, error = null)
             cache.restore()
             val revision = cache.revision()
             if (_uiState.value.metadata == null) cache.metadata(videoId)?.let {
-                _uiState.value = YouTubeDetailState(false, it, offline = !availability.hasNetwork())
+                _uiState.value = YouTubeDetailState(false, it, offline = !availability.hasNetwork(), enriching = true)
             }
             suspendResult { engine.metadata(videoId, forceRefresh = forceRefresh) }.onSuccess {
                 if (cache.revision() == revision) {
@@ -95,10 +97,10 @@ class YouTubeDetailViewModel @Inject constructor(savedStateHandle: SavedStateHan
                     // Signed out the subscription is unknown: the page offers the channel, not the toggle.
                     val channel = engine.channelOf(it)?.let { channel -> if (signedIn) channel else channel.copy(subscribed = null) }
                     _uiState.value = YouTubeDetailState(false, it, channel = channel, signedIn = signedIn,
-                        likeStatus = engine.likeOverride(it.videoId) ?: it.likeStatus)
+                        likeStatus = engine.likeOverride(it.videoId) ?: it.likeStatus, enriching = false)
                 }
             }.onFailure {
-                _uiState.value = _uiState.value.copy(loading = false, offline = true, error = it.message)
+                _uiState.value = _uiState.value.copy(loading = false, enriching = false, offline = true, error = it.message)
             }
         }
     }
