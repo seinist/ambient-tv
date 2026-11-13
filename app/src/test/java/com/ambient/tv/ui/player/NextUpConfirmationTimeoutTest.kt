@@ -22,14 +22,13 @@ class NextUpConfirmationTimeoutTest {
 
     @Test fun terminalStillWatchingPromptHasBoundedLifetime() {
         assertTrue(waiting(ended = true))
-        assertTrue(waiting(ended = true))
+        assertTrue(waiting(ended = true, clockAtEnd = true))
         assertEquals(10_000L, NEXT_UP_CONFIRMATION_TIMEOUT_MS)
     }
 
     @Test fun nativeRendererThatMissesEofGetsSameExitPolicyAtDuration() {
-        assertTrue(waiting(clockAtEnd = true))
-        // Even if the decoder silently drops its play intent without reporting ended.
-        assertTrue(waiting(clockAtEnd = true))
+        // Handles a native decoder that silently clears playback at the final timestamp.
+        assertTrue(waiting(clockAtEnd = true, ended = false))
         assertEquals(2_000L, NEXT_UP_EOF_GRACE_MS)
     }
 
