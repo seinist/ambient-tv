@@ -178,11 +178,14 @@ private class SceneRenderer(
     private fun renderLoop(display: EGLDisplay, surface: EGLSurface) {
         val program = buildProgram(VERTEX_SHADER, "#define OCTAVES ${quality.octaves}\n" + FRAGMENT_HEADER + scene.body)
         GLES20.glUseProgram(program)
-        val quad = ByteBuffer.allocateDirect(8 * 4).order(ByteOrder.nativeOrder()).asFloatBuffer()
-            .put(floatArrayOf(-1f, -1f, 1f, -1f, -1f, 1f, 1f, 1f)).also { it.position(0) }
+        // A single oversized fullscreen triangle covers the complete viewport.
+        // No shared diagonal edge or second strip primitive can vanish on flaky TV GLES drivers.
+        val fullscreenTriangle = ByteBuffer.allocateDirect(FULLSCREEN_TRIANGLE_VERTICES.size * 4)
+            .order(ByteOrder.nativeOrder()).asFloatBuffer()
+            .put(FULLSCREEN_TRIANGLE_VERTICES).also { it.position(0) }
         val position = GLES20.glGetAttribLocation(program, "aPos")
         GLES20.glEnableVertexAttribArray(position)
-        GLES20.glVertexAttribPointer(position, 2, GLES20.GL_FLOAT, false, 0, quad)
+        GLES20.glVertexAttribPointer(position, 2, GLES20.GL_FLOAT, false, 0, fullscreenTriangle)
         val resolution = GLES20.glGetUniformLocation(program, "uRes")
         val time = GLES20.glGetUniformLocation(program, "uTime")
         val bright = GLES20.glGetUniformLocation(program, "uBright")
@@ -197,7 +200,7 @@ private class SceneRenderer(
             GLES20.glUniform2f(resolution, w.toFloat(), h.toFloat())
             GLES20.glUniform1f(time, ((offset + (frameStart - start) / 1e9) % TIME_WRAP_SECONDS).toFloat())
             GLES20.glUniform1f(bright, brightness())
-            GLES20.glDrawArrays(GLES20.GL_TRIANGLE_STRIP, 0, 4)
+            GLES20.glDrawArrays(GLES20.GL_TRIANGLES, 0, 3)
             if (!EGL14.eglSwapBuffers(display, surface)) {
                 check(!running) { "eglSwapBuffers 0x${Integer.toHexString(EGL14.eglGetError())}" }
                 break
@@ -234,6 +237,9 @@ private class SceneRenderer(
         const val TIME_WRAP_SECONDS = 7200.0
     }
 }
+
+// The triangle (-1,-1) -> (3,-1) -> (-1,3) encloses all four clip-space corners.
+internal val FULLSCREEN_TRIANGLE_VERTICES = floatArrayOf(-1f, -1f, 3f, -1f, -1f, 3f)
 
 private const val VERTEX_SHADER = """
 attribute vec2 aPos;
