@@ -485,6 +485,7 @@ class SettingsViewModel @Inject constructor(
         forcedSubtitlesEnabled = appPreferences.forcedSubtitlesEnabled,
         uiScale = appPreferences.uiScale,
         accentColorKey = appPreferences.accentColorKey,
+        accentStyleKey = appPreferences.accentStyleKey,
         customAccentHex = appPreferences.customAccentHex,
         customPlaybackAccentHex = appPreferences.customPlaybackAccentHex,
         dualAccentEnabled = appPreferences.dualAccentEnabled,
@@ -2381,6 +2382,10 @@ class SettingsViewModel @Inject constructor(
         _uiState.update { it.copy(uiScale = normalized) }
     }
 
+    fun onAccentStyleChanged(value: String) {
+        _uiState.update { it.copy(accentStyleKey = com.ambient.tv.ui.theme.AccentStyle.fromKey(value).key) }
+    }
+
     fun onAccentColorChanged(value: String) {
         _uiState.update { it.copy(accentColorKey = value) }
     }
@@ -3021,6 +3026,7 @@ class SettingsViewModel @Inject constructor(
         }
         appPreferences.uiScale = state.uiScale
         appPreferences.accentColorKey = state.accentColorKey
+        appPreferences.accentStyleKey = state.accentStyleKey
         appPreferences.customAccentHex = state.customAccentHex
         appPreferences.customPlaybackAccentHex = state.customPlaybackAccentHex
         appPreferences.dualAccentEnabled = state.dualAccentEnabled

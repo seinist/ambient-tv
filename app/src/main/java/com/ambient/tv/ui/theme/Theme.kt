@@ -33,6 +33,7 @@ fun AmbientTvTheme(
     accentColorKey: String = "gold",
     customAccentHex: String = "#E5A00D",
     themeModeKey: String = "dark",
+    accentStyleKey: String = AccentStyle.DEFAULT,
     complementaryPlayback: Boolean = false,
     customPlaybackAccentHex: String? = null,
     content: @Composable () -> Unit,
@@ -126,6 +127,7 @@ fun AmbientTvTheme(
         LocalDensity provides scaledDensity,
         LocalUiTokens provides tokens,
         LocalAccentModeKey provides accentColorKey,
+        LocalAccentStyle provides AccentStyle.fromKey(accentStyleKey),
         LocalPlaybackAccent provides PlaybackAccent(
             indicator = playback.lift(),
             text = accessibleAccent(playback, surface).lift(),

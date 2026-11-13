@@ -94,6 +94,7 @@ data class SettingsBackup(
     val uiScale: Float = 1f,
     val overscanPercent: Int = 0,
     val accentColorKey: String = "gold",
+    val accentStyleKey: String = com.ambient.tv.ui.theme.AccentStyle.DEFAULT,
     val customAccentHex: String = "#E5A00D",
     val customPlaybackAccentHex: String? = null,
     val dualAccentEnabled: Boolean = false,
@@ -441,6 +442,7 @@ class SettingsBackupManager @Inject constructor(
             uiScale = preferences.uiScale,
             overscanPercent = preferences.overscanPercent,
             accentColorKey = preferences.accentColorKey,
+            accentStyleKey = preferences.accentStyleKey,
             customAccentHex = preferences.customAccentHex,
             customPlaybackAccentHex = preferences.customPlaybackAccentHex,
             dualAccentEnabled = preferences.dualAccentEnabled,
@@ -822,6 +824,7 @@ class SettingsBackupManager @Inject constructor(
         preferences.uiScale = backup.uiScale
         preferences.overscanPercent = backup.overscanPercent
         preferences.accentColorKey = normalizedAccentKey(backup.accentColorKey)
+        preferences.accentStyleKey = backup.accentStyleKey
         preferences.customAccentHex = backup.customAccentHex
         preferences.customPlaybackAccentHex = com.ambient.tv.ui.theme.normalizedCustomPlaybackAccentHex(
             backup.customPlaybackAccentHex, preferences.customAccentHex,

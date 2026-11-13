@@ -26,9 +26,48 @@ import com.ambient.tv.R
 import com.ambient.tv.ui.common.activateOnTvKey
 import com.ambient.tv.ui.theme.AccentOptions
 import com.ambient.tv.ui.theme.accentColorFor
+import com.ambient.tv.ui.theme.AccentStyle
+import com.ambient.tv.ui.theme.accentBrush
+import com.ambient.tv.ui.theme.LocalAccentStyle
 import com.ambient.tv.ui.theme.playbackAccentColorFor
 
 internal enum class AccentColorRole { PRIMARY, PLAYBACK }
+
+@Composable
+internal fun accentStyleLabel(style: AccentStyle): String = stringResource(when (style) {
+    AccentStyle.SATIN -> R.string.settings_accent_style_satin
+    AccentStyle.GLASS -> R.string.settings_accent_style_glass
+    AccentStyle.GLOW -> R.string.settings_accent_style_glow
+    AccentStyle.PEARL -> R.string.settings_accent_style_pearl
+    AccentStyle.LIGHT -> R.string.settings_accent_style_light
+})
+
+/** Non-focusable live material sample: one chip edge and the matching progress fill. */
+@Composable
+internal fun AccentStylePreview(styleKey: String, colorKey: String, customHex: String) {
+    val style = AccentStyle.fromKey(styleKey)
+    val accent = accentColorFor(colorKey, customHex)
+    val brush = remember(accent, style) { accentBrush(accent, style) }
+    val shape = RoundedCornerShape(9.dp)
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(16.dp),
+        verticalAlignment = Alignment.CenterVertically) {
+        Box(
+            Modifier.width(96.dp).height(36.dp)
+                .background(MaterialTheme.colorScheme.surfaceVariant, shape)
+                .border(2.dp, brush, shape),
+            contentAlignment = Alignment.Center,
+        ) {
+            Text("Aa", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurface)
+        }
+        Box(
+            Modifier.weight(1f).height(5.dp).background(
+                MaterialTheme.colorScheme.onSurface.copy(alpha = .16f), RoundedCornerShape(3.dp),
+            ),
+        ) {
+            Box(Modifier.fillMaxWidth(.55f).fillMaxHeight().background(brush, RoundedCornerShape(3.dp)))
+        }
+    }
+}
 
 internal fun accentSwatchColors(key: String, primaryHex: String, playbackHex: String, dual: Boolean): List<Color> = when {
     key == "artwork" -> listOfNotNull(AccentOptions["blue"], AccentOptions["pink"], AccentOptions["gold"])
@@ -76,7 +115,7 @@ internal fun AccentPairPreview(key: String, primaryHex: String, playbackHex: Str
 @Composable
 private fun AccentRoleSwatch(label: String, color: Color, modifier: Modifier) {
     Row(modifier, verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-        Box(Modifier.size(28.dp).background(color, RoundedCornerShape(6.dp))
+        Box(Modifier.size(28.dp).background(accentBrush(color, LocalAccentStyle.current), RoundedCornerShape(6.dp))
             .border(1.dp, MaterialTheme.colorScheme.onSurface.copy(alpha = .25f), RoundedCornerShape(6.dp)))
         Text(label, style = MaterialTheme.typography.bodySmall)
     }

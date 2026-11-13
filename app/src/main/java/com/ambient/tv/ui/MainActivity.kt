@@ -774,6 +774,7 @@ open class MainActivity : ComponentActivity() {
                 }
             }
             var accentColorKey by remember { mutableStateOf(appPreferences.accentColorKey) }
+            var accentStyleKey by remember { mutableStateOf(appPreferences.accentStyleKey) }
             var customAccentHex by remember { mutableStateOf(appPreferences.customAccentHex) }
             var customPlaybackAccentHex by remember { mutableStateOf(appPreferences.customPlaybackAccentHex) }
             var dualAccentEnabled by remember { mutableStateOf(appPreferences.dualAccentEnabled) }
@@ -835,6 +836,7 @@ open class MainActivity : ComponentActivity() {
             AmbientTvTheme(
                 uiScale = uiScale,
                 accentColorKey = accentColorKey,
+                accentStyleKey = accentStyleKey,
                 customAccentHex = customAccentHex,
                 customPlaybackAccentHex = customPlaybackAccentHex,
                 complementaryPlayback = dualAccentEnabled,
@@ -886,9 +888,10 @@ open class MainActivity : ComponentActivity() {
                             }
                         },
                         onRegisterInteraction = ::registerInteraction,
-                        onUiPreferencesPreview = { scale, accent, customHex, customPlaybackHex, dualAccent, theme, hdr, convertSdr, peakNits, referenceWhite ->
+                        onUiPreferencesPreview = { scale, accent, customHex, customPlaybackHex, dualAccent, theme, hdr, convertSdr, peakNits, referenceWhite, accentStyle ->
                             uiScale = scale
                             accentColorKey = accent
+                            accentStyleKey = accentStyle
                             customAccentHex = customHex
                             customPlaybackAccentHex = customPlaybackHex
                             dualAccentEnabled = dualAccent
@@ -989,7 +992,7 @@ private fun AmbientTvApp(
     onScreensaverHidden: () -> Boolean,
     onScreensaverActiveChanged: (Boolean) -> Unit,
     onRegisterInteraction: () -> Unit,
-    onUiPreferencesPreview: (Float, String, String, String, Boolean, String, String, Boolean, Int, Int) -> Unit,
+    onUiPreferencesPreview: (Float, String, String, String, Boolean, String, String, Boolean, Int, Int, String) -> Unit,
     onPerformanceModePreview: (String, String) -> Unit,
     visibleBackgroundVideoPlayback: Boolean,
     backgroundVideoDimPercent: Int,

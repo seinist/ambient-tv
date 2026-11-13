@@ -2,6 +2,8 @@ package com.ambient.tv.ui.mobile
 
 import androidx.compose.foundation.Canvas
 import com.ambient.tv.ui.player.drawBookmarkTicks
+import com.ambient.tv.ui.theme.LocalAccentStyle
+import com.ambient.tv.ui.theme.accentBrush
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
@@ -56,6 +58,8 @@ fun HandheldSeekBar(
     paused: Boolean = false,
 ) {
     val accent = com.ambient.tv.ui.theme.LocalPlaybackAccent.current.indicator
+    val style = LocalAccentStyle.current
+    val progressBrush = remember(accent, style) { accentBrush(accent, style) }
     val navigation = LocalPlaybackNavigation.current
     val playPauseFocus = LocalPlayerPlayPauseFocus.current
     val latestPositionMs by rememberUpdatedState(positionMs)
@@ -141,7 +145,7 @@ fun HandheldSeekBar(
                 val trackWidth = 6.dp.toPx()
                 drawLine(Color.White.copy(alpha = 0.24f), Offset(0f, centerY), Offset(endX, centerY), trackWidth, StrokeCap.Round)
                 if (durationMs > 0L) {
-                    drawLine(accent, Offset(0f, centerY), Offset(endX * fraction, centerY), trackWidth, StrokeCap.Round)
+                    drawLine(progressBrush, Offset(0f, centerY), Offset(endX * fraction, centerY), trackWidth, StrokeCap.Round)
                     navigation?.timeline?.chapters?.forEach { chapter ->
                         val x = (chapter.startMs.toDouble() / durationMs).toFloat().coerceIn(0f, 1f) * endX
                         drawLine(Color.Black.copy(alpha = 0.76f), Offset(x, centerY - trackWidth / 2), Offset(x, centerY + trackWidth / 2), 2.dp.toPx())

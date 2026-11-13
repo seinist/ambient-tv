@@ -34,6 +34,7 @@ class AppearanceSettingsActivity : ComponentActivity() {
             val state by settingsViewModel.uiState.collectAsState()
             AmbientTvTheme(
                 uiScale = state.uiScale, accentColorKey = state.accentColorKey,
+                accentStyleKey = state.accentStyleKey,
                 customAccentHex = state.customAccentHex, customPlaybackAccentHex = state.customPlaybackAccentHex,
                 themeModeKey = state.themeModeKey,
             ) {

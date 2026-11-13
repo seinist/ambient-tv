@@ -3,6 +3,8 @@
 package com.ambient.tv.ui.player
 
 import com.ambient.tv.ui.theme.appControlSurface
+import com.ambient.tv.ui.theme.LocalAccentStyle
+import com.ambient.tv.ui.theme.accentBrush
 import com.ambient.tv.ui.common.rememberPlayerPanelNavigation
 import com.ambient.tv.ui.common.LocalPlayerPanelNavigation
 import com.ambient.tv.ui.mobile.deviceDp
@@ -1100,6 +1102,9 @@ internal fun TvPlayerSeekBar(
     paused: Boolean = false,
 ) {
     val seekable = interactive && durationMs > 0L
+    val progressAccent = com.ambient.tv.ui.theme.LocalPlaybackAccent.current.indicator
+    val progressStyle = LocalAccentStyle.current
+    val progressBrush = remember(progressAccent, progressStyle) { accentBrush(progressAccent, progressStyle) }
     val osd = LocalPlayerChromeState.current?.osd
     val expandControls = rememberExpandPlayerControls()
     val acceptsInput = seekable && osd?.show != false
@@ -1328,7 +1333,7 @@ internal fun TvPlayerSeekBar(
                     modifier = Modifier
                         .fillMaxWidth(progress)
                         .fillMaxHeight()
-                        .background(com.ambient.tv.ui.theme.LocalPlaybackAccent.current.indicator, RoundedCornerShape(50)),
+                        .background(progressBrush, RoundedCornerShape(50)),
                 )
                 if (durationMs > 0 && navigation != null) {
                     val timeline = navigation.timeline
@@ -1370,7 +1375,7 @@ internal fun TvPlayerSeekBar(
                         modifier = Modifier
                             .align(Alignment.CenterEnd)
                             .size(15.dp)
-                            .background(com.ambient.tv.ui.theme.LocalPlaybackAccent.current.indicator, CircleShape)
+                            .background(progressBrush, CircleShape)
                             .border(2.5.dp, Color.White, CircleShape),
                     )
                 }

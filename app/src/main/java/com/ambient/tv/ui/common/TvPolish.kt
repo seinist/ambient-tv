@@ -119,6 +119,10 @@ import com.ambient.tv.ui.sound.LocalUiSoundPlayer
 import com.ambient.tv.ui.sound.rememberUiSoundAction
 import com.ambient.tv.ui.theme.LocalUiTokens
 import com.ambient.tv.ui.theme.appControlSurface
+import com.ambient.tv.ui.theme.accentMaterialFill
+import com.ambient.tv.ui.theme.accentMaterialBorder
+import com.ambient.tv.ui.theme.AccentStyle
+import com.ambient.tv.ui.theme.LocalAccentStyle
 import com.ambient.tv.ui.theme.interactionColors
 import com.ambient.tv.ui.theme.menuFocusMotion
 import com.ambient.tv.ui.navigation.LocalSidebarContentPending
@@ -830,6 +834,11 @@ fun TvChip(
         if (iconOnly && (icon != null || leadingContent != null)) {
             val buttonModifier = modifier
                 .sizeIn(minWidth = 48.dp, minHeight = 48.dp)
+                .then(if (selected && LocalAccentStyle.current != AccentStyle.LIGHT)
+                    Modifier.accentMaterialBorder(2.dp, MaterialTheme.colorScheme.primary,
+                        RoundedCornerShape(LocalUiTokens.current.controlRadius),
+                        MaterialTheme.colorScheme.primary, true)
+                    else Modifier)
                 .semantics { contentDescription = text }
             val glyph: @Composable () -> Unit = {
                 if (loading) {
@@ -858,7 +867,13 @@ fun TvChip(
             return
         }
         androidx.compose.material3.FilterChip(
-            selected = selected, onClick = activate, enabled = enabled, modifier = modifier.sizeIn(minHeight = 48.dp),
+            selected = selected, onClick = activate, enabled = enabled,
+            modifier = modifier.sizeIn(minHeight = 48.dp)
+                .then(if (selected && LocalAccentStyle.current != AccentStyle.LIGHT)
+                    Modifier.accentMaterialBorder(2.dp, MaterialTheme.colorScheme.primary,
+                        RoundedCornerShape(LocalUiTokens.current.controlRadius),
+                        MaterialTheme.colorScheme.primary, true)
+                    else Modifier),
             label = { androidx.compose.material3.Text(text, maxLines = textMaxLines, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis) },
             leadingIcon = if (loading) {
                 { ButtonProgress(androidx.compose.material3.LocalContentColor.current, Modifier.size(18.dp)) }
@@ -1360,7 +1375,12 @@ fun TvActionButton(
     if (com.ambient.tv.ui.mobile.LocalHandheldUi.current) {
         androidx.compose.material3.FilledTonalButton(
             onClick = activate, enabled = visuallyEnabled,
-            modifier = (if (fillWidth) modifier.fillMaxWidth() else modifier).sizeIn(minHeight = 48.dp),
+            modifier = (if (fillWidth) modifier.fillMaxWidth() else modifier).sizeIn(minHeight = 48.dp)
+                .then(if (selected && LocalAccentStyle.current != AccentStyle.LIGHT)
+                    Modifier.accentMaterialBorder(2.dp, MaterialTheme.colorScheme.primary,
+                        RoundedCornerShape(LocalUiTokens.current.controlRadius),
+                        MaterialTheme.colorScheme.primary, true)
+                    else Modifier),
             shape = RoundedCornerShape(LocalUiTokens.current.controlRadius),
             colors = if (selected) androidx.compose.material3.ButtonDefaults.filledTonalButtonColors(
                 containerColor = MaterialTheme.colorScheme.primary, contentColor = MaterialTheme.colorScheme.onPrimary,
@@ -1445,8 +1465,8 @@ fun TvActionButton(
         val borderWidth = 2.dp
         Row(
             modifier = (if (fillWidth) Modifier.fillMaxWidth() else Modifier)
-                .background(container, buttonShape)
-                .uniformBorder(borderWidth, outline, buttonShape)
+                .accentMaterialFill(container, buttonShape, MaterialTheme.colorScheme.primary, focused || primaryFill)
+                .accentMaterialBorder(borderWidth, outline, buttonShape, MaterialTheme.colorScheme.primary, focused || primaryFill)
                 .padding(horizontal = (if (iconOnly) 12.dp else 18.dp) * uiScale, vertical = 12.dp * uiScale),
             horizontalArrangement = Arrangement.Center,
             verticalAlignment = Alignment.CenterVertically,
