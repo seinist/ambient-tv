@@ -509,7 +509,7 @@ fun SettingsScreen(
                             }
                             // Above the check button: a narrow button between two full-width rows
                             // is skipped by Up/Down.
-                            item(key = "appearance:image-cache") { ImageCacheSettings(uiState, viewModel) }
+                            item(key = "appearance:image-cache") { ImageCacheSettings() }
                             item {
                                 TvActionButton(
                                     text = stringResource(R.string.settings_check_ui),
@@ -2354,10 +2354,16 @@ private fun SubtitleLanguageChoice(selected: String, fallback: Boolean, onSelect
     )
 }
 
-/** Card image memory (applies after a restart), its live fill level and the 1080p card limit. */
+/**
+ * Card image memory, its live fill level and the 1080p card limit. Stored and applied directly:
+ * SettingsUiState is at the JVM's limit of constructor parameters and takes no further fields.
+ */
 @Composable
-private fun ImageCacheSettings(uiState: SettingsUiState, viewModel: SettingsViewModel) {
+private fun ImageCacheSettings() {
     val context = androidx.compose.ui.platform.LocalContext.current
+    val preferences = remember(context) { com.ambient.tv.ui.player.videoImagePreferences(context) }
+    var imageCacheMb by remember { mutableIntStateOf(preferences.imageCacheMb) }
+    var cardImages1080 by remember { mutableStateOf(preferences.cardImages1080) }
     val app = context.applicationContext as? com.ambient.tv.AmbientTvApplication
     val automaticMb = remember(app) { app?.automaticImageCacheMb() ?: 0 }
     // Only sizes above the automatic budget are offered: a choice never shrinks the cache.
@@ -2371,22 +2377,25 @@ private fun ImageCacheSettings(uiState: SettingsUiState, viewModel: SettingsView
         }
     }
     val mib = 1024L * 1024L
-    // Effective at once; the running loaders are resized instead of waiting for a restart.
-    LaunchedEffect(uiState.imageCacheMb) { app?.applyImageCacheMb(uiState.imageCacheMb) }
     SettingsGroup {
         SettingsSelect(
             label = stringResource(R.string.settings_image_cache),
             description = listOfNotNull(
                 stringResource(R.string.settings_image_cache_hint),
                 stringResource(R.string.settings_image_cache_usage, (usage.first / mib).toInt(), (usage.second / mib).toInt()),
-                stringResource(R.string.settings_image_cache_large_warning).takeIf { uiState.imageCacheMb >= 256 },
+                stringResource(R.string.settings_image_cache_large_warning).takeIf { imageCacheMb >= 256 },
             ).joinToString("\n"),
             options = choices.map { mb ->
                 SettingsSelectOption(
                     text = if (mb == 0) stringResource(R.string.settings_image_cache_auto, automaticMb)
                         else stringResource(R.string.settings_image_cache_mb, mb),
-                    selected = uiState.imageCacheMb == mb,
-                    onClick = { viewModel.onImageCacheMbChanged(mb) },
+                    selected = imageCacheMb == mb,
+                    onClick = {
+                        imageCacheMb = mb
+                        preferences.imageCacheMb = mb
+                        // Effective at once: the running loaders are resized, no restart needed.
+                        app?.applyImageCacheMb(mb)
+                    },
                 )
             },
         )
@@ -2394,8 +2403,8 @@ private fun ImageCacheSettings(uiState: SettingsUiState, viewModel: SettingsView
         if (androidx.compose.ui.platform.LocalDensity.current.density > com.ambient.tv.ui.common.CARD_IMAGE_1080_DENSITY) TvSettingRow(
             title = stringResource(R.string.settings_card_images_1080),
             body = stringResource(R.string.settings_card_images_1080_hint),
-            checked = uiState.cardImages1080,
-            onCheckedChange = viewModel::onCardImages1080Changed,
+            checked = cardImages1080,
+            onCheckedChange = { cardImages1080 = it; preferences.cardImages1080 = it },
         )
     }
 }

@@ -474,8 +474,6 @@ class SettingsViewModel @Inject constructor(
         libraryGridColumns = appPreferences.libraryGridColumns,
         libraryListRows = appPreferences.libraryListRows,
         highQualityAssetsEnabled = appPreferences.highQualityAssetsEnabled,
-        imageCacheMb = appPreferences.imageCacheMb,
-        cardImages1080 = appPreferences.cardImages1080,
         uiLanguageKey = appPreferences.uiLanguageKey,
         metadataLanguageKey = appPreferences.metadataLanguageKey,
         audioLanguageKey = appPreferences.audioLanguageKey,
@@ -2361,8 +2359,6 @@ class SettingsViewModel @Inject constructor(
     fun onLibraryGridColumnsChanged(value: Int) = _uiState.update { it.copy(libraryGridColumns = value.coerceIn(4, 12)) }
     fun onLibraryListRowsChanged(value: Int) = _uiState.update { it.copy(libraryListRows = value.coerceIn(4, 10)) }
     fun onHighQualityAssetsChanged(value: Boolean) = _uiState.update { it.copy(highQualityAssetsEnabled = value) }
-    fun onImageCacheMbChanged(value: Int) = _uiState.update { it.copy(imageCacheMb = value) }
-    fun onCardImages1080Changed(value: Boolean) = _uiState.update { it.copy(cardImages1080 = value) }
     fun onUiLanguageChanged(value: String) = _uiState.update { it.copy(uiLanguageKey = LanguagePreferences.normalizeKey(value)) }
     fun onMetadataLanguageChanged(value: String) = _uiState.update { it.copy(metadataLanguageKey = LanguagePreferences.normalizeKey(value)) }
     fun onAudioLanguageChanged(value: String) = _uiState.update { it.copy(audioLanguageKey = LanguagePreferences.normalizeKey(value)) }
@@ -3005,8 +3001,6 @@ class SettingsViewModel @Inject constructor(
         appPreferences.libraryGridColumns = state.libraryGridColumns
         appPreferences.libraryListRows = state.libraryListRows
         appPreferences.highQualityAssetsEnabled = state.highQualityAssetsEnabled
-        appPreferences.imageCacheMb = state.imageCacheMb
-        appPreferences.cardImages1080 = state.cardImages1080
         appPreferences.uiLanguageKey = state.uiLanguageKey
         appPreferences.metadataLanguageKey = state.metadataLanguageKey
         appPreferences.audioLanguageKey = state.audioLanguageKey
