@@ -1,5 +1,7 @@
 package com.ambient.tv.ui.browse
 
+import com.ambient.tv.ui.common.claimBrowseStartupFocusOnInput
+
 import com.ambient.tv.ui.theme.animatedFocusSurface
 import com.ambient.tv.ui.theme.screenGutter
 import com.ambient.tv.ui.mobile.deviceDp
@@ -131,6 +133,9 @@ fun FilteredBrowseScreen(
     val uhdScale = rememberUhdScale()
     val focusChain = com.ambient.tv.ui.common.rememberPageFocusChain()
     val filterFocusState = rememberFilterFocusState(viewModel)
+    val startupFocus = com.ambient.tv.ui.common.rememberBrowseStartupFocusGate(
+        viewModel.focusScopeKey, explicitReturn = playbackReturn != null,
+    )
     val filterFocus = remember { FocusRequester() }
     val settingsFocus = remember { FocusRequester() }
     val optionsFocus = remember { FocusRequester() }
@@ -177,7 +182,7 @@ fun FilteredBrowseScreen(
         viewModel.setSortDescending(it == "DESCENDING")
     }
     CompositionLocalProvider(LocalFilterFocusState provides filterFocusState) {
-        Box(Modifier.fillMaxSize()) {
+        Box(Modifier.fillMaxSize().claimBrowseStartupFocusOnInput(startupFocus)) {
             Column(Modifier.fillMaxSize()) {
                 PageHeader(
                     focusChain = focusChain,
@@ -260,13 +265,22 @@ fun FilteredBrowseScreen(
                         )
                     }
                     is FilteredBrowseUiState.Loaded -> {
+                        val focusState = if (startupFocus.followsFirst(playbackReturn != null))
+                            value.copy(focusedRatingKey = value.items.firstOrNull()?.ratingKey)
+                        else value
                         BrowseFocusContentIdentity(listOf(viewModel, value.viewMode, value.sort, value.sortDescending,
                             value.playbackReturnRevision))
-                        val initialKey = remember(value.items, value.focusedRatingKey) {
-                            value.focusedRatingKey?.takeIf { key -> value.items.any { it.ratingKey == key } }
+                        val initialKey = remember(value.items, focusState.focusedRatingKey) {
+                            focusState.focusedRatingKey?.takeIf { key -> value.items.any { it.ratingKey == key } }
                                 ?: value.items.firstOrNull()?.ratingKey
                         }
                         BrowseFocusInitialTarget(initialKey)
+                        BrowseStartupFollowFirst(
+                            startupFocus,
+                            value.items.firstOrNull()?.ratingKey?.let { BrowseFocusKey(null, it, true) },
+                            explicitReturn = playbackReturn != null,
+                            enabled = !showOptions && filterFocusState.allowContentAutoFocus,
+                        )
                         val playbackFocus = com.ambient.tv.ui.common.rememberBrowsePlaybackReturn(
                             token = playbackReturn?.revision?.takeIf { it == value.playbackReturnRevision },
                             target = initialKey?.let { com.ambient.tv.ui.common.BrowseFocusKey(row = null, item = it, content = true) },
@@ -285,8 +299,8 @@ fun FilteredBrowseScreen(
                             }
                             androidx.compose.runtime.key(value.playbackReturnRevision) {
                                 SoftViewChange(value.viewMode, Modifier.fillMaxSize()) {
-                                    if (value.viewMode == BrowseViewMode.GRID) BrowseGrid(value, { openItem(it, value.sort) }, onFocused)
-                                    else BrowseList(value, { openItem(it, value.sort) }, onFocused)
+                                    if (value.viewMode == BrowseViewMode.GRID) BrowseGrid(focusState, { openItem(it, value.sort) }, onFocused)
+                                    else BrowseList(focusState, { openItem(it, value.sort) }, onFocused)
                                 }
                             }
                         }
