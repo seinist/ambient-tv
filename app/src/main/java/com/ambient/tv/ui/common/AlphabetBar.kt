@@ -115,7 +115,7 @@ fun AlphabetBar(
                 .focusGroup(),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
-            letters.forEach { letter ->
+            letters.forEachIndexed { index, letter ->
                 val entryModifier = Modifier.height(entryHeight).then(
                     if (letter == entryFocusLetter && firstEntryFocusRequester != null)
                         Modifier.focusRequester(firstEntryFocusRequester) else Modifier,
@@ -126,6 +126,8 @@ fun AlphabetBar(
                     gridFocus = gridFocus,
                     modifier = entryModifier,
                     onFocused = { focusMemory.focused(letter) },
+                    isFirst = index == 0,
+                    isLast = index == letters.lastIndex,
                 ) { onSelect(letter) }
             }
         }
@@ -139,10 +141,19 @@ private fun AlphabetBarEntry(
     gridFocus: FocusRequester,
     modifier: Modifier = Modifier,
     onFocused: () -> Unit,
+    isFirst: Boolean,
+    isLast: Boolean,
     onClick: () -> Unit,
 ) {
     var focused by remember { mutableStateOf(false) }
-    val entryModifier = modifier.fillMaxWidth().focusProperties { left = gridFocus }
+    val entryModifier = modifier.fillMaxWidth().focusProperties {
+        left = gridFocus
+        // Parent-level D-pad acceleration calls moveFocus() directly, bypassing key handlers.
+        // Hard focus boundaries prevent even fast repeated Right/Up/Down from escaping the rail.
+        right = FocusRequester.Cancel
+        if (isFirst) up = FocusRequester.Cancel
+        if (isLast) down = FocusRequester.Cancel
+    }
         .activateOnTvKey(onClick = onClick).onFocusChanged {
             focused = it.isFocused
             if (it.isFocused) onFocused()
