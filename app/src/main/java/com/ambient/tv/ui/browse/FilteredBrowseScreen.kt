@@ -267,9 +267,13 @@ fun FilteredBrowseScreen(
                         )
                     }
                     is FilteredBrowseUiState.Loaded -> {
-                        val focusState = if (startupFocus.followsFirst(playbackReturn != null))
-                            value.copy(focusedRatingKey = value.items.firstOrNull()?.ratingKey)
-                        else value
+                        val focusState = when {
+                            startupFocus.followsFirst(playbackReturn != null) ->
+                                value.copy(focusedRatingKey = value.items.firstOrNull()?.ratingKey)
+                            startupFocus.claimed && playbackReturn == null && viewModel.currentSessionFocus() != null ->
+                                value.copy(focusedRatingKey = viewModel.currentSessionFocus())
+                            else -> value
+                        }
                         BrowseFocusContentIdentity(listOf(viewModel, value.viewMode, value.sort, value.sortDescending,
                             value.playbackReturnRevision))
                         val initialKey = remember(value.items, focusState.focusedRatingKey) {
