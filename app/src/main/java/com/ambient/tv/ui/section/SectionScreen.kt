@@ -366,8 +366,8 @@ internal fun SectionContent(
     com.ambient.tv.ui.common.BrowseStartupFollowFirst(
         gate = startupFocus,
         target = when (state.page) {
-            SectionPage.RECOMMENDATIONS -> initialRecommendationRow?.items?.firstOrNull()?.ratingKey?.let {
-                com.ambient.tv.ui.common.BrowseFocusKey(initialRecommendationRow.id, it, true)
+            SectionPage.RECOMMENDATIONS -> initialRecommendationRow?.let { row ->
+                row.items.firstOrNull()?.ratingKey?.let { com.ambient.tv.ui.common.BrowseFocusKey(row.id, it, true) }
             }
             SectionPage.LIBRARY -> state.items.firstOrNull()?.ratingKey?.let {
                 com.ambient.tv.ui.common.BrowseFocusKey(null, it, true)
