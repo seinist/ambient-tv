@@ -5,7 +5,8 @@
     <string name="player_osd_info_information">Informationen</string>
     <string name="player_osd_info_buttons_summary">Tasten</string>
     <string name="player_osd_navigation_indicator">Navigationssymbol</string>
-    <string name="player_osd_navigation_seek">Spulen</string>
+    <string name="player_osd_navigation_seek">Direktsprünge</string>
+    <string name="player_osd_navigation_timeline">Zeitleiste (Abwärts öffnet Bedienleiste)</string>
     <string name="player_osd_navigation_buttons">Bedienleiste</string>
     <string name="player_osd_navigation_chapters">Kapitel</string>
     <string name="player_osd_info_duration">Anzeigedauer</string>
