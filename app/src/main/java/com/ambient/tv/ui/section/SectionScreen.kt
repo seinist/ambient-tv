@@ -322,6 +322,19 @@ internal fun SectionContent(
         "section:$sectionKey:${state.page}", explicitReturn = playbackReturnToken != null,
     )
     val followFirst = startupFocus.followsFirst(playbackReturnToken != null)
+    // The ViewModel buffers each focus change without publishing Loaded on every DPAD hop.
+    // When the startup gate closes, use that live buffer rather than the old persisted key
+    // still present in the last Loaded object (which could otherwise snap back after input).
+    val sessionFocus = if (startupFocus.claimed && playbackReturnToken == null)
+        viewModel.currentSessionFocus(state.page) else null
+    val focusedState = sessionFocus?.let { entry ->
+        if (state.page == SectionPage.COLLECTIONS) state.copy(
+            focusedCollectionId = entry.itemKey.removePrefix("collection:"),
+        ) else state.copy(
+            focusedRatingKey = entry.itemKey,
+            focusedRecommendationRowId = entry.rowId,
+        )
+    } ?: state
     val focusState = if (followFirst) {
         // Cached rows are provisional until the first *user* input, not until Compose
         // automatically focuses the first item. New items inserted at the start still win.
@@ -334,28 +347,28 @@ internal fun SectionContent(
             SectionPage.COLLECTIONS -> state.copy(focusedCollectionId = state.collections.firstOrNull()?.id)
         }
     } else if (initialContentFocusPending) {
-        when (state.page) {
+        when (focusedState.page) {
             SectionPage.RECOMMENDATIONS -> {
-                val savedExists = state.focusedRatingKey != null && state.recommendationRows.any { row ->
-                    row.id == state.focusedRecommendationRowId &&
-                        row.items.any { state.focusedRatingKey in it.allRatingKeys }
+                val savedExists = focusedState.focusedRatingKey != null && focusedState.recommendationRows.any { row ->
+                    row.id == focusedState.focusedRecommendationRowId &&
+                        row.items.any { focusedState.focusedRatingKey in it.allRatingKeys }
                 }
-                if (savedExists) state else state.copy(
+                if (savedExists) focusedState else focusedState.copy(
                     focusedRatingKey = initialRecommendationRow?.items?.firstOrNull()?.ratingKey,
                     focusedRecommendationRowId = initialRecommendationRow?.id,
                 )
             }
             SectionPage.LIBRARY -> {
-                val savedExists = state.focusedRatingKey != null && state.items.any { state.focusedRatingKey in it.allRatingKeys }
-                if (savedExists) state else state.copy(focusedRatingKey = state.items.firstOrNull()?.ratingKey)
+                val savedExists = focusedState.focusedRatingKey != null && focusedState.items.any { focusedState.focusedRatingKey in it.allRatingKeys }
+                if (savedExists) focusedState else focusedState.copy(focusedRatingKey = focusedState.items.firstOrNull()?.ratingKey)
             }
             SectionPage.COLLECTIONS -> {
-                val savedExists = state.focusedCollectionId != null && state.collections.any { it.id == state.focusedCollectionId }
-                if (savedExists) state else state.copy(focusedCollectionId = state.collections.firstOrNull()?.id)
+                val savedExists = focusedState.focusedCollectionId != null && focusedState.collections.any { it.id == focusedState.focusedCollectionId }
+                if (savedExists) focusedState else focusedState.copy(focusedCollectionId = focusedState.collections.firstOrNull()?.id)
             }
         }
     } else {
-        state
+        focusedState
     }
     com.ambient.tv.ui.common.BrowseFocusContentIdentity(listOf(sectionKey, state.page, state.viewMode,
         state.sort, state.sortOrder, state.libraryFilters, state.playbackReturnRevision))
