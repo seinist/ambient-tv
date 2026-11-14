@@ -74,7 +74,6 @@ class PlaybackNavigationState {
     /** Seeks to an absolute timeline position; installed by [PlaybackNavigationProvider]. */
     var onChapterSeek: (Long) -> Unit = {}
     var interactionVersion by mutableIntStateOf(0)
-    val returnFocus = FocusRequester()
     fun interact() { interactionVersion++; BackgroundPlaybackSession.registerUserInteraction() }
     /** Chapter the last chapter key jumped to; shown briefly even while the OSD is hidden. */
     var chapterNotice by mutableStateOf<VideoChapter?>(null)
@@ -210,12 +209,12 @@ fun ChapterButton() {
     if (navigation.timeline.chapters.isEmpty()) return
     PlayerIconButton(Icons.AutoMirrored.Filled.ViewList, stringResource(R.string.player_chapters),
         onClick = { navigation.interact(); navigation.chaptersOpen = true },
-        modifier = Modifier.focusRequester(navigation.returnFocus), osd = OsdButton.CHAPTERS)
+        osd = OsdButton.CHAPTERS)
 }
 
 /**
  * Television: the chapter row below the OSD action bar, opened by Down on the bar or the chapter
- * button. Up/Back fold it back onto the chapter button; OK seeks and hands focus to the seek bar.
+ * button. Up/Back return to the last action (or Play/Pause); OK seeks and returns to the seek bar.
  */
 @Composable
 internal fun ChapterStrip() {
@@ -223,6 +222,8 @@ internal fun ChapterStrip() {
     val osd = LocalPlayerChromeState.current?.osd
     val acceptsInput = osd?.let { it.expanded && it.show } ?: true
     val open = navigation.chaptersOpen && navigation.timeline.chapters.isNotEmpty()
+    val returnToButtons = rememberExpandPlayerControls()
+    val returnToTimeline = rememberCollapsePlayerControls()
     LaunchedEffect(acceptsInput) {
         if (!acceptsInput) navigation.chaptersOpen = false
     }
@@ -242,17 +243,19 @@ internal fun ChapterStrip() {
         val selected = shownChapters.indexOfLast { it.startMs <= positionMs }.coerceAtLeast(0)
         val listState = rememberLazyListState(initialFirstVisibleItemIndex = (selected - 1).coerceAtLeast(0))
         val initialFocus = remember { FocusRequester() }
-        val controlFocus = LocalPlayerControlFocus.current
         fun fold() {
-            runCatching { navigation.returnFocus.requestFocus() }
             navigation.chaptersOpen = false
             navigation.interact()
+            // The chapter button can be hidden. Use the registered last action with the
+            // normal Play/Pause fallback, after the closing strip has relinquished focus.
+            returnToButtons()
         }
         LazyRow(
             state = listState,
             horizontalArrangement = Arrangement.spacedBy(14.dp),
             contentPadding = PaddingValues(vertical = 12.dp, horizontal = 4.dp),
             modifier = Modifier.fillMaxWidth().onPreviewKeyEvent { event ->
+                if (!open || !acceptsInput) return@onPreviewKeyEvent false
                 when (event.key) {
                     // Both halves of Back are taken so the back dispatcher does not also close the OSD.
                     androidx.compose.ui.input.key.Key.Back, androidx.compose.ui.input.key.Key.Escape -> {
@@ -273,17 +276,17 @@ internal fun ChapterStrip() {
                 val title = chapter.meaningfulTitle ?: stringResource(R.string.player_chapter_number, index + 1)
                 val frame = timeline.chapterFrame(chapter)
                 val choose = {
-                    if (acceptsInput) {
+                    if (open && acceptsInput) {
                         navigation.interact()
                         navigation.onChapterSeek(chapter.startMs)
-                        runCatching { controlFocus?.seekTarget()?.requestFocus() }
                         navigation.chaptersOpen = false
+                        returnToTimeline()
                     }
                 }
                 Column(
                     Modifier.width(200.dp)
                         .then(if (index == selected) Modifier.focusRequester(initialFocus) else Modifier)
-                        .focusProperties { canFocus = acceptsInput }
+                        .focusProperties { canFocus = open && acceptsInput }
                         .graphicsLayer { scaleX = scale; scaleY = scale }
                         .onFocusChanged { focused = it.isFocused }
                         .clip(shape).background(Color.Black.copy(alpha = if (focused) 0.72f else 0.5f))
@@ -292,7 +295,7 @@ internal fun ChapterStrip() {
                             index == selected -> com.ambient.tv.ui.theme.LocalPlaybackAccent.current.indicator
                             else -> Color.White.copy(alpha = 0.12f)
                         }, shape)
-                        .activateOnTvKey { choose() }.clickable(enabled = acceptsInput, role = Role.Button) { choose() },
+                        .activateOnTvKey { choose() }.clickable(enabled = open && acceptsInput, role = Role.Button) { choose() },
                 ) {
                     if (frame != null) TimelineImage(frame, Modifier.fillMaxWidth().aspectRatio(16f / 9f))
                     Column(Modifier.padding(horizontal = 10.dp, vertical = 7.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
@@ -314,10 +317,17 @@ internal fun ChapterStrip() {
                 }
             }
         }
-        LaunchedEffect(Unit) {
-            delay(60)
-            if (navigation.chaptersOpen && (osd == null || osd.show && osd.expanded)) {
-                runCatching { initialFocus.requestFocus() }
+        // A quick reopen reuses AnimatedVisibility's outgoing content. Run again for
+        // every opening, and wait for the lazy row's focus target to attach.
+        LaunchedEffect(open, acceptsInput) {
+            if (!open || !acceptsInput) return@LaunchedEffect
+            // A quick reopen can retain a scroll position far beyond the current chapter;
+            // compose its card again before requesting focus on it.
+            listState.scrollToItem((selected - 1).coerceAtLeast(0))
+            repeat(12) {
+                withFrameNanos { }
+                if (!navigation.chaptersOpen || osd?.let { !it.show || !it.expanded } == true) return@LaunchedEffect
+                if (runCatching { initialFocus.requestFocus() }.getOrDefault(false)) return@LaunchedEffect
             }
         }
     }
