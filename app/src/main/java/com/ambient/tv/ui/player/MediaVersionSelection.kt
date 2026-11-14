@@ -20,8 +20,8 @@ object MediaVersionSelection {
         if (sourceRatingKey == null) return requestedIndex
         return versions.indexOfFirst { version ->
             (version.sourceRatingKey ?: itemRatingKey) == sourceRatingKey &&
-                if (!sourceId.isNullOrBlank()) version.sourceId == sourceId
-                else sourceMediaIndex != null && version.sourceMediaIndex == sourceMediaIndex
+                (if (!sourceId.isNullOrBlank()) version.sourceId == sourceId
+                 else sourceMediaIndex != null && version.sourceMediaIndex == sourceMediaIndex)
         }
     }
 
