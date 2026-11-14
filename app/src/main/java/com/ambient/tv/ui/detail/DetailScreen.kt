@@ -170,6 +170,7 @@ fun DetailScreen(
     onBack: () -> Unit,
     onOpenSettings: () -> Unit,
     onPlay: (MediaItem, mediaIndex: Int, restart: Boolean) -> Unit,
+    onPlayVersion: (MediaItem, Int) -> Unit,
     onOpenChild: (MediaItem) -> Unit,
     onOpenEpisode: (MediaItem) -> Unit,
     onOpenSeason: (MediaItem) -> Unit,
@@ -254,6 +255,7 @@ fun DetailScreen(
                         actionInProgress = state.actionInProgress,
                         autoSelectDisplayVersion = state.autoSelectDisplayVersion,
                         onPlay = onPlay,
+                        onPlayVersion = onPlayVersion,
                         onOpenChild = onOpenChild,
                         onOpenEpisode = onOpenEpisode,
                         onOpenSeason = onOpenSeason,
@@ -390,6 +392,7 @@ internal fun DetailContent(
     actionInProgress: Boolean,
     autoSelectDisplayVersion: Boolean,
     onPlay: (MediaItem, Int, Boolean) -> Unit,
+    onPlayVersion: (MediaItem, Int) -> Unit,
     onOpenChild: (MediaItem) -> Unit,
     onOpenEpisode: (MediaItem) -> Unit,
     onOpenSeason: (MediaItem) -> Unit,
@@ -618,7 +621,9 @@ internal fun DetailContent(
         suspend fun focusRow(rowKey: String, stillRequested: () -> Boolean): Boolean {
             if (!stillRequested()) return false
             if (columnFocus.focusEntry(rowKey)) return true
-            rowSectionIndices[rowKey]?.let { listState.scrollToItem(it) }
+            rowSectionIndices[rowKey]?.takeIf { section ->
+                            listState.layoutInfo.visibleItemsInfo.none { it.index == section }
+                        }?.let { listState.scrollToItem(it) }
             var frames = 0
             while (!columnFocus.canScrollToEntry(rowKey) && frames++ < 12) {
                 withFrameNanos { }
@@ -823,7 +828,9 @@ internal fun DetailContent(
                 .rowColumnFocusNavigation(
                     columnFocus,
                     scrollToRow = { rowKey ->
-                        rowSectionIndices[rowKey]?.let { listState.scrollToItem(it) }
+                        rowSectionIndices[rowKey]?.takeIf { section ->
+                            listState.layoutInfo.visibleItemsInfo.none { it.index == section }
+                        }?.let { listState.scrollToItem(it) }
                     },
                 ) { rowOrder }
                 .focusProperties {
@@ -864,6 +871,7 @@ internal fun DetailContent(
                                 if (focusMemory.key == "hero:trailer") focusMemory.record(null)
                                 onPlay(media, version, restart)
                             },
+                            onPlayVersion = onPlayVersion,
                             onMore = {
                                 moreOpened = true
                                 showMore = true
@@ -1037,6 +1045,7 @@ private fun DetailHero(
     nextEpisode: MediaItem?,
     autoSelectDisplayVersion: Boolean,
     onPlay: (MediaItem, Int, Boolean) -> Unit,
+    onPlayVersion: (MediaItem, Int) -> Unit,
     onMore: (() -> Unit)?,
     canEdit: Boolean,
     onHeroFocused: () -> Unit,
@@ -1200,7 +1209,7 @@ private fun DetailHero(
                 }
             }
             if (isPlayable && item.mediaVersions.size > 1) {
-                MediaVersionPicker(item, optimalIndex, onPlay, onVersionFocused)
+                MediaVersionPicker(item, optimalIndex, onPlayVersion, onVersionFocused)
             }
         }
     }
@@ -1245,16 +1254,16 @@ private fun PrimaryPlaybackActions(
 private fun MediaVersionPicker(
     item: MediaItem,
     optimalIndex: Int,
-    onPlay: (MediaItem, Int, Boolean) -> Unit,
+    onPlayVersion: (MediaItem, Int) -> Unit,
     onFocused: (String) -> Unit,
 ) {
     val handheld = LocalHandheldUi.current
     val columnFocus = LocalDetailRowFocus.current?.focus
     val focusKeys = remember(item.ratingKey, item.mediaVersions) { detailVersionFocusKeys(item) }
-    Column(
-        modifier = Modifier.bringFocusedContextIntoView(),
-        verticalArrangement = Arrangement.spacedBy(8.dp),
-    ) {
+    val labels = remember(item.mediaVersions) { detailVersionLabels(item.mediaVersions) }
+    // Do not relocate the whole picker on entry. Each focused version already brings itself
+    // into view; a second parent request used to bounce the hero between its scroll positions.
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Text(stringResource(R.string.detail_versions), style = MaterialTheme.typography.labelMedium, modifier = Modifier.padding(top = 4.dp))
         // Every version is listed; past four rows the list scrolls in place (D-pad focus scrolls it).
         Column(
@@ -1285,10 +1294,10 @@ private fun MediaVersionPicker(
                         horizontalArrangement = Arrangement.spacedBy(10.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        val label = formatResolution(version.resolution) ?: "#${index + 1}"
+                        val label = labels[index]
                         TvActionButton(
                             text = label,
-                            onClick = { onPlay(item, index, false) },
+                            onClick = { onPlayVersion(item, index) },
                             enabled = version.streamUrl != null,
                             selected = index == optimalIndex,
                             modifier = Modifier.width(116.dp)
