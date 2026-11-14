@@ -878,12 +878,18 @@ internal fun LibraryContent(
             }
         })
         val initialRow = state.rows.getOrNull(restoreRowIndex)
-        val initialItemKey = initialRow?.items?.firstOrNull { initialFocusKey != null && initialFocusKey in it.allRatingKeys }?.ratingKey
+        // Seed the first actual tile before the sidebar's first focus handoff, not after it.
+        // Cached startup state may still contain yesterday's focused key in Loaded.
+        val firstStartupKey = startupFocus?.takeIf { it.followsFirst(returnToken != null) }
+            ?.let { homeFirstBrowseFocusKey(state) }
+        val initialItemKey = (firstStartupKey?.item as? String)
+            ?: initialRow?.items?.firstOrNull { initialFocusKey != null && initialFocusKey in it.allRatingKeys }?.ratingKey
             ?: initialFocusKey.takeIf { initialFocusRowId in state.tvRows }
+        val resolvedInitialRow = (firstStartupKey?.row as? String) ?: initialFocusRowId
         com.ambient.tv.ui.common.BrowseFocusContentIdentity(state.playbackReturnRevision, restoreInitialTarget = true)
         com.ambient.tv.ui.common.BrowseFocusInitialTarget(
             initialItemKey,
-            initialFocusRowId,
+            resolvedInitialRow,
         )
         startupFocus?.let { gate ->
             com.ambient.tv.ui.common.BrowseStartupFollowFirst(
