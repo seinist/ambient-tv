@@ -24,27 +24,18 @@ internal enum class DisplaySwitchOutcome { NOT_HELD, RESUMED, RESUMED_AFTER_TIME
 internal object DisplaySwitchPause {
     /** Upper bound for the DisplayManager confirmation before the configured delay starts anyway. */
     const val CONFIRM_TIMEOUT_MS = 6_000L
-    /** Earlier positions restart the title so the first seconds are not lost to the resync. */
-    const val RESTART_BELOW_MS = 3_000L
     /** A position jump larger than this while held is a user seek, not decoder drift. */
     const val USER_SEEK_TOLERANCE_MS = 1_500L
     const val POLL_MS = 100L
 }
 
-/** Pause only for a real mode change; live without timeshift cannot hold its position, so it is muted. */
+/** Hold every real mode change, even when the user configured no additional delay.
+ * Live without timeshift cannot hold its clock, so it is muted instead. */
 internal fun displaySwitchHoldFor(targetKey: String?, currentKey: String?, delayMs: Int, isLive: Boolean, timeshift: Boolean): DisplaySwitchHold = when {
-    delayMs <= 0 || targetKey == null || targetKey == currentKey -> DisplaySwitchHold.NONE
+    targetKey == null || targetKey == currentKey -> DisplaySwitchHold.NONE
     isLive && !timeshift -> DisplaySwitchHold.MUTE
     else -> DisplaySwitchHold.PAUSE
 }
-
-/**
- * Null keeps the current position; live streams are never rewound. A title paused right at its
- * start restarts at 0 only while it is still there: a resume position applied after the pause
- * (pausedAt read before the start seek landed) must not be thrown away.
- */
-internal fun displaySwitchResumeSeekMs(pausedAtMs: Long, isLive: Boolean, currentMs: Long = pausedAtMs): Long? =
-    if (!isLive && pausedAtMs < DisplaySwitchPause.RESTART_BELOW_MS && currentMs < DisplaySwitchPause.RESTART_BELOW_MS) 0L else null
 
 /**
  * Whether the held player was taken over by the user. Only an explicit play does that for live
@@ -104,10 +95,12 @@ internal suspend fun holdForDisplaySwitch(
     request: () -> Unit,
     awaitConfirmed: suspend (timeoutMs: Long) -> Boolean,
     stillOwned: () -> Boolean,
+    /** Already paused before the first rendered frame by [DisplayPlaybackStartup]. */
+    initiallyPaused: Boolean = false,
     hdmiAudio: HdmiAudioWatch? = null,
     nowMs: () -> Long = android.os.SystemClock::elapsedRealtime,
 ): DisplaySwitchOutcome {
-    val effective = if (hold == DisplaySwitchHold.PAUSE && !player.wantsToPlay()) DisplaySwitchHold.NONE else hold
+    val effective = if (hold == DisplaySwitchHold.PAUSE && !initiallyPaused && !player.wantsToPlay()) DisplaySwitchHold.NONE else hold
     if (effective == DisplaySwitchHold.NONE) {
         if (hdmiAudio == null) {
             request()
@@ -129,7 +122,9 @@ internal suspend fun holdForDisplaySwitch(
     var userTookOver = false
     var completed = false
     var audioReplugged = false
-    if (effective == DisplaySwitchHold.PAUSE) player.pause() else player.setOutputMuted(true)
+    if (effective == DisplaySwitchHold.PAUSE) {
+        if (!initiallyPaused) player.pause()
+    } else player.setOutputMuted(true)
     hdmiAudio?.start()
     try {
         val requestedAt = if (hdmiAudio != null) nowMs() else 0L
@@ -173,7 +168,8 @@ internal suspend fun holdForDisplaySwitch(
                 // Unmute even when the title changed: the engine can be reused by the next title.
                 runCatching { player.setOutputMuted(false) }
             } else if (!userTookOver && owned) {
-                displaySwitchResumeSeekMs(pausedAt, isLive, player.positionMs())?.let(player::seekTo)
+                // Never replay the opening seconds: the start lease held the initial frame,
+                // and a real resume position (including late source seeks) must survive HDMI.
                 player.play()
             }
             if (!completed) Timber.i("DisplaySwitchPause cancelled owned=%s", owned)
