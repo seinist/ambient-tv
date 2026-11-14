@@ -30,24 +30,83 @@ class DisplaySwitchPauseTest {
         override fun reopenGeneration() = generation
     }
 
-    @Test fun holdOnlyForARealModeChangeWithADelay() {
+    @Test fun holdOnlyForARealModeChangeEvenWithoutExtraDelay() {
         assertEquals(DisplaySwitchHold.NONE, displaySwitchHoldFor("a", "a", 3_000, isLive = false, timeshift = false))
-        assertEquals(DisplaySwitchHold.NONE, displaySwitchHoldFor("b", "a", 0, isLive = false, timeshift = false))
+        assertEquals(DisplaySwitchHold.PAUSE, displaySwitchHoldFor("b", "a", 0, isLive = false, timeshift = false))
         assertEquals(DisplaySwitchHold.NONE, displaySwitchHoldFor(null, "a", 3_000, isLive = false, timeshift = false))
         assertEquals(DisplaySwitchHold.PAUSE, displaySwitchHoldFor("b", "a", 500, isLive = false, timeshift = false))
         assertEquals(DisplaySwitchHold.PAUSE, displaySwitchHoldFor("b", null, 500, isLive = false, timeshift = false))
+    }
+
+
+    @Test fun freshTvVodStartsHeldOnlyWhenARealDisplayPolicyMaySwitch() {
+        val eligible: (Boolean, Boolean, Boolean, Boolean, Boolean, Int, String, String) -> Boolean =
+            ::shouldHoldInitialDisplayPlayback
+        assertTrue(eligible(true, true, false, false, true, 3,
+            AppPreferences.DISPLAY_REFRESH_START_STOP, AppPreferences.DISPLAY_MODE_AUTO_CONTENT))
+        assertFalse(eligible(false, true, false, false, true, 3,
+            AppPreferences.DISPLAY_REFRESH_START_STOP, AppPreferences.DISPLAY_MODE_AUTO_CONTENT))
+        assertFalse(eligible(true, false, false, false, true, 3,
+            AppPreferences.DISPLAY_REFRESH_START_STOP, AppPreferences.DISPLAY_MODE_AUTO_CONTENT))
+        assertFalse(eligible(true, true, true, false, true, 3,
+            AppPreferences.DISPLAY_REFRESH_START_STOP, AppPreferences.DISPLAY_MODE_AUTO_CONTENT))
+        assertFalse(eligible(true, true, false, true, true, 3,
+            AppPreferences.DISPLAY_REFRESH_START_STOP, AppPreferences.DISPLAY_MODE_AUTO_CONTENT))
+        assertFalse(eligible(true, true, false, false, false, 3,
+            AppPreferences.DISPLAY_REFRESH_START_STOP, AppPreferences.DISPLAY_MODE_AUTO_CONTENT))
+        assertFalse(eligible(true, true, false, false, true, 1,
+            AppPreferences.DISPLAY_REFRESH_START_STOP, AppPreferences.DISPLAY_MODE_AUTO_CONTENT))
+        assertFalse(eligible(true, true, false, false, true, 3,
+            AppPreferences.DISPLAY_REFRESH_OFF, "system"))
+        assertTrue(eligible(true, true, false, false, true, 3,
+            AppPreferences.DISPLAY_REFRESH_OFF, "3840x2160@50.000"))
+    }
+
+    @Test fun initialHoldWaitsForPhysicalConfirmationWithoutPlayingOrSeeking() = runTest {
+        // The shared session paused the VOD before its first frame; don't pause a second time.
+        val player = FakePlayer(playing = false, position = 0)
+        val confirmed = CompletableDeferred<Boolean>()
+        val result = async {
+            holdForDisplaySwitch(player, DisplaySwitchHold.PAUSE, 0, isLive = false,
+                request = { player.events += "request" },
+                awaitConfirmed = { confirmed.await() }, stillOwned = { true },
+                initiallyPaused = true)
+        }
+        runCurrent()
+        assertEquals(listOf("request"), player.events)
+        advanceTimeBy(1_000); runCurrent()
+        assertFalse(player.playing)
+        // The decoder may discover the server's original resume position while waiting.
+        player.position = 320_000
+        confirmed.complete(true)
+        advanceUntilIdle()
+        assertEquals(DisplaySwitchOutcome.RESUMED, result.await())
+        assertEquals(listOf("request", "play"), player.events)
+        assertEquals(320_000L, player.position)
+    }
+
+    @Test fun initialHoldRespectsManualPauseInsteadOfResuming() = runTest {
+        val player = FakePlayer(playing = false)
+        val confirmed = CompletableDeferred<Boolean>()
+        var owned = true
+        val result = async {
+            holdForDisplaySwitch(player, DisplaySwitchHold.PAUSE, 0, isLive = false,
+                request = {}, awaitConfirmed = { confirmed.await() },
+                stillOwned = { owned }, initiallyPaused = true)
+        }
+        runCurrent()
+        owned = false
+        confirmed.complete(true)
+        advanceUntilIdle()
+        assertEquals(DisplaySwitchOutcome.RESUMED, result.await())
+        assertFalse(player.playing)
+        assertTrue(player.events.isEmpty())
     }
 
     @Test fun liveTvPausesWithTimeshiftAndOnlyMutesWithout() {
         assertEquals(DisplaySwitchHold.PAUSE, displaySwitchHoldFor("b", "a", 3_000, isLive = true, timeshift = true))
         assertEquals(DisplaySwitchHold.MUTE, displaySwitchHoldFor("b", "a", 3_000, isLive = true, timeshift = false))
         assertEquals(DisplaySwitchHold.NONE, displaySwitchHoldFor("a", "a", 3_000, isLive = true, timeshift = false))
-    }
-
-    @Test fun earlyPositionsRestartButLiveIsNeverRewound() {
-        assertEquals(0L, displaySwitchResumeSeekMs(2_999, isLive = false))
-        assertNull(displaySwitchResumeSeekMs(3_000, isLive = false))
-        assertNull(displaySwitchResumeSeekMs(500, isLive = true))
     }
 
     @Test fun valuesSnapToHalfSecondStepsBetweenOffAndTwentySeconds() {
@@ -118,11 +177,12 @@ class DisplaySwitchPauseTest {
         assertTrue(currentTime in 6_500L..6_600L)
     }
 
-    @Test fun earlyPositionRestartsFromTheBeginning() = runTest {
+    @Test fun earlyPositionIsNotReplayedAfterHdmiConfirmation() = runTest {
         val player = FakePlayer(position = 1_200)
         holdForDisplaySwitch(player, DisplaySwitchHold.PAUSE, 500, isLive = false, request = {},
             awaitConfirmed = { true }, stillOwned = { true })
-        assertEquals(listOf("pause", "seek:0", "play"), player.events)
+        assertEquals(listOf("pause", "play"), player.events)
+        assertEquals(1_200L, player.position)
     }
 
     @Test fun userPlayOrSeekCancelsTheAutoResume() = runTest {
@@ -219,7 +279,6 @@ class DisplaySwitchPauseTest {
         runCurrent(); player.position = 1_800_000; player.generation++
         assertEquals(DisplaySwitchOutcome.RESUMED, result.await())
         assertEquals(listOf("pause", "play"), player.events)
-        assertNull(displaySwitchResumeSeekMs(0, isLive = false, currentMs = 1_800_000))
     }
 
     @Test fun muteIsUndoneEvenWhenTheTitleChanged() = runTest {

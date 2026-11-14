@@ -660,9 +660,9 @@
     <string name="settings_display_allow_3_2">Allow 3:2 pulldown (24→60 Hz)</string>
     <string name="settings_display_sync_playback">Sync playback to display</string>
     <string name="settings_display_sync_playback_hint">Smoother picture. MPV only.</string>
-    <string name="settings_display_switch_pause">Pause on display switch</string>
-    <string name="settings_display_switch_pause_hint">Waits until the picture is steady before the mode changes.</string>
-    <string name="settings_display_switch_pause_off">Off</string>
+    <string name="settings_display_switch_pause">Extra delay after display switch</string>
+    <string name="settings_display_switch_pause_hint">Playback waits for the display mode change. Optionally add time for HDMI/AV receivers to stabilize.</string>
+    <string name="settings_display_switch_pause_off">No extra delay</string>
     <string name="settings_display_switch_pause_seconds">%1$s s</string>
     <string name="settings_display_switch_pause_recommended">%1$s · AV receiver</string>
     <string name="settings_display_modes_unavailable">No alternative display modes available.</string>

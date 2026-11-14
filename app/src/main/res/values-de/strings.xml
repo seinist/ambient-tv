@@ -660,9 +660,9 @@
     <string name="settings_display_allow_3_2">3:2-Pulldown erlauben (24→60 Hz)</string>
     <string name="settings_display_sync_playback">An Display synchronisieren</string>
     <string name="settings_display_sync_playback_hint">Ruckelfreies Bild. Nur mit MPV.</string>
-    <string name="settings_display_switch_pause">Pause bei Moduswechsel</string>
-    <string name="settings_display_switch_pause_hint">Wartet, bis das Bild steht, bevor der Modus wechselt.</string>
-    <string name="settings_display_switch_pause_off">Aus</string>
+    <string name="settings_display_switch_pause">Zusätzliche Wartezeit nach Moduswechsel</string>
+    <string name="settings_display_switch_pause_hint">Die Wiedergabe wartet auf den Displaywechsel. Optional zusätzliche Zeit für HDMI/AV-Receiver einstellen.</string>
+    <string name="settings_display_switch_pause_off">Keine Zusatzzeit</string>
     <string name="settings_display_switch_pause_seconds">%1$s s</string>
     <string name="settings_display_switch_pause_recommended">%1$s · AV-Receiver</string>
     <string name="settings_display_modes_unavailable">Keine alternativen Anzeigemodi verfügbar.</string>

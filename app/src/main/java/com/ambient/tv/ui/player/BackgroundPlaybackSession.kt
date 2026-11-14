@@ -367,6 +367,7 @@ object BackgroundPlaybackSession {
         }
         clearPauseRewind()
         val previous = handle
+        DisplayPlaybackStartup.clearFor(previous)
         val replacementPlayIntent = current.wantsToPlay.takeIf { current.replacingSource }
         val samePlayback = previous != null && current.metadata?.let { previousMetadata ->
             previousMetadata.route == metadata.route &&
@@ -463,8 +464,12 @@ object BackgroundPlaybackSession {
             // Constructors already request Play; only carry an explicit pending Pause.
             if (!replacementPlayIntent) created.pause()
         }
+        // Prepare and discover the source format, but do not visibly play its first frames
+        // before a TV's automatic resolution/refresh change has completed.
+        DisplayPlaybackStartup.arm(context, metadata, created, samePlayback)
         mutableSnapshot.value = Snapshot(
-            metadata, backend, created.status(), ++generation, wantsToPlay = created.wantsToPlay(),
+            metadata, backend, created.status(), ++generation,
+            wantsToPlay = created.wantsToPlay() || DisplayPlaybackStartup.isWaiting(created),
             completedByNavigation = samePlayback && current.completedByNavigation,
         )
         if (previous != null || current.replacingSource) PlaybackOutputTransition.begin(context)
@@ -551,6 +556,7 @@ object BackgroundPlaybackSession {
         pauseRewindOwner = null
         val current = snapshot.value
         val previous = handle
+        DisplayPlaybackStartup.clearFor(previous)
         val status = previous?.status() ?: current.status
         val playIntent = playWhenReadyOverride ?: previous?.wantsToPlay() ?: if (current.active) current.wantsToPlay else true
         appContext?.let { context ->
@@ -659,7 +665,8 @@ object BackgroundPlaybackSession {
         }
         val current = snapshot.value
         mutableSnapshot.value = current.copy(status = status,
-            wantsToPlay = if (current.replacingSource) current.wantsToPlay else player.wantsToPlay())
+            wantsToPlay = if (current.replacingSource) current.wantsToPlay
+                else player.wantsToPlay() || DisplayPlaybackStartup.isWaiting(player))
         SleepSession.tick(sleepTarget)
     }
 
@@ -682,6 +689,7 @@ object BackgroundPlaybackSession {
 
     fun play() {
         checkThread()
+        DisplayPlaybackStartup.userOverride(handle)
         clearPauseRewind()
         handle?.play()
         if (snapshot.value.replacingSource) mutableSnapshot.value = snapshot.value.copy(wantsToPlay = true)
@@ -689,12 +697,13 @@ object BackgroundPlaybackSession {
     }
     fun pause() {
         checkThread()
+        DisplayPlaybackStartup.userOverride(handle)
         clearPauseRewind()
         handle?.pause()
         if (snapshot.value.replacingSource) mutableSnapshot.value = snapshot.value.copy(wantsToPlay = false)
         tick()
     }
-    fun toggle() { if (handle?.wantsToPlay() ?: snapshot.value.wantsToPlay) pause() else play() }
+    fun toggle() { if (DisplayPlaybackStartup.isWaiting(handle) || (handle?.wantsToPlay() ?: snapshot.value.wantsToPlay)) pause() else play() }
 
     /** One current global value for keyboard, touch and transport buttons, including panel edits. */
     fun seekJumpMs(fallbackMs: Long): Long =
@@ -731,7 +740,8 @@ object BackgroundPlaybackSession {
         resumeRequestVersion++
         registerUserInteraction()
         val player = handle
-        val wasPlaying = player?.wantsToPlay() == true
+        val wasPlaying = player?.wantsToPlay() == true || DisplayPlaybackStartup.isWaiting(player)
+        DisplayPlaybackStartup.userOverride(player)
         val eligible = player != null && resumeCapabilities().pauseRewind
         if (wasPlaying && eligible) {
             pauseRewindOwner = player
@@ -751,6 +761,7 @@ object BackgroundPlaybackSession {
         if (resumePreparationPending) return // Repeated Play must not bypass the pending seek.
         val requestVersion = ++resumeRequestVersion
         val player = handle
+        DisplayPlaybackStartup.userOverride(player)
         val metadata = snapshot.value.metadata
         val prefs = subtitlePreferences
         val buffer = com.ambient.tv.livetv.LiveTimeshift.current.takeIf { metadata?.isLive == true }
@@ -803,12 +814,14 @@ object BackgroundPlaybackSession {
 
     fun userToggle() {
         checkThread()
-        if (resumePreparationPending || (handle?.wantsToPlay() ?: snapshot.value.wantsToPlay)) userPause() else userPlay()
+        if (DisplayPlaybackStartup.isWaiting(handle) || resumePreparationPending ||
+            (handle?.wantsToPlay() ?: snapshot.value.wantsToPlay)) userPause() else userPlay()
     }
 
     /** Call when the user begins a seek, including an uncommitted timeline preview. */
     fun userSeek() {
         checkThread()
+        DisplayPlaybackStartup.userOverride(handle)
         clearPauseRewind()
         clearUserEndSeek()
         externalSeekVersion++
@@ -902,6 +915,7 @@ object BackgroundPlaybackSession {
         PlaybackOutputTransition.clear()
         if (keepSleepTimer || preserveNextUpChain) SleepSession.end(sleepTarget, keep = true) else SleepSession.end(sleepTarget)
         val previous = handle
+        DisplayPlaybackStartup.clearFor(previous)
         appContext?.let { context ->
             runCatching { TitleVideoSettingsStore.capture(context, snapshot.value.metadata, previous, videoSettingsOverride) }
         }
