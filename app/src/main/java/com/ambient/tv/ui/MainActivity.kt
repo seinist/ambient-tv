@@ -2958,6 +2958,20 @@ private fun AmbientTvApp(
                                     title = item.title,
                                 )
                             },
+                            onPlayVersion = { item, index ->
+                                val version = item.mediaVersions[index]
+                                playOnSelectedTarget(
+                                    Destinations.player(
+                                        item.ratingKey, index, collectionId = collectionId, collectionSort = collectionSort,
+                                        detailOrigin = item.type == "episode",
+                                        explicitVersion = true,
+                                        versionSourceKey = version.sourceRatingKey ?: item.ratingKey,
+                                        versionSourceIndex = version.sourceMediaIndex,
+                                        versionSourceId = version.sourceId,
+                                    ),
+                                    title = item.title,
+                                )
+                            },
                             onOpenChild = { child -> handleMediaSelection(child.ratingKey, collectionId, collectionSort) },
                             onOpenEpisode = { episode -> navigateToDetails(episode.ratingKey, collectionId, collectionSort) },
                             onOpenSeason = { season ->
@@ -3064,6 +3078,10 @@ private fun AmbientTvApp(
                             navArgument("collectionId") { type = NavType.StringType; defaultValue = "" },
                             navArgument("collectionSort") { type = NavType.StringType; defaultValue = "" },
                             navArgument("detailOrigin") { type = NavType.BoolType; defaultValue = false },
+                            navArgument("explicitVersion") { type = NavType.BoolType; defaultValue = false },
+                            navArgument("versionSourceKey") { type = NavType.StringType; defaultValue = "" },
+                            navArgument("versionSourceIndex") { type = NavType.IntType; defaultValue = -1 },
+                            navArgument("versionSourceId") { type = NavType.StringType; defaultValue = "" },
                         ),
                     ) { entry ->
                         val collectionId = entry.arguments?.getString("collectionId")?.takeIf { it.isNotBlank() }

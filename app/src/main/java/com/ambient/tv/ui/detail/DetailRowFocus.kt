@@ -1,6 +1,8 @@
 package com.ambient.tv.ui.detail
 
 import com.ambient.tv.domain.model.MediaItem
+import com.ambient.tv.domain.model.MediaVersion
+import com.ambient.tv.ui.common.formatResolution
 
 /** Only identifiers live for the app session; no screen, focus requester or saved-state bundle. */
 internal class DetailFocusMemory {
@@ -129,6 +131,26 @@ internal fun detailRowForFocusKey(key: String?): String? = when {
     key.startsWith("actor:") -> key.substringBefore('\u0000')
     key.startsWith("collection:") -> "collections"
     else -> key.substringBefore(':')
+}
+
+/**
+ * Resolution is only a quality label, not a physical file identity. When versions share it,
+ * number the buttons while keeping the distinct file names and full source list below them.
+ */
+internal fun detailVersionLabels(versions: List<MediaVersion>): List<String> {
+    val resolutions = versions.mapIndexed { index, version ->
+        formatResolution(version.resolution) ?: "#${index + 1}"
+    }
+    val frequencies = resolutions.groupingBy { it }.eachCount()
+    val occurrences = mutableMapOf<String, Int>()
+    return resolutions.map { label ->
+        if (frequencies.getValue(label) == 1) label
+        else {
+            val number = occurrences.getOrDefault(label, 0) + 1
+            occurrences[label] = number
+            "$label #$number"
+        }
+    }
 }
 
 /** Keep focus on the same physical source when late metadata inserts or reorders versions. */
