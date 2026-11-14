@@ -100,8 +100,15 @@ internal fun BrowseStartupFollowFirst(
         if (owner == null || target == null || !follows || !enabled || !active || handheld) return@LaunchedEffect
         repeat(16) {
             if (!gate.followsFirst(explicitReturn) || !enabled || !active) return@LaunchedEffect
-            owner.requestContentFocus(target)
-            if (owner.hasFocus(target)) return@LaunchedEffect
+            // Do not steal focus from the sidebar, a filter chip or the page header. Those
+            // controls own the current navigation, even if the data is still updating.
+            // The normal sidebar entry already requests the initial first tile; this
+            // reconciliation only redirects a tile that actually holds content focus.
+            if (owner.focusedContentKey != null) {
+                if (owner.hasFocus(target)) return@LaunchedEffect
+                owner.requestContentFocus(target)
+                if (owner.hasFocus(target)) return@LaunchedEffect
+            }
             withFrameNanos { }
         }
     }
