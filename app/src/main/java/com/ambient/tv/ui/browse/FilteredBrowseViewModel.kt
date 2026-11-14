@@ -59,6 +59,8 @@ class FilteredBrowseViewModel internal constructor(
     val reconnectSources: Set<String> = setOf(com.ambient.tv.data.browse.mediaProvider(id))
     val title: String = checkNotNull(savedStateHandle.get<String>("title"))
     private val stateKey = "browse:$kind:$id"
+    /** Process-local initial focus is shared across the same actor/collection destination. */
+    internal val focusScopeKey: String get() = stateKey
     /** The selected layout is available before the first fetch completes. */
     val loadingViewMode: BrowseViewMode get() = viewMode()
     private var sourceItems: List<MediaItem> = emptyList()
