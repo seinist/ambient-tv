@@ -871,7 +871,11 @@ internal fun DetailContent(
                                 if (focusMemory.key == "hero:trailer") focusMemory.record(null)
                                 onPlay(media, version, restart)
                             },
-                            onPlayVersion = onPlayVersion,
+                            onPlayVersion = { media, index ->
+                                restoreTrailer = false
+                                if (focusMemory.key == "hero:trailer") focusMemory.record(null)
+                                onPlayVersion(media, index)
+                            },
                             onMore = {
                                 moreOpened = true
                                 showMore = true
