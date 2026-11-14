@@ -105,7 +105,10 @@ class PlaybackSeekCoordinatorTest {
         assertEquals(70_000L, seek.displayedPosition(69_600L))
         assertEquals(70_000L, seek.pendingTarget)
         now = 2_300L
-        assertEquals(70_200L, seek.displayedPosition(70_200L))
+        assertEquals(70_000L, seek.displayedPosition(70_200L))
+        // A post-rewind alignment still needs the normal stability window.
+        now = 2_850L
+        assertEquals(70_750L, seek.displayedPosition(70_750L))
         assertNull(seek.pendingTarget)
     }
 
