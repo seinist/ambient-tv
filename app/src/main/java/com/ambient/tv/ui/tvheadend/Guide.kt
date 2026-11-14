@@ -447,7 +447,6 @@ internal fun LiveTvChannelBrowser(
                     alphabetTarget.value = visibleChannels.getOrNull(index)?.uuid
                     jumpTo(index, false)
                 }, gridFocus = contentFocus, modifier = Modifier.fillMaxHeight(), firstEntryFocusRequester = alphabetFocus,
-                    actionsFocus = pageFocusChain?.actions,
                     onReturnToContent = {
                         val target = visibleChannels.indexOfFirst { it.uuid == alphabetTarget.value }.takeIf { it >= 0 } ?: listState.firstVisibleItemIndex
                         jumpTo(target, true)
@@ -470,7 +469,6 @@ private fun GuideAlphabetBar(
     gridFocus: FocusRequester,
     modifier: Modifier,
     firstEntryFocusRequester: FocusRequester,
-    actionsFocus: FocusRequester?,
     onReturnToContent: () -> Unit,
 ) {
     val lettersById = remember(channels) { channels.associate { it.uuid to guideIndexLetter(it.name) } }
@@ -478,7 +476,7 @@ private fun GuideAlphabetBar(
         ?: channels.getOrNull(listState.firstVisibleItemIndex)?.let { guideIndexLetter(it.name) }
     AlphabetBar(
         letters, selectedLetter, onSelect, gridFocus, modifier, onReturnToContent,
-        firstEntryFocusRequester, actionsFocus,
+        firstEntryFocusRequester,
     )
 }
 
