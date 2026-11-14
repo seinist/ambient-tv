@@ -160,12 +160,17 @@ import androidx.lifecycle.repeatOnLifecycle
         if (browseSectioned) populatedRows.map { row -> row.id to row.items.map { it.videoId } }
         else listOf(flatFocusRow to populatedRows.flatMap { it.items }.map { it.videoId }.distinct())
     }
+    val startupFocus = rememberBrowseStartupFocusGate(
+        "youtube:${state.feed.key}:${state.channel?.channelId.orEmpty()}",
+        explicitReturn = preparedReturn != null,
+    )
+    val followFirst = startupFocus.followsFirst(preparedReturn != null)
     val focusMemory = remember(state.feed, state.channel?.channelId, state.query, state.filter,
         state.sort, state.sortDescending, state.viewMode, state.returnFocusRevision) { ContentRefreshFocusMemory() }
-    val contentFocusTarget = remember(focusMemory, focusRows, preparedReturn?.target) {
+    val contentFocusTarget = remember(focusMemory, focusRows, preparedReturn?.target, followFirst) {
         focusMemory.resolve(
-            savedItemId = preparedReturn?.target?.itemId ?: viewModel.focusedVideoId(state.feed),
-            savedRowId = if (browseSectioned) preparedReturn?.target?.rowId ?: viewModel.focusedRowId(state.feed)
+            savedItemId = preparedReturn?.target?.itemId ?: if (followFirst) null else viewModel.focusedVideoId(state.feed),
+            savedRowId = if (browseSectioned) preparedReturn?.target?.rowId ?: if (followFirst) null else viewModel.focusedRowId(state.feed)
                 else flatFocusRow,
             rows = focusRows,
         )
@@ -175,6 +180,16 @@ import androidx.lifecycle.repeatOnLifecycle
         restoreInitialTarget = true)
     com.ambient.tv.ui.common.BrowseFocusInitialTarget(contentFocusTarget.itemId, contentFocusTarget.rowId)
     BrowseFocusRefreshRecovery(focusRows)
+    // A cached feed is provisional until genuine navigation. When the network prepends new
+    // videos or an entire row, focus their new first tile instead of the old cached tile.
+    BrowseStartupFollowFirst(
+        gate = startupFocus,
+        target = focusRows.firstOrNull { it.second.isNotEmpty() }?.let { (row, items) ->
+            BrowseFocusKey(row, items.first(), true)
+        },
+        explicitReturn = preparedReturn != null,
+        enabled = !state.loading && !showViewOptions && filterFocusState.allowContentAutoFocus,
+    )
     val playbackReturn = rememberBrowsePlaybackReturn(
         token = playbackVisitRevision,
         target = contentFocusTarget.itemId?.let { BrowseFocusKey(contentFocusTarget.rowId, it, true) },
@@ -239,7 +254,8 @@ import androidx.lifecycle.repeatOnLifecycle
     val filterModel = youtubeFilterModel(state, viewModel)
     val filterBarShown = com.ambient.tv.ui.common.LocalFilterBarSetting.current.shown
     CompositionLocalProvider(LocalFilterFocusState provides filterFocusState) {
-    Box(Modifier.fillMaxSize().cancelBrowseRefreshRecoveryOnInput()) { Column(Modifier.fillMaxSize().focusProperties { onEnter = { if (showViewOptions) cancelFocusChange() } }.focusGroup()) {
+    Box(Modifier.fillMaxSize().cancelBrowseRefreshRecoveryOnInput()
+        .claimBrowseStartupFocusOnInput(startupFocus)) { Column(Modifier.fillMaxSize().focusProperties { onEnter = { if (showViewOptions) cancelFocusChange() } }.focusGroup()) {
         Header(
             focusChain = focusChain,
             state,

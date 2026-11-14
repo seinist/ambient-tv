@@ -288,8 +288,11 @@ class HomeViewModel @Inject constructor(
     private var activeFocusedRatingKey: String? = null
     private var activeFocusedRowId: String? = null
     private var homeFocusStateKey = HOME_FOCUS_STATE_KEY
-    private var persistedHomeFocusKey: String? = appPreferences.sectionFocus(homeFocusStateKey)
-    private var persistedHomeFocusRowId: String? = appPreferences.sectionFocusRow(homeFocusStateKey)
+    // Persisted focus is for in-session return only; a new app process must not seed its
+    // first Home/overview render from yesterday's card. The live ViewModel retains focus
+    // normally after the viewer navigates, and explicit player returns still win.
+    private var persistedHomeFocusKey: String? = null
+    private var persistedHomeFocusRowId: String? = null
     private var homeFocusPersistenceJob: Job? = null
 
     // Focus moves update only the pinned banner. Keeping it out of uiState prevents every D-pad
@@ -595,8 +598,8 @@ class HomeViewModel @Inject constructor(
         if (homeFocusStateKey != focusStateKey) {
             trailerPlaybackReturn.clear()
             homeFocusStateKey = focusStateKey
-            persistedHomeFocusKey = appPreferences.sectionFocus(focusStateKey)
-            persistedHomeFocusRowId = appPreferences.sectionFocusRow(focusStateKey)
+            persistedHomeFocusKey = null
+            persistedHomeFocusRowId = null
             activeFocusKnown = false
             activeFocusedRatingKey = null
             activeFocusedRowId = null
