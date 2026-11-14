@@ -205,7 +205,14 @@ fun HomeScreen(
     val homeHeroStyleKey = viewModel.homeHeroStyleKey
     val homeHeroIntensityPercent = viewModel.homeHeroIntensityPercent
     val homeHeroSpreadKey = viewModel.homeHeroSpreadKey
-    val focusSnapshot = preparedReturn?.let { HomeFocusSnapshot(it.focusedRatingKey, it.focusedRowId) }
+    // The disk-persisted row/card is a return address, not a cold-start landing. Until
+    // actual user input, show the current first card even if a cached Home had an old focus.
+    val startupFocus = com.ambient.tv.ui.common.rememberBrowseStartupFocusGate(
+        "home:$focusStateKey", explicitReturn = entryReturn != null,
+    )
+    val focusSnapshot = if (startupFocus.followsFirst(entryReturn != null))
+        HomeFocusSnapshot(null, null)
+    else preparedReturn?.let { HomeFocusSnapshot(it.focusedRatingKey, it.focusedRowId) }
         ?: viewModel.focusSnapshot()
     val activeDestination = com.ambient.tv.ui.common.isActiveNavigationDestination()
     var acceptedReturnKey by remember(focusStateKey) { mutableStateOf<String?>(null) }
@@ -333,7 +340,9 @@ fun HomeScreen(
     // The overview's focus backdrop runs behind its header too, like the library pages: no dark
     // strip above the rows, the header actions sit on the artwork beside the title.
     val overviewRowsScrolling = remember { MutableStateFlow(false) }
-    Box(Modifier.fillMaxSize()) {
+    Box(Modifier.fillMaxSize().then(
+        com.ambient.tv.ui.common.Modifier.claimBrowseStartupFocusOnInput(startupFocus)
+    )) {
     if (systemOverview && !LocalHandheldUi.current) HomeFocusBackdrop(heroContent, overviewRowsScrolling)
     Column(Modifier.fillMaxSize()) {
         if (!systemOverview) com.ambient.tv.update.UpdateHomeCard()
@@ -386,6 +395,7 @@ fun HomeScreen(
                         homeHeroIntensityPercent = homeHeroIntensityPercent,
                         homeHeroSpreadKey = homeHeroSpreadKey,
                         focusSnapshot = focusSnapshot,
+                        startupFocus = startupFocus,
                         onItemClick = openItem,
                         onTelegramRowItemClick = { rowId, key ->
                             viewModel.captureFocusForReturn()
@@ -694,6 +704,7 @@ internal fun LibraryContent(
     },
     returnToken: Any? = state.playbackReturnRevision.takeIf { it > 0 },
     returnFocus: com.ambient.tv.ui.common.BrowsePlaybackReturn? = null,
+    startupFocus: com.ambient.tv.ui.common.BrowseStartupFocusGate? = null,
 ) {
     // Keep partial rows out of the focus tree until the initial library load settles.
     if (state.loading && (state.rowKeys.isEmpty() || state.initialFocusTarget != HomeInitialFocusTarget.NONE)) {
@@ -874,6 +885,14 @@ internal fun LibraryContent(
             initialItemKey,
             initialFocusRowId,
         )
+        startupFocus?.let { gate ->
+            com.ambient.tv.ui.common.BrowseStartupFollowFirst(
+                gate = gate,
+                target = homeFirstBrowseFocusKey(state),
+                explicitReturn = returnToken != null,
+                enabled = true,
+            )
+        }
         val browseFocus = com.ambient.tv.ui.common.LocalBrowseFocusReturnState.current
         LaunchedEffect(rowListState) {
             snapshotFlow { rowListState.isScrollInProgress }.collect { rowsScrolling.value = it }
@@ -1144,6 +1163,25 @@ internal fun LibraryContent(
     }
 }
 
+/**
+ * Home has media, TV, shortcuts and offline rows. Every first-card target must agree with
+ * RegisterBrowseFocusRows, including the leading guide/channels card of a live row. Using
+ * the displayed rowKeys (rather than provider response order) also handles a newly inserted
+ * row above the cached first row.
+ */
+internal fun homeFirstBrowseFocusKey(state: HomeUiState.Loaded): com.ambient.tv.ui.common.BrowseFocusKey? {
+    for (rowKey in state.rowKeys) {
+        val itemKey: String? = when {
+            rowKey.startsWith(HOME_OFFLINE_ROW_PREFIX) -> rowKey.removePrefix(HOME_OFFLINE_ROW_PREFIX)
+            rowKey in state.tvRows -> if (rowKey.startsWith("recent-tv")) ChannelsTileKey else GuideTileKey
+            rowKey.startsWith("shortcut:") -> rowKey.removePrefix("shortcut:")
+            else -> state.rows.firstOrNull { it.id == rowKey }?.items?.firstOrNull()?.ratingKey
+        }
+        if (itemKey != null) return com.ambient.tv.ui.common.BrowseFocusKey(rowKey, itemKey, true)
+    }
+    return null
+}
+
 /** An offline server's place on Home: its name and the one action that wakes and reconnects it. */
 @Composable
 private fun HomeOfflineRow(system: String, columnFocus: RowColumnFocus?, rowKey: String, onFocused: () -> Unit) {
@@ -1161,7 +1199,9 @@ private fun HomeOfflineRow(system: String, columnFocus: RowColumnFocus?, rowKey:
                 text = offlineActionLabel(gate, system),
                 onClick = { vm.retrySystem(system) },
                 loading = gate.retrying,
-                modifier = Modifier.rowColumnFocusTarget(columnFocus, rowKey, system, soundsOnFocus = true).onFocusChanged { if (it.isFocused) onFocused() },
+                modifier = Modifier.rowColumnFocusTarget(columnFocus, rowKey, system, soundsOnFocus = true)
+                    .browseFocusTarget(system, rowKey = rowKey)
+                    .onFocusChanged { if (it.isFocused) onFocused() },
             )
         }
     }
@@ -1198,7 +1238,9 @@ private fun HomeShortcutRow(
                     else -> row.displayTitle(LocalContext.current)
                 },
                 onClick = { onOpen(row) },
-                modifier = Modifier.rowColumnFocusTarget(columnFocus, rowKey, row.id, soundsOnFocus = true).focusRequester(firstFocus).onFocusChanged { if (it.isFocused) onFocused(row) },
+                modifier = Modifier.rowColumnFocusTarget(columnFocus, rowKey, row.id, soundsOnFocus = true)
+                    .browseFocusTarget(row.id, rowKey = rowKey)
+                    .focusRequester(firstFocus).onFocusChanged { if (it.isFocused) onFocused(row) },
             )
         }
     }
@@ -1352,6 +1394,7 @@ internal fun HomeLiveTvRow(
                             onClick = onOpenChannels,
                             modifier = Modifier
                                 .rowColumnFocusTarget(columnFocus, rowKey, ChannelsTileKey)
+                                .browseFocusTarget(ChannelsTileKey, rowKey = rowKey)
                                 .then(anchorModifier),
                         )
                     }
@@ -1363,6 +1406,7 @@ internal fun HomeLiveTvRow(
                             onClick = onOpenGuide,
                             modifier = Modifier
                                 .rowColumnFocusTarget(columnFocus, rowKey, GuideTileKey)
+                                .browseFocusTarget(GuideTileKey, rowKey = rowKey)
                                 .then(anchorModifier),
                         )
                     }
@@ -1376,6 +1420,7 @@ internal fun HomeLiveTvRow(
                         onFocused = { onItemFocused(item) },
                         modifier = Modifier
                             .rowColumnFocusTarget(columnFocus, rowKey, "${item.channel.sourceId}:${item.channel.uuid}")
+                            .browseFocusTarget("${item.channel.sourceId}:${item.channel.uuid}", rowKey = rowKey)
                             .then(if (lazyIndex == 0) anchorModifier else Modifier),
                     )
                 }
