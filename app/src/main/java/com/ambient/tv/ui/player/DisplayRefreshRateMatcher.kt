@@ -658,6 +658,10 @@ fun rememberDisplayModeRequest(
             if (!format.hasRate && !format.hasSize) return@LaunchedEffect
             val needsSize = displayFormatNeedsSize(preferredModeKey, whitelist.isNotEmpty())
             if (needsSize && !format.hasSize) return@LaunchedEffect
+            // During the first-frame gate wait for actual cadence, not just an early width/
+            // height callback. Selecting a mode for 0 fps can force a second HDMI switch.
+            if (DisplayPlaybackStartup.isWaiting(BackgroundPlaybackSession.activeHandle()) && !format.hasRate)
+                return@LaunchedEffect
             // Decoder size/FPS callbacks arrive separately; settle them before requesting HDMI.
             // A newer format cancels this effect and starts with the complete source format.
             delay(500)
@@ -690,7 +694,10 @@ fun rememberDisplayModeRequest(
                     preserveRefreshRate = interpolation,
                     preserveOutputResolution = rendererScaling,
                     requiredHdrType = requiredHdrType,
-                ) ?: return@LaunchedEffect
+                ) ?: run {
+                    DisplayPlaybackStartup.releaseIfWaiting(BackgroundPlaybackSession.activeHandle())
+                    return@LaunchedEffect
+                }
                 // Only the first request may pause; a retry must not hold playback a second time.
                 if (attempt == 0) switchWithPause(selected)?.join()
                 else DisplayRefreshRateMatcher.requestDisplayMode(activity, selected)
