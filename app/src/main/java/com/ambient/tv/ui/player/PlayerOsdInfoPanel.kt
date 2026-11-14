@@ -15,6 +15,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import com.ambient.tv.R
+import com.ambient.tv.ui.mobile.LocalHandheldUi
 import com.ambient.tv.ui.common.PlayerDropUpSelector
 import com.ambient.tv.ui.common.PlayerOsdTimeout
 import com.ambient.tv.ui.common.PlayerPanelEntry
@@ -31,9 +32,10 @@ private enum class OsdInfoEntry(@StringRes val summary: Int, @StringRes val sect
 }
 
 /** The description and the submenu use the same entries for the current player. */
-private fun osdInfoEntries(audioSession: AudioSession?, hasVideo: Boolean): List<OsdInfoEntry> = buildList {
+private fun osdInfoEntries(audioSession: AudioSession?, hasVideo: Boolean, tvRemote: Boolean): List<OsdInfoEntry> = buildList {
     if (activeOsdPlayer?.offeredButtons()?.let { filterVideoDiagnosticButtons(it, hasVideo).isNotEmpty() } == true) add(OsdInfoEntry.BUTTONS)
     add(OsdInfoEntry.DURATION)
+    if (tvRemote) add(OsdInfoEntry.NAVIGATION_MODE)
     add(OsdInfoEntry.CODECS)
     if (hasVideo && audioSession?.audioOnly == false) {
         add(OsdInfoEntry.FPS)
@@ -47,7 +49,7 @@ internal fun PlayerOsdInfoPanelEntry(audioSession: AudioSession?, hasVideo: Bool
     PlayerPanelEntry(
         icon = Icons.Filled.Tune,
         title = stringResource(R.string.player_osd_info),
-        value = osdInfoEntries(audioSession, hasVideo).map { stringResource(it.summary) }.joinToString(" · "),
+        value = osdInfoEntries(audioSession, hasVideo, tvRemote = !LocalHandheldUi.current).map { stringResource(it.summary) }.joinToString(" · "),
         onClick = onOpen,
     )
 }
@@ -56,7 +58,7 @@ internal fun PlayerOsdInfoPanelEntry(audioSession: AudioSession?, hasVideo: Bool
 internal fun PlayerOsdInfoPanelControls(audioSession: AudioSession?, hasVideo: Boolean, onOpenButtons: () -> Unit) {
     val context = LocalContext.current
     val preferences = remember(context) { videoImagePreferences(context) }
-    val entries = osdInfoEntries(audioSession, hasVideo)
+    val entries = osdInfoEntries(audioSession, hasVideo, tvRemote = !LocalHandheldUi.current)
     entries.forEachIndexed { index, entry ->
         if (index == 0 || entries[index - 1].section != entry.section) {
             RightPanelSectionTitle(stringResource(entry.section))
