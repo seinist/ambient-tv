@@ -530,7 +530,6 @@ internal fun SectionContent(
                             gridFocus = libraryFocusRequester,
                             modifier = Modifier.align(Alignment.CenterEnd).fillMaxHeight(),
                             firstEntryFocusRequester = alphabetRightFocusRequester,
-                            actionsFocus = focusChain.actions,
                         )
                     }
                 }
@@ -566,7 +565,6 @@ private fun LibraryAlphabetBar(
     gridFocus: FocusRequester,
     modifier: Modifier = Modifier,
     firstEntryFocusRequester: FocusRequester? = null,
-    actionsFocus: FocusRequester? = null,
 ) {
     AlphabetBar(
         letters = letters,
@@ -575,7 +573,6 @@ private fun LibraryAlphabetBar(
         gridFocus = gridFocus,
         modifier = modifier,
         firstEntryFocusRequester = firstEntryFocusRequester,
-        actionsFocus = actionsFocus,
     )
 }
 
