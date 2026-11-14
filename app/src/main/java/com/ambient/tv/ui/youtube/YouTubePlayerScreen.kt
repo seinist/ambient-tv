@@ -720,7 +720,7 @@ private fun YouTubeMedia3Playback(
     var tracks by remember { mutableStateOf<Tracks?>(null) }
     var defaultAudioTrackApplied by remember(playback.videoId) { mutableStateOf(false) }
     var completionPending by remember { mutableStateOf(false) }
-    val seekCoordinator = remember(playback.videoId) { PlaybackSeekCoordinator() }
+    val seekCoordinator = remember(playback.videoId) { PlaybackSeekCoordinator(holdSeekTargetUntilReached = !playback.isLive) }
     SyncYouTubeSessionSeek(seekCoordinator, playback, seekCoordinator)
     var lateResumeApplied by remember(seekCoordinator) { mutableStateOf(startPositionMs > 0L) }
     var userSeeked by remember(playback.videoId) { mutableStateOf(false) }
@@ -1312,7 +1312,7 @@ private fun YouTubeVlcPlayback(playback: YouTubePlayback, audioUri: String?, str
             delay(750)
         }
     }
-    val seekCoordinator = remember(controller) { PlaybackSeekCoordinator() }
+    val seekCoordinator = remember(controller) { PlaybackSeekCoordinator(holdSeekTargetUntilReached = !playback.isLive) }
     SyncYouTubeSessionSeek(seekCoordinator, playback, seekCoordinator)
     var lateResumeApplied by remember(seekCoordinator) { mutableStateOf(startPositionMs > 0L) }
     var userSeeked by remember(controller) { mutableStateOf(false) }
@@ -1650,7 +1650,7 @@ private fun YouTubeMpvPlayback(playback: YouTubePlayback, streams: YouTubeStream
         if (fps > 0f || dimensions != null) onVideoFormatChanged(fps, dimensions?.first, dimensions?.second)
     }
     com.ambient.tv.ui.player.MpvRenderOverloadDialog(controller, panelNavigation)
-    val seekCoordinator = remember(controller) { PlaybackSeekCoordinator() }
+    val seekCoordinator = remember(controller) { PlaybackSeekCoordinator(holdSeekTargetUntilReached = !playback.isLive) }
     SyncYouTubeSessionSeek(seekCoordinator, playback, seekCoordinator)
     var lateResumeApplied by remember(seekCoordinator) { mutableStateOf(startPositionMs > 0L) }
     var userSeeked by remember(controller) { mutableStateOf(false) }
