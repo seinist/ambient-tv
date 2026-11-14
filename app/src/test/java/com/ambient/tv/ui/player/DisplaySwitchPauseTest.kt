@@ -87,14 +87,16 @@ class DisplaySwitchPauseTest {
 
     @Test fun initialHoldRespectsManualPauseInsteadOfResuming() = runTest {
         val player = FakePlayer(playing = false)
+        val confirmed = CompletableDeferred<Boolean>()
         var owned = true
         val result = async {
             holdForDisplaySwitch(player, DisplaySwitchHold.PAUSE, 0, isLive = false,
-                request = {}, awaitConfirmed = { true },
+                request = {}, awaitConfirmed = { confirmed.await() },
                 stillOwned = { owned }, initiallyPaused = true)
         }
         runCurrent()
         owned = false
+        confirmed.complete(true)
         advanceUntilIdle()
         assertEquals(DisplaySwitchOutcome.RESUMED, result.await())
         assertFalse(player.playing)
