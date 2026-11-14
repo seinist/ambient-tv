@@ -173,6 +173,11 @@ class PlayerViewModel @Inject constructor(
 
     private var ratingKey: String = checkNotNull(savedStateHandle["ratingKey"])
     private var mediaIndex: Int = savedStateHandle.get<String>("mediaIndex")?.toIntOrNull() ?: 0
+    /** Set only by a tap/OK on a specific version row; ordinary Play keeps Auto. */
+    private val explicitVersion = savedStateHandle.get<Boolean>("explicitVersion") == true
+    private val versionSourceKey = savedStateHandle.get<String>("versionSourceKey")?.takeIf { it.isNotBlank() }
+    private val versionSourceIndex = savedStateHandle.get<Int>("versionSourceIndex")?.takeIf { it >= 0 }
+    private val versionSourceId = savedStateHandle.get<String>("versionSourceId")?.takeIf { it.isNotBlank() }
     private var restartFromBeginning: Boolean = savedStateHandle.get<Boolean>("restart") ?: false
     private val savedResumeRequest = SavedResumeRequest()
     private val collectionId: String? = savedStateHandle.get<String>("collectionId")?.takeIf { it.isNotBlank() }
@@ -182,6 +187,10 @@ class PlayerViewModel @Inject constructor(
         mediaIndex,
         collectionId = collectionId,
         collectionSort = collectionSort,
+        explicitVersion = explicitVersion,
+        versionSourceKey = versionSourceKey,
+        versionSourceIndex = versionSourceIndex,
+        versionSourceId = versionSourceId,
     )
     private fun titleSource(ratingKey: String = this.ratingKey): String = when {
         com.ambient.tv.data.shared.SharedMediaRepository.owns(ratingKey) -> "shared"
@@ -468,7 +477,14 @@ class PlayerViewModel @Inject constructor(
                 }
                 videoScope = loadVideoScope(item)
                 currentCoroutineContext().ensureActive()
-                var selectedVersionIndex = forcedVersion ?: displayVersionSelector.selectIndex(item.mediaVersions, mediaIndex)
+                // An explicit version picker click wins over display Auto and codec preference.
+                // Match the source after metadata refresh, rather than trusting a shifted list index.
+                var selectedVersionIndex = forcedVersion ?: if (explicitVersion) {
+                    MediaVersionSelection.explicitIndex(
+                        item.mediaVersions, mediaIndex, item.ratingKey,
+                        versionSourceKey, versionSourceIndex, versionSourceId,
+                    )
+                } else displayVersionSelector.selectIndex(item.mediaVersions, mediaIndex)
                 var version = item.mediaVersions.getOrNull(selectedVersionIndex)
                 if (version == null) {
                     _uiState.value = PlayerUiState.Error(context.getString(R.string.player_version_not_found))
@@ -479,7 +495,7 @@ class PlayerViewModel @Inject constructor(
                 if (
                     routedAudioOptions().localFallback == "off" &&
                     appPreferences.playbackBackendKey == "media3" &&
-                    appPreferences.autoSelectDisplayVersion && forcedVersion == null &&
+                    appPreferences.autoSelectDisplayVersion && forcedVersion == null && !explicitVersion &&
                     assessment.audioOnlyFallbackRecommended
                 ) {
                     val selectedPixels = version.pixelCount
@@ -659,7 +675,7 @@ class PlayerViewModel @Inject constructor(
                         sourceRatingKey = playbackRatingKey,
                         sourceMediaIndex = playbackMediaIndex,
                         selectedVersionIndex = selectedVersionIndex,
-                        autoVersionSelection = forcedVersion == null && appPreferences.autoSelectDisplayVersion,
+                        autoVersionSelection = forcedVersion == null && !explicitVersion && appPreferences.autoSelectDisplayVersion,
                         companionVersions = item.mediaVersions.mapIndexed { index, v -> index.toString() to listOfNotNull(v.resolution, v.videoCodec, v.audioCodec, v.bitrateKbps?.let { "$it kb/s" }).joinToString(" · ").ifBlank { "${index + 1}" } },
                         streamHeaders = streamHeaders(),
                         playbackBackendKey = resolvedPlaybackBackend(
