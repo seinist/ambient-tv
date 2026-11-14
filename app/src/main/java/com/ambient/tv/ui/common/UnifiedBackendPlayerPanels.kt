@@ -483,7 +483,10 @@ fun UnifiedBackendPlayerPanel(
                 value = displayedAudioOptions.firstOrNull { it.first == selectedAudio }?.second ?: stringResource(R.string.player_default_track),
                 options = displayedAudioOptions,
                 selectedKey = selectedAudio,
-                onSelected = { onAudioSelected(it); back() },
+                // The drop-up closes itself and restores focus to the track row.
+                // Leaving AUDIO here returns to its parent settings (or closes a direct AUDIO
+                // panel), forcing the viewer to reopen audio settings after each track change.
+                onSelected = onAudioSelected,
             )
             val state = navigation?.audioState ?: remember { VideoPanelState().apply { section = "output" } }
             androidx.compose.runtime.CompositionLocalProvider(LocalVideoPanelState provides state) {
