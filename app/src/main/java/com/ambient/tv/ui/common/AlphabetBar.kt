@@ -12,6 +12,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.*
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.key.*
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.tv.material3.*
@@ -146,7 +147,7 @@ private fun AlphabetBarEntry(
     onClick: () -> Unit,
 ) {
     var focused by remember { mutableStateOf(false) }
-    val entryModifier = modifier.fillMaxWidth().focusProperties {
+    val entryModifier = modifier.fillMaxWidth().testTag("alphabet-letter-$text").focusProperties {
         left = gridFocus
         // Parent-level D-pad acceleration calls moveFocus() directly, bypassing key handlers.
         // Hard focus boundaries prevent even fast repeated Right/Up/Down from escaping the rail.
