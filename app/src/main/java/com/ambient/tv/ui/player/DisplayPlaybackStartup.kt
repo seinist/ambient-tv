@@ -55,7 +55,9 @@ internal object DisplayPlaybackStartup {
         clear()
         val prefs = videoImagePreferences(context)
         val television = com.ambient.tv.ui.mobile.isTelevision(context)
-        if (!television || !metadata.hasVideo || metadata.isLive || samePlayback || !player.wantsToPlay()) return
+        // Background/service playback has no composable display matcher to finish a lease.
+        if (context.findActivity() == null || !television || !metadata.hasVideo || metadata.isLive ||
+            samePlayback || !player.wantsToPlay()) return
         if (!shouldHoldInitialDisplayPlayback(
                 television = television, hasVideo = metadata.hasVideo, isLive = metadata.isLive,
                 samePlayback = samePlayback, wantsToPlay = player.wantsToPlay(),
