@@ -1,6 +1,8 @@
 package com.ambient.tv.ui.browse
 
 import com.ambient.tv.ui.common.claimBrowseStartupFocusOnInput
+import com.ambient.tv.ui.common.BrowseStartupFollowFirst
+import com.ambient.tv.ui.common.BrowseFocusKey
 
 import com.ambient.tv.ui.theme.animatedFocusSurface
 import com.ambient.tv.ui.theme.screenGutter
