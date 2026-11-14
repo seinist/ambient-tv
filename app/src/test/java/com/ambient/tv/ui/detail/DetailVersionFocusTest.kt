@@ -51,13 +51,15 @@ class DetailVersionFocusTest {
         disabled: Set<Int> = emptySet(),
         withFollowingSection: Boolean = false,
         longSummary: Boolean = false,
+        versionCount: Int = 6,
+        sameResolution: Boolean = false,
     ): MutableState<MediaItem> {
         val item = movie("movie", "Versioned film").copy(
             summary = if (longSummary) "A long film synopsis fills all five lines of the detail hero. ".repeat(40) else null,
-            mediaVersions = (0 until 6).map { index ->
+            mediaVersions = (0 until versionCount).map { index ->
                 MediaVersion(
                     streamUrl = if (index in disabled) null else "https://example.invalid/version-$index.mkv",
-                    resolution = null, videoCodec = null, audioCodec = null, container = null,
+                    resolution = if (sameResolution) "1080" else null, videoCodec = null, audioCodec = null, container = null,
                     sourceRatingKey = "movie", sourceMediaIndex = index,
                     fileName = "Version-${index + 1}.mkv",
                 )
@@ -88,6 +90,7 @@ class DetailVersionFocusTest {
                         actionInProgress = false,
                         autoSelectDisplayVersion = false,
                         onPlay = { media, index, restart -> playback += Playback(media.ratingKey, index, restart) },
+                        onPlayVersion = { media, index -> playback += Playback(media.ratingKey, index, false) },
                         onOpenChild = {},
                         onOpenEpisode = {},
                         onOpenSeason = {},
@@ -135,6 +138,33 @@ class DetailVersionFocusTest {
         }
         press(Key.DirectionUp)
         playAction().assertIsFocused().assertIsDisplayed()
+    }
+
+    @Test fun twoIdenticalResolutionFilesRemainSeparatelyPlayableWithStableDpadFocus() {
+        mount(versionCount = 2, sameResolution = true, longSummary = true)
+        playAction().assertIsFocused()
+
+        press(Key.DirectionDown)
+        action("1080p #1").assertIsFocused().assertIsDisplayed()
+        press(Key.DirectionCenter)
+        press(Key.DirectionDown)
+        action("1080p #2").assertIsFocused().assertIsDisplayed()
+        press(Key.DirectionCenter)
+        press(Key.DirectionUp)
+        action("1080p #1").assertIsFocused().assertIsDisplayed()
+        press(Key.DirectionUp)
+        playAction().assertIsFocused().assertIsDisplayed()
+
+        assertEquals(listOf(Playback("movie", 0, false), Playback("movie", 1, false)), playback)
+    }
+
+    @Test fun duplicateResolutionLabelsNeverCollapseSourceFocusKeys() {
+        val item = movie("movie", "Duplicates").copy(mediaVersions = listOf(
+            MediaVersion("https://example.invalid/a", "1080", null, null, "mkv", sourceRatingKey = "movie", sourceMediaIndex = 0),
+            MediaVersion("https://example.invalid/b", "1080", null, null, "mkv", sourceRatingKey = "movie", sourceMediaIndex = 1),
+        ))
+        assertEquals(listOf("1080p #1", "1080p #2"), detailVersionLabels(item.mediaVersions))
+        assertEquals(2, detailVersionFocusKeys(item).distinct().size)
     }
 
     @Test fun disabledFirstMiddleAndLastSourcesAreSkippedWithoutChangingPlaybackIndices() {
