@@ -548,7 +548,6 @@ fun RadioScreen(
                             },
                             modifier = Modifier.fillMaxHeight(),
                             firstEntryFocusRequester = alphabetRightFocusRequester,
-                            actionsFocus = focusChain.actions,
                         )
                     }
                 }
@@ -694,7 +693,6 @@ fun RadioScreen(
                             },
                             modifier = Modifier.fillMaxHeight(),
                             firstEntryFocusRequester = alphabetRightFocusRequester,
-                            actionsFocus = focusChain.actions,
                         )
                     }
                 }
@@ -752,7 +750,6 @@ private fun RadioAlphabetBar(
     modifier: Modifier = Modifier,
     onReturnToContent: () -> Unit,
     firstEntryFocusRequester: FocusRequester,
-    actionsFocus: FocusRequester,
 ) {
     val currentId = focusedId.value?.takeIf(lettersById::containsKey) ?: initialId
     // D-pad focus is authoritative on TV; handheld finger scrolling follows the viewport.
@@ -768,7 +765,6 @@ private fun RadioAlphabetBar(
         modifier = modifier,
         onReturnToContent = onReturnToContent,
         firstEntryFocusRequester = firstEntryFocusRequester,
-        actionsFocus = actionsFocus,
     )
 }
 
