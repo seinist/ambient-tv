@@ -4,6 +4,27 @@ import com.ambient.tv.domain.model.MediaVersion
 
 /** Pure selection logic kept Android-free so version decisions can be unit-tested. */
 object MediaVersionSelection {
+    /**
+     * Detail's version rows select a physical source, not a display-quality tier. Re-resolve
+     * that identity after metadata refresh, because a sibling can be inserted before playback
+     * opens. A removed source must fail instead of silently playing a different version.
+     */
+    fun explicitIndex(
+        versions: List<MediaVersion>,
+        requestedIndex: Int,
+        itemRatingKey: String,
+        sourceRatingKey: String?,
+        sourceMediaIndex: Int?,
+        sourceId: String?,
+    ): Int {
+        if (sourceRatingKey == null) return requestedIndex
+        return versions.indexOfFirst { version ->
+            (version.sourceRatingKey ?: itemRatingKey) == sourceRatingKey &&
+                if (!sourceId.isNullOrBlank()) version.sourceId == sourceId
+                else sourceMediaIndex != null && version.sourceMediaIndex == sourceMediaIndex
+        }
+    }
+
     fun selectIndex(
         versions: List<MediaVersion>,
         requestedIndex: Int,
