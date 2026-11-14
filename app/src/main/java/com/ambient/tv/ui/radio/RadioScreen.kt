@@ -1,5 +1,7 @@
 package com.ambient.tv.ui.radio
 
+import com.ambient.tv.ui.common.claimBrowseStartupFocusOnInput
+
 import com.ambient.tv.ui.theme.animatedFocusBorder
 
 import androidx.activity.compose.BackHandler
@@ -198,6 +200,10 @@ fun RadioScreen(
     ReportSidebarContentReady(!requestedPagePending && state.contentReady)
 
     val focusScope = state.focusScope()
+    val startupFocus = com.ambient.tv.ui.common.rememberBrowseStartupFocusGate(
+        "radio:$focusScope", explicitReturn = preparedReturn != null,
+    )
+    val followFirst = startupFocus.followsFirst(preparedReturn != null)
     val showingFacets = if (requestedPagePending && state.section != requestedSection)
         requestedSection.isFacetSection else state.isFacetOverview()
     val locale = LocalContext.current.resources.configuration.locales[0]
@@ -225,9 +231,12 @@ fun RadioScreen(
     // Hold the initial selection stable while browsing: paging and metadata updates must not
     // jump the list back to a previously focused card.
     val initialContentId = remember(
-        focusScope, effectiveViewMode, state.contentReady, state.returnFocusRevision, requestedPagePending, state.sortDescending,
+        focusScope, effectiveViewMode, state.contentReady, state.returnFocusRevision,
+        requestedPagePending, state.sortDescending, followFirst,
+        contentIds.firstOrNull().takeIf { followFirst },
     ) {
         if (requestedPagePending || !state.contentReady) null
+        else if (followFirst) contentIds.firstOrNull()
         else radioInitialFocusId(
             entryReturn?.currentId?.takeIf { preparedReturn != null } ?: viewModel.lastFocusedContent(focusScope),
             playingStationId.takeUnless { showingFacets },
@@ -285,6 +294,13 @@ fun RadioScreen(
         if (effectiveViewMode == RadioViewMode.GRID) RegisterBrowseFocusGrid(gridState, contentIds)
         else RegisterBrowseFocusList(listState, contentIds)
     }
+    com.ambient.tv.ui.common.BrowseStartupFollowFirst(
+        gate = startupFocus,
+        target = contentIds.firstOrNull()?.let { BrowseFocusKey(null, it, true) },
+        explicitReturn = preparedReturn != null,
+        enabled = !requestedPagePending && state.contentReady && !showViewOptions &&
+            pendingContentFocus == null,
+    )
     val playbackReturn = rememberBrowsePlaybackReturn(
         token = playbackVisitRevision,
         target = initialContentId?.let { BrowseFocusKey(null, it, true) },
@@ -356,7 +372,7 @@ fun RadioScreen(
         BackHandler(enabled = !showViewOptions && !searchVisible && state.selectedFacet == null) { onBack() }
     }
 
-    Box(Modifier.fillMaxSize()) {
+    Box(Modifier.fillMaxSize().claimBrowseStartupFocusOnInput(startupFocus)) {
         Column(
             Modifier
                 .fillMaxSize()
