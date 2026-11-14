@@ -18,6 +18,9 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.key
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import kotlinx.coroutines.delay
 import timber.log.Timber
 import com.ambient.tv.ui.player.BackgroundPlaybackSession
@@ -300,9 +303,10 @@ fun MpvVideoSurface(
         }
     }
     val hdrHeadroom = com.ambient.tv.ui.player.videoSurfaceHdrHeadroom()
-    key(controller) { AndroidView(
+    val lifecycle = LocalLifecycleOwner.current.lifecycle
+    key(controller, lifecycle) { AndroidView(
         factory = { context ->
-            MpvSurfaceHost(context, controller)
+            MpvSurfaceHost(context, controller, lifecycle)
         },
         onRelease = { it.release() },
         update = { view ->
@@ -319,21 +323,48 @@ fun MpvVideoSurface(
 private class MpvSurfaceHost(
     context: Context,
     private val controller: MpvPlaybackController,
+    private val lifecycle: Lifecycle,
 ) : VideoSurfaceLayout(context), SurfaceHolder.Callback {
+    private var started = lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)
+    private var released = false
+    private val lifecycleObserver = LifecycleEventObserver { _, event ->
+        when (event) {
+            Lifecycle.Event.ON_START -> {
+                started = true
+                // A SurfaceView may survive backgrounding without another surfaceCreated().
+                // Rebind the existing window; the playback engine, position and audio stay alive.
+                attachIfReady()
+            }
+            Lifecycle.Event.ON_STOP -> {
+                started = false
+                // Keep MPV's VO off the window before Android can retire its native Surface.
+                controller.detachSurfaceAndWait(videoSurface.holder.surface)
+            }
+            else -> Unit
+        }
+    }
+
     init {
         renderAtDisplayResolution = controller.gpuRenderAtPanel
         videoSurface.holder.addCallback(this)
+        lifecycle.addObserver(lifecycleObserver)
     }
 
     override fun onDisplayRefreshRateChanged(refreshRate: Float) = controller.displayRefreshRateChanged(refreshRate)
 
-    override fun surfaceCreated(holder: SurfaceHolder) {
+    private fun attachIfReady() {
+        if (released || !started) return
+        val holder = videoSurface.holder
+        if (!holder.surface.isValid) return // surfaceCreated will attach when it becomes valid.
         val frame = holder.surfaceFrame
         controller.attachSurface(holder.surface, frame.width(), frame.height())
     }
 
+    override fun surfaceCreated(holder: SurfaceHolder) = attachIfReady()
+
     override fun surfaceChanged(holder: SurfaceHolder, format: Int, width: Int, height: Int) {
-        controller.surfaceSizeChanged(width, height)
+        attachIfReady()
+        if (started && !released) controller.surfaceSizeChanged(width, height)
     }
 
     override fun surfaceDestroyed(holder: SurfaceHolder) {
@@ -342,8 +373,11 @@ private class MpvSurfaceHost(
     }
 
     fun release() {
+        if (released) return
+        released = true
+        lifecycle.removeObserver(lifecycleObserver)
         videoSurface.holder.removeCallback(this)
-        if (videoSurface.holder.surface.isValid) controller.detachSurfaceAndWait(videoSurface.holder.surface)
+        controller.detachSurfaceAndWait(videoSurface.holder.surface)
     }
 }
 

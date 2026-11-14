@@ -85,7 +85,7 @@ class StopCrashGuardsTest {
         var discarded = 0
         val queue = MpvCommandQueue({ scheduled.addLast(it) }, { throw AssertionError(it) })
         queue.submit("audio", discard = { discarded++ }) { order += "audio" }
-        queue.submit("surface", keepOnClose = true) { order += "detach" }
+        queue.submit("surface-detach", keepOnClose = true) { order += "detach" }
         queue.submit("filter", discard = { discarded++ }) { order += "filter" }
         queue.close { order += "cleanup" }
         while (scheduled.isNotEmpty()) scheduled.removeFirst()()
@@ -93,17 +93,39 @@ class StopCrashGuardsTest {
         assertEquals(2, discarded)
     }
 
-    @Test fun replacedDetachIsNotKeptAndAttachIsDiscardedOnClose() {
+    @Test fun pendingDetachSurvivesForegroundAttachAndClose() {
         val scheduled = ArrayDeque<() -> Unit>()
         val order = mutableListOf<String>()
         var copyReleased = false
         val queue = MpvCommandQueue({ scheduled.addLast(it) }, { throw AssertionError(it) })
-        queue.submit("surface", keepOnClose = true) { order += "detach" }
-        queue.submit("surface", discard = { copyReleased = true }) { order += "attach" }
+        queue.submit("surface-detach", keepOnClose = true) { order += "detach" }
+        queue.submit("surface-attach", discard = { copyReleased = true }) { order += "attach" }
         queue.close { order += "cleanup" }
         while (scheduled.isNotEmpty()) scheduled.removeFirst()()
-        assertEquals(listOf("cleanup"), order)
+        assertEquals(listOf("detach", "cleanup"), order)
         assertTrue(copyReleased)
+    }
+
+    @Test fun quickBackgroundForegroundRetiresOldSurfaceBeforeReattach() {
+        val scheduled = ArrayDeque<() -> Unit>()
+        val order = mutableListOf<String>()
+        val gate = MpvSurfaceDetachGate()
+        val queue = MpvCommandQueue({ scheduled.addLast(it) }, { throw AssertionError(it) })
+        gate.attaching()
+        val ticket = gate.requestDetach()
+        queue.submit("surface-detach", keepOnClose = true) {
+            order += "detach"
+            gate.detached(ticket)
+        }
+        queue.submit("surface-attach") {
+            // The destroyed window is no longer in use before the next VO is attached.
+            assertTrue(gate.await(100))
+            order += "reattach"
+            gate.attaching()
+        }
+        while (scheduled.isNotEmpty()) scheduled.removeFirst()()
+        assertEquals(listOf("detach", "reattach"), order)
+        assertTrue(gate.inUse)
     }
 
     @Test fun keptDetachRunsAfterTheInFlightOperation() {
@@ -116,7 +138,7 @@ class StopCrashGuardsTest {
         try {
             queue.submit("native") { entered.countDown(); unblock.await(5, TimeUnit.SECONDS); order += "native" }
             assertTrue(entered.await(2, TimeUnit.SECONDS))
-            queue.submit("surface", keepOnClose = true) { order += "detach" }
+            queue.submit("surface-detach", keepOnClose = true) { order += "detach" }
             queue.close { order += "cleanup"; done.countDown() }
             unblock.countDown()
             assertTrue(done.await(2, TimeUnit.SECONDS))
@@ -164,7 +186,11 @@ class StopCrashGuardsTest {
         assertTrue(view.contains("controller.detachSurfaceAndWait(videoSurface.holder.surface)"))
         val wait = controller.substring(controller.indexOf("fun detachSurfaceAndWait("))
         assertTrue(wait.indexOf("Looper.myLooper() === thread.looper) return") < wait.indexOf("surfaceGate.await("))
-        assertTrue(controller.contains("mailbox.submit(\"surface\", keepOnClose = true)"))
+        assertTrue(controller.contains("mailbox.submit(\"surface-detach\", keepOnClose = true)"))
+        assertTrue(controller.contains("mailbox.submit(\"surface-attach\""))
+        assertTrue(view.contains("Lifecycle.Event.ON_START -> {"))
+        assertTrue(view.contains("Lifecycle.Event.ON_STOP -> {"))
+        assertTrue(view.contains("attachIfReady()"))
         assertTrue(controller.contains("} finally { surfaceGate.detached(ticket) }"))
         assertTrue(controller.contains("surfaceGate.closed()"))
         assertTrue(controller.indexOf("surfaceGate.attaching()") < controller.indexOf("player.attachSurface(copy, width, height)"))
@@ -179,14 +205,14 @@ class StopCrashGuardsTest {
         val gate = MpvSurfaceDetachGate()
         val queue = MpvCommandQueue({ executor.execute(it) }, { throw AssertionError(it) })
         try {
-            queue.submit("surface") {
+            queue.submit("surface-attach") {
                 entered.countDown()
                 check(resume.await(5, TimeUnit.SECONDS))
                 gate.attaching()
             }
             assertTrue(entered.await(2, TimeUnit.SECONDS))
             val ticket = gate.requestDetach()
-            queue.submit("surface", keepOnClose = true) { gate.detached(ticket); done.countDown() }
+            queue.submit("surface-detach", keepOnClose = true) { gate.detached(ticket); done.countDown() }
             assertFalse(gate.await(10))
             resume.countDown()
             assertTrue(gate.await(2_000))
@@ -214,7 +240,7 @@ class StopCrashGuardsTest {
         val gate = MpvSurfaceDetachGate()
         val queue = MpvCommandQueue({ executor.execute(it) }, { throw AssertionError(it) })
         try {
-            queue.submit("surface") {
+            queue.submit("surface-attach") {
                 entered.countDown()
                 check(resume.await(5, TimeUnit.SECONDS))
                 gate.attaching()

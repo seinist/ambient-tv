@@ -432,7 +432,9 @@ class MpvPlaybackController(
             Surface.CREATOR.createFromParcel(parcel)
         } finally { parcel.recycle() }
         surfaceIdentity = surface
-        mailbox.submit("surface", discard = { copy.release() }) {
+        // A queued detach must not be overwritten by a foreground reattach: retire
+        // the previous VO before binding the (possibly surviving) SurfaceView again.
+        mailbox.submit("surface-attach", discard = { copy.release() }) {
             val player = engine
             if (player == null) copy.release()
             else {
@@ -451,7 +453,7 @@ class MpvPlaybackController(
         // Kept across close(): Stop's release() must not drop the detach queued just before it.
         if (!released) {
             val ticket = surfaceGate.requestDetach()
-            mailbox.submit("surface", keepOnClose = true) {
+            mailbox.submit("surface-detach", keepOnClose = true) {
                 try {
                     engine?.detachSurface()
                     ownedSurface?.release()
