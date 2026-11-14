@@ -216,7 +216,9 @@ fun TelegramScreen(
     val flat = remember(currentRows, sort, descending) { flatMonogramItems(currentRows, sort, descending) }
     val focusIndex = remember(currentRows, flat) { MonogramBrowseFocusIndex(currentRows, flat) }
     val initialKey = (if (followFirst) null else focusMemory.key?.takeIf(focusIndex::contains))
-        ?: currentRows.firstOrNull { it.items.isNotEmpty() }?.items?.firstOrNull()?.ratingKey
+        ?: if (layout == MonogramBrowseLayout.ROWS)
+            currentRows.firstOrNull { it.items.isNotEmpty() }?.items?.firstOrNull()?.ratingKey
+        else flat.firstOrNull()?.ratingKey
     val initialRow = focusIndex.rowForItem(initialKey)
     val initialRowIndex = currentRows.indexOfFirst { it.id == initialRow }.coerceAtLeast(0)
     val initialFlatIndex = focusIndex.flatKeys.indexOf(initialKey).coerceAtLeast(0)
@@ -368,9 +370,7 @@ fun TelegramScreen(
         restorePanelFocus = true
     }
 
-    Box(Modifier.fillMaxSize().then(
-        Modifier.claimBrowseStartupFocusOnInput(startupFocus)
-    )) {
+    Box(Modifier.fillMaxSize().claimBrowseStartupFocusOnInput(startupFocus)) {
         Column(
             Modifier.fillMaxSize().handheldSwipeTabs(
                 tabs = shownTabs.map { it.first }, selected = canonical,
