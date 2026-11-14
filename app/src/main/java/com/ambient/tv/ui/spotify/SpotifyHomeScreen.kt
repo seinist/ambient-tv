@@ -1,5 +1,7 @@
 package com.ambient.tv.ui.spotify
 
+import com.ambient.tv.ui.common.claimBrowseStartupFocusOnInput
+
 import com.ambient.tv.spotify.SpotifyEntityType
 
 import com.ambient.tv.ui.theme.animatedFocusSurface
@@ -74,11 +76,15 @@ fun SpotifyHomeScreen(
     com.ambient.tv.ui.common.RefreshOnEnterAndReconnect(setOf("spotify")) { viewModel.enter(initialSectionKey) }
     val expectedSectionKey = initialSectionKey ?: "home"
     val focusStateKey = remember(expectedSectionKey) { "spotify:$expectedSectionKey" }
-    val focusItemId = remember(focusStateKey, state.items, navigationReturn?.revision) {
+    val startupFocus = com.ambient.tv.ui.common.rememberBrowseStartupFocusGate(
+        focusStateKey, explicitReturn = navigationReturn != null,
+    )
+    val followFirst = startupFocus.followsFirst(navigationReturn != null)
+    val focusItemId = remember(focusStateKey, state.items, navigationReturn?.revision, followFirst) {
         val played = navigationReturn?.itemId?.removePrefix("spotify:track:")
         val returnedId = state.items.firstOrNull { it.type == SpotifyEntityType.TRACK && it.id == played }?.let(::spotifyFocusId)
         resolveContentFocusTarget(
-            savedItemId = returnedId ?: viewModel.focusedItemId(focusStateKey),
+            savedItemId = returnedId ?: if (followFirst) null else viewModel.focusedItemId(focusStateKey),
             savedRowId = null,
             rows = listOf(null to state.items.map(::spotifyFocusId)),
         ).itemId
@@ -98,6 +104,12 @@ fun SpotifyHomeScreen(
     RegisterBrowseFocusGrid(gridState, remember(state.items) { state.items.map(::spotifyFocusId) })
     val failed = state.error != null || state.errorRes != null
     if (!state.loading && state.sectionKey == expectedSectionKey && !failed) BrowseFocusInitialTarget(focusItemId)
+    com.ambient.tv.ui.common.BrowseStartupFollowFirst(
+        gate = startupFocus,
+        target = state.items.firstOrNull()?.let { com.ambient.tv.ui.common.BrowseFocusKey(null, spotifyFocusId(it), true) },
+        explicitReturn = navigationReturn != null,
+        enabled = !state.loading && state.sectionKey == expectedSectionKey && !failed,
+    )
     val playbackReturn = com.ambient.tv.ui.common.rememberBrowsePlaybackReturn(
         token = navigationReturn?.revision,
         target = focusItemId?.let { com.ambient.tv.ui.common.BrowseFocusKey(null, it, true) },
@@ -138,7 +150,8 @@ fun SpotifyHomeScreen(
         }
     }
     val focusChain = com.ambient.tv.ui.common.rememberPageFocusChain()
-    Column(Modifier.fillMaxSize().padding(start = screenGutter(), end = screenGutter(), bottom = screenGutter(), top = com.ambient.tv.ui.common.pageHeaderTop(screenGutter())), verticalArrangement = Arrangement.spacedBy(18.dp)) {
+    Column(Modifier.fillMaxSize().claimBrowseStartupFocusOnInput(startupFocus)
+        .padding(start = screenGutter(), end = screenGutter(), bottom = screenGutter(), top = com.ambient.tv.ui.common.pageHeaderTop(screenGutter())), verticalArrangement = Arrangement.spacedBy(18.dp)) {
         PageHeader(focusChain = focusChain, actions = {
             TvChip(
                 text = when {
