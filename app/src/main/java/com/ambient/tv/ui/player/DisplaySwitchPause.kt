@@ -139,7 +139,7 @@ internal suspend fun holdForDisplaySwitch(
             while (waiting.isActive) {
                 val reopened = player.reopenGeneration() != generation
                 if (effective == DisplaySwitchHold.PAUSE &&
-                    displaySwitchUserTookOver(player.wantsToPlay(), isLive, pausedAt, player.positionMs(), reopened)) {
+                    displaySwitchUserTookOver(player.wantsToPlay(), isLive || initiallyPaused, pausedAt, player.positionMs(), reopened)) {
                     userTookOver = true
                     waiting.cancel()
                     break
