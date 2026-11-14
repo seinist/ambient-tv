@@ -1,5 +1,7 @@
 package com.ambient.tv.trailers
 
+import com.ambient.tv.ui.common.claimBrowseStartupFocusOnInput
+
 import com.ambient.tv.ui.common.leftKeyAction
 import android.os.SystemClock
 import androidx.activity.compose.BackHandler
@@ -186,6 +188,8 @@ internal fun TrailerCatalogContent(
     var filter by remember(selectedFeedName) { mutableStateOf(preferences.sectionFilter(stateKey)
         ?.let { runCatching { TrailerFilter.valueOf(it) }.getOrNull() } ?: TrailerFilter.ALL) }
     var focusedKey by remember(selectedFeedName) { mutableStateOf(preferences.sectionFocus(stateKey)) }
+    val startupFocus = com.ambient.tv.ui.common.rememberBrowseStartupFocusGate(stateKey)
+    val displayedFocusKey = if (startupFocus.followsFirst()) null else focusedKey
     var showViewOptions by rememberSaveable { mutableStateOf(false) }
     var optionsOpened by remember { mutableStateOf(false) }
     val optionsFocus = remember { androidx.compose.ui.focus.FocusRequester() }
@@ -279,6 +283,13 @@ internal fun TrailerCatalogContent(
     }
     BrowseFocusContentIdentity(listOf(stateKey, viewMode, sort, sortDescending, filter))
     BrowseFocusInitialTarget(visibleEntries.firstOrNull()?.toMediaItem()?.ratingKey)
+    com.ambient.tv.ui.common.BrowseStartupFollowFirst(
+        gate = startupFocus,
+        target = visibleEntries.firstOrNull()?.toMediaItem()?.ratingKey?.let {
+            com.ambient.tv.ui.common.BrowseFocusKey(null, it, true)
+        },
+        enabled = !state.loadingInitial && !showViewOptions && filterFocusState.allowContentAutoFocus,
+    )
     ReportSidebarContentReady(!state.loadingInitial)
     BackHandler(enabled = showViewOptions) { showViewOptions = false }
     BackHandler(enabled = !showViewOptions) { optionsOpened = false; onBack() }
@@ -309,7 +320,7 @@ internal fun TrailerCatalogContent(
     val filterBarShown = configured && enabled && LocalFilterBarSetting.current.shown
 
     CompositionLocalProvider(LocalFilterFocusState provides filterFocusState) {
-    Box(Modifier.fillMaxSize()) {
+    Box(Modifier.fillMaxSize().claimBrowseStartupFocusOnInput(startupFocus)) {
         Column(Modifier.fillMaxSize().padding(start = 32.dp, end = 32.dp, top = com.ambient.tv.ui.common.pageHeaderTop(28.dp))) {
             PageHeader(actions = {
                 TvChip(stringResource(R.string.trailers_back), modifier = Modifier.leftKeyAction(onBack), icon = Icons.AutoMirrored.Filled.ArrowBack, iconOnly = true, onClick = onBack)
@@ -393,10 +404,10 @@ internal fun TrailerCatalogContent(
                             TrailerPagingFooter(state, { scope.launch { loadPage(feed, state.page + 1, false) } })
                         }
                     }
-                    viewMode == TrailerViewMode.LIST -> TrailerList(visibleEntries, listRows, focusedKey,
+                    viewMode == TrailerViewMode.LIST -> TrailerList(visibleEntries, listRows, displayedFocusKey,
                         { entry -> filterFocusState.enterContent(); focusedKey = entry.key; preferences.setSectionFocus(stateKey, entry.key) },
                         onOpenTitle, state, { scope.launch { loadPage(feed, state.page + 1, false) } })
-                    else -> TrailerGrid(visibleEntries, viewMode, gridColumns, focusedKey,
+                    else -> TrailerGrid(visibleEntries, viewMode, gridColumns, displayedFocusKey,
                         { entry -> filterFocusState.enterContent(); focusedKey = entry.key; preferences.setSectionFocus(stateKey, entry.key) },
                         onOpenTitle, state, { scope.launch { loadPage(feed, state.page + 1, false) } })
                 }
