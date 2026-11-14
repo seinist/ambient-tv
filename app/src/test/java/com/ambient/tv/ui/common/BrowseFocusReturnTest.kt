@@ -71,7 +71,11 @@ import org.robolectric.annotation.Config
 class BrowseFocusReturnTest {
     @get:Rule val rule = createAndroidComposeRule<ComponentActivity>()
 
-    private class Fixture(val refreshNeighbours: Boolean = false) {
+    private class Fixture(
+        val refreshNeighbours: Boolean = false,
+        val startup: Boolean = false,
+    ) {
+        val startupGate = BrowseStartupFocusGate()
         var destination by mutableStateOf(Destinations.HOME)
         var itemIds by mutableStateOf((0 until 90).map { "item-$it" })
         var focusSnapshot by mutableStateOf<List<String>?>(null)
@@ -114,8 +118,9 @@ class BrowseFocusReturnTest {
         enterContent: Boolean = true,
         hold: Boolean = false,
         refreshNeighbours: Boolean = false,
+        startup: Boolean = false,
     ): Fixture {
-        val fixture = Fixture(refreshNeighbours).also { it.hold = hold }
+        val fixture = Fixture(refreshNeighbours, startup).also { it.hold = hold }
         currentFixture = fixture
         rule.setContent {
             CompositionLocalProvider(
@@ -191,9 +196,15 @@ class BrowseFocusReturnTest {
         BrowseFocusContentIdentity("posters")
         BrowseFocusInitialTarget(when {
             fixture.hold -> null
+            fixture.startup && fixture.startupGate.followsFirst() -> ids.firstOrNull()
             destination == Destinations.HOME -> initialTarget
             else -> ids.firstOrNull()
         })
+        if (fixture.startup) BrowseStartupFollowFirst(
+            fixture.startupGate,
+            ids.firstOrNull()?.let { BrowseFocusKey(null, it, true) },
+            explicitReturn = fixture.playbackReturn != null,
+        )
         if (fixture.refreshNeighbours) BrowseFocusRefreshRecovery(listOf(null to (fixture.focusSnapshot ?: ids)))
         BrowseFocusHoldEntry(fixture.hold)
         val playback = rememberBrowsePlaybackReturn(fixture.playbackReturn?.first, fixture.playbackReturn?.second)
@@ -202,7 +213,9 @@ class BrowseFocusReturnTest {
             fixture.grids[destination] = grid
             fixture.playbackController = playback
         }
-        Box(Modifier.fillMaxSize().then(playback.modifier).cancelBrowseRefreshRecoveryOnInput().focusRestorer().focusGroup()) {
+        Box(Modifier.fillMaxSize().then(playback.modifier).cancelBrowseRefreshRecoveryOnInput()
+            .then(if (fixture.startup) Modifier.claimBrowseStartupFocusOnInput(fixture.startupGate) else Modifier)
+            .focusRestorer().focusGroup()) {
             Column(
                 Modifier.fillMaxSize().padding(24.dp).focusGroup(),
                 verticalArrangement = Arrangement.spacedBy(12.dp),
@@ -399,6 +412,39 @@ class BrowseFocusReturnTest {
         val fixture = mount()
         focused(fixture.tileTag("item-0"))
         rule.runOnIdle { assertFalse(fixture.sidebarOwnsFocus) }
+    }
+
+    @Test fun startupIgnoresPersistedPositionAndFollowsNewFirstItemFromLiveData() {
+        val fixture = mount(initialTarget = "item-44", startup = true)
+        awaitFocus(fixture.tileTag("item-0"))
+        rule.runOnIdle { assertTrue(fixture.startupGate.followsFirst()) }
+        rule.runOnIdle { fixture.itemIds = listOf("fresh-first") + fixture.itemIds }
+        awaitFocus(fixture.tileTag("fresh-first"))
+        rule.runOnIdle { assertTrue(fixture.startupGate.followsFirst()) }
+    }
+
+    @Test fun startupStopsFollowingNewFirstItemAfterActualDpadNavigation() {
+        val fixture = mount(startup = true)
+        awaitFocus(fixture.tileTag("item-0"))
+        press(Key.DirectionRight)
+        awaitFocus(fixture.tileTag("item-1"))
+        rule.runOnIdle {
+            assertFalse(fixture.startupGate.followsFirst())
+            fixture.itemIds = listOf("new-a", "new-b") + fixture.itemIds
+        }
+        rule.waitForIdle()
+        focused(fixture.tileTag("item-1"))
+    }
+
+    @Test fun startupDoesNotReplaceAnExplicitPlaybackReturn() {
+        val fixture = mount(startup = true)
+        rule.runOnIdle {
+            fixture.playbackReturn = 45L to BrowseFocusKey(null, "item-6", true)
+        }
+        awaitFocus(fixture.tileTag("item-6"))
+        rule.runOnIdle { fixture.itemIds = listOf("new-first") + fixture.itemIds }
+        rule.waitForIdle()
+        focused(fixture.tileTag("item-6"))
     }
 
     @Test fun leftCancelsAPendingHandoffAndLaterReadinessCannotTakeFocus() {
