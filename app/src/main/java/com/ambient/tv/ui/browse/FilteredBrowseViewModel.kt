@@ -75,6 +75,9 @@ class FilteredBrowseViewModel internal constructor(
     private var loadJob: Job? = null
     private var loadRevision = 0L
     private var playbackReturnRevision = 0L
+    /** Immediate focus memory: Loaded is deliberately not emitted for every DPAD move. */
+    private var sessionFocusedRatingKey: String? = null
+    internal fun currentSessionFocus(): String? = sessionFocusedRatingKey
 
     /** Entry/reconnect callers already prepared this source's caches. */
     fun load() = load(refreshCaches = false)
@@ -92,6 +95,7 @@ class FilteredBrowseViewModel internal constructor(
         _refreshing.value = false
         _refreshError.value = null
         playbackReturnRevision = prepared.playbackReturnRevision
+        sessionFocusedRatingKey = prepared.focusedRatingKey
         preferences.setSectionFocus(stateKey, checkNotNull(prepared.focusedRatingKey))
         _uiState.value = prepared
     }
@@ -154,6 +158,7 @@ class FilteredBrowseViewModel internal constructor(
     fun onItemFocused(item: MediaItem) {
         // Session memory is enough while browsing. Emitting Loaded here invalidates the
         // whole result grid on every D-pad step, even though only two tiles change focus.
+        sessionFocusedRatingKey = item.ratingKey
         preferences.setSectionFocus(stateKey, item.ratingKey)
     }
 
