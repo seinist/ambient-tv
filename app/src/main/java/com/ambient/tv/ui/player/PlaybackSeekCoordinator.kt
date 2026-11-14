@@ -18,6 +18,8 @@ class PlaybackSeekCoordinator(
     val debounceMs: Long = DEBOUNCE_MS,
     private val snapToleranceMs: Long = SNAP_TOLERANCE_MS,
     private val holdMs: Long = HOLD_MS,
+    /** Keep a VOD seek's visual target until playback catches up from a preceding keyframe. */
+    private val holdSeekTargetUntilReached: Boolean = false,
     private val nowMs: () -> Long = { android.os.SystemClock.elapsedRealtime() },
 ) {
     private var pendingTargetMs: Long? = null
@@ -101,6 +103,12 @@ class PlaybackSeekCoordinator(
             return engine
         }
         observeAlignment(pending, engine, now, movedNow)
+        // SmartTube's VOD renderers can actually start from the previous keyframe (mpv uses
+        // absolute+keyframes and Media3 uses CLOSEST_SYNC). That is valid playback, not an OSD
+        // instruction to move the seek thumb backward from the time the viewer just selected.
+        // Keep the requested visual target until the real clock reaches it. Do not apply this to
+        // live/DVR where the sliding window edge can stay ahead of the decoder indefinitely.
+        if (holdSeekTargetUntilReached && engine < pending) return pending
         val sinceRequest = now - lastRequestAtMs
         // A held key pauses ~400 ms before it repeats; until then the engine is only on its way
         // to an earlier target of the same burst.
@@ -180,7 +188,7 @@ class PlaybackSeekCoordinator(
         // snap tolerance's poll jitter is that keyframe, not a landing.
         val lower = if (stopped) (acknowledged - STOPPED_DROP_MS).coerceAtLeast(0L)
         else (acknowledged - ALIGN_BEFORE_MS).coerceAtLeast(0L)
-        if (engine < lower) {
+        if (engine < if (holdSeekTargetUntilReached) acknowledged else lower) {
             pendingTargetMs = acknowledged
             lastCommittedTargetMs = committed
             alignedAtMs = null
