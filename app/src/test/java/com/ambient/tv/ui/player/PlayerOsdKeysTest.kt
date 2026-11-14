@@ -64,6 +64,19 @@ class PlayerOsdKeysTest {
         assertEquals(true to listOf("seek:-120000:bar"), press(Key.DirectionLeft, state(OsdContent.RECORDING)))
     }
 
+    @Test fun passiveFeedbackRetainsDownAsBackwardJumpUntilOkClaimsTimeline() {
+        val direct = state(bar = true)
+        assertEquals(true to listOf("seek:60000:bar"), press(Key.DirectionUp, direct))
+        assertEquals(true to listOf("seek:-60000:bar"), press(Key.DirectionDown, direct))
+        assertEquals(true to listOf("seek:-120000:bar"), press(Key.DirectionLeft, direct))
+        assertEquals(true to listOf("seek:120000:bar"), press(Key.DirectionRight, direct))
+        assertEquals(true to listOf("hideBar", "osd"), press(Key.DirectionCenter, direct))
+        // After OK reveals the interactive timeline, Down belongs to focus navigation.
+        assertEquals(false to emptyList<String>(), press(
+            Key.DirectionDown, state(visible = true).copy(seekBarFocused = true),
+        ))
+    }
+
     @Test fun upOnTheSeekBarOfTheOpenOsdJumpsAndContinuesInSeekMode() {
         val onSeekBar = state(visible = true).copy(seekBarFocused = true)
         // Same jump as with the OSD hidden, shown with the passive seek bar.
