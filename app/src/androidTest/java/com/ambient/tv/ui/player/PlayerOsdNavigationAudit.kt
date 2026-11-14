@@ -17,6 +17,12 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.semantics.SemanticsActions
+import androidx.compose.ui.semantics.SemanticsNode
+import androidx.compose.ui.semantics.SemanticsOwner
+import androidx.compose.ui.semantics.SemanticsProperties
+import com.ambient.tv.domain.model.PlaybackTimeline
+import com.ambient.tv.domain.model.VideoChapter
 import com.ambient.tv.ui.catalog.UiCatalogActivity
 import com.ambient.tv.ui.common.PlayerControlBar
 import com.ambient.tv.ui.common.PlayerIconButton
@@ -39,6 +45,12 @@ internal class PlayerOsdNavigationAudit(private val instrumentation: Instrumenta
     private var toggles = 0
     private var selectedTrack = "1"
     private lateinit var focusState: PlayerControlFocus
+    private lateinit var activity: UiCatalogActivity
+    private val chapterNavigation = PlaybackNavigationState()
+    private val chapterPlayer = mutableStateOf(OsdPlayer.YOUTUBE)
+    private val chapters = List(20) { index -> VideoChapter(index * 6_000L, "Audit chapter ${index + 1}") }
+    private var chapterSeekCalls = 0
+    private var chapterSeekTarget: Long? = null
     private fun mark(id: String) = Modifier.onFocusChanged {
         if (it.isFocused) focused = id else if (focused == id) focused = null
     }
@@ -82,6 +94,150 @@ internal class PlayerOsdNavigationAudit(private val instrumentation: Instrumenta
         }
         error("Initial focus target did not become ready")
     }
+
+    /** Observe the production chapter cards without repairing their focus from the audit. */
+    private fun focusedChapterTitle(): String? {
+        var focusedTitle: String? = null
+        fun text(node: SemanticsNode): List<String> =
+            node.config.getOrElse(SemanticsProperties.Text) { emptyList() }.map { it.text } +
+                node.children.flatMap(::text)
+        fun visitNode(node: SemanticsNode) {
+            if (node.config.getOrElse(SemanticsProperties.Focused) { false } &&
+                node.config.contains(SemanticsActions.OnClick)) {
+                focusedTitle = text(node).firstOrNull { title -> chapters.any { it.title == title } }
+            }
+            if (focusedTitle == null) node.children.forEach(::visitNode)
+        }
+        fun visitView(view: android.view.View) {
+            val owner = view.javaClass.methods.firstOrNull { it.name == "getSemanticsOwner" && it.parameterCount == 0 }
+                ?.invoke(view) as? SemanticsOwner
+            if (owner != null) visitNode(owner.rootSemanticsNode)
+            if (focusedTitle == null && view is android.view.ViewGroup) repeat(view.childCount) { visitView(view.getChildAt(it)) }
+        }
+        visitView(activity.window.decorView)
+        return focusedTitle
+    }
+
+    private fun awaitChapterFocus(expected: String? = null) = awaitState("chapter card focus${expected?.let { " on $it" }.orEmpty()}") {
+        val title = focusedChapterTitle()
+        chapterNavigation.chaptersOpen && title != null && (expected == null || title == expected)
+    }
+
+    private fun openChapters() {
+        key(KeyEvent.KEYCODE_DPAD_DOWN)
+        awaitChapterFocus()
+    }
+
+    private fun assertFoldedToAction(expected: String) {
+        awaitFocus(expected)
+        // The old implementation could keep focus on a card until its 350 ms exit ended.
+        Thread.sleep(450)
+        main {
+            check(!chapterNavigation.chaptersOpen && chrome.osd.show && chrome.osd.expanded)
+            check(focused == expected && focusState.hasFocus) { "Chapter fold lost action focus after exit: $focused" }
+        }
+    }
+
+    private fun auditChapterNavigation(settings: FocusRequester) {
+        val preferences = videoImagePreferences(instrumentation.targetContext)
+        for (player in listOf(OsdPlayer.YOUTUBE, OsdPlayer.MEDIA)) {
+            main {
+                chapterPlayer.value = player
+                chapterNavigation.timeline = PlaybackTimeline(chapters = chapters)
+                chapterNavigation.onChapterSeek = { target -> chapterSeekCalls++; chapterSeekTarget = target }
+                setOsdButtonVisible(preferences, player, OsdButton.CHAPTERS, visible = false)
+            }
+            instrumentation.waitForIdleSync()
+            requestFocus(settings)
+            // Down opens chapters independently of whether their optional toolbar button exists.
+            openChapters()
+            key(KeyEvent.KEYCODE_DPAD_UP)
+            assertFoldedToAction("settings")
+            key(KeyEvent.KEYCODE_DPAD_LEFT)
+            awaitFocus("play")
+            key(KeyEvent.KEYCODE_DPAD_RIGHT)
+            awaitFocus("settings")
+            openChapters()
+            key(KeyEvent.KEYCODE_BACK)
+            assertFoldedToAction("settings")
+
+            main { setOsdButtonVisible(preferences, player, OsdButton.CHAPTERS, visible = true) }
+            instrumentation.waitForIdleSync()
+            openChapters()
+            key(KeyEvent.KEYCODE_DPAD_UP)
+            assertFoldedToAction("settings")
+            key(KeyEvent.KEYCODE_DPAD_RIGHT)
+            awaitFocus("play")
+            key(KeyEvent.KEYCODE_DPAD_LEFT)
+            awaitFocus("settings")
+            log("PASS $player chapters return to the originating action on Up/Back with visible or hidden chapter button")
+
+            main { setOsdButtonVisible(preferences, player, OsdButton.CHAPTERS, visible = false) }
+            instrumentation.waitForIdleSync()
+            openChapters()
+            var adjacentIndex = 0
+            var moveLeft = false
+            main {
+                val selected = chapters.indexOfFirst { it.title == focusedChapterTitle() }
+                check(selected >= 0)
+                moveLeft = selected == chapters.lastIndex
+                adjacentIndex = if (moveLeft) selected - 1 else selected + 1
+                chapterSeekCalls = 0
+                chapterSeekTarget = null
+            }
+            key(if (moveLeft) KeyEvent.KEYCODE_DPAD_LEFT else KeyEvent.KEYCODE_DPAD_RIGHT)
+            awaitChapterFocus(chapters[adjacentIndex].title)
+            key(KeyEvent.KEYCODE_DPAD_CENTER)
+            awaitFocus("timeline")
+            main {
+                check(chapterSeekCalls == 1 && chapterSeekTarget == chapters[adjacentIndex].startMs)
+                check(!chapterNavigation.chaptersOpen && !chrome.osd.expanded && chrome.osd.show)
+            }
+            key(KeyEvent.KEYCODE_DPAD_DOWN)
+            awaitFocus("settings")
+            log("PASS $player chapter selection seeks once and returns to the compact timeline")
+
+            openChapters()
+            var currentChapterIndex = 0
+            main {
+                currentChapterIndex = chapters.indexOfFirst { it.title == focusedChapterTitle() }
+                check(currentChapterIndex >= 0)
+            }
+            // Move far enough for LazyRow to detach the currently playing chapter's card.
+            val lastBrowsedIndex = if (currentChapterIndex < chapters.size / 2) chapters.lastIndex else 0
+            val direction = if (lastBrowsedIndex > currentChapterIndex) 1 else -1
+            var browsedIndex = currentChapterIndex
+            while (browsedIndex != lastBrowsedIndex) {
+                key(if (direction > 0) KeyEvent.KEYCODE_DPAD_RIGHT else KeyEvent.KEYCODE_DPAD_LEFT)
+                browsedIndex += direction
+                awaitChapterFocus(chapters[browsedIndex].title)
+            }
+            val foldedAt = android.os.SystemClock.uptimeMillis()
+            key(KeyEvent.KEYCODE_DPAD_UP)
+            awaitFocus("settings")
+            // Re-enter while AnimatedVisibility still retains the departing chapter row.
+            key(KeyEvent.KEYCODE_DPAD_DOWN)
+            val reopenDelayMs = android.os.SystemClock.uptimeMillis() - foldedAt
+            awaitChapterFocus(chapters[currentChapterIndex].title)
+            Thread.sleep(450)
+            awaitChapterFocus(chapters[currentChapterIndex].title)
+            key(KeyEvent.KEYCODE_DPAD_UP)
+            assertFoldedToAction("settings")
+            log("PASS $player chapter reopen after $reopenDelayMs ms restores the offscreen current card and retains focus")
+
+            openChapters()
+            main { settingsVisible.value = false }
+            instrumentation.waitForIdleSync()
+            key(KeyEvent.KEYCODE_DPAD_UP)
+            assertFoldedToAction("play")
+            main { settingsVisible.value = true }
+            instrumentation.waitForIdleSync()
+            key(KeyEvent.KEYCODE_DPAD_RIGHT)
+            awaitFocus("settings")
+            log("PASS $player chapter return falls back to Play when the originating action disappears")
+        }
+        main { chapterNavigation.timeline = PlaybackTimeline() }
+    }
     @Composable
     private fun AuditPanelRows() {
         if (panelLoading.value) {
@@ -96,14 +252,18 @@ internal class PlayerOsdNavigationAudit(private val instrumentation: Instrumenta
 
     fun run() {
         check(instrumentation.targetContext.packageName.endsWith(".osdaudit"))
-        val activity = instrumentation.startActivitySync(Intent(instrumentation.targetContext, UiCatalogActivity::class.java)
+        val preferences = videoImagePreferences(instrumentation.targetContext)
+        val originalChapterVisibility = listOf(OsdPlayer.YOUTUBE, OsdPlayer.MEDIA).associateWith {
+            osdButtonVisible(OsdButton.CHAPTERS, it, preferences.osdHiddenButtons)
+        }
+        activity = instrumentation.startActivitySync(Intent(instrumentation.targetContext, UiCatalogActivity::class.java)
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) as UiCatalogActivity
         val play = FocusRequester()
         val settings = FocusRequester()
         try {
             main {
                 activity.setContent {
-                    CompositionLocalProvider(LocalHandheldUi provides false) {
+                    CompositionLocalProvider(LocalHandheldUi provides false, LocalPlaybackNavigation provides chapterNavigation) {
                         AmbientTvTheme {
                             PersistentPlayerChrome("osd-navigation-audit") {
                                 focusState = checkNotNull(LocalPlayerControlFocus.current)
@@ -129,7 +289,7 @@ internal class PlayerOsdNavigationAudit(private val instrumentation: Instrumenta
                                                         onSeekBy = { seekDelta += it }, onInteraction = {},
                                                         modifier = mark("timeline"),
                                                     )
-                                                    PlayerControlBar(leftContent = {
+                                                    PlayerControlBar(player = chapterPlayer.value, leftContent = {
                                                         PlayerIconButton(Icons.Default.PlayArrow, "Play", {},
                                                             modifier = mark("play").focusRequester(play), primary = true)
                                                     }, rightContent = {
@@ -274,6 +434,7 @@ internal class PlayerOsdNavigationAudit(private val instrumentation: Instrumenta
                 main { check(focused == "settings") { "Closed panel reclaimed focus" } }
                 log("PASS $panel metadata update and replaced control retain panel focus and D-pad navigation")
             }
+            auditChapterNavigation(settings)
             main { chrome.osd.close() }
             Thread.sleep(150)
             main { chrome.osd.reveal() }
@@ -287,6 +448,11 @@ internal class PlayerOsdNavigationAudit(private val instrumentation: Instrumenta
             main { chrome.osd.close(); chrome.osd.close() }
             awaitState("second close finishes immediately") { chrome.osd.mode == PlayerOsdMode.HIDDEN }
             log("PASS close reversal preserves compact focus; close completion and repeated Back reach hidden")
-        } finally { main { activity.finish() } }
+        } finally { main {
+            originalChapterVisibility.forEach { (player, visible) ->
+                setOsdButtonVisible(preferences, player, OsdButton.CHAPTERS, visible)
+            }
+            activity.finish()
+        } }
     }
 }

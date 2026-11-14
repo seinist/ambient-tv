@@ -44,12 +44,18 @@ fun RequestPlayerOverlayFocus(
     val panelHandingBack = panelNavigation?.restoreKey != null
     var seenPlaybackStart by remember { mutableStateOf(false) }
     if (playbackStarted) seenPlaybackStart = true
-    val focusReturnVersion = LocalPlaybackNavigation.current?.focusReturnVersion
-    LaunchedEffect(enabled, seenPlaybackStart, playbackIdentity, requester, focusReturnVersion, panelNavigation?.restoreFailed, mediaRoute, changingItem, osd?.mode, osd?.closing, compactTarget) {
+    val playbackNavigation = LocalPlaybackNavigation.current
+    val focusReturnVersion = playbackNavigation?.focusReturnVersion
+    LaunchedEffect(
+        enabled, seenPlaybackStart, playbackIdentity, requester, focusReturnVersion,
+        panelNavigation?.restoreFailed, mediaRoute, changingItem, osd?.mode, osd?.closing,
+        compactTarget, playbackNavigation, playbackNavigation?.chaptersOpen,
+    ) {
         if (!enabled && panelNavigation?.panel == com.ambient.tv.ui.common.UnifiedPlayerPanel.NONE) {
             panelNavigation.cancelFocusReturn()
         }
-        if (handheld || !enabled || panelHandingBack || changingItem || osd?.closing == true) return@LaunchedEffect
+        if (handheld || !enabled || panelHandingBack || changingItem || osd?.closing == true ||
+            playbackNavigation?.chaptersOpen == true) return@LaunchedEffect
         val generation = panelNavigation?.restoreGeneration
         repeat(12) { attempt ->
             if (attempt == 0) {
@@ -59,7 +65,8 @@ fun RequestPlayerOverlayFocus(
                 delay(50)
             }
             if (!currentEnabled || osd?.closing == true || panelNavigation?.panel?.let { it != com.ambient.tv.ui.common.UnifiedPlayerPanel.NONE } == true ||
-                panelNavigation?.restoreGeneration != generation || panelNavigation?.restoreKey != null) return@LaunchedEffect
+                panelNavigation?.restoreGeneration != generation || panelNavigation?.restoreKey != null ||
+                playbackNavigation?.chaptersOpen == true) return@LaunchedEffect
             // A live channel can remount the entire OSD. Restore its last control, and never
             // steal focus again when the new stream reports its first playing frame.
             val compact = osd != null && !osd.expanded
@@ -83,8 +90,9 @@ internal fun rememberExpandPlayerControls(): () -> Unit {
     val controls = LocalPlayerControlFocus.current
     val fallback = rememberPlayerPlayFocus()
     val navigation = LocalPlayerPanelNavigation.current
+    val playbackNavigation = LocalPlaybackNavigation.current
     val scope = rememberCoroutineScope()
-    return remember(osd, controls, fallback, navigation, scope) {
+    return remember(osd, controls, fallback, navigation, playbackNavigation, scope) {
         {
             osd?.expand()
             val generation = osd?.transitionVersion
@@ -92,7 +100,8 @@ internal fun rememberExpandPlayerControls(): () -> Unit {
                 repeat(12) {
                     withFrameNanos { }
                     if (osd?.let { it.transitionVersion != generation || !it.expanded || it.closing } == true ||
-                        navigation?.panel?.let { it != com.ambient.tv.ui.common.UnifiedPlayerPanel.NONE } == true) return@launch
+                        navigation?.panel?.let { it != com.ambient.tv.ui.common.UnifiedPlayerPanel.NONE } == true ||
+                        playbackNavigation?.chaptersOpen == true) return@launch
                     val target = controls?.buttonTarget(fallback) ?: fallback
                     if (runCatching { target.requestFocus() }.getOrDefault(false)) return@launch
                 }
