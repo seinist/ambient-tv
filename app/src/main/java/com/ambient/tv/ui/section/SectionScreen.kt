@@ -167,6 +167,7 @@ import com.ambient.tv.ui.common.overlayLazyScrollbar
 import com.ambient.tv.ui.common.PageHeader
 import com.ambient.tv.ui.common.PageChipRow
 import com.ambient.tv.ui.common.browseFocusTarget
+import com.ambient.tv.ui.common.claimBrowseStartupFocusOnInput
 import com.ambient.tv.ui.common.RegisterBrowseFocusSections
 import com.ambient.tv.ui.common.RegisterBrowseFocusRows
 import com.ambient.tv.ui.common.BrowseFocusRow
@@ -317,7 +318,22 @@ internal fun SectionContent(
     val optionsFocusRequester = remember { FocusRequester() }
     var initialContentFocusPending by remember(sectionKey, state.page, state.playbackReturnRevision) { mutableStateOf(true) }
     val initialRecommendationRow = state.recommendationRows.firstOrNull { it.items.isNotEmpty() }
-    val focusState = if (initialContentFocusPending) {
+    val startupFocus = com.ambient.tv.ui.common.rememberBrowseStartupFocusGate(
+        "section:$sectionKey:${state.page}", explicitReturn = playbackReturnToken != null,
+    )
+    val followFirst = startupFocus.followsFirst(playbackReturnToken != null)
+    val focusState = if (followFirst) {
+        // Cached rows are provisional until the first *user* input, not until Compose
+        // automatically focuses the first item. New items inserted at the start still win.
+        when (state.page) {
+            SectionPage.RECOMMENDATIONS -> state.copy(
+                focusedRatingKey = initialRecommendationRow?.items?.firstOrNull()?.ratingKey,
+                focusedRecommendationRowId = initialRecommendationRow?.id,
+            )
+            SectionPage.LIBRARY -> state.copy(focusedRatingKey = state.items.firstOrNull()?.ratingKey)
+            SectionPage.COLLECTIONS -> state.copy(focusedCollectionId = state.collections.firstOrNull()?.id)
+        }
+    } else if (initialContentFocusPending) {
         when (state.page) {
             SectionPage.RECOMMENDATIONS -> {
                 val savedExists = state.focusedRatingKey != null && state.recommendationRows.any { row ->
@@ -346,6 +362,22 @@ internal fun SectionContent(
     com.ambient.tv.ui.common.BrowseFocusInitialTarget(
         if (state.page == SectionPage.COLLECTIONS) focusState.focusedCollectionId else focusState.focusedRatingKey,
         focusState.focusedRecommendationRowId.takeIf { state.page == SectionPage.RECOMMENDATIONS },
+    )
+    com.ambient.tv.ui.common.BrowseStartupFollowFirst(
+        gate = startupFocus,
+        target = when (state.page) {
+            SectionPage.RECOMMENDATIONS -> initialRecommendationRow?.items?.firstOrNull()?.ratingKey?.let {
+                com.ambient.tv.ui.common.BrowseFocusKey(initialRecommendationRow.id, it, true)
+            }
+            SectionPage.LIBRARY -> state.items.firstOrNull()?.ratingKey?.let {
+                com.ambient.tv.ui.common.BrowseFocusKey(null, it, true)
+            }
+            SectionPage.COLLECTIONS -> state.collections.firstOrNull()?.id?.let {
+                com.ambient.tv.ui.common.BrowseFocusKey(null, it, true)
+            }
+        },
+        explicitReturn = playbackReturnToken != null,
+        enabled = !showOptions && filterFocusState.allowContentAutoFocus,
     )
     val playbackFocus = com.ambient.tv.ui.common.rememberBrowsePlaybackReturn(
         token = playbackReturnToken,
@@ -406,7 +438,7 @@ internal fun SectionContent(
         if (heroBackdrop) recommendationHero.collect { hero -> if (hero != null) sharedBackgroundArtwork?.value = hero }
     }
     CompositionLocalProvider(LocalFilterFocusState provides filterFocusState) {
-        Box(Modifier.fillMaxSize()) {
+        Box(Modifier.fillMaxSize().claimBrowseStartupFocusOnInput(startupFocus)) {
             if (heroBackdrop) com.ambient.tv.ui.home.HomeFocusBackdrop(recommendationHero)
             Column(
                 Modifier
