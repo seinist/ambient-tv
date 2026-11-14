@@ -49,7 +49,7 @@ object Destinations {
     const val YOUTUBE_PLAYER = "youtube_player/{videoId}?trailer={trailer}&browseSession={browseSession}"
     const val TVH_PLAYER = "tvh_player/{kind}/{id}?sourceId={sourceId}"
     const val DETAIL = "detail/{ratingKey}?collectionId={collectionId}&collectionSort={collectionSort}"
-    const val PLAYER = "player/{ratingKey}?mediaIndex={mediaIndex}&restart={restart}&collectionId={collectionId}&collectionSort={collectionSort}&detailOrigin={detailOrigin}"
+    const val PLAYER = "player/{ratingKey}?mediaIndex={mediaIndex}&restart={restart}&collectionId={collectionId}&collectionSort={collectionSort}&detailOrigin={detailOrigin}&explicitVersion={explicitVersion}&versionSourceKey={versionSourceKey}&versionSourceIndex={versionSourceIndex}&versionSourceId={versionSourceId}"
     const val SECTION = "section/{sectionKey}"
     const val FILTERED_BROWSE = "browse/{kind}/{filterId}/{title}"
     const val DETAIL_FILTERED_BROWSE = "detail_browse/{kind}/{filterId}/{title}"
@@ -104,6 +104,11 @@ object Destinations {
         collectionSort: String? = null,
         /** Set when an episode was started from a detail page, so leaving the player can open that episode. */
         detailOrigin: Boolean = false,
+        /** A click on a physical version in Detail must not be replaced by display Auto selection. */
+        explicitVersion: Boolean = false,
+        versionSourceKey: String? = null,
+        versionSourceIndex: Int? = null,
+        versionSourceId: String? = null,
     ) = buildString {
         append("player/").append(Uri.encode(ratingKey))
         append("?mediaIndex=").append(mediaIndex)
@@ -113,6 +118,12 @@ object Destinations {
             append("&collectionSort=").append(Uri.encode(collectionSort.orEmpty()))
         }
         if (detailOrigin) append("&detailOrigin=true")
+        if (explicitVersion) {
+            append("&explicitVersion=true")
+            versionSourceKey?.let { append("&versionSourceKey=").append(Uri.encode(it)) }
+            versionSourceIndex?.let { append("&versionSourceIndex=").append(it) }
+            versionSourceId?.let { append("&versionSourceId=").append(Uri.encode(it)) }
+        }
     }
     fun section(sectionKey: String) = "section/${Uri.encode(sectionKey)}"
     fun filteredBrowse(kind: String, filterId: String, title: String) = "browse/$kind/${Uri.encode(filterId)}/${Uri.encode(title)}"
