@@ -292,6 +292,10 @@ class SectionViewModel @Inject constructor(
 
     private fun stateKey(targetPage: SectionPage = page): String = "$sectionKey:${targetPage.name.lowercase()}"
 
+    /** Updated on each focused tile without publishing an expensive whole-grid Loaded state. */
+    internal fun currentSessionFocus(targetPage: SectionPage): com.ambient.tv.ui.common.BrowseFocusSnapshot? =
+        focusBuffer.get(stateKey(targetPage))
+
     private fun sort(): SectionSort = preferences.sectionSort(stateKey())?.let { runCatching { SectionSort.valueOf(it) }.getOrNull() } ?: SectionSort.TITLE
     private fun sortOrder(): SectionSortOrder = preferences.sectionSortOrder(stateKey())
         ?.let { runCatching { SectionSortOrder.valueOf(it) }.getOrNull() }
