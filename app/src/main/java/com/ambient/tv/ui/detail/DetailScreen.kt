@@ -622,8 +622,8 @@ internal fun DetailContent(
             if (!stillRequested()) return false
             if (columnFocus.focusEntry(rowKey)) return true
             rowSectionIndices[rowKey]?.takeIf { section ->
-                            listState.layoutInfo.visibleItemsInfo.none { it.index == section }
-                        }?.let { listState.scrollToItem(it) }
+                listState.layoutInfo.visibleItemsInfo.none { it.index == section }
+            }?.let { listState.scrollToItem(it) }
             var frames = 0
             while (!columnFocus.canScrollToEntry(rowKey) && frames++ < 12) {
                 withFrameNanos { }
