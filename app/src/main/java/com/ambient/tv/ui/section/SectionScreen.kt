@@ -281,6 +281,7 @@ fun SectionScreen(
                 onRefresh = viewModel::reload,
                 refreshing = refreshing,
                 playbackReturnToken = playbackReturn?.revision?.takeIf { it == state.playbackReturnRevision },
+                sessionFocusForPage = viewModel::currentSessionFocus,
             )
         }
 
@@ -311,6 +312,8 @@ internal fun SectionContent(
     onRefresh: () -> Unit = {},
     refreshing: Boolean = false,
     playbackReturnToken: Any? = null,
+    /** The screen owns the ViewModel; the reusable content only reads its buffered focus. */
+    sessionFocusForPage: (SectionPage) -> com.ambient.tv.ui.common.BrowseFocusSnapshot? = { null },
 ) {
     val filterFocusState = rememberFilterFocusState(sectionKey, state.page)
     var showOptions by remember { mutableStateOf(false) }
@@ -326,7 +329,7 @@ internal fun SectionContent(
     // When the startup gate closes, use that live buffer rather than the old persisted key
     // still present in the last Loaded object (which could otherwise snap back after input).
     val sessionFocus = if (startupFocus.claimed && playbackReturnToken == null)
-        viewModel.currentSessionFocus(state.page) else null
+        sessionFocusForPage(state.page) else null
     val focusedState = sessionFocus?.let { entry ->
         if (state.page == SectionPage.COLLECTIONS) state.copy(
             focusedCollectionId = entry.itemKey.removePrefix("collection:"),
