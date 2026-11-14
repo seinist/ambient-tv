@@ -53,6 +53,7 @@ class DetailVersionFocusTest {
         longSummary: Boolean = false,
         versionCount: Int = 6,
         sameResolution: Boolean = false,
+        autoSelectDisplayVersion: Boolean = false,
     ): MutableState<MediaItem> {
         val item = movie("movie", "Versioned film").copy(
             summary = if (longSummary) "A long film synopsis fills all five lines of the detail hero. ".repeat(40) else null,
@@ -88,7 +89,7 @@ class DetailVersionFocusTest {
                         similarLoading = false,
                         actorRows = emptyList(),
                         actionInProgress = false,
-                        autoSelectDisplayVersion = false,
+                        autoSelectDisplayVersion = autoSelectDisplayVersion,
                         onPlay = { media, index, restart -> playback += Playback(media.ratingKey, index, restart) },
                         onPlayVersion = { media, index -> playback += Playback(media.ratingKey, index, false) },
                         onOpenChild = {},
@@ -141,7 +142,7 @@ class DetailVersionFocusTest {
     }
 
     @Test fun twoIdenticalResolutionFilesRemainSeparatelyPlayableWithStableDpadFocus() {
-        mount(versionCount = 2, sameResolution = true, longSummary = true)
+        mount(versionCount = 2, sameResolution = true, longSummary = true, autoSelectDisplayVersion = true)
         playAction().assertIsFocused()
 
         press(Key.DirectionDown)
