@@ -1,5 +1,7 @@
 package com.ambient.tv.ui.telegram
 
+import com.ambient.tv.ui.common.claimBrowseStartupFocusOnInput
+
 import com.ambient.tv.ui.theme.animatedFocusSurface
 import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.MusicNote
@@ -189,6 +191,10 @@ fun TelegramScreen(
         .ifEmpty { sections.take(1) }
     val canonical = sectionKey.takeIf { key -> shownTabs.any { it.first == key } }
         ?: shownTabs.first().first
+    val startupFocus = com.ambient.tv.ui.common.rememberBrowseStartupFocusGate(
+        "monogram:$sectionKey", explicitReturn = returnVisit != null,
+    )
+    val followFirst = startupFocus.followsFirst(returnVisit != null)
     val focusMemory = rememberMonogramFocusMemory(sectionKey, returnedKey, state.playbackReturnRevision)
     var layoutKey by rememberSaveable(sectionKey) { mutableStateOf(viewModel.viewMode(sectionKey).name) }
     val layout = MonogramBrowseLayout.valueOf(layoutKey)
@@ -209,8 +215,8 @@ fun TelegramScreen(
     }
     val flat = remember(currentRows, sort, descending) { flatMonogramItems(currentRows, sort, descending) }
     val focusIndex = remember(currentRows, flat) { MonogramBrowseFocusIndex(currentRows, flat) }
-    val initialKey = focusMemory.key?.takeIf(focusIndex::contains)
-        ?: currentRows.firstOrNull()?.items?.firstOrNull()?.ratingKey
+    val initialKey = (if (followFirst) null else focusMemory.key?.takeIf(focusIndex::contains))
+        ?: currentRows.firstOrNull { it.items.isNotEmpty() }?.items?.firstOrNull()?.ratingKey
     val initialRow = focusIndex.rowForItem(initialKey)
     val initialRowIndex = currentRows.indexOfFirst { it.id == initialRow }.coerceAtLeast(0)
     val initialFlatIndex = focusIndex.flatKeys.indexOf(initialKey).coerceAtLeast(0)
@@ -288,6 +294,18 @@ fun TelegramScreen(
         initialKey,
         initialRow.takeIf { layout == MonogramBrowseLayout.ROWS },
     )
+    com.ambient.tv.ui.common.BrowseStartupFollowFirst(
+        gate = startupFocus,
+        target = if (layout == MonogramBrowseLayout.ROWS)
+            currentRows.firstOrNull { it.items.isNotEmpty() }?.let { row ->
+                com.ambient.tv.ui.common.BrowseFocusKey(row.id, row.items.first().ratingKey, true)
+            }
+        else flat.firstOrNull()?.ratingKey?.let {
+            com.ambient.tv.ui.common.BrowseFocusKey(null, it, true)
+        },
+        explicitReturn = returnVisit != null,
+        enabled = state.available && currentRows.isNotEmpty() && !showViewOptions,
+    )
     val returnTarget = returnedKey?.takeIf(focusIndex::contains) ?: initialKey
     val playbackReturn = rememberBrowsePlaybackReturn(
         token = returnVisit,
@@ -350,7 +368,9 @@ fun TelegramScreen(
         restorePanelFocus = true
     }
 
-    Box(Modifier.fillMaxSize()) {
+    Box(Modifier.fillMaxSize().then(
+        Modifier.claimBrowseStartupFocusOnInput(startupFocus)
+    )) {
         Column(
             Modifier.fillMaxSize().handheldSwipeTabs(
                 tabs = shownTabs.map { it.first }, selected = canonical,
