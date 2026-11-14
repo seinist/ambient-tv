@@ -21,6 +21,8 @@ import com.ambient.tv.ui.common.RowColumnFocus
 import com.ambient.tv.ui.common.rowColumnFocusNavigation
 import com.ambient.tv.ui.common.rowColumnFocusWrapRight
 import com.ambient.tv.ui.common.rowColumnFocusTarget
+import com.ambient.tv.ui.common.browseFocusTarget
+import com.ambient.tv.ui.common.claimBrowseStartupFocusOnInput
 import androidx.compose.ui.platform.LocalContext
 import com.ambient.tv.ui.common.displayTitle
 import androidx.lifecycle.Lifecycle
@@ -340,9 +342,7 @@ fun HomeScreen(
     // The overview's focus backdrop runs behind its header too, like the library pages: no dark
     // strip above the rows, the header actions sit on the artwork beside the title.
     val overviewRowsScrolling = remember { MutableStateFlow(false) }
-    Box(Modifier.fillMaxSize().then(
-        com.ambient.tv.ui.common.Modifier.claimBrowseStartupFocusOnInput(startupFocus)
-    )) {
+    Box(Modifier.fillMaxSize().claimBrowseStartupFocusOnInput(startupFocus)) {
     if (systemOverview && !LocalHandheldUi.current) HomeFocusBackdrop(heroContent, overviewRowsScrolling)
     Column(Modifier.fillMaxSize()) {
         if (!systemOverview) com.ambient.tv.update.UpdateHomeCard()
