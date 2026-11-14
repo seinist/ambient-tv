@@ -104,10 +104,10 @@ class PlaybackSeekCoordinatorTest {
         // Even a small 400ms keyframe rewind must not pull the seek thumb backwards.
         assertEquals(70_000L, seek.displayedPosition(69_600L))
         assertEquals(70_000L, seek.pendingTarget)
-        now = 2_300L
+        now = 1_800L
         assertEquals(70_000L, seek.displayedPosition(70_200L))
         // A post-rewind alignment still needs the normal stability window.
-        now = 2_850L
+        now = 2_350L
         assertEquals(70_750L, seek.displayedPosition(70_750L))
         assertNull(seek.pendingTarget)
     }
