@@ -188,7 +188,8 @@ class PlaybackSeekCoordinator(
         // snap tolerance's poll jitter is that keyframe, not a landing.
         val lower = if (stopped) (acknowledged - STOPPED_DROP_MS).coerceAtLeast(0L)
         else (acknowledged - ALIGN_BEFORE_MS).coerceAtLeast(0L)
-        if (engine < if (holdSeekTargetUntilReached) acknowledged else lower) {
+        val minRetainedPosition = if (holdSeekTargetUntilReached) acknowledged else lower
+        if (engine < minRetainedPosition) {
             pendingTargetMs = acknowledged
             lastCommittedTargetMs = committed
             alignedAtMs = null
