@@ -532,7 +532,10 @@ fun rememberDisplayModeRequest(
     val holdJob = remember(activity, playbackKey) { arrayOfNulls<Job>(1) }
     // Pause, request, confirm and delay outlive format-driven effect restarts, not the title.
     fun switchWithPause(target: SupportedDisplayMode?): Job? {
-        target ?: return null
+        if (target == null) {
+            DisplayPlaybackStartup.releaseIfWaiting(BackgroundPlaybackSession.activeHandle())
+            return null
+        }
         val delayMs = AppPreferences.normalizeDisplaySwitchPauseMs(latestSwitchPauseMs)
         val handle = BackgroundPlaybackSession.activeHandle()
         val metadata = BackgroundPlaybackSession.snapshot.value.metadata
@@ -544,11 +547,19 @@ fun rememberDisplayModeRequest(
         val extraMs = displaySwitchTransitionExtraMs(delayMs)
         val key = playbackKey
         val mediaKey = metadata?.let { it.source to it.mediaId }
+        val realSwitch = target.key != DisplayRefreshRateMatcher.currentModeKey(activity)
+        if (!realSwitch) {
+            // The desired mode is already active: a start held during format discovery can play.
+            DisplayPlaybackStartup.releaseIfWaiting(handle)
+            DisplayRefreshRateMatcher.requestDisplayMode(activity, target, extraMs)
+            return null
+        }
+        val startup = if (hold == DisplaySwitchHold.PAUSE) DisplayPlaybackStartup.claim(handle) else null
         val stillOwned = {
             latestPlaybackKey == key && BackgroundPlaybackSession.activeHandle() === handle &&
-                BackgroundPlaybackSession.snapshot.value.metadata?.let { it.source to it.mediaId } == mediaKey
+                BackgroundPlaybackSession.snapshot.value.metadata?.let { it.source to it.mediaId } == mediaKey &&
+                (startup == null || DisplayPlaybackStartup.owns(startup))
         }
-        val realSwitch = target.key != DisplayRefreshRateMatcher.currentModeKey(activity)
         if (hold == DisplaySwitchHold.NONE || handle == null) {
             if (handle == null || activity == null || !realSwitch) {
                 DisplayRefreshRateMatcher.requestDisplayMode(activity, target, extraMs)
@@ -568,14 +579,20 @@ fun rememberDisplayModeRequest(
             return null
         }
         return holdScope.launch {
-            val outcome = holdForDisplaySwitch(
-                handle.asDisplaySwitchPlayer(), hold, delayMs, isLive,
-                request = { DisplayRefreshRateMatcher.requestDisplayMode(activity, target, extraMs) },
-                awaitConfirmed = { timeout -> awaitDisplayMode(activity, target.key, timeout) },
-                stillOwned = stillOwned,
-                hdmiAudio = activity?.let { AndroidHdmiAudioWatch(it.applicationContext) },
-            )
-            Timber.i("DisplaySwitchPause hold=%s delay=%dms target=%s outcome=%s", hold, delayMs, target.key, outcome)
+            try {
+                val outcome = holdForDisplaySwitch(
+                    handle.asDisplaySwitchPlayer(), hold, delayMs, isLive,
+                    request = { DisplayRefreshRateMatcher.requestDisplayMode(activity, target, extraMs) },
+                    awaitConfirmed = { timeout -> awaitDisplayMode(activity, target.key, timeout) },
+                    stillOwned = stillOwned,
+                    initiallyPaused = startup != null,
+                    hdmiAudio = activity?.let { AndroidHdmiAudioWatch(it.applicationContext) },
+                )
+                Timber.i("DisplaySwitchPause hold=%s delay=%dms target=%s outcome=%s", hold, delayMs, target.key, outcome)
+            } finally {
+                // holdForDisplaySwitch owns the resume; just retire the start lease.
+                startup?.let { DisplayPlaybackStartup.finish(it, resume = false) }
+            }
         }.also { holdJob[0] = it }
     }
     DisposableEffect(activity, playbackKey, metadataRoute) {
@@ -605,6 +622,7 @@ fun rememberDisplayModeRequest(
         val fixed = metadataRoute?.let(PlaybackDisplayModeRevision::sessionFixedFor)
         if (fixed != null) {
             if (fixed == "system") {
+                DisplayPlaybackStartup.releaseIfWaiting(BackgroundPlaybackSession.activeHandle())
                 DisplayRefreshRateMatcher.restoreMode(activity, origin.claim.modeId)
                 return@LaunchedEffect
             }
@@ -629,7 +647,10 @@ fun rememberDisplayModeRequest(
         // Let a running hold finish; a newer format must not request a second mode mid-resync.
         holdJob[0]?.takeIf { it.isActive }?.join()
         if (adjustmentKey == "off") {
-            if (preferredModeKey == "system") DisplayRefreshRateMatcher.restoreMode(activity, origin.claim.modeId)
+            if (preferredModeKey == "system") {
+                DisplayPlaybackStartup.releaseIfWaiting(BackgroundPlaybackSession.activeHandle())
+                DisplayRefreshRateMatcher.restoreMode(activity, origin.claim.modeId)
+            }
             else switchWithPause(DisplayRefreshRateMatcher.preferredMode(activity, preferredModeKey))?.join()
         } else if (adjustmentKey == "always" || !switchedAtStart ||
             displayRateUpgradeNeeded(adjustmentKey, preferredModeKey, activity?.let(androidx.core.content.ContextCompat::getDisplayOrDefault)?.refreshRate, content?.fps)) {
@@ -656,6 +677,7 @@ fun rememberDisplayModeRequest(
                     handoffKeepsCurrentMode(current, selected, format.fps, allowDoubleRate, DisplayRefreshRateMatcher.highRateDoubling)) {
                     Timber.i("DisplayHandoff keeps %s for %s fps (target %s)", current.key, format.fps, selected.key)
                     switchedAtStart = true
+                    DisplayPlaybackStartup.releaseIfWaiting(BackgroundPlaybackSession.activeHandle())
                     return@LaunchedEffect
                 }
             }
