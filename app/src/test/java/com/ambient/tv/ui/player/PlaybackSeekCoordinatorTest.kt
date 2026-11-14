@@ -53,6 +53,62 @@ class PlaybackSeekCoordinatorTest {
         assertNull(seek.pendingTarget)
     }
 
+    @Test fun smartTubeVodDoesNotMoveSeekThumbBackToTheEarlierPlayingKeyframe() {
+        var now = 0L
+        val seek = PlaybackSeekCoordinator(holdSeekTargetUntilReached = true, nowMs = { now })
+        assertEquals(40_000L, seek.displayedPosition(40_000))
+        seek.requestAbsolute(50_000L)
+        seek.consumeCommit()
+
+        now = 800L
+        assertEquals(50_000L, seek.displayedPosition(48_000L))
+        now = 1_400L
+        // Previously this handed the UI back to 48.6s and made the bar jump backwards.
+        assertEquals(50_000L, seek.displayedPosition(48_600L))
+        assertEquals(50_000L, seek.pendingTarget)
+        now = 2_800L
+        assertEquals(50_000L, seek.displayedPosition(49_850L))
+        now = 3_050L
+        assertEquals(50_050L, seek.displayedPosition(50_050L))
+        assertNull(seek.pendingTarget)
+        now = 3_300L
+        assertEquals(50_300L, seek.displayedPosition(50_300L))
+    }
+
+    @Test fun smartTubeVodBackwardSeeksAlsoIgnoreTheEarlierLandingKeyframe() {
+        var now = 0L
+        val seek = PlaybackSeekCoordinator(holdSeekTargetUntilReached = true, nowMs = { now })
+        seek.displayedPosition(80_000L)
+        assertEquals(50_000L, seek.requestRelative(-30_000L, 80_000L, 120_000L))
+        seek.consumeCommit()
+        now = 800L
+        assertEquals(50_000L, seek.displayedPosition(48_000L))
+        now = 1_400L
+        assertEquals(50_000L, seek.displayedPosition(48_600L))
+        // Rapid next seek still stacks on the requested target, not the preceding keyframe.
+        assertEquals(40_000L, seek.requestRelative(-10_000L, 48_600L, 120_000L))
+    }
+
+    @Test fun smartTubeVodRestoresTargetIfNativeEngineFirstAcknowledgesThenRewinds() {
+        var now = 0L
+        val seek = PlaybackSeekCoordinator(holdSeekTargetUntilReached = true, nowMs = { now })
+        seek.displayedPosition(40_000L)
+        seek.requestAbsolute(70_000L)
+        seek.consumeCommit()
+        now = 800L
+        assertEquals(70_000L, seek.displayedPosition(70_000L))
+        now = 1_400L
+        assertEquals(70_000L, seek.displayedPosition(70_000L))
+        assertNull(seek.pendingTarget)
+        now = 1_650L
+        // Even a small 400ms keyframe rewind must not pull the seek thumb backwards.
+        assertEquals(70_000L, seek.displayedPosition(69_600L))
+        assertEquals(70_000L, seek.pendingTarget)
+        now = 2_300L
+        assertEquals(70_200L, seek.displayedPosition(70_200L))
+        assertNull(seek.pendingTarget)
+    }
+
     @Test fun chapterNavigationKeepsTheTargetAfterAPrecedingKeyframeLanding() {
         var now = 0L
         val seek = PlaybackSeekCoordinator(nowMs = { now })
