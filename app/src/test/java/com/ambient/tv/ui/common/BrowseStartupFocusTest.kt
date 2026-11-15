@@ -2,6 +2,7 @@ package com.ambient.tv.ui.common
 
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertSame
+import org.junit.Assert.assertNotSame
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -31,5 +32,19 @@ class BrowseStartupFocusTest {
         first.claim()
         assertFalse(BrowseStartupFocusSessions.get("startup-focus-test-1").followsFirst())
         assertTrue(different.followsFirst())
+    }
+
+    @Test fun aNewUiSessionDropsClaimedPagesEvenIfPlaybackKeptTheProcessAlive() {
+        val previous = BrowseStartupFocusSessions.get("fresh-ui-session")
+        previous.claim()
+        val generation = BrowseStartupFocusSessions.generation
+
+        BrowseStartupFocusSessions.clear()
+
+        val fresh = BrowseStartupFocusSessions.get("fresh-ui-session")
+        assertNotSame(previous, fresh)
+        assertTrue(fresh.followsFirst())
+        assertTrue(BrowseStartupFocusSessions.generation > generation)
+        assertFalse(previous.followsFirst())
     }
 }

@@ -183,6 +183,8 @@ fun HomeScreen(
     /** Contextual navigation for Library, Wake-on-LAN and the affected media provider. */
     onOpenRelevantSettings: (String) -> Unit = { onOpenSettings() },
 ) {
+    val browseSession = com.ambient.tv.ui.common.BrowseStartupFocusSessions.generation
+    val viewModelSession = remember(viewModel) { browseSession }
     val storedState by viewModel.uiState.collectAsState()
     val pendingYouTubeReturn by viewModel.pendingYouTubePlaybackReturn.collectAsState()
     val pendingTelegramReturn by viewModel.pendingTelegramPlaybackReturn.collectAsState()
@@ -193,7 +195,10 @@ fun HomeScreen(
         homeNavigationPlaybackReturn(storedState, navigationReturn, viewModel.navigationPlaybackRowId)
     }
     // The regular player that just closed outranks an older mini-player queue event.
-    val entryReturn = if (navigationReturn != null) mediaReturn else providerReturn
+    // A launcher restart replaces the root entry after composition. Its old ViewModel/return
+    // can survive for that first frame, but must not override the new session's first tile.
+    val entryReturn = if (viewModelSession != browseSession) null
+        else if (navigationReturn != null) mediaReturn else providerReturn
     val preparedReturn = viewModel.preparePlaybackReturn(storedState, focusStateKey, entryReturn)
     val uiState = preparedReturn ?: storedState
     // Build the returned hero and row viewport together; entry commits this same snapshot.
@@ -207,8 +212,8 @@ fun HomeScreen(
     val homeHeroStyleKey = viewModel.homeHeroStyleKey
     val homeHeroIntensityPercent = viewModel.homeHeroIntensityPercent
     val homeHeroSpreadKey = viewModel.homeHeroSpreadKey
-    // The disk-persisted row/card is a return address, not a cold-start landing. Until
-    // actual user input, show the current first card even if a cached Home had an old focus.
+    // A retained row/card is a return address, not a cold-start landing. Until actual user
+    // input, show the current first card even if cached Home state still had an old focus.
     val startupFocus = com.ambient.tv.ui.common.rememberBrowseStartupFocusGate(
         "home:$focusStateKey", explicitReturn = entryReturn != null,
     )
@@ -217,7 +222,7 @@ fun HomeScreen(
     else preparedReturn?.let { HomeFocusSnapshot(it.focusedRatingKey, it.focusedRowId) }
         ?: viewModel.focusSnapshot()
     val activeDestination = com.ambient.tv.ui.common.isActiveNavigationDestination()
-    var acceptedReturnKey by remember(focusStateKey) { mutableStateOf<String?>(null) }
+    var acceptedReturnKey by remember(focusStateKey, browseSession) { mutableStateOf<String?>(null) }
     androidx.compose.runtime.SideEffect {
         if (!activeDestination) acceptedReturnKey = null
         else if (entryReturn != null) acceptedReturnKey = entryReturn.key
@@ -387,6 +392,7 @@ fun HomeScreen(
                     if (systemOverview) overviewViewMode else Unit,
                     Modifier.fillMaxSize(),
                 ) {
+                    androidx.compose.runtime.key(browseSession) {
                     LibraryContent(
                         state = state,
                         loadingRowStyles = loadingRowStyles,
@@ -431,6 +437,7 @@ fun HomeScreen(
                         returnToken = returnKey,
                         returnFocus = playbackReturnController,
                     )
+                    }
                 }
                 is HomeUiState.Offline -> Centered {
                     ServerOfflineContent(state.serverName, viewModel::retry, onOpenSettings)
@@ -733,13 +740,17 @@ internal fun LibraryContent(
         return
     }
 
+    val followFirstItem = startupFocus?.followsFirst(returnToken != null) == true
+
     if (LocalHandheldUi.current) {
         // Touch has no row-focus previews; the hero was redundant and consumed the first
         // viewport. Keep the regular row cards and their own labels/actions at the top.
         androidx.compose.runtime.key(state.playbackReturnRevision) {
+        val listState = rememberLazyListState(initialFirstVisibleItemIndex = state.rowKeys.indexOf(focusSnapshot.rowId).coerceAtLeast(0))
+        com.ambient.tv.ui.common.BrowseStartupViewport(listState, state.rowKeys, followFirstItem)
         LazyColumn(
             allowUpExit = true,
-            state = rememberLazyListState(initialFirstVisibleItemIndex = state.rowKeys.indexOf(focusSnapshot.rowId).coerceAtLeast(0)),
+            state = listState,
             modifier = Modifier.fillMaxSize(),
             contentPadding = androidx.compose.foundation.layout.PaddingValues(bottom = 24.dp),
         ) {
@@ -755,6 +766,7 @@ internal fun LibraryContent(
                             onItemFocused = { onLiveTvFocused(rowKey, it) },
                             rowKey = rowKey,
                             restoreChannelKey = focusSnapshot.ratingKey.takeIf { rowKey == focusSnapshot.rowId && returnToken != null },
+                            followFirstItem = followFirstItem,
                             onOpenChannels = if (recent) {
                                 { onOpenHomeContent(homeTvShortcut(rowKey, "live")) }
                             } else null,
@@ -781,7 +793,8 @@ internal fun LibraryContent(
                                 }
                             }
                         }, onItemFocused = { onItemFocused(row.id, it) },
-                            restoreRatingKey = focusSnapshot.ratingKey.takeIf { row.id == focusSnapshot.rowId })
+                            restoreRatingKey = focusSnapshot.ratingKey.takeIf { row.id == focusSnapshot.rowId },
+                            followFirstItem = followFirstItem)
                     }
                 }
             }
@@ -870,6 +883,7 @@ internal fun LibraryContent(
         val rowListState = com.ambient.tv.ui.common.rememberBrowseRowColumnState(
             initialFirstVisibleItemIndex = if (restoreArmed) restoreListIndex else 0,
         )
+        com.ambient.tv.ui.common.BrowseStartupViewport(rowListState, state.rowKeys, followFirstItem)
         com.ambient.tv.ui.common.RegisterBrowseFocusRows(rowListState, state.rowKeys.map { rowKey ->
             rowKey to when {
                 rowKey.startsWith(HOME_OFFLINE_ROW_PREFIX) -> listOf(rowKey.removePrefix(HOME_OFFLINE_ROW_PREFIX))
@@ -915,6 +929,7 @@ internal fun LibraryContent(
         val rowCentering = rememberRowCenteringState(rowListState)
         val rowCenteringGate = remember(rowListState) { com.ambient.tv.ui.common.RowFocusCenteringGate() }
         val columnFocus = com.ambient.tv.ui.common.rememberRowColumnFocus()
+        if (followFirstItem) state.rowKeys.forEach(columnFocus::forget)
         // Survives a live row leaving the lazy list, so the first entry of this visit
         // still starts on card 0 after the row is scrolled away and back.
         val liveRowEntry = remember { LiveRowEntry() }
@@ -1083,6 +1098,7 @@ internal fun LibraryContent(
                                 columnFocus = columnFocus,
                                 rowKey = rowKey,
                                 restoreChannelKey = initialFocusKey.takeIf { rowKey == initialFocusRowId && returnToken != null },
+                                followFirstItem = followFirstItem,
                                 onOpenChannels = if (recent) {
                                     { onOpenHomeContent(homeTvShortcut(rowKey, "live")) }
                                 } else null,
@@ -1141,6 +1157,7 @@ internal fun LibraryContent(
                                         missingFocusFallback?.first == row.id -> missingFocusFallback.second
                                         else -> null
                                     },
+                                    followFirstItem = followFirstItem,
                                 )
                             }
                         }
@@ -1276,6 +1293,7 @@ internal fun HomeLiveTvRow(
     entry: LiveRowEntry? = null,
     /** Explicit playback return, resolved before the horizontal Lazy state is constructed. */
     restoreChannelKey: String? = null,
+    followFirstItem: Boolean = false,
 ) {
     val tv = !LocalHandheldUi.current
     val firstItemFocusRequester = remember { FocusRequester() }
@@ -1313,6 +1331,8 @@ internal fun HomeLiveTvRow(
     val rowState = com.ambient.tv.ui.common.rememberBrowseRowState(
         initialFirstVisibleItemIndex = (entryIndex - 1).coerceAtLeast(0),
     )
+    com.ambient.tv.ui.common.BrowseStartupViewport(rowState,
+        remember(channelKeys, leadingKey) { listOfNotNull(leadingKey) + channelKeys }, followFirstItem)
     com.ambient.tv.ui.common.RegisterRowColumnFocus(columnFocus, rowKey, rowState,
         remember(channelKeys, leadingKey) { listOfNotNull(leadingKey) + channelKeys })
     // One clock per row moves every tile's progress bar each minute.

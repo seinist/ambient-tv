@@ -40,7 +40,12 @@ internal class ForegroundTrimMemoryCache(
 
 internal const val RUNNING_LOW_KEEP_FRACTION = 0.75
 
+// Android 14+ no longer sends RUNNING_* levels, but older TVs still do. Keep the
+// legacy critical threshold so those devices can release the full requested amount.
+@Suppress("DEPRECATION")
+private const val LEGACY_RUNNING_CRITICAL = ComponentCallbacks2.TRIM_MEMORY_RUNNING_CRITICAL
+
 /** Size Coil's [MemoryCache.trimToSize] request is reduced to for [level]. */
 internal fun foregroundTrimTarget(requested: Long, level: Int, maxSize: Long): Long =
-    if (level >= ComponentCallbacks2.TRIM_MEMORY_RUNNING_CRITICAL) requested
+    if (level >= LEGACY_RUNNING_CRITICAL) requested
     else maxOf(requested, (maxSize * RUNNING_LOW_KEEP_FRACTION).toLong())

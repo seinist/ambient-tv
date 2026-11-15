@@ -275,7 +275,7 @@ fun PlaybackSessionContent(
         val current = BackgroundPlaybackSession.snapshot.value
         if (current.metadata?.route != metadata.route ||
             current.generation != snapshot.generation || current.replacingSource ||
-            current.metadata?.mediaId != metadata.mediaId ||
+            current.metadata.mediaId != metadata.mediaId ||
             handledKey == candidateKey || dismissedKey == candidateKey ||
             com.ambient.tv.companion.CompanionQueuePlayback.pending) return@LaunchedEffect
         val endedNow = current.status.ended ||

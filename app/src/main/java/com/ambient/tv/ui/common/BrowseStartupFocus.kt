@@ -1,16 +1,18 @@
 package com.ambient.tv.ui.common
 
-import androidx.compose.foundation.gestures.awaitEachGesture
-import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
@@ -35,14 +37,16 @@ internal class BrowseStartupFocusGate {
 }
 
 /**
- * Only in-memory, never SavedState / SharedPreferences. A cold app process starts every browse
- * view at card zero, while revisiting a view during the same process keeps its chosen position.
+ * Only in-memory, never SavedState / SharedPreferences. A new UI session starts every browse
+ * view at card zero, while revisiting a view during that same session keeps its chosen position.
  * Bound the registry so visiting dynamically generated detail/collection pages cannot grow it
  * without limit.
  */
 internal object BrowseStartupFocusSessions {
     private const val MAX_SESSIONS = 256
     private val sessions = LinkedHashMap<String, BrowseStartupFocusGate>()
+    var generation by mutableLongStateOf(0L)
+        private set
 
     @Synchronized
     fun get(key: String): BrowseStartupFocusGate {
@@ -50,13 +54,39 @@ internal object BrowseStartupFocusSessions {
         if (sessions.size >= MAX_SESSIONS) sessions.remove(sessions.keys.first())
         return BrowseStartupFocusGate().also { sessions[key] = it }
     }
+
+    /** A background player may keep the process alive after its browse UI session ended. */
+    @Synchronized
+    fun clear() {
+        sessions.clear()
+        generation++
+    }
 }
 
 @Composable
 internal fun rememberBrowseStartupFocusGate(scope: String, explicitReturn: Boolean = false): BrowseStartupFocusGate {
-    val gate = remember(scope) { BrowseStartupFocusSessions.get(scope) }
+    val gate = remember(scope, BrowseStartupFocusSessions.generation) { BrowseStartupFocusSessions.get(scope) }
     if (explicitReturn) SideEffect { gate.claim() }
     return gate
+}
+
+/**
+ * Focus reconciliation alone is too late: LazyListState restores saved scroll offsets and
+ * preserves the old first visible item's key when fresh rows/cards are inserted ahead of it.
+ * Request index zero during composition's apply phase, before the first/new list is measured,
+ * rather than scrolling back in a coroutine after an obsolete viewport was already drawn.
+ * A real navigation input or explicit playback return disables this pin immediately.
+ */
+@Composable
+internal fun BrowseStartupViewport(
+    state: LazyListState,
+    itemKeys: List<Any>,
+    followFirst: Boolean,
+) {
+    if (followFirst) DisposableEffect(state, itemKeys) {
+        state.requestScrollToItem(0)
+        onDispose { }
+    }
 }
 
 private val BrowseStartupNavigationKeys = setOf(
@@ -71,9 +101,13 @@ internal fun Modifier.claimBrowseStartupFocusOnInput(gate: BrowseStartupFocusGat
         if (event.type == KeyEventType.KeyDown && event.key in BrowseStartupNavigationKeys) gate.claim()
         false
     }.pointerInput(gate) {
-        awaitEachGesture {
-            awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
-            gate.claim()
+        awaitPointerEventScope {
+            while (true) {
+                val event = awaitPointerEvent(PointerEventPass.Initial)
+                if (event.changes.any { (it.pressed && !it.previousPressed) || it.scrollDelta != Offset.Zero }) {
+                    gate.claim()
+                }
+            }
         }
     }
 

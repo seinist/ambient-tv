@@ -581,7 +581,7 @@ fun ArtworkImage(
                     val source = it.result.dataSource
                     // Without the query: signed thumbnail URLs differ only there between two fetches.
                     val pictureIdentity = (currentModel as? String)?.substringBefore('?') ?: requestIdentity
-                    if (!backdrop && currentModel != null && source != coil3.decode.DataSource.MEMORY_CACHE &&
+                    if (!backdrop && source != coil3.decode.DataSource.MEMORY_CACHE &&
                         source != coil3.decode.DataSource.MEMORY) {
                         val known = keyIndex.keys(currentModel)
                         val urlChanged = keyIndex.modelChanged(pictureIdentity, currentModel)
@@ -597,9 +597,9 @@ fun ArtworkImage(
                                     "key=${key?.extras} known=${known.map { k -> k.extras }} " +
                                     "cache=${(cache?.size ?: 0L) / 1024}/${(cache?.maxSize ?: 0L) / 1024} KiB")
                         }
-                    } else if (currentModel != null) keyIndex.modelChanged(pictureIdentity, currentModel)
+                    } else keyIndex.modelChanged(pictureIdentity, currentModel)
                     if (key != null) {
-                        currentModel?.let { keyIndex.remember(it, key) }
+                        keyIndex.remember(currentModel, key)
                         continuity.model = currentModel
                         continuity.identity = requestIdentity
                         continuity.memoryKey = key

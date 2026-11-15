@@ -7,6 +7,7 @@ import android.os.Looper
 import androidx.lifecycle.ViewModelStore
 import androidx.test.core.app.ApplicationProvider
 import com.ambient.tv.data.local.AppPreferences
+import com.ambient.tv.data.weather.WeatherLocation
 import com.ambient.tv.data.weather.WeatherRepository
 import com.ambient.tv.data.weather.WeatherSettings
 import java.io.File
@@ -44,7 +45,7 @@ import org.robolectric.annotation.Config
 class WeatherViewModelNetworkTest {
     @get:Rule val temporary = TemporaryFolder()
 
-    @Test fun aFirstLocationCanBeSearchedAddedAndLoadedWithTheDefaultServerLanRestriction() = runBlocking {
+    @Test fun aFirstLocationCanBeSearchedAndAddedBeforeAVisibleConsumerLoadsItsForecast() = runBlocking {
         fixture().use { fixture ->
             val model = fixture.model
             assertTrue(fixture.preferences.localNetworkOnly)
@@ -62,6 +63,9 @@ class WeatherViewModelNetworkTest {
             assertEquals("geonames:2950159", place.id)
 
             model.addLocation(place)
+            assertEquals(listOf("geocoding-api.open-meteo.com"), fixture.hosts)
+            assertNull(model.state.value.data)
+            model.refreshVisible()
             val forecast = withTimeout(5_000) {
                 model.state.first { !it.loading && (it.data != null || it.error != null) }
             }
@@ -72,6 +76,34 @@ class WeatherViewModelNetworkTest {
             assertEquals(WeatherLocationSearch(), model.search.value)
             assertEquals(listOf("geocoding-api.open-meteo.com", "api.open-meteo.com"), fixture.hosts)
             assertTrue("Adding weather must preserve the media-server restriction", fixture.preferences.localNetworkOnly)
+        }
+    }
+
+    @Test fun changingSettingsWithoutAVisibleForecastDoesNotStartRequests() = runBlocking {
+        val requested = CountDownLatch(1)
+        val first = WeatherLocation("erfurt", "Erfurt", "Deutschland", latitude = 50.98,
+            longitude = 11.03, timezone = "Europe/Berlin")
+        val second = first.copy(id = "berlin", name = "Berlin", latitude = 52.52, longitude = 13.41)
+        fixture(enabled = true, locations = listOf(first)) { requested.countDown() }.use { fixture ->
+            val model = fixture.model
+            model.setEnabled(false)
+            model.setEnabled(true)
+            model.addLocation(second)
+            model.selectLocation(first.id)
+            model.removeLocation(second.id)
+            model.setTemperatureUnit("fahrenheit")
+            model.setWindUnit("mph")
+            model.changeSettings { it.copy(showInHeader = false, showInScreensaver = true) }
+            fixture.dispatcher.scheduler.runCurrent()
+            assertFalse("Settings must wait for a visible weather consumer", requested.await(200, TimeUnit.MILLISECONDS))
+            assertTrue(fixture.hosts.isEmpty())
+            assertNull(model.state.value.data)
+
+            model.refreshVisible()
+            assertEquals(listOf("api.open-meteo.com"), fixture.hosts)
+            assertEquals(first, model.state.value.data?.location)
+            assertEquals("fahrenheit", model.state.value.data?.temperatureUnit)
+            assertEquals("mph", model.state.value.data?.windUnit)
         }
     }
 
@@ -111,6 +143,7 @@ class WeatherViewModelNetworkTest {
     private fun fixture(
         enabled: Boolean = false,
         serverLanOnly: Boolean? = null,
+        locations: List<WeatherLocation> = emptyList(),
         beforeResponse: (Interceptor.Chain) -> Unit = {},
     ): Fixture {
         val directory = temporary.newFolder()
@@ -119,7 +152,7 @@ class WeatherViewModelNetworkTest {
         }
         val storage = context.getSharedPreferences("weather-viewmodel-${directory.name}", Context.MODE_PRIVATE)
         val preferences = AppPreferences(storage).apply {
-            weatherSettings = WeatherSettings(enabled = enabled)
+            weatherSettings = WeatherSettings(enabled = enabled, locations = locations)
             serverLanOnly?.let { localNetworkOnly = it }
         }
         val hosts = CopyOnWriteArrayList<String>()
