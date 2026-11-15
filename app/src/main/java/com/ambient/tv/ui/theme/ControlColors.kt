@@ -160,7 +160,16 @@ internal fun controlPalette(
         selectedOutline = uiHdrHighlight(accentFocus, headroom).copy(alpha = .85f),
         prominentOutline = uiHdrHighlight(edge, headroom).copy(alpha = .48f),
         materialStops = accentMaterialStops(accentColor, style).map { (position, color) ->
-            position to uiHdrHighlight(color, headroom)
+            val lifted = uiHdrHighlight(color, headroom)
+            // The sRGB-to-linear matrix can leave a tiny negative component for an
+            // exact zero channel (e.g. cyan). Keep the bounded material nonnegative.
+            position to if (lifted.colorSpace == ColorSpaces.LinearExtendedSrgb) Color(
+                lifted.red.coerceAtLeast(0f),
+                lifted.green.coerceAtLeast(0f),
+                lifted.blue.coerceAtLeast(0f),
+                lifted.alpha,
+                ColorSpaces.LinearExtendedSrgb,
+            ) else lifted
         },
         style = style,
         materialOpacity = washOpacity,
