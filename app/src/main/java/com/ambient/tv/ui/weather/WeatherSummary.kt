@@ -60,7 +60,6 @@ fun WeatherCompactSummary(
     temperatureUnit: String = snapshot.temperatureUnit,
     modifier: Modifier = Modifier,
     textColor: Color? = null,
-    interactiveAttribution: Boolean = true,
 ) {
     // A setting change may briefly precede the new-unit response. Never relabel the old value.
     val unit = snapshot.temperatureUnit
@@ -72,21 +71,12 @@ fun WeatherCompactSummary(
     val value = weatherTemperature(current.temperature, unit, locale)
     val description = stringResource(R.string.weather_compact_description, snapshot.location.name, value,
         stringResource(weatherConditionRes(current.weatherCode)))
-    Column(modifier, horizontalAlignment = Alignment.End) {
-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp),
-            modifier = Modifier.semantics { contentDescription = description }) {
-            Icon(weatherIcon(current.weatherCode, current.isDay), null, Modifier.size(20.dp), tint = color)
-            Text(value, style = MaterialTheme.typography.bodyMedium, color = color, maxLines = 1)
-            if (snapshot.isStale(nowMillis) || temperatureUnit != unit) {
-                Text(stringResource(R.string.weather_cached), style = MaterialTheme.typography.labelSmall,
-                    color = color.copy(alpha = color.alpha * .8f), maxLines = 1)
-            }
-        }
-        if (interactiveAttribution) {
-            WeatherSourceLink(stringResource(R.string.weather_source_short), "https://open-meteo.com/",
-                color = color.copy(alpha = color.alpha * .8f))
-        } else {
-            Text(stringResource(R.string.weather_source_passive), style = MaterialTheme.typography.labelSmall,
+    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp),
+        modifier = modifier.semantics { contentDescription = description }) {
+        Icon(weatherIcon(current.weatherCode, current.isDay), null, Modifier.size(20.dp), tint = color)
+        Text(value, style = MaterialTheme.typography.bodyMedium, color = color, maxLines = 1)
+        if (snapshot.isStale(nowMillis) || temperatureUnit != unit) {
+            Text(stringResource(R.string.weather_cached), style = MaterialTheme.typography.labelSmall,
                 color = color.copy(alpha = color.alpha * .8f), maxLines = 1)
         }
     }

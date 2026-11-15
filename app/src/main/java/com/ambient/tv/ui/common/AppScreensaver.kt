@@ -331,7 +331,7 @@ private fun ClockBlock(
         }
         weather?.let {
             if (showClock) Spacer(Modifier.height(12.dp))
-            com.ambient.tv.ui.weather.WeatherCompactSummary(snapshot = it, textColor = detailColor, interactiveAttribution = false)
+            com.ambient.tv.ui.weather.WeatherCompactSummary(snapshot = it, textColor = detailColor)
         }
     }
 }

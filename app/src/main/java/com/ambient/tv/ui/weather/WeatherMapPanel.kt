@@ -47,8 +47,10 @@ import com.ambient.tv.data.weather.WeatherMapKind
 import com.ambient.tv.data.weather.WeatherMapProvider
 import com.ambient.tv.data.weather.WeatherMapViewport
 import com.ambient.tv.ui.common.FeedbackLayout
+import com.ambient.tv.ui.common.FullscreenSpinner
 import com.ambient.tv.ui.common.OperationFeedbackContent
 import com.ambient.tv.ui.common.OperationFeedbackScope
+import com.ambient.tv.ui.common.StatePanel
 import com.ambient.tv.ui.common.TvActionButton
 import com.ambient.tv.ui.common.TvChip
 import com.ambient.tv.ui.common.TvLazyColumn
@@ -59,18 +61,18 @@ import java.time.format.DateTimeFormatter
 import java.util.Locale
 import kotlin.math.roundToInt
 
-/** Manual source selection; a source error never changes the user's saved provider. */
+/** Display only the provider selected in weather settings; an outage never replaces it. */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun WeatherMapPanel(
     location: WeatherLocation,
     kind: WeatherMapKind,
     providerId: String,
-    onProviderSelected: (String) -> Unit,
+    onOpenSettings: () -> Unit,
     networkAllowed: Boolean,
     modifier: Modifier = Modifier,
+    viewModel: WeatherMapViewModel = hiltViewModel(),
 ) {
-    val viewModel: WeatherMapViewModel = hiltViewModel()
     val lifecycle = LocalLifecycleOwner.current.lifecycle
     val contentVisible = LocalWeatherPresentation.current.contentVisible
     val source = WeatherMapProvider.selected(providerId, kind)
@@ -103,22 +105,20 @@ fun WeatherMapPanel(
 
     TvLazyColumn(modifier, verticalArrangement = Arrangement.spacedBy(12.dp),
         contentPadding = PaddingValues(bottom = 24.dp), allowUpExit = true, wrapVerticalFocus = false) {
-        item(key = "providers") {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text(stringResource(R.string.weather_maps_choose_provider), style = MaterialTheme.typography.titleMedium)
-                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    WeatherMapProvider.forKind(kind).forEach { provider ->
-                        TvChip(provider.title, selected = source == provider,
-                            onClick = { viewModel.stopPlaying(); onProviderSelected(provider.id) })
-                    }
-                }
-            }
-        }
         if (source == null) {
             item(key = "choose-provider") {
-                Text(stringResource(R.string.weather_maps_choose_hint), style = MaterialTheme.typography.bodyMedium)
+                StatePanel(
+                    title = stringResource(R.string.weather_maps_choose_provider),
+                    body = stringResource(R.string.weather_maps_choose_hint),
+                    actionLabel = stringResource(R.string.weather_settings),
+                    onAction = onOpenSettings,
+                    modifier = Modifier.fillMaxWidth(),
+                )
             }
         } else {
+            item(key = "provider") {
+                Text(source.title, style = MaterialTheme.typography.titleMedium)
+            }
             item(key = "source-description") {
                 Text(stringResource(when (source) {
                     WeatherMapProvider.RAINVIEWER -> R.string.weather_maps_rainviewer_description
@@ -143,7 +143,7 @@ fun WeatherMapPanel(
                 }
             }
             if (image != null || state.loading) item(key = "map") {
-                WeatherMapImageContent(image, source, viewport, location)
+                WeatherMapImageContent(image, source, viewport, location, state.frameLoading)
             }
             if (image != null) item(key = "image-time") {
                 WeatherMapImageTime(image, source, location, error != null)
@@ -182,7 +182,8 @@ fun WeatherMapPanel(
 }
 
 @Composable
-private fun WeatherMapImageContent(image: WeatherMapImage?, source: WeatherMapProvider, viewport: WeatherMapViewport, location: WeatherLocation) {
+private fun WeatherMapImageContent(image: WeatherMapImage?, source: WeatherMapProvider, viewport: WeatherMapViewport,
+    location: WeatherLocation, frameLoading: Boolean) {
     BoxWithConstraints(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
         val side = minOf(maxWidth, 360.dp)
         Box(Modifier.size(side).clip(RoundedCornerShape(12.dp)).background(MaterialTheme.colorScheme.surfaceVariant)) {
@@ -200,6 +201,7 @@ private fun WeatherMapImageContent(image: WeatherMapImage?, source: WeatherMapPr
                 }
                 WeatherSourceLink("© OpenStreetMap contributors", "https://www.openstreetmap.org/copyright",
                     modifier = Modifier.align(Alignment.BottomEnd).background(Color.Black.copy(alpha = .8f)), color = Color.White)
+                if (frameLoading) FullscreenSpinner(Modifier.align(Alignment.TopEnd).padding(12.dp))
             } else Text(stringResource(R.string.weather_maps_loading), Modifier.align(Alignment.Center).padding(20.dp))
         }
     }

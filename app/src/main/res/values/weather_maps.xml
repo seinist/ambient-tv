@@ -1,17 +1,17 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="weather_maps_choose_provider">Map provider</string>
-    <string name="weather_maps_choose_hint">Choose a provider for this map. Your selection is saved; providers never change automatically.</string>
+    <string name="weather_maps_choose_hint">Choose a provider for this map in weather settings. Only your selected provider is shown here.</string>
     <string name="weather_maps_rainviewer_description">Past radar · up to 2 hours. Dark areas have no radar coverage; the coverage mask may lag behind outages.</string>
     <string name="weather_maps_dwd_description">DWD radar reflectivity · Germany and nearby areas · 5-minute images. Coverage can have gaps.</string>
     <string name="weather_maps_nasa_description">NOAA-20 visible-colour daily mosaic (UTC). Daily satellite imagery can have gaps, including at night.</string>
     <string name="weather_maps_eumetsat_description">Global geostationary infrared composite · 3-hour images. Polar areas and satellite edges can have gaps.</string>
     <string name="weather_maps_network_disabled">Weather is disabled. Enable weather in settings to load maps.</string>
     <string name="weather_maps_offline">No internet connection. Stored images remain visible with their original time. Reconnect and refresh to load new images.</string>
-    <string name="weather_maps_unavailable">The selected provider is currently unavailable. Stored images remain visible. Try again or choose another provider above.</string>
-    <string name="weather_maps_rate_limited">The provider has asked us to wait. Stored images remain available; try again later or choose another provider.</string>
-    <string name="weather_maps_access_denied">The provider is not allowing access to this map. Choose another provider or try again later.</string>
-    <string name="weather_maps_no_coverage">This provider has no data for this map area. Choose another provider or move the map.</string>
+    <string name="weather_maps_unavailable">The selected provider is currently unavailable. Stored images remain visible. Try again or choose another provider in weather settings.</string>
+    <string name="weather_maps_rate_limited">The provider has asked us to wait. Stored images remain available; try again later or choose another provider in weather settings.</string>
+    <string name="weather_maps_access_denied">The provider is not allowing access to this map. Choose another provider in weather settings or try again later.</string>
+    <string name="weather_maps_no_coverage">This provider has no data for this map area. Move the map or choose another provider in weather settings.</string>
     <string name="weather_maps_loading">Loading map…</string>
     <string name="weather_maps_image_description">%1$s weather map near %2$s. The marker shows the saved location when it is in view.</string>
     <string name="weather_maps_frame_time">Image: %1$s</string>

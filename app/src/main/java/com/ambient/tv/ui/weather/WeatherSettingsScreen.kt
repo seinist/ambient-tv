@@ -189,7 +189,6 @@ fun WeatherSettingsScreen(
             item(key = "map-settings-hint") {
                 Text(stringResource(R.string.weather_maps_manual_hint), style = MaterialTheme.typography.bodySmall, color = muted)
             }
-            item(key = "source") { WeatherAttribution() }
         }
     }
 }

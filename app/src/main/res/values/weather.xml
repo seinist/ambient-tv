@@ -61,15 +61,13 @@
     <string name="weather_hour_detail">%1$s · %2$s · Precipitation: %3$s · %4$s</string>
     <string name="weather_local_times">Times at the selected location (%1$s).</string>
     <string name="weather_compact_description">%1$s: %2$s, %3$s</string>
-    <string name="weather_source_short">Open-Meteo</string>
-    <string name="weather_source_passive">Open-Meteo · open-meteo.com</string>
     <string name="weather_source">Weather data: Open-Meteo</string>
     <string name="weather_location_source">Location data: GeoNames via Open-Meteo</string>
     <string name="weather_map_providers">Map providers</string>
     <string name="weather_radar_provider">Radar provider</string>
     <string name="weather_satellite_provider">Satellite provider</string>
     <string name="weather_provider_none">No selection</string>
-    <string name="weather_maps_manual_hint">Choose radar and satellite providers separately here or in their map tabs. Your selected provider is kept when a service is unavailable. Maps load when opened.</string>
+    <string name="weather_maps_manual_hint">Choose radar and satellite providers separately here. Each map tab shows only its selected provider. Your selection is kept when a service is unavailable. Maps load when opened.</string>
     <string name="weather_clear">Clear</string>
     <string name="weather_mostly_clear">Mainly clear</string>
     <string name="weather_partly_cloudy">Partly cloudy</string>

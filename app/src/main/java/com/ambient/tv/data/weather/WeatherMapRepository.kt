@@ -9,6 +9,7 @@ import android.graphics.Paint
 import android.graphics.Rect
 import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
+import android.util.LruCache
 import com.ambient.tv.data.local.AppPreferences
 import com.ambient.tv.di.SharedOkHttp
 import dagger.hilt.android.qualifiers.ApplicationContext
@@ -18,17 +19,21 @@ import java.security.MessageDigest
 import java.time.Instant
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicInteger
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
@@ -67,16 +72,34 @@ class WeatherMapRepository @Inject constructor(
     private val preferences: AppPreferences,
     @SharedOkHttp pool: ConnectionPool,
 ) {
-    private val folder = File(context.cacheDir, "weather-maps-v1")
+    private val folder by lazy { File(context.cacheDir, "weather-maps-v1") }
     private val connectivity = context.getSystemService(ConnectivityManager::class.java)
     private val json = Json { ignoreUnknownKeys = true }
-    private val client = OkHttpClient.Builder().connectionPool(pool)
+    private var client = OkHttpClient.Builder().connectionPool(pool)
         .connectTimeout(8, TimeUnit.SECONDS).readTimeout(15, TimeUnit.SECONDS).callTimeout(20, TimeUnit.SECONDS)
         .followRedirects(false).followSslRedirects(false).build()
     private val seriesLock = Mutex()
     private val rateLock = Mutex()
-    private var lastRequestElapsed = 0L
+    private var lastRequestElapsed: Long? = null
     private val retryAfter = ConcurrentHashMap<String, Long>()
+    private val frameLocks = WeatherMapImageLocks()
+    private val rawLocks = WeatherMapImageLocks()
+    private val rendered = object : LruCache<String, RenderedImage>(16 * 1024 * 1024) {
+        override fun sizeOf(key: String, value: RenderedImage) = value.image.bitmap.byteCount
+    }
+    private val raw = object : LruCache<String, RawImage>(4 * 1024 * 1024) {
+        override fun sizeOf(key: String, value: RawImage) = value.bitmap.byteCount
+    }
+    private val optionalRetryAfter = LruCache<String, Long>(128)
+    private val rawWrites = AtomicInteger(3) // First successful download also checks an existing disk cache.
+    private var optionalTimeoutMillis = 2_500L
+
+    /** Controlled HTTP responses in regression tests; production keeps its standalone client. */
+    internal constructor(context: Context, preferences: AppPreferences, client: OkHttpClient,
+        optionalTimeoutMillis: Long = 2_500L) : this(context, preferences, client.connectionPool) {
+        this.client = client
+        this.optionalTimeoutMillis = optionalTimeoutMillis
+    }
 
     suspend fun cached(provider: WeatherMapProvider, viewport: WeatherMapViewport): WeatherMapResult =
         withContext(Dispatchers.IO) { cachedResult(provider, viewport) }
@@ -89,7 +112,7 @@ class WeatherMapRepository @Inject constructor(
                 val series = seriesLock.withLock { loadSeries(provider, networkAllowed, force) }
                 if (!viewport.intersects(series.bounds)) return@withContext WeatherMapResult(series, error = WeatherMapError.NO_COVERAGE)
                 val frame = series.frames.last()
-                val image = loadImage(provider, viewport, frame, networkAllowed)
+                val image = loadImage(provider, viewport, frame, networkAllowed, retryOptional = force)
                 storeSafely { persistLast(provider, viewport, series, image) }
                 WeatherMapResult(series, image)
             } catch (e: CancellationException) {
@@ -141,49 +164,126 @@ class WeatherMapRepository @Inject constructor(
         return series
     }
 
-    private suspend fun loadImage(provider: WeatherMapProvider, viewport: WeatherMapViewport, frame: WeatherMapFrame, networkAllowed: Boolean): WeatherMapImage {
+    private suspend fun loadImage(provider: WeatherMapProvider, viewport: WeatherMapViewport, frame: WeatherMapFrame,
+        networkAllowed: Boolean, retryOptional: Boolean = false): WeatherMapImage {
         val composite = compositeFile(provider, viewport, frame)
-        val metadata = readJson<CachedImage>(File(composite.path + ".json"))
-        if (metadata != null && composite.isFile &&
-            (!allowed(networkAllowed) || (!metadata.baseMissing && !metadata.coverageMissing))) readImage(composite)?.let {
-            return WeatherMapImage(it, frame, true, metadata.baseMissing, metadata.coverageMissing)
+        return frameLocks.withLock(composite.name) {
+            val cached = cachedImage(composite, frame)
+            if (cached != null && (!allowed(networkAllowed) ||
+                    (!cached.image.baseMissing && !cached.image.coverageMissing) ||
+                    (!retryOptional && System.currentTimeMillis() < cached.optionalRetryAtMillis))) {
+                return@withLock cached.image.copy(fromCache = true)
+            }
+            val baseUrl = weatherBaseMapUrl(viewport)
+            val coverageUrl = if (provider == WeatherMapProvider.RAINVIEWER)
+                weatherMapCoverageUrl(viewport, frame.tileHost) else null
+            if (retryOptional) {
+                optionalRetryAfter.remove(baseUrl)
+                coverageUrl?.let(optionalRetryAfter::remove)
+            }
+            // Independent layers load together. A slow background or coverage mask has a short
+            // deadline and cannot hold a usable weather frame behind two full HTTP timeouts.
+            val layers = coroutineScope {
+                val weather = async { image(weatherMapImageUrl(provider, viewport, frame), networkAllowed, Long.MAX_VALUE) }
+                val base = async { optionalImage(baseUrl, networkAllowed, 7 * 24 * 60 * 60_000L) }
+                val coverage = coverageUrl?.let { url -> async { optionalImage(url, networkAllowed, 24 * 60 * 60_000L) } }
+                val weatherBitmap = weather.await()
+                // Give already-running layers one shared grace period after the required image
+                // arrives. Slow but healthy layers can use all the time the weather image needed.
+                withTimeoutOrNull(optionalTimeoutMillis) { base.await(); coverage?.await() }
+                val baseBitmap = if (base.isCompleted) base.await() else {
+                    optionalRetryAfter.put(baseUrl, System.currentTimeMillis() + OPTIONAL_RETRY_MILLIS)
+                    base.cancel()
+                    cachedRawImage(baseUrl)?.bitmap
+                }
+                val coverageBitmap = if (coverage?.isCompleted == true) coverage.await() else {
+                    if (coverage != null) {
+                        optionalRetryAfter.put(checkNotNull(coverageUrl), System.currentTimeMillis() + OPTIONAL_RETRY_MILLIS)
+                        coverage.cancel()
+                    }
+                    coverageUrl?.let { cachedRawImage(it)?.bitmap }
+                }
+                Triple(weatherBitmap, baseBitmap, coverageBitmap)
+            }
+            val combined = Bitmap.createBitmap(512, 512, Bitmap.Config.ARGB_8888)
+            val canvas = Canvas(combined)
+            canvas.drawColor(Color.rgb(36, 43, 51))
+            val rect = Rect(0, 0, 512, 512)
+            val paint = Paint(Paint.FILTER_BITMAP_FLAG)
+            layers.second?.let { canvas.drawBitmap(it, null, rect, paint) }
+            canvas.drawBitmap(layers.first, null, rect, paint)
+            // Missing coverage must remain explicit; a transparent radar image alone is not
+            // evidence of dry weather outside the service's measured area.
+            layers.third?.let { canvas.drawBitmap(it, null, rect, Paint().apply { alpha = 160 }) }
+            val metadata = CachedImage(layers.second == null, coverageUrl != null && layers.third == null,
+                System.currentTimeMillis() + OPTIONAL_RETRY_MILLIS)
+            val result = WeatherMapImage(combined, frame, false, metadata.baseMissing, metadata.coverageMissing)
+            rendered.put(composite.name, RenderedImage(result, metadata.optionalRetryAtMillis))
+            storeSafely {
+                atomicWrite(composite) { output -> combined.compress(Bitmap.CompressFormat.PNG, 100, output) }
+                writeJson(File(composite.path + ".json"), metadata)
+                prune()
+            }
+            result
         }
-        val weather = image(weatherMapImageUrl(provider, viewport, frame), networkAllowed, Long.MAX_VALUE)
-        val base = optionalImage(weatherBaseMapUrl(viewport), networkAllowed, 7 * 24 * 60 * 60_000L)
-        val coverage = if (provider == WeatherMapProvider.RAINVIEWER)
-            optionalImage(weatherMapCoverageUrl(viewport), networkAllowed, 24 * 60 * 60_000L) else null
-        val combined = Bitmap.createBitmap(512, 512, Bitmap.Config.ARGB_8888)
-        val canvas = Canvas(combined)
-        canvas.drawColor(Color.rgb(36, 43, 51))
-        val rect = Rect(0, 0, 512, 512)
-        val paint = Paint(Paint.FILTER_BITMAP_FLAG)
-        base?.let { canvas.drawBitmap(it, null, rect, paint) }
-        canvas.drawBitmap(weather, null, rect, paint)
-        // RainViewer's published mask makes missing radar coverage visibly different from dry weather.
-        coverage?.let { canvas.drawBitmap(it, null, rect, Paint().apply { alpha = 160 }) }
-        val baseMissing = base == null
-        val coverageMissing = provider == WeatherMapProvider.RAINVIEWER && coverage == null
-        storeSafely {
-            atomicWrite(composite) { output -> combined.compress(Bitmap.CompressFormat.PNG, 100, output) }
-            writeJson(File(composite.path + ".json"), CachedImage(baseMissing, coverageMissing))
-            prune()
-        }
-        return WeatherMapImage(combined, frame, false, baseMissing, coverageMissing)
     }
 
-    private suspend fun optionalImage(url: String, networkAllowed: Boolean, ttl: Long): Bitmap? = try {
-        image(url, networkAllowed, ttl)
-    } catch (e: CancellationException) { throw e } catch (_: Exception) { null }
+    private suspend fun optionalImage(url: String, networkAllowed: Boolean, ttl: Long): Bitmap? =
+        rawImage(url, networkAllowed, ttl, optional = true)
 
-    private suspend fun image(url: String, networkAllowed: Boolean, ttl: Long): Bitmap {
+    private suspend fun image(url: String, networkAllowed: Boolean, ttl: Long): Bitmap =
+        rawImage(url, networkAllowed, ttl, optional = false)
+            ?: throw WeatherMapRequestException(WeatherMapError.UNAVAILABLE)
+
+    private suspend fun rawImage(url: String, networkAllowed: Boolean, ttl: Long, optional: Boolean): Bitmap? = rawLocks.withLock(url) {
         val file = File(folder, "raw-${digest(url)}.img")
-        if (file.isFile && (System.currentTimeMillis() - file.lastModified() in 0 until ttl || !allowed(networkAllowed))) {
-            readImage(file)?.let { return it }
+        val cached = cachedRawImage(url)
+        val now = System.currentTimeMillis()
+        if (cached != null && (now - cached.storedAtMillis in 0 until ttl || !allowed(networkAllowed))) {
+            return@withLock cached.bitmap
         }
-        val bytes = get(url, networkAllowed, 3 * 1024 * 1024)
-        val bitmap = decode(bytes) ?: throw WeatherMapRequestException(WeatherMapError.UNAVAILABLE)
-        storeSafely { atomicWrite(file) { it.write(bytes) } }
-        return bitmap
+        if (optional && (!allowed(networkAllowed) || now < (optionalRetryAfter.get(url) ?: 0L))) return@withLock cached?.bitmap
+        suspend fun fetch(): Bitmap {
+            val bytes = get(url, networkAllowed, 3 * 1024 * 1024)
+            val bitmap = decode(bytes) ?: throw WeatherMapRequestException(WeatherMapError.UNAVAILABLE)
+            raw.put(url, RawImage(bitmap, System.currentTimeMillis()))
+            storeSafely {
+                atomicWrite(file) { it.write(bytes) }
+                // Even when the required layer repeatedly fails, successful background downloads
+                // cannot grow the disk cache indefinitely. Batch scans to avoid one per tile.
+                if (rawWrites.incrementAndGet() % 4 == 0) prune()
+            }
+            return bitmap
+        }
+        if (!optional) return@withLock fetch()
+        val downloaded = try {
+            fetch()
+        } catch (e: CancellationException) {
+            // Hiding the map cancels all its children and never marks a source as unavailable.
+            throw e
+        } catch (_: Exception) { null }
+        if (downloaded != null) {
+            optionalRetryAfter.remove(url)
+            downloaded
+        } else {
+            optionalRetryAfter.put(url, System.currentTimeMillis() + OPTIONAL_RETRY_MILLIS)
+            cached?.bitmap
+        }
+    }
+
+    private fun cachedRawImage(url: String): RawImage? {
+        raw.get(url)?.let { return it }
+        val file = File(folder, "raw-${digest(url)}.img")
+        val bitmap = readImage(file) ?: return null
+        return RawImage(bitmap, file.lastModified()).also { raw.put(url, it) }
+    }
+
+    private fun cachedImage(file: File, frame: WeatherMapFrame): RenderedImage? {
+        rendered.get(file.name)?.let { return it }
+        val metadata = readJson<CachedImage>(File(file.path + ".json")) ?: return null
+        val bitmap = readImage(file) ?: return null
+        return RenderedImage(WeatherMapImage(bitmap, frame, true, metadata.baseMissing, metadata.coverageMissing),
+            metadata.optionalRetryAtMillis).also { rendered.put(file.name, it) }
     }
 
     private fun readImage(file: File): Bitmap? = runCatching {
@@ -209,14 +309,18 @@ class WeatherMapRepository @Inject constructor(
             .header("Accept", "image/png,image/jpeg,application/json,text/xml,*/*")
             .build()
         val host = request.url.host
-        if ((retryAfter[host] ?: 0L) > System.currentTimeMillis()) throw WeatherMapRequestException(WeatherMapError.RATE_LIMITED)
-        // All sources share this budget. Below RainViewer's 100 requests/IP/minute; cancelled
-        // scrubbing also consumes a slot. Cached playback never reaches this gate.
-        rateLock.withLock {
-            val elapsed = android.os.SystemClock.elapsedRealtime()
-            delay((750L - (elapsed - lastRequestElapsed)).coerceAtLeast(0))
+        val rainviewer = host == "rainviewer.com" || host.endsWith(".rainviewer.com")
+        val service = if (rainviewer) "rainviewer.com" else host
+        if ((retryAfter[service] ?: 0L) > System.currentTimeMillis()) throw WeatherMapRequestException(WeatherMapError.RATE_LIMITED)
+        // RainViewer counts API and tile calls together. Other services and the base map do
+        // not spend this budget or inherit its delay. Cached animation never enters the gate.
+        if (rainviewer) rateLock.withLock {
+            lastRequestElapsed?.let { previous ->
+                delay((750L - (android.os.SystemClock.elapsedRealtime() - previous)).coerceAtLeast(0))
+            }
             lastRequestElapsed = android.os.SystemClock.elapsedRealtime()
         }
+        if ((retryAfter[service] ?: 0L) > System.currentTimeMillis()) throw WeatherMapRequestException(WeatherMapError.RATE_LIMITED)
         if (!allowed(networkAllowed)) throw WeatherMapRequestException(WeatherMapError.NETWORK_DISABLED)
         return suspendCancellableCoroutine { continuation ->
             val call = client.newCall(request)
@@ -230,7 +334,7 @@ class WeatherMapRepository @Inject constructor(
                         val bytes = response.use {
                             if (!allowed(networkAllowed)) throw WeatherMapRequestException(WeatherMapError.NETWORK_DISABLED)
                             if (it.code == 429) {
-                                retryAfter[host] = weatherRetryAfterMillis(it.header("Retry-After"), System.currentTimeMillis())
+                                retryAfter[service] = weatherRetryAfterMillis(it.header("Retry-After"), System.currentTimeMillis())
                                 throw WeatherMapRequestException(WeatherMapError.RATE_LIMITED)
                             }
                             if (it.code == 401 || it.code == 403) throw WeatherMapRequestException(WeatherMapError.ACCESS_DENIED)
@@ -259,10 +363,14 @@ class WeatherMapRepository @Inject constructor(
     private fun cachedResult(provider: WeatherMapProvider, viewport: WeatherMapViewport): WeatherMapResult {
         val last = readJson<CachedLast>(lastFile(provider, viewport)) ?: return WeatherMapResult()
         if (last.series.providerId != provider.id || last.viewport != viewport) return WeatherMapResult()
-        val file = compositeFile(provider, viewport, last.frame)
-        val flags = readJson<CachedImage>(File(file.path + ".json")) ?: return WeatherMapResult(last.series)
-        val bitmap = readImage(file) ?: return WeatherMapResult(last.series)
-        return WeatherMapResult(last.series, WeatherMapImage(bitmap, last.frame, true, flags.baseMissing, flags.coverageMissing))
+        // Cache contents are expendable. Invalid persisted source paths/hosts must never stop
+        // a fresh manifest request or make a cache-only read throw into the view model.
+        val file = runCatching { compositeFile(provider, viewport, last.frame) }.getOrNull() ?: return WeatherMapResult()
+        // Older versions used the timestamp alone. Keep that image available offline, while
+        // every new fetch/cache lookup includes the published path and host as well.
+        val legacy = File(folder, "map-${provider.id}-${viewport.key}-${last.frame.epochMillis}.png")
+        val image = cachedImage(file, last.frame) ?: cachedImage(legacy, last.frame)
+        return WeatherMapResult(last.series, image?.image?.copy(fromCache = true))
     }
 
     private fun persistLast(provider: WeatherMapProvider, viewport: WeatherMapViewport, series: WeatherMapSeries, image: WeatherMapImage) {
@@ -271,7 +379,7 @@ class WeatherMapRepository @Inject constructor(
 
     private fun lastFile(provider: WeatherMapProvider, viewport: WeatherMapViewport) = File(folder, "last-${provider.id}-${viewport.key}.json")
     private fun compositeFile(provider: WeatherMapProvider, viewport: WeatherMapViewport, frame: WeatherMapFrame) =
-        File(folder, "map-${provider.id}-${viewport.key}-${frame.epochMillis}.png")
+        File(folder, "map-${provider.id}-${viewport.key}-${frame.epochMillis}-${digest(weatherMapImageUrl(provider, viewport, frame)).take(16)}.png")
 
     private inline fun <reified T> readJson(file: File): T? = runCatching {
         if (file.length() > 512_000) return null
@@ -298,6 +406,25 @@ class WeatherMapRepository @Inject constructor(
 
     private fun digest(value: String) = MessageDigest.getInstance("SHA-256").digest(value.toByteArray()).joinToString("") { "%02x".format(it) }
 
-    @Serializable private data class CachedImage(val baseMissing: Boolean, val coverageMissing: Boolean)
+    private data class RawImage(val bitmap: Bitmap, val storedAtMillis: Long)
+    private data class RenderedImage(val image: WeatherMapImage, val optionalRetryAtMillis: Long)
+    @Serializable private data class CachedImage(val baseMissing: Boolean, val coverageMissing: Boolean, val optionalRetryAtMillis: Long = 0)
     @Serializable private data class CachedLast(val viewport: WeatherMapViewport, val series: WeatherMapSeries, val frame: WeatherMapFrame)
+
+    private companion object { const val OPTIONAL_RETRY_MILLIS = 60_000L }
+}
+
+/** Deduplicate current callers only; retired keys retain neither a lock nor a loading job. */
+private class WeatherMapImageLocks {
+    private class Entry(val mutex: Mutex = Mutex(), var users: Int = 0)
+    private val entries = mutableMapOf<String, Entry>()
+
+    suspend fun <T> withLock(key: String, block: suspend () -> T): T {
+        val entry = synchronized(entries) { entries.getOrPut(key) { Entry() }.also { it.users++ } }
+        try {
+            return entry.mutex.withLock { block() }
+        } finally {
+            synchronized(entries) { if (--entry.users == 0) entries.remove(key) }
+        }
+    }
 }

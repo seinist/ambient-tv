@@ -11,8 +11,13 @@ import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.longOrNull
 import okhttp3.HttpUrl.Companion.toHttpUrl
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import org.w3c.dom.Element
 import org.xml.sax.InputSource
+
+// RainViewer paths are opaque identifiers, not timestamps (current manifests use hex IDs).
+// Keep the complete published identifier while disallowing traversal and URL delimiters.
+private val rainViewerFramePath = Regex("/v2/radar/[A-Za-z0-9_-]{1,128}")
 
 internal fun weatherMapCapabilitiesUrl(provider: WeatherMapProvider, now: Instant): String = when (provider) {
     WeatherMapProvider.RAINVIEWER -> "https://api.rainviewer.com/public/weather-maps.json"
@@ -30,12 +35,14 @@ internal fun parseWeatherMapSeries(provider: WeatherMapProvider, text: String, n
     when (provider) {
         WeatherMapProvider.RAINVIEWER -> {
             val root = Json.parseToJsonElement(text).jsonObject
+            val host = rainViewerTileHost(root["host"]?.jsonPrimitive?.contentOrNull
+                ?: "https://tilecache.rainviewer.com")
             frames = root["radar"]?.jsonObject?.get("past")?.jsonArray.orEmpty().mapNotNull { item ->
                 val obj = item.jsonObject
                 val epoch = obj["time"]?.jsonPrimitive?.longOrNull ?: return@mapNotNull null
                 val path = obj["path"]?.jsonPrimitive?.contentOrNull ?: return@mapNotNull null
-                if (!Regex("/v2/radar/[0-9]{9,13}").matches(path) || epoch !in 1..now.epochSecond + 300) return@mapNotNull null
-                WeatherMapFrame(Instant.ofEpochSecond(epoch).toString(), epoch * 1000, path)
+                if (!rainViewerFramePath.matches(path) || epoch !in 1..now.epochSecond + 300) return@mapNotNull null
+                WeatherMapFrame(Instant.ofEpochSecond(epoch).toString(), epoch * 1000, path, host)
             }.distinctBy { it.epochMillis }.sortedBy { it.epochMillis }.takeLast(13)
         }
         WeatherMapProvider.NASA -> {
@@ -85,9 +92,9 @@ private fun Element.directChildren(name: String): List<Element> = (0 until child
 
 internal fun weatherMapImageUrl(provider: WeatherMapProvider, viewport: WeatherMapViewport, frame: WeatherMapFrame): String =
     if (provider == WeatherMapProvider.RAINVIEWER) {
-        require(Regex("/v2/radar/[0-9]{9,13}").matches(frame.path))
+        require(rainViewerFramePath.matches(frame.path))
         // A single reflectivity palette for all precipitation; the legend has no snow-type claim.
-        "https://tilecache.rainviewer.com${frame.path}/512/${viewport.zoom}/${viewport.x}/${viewport.y}/2/1_0.png"
+        "${rainViewerTileHost(frame.tileHost)}${frame.path}/512/${viewport.zoom}/${viewport.x}/${viewport.y}/2/1_0.png"
     } else provider.endpoint.toHttpUrl().newBuilder()
         .addQueryParameter("SERVICE", "WMS").addQueryParameter("REQUEST", "GetMap")
         .addQueryParameter("VERSION", "1.3.0").addQueryParameter("CRS", "EPSG:3857")
@@ -96,8 +103,18 @@ internal fun weatherMapImageUrl(provider: WeatherMapProvider, viewport: WeatherM
         .addQueryParameter("HEIGHT", "512").addQueryParameter("FORMAT", "image/png")
         .addQueryParameter("TRANSPARENT", "TRUE").addQueryParameter("TIME", frame.time).build().toString()
 
-internal fun weatherMapCoverageUrl(viewport: WeatherMapViewport): String =
-    "https://tilecache.rainviewer.com/v2/coverage/0/512/${viewport.zoom}/${viewport.x}/${viewport.y}/0/0_0.png"
+internal fun weatherMapCoverageUrl(viewport: WeatherMapViewport, tileHost: String = "https://tilecache.rainviewer.com"): String =
+    "${rainViewerTileHost(tileHost)}/v2/coverage/0/512/${viewport.zoom}/${viewport.x}/${viewport.y}/0/0_0.png"
+
+/** Honour the source's CDN host without allowing a manifest or cached entry to target another service. */
+private fun rainViewerTileHost(value: String): String {
+    val url = requireNotNull(value.toHttpUrlOrNull()) { "Invalid radar tile host" }
+    require(url.isHttps && url.port == 443 &&
+        (url.host == "rainviewer.com" || url.host.endsWith(".rainviewer.com")) &&
+        url.username.isEmpty() && url.password.isEmpty() && url.encodedPath == "/" &&
+        url.query == null && url.fragment == null) { "Invalid radar tile host" }
+    return url.toString().removeSuffix("/")
+}
 
 internal fun weatherBaseMapUrl(viewport: WeatherMapViewport): String =
     "https://tile.openstreetmap.org/${viewport.zoom}/${viewport.x}/${viewport.y}.png"
