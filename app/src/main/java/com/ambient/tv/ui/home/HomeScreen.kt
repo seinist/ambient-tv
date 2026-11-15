@@ -256,8 +256,9 @@ fun HomeScreen(
         focusSnapshot.ratingKey?.let { com.ambient.tv.ui.common.BrowseFocusKey(focusSnapshot.rowId, it, content = true) },
         enabled = !parkInitialFocus,
     )
-    // Keep the cancel control focusable on television during startup.
-    ReportSidebarContentReady(!parkInitialFocus || canCancelStartupWake)
+    // Only the handheld cancel button belongs to this content subtree. TV uses the global
+    // wake action, which the shell can focus without treating Home's loading rows as ready.
+    ReportSidebarContentReady(!parkInitialFocus || (LocalHandheldUi.current && canCancelStartupWake))
     val systemOverview = plexOnly || jellyfinOnly || embyOnly
     val overviewProvider = when {
         plexOnly -> "plex"
