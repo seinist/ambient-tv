@@ -413,7 +413,7 @@ fun SettingsScreen(
                                             )
                                         },
                                     )
-                                    AccentStylePreview(uiState.accentStyleKey, uiState.accentColorKey, uiState.customAccentHex)
+                                    AccentStylePreview(uiState.accentStyleKey)
                                 }
                             }
                             item(key = "appearance:accent") {

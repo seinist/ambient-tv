@@ -2,7 +2,8 @@ package com.ambient.tv.ui.common
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import com.ambient.tv.ui.theme.animatedFocusBorder
+import com.ambient.tv.ui.theme.animatedFocusSurface
+import com.ambient.tv.ui.theme.LocalUiTokens
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -194,16 +195,14 @@ internal fun MonogramMediaCard(
     ) {
         Column(
             modifier = Modifier
-                .background(
-                    if (focused) MaterialTheme.colorScheme.primary.copy(alpha = .12f)
-                    else MaterialTheme.colorScheme.surface.copy(alpha = .58f),
-                    shape,
-                )
-                .animatedFocusBorder(
+                .animatedFocusSurface(
                     focused = focused,
                     shape = shape,
-                    focusedColor = MaterialTheme.colorScheme.primary,
-                    unfocusedColor = Color.White.copy(alpha = .04f),
+                    focusedBackground = MaterialTheme.colorScheme.primary.copy(alpha = .12f),
+                    unfocusedBackground = MaterialTheme.colorScheme.surface.copy(alpha = .58f),
+                    focusedBorder = MaterialTheme.colorScheme.primary,
+                    unfocusedBorder = Color.White.copy(alpha = .04f),
+                    borderWidth = LocalUiTokens.current.focusBorder,
                 )
                 .padding(if (heroRow) 3.dp else 8.dp),
             verticalArrangement = Arrangement.spacedBy(7.dp),

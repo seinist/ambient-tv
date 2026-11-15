@@ -43,6 +43,7 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.text.style.TextAlign
@@ -388,7 +389,11 @@ private fun MediaMetadataOverlay(
 
     Column(
         modifier = modifier
-            .background(MetadataBannerFill)
+            .artworkAccentSurface(
+                shape = RectangleShape,
+                accent = MaterialTheme.colorScheme.primary,
+                baseColor = MetadataBannerFill,
+            )
             .padding(start = 8.dp, end = 8.dp, top = 5.dp, bottom = 5.dp + bottomInset),
         verticalArrangement = Arrangement.spacedBy(2.dp),
         horizontalAlignment = Alignment.CenterHorizontally,

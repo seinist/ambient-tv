@@ -36,6 +36,7 @@ import com.ambient.tv.ui.common.MediaTile
 import com.ambient.tv.ui.common.MediaTileStyle
 import com.ambient.tv.ui.common.TvActionButton
 import com.ambient.tv.ui.player.TvPlayerSeekBar
+import com.ambient.tv.ui.settings.accentStyleLabel
 import com.ambient.tv.ui.theme.*
 
 /** A launcher-accessible, offline design review using the production media tiles and seek bar. */
@@ -62,10 +63,14 @@ class AccentPreviewActivity : ComponentActivity() {
 }
 
 @Composable
+@OptIn(ExperimentalLayoutApi::class)
 private fun AccentPreview(preferences: com.ambient.tv.data.local.AppPreferences, appearanceRevision: Int) {
     val keys = remember { AccentOptions.keys.toList() + "custom" }
     val names = listOf("Gold", "Orange", "Blau", "Türkis", "Grün", "Violett", "Rosa", "Rot", "Eigene Farbe")
     var colorIndex by rememberSaveable(appearanceRevision) { mutableIntStateOf(keys.indexOf(preferences.accentColorKey).coerceAtLeast(0)) }
+    var styleIndex by rememberSaveable(appearanceRevision) {
+        mutableIntStateOf(AccentStyle.entries.indexOf(AccentStyle.fromKey(preferences.accentStyleKey)))
+    }
     val customHex = remember(appearanceRevision) { preferences.customAccentHex }
     val customPlaybackHex = remember(appearanceRevision) { preferences.customPlaybackAccentHex }
     var complementary by rememberSaveable { mutableStateOf(true) }
@@ -87,6 +92,7 @@ private fun AccentPreview(preferences: com.ambient.tv.data.local.AppPreferences,
         if (playing) "playing" else "paused", "Vorschau", false)
 
     AmbientTvTheme(uiScale = .85f, accentColorKey = keys[colorIndex], customAccentHex = customHex,
+        accentStyleKey = AccentStyle.entries[styleIndex].key,
         customPlaybackAccentHex = customPlaybackHex, complementaryPlayback = complementary) {
         CompositionLocalProvider(
             LocalPlaybackIndicators provides listOf(indicator),
@@ -100,17 +106,19 @@ private fun AccentPreview(preferences: com.ambient.tv.data.local.AppPreferences,
                     .verticalScroll(rememberScrollState()).padding(horizontal = 44.dp, vertical = 22.dp),
                 verticalArrangement = Arrangement.spacedBy(14.dp),
             ) {
-                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween) {
+                Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                         BrandWordmark(height = 25.dp)
                         Text("Interaktive Designvorschau · Beispieldaten", fontSize = 12.sp, color = scheme.onSurfaceVariant)
                     }
-                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         TvActionButton("Einstellungen", {
                             context.startActivity(android.content.Intent(context, AppearanceSettingsActivity::class.java))
                         })
                         TvActionButton("Farbe: ${names[colorIndex]}", { colorIndex = (colorIndex + 1) % keys.size }, Modifier.focusRequester(first))
+                        TvActionButton("Stil: ${accentStyleLabel(AccentStyle.entries[styleIndex])}", {
+                            styleIndex = (styleIndex + 1) % AccentStyle.entries.size
+                        })
                         TvActionButton(if (complementary) "RGB-Komplement" else "Einfarbig", { complementary = !complementary }, selected = complementary)
                     }
                 }
@@ -165,7 +173,7 @@ private fun AccentPreview(preferences: com.ambient.tv.data.local.AppPreferences,
 @Composable
 private fun ColorRole(label: String, color: Color) {
     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(9.dp)) {
-        Box(Modifier.size(26.dp).background(color, RoundedCornerShape(6.dp)))
+        Box(Modifier.size(26.dp).background(accentBrush(color, LocalAccentStyle.current), RoundedCornerShape(6.dp)))
         Column {
             Text(label, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
             Text("#%06X".format(color.toArgb() and 0xFFFFFF), fontSize = 13.sp)

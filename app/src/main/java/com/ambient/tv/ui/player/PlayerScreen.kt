@@ -5,6 +5,7 @@ package com.ambient.tv.ui.player
 import com.ambient.tv.ui.theme.appControlSurface
 import com.ambient.tv.ui.theme.LocalAccentStyle
 import com.ambient.tv.ui.theme.accentBrush
+import com.ambient.tv.ui.theme.drawAccentProgress
 import com.ambient.tv.ui.common.rememberPlayerPanelNavigation
 import com.ambient.tv.ui.common.LocalPlayerPanelNavigation
 import com.ambient.tv.ui.mobile.deviceDp
@@ -1117,6 +1118,8 @@ internal fun TvPlayerSeekBar(
     val progressAccent = com.ambient.tv.ui.theme.LocalPlaybackAccent.current.indicator
     val progressStyle = LocalAccentStyle.current
     val progressBrush = remember(progressAccent, progressStyle) { accentBrush(progressAccent, progressStyle) }
+    // ShaderBrush caches one size; the thumb must not invalidate the full track's shader.
+    val progressThumbBrush = remember(progressAccent, progressStyle) { accentBrush(progressAccent, progressStyle) }
     val osd = LocalPlayerChromeState.current?.osd
     val expandControls = rememberExpandPlayerControls()
     val acceptsInput = seekable && osd?.show != false
@@ -1346,12 +1349,10 @@ internal fun TvPlayerSeekBar(
                     }
                     .background(Color.White.copy(alpha = 0.24f), RoundedCornerShape(50)),
             ) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth(progress)
-                        .fillMaxHeight()
-                        .background(progressBrush, RoundedCornerShape(50)),
-                )
+                androidx.compose.foundation.Canvas(Modifier.matchParentSize()) {
+                    drawAccentProgress(progressBrush, progress,
+                        fromRight = layoutDirection == androidx.compose.ui.unit.LayoutDirection.Rtl)
+                }
                 if (durationMs > 0 && navigation != null) {
                     val timeline = navigation.timeline
                     val current = timeline.chapterAt(displayedPosition)
@@ -1398,7 +1399,7 @@ internal fun TvPlayerSeekBar(
                             .align(Alignment.CenterEnd)
                             .size(15.dp)
                             .graphicsLayer { alpha = dataAlpha.value }
-                            .background(progressBrush, CircleShape)
+                            .background(progressThumbBrush, CircleShape)
                             .border(2.5.dp, Color.White, CircleShape),
                     )
                 }

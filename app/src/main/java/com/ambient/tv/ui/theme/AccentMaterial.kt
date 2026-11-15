@@ -9,14 +9,39 @@ import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.composed
 import androidx.compose.ui.draw.drawWithCache
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.drawOutline
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.translate
 import androidx.compose.ui.unit.Dp
 import com.ambient.tv.ui.performance.LocalPerformanceProfile
+
+/**
+ * Draw inside a track-sized scope. The brush keeps the full track's coordinates while only
+ * the filled geometry grows, so a stationary reflection never slides as playback advances.
+ */
+internal fun DrawScope.drawAccentProgress(
+    brush: Brush,
+    fraction: Float,
+    fromRight: Boolean = false,
+    radius: Float = size.height / 2f,
+) {
+    val bounded = if (fraction.isFinite()) fraction.coerceIn(0f, 1f) else 0f
+    val fillWidth = size.width * bounded
+    if (fillWidth <= 0f || size.height <= 0f) return
+    drawRoundRect(
+        brush = brush,
+        topLeft = Offset(if (fromRight) size.width - fillWidth else 0f, 0f),
+        size = Size(fillWidth, size.height),
+        cornerRadius = CornerRadius(radius, radius),
+    )
+}
 
 /**
  * Small reusable material treatment for buttons and controls. Fill/stroke use

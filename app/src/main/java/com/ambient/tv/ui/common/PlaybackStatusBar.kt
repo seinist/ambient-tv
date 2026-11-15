@@ -1,18 +1,19 @@
 package com.ambient.tv.ui.common
 
-import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import com.ambient.tv.ui.theme.LocalAccentStyle
 import com.ambient.tv.ui.theme.accentBrush
+import com.ambient.tv.ui.theme.drawAccentProgress
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawWithCache
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import com.ambient.tv.ui.theme.LocalPlaybackAccent
 
@@ -25,22 +26,22 @@ fun PlaybackStatusBar(
     modifier: Modifier = Modifier,
     trackColor: Color = Color.Black.copy(alpha = 0.58f),
 ) {
-    val fraction = progress.coerceIn(0f, 1f)
+    val fraction = rememberUpdatedState(if (progress.isFinite()) progress.coerceIn(0f, 1f) else 0f)
     val accent = LocalPlaybackAccent.current.indicator
     val style = LocalAccentStyle.current
-    val progressBrush = remember(accent, style) { accentBrush(accent, style) }
     val shape = RoundedCornerShape(1.dp)
     Box(
         modifier
+            .fillMaxWidth()
             .height(PlaybackStatusBarHeight)
             .clip(shape)
-            .background(trackColor),
-    ) {
-        Box(
-            Modifier
-                .fillMaxHeight()
-                .fillMaxWidth(fraction)
-                .background(progressBrush),
-        )
-    }
+            .drawWithCache {
+                val progressBrush = accentBrush(accent, style)
+                onDrawBehind {
+                    drawRect(trackColor)
+                    drawAccentProgress(progressBrush, fraction.value,
+                        fromRight = layoutDirection == LayoutDirection.Rtl, radius = 1.dp.toPx())
+                }
+            },
+    )
 }

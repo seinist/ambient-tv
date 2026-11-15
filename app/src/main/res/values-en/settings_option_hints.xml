@@ -23,6 +23,9 @@
     <string name="settings_accent_style_glass_hint">Uses a glossy gradient with a glass-like finish.</string>
     <string name="settings_accent_style_glow_hint">Uses a soft gradient with bright edges.</string>
     <string name="settings_accent_style_pearl_hint">Uses a pearlescent gradient with subtle color tones.</string>
+    <string name="settings_accent_style_ceramic_hint">Uses a rich, calm color with a fine light edge.</string>
+    <string name="settings_accent_style_chrome_hint">Uses a polished gradient with a narrow, bright reflection.</string>
+    <string name="settings_accent_style_facet_hint">Uses angular light and shade in the selected accent color.</string>
     <string name="settings_accent_style_light_hint">Uses a solid color without a gradient.</string>
     <string name="settings_audio_visualizer_projectm_hint">Shows animated patterns that react to music.</string>
     <string name="settings_audio_visualizer_spectrum_hint">Shows the frequency spectrum of the audio.</string>

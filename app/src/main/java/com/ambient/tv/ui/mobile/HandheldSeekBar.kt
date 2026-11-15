@@ -4,6 +4,7 @@ import androidx.compose.foundation.Canvas
 import com.ambient.tv.ui.player.drawBookmarkTicks
 import com.ambient.tv.ui.theme.LocalAccentStyle
 import com.ambient.tv.ui.theme.accentBrush
+import com.ambient.tv.ui.theme.drawAccentProgress
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
@@ -28,8 +29,9 @@ import androidx.compose.ui.layout.boundsInRoot
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.drawscope.inset
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.semantics.ProgressBarRangeInfo
@@ -153,16 +155,21 @@ fun HandheldSeekBar(
             val bookmarks = com.ambient.tv.ui.player.rememberPlayingBookmarks()
             Canvas(Modifier.fillMaxSize()) {
                 val centerY = size.height / 2f
-                val endX = size.width
                 val trackWidth = 6.dp.toPx()
-                drawLine(Color.White.copy(alpha = 0.24f), Offset(0f, centerY), Offset(endX, centerY), trackWidth, StrokeCap.Round)
+                inset(vertical = centerY - trackWidth / 2) {
+                    drawRoundRect(Color.White.copy(alpha = 0.24f),
+                        cornerRadius = CornerRadius(trackWidth / 2, trackWidth / 2))
+                }
             }
             Canvas(Modifier.fillMaxSize().graphicsLayer { alpha = dataAlpha.value }) {
                 val centerY = size.height / 2f
                 val endX = size.width
                 val trackWidth = 6.dp.toPx()
                 if (durationMs > 0L) {
-                    drawLine(progressBrush, Offset(0f, centerY), Offset(endX * fraction, centerY), trackWidth, StrokeCap.Round)
+                    // Scope the material to the visible track, not the taller touch target.
+                    inset(vertical = centerY - trackWidth / 2) {
+                        drawAccentProgress(progressBrush, fraction)
+                    }
                     navigation?.timeline?.chapters?.forEach { chapter ->
                         val x = (chapter.startMs.toDouble() / durationMs).toFloat().coerceIn(0f, 1f) * endX
                         drawLine(Color.Black.copy(alpha = 0.76f), Offset(x, centerY - trackWidth / 2), Offset(x, centerY + trackWidth / 2), 2.dp.toPx())

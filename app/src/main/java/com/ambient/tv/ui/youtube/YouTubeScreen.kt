@@ -3,7 +3,8 @@
 package com.ambient.tv.ui.youtube
 
 import com.ambient.tv.ui.theme.screenGutter
-import com.ambient.tv.ui.theme.animatedFocusBorder
+import com.ambient.tv.ui.theme.animatedFocusSurface
+import com.ambient.tv.ui.theme.LocalUiTokens
 import com.ambient.tv.ui.mobile.DeviceActionRow
 import com.ambient.tv.ui.mobile.LocalHandheldUi
 
@@ -955,11 +956,13 @@ private fun YouTubeListItem(
     ) {
         Row(
             Modifier
-                .background(if (focused) MaterialTheme.colorScheme.primary.copy(alpha = .12f) else Color.Transparent, shape)
-                .animatedFocusBorder(
+                .animatedFocusSurface(
                     focused = focused, shape = shape,
-                    focusedColor = MaterialTheme.colorScheme.primary,
-                    unfocusedColor = Color.White.copy(alpha = .04f),
+                    focusedBackground = MaterialTheme.colorScheme.primary.copy(alpha = .12f),
+                    unfocusedBackground = Color.Transparent,
+                    focusedBorder = MaterialTheme.colorScheme.primary,
+                    unfocusedBorder = Color.White.copy(alpha = .04f),
+                    borderWidth = LocalUiTokens.current.focusBorder,
                 )
                 .padding(10.dp * rowScale),
             horizontalArrangement = Arrangement.spacedBy(14.dp * rowScale),
@@ -1355,15 +1358,13 @@ private fun Card(
     ) {
         Column(
             Modifier
-                .background(
-                    if (focused) MaterialTheme.colorScheme.primary.copy(alpha = .12f)
-                    else MaterialTheme.colorScheme.surface.copy(alpha = .58f),
-                    shape,
-                )
-                .animatedFocusBorder(
+                .animatedFocusSurface(
                     focused = focused, shape = shape,
-                    focusedColor = MaterialTheme.colorScheme.primary,
-                    unfocusedColor = Color.White.copy(alpha = .04f),
+                    focusedBackground = MaterialTheme.colorScheme.primary.copy(alpha = .12f),
+                    unfocusedBackground = MaterialTheme.colorScheme.surface.copy(alpha = .58f),
+                    focusedBorder = MaterialTheme.colorScheme.primary,
+                    unfocusedBorder = Color.White.copy(alpha = .04f),
+                    borderWidth = LocalUiTokens.current.focusBorder,
                 )
                 .padding(if (showText) 8.dp else 3.dp),
             verticalArrangement = Arrangement.spacedBy(7.dp),
@@ -1409,8 +1410,10 @@ private fun BoxScope.YouTubeWatchProgress(item: YouTubeItem) {
             modifier = Modifier.align(Alignment.TopEnd).padding(7.dp),
         )
     } else if (watched > 0) {
-        Box(Modifier.align(Alignment.BottomStart).fillMaxWidth(watched / 100f)
-            .height(3.dp).background(MaterialTheme.colorScheme.primary))
+        PlaybackStatusBar(
+            progress = watched / 100f,
+            modifier = Modifier.align(Alignment.BottomStart).fillMaxWidth(),
+        )
     }
 }
 /** Keeps the first loading frame in the exact selected presentation family. */

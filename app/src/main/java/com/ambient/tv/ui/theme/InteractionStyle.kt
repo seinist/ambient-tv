@@ -266,6 +266,14 @@ fun Modifier.animatedFocusSurface(
         animationSpec = fade,
         label = "focus surface stroke",
     )
+    val materialReveal = animateFloatAsState(
+        targetValue = if (focused) 1f else 0f,
+        animationSpec = tween(
+            durationMillis = focusBorderFadeDurationMs(focused, reduced),
+            easing = LinearOutSlowInEasing,
+        ),
+        label = "focus surface material",
+    )
     this.drawWithCache {
         val strokePx = borderWidth.toPx()
         val full = shape.createOutline(size, layoutDirection, this)
@@ -279,22 +287,24 @@ fun Modifier.animatedFocusSurface(
             this,
         )
         val material = accentBrush(primaryAccent, materialStyle)
+        val stroke = Stroke(strokePx)
+        val glowStroke = if (materialStyle == AccentStyle.GLOW && !reduced) Stroke(strokePx * 2.5f) else null
         onDrawWithContent {
             drawOutline(full, fill.value)
-            if (materialStyle != AccentStyle.LIGHT && focused) {
-                drawOutline(full, material, alpha = accentWashOpacity(materialStyle))
+            if (materialStyle != AccentStyle.LIGHT && materialReveal.value > 0f) {
+                drawOutline(full, material, alpha = accentWashOpacity(materialStyle) * materialReveal.value)
             }
             drawContent()
             if (strokePx > 0f && strokeColor.value.alpha > 0f) {
                 translate(inset, inset) {
                     if (materialStyle == AccentStyle.LIGHT) {
-                        drawOutline(inner, strokeColor.value, style = Stroke(strokePx))
+                        drawOutline(inner, strokeColor.value, style = stroke)
                     } else {
-                        if (materialStyle == AccentStyle.GLOW && !reduced) {
-                            drawOutline(inner, material, alpha = strokeColor.value.alpha * .12f,
-                                style = Stroke(strokePx * 2.5f))
+                        if (glowStroke != null) {
+                            drawOutline(inner, material, alpha = strokeColor.value.alpha * .12f * materialReveal.value,
+                                style = glowStroke)
                         }
-                        drawOutline(inner, material, alpha = strokeColor.value.alpha, style = Stroke(strokePx))
+                        drawOutline(inner, material, alpha = strokeColor.value.alpha, style = stroke)
                     }
                 }
             }
