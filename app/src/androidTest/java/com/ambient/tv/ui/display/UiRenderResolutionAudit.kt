@@ -57,6 +57,8 @@ internal class UiRenderResolutionAudit(
     private val instrumentation: Instrumentation,
     private val log: (String) -> Unit,
 ) {
+    private var onTimeout: ((String) -> Unit)? = null
+
     private fun <T> main(action: () -> T): T {
         val result = AtomicReference<Result<T>>()
         val done = CountDownLatch(1)
@@ -74,6 +76,8 @@ internal class UiRenderResolutionAudit(
             if (main(condition)) return
             Thread.sleep(75)
         }
+        runCatching { onTimeout?.invoke(label) }
+            .onFailure { log("Audit timeout diagnostics failed: $it") }
         error("UI render audit timed out: $label")
     }
 
@@ -122,6 +126,35 @@ internal class UiRenderResolutionAudit(
                 compose.rootView.width == width && compose.rootView.height == height &&
                 carrier.holder.surface.isValid && carrier.holder.surfaceFrame.width() == width &&
                 carrier.holder.surfaceFrame.height() == height && compose.uiRenderViewport() != null
+        }
+
+        onTimeout = { label ->
+            val focusState = main {
+                val carrier = if (hostCreated) host.getChildAt(0) as? SurfaceView else null
+                buildString {
+                    appendLine("Timeout: $label")
+                    appendLine("rootFocused=$rootFocused")
+                    appendLine("compose.hasFocus=${if (contentCreated) compose.hasFocus() else null}")
+                    appendLine("compose.rootView.hasWindowFocus=${if (contentCreated) compose.rootView.hasWindowFocus() else null}")
+                    appendLine("carrier.isFocused=${carrier?.isFocused}")
+                    appendLine("carrier.hasWindowFocus=${carrier?.hasWindowFocus()}")
+                    appendLine("carrier.isAttachedToWindow=${carrier?.isAttachedToWindow}")
+                    appendLine("carrier.surfaceValid=${carrier?.holder?.surface?.isValid}")
+                    appendLine("nativeDecor.hasWindowFocus=${activity.window.decorView.hasWindowFocus()}")
+                    appendLine("activity.currentFocus=${activity.currentFocus}")
+                    appendLine("dialogVisible=${dialogVisible.value}, dialogWindowFocus=${dialogView?.rootView?.hasWindowFocus()}")
+                    appendLine("popupVisible=${popupVisible.value}, popupWindowFocus=${popupView?.rootView?.hasWindowFocus()}")
+                    appendLine("routedKeys=$routedKeyCount, routedTouches=$routedTouchCount, activations=${activations.intValue}")
+                }
+            }
+            log(focusState)
+            File(instrumentation.targetContext.filesDir, "ui-render-resolution-focus.txt").writeText(focusState)
+            for (service in listOf("window", "input")) {
+                val dump = instrumentation.uiAutomation.executeShellCommand("dumpsys -t 5 $service").use { descriptor ->
+                    android.os.ParcelFileDescriptor.AutoCloseInputStream(descriptor).bufferedReader().use { it.readText() }
+                }
+                File(instrumentation.targetContext.filesDir, "ui-render-resolution-$service.txt").writeText(dump)
+            }
         }
 
         try {
@@ -347,6 +380,7 @@ internal class UiRenderResolutionAudit(
             await("native fallback dialog closes") { !dialogVisible.value }
             log("PASS native fallback preserves remember state and continues composing and handling DPAD/Back")
         } finally {
+            onTimeout = null
             main {
                 if (hostCreated) host.close()
                 if (contentCreated) compose.disposeComposition()

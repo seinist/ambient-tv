@@ -92,6 +92,7 @@ internal class UiRenderResolutionHost(
     private var surfaceAvailable = false
     private var displayListenerRegistered = false
     private var fixedSize: Pair<Int, Int>? = null
+    private var focusFrameCallback: Runnable? = null
     private var closed = false
     private var failed = false
 
@@ -213,7 +214,7 @@ internal class UiRenderResolutionHost(
 
     override fun onWindowFocusChanged(hasWindowFocus: Boolean) {
         super.onWindowFocusChanged(hasWindowFocus)
-        if (hasWindowFocus && host != null && !closed && !failed) requestEmbeddedFocus()
+        if (hasWindowFocus) requestEmbeddedFocus() else cancelEmbeddedFocusRequest()
     }
 
     private fun scheduleRefresh() {
@@ -252,6 +253,7 @@ internal class UiRenderResolutionHost(
             ) {
                 existingHost.relayout(next.renderWidth, next.renderHeight)
             }
+            requestEmbeddedFocus()
         } catch (error: Exception) {
             fail(error)
         }
@@ -283,21 +285,52 @@ internal class UiRenderResolutionHost(
             throw error
         }
         // SurfaceView owns the transferred package and links both accessibility and input trees.
-        requestEmbeddedFocus(forceCarrierFocusChange = true)
+        // Input focus follows after an embedded frame has actually reached the compositor.
+        // setView schedules attachment in the next traversal. View.post also queues correctly
+        // while detached, so startup does not depend on another outer-window focus/size event.
+        embeddedRoot.post { if (host === created) requestEmbeddedFocus() }
     }
 
-    private fun requestEmbeddedFocus(forceCarrierFocusChange: Boolean = false) {
-        if (!interactive) return
-        // Android 12 transfers embedded window focus only from SurfaceView.onFocusChanged;
-        // setChildSurfacePackage does not transfer it when the carrier was already focused.
-        // Toggle only after installing a new package. Ordinary native-window focus callbacks
-        // must not repeatedly revoke/regrant focus, and the Compose focus tree stays untouched.
-        if (forceCarrierFocusChange && surfaceView.isFocused) {
-            surfaceView.isFocusable = false
-            surfaceView.isFocusableInTouchMode = true // Also restores focusability.
+    private fun requestEmbeddedFocus() {
+        val expectedHost = host ?: return
+        if (!interactive || closed || failed || !surfaceAvailable || !hasWindowFocus() ||
+            embeddedRoot.hasWindowFocus() || !embeddedRoot.isAttachedToWindow ||
+            embeddedRoot.visibility != VISIBLE || focusFrameCallback != null
+        ) return
+
+        // API 31 drops a transfer made before the native window owns focus or before the
+        // embedded input surface is drawn. A committed frame supplies the same readiness
+        // boundary used by Android's SurfaceControlViewHost input tests.
+        lateinit var callback: Runnable
+        callback = Runnable {
+            mainHandler.post {
+                if (focusFrameCallback !== callback) return@post
+                focusFrameCallback = null
+                if (host !== expectedHost || closed || failed || !surfaceAvailable ||
+                    !hasWindowFocus() || embeddedRoot.hasWindowFocus()
+                ) return@post
+
+                // Android 12 transfers focus only from SurfaceView.onFocusChanged. The View
+                // can stay focused while a dialog or another window owns input, so requesting
+                // focus on it again is a no-op. Toggle only while the native window owns focus;
+                // a successful transfer makes that window lose focus and schedules no retry.
+                // The embedded Compose focus tree, including its selected control, is retained.
+                if (surfaceView.isFocused) {
+                    surfaceView.isFocusable = false
+                    surfaceView.isFocusableInTouchMode = true // Also restores focusability.
+                }
+                surfaceView.requestFocus()
+                if (!embeddedRoot.hasFocus()) embeddedRoot.requestFocus()
+            }
         }
-        surfaceView.requestFocus()
-        if (!embeddedRoot.hasFocus()) embeddedRoot.requestFocus()
+        focusFrameCallback = callback
+        embeddedRoot.viewTreeObserver.registerFrameCommitCallback(callback)
+        embeddedRoot.invalidate()
+    }
+
+    private fun cancelEmbeddedFocusRequest() {
+        focusFrameCallback?.let { embeddedRoot.viewTreeObserver.unregisterFrameCommitCallback(it) }
+        focusFrameCallback = null
     }
 
     /** Direct endpoints for Activity fallback dispatch or synthetic input; bypass the callbacks. */
@@ -329,6 +362,7 @@ internal class UiRenderResolutionHost(
     }
 
     private fun releaseEmbeddedHost() {
+        cancelEmbeddedFocusRequest()
         val previous = host
         host = null
         hostedDisplayId = null
