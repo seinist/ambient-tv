@@ -315,8 +315,10 @@ fun BoxScope.ReferencePlayerBottomContent(
                 } else Modifier)
                 .focusRequester(compactFocus)
                 .focusProperties {
+                    // Keep the focused loading fallback attached until the existing overlay
+                    // focus effect hands it to the newly registered timeline.
                     canFocus = !handheld && osd != null && osd.visible.value && !osd.expanded &&
-                        !osd.closing && controlFocus.seekTarget() == null
+                        !osd.closing && (controlFocus.seekTarget() == null || compactFocused)
                 }
                 .onFocusChanged {
                     compactFocused = it.isFocused

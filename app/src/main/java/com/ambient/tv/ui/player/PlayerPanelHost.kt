@@ -308,8 +308,6 @@ internal data class PlayerOsdModel(
     val state: PlayerUiState.Ready,
     val positionMs: Long,
     val durationMs: Long,
-    /** Media3 shows the time line also without a known duration; VLC/MPV only with one. */
-    val timelineAlways: Boolean,
     val clockEndPadding: androidx.compose.ui.unit.Dp,
     val isPlaying: Boolean,
     val loading: Boolean,
@@ -355,6 +353,12 @@ internal fun PublishPlayerOsd(model: PlayerOsdSpec, visible: Boolean) {
 private fun PlayerOsdContent(model: PlayerOsdModel, visible: Boolean, panel: UnifiedPlayerPanel) {
     val seekFocusRequester = rememberPlayerSeekFocus()
     val playFocusRequester = rememberPlayerPlayFocus()
+    // A renderer restart may briefly lose its duration; a different file/version must not reuse it.
+    val durationMs = rememberPlayerTimelineDuration(
+        sourceIdentity = "media:${model.state.sourceRatingKey}:${model.state.sourceMediaIndex}",
+        durationMs = model.durationMs,
+        fallbackDurationMs = model.state.durationMs ?: 0L,
+    )
     PlayerOverlayVisibility(visible = visible) {
         ReferencePlayerOverlayBackground()
         ReferencePlayerClock(
@@ -362,11 +366,11 @@ private fun PlayerOsdContent(model: PlayerOsdModel, visible: Boolean, panel: Uni
         )
         ReferencePlayerBottomContent(onTogglePlayback = model.onSeekBarToggle) {
             PlayerNowPlayingHeader(model.state)
-            if (model.timelineAlways || model.durationMs > 0L) {
+            PlayerTimelineSlot {
                 TvPlayerSeekBar(
                     positionMs = model.seekState.positionMs,
                     seekState = model.seekState,
-                    durationMs = model.durationMs,
+                    durationMs = durationMs,
                     paused = model.paused,
                     onSeekBy = model.onSeekBarSeek,
                     onInteraction = model.onSeekBarInteraction,

@@ -95,6 +95,8 @@ import com.ambient.tv.ui.player.ReferencePlayerHeader
 import com.ambient.tv.ui.player.ReferencePlayerOverlayBackground
 import com.ambient.tv.ui.player.RequestPlayerOverlayFocus
 import com.ambient.tv.ui.player.TvPlayerSeekBar
+import com.ambient.tv.ui.player.PlayerTimelineSlot
+import com.ambient.tv.ui.player.rememberPlayerTimelineDuration
 import com.ambient.tv.ui.player.rememberPlayerControlsVisible
 import com.ambient.tv.ui.player.rememberPlayerEngineFocus
 import com.ambient.tv.ui.player.rememberPlayerOsdController
@@ -952,6 +954,13 @@ internal data class TelegramOsd(
         val osd = rememberPlayerOsdController()
         val playFocus = rememberPlayerPlayFocus()
         val seekFocus = rememberPlayerSeekFocus()
+        val timelineDurationMs = rememberPlayerTimelineDuration(
+            sourceIdentity = media.mediaKey,
+            durationMs = if (media.kind == TelegramMediaKind.PHOTO) 0L
+                else durationMs,
+            retainDuration = media.kind != TelegramMediaKind.PHOTO,
+            fallbackDurationMs = if (media.kind == TelegramMediaKind.PHOTO) 0L else media.durationMs,
+        )
         PlayerOverlayVisibility(visible = visible) {
             ReferencePlayerOverlayBackground()
             ReferencePlayerClock(
@@ -970,16 +979,18 @@ internal data class TelegramOsd(
                     description = media.summary,
                     artworkUrl = media.cardImageUrl ?: media.thumbnailUrl,
                 )
-                if (durationMs > 0 && media.kind != TelegramMediaKind.PHOTO) {
-                    TvPlayerSeekBar(
-                        positionMs = positionMs.coerceIn(0L, durationMs),
-                        durationMs = durationMs,
-                        onSeekBy = onSeekBy,
-                        onInteraction = osd::interact,
-                        onTogglePlayback = onToggle,
-                        onPlay = { if (!playing) BackgroundPlaybackSession.userPlay() },
-                        modifier = Modifier.focusRequester(seekFocus),
-                    )
+                if (media.kind != TelegramMediaKind.PHOTO) {
+                    PlayerTimelineSlot {
+                        TvPlayerSeekBar(
+                            positionMs = positionMs.coerceIn(0L, timelineDurationMs),
+                            durationMs = timelineDurationMs,
+                            onSeekBy = onSeekBy,
+                            onInteraction = osd::interact,
+                            onTogglePlayback = onToggle,
+                            onPlay = { if (!playing) BackgroundPlaybackSession.userPlay() },
+                            modifier = Modifier.focusRequester(seekFocus),
+                        )
+                    }
                 }
                 PlayerTechBadgeRow {
                     MetaBadge(systemName(MediaSystem.TELEGRAM), emphasized = true)

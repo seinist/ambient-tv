@@ -928,7 +928,6 @@ private fun PlayerControlsOverlay(
         hasVideo = hasVideo,
         positionMs = positionMs,
         durationMs = durationMs,
-        timelineAlways = true,
         clockEndPadding = deviceDp(48.dp, 16.dp),
         isPlaying = isPlaying,
         loading = isBuffering,
@@ -1102,7 +1101,19 @@ internal fun TvPlayerSeekBar(
     showEndTime: Boolean = com.ambient.tv.ui.common.LocalClockSettings.current.endTime,
     paused: Boolean = false,
 ) {
+    // Keep the same touch geometry before metadata arrives. No unattached TV focus target
+    // should be registered for the handheld branch, including its passive/loading state.
+    if (com.ambient.tv.ui.mobile.LocalHandheldUi.current) {
+        com.ambient.tv.ui.mobile.HandheldSeekBar(
+            positionMs, durationMs, onSeekBy, onInteraction, modifier, showEndTime,
+            paused = paused,
+            interactive = interactive && LocalPlayerChromeState.current?.osd?.show != false,
+            timelineContext = timelineContext,
+        )
+        return
+    }
     val seekable = interactive && durationMs > 0L
+    val dataAlpha = playerTimelineRevealAlpha(durationMs > 0L)
     val progressAccent = com.ambient.tv.ui.theme.LocalPlaybackAccent.current.indicator
     val progressStyle = LocalAccentStyle.current
     val progressBrush = remember(progressAccent, progressStyle) { accentBrush(progressAccent, progressStyle) }
@@ -1129,10 +1140,6 @@ internal fun TvPlayerSeekBar(
         }
     } else {
         Modifier
-    }
-    if (com.ambient.tv.ui.mobile.LocalHandheldUi.current && seekable) {
-        com.ambient.tv.ui.mobile.HandheldSeekBar(positionMs, durationMs, onSeekBy, onInteraction, modifier, showEndTime, paused = paused)
-        return
     }
     val navigation = LocalPlaybackNavigation.current
     val previewOverlay = LocalSeekPreviewOverlayState.current
@@ -1324,10 +1331,19 @@ internal fun TvPlayerSeekBar(
                 .height(if (highlighted) 7.dp else 6.dp)
                 .onGloballyPositioned { previewOverlay?.trackBoundsInRoot = it.boundsInRoot() },
         ) {
+            // The neutral track is present immediately, at exactly the real track's height.
+            Box(
+                Modifier.matchParentSize()
+                    .graphicsLayer { alpha = 1f - dataAlpha.value }
+                    .background(Color.White.copy(alpha = 0.24f), RoundedCornerShape(50)),
+            )
             // Offscreen so chapter gaps can be cut out of track and progress alike.
             Box(
                 Modifier.matchParentSize()
-                    .graphicsLayer { compositingStrategy = androidx.compose.ui.graphics.CompositingStrategy.Offscreen }
+                    .graphicsLayer {
+                        alpha = dataAlpha.value
+                        compositingStrategy = androidx.compose.ui.graphics.CompositingStrategy.Offscreen
+                    }
                     .background(Color.White.copy(alpha = 0.24f), RoundedCornerShape(50)),
             ) {
                 Box(
@@ -1362,7 +1378,12 @@ internal fun TvPlayerSeekBar(
                 }
             }
             // Outside the offscreen layer: the ticks reach a little above and below the track.
-            if (bookmarks.isNotEmpty()) androidx.compose.foundation.Canvas(Modifier.matchParentSize()) {
+            if (bookmarks.isNotEmpty()) androidx.compose.foundation.Canvas(
+                Modifier.matchParentSize().graphicsLayer {
+                    alpha = dataAlpha.value
+                    compositingStrategy = androidx.compose.ui.graphics.CompositingStrategy.ModulateAlpha
+                },
+            ) {
                 drawBookmarkTicks(bookmarks, durationMs, 0f, size.height)
             }
             if (highlighted && durationMs > 0) {
@@ -1376,6 +1397,7 @@ internal fun TvPlayerSeekBar(
                         modifier = Modifier
                             .align(Alignment.CenterEnd)
                             .size(15.dp)
+                            .graphicsLayer { alpha = dataAlpha.value }
                             .background(progressBrush, CircleShape)
                             .border(2.5.dp, Color.White, CircleShape),
                     )
@@ -1385,20 +1407,21 @@ internal fun TvPlayerSeekBar(
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 PlayerOsdNavigationIndicator(paused)
-                Text(
-                    if (durationMs > 0L) "${formatDuration(displayedPosition)} / ${formatDuration(durationMs)}" else formatDuration(displayedPosition),
+                PlayerTimelineTimeText(
+                    ready = durationMs > 0L,
+                    text = "${formatDuration(displayedPosition)} / ${formatDuration(durationMs)}",
                     color = Color.White.copy(alpha = 0.82f),
-                    fontSize = 13.sp,
+                    placeholder = "--:-- / --:--",
                 )
             }
             val endFormatter = com.ambient.tv.ui.common.rememberTimeFormatter()
             val endsAt = if (showEndTime && durationMs > 0L) {
                 java.time.LocalTime.now().plusSeconds(remaining / 1000L).format(endFormatter)
             } else null
-            Text(
-                endsAt?.let { "−${formatDuration(remaining)} · ${stringResource(R.string.player_ends_at, it)}" } ?: "−${formatDuration(remaining)}",
+            PlayerTimelineTimeText(
+                ready = durationMs > 0L,
+                text = endsAt?.let { "−${formatDuration(remaining)} · ${stringResource(R.string.player_ends_at, it)}" } ?: "−${formatDuration(remaining)}",
                 color = Color.White.copy(alpha = 0.72f),
-                fontSize = 13.sp,
             )
         }
     }

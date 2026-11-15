@@ -339,7 +339,6 @@ internal fun VlcPlayerContent(
             hasVideo = !audioOnlyContent,
             positionMs = seek.positionMs,
             durationMs = timelineDurationMs,
-            timelineAlways = false,
             clockEndPadding = 48.dp,
             isPlaying = snapshot.isPlaying,
             loading = waitingForPlaybackPicture(snapshot.wantsToPlay, snapshot.isPlaying),
