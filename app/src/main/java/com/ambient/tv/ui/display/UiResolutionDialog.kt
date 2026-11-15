@@ -125,6 +125,10 @@ internal fun UiResolutionDialog(
                                 Timber.w(error, "Dialog UI surface unavailable; retaining native dialog content")
                                 container.post {
                                     val previous = host ?: return@post
+                                    if (container.getChildAt(0) !== previous) {
+                                        host = null
+                                        return@post
+                                    }
                                     host = null
                                     val savedContent = previous.takeContentView()
                                     failed = true

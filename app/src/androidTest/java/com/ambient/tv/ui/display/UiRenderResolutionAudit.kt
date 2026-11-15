@@ -291,7 +291,10 @@ internal class UiRenderResolutionAudit(
                     location[1] + buttonBounds.center.y * coordinates.windowHeight / coordinates.renderHeight)
             }
             tap(touchPoint.first, touchPoint.second)
-            await("scaled pointer hits button") { routedTouchCount > 0 && activations.intValue == 3 && dialogVisible.value }
+            await("scaled pointer hits button") {
+                routedTouchCount > 0 && activations.intValue == 3 && dialogVisible.value &&
+                    dialogView?.rootView?.hasWindowFocus() == true
+            }
             key(KeyEvent.KEYCODE_BACK)
             await("pointer dialog dismissed") { !dialogVisible.value && dialogView == null }
             main { popupVisible.value = false }
@@ -336,7 +339,10 @@ internal class UiRenderResolutionAudit(
                 check(focus.requestFocus())
             }
             key(KeyEvent.KEYCODE_DPAD_CENTER)
-            await("native fallback remains interactive") { activations.intValue == 4 && dialogVisible.value }
+            await("native fallback remains interactive") {
+                activations.intValue == 4 && dialogVisible.value &&
+                    dialogView?.rootView?.hasWindowFocus() == true
+            }
             key(KeyEvent.KEYCODE_BACK)
             await("native fallback dialog closes") { !dialogVisible.value }
             log("PASS native fallback preserves remember state and continues composing and handling DPAD/Back")
@@ -374,5 +380,17 @@ internal class UiRenderResolutionAudit(
             android.os.ParcelFileDescriptor.AutoCloseInputStream(descriptor).bufferedReader().use { it.readText() }
         }
         File(instrumentation.targetContext.filesDir, "ui-render-resolution-surfaceflinger.txt").writeText(dump)
+        val screenshot = checkNotNull(instrumentation.uiAutomation.takeScreenshot()) {
+            "UI render audit could not capture the composed display"
+        }
+        try {
+            File(instrumentation.targetContext.filesDir, "ui-render-resolution.png").outputStream().use { output ->
+                check(screenshot.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, output)) {
+                    "UI render audit could not encode the composed display screenshot"
+                }
+            }
+        } finally {
+            screenshot.recycle()
+        }
     }
 }
