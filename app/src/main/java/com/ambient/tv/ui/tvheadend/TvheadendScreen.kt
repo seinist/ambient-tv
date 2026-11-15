@@ -1,5 +1,7 @@
 package com.ambient.tv.ui.tvheadend
 
+import com.ambient.tv.ui.common.collectAsCurrentState
+
 import com.ambient.tv.livetv.LiveTvArt
 import com.ambient.tv.livetv.asGuideThumbnail
 import com.ambient.tv.livetv.liveTvChannelRowArt
@@ -144,7 +146,7 @@ fun TvheadendScreen(
     /** The live source can be TVHeadend, IPTV, Plex, Jellyfin or Emby. */
     onOpenSourceSettings: (String) -> Unit = { onOpenSettings() },
 ) {
-    val state by viewModel.uiState.collectAsState()
+    val state = viewModel.uiState.collectAsCurrentState()
     val navigationReturn = com.ambient.tv.ui.common.rememberNavigationPlaybackReturn()
     // Guide cards observe artwork by title below; avoid invalidating the entire programme grid
     // on each TMDb response. Event/recording dialogs continue using full resolution art.
@@ -213,7 +215,7 @@ fun TvheadendScreen(
         } else com.ambient.tv.livetv.LiveTvZapOrder.clear()
         onWatchChannel(channelUuid)
     }
-    val pendingReturns by com.ambient.tv.livetv.LiveTvReturnFocus.pending.collectAsState()
+    val pendingReturns = com.ambient.tv.livetv.LiveTvReturnFocus.pending.collectAsCurrentState()
     val entryReturn = com.ambient.tv.ui.common.rememberPlaybackReturnOnEntry(pendingReturns[state.source.id]) { it.revision }
     val playbackVisitRevision = com.ambient.tv.ui.common.rememberPlaybackReturnVisitToken(entryReturn?.revision)
     val returnedTarget = entryReturn?.let {
@@ -319,7 +321,7 @@ fun TvheadendScreen(
         OperationFeedbackScope(viewModel.feedback, "dashboard", state.selectedEvent == null && state.selectedRecording == null)
         OperationFeedbackScope(viewModel.feedback, "timers", state.tab == TvheadendTab.TIMERS && state.selectedEvent == null && state.selectedRecording == null)
         if (state.dashboard != null && state.error != null && state.tabHasContent()) {
-            OperationFeedbackContent(state.error!!, Modifier.fillMaxWidth(),
+            OperationFeedbackContent(state.error, Modifier.fillMaxWidth(),
                 actionLabel = stringResource(R.string.home_retry), onAction = viewModel::refresh)
         }
         if (state.offline && state.dashboard != null) Row(

@@ -1,5 +1,6 @@
 package com.ambient.tv.ui.browse
 
+import com.ambient.tv.ui.common.collectAsCurrentState
 import com.ambient.tv.ui.common.claimBrowseStartupFocusOnInput
 import com.ambient.tv.ui.common.BrowseStartupFollowFirst
 import com.ambient.tv.ui.common.BrowseFocusKey
@@ -113,7 +114,7 @@ fun FilteredBrowseScreen(
     leftNavigatesBack: Boolean = true,
     viewModel: FilteredBrowseViewModel = hiltViewModel(),
 ) {
-    val storedState by viewModel.uiState.collectAsState()
+    val storedState = viewModel.uiState.collectAsCurrentState()
     val navigationReturn = com.ambient.tv.ui.common.rememberNavigationPlaybackReturn()
     val playbackReturn = remember(navigationReturn) {
         navigationReturn.takeIf { event ->

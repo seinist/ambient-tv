@@ -114,6 +114,7 @@ import com.ambient.tv.ui.common.ViewOptionsPanel
 import com.ambient.tv.ui.common.ViewPreview
 import com.ambient.tv.ui.common.activateOnTvKey
 import com.ambient.tv.ui.common.browseFocusTarget
+import com.ambient.tv.ui.common.collectAsCurrentState
 import com.ambient.tv.ui.common.handheldSwipeTabs
 import com.ambient.tv.ui.common.mediaFocusMotion
 import com.ambient.tv.ui.common.noSurfaceScale
@@ -161,8 +162,8 @@ fun TelegramScreen(
         liveSectionKey.value = it
     }
     @Suppress("NAME_SHADOWING") val sectionKey = liveSectionKey.value
-    val storedState by viewModel.state.collectAsState()
-    val pendingReturn by viewModel.pendingPlaybackReturn.collectAsState()
+    val storedState = viewModel.state.collectAsCurrentState()
+    val pendingReturn = viewModel.pendingPlaybackReturn.collectAsCurrentState()
     val preview = viewModel.preparePlaybackReturn(sectionKey, pendingReturn)
     val entryReturn = rememberPlaybackReturnOnEntry(pendingReturn.takeIf { preview != null }) { it.revision }
     val returnVisit = rememberPlaybackReturnVisitToken(entryReturn?.revision)

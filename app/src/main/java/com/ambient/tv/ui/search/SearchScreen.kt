@@ -1,5 +1,6 @@
 package com.ambient.tv.ui.search
 
+import com.ambient.tv.ui.common.collectAsCurrentState
 import com.ambient.tv.ui.theme.animatedFocusSurface
 import com.ambient.tv.ui.theme.screenGutter
 import androidx.activity.compose.BackHandler
@@ -137,8 +138,8 @@ fun SearchScreen(
     onBack: (() -> Unit)? = null,
     viewModel: SearchViewModel = hiltViewModel(),
 ) {
-    val storedState by viewModel.uiState.collectAsState()
-    val externalQuery by com.ambient.tv.search.ExternalSearch.requests.collectAsState()
+    val storedState = viewModel.uiState.collectAsCurrentState()
+    val externalQuery = com.ambient.tv.search.ExternalSearch.requests.collectAsCurrentState()
     val navigationReturn = com.ambient.tv.ui.common.rememberNavigationPlaybackReturn()
     // Admit only the snapshot present on entry. A later query/provider response cannot turn an
     // unavailable old player item into a new focus request, or override an external search.

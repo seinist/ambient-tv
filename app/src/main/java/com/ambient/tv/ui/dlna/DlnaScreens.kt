@@ -1,5 +1,6 @@
 package com.ambient.tv.ui.dlna
 
+import com.ambient.tv.ui.common.collectAsCurrentState
 import com.ambient.tv.ui.common.BrowseFocusContentIdentity
 import com.ambient.tv.ui.common.BrowseFocusInitialTarget
 import com.ambient.tv.ui.common.RegisterBrowseFocusGrid
@@ -194,7 +195,7 @@ private fun SavedDlnaServer(server: DlnaServer, onOpen: () -> Unit, onRemove: ()
 @Composable
 fun DlnaBrowserScreen(onPlay: (String) -> Unit, onManage: () -> Unit, onBack: () -> Unit, viewModel: DlnaBrowserViewModel = hiltViewModel()) {
     OperationFeedbackScope(viewModel.feedback, "browse")
-    val state by viewModel.state.collectAsState()
+    val state = viewModel.state.collectAsCurrentState()
     val navigationReturn = rememberNavigationPlaybackReturn()
     com.ambient.tv.ui.common.RefreshOnEnterAndReconnect(
         setOf(state.server?.id?.let { "dlna:$it" } ?: "dlna"), viewModel::refreshOnReconnect,

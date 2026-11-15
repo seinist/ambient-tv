@@ -2,6 +2,7 @@ package com.ambient.tv.ui.common
 
 import android.view.View
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.gestures.stopScroll
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.grid.LazyGridState
 import androidx.compose.foundation.relocation.BringIntoViewRequester
@@ -18,6 +19,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.composed
@@ -44,9 +46,14 @@ import com.ambient.tv.ui.navigation.SidebarContentEntry
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 
 internal data class BrowseFocusSlot(val key: BrowseFocusKey, val index: Int)
+internal data class BrowseViewportPosition(val index: Int, val offset: Int, val scrolling: Boolean)
 private val BrowseConfirmKeys = setOf(Key.DirectionCenter, Key.Enter, Key.NumPadEnter, Key.Spacebar)
 
 /**
@@ -103,9 +110,23 @@ internal class BrowseFocusReturnState(
         val visible: (Int) -> Boolean,
         val scroll: suspend (Int) -> Unit,
         val allowRecovery: () -> Boolean,
+        val requestScroll: (Int) -> Unit,
+        val viewport: () -> BrowseViewportPosition,
+        val stopScroll: suspend () -> Unit,
     ) {
         private val index = BrowseFocusSlotIndex(slots)
+        private var returnPreparation: Pair<Any, BrowseFocusSlot>? = null
         fun slot(key: BrowseFocusKey): BrowseFocusSlot? = index[key]
+
+        fun prepareReturn(token: Any, target: BrowseFocusKey) {
+            val slot = slot(target) ?: return
+            val preparation = token to slot
+            if (returnPreparation == preparation) return
+            returnPreparation = preparation
+            // Initial Lazy state arguments do not replace a restored viewport. This request
+            // overrides that saved position in the next measure, without drawing an old frame.
+            requestScroll(slot.index)
+        }
     }
     private val targets = linkedMapOf<Target, Unit>()
     private val collections = linkedMapOf<Any, Collection>()
@@ -230,6 +251,7 @@ internal class BrowseFocusReturnState(
         managesInitialFocus = true
         initialTargetChosen = true
         refreshAnchor = refreshSnapshot?.anchor(target)
+        collections.values.forEach { it.prepareReturn(token, target) }
     }
 
     fun clearPlaybackReturn(token: Any, target: BrowseFocusKey) {
@@ -246,6 +268,51 @@ internal class BrowseFocusReturnState(
 
     fun hasFocus(target: BrowseFocusKey): Boolean =
         targets.keys.any { it.key == target && it.hasFocus && it.visible }
+
+    /** Focus acceptance can start a second, animated TV comfort-zone relocation. Await it
+     * while the return is still hidden, including any outer row's concurrent centering. */
+    suspend fun settlePlaybackViewport(address: BrowseFocusKey): Boolean {
+        if (!active || holdEntry || !hasFocus(address)) return false
+        val target = targets.keys.firstOrNull { it.key == address && it.hasFocus && it.visible } ?: return false
+        try {
+            target.bringIntoView.bringIntoView()
+            fun viewport(): Map<Any, BrowseViewportPosition>? {
+                if (!active || holdEntry || !hasFocus(address)) return null
+                return buildMap {
+                    collections.forEach { (key, source) ->
+                        val slot = source.slot(address) ?: return@forEach
+                        val position = source.viewport()
+                        if (!source.visible(slot.index) || position.scrolling) return null
+                        put(key, position)
+                    }
+                }
+            }
+            val settled = snapshotFlow { viewport() }.first { it != null }
+            // Contextual row relocation can be launched by the focus callback after its next
+            // layout. Confirm measured positions after that work, not just the leaf focus bit.
+            repeat(3) {
+                withFrameNanos { }
+                if (viewport() != settled) return false
+            }
+            return active && !holdEntry && hasFocus(address)
+        } catch (cancelled: CancellationException) {
+            // A newer BringIntoView request may supersede this one without cancelling the
+            // handoff itself. Retry that layout; navigation/disposal still cancels immediately.
+            currentCoroutineContext().ensureActive()
+            return false
+        } catch (_: IllegalStateException) {
+            return false
+        }
+    }
+
+    /** A timed-out return must not leave its own scroll running after the draw gate opens. */
+    suspend fun stopPlaybackViewport(address: BrowseFocusKey) {
+        preparation?.cancel()
+        preparation = null
+        prepared = null
+        if (!active) return
+        collections.values.toList().filter { it.slot(address) != null }.forEach { it.stopScroll() }
+    }
 
     /** Actual content ownership, excluding the remembered tile while a header owns focus. */
     val focusedContentKey: BrowseFocusKey?
@@ -406,8 +473,17 @@ internal class BrowseFocusReturnState(
     }
 
     fun registerCollection(owner: Any, slots: () -> List<BrowseFocusSlot>, visible: (Int) -> Boolean,
-                           scroll: suspend (Int) -> Unit, allowRecovery: () -> Boolean) {
-        collections[owner] = Collection(slots, visible, scroll, allowRecovery)
+                           scroll: suspend (Int) -> Unit, allowRecovery: () -> Boolean,
+                           requestScroll: (Int) -> Unit, viewport: () -> BrowseViewportPosition,
+                           stopScroll: suspend () -> Unit) {
+        collections[owner] = Collection(slots, visible, scroll, allowRecovery, requestScroll, viewport, stopScroll)
+        prepareCollectionReturn(owner)
+    }
+    fun prepareCollectionReturn(owner: Any) {
+        if (!active) return
+        val token = playbackReturnToken ?: return
+        val address = playbackReturnAddress ?: return
+        collections[owner]?.prepareReturn(token, address)
     }
     fun unregisterCollection(owner: Any) { collections.remove(owner) }
     fun setFallback(owner: Any, action: () -> Boolean?) { fallbackOwner = owner; fallback = action }
@@ -531,9 +607,8 @@ internal class BrowseFocusReturnState(
 }
 
 /**
- * Keeps a prepared return layout invisible until its exact focus address accepts entry. Lazy
- * states must already be constructed at the target indices; this is the final focus handoff,
- * not an animated scroll from the old position. The ordinary loading gate remains independent.
+ * Keeps a prepared return layout invisible until its exact focus address accepts entry and
+ * all focus-driven viewport movement finishes. The ordinary loading gate remains independent.
  */
 internal class BrowsePlaybackReturn internal constructor(
     private val owner: BrowseFocusReturnState?,
@@ -567,11 +642,27 @@ internal class BrowsePlaybackReturn internal constructor(
         if (!pending) return true
         prepare()
         val address = checkNotNull(target)
+        // Every relocation places the container again. Do not restart focus/BringIntoView
+        // from those layout callbacks while the requested leaf is already settling.
+        if (owner?.hasFocus(address) == true) return true
         request { owner?.requestContentFocus(address) }
         // requestFocus can enter a container while its previous child still owns focus.
-        // Reveal only after the requested registration itself has received the focus event.
-        if (owner?.hasFocus(address) == true) complete()
-        return !pending
+        return owner?.hasFocus(address) == true
+    }
+
+    internal suspend fun finishViewport(): Boolean {
+        if (!pending) return true
+        if (owner?.settlePlaybackViewport(checkNotNull(target)) != true) return false
+        if (pending) complete()
+        return true
+    }
+
+    internal suspend fun abandonViewport() {
+        try {
+            if (pending) target?.let { owner?.stopPlaybackViewport(it) }
+        } finally {
+            complete()
+        }
     }
 
     /** Also releases the gate if an external owner/dialog prevents the bounded handoff. */
@@ -635,13 +726,16 @@ internal fun rememberBrowsePlaybackReturn(
     DisposableEffect(controller) { onDispose { controller.detach() } }
     LaunchedEffect(controller, active, enabled, controller.target, controller.laidOut) {
         if (!active || !enabled || !controller.laidOut) return@LaunchedEffect
-        // onGloballyPositioned normally completes before the first draw. A nested lazy row
-        // or a shell transition can need a few additional layout passes; never hang the page.
-        repeat(12) {
-            if (controller.tryFocus()) return@LaunchedEffect
-            withFrameNanos { }
+        // Initial requests snap before measure. Then await the actual focus/relocation work;
+        // accepting focus alone can still leave a comfort-zone or row-centering scroll queued.
+        val completed = withTimeoutOrNull(1_500L) {
+            while (controller.pending) {
+                if (controller.tryFocus() && controller.finishViewport()) return@withTimeoutOrNull true
+                withFrameNanos { }
+            }
+            true
         }
-        controller.complete()
+        if (completed != true) controller.abandonViewport()
     }
     return controller
 }
@@ -833,9 +927,35 @@ private fun RegisterBrowseFocusCollection(
     val currentVisible = rememberUpdatedState(visible)
     val filterFocus = LocalFilterFocusState.current
     val allowRecovery = rememberUpdatedState(filterFocus?.allowContentAutoFocus != false)
+    val requestScroll: (Int) -> Unit = remember(token) {
+        when (token) {
+            is LazyListState -> { index -> token.requestScrollToItem(index) }
+            is LazyGridState -> { index -> token.requestScrollToItem(index) }
+            else -> error("A browse collection needs a lazy list or grid state")
+        }
+    }
+    val viewport: () -> BrowseViewportPosition = remember(token) {
+        when (token) {
+            is LazyListState -> { -> BrowseViewportPosition(token.firstVisibleItemIndex,
+                token.firstVisibleItemScrollOffset, token.isScrollInProgress) }
+            is LazyGridState -> { -> BrowseViewportPosition(token.firstVisibleItemIndex,
+                token.firstVisibleItemScrollOffset, token.isScrollInProgress) }
+            else -> error("A browse collection needs a lazy list or grid state")
+        }
+    }
+    val stopScroll: suspend () -> Unit = remember(token) {
+        when (token) {
+            is LazyListState -> { -> token.stopScroll() }
+            is LazyGridState -> { -> token.stopScroll() }
+            else -> error("A browse collection needs a lazy list or grid state")
+        }
+    }
     DisposableEffect(owner, token) {
         owner.registerCollection(token, { currentSlots.value }, { currentVisible.value(it) },
-            { currentScroll.value(it) }, { allowRecovery.value })
+            { currentScroll.value(it) }, { allowRecovery.value }, requestScroll, viewport, stopScroll)
         onDispose { owner.unregisterCollection(token) }
     }
+    // Rows subcompose after their outer column has moved; a changed slot snapshot can also
+    // resolve a formerly unavailable address before this collection's next measure.
+    SideEffect { owner.prepareCollectionReturn(token) }
 }

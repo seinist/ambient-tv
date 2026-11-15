@@ -2,6 +2,7 @@
 
 package com.ambient.tv.ui.section
 
+import com.ambient.tv.ui.common.collectAsCurrentState
 import com.ambient.tv.ui.common.glideToItem
 import com.ambient.tv.ui.theme.screenGutter
 import com.ambient.tv.ui.theme.animatedFocusBorder
@@ -195,7 +196,7 @@ fun SectionScreen(
     onBack: (() -> Unit)? = null,
     viewModel: SectionViewModel = hiltViewModel(),
 ) {
-    val storedState by viewModel.uiState.collectAsState()
+    val storedState = viewModel.uiState.collectAsCurrentState()
     val navigationReturn = com.ambient.tv.ui.common.rememberNavigationPlaybackReturn()
     // A missing return item must not become a new focus command when a later refresh adds it.
     val playbackReturn = remember(navigationReturn) {

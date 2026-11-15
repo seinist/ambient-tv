@@ -23,6 +23,7 @@ import com.ambient.tv.ui.common.rowColumnFocusWrapRight
 import com.ambient.tv.ui.common.rowColumnFocusTarget
 import com.ambient.tv.ui.common.browseFocusTarget
 import com.ambient.tv.ui.common.claimBrowseStartupFocusOnInput
+import com.ambient.tv.ui.common.collectAsCurrentState
 import androidx.compose.ui.platform.LocalContext
 import com.ambient.tv.ui.common.displayTitle
 import androidx.lifecycle.Lifecycle
@@ -185,9 +186,9 @@ fun HomeScreen(
 ) {
     val browseSession = com.ambient.tv.ui.common.BrowseStartupFocusSessions.generation
     val viewModelSession = remember(viewModel) { browseSession }
-    val storedState by viewModel.uiState.collectAsState()
-    val pendingYouTubeReturn by viewModel.pendingYouTubePlaybackReturn.collectAsState()
-    val pendingTelegramReturn by viewModel.pendingTelegramPlaybackReturn.collectAsState()
+    val storedState = viewModel.uiState.collectAsCurrentState()
+    val pendingYouTubeReturn = viewModel.pendingYouTubePlaybackReturn.collectAsCurrentState()
+    val pendingTelegramReturn = viewModel.pendingTelegramPlaybackReturn.collectAsCurrentState()
     val pendingReturn = viewModel.pendingPlaybackReturn(focusStateKey, pendingYouTubeReturn, pendingTelegramReturn)
     val providerReturn = com.ambient.tv.ui.common.rememberPlaybackReturnOnEntry(pendingReturn) { it.key }
     val navigationReturn = com.ambient.tv.ui.common.rememberNavigationPlaybackReturn()
@@ -978,16 +979,21 @@ internal fun LibraryContent(
                 val pending = pendingVisualRow.value
                 if (pending != null && pending != key) return@collectLatest
                 val index = state.rowKeys.indexOf(key)
+                if (index < 0) return@collectLatest
                 val alreadyCentered = rowCenteringGate.consume(key)
-                if (index >= 0) activeRowIndex.intValue = index
+                activeRowIndex.intValue = index
                 if (pending == key) pendingVisualRow.value = null
                 // The return viewport is already placed at its initial row before drawing.
                 // Do not start a centering glide as that same row receives its first focus.
-                if (returningRow) {
-                    if (key == initialFocusRowId) returningRow = false
+                if (returningRow && key == initialFocusRowId) {
+                    returningRow = false
                     return@collectLatest
                 }
-                if (index >= 0 && !alreadyCentered) {
+                // A retained live row may never send a new entry event. Once its return has
+                // finished, an ordinary Up/Down must still center whichever row takes focus.
+                if (playbackReturn.pending) return@collectLatest
+                returningRow = false
+                if (!alreadyCentered) {
                     rowCentering.centerItem(index, bottomInset = bottomInsetPx)
                 }
             }

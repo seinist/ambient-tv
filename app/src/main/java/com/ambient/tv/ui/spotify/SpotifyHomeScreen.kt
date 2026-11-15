@@ -1,5 +1,6 @@
 package com.ambient.tv.ui.spotify
 
+import com.ambient.tv.ui.common.collectAsCurrentState
 import com.ambient.tv.ui.common.claimBrowseStartupFocusOnInput
 
 import com.ambient.tv.spotify.SpotifyEntityType
@@ -72,7 +73,7 @@ fun SpotifyHomeScreen(
     onBack: (() -> Unit)? = null,
     viewModel: SpotifyHomeViewModel = hiltViewModel(),
 ) {
-    val state by viewModel.state.collectAsState()
+    val state = viewModel.state.collectAsCurrentState()
     val navigationReturn = com.ambient.tv.ui.common.rememberNavigationPlaybackReturn()
     com.ambient.tv.ui.common.RefreshOnEnterAndReconnect(setOf("spotify")) { viewModel.enter(initialSectionKey) }
     val expectedSectionKey = initialSectionKey ?: "home"

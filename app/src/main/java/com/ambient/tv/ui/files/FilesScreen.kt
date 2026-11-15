@@ -1,5 +1,6 @@
 package com.ambient.tv.ui.files
 
+import com.ambient.tv.ui.common.collectAsCurrentState
 import com.ambient.tv.ui.common.leftKeyAction
 import com.ambient.tv.ui.common.BrowseFocusKey
 import com.ambient.tv.ui.common.BrowseFocusSlot
@@ -81,7 +82,7 @@ private const val UP_ID = "up"
 fun FilesScreen(onPlay: (String, Boolean) -> Unit, onBack: () -> Unit, contentActive: Boolean, onOpenPhotos: () -> Unit = {}, viewModel: FilesViewModel = hiltViewModel()) {
     val handheld = LocalHandheldUi.current
     LaunchedEffect(viewModel) { viewModel.applyViewerReturn() }
-    val state by viewModel.state.collectAsState()
+    val state = viewModel.state.collectAsCurrentState()
     val navigationReturn = rememberNavigationPlaybackReturn()
     val sourceId = state.folders.lastOrNull()?.sourceId
     val sources = if (state.sources.firstOrNull { it.id == sourceId }?.kind == "local") emptySet()
@@ -203,7 +204,7 @@ fun FilesScreen(onPlay: (String, Boolean) -> Unit, onBack: () -> Unit, contentAc
         Box(Modifier.fillMaxWidth().weight(1f).pageContentUp(focusChain)
             .onFocusChanged { if (it.hasFocus) keepHeaderFocus = false }.focusGroup()) {
             if (state.error != null && ids.isEmpty()) {
-                OperationFeedbackContent(state.error!!, Modifier.align(Alignment.Center).widthIn(max = 680.dp), FeedbackLayout.PAGE,
+                OperationFeedbackContent(state.error, Modifier.align(Alignment.Center).widthIn(max = 680.dp), FeedbackLayout.PAGE,
                     actionLabel = stringResource(if (state.folders.isEmpty()) R.string.files_back else R.string.home_retry),
                     onAction = if (state.folders.isEmpty()) onBack else viewModel::refresh,
                     actionModifier = Modifier.focusRequester(retryFocus), requestActionFocus = !keepHeaderFocus,
