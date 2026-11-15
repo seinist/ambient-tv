@@ -16,6 +16,8 @@ import com.ambient.tv.ui.mobile.deviceDp
 
 import android.app.Activity
 import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
@@ -1458,18 +1460,13 @@ private fun OsdIconButton(
     loading: Boolean = false,
 ) {
     var focused by remember { mutableStateOf(false) }
+    val interactions = remember { MutableInteractionSource() }
+    val pressed by interactions.collectIsPressedAsState()
     val uiScale = rememberUhdScale()
     val width = (if (primary) 58.dp else 48.dp) * uiScale
     val height = 40.dp * uiScale
     val elevation by animateDpAsState(if (focused) 7.dp else 1.dp, tween(120), label = "osdButtonElevation")
-    val background = when {
-        primary && (focused || selected) -> Gold
-        primary -> Color.White.copy(alpha = 0.94f)
-        focused -> Color.White.copy(alpha = 0.98f)
-        selected -> Gold.copy(alpha = 0.90f)
-        else -> Color(0xD9181A1E)
-    }
-    val foreground = if (focused || selected || primary) Color.Black else Color.White
+    val foreground = MaterialTheme.colorScheme.onSurface
     val shape = RoundedCornerShape(6.dp * uiScale)
 
     Row(
@@ -1478,10 +1475,9 @@ private fun OsdIconButton(
             .height(height)
             .shadow(elevation, shape)
             .onFocusChanged { focused = it.isFocused }
-            .background(background, shape)
-            .border(1.dp, if (focused) Gold else Color.White.copy(alpha = 0.13f), shape)
+            .appControlSurface(focused = focused, selected = selected, shape = shape, prominent = primary, pressed = pressed)
             .activateOnTvKey(onClick = onClick)
-            .clickable(onClick = onClick)
+            .clickable(interactionSource = interactions, indication = null, onClick = onClick)
             .focusable()
             .padding(horizontal = 8.dp * uiScale),
         verticalAlignment = Alignment.CenterVertically,
@@ -1580,13 +1576,16 @@ private fun OsdChoiceRow(
 @Composable
 private fun OsdSpeedChip(label: String, selected: Boolean, onClick: () -> Unit) {
     var focused by remember { mutableStateOf(false) }
+    val interactions = remember { MutableInteractionSource() }
+    val pressed by interactions.collectIsPressedAsState()
     Box(
         modifier = Modifier.width(70.dp).height(40.dp).onFocusChanged { focused = it.isFocused }
-            .appControlSurface(focused = focused, selected = selected, shape = RoundedCornerShape(6.dp))
-            .activateOnTvKey(onClick = onClick).clickable(onClick = onClick).focusable(),
+            .appControlSurface(focused = focused, selected = selected, shape = RoundedCornerShape(6.dp), pressed = pressed)
+            .activateOnTvKey(onClick = onClick)
+            .clickable(interactionSource = interactions, indication = null, onClick = onClick).focusable(),
         contentAlignment = Alignment.Center,
     ) {
-        Text(label, color = if (selected && !focused) Gold else MaterialTheme.colorScheme.onSurface, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+        Text(label, color = MaterialTheme.colorScheme.onSurface, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
     }
 }
 

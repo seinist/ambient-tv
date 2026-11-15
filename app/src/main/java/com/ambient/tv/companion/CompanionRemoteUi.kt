@@ -4,6 +4,9 @@ import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsFocusedAsState
+import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -28,6 +31,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
@@ -46,6 +51,9 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.ambient.tv.R
 import com.ambient.tv.ui.common.TvActionButton
+import com.ambient.tv.ui.common.ProvideControlContent
+import com.ambient.tv.ui.theme.appControlSurface
+import com.ambient.tv.ui.theme.interactionColors
 
 /**
  * Phone remote for the connected TV as a page of its own: it fills the content area above the
@@ -110,7 +118,7 @@ internal fun CompanionRemoteScreen(manager: CompanionManager, modifier: Modifier
                             Text(stringResource(if (state.online) R.string.companion_control_unavailable else R.string.remote_reconnect_hint,
                                 state.remote?.controller.orEmpty()), style = MaterialTheme.typography.bodyMedium)
                             if (!state.online) TvActionButton(stringResource(R.string.sync_retry_connection), manager::showRemoteOrDevices, fillWidth = true)
-                            if (state.online) OutlinedButton({ manager.send(CompanionFrame(type = "input_claim")) }) {
+                            if (state.online) RemoteActionButton({ manager.send(CompanionFrame(type = "input_claim")) }) {
                                 Text(stringResource(R.string.companion_take_control))
                             }
                         }
@@ -124,7 +132,7 @@ internal fun CompanionRemoteScreen(manager: CompanionManager, modifier: Modifier
                 RemotePlayerControls(manager, state)
             }
             // The TV's own back key; leaving this page is the arrow at the top or the system back.
-            OutlinedButton({ key("back") }, enabled = granted,
+            RemoteActionButton({ key("back") }, enabled = granted,
                 modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp).heightIn(min = 48.dp)) {
                 Icon(Icons.AutoMirrored.Filled.ArrowBack, null, Modifier.size(18.dp))
                 Spacer(Modifier.width(6.dp))
@@ -147,7 +155,7 @@ private fun RemoteDirectionPad(enabled: Boolean, key: (String) -> Unit) {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly,
                 verticalAlignment = Alignment.CenterVertically) {
                 RemoteDirectionButton(Icons.AutoMirrored.Filled.KeyboardArrowLeft, R.string.remote_left, enabled) { key("left") }
-                FilledIconButton({ key("ok") }, enabled = enabled, modifier = Modifier.size(76.dp), shape = CircleShape) {
+                RemoteIconButton({ key("ok") }, enabled = enabled, modifier = Modifier.size(76.dp), shape = CircleShape, prominent = true) {
                     Icon(Icons.Default.Check, stringResource(R.string.remote_ok), Modifier.size(32.dp))
                 }
                 RemoteDirectionButton(Icons.AutoMirrored.Filled.KeyboardArrowRight, R.string.remote_right, enabled) { key("right") }
@@ -159,8 +167,76 @@ private fun RemoteDirectionPad(enabled: Boolean, key: (String) -> Unit) {
 
 @Composable
 private fun RemoteDirectionButton(icon: ImageVector, label: Int, enabled: Boolean, action: () -> Unit) {
-    FilledTonalIconButton(action, enabled = enabled, modifier = Modifier.size(64.dp), shape = RoundedCornerShape(20.dp)) {
+    RemoteIconButton(action, enabled = enabled, modifier = Modifier.size(64.dp), shape = RoundedCornerShape(20.dp)) {
         Icon(icon, stringResource(label), Modifier.size(34.dp))
+    }
+}
+
+/** Keep the native touch target and semantics while sharing the app's dark control treatment. */
+@Composable
+private fun RemoteIconButton(
+    onClick: () -> Unit,
+    enabled: Boolean,
+    modifier: Modifier,
+    shape: Shape,
+    prominent: Boolean = false,
+    content: @Composable () -> Unit,
+) {
+    val interactions = remember { MutableInteractionSource() }
+    val focused by interactions.collectIsFocusedAsState()
+    val pressed by interactions.collectIsPressedAsState()
+    val foreground = interactionColors(focused, enabled = enabled, animate = false).content
+    val controlModifier = modifier.appControlSurface(
+        focused = focused, enabled = enabled, shape = shape, prominent = prominent, pressed = pressed,
+    )
+    val colors = IconButtonDefaults.filledIconButtonColors(
+        containerColor = Color.Transparent,
+        contentColor = foreground,
+        disabledContainerColor = Color.Transparent,
+        disabledContentColor = foreground,
+    )
+    ProvideControlContent(foreground) {
+        if (prominent) {
+            FilledIconButton(onClick, enabled = enabled, modifier = controlModifier, shape = shape,
+                colors = colors, interactionSource = interactions, content = content)
+        } else {
+            FilledTonalIconButton(onClick, enabled = enabled, modifier = controlModifier, shape = shape,
+                colors = colors, interactionSource = interactions, content = content)
+        }
+    }
+}
+
+@Composable
+private fun RemoteActionButton(
+    onClick: () -> Unit,
+    enabled: Boolean = true,
+    modifier: Modifier = Modifier,
+    prominent: Boolean = false,
+    content: @Composable RowScope.() -> Unit,
+) {
+    val interactions = remember { MutableInteractionSource() }
+    val focused by interactions.collectIsFocusedAsState()
+    val pressed by interactions.collectIsPressedAsState()
+    val foreground = interactionColors(focused, enabled = enabled, animate = false).content
+    val shape = ButtonDefaults.shape
+    val controlModifier = modifier.appControlSurface(
+        focused = focused, enabled = enabled, shape = shape, prominent = prominent, pressed = pressed,
+    )
+    val colors = ButtonDefaults.buttonColors(
+        containerColor = Color.Transparent,
+        contentColor = foreground,
+        disabledContainerColor = Color.Transparent,
+        disabledContentColor = foreground,
+    )
+    ProvideControlContent(foreground) {
+        if (prominent) {
+            Button(onClick, enabled = enabled, modifier = controlModifier, shape = shape,
+                colors = colors, interactionSource = interactions, content = content)
+        } else {
+            OutlinedButton(onClick, enabled = enabled, modifier = controlModifier, shape = shape,
+                border = BorderStroke(1.dp, Color.Transparent), colors = colors,
+                interactionSource = interactions, content = content)
+        }
     }
 }
 
@@ -228,7 +304,7 @@ private fun RemoteMousePad(enabled: Boolean, sensitivity: Float, onSensitivity: 
             }
         }
     }
-    OutlinedButton({ send(CompanionInput("click")) }, enabled = enabled, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) {
+    RemoteActionButton({ send(CompanionInput("click")) }, enabled = enabled, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) {
         Text(clickLabel)
     }
     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -253,14 +329,14 @@ private fun RemoteKeyboard(enabled: Boolean, text: String, onText: (String) -> U
         singleLine = false,
         keyboardOptions = KeyboardOptions(imeAction = ImeAction.Default),
     )
-    Button(insert, enabled = enabled && text.isNotEmpty(), modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp)) {
+    RemoteActionButton(insert, enabled = enabled && text.isNotEmpty(), modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp), prominent = true) {
         Text(stringResource(R.string.companion_insert_text))
     }
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        OutlinedButton({ key("delete") }, enabled = enabled, modifier = Modifier.weight(1f).heightIn(min = 48.dp)) {
+        RemoteActionButton({ key("delete") }, enabled = enabled, modifier = Modifier.weight(1f).heightIn(min = 48.dp)) {
             Icon(Icons.AutoMirrored.Filled.Backspace, stringResource(R.string.companion_delete_character), Modifier.size(22.dp))
         }
-        OutlinedButton({ key("enter") }, enabled = enabled, modifier = Modifier.weight(1f).heightIn(min = 48.dp)) {
+        RemoteActionButton({ key("enter") }, enabled = enabled, modifier = Modifier.weight(1f).heightIn(min = 48.dp)) {
             Icon(Icons.AutoMirrored.Filled.KeyboardReturn, null, Modifier.size(20.dp))
             Spacer(Modifier.width(8.dp))
             Text(stringResource(R.string.companion_enter))

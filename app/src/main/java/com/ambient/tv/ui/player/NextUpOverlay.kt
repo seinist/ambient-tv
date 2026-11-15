@@ -176,6 +176,7 @@ internal fun NextUpOverlay(
                             toggleableState = ToggleableState(autoplay)
                         },
                         selected = autoplay,
+                        prominent = false,
                     )
                 }
                 TvActionButton(
@@ -196,6 +197,7 @@ internal fun NextUpOverlay(
                         stringResource(if (stillWatching) R.string.next_up_continue else R.string.next_up_play_now),
                         onPlayNow,
                         Modifier.focusRequester(playFocus),
+                        prominent = true,
                     )
                 }
             }

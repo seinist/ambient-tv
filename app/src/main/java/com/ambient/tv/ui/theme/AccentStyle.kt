@@ -37,38 +37,44 @@ private fun accentLerp(accent: Color, target: Color, fraction: Float): Color =
     lerp(accent, target.convert(accent.colorSpace), fraction)
 
 /** Material shader palette derived from the main or separate playback accent. */
-fun accentBrush(accent: Color, style: AccentStyle): Brush = when (style) {
-    AccentStyle.LIGHT -> SolidColor(accent)
-    AccentStyle.SATIN -> Brush.linearGradient(
+fun accentBrush(accent: Color, style: AccentStyle): Brush =
+    accentMaterialBrush(accentMaterialStops(accent, style), style)
+
+/** Shared stops let controls bound/lift their material without duplicating the style palette. */
+internal fun accentMaterialStops(accent: Color, style: AccentStyle): List<Pair<Float, Color>> = when (style) {
+    AccentStyle.LIGHT -> listOf(0f to accent)
+    AccentStyle.SATIN -> listOf(
         0f to accentLerp(accent, Color.White, 0.40f),
         0.23f to accentLerp(accent, Color.Black, 0.12f),
         0.58f to accentLerp(accent, Color.White, 0.25f),
         1f to accentLerp(accent, Color.Black, 0.16f),
     )
-    AccentStyle.GLASS -> Brush.linearGradient(
+    AccentStyle.GLASS -> listOf(
         0f to accentLerp(accent, Color.White, 0.48f),
         0.25f to accentLerp(accent, Color.White, 0.16f),
         0.60f to accent,
         1f to accentLerp(accent, Color.Black, 0.22f),
     )
-    AccentStyle.GLOW -> Brush.horizontalGradient(
-        listOf(accentLerp(accent, Color.White, 0.18f), accent, accentLerp(accent, Color.White, 0.30f)),
+    AccentStyle.GLOW -> listOf(
+        0f to accentLerp(accent, Color.White, 0.18f),
+        .5f to accent,
+        1f to accentLerp(accent, Color.White, 0.30f),
     )
-    AccentStyle.PEARL -> Brush.linearGradient(
+    AccentStyle.PEARL -> listOf(
         0f to accentLerp(accent, Color.White, 0.44f),
         0.32f to accentLerp(accent, Color(0xFFA9C6FF), 0.30f),
         0.69f to accentLerp(accent, Color(0xFFFFB9D7), 0.28f),
         1f to accentLerp(accent, Color.White, 0.26f),
     )
     // A broad, saturated body with a small light lip and shaded lower edge.
-    AccentStyle.CERAMIC -> Brush.verticalGradient(
+    AccentStyle.CERAMIC -> listOf(
         0f to accentLerp(accent, Color.White, 0.28f),
         0.10f to accentLerp(accent, Color.White, 0.06f),
         0.78f to accent,
         1f to accentLerp(accent, Color.Black, 0.14f),
     )
     // A narrow static reflection; the shaded sections retain the accent hue.
-    AccentStyle.CHROME -> Brush.linearGradient(
+    AccentStyle.CHROME -> listOf(
         0f to accentLerp(accent, Color.White, 0.38f),
         0.35f to accentLerp(accent, Color.Black, 0.16f),
         0.47f to accentLerp(accent, Color.White, 0.70f),
@@ -77,7 +83,7 @@ fun accentBrush(accent: Color, style: AccentStyle): Brush = when (style) {
         1f to accentLerp(accent, Color.White, 0.24f),
     )
     // Three diagonal light planes, with short transitions to avoid a jagged seam.
-    AccentStyle.FACET -> Brush.linearGradient(
+    AccentStyle.FACET -> listOf(
         0f to accentLerp(accent, Color.White, 0.30f),
         0.33f to accentLerp(accent, Color.White, 0.30f),
         0.35f to accent,
@@ -85,6 +91,13 @@ fun accentBrush(accent: Color, style: AccentStyle): Brush = when (style) {
         0.68f to accentLerp(accent, Color.Black, 0.13f),
         1f to accentLerp(accent, Color.Black, 0.13f),
     )
+}
+
+internal fun accentMaterialBrush(stops: List<Pair<Float, Color>>, style: AccentStyle): Brush = when (style) {
+    AccentStyle.LIGHT -> SolidColor(stops.first().second)
+    AccentStyle.GLOW -> Brush.horizontalGradient(*stops.toTypedArray())
+    AccentStyle.CERAMIC -> Brush.verticalGradient(*stops.toTypedArray())
+    else -> Brush.linearGradient(*stops.toTypedArray())
 }
 
 /** Keep unfocused content neutral; only active elements receive a material wash. */

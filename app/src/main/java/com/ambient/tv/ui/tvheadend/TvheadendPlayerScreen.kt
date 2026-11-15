@@ -32,6 +32,8 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.focusGroup
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -1145,19 +1147,16 @@ private fun TvhOsdAction(
     primary: Boolean = false,
 ) {
     var focused by remember { mutableStateOf(false) }
+    val interactions = remember { MutableInteractionSource() }
+    val pressed by interactions.collectIsPressedAsState()
     val shape = RoundedCornerShape(6.dp)
-    val background = when {
-        focused -> Color.White
-        primary -> Color.White.copy(alpha = 0.94f)
-        else -> Color(0xD9181A1E)
-    }
-    val foreground = if (focused || primary) Color.Black else Color.White
+    val foreground = MaterialTheme.colorScheme.onSurface
     Row(
         modifier = modifier.width(if (primary) 58.dp else 48.dp).height(40.dp)
             .onFocusChanged { focused = it.isFocused }
-            .background(background, shape)
-            .border(1.dp, if (focused) MaterialTheme.colorScheme.primary else Color.White.copy(alpha = 0.13f), shape)
-            .activateOnTvKey(onClick = onClick).clickable(onClick = onClick).focusable(),
+            .appControlSurface(focused = focused, shape = shape, prominent = primary, pressed = pressed)
+            .activateOnTvKey(onClick = onClick)
+            .clickable(interactionSource = interactions, indication = null, onClick = onClick).focusable(),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.Center,
     ) {

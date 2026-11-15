@@ -4,6 +4,8 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -51,6 +53,7 @@ import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
 import com.ambient.tv.R
 import com.ambient.tv.ui.common.activateOnTvKey
+import com.ambient.tv.ui.theme.appControlSurface
 import kotlinx.coroutines.delay
 
 /**
@@ -384,13 +387,10 @@ private fun MiniPlaybackAction(
     onFocusedChanged: (Boolean) -> Unit = {},
 ) {
     var focused by remember { mutableStateOf(false) }
+    val interactions = remember { MutableInteractionSource() }
+    val pressed by interactions.collectIsPressedAsState()
     val shape = RoundedCornerShape(8.dp)
-    val background = when {
-        focused -> MaterialTheme.colorScheme.primary
-        primary -> MaterialTheme.colorScheme.primary.copy(alpha = 0.18f)
-        else -> Color.Transparent
-    }
-    val foreground = if (focused) Color.Black else if (primary) MaterialTheme.colorScheme.primary else Color.White.copy(alpha = 0.76f)
+    val foreground = MaterialTheme.colorScheme.onSurface
 
     Box(
         modifier = modifier
@@ -399,14 +399,9 @@ private fun MiniPlaybackAction(
                 focused = it.isFocused
                 onFocusedChanged(it.isFocused)
             }
-            .background(background, shape)
-            .border(
-                if (focused) 1.5.dp else 1.dp,
-                if (focused) Color.White.copy(alpha = 0.90f) else Color.White.copy(alpha = if (primary) 0.12f else 0.06f),
-                shape,
-            )
+            .appControlSurface(focused = focused, shape = shape, prominent = primary, pressed = pressed)
             .activateOnTvKey(onClick = onClick)
-            .clickable(onClick = onClick),
+            .clickable(interactionSource = interactions, indication = null, onClick = onClick),
         contentAlignment = Alignment.Center,
     ) {
         Icon(icon, contentDescription = label, tint = foreground, modifier = Modifier.size(18.dp))
