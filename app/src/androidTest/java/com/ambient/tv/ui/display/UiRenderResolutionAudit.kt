@@ -371,6 +371,7 @@ internal class UiRenderResolutionAudit(
                 check(rememberedIdentity === initialIdentity && activations.intValue == 3)
                 check(focus.requestFocus())
             }
+            await("native fallback input focus restored") { rootFocused && compose.rootView.hasWindowFocus() }
             key(KeyEvent.KEYCODE_DPAD_CENTER)
             await("native fallback remains interactive") {
                 activations.intValue == 4 && dialogVisible.value &&
