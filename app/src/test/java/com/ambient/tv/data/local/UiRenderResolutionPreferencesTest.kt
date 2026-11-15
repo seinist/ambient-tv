@@ -39,7 +39,7 @@ class UiRenderResolutionPreferencesTest {
         }
         val exported = SettingsBackupManager(source, TokenStore(memoryPreferences(), source)).exportJson()
         val data = Json.parseToJsonElement(exported).jsonObject
-        assertEquals("77", data.getValue("schemaVersion").jsonPrimitive.content)
+        assertEquals("78", data.getValue("schemaVersion").jsonPrimitive.content)
         assertEquals("1080p", data.getValue("uiRenderResolutionKey").jsonPrimitive.content)
         val target = AppPreferences(memoryPreferences())
         SettingsBackupManager(target, TokenStore(memoryPreferences(), target)).importJson(exported)
@@ -64,7 +64,7 @@ class UiRenderResolutionPreferencesTest {
         val preferences = AppPreferences(memoryPreferences()).apply { uiRenderResolutionKey = "panel" }
         val manager = SettingsBackupManager(preferences, TokenStore(memoryPreferences(), preferences))
         assertTrue(runCatching {
-            manager.importJson("""{"schemaVersion":78,"exportedAtEpochMs":0,"uiRenderResolutionKey":"1080p"}""")
+            manager.importJson("""{"schemaVersion":79,"exportedAtEpochMs":0,"uiRenderResolutionKey":"1080p"}""")
         }.isFailure)
         assertEquals("panel", preferences.uiRenderResolutionKey)
     }

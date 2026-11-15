@@ -27,6 +27,9 @@ internal fun accentStyleHintRes(style: AccentStyle): Int = when (style) {
     AccentStyle.GLASS -> R.string.settings_accent_style_glass_hint
     AccentStyle.GLOW -> R.string.settings_accent_style_glow_hint
     AccentStyle.PEARL -> R.string.settings_accent_style_pearl_hint
+    AccentStyle.CERAMIC -> R.string.settings_accent_style_ceramic_hint
+    AccentStyle.CHROME -> R.string.settings_accent_style_chrome_hint
+    AccentStyle.FACET -> R.string.settings_accent_style_facet_hint
     AccentStyle.LIGHT -> R.string.settings_accent_style_light_hint
 }
 

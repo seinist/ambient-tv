@@ -1,5 +1,7 @@
 package com.ambient.tv.ui.common
 
+import com.ambient.tv.ui.theme.AccentMotionScope
+import com.ambient.tv.ui.theme.accentMotionOutline
 import coil3.request.crossfade
 import coil3.request.bitmapConfig
 import androidx.activity.compose.BackHandler
@@ -24,6 +26,8 @@ import androidx.compose.foundation.MarqueeSpacing
 import androidx.compose.foundation.background
 import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.border
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsFocusedAsState
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.isImeVisible
@@ -831,54 +835,64 @@ fun TvChip(
     val uiSounds = LocalUiSoundPlayer.current
     val activate = rememberUiSoundAction(enabled = clickable, onClick = onClick)
     if (com.ambient.tv.ui.mobile.LocalHandheldUi.current) {
-        if (iconOnly && (icon != null || leadingContent != null)) {
-            val buttonModifier = modifier
-                .sizeIn(minWidth = 48.dp, minHeight = 48.dp)
-                .then(if (selected && LocalAccentStyle.current != AccentStyle.LIGHT)
-                    Modifier.accentMaterialBorder(2.dp, MaterialTheme.colorScheme.primary,
-                        RoundedCornerShape(LocalUiTokens.current.controlRadius),
-                        MaterialTheme.colorScheme.primary, true)
-                    else Modifier)
-                .semantics { contentDescription = text }
-            val glyph: @Composable () -> Unit = {
-                if (loading) {
-                    ButtonProgress(androidx.compose.material3.LocalContentColor.current, Modifier.size(20.dp))
-                } else if (leadingContent != null) {
-                    leadingContent()
-                } else {
-                    androidx.compose.material3.Icon(checkNotNull(icon), contentDescription = null, modifier = Modifier.size(20.dp))
+        val interactionSource = remember { MutableInteractionSource() }
+        val focused by interactionSource.collectIsFocusedAsState()
+        AccentMotionScope(active = focused && enabled) {
+            val selectedMaterialBorder = selected && LocalAccentStyle.current != AccentStyle.LIGHT
+            if (iconOnly && (icon != null || leadingContent != null)) {
+                val buttonModifier = modifier
+                    .sizeIn(minWidth = 48.dp, minHeight = 48.dp)
+                    .then(if (selectedMaterialBorder)
+                        Modifier.accentMaterialBorder(2.dp, MaterialTheme.colorScheme.primary,
+                            RoundedCornerShape(LocalUiTokens.current.controlRadius),
+                            MaterialTheme.colorScheme.primary, true)
+                        else Modifier.accentMotionOutline(androidx.compose.material3.IconButtonDefaults.filledShape,
+                            MaterialTheme.colorScheme.primary))
+                    .semantics { contentDescription = text }
+                val glyph: @Composable () -> Unit = {
+                    if (loading) {
+                        ButtonProgress(androidx.compose.material3.LocalContentColor.current, Modifier.size(20.dp))
+                    } else if (leadingContent != null) {
+                        leadingContent()
+                    } else {
+                        androidx.compose.material3.Icon(checkNotNull(icon), contentDescription = null, modifier = Modifier.size(20.dp))
+                    }
                 }
-            }
-            if (selected) {
-                androidx.compose.material3.FilledIconButton(
-                    onClick = activate,
-                    enabled = enabled,
-                    modifier = buttonModifier,
-                    content = glyph,
-                )
+                if (selected) {
+                    androidx.compose.material3.FilledIconButton(
+                        onClick = activate,
+                        enabled = enabled,
+                        modifier = buttonModifier,
+                        interactionSource = interactionSource,
+                        content = glyph,
+                    )
+                } else {
+                    androidx.compose.material3.FilledTonalIconButton(
+                        onClick = activate,
+                        enabled = enabled,
+                        modifier = buttonModifier,
+                        interactionSource = interactionSource,
+                        content = glyph,
+                    )
+                }
             } else {
-                androidx.compose.material3.FilledTonalIconButton(
-                    onClick = activate,
-                    enabled = enabled,
-                    modifier = buttonModifier,
-                    content = glyph,
+                androidx.compose.material3.FilterChip(
+                    selected = selected, onClick = activate, enabled = enabled,
+                    modifier = modifier.sizeIn(minHeight = 48.dp)
+                        .then(if (selectedMaterialBorder)
+                            Modifier.accentMaterialBorder(2.dp, MaterialTheme.colorScheme.primary,
+                                RoundedCornerShape(LocalUiTokens.current.controlRadius),
+                                MaterialTheme.colorScheme.primary, true)
+                            else Modifier.accentMotionOutline(androidx.compose.material3.FilterChipDefaults.shape,
+                                MaterialTheme.colorScheme.primary)),
+                    interactionSource = interactionSource,
+                    label = { androidx.compose.material3.Text(text, maxLines = textMaxLines, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis) },
+                    leadingIcon = if (loading) {
+                        { ButtonProgress(androidx.compose.material3.LocalContentColor.current, Modifier.size(18.dp)) }
+                    } else leadingContent ?: icon?.let { image -> { androidx.compose.material3.Icon(image, null, Modifier.size(18.dp)) } },
                 )
             }
-            return
         }
-        androidx.compose.material3.FilterChip(
-            selected = selected, onClick = activate, enabled = enabled,
-            modifier = modifier.sizeIn(minHeight = 48.dp)
-                .then(if (selected && LocalAccentStyle.current != AccentStyle.LIGHT)
-                    Modifier.accentMaterialBorder(2.dp, MaterialTheme.colorScheme.primary,
-                        RoundedCornerShape(LocalUiTokens.current.controlRadius),
-                        MaterialTheme.colorScheme.primary, true)
-                    else Modifier),
-            label = { androidx.compose.material3.Text(text, maxLines = textMaxLines, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis) },
-            leadingIcon = if (loading) {
-                { ButtonProgress(androidx.compose.material3.LocalContentColor.current, Modifier.size(18.dp)) }
-            } else leadingContent ?: icon?.let { image -> { androidx.compose.material3.Icon(image, null, Modifier.size(18.dp)) } },
-        )
         return
     }
 
@@ -1373,24 +1387,29 @@ fun TvActionButton(
     // An empty [text] with an [icon] draws a square icon button.
     val iconOnly = text.isEmpty() && icon != null
     if (com.ambient.tv.ui.mobile.LocalHandheldUi.current) {
-        androidx.compose.material3.FilledTonalButton(
-            onClick = activate, enabled = visuallyEnabled,
-            modifier = (if (fillWidth) modifier.fillMaxWidth() else modifier).sizeIn(minHeight = 48.dp)
-                .then(if (selected && LocalAccentStyle.current != AccentStyle.LIGHT)
-                    Modifier.accentMaterialBorder(2.dp, MaterialTheme.colorScheme.primary,
-                        RoundedCornerShape(LocalUiTokens.current.controlRadius),
-                        MaterialTheme.colorScheme.primary, true)
-                    else Modifier),
-            shape = RoundedCornerShape(LocalUiTokens.current.controlRadius),
-            colors = if (selected) androidx.compose.material3.ButtonDefaults.filledTonalButtonColors(
-                containerColor = MaterialTheme.colorScheme.primary, contentColor = MaterialTheme.colorScheme.onPrimary,
-            ) else androidx.compose.material3.ButtonDefaults.filledTonalButtonColors(
-                containerColor = MaterialTheme.colorScheme.surfaceVariant, contentColor = MaterialTheme.colorScheme.onSurface,
-            ),
-        ) {
-            if (loading) ButtonProgress(androidx.compose.material3.LocalContentColor.current, Modifier.padding(end = 6.dp).size(20.dp))
-            else if (icon != null) androidx.compose.material3.Icon(icon, null, Modifier.size(20.dp).padding(end = if (text.isEmpty()) 0.dp else 4.dp))
-            if (text.isNotEmpty()) androidx.compose.material3.Text(text, maxLines = 2, overflow = TextOverflow.Ellipsis)
+        val interactionSource = remember { MutableInteractionSource() }
+        val focused by interactionSource.collectIsFocusedAsState()
+        val buttonShape = RoundedCornerShape(LocalUiTokens.current.controlRadius)
+        AccentMotionScope(active = focused && visuallyEnabled) {
+            androidx.compose.material3.FilledTonalButton(
+                onClick = activate, enabled = visuallyEnabled,
+                modifier = (if (fillWidth) modifier.fillMaxWidth() else modifier).sizeIn(minHeight = 48.dp)
+                    .then(if (selected && LocalAccentStyle.current != AccentStyle.LIGHT)
+                        Modifier.accentMaterialBorder(2.dp, MaterialTheme.colorScheme.primary,
+                            buttonShape, MaterialTheme.colorScheme.primary, true)
+                        else Modifier.accentMotionOutline(buttonShape, MaterialTheme.colorScheme.primary)),
+                shape = buttonShape,
+                interactionSource = interactionSource,
+                colors = if (selected) androidx.compose.material3.ButtonDefaults.filledTonalButtonColors(
+                    containerColor = MaterialTheme.colorScheme.primary, contentColor = MaterialTheme.colorScheme.onPrimary,
+                ) else androidx.compose.material3.ButtonDefaults.filledTonalButtonColors(
+                    containerColor = MaterialTheme.colorScheme.surfaceVariant, contentColor = MaterialTheme.colorScheme.onSurface,
+                ),
+            ) {
+                if (loading) ButtonProgress(androidx.compose.material3.LocalContentColor.current, Modifier.padding(end = 6.dp).size(20.dp))
+                else if (icon != null) androidx.compose.material3.Icon(icon, null, Modifier.size(20.dp).padding(end = if (text.isEmpty()) 0.dp else 4.dp))
+                if (text.isNotEmpty()) androidx.compose.material3.Text(text, maxLines = 2, overflow = TextOverflow.Ellipsis)
+            }
         }
         return
     }
@@ -1445,51 +1464,53 @@ fun TvActionButton(
                 else keyPressed = false
             },
     ) {
-        val interaction = interactionColors(focused, selected, visuallyEnabled)
-        // A white custom accent must still show an unmistakable focus change on a primary action.
-        val primaryFill = selected && visuallyEnabled && !focused
-        val fadeMs = com.ambient.tv.ui.theme.focusBorderFadeDurationMs(
-            focused, LocalPerformanceProfile.current.reducedEffects,
-        )
-        val container by animateColorAsState(
-            if (primaryFill) MaterialTheme.colorScheme.primary else interaction.container,
-            tween(fadeMs), label = "action surface",
-        )
-        val foreground by animateColorAsState(
-            if (primaryFill) MaterialTheme.colorScheme.onPrimary else interaction.content,
-            tween(fadeMs), label = "action foreground",
-        )
-        val outline = interaction.outline
-        // Keep the stroke geometry invariant across focus/selected/pressed states.
-        // Only its color changes; changing width can produce sub-pixel edge shimmer on TVs.
-        val borderWidth = 2.dp
-        Row(
-            modifier = (if (fillWidth) Modifier.fillMaxWidth() else Modifier)
-                .accentMaterialFill(container, buttonShape, MaterialTheme.colorScheme.primary, focused || primaryFill)
-                .accentMaterialBorder(borderWidth, outline, buttonShape, MaterialTheme.colorScheme.primary, focused || primaryFill)
-                .padding(horizontal = (if (iconOnly) 12.dp else 18.dp) * uiScale, vertical = 12.dp * uiScale),
-            horizontalArrangement = Arrangement.Center,
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            // Spinner and icon share one slot. Without an icon the slot grows in smoothly, so
-            // the label and neighbouring controls slide instead of jumping. The slot stays close
-            // to the label's line height, so icon buttons match text-only buttons in a row.
-            AnimatedVisibility(
-                visible = icon != null || loading,
-                enter = fadeIn(tween(tokens.animationFastMs)) + expandHorizontally(tween(tokens.animationFastMs)),
-                exit = fadeOut(tween(tokens.animationFastMs)) + shrinkHorizontally(tween(tokens.animationFastMs)),
+        AccentMotionScope(active = focused && visuallyEnabled) {
+            val interaction = interactionColors(focused, selected, visuallyEnabled)
+            // A white custom accent must still show an unmistakable focus change on a primary action.
+            val primaryFill = selected && visuallyEnabled && !focused
+            val fadeMs = com.ambient.tv.ui.theme.focusBorderFadeDurationMs(
+                focused, LocalPerformanceProfile.current.reducedEffects,
+            )
+            val container by animateColorAsState(
+                if (primaryFill) MaterialTheme.colorScheme.primary else interaction.container,
+                tween(fadeMs), label = "action surface",
+            )
+            val foreground by animateColorAsState(
+                if (primaryFill) MaterialTheme.colorScheme.onPrimary else interaction.content,
+                tween(fadeMs), label = "action foreground",
+            )
+            val outline = interaction.outline
+            // Keep the stroke geometry invariant across focus/selected/pressed states.
+            // Only its color changes; changing width can produce sub-pixel edge shimmer on TVs.
+            val borderWidth = 2.dp
+            Row(
+                modifier = (if (fillWidth) Modifier.fillMaxWidth() else Modifier)
+                    .accentMaterialFill(container, buttonShape, MaterialTheme.colorScheme.primary, focused || primaryFill)
+                    .accentMaterialBorder(borderWidth, outline, buttonShape, MaterialTheme.colorScheme.primary, focused || primaryFill)
+                    .padding(horizontal = (if (iconOnly) 12.dp else 18.dp) * uiScale, vertical = 12.dp * uiScale),
+                horizontalArrangement = Arrangement.Center,
+                verticalAlignment = Alignment.CenterVertically,
             ) {
-                Crossfade(loading, animationSpec = tween(tokens.animationFastMs), label = "action progress") { showProgress ->
-                    Box(Modifier.padding(end = if (iconOnly) 0.dp else 8.dp * uiScale).size(20.dp * uiScale), contentAlignment = Alignment.Center) {
-                        if (showProgress) {
-                            ButtonProgress(foreground, Modifier.fillMaxSize())
-                        } else if (icon != null) {
-                            androidx.compose.material3.Icon(imageVector = icon, contentDescription = null, tint = foreground, modifier = Modifier.fillMaxSize())
+                // Spinner and icon share one slot. Without an icon the slot grows in smoothly, so
+                // the label and neighbouring controls slide instead of jumping. The slot stays close
+                // to the label's line height, so icon buttons match text-only buttons in a row.
+                AnimatedVisibility(
+                    visible = icon != null || loading,
+                    enter = fadeIn(tween(tokens.animationFastMs)) + expandHorizontally(tween(tokens.animationFastMs)),
+                    exit = fadeOut(tween(tokens.animationFastMs)) + shrinkHorizontally(tween(tokens.animationFastMs)),
+                ) {
+                    Crossfade(loading, animationSpec = tween(tokens.animationFastMs), label = "action progress") { showProgress ->
+                        Box(Modifier.padding(end = if (iconOnly) 0.dp else 8.dp * uiScale).size(20.dp * uiScale), contentAlignment = Alignment.Center) {
+                            if (showProgress) {
+                                ButtonProgress(foreground, Modifier.fillMaxSize())
+                            } else if (icon != null) {
+                                androidx.compose.material3.Icon(imageVector = icon, contentDescription = null, tint = foreground, modifier = Modifier.fillMaxSize())
+                            }
                         }
                     }
                 }
+                if (!iconOnly) Text(text = text, color = foreground, style = MaterialTheme.typography.labelLarge, maxLines = 1)
             }
-            if (!iconOnly) Text(text = text, color = foreground, style = MaterialTheme.typography.labelLarge, maxLines = 1)
         }
     }
 }

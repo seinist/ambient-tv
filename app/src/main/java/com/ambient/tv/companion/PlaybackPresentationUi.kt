@@ -1,6 +1,5 @@
 package com.ambient.tv.companion
 
-import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -21,6 +20,7 @@ import androidx.tv.material3.Text
 import com.ambient.tv.R
 import com.ambient.tv.domain.model.MediaItem
 import com.ambient.tv.spotify.SpotifyRepository
+import com.ambient.tv.ui.common.artworkAccentSurface
 import com.ambient.tv.ui.mobile.LocalHandheldUi
 import com.ambient.tv.ui.player.BackgroundPlaybackSession
 
@@ -88,15 +88,18 @@ internal fun PlaybackBadge(indicator: PlaybackIndicator?, modifier: Modifier = M
     indicator ?: return
     val label = playbackPhaseLabel(indicator.phase)
     val description = stringResource(R.string.playback_status_on_device, label, indicator.device)
+    val accent = if (indicator.phase == "error") MaterialTheme.colorScheme.error
+        else com.ambient.tv.ui.theme.LocalPlaybackAccent.current.text
     Row(modifier.semantics { contentDescription = description }
-        .background(Color.Black.copy(alpha = .82f), RoundedCornerShape(6.dp)).padding(horizontal = 6.dp, vertical = 3.dp),
+        .artworkAccentSurface(RoundedCornerShape(6.dp), accent, emphasized = true)
+        .padding(horizontal = 6.dp, vertical = 3.dp),
         verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(3.dp)) {
         androidx.compose.material3.Icon(when (indicator.phase) {
             "paused" -> Icons.Default.Pause
             "error" -> Icons.Default.ErrorOutline
             "loading", "buffering" -> Icons.Default.HourglassEmpty
             else -> Icons.Default.PlayArrow
-        }, null, Modifier.size(14.dp), tint = if (indicator.phase == "error") MaterialTheme.colorScheme.error else com.ambient.tv.ui.theme.LocalPlaybackAccent.current.text)
+        }, null, Modifier.size(14.dp), tint = accent)
         Text(if (indicator.remote) "TV · $label" else label, style = MaterialTheme.typography.labelSmall,
             color = Color.White, maxLines = 1)
     }

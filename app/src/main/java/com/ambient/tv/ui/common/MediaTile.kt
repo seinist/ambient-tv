@@ -1,5 +1,6 @@
 package com.ambient.tv.ui.common
 
+import com.ambient.tv.ui.theme.AccentMotionScope
 import com.ambient.tv.ui.mobile.LocalHandheldUi
 import com.ambient.tv.ui.mobile.deviceDp
 
@@ -43,6 +44,7 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.text.style.TextAlign
@@ -251,77 +253,79 @@ fun MediaTile(
                     }
                 },
         ) {
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .animatedFocusBorder(
-                        focused = focused,
-                        shape = tileShape,
-                        // The scheme primary is already contrast-adjusted and HDR-aware.
-                        focusedColor = MaterialTheme.colorScheme.primary.copy(alpha = .96f),
+            AccentMotionScope(active = focused) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .animatedFocusBorder(
+                            focused = focused,
+                            shape = tileShape,
+                            // The scheme primary is already contrast-adjusted and HDR-aware.
+                            focusedColor = MaterialTheme.colorScheme.primary.copy(alpha = .96f),
+                        )
+                        .padding(2.dp),
+                ) {
+                    val imageUrl = mediaTileImageUrl(visualItem, resolvedStyle)
+                    // Monogram channel cards follow SmartTube's round-avatar treatment.
+                    // Content remains the normal shared card/focus component on TV and phone.
+                    if (visualItem.ratingKey.startsWith("telegram-channel:")) {
+                        Box(
+                            Modifier.fillMaxSize().background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = .45f)),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            if (imageUrl != null) ArtworkImage(
+                                model = imageUrl, title = visualItem.title,
+                                modifier = Modifier.fillMaxHeight(.82f).aspectRatio(1f).clip(CircleShape),
+                                contentScale = ContentScale.Crop,
+                                staggerUncached = true,
+                                prioritizeUncached = focused,
+                            ) else Icon(
+                                Icons.Filled.AccountCircle, contentDescription = visualItem.title,
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.fillMaxHeight(.64f).aspectRatio(1f),
+                            )
+                        }
+                    } else MediaArtworkWithStreamIcons(
+                        item = visualItem,
+                        model = imageUrl,
+                        title = visualItem.title,
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier.fillMaxSize().clip(tileShape),
+                        staggerUncachedArtwork = true,
+                        prioritizeUncachedArtwork = focused,
                     )
-                    .padding(2.dp),
-            ) {
-                val imageUrl = mediaTileImageUrl(visualItem, resolvedStyle)
-                // Monogram channel cards follow SmartTube's round-avatar treatment.
-                // Content remains the normal shared card/focus component on TV and phone.
-                if (visualItem.ratingKey.startsWith("telegram-channel:")) {
-                    Box(
-                        Modifier.fillMaxSize().background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = .45f)),
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        if (imageUrl != null) ArtworkImage(
-                            model = imageUrl, title = visualItem.title,
-                            modifier = Modifier.fillMaxHeight(.82f).aspectRatio(1f).clip(CircleShape),
-                            contentScale = ContentScale.Crop,
-                            staggerUncached = true,
-                            prioritizeUncached = focused,
-                        ) else Icon(
-                            Icons.Filled.AccountCircle, contentDescription = visualItem.title,
-                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.fillMaxHeight(.64f).aspectRatio(1f),
+
+                    val progress = visualItem.progressFraction?.takeIf { it > 0f && it < 1f }
+
+                    // Only while focused, so unfocused posters stay clean.
+                    if (!heroRowTiles) MediaMetadataOverlay(
+                        item = visualItem,
+                        focused = focused,
+                        // The progress bar runs along the bottom edge; the text stays clear of it.
+                        bottomInset = if (progress != null) PlaybackStatusBarHeight else 0.dp,
+                        modifier = Modifier
+                            .align(Alignment.BottomStart)
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(bottomStart = tokens.cardRadius, bottomEnd = tokens.cardRadius)),
+                    )
+
+                    // One spot for the watch state on every tile: a check once seen, otherwise the
+                    // number of episodes still to watch.
+                    val watchBadge = if (visualItem.isWatched) "✓" else visualItem.unwatchedLeafCount?.takeIf { it > 0 }?.toString()
+                    watchBadge?.let {
+                        MetaBadge(text = it, emphasized = true, modifier = Modifier.align(Alignment.TopEnd).padding(7.dp))
+                    }
+                    // Resolution mirrors it in the opposite corner instead of crowding the metadata banner.
+                    if (remember(visualItem) { isUhd(visualItem) }) {
+                        MetaBadge(text = UHD_LABEL, emphasized = true, modifier = Modifier.align(Alignment.TopStart).padding(7.dp))
+                    }
+
+                    progress?.let { fraction ->
+                        PlaybackStatusBar(
+                            progress = fraction,
+                            modifier = Modifier.align(Alignment.BottomStart).fillMaxWidth(),
                         )
                     }
-                } else MediaArtworkWithStreamIcons(
-                    item = visualItem,
-                    model = imageUrl,
-                    title = visualItem.title,
-                    contentScale = ContentScale.Crop,
-                    modifier = Modifier.fillMaxSize().clip(tileShape),
-                    staggerUncachedArtwork = true,
-                    prioritizeUncachedArtwork = focused,
-                )
-
-                val progress = visualItem.progressFraction?.takeIf { it > 0f && it < 1f }
-
-                // Only while focused, so unfocused posters stay clean.
-                if (!heroRowTiles) MediaMetadataOverlay(
-                    item = visualItem,
-                    focused = focused,
-                    // The progress bar runs along the bottom edge; the text stays clear of it.
-                    bottomInset = if (progress != null) PlaybackStatusBarHeight else 0.dp,
-                    modifier = Modifier
-                        .align(Alignment.BottomStart)
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(bottomStart = tokens.cardRadius, bottomEnd = tokens.cardRadius)),
-                )
-
-                // One spot for the watch state on every tile: a check once seen, otherwise the
-                // number of episodes still to watch.
-                val watchBadge = if (visualItem.isWatched) "✓" else visualItem.unwatchedLeafCount?.takeIf { it > 0 }?.toString()
-                watchBadge?.let {
-                    MetaBadge(text = it, emphasized = true, modifier = Modifier.align(Alignment.TopEnd).padding(7.dp))
-                }
-                // Resolution mirrors it in the opposite corner instead of crowding the metadata banner.
-                if (remember(visualItem) { isUhd(visualItem) }) {
-                    MetaBadge(text = UHD_LABEL, emphasized = true, modifier = Modifier.align(Alignment.TopStart).padding(7.dp))
-                }
-
-                progress?.let { fraction ->
-                    PlaybackStatusBar(
-                        progress = fraction,
-                        modifier = Modifier.align(Alignment.BottomStart).fillMaxWidth(),
-                    )
                 }
             }
         }
@@ -388,7 +392,11 @@ private fun MediaMetadataOverlay(
 
     Column(
         modifier = modifier
-            .background(MetadataBannerFill)
+            .artworkAccentSurface(
+                shape = RectangleShape,
+                accent = MaterialTheme.colorScheme.primary,
+                baseColor = MetadataBannerFill,
+            )
             .padding(start = 8.dp, end = 8.dp, top = 5.dp, bottom = 5.dp + bottomInset),
         verticalArrangement = Arrangement.spacedBy(2.dp),
         horizontalAlignment = Alignment.CenterHorizontally,

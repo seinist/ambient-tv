@@ -96,6 +96,7 @@ class SpotifyWebAuthActivity : ComponentActivity() {
                 uiScale = preferences.uiScale,
                 accentColorKey = preferences.accentColorKey,
                 accentStyleKey = preferences.accentStyleKey,
+                accentMotionKey = preferences.accentMotionKey,
                 customAccentHex = preferences.customAccentHex,
                 customPlaybackAccentHex = preferences.customPlaybackAccentHex,
                 complementaryPlayback = preferences.dualAccentEnabled,

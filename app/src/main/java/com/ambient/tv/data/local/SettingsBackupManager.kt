@@ -96,6 +96,8 @@ data class SettingsBackup(
     val overscanPercent: Int = 0,
     val accentColorKey: String = "gold",
     val accentStyleKey: String = com.ambient.tv.ui.theme.AccentStyle.DEFAULT,
+    /** Since schema 78; older backups keep the static default. */
+    val accentMotionKey: String = com.ambient.tv.ui.theme.AccentMotionMode.DEFAULT,
     val customAccentHex: String = "#E5A00D",
     val customPlaybackAccentHex: String? = null,
     val dualAccentEnabled: Boolean = false,
@@ -447,6 +449,7 @@ class SettingsBackupManager @Inject constructor(
             overscanPercent = preferences.overscanPercent,
             accentColorKey = preferences.accentColorKey,
             accentStyleKey = preferences.accentStyleKey,
+            accentMotionKey = preferences.accentMotionKey,
             customAccentHex = preferences.customAccentHex,
             customPlaybackAccentHex = preferences.customPlaybackAccentHex,
             dualAccentEnabled = preferences.dualAccentEnabled,
@@ -831,6 +834,7 @@ class SettingsBackupManager @Inject constructor(
         preferences.overscanPercent = backup.overscanPercent
         preferences.accentColorKey = normalizedAccentKey(backup.accentColorKey)
         preferences.accentStyleKey = backup.accentStyleKey
+        preferences.accentMotionKey = backup.accentMotionKey
         preferences.customAccentHex = backup.customAccentHex
         preferences.customPlaybackAccentHex = com.ambient.tv.ui.theme.normalizedCustomPlaybackAccentHex(
             backup.customPlaybackAccentHex, preferences.customAccentHex,
@@ -1060,7 +1064,7 @@ class SettingsBackupManager @Inject constructor(
     }
 
     private companion object {
-        const val CURRENT_SCHEMA_VERSION = 77
+        const val CURRENT_SCHEMA_VERSION = 78
         val PORTABLE_DISPLAY_MODES = setOf("system", AppPreferences.DISPLAY_MODE_AUTO_CONTENT, AppPreferences.DISPLAY_MODE_AUTO_DISPLAY)
     }
 }
