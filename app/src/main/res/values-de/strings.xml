@@ -1955,10 +1955,8 @@
     <string name="settings_network_buffer_low">Klein</string>
     <string name="settings_network_buffer_medium">Mittel (Standard)</string>
     <string name="settings_network_buffer_high">Groß</string>
-    <string name="player_back_title">Zurück im Player</string>
-    <string name="player_back_hint">Was die Zurück-Taste tut, wenn die Player-Steuerung ausgeblendet ist. Minimieren spielt im Hintergrund weiter wie der Vollbild-verlassen-Button.</string>
-    <string name="player_back_stop">Wiedergabe stoppen</string>
-    <string name="player_back_minimize">Minimieren (weiterspielen)</string>
+    <string name="player_back_title">Bei Zurück im Hintergrund weiterspielen</string>
+    <string name="player_back_hint">Ein: Vollbild verlassen und weiterspielen. Aus: Video beenden. Offene Player-Menüs werden zuerst geschlossen.</string>
     <string name="player_osd_duration_title">Anzeigedauer der Player-Steuerung</string>
     <string name="player_osd_duration_hint">Wie lange die Steuerung sichtbar bleibt.</string>
     <string name="player_osd_duration_seconds">%1$d Sekunden</string>

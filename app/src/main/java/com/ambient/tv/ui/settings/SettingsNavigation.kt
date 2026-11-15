@@ -23,7 +23,7 @@ internal fun settingsShortcutItemKey(key: String?): String? {
     val target = key?.substringAfter(':', missingDelimiterValue = "")?.lowercase(Locale.ROOT).orEmpty()
     return when (category) {
         SettingsCategory.APPEARANCE -> target.takeIf { it in setOf("hdr", "scale", "accent", "theme") }?.let { "appearance:$it" }
-        SettingsCategory.PLAYBACK -> target.takeIf { it in setOf("renderer", "test-duration") }?.let { "playback:$it" }
+        SettingsCategory.PLAYBACK -> target.takeIf { it in setOf("back", "renderer", "test-duration") }?.let { "playback:$it" }
         SettingsCategory.BACKGROUND -> target.takeIf { it == "video" }?.let { "background:$it" }
         SettingsCategory.SEEK -> target.takeIf { it == "controls" }?.let { "seek:$it" }
         SettingsCategory.SPOTIFY -> target.takeIf { it == "account" }?.let { "spotify:$it" }
@@ -240,6 +240,8 @@ internal fun settingsSearchTargetKey(category: SettingsCategory, query: String):
         }
         SettingsCategory.SEEK -> "seek:controls"
         SettingsCategory.PLAYBACK -> when {
+            listOf("zurück", "zurueck", "minimier", "minimiz", "weiterspiel", "hintergrund", "background").any { it in q } ||
+                Regex("\\bback\\b").containsMatchIn(q) -> "playback:back"
             listOf("drop", "bildaussetzer", "prüfdauer", "duration").any { it in q } -> "playback:test-duration"
             listOf("backend", "player", "mpv", "vlc", "media3").any { it in q } -> "playback:renderer"
             else -> null

@@ -13,6 +13,7 @@ import androidx.compose.ui.unit.dp
 import com.ambient.tv.R
 import com.ambient.tv.ui.common.PlayerOsdTimeout
 import com.ambient.tv.ui.common.SettingsSectionHeader
+import com.ambient.tv.ui.common.TvSettingRow
 
 /** Settings › Playback: how long the player controls stay visible; applies right away. */
 @Composable
@@ -34,19 +35,17 @@ internal fun PlayerOsdSettingsGroup(viewModel: LiveTvExtrasSettingsViewModel = a
     }
 }
 
-/** Settings › Playback: what remote Back does once the OSD is hidden; applies right away. */
+/** Settings › Playback: what Back does when leaving the player; applies right away. */
 @Composable
 internal fun PlayerBackSettingsGroup(viewModel: LiveTvExtrasSettingsViewModel = androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel()) {
     var minimize by remember { mutableStateOf(viewModel.preferences.playerBackMinimizes) }
-    SettingsSelect(
-        label = stringResource(R.string.player_back_title),
-        description = stringResource(R.string.player_back_hint),
-        options = listOf(false to R.string.player_back_stop, true to R.string.player_back_minimize).map { (value, label) ->
-            SettingsSelectOption(
-                text = stringResource(label),
-                selected = minimize == value,
-                onClick = { minimize = value; viewModel.preferences.playerBackMinimizes = value },
-            )
+    TvSettingRow(
+        title = stringResource(R.string.player_back_title),
+        body = stringResource(R.string.player_back_hint),
+        checked = minimize,
+        onCheckedChange = { value ->
+            minimize = value
+            viewModel.preferences.playerBackMinimizes = value
         },
     )
 }

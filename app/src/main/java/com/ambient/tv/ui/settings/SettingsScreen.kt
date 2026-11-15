@@ -777,7 +777,9 @@ fun SettingsScreen(
                         }
 
                         SettingsCategory.PLAYBACK -> {
-                            item { SettingsSubheader(stringResource(R.string.settings_section_general_performance), firstInContent = true) }
+                            item { SettingsSubheader(stringResource(R.string.settings_section_general_playback), firstInContent = true) }
+                            item(key = "playback:back") { PlayerBackSettingsGroup() }
+                            item { SettingsSubheader(stringResource(R.string.settings_section_general_performance)) }
                             item {
                                 SettingsGroup(
                                     subtitle = stringResource(R.string.settings_playback_performance_hint),
@@ -976,7 +978,6 @@ fun SettingsScreen(
                             }
                             item { TvSettingRow(stringResource(R.string.settings_auto_display_version), stringResource(R.string.settings_auto_display_version_hint), uiState.autoSelectDisplayVersion, viewModel::onAutoSelectDisplayVersionToggled) }
                             item { PlayerOsdSettingsGroup() }
-                            item { PlayerBackSettingsGroup() }
                             item { NetworkBufferSettingsGroup() }
                         }
 

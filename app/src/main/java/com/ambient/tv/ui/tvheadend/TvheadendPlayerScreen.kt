@@ -489,15 +489,18 @@ private fun TvheadendPlaybackSurface(
         tvhAudio?.performanceHint == true || tvhAudio?.showFpsOverlay == true,
     )
     // Back is owned by the dispatcher, so nested panels/popups close one level per press.
-    // TV Back follows the minimize setting after hiding the OSD. On a handheld, live content
-    // and audio keep playing when leaving the player, even before tracks are discovered.
+    // Videos follow the Back setting on every device. Radio keeps playing on a handheld,
+    // including during startup before the renderer has discovered its tracks.
     val handheldUi = com.ambient.tv.ui.mobile.LocalHandheldUi.current
     val backMinimizes = com.ambient.tv.ui.player.rememberBackMinimizesPlayback()
     fun exitOnBack() {
-        val audioOnly = player.currentTracks.groups.let { groups ->
-            groups.any { it.type == C.TRACK_TYPE_AUDIO } && groups.none { it.type == C.TRACK_TYPE_VIDEO }
-        }
-        if (com.ambient.tv.ui.player.backLeavesPlaybackRunning(audioOnly, handheldUi, backMinimizes(), isLive = source.isLive)) onBack()
+        val audioOnly = liveTvAudioOnlyForBack(
+            channel?.kind,
+            detectedAudioOnly = player.currentTracks.groups.let { groups ->
+                groups.any { it.type == C.TRACK_TYPE_AUDIO } && groups.none { it.type == C.TRACK_TYPE_VIDEO }
+            },
+        )
+        if (com.ambient.tv.ui.player.backLeavesPlaybackRunning(audioOnly, handheldUi, backMinimizes())) onBack()
         else BackgroundPlaybackSession.stop()
     }
     androidx.activity.compose.BackHandler(enabled = panel == UnifiedPlayerPanel.NONE) {
