@@ -163,12 +163,21 @@ internal sealed interface SidebarNavRow {
     ) : SidebarNavRow
 }
 
-/** Main page: Search/Home, then one row per system (id "system:<id>"). */
-internal fun sidebarMainRows(globals: List<MenuDestination>, systems: List<SidebarNavSystem>, activeRoute: String?): List<SidebarNavRow.Item> =
+/** Main page: fixed Search/Home, then systems and direct destinations in their shared order. */
+internal fun sidebarMainRows(
+    globals: List<MenuDestination>,
+    systems: List<SidebarNavSystem>,
+    activeRoute: String?,
+    standalone: List<MenuDestination> = emptyList(),
+    systemOrder: List<String> = emptyList(),
+): List<SidebarNavRow.Item> =
     globals.map { SidebarNavRow.Item(it, it.route == activeRoute) } +
-        systems.filter { it.entries.isNotEmpty() }.map {
-            SidebarNavRow.Item(MenuDestination("system:${it.id}", it.label, it.icon, ""), it.active, it.id, opensPage = true)
-        }
+        sidebarOrderedEntries(
+            systems.filter { it.entries.isNotEmpty() }.map {
+                SidebarNavRow.Item(MenuDestination("system:${it.id}", it.label, it.icon, ""), it.active, it.id, opensPage = true)
+            } + standalone.map { SidebarNavRow.Item(it, it.route == activeRoute) },
+            systemOrder,
+        ) { it.systemId ?: it.destination.id }
 
 /** System page: every entry of the system, then its settings shortcut. */
 internal fun sidebarPageRows(systemId: String, entries: List<MenuDestination>, settings: MenuDestination?, activeRoute: String?): List<SidebarNavRow.Item> =

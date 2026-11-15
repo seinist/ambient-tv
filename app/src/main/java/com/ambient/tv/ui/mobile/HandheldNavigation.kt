@@ -24,9 +24,11 @@ import kotlinx.coroutines.flow.map
 import com.ambient.tv.R
 import com.ambient.tv.ui.common.MediaSystem
 import com.ambient.tv.ui.common.SystemLogo
-import com.ambient.tv.ui.common.systemName
 import com.ambient.tv.ui.navigation.Destinations
 import com.ambient.tv.ui.navigation.SidebarViewModel
+import com.ambient.tv.ui.navigation.WEATHER_MENU_ID
+import com.ambient.tv.ui.navigation.menuOrderItems
+import com.ambient.tv.ui.navigation.menuSystemName
 import com.ambient.tv.ui.navigation.sidebarShowsGlobalSearch
 import com.ambient.tv.ui.player.BackgroundPlaybackSession
 import com.ambient.tv.ui.player.PlaybackArtworkCard
@@ -145,7 +147,7 @@ fun HandheldNavigationHost(
     )
     // Same editor as the television sidebar: the stored order also drives this navigation bar.
     // Shown from the host so the sheet is gone before the dialog opens.
-    val menuItems = com.ambient.tv.ui.navigation.menuOrderItems(sidebarState)
+    val menuItems = menuOrderItems(sidebarState)
     if (manageMenu && menuItems.isNotEmpty()) {
         com.ambient.tv.ui.navigation.MenuOrderDialog(
             systems = menuItems,
@@ -272,8 +274,8 @@ private fun HandheldSources(
     val spotifyNativeAvailable = sidebarState.spotifyNativeAvailable
     val tvKeys = sidebarState.tvheadendSubmenuKeys
     val settingsShortcutHidden = sidebarState.settingsShortcutHidden
-    val order = sidebarState.systemOrder
-    val canManageMenu = com.ambient.tv.ui.navigation.menuOrderItems(sidebarState).isNotEmpty()
+    val menuItems = menuOrderItems(sidebarState)
+    val canManageMenu = menuItems.isNotEmpty()
     // Fetch menus only when opened. Content repositories retain their existing caches/async jobs.
     LaunchedEffect(Unit) { viewModel.refresh() }
     val overview = stringResource(R.string.nav_overview)
@@ -288,7 +290,7 @@ private fun HandheldSources(
     fun withSettings(system: MediaSystem, entries: List<SourceEntry>): SourceGroup {
         val settings = if (system.key in settingsShortcutHidden) null else SourceEntry(
             key = "settings",
-            title = stringResource(R.string.nav_system_settings, systemName(system)),
+            title = stringResource(R.string.nav_system_settings, menuSystemName(system)),
             route = Destinations.SETTINGS,
             settingsCategory = system.key,
         )
@@ -386,7 +388,8 @@ private fun HandheldSources(
             val label = when (key) { "live" -> R.string.tvh_live; "guide" -> R.string.tvh_guide; "recordings" -> R.string.tvh_recordings; "timers" -> R.string.tvh_timers; else -> null } ?: return@mapNotNull null
             SourceEntry(key, stringResource(label), if (key == "live") Destinations.LIVE_TV else Destinations.liveTvSection(key))
         }.ifEmpty { listOf(SourceEntry("live", stringResource(R.string.tvh_live), Destinations.LIVE_TV)) }))
-    }.sortedBy { order.indexOf(it.system.key).takeIf { index -> index >= 0 } ?: Int.MAX_VALUE }
+    }
+    val groupsById = groups.associateBy { it.system.key }
     var expanded by rememberSaveable { mutableStateOf<String?>(null) }
     ModalBottomSheet(onDismissRequest = onDismiss, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)) {
         Row(Modifier.fillMaxWidth().padding(horizontal = 20.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -394,19 +397,25 @@ private fun HandheldSources(
             IconButton(onDismiss) { Icon(Icons.Default.Close, stringResource(R.string.action_close)) }
         }
         LazyColumn(Modifier.fillMaxWidth().weight(1f, fill = false), contentPadding = PaddingValues(bottom = 24.dp)) {
-            if (sidebarState.weatherEnabled) item("weather") {
-                ListItem(
-                    headlineContent = { Text(stringResource(R.string.weather_title)) },
-                    leadingContent = { Icon(Icons.Default.Cloud, null) },
-                    trailingContent = { Icon(Icons.Default.ChevronRight, null) },
-                    modifier = Modifier.clickable { onNavigate(Destinations.WEATHER) },
-                )
-            }
-            groups.forEach { group ->
+            // The editor and this sheet share both the names and the complete order, including
+            // Weather's direct route between media groups.
+            menuItems.forEach { menuItem ->
+                if (menuItem.id == WEATHER_MENU_ID) {
+                    item(menuItem.id) {
+                        ListItem(
+                            headlineContent = { Text(menuItem.label) },
+                            leadingContent = { Icon(menuItem.icon, null) },
+                            trailingContent = { Icon(Icons.Default.ChevronRight, null) },
+                            modifier = Modifier.clickable { onNavigate(Destinations.WEATHER) },
+                        )
+                    }
+                    return@forEach
+                }
+                val group = groupsById[menuItem.id] ?: return@forEach
                 val open = groups.size == 1 || expanded == group.system.key
                 item(group.system.key) {
                     ListItem(
-                        headlineContent = { Text(systemName(group.system)) },
+                        headlineContent = { Text(menuItem.label) },
                         supportingContent = if (group.system.key in sidebarState.offlineSystems) {
                             { Text(stringResource(R.string.offline_badge)) }
                         } else null,
