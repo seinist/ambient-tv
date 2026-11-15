@@ -331,6 +331,9 @@ internal fun SettingsHub(
             if (category == SettingsCategory.PLAYBACK) {
                 append(" performance leistung prüfen test frame drop bildaussetzer prüfdauer duration version display auflösung resolution")
                 append(' '); append(stringResource(R.string.settings_frame_drop_duration))
+                append(' '); append(stringResource(R.string.player_back_title))
+                append(' '); append(stringResource(R.string.player_back_hint))
+                append(" zurück zurueck back minimieren minimize weiterspielen hintergrund background")
             }
             if (category == SettingsCategory.LIVE_TV) append(" timeshift aufnahme recording erinnerung reminder vorlauf umschalten buffer puffer")
             if (category == SettingsCategory.CLOCK) append(" uhr uhrzeit zeit datum clock time date 24h 12h am pm sekunden seconds endzeit end time")
