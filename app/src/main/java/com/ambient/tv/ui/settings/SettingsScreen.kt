@@ -404,7 +404,7 @@ fun SettingsScreen(
                                 SettingsGroup {
                                     SettingsSelect(
                                         label = stringResource(R.string.settings_accent_style),
-                                        description = stringResource(R.string.settings_accent_style_hint),
+                                        description = stringResource(accentStyleHintRes(com.ambient.tv.ui.theme.AccentStyle.fromKey(uiState.accentStyleKey))),
                                         options = com.ambient.tv.ui.theme.AccentStyle.entries.map { style ->
                                             SettingsSelectOption(
                                                 text = accentStyleLabel(style),
@@ -515,10 +515,10 @@ fun SettingsScreen(
                             item {
                                 SettingsGroup(
                                     title = stringResource(R.string.settings_ui_performance),
-                                    subtitle = stringResource(R.string.settings_ui_performance_hint),
                                 ) {
                                     PerformanceModeSelect(
                                         selected = uiState.uiPerformanceModeKey,
+                                        description = stringResource(uiPerformanceHintRes(uiState.uiPerformanceModeKey)),
                                         onSelected = viewModel::onUiPerformanceModeChanged,
                                     )
                                 }
@@ -781,11 +781,10 @@ fun SettingsScreen(
                             item(key = "playback:back") { PlayerBackSettingsGroup() }
                             item { SettingsSubheader(stringResource(R.string.settings_section_general_performance)) }
                             item {
-                                SettingsGroup(
-                                    subtitle = stringResource(R.string.settings_playback_performance_hint),
-                                ) {
+                                SettingsGroup {
                                     PerformanceModeSelect(
                                         selected = uiState.playbackPerformanceModeKey,
+                                        description = stringResource(playbackPerformanceHintRes(uiState.playbackPerformanceModeKey)),
                                         onSelected = viewModel::onPlaybackPerformanceModeChanged,
                                         // Auto on a low-end device runs playback in Sparsam; say so.
                                         autoLowEnd = com.ambient.tv.ui.performance.LocalPerformanceProfile.current.lowEndDevice,
@@ -870,7 +869,7 @@ fun SettingsScreen(
                                     SettingsGroup {
                                         SettingsSelect(
                                             label = stringResource(R.string.settings_display_adjustment_title),
-                                            description = stringResource(R.string.settings_display_adjustment_hint),
+                                            description = stringResource(displayAdjustmentHintRes(uiState.displayRefreshAdjustmentKey)),
                                             options = buildList {
                                             listOf("off", "always", "start_stop", "start").forEach { key ->
                                                 add(SettingsSelectOption(
@@ -921,7 +920,7 @@ fun SettingsScreen(
                                     SettingsGroup {
                                         SettingsSelect(
                                             label = stringResource(R.string.settings_display_mode_title),
-                                            description = stringResource(R.string.settings_display_mode_hint),
+                                            description = stringResource(displayModeHintRes(uiState.preferredDisplayModeKey, uiState.displayRefreshAdjustmentKey)),
                                             options = buildList {
                                             add(SettingsSelectOption(
                                                 text = stringResource(R.string.settings_display_mode_auto_content),
@@ -1235,7 +1234,7 @@ fun SettingsScreen(
                         SettingsCategory.VISUALIZER -> {
                             item {
                                 SettingsGroup {
-                                    SettingsSelect(label = stringResource(R.string.settings_audio_visualizer), description = stringResource(R.string.settings_audio_visualizer_hint), options = buildList {
+                                    SettingsSelect(label = stringResource(R.string.settings_audio_visualizer), description = stringResource(audioVisualizerHintRes(uiState.audioVisualizerModeKey)), options = buildList {
                                         listOf("projectm", "spectrum", "off").forEach { mode ->
                                             val unavailable = mode == "projectm" && !com.ambient.tv.ui.common.projectm.ProjectMAvailability.canConfigure
                                             add(SettingsSelectOption(
@@ -2258,6 +2257,7 @@ private fun themeModeLabel(key: String): String = when (key) {
 @Composable
 private fun PerformanceModeSelect(
     selected: String,
+    description: String,
     onSelected: (String) -> Unit,
     autoLowEnd: Boolean = false,
 ) {
@@ -2268,7 +2268,7 @@ private fun PerformanceModeSelect(
             selected = selected == mode,
             onClick = { onSelected(mode) },
         )
-    })
+    }, description = description)
 }
 
 @Composable
