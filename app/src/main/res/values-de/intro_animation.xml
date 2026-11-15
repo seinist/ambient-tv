@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="settings_intro_animation">Start-Animation</string>
-    <string name="settings_intro_animation_hint">Einmal beim Start, in deinen Farben. Läuft gerade ein Aufwecken, zeigt sie den Fortschritt.</string>
+    <string name="settings_intro_animation_hint">Beim Start bis zu 5 Sekunden, in deinen Farben. Verbindungen laufen im Hintergrund weiter.</string>
     <string name="settings_intro_off">Aus</string>
     <string name="settings_intro_bloom">Lichtfeld</string>
     <string name="settings_intro_horizon">Morgenlicht</string>
@@ -9,4 +9,5 @@
     <string name="settings_intro_prism">Prisma</string>
     <string name="settings_intro_preview">Vorschau</string>
     <string name="intro_skip_hint">Beliebige Taste zum Fortfahren</string>
+    <string name="intro_skip_touch_hint">Tippen zum Fortfahren</string>
 </resources>

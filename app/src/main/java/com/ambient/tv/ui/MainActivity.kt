@@ -1662,6 +1662,8 @@ private fun AmbientTvApp(
     var appHasFocus by remember { mutableStateOf(false) }
     // The wake action sits outside the Sidebar/NavHost row and owns focus independently.
     val wakeFocus = remember { com.ambient.tv.notifications.TvWakeFocusState() }
+    val connectionStatusUi = remember { com.ambient.tv.notifications.ConnectionStatusUiState() }
+    var handheldNotificationBottomInset by remember { mutableStateOf(0.dp) }
     val contentFocusPermit = remember { mutableStateOf(false) }
     val windowInfo = androidx.compose.ui.platform.LocalWindowInfo.current
     var contentHasFocus by remember { mutableStateOf(false) }
@@ -1678,7 +1680,7 @@ private fun AmbientTvApp(
     var settingsOpen by remember { mutableStateOf(currentRoute == Destinations.SETTINGS) }
     var restoreFocusAfterNavigation by remember { mutableStateOf(false) }
     fun shellFocusAllowed(): Boolean = windowInfo.isWindowFocused && !screensaverOverlayPresent &&
-        !com.ambient.tv.ui.intro.IntroPresentation.active
+        !com.ambient.tv.ui.intro.IntroPresentation.active && !connectionStatusUi.isDetailsOpen
     fun requestContentFocus(): Boolean {
         if (!shellFocusAllowed()) return false
         if (wakeFocus.hasFocus) return true
@@ -1715,7 +1717,8 @@ private fun AmbientTvApp(
     }
     LaunchedEffect(currentRoute, sidebarDestinationKey, sidebarContentReady, appHasFocus,
         contentContainerFocused, sidebarHasFocus, windowInfo.isWindowFocused, screensaverOverlayPresent,
-        wakeFocus.hasFocus, wakeFocus.isAvailable, com.ambient.tv.ui.intro.IntroPresentation.active) {
+        wakeFocus.hasFocus, wakeFocus.isAvailable, com.ambient.tv.ui.intro.IntroPresentation.active,
+        connectionStatusUi.isDetailsOpen) {
         if (handheld || currentRoute in FULLSCREEN_ROUTES || !shellFocusAllowed() || wakeFocus.hasFocus) return@LaunchedEffect
         if (sidebarContentPending) {
             // WOL cancellation is a usable target even before the destination has content.
@@ -1746,7 +1749,8 @@ private fun AmbientTvApp(
         runCatching { sidebarFocusRequester.requestFocus() }
     }
     LaunchedEffect(sidebarContentPending, wakeFocus.hasFocus, windowInfo.isWindowFocused,
-        screensaverOverlayPresent, com.ambient.tv.ui.intro.IntroPresentation.active) {
+        screensaverOverlayPresent, com.ambient.tv.ui.intro.IntroPresentation.active,
+        connectionStatusUi.isDetailsOpen) {
         if (!sidebarContentPending && initialContentEntryPending && shellFocusAllowed()) {
             initialContentEntryPending = false
             androidx.compose.runtime.withFrameNanos { }
@@ -1775,6 +1779,7 @@ private fun AmbientTvApp(
         screensaverOverlayPresent,
         wakeFocus.hasFocus,
         com.ambient.tv.ui.intro.IntroPresentation.active,
+        connectionStatusUi.isDetailsOpen,
     ) {
         if (!restoreFocusAfterNavigation || sidebarContentPending || !shellFocusAllowed()) return@LaunchedEffect
         if (wakeFocus.hasFocus) {
@@ -2230,6 +2235,7 @@ private fun AmbientTvApp(
                 onNavigate = ::navigateSidebar,
                 onOpenPlayback = { route -> guardedSettingsExit { navController.navigate(route) { launchSingleTop = true } } },
                 onOpenSystemSettings = ::openSystemSettings,
+                onOverlayBottomInsetChanged = { handheldNotificationBottomInset = it },
             ) {
             Row(
                 modifier = Modifier
@@ -2307,6 +2313,9 @@ private fun AmbientTvApp(
                     onEntryRequestConsumed = { sidebarEntryRequested.value = false },
                     onFocusOwnershipChanged = { sidebarHasFocus = it },
                     onExitApp = ::exitApp,
+                    onOpenStartStatus = if (connectionStatusUi.isAvailable) {
+                        { onClosed -> connectionStatusUi.openDetails(onClosed) }
+                    } else null,
                     modifier = Modifier.focusRequester(sidebarFocusRequester),
                 )
             }
@@ -3397,11 +3406,16 @@ private fun AmbientTvApp(
             // A programme reminder that is due while the app is open.
             com.ambient.tv.livetv.LiveTvReminderPromptDialog()
             com.ambient.tv.notifications.AppNotificationHost(
-                // The intro shows connectivity itself; held cards keep their full reading time.
+                // The intro and app present the same retained connection session.
                 hidden = screensaverOverlayPresent || com.ambient.tv.ui.intro.IntroPresentation.active,
                 playback = onPlayerScreen,
-                // Settings already has an in-place Wake/Cancel toggle. Do not steal its D-pad focus.
-                autoFocusWake = currentRoute != Destinations.SETTINGS && currentRoute != Destinations.SETUP_SETTINGS,
+                // Only supply an initial target while content has no usable focus. Later status
+                // updates never take focus away from browsing or a Settings control.
+                autoFocusWake = sidebarContentPending && !sidebarHasFocus &&
+                    !(contentHasFocus && !contentContainerFocused) &&
+                    currentRoute != Destinations.SETTINGS && currentRoute != Destinations.SETUP_SETTINGS,
+                statusUiState = connectionStatusUi,
+                handheldBottomInset = handheldNotificationBottomInset,
                 wakeFocus = wakeFocus,
                 onWakeNavigateToSidebar = {
                     if (handheld || currentRoute in FULLSCREEN_ROUTES || !shellFocusAllowed()) {

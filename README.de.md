@@ -120,6 +120,8 @@ Ambient TV entsteht in der Freizeit, aus Liebe zu einem guten Fernsehabend. Wenn
 ### 🌐 Netzwerk
 - **Wake-on-LAN** für Server, NAS-Quellen und DLNA-Server, nach Rechner gruppiert
 - Eingebautes **WireGuard**, je System schaltbar
+- Kompakter **Verbindungsstatus** für VPN, Wake-on-LAN und Serververbindungen, mit Abbrechen/Wiederholen je Gerät und aufklappbaren technischen Details auf TV und Handy
+- Start-Intros enden innerhalb von **fünf Sekunden**; laufende Verbindungen werden in der App weiter angezeigt, ohne jeden erledigten Schritt erneut einzublenden
 - **DLNA-Renderer** – Empfang von BubbleUPnP, VLC, …
 
 </td>

@@ -1,0 +1,6 @@
+<resources>
+    <string name="notice_waiting_for_vpn">Waiting for VPN</string>
+    <string name="notice_waiting_for_network">Waiting for network</string>
+    <string name="notice_wake_cancelled">Wake attempt cancelled</string>
+    <string name="notice_vpn_failed_reason">VPN connection failed: %1$s</string>
+</resources>

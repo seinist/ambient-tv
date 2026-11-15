@@ -1,0 +1,24 @@
+<resources>
+    <string name="start_status_title">Connection status</string>
+    <string name="start_status_details">Details</string>
+    <string name="start_status_problem">Connection problem</string>
+    <string name="start_status_minimize">Minimize connection status</string>
+    <string name="start_status_empty">No connection activity in this session.</string>
+    <string name="start_status_connecting">Preparing connections</string>
+    <string name="start_status_connecting_vpn">Connecting VPN</string>
+    <string name="start_status_waking_server">Waking server</string>
+    <string name="start_status_waking_servers">Waking servers</string>
+    <string name="start_status_starting_services">Waiting for services</string>
+    <string name="start_status_ready">Connections ready</string>
+    <string name="start_status_unavailable">Connection unavailable</string>
+    <string name="start_status_vpn_unavailable">VPN unavailable</string>
+    <string name="start_status_source_and_ready">%1$s · %2$d ready</string>
+    <string name="start_status_service_detail">%1$s: %2$s</string>
+    <string name="start_status_retry">Try again</string>
+    <string name="start_status_technical_details">Technical details</string>
+    <string name="start_status_hide_technical_details">Hide technical details</string>
+    <string name="start_status_packets">Wake packets sent: %1$d of %2$d</string>
+    <string name="start_status_wait_remaining">Maximum remaining wait: %1$d s</string>
+    <string name="start_status_retry_in">Next wake attempt in %1$d s</string>
+    <string name="start_status_time_budget_hint">The time limit is a wait budget, not the server’s startup progress.</string>
+</resources>

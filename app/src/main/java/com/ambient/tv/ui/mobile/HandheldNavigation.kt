@@ -43,9 +43,16 @@ fun HandheldNavigationHost(
     onNavigate: (String) -> Unit,
     onOpenPlayback: (String) -> Unit,
     onOpenSystemSettings: (String) -> Unit = {},
+    /** Extra space above system insets occupied by navigation, companion bars and the mini-player. */
+    onOverlayBottomInsetChanged: (androidx.compose.ui.unit.Dp) -> Unit = {},
     content: @Composable () -> Unit,
 ) {
     if (!LocalHandheldUi.current) { content(); return }
+    val overlayInsetChanged by rememberUpdatedState(onOverlayBottomInsetChanged)
+    val windowHeight = androidx.compose.ui.platform.LocalWindowInfo.current.containerSize.height
+    val overlayDensity = androidx.compose.ui.platform.LocalDensity.current
+    val safeBottom = WindowInsets.safeDrawing.getBottom(overlayDensity)
+    DisposableEffect(Unit) { onDispose { overlayInsetChanged(0.dp) } }
     var showSources by rememberSaveable { mutableStateOf(false) }
     var manageMenu by rememberSaveable { mutableStateOf(false) }
     val sidebarVm: SidebarViewModel = hiltViewModel()
@@ -92,6 +99,11 @@ fun HandheldNavigationHost(
                 val top = c.positionInWindow().y.toInt()
                 panelBounds.top = top
                 panelBounds.bottom = top + c.size.height
+                // Measure the actual stack; bars can appear or change height independently of
+                // the navigation mode, orientation and the currently playing media.
+                overlayInsetChanged(with(overlayDensity) {
+                    (windowHeight - panelBounds.bottom - safeBottom).coerceAtLeast(0).toDp()
+                })
             },
         ) {
             androidx.compose.runtime.CompositionLocalProvider(

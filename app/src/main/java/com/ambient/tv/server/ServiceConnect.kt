@@ -95,8 +95,8 @@ internal class SharedConnectRun(private val scope: CoroutineScope) {
 
     suspend fun joinOrStart(key: String, block: suspend () -> Boolean): Boolean {
         val run = synchronized(lock) {
-            val current = running?.takeIf { it.isActive }
-            if (current != null && runningKey == key) current
+            val current = running?.takeIf { !it.isCompleted }
+            if (current?.isActive == true && runningKey == key) current
             else {
                 current?.cancel()
                 started++

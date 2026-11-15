@@ -12,7 +12,9 @@ import com.ambient.tv.ui.common.MediaSystem
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -128,7 +130,8 @@ class UnreachableServerGate @Inject constructor(
         revision.value = revision.value + 1
     }
 
-    private var retryJob: kotlinx.coroutines.Job? = null
+    private val retryLock = Any()
+    private val retryJobs = mutableMapOf<String, Job>()
 
     /**
      * Cancel the real shared wake jobs rather than simply dismissing their progress view.
@@ -136,7 +139,7 @@ class UnreachableServerGate @Inject constructor(
      */
     fun cancelStartupWake() {
         if (!current().waking) return
-        retryJob?.cancel()
+        synchronized(retryLock) { retryJobs.values.toList() }.forEach { it.cancel() }
         if (com.ambient.tv.server.isInFlightConnectState(plex.state.value)) plex.cancelStartupWake()
         if (com.ambient.tv.server.isInFlightConnectState(jellyfin.state.value)) jellyfin.cancelStartupWake()
         if (com.ambient.tv.server.isInFlightConnectState(emby.state.value)) emby.cancelStartupWake()
@@ -149,6 +152,7 @@ class UnreachableServerGate @Inject constructor(
      * keep their own connect jobs and notifications. Manual/NAS/DLNA jobs are tracked separately.
      */
     fun cancelMachineWake(machine: String): Boolean {
+        synchronized(retryLock) { retryJobs[machine] }?.cancel()
         var cancelled = false
         if (hosts.machine("plex") == machine && com.ambient.tv.server.isInFlightConnectState(plex.state.value)) {
             plex.cancelStartupWake()
@@ -178,50 +182,80 @@ class UnreachableServerGate @Inject constructor(
         tvheadend.allowWakeRetry()
     }
 
-    fun retry() = startRetry(onlySystem = null)
+    fun retry() = startRetry(selected = null)
 
     /** The offline page reconnects its own server, plus siblings on the same machine for WOL. */
-    fun retrySystem(system: String) = startRetry(onlySystem = system)
+    fun retrySystem(system: String) = startRetry(selected = setOf(system))
 
-    private fun startRetry(onlySystem: String?) {
-        if (retryJob?.isActive == true) return
-        val failed = offlineRetryTargets(current().offline, onlySystem, hosts::machine)
+    /** A single status action retries all affected services, without dropping later targets. */
+    fun retrySystems(systems: Set<String>, includeMachineSiblings: Boolean = true) =
+        startRetry(systems, includeMachineSiblings)
+
+    /** Actual service state wins over a retained status row or a delayed offline-page snapshot. */
+    fun retryableSystems(): Set<String> = buildSet {
+        fun addFailed(system: String, configured: Boolean, value: ServerConnectionState) {
+            if (configured && value !is ServerConnectionState.Online &&
+                value != ServerConnectionState.NotConfigured && !com.ambient.tv.server.isInFlightConnectState(value)) add(system)
+        }
+        addFailed("plex", preferences.hasPlexEndpoint, plex.state.value)
+        addFailed("jellyfin", preferences.isJellyfinConfigured, jellyfin.state.value)
+        addFailed("emby", preferences.isEmbyConfigured, emby.state.value)
+        addFailed("tvheadend", preferences.hasTvheadendEndpoint, tvheadend.state.value)
+    }
+
+    private fun startRetry(selected: Set<String>?, includeMachineSiblings: Boolean = true) {
+        val offline = retryableSystems()
+        val failed = if (includeMachineSiblings) selectedOfflineRetryTargets(offline, selected, hosts::machine)
+            else offline.intersect(selected.orEmpty())
         if (failed.isEmpty()) return
-        retrying.value = true
-        retryJob = scope.launch {
-          try {
-            // One active recovery per machine. Siblings only refresh their own service identity.
-            coroutineScope {
-                failed.groupBy { hosts.machine(it) ?: it }.values.forEach { systems -> launch {
-                    val first = systems.firstOrNull(::wakeConfigured) ?: systems.first()
+        val scheduled = mutableListOf<Job>()
+        synchronized(retryLock) {
+            failed.groupBy { hosts.machine(it) ?: it }.forEach { (machine, systems) ->
+                val previous = retryJobs[machine]
+                if (previous != null && !previous.isCompleted && !previous.isCancelled) return@forEach
+                val job = scope.launch(start = CoroutineStart.LAZY) {
+                    // A cancelled attempt must finish its state cleanup before its replacement.
+                    previous?.join()
+                    val stillFailed = systems.filter { it in retryableSystems() }
+                    if (stillFailed.isEmpty()) return@launch
+                    stillFailed.forEach(::allowWakeRetryFor)
+                    // One recovery per machine. Siblings refresh their own service identity.
+                    val first = stillFailed.firstOrNull(::wakeConfigured) ?: stillFailed.first()
                     when (first) {
                         "plex" -> plex.reconnect()
                         "jellyfin" -> jellyfin.reconnect()
                         "emby" -> emby.reconnect()
                         "tvheadend" -> tvheadend.reconnect()
                     }
-                    systems.filter { it != first }.forEach { system -> when (system) {
+                    stillFailed.filter { it != first }.forEach { system -> when (system) {
                         "plex" -> plex.checkInBackground(force = true)
                         "jellyfin" -> jellyfin.checkInBackground(force = true)
                         "emby" -> emby.checkInBackground(force = true)
                         "tvheadend" -> tvheadend.checkInBackground(force = true)
                     } }
-                } }
+                    refresh()
+                    // Each service already reports its result to the shared connection status.
+                }
+                retryJobs[machine] = job
+                job.invokeOnCompletion {
+                    synchronized(retryLock) {
+                        if (retryJobs[machine] === job) retryJobs.remove(machine)
+                        retrying.value = retryJobs.isNotEmpty()
+                    }
+                }
+                scheduled += job
             }
-            refresh()
-            // Say how it ended: without this, a failed retry just shows the same dialog again.
-            val still = current().unreachable.intersect(failed)
-            com.ambient.tv.notifications.AppNotifications.post(com.ambient.tv.notifications.AppNotice(
-                key = "unreachable:retry:${System.currentTimeMillis()}",
-                message = if (still.isEmpty()) com.ambient.tv.R.string.unreachable_retry_success else com.ambient.tv.R.string.unreachable_retry_failed,
-                args = listOf(still.map(::displayName).joinToString(", ")),
-                kind = com.ambient.tv.notifications.NoticeKind.CONNECTION,
-                phase = if (still.isEmpty()) com.ambient.tv.notifications.NoticePhase.SUCCESS else com.ambient.tv.notifications.NoticePhase.ERROR,
-            ))
-          } finally {
-            retrying.value = false
-          }
+            retrying.value = retryJobs.isNotEmpty()
         }
+        scheduled.forEach { it.start() }
+    }
+
+    private fun allowWakeRetryFor(system: String) = when (system) {
+        "plex" -> plex.allowWakeRetry()
+        "jellyfin" -> jellyfin.allowWakeRetry()
+        "emby" -> emby.allowWakeRetry()
+        "tvheadend" -> tvheadend.allowWakeRetry()
+        else -> Unit
     }
 
     /** A wake packet can be sent for [system]: Wake-on-LAN is on and has a MAC address. */

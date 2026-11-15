@@ -48,10 +48,14 @@ class ConnectionNotifications @Inject constructor(
             val wakingMachines = mutableMapOf<String, String>()
             combine(plex.state, jellyfin.state, emby.state, tvheadend.state, vpn.status) { p, j, e, t, route ->
                 route to listOf(
-                    Target("plex", preferences.host, preferences.activeServerProfile()?.name, p, preferences.macAddress),
-                    Target("jellyfin", preferences.jellyfinHost, preferences.activeJellyfinServerProfile()?.name, j, preferences.jellyfinMacAddress),
-                    Target("emby", preferences.embyHost, preferences.activeEmbyServerProfile()?.name, e, preferences.embyMacAddress),
-                    Target("tvheadend", preferences.tvheadendHost, null, t, preferences.tvheadendMacAddress),
+                    Target("plex", preferences.host, preferences.activeServerProfile()?.name, p, preferences.macAddress,
+                        preferences.wireGuardPlexEnabled, plex.isAutomaticReconnectPaused()),
+                    Target("jellyfin", preferences.jellyfinHost, preferences.activeJellyfinServerProfile()?.name, j, preferences.jellyfinMacAddress,
+                        preferences.wireGuardJellyfinEnabled, jellyfin.isAutomaticReconnectPaused()),
+                    Target("emby", preferences.embyHost, preferences.activeEmbyServerProfile()?.name, e, preferences.embyMacAddress,
+                        preferences.wireGuardEmbyEnabled, emby.isAutomaticReconnectPaused()),
+                    Target("tvheadend", preferences.tvheadendHost, null, t, preferences.tvheadendMacAddress,
+                        preferences.wireGuardTvheadendEnabled, tvheadend.isAutomaticReconnectPaused()),
                 )
             }.collect { (route, targets) ->
                 // Wakes are announced per machine, shared with TVHeadend, NAS and DLNA on it.
@@ -65,7 +69,8 @@ class ConnectionNotifications @Inject constructor(
                         WakeNotices.begin(key, target.system, target.name?.takeIf(String::isNotBlank) ?: target.host.trim().ifBlank { null })
                     } else if (!isWaking && machine != null) {
                         wakingMachines.remove(target.system)
-                        when (target.state) {
+                        if (target.cancelled) WakeNotices.cancel(machine, target.system)
+                        else when (target.state) {
                             ServerConnectionState.Connecting, is ServerConnectionState.Online, is ServerConnectionState.Waking ->
                                 WakeNotices.finish(machine, target.system, success = true)
                             ServerConnectionState.WakeTimedOut, ServerConnectionState.Offline, is ServerConnectionState.Error ->
@@ -84,58 +89,79 @@ class ConnectionNotifications @Inject constructor(
                 }
                 val notices = targets.filter { it.state != ServerConnectionState.NotConfigured }
                     .groupBy { wakeMachines.keyFor(it.system, it.host, it.mac) }
-                    .mapValues { (host, group) ->
-                        val waking = group.any { isMachineWaking(it.state) }
-                        val serviceStarting = !waking && group.any { (it.state as? ServerConnectionState.Waking)?.serviceStarting == true }
-                        val failed = group.filter { it.state == ServerConnectionState.Offline || it.state == ServerConnectionState.WakeTimedOut || it.state is ServerConnectionState.Error }
-                        val online = group.all { it.state is ServerConnectionState.Online }
-                        val waitingForVpn = route == WireGuardRouteState.Connecting && !online && failed.isEmpty() && group.any {
-                            when (it.system) {
-                                "plex" -> preferences.wireGuardPlexEnabled
-                                "jellyfin" -> preferences.wireGuardJellyfinEnabled
-                                "emby" -> preferences.wireGuardEmbyEnabled
-                                "tvheadend" -> preferences.wireGuardTvheadendEnabled
-                                else -> false
+                    .flatMap { (host, allTargets) ->
+                        // Keep causally blocked services separate from independent failures on
+                        // the same machine. The shared reducer shows one VPN cause, not N failures.
+                        val (vpnTargets, group) = allTargets.partition {
+                            !it.cancelled && connectionDependency(it.state, it.vpnEnabled, route) == ConnectivityDependency.VPN
+                        }
+                        buildList {
+                            val vpnReason = vpnTargets.firstNotNullOfOrNull {
+                                (it.state as? ServerConnectionState.Error)?.message?.let(::sanitizeFailureDetail)?.takeIf(String::isNotBlank)
+                            }
+                            if (vpnTargets.isNotEmpty()) add(AppNotice(
+                                key = "connection:$host:vpn",
+                                message = if (vpnReason != null) R.string.notice_vpn_failed_reason else R.string.notice_waiting_for_vpn,
+                                systems = vpnTargets.map(Target::system),
+                                subject = vpnTargets.mapNotNull { it.name?.takeIf(String::isNotBlank) }.distinct()
+                                    .joinToString(", ").ifBlank { vpnTargets.first().host },
+                                phase = if (vpnTargets.any { it.state is ServerConnectionState.Error }) NoticePhase.ERROR else NoticePhase.WORKING,
+                                kind = NoticeKind.CONNECTION,
+                                quietSuccess = true,
+                                args = listOfNotNull(vpnReason),
+                                interruptPlayback = vpnTargets.any { it.state is ServerConnectionState.Error },
+                                machine = host,
+                                blockedBy = ConnectivityDependency.VPN,
+                            ))
+                            if (group.isNotEmpty()) {
+                                val waking = group.any { isMachineWaking(it.state) }
+                                val serviceStarting = !waking && group.any { (it.state as? ServerConnectionState.Waking)?.serviceStarting == true }
+                                val failed = group.filter { !it.cancelled && (it.state == ServerConnectionState.Offline || it.state == ServerConnectionState.WakeTimedOut || it.state is ServerConnectionState.Error) }
+                                val cancelled = group.any { it.cancelled && it.state !is ServerConnectionState.Online }
+                                val online = group.all { it.state is ServerConnectionState.Online }
+                                // The cause: the connection manager's reason for an error, the address for "offline".
+                                val reason = failed.firstNotNullOfOrNull { (it.state as? ServerConnectionState.Error)?.message?.let(::sanitizeFailureDetail)?.takeIf(String::isNotBlank) }
+                                    ?: failed.firstOrNull { it.state == ServerConnectionState.Offline }?.let { context.getString(R.string.reason_unreachable, it.host.trim().ifBlank { it.system }) }
+                                val phase = when {
+                                    waking -> NoticePhase.WORKING
+                                    failed.isNotEmpty() -> NoticePhase.ERROR
+                                    online -> NoticePhase.SUCCESS
+                                    cancelled -> NoticePhase.INFO
+                                    else -> NoticePhase.WORKING
+                                }
+                                AppNotice(
+                                    key = "connection:$host",
+                                    systems = (if (phase == NoticePhase.ERROR) failed else group).map { it.system },
+                                    subject = group.mapNotNull { it.name?.takeIf(String::isNotBlank) }.distinct().joinToString(", ").ifBlank { host },
+                                    phase = phase,
+                                    kind = if (waking) NoticeKind.WAKE else NoticeKind.CONNECTION,
+                                    message = when {
+                                        waking -> R.string.notice_waking
+                                        serviceStarting -> R.string.notice_service_starting
+                                        failed.any { it.state == ServerConnectionState.WakeTimedOut } -> R.string.notice_wake_failed
+                                        failed.isNotEmpty() && reason != null -> R.string.notice_unreachable_reason
+                                        failed.isNotEmpty() -> R.string.notice_unreachable
+                                        online -> R.string.notice_connected
+                                        cancelled -> R.string.notice_wake_cancelled
+                                        else -> R.string.notice_connecting
+                                    },
+                                    args = if (!waking && failed.isNotEmpty() && reason != null &&
+                                        failed.none { it.state == ServerConnectionState.WakeTimedOut }) listOf(reason) else emptyList(),
+                                    quietSuccess = true, interruptPlayback = waking || failed.isNotEmpty(),
+                                    machine = host,
+                                    cancelled = cancelled && phase == NoticePhase.INFO,
+                                ).takeUnless {
+                                    // The machine's wake card already covers waking and a failed wake.
+                                    waking || (failed.isNotEmpty() && failed.all { f -> f.state == ServerConnectionState.WakeTimedOut })
+                                }?.let(::add)
                             }
                         }
-                        // The cause: the connection manager's reason for an error, the address for "offline".
-                        val reason = failed.firstNotNullOfOrNull { (it.state as? ServerConnectionState.Error)?.message?.takeIf(String::isNotBlank) }
-                            ?: failed.firstOrNull { it.state == ServerConnectionState.Offline }?.let { context.getString(R.string.reason_unreachable, it.host.trim().ifBlank { it.system }) }
-                        val phase = when {
-                            waking -> NoticePhase.WORKING
-                            failed.isNotEmpty() -> NoticePhase.ERROR
-                            online -> NoticePhase.SUCCESS
-                            else -> NoticePhase.WORKING
-                        }
-                        AppNotice(
-                            key = "connection:$host",
-                            systems = (if (phase == NoticePhase.ERROR) failed else group).map { it.system },
-                            subject = group.mapNotNull { it.name?.takeIf(String::isNotBlank) }.distinct().joinToString(", ").ifBlank { host },
-                            phase = phase,
-                            kind = if (waitingForVpn) NoticeKind.VPN else if (waking) NoticeKind.WAKE else NoticeKind.CONNECTION,
-                            message = when {
-                                waitingForVpn -> R.string.notice_vpn_connecting
-                                waking -> R.string.notice_waking
-                                serviceStarting -> R.string.notice_service_starting
-                                failed.any { it.state == ServerConnectionState.WakeTimedOut } -> R.string.notice_wake_failed
-                                failed.isNotEmpty() && reason != null -> R.string.notice_unreachable_reason
-                                failed.isNotEmpty() -> R.string.notice_unreachable
-                                online -> R.string.notice_connected
-                                else -> R.string.notice_connecting
-                            },
-                            args = if (!waitingForVpn && !waking && failed.isNotEmpty() && reason != null &&
-                                failed.none { it.state == ServerConnectionState.WakeTimedOut }) listOf(reason) else emptyList(),
-                            quietSuccess = true, interruptPlayback = waking || failed.isNotEmpty(),
-                        ).takeUnless {
-                            // The machine's wake card already covers waking and a failed wake.
-                            !waitingForVpn && (waking || (failed.isNotEmpty() && failed.all { f -> f.state == ServerConnectionState.WakeTimedOut }))
-                        }
-                    }.filterValues { it != null }.mapValues { it.value!! }
-                previous.keys.filterNot { it in notices }.forEach { AppNotifications.dismiss("connection:$it") }
-                notices.forEach { (host, notice) ->
-                    if (previous[host] != notice) {
-                        if (notice.phase == NoticePhase.ERROR) unhealthy.add(host)
-                        val recovered = notice.phase == NoticePhase.SUCCESS && unhealthy.remove(host)
+                    }.associateBy(AppNotice::key)
+                previous.keys.filterNot { it in notices }.forEach(AppNotifications::removeConnectivity)
+                notices.forEach { (key, notice) ->
+                    if (previous[key] != notice) {
+                        if (notice.phase == NoticePhase.ERROR) unhealthy.add(key)
+                        val recovered = notice.phase == NoticePhase.SUCCESS && unhealthy.remove(key)
                         AppNotifications.post(if (recovered) notice.copy(quietSuccess = false, interruptPlayback = true) else notice)
                     }
                 }
@@ -153,13 +179,9 @@ class ConnectionNotifications @Inject constructor(
             }
         }
         scope.launch {
-            var previous: WireGuardRouteState = vpn.status.value
+            var previous: WireGuardRouteState? = null
             vpn.status.collect { state ->
                 if (state != previous) {
-                    val coveredByConnection = listOf(plex.state.value, jellyfin.state.value, emby.state.value, tvheadend.state.value).any {
-                        it == ServerConnectionState.Checking || it == ServerConnectionState.Connecting ||
-                            it == ServerConnectionState.SendingWakePacket || it is ServerConnectionState.Waking
-                    }
                     val systems = buildList {
                         if (preferences.wireGuardPlexEnabled) add("plex")
                         if (preferences.wireGuardJellyfinEnabled) add("jellyfin")
@@ -170,12 +192,16 @@ class ConnectionNotifications @Inject constructor(
                     val (phase, message) = when (state) {
                         WireGuardRouteState.Connecting -> NoticePhase.WORKING to R.string.notice_vpn_connecting
                         WireGuardRouteState.Up -> NoticePhase.SUCCESS to R.string.notice_vpn_connected
-                        is WireGuardRouteState.Failed -> NoticePhase.ERROR to R.string.notice_vpn_failed
+                        is WireGuardRouteState.Failed -> NoticePhase.ERROR to R.string.notice_vpn_failed_reason
                         WireGuardRouteState.Idle -> NoticePhase.INFO to R.string.notice_vpn_stopped
                     }
-                    if (coveredByConnection && state !is WireGuardRouteState.Failed && state != WireGuardRouteState.Idle) {
-                        AppNotifications.dismiss("vpn")
-                    } else AppNotifications.post(AppNotice("vpn", message, systems, "WireGuard", phase, NoticeKind.VPN))
+                    // Keep the prerequisite as one stable session row. The compact presenter
+                    // aggregates it with its dependants and never replays intermediate successes.
+                    if (state != WireGuardRouteState.Idle || previous != null) AppNotifications.post(AppNotice(
+                        "vpn", message, systems, "WireGuard", phase, NoticeKind.VPN,
+                        args = if (state is WireGuardRouteState.Failed) listOf(sanitizeFailureDetail(state.message)) else emptyList(),
+                        quietSuccess = true, interruptPlayback = phase == NoticePhase.ERROR,
+                    ))
                 }
                 previous = state
             }
@@ -225,7 +251,26 @@ class ConnectionNotifications @Inject constructor(
         }
     }
 
-    private data class Target(val system: String, val host: String, val name: String?, val state: ServerConnectionState, val mac: String? = null)
+    private data class Target(
+        val system: String,
+        val host: String,
+        val name: String?,
+        val state: ServerConnectionState,
+        val mac: String? = null,
+        val vpnEnabled: Boolean = false,
+        val cancelled: Boolean = false,
+    )
+}
+
+/** Only a typed prerequisite failure is blocked; an unrelated service error remains its own error. */
+internal fun connectionDependency(
+    state: ServerConnectionState,
+    vpnEnabled: Boolean,
+    route: WireGuardRouteState,
+): ConnectivityDependency? = when {
+    state is ServerConnectionState.Error -> if (state.cause == com.ambient.tv.server.ServerConnectionFailure.VPN) ConnectivityDependency.VPN else null
+    vpnEnabled && route == WireGuardRouteState.Connecting && state !is ServerConnectionState.Online -> ConnectivityDependency.VPN
+    else -> null
 }
 
 /** Waking the machine itself (packets / waiting for it); not "machine awake, service starting". */

@@ -110,6 +110,7 @@ private val SIDEBAR_SUBMENU_SEPARATOR_GAP = 19.dp
 // Submenu rows (2dp outer padding + this) put their icon 17dp in from the row edge, like the main rail.
 private val SUBMENU_ICON_INSET = 15.dp
 private const val PAGE_BACK_ID = "page-back"
+private const val START_STATUS_ID = "start-status"
 // A group unfolds with the rail's own timing, so opening the rail and opening a group feel alike.
 private const val SIDEBAR_GROUP_MS = 220
 private const val SIDEBAR_OPEN_MS = 260
@@ -160,6 +161,8 @@ fun Sidebar(
     currentTelegramSectionKey: String? = null,
     /** Quit button at the end of the bottom row, after a confirmation like in Settings › App. */
     onExitApp: (() -> Unit)? = null,
+    /** Opens the global status panel and receives a callback restoring this menu's focus. */
+    onOpenStartStatus: ((() -> Unit) -> Unit)? = null,
 ) {
     val state by viewModel.uiState.collectAsState()
     com.ambient.tv.ui.common.RefreshOnReconnect(viewModel.reconnectSources, viewModel::refreshAfterReconnect)
@@ -178,7 +181,7 @@ fun Sidebar(
         state, actions, currentRoute, currentSectionKey, currentYouTubeFeedKey, currentTrailerFeedKey, currentSpotifySectionKey,
         currentTvheadendTab, currentLiveTvSourceId, currentFileSourceId, currentDlnaServerId, onNavigate, onOpenSystemSettings,
         onOpenPlayback, onPlayNext, requestContentFocus, contentReady, isEntryRequested, onEntryRequestConsumed,
-        onFocusOwnershipChanged, modifier, currentRadioSectionKey, currentTelegramSectionKey, onExitApp,
+        onFocusOwnershipChanged, modifier, currentRadioSectionKey, currentTelegramSectionKey, onExitApp, onOpenStartStatus,
     )
 }
 
@@ -219,9 +222,11 @@ internal fun SidebarContent(
     currentRadioSectionKey: String? = null,
     currentTelegramSectionKey: String? = null,
     onExitApp: (() -> Unit)? = null,
+    onOpenStartStatus: ((() -> Unit) -> Unit)? = null,
 ) {
     val uiScale = rememberUhdScale()
     var showExitConfirmation by remember { mutableStateOf(false) }
+    var startStatusOpen by remember { mutableStateOf(false) }
     val menuMotionEnabled = LocalPerformanceProfile.current.allowSpringFocus
     val plexEnabled = sidebarState.plexEnabled
     val jellyfinEnabled = sidebarState.jellyfinEnabled
@@ -466,12 +471,13 @@ internal fun SidebarContent(
     val inSubmenu = openGroup != null
     val navRows = rowsFor(openGroup?.id)
     // On a system page the back header is the first focusable row.
-    val navItemIds = (if (inSubmenu) listOf(PAGE_BACK_ID) else emptyList()) + navRows.map { it.destination.id }
+    val navItemIds = (if (inSubmenu) listOf(PAGE_BACK_ID) else emptyList()) + navRows.map { it.destination.id } +
+        if (onOpenStartStatus != null) listOf(START_STATUS_ID) else emptyList()
     val konfigurationShown = openGroup != null && openGroup.id !in settingsShortcutHidden
     val visibleIds = navItemIds + "settings" + "order" + "exit" + "pill"
     val allRowIds = remember(mainRows, pageRowsById) { (mainRows + pageRowsById.values.flatten()).map { it.destination.id }.toSet() }
     // Drop requesters of rows that no longer exist anywhere.
-    SideEffect { requesters.keys.retainAll(allRowIds + setOf("settings", "order", "exit", "pill", PAGE_BACK_ID)) }
+    SideEffect { requesters.keys.retainAll(allRowIds + setOf("settings", "order", "exit", "pill", PAGE_BACK_ID, START_STATUS_ID)) }
     val safeAnchor = mainRows.firstOrNull()?.destination?.id ?: "settings"
     fun childTarget(system: MenuSystem): String = chooseSidebarChild(
         system.entries.map { it.id },
@@ -623,8 +629,8 @@ internal fun SidebarContent(
         expanded = true
         pendingFocus = lastFocusedId?.takeIf { it in visibleIds } ?: safeAnchor
     }
-    LaunchedEffect(hasFocus, showOrderDialog) {
-        if (!hasFocus && !showOrderDialog) {
+    LaunchedEffect(hasFocus, showOrderDialog, startStatusOpen) {
+        if (!hasFocus && !showOrderDialog && !startStatusOpen) {
             delay(180)
             if (!hasFocus) expanded = false
         }
@@ -644,8 +650,8 @@ internal fun SidebarContent(
     }
     // Dialog changes also update ownership; focus events register synchronously below.
     val registerBack = rememberSidebarBackRegistration()
-    DisposableEffect(hasFocus, showOrderDialog) {
-        if (hasFocus && !showOrderDialog) {
+    DisposableEffect(hasFocus, showOrderDialog, startStatusOpen) {
+        if (hasFocus && !showOrderDialog && !startStatusOpen) {
             registerBack { currentBackHandler.value() }
         } else {
             registerBack(null)
@@ -666,8 +672,10 @@ internal fun SidebarContent(
     val textMeasurer = androidx.compose.ui.text.rememberTextMeasurer()
     val density = LocalDensity.current
     val settingsLabel = stringResource(R.string.nav_settings)
-    val candidateLabels = remember(globals, standalone, systems) {
-        (globals + standalone).map { it.label } + systems.flatMap { system -> listOf(system.label) + system.entries.map { it.label } }
+    val startStatusLabel = stringResource(R.string.start_status_title)
+    val candidateLabels = remember(globals, standalone, systems, startStatusLabel, onOpenStartStatus != null) {
+        (globals + standalone).map { it.label } + systems.flatMap { system -> listOf(system.label) + system.entries.map { it.label } } +
+            listOfNotNull(startStatusLabel.takeIf { onOpenStartStatus != null })
     }
     val headerLabels = remember(systems) { systems.map { it.label } }
     var widestPanel by remember(screenWidth, uiScale) { mutableStateOf(0.dp) }
@@ -895,6 +903,25 @@ internal fun SidebarContent(
                     }
                     }
                     Spacer(Modifier.height(6.dp * uiScale))
+                    onOpenStartStatus?.let { openStatus ->
+                        SidebarItem(
+                            Icons.Filled.NetworkCheck, startStatusLabel, false, true,
+                            {
+                                startStatusOpen = true
+                                openStatus {
+                                    startStatusOpen = false
+                                    expanded = true
+                                    pendingFocus = START_STATUS_ID
+                                }
+                            }, requester(START_STATUS_ID),
+                            padH = 10.dp, iconGap = 10.dp,
+                            focusable = expanded,
+                            onFocused = { markFocus(START_STATUS_ID) },
+                            onWrapKey = { wrapFocus(START_STATUS_ID, it) },
+                            testTag = "sidebar:start-status",
+                            modifier = Modifier.fillMaxWidth().padding(bottom = 4.dp),
+                        )
+                    }
                     // Bottom row = settings + menu editor for the current level: app settings on the
                     // main page, the system's own configuration on a system page (unless hidden).
                     val levelSystem = openGroup?.takeIf { konfigurationShown }

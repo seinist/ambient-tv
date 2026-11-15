@@ -23,6 +23,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
@@ -54,14 +55,13 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.graphics.vector.PathParser
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import com.ambient.tv.R
 import com.ambient.tv.data.local.IntroAnimation
 import com.ambient.tv.notifications.AppNotifications
 import com.ambient.tv.notifications.IntroConnectionStatus
-import com.ambient.tv.notifications.NoticeKind
-import com.ambient.tv.notifications.workingConnectivity
 import com.ambient.tv.ui.performance.LocalPerformanceProfile
 import com.ambient.tv.ui.performance.PerformanceMode
 import com.ambient.tv.ui.theme.LocalPlaybackAccent
@@ -69,7 +69,6 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withTimeoutOrNull
 import kotlin.math.PI
 import kotlin.math.cos
 import kotlin.math.sin
@@ -170,7 +169,7 @@ private class IntroFrame(
 private fun phase(t: Float, start: Float, end: Float) = ((t - start) / (end - start)).coerceIn(0f, 1f)
 /** Sine in-out: slow on both ends, no snap. */
 private fun soft(x: Float) = (1f - cos(x * PI.toFloat())) / 2f
-/** Backdrops remain visible in the settled/low-power frame and during a long server wake. */
+/** Backdrops remain visible in the settled/low-power frame and throughout the exit fade. */
 internal fun introBackdropPresence(seconds: Float): Float = soft(phase(seconds, 0f, 1.25f))
 /** Breathing curve over one loop: 0 at the loop seam, 1 halfway. */
 private fun wave(t: Float) = (1f - cos(t * 2f * PI.toFloat())) / 2f
@@ -182,9 +181,9 @@ internal fun introBloomPeakAt(iconOrigin: Offset, iconUnit: Float): List<Offset>
 
 /**
  * Full-screen intro in the current accent (and playback accent when a pair is set). The app
- * composes underneath. Light is the subject: it gathers, the brand wordmark settles into it, and
- * the light keeps breathing while a wake or connect is still running. The composition sits in the
- * upper part so the connection status below never covers it. Any key skips.
+ * composes underneath. The light and brand reveal finish within five seconds, including the exit
+ * fade; connection work continues independently. The composition sits in the upper part so the
+ * compact connection status below never covers it. Any key or tap continues to the app.
  */
 @Composable
 fun IntroAnimationOverlay(styleKey: String, onFinished: () -> Unit, modifier: Modifier = Modifier) {
@@ -203,16 +202,19 @@ fun IntroAnimationOverlay(styleKey: String, onFinished: () -> Unit, modifier: Mo
     // Sparsam: the settled frame without motion; reduced effects: motion without grain and extra light.
     val still = profile.mode == PerformanceMode.LOW
     val lite = profile.reducedEffects
-    // Seconds since the intro appeared; read only in the draw phase, so the loop never recomposes.
+    val handheld = com.ambient.tv.ui.mobile.LocalHandheldUi.current
+    val windowInfo = LocalWindowInfo.current
+    val startedAtMillis = remember { SystemClock.uptimeMillis() }
+    // Drawing time is scaled to finish each reveal before the exit fade. Read only while drawing.
     val clock = remember { mutableFloatStateOf(0f) }
     val exit = remember { Animatable(1f) }
     val statusAlpha = remember { Animatable(0f) }
     val logo = remember { LogoPaths() }
     val wordmark = remember { WordmarkPaths() }
     val grain = remember(lite) { if (lite || still) null else grainBrush() }
-    var holding by remember { mutableStateOf(false) }
+    var statusReady by remember { mutableStateOf(false) }
     val snapshot by AppNotifications.store.state.collectAsState()
-    val status = workingConnectivity(snapshot)
+    val status = snapshot.connectivity
     DisposableEffect(Unit) {
         IntroPresentation.setActive(true)
         IntroPresentation.setCovering(style != IntroAnimation.OFF)
@@ -222,30 +224,43 @@ fun IntroAnimationOverlay(styleKey: String, onFinished: () -> Unit, modifier: Mo
     val skipBaseline = remember { IntroPresentation.skipRequests }
     LaunchedEffect(style) {
         if (style == IntroAnimation.OFF) { finished(); return@LaunchedEffect }
-        var skipped = false
         val ticker = if (still) null else launch {
-            val startNanos = withFrameNanos { it }
-            while (true) withFrameNanos { clock.floatValue = (it - startNanos) / 1_000_000_000f }
+            while (true) withFrameNanos {
+                clock.floatValue = IntroTiming.animationSeconds(SystemClock.uptimeMillis() - startedAtMillis)
+            }
         }
-        val run = launch {
-            delay(MIN_VISIBLE_MS)
-            holdWhileConnecting { holding = it }
+        try {
+            runIntroTimeline(
+                startedAtMillis = startedAtMillis,
+                nowMillis = SystemClock::uptimeMillis,
+                still = still,
+                awaitSkip = {
+                    snapshotFlow { IntroPresentation.skipRequests }.first { it != skipBaseline }
+                },
+                fadeOut = { duration ->
+                    // The light keeps moving under the fade instead of freezing for its last frame.
+                    IntroPresentation.setCovering(false)
+                    exit.animateTo(0f, tween(duration, easing = LinearEasing))
+                },
+            )
+        } finally {
+            ticker?.cancel()
         }
-        val skipWatch = launch {
-            snapshotFlow { IntroPresentation.skipRequests }.first { it != skipBaseline }
-            skipped = true
-            run.cancel()
-        }
-        run.join()
-        skipWatch.cancel()
-        // The loop keeps running under the fade, so the light dims instead of freezing.
         IntroPresentation.setCovering(false)
-        exit.animateTo(0f, tween(if (skipped || still) 220 else 700, easing = LinearEasing))
-        ticker?.cancel()
         finished()
     }
-    LaunchedEffect(holding) {
-        if (holding) statusAlpha.animateTo(1f, tween(if (lite) 0 else 600))
+    LaunchedEffect(Unit) {
+        delay((IntroTiming.STATUS_DELAY_MS - (SystemClock.uptimeMillis() - startedAtMillis)).coerceAtLeast(0L))
+        statusReady = true
+        statusAlpha.animateTo(1f, tween(if (lite || still) 0 else IntroTiming.STATUS_FADE_DURATION_MS))
+    }
+    // Count the session as shown only when its compact content is actually on screen. This same
+    // presentation state carries over to Home, without replaying each completed startup notice.
+    val statusHasOpacity by remember { derivedStateOf { statusAlpha.value > 0f && exit.value > 0f } }
+    val statusPresented = style != IntroAnimation.OFF && statusReady && status.visible &&
+        statusHasOpacity && windowInfo.isWindowFocused
+    LaunchedEffect(status.sessionId, statusPresented) {
+        if (statusPresented) AppNotifications.store.markConnectivityPresented()
     }
     if (style == IntroAnimation.OFF) return
     val openSeconds = IntroAnimation.durationMs(style) / 1000f
@@ -292,23 +307,26 @@ fun IntroAnimationOverlay(styleKey: String, onFinished: () -> Unit, modifier: Mo
                 )
             }
         }
-        if (holding) {
+        if (statusReady) {
             Column(
                 Modifier.align(Alignment.BottomCenter)
                     .fillMaxWidth()
                     .then(
-                        if (com.ambient.tv.ui.mobile.LocalHandheldUi.current) {
+                        if (handheld) {
                             Modifier.windowInsetsPadding(WindowInsets.safeDrawing)
                         } else Modifier
                     )
-                    .padding(bottom = 56.dp)
+                    .padding(horizontal = if (handheld) 24.dp else 40.dp)
+                    .padding(bottom = if (handheld) 32.dp else 56.dp)
                     .graphicsLayer { alpha = statusAlpha.value },
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
-                IntroConnectionStatus(status, Modifier.widthIn(max = 440.dp))
+                if (status.visible) {
+                    IntroConnectionStatus(status = status, modifier = Modifier.widthIn(max = 440.dp))
+                }
                 Text(
-                    stringResource(R.string.intro_skip_hint),
+                    stringResource(if (handheld) R.string.intro_skip_touch_hint else R.string.intro_skip_hint),
                     style = MaterialTheme.typography.labelMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -316,28 +334,6 @@ fun IntroAnimationOverlay(styleKey: String, onFinished: () -> Unit, modifier: Mo
         }
     }
 }
-
-/**
- * Waits while connectivity work is running. A wake holds for its own budget (the user can always
- * skip); a plain connect only briefly, so a slow server never keeps the app behind the intro.
- */
-private suspend fun holdWhileConnecting(onHolding: (Boolean) -> Unit) {
-    val started = SystemClock.uptimeMillis()
-    withTimeoutOrNull(MAX_HOLD_MS) {
-        while (true) {
-            val working = workingConnectivity(AppNotifications.store.state.value)
-            if (working.isEmpty()) break
-            val waking = working.any { it.notice.kind == NoticeKind.WAKE }
-            if (!waking && SystemClock.uptimeMillis() - started > CONNECT_HOLD_MS) break
-            onHolding(true)
-            delay(100)
-        }
-    }
-}
-
-private const val MIN_VISIBLE_MS = 6_000L
-private const val MAX_HOLD_MS = 3 * 60_000L
-private const val CONNECT_HOLD_MS = 6_000L
 
 /** Per-frame draw flag; the intro draws on the main thread only. */
 private object IntroDraw {

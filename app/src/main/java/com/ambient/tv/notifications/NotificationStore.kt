@@ -39,6 +39,12 @@ data class AppNotice(
     val packets: Int = 0,
     /** Wake: wall-clock time of the next burst if no answer comes first (0 = none follows). */
     val nextPacketAt: Long = 0L,
+    /** Canonical physical-machine key shared by wake and service connection producers. */
+    val machine: String? = null,
+    /** The operation could not run until this prerequisite succeeds. Never inferred from text. */
+    val blockedBy: ConnectivityDependency? = null,
+    /** User cancellation is a retained, retryable result rather than a connection failure. */
+    val cancelled: Boolean = false,
 )
 
 data class NoticeEntry(
@@ -54,6 +60,7 @@ data class NotificationSnapshot(
     val pending: List<NoticeEntry> = emptyList(),
     val visible: List<NoticeEntry> = emptyList(),
     val history: List<NoticeEntry> = emptyList(),
+    val connectivity: ConnectivitySnapshot = ConnectivitySnapshot(),
 )
 
 /**
@@ -83,6 +90,7 @@ class NotificationStore(
     fun post(notice: AppNotice) {
         val state = mutable.value
         val old = state.pending.firstOrNull { it.notice.key == notice.key }
+            ?: state.connectivity.entries.firstOrNull { it.notice.key == notice.key }
         @Suppress("NAME_SHADOWING")
         val notice = mergeWorkingSystems(old?.notice, notice)
         if (old?.notice == notice) return
@@ -100,7 +108,10 @@ class NotificationStore(
         val pending = state.pending.filterNot { it.notice.key == notice.key } + if (quiet) emptyList() else listOf(entry)
         val history = if (notice.phase == NoticePhase.WORKING || quiet) state.history else
             (listOf(entry) + state.history.filterNot { it.id == entry.id }).take(20)
-        mutable.value = state.copy(pending = pending.takeLast(32), history = history)
+        mutable.value = state.copy(
+            pending = pending.takeLast(32), history = history,
+            connectivity = state.connectivity.postConnectivity(entry, now),
+        )
     }
 
     @Synchronized
@@ -108,6 +119,38 @@ class NotificationStore(
         mutable.value = mutable.value.let { state -> state.copy(
             pending = state.pending.filterNot { it.notice.key == key },
             visible = state.visible.filterNot { it.notice.key == key },
+        ) }
+    }
+
+    /** Only an operation owner may remove retained state; hiding a notification is not cancellation. */
+    @Synchronized
+    fun removeConnectivity(key: String) {
+        mutable.value = mutable.value.let { state -> state.copy(
+            pending = state.pending.filterNot { it.notice.key == key },
+            visible = state.visible.filterNot { it.notice.key == key },
+            connectivity = state.connectivity.removeConnectivity(key, clock()),
+        ) }
+    }
+
+    @Synchronized
+    fun minimizeConnectivity() {
+        mutable.value = mutable.value.let { state -> state.copy(
+            connectivity = state.connectivity.copy(minimized = true, visible = false),
+        ) }
+    }
+
+    @Synchronized
+    fun restoreConnectivity() {
+        mutable.value = mutable.value.let { state -> state.copy(
+            connectivity = state.connectivity.copy(minimized = false),
+        ) }
+    }
+
+    /** Shared by intro and the main surface, so changing windows cannot replay completion. */
+    @Synchronized
+    fun markConnectivityPresented() {
+        mutable.value = mutable.value.let { state -> state.copy(
+            connectivity = state.connectivity.markPresented(clock()),
         ) }
     }
 
@@ -124,6 +167,7 @@ class NotificationStore(
     fun tick(presenting: Boolean = true, playback: Boolean = false, timeoutScale: Float = 1f) {
         val now = clock()
         val state = mutable.value
+        val connectivity = state.connectivity.tickConnectivity(now, playback, timeoutScale)
         var pending = state.pending.filter { entry ->
             val duration = if (entry.notice.phase == NoticePhase.ERROR) 7_000 else 3_000
             when {
@@ -138,6 +182,9 @@ class NotificationStore(
         val wakingSystems = pending.filter {
             it.notice.kind == NoticeKind.WAKE && it.notice.phase == NoticePhase.WORKING
         }.flatMap { it.notice.systems }.toSet()
+        val independentSlots = if (connectivity.visible || connectivity.working || connectivity.hasErrors ||
+            connectivity.rows.any { it.notice.cancelled }) 1 else 2
+        var independentSelected = 0
         val selected = if (!presenting) emptyList() else pending
             .filter { it.notice.phase != NoticePhase.WORKING || now - it.createdAt >= 700 }
             .filterNot {
@@ -151,9 +198,13 @@ class NotificationStore(
             .groupBy {
                 if (it.notice.kind in setOf(NoticeKind.CONNECTION, NoticeKind.WAKE, NoticeKind.VPN))
                     "connectivity" else "notice:${it.id}"
-            }.values.take(2).flatten().map { it.id }.toSet()
+            }.filter { (group, _) -> group == "connectivity" || independentSelected++ < independentSlots }
+            .values.flatten().map { it.id }.toSet()
         pending = pending.map { if (it.id in selected && it.shownAt == null) it.copy(shownAt = now) else it }
-        mutable.value = state.copy(pending = pending, visible = pending.filter { it.id in selected })
+        mutable.value = state.copy(
+            pending = pending, visible = pending.filter { it.id in selected },
+            connectivity = connectivity,
+        )
     }
 }
 
@@ -165,4 +216,5 @@ object AppNotifications {
         store.post(notice)
     }
     fun dismiss(key: String) = store.dismiss(key)
+    fun removeConnectivity(key: String) = store.removeConnectivity(key)
 }

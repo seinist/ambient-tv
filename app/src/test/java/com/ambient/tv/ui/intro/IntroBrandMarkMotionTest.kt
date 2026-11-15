@@ -14,9 +14,8 @@ class IntroBrandMarkMotionTest {
         assertTrue(prismRibbonEnvelope(0.08f) < prismRibbonEnvelope(0.16f))
     }
 
-    @Test fun ambientBackgroundStaysVisibleAfterRevealAndDuringServerWake() {
-        // Low-power rendering uses the settled 60-second frame; the 3-minute wake hold
-        // must never fade these new backgrounds back to a blank screen.
+    @Test fun ambientBackgroundStaysVisibleAfterRevealAndInLowPowerFrame() {
+        // Low-power rendering uses the settled 60-second frame, which must keep the backdrop.
         assertEquals(0f, introBackdropPresence(0f), 0.0001f)
         assertTrue(introBackdropPresence(0.65f) > 0f)
         assertTrue(introBackdropPresence(0.65f) < 1f)

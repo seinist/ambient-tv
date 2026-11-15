@@ -85,10 +85,41 @@ class WakeNoticesTest {
     }
 
     @Test
-    fun lastCancelledMemberDismisses() {
+    fun lastCancelledMemberKeepsARetryableTerminalResult() {
         tracker.begin("mac:aa", "plex", null)
         tracker.cancel("mac:aa", "plex")
-        assertEquals(listOf("wake:mac:aa"), dismissed)
+        assertEquals(NoticePhase.INFO, posted.last().phase)
+        assertEquals(true, posted.last().cancelled)
+        assertEquals(R.string.notice_wake_cancelled, posted.last().message)
+        assertEquals(false, tracker.isWaking("mac:aa"))
+    }
+
+    @Test
+    fun cancellingAMachineIgnoresLatePacketsAndCompletionUntilAnExplicitNewAttempt() {
+        tracker.begin("mac:aa", "plex", null)
+        tracker.begin("mac:aa", "files", null)
+        tracker.cancelMachine("mac:aa")
+        val count = posted.size
+        tracker.sent("mac:aa", 1, 3, 60_000)
+        tracker.finish("mac:aa", "plex", success = true)
+        tracker.machineOnline("mac:aa")
+        assertEquals(count, posted.size)
+        assertEquals(true, posted.last().cancelled)
+        tracker.begin("mac:aa", "plex", null)
+        assertEquals(NoticePhase.WORKING, posted.last().phase)
+        assertEquals(false, posted.last().cancelled)
+    }
+
+    @Test
+    fun lateCompletionCannotUndoOneMembersCancellationWhileASiblingStillWorks() {
+        tracker.begin("mac:aa", "plex", null)
+        tracker.begin("mac:aa", "files", null)
+        tracker.cancel("mac:aa", "files")
+        tracker.finish("mac:aa", "files", success = true)
+        assertEquals(true, tracker.isWaking("mac:aa"))
+        tracker.finish("mac:aa", "plex", success = true)
+        assertEquals(true, posted.last().cancelled)
+        assertEquals(NoticePhase.INFO, posted.last().phase)
     }
 
     @Test

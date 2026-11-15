@@ -4,10 +4,16 @@ import com.ambient.tv.notifications.AppNotice
 import com.ambient.tv.notifications.NoticePhase
 import com.ambient.tv.notifications.WakeNoticeTracker
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.async
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.yield
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class ManualWakeCoordinatorTest {
@@ -29,6 +35,32 @@ class ManualWakeCoordinatorTest {
         reachable = { _, _ -> reachable() },
         windowMs = 10, pollMs = 1,
     )
+
+    @OptIn(ExperimentalCoroutinesApi::class)
+    @Test fun aLateSendCannotPublishProgressAfterCancellation() = runTest {
+        val releaseSend = CompletableDeferred<Unit>()
+        val coordinator = ManualWakeCoordinator(
+            notices = notices,
+            group = { _, _, _ -> "mac:aabbccddeeff" to listOf("aabbccddeeff") },
+            send = { _, _, _, _, _ ->
+                withContext(NonCancellable) { releaseSend.await(); Result.success(Unit) }
+            },
+            reachable = { _, _ -> true },
+        )
+        val wake = launch {
+            coordinator.wake(ManualWakeRequest("files", "files:1", "NAS", "nas.local", "aa:bb:cc:dd:ee:ff", 445))
+        }
+        runCurrent()
+        notices.cancelMachine("mac:aabbccddeeff")
+        wake.cancel()
+        val afterCancel = posted.size
+        releaseSend.complete(Unit)
+        runCurrent()
+        assertEquals(afterCancel, posted.size)
+        assertEquals(NoticePhase.INFO, posted.last().phase)
+        assertTrue(posted.last().cancelled)
+        assertEquals(0, posted.last().packetsSent)
+    }
 
     @Test
     fun pressingWakeForOneSystemWakesEveryNicOfTheMachineOnce() = runTest {
