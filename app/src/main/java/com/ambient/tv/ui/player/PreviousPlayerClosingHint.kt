@@ -16,7 +16,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.window.Popup
+import com.ambient.tv.ui.display.UiResolutionPopup as Popup
 import androidx.compose.ui.window.PopupProperties
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
@@ -31,7 +31,7 @@ internal fun previousPlayerHintVisible(waiting: Boolean, waitedMs: Long): Boolea
 
 /**
  * "Vorheriger Player wird beendet…" while a renderer switch waits for the old player to close
- * its output. Not focusable: the panel and the remote keep working, and no dialog opens.
+ * its output. Noninteractive: the panel and the remote keep working while the hint is shown.
  */
 @Composable
 internal fun PreviousPlayerClosingHint(waiting: Boolean) {

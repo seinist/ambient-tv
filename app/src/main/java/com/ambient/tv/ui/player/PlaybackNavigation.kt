@@ -170,7 +170,7 @@ private fun ChapterNotice(timeline: PlaybackTimeline, chapter: VideoChapter, onD
     LaunchedEffect(chapter) { delay(2_200); onDone() }
     if (index < 0) return
     val position = stringResource(R.string.player_chapter_position, index + 1, timeline.chapters.size)
-    androidx.compose.ui.window.Popup(alignment = Alignment.TopCenter, offset = IntOffset(0, with(LocalDensity.current) { 32.dp.roundToPx() }),
+    com.ambient.tv.ui.display.UiResolutionPopup(alignment = Alignment.TopCenter, offset = IntOffset(0, with(LocalDensity.current) { 32.dp.roundToPx() }),
         properties = androidx.compose.ui.window.PopupProperties(focusable = false)) {
         Text(chapter.meaningfulTitle?.let { "$position · $it" } ?: position, color = Color.White, maxLines = 1,
             style = MaterialTheme.typography.titleSmall,

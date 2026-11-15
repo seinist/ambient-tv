@@ -470,9 +470,13 @@ internal fun MpvPlayerContent(
                         formatMpvScalerStat(snapshot.activeDownscaler, stored.downscaler, replaced(stored.downscaler, defaults.downscaler))?.let { add(stringResource(R.string.player_nerd_downscaler) to it) }
                         formatMpvDebandStat(stored.deband, replaced(stored.deband, defaults.deband), stringResource(R.string.player_nerd_enabled))?.let { add(stringResource(R.string.player_nerd_deband_configured) to it) }
                         if (snapshot.sparsam) add(stringResource(R.string.player_nerd_sparsam) to stringResource(R.string.settings_performance_low))
-                        val (renderW, renderH) = gpuRenderSize(context, controller.gpuRenderAtPanel)
+                        val renderSize = controller.renderSurfaceSize
+                        val renderTarget = gpuRenderTargetMode(videoImagePreferences(context).gpuRenderResolutionKey,
+                            gpuOutput = true, atDisplayResolution = controller.gpuRenderAtPanel)
                         add(stringResource(R.string.player_nerd_render_resolution) to
-                            gpuRenderResolutionLabel(true, controller.gpuRenderAtPanel, renderW, renderH))
+                            gpuRenderResolutionLabel(true, controller.gpuRenderAtPanel,
+                                renderSize?.first, renderSize?.second,
+                                windowResolution = renderTarget == VideoRenderTargetMode.WINDOW))
                         add(stringResource(R.string.player_nerd_sdr_curve) to
                             com.ambient.tv.ui.player.backend.mpvSdrSurfaceLabel(controller.sdrSurfaceDataSpace))
                     }

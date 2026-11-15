@@ -16,16 +16,33 @@ class Media3SurfaceResolutionPolicyTest {
         }
     }
 
-    @Test fun explicitUiAndLowEndAutoKeepTheLogicalRenderTarget() {
+    @Test fun explicitUiFollowsTheUiWhileLowEndAutoPreservesTheOriginalWindow() {
         for (enabled in listOf(false, true)) {
             assertEquals(Media3SurfaceResolutionPolicy(false, false),
                 policy(resolutionKey = "ui", processingEnabled = enabled))
-            assertEquals(Media3SurfaceResolutionPolicy(false, false),
-                policy(resolutionKey = "auto", lowEndDevice = true, processingEnabled = enabled))
+            val auto = policy(resolutionKey = "auto", lowEndDevice = true, processingEnabled = enabled)
+            assertEquals(Media3SurfaceResolutionPolicy(false, enabled, targetAtWindowResolution = true), auto)
+            assertFalse(auto.fixesBuffer(uiScaled = false))
+            assertEquals(enabled, auto.fixesBuffer(uiScaled = true))
         }
         // A deliberate Panel choice keeps the existing override on a slower device.
         assertEquals(Media3SurfaceResolutionPolicy(true, true),
             policy(resolutionKey = "panel", lowEndDevice = true))
+    }
+
+    @Test fun originalWindowTargetNeverConstrainsDirectOrBlockedProcessing() {
+        val blocked = listOf(
+            policy(resolutionKey = "auto", lowEndDevice = true, gpuEffectsSupported = false),
+            policy(resolutionKey = "auto", lowEndDevice = true, sdrEffectsAllowed = false),
+            policy(resolutionKey = "auto", lowEndDevice = true, processingEnabled = false),
+            policy(resolutionKey = "auto", lowEndDevice = true, reducedEffects = true),
+            policy(resolutionKey = "auto", lowEndDevice = true, effectsFailed = true),
+        )
+        for (policy in blocked) {
+            assertEquals(VideoRenderTargetMode.WINDOW, policy.targetMode)
+            assertFalse(policy.fixesBuffer(uiScaled = true))
+        }
+        assertFalse(policy(resolutionKey = "ui").fixesBuffer(uiScaled = true))
     }
 
     @Test fun unavailableOrFailedEffectsDoNotForceANativeSurfaceBuffer() {

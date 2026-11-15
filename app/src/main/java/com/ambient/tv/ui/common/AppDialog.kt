@@ -2,6 +2,8 @@
 
 package com.ambient.tv.ui.common
 
+import com.ambient.tv.ui.display.findUiRenderWindow
+
 import com.ambient.tv.ui.sound.navigationSoundInput
 
 import androidx.compose.animation.core.Animatable
@@ -49,7 +51,7 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.window.Dialog
+import com.ambient.tv.ui.display.UiResolutionDialog as Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
@@ -121,6 +123,7 @@ fun AppDialog(
 ) {
     KeepPlayerPanelOpen()
     val density = LocalDensity.current
+    val renderedWindow = com.ambient.tv.ui.display.LocalUiRenderEnvironment.current.embedded
     val tokens = LocalUiTokens.current
     val accentMode = LocalAccentModeKey.current
     val handheld = LocalHandheldUi.current
@@ -133,7 +136,9 @@ fun AppDialog(
     val effectiveMaxHeightFraction = appDialogHeightFraction(maxHeightFraction, handheld, wideHandheld)
     // Measured in the page's (UI-scaled) density: Configuration.screenHeightDp is in system dp
     // and would shrink every dialog by the UI scale factor, forcing content to scroll.
-    val screenHeight = with(density) { LocalContext.current.resources.displayMetrics.heightPixels.toDp() }
+    val screenPixels = com.ambient.tv.ui.display.LocalUiRenderEnvironment.current.viewport?.renderHeight
+        ?: LocalContext.current.resources.displayMetrics.heightPixels
+    val screenHeight = with(density) { screenPixels.toDp() }
         .takeIf { it > 0.dp } ?: LocalConfiguration.current.screenHeightDp.dp
     val maxHeight = screenHeight * effectiveMaxHeightFraction
     val verticalInset = screenHeight * ((1f - effectiveMaxHeightFraction) / 2f)
@@ -155,8 +160,9 @@ fun AppDialog(
         // A dialog owns its own view, so the framework's D-pad clicks have to be silenced here too.
         com.ambient.tv.ui.sound.SilenceSystemMenuSounds()
         if (handheld) DialogResizesForKeyboard()
+        val dialogDensity = if (renderedWindow) LocalDensity.current else density
         CompositionLocalProvider(
-            LocalDensity provides density,
+            LocalDensity provides dialogDensity,
             LocalUiTokens provides tokens,
             LocalAccentModeKey provides accentMode,
         ) {
@@ -304,7 +310,7 @@ private fun DialogResizesForKeyboard() {
     val view = androidx.compose.ui.platform.LocalView.current
     androidx.compose.runtime.DisposableEffect(view) {
         @Suppress("DEPRECATION")
-        (view.parent as? androidx.compose.ui.window.DialogWindowProvider)?.window
+        view.findUiRenderWindow()
             ?.setSoftInputMode(android.view.WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE)
         onDispose { }
     }

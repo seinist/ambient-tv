@@ -6,6 +6,7 @@ import androidx.compose.runtime.setValue
 import com.ambient.tv.ui.player.withTitle
 import com.ambient.tv.ui.player.withResolution
 import com.ambient.tv.ui.player.videoImagePreferences
+import com.ambient.tv.ui.player.gpuRenderTargetMode
 import com.ambient.tv.ui.player.withGlobalSvp
 import android.content.Context
 import android.view.SurfaceHolder
@@ -310,7 +311,10 @@ fun MpvVideoSurface(
         },
         onRelease = { it.release() },
         update = { view ->
-            view.renderAtDisplayResolution = controller.gpuRenderAtPanel
+            view.renderResolutionTarget = gpuRenderTargetMode(
+                videoImagePreferences(view.context).gpuRenderResolutionKey,
+                controller.supportsGpuFilters, controller.gpuRenderAtPanel,
+            )
             view.presentation = presentation
             view.sourceAspectRatio = sourceAspectRatio
             view.ambientBackdrop = com.ambient.tv.ui.player.AmbientVideoBackdrop.active
@@ -345,7 +349,10 @@ private class MpvSurfaceHost(
     }
 
     init {
-        renderAtDisplayResolution = controller.gpuRenderAtPanel
+        renderResolutionTarget = gpuRenderTargetMode(
+            videoImagePreferences(context).gpuRenderResolutionKey,
+            controller.supportsGpuFilters, controller.gpuRenderAtPanel,
+        )
         videoSurface.holder.addCallback(this)
         lifecycle.addObserver(lifecycleObserver)
     }

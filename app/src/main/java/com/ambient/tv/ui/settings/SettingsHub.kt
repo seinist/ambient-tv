@@ -321,6 +321,10 @@ internal fun SettingsHub(
             append(stringResource(category.titleRes)); append(' '); append(category.name)
             if (category == SettingsCategory.APPEARANCE) {
                 append(' '); append(stringResource(R.string.settings_ui_hdr)); append(" hdr sdr")
+                if (!handheld) {
+                    append(' '); append(stringResource(R.string.settings_ui_render_resolution))
+                    append(" ui render resolution auflösung aufloesung 1080p")
+                }
             }
             if (category == SettingsCategory.IMAGE) {
                 if (showSdrToHdr) {

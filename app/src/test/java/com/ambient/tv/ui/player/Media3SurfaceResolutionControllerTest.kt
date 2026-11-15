@@ -10,6 +10,9 @@ import android.view.SurfaceHolder
 import android.view.SurfaceView
 import android.view.View
 import android.widget.FrameLayout
+import com.ambient.tv.ui.display.UiRenderViewport
+import com.ambient.tv.ui.display.UiRenderViewportSource
+import com.ambient.tv.ui.display.uiRenderViewport
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -33,6 +36,7 @@ class Media3SurfaceResolutionControllerTest {
     private lateinit var activity: Activity
     private lateinit var container: FrameLayout
     private val controllers = mutableListOf<Media3SurfaceResolutionController>()
+    private val viewportSources = mutableListOf<UiRenderViewportSource>()
     private val panel = Media3SurfaceResolutionPolicy(targetAtDisplayResolution = true, fixSurfaceSize = true)
 
     @Before fun setUp() {
@@ -46,7 +50,105 @@ class Media3SurfaceResolutionControllerTest {
 
     @After fun tearDown() {
         controllers.forEach { it.release() }
+        viewportSources.forEach { it.close() }
         activityController.close()
+    }
+
+    @Test
+    @Config(qualifiers = "w3840dp-h2160dp-land-mdpi")
+    fun fullHdUiKeepsPanelAndAutomaticVideoAtTheOriginalFourKWindow() {
+        val source = hostedViewport(UiRenderViewport(1920, 1080, 3840, 2160))
+        val view = newSurface()
+        changePhysicalMode(checkNotNull(view.display), 3840, 2160)
+        settleViewport(source, 1920, 1080)
+        assertEquals(3840 to 2160, logicalSize(checkNotNull(view.display)))
+        val targets = mutableListOf<Pair<Int, Int>?>()
+        val controller = controller(view, targets)
+
+        controller.update(panel)
+        assertEquals(3840 to 2160, targets.last())
+        assertEquals(listOf(3840 to 2160), view.recording.fixedRequests)
+
+        controller.update(Media3SurfaceResolutionPolicy(false, true, targetAtWindowResolution = true))
+        assertEquals(3840 to 2160, targets.last())
+        assertEquals(1, view.recording.fixedRequests.size)
+
+        controller.update(Media3SurfaceResolutionPolicy(false, false))
+        assertEquals(1920 to 1080, targets.last())
+        assertEquals(1, view.recording.layoutRequests)
+        assertEquals(1920 to 1080, view.width to view.height)
+    }
+
+    @Test
+    @Config(qualifiers = "w3840dp-h2160dp-land-mdpi")
+    fun hostedMiniPlayerKeepsItsFractionOfTheWindowAndDirectOutputUnconstrained() {
+        val source = hostedViewport(UiRenderViewport(1920, 1080, 3840, 2160))
+        val view = newSurface(480, 270)
+        changePhysicalMode(checkNotNull(view.display), 3840, 2160)
+        settleViewport(source, 1920, 1080)
+        val targets = mutableListOf<Pair<Int, Int>?>()
+        val controller = controller(view, targets)
+
+        controller.update(panel.copy(fixSurfaceSize = false))
+        assertEquals(960 to 540, targets.last())
+        assertTrue(view.recording.fixedRequests.isEmpty())
+        assertEquals(0, view.recording.layoutRequests)
+
+        controller.update(panel)
+        assertEquals(listOf(960 to 540), view.recording.fixedRequests)
+        assertEquals(480 to 270, view.width to view.height)
+
+        controller.update(Media3SurfaceResolutionPolicy(false, false, targetAtWindowResolution = true))
+        assertEquals(960 to 540, targets.last())
+        assertEquals(1, view.recording.layoutRequests)
+    }
+
+    @Test
+    @Config(qualifiers = "w3840dp-h2160dp-land-mdpi")
+    fun pendingUiRelayoutNeverCombinesNewScaleWithOldViewDimensions() {
+        val source = hostedViewport(UiRenderViewport(3840, 2160, 3840, 2160))
+        val view = newSurface(3840, 2160)
+        changePhysicalMode(checkNotNull(view.display), 3840, 2160)
+        settleViewport(source, 3840, 2160)
+        val targets = mutableListOf<Pair<Int, Int>?>()
+        val controller = controller(view, targets)
+        controller.update(panel)
+        view.recording.fixedRequests.clear()
+        targets.clear()
+
+        source.update(UiRenderViewport(1920, 1080, 3840, 2160))
+        controller.update(panel)
+        source.onPreDraw()
+        assertNull(view.uiRenderViewport())
+        assertTrue(view.recording.fixedRequests.isEmpty())
+        assertTrue(targets.isEmpty())
+
+        // A direct decoder must release the old GPU constraint even before layout settles.
+        controller.update(panel.copy(fixSurfaceSize = false))
+        assertEquals(1, view.recording.layoutRequests)
+        controller.update(panel)
+        view.layoutParams = FrameLayout.LayoutParams(1920, 1080)
+        settleViewport(source, 1920, 1080)
+
+        assertEquals(1920 to 1080, view.width to view.height)
+        assertEquals(listOf(3840 to 2160), view.recording.fixedRequests)
+        assertTrue(view.recording.fixedRequests.none { it.first > 3840 || it.second > 2160 })
+    }
+
+    @Test
+    // API 29 is the app's minimum SDK and the supported pre-SurfaceControlViewHost fallback.
+    @Config(sdk = [29, 34])
+    fun automaticWindowTargetKeepsTheUnhostedFallbackSurfaceAtItsLayoutSize() {
+        val view = newSurface()
+        changePhysicalMode(checkNotNull(view.display), 3840, 2160)
+        val targets = mutableListOf<Pair<Int, Int>?>()
+        controller(view, targets).update(
+            Media3SurfaceResolutionPolicy(false, true, targetAtWindowResolution = true),
+        )
+
+        assertEquals(listOf(1920 to 1080), targets)
+        assertTrue(view.recording.fixedRequests.isEmpty())
+        assertEquals(0, view.recording.layoutRequests)
     }
 
     @Test fun displayModeEventResizesTheBufferWithoutResizingTheLogicalView() {
@@ -190,6 +292,21 @@ class Media3SurfaceResolutionControllerTest {
 
     private fun newSurface(width: Int = 1920, height: Int = 1080) =
         RecordingSurfaceView(activity).also { attach(it, width, height) }
+
+    private fun hostedViewport(viewport: UiRenderViewport): UiRenderViewportSource =
+        UiRenderViewportSource(container).also { source ->
+            viewportSources += source
+            source.update(viewport)
+            settleViewport(source, viewport.renderWidth, viewport.renderHeight)
+        }
+
+    private fun settleViewport(source: UiRenderViewportSource, width: Int, height: Int) {
+        container.layoutParams = container.layoutParams.apply { this.width = width; this.height = height }
+        container.measure(View.MeasureSpec.makeMeasureSpec(width, View.MeasureSpec.EXACTLY),
+            View.MeasureSpec.makeMeasureSpec(height, View.MeasureSpec.EXACTLY))
+        container.layout(0, 0, width, height)
+        source.onPreDraw()
+    }
 
     private fun attach(view: SurfaceView, width: Int, height: Int) {
         container.addView(view, FrameLayout.LayoutParams(width, height))

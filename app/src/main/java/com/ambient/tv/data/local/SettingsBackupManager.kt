@@ -92,6 +92,7 @@ data class SettingsBackup(
     val libraryListRows: Int = 7,
     val highQualityAssetsEnabled: Boolean = false,
     val uiScale: Float = 1f,
+    val uiRenderResolutionKey: String = UiRenderResolutionPolicy.SYSTEM,
     val overscanPercent: Int = 0,
     val accentColorKey: String = "gold",
     val accentStyleKey: String = com.ambient.tv.ui.theme.AccentStyle.DEFAULT,
@@ -442,6 +443,7 @@ class SettingsBackupManager @Inject constructor(
             libraryListRows = preferences.libraryListRows,
             highQualityAssetsEnabled = preferences.highQualityAssetsEnabled,
             uiScale = preferences.uiScale,
+            uiRenderResolutionKey = preferences.uiRenderResolutionKey,
             overscanPercent = preferences.overscanPercent,
             accentColorKey = preferences.accentColorKey,
             accentStyleKey = preferences.accentStyleKey,
@@ -825,6 +827,7 @@ class SettingsBackupManager @Inject constructor(
         preferences.libraryListRows = backup.libraryListRows
         preferences.highQualityAssetsEnabled = backup.highQualityAssetsEnabled
         preferences.uiScale = backup.uiScale
+        if (backup.schemaVersion >= 77) preferences.uiRenderResolutionKey = backup.uiRenderResolutionKey
         preferences.overscanPercent = backup.overscanPercent
         preferences.accentColorKey = normalizedAccentKey(backup.accentColorKey)
         preferences.accentStyleKey = backup.accentStyleKey
@@ -1057,7 +1060,7 @@ class SettingsBackupManager @Inject constructor(
     }
 
     private companion object {
-        const val CURRENT_SCHEMA_VERSION = 76
+        const val CURRENT_SCHEMA_VERSION = 77
         val PORTABLE_DISPLAY_MODES = setOf("system", AppPreferences.DISPLAY_MODE_AUTO_CONTENT, AppPreferences.DISPLAY_MODE_AUTO_DISPLAY)
     }
 }

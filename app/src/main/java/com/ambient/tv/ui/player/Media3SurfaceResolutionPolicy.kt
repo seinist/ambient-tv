@@ -3,8 +3,18 @@ package com.ambient.tv.ui.player
 /** The intended GPU target can be known before it is safe to resize the video surface. */
 internal data class Media3SurfaceResolutionPolicy(
     val targetAtDisplayResolution: Boolean,
+    /** GPU processing is eligible; the controller also checks whether this viewport needs fixing. */
     val fixSurfaceSize: Boolean,
-)
+    val targetAtWindowResolution: Boolean = false,
+) {
+    val targetMode: VideoRenderTargetMode get() = when {
+        targetAtDisplayResolution -> VideoRenderTargetMode.DISPLAY
+        targetAtWindowResolution -> VideoRenderTargetMode.WINDOW
+        else -> VideoRenderTargetMode.UI
+    }
+
+    fun fixesBuffer(uiScaled: Boolean): Boolean = fixSurfaceSize && targetMode.fixesBuffer(uiScaled)
+}
 
 /**
  * Resolve scaler availability independently from whether image processing is already enabled.
@@ -26,9 +36,12 @@ internal fun media3SurfaceResolutionPolicy(
         lowEndDevice = lowEndDevice,
         userImageProcessing = true,
     )
+    val targetAtWindowResolution = gpuRenderTargetMode(resolutionKey, gpuOutput = true,
+        atDisplayResolution = targetAtDisplayResolution) == VideoRenderTargetMode.WINDOW
     return Media3SurfaceResolutionPolicy(
         targetAtDisplayResolution = targetAtDisplayResolution,
-        fixSurfaceSize = targetAtDisplayResolution && gpuEffectsSupported && sdrEffectsAllowed &&
+        fixSurfaceSize = (targetAtDisplayResolution || targetAtWindowResolution) && gpuEffectsSupported && sdrEffectsAllowed &&
             processingEnabled && !reducedEffects && !effectsFailed,
+        targetAtWindowResolution = targetAtWindowResolution,
     )
 }

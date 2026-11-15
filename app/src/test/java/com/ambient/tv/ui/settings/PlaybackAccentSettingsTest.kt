@@ -62,7 +62,7 @@ class PlaybackAccentSettingsTest {
         val baseline = SettingsUiState(accentColorKey = "custom")
         val draft = baseline.copy(customPlaybackAccentHex = "#123456")
         assertNotEquals(baseline.editableValues(), draft.editableValues())
-        val stored = baseline.copy(customAccentHex = "#FEDCBA", uiScale = .9f)
+        val stored = baseline.copy(customAccentHex = "#FEDCBA", uiDisplay = baseline.uiDisplay.copy(scale = .9f))
         val merged = mergeStoredSettings(draft, baseline, stored)
         assertEquals("#123456", merged.customPlaybackAccentHex)
         assertEquals("#FEDCBA", merged.customAccentHex)

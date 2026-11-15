@@ -230,6 +230,7 @@ class MpvPlaybackController(
         val next = MpvEngineState(
             confirmed = true,
             status = status, wantsToPlay = player.wantsToPlay(), seekable = player.canSeekNow(), supportsGpuFilters = player.supportsGpuFilters, gpuRenderAtPanel = player.gpuRenderAtPanel, sdrSurfaceDataSpace = player.sdrSurfaceDataSpace,
+            renderSurfaceSize = player.renderSurfaceSize,
             usesFrameInterpolation = player.usesFrameInterpolation, accelerationFallback = player.accelerationFallback, shieldSoftwareStatus = player.shieldSoftwareStatus,
             imageOptions = player.imageOptions, imageOptionWarnings = player.imageOptionWarnings.toList(),
             deinterlaceModeKey = player.deinterlaceModeKey, deinterlaceFilterKey = player.deinterlaceFilterKey,
@@ -271,8 +272,9 @@ class MpvPlaybackController(
     val supportsGpuFilters get() = state.supportsGpuFilters
     /** False until the running engine reported its state; until then output facts are expected. */
     val engineConfirmed get() = state.confirmed
-    /** The GPU output renders at the physical panel resolution (otherwise at the UI size). */
+    /** The GPU output uses panel coordinates; Auto may otherwise keep the original window. */
     val gpuRenderAtPanel get() = state.gpuRenderAtPanel
+    val renderSurfaceSize get() = state.renderSurfaceSize
     val sdrSurfaceDataSpace get() = state.sdrSurfaceDataSpace
     override val usesRendererScaling get() = supportsGpuFilters
     override val usesFrameInterpolation get() = state.usesFrameInterpolation
@@ -565,6 +567,7 @@ private data class MpvEngineState(
     val seekable: Boolean = false,
     val supportsGpuFilters: Boolean = false,
     val gpuRenderAtPanel: Boolean = false,
+    val renderSurfaceSize: Pair<Int, Int>? = null,
     val sdrSurfaceDataSpace: Int? = null,
     val usesFrameInterpolation: Boolean = false,
     val accelerationFallback: String? = null,

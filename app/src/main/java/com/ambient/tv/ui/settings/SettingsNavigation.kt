@@ -233,6 +233,7 @@ internal fun settingsSearchTargetKey(category: SettingsCategory, query: String):
     return when (category) {
         SettingsCategory.APPEARANCE -> when {
             listOf("hdr", "sdr").any { it in q } -> "appearance:hdr"
+            listOf("auflösung", "aufloesung", "resolution", "1080", "render").any { it in q } -> "appearance:render-resolution"
             listOf("scale", "skal", "größe", "groesse", "size", "zoom").any { it in q } -> "appearance:scale"
             listOf("accent", "akzent", "colour", "color", "farbe").any { it in q } -> "appearance:accent"
             listOf("theme", "thema", "oled", "dim", "dark", "dunkel").any { it in q } -> "appearance:theme"

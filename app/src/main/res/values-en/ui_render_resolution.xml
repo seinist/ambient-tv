@@ -1,0 +1,12 @@
+<resources>
+    <string name="settings_ui_render_resolution">Interface resolution</string>
+    <string name="settings_ui_render_resolution_system">System default</string>
+    <string name="settings_ui_render_resolution_1080">1080p</string>
+    <string name="settings_ui_render_resolution_panel">Display resolution</string>
+    <string name="settings_ui_render_resolution_system_hint">Uses the interface resolution provided by the system.</string>
+    <string name="settings_ui_render_resolution_1080_hint">Renders the interface at up to 1080p.</string>
+    <string name="settings_ui_render_resolution_panel_hint">Renders the interface at the display resolution.</string>
+    <string name="settings_ui_render_resolution_restart">Applies from the next app start.</string>
+    <string name="settings_ui_render_resolution_hdr_hint">UI HDR requires the system resolution.</string>
+    <string name="settings_ui_render_resolution_unavailable">Separate interface resolution requires Android 11 or later.</string>
+</resources>

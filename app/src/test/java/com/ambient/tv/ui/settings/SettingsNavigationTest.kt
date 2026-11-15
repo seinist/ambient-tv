@@ -313,7 +313,7 @@ class SettingsNavigationTest {
     }
     @Test fun refreshKeepsDraftAndAcceptsUneditedPlayerDefaults() {
         val baseline = SettingsUiState()
-        val draft = baseline.copy(uiScale = 0.9f)
+        val draft = baseline.copy(uiDisplay = baseline.uiDisplay.copy(scale = 0.9f))
         val stored = baseline.copy(audioSettings = baseline.audioSettings.update(AudioOptions(output = "pcm")))
         val merged = mergeStoredSettings(draft, baseline, stored)
         assertEquals(0.9f, merged.uiScale)
@@ -360,6 +360,8 @@ class SettingsNavigationTest {
     @Test
     fun searchTargetsKeepTheirIdentityWhenSectionsMove() {
         assertEquals("appearance:scale", settingsSearchTargetKey(SettingsCategory.APPEARANCE, "ui scale"))
+        assertEquals("appearance:render-resolution", settingsSearchTargetKey(SettingsCategory.APPEARANCE, "Auflösung der Oberfläche"))
+        assertEquals("appearance:render-resolution", settingsSearchTargetKey(SettingsCategory.APPEARANCE, "interface resolution"))
         assertEquals("appearance:theme", settingsSearchTargetKey(SettingsCategory.APPEARANCE, "oled theme"))
         assertEquals("appearance:hdr", settingsSearchTargetKey(SettingsCategory.APPEARANCE, "HDR"))
         assertEquals("playback:test-duration", settingsSearchTargetKey(SettingsCategory.PLAYBACK, "Prüfdauer Bildaussetzer"))

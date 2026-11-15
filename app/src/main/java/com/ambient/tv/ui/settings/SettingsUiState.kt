@@ -43,6 +43,12 @@ data class MediaServerAuthLiveState(
     val resolvingMac: Boolean = false,
 )
 
+/** Related UI size settings share one constructor slot to stay within the JVM method limit. */
+data class UiDisplayDraft(
+    val scale: Float = 1f,
+    val renderResolutionKey: String = UiRenderResolutionPolicy.SYSTEM,
+)
+
 data class SettingsUiState(
     val trailersConfigured: Boolean = false,
     val mpvImageOptions: MpvImageOptions = MpvImageOptions(),
@@ -160,7 +166,7 @@ data class SettingsUiState(
     val subtitleFallbackLanguageKey: String = "none",
     val fullSubtitlesOnForeignAudio: Boolean = false,
     val forcedSubtitlesInUiLanguage: Boolean = false,
-    val uiScale: Float = 1f,
+    val uiDisplay: UiDisplayDraft = UiDisplayDraft(),
     val accentColorKey: String = "gold",
     val customAccentHex: String = "#E5A00D",
     val customPlaybackAccentHex: String = "#1A5FF2",
@@ -304,6 +310,8 @@ data class SettingsUiState(
     val screensaverPhotoAlbumKey: String = "",
     val screensaverPhotoAlbumTitle: String = "",
 ) {
+    val uiScale: Float get() = uiDisplay.scale
+    val uiRenderResolutionKey: String get() = uiDisplay.renderResolutionKey
     val bigSeekJumpSeconds: Int get() = seekPlayback.bigSeekJumpSeconds
     val pauseRewindSeconds: Int get() = seekPlayback.pauseRewindSeconds
     val pauseRewindMinPauseSeconds: Int get() = seekPlayback.pauseRewindMinPauseSeconds
@@ -390,6 +398,7 @@ internal fun SettingsUiState.editableValues(): List<Any?> = listOf(
     fullSubtitlesOnForeignAudio,
     forcedSubtitlesInUiLanguage,
     uiScale,
+    uiRenderResolutionKey,
     accentColorKey,
     customAccentHex,
     customPlaybackAccentHex,
@@ -574,7 +583,11 @@ internal fun mergeStoredSettings(draft: SettingsUiState, baseline: SettingsUiSta
     fullSubtitlesOnForeignAudio = if (draft.fullSubtitlesOnForeignAudio != baseline.fullSubtitlesOnForeignAudio) draft.fullSubtitlesOnForeignAudio else stored.fullSubtitlesOnForeignAudio,
     forcedSubtitlesInUiLanguage = if (draft.forcedSubtitlesInUiLanguage != baseline.forcedSubtitlesInUiLanguage) draft.forcedSubtitlesInUiLanguage else stored.forcedSubtitlesInUiLanguage,
     forcedSubtitlesEnabled = if (draft.forcedSubtitlesEnabled != baseline.forcedSubtitlesEnabled) draft.forcedSubtitlesEnabled else stored.forcedSubtitlesEnabled,
-    uiScale = if (draft.uiScale != baseline.uiScale) draft.uiScale else stored.uiScale,
+    uiDisplay = UiDisplayDraft(
+        scale = if (draft.uiScale != baseline.uiScale) draft.uiScale else stored.uiScale,
+        renderResolutionKey = if (draft.uiRenderResolutionKey != baseline.uiRenderResolutionKey)
+            draft.uiRenderResolutionKey else stored.uiRenderResolutionKey,
+    ),
     accentColorKey = if (draft.accentColorKey != baseline.accentColorKey) draft.accentColorKey else stored.accentColorKey,
     customAccentHex = if (draft.customAccentHex != baseline.customAccentHex) draft.customAccentHex else stored.customAccentHex,
     customPlaybackAccentHex = if (draft.customPlaybackAccentHex != baseline.customPlaybackAccentHex) draft.customPlaybackAccentHex else stored.customPlaybackAccentHex,

@@ -894,6 +894,11 @@ class AppPreferences @Inject constructor(
         get() = UiScalePolicy.normalize(prefs.getFloat(KEY_UI_SCALE, 1f))
         set(value) = prefs.edit { putFloat(KEY_UI_SCALE, UiScalePolicy.normalize(value)) }
 
+    /** Device-local UI buffer choice, read when the app UI starts; video keeps its own target. */
+    var uiRenderResolutionKey: String
+        get() = UiRenderResolutionPolicy.normalize(prefs.getString("ui_render_resolution", UiRenderResolutionPolicy.SYSTEM))
+        set(value) = prefs.edit { putString("ui_render_resolution", UiRenderResolutionPolicy.normalize(value)) }
+
     private val overscanState = androidx.compose.runtime.mutableIntStateOf(OverscanPolicy.normalize(prefs.getInt(KEY_OVERSCAN_PERCENT, 0)))
 
     /** Inset of the whole UI from each screen edge, in percent of the display size. Applies live. */

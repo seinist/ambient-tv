@@ -466,6 +466,11 @@ fun SettingsScreen(
                                 }
                             }
                             item { SettingsSubheader(stringResource(R.string.settings_section_general_display_size)) }
+                            if (com.ambient.tv.ui.mobile.isTelevision(displayContext)) {
+                                item(key = "appearance:render-resolution") {
+                                    UiRenderResolutionSettings(uiState.uiRenderResolutionKey, viewModel::onUiRenderResolutionChanged)
+                                }
+                            }
                             item(key = "appearance:scale") {
                                 com.ambient.tv.ui.common.RightPanelValueSlider(
                                     title = stringResource(R.string.settings_ui_scale),

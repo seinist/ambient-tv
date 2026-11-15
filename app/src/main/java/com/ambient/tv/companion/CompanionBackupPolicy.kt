@@ -44,7 +44,7 @@ internal object CompanionBackupPolicy {
     private val sinceSchema62 = setOf("sleepAutoStartKey", "sleepWarningMinutes")
     private val hardware = setOf(
         "autoSelectDisplayVersion", "displayRefreshAdjustmentKey", "displayModeWhitelist", "preferredDisplayModeKey",
-        "allowDoubleRefreshRate", "preferDoubleRefreshRate", "allowThreeTwoPulldown", "displaySwitchPauseMs", "syncPlaybackToDisplay", "uiScale", "overscanPercent", "uiHdrModeKey", "sdrToHdrEnabled", "sdrToHdrPeakNits", "sdrToHdrReferenceWhiteNits",
+        "allowDoubleRefreshRate", "preferDoubleRefreshRate", "allowThreeTwoPulldown", "displaySwitchPauseMs", "syncPlaybackToDisplay", "uiScale", "uiRenderResolutionKey", "overscanPercent", "uiHdrModeKey", "sdrToHdrEnabled", "sdrToHdrPeakNits", "sdrToHdrReferenceWhiteNits",
         "allowHighRefreshDoubling", "gpuRenderResolutionKey", "mpvSdrCurveKey", "svpExplicitChoice", "mpvImageExplicitChoice",
         "performanceModeKey", "uiPerformanceModeKey", "playbackPerformanceModeKey", "frameDropTestSeconds", "highQualityAssetsEnabled", "playbackBackendKey", "tvheadendPlaybackBackendKey",
         "mpvVideoOutputModeKey", "mpvVideoDecoderKey", "mpvHdrGpuEnabled", "vlcVideoOutputModeKey", "mediaAudioPassthroughEnabled",
@@ -179,6 +179,7 @@ internal object CompanionBackupPolicy {
         if (mode in setOf("settings", "preferences")) {
             require(overwrite) // Settings replacement is only available after explicit TV confirmation.
             (portable + if (deviceSettings) hardware else emptySet()).filter { source.schemaVersion >= 50 || it !in navSounds }.filter { source.schemaVersion >= 58 || it !in sinceSchema58 }.filter { source.schemaVersion >= 59 || it !in setOf("liveTimeshiftEnabled", "liveDirectRecordEnabled") }.filter { source.schemaVersion >= 60 || it != "playerOsdSeconds" }.filter { source.schemaVersion >= 61 || it != "displaySwitchPauseMs" }.filter { source.schemaVersion >= 62 || it !in sinceSchema62 }.filter { source.schemaVersion >= 63 || it != "sleepDailyStopMinute" }.filter { source.schemaVersion >= 64 || it != "mpvHdrGpuEnabled" }.filter { source.schemaVersion >= 65 || it != "sdrToHdrReferenceWhiteNits" }.filter { source.schemaVersion >= 66 || it !in sinceSchema66 }.filter { source.schemaVersion >= 67 || it != "syncPlaybackToDisplay" }.filter { source.schemaVersion >= 68 || it != "mpvImageExplicitChoice" }.filter { source.schemaVersion >= 69 || it !in sinceSchema69 }.filter { source.schemaVersion >= 71 || it != "preferDoubleRefreshRate" }.filter { source.schemaVersion >= 73 || it !in setOf("playerBackMinimizes", "networkBufferKey") }.filter { source.schemaVersion >= 74 || it !in sinceSchema74 }.filter { source.schemaVersion >= 75 || it !in sinceSchema75 }
+                .filter { source.schemaVersion >= 77 || it != "uiRenderResolutionKey" }
                 // A sender from before the clock page has no clock: the receiver keeps its own.
                 .filter { it != "clock" || source.clock != null }
                 .filter { it != "subtitleAppearance" || source.subtitleAppearance != null }

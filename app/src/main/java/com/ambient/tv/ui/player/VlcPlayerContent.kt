@@ -423,6 +423,15 @@ internal fun VlcPlayerContent(
                         ).joinToString(" · ").takeIf { it.isNotBlank() }?.let { add(stringResource(R.string.player_video) to it) }
                         formatNerdBitrate(runtimeVideo?.videoBitrateBitsPerSecond)?.let { add(stringResource(R.string.player_nerd_video_bitrate) to it) }
                         add(stringResource(R.string.player_nerd_scaler_configured) to controller.currentScalingFilter())
+                        if (controller.rendersVideoOnGpu) {
+                            val renderSize = controller.renderSurfaceSize
+                            val renderTarget = gpuRenderTargetMode(videoImagePreferences(context).gpuRenderResolutionKey,
+                                gpuOutput = true, atDisplayResolution = controller.gpuRenderAtPanel)
+                            add(stringResource(R.string.player_nerd_render_resolution) to
+                                gpuRenderResolutionLabel(true, controller.gpuRenderAtPanel,
+                                    renderSize?.first, renderSize?.second,
+                                    windowResolution = renderTarget == VideoRenderTargetMode.WINDOW))
+                        }
                         add(stringResource(R.string.player_nerd_image_processing_configured) to if (controller.imageOptions.softwareProcessing) stringResource(R.string.player_nerd_image_processing_software) else stringResource(R.string.player_nerd_image_processing_hardware))
                         (context as? android.app.Activity)?.let(androidx.core.content.ContextCompat::getDisplayOrDefault)?.refreshRate?.takeIf { it > 0f }?.let { add(stringResource(R.string.player_nerd_display_refresh) to formatNerdHz(it.toDouble()).orEmpty()) }
                     }

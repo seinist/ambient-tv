@@ -12,7 +12,6 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.colorspace.ColorSpaces
 import androidx.compose.ui.platform.LocalView
-import androidx.compose.ui.window.DialogWindowProvider
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.repeatOnLifecycle
@@ -25,7 +24,10 @@ import kotlinx.coroutines.awaitCancellation
 import timber.log.Timber
 
 /** Requested UI mode only. This is not a measurement of the TV's HDMI output. */
-internal class UiHdrState(private val mainWindow: Window) : UiHdrOutput {
+internal class UiHdrState(
+    private val mainWindow: Window,
+    private val canvasHdrSupported: Boolean = true,
+) : UiHdrOutput {
     internal val conversionExperiment = com.ambient.tv.ui.player.PlayerHdrWindowExperiment(mainWindow)
     var headroom by mutableFloatStateOf(1f)
         private set
@@ -61,6 +63,15 @@ internal class UiHdrState(private val mainWindow: Window) : UiHdrOutput {
         stopVideoConversion()
         val owner = ambientOwner ?: return
         ambient.filter { it !== owner }.forEach { it.update(null) }
+        // SurfaceControlViewHost's public API cannot request a Canvas HDR color mode.
+        // Keep only that Canvas in SDR; independent video/projectM HDR surfaces still work.
+        if (owner.windowOutput && !canvasHdrSupported) {
+            owner.update(null)
+            controller.reset()
+            headroom = 1f
+            ambientWindowSince = 0L
+            return
+        }
         val safeRequest = request.takeIf { !suspended && !failed && owner.canRequest() && owner !in ambientFailures }
         if (owner.windowOutput) {
             // Configure the Canvas HDR target before publishing a shader request.
@@ -139,8 +150,10 @@ internal class UiHdrState(private val mainWindow: Window) : UiHdrOutput {
     }
 
     internal fun update(eligibility: UiHdrEligibility, identity: Any?) {
-        headroom = controller.update(eligibility.copy(windowReady = eligibility.windowReady && popupCount == 0),
+        val requestedHeadroom = controller.update(
+            eligibility.copy(windowReady = eligibility.windowReady && popupCount == 0),
             identity, SystemClock.elapsedRealtime())
+        headroom = if (canvasHdrSupported) requestedHeadroom else 1f
         failed = failed || controller.failed
     }
 
@@ -189,8 +202,9 @@ internal fun rememberUiHdrState(
     sdrToHdrEnabled: Boolean = false,
     sdrToHdrPeakNits: Int = 0,
     sdrToHdrReferenceWhiteNits: Int = 0,
+    canvasHdrSupported: Boolean = true,
 ): UiHdrState {
-    val state = remember(activity) { UiHdrState(activity.window) }
+    val state = remember(activity, canvasHdrSupported) { UiHdrState(activity.window, canvasHdrSupported) }
     com.ambient.tv.ui.player.ObservePlayerHdrEnvironment(activity, state.conversionExperiment)
     // Not a restart key: the renderers apply a new SDR white live, without leaving HDR.
     val referenceWhite by androidx.compose.runtime.rememberUpdatedState(sdrToHdrReferenceWhiteNits)
@@ -306,7 +320,7 @@ fun MatchUiHdrDialogWindow() {
     val state = LocalUiHdrState.current
     val view = LocalView.current
     DisposableEffect(state, view) {
-        val window = (view.parent as? DialogWindowProvider)?.window
+        val window = view.findUiRenderWindow()
         if (window != null) state?.attach(window)
         else state?.openPopup()
         onDispose {

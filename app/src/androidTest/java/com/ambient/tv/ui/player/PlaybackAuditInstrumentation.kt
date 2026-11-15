@@ -426,6 +426,11 @@ class PlaybackAuditInstrumentation : Instrumentation() {
                     finish(Activity.RESULT_OK, Bundle().apply { putString("stream", "TRAILER PLAYBACK AUDIT PASSED\n$results") })
                     return@thread
                 }
+                if (arguments.getString("uiResolution") == "true") {
+                    com.ambient.tv.ui.display.UiRenderResolutionAudit(this, ::log).run()
+                    finish(Activity.RESULT_OK, Bundle().apply { putString("stream", "UI RESOLUTION AUDIT PASSED\n$results") })
+                    return@thread
+                }
                 if (arguments.getString("uiHdr") == "true") {
                     com.ambient.tv.ui.display.UiHdrAudit(this, ::log).run(tmdbOnly = arguments.getString("tmdbOnly") == "true")
                     finish(Activity.RESULT_OK, Bundle().apply { putString("stream", "UI HDR FALLBACK AUDIT PASSED\n$results") })
