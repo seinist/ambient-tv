@@ -3,7 +3,9 @@ package com.ambient.tv.data.weather
 import java.io.StringReader
 import java.time.Instant
 import java.time.ZoneOffset
+import java.util.Locale
 import javax.xml.parsers.DocumentBuilderFactory
+import kotlin.math.roundToInt
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonArray
@@ -90,21 +92,52 @@ private fun Element.directChildren(name: String): List<Element> = (0 until child
     (childNodes.item(it) as? Element)?.takeIf { child -> (child.localName ?: child.tagName) == name }
 }
 
-internal fun weatherMapImageUrl(provider: WeatherMapProvider, viewport: WeatherMapViewport, frame: WeatherMapFrame): String =
+/** Destination coordinates are relative to the visible image; base tiles can extend past its edges. */
+internal data class WeatherMapImagePart(
+    val url: String,
+    val left: Float = 0f,
+    val top: Float = 0f,
+    val right: Float = 1f,
+    val bottom: Float = 1f,
+)
+
+internal fun weatherMapImageParts(provider: WeatherMapProvider, viewport: WeatherMapViewport,
+    frame: WeatherMapFrame): List<WeatherMapImagePart> =
     if (provider == WeatherMapProvider.RAINVIEWER) {
         require(rainViewerFramePath.matches(frame.path))
         // A single reflectivity palette for all precipitation; the legend has no snow-type claim.
-        "${rainViewerTileHost(frame.tileHost)}${frame.path}/512/${viewport.zoom}/${viewport.x}/${viewport.y}/2/1_0.png"
-    } else provider.endpoint.toHttpUrl().newBuilder()
+        listOf(WeatherMapImagePart("${rainViewerTileHost(frame.tileHost)}${frame.path}/512/${rainViewerCoordinates(viewport)}/2/1_0.png"))
+    } else viewport.mercatorParts().let { parts ->
+        val split = (512 * parts.first().right).roundToInt().coerceIn(1, 511)
+        parts.mapIndexed { index, part ->
+            val width = if (parts.size == 1) 512 else if (index == 0) split else 512 - split
+            WeatherMapImagePart(weatherWmsImageUrl(provider, part.bounds, width, frame),
+                left = part.left, right = part.right)
+        }
+    }
+
+/** The first request is useful for inspecting a source; rendering must use every returned part. */
+internal fun weatherMapImageUrl(provider: WeatherMapProvider, viewport: WeatherMapViewport, frame: WeatherMapFrame): String =
+    weatherMapImageParts(provider, viewport, frame).first().url
+
+private fun weatherWmsImageUrl(provider: WeatherMapProvider, bounds: String, width: Int, frame: WeatherMapFrame): String =
+    provider.endpoint.toHttpUrl().newBuilder()
         .addQueryParameter("SERVICE", "WMS").addQueryParameter("REQUEST", "GetMap")
         .addQueryParameter("VERSION", "1.3.0").addQueryParameter("CRS", "EPSG:3857")
         .addQueryParameter("LAYERS", provider.layer).addQueryParameter("STYLES", "")
-        .addQueryParameter("BBOX", viewport.mercatorBounds).addQueryParameter("WIDTH", "512")
+        .addQueryParameter("BBOX", bounds).addQueryParameter("WIDTH", width.toString())
         .addQueryParameter("HEIGHT", "512").addQueryParameter("FORMAT", "image/png")
         .addQueryParameter("TRANSPARENT", "TRUE").addQueryParameter("TIME", frame.time).build().toString()
 
 internal fun weatherMapCoverageUrl(viewport: WeatherMapViewport, tileHost: String = "https://tilecache.rainviewer.com"): String =
-    "${rainViewerTileHost(tileHost)}/v2/coverage/0/512/${viewport.zoom}/${viewport.x}/${viewport.y}/0/0_0.png"
+    "${rainViewerTileHost(tileHost)}/v2/coverage/0/512/${rainViewerCoordinates(viewport)}/0/0_0.png"
+
+private fun rainViewerCoordinates(viewport: WeatherMapViewport): String {
+    if (viewport.offsetX == 0.0 && viewport.offsetY == 0.0) return "${viewport.zoom}/${viewport.x}/${viewport.y}"
+    // The documented point endpoint centres the same one-tile extent without four radar
+    // downloads per frame. Decimal dots distinguish coordinates from integer tile indices.
+    return String.format(Locale.ROOT, "%d/%.10f/%.10f", viewport.zoom, viewport.centreLatitude, viewport.centreLongitude)
+}
 
 /** Honour the source's CDN host without allowing a manifest or cached entry to target another service. */
 private fun rainViewerTileHost(value: String): String {
@@ -118,3 +151,7 @@ private fun rainViewerTileHost(value: String): String {
 
 internal fun weatherBaseMapUrl(viewport: WeatherMapViewport): String =
     "https://tile.openstreetmap.org/${viewport.zoom}/${viewport.x}/${viewport.y}.png"
+
+internal fun weatherBaseMapParts(viewport: WeatherMapViewport): List<WeatherMapImagePart> = viewport.baseTiles().map { tile ->
+    WeatherMapImagePart(weatherBaseMapUrl(tile.viewport), tile.left, tile.top, tile.left + 1f, tile.top + 1f)
+}
