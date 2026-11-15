@@ -101,7 +101,6 @@ fun WeatherScreen(
 ) {
     val settings by viewModel.settings.collectAsState()
     val state by viewModel.state.collectAsState()
-    val networkAllowed by viewModel.networkAllowed.collectAsState()
     val contentVisible = LocalWeatherPresentation.current.contentVisible
     val owner = LocalLifecycleOwner.current
     val tokens = LocalUiTokens.current
@@ -111,7 +110,7 @@ fun WeatherScreen(
     var tab by rememberSaveable { mutableStateOf("overview") }
     val location = settings.selectedLocation
     val snapshot = state.data?.takeIf { it.matches(settings) }
-    var settledError by remember(settings.enabled, location, settings.temperatureUnit, settings.windUnit, networkAllowed) {
+    var settledError by remember(settings.enabled, location, settings.temperatureUnit, settings.windUnit) {
         mutableStateOf<WeatherError?>(null)
     }
     LaunchedEffect(state.error, state.loading) {
@@ -128,8 +127,8 @@ fun WeatherScreen(
     ReportSidebarContentReady(true)
     BackHandler(enabled = onBack != null) { onBack?.invoke() }
     LaunchedEffect(viewModel, owner, settings.enabled, location, settings.temperatureUnit,
-        settings.windUnit, networkAllowed, contentVisible) {
-        if (settings.enabled && location != null && networkAllowed && contentVisible) {
+        settings.windUnit, contentVisible) {
+        if (settings.enabled && location != null && contentVisible) {
             owner.lifecycle.repeatOnLifecycle(Lifecycle.State.RESUMED) {
                 while (true) {
                     viewModel.refreshVisible()
@@ -148,7 +147,7 @@ fun WeatherScreen(
                     iconOnly = true, modifier = Modifier.leftKeyAction(back), onClick = back)
             }
             TvChip(stringResource(R.string.weather_refresh), icon = Icons.Filled.Refresh, iconOnly = true,
-                enabled = settings.enabled && location != null && networkAllowed,
+                enabled = settings.enabled && location != null,
                 loading = state.loading, onClick = viewModel::retryForecast)
             TvChip(stringResource(R.string.weather_settings), icon = Icons.Filled.Settings,
                 iconOnly = true, onClick = onOpenSettings)
@@ -196,22 +195,21 @@ fun WeatherScreen(
                         onProviderSelected = { provider -> viewModel.changeSettings {
                             if (tab == "radar") it.copy(radarProvider = provider) else it.copy(satelliteProvider = provider)
                         } },
-                        networkAllowed = networkAllowed && settings.enabled,
+                        networkAllowed = settings.enabled,
                         modifier = Modifier.fillMaxWidth().weight(1f).pageContentUp(focusChain),
                     )
                     else -> {
                         if (snapshot != null) {
                             WeatherOverview(snapshot, state.copy(error = displayedError), nowMillis, focusChain,
-                                networkAllowed = networkAllowed, onRetry = viewModel::retryForecast,
-                                onOpenSettings = onOpenSettings, modifier = Modifier.fillMaxWidth().weight(1f))
+                                onRetry = viewModel::retryForecast, modifier = Modifier.fillMaxWidth().weight(1f))
                         } else if (displayedError != null) {
                             val feedback = weatherForecastFeedback(displayedError, cached = false, subject = location.name)
                             StatePanel(stringResource(feedback.message, *feedback.args.toTypedArray()),
                                 body = feedback.detail?.let { stringResource(it) },
                                 phase = feedback.phase,
-                                actionLabel = stringResource(if (networkAllowed) R.string.weather_retry else R.string.weather_settings),
+                                actionLabel = stringResource(R.string.weather_retry),
                                 actionLoading = state.loading,
-                                onAction = if (networkAllowed) ({ if (!state.loading) viewModel.retryForecast() }) else onOpenSettings,
+                                onAction = { if (!state.loading) viewModel.retryForecast() },
                                 modifier = Modifier.fillMaxWidth().weight(1f))
                         } else {
                             WeatherLoadingOverview(location.name, handheld, Modifier.fillMaxWidth().weight(1f))
@@ -229,9 +227,7 @@ private fun WeatherOverview(
     state: WeatherState,
     nowMillis: Long,
     focusChain: PageFocusChain,
-    networkAllowed: Boolean,
     onRetry: () -> Unit,
-    onOpenSettings: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val locale = LocalConfiguration.current.locales[0] ?: Locale.ROOT
@@ -259,9 +255,9 @@ private fun WeatherOverview(
                     OperationFeedbackContent(
                         weatherForecastFeedback(state.error, cached = true, subject = snapshot.location.name),
                         modifier = Modifier.fillMaxWidth(), layout = FeedbackLayout.COMPACT,
-                        actionLabel = stringResource(if (networkAllowed) R.string.weather_retry else R.string.weather_settings),
-                        onAction = if (networkAllowed) onRetry else onOpenSettings,
-                        actionLoading = state.loading && networkAllowed, requestActionFocus = false,
+                        actionLabel = stringResource(R.string.weather_retry),
+                        onAction = onRetry,
+                        actionLoading = state.loading, requestActionFocus = false,
                     )
                 }
                 Text(stringResource(R.string.weather_updated,

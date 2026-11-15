@@ -10,7 +10,7 @@
     <string name="weather_retry">Erneut versuchen</string>
     <string name="weather_setup">Wetter einrichten</string>
     <string name="weather_enable">Wetter aktivieren</string>
-    <string name="weather_enable_hint">Wetter für gespeicherte Orte, auf Wunsch auch im Seitenkopf und Bildschirmschoner.</string>
+    <string name="weather_enable_hint">Wetter für gespeicherte Orte über das Internet laden, auf Wunsch auch im Seitenkopf und Bildschirmschoner.</string>
     <string name="weather_disabled">Wetter ist deaktiviert</string>
     <string name="weather_disabled_hint">Aktiviere Wetter und wähle einen Ort in den Einstellungen aus.</string>
     <string name="weather_choose_location">Ort auswählen</string>
@@ -34,8 +34,6 @@
     <string name="weather_show_screensaver_hint">Wetter für den ausgewählten Ort bei der Uhr des Bildschirmschoners anzeigen.</string>
     <string name="weather_units">Einheiten</string>
     <string name="weather_temperature">Temperatur</string>
-    <string name="weather_local_only">Nur lokaler Netzwerkzugriff ist erlaubt</string>
-    <string name="weather_local_only_hint">Wetter und Karten benötigen für Aktualisierungen Internetzugriff. Deaktiviere „Nur lokales Netzwerk“ in den Netzwerkeinstellungen. Gespeicherte Daten bleiben verfügbar.</string>
     <string name="weather_offline">Wetter konnte nicht aktualisiert werden</string>
     <string name="weather_rate_limited">Der Wetterdienst ist ausgelastet. Versuche es später erneut.</string>
     <string name="weather_unavailable">Wetter ist derzeit nicht verfügbar</string>

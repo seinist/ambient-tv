@@ -2,7 +2,6 @@ package com.ambient.tv.ui.weather
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import com.ambient.tv.data.local.AppPreferences
 import com.ambient.tv.data.weather.WeatherError
 import com.ambient.tv.data.weather.WeatherLocation
 import com.ambient.tv.data.weather.WeatherRepository
@@ -16,14 +15,10 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
-import kotlinx.coroutines.flow.onStart
-import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import javax.inject.Inject
 
@@ -39,14 +34,10 @@ data class WeatherLocationSearch(
 @HiltViewModel
 class WeatherViewModel @Inject constructor(
     private val repository: WeatherRepository,
-    private val preferences: AppPreferences,
 ) : ViewModel() {
     val settings = repository.settings
     val state = repository.state
     val feedbackReporter = OperationFeedbackReporter()
-    val networkAllowed = preferences.changes().onStart { emit(Unit) }
-        .map { !preferences.localNetworkOnly }.distinctUntilChanged()
-        .stateIn(viewModelScope, SharingStarted.Eagerly, !preferences.localNetworkOnly)
     private val mutableSearch = MutableStateFlow(WeatherLocationSearch())
     val search = mutableSearch.asStateFlow()
     private var searchJob: Job? = null
@@ -57,7 +48,7 @@ class WeatherViewModel @Inject constructor(
 
     init {
         viewModelScope.launch {
-            combine(settings, networkAllowed) { value, allowed -> value.enabled && allowed }
+            settings.map { it.enabled }
                 .distinctUntilChanged().collect { allowed ->
                     if (!allowed) {
                         clearSearch()
@@ -75,7 +66,7 @@ class WeatherViewModel @Inject constructor(
     fun retryForecast() {
         val selected = settings.value
         val place = selected.selectedLocation ?: return
-        if (!selected.enabled || preferences.localNetworkOnly) return
+        if (!selected.enabled) return
         val identity = weatherCacheKey(place, selected)
         cancelForecastRetry()
         val ticket = feedbackReporter.begin(WEATHER_FORECAST_SCOPE)
@@ -86,9 +77,7 @@ class WeatherViewModel @Inject constructor(
                 val current = settings.value
                 val stillSelected = current.selectedLocation?.let { weatherCacheKey(it, current) } == identity
                 val error = result?.error
-                if (current.enabled && !preferences.localNetworkOnly && stillSelected && error != null &&
-                    error != WeatherError.DISABLED && error != WeatherError.LOCAL_ONLY
-                ) {
+                if (current.enabled && stillSelected && error != null && error != WeatherError.DISABLED) {
                     feedbackReporter.complete(ticket, weatherForecastFeedback(error, result.data != null,
                         subject = place.name, delivery = FeedbackDelivery.ACTION))
                 }
@@ -181,7 +170,7 @@ class WeatherViewModel @Inject constructor(
         val generation = ++searchGeneration
         val boundedQuery = query.take(100)
         val requestedQuery = boundedQuery.trim()
-        val allowed = settings.value.enabled && !preferences.localNetworkOnly
+        val allowed = settings.value.enabled
         val previous = mutableSearch.value
         val loading = requestedQuery.length >= 2 && allowed
         mutableSearch.value = if (manualRetry && previous.query == boundedQuery && previous.failed)
@@ -194,7 +183,7 @@ class WeatherViewModel @Inject constructor(
             try {
                 if (!manualRetry) delay(450)
                 val locations = repository.searchLocations(requestedQuery, language)
-                if (searchGeneration == generation && settings.value.enabled && !preferences.localNetworkOnly) {
+                if (searchGeneration == generation && settings.value.enabled) {
                     mutableSearch.value = WeatherLocationSearch(boundedQuery, locations, completed = true)
                 }
             } catch (cancelled: CancellationException) {
@@ -203,7 +192,7 @@ class WeatherViewModel @Inject constructor(
                 }
                 throw cancelled
             } catch (error: Exception) {
-                if (searchGeneration == generation && settings.value.enabled && !preferences.localNetworkOnly) {
+                if (searchGeneration == generation && settings.value.enabled) {
                     val reason = (error as? WeatherRequestException)?.reason ?: WeatherError.UNAVAILABLE
                     mutableSearch.value = WeatherLocationSearch(query = boundedQuery, completed = true, failed = true,
                         error = reason)

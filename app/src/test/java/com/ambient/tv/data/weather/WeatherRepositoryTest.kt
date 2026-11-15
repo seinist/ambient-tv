@@ -41,6 +41,63 @@ class WeatherRepositoryTest {
     private val other = WeatherLocation("b", "New York", "United States", "New York", 40.71, -74.01, "America/New_York")
     private val settings = WeatherSettings(enabled = true, locations = listOf(place, other), selectedLocationId = place.id)
 
+    @Test fun enabledWeatherUsesSearchAndForecastWithTheDefaultServerLanRestriction() = runBlocking {
+        fixture { chain, _ ->
+            if (chain.request().url.host == "geocoding-api.open-meteo.com") response(chain, body = geocoding)
+            else response(chain)
+        }.use { fixture ->
+            assertTrue("The media-server LAN default must remain enabled", fixture.preferences.localNetworkOnly)
+            assertEquals("Berlin", fixture.repository.searchLocations("Berlin", "de").single().name)
+            val forecast = fixture.repository.refresh()
+            assertEquals(place, forecast?.data?.location)
+            assertNull(forecast?.error)
+            assertEquals(2, fixture.requests.get())
+            assertTrue("Weather must not change the media-server restriction", fixture.preferences.localNetworkOnly)
+        }
+    }
+
+    @Test fun reenablingTheServerLanRestrictionDoesNotCancelActiveWeatherRequests() = runBlocking {
+        val started = CountDownLatch(2)
+        val release = CountDownLatch(1)
+        fixture { chain, _ ->
+            started.countDown()
+            release.await(5, TimeUnit.SECONDS)
+            if (chain.request().url.host == "geocoding-api.open-meteo.com") response(chain, body = geocoding)
+            else response(chain)
+        }.use { fixture ->
+            fixture.preferences.localNetworkOnly = false
+            fixture.repository.updateSettings(settings)
+            val forecast = async(Dispatchers.IO) { fixture.repository.refresh() }
+            val search = async(Dispatchers.IO) { fixture.repository.searchLocations("Berlin", "de") }
+            try {
+                started.awaitOrFail()
+                fixture.preferences.localNetworkOnly = true
+                // Also exercise a consumer synchronizing preferences after this server-only change.
+                fixture.repository.updateSettings(settings)
+                release.countDown()
+                val result = withTimeout(5_000) { forecast.await() }
+                assertEquals(place, result?.data?.location)
+                assertNull(result?.error)
+                assertEquals("Berlin", withTimeout(5_000) { search.await() }.single().name)
+                assertEquals(2, fixture.requests.get())
+                assertTrue(fixture.preferences.localNetworkOnly)
+            } finally { release.countDown(); forecast.cancelAndJoin(); search.cancelAndJoin() }
+        }
+    }
+
+    @Test fun disablingWeatherStillBlocksNewSearchAndForecastRequests() = runBlocking {
+        fixture { chain, _ -> response(chain) }.use { fixture ->
+            fixture.repository.updateSettings(settings.copy(enabled = false))
+            val forecast = fixture.repository.refresh(force = true)
+            val searchFailure = runCatching { fixture.repository.searchLocations("Berlin", "de") }.exceptionOrNull()
+            assertEquals(WeatherError.DISABLED, forecast?.error)
+            assertNull(forecast?.data)
+            assertEquals(WeatherError.DISABLED, (searchFailure as? WeatherRequestException)?.reason)
+            assertEquals(0, fixture.requests.get())
+            assertTrue(fixture.preferences.localNetworkOnly)
+        }
+    }
+
     @Test fun cancelledVisibleRefreshCanRetryImmediatelyWithoutAnEmptyThirtyMinuteWait() = runBlocking {
         val started = CountDownLatch(1)
         val release = CountDownLatch(1)
@@ -179,29 +236,26 @@ class WeatherRepositoryTest {
         }
     }
 
-    @Test fun locallyCancelledSearchStaysCancellationWhenPolicyIsReenabledBeforeTheCallback() = runBlocking {
-        for (lanOnly in listOf(false, true)) {
-            val started = CountDownLatch(1)
-            val release = CountDownLatch(1)
-            fixture { chain, attempt ->
-                if (attempt == 1) { started.countDown(); release.await(5, TimeUnit.SECONDS) }
-                response(chain, body = geocoding)
-            }.use { fixture ->
-                val search = async(Dispatchers.IO) { fixture.repository.searchLocations("Berlin", "de") }
-                try {
-                    started.awaitOrFail()
-                    if (lanOnly) fixture.preferences.localNetworkOnly = true
-                    fixture.repository.updateSettings(settings.copy(enabled = lanOnly))
-                    fixture.preferences.localNetworkOnly = false
-                    fixture.repository.updateSettings(settings)
-                    release.countDown()
-                    val failure = runCatching { withTimeout(5_000) { search.await() } }.exceptionOrNull()
-                    assertTrue("Local cancellation must never become a provider failure", failure is CancellationException)
-                    assertTrue("The request itself must be cancelled, rather than timing out in the test", search.isCancelled)
-                    assertEquals("Berlin", fixture.repository.searchLocations("Berlin", "de").single().name)
-                    assertEquals(2, fixture.requests.get())
-                } finally { release.countDown(); search.cancelAndJoin() }
-            }
+    @Test fun locallyCancelledSearchStaysCancellationWhenWeatherIsReenabledBeforeTheCallback() = runBlocking {
+        val started = CountDownLatch(1)
+        val release = CountDownLatch(1)
+        fixture { chain, attempt ->
+            if (attempt == 1) { started.countDown(); release.await(5, TimeUnit.SECONDS) }
+            response(chain, body = geocoding)
+        }.use { fixture ->
+            val search = async(Dispatchers.IO) { fixture.repository.searchLocations("Berlin", "de") }
+            try {
+                started.awaitOrFail()
+                fixture.repository.updateSettings(settings.copy(enabled = false))
+                fixture.repository.updateSettings(settings)
+                release.countDown()
+                val failure = runCatching { withTimeout(5_000) { search.await() } }.exceptionOrNull()
+                assertTrue("Local cancellation must never become a provider failure", failure is CancellationException)
+                assertTrue("The request itself must be cancelled, rather than timing out in the test", search.isCancelled)
+                assertEquals("Berlin", fixture.repository.searchLocations("Berlin", "de").single().name)
+                assertEquals(2, fixture.requests.get())
+                assertTrue(fixture.preferences.localNetworkOnly)
+            } finally { release.countDown(); search.cancelAndJoin() }
         }
     }
 
@@ -209,7 +263,7 @@ class WeatherRepositoryTest {
         storage: SharedPreferences = memoryPreferences(),
         answer: (Interceptor.Chain, Int) -> Response,
     ): Fixture {
-        val preferences = AppPreferences(storage).apply { localNetworkOnly = false; weatherSettings = settings }
+        val preferences = AppPreferences(storage).apply { weatherSettings = settings }
         val requests = AtomicInteger()
         val client = OkHttpClient.Builder().addInterceptor { answer(it, requests.incrementAndGet()) }.build()
         val context = object : ContextWrapper(ApplicationProvider.getApplicationContext<Context>()) {

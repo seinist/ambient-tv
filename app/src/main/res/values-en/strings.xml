@@ -358,7 +358,7 @@
     <string name="collections_empty_body">This library does not contain any Plex collections yet.</string>
     <string name="collection_item_count">%1$d titles</string>
     <string name="settings_local_only">Local network only</string>
-    <string name="settings_local_only_hint">Connect on your home network only.</string>
+    <string name="settings_local_only_hint">Connect to media servers on your home network only. Online services remain available.</string>
     <string name="settings_theme_music">Theme music</string>
     <string name="settings_theme_music_hint">Plays theme music on the detail page.</string>
     <string name="settings_theme_music_volume">Theme music volume</string>

@@ -10,7 +10,7 @@
     <string name="weather_retry">Try again</string>
     <string name="weather_setup">Set up weather</string>
     <string name="weather_enable">Enable weather</string>
-    <string name="weather_enable_hint">Weather for your saved locations, with optional display in the header and screensaver.</string>
+    <string name="weather_enable_hint">Load weather for your saved locations over the internet, with optional display in the header and screensaver.</string>
     <string name="weather_disabled">Weather is disabled</string>
     <string name="weather_disabled_hint">Enable weather and choose a location in settings.</string>
     <string name="weather_choose_location">Choose a location</string>
@@ -34,8 +34,6 @@
     <string name="weather_show_screensaver_hint">Show weather for the selected location with the screensaver clock.</string>
     <string name="weather_units">Units</string>
     <string name="weather_temperature">Temperature</string>
-    <string name="weather_local_only">Only local network access is allowed</string>
-    <string name="weather_local_only_hint">Weather and map updates need internet access. Turn off “Local network only” in network settings. Saved data remains available.</string>
     <string name="weather_offline">Weather could not be updated</string>
     <string name="weather_rate_limited">The weather service is busy. Please try again later.</string>
     <string name="weather_unavailable">Weather is currently unavailable</string>

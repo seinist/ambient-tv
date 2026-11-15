@@ -22,15 +22,13 @@ class WeatherFeedbackTest {
         assertFalse(saved.shouldNotify(false))
     }
 
-    @Test fun disabledAndLocalOnlyAreInformationalEvenAfterAManualRetry() {
-        for (error in listOf(WeatherError.DISABLED, WeatherError.LOCAL_ONLY)) {
-            val forecast = weatherForecastFeedback(error, cached = false, delivery = FeedbackDelivery.ACTION)
-            val search = weatherSearchFeedback(error, delivery = FeedbackDelivery.ACTION)
-            assertEquals(FeedbackPhase.INFO, forecast.phase)
-            assertEquals(FeedbackPhase.INFO, search.phase)
-            assertFalse(forecast.shouldNotify(false))
-            assertFalse(search.shouldNotify(false))
-        }
+    @Test fun disabledWeatherIsInformationalEvenAfterAManualRetry() {
+        val forecast = weatherForecastFeedback(WeatherError.DISABLED, cached = false, delivery = FeedbackDelivery.ACTION)
+        val search = weatherSearchFeedback(WeatherError.DISABLED, delivery = FeedbackDelivery.ACTION)
+        assertEquals(FeedbackPhase.INFO, forecast.phase)
+        assertEquals(FeedbackPhase.INFO, search.phase)
+        assertFalse(forecast.shouldNotify(false))
+        assertFalse(search.shouldNotify(false))
     }
 
     @Test fun explicitRetryReportsOnceOnlyAfterTheRelevantViewIsHidden() {

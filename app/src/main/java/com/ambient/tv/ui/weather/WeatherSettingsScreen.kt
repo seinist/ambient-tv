@@ -26,7 +26,6 @@ import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
 import com.ambient.tv.R
-import com.ambient.tv.data.weather.WeatherError
 import com.ambient.tv.data.weather.WeatherLocation
 import com.ambient.tv.data.weather.WeatherMapKind
 import com.ambient.tv.data.weather.WeatherMapProvider
@@ -57,7 +56,6 @@ fun WeatherSettingsScreen(
 ) {
     val settings by viewModel.settings.collectAsState()
     val search by viewModel.search.collectAsState()
-    val networkAllowed by viewModel.networkAllowed.collectAsState()
     val contentVisible = LocalWeatherPresentation.current.contentVisible
     val locale = LocalConfiguration.current.locales[0]
     val language = locale?.language ?: "en"
@@ -90,10 +88,6 @@ fun WeatherSettingsScreen(
                 TvSettingRow(stringResource(R.string.weather_enable), stringResource(R.string.weather_enable_hint),
                     checked = settings.enabled, onCheckedChange = viewModel::setEnabled)
             }
-            if (!networkAllowed) item(key = "local-only") {
-                OperationFeedbackContent(weatherForecastFeedback(WeatherError.LOCAL_ONLY, cached = false),
-                    modifier = Modifier.fillMaxWidth(), layout = FeedbackLayout.COMPACT)
-            }
             item(key = "places-title") {
                 Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     Text(stringResource(R.string.weather_manage_locations), style = MaterialTheme.typography.titleLarge)
@@ -115,7 +109,7 @@ fun WeatherSettingsScreen(
             if (settings.locations.size >= WeatherSettings.MAX_LOCATIONS) item(key = "places-limit") {
                 Text(stringResource(R.string.weather_locations_limit, WeatherSettings.MAX_LOCATIONS),
                     style = MaterialTheme.typography.bodySmall, color = muted)
-            } else if (settings.enabled && networkAllowed) {
+            } else if (settings.enabled) {
                 item(key = "location-search") {
                     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         TvTextField(search.query, onValueChange = { viewModel.searchLocations(it, language) },

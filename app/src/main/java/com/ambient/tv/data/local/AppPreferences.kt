@@ -696,6 +696,7 @@ class AppPreferences @Inject constructor(
         set(value) = prefs.edit { putBoolean(KEY_CHOOSE_SERVER_ON_STARTUP, value) }
 
 
+    /** Restricts configured media-server connections; public online services use their own switches. */
     var localNetworkOnly: Boolean
         get() = prefs.getBoolean(KEY_LOCAL_NETWORK_ONLY, true)
         set(value) = prefs.edit { putBoolean(KEY_LOCAL_NETWORK_ONLY, value) }
