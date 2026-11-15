@@ -69,6 +69,8 @@ fun ContentRow(
     columnFocus: RowColumnFocus? = null,
     /** Works for touch/wheel scrolling as well as remote focus, without extra row controls. */
     onViewportNearEnd: ((Int) -> Unit)? = null,
+    /** A fresh Home keeps cached and subsequently inserted cards at zero until user input. */
+    followFirstItem: Boolean = false,
 ) {
     val handheld = com.ambient.tv.ui.mobile.LocalHandheldUi.current
     // A row recycled out of the list comes back scrolled to the tile it was left on.
@@ -79,6 +81,8 @@ fun ContentRow(
     val rowState = rememberBrowseRowState(
         initialFirstVisibleItemIndex = (restoreIndex - 1).coerceAtLeast(0),
     )
+    val itemKeys = remember(row.items) { row.items.map { it.ratingKey } }
+    BrowseStartupViewport(rowState, itemKeys, followFirstItem)
     BrowseScrollBudget(rowState)
     if (onViewportNearEnd != null) {
         LaunchedEffect(rowState, row.id, row.items.size) {
@@ -89,7 +93,7 @@ fun ContentRow(
                 }
         }
     }
-    RegisterRowColumnFocus(columnFocus, row.id, rowState, remember(row.items) { row.items.map { it.ratingKey } })
+    RegisterRowColumnFocus(columnFocus, row.id, rowState, itemKeys)
     // Focus changes are extremely frequent while moving vertically. Keep them out of the
     // ContentRow composition so the nested LazyRow and its visible MediaTiles are not recomposed
     // just to animate the section heading.

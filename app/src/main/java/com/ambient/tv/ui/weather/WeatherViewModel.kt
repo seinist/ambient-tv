@@ -58,10 +58,6 @@ class WeatherViewModel @Inject constructor(
         }
     }
 
-    fun refresh(force: Boolean = false) {
-        viewModelScope.launch { repository.refresh(force) }
-    }
-
     /** Only an explicit Retry may report a failure after its inline scope has disappeared. */
     fun retryForecast() {
         val selected = settings.value
@@ -98,6 +94,8 @@ class WeatherViewModel @Inject constructor(
     /** A visible-page refresh belongs to the caller's lifecycle, including cancellation. */
     suspend fun refreshVisible() { repository.refresh() }
 
+    // Changing settings only changes selection/policy. Visible header, screensaver or forecast
+    // consumers observe these settings and own any refresh, including its cancellation.
     fun changeSettings(change: (WeatherSettings) -> WeatherSettings) {
         val current = settings.value
         val next = change(current).normalized()
@@ -110,12 +108,10 @@ class WeatherViewModel @Inject constructor(
 
     fun setEnabled(enabled: Boolean) {
         changeSettings { it.copy(enabled = enabled) }
-        if (enabled) refresh()
     }
 
     fun selectLocation(id: String) {
         changeSettings { it.copy(selectedLocationId = id) }
-        refresh()
     }
 
     fun addLocation(location: WeatherLocation) {
@@ -125,7 +121,6 @@ class WeatherViewModel @Inject constructor(
             it.copy(locations = (it.locations.filterNot { saved -> saved.id == location.id } + location), selectedLocationId = location.id)
         }
         clearSearch()
-        refresh()
     }
 
     fun removeLocation(id: String) {
@@ -134,17 +129,14 @@ class WeatherViewModel @Inject constructor(
             current.copy(locations = remaining,
                 selectedLocationId = if (current.selectedLocationId == id) remaining.firstOrNull()?.id else current.selectedLocationId)
         }
-        refresh()
     }
 
     fun setTemperatureUnit(unit: String) {
         changeSettings { it.copy(temperatureUnit = unit) }
-        refresh()
     }
 
     fun setWindUnit(unit: String) {
         changeSettings { it.copy(windUnit = unit) }
-        refresh()
     }
 
     fun clearSearch() {

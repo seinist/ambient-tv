@@ -41,6 +41,43 @@ class WeatherRepositoryTest {
     private val other = WeatherLocation("b", "New York", "United States", "New York", 40.71, -74.01, "America/New_York")
     private val settings = WeatherSettings(enabled = true, locations = listOf(place, other), selectedLocationId = place.id)
 
+    @Test fun startupAndSettingsChangesLeaveWeatherStorageAndHttpIdleUntilNeeded() = runBlocking {
+        fixture { chain, _ -> response(chain) }.use { fixture ->
+            assertEquals(0, fixture.cacheDirectoryReads.get())
+            assertEquals(0, fixture.requests.get())
+            fixture.repository.updateSettings(settings.copy(selectedLocationId = other.id, showInHeader = false,
+                showInScreensaver = true, temperatureUnit = "fahrenheit"))
+            assertNull(fixture.repository.state.value.data)
+            assertEquals(0, fixture.cacheDirectoryReads.get())
+            assertEquals(0, fixture.requests.get())
+
+            fixture.repository.updateSettings(settings.copy(enabled = false))
+            assertEquals(WeatherError.DISABLED, fixture.repository.refresh()?.error)
+            assertEquals(0, fixture.cacheDirectoryReads.get())
+            fixture.repository.updateSettings(settings)
+            val forecast = fixture.repository.refresh()
+            assertEquals(place, forecast?.data?.location)
+            assertEquals(1, fixture.cacheDirectoryReads.get())
+            assertEquals(1, fixture.requests.get())
+            assertEquals(forecast, fixture.repository.refresh())
+            assertEquals(1, fixture.requests.get())
+        }
+    }
+
+    @Test fun firstVisibleConsumerRestoresAFreshDiskCacheWithoutAnotherHttpRequest() = runBlocking {
+        val directory = temporary.newFolder()
+        val saved = fixture(directory = directory) { chain, _ -> response(chain) }.use { fixture ->
+            fixture.repository.refresh()?.data.also { assertNotNull(it) }
+        }
+        fixture(directory = directory) { _, _ -> error("A fresh cache must not request HTTP") }.use { fixture ->
+            assertNull(fixture.repository.state.value.data)
+            assertEquals(0, fixture.cacheDirectoryReads.get())
+            assertEquals(saved, fixture.repository.refresh()?.data)
+            assertEquals(1, fixture.cacheDirectoryReads.get())
+            assertEquals(0, fixture.requests.get())
+        }
+    }
+
     @Test fun enabledWeatherUsesSearchAndForecastWithTheDefaultServerLanRestriction() = runBlocking {
         fixture { chain, _ ->
             if (chain.request().url.host == "geocoding-api.open-meteo.com") response(chain, body = geocoding)
@@ -261,16 +298,17 @@ class WeatherRepositoryTest {
 
     private fun fixture(
         storage: SharedPreferences = memoryPreferences(),
+        directory: File = temporary.newFolder(),
         answer: (Interceptor.Chain, Int) -> Response,
     ): Fixture {
         val preferences = AppPreferences(storage).apply { weatherSettings = settings }
         val requests = AtomicInteger()
+        val cacheDirectoryReads = AtomicInteger()
         val client = OkHttpClient.Builder().addInterceptor { answer(it, requests.incrementAndGet()) }.build()
         val context = object : ContextWrapper(ApplicationProvider.getApplicationContext<Context>()) {
-            private val directory = temporary.newFolder()
-            override fun getCacheDir(): File = directory
+            override fun getCacheDir(): File = directory.also { cacheDirectoryReads.incrementAndGet() }
         }
-        return Fixture(WeatherRepository(context, preferences, storage, client), preferences, client, requests)
+        return Fixture(WeatherRepository(context, preferences, storage, client), preferences, client, requests, cacheDirectoryReads)
     }
 
     private fun response(chain: Interceptor.Chain, code: Int = 200,
@@ -284,6 +322,7 @@ class WeatherRepositoryTest {
         val preferences: AppPreferences,
         val client: OkHttpClient,
         val requests: AtomicInteger,
+        val cacheDirectoryReads: AtomicInteger,
     ) : AutoCloseable {
         override fun close() {
             client.dispatcher.cancelAll()

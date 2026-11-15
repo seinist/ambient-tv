@@ -126,9 +126,10 @@ fun WeatherScreen(
     // These controls are usable before a response arrives. Do not make sidebar focus wait on HTTP.
     ReportSidebarContentReady(true)
     BackHandler(enabled = onBack != null) { onBack?.invoke() }
+    // Map tabs own their map requests; a forecast is only needed by this overview or its header.
     LaunchedEffect(viewModel, owner, settings.enabled, location, settings.temperatureUnit,
-        settings.windUnit, contentVisible) {
-        if (settings.enabled && location != null && contentVisible) {
+        settings.windUnit, contentVisible, tab) {
+        if (settings.enabled && location != null && contentVisible && tab == "overview") {
             owner.lifecycle.repeatOnLifecycle(Lifecycle.State.RESUMED) {
                 while (true) {
                     viewModel.refreshVisible()
@@ -146,8 +147,8 @@ fun WeatherScreen(
                 TvChip(stringResource(R.string.back), icon = Icons.AutoMirrored.Filled.ArrowBack,
                     iconOnly = true, modifier = Modifier.leftKeyAction(back), onClick = back)
             }
-            TvChip(stringResource(R.string.weather_refresh), icon = Icons.Filled.Refresh, iconOnly = true,
-                enabled = settings.enabled && location != null,
+            if (tab == "overview") TvChip(stringResource(R.string.weather_refresh), icon = Icons.Filled.Refresh,
+                iconOnly = true, enabled = settings.enabled && location != null,
                 loading = state.loading, onClick = viewModel::retryForecast)
             TvChip(stringResource(R.string.weather_settings), icon = Icons.Filled.Settings,
                 iconOnly = true, onClick = onOpenSettings)

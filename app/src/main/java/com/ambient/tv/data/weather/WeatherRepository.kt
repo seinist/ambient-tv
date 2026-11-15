@@ -20,10 +20,7 @@ import javax.inject.Singleton
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -45,8 +42,9 @@ import okhttp3.Request
 import okhttp3.Response
 
 /**
- * One forecast/cache for the page, header and screensaver. Construction never starts a network
- * request; visible consumers refresh explicitly. The provider IDs only configure map consumers.
+ * One forecast/cache for the page, header and screensaver. Construction and settings changes
+ * never read the disk cache or start HTTP; visible consumers refresh explicitly. The provider
+ * IDs only configure map consumers.
  */
 @Singleton
 class WeatherRepository @Inject constructor(
@@ -57,13 +55,12 @@ class WeatherRepository @Inject constructor(
     @SharedOkHttp dispatcher: Dispatcher,
 ) {
     private val json = Json { ignoreUnknownKeys = true }
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val gate = Any()
     private val refreshMutex = Mutex()
     private data class ActiveRequest(val generation: Long, val forecast: Boolean)
     private val activeCalls = ConcurrentHashMap<Call, ActiveRequest>()
     private val rateLimitedUntil = AtomicLong(0)
-    private val cacheFile = AtomicFile(File(context.cacheDir, "weather/forecasts-v1.json"))
+    private val cacheFile by lazy { AtomicFile(File(context.cacheDir, "weather/forecasts-v1.json")) }
     private var cacheLoaded = false // Accessed only under refreshMutex.
     private var cache: Map<String, WeatherSnapshot> = emptyMap() // Accessed under gate.
     private var generation = 0L
@@ -108,7 +105,7 @@ class WeatherRepository @Inject constructor(
 
     init {
         regularPreferences.registerOnSharedPreferenceChangeListener(preferenceListener)
-        synchronizeSettings(restoreCache = true)
+        synchronizeSettings()
     }
 
     fun updateSettings(value: WeatherSettings) {
@@ -116,8 +113,8 @@ class WeatherRepository @Inject constructor(
         synchronizeSettings()
     }
 
-    private fun synchronizeSettings(restoreCache: Boolean = false) {
-        val (changedGeneration, enabled, accessChanged) = synchronized(gate) {
+    private fun synchronizeSettings() {
+        val (changedGeneration, accessChanged) = synchronized(gate) {
             // Read and apply under one lock: a delayed IO consumer must not restore a preference
             // snapshot from before a completed main-thread update.
             val next = preferences.weatherSettings
@@ -134,25 +131,13 @@ class WeatherRepository @Inject constructor(
                     error = accessError(next),
                 )
             }
-            Triple(generation.takeIf { changed }, next.enabled, accessChanged)
+            generation.takeIf { changed } to accessChanged
         }
         // A new consumer may already have started the newly selected place by this point.
         // Cancel only requests from an older selection/policy generation.
         if (changedGeneration != null) activeCalls.forEach { (call, request) ->
             // Geocoding depends on its query, not on the forecast's selected place or units.
             if (request.generation < changedGeneration && (accessChanged || request.forecast)) call.cancel()
-        }
-        if ((changedGeneration != null || restoreCache) && enabled) scope.launch {
-            refreshMutex.withLock {
-                loadCache()
-                synchronized(gate) {
-                    val selected = _settings.value
-                    val key = selected.selectedLocation?.let { weatherCacheKey(it, selected) }
-                    if (selected.enabled && _state.value.data == null && key != null) {
-                        _state.value = _state.value.copy(data = cache[key])
-                    }
-                }
-            }
         }
     }
 
@@ -179,9 +164,10 @@ class WeatherRepository @Inject constructor(
     suspend fun refresh(force: Boolean = false): WeatherState? = withContext(Dispatchers.IO) {
         synchronizeSettings()
         refreshMutex.withLock {
-            loadCache()
             val (selected, token) = synchronized(gate) { _settings.value to generation }
             val place = selected.selectedLocation ?: return@withLock null
+            if (!selected.enabled) return@withLock publish(token, WeatherState(error = WeatherError.DISABLED))
+            loadCache()
             val key = weatherCacheKey(place, selected)
             val saved = synchronized(gate) { cache[key] ?: _state.value.data?.takeIf { it.matches(selected) } }
             accessError(preferences.weatherSettings)?.let { error ->

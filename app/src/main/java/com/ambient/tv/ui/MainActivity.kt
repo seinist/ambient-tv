@@ -351,6 +351,7 @@ open class MainActivity : ComponentActivity() {
     /** All browse positions belong to the UI session, including stores held by background services. */
     private fun resetBrowseSessionPositions() {
         appPreferences.clearSessionFocus()
+        com.ambient.tv.ui.common.BrowseStartupFocusSessions.clear()
         com.ambient.tv.ui.radio.RadioFocusMemory.clear()
         radioPlaybackQueue.clearReturnFocus()
         com.ambient.tv.ui.detail.DetailFocusSessions.clear()
@@ -934,6 +935,8 @@ open class MainActivity : ComponentActivity() {
                         lastInteractionElapsedMs = lastInteractionElapsedMs.longValue,
                         screensaverActive = screensaverActive.value,
                         screensaverOverlayPresent = screensaverOverlayPresent.value,
+                        // The intro's effect-owned flags are still false during the first composition.
+                        introVisible = introStyle != com.ambient.tv.data.local.IntroAnimation.OFF,
                         onScreensaverActiveChanged = ::setScreensaverActive,
                         onScreensaverHidden = {
                             if (screensaverActive.value) false else {
@@ -1119,6 +1122,7 @@ private fun AmbientTvApp(
     lastInteractionElapsedMs: Long,
     screensaverActive: Boolean,
     screensaverOverlayPresent: Boolean,
+    introVisible: Boolean,
     onScreensaverHidden: () -> Boolean,
     onScreensaverActiveChanged: (Boolean) -> Unit,
     onRegisterInteraction: () -> Unit,
@@ -1857,12 +1861,12 @@ private fun AmbientTvApp(
     // deliberately excluded. Play intent keeps the flag during buffering and source changes.
     val standbyRequested = !handheld && com.ambient.tv.ui.player.SleepSession.standbyRequested
     val weatherPresentation = com.ambient.tv.ui.weather.rememberWeatherPresentation(
-        headerVisible = currentRoute != null && !standbyRequested && !screensaverOverlayPresent && !pipPresentation &&
+        headerVisible = !introVisible && !standbyRequested && !screensaverOverlayPresent && !pipPresentation &&
             !onPlayerRoute && currentRoute !in setOf(Destinations.PHOTO_VIEWER, Destinations.ITEM_TRAILERS,
                 Destinations.TMDB_TRAILERS, Destinations.SERVER_SELECT, Destinations.INITIAL_SETUP, Destinations.SETUP_COMPLETE),
-        screensaverVisible = !standbyRequested && !pipPresentation &&
+        screensaverVisible = !introVisible && !standbyRequested && !pipPresentation &&
             ScreensaverPresentation.shouldShow(screensaverActive, screensaverPreview != null, playbackActive),
-        contentVisible = !standbyRequested && !screensaverOverlayPresent && !pipPresentation,
+        contentVisible = !introVisible && !standbyRequested && !screensaverOverlayPresent && !pipPresentation,
     )
     val keepScreenOn = com.ambient.tv.ui.player.shouldKeepScreenOn(
         handheld = handheld,
