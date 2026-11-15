@@ -217,7 +217,13 @@ internal object CompanionBackupPolicy {
     private fun fit(source: SettingsBackup, fields: MutableMap<String, JsonElement>, presentFields: Set<String>?): Prepared {
         // Accent styles predate a dedicated schema bump. An older file's missing style must
         // remain missing through both sanitization passes instead of acquiring today's default.
-        if (presentFields != null) (profileKeys + "accentStyleKey").filterNot { it in presentFields }.forEach(fields::remove)
+        if (presentFields != null) {
+            (profileKeys + "accentStyleKey" + sinceSchema80).filterNot { it in presentFields }.forEach(fields::remove)
+        } else if (source.schemaVersion < 80) {
+            // These fields already existed in file backups. An old decoded model alone cannot
+            // tell an explicit file value from a default filled in for an older Companion sender.
+            sinceSchema80.forEach(fields::remove)
+        }
         if ("titleVideoSettings" in fields) fields["titleVideoSettings"] = compact.encodeToJsonElement(source.titleVideoSettings)
         if ("scopedVideoSettings" in fields) fields["scopedVideoSettings"] = compact.encodeToJsonElement(source.scopedVideoSettings)
         val full = JsonObject(fields).toString()
@@ -243,7 +249,7 @@ internal object CompanionBackupPolicy {
                 .filter { source.schemaVersion >= 78 || it != "accentMotionKey" }
                 .filter { it != "accentStyleKey" || presentFields == null || it in presentFields }
                 .filter { source.schemaVersion >= 72 || it != "introAnimationKey" }
-                .filter { source.schemaVersion >= 80 || it !in sinceSchema80 }
+                .filter { it !in sinceSchema80 || (presentFields?.contains(it) ?: (source.schemaVersion >= 80)) }
                 // A settings-only transfer has no account identities to map local profile keys.
                 .filter { mode != "preferences" || it !in profileKeys }
                 // A sender from before the clock page has no clock: the receiver keeps its own.
