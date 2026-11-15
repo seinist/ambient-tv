@@ -579,6 +579,14 @@ internal fun SidebarContent(
     LaunchedEffect(pendingFocus, expanded, navItemIds) {
         val target = pendingFocus ?: return@LaunchedEffect
         if (!expanded) return@LaunchedEffect
+        // A completed status can disappear while its panel is open. Keep the replacement
+        // pending during onEnter, so the rail does not redirect it to the active page or reject it.
+        if (target !in visibleIds) {
+            pendingFocus = sidebarFocusFallback(
+                openGroup != null, navRows.map { it.destination.id }, lastFocusedId, safeAnchor,
+            )
+            return@LaunchedEffect
+        }
         // Request once successfully. Never reaffirm focus after success: a repeated request can
         // override the user's next D-pad movement.
         repeat(4) {

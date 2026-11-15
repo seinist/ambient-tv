@@ -12,7 +12,6 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
-import androidx.compose.ui.test.assertDoesNotExist
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.getBoundsInRoot
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
@@ -176,7 +175,7 @@ class ConnectionStatusUiTest {
     }
 
     @Test fun introUsesOnlyCompactSummaryWithoutActionsOrPacketCounters() {
-        val current = status()
+        var current by mutableStateOf(status())
         rule.setContent {
             CompositionLocalProvider(LocalHandheldUi provides true) {
                 AmbientTvTheme {
@@ -189,6 +188,16 @@ class ConnectionStatusUiTest {
         rule.onNodeWithText(rule.activity.getString(R.string.start_status_waking_server)).assertIsDisplayed()
         rule.onNodeWithText(rule.activity.getString(R.string.home_cancel_wake)).assertDoesNotExist()
         rule.onNodeWithText(rule.activity.getString(R.string.start_status_packets, 1, 3)).assertDoesNotExist()
-        assertTrue(rule.onNodeWithTag("intro-status").getBoundsInRoot().height < 120.dp)
+        val bounds = rule.onNodeWithTag("intro-status").getBoundsInRoot()
+        assertTrue(bounds.bottom - bounds.top < 120.dp)
+        rule.runOnIdle {
+            current = status(wake().copy(
+                key = "connection:medienserver",
+                kind = NoticeKind.CONNECTION,
+                message = R.string.notice_service_starting,
+            ))
+        }
+        rule.onNodeWithText(rule.activity.getString(R.string.start_status_starting_services)).assertIsDisplayed()
+        rule.onNodeWithText(rule.activity.getString(R.string.start_status_connecting)).assertDoesNotExist()
     }
 }

@@ -125,10 +125,11 @@ internal fun ConnectionStatusSummary(
         )
         status.working && primary?.kind == NoticeKind.VPN ->
             stringResource(R.string.start_status_connecting_vpn)
+        status.working && primary?.message == R.string.notice_service_starting ->
+            stringResource(R.string.start_status_starting_services)
         status.working && primary?.kind == NoticeKind.WAKE ->
             stringResource(
-                if (primary.message == R.string.notice_service_starting) R.string.start_status_starting_services
-                else if (status.activeWakes.size > 1) R.string.start_status_waking_servers
+                if (status.activeWakes.size > 1) R.string.start_status_waking_servers
                 else R.string.start_status_waking_server,
             )
         status.working -> stringResource(R.string.start_status_connecting)
@@ -189,6 +190,11 @@ private fun ConnectionPhaseIcon(phase: NoticePhase, reduced: Boolean, modifier: 
     }
 }
 
+/** Child disposal may run in the same removal as its whole card; only the card owns hand-back. */
+private class ConnectionStatusFocusAttachment {
+    var attached = false
+}
+
 /**
  * Details is the stable TV focus anchor. A disappearing cancel action returns there; Back
  * leaves the card without cancelling any job. Progress updates never request focus again.
@@ -214,10 +220,13 @@ internal fun CompactConnectionStatus(
     val cardFocusedNow by rememberUpdatedState(cardFocused)
     val cancelFocusedNow by rememberUpdatedState(cancelFocused)
     val cancel = status.activeWakes.singleOrNull()
+    val attachment = remember { ConnectionStatusFocusAttachment() }
     var autoFocusAttempted by remember(status.sessionId) { mutableStateOf(false) }
     DisposableEffect(wakeFocus, handheld) {
+        attachment.attached = true
         if (!handheld) wakeFocus.attach()
         onDispose {
+            attachment.attached = false
             if (!handheld) {
                 val shouldReturn = cardFocusedNow
                 wakeFocus.detach()
@@ -271,7 +280,9 @@ internal fun CompactConnectionStatus(
                     DisposableEffect(cancel.key) {
                         onDispose {
                             if (!handheld && cancelFocusedNow) view.post {
-                                if (!wakeFocus.requestEntryFocus()) release()
+                                // Whole-card removal already posted the single external
+                                // hand-back. Only rescue Details when this card still exists.
+                                if (attachment.attached && !wakeFocus.requestEntryFocus()) release()
                             }
                         }
                     }

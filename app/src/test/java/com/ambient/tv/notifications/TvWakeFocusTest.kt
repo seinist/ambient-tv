@@ -28,7 +28,6 @@ import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onRoot
-import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performKeyInput
 import androidx.compose.ui.test.pressKey
 import androidx.compose.ui.unit.dp
@@ -226,7 +225,8 @@ class TvWakeFocusTest {
         press(Key.DirectionRight)
         rule.onNodeWithTag("connection-status-cancel").assertIsFocused()
         press(Key.DirectionCenter)
-        rule.waitUntil(timeoutMillis = 2_000) { fixture.releases == 1 }
+        rule.waitUntil(timeoutMillis = 2_000) { fixture.releases > 0 }
+        rule.runOnIdle { assertEquals("A removed card must return focus exactly once", 1, fixture.releases) }
         rule.onNodeWithTag("sidebar:home", useUnmergedTree = true).assertIsFocused()
         rule.runOnIdle { assertEquals(listOf("wake:first"), fixture.cancellations); assertEquals(0, fixture.pageBacks) }
     }
@@ -239,7 +239,11 @@ class TvWakeFocusTest {
         rule.onAllNodesWithTag("connection-status-cancel").assertCountEquals(0)
         press(Key.DirectionCenter)
         rule.onNodeWithTag("connection-status-panel").assertIsDisplayed()
-        rule.onNodeWithTag("connection-cancel:machine:second").performClick()
+        rule.onNodeWithTag("connection-cancel:machine:first").assertIsFocused()
+        press(Key.DirectionDown)
+        rule.onNodeWithTag("connection-cancel:machine:second").assertIsFocused()
+        // TV Surface accepts a remote confirmation; performClick would inject a touch.
+        press(Key.DirectionCenter)
         rule.runOnIdle {
             assertEquals(listOf("wake:second"), fixture.cancellations)
             assertEquals(listOf("wake:first"), fixture.notices.map(AppNotice::key))
@@ -267,7 +271,10 @@ class TvWakeFocusTest {
         rule.runOnIdle { fixture.notices = listOf(wake("first")) }
         awaitDetailsFocus(fixture)
         rule.runOnIdle { fixture.notices = emptyList() }
-        rule.waitUntil(timeoutMillis = 2_000) { fixture.releases == 1 }
+        // Apply removal and drain its Android View.post before checking the hand-back.
+        rule.waitForIdle()
+        rule.waitUntil(timeoutMillis = 2_000) { fixture.releases > 0 }
+        rule.runOnIdle { assertEquals("A removed card must return focus exactly once", 1, fixture.releases) }
         rule.onNodeWithTag("content").assertIsFocused()
         rule.runOnIdle { assertFalse(fixture.wakeFocus.isAvailable); assertTrue(fixture.cancellations.isEmpty()) }
     }
@@ -324,7 +331,8 @@ class TvWakeFocusTest {
             rule.runOnIdle { assertTrue(cancelled.isEmpty()) }
             rule.onNodeWithTag("connection-status-badge").assertIsFocused()
             press(Key.DirectionCenter)
-            rule.onNodeWithTag("connection-cancel:machine:notifications-off").performClick()
+            rule.onNodeWithTag("connection-cancel:machine:notifications-off").assertIsFocused()
+            press(Key.DirectionCenter)
             rule.runOnIdle { assertEquals(listOf("wake:notifications-off"), cancelled) }
         } finally {
             AppNotifications.store.removeConnectivity(notice.key)
