@@ -168,6 +168,9 @@ internal class UiRenderResolutionAudit(
                     appendLine("host.viewport=${if (hostCreated) host.viewport else null}")
                     appendLine("providedViewport=${viewport.value}")
                     appendLine("settledViewport=${if (contentCreated) compose.uiRenderViewport() else null}")
+                    appendLine("density.local=$observedDensity, configuration.localDpi=$observedDensityDpi")
+                    appendLine("configuration.resourceDpi=${activity.resources.configuration.densityDpi}")
+                    appendLine("configuration.localHeightDp=$observedScreenHeightDp, resourceHeightDp=${activity.resources.configuration.screenHeightDp}")
                     appendLine("rootFocused=$rootFocused")
                     appendLine("compose.hasFocus=${if (contentCreated) compose.hasFocus() else null}")
                     appendLine("compose.rootView.hasWindowFocus=${if (contentCreated) compose.rootView.hasWindowFocus() else null}")
@@ -184,6 +187,7 @@ internal class UiRenderResolutionAudit(
             }
             log(focusState)
             File(instrumentation.targetContext.filesDir, "ui-render-resolution-focus.txt").writeText(focusState)
+            captureSurfaces("ui-render-resolution-timeout")
             for (service in listOf("window", "input")) {
                 val dump = instrumentation.uiAutomation.executeShellCommand("dumpsys -t 5 $service").use { descriptor ->
                     android.os.ParcelFileDescriptor.AutoCloseInputStream(descriptor).bufferedReader().use { it.readText() }
@@ -596,16 +600,16 @@ internal class UiRenderResolutionAudit(
         }
     }
 
-    private fun captureSurfaces() {
+    private fun captureSurfaces(filePrefix: String = "ui-render-resolution") {
         val dump = instrumentation.uiAutomation.executeShellCommand("dumpsys SurfaceFlinger").use { descriptor ->
             android.os.ParcelFileDescriptor.AutoCloseInputStream(descriptor).bufferedReader().use { it.readText() }
         }
-        File(instrumentation.targetContext.filesDir, "ui-render-resolution-surfaceflinger.txt").writeText(dump)
+        File(instrumentation.targetContext.filesDir, "$filePrefix-surfaceflinger.txt").writeText(dump)
         val screenshot = checkNotNull(instrumentation.uiAutomation.takeScreenshot()) {
             "UI render audit could not capture the composed display"
         }
         try {
-            File(instrumentation.targetContext.filesDir, "ui-render-resolution.png").outputStream().use { output ->
+            File(instrumentation.targetContext.filesDir, "$filePrefix.png").outputStream().use { output ->
                 check(screenshot.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, output)) {
                     "UI render audit could not encode the composed display screenshot"
                 }

@@ -216,7 +216,7 @@ internal class UiRenderResolutionHost(
         // starts with that new Configuration and does not notify the retained AndroidComposeView,
         // whose cached LocalConfiguration/LocalDensity must also be updated before its next layout.
         embeddedRoot.dispatchConfigurationChanged(newConfig)
-        releaseEmbeddedHost()
+        resetEmbeddedHost()
         scheduleRefresh()
     }
 
@@ -255,7 +255,7 @@ internal class UiRenderResolutionHost(
                 fixedSize = size
                 surfaceView.holder.setFixedSize(size.first, size.second)
             }
-            if (hostedDisplayId != null && hostedDisplayId != display.displayId) releaseEmbeddedHost()
+            if (hostedDisplayId != null && hostedDisplayId != display.displayId) resetEmbeddedHost()
             if (!surfaceAvailable) return
 
             embeddedRoot.visibility = if (windowVisibility == VISIBLE) VISIBLE else INVISIBLE
@@ -375,6 +375,21 @@ internal class UiRenderResolutionHost(
         if (!displayListenerRegistered) return
         displayListenerRegistered = false
         displayManager?.unregisterDisplayListener(displayListener)
+    }
+
+    /** Replacing the ViewRoot also requires clearing the carrier's previous surface package. */
+    private fun resetEmbeddedHost() {
+        val resetCarrier = host != null && surfaceView.isAttachedToWindow
+        releaseEmbeddedHost()
+        if (!resetCarrier) return
+        // Android 12's setChildSurfacePackage replacement branch detaches the old package
+        // without reparenting the new one. Detaching the same carrier clears that package
+        // through public View lifecycle APIs; its next package then uses initial attachment.
+        // Clear readiness before removal. Any synchronous surfaceCreated from addView may
+        // install a replacement only after the old ViewRoot and package have been released.
+        surfaceAvailable = false
+        removeView(surfaceView)
+        addView(surfaceView, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
     }
 
     private fun releaseEmbeddedHost() {
