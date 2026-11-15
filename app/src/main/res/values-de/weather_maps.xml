@@ -1,17 +1,17 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="weather_maps_choose_provider">Kartendienst</string>
-    <string name="weather_maps_choose_hint">Wähle einen Dienst für diese Karte. Deine Auswahl wird gespeichert; der Anbieter wechselt nicht automatisch.</string>
+    <string name="weather_maps_choose_hint">Wähle in den Wettereinstellungen einen Dienst für diese Karte. Hier wird nur dein ausgewählter Anbieter angezeigt.</string>
     <string name="weather_maps_rainviewer_description">Vergangenes Regenradar · bis zu 2 Stunden. Dunkle Bereiche haben keine Radarabdeckung; die Abdeckungsmaske kann Ausfällen hinterherlaufen.</string>
     <string name="weather_maps_dwd_description">DWD-Radarreflektivität · Deutschland und Umgebung · Bilder alle 5 Minuten. Die Abdeckung kann Lücken haben.</string>
     <string name="weather_maps_nasa_description">NOAA-20-Tagesmosaik in sichtbaren Farben (UTC). Die täglichen Satellitenbilder können Lücken haben, auch nachts.</string>
     <string name="weather_maps_eumetsat_description">Globales geostationäres Infrarot-Komposit · Bilder alle 3 Stunden. An Polen und Satellitenrändern sind Lücken möglich.</string>
     <string name="weather_maps_network_disabled">Wetter ist deaktiviert. Aktiviere Wetter in den Einstellungen, um Karten zu laden.</string>
     <string name="weather_maps_offline">Keine Internetverbindung. Gespeicherte Bilder bleiben mit ihrem ursprünglichen Zeitpunkt sichtbar. Nach dem Verbinden aktualisieren, um neue Bilder zu laden.</string>
-    <string name="weather_maps_unavailable">Der gewählte Dienst ist derzeit nicht erreichbar. Gespeicherte Bilder bleiben sichtbar. Erneut versuchen oder oben einen anderen Dienst wählen.</string>
-    <string name="weather_maps_rate_limited">Der Anbieter verlangt eine Wartezeit. Gespeicherte Bilder bleiben verfügbar; später erneut versuchen oder einen anderen Dienst wählen.</string>
-    <string name="weather_maps_access_denied">Der Anbieter erlaubt den Zugriff auf diese Karte derzeit nicht. Einen anderen Dienst wählen oder später erneut versuchen.</string>
-    <string name="weather_maps_no_coverage">Für diesen Kartenausschnitt liefert der Anbieter keine Daten. Einen anderen Dienst wählen oder die Karte verschieben.</string>
+    <string name="weather_maps_unavailable">Der gewählte Dienst ist derzeit nicht erreichbar. Gespeicherte Bilder bleiben sichtbar. Erneut versuchen oder in den Wettereinstellungen einen anderen Dienst wählen.</string>
+    <string name="weather_maps_rate_limited">Der Anbieter verlangt eine Wartezeit. Gespeicherte Bilder bleiben verfügbar; später erneut versuchen oder in den Wettereinstellungen einen anderen Dienst wählen.</string>
+    <string name="weather_maps_access_denied">Der Anbieter erlaubt den Zugriff auf diese Karte derzeit nicht. In den Wettereinstellungen einen anderen Dienst wählen oder später erneut versuchen.</string>
+    <string name="weather_maps_no_coverage">Für diesen Kartenausschnitt liefert der Anbieter keine Daten. Die Karte verschieben oder in den Wettereinstellungen einen anderen Dienst wählen.</string>
     <string name="weather_maps_loading">Karte wird geladen…</string>
     <string name="weather_maps_image_description">Wetterkarte von %1$s bei %2$s. Die Markierung zeigt den gespeicherten Ort, falls er im Ausschnitt liegt.</string>
     <string name="weather_maps_frame_time">Bild: %1$s</string>

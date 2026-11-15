@@ -15,7 +15,10 @@ import com.ambient.tv.notifications.OperationFeedbackReporter
 import dagger.hilt.android.lifecycle.HiltViewModel
 import javax.inject.Inject
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.Flow
@@ -99,6 +102,7 @@ class WeatherMapViewModel internal constructor(
     private var playbackJob: Job? = null
     private var loadRevision = 0L
     private var frameRevision = 0L
+    private var playbackRevision = 0L
     private var manualLoad = false
     private var ticket: OperationFeedbackReporter.Ticket? = null
     private var permitted = true
@@ -171,9 +175,11 @@ class WeatherMapViewModel internal constructor(
     }
 
     internal fun stopPlaying() {
+        playbackRevision++
         playbackJob?.cancel()
         playbackJob = null
-        mutable.value = mutable.value.copy(playing = false)
+        mutable.value = mutable.value.let { it.copy(playing = false,
+            frameLoading = if (it.playing) false else it.frameLoading) }
     }
 
     internal fun step(delta: Int) {
@@ -185,18 +191,80 @@ class WeatherMapViewModel internal constructor(
 
     internal fun togglePlayback() {
         if (mutable.value.playing) { stopPlaying(); return }
-        if (!visible || mutable.value.loading || (mutable.value.result?.series?.frames?.size ?: 0) < 2 ||
-            mutable.value.result?.error == WeatherMapError.NO_COVERAGE) return
+        val initial = mutable.value
+        val request = initial.request ?: return
+        val provider = request.provider ?: return
+        val series = initial.result?.series ?: return
+        if (!visible || initial.loading || series.frames.size < 2 ||
+            initial.result.error == WeatherMapError.NO_COVERAGE || currentPolicy?.matches(request) == false) return
+        cancelFrame()
+        val revision = ++playbackRevision
         mutable.value = mutable.value.copy(playing = true)
         playbackJob = viewModelScope.launch {
-            while (visible && mutable.value.playing) {
-                delay(1100)
-                val current = mutable.value
-                val count = current.result?.series?.frames?.size ?: 0
-                if (count > 1 && !current.loading && !current.frameLoading) selectFrame((current.selectedFrame + 1) % count)
+            try {
+                coroutineScope {
+                    if (!currentPlayback(request, revision)) return@coroutineScope
+                    // Buffer only after Play, and only two frames ahead. All pending work belongs
+                    // to this job, so Pause, a tab/location change or hiding the page cancels it.
+                    val ready = LinkedHashMap<Int, WeatherMapResult>()
+                    val pending = mutableMapOf<Int, Deferred<WeatherMapResult>>()
+                    if (initial.result.image != null && initial.selectedFrame in series.frames.indices) {
+                        ready[initial.selectedFrame] = initial.result
+                    }
+                    fun prepare(index: Int) {
+                        if (index in ready || index in pending) return
+                        pending[index] = async {
+                            try {
+                                loader.frame(provider, request.viewport, series, index, request.networkAllowed && permitted)
+                            } catch (cancelled: CancellationException) {
+                                throw cancelled
+                            } catch (_: Exception) {
+                                WeatherMapResult(series, error = WeatherMapError.UNAVAILABLE)
+                            }
+                        }
+                    }
+                    var index = (initial.selectedFrame + 1).mod(series.frames.size)
+                    prepare(index)
+                    prepare((index + 1) % series.frames.size)
+                    while (currentPlayback(request, revision)) {
+                        val next = ready[index] ?: run {
+                            prepare(index)
+                            val frame = pending.remove(index)!!
+                            mutable.value = mutable.value.copy(frameLoading = !frame.isCompleted)
+                            frame.await()
+                        }
+                        if (!currentPlayback(request, revision)) break
+                        showFrame(next, index)
+                        mutable.value = mutable.value.copy(frameLoading = false)
+                        if (next.image == null || next.error != null) {
+                            mutable.value = mutable.value.copy(playing = false)
+                            break
+                        }
+                        ready[index] = next
+                        // Published series contain at most thirteen frames; also bound older caches.
+                        if (ready.size > 13) ready.remove(ready.keys.first())
+                        index = (index + 1) % series.frames.size
+                        prepare(index)
+                        prepare((index + 1) % series.frames.size)
+                        // The first frame starts as soon as it is ready. Subsequent frames keep
+                        // their cadence while the next images load, and full loops reuse pixels.
+                        delay(1100)
+                    }
+                    pending.values.forEach { it.cancel() }
+                }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } finally {
+                if (playbackRevision == revision) {
+                    mutable.value = mutable.value.copy(playing = false, frameLoading = false)
+                    playbackJob = null
+                }
             }
         }
     }
+
+    private fun currentPlayback(request: WeatherMapRequest, revision: Long): Boolean =
+        visible && mutable.value.playing && mutable.value.request == request && playbackRevision == revision
 
     private fun load(manual: Boolean) {
         val request = mutable.value.request ?: return
@@ -277,11 +345,7 @@ class WeatherMapViewModel internal constructor(
             try {
                 val next = loader.frame(provider, request.viewport, series, index, request.networkAllowed && permitted)
                 if (mutable.value.request != request || frameRevision != revision || !visible) return@launch
-                val previous = mutable.value.result
-                // A cached frame cannot prove that a failed source recovered; keep its error and time.
-                mutable.value = if (next.image != null) mutable.value.copy(
-                    result = next.copy(error = next.error ?: previous?.error), selectedFrame = index,
-                ) else mutable.value.copy(result = previous?.copy(error = next.error) ?: next)
+                showFrame(next, index)
                 if (next.error != null) stopPlaying()
             } catch (cancelled: CancellationException) {
                 throw cancelled
@@ -297,6 +361,14 @@ class WeatherMapViewModel internal constructor(
                 }
             }
         }
+    }
+
+    private fun showFrame(next: WeatherMapResult, index: Int) {
+        val previous = mutable.value.result
+        // A cached frame cannot prove that a failed source recovered; retain the source error.
+        mutable.value = if (next.image != null) mutable.value.copy(
+            result = next.copy(error = next.error ?: previous?.error), selectedFrame = index,
+        ) else mutable.value.copy(result = (previous ?: next).copy(error = next.error ?: WeatherMapError.UNAVAILABLE))
     }
 
     private fun currentLoad(request: WeatherMapRequest, revision: Long) =

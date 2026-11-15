@@ -61,15 +61,13 @@
     <string name="weather_hour_detail">%1$s · %2$s · Niederschlag: %3$s · %4$s</string>
     <string name="weather_local_times">Uhrzeiten am ausgewählten Ort (%1$s).</string>
     <string name="weather_compact_description">%1$s: %2$s, %3$s</string>
-    <string name="weather_source_short">Open-Meteo</string>
-    <string name="weather_source_passive">Open-Meteo · open-meteo.com</string>
     <string name="weather_source">Wetterdaten: Open-Meteo</string>
     <string name="weather_location_source">Ortsdaten: GeoNames über Open-Meteo</string>
     <string name="weather_map_providers">Kartenanbieter</string>
     <string name="weather_radar_provider">Radardienst</string>
     <string name="weather_satellite_provider">Satellitendienst</string>
     <string name="weather_provider_none">Keine Auswahl</string>
-    <string name="weather_maps_manual_hint">Radar- und Satellitendienst wählst du getrennt hier oder im jeweiligen Kartenbereich aus. Deine Auswahl bleibt bei einem Ausfall erhalten. Karten werden beim Öffnen geladen.</string>
+    <string name="weather_maps_manual_hint">Radar- und Satellitendienst wählst du hier getrennt aus. Jeder Kartenbereich zeigt nur den gewählten Anbieter. Deine Auswahl bleibt bei einem Ausfall erhalten. Karten werden beim Öffnen geladen.</string>
     <string name="weather_clear">Klar</string>
     <string name="weather_mostly_clear">Überwiegend klar</string>
     <string name="weather_partly_cloudy">Teilweise bewölkt</string>

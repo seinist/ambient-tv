@@ -94,7 +94,13 @@ data class WeatherMapViewport(val zoom: Int, val x: Int, val y: Int) {
 data class WeatherMapBounds(val west: Double = -180.0, val south: Double = -85.05, val east: Double = 180.0, val north: Double = 85.05)
 
 @Serializable
-data class WeatherMapFrame(val time: String, val epochMillis: Long, val path: String = "")
+data class WeatherMapFrame(
+    val time: String,
+    val epochMillis: Long,
+    val path: String = "",
+    // The manifest controls RainViewer's tile host. The default also reads existing disk caches.
+    val tileHost: String = "https://tilecache.rainviewer.com",
+)
 
 @Serializable
 data class WeatherMapSeries(

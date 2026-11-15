@@ -1,6 +1,7 @@
 package com.ambient.tv.data.weather
 
 import java.time.Instant
+import kotlinx.serialization.json.Json
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import org.junit.Assert.*
 import org.junit.Test
@@ -44,11 +45,11 @@ class WeatherMapTest {
     @Test fun `radar manifest ignores nowcast satellites unsafe paths and future frames`() {
         val latest = now.epochSecond
         val series = parseWeatherMapSeries(WeatherMapProvider.RAINVIEWER, """{
-          "host":"https://unexpected.invalid",
+          "host":"https://tilecache.rainviewer.com",
           "radar":{"past":[
             {"time":${latest - 600},"path":"/v2/radar/${latest - 600}"},
-            {"time":$latest,"path":"/v2/radar/$latest"},
-            {"time":$latest,"path":"/v2/radar/$latest"},
+            {"time":$latest,"path":"/v2/radar/3fbfe8dfae28"},
+            {"time":$latest,"path":"/v2/radar/3fbfe8dfae28"},
             {"time":${latest - 1200},"path":"/../../other"},
             {"time":${latest + 3600},"path":"/v2/radar/${latest + 3600}"}
           ],"nowcast":[{"time":${latest + 600},"path":"/v2/radar/${latest + 600}"}]},
@@ -56,9 +57,59 @@ class WeatherMapTest {
         }""", now)
         assertEquals(2, series.frames.size)
         assertEquals(latest * 1000, series.frames.last().epochMillis)
+        assertEquals("/v2/radar/3fbfe8dfae28", series.frames.last().path)
         val url = weatherMapImageUrl(WeatherMapProvider.RAINVIEWER, WeatherMapViewport.at(50.98, 11.03), series.frames.last())
         assertEquals("tilecache.rainviewer.com", url.toHttpUrl().host)
+        assertTrue(url.contains("/v2/radar/3fbfe8dfae28/"))
         assertTrue(url.endsWith("/512/6/33/21/2/1_0.png"))
+    }
+
+    @Test fun `radar uses the published tile host for frames and coverage`() {
+        val series = parseWeatherMapSeries(WeatherMapProvider.RAINVIEWER, """{
+          "host":"https://tiles.rainviewer.com/",
+          "radar":{"past":[{"time":${now.epochSecond},"path":"/v2/radar/frame_A-b123"}]}
+        }""", now)
+        val frame = series.frames.single()
+        val view = WeatherMapViewport.at(50.98, 11.03)
+        assertEquals("https://tiles.rainviewer.com", frame.tileHost)
+        assertEquals("tiles.rainviewer.com", weatherMapImageUrl(WeatherMapProvider.RAINVIEWER, view, frame).toHttpUrl().host)
+        assertEquals("tiles.rainviewer.com", weatherMapCoverageUrl(view, frame.tileHost).toHttpUrl().host)
+    }
+
+    @Test fun `existing frame caches without a tile host still load`() {
+        val frame = Json.decodeFromString<WeatherMapFrame>("""{
+          "time":"2026-11-15T15:00:00Z", "epochMillis":${now.toEpochMilli()}, "path":"/v2/radar/${now.epochSecond}"
+        }""")
+        assertEquals("https://tilecache.rainviewer.com", frame.tileHost)
+        assertEquals("tilecache.rainviewer.com", weatherMapImageUrl(
+            WeatherMapProvider.RAINVIEWER, WeatherMapViewport.at(50.98, 11.03), frame).toHttpUrl().host)
+    }
+
+    @Test fun `radar manifests cannot redirect image requests to unrelated or authenticated hosts`() {
+        listOf("https://unexpected.invalid", "http://tilecache.rainviewer.com",
+            "https://rainviewer.com.evil.invalid", "https://127.0.0.1", "https://tilecache.rainviewer.com:444",
+            "https://user:secret@tilecache.rainviewer.com", "https://tilecache.rainviewer.com/path",
+            "https://tilecache.rainviewer.com/?key=value", "https://tilecache.rainviewer.com/#fragment").forEach { host ->
+            assertThrows("Unsafe manifest host: $host", IllegalArgumentException::class.java) {
+                parseWeatherMapSeries(WeatherMapProvider.RAINVIEWER, """{
+                  "host":"$host", "radar":{"past":[{"time":${now.epochSecond},"path":"/v2/radar/3fbfe8dfae28"}]}
+                }""", now)
+            }
+        }
+    }
+
+    @Test fun `opaque radar IDs cannot escape the image path even when read from a cache`() {
+        val view = WeatherMapViewport.at(50.98, 11.03)
+        listOf("/v2/radar/../other", "/v2/radar/%2e%2e", "/v2/radar/id?query=1",
+            "/v2/radar/id#fragment", "https://unexpected.invalid/v2/radar/id", "/v2/radar/",
+            "/v2/radar/" + "x".repeat(129)).forEach { path ->
+            val frame = WeatherMapFrame(now.toString(), now.toEpochMilli(), path)
+            assertThrows("Unsafe cached frame path: $path", IllegalArgumentException::class.java) {
+                weatherMapImageUrl(WeatherMapProvider.RAINVIEWER, view, frame)
+            }
+        }
+        val frame = WeatherMapFrame(now.toString(), now.toEpochMilli(), "/v2/radar/3fbfe8dfae28", "https://unexpected.invalid")
+        assertThrows(IllegalArgumentException::class.java) { weatherMapImageUrl(WeatherMapProvider.RAINVIEWER, view, frame) }
     }
 
     @Test fun `scoped DWD capabilities resolve unprefixed layer times and latitude longitude axes`() {

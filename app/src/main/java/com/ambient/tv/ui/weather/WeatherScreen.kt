@@ -72,6 +72,7 @@ import com.ambient.tv.ui.common.StatePanel
 import com.ambient.tv.ui.common.TvChip
 import com.ambient.tv.ui.common.TvLazyColumn
 import com.ambient.tv.ui.common.activateOnTvKey
+import com.ambient.tv.ui.common.handheldSwipeTabs
 import com.ambient.tv.ui.common.leftKeyAction
 import com.ambient.tv.ui.common.noSurfaceBorder
 import com.ambient.tv.ui.common.noSurfaceScale
@@ -92,6 +93,8 @@ import kotlinx.coroutines.delay
 import java.time.Instant
 import java.time.temporal.ChronoUnit
 import java.util.Locale
+
+private val WEATHER_TABS = listOf("overview", "radar", "satellite")
 
 @Composable
 fun WeatherScreen(
@@ -139,7 +142,12 @@ fun WeatherScreen(
         }
     }
 
-    Column(Modifier.fillMaxSize().padding(start = tokens.screenPadding, end = tokens.screenPadding,
+    Column(Modifier.fillMaxSize().handheldSwipeTabs(
+        tabs = WEATHER_TABS,
+        selected = tab,
+        onSelect = { tab = it },
+        enabled = contentVisible,
+    ).padding(start = tokens.screenPadding, end = tokens.screenPadding,
         top = pageHeaderTop(tokens.screenPadding), bottom = tokens.screenPadding),
         verticalArrangement = Arrangement.spacedBy(10.dp)) {
         PageHeader(focusChain = focusChain, actions = {
@@ -155,7 +163,7 @@ fun WeatherScreen(
         }) {
             Text(stringResource(R.string.weather_title), style = MaterialTheme.typography.headlineMedium)
         }
-        PageChipRow(focusChain, selectedIndex = when (tab) { "radar" -> 1; "satellite" -> 2; else -> 0 }) {
+        PageChipRow(focusChain, selectedIndex = WEATHER_TABS.indexOf(tab).coerceAtLeast(0)) {
             item(key = "overview") {
                 TvChip(stringResource(R.string.weather_overview), selected = tab == "overview",
                     modifier = if (tab == "overview") Modifier.focusRequester(focusChain.selectedChip) else Modifier) { tab = "overview" }
@@ -193,9 +201,7 @@ fun WeatherScreen(
                         location = location,
                         kind = if (tab == "radar") WeatherMapKind.RADAR else WeatherMapKind.SATELLITE,
                         providerId = if (tab == "radar") settings.radarProvider else settings.satelliteProvider,
-                        onProviderSelected = { provider -> viewModel.changeSettings {
-                            if (tab == "radar") it.copy(radarProvider = provider) else it.copy(satelliteProvider = provider)
-                        } },
+                        onOpenSettings = onOpenSettings,
                         networkAllowed = settings.enabled,
                         modifier = Modifier.fillMaxWidth().weight(1f).pageContentUp(focusChain),
                     )
