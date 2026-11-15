@@ -29,7 +29,7 @@ internal object CompanionBackupPolicy {
         "photoIncludeSubfolders", "photoSortKey",
         "photoSlideshowIntervalSeconds", "photoTransitionKey", "photoKenBurns", "photoShuffle", "photoShowInfo",
         "liveTvReminderLeadMinutes", "liveDirectRecordEnabled", "playerOsdSeconds", "playerBackMinimizes", "networkBufferKey",
-        "radioEnabled", "radioFavorites",
+        "radioEnabled", "radioFavorites", "weather",
     )
     /** Fields older backups do not carry: their defaults must not overwrite the receiver's values. */
     private val sinceSchema58 = setOf("liveTvReminderLeadMinutes", "liveTimeshiftMb")
@@ -182,6 +182,7 @@ internal object CompanionBackupPolicy {
                 .filter { source.schemaVersion >= 77 || it != "uiRenderResolutionKey" }
                 // A sender from before the clock page has no clock: the receiver keeps its own.
                 .filter { it != "clock" || source.clock != null }
+                .filter { it != "weather" || source.weather != null }
                 .filter { it != "subtitleAppearance" || source.subtitleAppearance != null }
                 .filter { it != "nightSchedule" || source.nightSchedule != null }
                 .filter { it != "playerOsdModeIconVisible" || source.playerOsdModeIconVisible != null }

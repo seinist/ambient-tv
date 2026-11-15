@@ -73,6 +73,7 @@ fun AppScreensaver(
     artworkIntervalSeconds: Int,
     dimPercent: Int,
     qualityKey: String,
+    weather: com.ambient.tv.data.weather.WeatherSnapshot? = null,
     modifier: Modifier = Modifier,
 ) {
     val performance = LocalPerformanceProfile.current
@@ -107,12 +108,13 @@ fun AppScreensaver(
                     ?: AmbientBackground(brightness)
             }
         }
-        if (showClock) ScreensaverClock(showDate, clock, modeKey == "oled", brightness)
+        if (showClock || weather != null) ScreensaverClock(showClock, showDate, clock, modeKey == "oled", brightness, weather)
     }
 }
 
 @Composable
-private fun ScreensaverClock(showDate: Boolean, clock: com.ambient.tv.data.local.ClockSettings, oled: Boolean, brightness: Float) {
+private fun ScreensaverClock(showClock: Boolean, showDate: Boolean, clock: com.ambient.tv.data.local.ClockSettings, oled: Boolean, brightness: Float,
+    weather: com.ambient.tv.data.weather.WeatherSnapshot?) {
     val use24HourClock = rememberUse24Hour(clock)
     // Only the minute display needs recomposition. Background motion uses its own draw clock.
     val now by rememberWallClock()
@@ -144,7 +146,7 @@ private fun ScreensaverClock(showDate: Boolean, clock: com.ambient.tv.data.local
         val safeY = ((height - clockSize.height) / 2f - margin).coerceAtLeast(0f)
         val typeSize = (min(maxWidth.value * 0.18f / density.fontScale, maxHeight.value * 0.28f / density.fontScale))
             .coerceIn(32f, if (oled) 94f else 132f)
-        ClockBlock(timeText, dateText, periodText, showDate, oled, brightness, typeSize,
+        ClockBlock(timeText, dateText, periodText, showDate, oled, brightness, typeSize, showClock, weather,
             Modifier.align(Alignment.Center)
                 // Also clamp the in-flight animation after a window/font-size change.
                 .offset { IntOffset(x.coerceIn(-safeX, safeX).roundToInt(), y.coerceIn(-safeY, safeY).roundToInt()) }
@@ -297,7 +299,8 @@ private fun PhotoBackground(intervalSeconds: Int, brightness: Float, hdrHeadroom
 @Composable
 private fun ClockBlock(
     timeText: String, dateText: String, periodText: String?, showDate: Boolean,
-    oled: Boolean, brightness: Float, typeSize: Float, modifier: Modifier = Modifier,
+    oled: Boolean, brightness: Float, typeSize: Float, showClock: Boolean,
+    weather: com.ambient.tv.data.weather.WeatherSnapshot?, modifier: Modifier = Modifier,
 ) {
     val timeColor = Color(0xFFF0F2F5).copy(alpha = (if (oled) 0.36f else 0.92f) * brightness)
     val detailColor = Color(0xFFD9E0E8).copy(alpha = (if (oled) 0.23f else 0.64f) * brightness)
@@ -311,7 +314,7 @@ private fun ClockBlock(
         shadow = if (oled) null else Shadow(Color.Black.copy(alpha = 0.30f), Offset(0f, 2f), 14f),
     )
     Column(modifier.padding(horizontal = 24.dp, vertical = 18.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-        Row(verticalAlignment = Alignment.Bottom) {
+        if (showClock) Row(verticalAlignment = Alignment.Bottom) {
             Crossfade(timeText, animationSpec = tween(500), label = "clockMinute") { text ->
                 Text(text, style = face, color = timeColor, maxLines = 1, softWrap = false, textAlign = TextAlign.Center)
             }
@@ -320,11 +323,15 @@ private fun ClockBlock(
                 fontSize = (typeSize * 0.14f).coerceIn(12f, 18f).sp,
                 fontWeight = FontWeight.Medium, letterSpacing = 1.sp, color = detailColor)
         }
-        if (showDate) {
+        if (showClock && showDate) {
             Spacer(Modifier.height(8.dp))
             Text(dateText, fontSize = (typeSize * 0.13f).coerceIn(12f, 17f).sp,
                 fontWeight = FontWeight.Normal, letterSpacing = 1.3.sp,
                 color = detailColor, textAlign = TextAlign.Center, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        }
+        weather?.let {
+            if (showClock) Spacer(Modifier.height(12.dp))
+            com.ambient.tv.ui.weather.WeatherCompactSummary(snapshot = it, textColor = detailColor, interactiveAttribution = false)
         }
     }
 }

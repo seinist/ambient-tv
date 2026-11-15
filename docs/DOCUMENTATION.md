@@ -230,6 +230,29 @@ The clock settings are part of the settings backup; older backups take over thei
 
 “Everywhere (headers)” shows the clock outside playback; “Everywhere + player” includes playback. The screensaver shares time format and date style but retains its separate brightness and OLED dimming.
 
+### 3.10 Weather
+
+Open **Settings › Appearance › Weather**, also available at the Simple settings level. Weather is off until enabled. Its settings remain accessible when its menu entry is hidden.
+
+| Setting | Options / values | Default | Description |
+| --- | --- | --- | --- |
+| Enable weather | On / Off | Off | Enables forecasts for deliberately saved locations; no device location permission. |
+| Locations | Search and save up to five places | None | Choose the active place; its local time zone labels the forecast. |
+| Show weather in the left menu | On / Off | On when weather is enabled | Opens the weather page from the TV sidebar; on phones it appears in the sources sheet. |
+| Weather in the header | On / Off | On when weather is enabled | Symbol and temperature on Home and page headers, independently of the clock and menu entry. |
+| Weather in the screensaver | On / Off | Off | Shares the moving, dimmed screensaver block; also works with the clock hidden. |
+| Temperature / wind | °C or °F; km/h, m/s, mph or knots | °C / km/h | Units are stored with cached values to prevent relabelling old data. |
+| Radar provider | RainViewer or DWD | No selection | An explicit choice is required. DWD is regional; RainViewer coverage depends on available radars. |
+| Satellite provider | NASA GIBS or EUMETSAT | No selection | NASA is daily visible imagery; EUMETSAT provides a separate infrared product. |
+
+The page shows current conditions, the next 24 hours and seven daily forecasts from [Open-Meteo](https://open-meteo.com/en/docs), plus separate Radar and Satellite tabs. Saved places can be switched without changing the map providers. The header and screensaver reuse the same forecast cache. Forecasts refresh at most once per 30-minute cache interval during normal visible use; a manual retry is still subject to request limits.
+
+Maps show the selected provider, product and frame time. Zoom, pan, return to the saved location and available radar frames work with the remote. **There is no automatic provider switch**: on failure, retry or choose another provider yourself. A service error, missing coverage and a blank precipitation overlay do not all mean “no rain”. Previously loaded images may remain visible with their cached status; offline access is limited to already loaded map extents and frames. Cache files may be evicted by Android. The app's local-network-only mode prevents weather internet requests.
+
+Provider documentation: [RainViewer](https://www.rainviewer.com/api/weather-maps-api.html), [DWD](https://geoportal.dwd.de/), [NASA GIBS](https://nasa-gibs.github.io/gibs-api-docs/), [EUMETView](https://user.eumetsat.int/data-access/eumetview/resources). Radar availability varies by region. Satellite imagery and model forecasts are different products and keep their own timestamps. The app displays the attribution with each source.
+
+Weather preferences, saved places, menu/display switches and both explicit provider choices are included in settings backups and preference transfers. Older backups without a weather field preserve the receiving device's choices. Forecasts and map images are cache data and are not transferred.
+
 ---
 
 ## 4. Media sources & accounts
@@ -865,7 +888,7 @@ Under **App & data › Backup**:
 - **Export without credentials** (default): no Plex tokens, no TVHeadend password; file-source passwords only when exporting with credentials. Before saving, an optional passphrase can be set (entered twice, show/hide toggle); leave it empty for a plain JSON file as before
 - **Export with credentials:** only when needed; the file is encrypted with a passphrase (at least 8 characters, AES-256-GCM, PBKDF2) that import asks for. Without the passphrase the backup cannot be restored. Companion transfers stay TLS-protected.
 - Encrypted files are a small JSON envelope (`"format":"ambient-tv-encrypted-backup"`, version 1, PBKDF2-HMAC-SHA256 with 310 000 iterations, random 16-byte salt and 12-byte IV, AES-256-GCM). Import detects plain vs. encrypted files automatically and asks for the passphrase; a wrong passphrase or a damaged file shows an error and the dialog stays open for another try.
-- Import restores settings and server profiles (schema up to current **76**)
+- Import restores settings and server profiles (schema up to current **78**), including weather places, display switches and the separately selected radar/satellite providers
 - Monogram system status, six menu/TV chips, Home rows and views are included in ordinary backups; Telegram API ID/hash only in passphrase-encrypted **credentials** exports. Telegram login/2FA, native session and downloaded private media are never portable; sign in again on a new device.
 - IPTV playlists and the OpenSubtitles key and account are only part of backups **with credentials** (playlist addresses often carry the provider account); a backup without credentials leaves the device's own unchanged. Timeshift size, timeshift/direct-recording switches (since schema 59) and reminder lead time are always backed up, scheduled reminders are not.
 - File sources and WOL are backed up; **local folder permissions (SAF) are not portable** and must be granted again on a new device

@@ -341,6 +341,7 @@ internal fun SettingsHub(
             }
             if (category == SettingsCategory.LIVE_TV) append(" timeshift aufnahme recording erinnerung reminder vorlauf umschalten buffer puffer")
             if (category == SettingsCategory.CLOCK) append(" uhr uhrzeit zeit datum clock time date 24h 12h am pm sekunden seconds endzeit end time")
+            if (category == SettingsCategory.WEATHER) append(" wetter weather radar satellit satellite regen rain vorhersage forecast temperatur temperature menü menu kopfzeile header bildschirmschoner screensaver open meteo dwd rainviewer nasa eumetsat")
             if (category == SettingsCategory.BACKGROUND) append(" lichtstimmung lichtschein hintergrundbilder hintergrundvideo artwork backdrop hero intensity stärke ausbreitung")
             if (category == SettingsCategory.NAV_SOUNDS) {
                 append(" menütöne menutoene navigationssounds navigation sounds sound-editor sound editor hall reverb echo")
@@ -512,7 +513,7 @@ internal fun SettingsHub(
         if (handheld) {
             // Keep the clock out of the narrow title/search row, including large type
             // and long dates. It follows the same visibility setting as other headers.
-            if (com.ambient.tv.ui.common.LocalClockSettings.current.inHeader) {
+            if (com.ambient.tv.ui.common.LocalClockSettings.current.inHeader || com.ambient.tv.ui.weather.LocalWeatherPresentation.current.header != null) {
                 com.ambient.tv.ui.common.HeaderClock(Modifier.align(Alignment.End))
             }
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
@@ -584,7 +585,7 @@ internal fun SettingsHub(
                     }
                 }
                 // Same corner as every page header (PageHeader) and Home.
-                if (com.ambient.tv.ui.common.LocalClockSettings.current.inHeader) {
+                if (com.ambient.tv.ui.common.LocalClockSettings.current.inHeader || com.ambient.tv.ui.weather.LocalWeatherPresentation.current.header != null) {
                     com.ambient.tv.ui.common.HeaderClock(Modifier.align(Alignment.Top))
                 }
             }

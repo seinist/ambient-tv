@@ -17,6 +17,7 @@ object Destinations {
     const val DLNA = "dlna"
     const val DLNA_SERVER = "dlna/{serverId}"
     const val HOME = "home"
+    const val WEATHER = "weather"
     const val PLEX = "plex"
     const val JELLYFIN = "jellyfin"
     const val EMBY = "emby"

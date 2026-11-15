@@ -22,6 +22,13 @@ class AppPreferences @Inject constructor(
     @TitleSettingsPrefs private val titlePrefs: SharedPreferences = prefs,
 ) {
     private val json = Json { ignoreUnknownKeys = true }
+    /** Optional weather module; empty map provider IDs require an explicit user choice. */
+    var weatherSettings: com.ambient.tv.data.weather.WeatherSettings
+        get() = runCatching {
+            json.decodeFromString<com.ambient.tv.data.weather.WeatherSettings>(prefs.getString("weather_settings", "{}")!!)
+        }.getOrDefault(com.ambient.tv.data.weather.WeatherSettings()).normalized()
+        set(value) = prefs.edit { putString("weather_settings", json.encodeToString(value.normalized())) }
+
     /** Media servers the "Continue watching · all systems" Home row takes titles from (default: all). */
     var allContinueSystems: Set<String>
         get() = prefs.getStringSet("all_continue_systems", null)?.toSet() ?: ALL_CONTINUE_DEFAULT_SYSTEMS
@@ -105,9 +112,9 @@ class AppPreferences @Inject constructor(
 
     /** Main-menu entries that have a divider below them (menu editor). Missing key = none. */
     var sidebarDividersAfter: Set<String>
-        // Ids of systems that no longer exist are dropped on load (Search/Home are the globals).
+        // Ids of systems that no longer exist are dropped on load; keep the global destinations.
         get() = prefs.getString("sidebar_dividers_after", "").orEmpty().split(',')
-            .filter { it in SystemNameOverrides.KEYS || it == "search" || it == "home" }.toSet()
+            .filter { it in SystemNameOverrides.KEYS || it in setOf("search", "home", "weather") }.toSet()
         set(value) = prefs.edit { putString("sidebar_dividers_after", value.filter { it.isNotBlank() }.sorted().joinToString(",")) }
 
     /**
