@@ -35,7 +35,7 @@ class RadioBackupTest {
         source.recordRadioStation(station("history-only", "History"))
 
         val raw = SettingsBackupManager(source, sourceTokens).exportJson()
-        assertEquals("78", Json.parseToJsonElement(raw).jsonObject["schemaVersion"].toString())
+        assertEquals(SettingsBackupManager.CURRENT_SCHEMA_VERSION.toString(), Json.parseToJsonElement(raw).jsonObject["schemaVersion"].toString())
         assertTrue(raw.contains("favorite"))
         assertFalse(raw.contains("history-only"))
 

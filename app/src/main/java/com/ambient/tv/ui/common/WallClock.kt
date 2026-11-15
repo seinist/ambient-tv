@@ -174,6 +174,11 @@ fun AmbientClock(settings: ClockSettings, modifier: Modifier = Modifier) {
 
 /** The clock at the right end of a [PageHeader] and floating over the app home. */
 @Composable
-fun HeaderClock(modifier: Modifier = Modifier) {
-    AmbientClock(LocalClockSettings.current, modifier.padding(start = 18.dp))
+fun HeaderClock(modifier: Modifier = Modifier, showClock: Boolean = LocalClockSettings.current.inHeader) {
+    val weather = com.ambient.tv.ui.weather.LocalWeatherPresentation.current.header
+    if (!showClock && weather == null) return
+    Row(modifier.padding(start = 18.dp), horizontalArrangement = Arrangement.spacedBy(18.dp), verticalAlignment = Alignment.Top) {
+        weather?.let { com.ambient.tv.ui.weather.WeatherCompactSummary(snapshot = it) }
+        if (showClock) AmbientClock(LocalClockSettings.current)
+    }
 }

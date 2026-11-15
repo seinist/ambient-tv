@@ -350,9 +350,9 @@ fun HomeScreen(
         val handheldHeader = LocalHandheldUi.current
         // Phones have no tall hero corner: reserve a real row so the configured clock
         // stays visible without covering the first cards or update notice.
-        if (!systemOverview && handheldHeader && com.ambient.tv.ui.common.LocalClockSettings.current.onHome) {
+        if (!systemOverview && handheldHeader && (com.ambient.tv.ui.common.LocalClockSettings.current.onHome || com.ambient.tv.ui.weather.LocalWeatherPresentation.current.header != null)) {
             Box(Modifier.fillMaxWidth().padding(horizontal = screenGutter(), vertical = 8.dp)) {
-                com.ambient.tv.ui.common.HeaderClock(Modifier.align(Alignment.TopEnd))
+                com.ambient.tv.ui.common.HeaderClock(Modifier.align(Alignment.TopEnd), showClock = com.ambient.tv.ui.common.LocalClockSettings.current.onHome)
             }
         }
         val overviewHeader: @Composable (Modifier) -> Unit = { headerModifier ->
@@ -460,9 +460,10 @@ fun HomeScreen(
             )
         }
         // The app home has no header row: the clock floats where the library pages put it.
-        if (!systemOverview && !LocalHandheldUi.current && com.ambient.tv.ui.common.LocalClockSettings.current.onHome) {
+        if (!systemOverview && !LocalHandheldUi.current && (com.ambient.tv.ui.common.LocalClockSettings.current.onHome || com.ambient.tv.ui.weather.LocalWeatherPresentation.current.header != null)) {
             com.ambient.tv.ui.common.HeaderClock(
                 Modifier.align(Alignment.TopEnd).padding(top = com.ambient.tv.ui.common.PageHeaderTopTv, end = screenGutter()).zIndex(2f),
+                showClock = com.ambient.tv.ui.common.LocalClockSettings.current.onHome,
             )
         }
         if (showOverviewOptions) {
@@ -1161,7 +1162,7 @@ internal fun LibraryContent(
             titleActions = heroTitleActions,
             atScreenTop = true,
             // The overview's floating actions and clock, or the app home's clock.
-            clockCorner = externalBackdropScrolling != null || com.ambient.tv.ui.common.LocalClockSettings.current.onHome,
+            clockCorner = externalBackdropScrolling != null || com.ambient.tv.ui.common.LocalClockSettings.current.onHome || com.ambient.tv.ui.weather.LocalWeatherPresentation.current.header != null,
             modifier = Modifier
                 .align(Alignment.TopCenter)
                 .zIndex(1f),
@@ -1719,7 +1720,8 @@ internal fun HomeHero(
                 .width(artworkWidth).height(
                     if (clockCorner) {
                         // Still centred on the metadata, so only the height shrinks to stay under the clock.
-                        val reserve = homeClockReserve(com.ambient.tv.ui.common.LocalClockSettings.current)
+                        val reserve = homeClockReserve(com.ambient.tv.ui.common.LocalClockSettings.current,
+                            com.ambient.tv.ui.weather.LocalWeatherPresentation.current.header != null)
                         (heroHeight - HomeHeroFadeTail - reserve * 2).coerceIn(48.dp, deviceDp(160.dp, 120.dp))
                     } else deviceDp(160.dp, 120.dp),
                 ),
@@ -2048,13 +2050,14 @@ private val HomeHeroMinHeight = 190.dp
 internal val HomeRowsLift = 30.dp
 
 // Top of the screen the floating home clock covers, its padding included.
-private fun homeClockReserve(clock: com.ambient.tv.data.local.ClockSettings): Dp {
+private fun homeClockReserve(clock: com.ambient.tv.data.local.ClockSettings, weatherVisible: Boolean): Dp {
     val twoLines = !clock.dateBeside && clock.date != com.ambient.tv.data.local.ClockSettings.DATE_OFF
-    return when (clock.size) {
+    val clockHeight = when (clock.size) {
         com.ambient.tv.data.local.ClockSettings.SIZE_SMALL -> if (twoLines) 64.dp else 52.dp
         com.ambient.tv.data.local.ClockSettings.SIZE_LARGE -> if (twoLines) 88.dp else 70.dp
         else -> if (twoLines) 72.dp else 58.dp
     }
+    return if (weatherVisible) maxOf(clockHeight, 80.dp) else clockHeight
 }
 
 // Keep the metadata/logo above the ambient surface's transparent lower edge.

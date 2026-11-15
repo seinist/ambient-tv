@@ -231,6 +231,31 @@ Die Uhr-Einstellungen sind Teil der Einstellungssicherung; ältere Sicherungen �
 
 „Überall (Kopfzeilen)“ zeigt die Uhr außerhalb des Players; für die Wiedergabe ist „Überall + Player“ vorgesehen. Der Bildschirmschoner übernimmt Zeitformat und Datumsstil, behält aber seine eigene Helligkeit und OLED-Abdunklung.
 
+### 3.10 Wetter
+
+Unter **Einstellungen › Darstellung › Wetter**, auch im Einstellungsumfang Einfach. Wetter ist zunächst deaktiviert. Die Einstellungen bleiben erreichbar, wenn der Menüeintrag ausgeblendet ist.
+
+| Einstellung | Optionen / Werte | Standard | Beschreibung |
+| --- | --- | --- | --- |
+| Wetter aktivieren | An / Aus | Aus | Vorhersagen für selbst gespeicherte Orte; keine Standortberechtigung nötig. |
+| Orte | Bis zu fünf Orte suchen und speichern | Keine | Aktiven Ort auswählen; die Vorhersage verwendet dessen Zeitzone. |
+| Wetter im linken Menü anzeigen | An / Aus | An, sobald Wetter aktiviert ist | Öffnet die Wetterseite über die TV-Seitenleiste; am Handy steht sie in der Quellenauswahl. |
+| Wetter im Seitenkopf | An / Aus | An, sobald Wetter aktiviert ist | Symbol und Temperatur auf der Startseite und in Kopfzeilen, unabhängig von Uhr und Menüeintrag. |
+| Wetter im Bildschirmschoner | An / Aus | Aus | Wandert mit dem gedimmten Uhrblock; funktioniert auch bei ausgeblendeter Uhr. |
+| Temperatur / Wind | °C oder °F; km/h, m/s, mph oder Knoten | °C / km/h | Die Einheit wird mit gespeicherten Werten gesichert, damit alte Daten nicht falsch beschriftet werden. |
+| Radardienst | RainViewer oder DWD | Keine Auswahl | Muss ausdrücklich gewählt werden. DWD ist regional; RainViewer hängt von verfügbaren Radaranlagen ab. |
+| Satellitendienst | NASA GIBS oder EUMETSAT | Keine Auswahl | NASA liefert tägliche Farbbilder; EUMETSAT bietet ein eigenes Infrarotprodukt. |
+
+Die Wetterseite zeigt aktuelle Werte, die nächsten 24 Stunden und sieben Tagesvorhersagen von [Open-Meteo](https://open-meteo.com/en/docs) sowie eigene Reiter für Radar und Satellit. Ein Ortswechsel lässt die Anbieterwahl bestehen. Kopfzeile und Bildschirmschoner verwenden denselben Vorhersage-Cache. Bei normaler sichtbarer Nutzung werden Vorhersagen nach 30 Minuten erneuert; auch ein manueller Neuversuch beachtet die Abrufbegrenzungen.
+
+Auf Karten stehen Anbieter, Produkt und Bildzeit. Zoom, Verschieben, Rückkehr zum gespeicherten Ort und verfügbare Radarbilder sind per Fernbedienung bedienbar. **Kein automatischer Anbieterwechsel:** Bei einem Ausfall selbst erneut versuchen oder einen anderen Dienst wählen. Ein Dienstfehler, fehlende Abdeckung und eine leere Niederschlagsebene bedeuten nicht alle „kein Regen“. Bereits geladene Bilder können mit ihrem Speicherstatus sichtbar bleiben; offline stehen nur zuvor geladene Ausschnitte und Bilder zur Verfügung. Android kann Cachedateien löschen. Der Modus „Nur lokales Netzwerk“ verhindert Internetabrufe für Wetter.
+
+Anbieterdokumentation: [RainViewer](https://www.rainviewer.com/api/weather-maps-api.html), [DWD](https://geoportal.dwd.de/), [NASA GIBS](https://nasa-gibs.github.io/gibs-api-docs/), [EUMETView](https://user.eumetsat.int/data-access/eumetview/resources). Radar ist regional unterschiedlich verfügbar. Satellitenbilder und Modellvorhersagen sind unterschiedliche Produkte mit eigenen Zeitständen. Die App zeigt die jeweilige Quelle an.
+
+Wetter-Einstellungen, Orte, Menü-/Anzeigeschalter und beide ausdrücklich gewählten Kartendienste sind in Sicherungen und Einstellungsübertragungen enthalten. Ältere Sicherungen ohne Wetter-Feld erhalten die Auswahl auf dem empfangenden Gerät. Vorhersagen und Kartenbilder werden als Cache nicht übertragen.
+
+Fehler bei Wetter, Karten und Ortssuche verwenden die gemeinsamen Hinweis-Komponenten der App. Gespeicherte Daten bleiben mit einem kompakten Statushinweis sichtbar; fehlende Abdeckung wird als Information angezeigt. Wiederholen-Schaltflächen bleiben beim Laden erhalten, und die Kartenansicht lässt sich scrollen, damit alle Bedienelemente erreichbar bleiben. Automatische Aktualisierungsfehler bleiben in ihrer Ansicht. Ein ausdrücklich wiederholter Abruf kann einmal über das normale Benachrichtigungssystem auf einen Fehler hinweisen, wenn seine Ansicht inzwischen ausgeblendet ist. Abgebrochene oder überholte Versuche melden nichts; Wetterhinweise unterbrechen keine Wiedergabe.
+
 ---
 
 ## 4. Medienquellen & Konten
@@ -864,7 +889,7 @@ Unter **App & Daten › Sicherung**:
 - **Ohne Zugangsdaten exportieren** (Standard): keine Plex-Tokens, kein TVHeadend-Passwort; Dateiquellen-Passwörter nur bei Export mit Zugangsdaten. Vor dem Speichern kann optional ein Passwort gesetzt werden (zweimal einzugeben, Anzeigen/Verbergen); leer lassen ergibt wie bisher eine unverschlüsselte JSON-Datei
 - **Mit Zugangsdaten exportieren:** nur bei Bedarf; die Datei wird mit einer Passphrase (mindestens 8 Zeichen, AES-256-GCM, PBKDF2) verschlüsselt, die beim Import abgefragt wird. Ohne Passphrase ist das Backup nicht wiederherstellbar. Die Übertragung per Companion bleibt TLS-geschützt.
 - Verschlüsselte Dateien sind ein kleiner JSON-Umschlag (`"format":"ambient-tv-encrypted-backup"`, Version 1, PBKDF2-HMAC-SHA256 mit 310 000 Iterationen, zufälliges 16-Byte-Salt und 12-Byte-IV, AES-256-GCM). Der Import erkennt unverschlüsselte und verschlüsselte Dateien automatisch und fragt nach dem Passwort; bei falschem Passwort oder beschädigter Datei erscheint ein Hinweis und der Dialog bleibt für einen neuen Versuch offen.
-- Import stellt Einstellungen und Serverprofile wieder her (Schema bis aktuell **76**)
+- Import stellt Einstellungen und Serverprofile wieder her (Schema bis aktuell **79**), einschließlich Wetter-Orten, Anzeigeschaltern und getrennt gewählten Radar-/Satellitendiensten
 - Monogram-Aktivierung, sechs Menü-/TV-Chips, Home-Reihen und Ansichtsmodi sind im normalen Backup enthalten; Telegram-API-ID/Hash nur im passwortverschlüsselten Export **mit Zugangsdaten**. Native Telegram-Anmeldung/2FA, Sitzungen und private Medien bleiben auf dem Gerät; auf neuen Geräten neu anmelden.
 - IPTV-Wiedergabelisten sowie OpenSubtitles-Schlüssel und -Konto sind nur in Backups **mit Zugangsdaten** enthalten (Listen-Adressen enthalten oft das Anbieterkonto); ein Backup ohne Zugangsdaten lässt die vorhandenen auf dem Gerät unverändert. Timeshift-Größe, Timeshift-/Direktaufnahme-Schalter (ab Schema 59) und Erinnerungs-Vorlauf werden immer gesichert, geplante Erinnerungen nicht.
 - Dateiquellen und WOL werden gesichert; **lokale Ordner-Berechtigungen (SAF) sind nicht übertragbar** und müssen auf dem neuen Gerät erneut erteilt werden

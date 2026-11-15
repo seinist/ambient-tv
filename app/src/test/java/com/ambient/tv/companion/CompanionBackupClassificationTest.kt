@@ -21,6 +21,19 @@ class CompanionBackupClassificationTest {
         assertTrue("sidebarDividersAfter" in CompanionBackupPolicy.classifiedFields)
     }
 
+    @Test fun weatherPreferencesTravelOnlyWhenPresentAndNotWithAccountsOnly() {
+        val targetWeather = com.ambient.tv.data.weather.WeatherSettings(enabled = true, radarProvider = "dwd")
+        val sourceWeather = targetWeather.copy(showInSidebar = false, radarProvider = "rainviewer", satelliteProvider = "nasa_gibs")
+        val target = SettingsBackup(exportedAtEpochMs = 1, weather = targetWeather)
+        val source = SettingsBackup(exportedAtEpochMs = 2, weather = sourceWeather)
+        fun merged(value: SettingsBackup, mode: String = "preferences") =
+            CompanionBackupPolicy.json.decodeFromString<SettingsBackup>(
+                CompanionBackupPolicy.merge(value, target, mode, overwrite = true, deviceSettings = false)).weather
+        assertEquals(sourceWeather, merged(source))
+        assertEquals(targetWeather, merged(source.copy(weather = null)))
+        assertEquals(targetWeather, merged(source, mode = "accounts"))
+    }
+
     @Test fun uiResolutionTravelsOnlyWithDeviceSettingsFromSchema77() {
         val target = SettingsBackup(schemaVersion = 77, exportedAtEpochMs = 1, uiRenderResolutionKey = "panel")
         val source = SettingsBackup(schemaVersion = 77, exportedAtEpochMs = 2, uiRenderResolutionKey = "1080p")

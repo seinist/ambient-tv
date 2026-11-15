@@ -15,6 +15,7 @@ Aktuelle Funktionen im Kompendium:
 - [Externe und Online-Untertitel](DOCUMENTATION.de.md#62-untertitel)
 - [Wake-on-LAN-Gruppen](DOCUMENTATION.de.md#53-server--wake-on-lan)
 - [Uhr](DOCUMENTATION.de.md#39-uhr)
+- [Wetter: Orte, Anzeigeschalter und manuelle Kartenanbieter](DOCUMENTATION.de.md#310-wetter)
 - [Aufnahmen und Timer: bearbeiten, löschen, Bilder](DOCUMENTATION.de.md#43-tvheadend)
 - [Media3-GPU-Filter (MPV-Kernel, RAVU, NIS, Korn, Entrauschen)](DOCUMENTATION.de.md#74-bildoptionen-vlc-und-media3)
 - [Untertitel-Aussehen und automatische Synchronisierung](DOCUMENTATION.de.md#62-untertitel)

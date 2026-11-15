@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="weather_maps_choose_provider">Map provider</string>
+    <string name="weather_maps_choose_hint">Choose a provider for this map. Your selection is saved; providers never change automatically.</string>
+    <string name="weather_maps_rainviewer_description">Past radar · up to 2 hours. Dark areas have no radar coverage; the coverage mask may lag behind outages.</string>
+    <string name="weather_maps_dwd_description">DWD radar reflectivity · Germany and nearby areas · 5-minute images. Coverage can have gaps.</string>
+    <string name="weather_maps_nasa_description">NOAA-20 visible-colour daily mosaic (UTC). Daily satellite imagery can have gaps, including at night.</string>
+    <string name="weather_maps_eumetsat_description">Global geostationary infrared composite · 3-hour images. Polar areas and satellite edges can have gaps.</string>
+    <string name="weather_maps_network_disabled">Online maps are disabled. Only previously loaded map areas and images are available.</string>
+    <string name="weather_maps_offline">No internet connection. Stored images remain visible with their original time. Reconnect and refresh to load new images.</string>
+    <string name="weather_maps_unavailable">The selected provider is currently unavailable. Stored images remain visible. Try again or choose another provider above.</string>
+    <string name="weather_maps_rate_limited">The provider has asked us to wait. Stored images remain available; try again later or choose another provider.</string>
+    <string name="weather_maps_access_denied">The provider is not allowing access to this map. Choose another provider or try again later.</string>
+    <string name="weather_maps_no_coverage">This provider has no data for this map area. Choose another provider or move the map.</string>
+    <string name="weather_maps_loading">Loading map…</string>
+    <string name="weather_maps_image_description">%1$s weather map near %2$s. The marker shows the saved location when it is in view.</string>
+    <string name="weather_maps_frame_time">Image: %1$s</string>
+    <string name="weather_maps_daily_time">Daily image: %1$s (UTC)</string>
+    <string name="weather_maps_stored">Stored / older data</string>
+    <string name="weather_maps_base_missing">The base map is unavailable. The weather image is still shown.</string>
+    <string name="weather_maps_coverage_missing">Radar coverage could not be checked. An empty area does not necessarily mean dry weather.</string>
+    <string name="weather_maps_previous">Earlier</string>
+    <string name="weather_maps_next">Later</string>
+    <string name="weather_maps_play">Play</string>
+    <string name="weather_maps_pause">Pause</string>
+    <string name="weather_maps_retry">Refresh</string>
+    <string name="weather_maps_zoom_in">Zoom in</string>
+    <string name="weather_maps_zoom_out">Zoom out</string>
+    <string name="weather_maps_west">West</string>
+    <string name="weather_maps_east">East</string>
+    <string name="weather_maps_north">North</string>
+    <string name="weather_maps_south">South</string>
+    <string name="weather_maps_centre">My location</string>
+    <string name="weather_maps_width">Map width: approximately %1$d km at the centre</string>
+    <string name="weather_maps_legend_samples">Radar reflectivity (dBZ) · selected colour values</string>
+    <string name="weather_maps_full_legend">Provider colour legend</string>
+</resources>

@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="weather_maps_choose_provider">Kartendienst</string>
+    <string name="weather_maps_choose_hint">Wähle einen Dienst für diese Karte. Deine Auswahl wird gespeichert; der Anbieter wechselt nicht automatisch.</string>
+    <string name="weather_maps_rainviewer_description">Vergangenes Regenradar · bis zu 2 Stunden. Dunkle Bereiche haben keine Radarabdeckung; die Abdeckungsmaske kann Ausfällen hinterherlaufen.</string>
+    <string name="weather_maps_dwd_description">DWD-Radarreflektivität · Deutschland und Umgebung · Bilder alle 5 Minuten. Die Abdeckung kann Lücken haben.</string>
+    <string name="weather_maps_nasa_description">NOAA-20-Tagesmosaik in sichtbaren Farben (UTC). Die täglichen Satellitenbilder können Lücken haben, auch nachts.</string>
+    <string name="weather_maps_eumetsat_description">Globales geostationäres Infrarot-Komposit · Bilder alle 3 Stunden. An Polen und Satellitenrändern sind Lücken möglich.</string>
+    <string name="weather_maps_network_disabled">Online-Karten sind deaktiviert. Verfügbar sind nur bereits geladene Kartenausschnitte und Bilder.</string>
+    <string name="weather_maps_offline">Keine Internetverbindung. Gespeicherte Bilder bleiben mit ihrem ursprünglichen Zeitpunkt sichtbar. Nach dem Verbinden aktualisieren, um neue Bilder zu laden.</string>
+    <string name="weather_maps_unavailable">Der gewählte Dienst ist derzeit nicht erreichbar. Gespeicherte Bilder bleiben sichtbar. Erneut versuchen oder oben einen anderen Dienst wählen.</string>
+    <string name="weather_maps_rate_limited">Der Anbieter verlangt eine Wartezeit. Gespeicherte Bilder bleiben verfügbar; später erneut versuchen oder einen anderen Dienst wählen.</string>
+    <string name="weather_maps_access_denied">Der Anbieter erlaubt den Zugriff auf diese Karte derzeit nicht. Einen anderen Dienst wählen oder später erneut versuchen.</string>
+    <string name="weather_maps_no_coverage">Für diesen Kartenausschnitt liefert der Anbieter keine Daten. Einen anderen Dienst wählen oder die Karte verschieben.</string>
+    <string name="weather_maps_loading">Karte wird geladen…</string>
+    <string name="weather_maps_image_description">Wetterkarte von %1$s bei %2$s. Die Markierung zeigt den gespeicherten Ort, falls er im Ausschnitt liegt.</string>
+    <string name="weather_maps_frame_time">Bild: %1$s</string>
+    <string name="weather_maps_daily_time">Tagesbild: %1$s (UTC)</string>
+    <string name="weather_maps_stored">Gespeicherte / ältere Daten</string>
+    <string name="weather_maps_base_missing">Die Grundkarte ist nicht verfügbar. Das Wetterbild wird weiterhin angezeigt.</string>
+    <string name="weather_maps_coverage_missing">Die Radarabdeckung konnte nicht geprüft werden. Ein leerer Bereich bedeutet nicht zwingend trockenes Wetter.</string>
+    <string name="weather_maps_previous">Früher</string>
+    <string name="weather_maps_next">Später</string>
+    <string name="weather_maps_play">Abspielen</string>
+    <string name="weather_maps_pause">Pause</string>
+    <string name="weather_maps_retry">Aktualisieren</string>
+    <string name="weather_maps_zoom_in">Vergrößern</string>
+    <string name="weather_maps_zoom_out">Verkleinern</string>
+    <string name="weather_maps_west">Westen</string>
+    <string name="weather_maps_east">Osten</string>
+    <string name="weather_maps_north">Norden</string>
+    <string name="weather_maps_south">Süden</string>
+    <string name="weather_maps_centre">Mein Ort</string>
+    <string name="weather_maps_width">Kartenbreite: etwa %1$d km auf mittlerer Höhe</string>
+    <string name="weather_maps_legend_samples">Radarreflektivität (dBZ) · ausgewählte Farbwerte</string>
+    <string name="weather_maps_full_legend">Farblegende des Anbieters</string>
+</resources>

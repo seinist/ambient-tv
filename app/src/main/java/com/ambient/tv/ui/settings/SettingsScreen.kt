@@ -351,6 +351,10 @@ fun SettingsScreen(
                 )
                 return@Column
             }
+            if (selectedCategory == SettingsCategory.WEATHER) {
+                com.ambient.tv.ui.weather.WeatherSettingsScreen(embedded = true, modifier = Modifier.weight(1f))
+                return@Column
+            }
             val wakeRevision by viewModel.wakeSourcesRevision.collectAsState(initial = 0L to 0L)
             val wakeGroups = remember(uiState, wakeRevision, selectedCategory) {
                 if (selectedCategory == SettingsCategory.WAKE) viewModel.wakeGroups(uiState) else emptyList()
@@ -368,6 +372,7 @@ fun SettingsScreen(
                   indexedSettingsItems(itemIndex) {
                     when (selectedCategory) {
                         SettingsCategory.NAV_SOUNDS -> Unit // Full-page editor above.
+                        SettingsCategory.WEATHER -> Unit // Full-page weather settings above.
                         SettingsCategory.COMPANION -> companionSettingsItems()
                         SettingsCategory.TRANSFER -> {
                             item { CompanionTransferSection() }

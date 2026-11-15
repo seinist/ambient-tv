@@ -68,7 +68,7 @@ internal fun SettingsArea.groupsMediaSources(): Boolean =
 internal val SettingsCategory.level: com.ambient.tv.ui.common.SettingsLevel get() = when {
     isMediaSource() -> com.ambient.tv.ui.common.SettingsLevel.SIMPLE
     this in setOf(SettingsCategory.LANGUAGE, SettingsCategory.APPEARANCE, SettingsCategory.HOME,
-        SettingsCategory.SUBTITLES, SettingsCategory.NOTIFICATIONS, SettingsCategory.ABOUT) ->
+        SettingsCategory.SUBTITLES, SettingsCategory.NOTIFICATIONS, SettingsCategory.ABOUT, SettingsCategory.WEATHER) ->
         com.ambient.tv.ui.common.SettingsLevel.SIMPLE
     this in setOf(SettingsCategory.IMAGE, SettingsCategory.VISUALIZER, SettingsCategory.WIREGUARD,
         SettingsCategory.DIAGNOSTICS, SettingsCategory.ADVANCED) ->
@@ -88,6 +88,7 @@ internal enum class SettingsCategory(val area: SettingsArea, val titleRes: Int, 
     APPEARANCE(SettingsArea.START, R.string.settings_appearance_title, R.string.settings_page_appearance_hint),
     BACKGROUND(SettingsArea.START, R.string.settings_background_page_title, R.string.settings_page_background_hint),
     CLOCK(SettingsArea.START, R.string.settings_clock_title, R.string.settings_page_clock_hint),
+    WEATHER(SettingsArea.START, R.string.weather_title, R.string.weather_settings_hint),
     HOME(SettingsArea.HOME, R.string.settings_home_rows_title, R.string.settings_page_home_hint),
     LIBRARY(SettingsArea.HOME, R.string.settings_library_title, R.string.settings_page_library_hint),
     /** Media-card activation behavior (formerly titled Navigation). */

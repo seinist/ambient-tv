@@ -414,6 +414,9 @@ internal fun SidebarContent(
         if (showHome) {
             add(MenuDestination("home", stringResource(R.string.nav_home), Icons.Filled.Home, Destinations.HOME))
         }
+        if (sidebarState.weatherEnabled) {
+            add(MenuDestination("weather", stringResource(R.string.weather_title), androidx.compose.material.icons.Icons.Filled.Cloud, Destinations.WEATHER))
+        }
         if (systems.isEmpty()) add(MenuDestination("setup", stringResource(R.string.sidebar_add_system), Icons.Filled.Add, Destinations.INITIAL_SETUP))
     }
     val filesLabel = stringResource(R.string.nav_files)

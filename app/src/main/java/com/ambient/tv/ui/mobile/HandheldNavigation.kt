@@ -394,6 +394,14 @@ private fun HandheldSources(
             IconButton(onDismiss) { Icon(Icons.Default.Close, stringResource(R.string.action_close)) }
         }
         LazyColumn(Modifier.fillMaxWidth().weight(1f, fill = false), contentPadding = PaddingValues(bottom = 24.dp)) {
+            if (sidebarState.weatherEnabled) item("weather") {
+                ListItem(
+                    headlineContent = { Text(stringResource(R.string.weather_title)) },
+                    leadingContent = { Icon(Icons.Default.Cloud, null) },
+                    trailingContent = { Icon(Icons.Default.ChevronRight, null) },
+                    modifier = Modifier.clickable { onNavigate(Destinations.WEATHER) },
+                )
+            }
             groups.forEach { group ->
                 val open = groups.size == 1 || expanded == group.system.key
                 item(group.system.key) {

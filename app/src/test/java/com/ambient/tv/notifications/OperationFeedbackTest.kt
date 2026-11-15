@@ -74,6 +74,21 @@ class OperationFeedbackTest {
         assertEquals(listOf(NoticePhase.SUCCESS), notices.map { it.phase })
     }
 
+    @Test fun lateCancellationOfOldCoroutineKeepsTheNewAttemptValid() {
+        val notices = mutableListOf<AppNotice>()
+        val reporter = OperationFeedbackReporter { notices.add(it) }
+        val old = reporter.begin("retry")
+        val current = reporter.begin("retry")
+        reporter.cancel(old)
+        assertNotNull(reporter.complete(current, failure()))
+        assertEquals(1, notices.size)
+        assertNull(reporter.complete(old, failure()))
+        val cancelled = reporter.begin("retry")
+        reporter.cancel(cancelled)
+        assertNull(reporter.complete(cancelled, failure()))
+        assertEquals(1, notices.size)
+    }
+
     @Test fun validationAndPageFailuresStayInlineEvenWhenHidden() {
         assertFalse(failure().copy(delivery = FeedbackDelivery.INLINE).shouldNotify(false))
         assertFalse(failure().copy(phase = FeedbackPhase.SUCCESS, delivery = FeedbackDelivery.CONTEXTUAL).shouldNotify(true))

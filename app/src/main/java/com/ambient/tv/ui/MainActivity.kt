@@ -1082,7 +1082,7 @@ internal fun radioSectionTransitionIsInstant(fromRoute: String?, toRoute: String
     return isRadioBrowse(fromRoute) && isRadioBrowse(toRoute)
 }
 
-internal val SIDEBAR_ROUTES = setOf(Destinations.TRAILERS, Destinations.TRAILER_FEED, Destinations.FILES, Destinations.FILE_SOURCE, Destinations.FILE_FAVORITES, Destinations.FILE_RECENT, Destinations.FILE_CONTINUE, Destinations.DLNA, Destinations.DLNA_SERVER, Destinations.HOME, Destinations.PLEX, Destinations.JELLYFIN, Destinations.EMBY, Destinations.SEARCH, Destinations.YOUTUBE, Destinations.YOUTUBE_FEED, Destinations.TELEGRAM, Destinations.TELEGRAM_SECTION, Destinations.SPOTIFY, Destinations.SPOTIFY_SECTION, Destinations.RADIO, Destinations.RADIO_SECTION, Destinations.LIVE_TV, Destinations.LIVE_TV_SECTION, Destinations.SETTINGS, Destinations.SECTION)
+internal val SIDEBAR_ROUTES = setOf(Destinations.TRAILERS, Destinations.TRAILER_FEED, Destinations.FILES, Destinations.FILE_SOURCE, Destinations.FILE_FAVORITES, Destinations.FILE_RECENT, Destinations.FILE_CONTINUE, Destinations.DLNA, Destinations.DLNA_SERVER, Destinations.HOME, Destinations.WEATHER, Destinations.PLEX, Destinations.JELLYFIN, Destinations.EMBY, Destinations.SEARCH, Destinations.YOUTUBE, Destinations.YOUTUBE_FEED, Destinations.TELEGRAM, Destinations.TELEGRAM_SECTION, Destinations.SPOTIFY, Destinations.SPOTIFY_SECTION, Destinations.RADIO, Destinations.RADIO_SECTION, Destinations.LIVE_TV, Destinations.LIVE_TV_SECTION, Destinations.SETTINGS, Destinations.SECTION)
 internal val FULLSCREEN_ROUTES = setOf(Destinations.ITEM_TRAILERS, Destinations.TMDB_TRAILERS, Destinations.PHOTO_VIEWER, Destinations.SETUP_COMPLETE, Destinations.INITIAL_SETUP, Destinations.SETUP_SETTINGS, Destinations.PLAYER, Destinations.TVH_PLAYER, Destinations.YOUTUBE_PLAYER, Destinations.TELEGRAM_PLAYER, Destinations.TELEGRAM_DETAIL, Destinations.YOUTUBE_DETAIL, Destinations.YOUTUBE_CHANNEL, Destinations.SPOTIFY_PLAYER, Destinations.RADIO_PLAYER, Destinations.RADIO_DETAIL, Destinations.SPOTIFY_DETAIL, Destinations.SERVER_SELECT, Destinations.DETAIL, Destinations.DETAIL_FILTERED_BROWSE)
 // Saved on the Settings back stack entry by a sidebar shortcut: the page to open, plus a serial
 // that changes with every request.
@@ -1856,6 +1856,14 @@ private fun AmbientTvApp(
     // only stays awake on its visible player page. PiP, idle browse and sleep standby are
     // deliberately excluded. Play intent keeps the flag during buffering and source changes.
     val standbyRequested = !handheld && com.ambient.tv.ui.player.SleepSession.standbyRequested
+    val weatherPresentation = com.ambient.tv.ui.weather.rememberWeatherPresentation(
+        headerVisible = currentRoute != null && !standbyRequested && !screensaverOverlayPresent && !pipPresentation &&
+            !onPlayerRoute && currentRoute !in setOf(Destinations.PHOTO_VIEWER, Destinations.ITEM_TRAILERS,
+                Destinations.TMDB_TRAILERS, Destinations.SERVER_SELECT, Destinations.INITIAL_SETUP, Destinations.SETUP_COMPLETE),
+        screensaverVisible = !standbyRequested && !pipPresentation &&
+            ScreensaverPresentation.shouldShow(screensaverActive, screensaverPreview != null, playbackActive),
+        contentVisible = !standbyRequested && !screensaverOverlayPresent && !pipPresentation,
+    )
     val keepScreenOn = com.ambient.tv.ui.player.shouldKeepScreenOn(
         handheld = handheld,
         appScreensaverEnabled = screensaverEnabled,
@@ -2191,6 +2199,7 @@ private fun AmbientTvApp(
                 com.ambient.tv.ui.common.LocalHomeBackgroundArtwork provides homeBackgroundArtwork,
                 com.ambient.tv.ui.common.LocalFocusArtworkBackdrop provides homeBackground.focusArtwork,
                 com.ambient.tv.ui.common.LocalClockSettings provides clockSettings,
+                com.ambient.tv.ui.weather.LocalWeatherPresentation provides weatherPresentation,
                 LocalPersistentPlaybackVideoHost provides persistentVideoHost,
                 LocalVisibleBackgroundVideo provides showVisibleBackgroundVideo,
                 LocalSidebarContentReadyReporter provides reportSidebarContentReady,
@@ -2688,6 +2697,14 @@ private fun AmbientTvApp(
                                 navController.navigate(Destinations.telegramSection("channel:$chat"))
                             },
                         )
+                    }
+                    composable(Destinations.WEATHER) {
+                        RestorableSidebarContent {
+                            com.ambient.tv.ui.weather.WeatherScreen(
+                                onBack = ::focusSidebar,
+                                onOpenSettings = { openSystemSettings("weather") },
+                            )
+                        }
                     }
                     composable(Destinations.RADIO) {
                         RestorableSidebarContent {
@@ -3423,6 +3440,7 @@ private fun AmbientTvApp(
                     artworkIntervalSeconds = preview?.artworkIntervalSeconds ?: screensaverArtworkIntervalSeconds,
                     dimPercent = preview?.dimPercent ?: screensaverDimPercent,
                     qualityKey = preview?.qualityKey ?: screensaverQualityKey,
+                    weather = weatherPresentation.screensaver,
                     modifier = Modifier.fillMaxSize(),
                 )
             }

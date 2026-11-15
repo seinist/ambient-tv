@@ -33,6 +33,8 @@ data class SettingsBackup(
     val youtubeEnabled: Boolean = false,
     val spotifyEnabled: Boolean = false,
     val radioEnabled: Boolean = false,
+    /** Absent in older backups: preserve the receiving device's weather configuration. */
+    val weather: com.ambient.tv.data.weather.WeatherSettings? = null,
     /** Portable Telegram system settings; native MTProto authorization/session stays device-local. */
     val telegramEnabled: Boolean = false,
     val telegramSubmenuKeys: List<String> = AppPreferences.DEFAULT_TELEGRAM_SUBMENU_KEYS,
@@ -373,6 +375,7 @@ class SettingsBackupManager @Inject constructor(
             ),
             spotifyEnabled = preferences.spotifyEnabled,
             radioEnabled = preferences.radioEnabled,
+            weather = preferences.weatherSettings,
             telegramEnabled = preferences.telegramEnabled,
             telegramSubmenuKeys = preferences.telegramSubmenuKeys,
             monogramApiCredentials = if (includeCredentials && BuiltInKeys.monogram == null) tokenStore.monogramCredentials()?.let { (id, hash) ->
@@ -760,6 +763,7 @@ class SettingsBackupManager @Inject constructor(
         preferences.youtubeEnabled = backup.youtubeEnabled
         preferences.spotifyEnabled = backup.spotifyEnabled
         preferences.radioEnabled = backup.radioEnabled
+        backup.weather?.let { preferences.weatherSettings = it.normalized() }
         preferences.telegramEnabled = backup.telegramEnabled
         preferences.telegramSubmenuKeys = backup.telegramSubmenuKeys
         preferences.replaceRadioFavorites(backup.radioFavorites)
@@ -1063,8 +1067,8 @@ class SettingsBackupManager @Inject constructor(
         }
     }
 
-    private companion object {
-        const val CURRENT_SCHEMA_VERSION = 78
+    internal companion object {
+        const val CURRENT_SCHEMA_VERSION = 79
         val PORTABLE_DISPLAY_MODES = setOf("system", AppPreferences.DISPLAY_MODE_AUTO_CONTENT, AppPreferences.DISPLAY_MODE_AUTO_DISPLAY)
     }
 }
