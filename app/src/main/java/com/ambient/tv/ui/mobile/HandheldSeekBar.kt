@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -33,14 +34,12 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.semantics.ProgressBarRangeInfo
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.disabled
 import androidx.compose.ui.semantics.progressBarRangeInfo
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.setProgress
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import androidx.compose.ui.res.stringResource
-import androidx.tv.material3.Text
-import androidx.tv.material3.MaterialTheme
 import com.ambient.tv.R
 import com.ambient.tv.ui.common.LocalPlayerPlayPauseFocus
 import com.ambient.tv.ui.player.LocalPlaybackNavigation
@@ -56,7 +55,11 @@ fun HandheldSeekBar(
     modifier: Modifier = Modifier,
     showEndTime: Boolean = true,
     paused: Boolean = false,
+    interactive: Boolean = true,
+    timelineContext: (@Composable (Long) -> Unit)? = null,
 ) {
+    val canSeek = interactive && durationMs > 0L
+    val dataAlpha = com.ambient.tv.ui.player.playerTimelineRevealAlpha(durationMs > 0L)
     val accent = com.ambient.tv.ui.theme.LocalPlaybackAccent.current.indicator
     val style = LocalAccentStyle.current
     val progressBrush = remember(accent, style) { accentBrush(accent, style) }
@@ -67,6 +70,7 @@ fun HandheldSeekBar(
     val latestOnInteraction by rememberUpdatedState(onInteraction)
     var dragFraction by remember { mutableStateOf<Float?>(null) }
     var dragStartMs by remember { mutableStateOf(positionMs) }
+    LaunchedEffect(canSeek) { if (!canSeek) dragFraction = null }
     val fraction = dragFraction ?: (positionMs.toDouble() / durationMs.coerceAtLeast(1L))
         .toFloat().coerceIn(0f, 1f)
     val shownPosition = if (dragFraction != null) (fraction * durationMs).toLong() else positionMs
@@ -77,12 +81,22 @@ fun HandheldSeekBar(
     } == true
     SideEffect { preview?.update(previewTarget, durationMs, previewAvailable) }
     DisposableEffect(preview) { onDispose { preview?.hide() } }
-    val accessibilityLabel = stringResource(R.string.player_seekbar_description, elapsedLabel(shownPosition), elapsedLabel(durationMs))
+    val accessibilityLabel = stringResource(
+        R.string.player_seekbar_description,
+        if (durationMs > 0L) elapsedLabel(shownPosition) else "--:--",
+        if (durationMs > 0L) elapsedLabel(durationMs) else "--:--",
+    )
 
     Column(modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(2.dp)) {
         val chapterAlpha by com.ambient.tv.ui.player.seekPreviewYieldAlpha()
-        com.ambient.tv.ui.player.CurrentChapterLabel(shownPosition,
-            Modifier.graphicsLayer { alpha = chapterAlpha })
+        if (timelineContext != null) {
+            Column(Modifier.graphicsLayer { alpha = chapterAlpha }, verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                timelineContext(shownPosition)
+            }
+        } else {
+            com.ambient.tv.ui.player.CurrentChapterLabel(shownPosition,
+                Modifier.graphicsLayer { alpha = chapterAlpha })
+        }
         Box(
             Modifier
                 .fillMaxWidth()
@@ -92,29 +106,26 @@ fun HandheldSeekBar(
                 .then(if (playPauseFocus != null) Modifier.focusProperties { down = playPauseFocus } else Modifier)
                 .semantics {
                     contentDescription = accessibilityLabel
-                    progressBarRangeInfo = ProgressBarRangeInfo(fraction, 0f..1f)
-                    setProgress { target ->
-                        if (durationMs > 0L) {
-                            com.ambient.tv.ui.player.BackgroundPlaybackSession.userSeek()
-                            navigation?.interact()
-                            latestOnInteraction()
-                            latestOnSeekBy(handheldSeekDelta(target, latestPositionMs, durationMs))
-                            true
-                        } else false
+                    if (durationMs > 0L) progressBarRangeInfo = ProgressBarRangeInfo(fraction, 0f..1f)
+                    if (!canSeek) disabled()
+                    if (canSeek) setProgress { target ->
+                        com.ambient.tv.ui.player.BackgroundPlaybackSession.userSeek()
+                        navigation?.interact()
+                        latestOnInteraction()
+                        latestOnSeekBy(handheldSeekDelta(target, latestPositionMs, durationMs))
+                        true
                     }
                 }
-                .pointerInput(durationMs) {
+                .then(if (canSeek) Modifier.pointerInput(durationMs) {
                     detectTapGestures { point ->
-                        if (durationMs > 0L) {
-                            com.ambient.tv.ui.player.BackgroundPlaybackSession.userSeek()
-                            val target = (point.x / size.width.coerceAtLeast(1).toFloat()).coerceIn(0f, 1f)
-                            navigation?.interact()
-                            latestOnInteraction()
-                            latestOnSeekBy(handheldSeekDelta(target, latestPositionMs, durationMs))
-                        }
+                        com.ambient.tv.ui.player.BackgroundPlaybackSession.userSeek()
+                        val target = (point.x / size.width.coerceAtLeast(1).toFloat()).coerceIn(0f, 1f)
+                        navigation?.interact()
+                        latestOnInteraction()
+                        latestOnSeekBy(handheldSeekDelta(target, latestPositionMs, durationMs))
                     }
-                }
-                .pointerInput(durationMs) {
+                } else Modifier)
+                .then(if (canSeek) Modifier.pointerInput(durationMs) {
                     detectHorizontalDragGestures(
                         onDragStart = { point ->
                             com.ambient.tv.ui.player.BackgroundPlaybackSession.userSeek()
@@ -124,6 +135,7 @@ fun HandheldSeekBar(
                             latestOnInteraction()
                         },
                         onHorizontalDrag = { change, _ ->
+                            change.consume()
                             dragFraction = (change.position.x / size.width.coerceAtLeast(1).toFloat()).coerceIn(0f, 1f)
                             navigation?.interact()
                             latestOnInteraction()
@@ -135,7 +147,7 @@ fun HandheldSeekBar(
                         },
                         onDragCancel = { dragFraction = null },
                     )
-                },
+                } else Modifier),
             contentAlignment = Alignment.CenterStart,
         ) {
             val bookmarks = com.ambient.tv.ui.player.rememberPlayingBookmarks()
@@ -144,6 +156,11 @@ fun HandheldSeekBar(
                 val endX = size.width
                 val trackWidth = 6.dp.toPx()
                 drawLine(Color.White.copy(alpha = 0.24f), Offset(0f, centerY), Offset(endX, centerY), trackWidth, StrokeCap.Round)
+            }
+            Canvas(Modifier.fillMaxSize().graphicsLayer { alpha = dataAlpha.value }) {
+                val centerY = size.height / 2f
+                val endX = size.width
+                val trackWidth = 6.dp.toPx()
                 if (durationMs > 0L) {
                     drawLine(progressBrush, Offset(0f, centerY), Offset(endX * fraction, centerY), trackWidth, StrokeCap.Round)
                     navigation?.timeline?.chapters?.forEach { chapter ->
@@ -164,17 +181,20 @@ fun HandheldSeekBar(
             val remaining = (durationMs - shownPosition).coerceAtLeast(0L)
             Row(verticalAlignment = Alignment.CenterVertically) {
                 com.ambient.tv.ui.player.PlayerOsdNavigationIndicator(paused)
-                Text(
-                    if (durationMs > 0L) "${elapsedLabel(shownPosition)} / ${elapsedLabel(durationMs)}" else elapsedLabel(shownPosition),
-                    color = Color.White.copy(alpha = 0.82f), fontSize = 13.sp,
+                com.ambient.tv.ui.player.PlayerTimelineTimeText(
+                    ready = durationMs > 0L,
+                    text = "${elapsedLabel(shownPosition)} / ${elapsedLabel(durationMs)}",
+                    color = Color.White.copy(alpha = 0.82f),
+                    placeholder = "--:-- / --:--",
                 )
             }
             val endsAt = if (showEndTime && durationMs > 0L) {
                 java.time.LocalTime.now().plusSeconds(remaining / 1000L).format(java.time.format.DateTimeFormatter.ofPattern("HH:mm"))
             } else null
-            Text(
-                endsAt?.let { "−${elapsedLabel(remaining)} · ${stringResource(R.string.player_ends_at, it)}" } ?: "−${elapsedLabel(remaining)}",
-                color = Color.White.copy(alpha = 0.72f), fontSize = 13.sp,
+            com.ambient.tv.ui.player.PlayerTimelineTimeText(
+                ready = durationMs > 0L,
+                text = endsAt?.let { "−${elapsedLabel(remaining)} · ${stringResource(R.string.player_ends_at, it)}" } ?: "−${elapsedLabel(remaining)}",
+                color = Color.White.copy(alpha = 0.72f),
             )
         }
     }

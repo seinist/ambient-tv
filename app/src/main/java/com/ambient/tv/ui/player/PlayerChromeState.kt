@@ -36,6 +36,8 @@ class PlayerChromeState(initialZapOsd: Boolean = false) {
     /** The active engine's OSD and panel content and remote handling; see [PersistentPlayerOverlays]. */
     internal val panelModel = mutableStateOf<PlayerPanelModel?>(null)
     internal val osdModel = mutableStateOf<PlayerOsdSpec?>(null)
+    /** VOD time readouts survive a decoder replacement, but never a media/version change. */
+    internal val timelineDuration = mutableStateOf(PlayerTimelineDuration())
     /** What the details dialog shows; published by the screen, so a renderer switch keeps it. */
     internal val detail = mutableStateOf<PlayerDetailInfo?>(null)
     /** Whether the Details button is switched on for this player; Info only opens the dialog then. */

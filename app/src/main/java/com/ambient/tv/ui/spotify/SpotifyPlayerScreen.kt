@@ -59,6 +59,8 @@ import com.ambient.tv.ui.common.PlayerControlBar
 import com.ambient.tv.ui.common.UnifiedBackendPlayerPanel
 import com.ambient.tv.ui.common.UnifiedPlayerPanel
 import com.ambient.tv.ui.player.TvPlayerSeekBar
+import com.ambient.tv.ui.player.PlayerTimelineSlot
+import com.ambient.tv.ui.player.rememberPlayerTimelineDuration
 import com.ambient.tv.ui.player.SleepTimerConfig
 import com.ambient.tv.ui.player.ReferencePlayerBottomContent
 import com.ambient.tv.ui.player.ReferencePlayerClock
@@ -92,6 +94,11 @@ private fun SpotifyPlayerContent(onBack: () -> Unit, viewModel: SpotifyPlayerVie
     val state by viewModel.state.collectAsState()
     val operationFeedback by viewModel.operationFeedback.collectAsState()
     val track = state.current
+    val timelineDurationMs = rememberPlayerTimelineDuration(
+        sourceIdentity = track?.uri ?: "spotify:waiting",
+        durationMs = state.durationMs,
+        fallbackDurationMs = track?.durationMs ?: 0L,
+    )
     val paused = com.ambient.tv.ui.player.shouldShowPlayerPaused(state.playing,
         active = state.connected && track != null)
     val art = track?.album?.images?.firstOrNull()?.url
@@ -247,12 +254,11 @@ private fun SpotifyPlayerContent(onBack: () -> Unit, viewModel: SpotifyPlayerVie
                     subtitle = track?.artists?.joinToString(", ") { it.name },
                     artworkAspectRatio = 1f,
                     artworkContentScale = ContentScale.Crop,
-                    showPaused = paused && state.durationMs <= 0L,
                 )
-                if (state.durationMs > 0L) {
+                PlayerTimelineSlot {
                     TvPlayerSeekBar(
                         state.positionMs,
-                        state.durationMs,
+                        timelineDurationMs,
                         onSeekBy = ::seekBy,
                         onInteraction = osd::interact,
                         onTogglePlayback = viewModel::toggle,

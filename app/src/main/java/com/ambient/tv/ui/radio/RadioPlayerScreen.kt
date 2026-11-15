@@ -84,6 +84,8 @@ import com.ambient.tv.ui.player.ReferencePlayerClock
 import com.ambient.tv.ui.player.ReferencePlayerHeader
 import com.ambient.tv.ui.player.ReferencePlayerOverlayBackground
 import com.ambient.tv.ui.player.TvPlayerSeekBar
+import com.ambient.tv.ui.player.PlayerTimelineSlot
+import com.ambient.tv.ui.player.rememberPlayerTimelineDuration
 import com.ambient.tv.ui.player.RequestPlayerOverlayFocus
 import com.ambient.tv.ui.player.handlePlayerOsdKey
 import com.ambient.tv.ui.player.rememberPlayerControlsVisible
@@ -492,7 +494,12 @@ internal data class RadioOsdModel(
         val seekFocusRequester = rememberPlayerSeekFocus()
         val osd = com.ambient.tv.ui.player.rememberPlayerOsdController()
         val header = radioHeaderPresentation(stationName, nowPlaying, systemName(MediaSystem.RADIO))
-        val hasSeekbar = radioTimelineMode(durationMs, seekable) == RadioTimelineMode.SEEK
+        val timelineDurationMs = rememberPlayerTimelineDuration(
+            sourceIdentity = "radio:$stationId",
+            durationMs = durationMs,
+            retainDuration = false,
+        )
+        val hasSeekbar = radioTimelineMode(timelineDurationMs, seekable) == RadioTimelineMode.SEEK
         PlayerOverlayVisibility(visible = visible) {
             ReferencePlayerOverlayBackground()
             ReferencePlayerClock(
@@ -522,24 +529,26 @@ internal data class RadioOsdModel(
                 // Match Live-TV radio: the timeline is always present under the header.
                 // No EPG/duration for an ordinary internet radio stream means a passive
                 // live indicator, not a fake zero-length, interactive seek control.
-                if (hasSeekbar) {
-                    TvPlayerSeekBar(
-                        positionMs = positionMs.coerceIn(0L, durationMs),
-                        durationMs = durationMs,
-                        paused = paused,
-                        onSeekBy = onSeekBy,
-                        onInteraction = osd::interact,
-                        onTogglePlayback = onToggle,
-                        onPlay = { if (!playing) BackgroundPlaybackSession.userPlay() },
-                        showEndTime = false,
-                        modifier = Modifier.focusRequester(seekFocusRequester),
-                    )
-                } else {
-                    LinearProgressIndicator(
-                        progress = { radioTimelineAccentFill(positionMs, durationMs) },
-                        color = com.ambient.tv.ui.theme.LocalPlaybackAccent.current.indicator,
-                        modifier = Modifier.fillMaxWidth(),
-                    )
+                PlayerTimelineSlot {
+                    if (hasSeekbar) {
+                        TvPlayerSeekBar(
+                            positionMs = positionMs.coerceIn(0L, timelineDurationMs),
+                            durationMs = timelineDurationMs,
+                            paused = paused,
+                            onSeekBy = onSeekBy,
+                            onInteraction = osd::interact,
+                            onTogglePlayback = onToggle,
+                            onPlay = { if (!playing) BackgroundPlaybackSession.userPlay() },
+                            showEndTime = false,
+                            modifier = Modifier.focusRequester(seekFocusRequester),
+                        )
+                    } else {
+                        LinearProgressIndicator(
+                            progress = { radioTimelineAccentFill(positionMs, timelineDurationMs) },
+                            color = com.ambient.tv.ui.theme.LocalPlaybackAccent.current.indicator,
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                    }
                 }
                 PlayerTechBadgeRow {
                     MetaBadge(systemName(MediaSystem.RADIO), emphasized = true)

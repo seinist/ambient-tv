@@ -130,6 +130,8 @@ import com.ambient.tv.ui.common.UnifiedPlayerPanel
 import com.ambient.tv.ui.player.PlaybackSeekCoordinator
 import com.ambient.tv.youtube.lateYouTubeResumeTarget
 import com.ambient.tv.ui.player.TvPlayerSeekBar
+import com.ambient.tv.ui.player.PlayerTimelineSlot
+import com.ambient.tv.ui.player.rememberPlayerTimelineDuration
 import com.ambient.tv.ui.player.backend.MpvBackendAvailability
 import com.ambient.tv.ui.player.backend.MpvVideoSurface
 import com.ambient.tv.ui.player.backend.PlaybackBackend
@@ -1964,7 +1966,13 @@ internal data class YouTubeOsdModel(
         val playFocusRequester = com.ambient.tv.ui.player.rememberPlayerPlayFocus()
         val navigation = LocalPlayerPanelNavigation.current
         val seekable = !playback.isLive || liveDvrWindow != null
-        val seekDurationMs = if (playback.isLive) liveDvrWindow?.durationMs ?: 0L else duration
+        val seekDurationMs = rememberPlayerTimelineDuration(
+            sourceIdentity = "youtube:${playback.videoId}",
+            durationMs = if (playback.isLive) liveDvrWindow?.durationMs ?: 0L
+                else duration,
+            retainDuration = !playback.isLive,
+            fallbackDurationMs = if (playback.isLive) 0L else playback.durationMs,
+        )
         val seekPositionMs = if (playback.isLive) liveDvrWindow?.displayPositionMs(position) ?: 0L else position
         val publication = if (playback.isLive) null else playback.publishedAtMs?.let {
             com.ambient.tv.ui.common.relativePublishedLabel(it)
@@ -1988,26 +1996,27 @@ internal data class YouTubeOsdModel(
                     subtitleTrailingText = publication,
                     showPaused = playback.isLive && paused && liveDvrWindow == null,
                 )
-                if (seekable && seekDurationMs > 0L) {
-                    TvPlayerSeekBar(
-                        positionMs = seekPositionMs.coerceIn(0L, seekDurationMs),
-                        durationMs = seekDurationMs,
-                        paused = paused,
-                        onSeekBy = onSeek,
-                        onInteraction = osd::interact,
-                        onTogglePlayback = onToggle,
-                        onPlay = { if (!playing) onToggle() },
-                        showEndTime = !playback.isLive,
-                        modifier = Modifier.focusRequester(seekFocusRequester),
-                    )
-                } else if (playback.isLive) {
-                    // Like Radio Browser, non-DVR live streams have a passive LIVE indicator,
-                    // never a misleading interactive bar with an invented duration.
-                    androidx.compose.material3.LinearProgressIndicator(
-                        progress = { 1f },
-                        color = com.ambient.tv.ui.theme.LocalPlaybackAccent.current.indicator,
-                        modifier = Modifier.fillMaxWidth(),
-                    )
+                PlayerTimelineSlot {
+                    if (seekable) {
+                        TvPlayerSeekBar(
+                            positionMs = seekPositionMs.coerceIn(0L, seekDurationMs),
+                            durationMs = seekDurationMs,
+                            paused = paused,
+                            onSeekBy = onSeek,
+                            onInteraction = osd::interact,
+                            onTogglePlayback = onToggle,
+                            onPlay = { if (!playing) onToggle() },
+                            showEndTime = !playback.isLive,
+                            modifier = Modifier.focusRequester(seekFocusRequester),
+                        )
+                    } else {
+                        // Non-DVR live streams retain their passive LIVE indicator.
+                        androidx.compose.material3.LinearProgressIndicator(
+                            progress = { 1f },
+                            color = com.ambient.tv.ui.theme.LocalPlaybackAccent.current.indicator,
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                    }
                 }
                 PlayerTechBadgeRow {
                     MetaBadge(com.ambient.tv.ui.common.systemName(com.ambient.tv.ui.common.MediaSystem.YOUTUBE), emphasized = true)

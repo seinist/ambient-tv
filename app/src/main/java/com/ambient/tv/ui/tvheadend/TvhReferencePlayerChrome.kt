@@ -2,6 +2,7 @@ package com.ambient.tv.ui.tvheadend
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.BoxScope
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
@@ -52,6 +53,8 @@ import com.ambient.tv.ui.player.ReferencePlayerClock
 import com.ambient.tv.ui.player.ReferencePlayerHeader
 import com.ambient.tv.ui.player.ReferencePlayerOverlayBackground
 import com.ambient.tv.ui.player.TvPlayerSeekBar
+import com.ambient.tv.ui.player.PlayerTimelineSlot
+import com.ambient.tv.ui.player.rememberPlayerTimelineDuration
 
 /** TVHeadend OSD rendered with the same chrome hierarchy and controls as the Plex/Jellyfin player. */
 @Composable
@@ -157,115 +160,120 @@ fun BoxScope.TvhReferencePlayerChrome(
         // Ticks with the buffer, so the button turns active while playback is paused.
         val liveJumpAvailable = jumpToLiveAvailable(source.isLive, positionMs)
         val liveJumpActive = shiftable && liveJumpAvailable
-        if (source.isLive) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Text(
-                    if (nowEvent != null && liveEventDurationMs > 0L)
-                        "${formatTvhChromeClock(nowEvent.startEpochSeconds)} – ${formatTvhChromeClock(nowEvent.stopEpochSeconds)}"
-                    else "",
-                    color = androidx.compose.ui.graphics.Color.White.copy(alpha = 0.82f),
-                    fontSize = 13.sp,
-                )
-                // EPG gives the broadcast end; delayed playback finishes later by its live offset.
-                if (nowEvent != null && nowEvent.stopEpochSeconds > nowSeconds) {
-                    Text(
-                        stringResource(
-                            R.string.player_ends_at,
-                            formatTvhChromeClock(nowEvent.stopEpochSeconds + behindMs / 1000L),
-                        ),
-                        color = androidx.compose.ui.graphics.Color.White.copy(alpha = 0.64f),
-                        fontSize = 13.sp,
+        PlayerTimelineSlot {
+            Column(verticalArrangement = Arrangement.spacedBy(com.ambient.tv.ui.mobile.deviceDp(13.dp, 6.dp))) {
+                if (source.isLive) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text(
+                            if (nowEvent != null && liveEventDurationMs > 0L)
+                                "${formatTvhChromeClock(nowEvent.startEpochSeconds)} – ${formatTvhChromeClock(nowEvent.stopEpochSeconds)}"
+                            else "",
+                            color = androidx.compose.ui.graphics.Color.White.copy(alpha = 0.82f),
+                            fontSize = 13.sp,
+                        )
+                        // EPG gives the broadcast end; delayed playback finishes later by its live offset.
+                        if (nowEvent != null && nowEvent.stopEpochSeconds > nowSeconds) {
+                            Text(
+                                stringResource(
+                                    R.string.player_ends_at,
+                                    formatTvhChromeClock(nowEvent.stopEpochSeconds + behindMs / 1000L),
+                                ),
+                                color = androidx.compose.ui.graphics.Color.White.copy(alpha = 0.64f),
+                                fontSize = 13.sp,
+                            )
+                        }
+                    }
+                    if (!showTimeshift) LinearProgressIndicator(
+                        progress = {
+                            if (liveEventDurationMs > 0L)
+                                (liveEventPositionMs.toFloat() / liveEventDurationMs.toFloat()).coerceIn(0f, 1f)
+                            else 0f
+                        },
+                        color = com.ambient.tv.ui.theme.LocalPlaybackAccent.current.indicator,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    // EPG is fetched separately from the stream. Empty text retains the line height
+                    // without briefly showing programme information from the previous channel.
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text(
+                            nextEvent?.let {
+                                stringResource(R.string.tvh_next_program, formatTvhChromeClock(it.startEpochSeconds), it.title)
+                            } ?: "",
+                            color = androidx.compose.ui.graphics.Color.White.copy(alpha = 0.62f),
+                            fontSize = 12.sp,
+                            maxLines = 1,
+                            modifier = Modifier.weight(1f),
+                        )
+                        // Without timeshift there is no seekbar. Reuse the reserved next-programme line.
+                        if (!showTimeshift) com.ambient.tv.ui.player.PlayerPausedIndicator(paused, showLabel = true, leadingSpacing = 8.dp)
+                    }
+                } else {
+                    TvPlayerSeekBar(
+                        positionMs = positionMs,
+                        durationMs = durationMs,
+                        onSeekBy = onSeekBy,
+                        onInteraction = osd::interact,
+                        onTogglePlayback = onTogglePlayback,
+                        onPlay = { if (!playing) onTogglePlayback() },
+                        paused = paused,
+                        modifier = Modifier.focusRequester(seekFocusRequester),
+                    )
+                }
+
+                if (showTimeshift) {
+                    val buffer = com.ambient.tv.livetv.LiveTimeshift.current
+                    val oldest = buffer?.oldestWallMs ?: watchedWallMs
+                    val edge = maxOf(oldest, buffer?.liveWallMs ?: watchedWallMs)
+                    TvPlayerSeekBar(
+                        positionMs = watchedWallMs.coerceIn(oldest, edge) - oldest,
+                        durationMs = (edge - oldest).coerceAtLeast(0L),
+                        interactive = shiftable,
+                        onSeekBy = { delta -> if (shiftable) seekLiveTimeshiftBy(positionMs, delta) },
+                        onInteraction = osd::interact,
+                        onTogglePlayback = onTogglePlayback,
+                        onPlay = { if (!playing) onTogglePlayback() },
+                        paused = paused,
+                        modifier = Modifier.focusRequester(seekFocusRequester),
+                        showEndTime = false,
+                        timelineContext = { previewPosition ->
+                            if (nowEvent != null && liveEventDurationMs > 0L) {
+                                val previewWallMs = oldest + previewPosition
+                                val programmeMs = programmePositionMs(previewWallMs, nowEvent.startEpochSeconds, nowEvent.stopEpochSeconds)
+                                val beforeProgramme = previewWallMs < nowEvent.startEpochSeconds * 1000L
+                                Text(
+                                    if (beforeProgramme) stringResource(R.string.timeshift_before_programme, formatTvhChromeClock(previewWallMs / 1000L))
+                                    else stringResource(R.string.timeshift_programme_position,
+                                        formatTvhChromeDuration(programmeMs),
+                                        formatTvhChromeDuration(liveEventDurationMs),
+                                        formatTvhChromeClock(previewWallMs / 1000L)),
+                                    color = androidx.tv.material3.MaterialTheme.colorScheme.primary,
+                                    fontSize = 12.sp,
+                                )
+                                LinearProgressIndicator(
+                                    progress = { (programmeMs.toDouble() / liveEventDurationMs).toFloat().coerceIn(0f, 1f) },
+                                    color = androidx.tv.material3.MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.fillMaxWidth().height(3.dp),
+                                )
+                            } else {
+                                Text("", fontSize = 12.sp)
+                                LinearProgressIndicator(
+                                    progress = { 0f },
+                                    color = androidx.tv.material3.MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.fillMaxWidth().height(3.dp),
+                                )
+                            }
+                        },
+
                     )
                 }
             }
-            if (!showTimeshift) LinearProgressIndicator(
-                progress = {
-                    if (liveEventDurationMs > 0L)
-                        (liveEventPositionMs.toFloat() / liveEventDurationMs.toFloat()).coerceIn(0f, 1f)
-                    else 0f
-                },
-                color = com.ambient.tv.ui.theme.LocalPlaybackAccent.current.indicator,
-                modifier = Modifier.fillMaxWidth(),
-            )
-            // EPG is fetched separately from the stream. Empty text retains the line height
-            // without briefly showing programme information from the previous channel.
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Text(
-                    nextEvent?.let {
-                        stringResource(R.string.tvh_next_program, formatTvhChromeClock(it.startEpochSeconds), it.title)
-                    } ?: "",
-                    color = androidx.compose.ui.graphics.Color.White.copy(alpha = 0.62f),
-                    fontSize = 12.sp,
-                    maxLines = 1,
-                    modifier = Modifier.weight(1f),
-                )
-                // Without timeshift there is no seekbar. Reuse the reserved next-programme line.
-                if (!showTimeshift) com.ambient.tv.ui.player.PlayerPausedIndicator(paused, showLabel = true, leadingSpacing = 8.dp)
-            }
-        } else if (!source.isLive && durationMs > 0L) {
-            TvPlayerSeekBar(
-                positionMs = positionMs,
-                durationMs = durationMs,
-                onSeekBy = onSeekBy,
-                onInteraction = osd::interact,
-                onTogglePlayback = onTogglePlayback,
-                onPlay = { if (!playing) onTogglePlayback() },
-                paused = paused,
-                modifier = Modifier.focusRequester(seekFocusRequester),
-            )
-        }
-
-        if (showTimeshift) {
-            val buffer = com.ambient.tv.livetv.LiveTimeshift.current
-            val oldest = buffer?.oldestWallMs ?: watchedWallMs
-            val edge = maxOf(oldest, buffer?.liveWallMs ?: watchedWallMs)
-            TvPlayerSeekBar(
-                positionMs = watchedWallMs.coerceIn(oldest, edge) - oldest,
-                durationMs = (edge - oldest).coerceAtLeast(1L),
-                onSeekBy = { delta -> if (shiftable) seekLiveTimeshiftBy(positionMs, delta) },
-                onInteraction = osd::interact,
-                onTogglePlayback = onTogglePlayback,
-                onPlay = { if (!playing) onTogglePlayback() },
-                paused = paused,
-                modifier = Modifier.focusRequester(seekFocusRequester),
-                showEndTime = false,
-                timelineContext = { previewPosition ->
-                    if (nowEvent != null && liveEventDurationMs > 0L) {
-                        val previewWallMs = oldest + previewPosition
-                        val programmeMs = programmePositionMs(previewWallMs, nowEvent.startEpochSeconds, nowEvent.stopEpochSeconds)
-                        val beforeProgramme = previewWallMs < nowEvent.startEpochSeconds * 1000L
-                        Text(
-                            if (beforeProgramme) stringResource(R.string.timeshift_before_programme, formatTvhChromeClock(previewWallMs / 1000L))
-                            else stringResource(R.string.timeshift_programme_position,
-                                formatTvhChromeDuration(programmeMs),
-                                formatTvhChromeDuration(liveEventDurationMs),
-                                formatTvhChromeClock(previewWallMs / 1000L)),
-                            color = androidx.tv.material3.MaterialTheme.colorScheme.primary,
-                            fontSize = 12.sp,
-                        )
-                        LinearProgressIndicator(
-                            progress = { (programmeMs.toDouble() / liveEventDurationMs).toFloat().coerceIn(0f, 1f) },
-                            color = androidx.tv.material3.MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.fillMaxWidth().height(3.dp),
-                        )
-                    } else {
-                        Text("", fontSize = 12.sp)
-                        LinearProgressIndicator(
-                            progress = { 0f },
-                            color = androidx.tv.material3.MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.fillMaxWidth().height(3.dp),
-                        )
-                    }
-                },
-
-            )
         }
 
         PlayerTechBadgeRow {
@@ -442,6 +450,14 @@ internal data class LiveOsdModel(
     override fun Content(visible: Boolean, panel: com.ambient.tv.ui.common.UnifiedPlayerPanel) {
         val seekFocusRequester = com.ambient.tv.ui.player.rememberPlayerSeekFocus()
         val playFocusRequester = com.ambient.tv.ui.player.rememberPlayerPlayFocus()
+        // Live buffers grow and reset independently; only a finite recording keeps its duration.
+        val timelineDurationMs = rememberPlayerTimelineDuration(
+            sourceIdentity = if (source.isLive) "live:${channel?.uuid ?: source.url}"
+                else "recording:${source.url}",
+            durationMs = durationMs,
+            retainDuration = !source.isLive,
+            fallbackDurationMs = if (source.isLive) 0L else source.durationMs ?: 0L,
+        )
         com.ambient.tv.ui.player.PlayerOverlayVisibility(
             visible = visible,
         ) {
@@ -454,7 +470,7 @@ internal data class LiveOsdModel(
                 nowEvent = nowEvent,
                 nextEvent = nextEvent,
                 positionMs = positionMs,
-                durationMs = durationMs,
+                durationMs = timelineDurationMs,
                 playing = playing,
                 loading = loading,
                 paused = paused,
