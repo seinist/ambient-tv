@@ -19,6 +19,8 @@ class UiRenderResolutionPreferencesTest {
             preferences.uiRenderResolutionKey = key
             val restarted = AppPreferences(storage)
             assertEquals(key, restarted.uiRenderResolutionKey)
+            assertEquals("system", UiRenderResolutionPolicy.effectiveKey(restarted.uiRenderResolutionKey, true, 30))
+            assertEquals(key, UiRenderResolutionPolicy.effectiveKey(restarted.uiRenderResolutionKey, true, 31))
             assertEquals(.9f, restarted.uiScale, 0f)
             assertEquals("panel", restarted.gpuRenderResolutionKey)
             assertEquals("force", restarted.uiHdrModeKey)

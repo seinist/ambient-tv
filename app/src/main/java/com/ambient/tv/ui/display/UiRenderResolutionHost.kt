@@ -54,9 +54,11 @@ internal class UiRenderHostCallbacks(
  * A normal Android ViewRoot rendered at a real, independently sized buffer, then composed into
  * the full outer viewport. The ordinary system path must not construct this host.
  *
- * Only public API-30 methods are used: setView(view, width, height), relayout(width, height),
+ * Rendering uses public API-30 methods: setView(view, width, height), relayout(width, height),
  * SurfaceHolder.setFixedSize and SurfaceView.setChildSurfacePackage. The package remains a
  * child of SurfaceView's scaled layer, so nested video SurfaceViews retain independent buffers.
+ * The interactive host requires API 31: API 30 embedded input channels explicitly cannot receive
+ * keys or window focus. API 31 adds SurfaceView's focus transfer to the embedded window and IME.
  *
  * The public SurfaceControlViewHost API cannot select this ViewRoot's colorMode (including the
  * API-37 LayoutParams). Its Canvas must therefore be treated as SDR by the caller; the native
@@ -66,7 +68,7 @@ internal class UiRenderHostCallbacks(
  * belongs to the stable native window decor, not the replaceable embedded ViewRoot. Dialogs
  * supply their remembered parent composition context to preserve composition locals.
  */
-@RequiresApi(30)
+@RequiresApi(31)
 internal class UiRenderResolutionHost(
     private val activity: ComponentActivity,
     modeKey: String,
@@ -281,11 +283,19 @@ internal class UiRenderResolutionHost(
             throw error
         }
         // SurfaceView owns the transferred package and links both accessibility and input trees.
-        requestEmbeddedFocus()
+        requestEmbeddedFocus(forceCarrierFocusChange = true)
     }
 
-    private fun requestEmbeddedFocus() {
+    private fun requestEmbeddedFocus(forceCarrierFocusChange: Boolean = false) {
         if (!interactive) return
+        // Android 12 transfers embedded window focus only from SurfaceView.onFocusChanged;
+        // setChildSurfacePackage does not transfer it when the carrier was already focused.
+        // Toggle only after installing a new package. Ordinary native-window focus callbacks
+        // must not repeatedly revoke/regrant focus, and the Compose focus tree stays untouched.
+        if (forceCarrierFocusChange && surfaceView.isFocused) {
+            surfaceView.isFocusable = false
+            surfaceView.isFocusableInTouchMode = true // Also restores focusability.
+        }
         surfaceView.requestFocus()
         if (!embeddedRoot.hasFocus()) embeddedRoot.requestFocus()
     }

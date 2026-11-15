@@ -11,7 +11,8 @@ object UiRenderResolutionPolicy {
 
     fun normalize(key: String?): String = key?.takeIf { it in keys } ?: SYSTEM
 
-    fun isSupported(isTelevision: Boolean, sdkInt: Int): Boolean = isTelevision && sdkInt >= 30
+    /** Android 12 adds the embedded-window focus forwarding needed for TV remote input. */
+    fun isSupported(isTelevision: Boolean, sdkInt: Int): Boolean = isTelevision && sdkInt >= 31
 
     fun effectiveKey(key: String?, isTelevision: Boolean, sdkInt: Int): String =
         if (isSupported(isTelevision, sdkInt)) normalize(key) else SYSTEM

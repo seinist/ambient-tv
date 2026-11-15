@@ -8,5 +8,5 @@
     <string name="settings_ui_render_resolution_panel_hint">Renders the interface at the display resolution.</string>
     <string name="settings_ui_render_resolution_restart">Applies from the next app start.</string>
     <string name="settings_ui_render_resolution_hdr_hint">UI HDR requires the system resolution.</string>
-    <string name="settings_ui_render_resolution_unavailable">Separate interface resolution requires Android 11 or later.</string>
+    <string name="settings_ui_render_resolution_unavailable">Separate interface resolution requires Android 12 or later.</string>
 </resources>

@@ -80,7 +80,7 @@ internal class UiRenderResolutionAudit(
     private fun key(code: Int) = instrumentation.sendKeyDownUpSync(code)
 
     fun run() {
-        check(Build.VERSION.SDK_INT >= 30)
+        check(Build.VERSION.SDK_INT >= 31) { "Embedded window focus requires Android 12 / API 31" }
         check(instrumentation.targetContext.packageName.endsWith(".hdraudit")) { "Use isolated .hdraudit app" }
         val activity = instrumentation.startActivitySync(
             Intent(instrumentation.targetContext, UiCatalogActivity::class.java)

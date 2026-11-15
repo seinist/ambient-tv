@@ -10,8 +10,8 @@ class UiRenderResolutionPolicyTest {
         }
         for (key in listOf("system", "1080p", "panel")) {
             assertEquals(key, UiRenderResolutionPolicy.normalize(key))
-            assertEquals(key, UiRenderResolutionPolicy.effectiveKey(key, isTelevision = true, sdkInt = 30))
-            assertEquals("system", UiRenderResolutionPolicy.effectiveKey(key, isTelevision = true, sdkInt = 29))
+            assertEquals(key, UiRenderResolutionPolicy.effectiveKey(key, isTelevision = true, sdkInt = 31))
+            assertEquals("system", UiRenderResolutionPolicy.effectiveKey(key, isTelevision = true, sdkInt = 30))
             assertEquals("system", UiRenderResolutionPolicy.effectiveKey(key, isTelevision = false, sdkInt = 35))
         }
     }
