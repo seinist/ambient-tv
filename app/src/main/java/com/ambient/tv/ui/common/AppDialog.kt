@@ -289,7 +289,6 @@ fun AppDialog(
             }
             }
             com.ambient.tv.notifications.AppNotificationHost(dialog = true)
-            com.ambient.tv.companion.CompanionDialogInputSurface()
             }
         }
     }

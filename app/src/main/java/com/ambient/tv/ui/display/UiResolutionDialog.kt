@@ -7,6 +7,7 @@ import android.widget.FrameLayout
 import androidx.activity.ComponentActivity
 import androidx.activity.OnBackPressedDispatcherOwner
 import androidx.activity.findViewTreeOnBackPressedDispatcherOwner
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
@@ -27,6 +28,7 @@ import androidx.compose.ui.unit.Density
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import com.ambient.tv.companion.CompanionDialogInputSurface
 import com.ambient.tv.data.local.UiRenderResolutionPolicy
 import com.ambient.tv.ui.player.findActivity
 import timber.log.Timber
@@ -47,7 +49,9 @@ internal fun UiResolutionDialog(
     val parentEnvironment = LocalUiRenderEnvironment.current
     val activity = LocalContext.current.findActivity() as? ComponentActivity
     if (!parentEnvironment.embedded || activity == null) {
-        Dialog(onDismissRequest = onDismissRequest, properties = properties, content = content)
+        Dialog(onDismissRequest = onDismissRequest, properties = properties) {
+            DialogInputContent(focusable, content)
+        }
         return
     }
     val parentDensity = LocalDensity.current
@@ -78,7 +82,9 @@ internal fun UiResolutionDialog(
         }
         if (window == null) {
             // A vendor Dialog without a discoverable Window retains working native content.
-            ProvideUiRenderEnvironment(UiRenderResolutionPolicy.SYSTEM, null, windowDensity) { currentContent() }
+            ProvideUiRenderEnvironment(UiRenderResolutionPolicy.SYSTEM, null, windowDensity) {
+                DialogInputContent(currentFocusable) { currentContent() }
+            }
         } else {
             AndroidView(
                 modifier = Modifier.fillMaxSize(),
@@ -91,7 +97,9 @@ internal fun UiResolutionDialog(
                                     if (failed) UiRenderResolutionPolicy.SYSTEM else parentEnvironment.modeKey,
                                     if (failed) null else viewport,
                                     currentWindowDensity,
-                                ) { currentContent() }
+                                ) {
+                                    DialogInputContent(currentFocusable) { currentContent() }
+                                }
                             }
                         }
                     }
@@ -159,6 +167,18 @@ internal fun UiResolutionDialog(
                 },
                 update = { },
             )
+        }
+    }
+}
+
+/** Every dialog owns one input registration in its actual native or embedded Compose root. */
+@Composable
+private fun DialogInputContent(focusable: Boolean, content: @Composable () -> Unit) {
+    Box(propagateMinConstraints = true) {
+        content()
+        if (focusable) {
+            // The cursor follows the measured content and must not expand compact native dialogs.
+            Box(Modifier.matchParentSize()) { CompanionDialogInputSurface() }
         }
     }
 }

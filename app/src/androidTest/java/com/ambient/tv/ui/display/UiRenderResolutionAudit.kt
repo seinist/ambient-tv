@@ -51,7 +51,6 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.window.DialogProperties
 import androidx.compose.ui.window.PopupProperties
 import androidx.tv.material3.Text
-import com.ambient.tv.companion.CompanionDialogInputSurface
 import com.ambient.tv.companion.CompanionInput
 import com.ambient.tv.companion.CompanionRemoteInput
 import com.ambient.tv.data.local.UiRenderResolutionPolicy
@@ -113,6 +112,7 @@ internal class UiRenderResolutionAudit(
         val mode = mutableStateOf(UiRenderResolutionPolicy.FULL_HD)
         val dialogVisible = mutableStateOf(false)
         val popupVisible = mutableStateOf(false)
+        val focusablePopupVisible = mutableStateOf(false)
         val editorVisible = mutableStateOf(false)
         val editorText = mutableStateOf("")
         val activations = mutableIntStateOf(0)
@@ -127,6 +127,7 @@ internal class UiRenderResolutionAudit(
         var dialogEnvironment: UiRenderEnvironment? = null
         var popupView: View? = null
         var popupEnvironment: UiRenderEnvironment? = null
+        var focusablePopupView: View? = null
         var editorFocused = false
         var observedDensity = 0f
         var observedDensityDpi = 0
@@ -258,7 +259,6 @@ internal class UiRenderResolutionAudit(
                                                 decorFitsSystemWindows = false,
                                             ),
                                         ) {
-                                            CompanionDialogInputSurface()
                                             val view = LocalView.current
                                             val environment = LocalUiRenderEnvironment.current
                                             val dialogFocus = remember { FocusRequester() }
@@ -290,6 +290,21 @@ internal class UiRenderResolutionAudit(
                                                 onDispose { popupView = null; popupEnvironment = null }
                                             }
                                             Text("Noninteractive resolution overlay")
+                                        }
+                                    }
+                                    if (focusablePopupVisible.value) {
+                                        UiResolutionPopup(
+                                            onDismissRequest = { focusablePopupVisible.value = false },
+                                            properties = PopupProperties(focusable = true),
+                                        ) {
+                                            val view = LocalView.current
+                                            val popupFocus = remember { FocusRequester() }
+                                            SideEffect { focusablePopupView = view }
+                                            DisposableEffect(Unit) { onDispose { focusablePopupView = null } }
+                                            TvActionButton("Close interactive popup",
+                                                { focusablePopupVisible.value = false },
+                                                Modifier.focusRequester(popupFocus))
+                                            LaunchedEffect(Unit) { withFrameNanos { }; popupFocus.requestFocus() }
                                         }
                                     }
                                 }
@@ -468,6 +483,20 @@ internal class UiRenderResolutionAudit(
                 }
             }
             log("PASS Companion dispatch reaches embedded activity/dialog keys, Back, pointer and Compose text InputConnection")
+
+            for (closeKey in listOf("ok", "back")) {
+                main { focusablePopupVisible.value = true }
+                await("focusable popup owns embedded input") {
+                    focusablePopupView?.rootView?.hasWindowFocus() == true &&
+                        focusablePopupView?.isUiRenderHosted() == true
+                }
+                main { check(CompanionRemoteInput.dispatch(CompanionInput("key", key = closeKey))) }
+                await("Companion $closeKey closes focusable popup") {
+                    !focusablePopupVisible.value && focusablePopupView == null &&
+                        compose.rootView.hasWindowFocus()
+                }
+            }
+            log("PASS focusable popup registers its real Companion endpoint and handles OK/Back")
 
             val originalDensityDpi = main { activity.resources.configuration.densityDpi }
             val originalOverride = Regex("Override density: (\\d+)").find(shell("wm density"))?.groupValues?.get(1)
