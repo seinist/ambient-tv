@@ -16,10 +16,13 @@ import android.view.View
 import android.view.WindowInsets
 import android.view.WindowManager
 import android.widget.FrameLayout
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
@@ -27,6 +30,7 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.withFrameNanos
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
@@ -103,7 +107,7 @@ internal class UiRenderResolutionAudit(
         val activations = mutableIntStateOf(0)
         val focus = FocusRequester()
         var rootFocused = false
-        var buttonBounds = Rect.Zero
+        var pointerBounds = Rect.Zero
         var rememberedIdentity: Any? = null
         var failure: Throwable? = null
         var routedKeyCount = 0
@@ -193,10 +197,18 @@ internal class UiRenderResolutionAudit(
                                             "Open resolution dialog (${activations.intValue})",
                                             { activations.intValue++; dialogVisible.value = true },
                                             Modifier.focusRequester(focus)
-                                                .onFocusChanged { rootFocused = it.hasFocus }
-                                                .onGloballyPositioned { buttonBounds = it.boundsInRoot() },
+                                                .onFocusChanged { rootFocused = it.hasFocus },
                                         )
                                         Text("1080p Compose · independent native video surface")
+                                        // TV Material Surface handles DPAD and semantics, not pointer taps.
+                                        // A separate real Compose click target tests the platform transform.
+                                        Box(
+                                            Modifier.size(240.dp, 64.dp)
+                                                .background(androidx.compose.ui.graphics.Color.DarkGray)
+                                                .clickable { activations.intValue++; dialogVisible.value = true }
+                                                .onGloballyPositioned { pointerBounds = it.boundsInRoot() },
+                                            contentAlignment = Alignment.Center,
+                                        ) { Text("Pointer probe") }
                                     }
                                     LaunchedEffect(dialogVisible.value) {
                                         if (!dialogVisible.value) {
@@ -323,11 +335,12 @@ internal class UiRenderResolutionAudit(
             await("overlay dialog dismissed") { !dialogVisible.value && rootFocused && compose.rootView.hasWindowFocus() }
             log("PASS nonfocusable popup retains key focus and does not block underlying controls")
 
+            await("pointer probe laid out") { !pointerBounds.isEmpty }
             val touchPoint = main {
                 val coordinates = checkNotNull(viewport.value)
                 val location = IntArray(2).also(host::getLocationOnScreen)
-                Pair(location[0] + buttonBounds.center.x * coordinates.windowWidth / coordinates.renderWidth,
-                    location[1] + buttonBounds.center.y * coordinates.windowHeight / coordinates.renderHeight)
+                Pair(location[0] + pointerBounds.center.x * coordinates.windowWidth / coordinates.renderWidth,
+                    location[1] + pointerBounds.center.y * coordinates.windowHeight / coordinates.renderHeight)
             }
             tap(touchPoint.first, touchPoint.second)
             await("scaled pointer hits button") {
