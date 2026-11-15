@@ -39,7 +39,9 @@ import org.robolectric.annotation.Config
 @Config(sdk = [34], application = Application::class)
 class WeatherMapRepositoryTest {
     @get:Rule val temporary = TemporaryFolder()
-    private val viewport = WeatherMapViewport.at(50.98, 11.03)
+    // Keep the generic I/O/concurrency fixtures tile-aligned; centered mosaics have their own
+    // rendering regressions, including all required background pieces and dateline strips.
+    private val viewport = WeatherMapViewport(6, 33, 21)
     private val now = Instant.now().minusSeconds(600)
     private val frames = listOf(
         WeatherMapFrame(now.minusSeconds(300).toString(), now.minusSeconds(300).toEpochMilli()),

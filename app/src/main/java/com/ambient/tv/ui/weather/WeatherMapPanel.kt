@@ -76,13 +76,11 @@ fun WeatherMapPanel(
     val lifecycle = LocalLifecycleOwner.current.lifecycle
     val contentVisible = LocalWeatherPresentation.current.contentVisible
     val source = WeatherMapProvider.selected(providerId, kind)
-    // Provider changes retain the same geographic view; a new location recentres it.
+    // The chosen place remains the centre at every zoom. Provider changes retain the zoom;
+    // selecting another place starts at its own local view.
     val initial = remember(location.id, location.latitude, location.longitude) { WeatherMapViewport.at(location.latitude, location.longitude) }
     var zoom by rememberSaveable(location.id, location.latitude, location.longitude) { mutableIntStateOf(initial.zoom) }
-    var x by rememberSaveable(location.id, location.latitude, location.longitude) { mutableIntStateOf(initial.x) }
-    var y by rememberSaveable(location.id, location.latitude, location.longitude) { mutableIntStateOf(initial.y) }
-    val viewport = WeatherMapViewport(zoom, x, y)
-    fun move(next: WeatherMapViewport) { zoom = next.zoom; x = next.x; y = next.y }
+    val viewport = remember(initial, zoom) { WeatherMapViewport.at(location.latitude, location.longitude, zoom) }
     val request = remember(location, kind, source, viewport, networkAllowed) {
         WeatherMapRequest(location, kind, source, viewport, networkAllowed)
     }
@@ -127,9 +125,6 @@ fun WeatherMapPanel(
                     WeatherMapProvider.EUMETSAT -> R.string.weather_maps_eumetsat_description
                 }), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
-            if (error != null) item(key = "map-feedback") {
-                OperationFeedbackContent(weatherMapFeedback(error, request), Modifier.fillMaxWidth(), FeedbackLayout.COMPACT)
-            }
             item(key = "time-controls") {
                 FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     TvActionButton(stringResource(R.string.weather_maps_previous), enabled = canPlay && state.selectedFrame > 0,
@@ -138,12 +133,28 @@ fun WeatherMapPanel(
                         enabled = canPlay, onClick = viewModel::togglePlayback)
                     TvActionButton(stringResource(R.string.weather_maps_next), enabled = canPlay && state.selectedFrame < count - 1,
                         onClick = { viewModel.step(1) })
-                    TvActionButton(stringResource(R.string.weather_maps_retry), enabled = networkAllowed && !state.loading,
+                    TvActionButton(stringResource(R.string.weather_maps_retry), enabled = networkAllowed,
                         loading = state.loading, onClick = viewModel::refresh)
                 }
             }
-            if (image != null || state.loading) item(key = "map") {
-                WeatherMapImageContent(image, source, viewport, location, state.frameLoading)
+            // Keep navigation before every changing image/error item. Loading a new extent
+            // must not remove items above the focused, pinned TV control while HTTP is pending.
+            item(key = "map-controls") {
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    TvChip(stringResource(R.string.weather_maps_zoom_out), enabled = zoom > WeatherMapViewport.MIN_ZOOM,
+                        onClick = { zoom = (zoom - 1).coerceAtLeast(WeatherMapViewport.MIN_ZOOM) })
+                    TvChip(stringResource(R.string.weather_maps_zoom_in), enabled = zoom < WeatherMapViewport.MAX_ZOOM,
+                        onClick = { zoom = (zoom + 1).coerceAtMost(WeatherMapViewport.MAX_ZOOM) })
+                }
+            }
+            if (error != null && image != null) item(key = "map-feedback") {
+                OperationFeedbackContent(weatherMapFeedback(error, request), Modifier.fillMaxWidth(), FeedbackLayout.COMPACT)
+            }
+            // Reserve the map area even between requests and on failure. Replacing a frame
+            // changes its contents, never the surrounding lazy-list structure or scroll anchor.
+            item(key = "map") {
+                WeatherMapImageContent(image, source, viewport, location, state.frameLoading,
+                    error = error, request = request)
             }
             if (image != null) item(key = "image-time") {
                 WeatherMapImageTime(image, source, location, error != null)
@@ -153,19 +164,6 @@ fun WeatherMapPanel(
             }
             if (image?.coverageMissing == true) item(key = "coverage-feedback") {
                 OperationFeedbackContent(weatherMapLayerFeedback(request, coverage = true), Modifier.fillMaxWidth(), FeedbackLayout.FIELD)
-            }
-            item(key = "map-controls") {
-                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    TvChip(stringResource(R.string.weather_maps_zoom_out), enabled = zoom > WeatherMapViewport.MIN_ZOOM,
-                        onClick = { move(viewport.zoomed(-1)) })
-                    TvChip(stringResource(R.string.weather_maps_zoom_in), enabled = zoom < WeatherMapViewport.MAX_ZOOM,
-                        onClick = { move(viewport.zoomed(1)) })
-                    TvChip(stringResource(R.string.weather_maps_west), onClick = { move(viewport.pan(-1, 0)) })
-                    TvChip(stringResource(R.string.weather_maps_east), onClick = { move(viewport.pan(1, 0)) })
-                    TvChip(stringResource(R.string.weather_maps_north), enabled = y > 0, onClick = { move(viewport.pan(0, -1)) })
-                    TvChip(stringResource(R.string.weather_maps_south), enabled = y < viewport.tiles - 1, onClick = { move(viewport.pan(0, 1)) })
-                    TvChip(stringResource(R.string.weather_maps_centre), onClick = { move(WeatherMapViewport.at(location.latitude, location.longitude, zoom)) })
-                }
             }
             if (image != null && kind == WeatherMapKind.RADAR) item(key = "radar-legend") {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) { WeatherMapLegend(source) }
@@ -183,7 +181,7 @@ fun WeatherMapPanel(
 
 @Composable
 private fun WeatherMapImageContent(image: WeatherMapImage?, source: WeatherMapProvider, viewport: WeatherMapViewport,
-    location: WeatherLocation, frameLoading: Boolean) {
+    location: WeatherLocation, frameLoading: Boolean, error: WeatherMapError?, request: WeatherMapRequest) {
     BoxWithConstraints(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
         val side = minOf(maxWidth, 360.dp)
         Box(Modifier.size(side).clip(RoundedCornerShape(12.dp)).background(MaterialTheme.colorScheme.surfaceVariant)) {
@@ -202,6 +200,9 @@ private fun WeatherMapImageContent(image: WeatherMapImage?, source: WeatherMapPr
                 WeatherSourceLink("© OpenStreetMap contributors", "https://www.openstreetmap.org/copyright",
                     modifier = Modifier.align(Alignment.BottomEnd).background(Color.Black.copy(alpha = .8f)), color = Color.White)
                 if (frameLoading) FullscreenSpinner(Modifier.align(Alignment.TopEnd).padding(12.dp))
+            } else if (error != null) {
+                OperationFeedbackContent(weatherMapFeedback(error, request),
+                    Modifier.align(Alignment.Center).padding(20.dp), FeedbackLayout.FIELD)
             } else Text(stringResource(R.string.weather_maps_loading), Modifier.align(Alignment.Center).padding(20.dp))
         }
     }

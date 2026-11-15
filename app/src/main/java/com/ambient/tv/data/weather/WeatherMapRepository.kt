@@ -6,7 +6,7 @@ import android.graphics.BitmapFactory
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
-import android.graphics.Rect
+import android.graphics.RectF
 import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
 import android.util.LruCache
@@ -28,7 +28,9 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -174,27 +176,33 @@ class WeatherMapRepository @Inject constructor(
                     (!retryOptional && System.currentTimeMillis() < cached.optionalRetryAtMillis))) {
                 return@withLock cached.image.copy(fromCache = true)
             }
-            val baseUrl = weatherBaseMapUrl(viewport)
+            val weatherParts = weatherMapImageParts(provider, viewport, frame)
+            val baseParts = weatherBaseMapParts(viewport)
             val coverageUrl = if (provider == WeatherMapProvider.RAINVIEWER)
                 weatherMapCoverageUrl(viewport, frame.tileHost) else null
             if (retryOptional) {
-                optionalRetryAfter.remove(baseUrl)
+                baseParts.forEach { optionalRetryAfter.remove(it.url) }
                 coverageUrl?.let(optionalRetryAfter::remove)
             }
             // Independent layers load together. A slow background or coverage mask has a short
             // deadline and cannot hold a usable weather frame behind two full HTTP timeouts.
             val layers = coroutineScope {
-                val weather = async { image(weatherMapImageUrl(provider, viewport, frame), networkAllowed, Long.MAX_VALUE) }
-                val base = async { optionalImage(baseUrl, networkAllowed, 7 * 24 * 60 * 60_000L) }
+                // Normally one required weather image; only a WMS view crossing the dateline
+                // needs two bounded strips. The base map uses at most four reusable OSM tiles.
+                val weather = weatherParts.map { part -> async { image(part.url, networkAllowed, Long.MAX_VALUE) } }
+                val base = baseParts.map { part -> async { optionalImage(part.url, networkAllowed, 7 * 24 * 60 * 60_000L) } }
                 val coverage = coverageUrl?.let { url -> async { optionalImage(url, networkAllowed, 24 * 60 * 60_000L) } }
-                val weatherBitmap = weather.await()
+                val weatherBitmaps = weatherParts.zip(weather).map { (part, pending) -> LoadedPart(part, pending.await()) }
                 // Give already-running layers one shared grace period after the required image
                 // arrives. Slow but healthy layers can use all the time the weather image needed.
-                withTimeoutOrNull(optionalTimeoutMillis) { base.await(); coverage?.await() }
-                val baseBitmap = if (base.isCompleted) base.await() else {
-                    optionalRetryAfter.put(baseUrl, System.currentTimeMillis() + OPTIONAL_RETRY_MILLIS)
-                    base.cancel()
-                    cachedRawImage(baseUrl)?.bitmap
+                withTimeoutOrNull(optionalTimeoutMillis) { base.forEach { it.await() }; coverage?.await() }
+                val baseBitmaps = baseParts.zip(base).map { (part, pending) ->
+                    val bitmap = if (pending.isCompleted) pending.await() else {
+                        optionalRetryAfter.put(part.url, System.currentTimeMillis() + OPTIONAL_RETRY_MILLIS)
+                        pending.cancel()
+                        cachedRawImage(part.url)?.bitmap
+                    }
+                    LoadedPart(part, bitmap)
                 }
                 val coverageBitmap = if (coverage?.isCompleted == true) coverage.await() else {
                     if (coverage != null) {
@@ -203,21 +211,28 @@ class WeatherMapRepository @Inject constructor(
                     }
                     coverageUrl?.let { cachedRawImage(it)?.bitmap }
                 }
-                Triple(weatherBitmap, baseBitmap, coverageBitmap)
+                MapLayers(weatherBitmaps, baseBitmaps, coverageBitmap)
             }
+            currentCoroutineContext().ensureActive()
             val combined = Bitmap.createBitmap(512, 512, Bitmap.Config.ARGB_8888)
             val canvas = Canvas(combined)
             canvas.drawColor(Color.rgb(36, 43, 51))
-            val rect = Rect(0, 0, 512, 512)
+            val rect = RectF(0f, 0f, 512f, 512f)
             val paint = Paint(Paint.FILTER_BITMAP_FLAG)
-            layers.second?.let { canvas.drawBitmap(it, null, rect, paint) }
-            canvas.drawBitmap(layers.first, null, rect, paint)
+            fun draw(part: LoadedPart) {
+                val area = part.part
+                part.bitmap?.let { canvas.drawBitmap(it, null,
+                    RectF(area.left * 512, area.top * 512, area.right * 512, area.bottom * 512), paint) }
+            }
+            layers.base.forEach(::draw)
+            layers.weather.forEach(::draw)
             // Missing coverage must remain explicit; a transparent radar image alone is not
             // evidence of dry weather outside the service's measured area.
-            layers.third?.let { canvas.drawBitmap(it, null, rect, Paint().apply { alpha = 160 }) }
-            val metadata = CachedImage(layers.second == null, coverageUrl != null && layers.third == null,
+            layers.coverage?.let { canvas.drawBitmap(it, null, rect, Paint().apply { alpha = 160 }) }
+            val metadata = CachedImage(layers.base.any { it.bitmap == null }, coverageUrl != null && layers.coverage == null,
                 System.currentTimeMillis() + OPTIONAL_RETRY_MILLIS)
             val result = WeatherMapImage(combined, frame, false, metadata.baseMissing, metadata.coverageMissing)
+            currentCoroutineContext().ensureActive()
             rendered.put(composite.name, RenderedImage(result, metadata.optionalRetryAtMillis))
             storeSafely {
                 atomicWrite(composite) { output -> combined.compress(Bitmap.CompressFormat.PNG, 100, output) }
@@ -379,7 +394,7 @@ class WeatherMapRepository @Inject constructor(
 
     private fun lastFile(provider: WeatherMapProvider, viewport: WeatherMapViewport) = File(folder, "last-${provider.id}-${viewport.key}.json")
     private fun compositeFile(provider: WeatherMapProvider, viewport: WeatherMapViewport, frame: WeatherMapFrame) =
-        File(folder, "map-${provider.id}-${viewport.key}-${frame.epochMillis}-${digest(weatherMapImageUrl(provider, viewport, frame)).take(16)}.png")
+        File(folder, "map-${provider.id}-${viewport.key}-${frame.epochMillis}-${digest(weatherMapImageParts(provider, viewport, frame).joinToString("|") { it.url }).take(16)}.png")
 
     private inline fun <reified T> readJson(file: File): T? = runCatching {
         if (file.length() > 512_000) return null
@@ -407,6 +422,8 @@ class WeatherMapRepository @Inject constructor(
     private fun digest(value: String) = MessageDigest.getInstance("SHA-256").digest(value.toByteArray()).joinToString("") { "%02x".format(it) }
 
     private data class RawImage(val bitmap: Bitmap, val storedAtMillis: Long)
+    private data class LoadedPart(val part: WeatherMapImagePart, val bitmap: Bitmap?)
+    private data class MapLayers(val weather: List<LoadedPart>, val base: List<LoadedPart>, val coverage: Bitmap?)
     private data class RenderedImage(val image: WeatherMapImage, val optionalRetryAtMillis: Long)
     @Serializable private data class CachedImage(val baseMissing: Boolean, val coverageMissing: Boolean, val optionalRetryAtMillis: Long = 0)
     @Serializable private data class CachedLast(val viewport: WeatherMapViewport, val series: WeatherMapSeries, val frame: WeatherMapFrame)
