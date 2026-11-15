@@ -8,6 +8,7 @@ import androidx.activity.compose.BackHandler
 import androidx.compose.animation.Crossfade
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
+import androidx.compose.foundation.focusGroup
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
@@ -22,9 +23,13 @@ import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
 import androidx.compose.ui.platform.LocalAccessibilityManager
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
@@ -70,6 +75,8 @@ fun AppNotificationHost(
     hidden: Boolean = false,
     playback: Boolean = false,
     autoFocusWake: Boolean = true,
+    wakeFocus: TvWakeFocusState = remember { TvWakeFocusState() },
+    onWakeNavigateToSidebar: () -> Boolean = { false },
     /** The focused cancel button went away (wake done or cancelled): give focus back. */
     onWakeFocusReleased: () -> Unit = {},
 ) {
@@ -162,6 +169,8 @@ fun AppNotificationHost(
                 if (key.startsWith("connection:")) wakeVm.cancelStartupWake() else wakeVm.cancelWake(key.removePrefix("wake:"))
             },
                 onFocusReleased = onWakeFocusReleased,
+                wakeFocus = wakeFocus,
+                onWakeNavigateToSidebar = onWakeNavigateToSidebar,
                 modifier = Modifier.align(Alignment.BottomCenter))
         }
     }
@@ -173,19 +182,32 @@ fun AppNotificationHost(
  * Each row is identified by the machine key, so one wake never stops unrelated servers.
  */
 @Composable
-private fun TvWakeCancelBar(
+internal fun TvWakeCancelBar(
     wakes: List<AppNotice>,
     autoFocus: Boolean,
     onCancel: (String) -> Unit,
     onFocusReleased: () -> Unit = {},
     modifier: Modifier = Modifier,
+    wakeFocus: TvWakeFocusState = remember { TvWakeFocusState() },
+    onWakeNavigateToSidebar: () -> Boolean = { false },
 ) {
     val view = androidx.compose.ui.platform.LocalView.current
     val currentRelease by androidx.compose.runtime.rememberUpdatedState(onFocusReleased)
     val colors = MaterialTheme.colorScheme
     val shape = RoundedCornerShape(14.dp)
+    DisposableEffect(wakeFocus) {
+        wakeFocus.attach()
+        onDispose { wakeFocus.detach() }
+    }
     Column(
         modifier.widthIn(max = 560.dp).heightIn(max = 300.dp)
+            .onFocusChanged { wakeFocus.onFocusChanged(it.hasFocus) }
+            .onPreviewKeyEvent { event ->
+                // This global action is outside the shell row that normally arms Sidebar entry.
+                event.key == Key.DirectionLeft && event.type == KeyEventType.KeyDown &&
+                    onWakeNavigateToSidebar()
+            }
+            .focusGroup()
             .background(colors.surface.copy(alpha = .98f), shape)
             .border(1.dp, colors.onSurface.copy(alpha = .16f), shape)
             .verticalScroll(rememberScrollState()).padding(12.dp),
@@ -194,12 +216,15 @@ private fun TvWakeCancelBar(
         wakes.forEachIndexed { index, notice ->
             key(notice.key) {
                 val machine = notice.key
-                val focus = remember { FocusRequester() }
                 var focused by remember { mutableStateOf(false) }
                 if (index == 0 && autoFocus) {
-                    LaunchedEffect(notice.key, autoFocus) {
-                        withFrameNanos { }
-                        runCatching { focus.requestFocus() }
+                    LaunchedEffect(notice.key, autoFocus, wakeFocus) {
+                        // The intro/window handoff may finish after the first layout. Stop as
+                        // soon as focus lands so later progress updates cannot steal it back.
+                        repeat(8) {
+                            withFrameNanos { }
+                            if (wakeFocus.requestFocus()) return@LaunchedEffect
+                        }
                     }
                 }
                 Row(horizontalArrangement = Arrangement.spacedBy(12.dp),
@@ -213,7 +238,8 @@ private fun TvWakeCancelBar(
                     TvActionButton(
                         text = stringResource(R.string.home_cancel_wake),
                         onClick = { onCancel(machine) },
-                        modifier = Modifier.focusRequester(focus)
+                        modifier = Modifier
+                            .then(if (index == 0) Modifier.focusRequester(wakeFocus.requester) else Modifier)
                             .onFocusChanged { focused = it.isFocused },
                     )
                 }
@@ -221,8 +247,14 @@ private fun TvWakeCancelBar(
                 // Removed while focused: without this the next D-pad press started over at the
                 // first element of the screen. Posted, because the node is still being removed.
                 val focusedNow by androidx.compose.runtime.rememberUpdatedState(focused)
-                androidx.compose.runtime.DisposableEffect(Unit) {
-                    onDispose { if (focusedNow) view.post { currentRelease() } }
+                androidx.compose.runtime.DisposableEffect(wakeFocus) {
+                    onDispose {
+                        if (focusedNow) view.post {
+                            // A different machine may still be waking. Keep its action reachable
+                            // before handing control back to the page or the sidebar.
+                            if (!wakeFocus.requestFocus()) currentRelease()
+                        }
+                    }
                 }
             }
         }

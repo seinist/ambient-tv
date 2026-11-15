@@ -9,6 +9,7 @@ import androidx.compose.ui.unit.dp
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
 import com.ambient.tv.R
+import com.ambient.tv.data.local.AppPreferences
 import com.ambient.tv.ui.common.TvActionButton
 import com.ambient.tv.ui.player.HdrMedia3Hint
 import com.ambient.tv.ui.player.ImageHint
@@ -89,19 +90,20 @@ internal fun RendererVideoSettings(
             "android" to stringResource(R.string.renderer_output_android),
             "vulkan" to stringResource(R.string.renderer_output_vulkan),
         )
+        val visibleOutputs = choices.filter { it.first != "vulkan" || outputAvailable }
+        val shownOutput = output.takeIf { selected -> visibleOutputs.any { it.first == selected } } ?: "auto"
         SettingsSelect(options = buildList {
-            val visible = choices.filter { it.first != "vulkan" || outputAvailable }
-            val shownOutput = output.takeIf { selected -> visible.any { it.first == selected } } ?: "auto"
-            visible.forEach { (value, label) ->
+            visibleOutputs.forEach { (value, label) ->
                 add(SettingsSelectOption(text = label, selected = value == shownOutput,
                     onClick = { changeOutput(value) }))
             }
         })
-        ImageHint(stringResource(when {
-            mpv && outputAvailable -> R.string.renderer_mpv_output_hint
-            mpv -> R.string.renderer_mpv_output_basic_hint
-            outputAvailable -> R.string.renderer_vlc_output_hint
-            else -> R.string.renderer_vlc_output_basic_hint
+        ImageHint(stringResource(when (shownOutput) {
+            "direct" -> R.string.renderer_output_direct_hint
+            "gpu" -> R.string.renderer_output_opengl_hint
+            "vulkan" -> R.string.renderer_output_vulkan_hint
+            "android" -> R.string.renderer_output_android_hint
+            else -> if (mpv) R.string.renderer_mpv_output_auto_hint else R.string.renderer_vlc_output_auto_hint
         }))
         HdrMedia3Hint()
         if (mpv) {
@@ -179,7 +181,6 @@ internal fun RendererVideoSettings(
             TvActionButton(stringResource(if (checking) R.string.renderer_test_running else R.string.renderer_test_again),
                 onClick = { if (!checking) checkAgain() })
         }
-        ImageHint(stringResource(R.string.vulkan_auto_hint))
         if (outputAvailable) ImageHint(stringResource(R.string.renderer_svp_compute_hint))
     }
 }
@@ -213,25 +214,42 @@ internal fun GpuOutputPreferenceSettings(mpv: Boolean, state: SettingsUiState, m
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
         Text(stringResource(R.string.renderer_render_resolution),
             style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.onSurface)
-        SettingsSelect(options = listOf(
-            com.ambient.tv.data.local.AppPreferences.GPU_RENDER_AUTO to R.string.renderer_render_resolution_auto,
-            com.ambient.tv.data.local.AppPreferences.GPU_RENDER_PANEL to R.string.renderer_render_resolution_panel,
-            com.ambient.tv.data.local.AppPreferences.GPU_RENDER_UI to R.string.renderer_render_resolution_ui,
-        ).map { (key, label) ->
-            SettingsSelectOption(text = stringResource(label), selected = key == state.gpuRenderResolutionKey,
+        val resolutionChoices = listOf(
+            AppPreferences.GPU_RENDER_AUTO to R.string.renderer_render_resolution_auto,
+            AppPreferences.GPU_RENDER_PANEL to R.string.renderer_render_resolution_panel,
+            AppPreferences.GPU_RENDER_UI to R.string.renderer_render_resolution_ui,
+        )
+        val shownResolution = state.gpuRenderResolutionKey.takeIf { selected -> resolutionChoices.any { it.first == selected } }
+            ?: AppPreferences.GPU_RENDER_AUTO
+        SettingsSelect(options = resolutionChoices.map { (key, label) ->
+            SettingsSelectOption(text = stringResource(label), selected = key == shownResolution,
                 onClick = { model.onGpuRenderResolutionChanged(key) })
         })
-        ImageHint(stringResource(R.string.renderer_render_resolution_hint))
+        ImageHint(stringResource(when (shownResolution) {
+            AppPreferences.GPU_RENDER_PANEL -> R.string.renderer_render_resolution_panel_hint
+            AppPreferences.GPU_RENDER_UI -> R.string.renderer_render_resolution_ui_hint
+            else -> R.string.renderer_render_resolution_auto_hint
+        }))
+        ImageHint(stringResource(R.string.settings_defaults_hint))
         if (mpv) {
             Text(stringResource(R.string.renderer_sdr_curve),
                 style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.onSurface)
-            SettingsSelect(options = sdrCurveChoices().map { (key, label) ->
-                SettingsSelectOption(text = label, selected = key == state.mpvSdrCurveKey,
+            val curves = sdrCurveChoices()
+            val shownCurve = state.mpvSdrCurveKey.takeIf { selected -> curves.any { it.first == selected } }
+                ?: AppPreferences.MPV_SDR_CURVE_AUTO
+            SettingsSelect(options = curves.map { (key, label) ->
+                SettingsSelectOption(text = label, selected = key == shownCurve,
                     onClick = { model.onMpvSdrCurveChanged(key) })
             })
-            ImageHint(stringResource(R.string.renderer_sdr_curve_hint))
+            ImageHint(stringResource(when (shownCurve) {
+                AppPreferences.MPV_SDR_CURVE_GAMMA22 -> R.string.renderer_sdr_curve_gamma22_hint
+                AppPreferences.MPV_SDR_CURVE_BT1886 -> R.string.renderer_sdr_curve_bt1886_hint
+                else -> R.string.renderer_sdr_curve_auto_hint
+            }))
             // Below Android 14 there is no HDR/SDR ratio: Auto cannot see the TV's HDR mode and stays BT.1886.
-            if (android.os.Build.VERSION.SDK_INT < 34) ImageHint(stringResource(R.string.renderer_sdr_curve_auto_legacy))
+            if (shownCurve == AppPreferences.MPV_SDR_CURVE_AUTO && android.os.Build.VERSION.SDK_INT < 34) {
+                ImageHint(stringResource(R.string.renderer_sdr_curve_auto_legacy))
+            }
             ZeroCopyLockRow(model)
         }
     }
