@@ -592,7 +592,7 @@ internal fun mergeStoredSettings(draft: SettingsUiState, baseline: SettingsUiSta
     customAccentHex = if (draft.customAccentHex != baseline.customAccentHex) draft.customAccentHex else stored.customAccentHex,
     customPlaybackAccentHex = if (draft.customPlaybackAccentHex != baseline.customPlaybackAccentHex) draft.customPlaybackAccentHex else stored.customPlaybackAccentHex,
     dualAccentEnabled = if (draft.dualAccentEnabled != baseline.dualAccentEnabled) draft.dualAccentEnabled else stored.dualAccentEnabled,
-    themeModeKey = if (draft.themeModeKey != baseline.themeModeKey) draft.themeModeKey else stored.themeModeKey,
+    themeModeKey = mergeAppearanceDraftKeys(draft, baseline, stored),
     uiHdrModeKey = if (draft.uiHdrModeKey != baseline.uiHdrModeKey) draft.uiHdrModeKey else stored.uiHdrModeKey,
     sdrToHdrPeakNits = if (draft.sdrToHdrPeakNits != baseline.sdrToHdrPeakNits) draft.sdrToHdrPeakNits else stored.sdrToHdrPeakNits,
     sdrToHdrReferenceWhiteNits = if (draft.sdrToHdrReferenceWhiteNits != baseline.sdrToHdrReferenceWhiteNits) draft.sdrToHdrReferenceWhiteNits else stored.sdrToHdrReferenceWhiteNits,

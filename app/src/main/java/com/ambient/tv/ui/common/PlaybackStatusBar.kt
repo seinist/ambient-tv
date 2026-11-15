@@ -9,6 +9,9 @@ import androidx.compose.runtime.rememberUpdatedState
 import com.ambient.tv.ui.theme.LocalAccentStyle
 import com.ambient.tv.ui.theme.accentBrush
 import com.ambient.tv.ui.theme.drawAccentProgress
+import com.ambient.tv.ui.theme.drawAccentProgressMotion
+import com.ambient.tv.ui.theme.AccentMotionPaints
+import com.ambient.tv.ui.theme.LocalAccentMotionState
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawWithCache
@@ -29,6 +32,7 @@ fun PlaybackStatusBar(
     val fraction = rememberUpdatedState(if (progress.isFinite()) progress.coerceIn(0f, 1f) else 0f)
     val accent = LocalPlaybackAccent.current.indicator
     val style = LocalAccentStyle.current
+    val motion = LocalAccentMotionState.current
     val shape = RoundedCornerShape(1.dp)
     Box(
         modifier
@@ -37,9 +41,12 @@ fun PlaybackStatusBar(
             .clip(shape)
             .drawWithCache {
                 val progressBrush = accentBrush(accent, style)
+                val motionPaints = if (motion != null) AccentMotionPaints(accent, style) else null
                 onDrawBehind {
                     drawRect(trackColor)
                     drawAccentProgress(progressBrush, fraction.value,
+                        fromRight = layoutDirection == LayoutDirection.Rtl, radius = 1.dp.toPx())
+                    if (motionPaints != null) drawAccentProgressMotion(motionPaints, motion?.value, fraction.value,
                         fromRight = layoutDirection == LayoutDirection.Rtl, radius = 1.dp.toPx())
                 }
             },

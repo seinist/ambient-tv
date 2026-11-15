@@ -37,6 +37,11 @@ import com.ambient.tv.ui.common.MediaTileStyle
 import com.ambient.tv.ui.common.TvActionButton
 import com.ambient.tv.ui.player.TvPlayerSeekBar
 import com.ambient.tv.ui.settings.accentStyleLabel
+import com.ambient.tv.ui.settings.accentMotionLabel
+import com.ambient.tv.ui.performance.LocalPerformanceProfile
+import com.ambient.tv.ui.performance.PerformanceMode
+import com.ambient.tv.ui.performance.PerformanceProfile
+import com.ambient.tv.ui.performance.detectLowEndDevice
 import com.ambient.tv.ui.theme.*
 
 /** A launcher-accessible, offline design review using the production media tiles and seek bar. */
@@ -71,6 +76,9 @@ private fun AccentPreview(preferences: com.ambient.tv.data.local.AppPreferences,
     var styleIndex by rememberSaveable(appearanceRevision) {
         mutableIntStateOf(AccentStyle.entries.indexOf(AccentStyle.fromKey(preferences.accentStyleKey)))
     }
+    var motionIndex by rememberSaveable(appearanceRevision) {
+        mutableIntStateOf(AccentMotionMode.entries.indexOf(AccentMotionMode.fromKey(preferences.accentMotionKey)))
+    }
     val customHex = remember(appearanceRevision) { preferences.customAccentHex }
     val customPlaybackHex = remember(appearanceRevision) { preferences.customPlaybackAccentHex }
     var complementary by rememberSaveable { mutableStateOf(true) }
@@ -79,6 +87,12 @@ private fun AccentPreview(preferences: com.ambient.tv.data.local.AppPreferences,
     var position by rememberSaveable { mutableLongStateOf(1_930_000L) }
     val first = remember { FocusRequester() }
     val context = LocalContext.current
+    val performance = remember(context, appearanceRevision) {
+        PerformanceProfile.resolve(
+            PerformanceMode.fromKey(preferences.effectiveUiPerformanceModeKey()), detectLowEndDevice(context),
+            PerformanceMode.fromKey(preferences.effectivePlaybackPerformanceModeKey()),
+        )
+    }
     val samples = remember(context) {
         listOf(
             sample(context.packageName, R.drawable.accent_preview_mountains, "Über den Wolken", 0, 1_930_000L, 5_760_000L, "Dokumentation"),
@@ -91,81 +105,87 @@ private fun AccentPreview(preferences: com.ambient.tv.data.local.AppPreferences,
     val indicator = PlaybackIndicator(CompanionMedia("device-local", current.ratingKey), emptyList(),
         if (playing) "playing" else "paused", "Vorschau", false)
 
-    AmbientTvTheme(uiScale = .85f, accentColorKey = keys[colorIndex], customAccentHex = customHex,
-        accentStyleKey = AccentStyle.entries[styleIndex].key,
-        customPlaybackAccentHex = customPlaybackHex, complementaryPlayback = complementary) {
-        CompositionLocalProvider(
-            LocalPlaybackIndicators provides listOf(indicator),
-            androidx.tv.material3.LocalContentColor provides MaterialTheme.colorScheme.onSurface,
-            androidx.compose.material3.LocalContentColor provides MaterialTheme.colorScheme.onSurface,
-        ) {
-            val scheme = MaterialTheme.colorScheme
-            val playback = LocalPlaybackAccent.current
-            Column(
-                Modifier.fillMaxSize().background(scheme.background)
-                    .verticalScroll(rememberScrollState()).padding(horizontal = 44.dp, vertical = 22.dp),
-                verticalArrangement = Arrangement.spacedBy(14.dp),
+    CompositionLocalProvider(LocalPerformanceProfile provides performance) {
+        AmbientTvTheme(uiScale = .85f, accentColorKey = keys[colorIndex], customAccentHex = customHex,
+            accentStyleKey = AccentStyle.entries[styleIndex].key,
+            accentMotionKey = AccentMotionMode.entries[motionIndex].key,
+            customPlaybackAccentHex = customPlaybackHex, complementaryPlayback = complementary) {
+            CompositionLocalProvider(
+                LocalPlaybackIndicators provides listOf(indicator),
+                androidx.tv.material3.LocalContentColor provides MaterialTheme.colorScheme.onSurface,
+                androidx.compose.material3.LocalContentColor provides MaterialTheme.colorScheme.onSurface,
             ) {
-                Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                        BrandWordmark(height = 25.dp)
-                        Text("Interaktive Designvorschau · Beispieldaten", fontSize = 12.sp, color = scheme.onSurfaceVariant)
-                    }
-                    FlowRow(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        TvActionButton("Einstellungen", {
-                            context.startActivity(android.content.Intent(context, AppearanceSettingsActivity::class.java))
-                        })
-                        TvActionButton("Farbe: ${names[colorIndex]}", { colorIndex = (colorIndex + 1) % keys.size }, Modifier.focusRequester(first))
-                        TvActionButton("Stil: ${accentStyleLabel(AccentStyle.entries[styleIndex])}", {
-                            styleIndex = (styleIndex + 1) % AccentStyle.entries.size
-                        })
-                        TvActionButton(if (complementary) "RGB-Komplement" else "Einfarbig", { complementary = !complementary }, selected = complementary)
-                    }
-                }
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(28.dp), verticalAlignment = Alignment.CenterVertically) {
-                    ColorRole("Aktionen & Auswahl", accentColorFor(keys[colorIndex], customHex))
-                    ColorRole("Wiedergabe & Fortschritt", if (complementary) playbackAccentColorFor(keys[colorIndex], customPlaybackHex, customHex) else accentColorFor(keys[colorIndex], customHex))
-                    Spacer(Modifier.weight(1f))
-                    Text("Helle Kontur = Fernbedienungsfokus", color = scheme.onSurfaceVariant, fontSize = 12.sp)
-                }
-                Row(Modifier.fillMaxWidth().background(scheme.surface, RoundedCornerShape(14.dp)).padding(20.dp),
-                    horizontalArrangement = Arrangement.spacedBy(24.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                        Text(current.title, fontSize = 30.sp, fontWeight = FontWeight.SemiBold)
-                        Text("2026  ·  ${current.genres.first()}  ·  ${duration / 60_000} Min.", color = scheme.onSurfaceVariant, fontSize = 13.sp)
-                        Text("Fortsetzen bei ${com.ambient.tv.companion.playbackTime(position)}", color = playback.text, fontSize = 16.sp)
-                    }
-                    Column(verticalArrangement = Arrangement.spacedBy(8.dp), horizontalAlignment = Alignment.End) {
-                        PlaybackBadge(indicator)
-                        TvActionButton(if (playing) "Pause" else "Fortsetzen", { playing = !playing }, selected = true,
-                            icon = if (playing) Icons.Default.Pause else Icons.Default.PlayArrow)
-                    }
-                }
-                Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                    Text("Weiterschauen", fontSize = 20.sp, fontWeight = FontWeight.SemiBold)
-                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                        samples.forEachIndexed { index, media ->
-                            MediaTile(
-                                item = if (index == selected) media.copy(viewOffsetMs = position) else media,
-                                onClick = { selected = index; position = media.viewOffsetMs!!; playing = true },
-                                style = MediaTileStyle.LANDSCAPE,
-                                showDescription = false,
-                            )
+                val scheme = MaterialTheme.colorScheme
+                val playback = LocalPlaybackAccent.current
+                Column(
+                    Modifier.fillMaxSize().background(scheme.background)
+                        .verticalScroll(rememberScrollState()).padding(horizontal = 44.dp, vertical = 22.dp),
+                    verticalArrangement = Arrangement.spacedBy(14.dp),
+                ) {
+                    Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                            BrandWordmark(height = 25.dp)
+                            Text("Interaktive Designvorschau · Beispieldaten", fontSize = 12.sp, color = scheme.onSurfaceVariant)
+                        }
+                        FlowRow(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            TvActionButton("Einstellungen", {
+                                context.startActivity(android.content.Intent(context, AppearanceSettingsActivity::class.java))
+                            })
+                            TvActionButton("Farbe: ${names[colorIndex]}", { colorIndex = (colorIndex + 1) % keys.size }, Modifier.focusRequester(first))
+                            TvActionButton("Stil: ${accentStyleLabel(AccentStyle.entries[styleIndex])}", {
+                                styleIndex = (styleIndex + 1) % AccentStyle.entries.size
+                            })
+                            TvActionButton("Animation: ${accentMotionLabel(AccentMotionMode.entries[motionIndex])}", {
+                                motionIndex = (motionIndex + 1) % AccentMotionMode.entries.size
+                            })
+                            TvActionButton(if (complementary) "RGB-Komplement" else "Einfarbig", { complementary = !complementary }, selected = complementary)
                         }
                     }
-                }
-                Column(Modifier.fillMaxWidth().background(scheme.surface, RoundedCornerShape(12.dp)).padding(horizontal = 18.dp, vertical = 12.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                        Text("Wiedergabe · ${current.title}", fontSize = 14.sp)
-                        Text("← → Spulen   ·   OK Pause / Fortsetzen", color = scheme.onSurfaceVariant, fontSize = 12.sp)
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(28.dp), verticalAlignment = Alignment.CenterVertically) {
+                        ColorRole("Aktionen & Auswahl", accentColorFor(keys[colorIndex], customHex))
+                        ColorRole("Wiedergabe & Fortschritt", if (complementary) playbackAccentColorFor(keys[colorIndex], customPlaybackHex, customHex) else accentColorFor(keys[colorIndex], customHex))
+                        Spacer(Modifier.weight(1f))
+                        Text("Helle Kontur = Fernbedienungsfokus", color = scheme.onSurfaceVariant, fontSize = 12.sp)
                     }
-                    TvPlayerSeekBar(position, duration,
-                        onSeekBy = { position = (position + it).coerceIn(0L, duration) }, onInteraction = {},
-                        onTogglePlayback = { playing = !playing }, onPlay = { playing = true })
+                    Row(Modifier.fillMaxWidth().background(scheme.surface, RoundedCornerShape(14.dp)).padding(20.dp),
+                        horizontalArrangement = Arrangement.spacedBy(24.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                            Text(current.title, fontSize = 30.sp, fontWeight = FontWeight.SemiBold)
+                            Text("2026  ·  ${current.genres.first()}  ·  ${duration / 60_000} Min.", color = scheme.onSurfaceVariant, fontSize = 13.sp)
+                            Text("Fortsetzen bei ${com.ambient.tv.companion.playbackTime(position)}", color = playback.text, fontSize = 16.sp)
+                        }
+                        Column(verticalArrangement = Arrangement.spacedBy(8.dp), horizontalAlignment = Alignment.End) {
+                            PlaybackBadge(indicator)
+                            TvActionButton(if (playing) "Pause" else "Fortsetzen", { playing = !playing }, selected = true,
+                                icon = if (playing) Icons.Default.Pause else Icons.Default.PlayArrow)
+                        }
+                    }
+                    Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                        Text("Weiterschauen", fontSize = 20.sp, fontWeight = FontWeight.SemiBold)
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                            samples.forEachIndexed { index, media ->
+                                MediaTile(
+                                    item = if (index == selected) media.copy(viewOffsetMs = position) else media,
+                                    onClick = { selected = index; position = media.viewOffsetMs!!; playing = true },
+                                    style = MediaTileStyle.LANDSCAPE,
+                                    showDescription = false,
+                                )
+                            }
+                        }
+                    }
+                    Column(Modifier.fillMaxWidth().background(scheme.surface, RoundedCornerShape(12.dp)).padding(horizontal = 18.dp, vertical = 12.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                            Text("Wiedergabe · ${current.title}", fontSize = 14.sp)
+                            Text("← → Spulen   ·   OK Pause / Fortsetzen", color = scheme.onSurfaceVariant, fontSize = 12.sp)
+                        }
+                        TvPlayerSeekBar(position, duration,
+                            onSeekBy = { position = (position + it).coerceIn(0L, duration) }, onInteraction = {},
+                            onTogglePlayback = { playing = !playing }, onPlay = { playing = true })
+                    }
                 }
+                LaunchedEffect(Unit) { withFrameNanos { }; first.requestFocus() }
             }
-            LaunchedEffect(Unit) { withFrameNanos { }; first.requestFocus() }
         }
     }
 }

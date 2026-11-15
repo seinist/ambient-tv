@@ -13,7 +13,7 @@
     <string name="renderer_sdr_curve_bt1886_hint">Feste SDR-Ausgabekurve BT.1886, unabhängig vom erkannten Displaymodus.</string>
     <string name="settings_ui_performance_auto_hint">Passt die Oberflächeneffekte an dein Gerät an.</string>
     <string name="settings_ui_performance_balanced_hint">Verwendet die normalen Oberflächeneffekte.</string>
-    <string name="settings_ui_performance_maximum_hint">Aktiviert zusätzliche Schatten für fokussierte Elemente.</string>
+    <string name="settings_ui_performance_maximum_hint">Aktiviert zusätzliche Schatten und optionale Accent-Animationen für fokussierte Elemente.</string>
     <string name="settings_ui_performance_low_hint">Reduziert Oberflächeneffekte und deaktiviert Navigationssounds.</string>
     <string name="settings_playback_performance_auto_hint">Passt die Bildverarbeitung an dein Gerät an.</string>
     <string name="settings_playback_performance_balanced_hint">Erlaubt Bildfilter ohne Bewegungsglättung.</string>

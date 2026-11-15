@@ -1,5 +1,6 @@
 package com.ambient.tv.ui.common
 
+import com.ambient.tv.ui.theme.AccentMotionScope
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import com.ambient.tv.ui.theme.animatedFocusSurface
@@ -193,41 +194,43 @@ internal fun MonogramMediaCard(
                 }
             },
     ) {
-        Column(
-            modifier = Modifier
-                .animatedFocusSurface(
-                    focused = focused,
-                    shape = shape,
-                    focusedBackground = MaterialTheme.colorScheme.primary.copy(alpha = .12f),
-                    unfocusedBackground = MaterialTheme.colorScheme.surface.copy(alpha = .58f),
-                    focusedBorder = MaterialTheme.colorScheme.primary,
-                    unfocusedBorder = Color.White.copy(alpha = .04f),
-                    borderWidth = LocalUiTokens.current.focusBorder,
-                )
-                .padding(if (heroRow) 3.dp else 8.dp),
-            verticalArrangement = Arrangement.spacedBy(7.dp),
-        ) {
-            MonogramArtwork(
-                item = item,
-                style = resolvedStyle,
-                modifier = Modifier.fillMaxWidth().aspectRatio(aspect).clip(artworkShape),
-                staggerUncached = true,
-                prioritizeUncached = focused,
-            )
-            if (!heroRow) {
-                Box(Modifier.fillMaxWidth().height(44.dp), contentAlignment = Alignment.Center) {
-                    CenteredMarqueeTitle(
-                        text = item.title,
+        AccentMotionScope(active = focused) {
+            Column(
+                modifier = Modifier
+                    .animatedFocusSurface(
                         focused = focused,
-                        style = MaterialTheme.typography.titleSmall,
+                        shape = shape,
+                        focusedBackground = MaterialTheme.colorScheme.primary.copy(alpha = .12f),
+                        unfocusedBackground = MaterialTheme.colorScheme.surface.copy(alpha = .58f),
+                        focusedBorder = MaterialTheme.colorScheme.primary,
+                        unfocusedBorder = Color.White.copy(alpha = .04f),
+                        borderWidth = LocalUiTokens.current.focusBorder,
+                    )
+                    .padding(if (heroRow) 3.dp else 8.dp),
+                verticalArrangement = Arrangement.spacedBy(7.dp),
+            ) {
+                MonogramArtwork(
+                    item = item,
+                    style = resolvedStyle,
+                    modifier = Modifier.fillMaxWidth().aspectRatio(aspect).clip(artworkShape),
+                    staggerUncached = true,
+                    prioritizeUncached = focused,
+                )
+                if (!heroRow) {
+                    Box(Modifier.fillMaxWidth().height(44.dp), contentAlignment = Alignment.Center) {
+                        CenteredMarqueeTitle(
+                            text = item.title,
+                            focused = focused,
+                            style = MaterialTheme.typography.titleSmall,
+                        )
+                    }
+                    CenteredMarqueeTitle(
+                        text = meta,
+                        focused = focused,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
-                CenteredMarqueeTitle(
-                    text = meta,
-                    focused = focused,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
             }
         }
     }

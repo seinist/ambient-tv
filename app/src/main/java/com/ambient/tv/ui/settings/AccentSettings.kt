@@ -9,6 +9,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.key
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -20,7 +21,10 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.boundsInWindow
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.res.stringResource
@@ -38,6 +42,10 @@ import com.ambient.tv.ui.common.WatchedBadge
 import com.ambient.tv.ui.theme.AccentOptions
 import com.ambient.tv.ui.theme.accentColorFor
 import com.ambient.tv.ui.theme.AccentStyle
+import com.ambient.tv.ui.theme.AccentMotionMode
+import com.ambient.tv.ui.theme.AccentMotionScope
+import com.ambient.tv.ui.theme.LocalAccentMotionAllowed
+import com.ambient.tv.ui.theme.LocalAccentMotionMode
 import com.ambient.tv.ui.theme.accentBrush
 import com.ambient.tv.ui.theme.LocalAccentStyle
 import com.ambient.tv.ui.theme.accentMaterialBorder
@@ -58,21 +66,54 @@ internal fun accentStyleLabel(style: AccentStyle): String = stringResource(when 
     AccentStyle.LIGHT -> R.string.settings_accent_style_light
 })
 
+@Composable
+internal fun accentMotionLabel(mode: AccentMotionMode): String = stringResource(when (mode) {
+    AccentMotionMode.OFF -> R.string.settings_accent_motion_off
+    AccentMotionMode.FOCUS -> R.string.settings_accent_motion_focus
+    AccentMotionMode.AMBIENT -> R.string.settings_accent_motion_ambient
+})
+
+@androidx.annotation.StringRes
+internal fun accentMotionHintRes(mode: AccentMotionMode): Int = when (mode) {
+    AccentMotionMode.OFF -> R.string.settings_accent_motion_off_hint
+    AccentMotionMode.FOCUS -> R.string.settings_accent_motion_focus_hint
+    AccentMotionMode.AMBIENT -> R.string.settings_accent_motion_ambient_hint
+}
+
 /** Production artwork surfaces and both accent roles, without adding any focus targets. */
 @Composable
-internal fun AccentStylePreview(styleKey: String) {
+internal fun AccentStylePreview(styleKey: String, motionKey: String = AccentMotionMode.DEFAULT) {
     val style = AccentStyle.fromKey(styleKey)
-    CompositionLocalProvider(LocalAccentStyle provides style) {
-        BoxWithConstraints(Modifier.fillMaxWidth()) {
-            if (maxWidth < 420.dp) {
-                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    AccentStyleCardPreview(Modifier.widthIn(max = 280.dp).fillMaxWidth())
-                    AccentStyleControlsPreview(Modifier.fillMaxWidth())
-                }
-            } else {
-                Row(horizontalArrangement = Arrangement.spacedBy(18.dp), verticalAlignment = Alignment.CenterVertically) {
-                    AccentStyleCardPreview(Modifier.width(236.dp))
-                    AccentStyleControlsPreview(Modifier.weight(1f))
+    val motion = AccentMotionMode.fromKey(motionKey)
+    val motionAllowed = LocalAccentMotionAllowed.current
+    val windowSize = LocalWindowInfo.current.containerSize
+    var visible by remember { mutableStateOf(false) }
+    key(style, motion) {
+        CompositionLocalProvider(
+            LocalAccentStyle provides style,
+            LocalAccentMotionMode provides motion,
+            LocalAccentMotionAllowed provides (motionAllowed && visible),
+        ) {
+            AccentMotionScope(active = visible) {
+                BoxWithConstraints(Modifier.fillMaxWidth().onGloballyPositioned { coordinates ->
+                    // Settings sections can stay composed beyond the scroll viewport.
+                    // Clipped window bounds keep the preview clock off while it is out of view.
+                    val bounds = coordinates.boundsInWindow()
+                    visible = coordinates.isAttached && bounds.width > 0f && bounds.height > 0f &&
+                        bounds.right > 0f && bounds.bottom > 0f &&
+                        bounds.left < windowSize.width && bounds.top < windowSize.height
+                }) {
+                    if (maxWidth < 420.dp) {
+                        Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                            AccentStyleCardPreview(Modifier.widthIn(max = 280.dp).fillMaxWidth())
+                            AccentStyleControlsPreview(Modifier.fillMaxWidth())
+                        }
+                    } else {
+                        Row(horizontalArrangement = Arrangement.spacedBy(18.dp), verticalAlignment = Alignment.CenterVertically) {
+                            AccentStyleCardPreview(Modifier.width(236.dp))
+                            AccentStyleControlsPreview(Modifier.weight(1f))
+                        }
+                    }
                 }
             }
         }

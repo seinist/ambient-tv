@@ -13,7 +13,7 @@
     <string name="renderer_sdr_curve_bt1886_hint">Uses the fixed BT.1886 curve for SDR output, regardless of the detected display mode.</string>
     <string name="settings_ui_performance_auto_hint">Adjusts interface effects to your device.</string>
     <string name="settings_ui_performance_balanced_hint">Uses the standard interface effects.</string>
-    <string name="settings_ui_performance_maximum_hint">Enables extra shadows for focused items.</string>
+    <string name="settings_ui_performance_maximum_hint">Enables extra shadows and optional accent animations for focused items.</string>
     <string name="settings_ui_performance_low_hint">Reduces interface effects and disables navigation sounds.</string>
     <string name="settings_playback_performance_auto_hint">Adjusts video processing to your device.</string>
     <string name="settings_playback_performance_balanced_hint">Allows image filters without motion smoothing.</string>

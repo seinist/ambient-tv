@@ -36,6 +36,7 @@ fun AmbientTvTheme(
     accentStyleKey: String = AccentStyle.DEFAULT,
     complementaryPlayback: Boolean = false,
     customPlaybackAccentHex: String? = null,
+    accentMotionKey: String = AccentMotionMode.DEFAULT,
     content: @Composable () -> Unit,
 ) {
     val handheld = com.ambient.tv.ui.mobile.LocalHandheldUi.current
@@ -128,6 +129,7 @@ fun AmbientTvTheme(
         LocalUiTokens provides tokens,
         LocalAccentModeKey provides accentColorKey,
         LocalAccentStyle provides AccentStyle.fromKey(accentStyleKey),
+        LocalAccentMotionMode provides AccentMotionMode.fromKey(accentMotionKey),
         LocalPlaybackAccent provides PlaybackAccent(
             indicator = playback.lift(),
             text = accessibleAccent(playback, surface).lift(),

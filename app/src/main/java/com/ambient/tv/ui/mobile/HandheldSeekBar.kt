@@ -1,5 +1,11 @@
 package com.ambient.tv.ui.mobile
 
+import com.ambient.tv.ui.theme.AccentMotionPaints
+import com.ambient.tv.ui.theme.AccentMotionScope
+import com.ambient.tv.ui.theme.LocalAccentMotionState
+import com.ambient.tv.ui.theme.drawAccentProgressMotion
+import com.ambient.tv.ui.player.LocalPlayerChromeState
+import com.ambient.tv.ui.player.LocalPlayerOsdStow
 import androidx.compose.foundation.Canvas
 import com.ambient.tv.ui.player.drawBookmarkTicks
 import com.ambient.tv.ui.theme.LocalAccentStyle
@@ -65,7 +71,10 @@ fun HandheldSeekBar(
     val accent = com.ambient.tv.ui.theme.LocalPlaybackAccent.current.indicator
     val style = LocalAccentStyle.current
     val progressBrush = remember(accent, style) { accentBrush(accent, style) }
+    val progressMotionPaints = remember(accent, style) { AccentMotionPaints(accent, style) }
     val navigation = LocalPlaybackNavigation.current
+    val osd = LocalPlayerChromeState.current?.osd
+    val stowing = LocalPlayerOsdStow.current?.closing == true
     val playPauseFocus = LocalPlayerPlayPauseFocus.current
     val latestPositionMs by rememberUpdatedState(positionMs)
     val latestOnSeekBy by rememberUpdatedState(onSeekBy)
@@ -99,86 +108,91 @@ fun HandheldSeekBar(
             com.ambient.tv.ui.player.CurrentChapterLabel(shownPosition,
                 Modifier.graphicsLayer { alpha = chapterAlpha })
         }
-        Box(
-            Modifier
-                .fillMaxWidth()
-                // Tall enough to grab, without the empty bands a 48dp box left around the 6dp track.
-                .height(32.dp)
-                .onGloballyPositioned { preview?.trackBoundsInRoot = it.boundsInRoot() }
-                .then(if (playPauseFocus != null) Modifier.focusProperties { down = playPauseFocus } else Modifier)
-                .semantics {
-                    contentDescription = accessibilityLabel
-                    if (durationMs > 0L) progressBarRangeInfo = ProgressBarRangeInfo(fraction, 0f..1f)
-                    if (!canSeek) disabled()
-                    if (canSeek) setProgress { target ->
-                        com.ambient.tv.ui.player.BackgroundPlaybackSession.userSeek()
-                        navigation?.interact()
-                        latestOnInteraction()
-                        latestOnSeekBy(handheldSeekDelta(target, latestPositionMs, durationMs))
-                        true
-                    }
-                }
-                .then(if (canSeek) Modifier.pointerInput(durationMs) {
-                    detectTapGestures { point ->
-                        com.ambient.tv.ui.player.BackgroundPlaybackSession.userSeek()
-                        val target = (point.x / size.width.coerceAtLeast(1).toFloat()).coerceIn(0f, 1f)
-                        navigation?.interact()
-                        latestOnInteraction()
-                        latestOnSeekBy(handheldSeekDelta(target, latestPositionMs, durationMs))
-                    }
-                } else Modifier)
-                .then(if (canSeek) Modifier.pointerInput(durationMs) {
-                    detectHorizontalDragGestures(
-                        onDragStart = { point ->
+        AccentMotionScope(active = canSeek && osd?.show != false && osd?.closing != true && !stowing &&
+            dragFraction == null) {
+            val motionState = LocalAccentMotionState.current
+            Box(
+                Modifier
+                    .fillMaxWidth()
+                    // Tall enough to grab, without the empty bands a 48dp box left around the 6dp track.
+                    .height(32.dp)
+                    .onGloballyPositioned { preview?.trackBoundsInRoot = it.boundsInRoot() }
+                    .then(if (playPauseFocus != null) Modifier.focusProperties { down = playPauseFocus } else Modifier)
+                    .semantics {
+                        contentDescription = accessibilityLabel
+                        if (durationMs > 0L) progressBarRangeInfo = ProgressBarRangeInfo(fraction, 0f..1f)
+                        if (!canSeek) disabled()
+                        if (canSeek) setProgress { target ->
                             com.ambient.tv.ui.player.BackgroundPlaybackSession.userSeek()
-                            dragStartMs = latestPositionMs
-                            dragFraction = (point.x / size.width.coerceAtLeast(1).toFloat()).coerceIn(0f, 1f)
                             navigation?.interact()
                             latestOnInteraction()
-                        },
-                        onHorizontalDrag = { change, _ ->
-                            change.consume()
-                            dragFraction = (change.position.x / size.width.coerceAtLeast(1).toFloat()).coerceIn(0f, 1f)
+                            latestOnSeekBy(handheldSeekDelta(target, latestPositionMs, durationMs))
+                            true
+                        }
+                    }
+                    .then(if (canSeek) Modifier.pointerInput(durationMs) {
+                        detectTapGestures { point ->
+                            com.ambient.tv.ui.player.BackgroundPlaybackSession.userSeek()
+                            val target = (point.x / size.width.coerceAtLeast(1).toFloat()).coerceIn(0f, 1f)
                             navigation?.interact()
                             latestOnInteraction()
-                        },
-                        onDragEnd = {
-                            dragFraction?.let { latestOnSeekBy(handheldSeekDelta(it, dragStartMs, durationMs)) }
-                            dragFraction = null
-                            latestOnInteraction()
-                        },
-                        onDragCancel = { dragFraction = null },
-                    )
-                } else Modifier),
-            contentAlignment = Alignment.CenterStart,
-        ) {
-            val bookmarks = com.ambient.tv.ui.player.rememberPlayingBookmarks()
-            Canvas(Modifier.fillMaxSize()) {
-                val centerY = size.height / 2f
-                val trackWidth = 6.dp.toPx()
-                inset(vertical = centerY - trackWidth / 2) {
-                    drawRoundRect(Color.White.copy(alpha = 0.24f),
-                        cornerRadius = CornerRadius(trackWidth / 2, trackWidth / 2))
-                }
-            }
-            Canvas(Modifier.fillMaxSize().graphicsLayer { alpha = dataAlpha.value }) {
-                val centerY = size.height / 2f
-                val endX = size.width
-                val trackWidth = 6.dp.toPx()
-                if (durationMs > 0L) {
-                    // Scope the material to the visible track, not the taller touch target.
+                            latestOnSeekBy(handheldSeekDelta(target, latestPositionMs, durationMs))
+                        }
+                    } else Modifier)
+                    .then(if (canSeek) Modifier.pointerInput(durationMs) {
+                        detectHorizontalDragGestures(
+                            onDragStart = { point ->
+                                com.ambient.tv.ui.player.BackgroundPlaybackSession.userSeek()
+                                dragStartMs = latestPositionMs
+                                dragFraction = (point.x / size.width.coerceAtLeast(1).toFloat()).coerceIn(0f, 1f)
+                                navigation?.interact()
+                                latestOnInteraction()
+                            },
+                            onHorizontalDrag = { change, _ ->
+                                change.consume()
+                                dragFraction = (change.position.x / size.width.coerceAtLeast(1).toFloat()).coerceIn(0f, 1f)
+                                navigation?.interact()
+                                latestOnInteraction()
+                            },
+                            onDragEnd = {
+                                dragFraction?.let { latestOnSeekBy(handheldSeekDelta(it, dragStartMs, durationMs)) }
+                                dragFraction = null
+                                latestOnInteraction()
+                            },
+                            onDragCancel = { dragFraction = null },
+                        )
+                    } else Modifier),
+                contentAlignment = Alignment.CenterStart,
+            ) {
+                val bookmarks = com.ambient.tv.ui.player.rememberPlayingBookmarks()
+                Canvas(Modifier.fillMaxSize()) {
+                    val centerY = size.height / 2f
+                    val trackWidth = 6.dp.toPx()
                     inset(vertical = centerY - trackWidth / 2) {
-                        drawAccentProgress(progressBrush, fraction)
+                        drawRoundRect(Color.White.copy(alpha = 0.24f),
+                            cornerRadius = CornerRadius(trackWidth / 2, trackWidth / 2))
                     }
-                    navigation?.timeline?.chapters?.forEach { chapter ->
-                        val x = (chapter.startMs.toDouble() / durationMs).toFloat().coerceIn(0f, 1f) * endX
-                        drawLine(Color.Black.copy(alpha = 0.76f), Offset(x, centerY - trackWidth / 2), Offset(x, centerY + trackWidth / 2), 2.dp.toPx())
-                    }
-                    drawBookmarkTicks(bookmarks, durationMs, centerY - trackWidth / 2, centerY + trackWidth / 2)
-                    if (dragFraction != null) {
-                        val radius = 8.5.dp.toPx()
-                        drawCircle(Color.White, radius = radius, center = Offset(endX * fraction, centerY))
-                        drawCircle(accent, radius = radius - 3.dp.toPx(), center = Offset(endX * fraction, centerY))
+                }
+                Canvas(Modifier.fillMaxSize().graphicsLayer { alpha = dataAlpha.value }) {
+                    val centerY = size.height / 2f
+                    val endX = size.width
+                    val trackWidth = 6.dp.toPx()
+                    if (durationMs > 0L) {
+                        // Scope the material to the visible track, not the taller touch target.
+                        inset(vertical = centerY - trackWidth / 2) {
+                            drawAccentProgress(progressBrush, fraction)
+                            drawAccentProgressMotion(progressMotionPaints, motionState?.value, fraction)
+                        }
+                        navigation?.timeline?.chapters?.forEach { chapter ->
+                            val x = (chapter.startMs.toDouble() / durationMs).toFloat().coerceIn(0f, 1f) * endX
+                            drawLine(Color.Black.copy(alpha = 0.76f), Offset(x, centerY - trackWidth / 2), Offset(x, centerY + trackWidth / 2), 2.dp.toPx())
+                        }
+                        drawBookmarkTicks(bookmarks, durationMs, centerY - trackWidth / 2, centerY + trackWidth / 2)
+                        if (dragFraction != null) {
+                            val radius = 8.5.dp.toPx()
+                            drawCircle(Color.White, radius = radius, center = Offset(endX * fraction, centerY))
+                            drawCircle(accent, radius = radius - 3.dp.toPx(), center = Offset(endX * fraction, centerY))
+                        }
                     }
                 }
             }

@@ -9,7 +9,7 @@ import androidx.compose.ui.graphics.lerp
 /**
  * Accent material is independent of the chosen accent hue and playback accent.
  * Light intentionally preserves the previous solid-color look. All other styles
- * use static brushes; they need no blur or continuously updated animation.
+ * use static base brushes; optional, Maximum-only material motion is drawn separately.
  */
 enum class AccentStyle(val key: String) {
     SATIN("satin"),
