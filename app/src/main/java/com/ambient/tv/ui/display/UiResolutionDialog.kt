@@ -48,8 +48,18 @@ internal fun UiResolutionDialog(
 ) {
     val parentEnvironment = LocalUiRenderEnvironment.current
     val activity = LocalContext.current.findActivity() as? ComponentActivity
-    if (!parentEnvironment.embedded || activity == null) {
+    // A parent's native fallback must not replace an already-open dialog's composition.
+    // A dialog that started embedded instead returns its existing content to its native window.
+    val initialMode = remember { parentEnvironment.modeKey }
+    if (initialMode == UiRenderResolutionPolicy.SYSTEM || activity == null) {
         Dialog(onDismissRequest = onDismissRequest, properties = properties) {
+            if (dimAmount != null) {
+                val window = LocalView.current.findUiRenderWindow()
+                DisposableEffect(window, dimAmount) {
+                    window?.setDimAmount(dimAmount)
+                    onDispose { }
+                }
+            }
             DialogInputContent(focusable, content)
         }
         return
@@ -63,110 +73,112 @@ internal fun UiResolutionDialog(
     val currentDismiss by rememberUpdatedState(onDismissRequest)
     val currentProperties by rememberUpdatedState(properties)
     val currentFocusable by rememberUpdatedState(focusable)
-    Dialog(onDismissRequest = onDismissRequest, properties = properties) {
-        val ownerView = LocalView.current
-        val window = ownerView.findUiRenderWindow()
-        val parentComposition = rememberCompositionContext()
-        // Compose's outer Dialog already owns a unique, Activity-restored saveable namespace.
-        // The extra ComposeView must use it rather than an unpersisted native Dialog registry.
-        val contentSaveableRegistry = LocalSaveableStateRegistry.current
-        val backKeyGate = remember { UiRenderBackKeyGate() }
-        var viewport by remember { mutableStateOf<UiRenderViewport?>(null) }
-        var failed by remember { mutableStateOf(false) }
-        // Noninteractive overlays must not steal either key focus or pointer input.
-        DisposableEffect(window, focusable, dimAmount) {
-            val flags = WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
-            if (focusable) window?.clearFlags(flags) else window?.addFlags(flags)
-            dimAmount?.let { window?.setDimAmount(it) }
-            onDispose { }
-        }
-        if (window == null) {
-            // A vendor Dialog without a discoverable Window retains working native content.
-            ProvideUiRenderEnvironment(UiRenderResolutionPolicy.SYSTEM, null, windowDensity) {
-                DialogInputContent(currentFocusable) { currentContent() }
+    // Compose keys its native Dialog by this constructor density. Keep the window stable even
+    // if undoing a non-binary render scale rounds differently; inner content uses live density.
+    val dialogWindowDensity = remember { windowDensity }
+    CompositionLocalProvider(LocalDensity provides dialogWindowDensity) {
+        Dialog(onDismissRequest = onDismissRequest, properties = properties) {
+            val ownerView = LocalView.current
+            val window = ownerView.findUiRenderWindow()
+            val parentComposition = rememberCompositionContext()
+            // Compose's outer Dialog already owns a unique, Activity-restored saveable namespace.
+            // The extra ComposeView must use it rather than an unpersisted native Dialog registry.
+            val contentSaveableRegistry = LocalSaveableStateRegistry.current
+            val backKeyGate = remember { UiRenderBackKeyGate() }
+            var viewport by remember { mutableStateOf<UiRenderViewport?>(null) }
+            var failed by remember { mutableStateOf(false) }
+            fun useNativeContent(container: FrameLayout) {
+                val previous = container.getChildAt(0) as? UiRenderResolutionHost ?: return
+                backKeyGate.reset()
+                val savedContent = previous.takeContentView()
+                failed = true
+                viewport = null
+                container.removeAllViews()
+                container.addView(savedContent, FrameLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+                if (currentFocusable) savedContent.requestFocus()
             }
-        } else {
-            AndroidView(
-                modifier = Modifier.fillMaxSize(),
-                factory = { context ->
-                    val container = FrameLayout(context)
-                    val compose = ComposeView(context).apply {
-                        setContent {
-                            CompositionLocalProvider(LocalSaveableStateRegistry provides contentSaveableRegistry) {
-                                ProvideUiRenderEnvironment(
-                                    if (failed) UiRenderResolutionPolicy.SYSTEM else parentEnvironment.modeKey,
-                                    if (failed) null else viewport,
-                                    currentWindowDensity,
-                                ) {
-                                    DialogInputContent(currentFocusable) { currentContent() }
+            // Noninteractive overlays must not steal either key focus or pointer input.
+            DisposableEffect(window, focusable, dimAmount) {
+                val flags = WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
+                if (focusable) window?.clearFlags(flags) else window?.addFlags(flags)
+                dimAmount?.let { window?.setDimAmount(it) }
+                onDispose { }
+            }
+            if (window == null) {
+                // A vendor Dialog without a discoverable Window retains working native content.
+                ProvideUiRenderEnvironment(UiRenderResolutionPolicy.SYSTEM, null, windowDensity) {
+                    DialogInputContent(currentFocusable) { currentContent() }
+                }
+            } else {
+                AndroidView(
+                    modifier = Modifier.fillMaxSize(),
+                    factory = { context ->
+                        val container = FrameLayout(context)
+                        val compose = ComposeView(context).apply {
+                            setContent {
+                                CompositionLocalProvider(LocalSaveableStateRegistry provides contentSaveableRegistry) {
+                                    ProvideUiRenderEnvironment(
+                                        if (failed) UiRenderResolutionPolicy.SYSTEM else initialMode,
+                                        if (failed) null else viewport,
+                                        currentWindowDensity,
+                                    ) {
+                                        DialogInputContent(currentFocusable) { currentContent() }
+                                    }
                                 }
                             }
                         }
-                    }
-                    var host: UiRenderResolutionHost? = null
-                    val created = UiRenderResolutionHost(
-                        activity = activity,
-                        modeKey = parentEnvironment.modeKey,
-                        contentView = compose,
-                        window = window,
-                        parentCompositionContext = parentComposition,
-                        ownerView = ownerView,
-                        interactive = focusable,
-                        callbacks = UiRenderHostCallbacks(
-                            onViewportChanged = { viewport = it },
-                            dispatchKeyEvent = { event, dispatch ->
-                                val consumedByContent = dispatch()
-                                if (event.keyCode == KeyEvent.KEYCODE_BACK ||
-                                    event.keyCode == KeyEvent.KEYCODE_ESCAPE) {
-                                    if (backKeyGate.onKeyEvent(event, consumedByContent)) {
-                                        val dispatcher = (window.callback as? OnBackPressedDispatcherOwner)?.onBackPressedDispatcher
-                                            ?: ownerView.findViewTreeOnBackPressedDispatcherOwner()?.onBackPressedDispatcher
-                                        if (dispatcher != null) dispatcher.onBackPressed()
-                                        else if (currentProperties.dismissOnBackPress) currentDismiss()
+                        val created = UiRenderResolutionHost(
+                            activity = activity,
+                            modeKey = initialMode,
+                            contentView = compose,
+                            window = window,
+                            parentCompositionContext = parentComposition,
+                            ownerView = ownerView,
+                            interactive = focusable,
+                            callbacks = UiRenderHostCallbacks(
+                                onViewportChanged = { viewport = it },
+                                dispatchKeyEvent = { event, dispatch ->
+                                    val consumedByContent = dispatch()
+                                    if (event.keyCode == KeyEvent.KEYCODE_BACK ||
+                                        event.keyCode == KeyEvent.KEYCODE_ESCAPE) {
+                                        if (backKeyGate.onKeyEvent(event, consumedByContent)) {
+                                            val dispatcher = (window.callback as? OnBackPressedDispatcherOwner)?.onBackPressedDispatcher
+                                                ?: ownerView.findViewTreeOnBackPressedDispatcherOwner()?.onBackPressedDispatcher
+                                            if (dispatcher != null) dispatcher.onBackPressed()
+                                            else if (currentProperties.dismissOnBackPress) currentDismiss()
+                                        }
+                                        true
+                                    } else consumedByContent
+                                },
+                                onWindowFocusChanged = { focused ->
+                                    if (!focused) {
+                                        backKeyGate.reset()
+                                        com.ambient.tv.companion.CompanionRemoteInput.hide()
                                     }
-                                    true
-                                } else consumedByContent
-                            },
-                            onWindowFocusChanged = { focused ->
-                                if (!focused) {
+                                },
+                                onFailure = { error ->
                                     backKeyGate.reset()
-                                    com.ambient.tv.companion.CompanionRemoteInput.hide()
-                                }
-                            },
-                            onFailure = { error ->
-                                backKeyGate.reset()
-                                Timber.w(error, "Dialog UI surface unavailable; retaining native dialog content")
-                                container.post {
-                                    val previous = host ?: return@post
-                                    if (container.getChildAt(0) !== previous) {
-                                        host = null
-                                        return@post
-                                    }
-                                    host = null
-                                    val savedContent = previous.takeContentView()
-                                    failed = true
-                                    viewport = null
-                                    container.removeAllViews()
-                                    container.addView(savedContent, FrameLayout.LayoutParams(
-                                        ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
-                                    if (currentFocusable) savedContent.requestFocus()
-                                }
-                            },
-                        ),
-                    )
-                    host = created
-                    container.addView(created, FrameLayout.LayoutParams(
-                        ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
-                    container
-                },
-                onRelease = { container ->
-                    backKeyGate.reset()
-                    (container.getChildAt(0) as? UiRenderResolutionHost)?.close()
-                    (container.getChildAt(0) as? ComposeView)?.disposeComposition()
-                    container.removeAllViews()
-                },
-                update = { },
-            )
+                                    Timber.w(error, "Dialog UI surface unavailable; retaining native dialog content")
+                                    container.post { useNativeContent(container) }
+                                },
+                            ),
+                        )
+                        container.addView(created, FrameLayout.LayoutParams(
+                            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+                        container
+                    },
+                    onRelease = { container ->
+                        backKeyGate.reset()
+                        (container.getChildAt(0) as? UiRenderResolutionHost)?.close()
+                        (container.getChildAt(0) as? ComposeView)?.disposeComposition()
+                        container.removeAllViews()
+                    },
+                    update = { container ->
+                        if (!parentEnvironment.embedded) useNativeContent(container)
+                    },
+                )
+            }
         }
     }
 }

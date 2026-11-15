@@ -27,6 +27,7 @@ import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.MutableIntState
 import androidx.compose.runtime.MutableState
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.mutableIntStateOf
@@ -125,9 +126,14 @@ internal class UiRenderResolutionAudit(
         var routedTouchCount = 0
         var dialogView: View? = null
         var dialogEnvironment: UiRenderEnvironment? = null
+        var dialogDraft: MutableIntState? = null
+        var dialogDraftValue = 0
         var popupView: View? = null
         var popupEnvironment: UiRenderEnvironment? = null
         var focusablePopupView: View? = null
+        var focusablePopupEnvironment: UiRenderEnvironment? = null
+        var focusablePopupDraft: MutableIntState? = null
+        var focusablePopupDraftValue = 0
         var editorFocused = false
         var observedDensity = 0f
         var observedDensityDpi = 0
@@ -181,7 +187,12 @@ internal class UiRenderResolutionAudit(
                     appendLine("nativeDecor.hasWindowFocus=${activity.window.decorView.hasWindowFocus()}")
                     appendLine("activity.currentFocus=${activity.currentFocus}")
                     appendLine("dialogVisible=${dialogVisible.value}, dialogWindowFocus=${dialogView?.rootView?.hasWindowFocus()}")
+                    appendLine("dialog.viewIdentity=${dialogView?.let { System.identityHashCode(it) }}, environment=$dialogEnvironment")
+                    appendLine("dialog.draftIdentity=${dialogDraft?.let { System.identityHashCode(it) }}, draft=${dialogDraft?.intValue}, composedDraft=$dialogDraftValue")
                     appendLine("popupVisible=${popupVisible.value}, popupWindowFocus=${popupView?.rootView?.hasWindowFocus()}")
+                    appendLine("focusablePopupVisible=${focusablePopupVisible.value}, focusablePopupWindowFocus=${focusablePopupView?.rootView?.hasWindowFocus()}")
+                    appendLine("focusablePopup.viewIdentity=${focusablePopupView?.let { System.identityHashCode(it) }}, environment=$focusablePopupEnvironment")
+                    appendLine("focusablePopup.draftIdentity=${focusablePopupDraft?.let { System.identityHashCode(it) }}, draft=${focusablePopupDraft?.intValue}, composedDraft=$focusablePopupDraftValue")
                     appendLine("routedKeys=$routedKeyCount, routedTouches=$routedTouchCount, activations=${activations.intValue}")
                 }
             }
@@ -265,16 +276,23 @@ internal class UiRenderResolutionAudit(
                                         ) {
                                             val view = LocalView.current
                                             val environment = LocalUiRenderEnvironment.current
+                                            val draft = remember { mutableIntStateOf(0) }
+                                            val draftValue = draft.intValue
                                             val dialogFocus = remember { FocusRequester() }
-                                            SideEffect { dialogView = view; dialogEnvironment = environment }
+                                            SideEffect {
+                                                dialogView = view
+                                                dialogEnvironment = environment
+                                                dialogDraft = draft
+                                                dialogDraftValue = draftValue
+                                            }
                                             DisposableEffect(Unit) {
-                                                onDispose { dialogView = null; dialogEnvironment = null }
+                                                onDispose { dialogView = null; dialogEnvironment = null; dialogDraft = null }
                                             }
                                             if (editorVisible.value) {
                                                 CompanionAuditEditor(editorText) { editorFocused = it }
                                             } else {
                                                 TvActionButton(
-                                                    "Close resolution dialog",
+                                                    "Close resolution dialog ($draftValue)",
                                                     { dialogVisible.value = false },
                                                     Modifier.focusRequester(dialogFocus),
                                                 )
@@ -302,10 +320,24 @@ internal class UiRenderResolutionAudit(
                                             properties = PopupProperties(focusable = true),
                                         ) {
                                             val view = LocalView.current
+                                            val environment = LocalUiRenderEnvironment.current
+                                            val draft = remember { mutableIntStateOf(0) }
+                                            val draftValue = draft.intValue
                                             val popupFocus = remember { FocusRequester() }
-                                            SideEffect { focusablePopupView = view }
-                                            DisposableEffect(Unit) { onDispose { focusablePopupView = null } }
-                                            TvActionButton("Close interactive popup",
+                                            SideEffect {
+                                                focusablePopupView = view
+                                                focusablePopupEnvironment = environment
+                                                focusablePopupDraft = draft
+                                                focusablePopupDraftValue = draftValue
+                                            }
+                                            DisposableEffect(Unit) {
+                                                onDispose {
+                                                    focusablePopupView = null
+                                                    focusablePopupEnvironment = null
+                                                    focusablePopupDraft = null
+                                                }
+                                            }
+                                            TvActionButton("Close interactive popup ($draftValue)",
                                                 { focusablePopupVisible.value = false },
                                                 Modifier.focusRequester(popupFocus))
                                             LaunchedEffect(Unit) { withFrameNanos { }; popupFocus.requestFocus() }
@@ -528,23 +560,67 @@ internal class UiRenderResolutionAudit(
             awaitDisplayDensity(originalDensityDpi)
             log("PASS real Android density Configuration round trip updates Compose density/configuration and preserves state")
 
+            // Both native windows must survive the parent's renderer fallback, including state
+            // owned inside their separate compositions. Open the popup last so it owns input.
+            main { dialogVisible.value = true }
+            await("dialog open before parent fallback") {
+                healthy() && dialogView?.rootView?.hasWindowFocus() == true &&
+                    dialogEnvironment?.embedded == true && dialogDraft != null
+            }
+            main { focusablePopupVisible.value = true }
+            await("popup above open dialog before parent fallback") {
+                healthy() && focusablePopupView?.rootView?.hasWindowFocus() == true &&
+                    focusablePopupEnvironment?.embedded == true && focusablePopupDraft != null
+            }
+            val dialogBeforeFallback = main { checkNotNull(dialogView) to checkNotNull(dialogDraft) }
+            val popupBeforeFallback = main { checkNotNull(focusablePopupView) to checkNotNull(focusablePopupDraft) }
+            main {
+                dialogBeforeFallback.second.intValue = 37
+                popupBeforeFallback.second.intValue = 83
+            }
+            await("dialog and popup compose distinct local drafts") {
+                dialogDraftValue == 37 && focusablePopupDraftValue == 83
+            }
             main {
                 val savedContent = host.takeContentView()
                 mode.value = UiRenderResolutionPolicy.SYSTEM
                 viewport.value = null
                 outer.removeAllViews()
                 outer.addView(savedContent, FrameLayout.LayoutParams(-1, -1))
+                // Match MainActivity's real fallback without taking focus from child windows.
+                savedContent.requestFocus()
             }
             await("native fallback reuses live composition") { compose.isAttachedToWindow && compose.width == 3840 && !compose.isUiRenderHosted() }
+            await("open dialog and popup retain content through parent fallback") {
+                dialogVisible.value && focusablePopupVisible.value &&
+                    dialogView === dialogBeforeFallback.first && dialogDraft === dialogBeforeFallback.second &&
+                    dialogDraft?.intValue == 37 && dialogDraftValue == 37 &&
+                    dialogEnvironment?.modeKey == UiRenderResolutionPolicy.SYSTEM && dialogView?.isUiRenderHosted() == false &&
+                    focusablePopupView === popupBeforeFallback.first && focusablePopupDraft === popupBeforeFallback.second &&
+                    focusablePopupDraft?.intValue == 83 && focusablePopupDraftValue == 83 &&
+                    focusablePopupEnvironment?.modeKey == UiRenderResolutionPolicy.SYSTEM &&
+                    focusablePopupView?.isUiRenderHosted() == false &&
+                    focusablePopupView?.rootView?.hasWindowFocus() == true
+            }
             main {
                 check(rememberedIdentity === initialIdentity && activations.intValue == 5)
-                check(focus.requestFocus())
+                check(CompanionRemoteInput.dispatch(CompanionInput("key", key = "ok")))
             }
+            await("Companion closes retained native popup and restores dialog focus") {
+                !focusablePopupVisible.value && focusablePopupView == null && dialogVisible.value &&
+                    dialogView === dialogBeforeFallback.first && dialogDraft === dialogBeforeFallback.second &&
+                    dialogDraft?.intValue == 37 && dialogView?.rootView?.hasWindowFocus() == true
+            }
+            main { check(CompanionRemoteInput.dispatch(CompanionInput("key", key = "ok"))) }
+            await("Companion closes retained native dialog") { !dialogVisible.value && dialogView == null }
             await("native fallback input focus restored") { rootFocused && compose.rootView.hasWindowFocus() }
+            main { check(rememberedIdentity === initialIdentity && activations.intValue == 5) }
+            log("PASS parent native fallback preserves open dialog/popup View and remember state, then Companion closes both and restores main input")
             main { check(CompanionRemoteInput.dispatch(CompanionInput("key", key = "ok"))) }
             await("native fallback remains interactive") {
                 activations.intValue == 6 && dialogVisible.value &&
-                    dialogView?.rootView?.hasWindowFocus() == true
+                    dialogView?.rootView?.hasWindowFocus() == true &&
+                    dialogEnvironment?.modeKey == UiRenderResolutionPolicy.SYSTEM && dialogView?.isUiRenderHosted() == false
             }
             main { check(CompanionRemoteInput.dispatch(CompanionInput("key", key = "back"))) }
             await("native fallback dialog closes") { !dialogVisible.value }

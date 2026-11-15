@@ -44,7 +44,9 @@ internal fun UiResolutionPopup(
     properties: PopupProperties = PopupProperties(),
     content: @Composable () -> Unit,
 ) {
-    if (!LocalUiRenderEnvironment.current.embedded) {
+    val environment = LocalUiRenderEnvironment.current
+    val embeddedAtCreation = remember { environment.embedded }
+    if (!embeddedAtCreation) {
         ComposePopup(alignment, offset, onDismissRequest, properties, content)
         return
     }
@@ -64,7 +66,10 @@ internal fun UiResolutionPopup(
     content: @Composable () -> Unit,
 ) {
     val sourceEnvironment = LocalUiRenderEnvironment.current
-    if (!sourceEnvironment.embedded) {
+    // Keep the existing popup/dialog call site through a parent's native fallback. Its anchor
+    // still follows the live coordinate space, and the dialog reparents its existing content.
+    val embeddedAtCreation = remember { sourceEnvironment.embedded }
+    if (!embeddedAtCreation) {
         ComposePopup(popupPositionProvider, onDismissRequest, properties, content)
         return
     }
@@ -74,7 +79,7 @@ internal fun UiResolutionPopup(
         // informational popup keeps the original, content-sized input area instead of a full
         // screen dialog. Its anchor Layout remains in the caller's embedded render space.
         val sourceView = LocalView.current
-        val nativeParentView = sourceView.findUiRenderWindow()?.decorView ?: sourceView
+        val nativeParentView = remember(sourceView) { sourceView.findUiRenderWindow()?.decorView ?: sourceView }
         val parentDensity = LocalDensity.current
         val sourceToNativeScale = 1f / sourceEnvironment.densityScale
         val nativeDensity = remember(parentDensity, sourceToNativeScale) {
