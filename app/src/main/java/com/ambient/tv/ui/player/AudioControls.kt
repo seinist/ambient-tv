@@ -172,8 +172,13 @@ internal fun AudioProfileEditor(
                 add("pcm" to stringResource(R.string.audio_fallback_pcm))
                 if (forceOffered) add("force" to stringResource(R.string.audio_prefer_bitstream))
             }
-            ImageChoice(R.string.audio_output, displayedAudioOutput(o, sourcePassthrough), outputs) { change(withAudioOutput(o, it)) }
-            ImageHint(stringResource(R.string.audio_output_hint))
+            val selectedOutput = displayedAudioOutput(o, sourcePassthrough)
+            ImageChoice(R.string.audio_output, selectedOutput, outputs) { change(withAudioOutput(o, it)) }
+            ImageHint(stringResource(when (selectedOutput) {
+                "pcm" -> R.string.audio_output_pcm_hint
+                "force" -> R.string.audio_output_force_hint
+                else -> R.string.audio_output_auto_hint
+            }))
             if (!flatLive) {
                 ImageHint(stringResource(R.string.settings_audio_source_hint))
                 ImageHint(stringResource(R.string.settings_passthrough_visualizer_hint))
