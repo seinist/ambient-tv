@@ -921,6 +921,11 @@ class AppPreferences @Inject constructor(
         get() = com.ambient.tv.ui.theme.AccentStyle.fromKey(prefs.getString(KEY_ACCENT_STYLE, null)).key
         set(value) = prefs.edit { putString(KEY_ACCENT_STYLE, com.ambient.tv.ui.theme.AccentStyle.fromKey(value).key) }
 
+    /** Saved independently of performance: changing profiles never clears the opted-in mode. */
+    var accentMotionKey: String
+        get() = com.ambient.tv.ui.theme.AccentMotionMode.fromKey(prefs.getString(KEY_ACCENT_MOTION, null)).key
+        set(value) = prefs.edit { putString(KEY_ACCENT_MOTION, com.ambient.tv.ui.theme.AccentMotionMode.fromKey(value).key) }
+
     var accentColorKey: String
         get() = normalizedAccentKey(prefs.getString(KEY_ACCENT_COLOR, "gold") ?: "gold")
         set(value) = prefs.edit { putString(KEY_ACCENT_COLOR, value) }
@@ -2472,6 +2477,7 @@ class AppPreferences @Inject constructor(
         const val KEY_OVERSCAN_PERCENT = "overscan_percent"
         const val KEY_ACCENT_COLOR = "accent_color"
         const val KEY_ACCENT_STYLE = "accent_style"
+        const val KEY_ACCENT_MOTION = "accent_motion"
         const val KEY_CUSTOM_ACCENT_HEX = "custom_accent_hex"
         const val KEY_CUSTOM_PLAYBACK_ACCENT_HEX = "custom_playback_accent_hex"
         const val KEY_DUAL_ACCENT_ENABLED = "dual_accent_enabled"

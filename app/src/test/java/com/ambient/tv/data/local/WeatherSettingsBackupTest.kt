@@ -27,16 +27,17 @@ class WeatherSettingsBackupTest {
 
     @Test fun locationsDisplayChoicesUnitsAndManualProvidersRoundTrip() {
         val storage = memoryPreferences()
-        val source = AppPreferences(storage).apply { weatherSettings = chosen }
+        val source = AppPreferences(storage).apply { weatherSettings = chosen; accentMotionKey = "ambient" }
         assertEquals(chosen, AppPreferences(storage).weatherSettings)
         val exported = manager(source).exportJson()
         val wire = Json.parseToJsonElement(exported).jsonObject
-        assertEquals("78", wire.getValue("schemaVersion").jsonPrimitive.content)
+        assertEquals(SettingsBackupManager.CURRENT_SCHEMA_VERSION.toString(), wire.getValue("schemaVersion").jsonPrimitive.content)
         assertEquals("false", wire.getValue("weather").jsonObject.getValue("showInSidebar").jsonPrimitive.content)
 
         val target = AppPreferences(memoryPreferences())
         manager(target).importJson(exported)
         assertEquals(chosen, target.weatherSettings)
+        assertEquals("ambient", target.accentMotionKey)
     }
 
     @Test fun oldMissingAndNullWeatherBackupsPreserveTheReceivingChoice() {

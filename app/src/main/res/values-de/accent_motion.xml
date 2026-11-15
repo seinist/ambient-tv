@@ -1,0 +1,10 @@
+<resources>
+    <string name="settings_accent_motion">Accent-Animationen</string>
+    <string name="settings_accent_motion_off">Aus</string>
+    <string name="settings_accent_motion_focus">Bei Fokus</string>
+    <string name="settings_accent_motion_ambient">Ambient</string>
+    <string name="settings_accent_motion_off_hint">Keine zusätzlichen Materialanimationen.</string>
+    <string name="settings_accent_motion_focus_hint">Ein dezenter Materialeffekt bei Fokus und beim Öffnen der Wiedergabeleiste.</string>
+    <string name="settings_accent_motion_ambient_hint">Ruhige Materialeffekte mit längeren Pausen auf aktiven Elementen.</string>
+    <string name="settings_accent_motion_unavailable">Aktiv bei Oberfläche → Maximale Leistung. Die Auswahl bleibt erhalten.</string>
+</resources>

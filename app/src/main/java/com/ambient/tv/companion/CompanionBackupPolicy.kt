@@ -14,7 +14,7 @@ internal object CompanionBackupPolicy {
         "preferredSubtitleLanguage", "subtitlesEnabled", "forcedSubtitlesEnabled", "subtitleModeKey",
         "subtitleLanguageKey", "subtitleFallbackLanguageKey", "fullSubtitlesOnForeignAudio", "forcedSubtitlesInUiLanguage", "mediaSelectionBehaviorKey",
         "showLibraryRowsOnHome", "showContinueWatchingHub", "showRecentHomeHubs", "showCollectionHomeHubs",
-        "accentColorKey", "accentStyleKey", "customAccentHex", "customPlaybackAccentHex", "dualAccentEnabled", "themeModeKey", "homeHeroStyleKey", "introAnimationKey", "notificationDisplayDurationKey",
+        "accentColorKey", "accentStyleKey", "accentMotionKey", "customAccentHex", "customPlaybackAccentHex", "dualAccentEnabled", "themeModeKey", "homeHeroStyleKey", "introAnimationKey", "notificationDisplayDurationKey",
         "trailersEnabled", "trailerLanguage", "youtubeSponsorBlockEnabled", "youtubeSponsorBlockModes", "youtubeSponsorBlockShowSegments", "youtubeAutoCaptions", "youtubeHistoryPaused", "youtubeHideShorts", "youtubeHideLiveInSubscriptions", "youtubeDeArrow", "youtubeFeedKeys", "youtubeStartFeedKey",
         "youtubeAutoplayNextEnabled", "youtubeSubtitlesEnabled", "youtubeMediaSelectionBehaviorKey", "telegramMediaSelectionBehaviorKey", "introSkipMode", "creditsSkipMode",
         "nextUpEnabled", "nextUpLeadSeconds", "nextUpCreditsDelaySeconds", "nextUpAutoplayEpisodes", "nextUpAutoplayCollections", "nextUpOverlayEnabled",
@@ -180,6 +180,7 @@ internal object CompanionBackupPolicy {
             require(overwrite) // Settings replacement is only available after explicit TV confirmation.
             (portable + if (deviceSettings) hardware else emptySet()).filter { source.schemaVersion >= 50 || it !in navSounds }.filter { source.schemaVersion >= 58 || it !in sinceSchema58 }.filter { source.schemaVersion >= 59 || it !in setOf("liveTimeshiftEnabled", "liveDirectRecordEnabled") }.filter { source.schemaVersion >= 60 || it != "playerOsdSeconds" }.filter { source.schemaVersion >= 61 || it != "displaySwitchPauseMs" }.filter { source.schemaVersion >= 62 || it !in sinceSchema62 }.filter { source.schemaVersion >= 63 || it != "sleepDailyStopMinute" }.filter { source.schemaVersion >= 64 || it != "mpvHdrGpuEnabled" }.filter { source.schemaVersion >= 65 || it != "sdrToHdrReferenceWhiteNits" }.filter { source.schemaVersion >= 66 || it !in sinceSchema66 }.filter { source.schemaVersion >= 67 || it != "syncPlaybackToDisplay" }.filter { source.schemaVersion >= 68 || it != "mpvImageExplicitChoice" }.filter { source.schemaVersion >= 69 || it !in sinceSchema69 }.filter { source.schemaVersion >= 71 || it != "preferDoubleRefreshRate" }.filter { source.schemaVersion >= 73 || it !in setOf("playerBackMinimizes", "networkBufferKey") }.filter { source.schemaVersion >= 74 || it !in sinceSchema74 }.filter { source.schemaVersion >= 75 || it !in sinceSchema75 }
                 .filter { source.schemaVersion >= 77 || it != "uiRenderResolutionKey" }
+                .filter { source.schemaVersion >= 78 || it != "accentMotionKey" }
                 // A sender from before the clock page has no clock: the receiver keeps its own.
                 .filter { it != "clock" || source.clock != null }
                 .filter { it != "weather" || source.weather != null }

@@ -824,6 +824,7 @@ open class MainActivity : ComponentActivity() {
             }
             var accentColorKey by remember { mutableStateOf(appPreferences.accentColorKey) }
             var accentStyleKey by remember { mutableStateOf(appPreferences.accentStyleKey) }
+            var accentMotionKey by remember { mutableStateOf(appPreferences.accentMotionKey) }
             var customAccentHex by remember { mutableStateOf(appPreferences.customAccentHex) }
             var customPlaybackAccentHex by remember { mutableStateOf(appPreferences.customPlaybackAccentHex) }
             var dualAccentEnabled by remember { mutableStateOf(appPreferences.dualAccentEnabled) }
@@ -880,6 +881,8 @@ open class MainActivity : ComponentActivity() {
                 com.ambient.tv.ui.display.LocalUiHdrState provides uiHdrState,
                 com.ambient.tv.ui.mobile.LocalHandheldUi provides (!com.ambient.tv.ui.mobile.isTelevision(this@MainActivity) && this@MainActivity is com.ambient.tv.ui.mobile.HandheldActivity),
                 com.ambient.tv.ui.performance.LocalPerformanceProfile provides performanceProfile,
+                com.ambient.tv.ui.theme.LocalAccentMotionAllowed provides
+                    (!screensaverOverlayPresent.value && !com.ambient.tv.ui.intro.IntroPresentation.coversContent),
                 com.ambient.tv.ui.sound.LocalUiSoundPlayer provides uiSoundPlayer,
                 com.ambient.tv.ui.common.LocalFilterBarSetting provides filterBarSetting,
             ) {
@@ -887,6 +890,7 @@ open class MainActivity : ComponentActivity() {
                 uiScale = uiScale,
                 accentColorKey = accentColorKey,
                 accentStyleKey = accentStyleKey,
+                accentMotionKey = accentMotionKey,
                 customAccentHex = customAccentHex,
                 customPlaybackAccentHex = customPlaybackAccentHex,
                 complementaryPlayback = dualAccentEnabled,
@@ -938,10 +942,11 @@ open class MainActivity : ComponentActivity() {
                             }
                         },
                         onRegisterInteraction = ::registerInteraction,
-                        onUiPreferencesPreview = { scale, accent, customHex, customPlaybackHex, dualAccent, theme, hdr, convertSdr, peakNits, referenceWhite, accentStyle ->
+                        onUiPreferencesPreview = { scale, accent, customHex, customPlaybackHex, dualAccent, theme, hdr, convertSdr, peakNits, referenceWhite, accentStyle, accentMotion ->
                             uiScale = scale
                             accentColorKey = accent
                             accentStyleKey = accentStyle
+                            accentMotionKey = accentMotion
                             customAccentHex = customHex
                             customPlaybackAccentHex = customPlaybackHex
                             dualAccentEnabled = dualAccent
@@ -1117,7 +1122,7 @@ private fun AmbientTvApp(
     onScreensaverHidden: () -> Boolean,
     onScreensaverActiveChanged: (Boolean) -> Unit,
     onRegisterInteraction: () -> Unit,
-    onUiPreferencesPreview: (Float, String, String, String, Boolean, String, String, Boolean, Int, Int, String) -> Unit,
+    onUiPreferencesPreview: (Float, String, String, String, Boolean, String, String, Boolean, Int, Int, String, String) -> Unit,
     onPerformanceModePreview: (String, String) -> Unit,
     visibleBackgroundVideoPlayback: Boolean,
     backgroundVideoDimPercent: Int,
