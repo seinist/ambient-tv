@@ -107,6 +107,26 @@ class SidebarFocusUiTest {
         rule.onNodeWithTag("sidebar:settings", useUnmergedTree = true).assertExists()
     }
 
+    @Test fun weatherOnlyKeepsItsDirectRowAndMenuEditorReachable() {
+        state = SidebarUiState(weatherEnabled = true)
+        setUp(Destinations.WEATHER)
+        key(Key.DirectionLeft)
+        focused("sidebar:weather")
+        rule.onNodeWithTag("sidebar:order", useUnmergedTree = true).assertExists()
+    }
+
+    @Test fun weatherAndOneMediaSystemKeepTheMainLevelInSavedFocusOrder() {
+        state = SidebarUiState(filesEnabled = true, weatherEnabled = true, systemOrder = listOf("weather", "files"))
+        setUp(Destinations.WEATHER)
+        key(Key.DirectionLeft)
+        focused("sidebar:weather")
+        rule.onNodeWithTag("sidebar:order", useUnmergedTree = true).assertExists()
+        key(Key.DirectionDown)
+        focused("sidebar:system:files")
+        key(Key.DirectionUp)
+        focused("sidebar:weather")
+    }
+
     @Test fun leftFromContentOpensOnTheActiveEntryOfTheActiveSystem() {
         setUp(Destinations.liveTvSection("guide"))
         key(Key.DirectionLeft)

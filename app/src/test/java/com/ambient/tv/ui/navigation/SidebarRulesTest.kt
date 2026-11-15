@@ -57,4 +57,30 @@ class SidebarRulesTest {
         assertEquals(listOf(MediaSystem.TELEGRAM, MediaSystem.YOUTUBE), menuOrderSystems(state))
         assertEquals(listOf(MediaSystem.YOUTUBE), menuOrderSystems(state.copy(telegramAuthorized = false)))
     }
+
+    @Test fun radioParticipatesInTheEditorAndKeepsItsSavedPosition() {
+        val state = SidebarUiState(plexEnabled = true, radioEnabled = true, systemOrder = listOf("radio", "plex"))
+        assertEquals(listOf(MediaSystem.RADIO, MediaSystem.PLEX), menuOrderSystems(state))
+        assertEquals(listOf(MediaSystem.PLEX), menuOrderSystems(state.copy(radioEnabled = false)))
+    }
+
+    @Test fun weatherSharesTheSystemOrderAndDividersWithoutOpeningASubmenu() {
+        val globals = listOf(MenuDestination("home", "Home", Icons.Filled.Home, Destinations.HOME))
+        val systems = listOf("plex", "radio").map { id ->
+            SidebarNavSystem(id, id, listOf(MenuDestination("$id:home", id, Icons.Filled.Home, id)), false, Icons.Filled.Home)
+        }
+        val weather = MenuDestination("weather", "Draußen", Icons.Filled.Home, Destinations.WEATHER)
+        val order = listOf("radio", "weather", "plex")
+        val rows = sidebarMainRows(globals, systems, Destinations.WEATHER, listOf(weather), order)
+
+        assertEquals(listOf("home", "system:radio", "weather", "system:plex"), rows.map { it.destination.id })
+        assertEquals("Draußen", rows[2].destination.label)
+        assertTrue(rows[2].active)
+        assertFalse(rows[2].opensPage)
+        assertEquals(Destinations.WEATHER, rows[2].destination.route)
+        assertEquals(listOf("home", "system:radio", "weather", "-", "system:plex"),
+            sidebarRowsWithDividers(rows, setOf("weather"), order).map {
+                if (it is SidebarNavRow.Item) it.destination.id else "-"
+            })
+    }
 }

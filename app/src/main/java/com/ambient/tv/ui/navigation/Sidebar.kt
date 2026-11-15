@@ -87,7 +87,6 @@ import com.ambient.tv.ui.common.MediaSystem
 import com.ambient.tv.ui.common.SystemLogo
 import com.ambient.tv.ui.common.SystemWordmark
 import com.ambient.tv.ui.common.overlayPanelBorder
-import com.ambient.tv.ui.common.systemName
 import com.ambient.tv.ui.common.librarySectionIcon
 import com.ambient.tv.ui.common.liveTvMenuIcon
 import com.ambient.tv.ui.common.spotifyMenuIcon
@@ -251,17 +250,17 @@ internal fun SidebarContent(
     val networkFileSources = sidebarState.networkFileSources
     val dlnaServers = sidebarState.dlnaServers
     val systems = buildList {
-        if (dlnaServers.isNotEmpty()) add(MenuSystem("dlna", systemName(MediaSystem.DLNA), Icons.Filled.VideoLibrary, system = MediaSystem.DLNA, entries =
+        if (dlnaServers.isNotEmpty()) add(MenuSystem("dlna", menuSystemName(MediaSystem.DLNA), Icons.Filled.VideoLibrary, system = MediaSystem.DLNA, entries =
             dlnaMenuDestinations(sidebarState)))
-        if (filesEnabled) add(MenuSystem("files", systemName(MediaSystem.FILES), Icons.Filled.Folder, system = MediaSystem.FILES, entries =
+        if (filesEnabled) add(MenuSystem("files", menuSystemName(MediaSystem.FILES), Icons.Filled.Folder, system = MediaSystem.FILES, entries =
             filesMenuDestinations(sidebarState)))
-        if (plexShown) add(MenuSystem("plex", offlineLabel(systemName(MediaSystem.PLEX, "Plex"), "plex" in sidebarState.offlineSystems), Icons.Filled.VideoLibrary, system = MediaSystem.PLEX, entries =
+        if (plexShown) add(MenuSystem("plex", offlineLabel(menuSystemName(MediaSystem.PLEX), "plex" in sidebarState.offlineSystems), Icons.Filled.VideoLibrary, system = MediaSystem.PLEX, entries =
             providerMenuDestinations(sidebarState, "plex")))
-        if (jellyfinShown) add(MenuSystem("jellyfin", offlineLabel(systemName(MediaSystem.JELLYFIN, "Jellyfin"), "jellyfin" in sidebarState.offlineSystems), Icons.Filled.VideoLibrary, system = MediaSystem.JELLYFIN, entries =
+        if (jellyfinShown) add(MenuSystem("jellyfin", offlineLabel(menuSystemName(MediaSystem.JELLYFIN), "jellyfin" in sidebarState.offlineSystems), Icons.Filled.VideoLibrary, system = MediaSystem.JELLYFIN, entries =
             providerMenuDestinations(sidebarState, "jellyfin")))
-        if (embyShown) add(MenuSystem("emby", offlineLabel(systemName(MediaSystem.EMBY, "Emby"), "emby" in sidebarState.offlineSystems), Icons.Filled.VideoLibrary, system = MediaSystem.EMBY, entries =
+        if (embyShown) add(MenuSystem("emby", offlineLabel(menuSystemName(MediaSystem.EMBY), "emby" in sidebarState.offlineSystems), Icons.Filled.VideoLibrary, system = MediaSystem.EMBY, entries =
             providerMenuDestinations(sidebarState, "emby")))
-        if (sidebarState.trailersConfigured) add(MenuSystem("trailers", systemName(MediaSystem.TRAILERS), Icons.Filled.Movie, system = MediaSystem.TRAILERS,
+        if (sidebarState.trailersConfigured) add(MenuSystem("trailers", menuSystemName(MediaSystem.TRAILERS), Icons.Filled.Movie, system = MediaSystem.TRAILERS,
             entries = TrailerFeed.entries.map { feed ->
                 MenuDestination(
                     id = "trailers:${feed.name.lowercase()}",
@@ -275,7 +274,7 @@ internal fun SidebarContent(
                     route = if (feed == TrailerFeed.CINEMA) Destinations.TRAILERS else Destinations.trailerFeed(feed.name),
                 )
             }))
-        if (youtubeEnabled) add(MenuSystem("youtube", systemName(MediaSystem.YOUTUBE, "SmartTube"), Icons.Filled.SmartDisplay, system = MediaSystem.YOUTUBE, entries =
+        if (youtubeEnabled) add(MenuSystem("youtube", menuSystemName(MediaSystem.YOUTUBE), Icons.Filled.SmartDisplay, system = MediaSystem.YOUTUBE, entries =
             youtubeFeedKeys.ifEmpty { listOf("home") }.map { key ->
                 val label = stringResource(when (key) {
                     "subscriptions" -> R.string.nav_youtube_subscriptions
@@ -317,16 +316,16 @@ internal fun SidebarContent(
                 mutableListOf(MenuDestination("spotify:unavailable", stringResource(R.string.spotify_native_missing), Icons.Filled.ErrorOutline,
                     Destinations.SETTINGS, settingsCategory = MediaSystem.SPOTIFY.key))
             }
-            add(MenuSystem("spotify", systemName(MediaSystem.SPOTIFY, "Spotify"), Icons.Filled.Headphones, entries, system = MediaSystem.SPOTIFY))
+            add(MenuSystem("spotify", menuSystemName(MediaSystem.SPOTIFY), Icons.Filled.Headphones, entries, system = MediaSystem.SPOTIFY))
         }
         if (telegramEnabled) add(MenuSystem(
-            "telegram", systemName(MediaSystem.TELEGRAM), Icons.Filled.Subscriptions, system = MediaSystem.TELEGRAM,
+            "telegram", menuSystemName(MediaSystem.TELEGRAM), Icons.Filled.Subscriptions, system = MediaSystem.TELEGRAM,
             entries = telegramMenuEntries(sidebarState.telegramSubmenuKeys).map { entry ->
                 MenuDestination("telegram:${entry.key}", stringResource(entry.title), telegramMenuIcon(entry.key), Destinations.telegramSection(entry.key))
             },
         ))
         if (radioEnabled) add(MenuSystem(
-            "radio", systemName(MediaSystem.RADIO), Icons.Filled.Headphones, system = MediaSystem.RADIO,
+            "radio", menuSystemName(MediaSystem.RADIO), Icons.Filled.Headphones, system = MediaSystem.RADIO,
             entries = listOf(
                 "popular" to stringResource(R.string.radio_popular),
                 "favorites" to stringResource(R.string.radio_favorites),
@@ -351,7 +350,7 @@ internal fun SidebarContent(
             // Rejected login: keep TVHeadend in the menu, pointing at its settings instead of vanishing.
             val entries = listOf(MenuDestination("tvheadend:login", stringResource(R.string.tvh_login_check), Icons.AutoMirrored.Filled.Login,
                 Destinations.SETTINGS, settingsCategory = MediaSystem.TVHEADEND.key))
-            add(MenuSystem("tvheadend", offlineLabel(systemName(MediaSystem.TVHEADEND, "TVHeadend"), "tvheadend" in sidebarState.offlineSystems), Icons.Filled.Tv, entries, system = MediaSystem.TVHEADEND))
+            add(MenuSystem("tvheadend", offlineLabel(menuSystemName(MediaSystem.TVHEADEND), "tvheadend" in sidebarState.offlineSystems), Icons.Filled.Tv, entries, system = MediaSystem.TVHEADEND))
         } else if (tvheadendEnabled) {
             val entries = listOfNotNull(
                 Triple("live", stringResource(R.string.tvh_live), liveTvMenuIcon("live")),
@@ -363,7 +362,7 @@ internal fun SidebarContent(
             ).filter { it.first in tvheadendSubmenuKeys }.map { (key, label, icon) ->
                 MenuDestination("tvheadend:$key", label, icon, if (key == "live") Destinations.LIVE_TV else Destinations.liveTvSection(key))
             }.ifEmpty { listOf(MenuDestination("tvheadend:live", stringResource(R.string.tvh_live), liveTvMenuIcon("live"), Destinations.LIVE_TV)) }
-            val label = offlineLabel(systemName(MediaSystem.TVHEADEND, "TVHeadend"), "tvheadend" in sidebarState.offlineSystems)
+            val label = offlineLabel(menuSystemName(MediaSystem.TVHEADEND), "tvheadend" in sidebarState.offlineSystems)
             add(MenuSystem("tvheadend", label, Icons.Filled.Tv, entries, system = MediaSystem.TVHEADEND))
         }
         // IPTV playlists (M3U + XMLTV): one entry per playlist and tab, through the shared Live TV screens.
@@ -379,13 +378,14 @@ internal fun SidebarContent(
                         .takeIf { available.capabilities.guide },
                 )
             }
-            add(MenuSystem("iptv", systemName(MediaSystem.IPTV), Icons.Filled.LiveTv, entries, system = MediaSystem.IPTV))
+            add(MenuSystem("iptv", menuSystemName(MediaSystem.IPTV), Icons.Filled.LiveTv, entries, system = MediaSystem.IPTV))
         }
     }.sortedBy { systemOrder.indexOf(it.id).let { index -> if (index < 0) Int.MAX_VALUE else index } }
         .map { it.copy(entries = sidebarOrderedEntries(it.entries, sidebarState.entryOrder[it.id]) { entry -> entry.id }) }
     val systemIds = systems.map { it.id }
-    // Exactly one system: its page is the main level (no extra step through a one-row main page).
-    val singleSystem: MenuSystem? = systems.singleOrNull()
+    val mainMenuItems = menuOrderItems(sidebarState)
+    // Only inline a lone media system when no other editable destination needs a main level.
+    val singleSystem: MenuSystem? = systems.singleOrNull()?.takeIf { !sidebarState.weatherEnabled }
     val activeRoute = sidebarConcreteRoute(
         currentRoute, currentSectionKey, currentYouTubeFeedKey, currentTrailerFeedKey,
         currentSpotifySectionKey, currentTvheadendTab, currentLiveTvSourceId, currentFileSourceId, currentDlnaServerId,
@@ -414,17 +414,15 @@ internal fun SidebarContent(
         if (showHome) {
             add(MenuDestination("home", stringResource(R.string.nav_home), Icons.Filled.Home, Destinations.HOME))
         }
-        if (sidebarState.weatherEnabled) {
-            add(MenuDestination("weather", stringResource(R.string.weather_title), androidx.compose.material.icons.Icons.Filled.Cloud, Destinations.WEATHER))
-        }
         if (systems.isEmpty()) add(MenuDestination("setup", stringResource(R.string.sidebar_add_system), Icons.Filled.Add, Destinations.INITIAL_SETUP))
     }
-    val filesLabel = stringResource(R.string.nav_files)
+    val standalone = mainMenuItems.filter { it.id == WEATHER_MENU_ID }.map {
+        MenuDestination(it.id, it.label, it.icon, Destinations.WEATHER)
+    }
     val configurationLabel = stringResource(R.string.nav_configuration)
-    fun systemLabel(system: MenuSystem) = if (system.id == "files") filesLabel else system.label
     // Row lists are built once per data change, not on every recomposition.
-    val mainRows = remember(globals, systems, activeRoute, activeSystem?.id, filesLabel, settingsShortcutHidden, configurationLabel) {
-        val single = systems.singleOrNull()
+    val mainRows = remember(globals, systems, standalone, systemOrder, activeRoute, activeSystem?.id, settingsShortcutHidden, configurationLabel) {
+        val single = singleSystem
         if (single != null) {
             // Keep global Settings at the bottom while exposing the single inlined provider's
             // own configuration directly, just like the nested system pages on multi-source TVs.
@@ -439,8 +437,8 @@ internal fun SidebarContent(
                 sidebarPageRows(single.id, listOfNotNull(sourceSettings) + single.entries, null, activeRoute)
         } else {
             sidebarMainRows(globals, systems.map { system ->
-                SidebarNavSystem(system.id, if (system.id == "files") filesLabel else system.label, system.entries, system.id == activeSystem?.id, system.icon)
-            }, activeRoute)
+                SidebarNavSystem(system.id, system.label, system.entries, system.id == activeSystem?.id, system.icon)
+            }, activeRoute, standalone, systemOrder)
         }
     }
     val pageRowsById = remember(systems, activeRoute) {
@@ -474,7 +472,7 @@ internal fun SidebarContent(
     val allRowIds = remember(mainRows, pageRowsById) { (mainRows + pageRowsById.values.flatten()).map { it.destination.id }.toSet() }
     // Drop requesters of rows that no longer exist anywhere.
     SideEffect { requesters.keys.retainAll(allRowIds + setOf("settings", "order", "exit", "pill", PAGE_BACK_ID)) }
-    val safeAnchor = globals.firstOrNull()?.id ?: "settings"
+    val safeAnchor = mainRows.firstOrNull()?.destination?.id ?: "settings"
     fun childTarget(system: MenuSystem): String = chooseSidebarChild(
         system.entries.map { it.id },
         rememberedChildren[system.id],
@@ -546,7 +544,7 @@ internal fun SidebarContent(
     // The editor edits the level on screen: the systems on the main page, a system's entries on
     // its page, and with a single system (inlined into the main level) that system's entries.
     val editorSystem = openGroup ?: singleSystem
-    val hasEditor = if (editorSystem != null) editorSystem.entries.size > 1 else menuEditorAvailable(systems.size)
+    val hasEditor = if (editorSystem != null) editorSystem.entries.size > 1 else mainMenuItems.isNotEmpty()
     fun wrapFocus(id: String, key: Key): Boolean {
         val order = navItemIds + "settings"
         val rowId = if (id == "order" || id == "exit") "settings" else id
@@ -668,10 +666,10 @@ internal fun SidebarContent(
     val textMeasurer = androidx.compose.ui.text.rememberTextMeasurer()
     val density = LocalDensity.current
     val settingsLabel = stringResource(R.string.nav_settings)
-    val candidateLabels = remember(globals, systems, filesLabel) {
-        globals.map { it.label } + systems.flatMap { system -> listOf(systemLabel(system)) + system.entries.map { it.label } }
+    val candidateLabels = remember(globals, standalone, systems) {
+        (globals + standalone).map { it.label } + systems.flatMap { system -> listOf(system.label) + system.entries.map { it.label } }
     }
-    val headerLabels = remember(systems, filesLabel) { systems.map(::systemLabel) }
+    val headerLabels = remember(systems) { systems.map { it.label } }
     var widestPanel by remember(screenWidth, uiScale) { mutableStateOf(0.dp) }
     val measuredPanel = remember(candidateLabels, headerLabels, settingsLabel, configurationLabel, screenWidth, uiScale, density, systems.size) {
         fun textDp(label: String, bold: Boolean = false) = with(density) {
@@ -854,7 +852,7 @@ internal fun SidebarContent(
                     ) { pageId ->
                         val pageSystem = systems.firstOrNull { it.id == pageId }
                         Column(Modifier.fillMaxSize()) {
-                            if (pageSystem != null) SidebarPageHeader(systemLabel(pageSystem), uiScale, requester(PAGE_BACK_ID),
+                            if (pageSystem != null) SidebarPageHeader(pageSystem.label, uiScale, requester(PAGE_BACK_ID),
                                 focusable = expanded && pageId == focusPage,
                                 onFocused = { markFocus(PAGE_BACK_ID) },
                                 onWrapKey = { wrapFocus(PAGE_BACK_ID, it) }) { leaveLevel() }
@@ -991,13 +989,13 @@ internal fun SidebarContent(
                 dividersAfter = sidebarState.entryDividers[level.id].orEmpty().toSet(),
                 onToggleDivider = { id -> viewModel.toggleEntryDivider(level.id, id) },
                 renamable = false,
-                title = systemLabel(level),
+                title = level.label,
             )
         } else {
-            val shownIds = systems.map { it.id }.toSet()
+            val shownIds = (systems.map { it.id } + standalone.map { it.id }).toSet()
             MenuOrderDialog(
                 // Every configured system; ones without a visible row right now are marked hidden.
-                systems = menuOrderItems(sidebarState).map { it.copy(hidden = it.id !in shownIds) },
+                systems = mainMenuItems.map { it.copy(hidden = it.id !in shownIds) },
                 onApplyOrder = { order -> viewModel.applySystemOrder(order) },
                 onRename = viewModel::renameSystems,
                 onDismiss = close,
@@ -1017,9 +1015,6 @@ private fun SidebarDivider(uiScale: Float) {
         .height(1.dp)
         .background(MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.3f)))
 }
-
-/** The editor is reachable once there is more than one system to order. */
-private fun menuEditorAvailable(shownSystems: Int): Boolean = shownSystems > 1
 
 /** Top of the open panel: the Ambient word mark (no profile). */
 @Composable

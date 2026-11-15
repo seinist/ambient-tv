@@ -26,8 +26,10 @@ import androidx.compose.material.icons.filled.HorizontalRule
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.height
 import androidx.compose.material.icons.filled.ArrowUpward
+import androidx.compose.material.icons.filled.Cloud
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Headphones
+import androidx.compose.material.icons.filled.LiveTv
 import androidx.compose.material.icons.filled.Movie
 import androidx.compose.material.icons.filled.PowerSettingsNew
 import androidx.compose.material.icons.filled.SmartDisplay
@@ -60,7 +62,6 @@ import com.ambient.tv.ui.common.OverlayLazyScrollbar
 import com.ambient.tv.ui.common.SystemLogo
 import com.ambient.tv.ui.common.TvActionButton
 import com.ambient.tv.ui.common.TvTextField
-import com.ambient.tv.ui.common.systemName
 import com.ambient.tv.ui.mobile.LocalHandheldUi
 
 /** One editable menu entry: the systems the television sidebar and the handheld menu both list. */
@@ -71,6 +72,8 @@ internal data class MenuOrderItem(
     val system: MediaSystem? = null,
     /** Configured but without a menu row right now (offline, no libraries, suppressed). */
     val hidden: Boolean = false,
+    /** Canonical menu name, independent of any saved custom name. */
+    val defaultLabel: String = label,
 )
 
 /** Mirrors the icons the television sidebar gives each system. */
@@ -79,8 +82,9 @@ internal fun menuSystemIcon(system: MediaSystem): ImageVector = when (system) {
     MediaSystem.TRAILERS -> Icons.Filled.Movie
     MediaSystem.YOUTUBE -> Icons.Filled.SmartDisplay
     MediaSystem.TELEGRAM -> Icons.Filled.Subscriptions
-    MediaSystem.SPOTIFY -> Icons.Filled.Headphones
-    MediaSystem.TVHEADEND, MediaSystem.IPTV -> Icons.Filled.Tv
+    MediaSystem.SPOTIFY, MediaSystem.RADIO -> Icons.Filled.Headphones
+    MediaSystem.TVHEADEND -> Icons.Filled.Tv
+    MediaSystem.IPTV -> Icons.Filled.LiveTv
     else -> Icons.Filled.VideoLibrary
 }
 
@@ -90,14 +94,20 @@ internal fun menuSystemIcon(system: MediaSystem): ImageVector = when (system) {
  */
 @Composable
 internal fun menuOrderItems(state: SidebarUiState): List<MenuOrderItem> {
-    return menuOrderSystems(state)
-        .map { MenuOrderItem(it.key, systemName(it), menuSystemIcon(it), it) }
+    val items = menuOrderSystems(state).map { system ->
+        MenuOrderItem(system.key, menuSystemName(system), menuSystemIcon(system), system,
+            defaultLabel = menuSystemDefaultName(system))
+    } + if (state.weatherEnabled) listOf(
+        MenuOrderItem(WEATHER_MENU_ID, weatherMenuName(), Icons.Filled.Cloud,
+            defaultLabel = stringResource(R.string.weather_title)),
+    ) else emptyList()
+    return sidebarOrderedEntries(items, state.systemOrder) { it.id }
 }
 
 /**
  * Only fields the user actually changed count as edited. A field still showing the name the
- * menu showed, the provider name or the system's own label stores no override, so opening and
- * closing the editor never turns a label (TVHeadend's "Live-TV") into a custom name.
+ * menu last saved, the provider name or the default menu label stores no override, so opening
+ * and closing the editor never turns a display label into a custom name.
  */
 internal fun menuOrderRenames(
     names: Map<String, String>,
@@ -123,6 +133,7 @@ internal fun menuOrderSystems(state: SidebarUiState): List<MediaSystem> =
         if (state.youtubeEnabled) add(MediaSystem.YOUTUBE)
         if (state.spotifyEnabled && state.spotifyAuthorized) add(MediaSystem.SPOTIFY)
         if (state.telegramEnabled && state.telegramAuthorized) add(MediaSystem.TELEGRAM)
+        if (state.radioEnabled) add(MediaSystem.RADIO)
         if (state.tvheadendEnabled) add(MediaSystem.TVHEADEND)
         if (state.liveTvSources.any { it.source.system == "iptv" }) add(MediaSystem.IPTV)
     }
@@ -130,7 +141,7 @@ internal fun menuOrderSystems(state: SidebarUiState): List<MediaSystem> =
 
 /**
  * One list row per system: its place, its mark, an inline name field and up/down arrows.
- * Order and names are drafted here; Done applies, Cancel discards. Television and handheld
+ * Order and names are saved immediately, including when closing with Back. Television and handheld
  * landscape put the editor beside the list; a portrait phone is too narrow for two columns and
  * stacks it underneath.
  */
@@ -151,12 +162,12 @@ internal fun MenuOrderDialog(
     // Each field starts with the name the menu shows; one left empty or set back to the
     // provider's name stores no override.
     val providers = systems.associate { item ->
-        item.id to (item.system?.let { it.brand ?: stringResource(it.label) } ?: item.label)
+        item.id to (item.system?.brand ?: item.defaultLabel)
     }
-    // A system's own label can differ from its provider ("Live-TV" for TVHeadend). Keeping
-    // that label is no rename either.
-    val defaults = systems.associate { item -> item.id to (item.system?.let { stringResource(it.label) } ?: item.label) }
-    val shown = remember { systems.associate { it.id to it.label } }
+    val defaults = systems.associate { item -> item.id to item.defaultLabel }
+    // Compare with the last saved draft, so changing a name and then restoring its original
+    // value also restores persistence instead of leaving the intermediate edit behind.
+    val savedNames = remember { systems.associate { it.id to it.label }.toMutableMap() }
     val names = remember { mutableStateMapOf<String, String>().apply { systems.forEach { put(it.id, it.label) } } }
     var draftOrder by remember { mutableStateOf(systems.map { it.id }) }
     val draftItems = remember(draftOrder, systems) {
@@ -176,15 +187,17 @@ internal fun MenuOrderDialog(
     }
     // Names are saved while typing, like every other setting (no separate save step).
     val saveNames = {
-        val (renamed, edited) = menuOrderRenames(names.toMap(), shown, providers, defaults)
+        val snapshot = names.toMap()
+        val (renamed, edited) = menuOrderRenames(snapshot, savedNames, providers, defaults)
         onRename(renamed, edited)
+        savedNames.putAll(snapshot)
     }
     val applyAndClose = {
         onApplyOrder(draftOrder)
         saveNames()
         onDismiss()
     }
-    // Closing keeps what was changed; names are applied when the editor closes.
+    // Closing keeps changes already saved while editing.
     val cancel = applyAndClose
     var selectedId by remember { mutableStateOf(systems.firstOrNull()?.id) }
     val selected = draftItems.firstOrNull { it.id == selectedId } ?: draftItems.firstOrNull()
