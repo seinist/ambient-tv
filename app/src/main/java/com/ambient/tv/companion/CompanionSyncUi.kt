@@ -44,6 +44,7 @@ internal fun CompanionSyncDialog(vm: CompanionViewModel, navSnapshot: SettingsBa
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
     var source by remember { mutableStateOf(navSnapshot) }
+    var sourceFields by remember { mutableStateOf<Set<String>?>(null) }
     var mode by rememberSaveable { mutableStateOf(if (navSnapshot != null) "nav_sounds" else "preferences") }
     var selected by rememberSaveable { mutableStateOf<List<String>?>(null) }
     // Opened from a TV's card or detail page: that TV is the target.
@@ -64,7 +65,7 @@ internal fun CompanionSyncDialog(vm: CompanionViewModel, navSnapshot: SettingsBa
             loading = true
             val result = withContext(Dispatchers.IO) { runCatching { vm.settings.snapshot() } }
             result.exceptionOrNull()?.let { android.util.Log.w("CompanionSync", "Settings snapshot failed", it) }
-            source = result.getOrNull(); failed = result.isFailure; loading = false; fromFile = false
+            source = result.getOrNull(); sourceFields = null; failed = result.isFailure; loading = false; fromFile = false
         }
     }
     LaunchedEffect(Unit) { if (navSnapshot == null) reload() }
@@ -75,9 +76,9 @@ internal fun CompanionSyncDialog(vm: CompanionViewModel, navSnapshot: SettingsBa
                 val raw = requireNotNull(context.contentResolver.openInputStream(uri)).use {
                     it.readBytesLimited(CompanionBackupPolicy.MAX_BYTES).toString(Charsets.UTF_8)
                 }
-                vm.settings.preview(raw)
+                vm.settings.preview(raw) to CompanionBackupPolicy.presentFields(raw)
             } }
-            result.onSuccess { source = it; selected = null; fromFile = true }
+            result.onSuccess { (snapshot, fields) -> source = snapshot; sourceFields = fields; selected = null; fromFile = true }
             failed = result.isFailure; loading = false
         }
     }
@@ -155,7 +156,7 @@ internal fun CompanionSyncDialog(vm: CompanionViewModel, navSnapshot: SettingsBa
                         val snapshot = source ?: return@TvActionButton
                         val result = runCatching {
                             val chosen = if (includeAccounts) selectSyncAccounts(snapshot, accountIds) else snapshot
-                            CompanionBackupPolicy.prepareWithInfo(chosen, sendCredentials, mode, sendSessions)
+                            CompanionBackupPolicy.prepareWithInfo(chosen, sendCredentials, mode, sendSessions, sourceFields)
                         }
                         result.onSuccess {
                             profilesOmitted = it.profilesOmitted

@@ -1,6 +1,7 @@
 package com.ambient.tv.companion
 
 import com.ambient.tv.data.local.SettingsBackup
+import com.ambient.tv.data.local.SettingsBackupExtras
 import com.ambient.tv.data.local.MonogramApiBackup
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.Json
@@ -14,7 +15,19 @@ class CompanionBackupClassificationTest {
     @Test fun everyBackupFieldIsClassified() {
         val d = SettingsBackup.serializer().descriptor
         val fields = (0 until d.elementsCount).map(d::getElementName).toSet()
-        assertEquals(emptySet<String>(), fields - CompanionBackupPolicy.classifiedFields)
+        assertEquals(fields, CompanionBackupPolicy.classifiedFields)
+    }
+
+    @Test fun everyExtraGroupAndMemberHasAnExplicitSharingClassification() {
+        val descriptor = SettingsBackupExtras.serializer().descriptor
+        val groups = (0 until descriptor.elementsCount).map(descriptor::getElementName).toSet()
+        assertEquals(groups, CompanionBackupPolicy.classifiedExtraFields.keys)
+        for (index in 0 until descriptor.elementsCount) {
+            val group = descriptor.getElementName(index)
+            val members = descriptor.getElementDescriptor(index)
+            val fields = (0 until members.elementsCount).map(members::getElementName).toSet()
+            assertEquals(group, fields, CompanionBackupPolicy.classifiedExtraFields.getValue(group))
+        }
     }
 
     @Test fun sidebarDividersTravelWithTheMenuOrder() {

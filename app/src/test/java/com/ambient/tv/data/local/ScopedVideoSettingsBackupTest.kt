@@ -37,7 +37,9 @@ class ScopedVideoSettingsBackupTest {
     }
 
     @Test fun companionCarriesProfilesOnlyFromSchema69AsDeviceSettings() {
-        val incoming = SettingsBackup(schemaVersion = 69, exportedAtEpochMs = 2, titleVideoSettings = title, scopedVideoSettings = scoped)
+        val incoming = SettingsBackup(schemaVersion = 69, exportedAtEpochMs = 2,
+            servers = listOf(ServerBackup(com.ambient.tv.domain.model.ServerProfile("srv", "Plex", "plex.test"))),
+            titleVideoSettings = title, scopedVideoSettings = scoped)
         val target = SettingsBackup(schemaVersion = 69, exportedAtEpochMs = 1)
         val merged = CompanionBackupPolicy.json.decodeFromString<SettingsBackup>(CompanionBackupPolicy.merge(incoming, target, "settings", true, true))
         assertEquals(title, merged.titleVideoSettings)

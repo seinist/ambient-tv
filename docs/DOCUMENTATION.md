@@ -2,7 +2,7 @@
 
 **Languages:** **English** · [Deutsch](DOCUMENTATION.de.md)
 
-**App:** Ambient TV (`com.ambient.tv`) · version `1.0` (see `version.properties` for versionCode) · minSdk 29, target/compileSdk 37 · settings backup schema 76
+**App:** Ambient TV (`com.ambient.tv`) · version `1.0` (see `version.properties` for versionCode) · minSdk 29, target/compileSdk 37 · settings backup schema 80
 **License:** [CC0 1.0 Universal](../LICENSE)
 
 This compendium lists what the app does today: every settings page, the player's Video and Audio panels, and the media sources. Labels are the real UI texts from `app/src/main/res/values*/`. Defaults are read from the code (`AppPreferences`, `AudioOptions`, `VideoImageOptions`, `SettingsUiState`). Nothing here is planned work.
@@ -891,11 +891,31 @@ Under **App & data › Backup**:
 - **Export without credentials** (default): no Plex tokens, no TVHeadend password; file-source passwords only when exporting with credentials. Before saving, an optional passphrase can be set (entered twice, show/hide toggle); leave it empty for a plain JSON file as before
 - **Export with credentials:** only when needed; the file is encrypted with a passphrase (at least 8 characters, AES-256-GCM, PBKDF2) that import asks for. Without the passphrase the backup cannot be restored. Companion transfers stay TLS-protected.
 - Encrypted files are a small JSON envelope (`"format":"ambient-tv-encrypted-backup"`, version 1, PBKDF2-HMAC-SHA256 with 310 000 iterations, random 16-byte salt and 12-byte IV, AES-256-GCM). Import detects plain vs. encrypted files automatically and asks for the passphrase; a wrong passphrase or a damaged file shows an error and the dialog stays open for another try.
-- Import restores settings and server profiles (schema up to current **79**), including weather places, display switches and the separately selected radar/satellite providers
+- Import restores settings and server profiles (schema up to current **80**), including weather places, display switches and the separately selected radar/satellite providers
 - Monogram system status, six menu/TV chips, Home rows and views are included in ordinary backups; Telegram API ID/hash only in passphrase-encrypted **credentials** exports. Telegram login/2FA, native session and downloaded private media are never portable; sign in again on a new device.
-- IPTV playlists and the OpenSubtitles key and account are only part of backups **with credentials** (playlist addresses often carry the provider account); a backup without credentials leaves the device's own unchanged. Timeshift size, timeshift/direct-recording switches (since schema 59) and reminder lead time are always backed up, scheduled reminders are not.
+- IPTV playlists and the OpenSubtitles key and account are only part of backups **with credentials** (playlist addresses often carry the provider account); a backup without credentials leaves the device's own unchanged. Timeshift size, timeshift/direct-recording switches (since schema 59), reminder lead time and reminder automatic switching are backed up; scheduled reminders stay on the device.
 - File sources and WOL are backed up; **local folder permissions (SAF) are not portable** and must be granted again on a new device
 - OAuth sessions and device IDs are not meant as a “portable login” — re-sign in accounts if needed
+
+### Settings coverage
+
+The same saved configuration supplies file backups and Companion transfers. The transfer mode and the separate device-settings choice determine which parts the receiver applies.
+
+| Settings | File backup | Share settings |
+|---|---|---|
+| Weather locations, units, radar/satellite providers, sidebar/header/screensaver display | Included | Included in preferences/settings mode |
+| Accent styles and motion, clock, subtitle appearance, OSD, Home layout, settings level, browse filter bar | Included | Included in preferences/settings mode |
+| Continue-watching sources, watched/resume thresholds, gapless music, lyrics, phone auto-PiP, launcher integration | Included | Included in preferences/settings mode |
+| ProjectM preset names, shuffle and favorite bundled presets; Spotify bitrate and visualization | Included | Included in preferences/settings mode |
+| Live-TV reminder automatic switching and automatic update checking | Included | Included in preferences/settings mode |
+| UI resolution, image-cache budget and 1080p card-image limit; display/audio/player tuning | Included | Only with device settings selected |
+| TVHeadend's separate HTSP port | Included | With the selected TVHeadend account |
+| Remembered title/season/series/collection video profiles | Included | Accounts plus settings, with device settings selected; server IDs are mapped to the receiver and unselected accounts keep their profiles |
+| Per-source library/EPG sorting, filters and views; hidden server libraries and photo screensaver source | Included | Kept on the receiver because they refer to its configured sources |
+
+Older backups without the new schema-80 settings preserve the receiver's choices. Missing values remain distinct from explicit `false`, automatic/zero and an empty selection. Imported settings levels and image-cache budgets update their running UI/cache; automatic update checking does not start a request during import. Cached artwork, weather data, downloaded media, pairing identities, receiver permissions, trusted senders and HbbTV consent stay local.
+
+Developers adding a preference must extend the backup mapping or document its local-state exception. `SettingsPreferenceCoverageTest` inventories mutable preferences independently of the export model, and the Companion classification test covers the nested schema-80 groups. Round-trip tests assert the restored preferences themselves, so a field omitted from both exports cannot silently pass.
 
 Under **App & data › Diagnostics** (error log for release builds):
 

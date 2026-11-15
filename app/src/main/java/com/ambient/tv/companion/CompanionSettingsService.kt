@@ -34,12 +34,13 @@ class CompanionSettingsService @Inject constructor(
         return CompanionBackupPolicy.prepare(source, credentials, mode, sessions)
     }
     fun prepareFile(raw: String, credentials: Boolean, mode: String = "settings", sessions: Boolean = credentials) =
-        CompanionBackupPolicy.prepare(preview(raw), credentials, mode, sessions)
+        CompanionBackupPolicy.prepare(preview(raw), credentials, mode, sessions, CompanionBackupPolicy.presentFields(raw))
 
     @Synchronized fun apply(raw: String, mode: String, overwrite: Boolean, deviceSettings: Boolean) {
         val source = preview(raw)
         val before = backups.exportJson(includeCredentials = true)
-        val merged = CompanionBackupPolicy.merge(source, backups.previewJson(before), mode, overwrite, deviceSettings)
+        val merged = CompanionBackupPolicy.merge(source, backups.previewJson(before), mode, overwrite, deviceSettings,
+            CompanionBackupPolicy.presentFields(raw))
         backups.previewJson(merged)
         saveRollback(before) // Durable encrypted recovery before the first preference write.
         try { backups.importJson(merged) }

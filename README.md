@@ -134,7 +134,7 @@ Ambient TV is built in spare time, out of love for a good couch evening. If it m
 - **Weather** with saved locations, hourly/daily forecasts and manually chosen radar/satellite maps; optional menu, header and screensaver display
 - **Light moods** above Home, **filter bar** above libraries, guide, trailers and YouTube
 - **Performance modes** Auto / Balanced / Low, screensaver, home-screen channels
-- **Settings backup** (schema 79; API credentials only with encrypted, password-protected export) · DE/EN UI
+- **Settings backup** (schema 80; API credentials only with encrypted, password-protected export) · DE/EN UI
 
 </td>
 </tr>

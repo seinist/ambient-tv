@@ -3,6 +3,7 @@ package com.ambient.tv.update
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
+import android.content.SharedPreferences
 import android.content.pm.PackageInstaller
 import android.content.pm.PackageManager
 import android.os.Build
@@ -46,7 +47,7 @@ internal data class UpdateState(
 /** App-owned scope keeps downloads alive across navigation, without retaining an Activity. */
 @Singleton
 class AppUpdater @Inject constructor(@ApplicationContext private val context: Context) {
-    private val prefs = context.getSharedPreferences("app_updates", Context.MODE_PRIVATE)
+    private val prefs = updatePreferences(context)
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private val client = OkHttpClient.Builder().connectTimeout(15, TimeUnit.SECONDS)
         .readTimeout(30, TimeUnit.SECONDS).followSslRedirects(false).build()
@@ -55,10 +56,17 @@ class AppUpdater @Inject constructor(@ApplicationContext private val context: Co
         automatic = prefs.getBoolean("automatic", false), skipped = prefs.getLong("skipped", 0),
     ))
     internal val state = mutable.asStateFlow()
+    private val preferenceChanges = SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
+        if (key == null || key == "automatic") {
+            mutable.update { it.copy(automatic = prefs.getBoolean("automatic", false)) }
+        }
+    }
     private var work: Job? = null
     @Volatile private var downloadCall: Call? = null
 
     init {
+        // Settings restores update the visible switch without starting a network check.
+        prefs.registerOnSharedPreferenceChangeListener(preferenceChanges)
         // Retain discoveries across process restarts even when the daily network check is not due.
         val cached = runCatching {
             parseOffer(prefs.getString("release", null) ?: return@runCatching null,
@@ -323,6 +331,19 @@ class AppUpdater @Inject constructor(@ApplicationContext private val context: Co
             current == incoming.apkContentsSigners.toSet()
         else incoming.signingCertificateHistory?.toSet()?.containsAll(current) == true
         if (!valid) throw UpdateFailure(R.string.update_signature_mismatch)
+    }
+
+    companion object {
+        private fun updatePreferences(context: Context): SharedPreferences =
+            context.getSharedPreferences("app_updates", Context.MODE_PRIVATE)
+
+        internal fun automaticUpdatesEnabled(context: Context): Boolean =
+            updatePreferences(context).getBoolean("automatic", false)
+
+        /** Restore only the user's preference; offers, downloads and check history stay local. */
+        internal fun restoreAutomaticUpdates(context: Context, enabled: Boolean) {
+            updatePreferences(context).edit().putBoolean("automatic", enabled).apply()
+        }
     }
 }
 

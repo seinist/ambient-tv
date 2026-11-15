@@ -34,16 +34,20 @@ class AppPreferences @Inject constructor(
         get() = prefs.getStringSet("all_continue_systems", null)?.toSet() ?: ALL_CONTINUE_DEFAULT_SYSTEMS
         set(value) = prefs.edit { putStringSet("all_continue_systems", value.toSet()) }
 
-    /** YouTube "Watch on TV": linked phones may send YouTube videos to this app (off by default). */
+    /**
+     * YouTube "Watch on TV": linked phones may send YouTube videos to this app (off by default).
+     * Device-local receiver permission; not transferred by backup or settings sharing.
+     */
     var youtubeTvLinkEnabled: Boolean
         get() = prefs.getBoolean("youtube_tv_link_enabled", false)
         set(value) = prefs.edit { putBoolean("youtube_tv_link_enabled", value) }
 
-    /** Diagnostic log for release builds (Settings → Diagnostics); off by default, device-local. */
+    /** Show the filter bar on library pages. */
     var filterBarShown: Boolean
         get() = prefs.getBoolean("filter_bar_shown", true)
         set(value) = prefs.edit { putBoolean("filter_bar_shown", value) }
 
+    /** Diagnostic log for release builds (Settings → Diagnostics); off by default, device-local. */
     var diagnosticLogEnabled: Boolean
         get() = prefs.getBoolean("diagnostic_log_enabled", false)
         set(value) = prefs.edit { putBoolean("diagnostic_log_enabled", value) }
@@ -53,11 +57,17 @@ class AppPreferences @Inject constructor(
         get() = prefs.getString("dlna_renderer_name", "").orEmpty()
         set(value) = prefs.edit { putString("dlna_renderer_name", value.trim().take(80)) }
 
-    /** DLNA MediaRenderer: other apps on the LAN may send media to this app (off by default). */
+    /**
+     * DLNA MediaRenderer: other apps on the LAN may send media to this app (off by default).
+     * Device-local receiver permission; not transferred by backup or settings sharing.
+     */
     var dlnaRendererEnabled: Boolean
         get() = prefs.getBoolean("dlna_renderer_enabled", false)
         set(value) = prefs.edit { putBoolean("dlna_renderer_enabled", value) }
-    /** Ask before playing from a sender not marked "always". */
+    /**
+     * Ask before playing from a sender not marked "always".
+     * Device-local receiver permission; not transferred by backup or settings sharing.
+     */
     var dlnaRendererAsk: Boolean
         get() = prefs.getBoolean("dlna_renderer_ask", true)
         set(value) = prefs.edit { putBoolean("dlna_renderer_ask", value) }
@@ -2263,22 +2273,28 @@ class AppPreferences @Inject constructor(
     )
 
     fun portableLibraryPreferences(): Map<String, String> = prefs.all
-        .filterKeys { key -> key.startsWith("section_sort_") || key.startsWith("section_filter_") || key.startsWith("section_view_") || key.startsWith("section_page_") || key.startsWith("overview_view_") }
+        .filterKeys { isPortableLibraryPreference(it, includeGuideOptions = true) }
         .mapNotNull { (key, value) -> (value as? String)?.let { key to it } }
         .toMap()
 
-    fun restorePortableLibraryPreferences(values: Map<String, String>) {
+    /** Backups before schema 80 did not include guide options and must leave them untouched. */
+    fun restorePortableLibraryPreferences(values: Map<String, String>, includeGuideOptions: Boolean = false) {
         prefs.edit {
             prefs.all.keys
-                .filter { it.startsWith("section_sort_") || it.startsWith("section_filter_") || it.startsWith("section_view_") || it.startsWith("section_page_") || it.startsWith("section_focus_") || it.startsWith("overview_view_") }
+                .filter { isPortableLibraryPreference(it, includeGuideOptions) || it.startsWith("section_focus_") }
                 .forEach(::remove)
             withPosterSectionViews(values).forEach { (key, value) ->
-                if (key.startsWith("section_sort_") || key.startsWith("section_filter_") || key.startsWith("section_view_") || key.startsWith("section_page_") || key.startsWith("overview_view_")) {
+                if (isPortableLibraryPreference(key, includeGuideOptions)) {
                     putString(key, value)
                 }
             }
         }
     }
+
+    private fun isPortableLibraryPreference(key: String, includeGuideOptions: Boolean): Boolean =
+        key.startsWith("section_sort_") || key.startsWith("section_filter_") ||
+            key.startsWith("section_view_") || key.startsWith("section_page_") ||
+            key.startsWith("overview_view_") || includeGuideOptions && key.startsWith("guide_options_")
 
     /** Only legacy library layouts turn landscape/rows into posters. SmartTube and
      * Monogram use a native landscape/ROWS mode and must keep it across backup import. */
