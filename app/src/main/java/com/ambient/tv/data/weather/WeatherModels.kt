@@ -78,7 +78,7 @@ data class WeatherSnapshot(
     } == true
 }
 
-enum class WeatherError { DISABLED, LOCAL_ONLY, OFFLINE, RATE_LIMITED, UNAVAILABLE, INVALID_DATA }
+enum class WeatherError { DISABLED, OFFLINE, RATE_LIMITED, UNAVAILABLE, INVALID_DATA }
 
 data class WeatherState(
     val data: WeatherSnapshot? = null,

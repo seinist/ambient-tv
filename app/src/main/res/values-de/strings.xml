@@ -359,7 +359,7 @@
     <string name="collections_empty_body">Diese Mediathek enthält noch keine Plex-Sammlungen.</string>
     <string name="collection_item_count">%1$d Titel</string>
     <string name="settings_local_only">Nur lokales Netzwerk</string>
-    <string name="settings_local_only_hint">Nur im Heimnetz verbinden.</string>
+    <string name="settings_local_only_hint">Medienserver nur im Heimnetz verbinden. Onlinedienste bleiben verfügbar.</string>
     <string name="settings_theme_music">Titelmusik</string>
     <string name="settings_theme_music_hint">Spielt Titelmusik auf der Detailseite.</string>
     <string name="settings_theme_music_volume">Titelmusik-Lautstärke</string>

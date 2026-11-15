@@ -114,7 +114,8 @@ class WeatherMapRepository @Inject constructor(
             }
         }
 
-    private fun allowed(networkAllowed: Boolean) = networkAllowed && !preferences.localNetworkOnly && preferences.weatherSettings.enabled
+    // The server LAN restriction does not apply to this explicitly enabled public weather service.
+    private fun allowed(networkAllowed: Boolean) = networkAllowed && preferences.weatherSettings.enabled
 
     private fun errorFor(error: Exception, networkAllowed: Boolean): WeatherMapError {
         if (!allowed(networkAllowed)) return WeatherMapError.NETWORK_DISABLED

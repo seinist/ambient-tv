@@ -6,7 +6,6 @@ import android.util.AtomicFile
 import com.ambient.tv.data.local.AppPreferences
 import com.ambient.tv.data.local.RegularPrefs
 import com.ambient.tv.di.SharedOkHttp
-import com.ambient.tv.network.LanOnlyDns
 import dagger.hilt.android.qualifiers.ApplicationContext
 import java.io.File
 import java.io.IOException
@@ -68,27 +67,26 @@ class WeatherRepository @Inject constructor(
     private var cacheLoaded = false // Accessed only under refreshMutex.
     private var cache: Map<String, WeatherSnapshot> = emptyMap() // Accessed under gate.
     private var generation = 0L
-    private var localOnly = preferences.localNetworkOnly
     private var lastAttemptKey: String? = null
     private var lastAttemptMillis = 0L
     private val _settings = MutableStateFlow(preferences.weatherSettings)
     val settings: StateFlow<WeatherSettings> = _settings.asStateFlow()
-    private val _state = MutableStateFlow(WeatherState(error = accessError(_settings.value, localOnly)))
+    private val _state = MutableStateFlow(WeatherState(error = accessError(_settings.value)))
     val state: StateFlow<WeatherState> = _state.asStateFlow()
 
     // A standalone client must never inherit a Plex token, server URL rewrite, cookies or an
-    // authentication interceptor. Only the connection pool/dispatcher are shared.
+    // authentication interceptor. Only the connection pool/dispatcher are shared. The media-server
+    // LAN restriction does not apply to this explicitly enabled public online service.
     private var client = OkHttpClient.Builder()
         .connectionPool(connectionPool)
         .dispatcher(dispatcher)
-        .dns(LanOnlyDns({ preferences.localNetworkOnly || !preferences.weatherSettings.enabled }))
         .connectTimeout(8, TimeUnit.SECONDS)
         .readTimeout(12, TimeUnit.SECONDS)
         .callTimeout(18, TimeUnit.SECONDS)
         .followRedirects(false)
         .followSslRedirects(false)
         .addInterceptor { chain ->
-            accessError(preferences.weatherSettings, preferences.localNetworkOnly)?.let { throw WeatherRequestException(it) }
+            accessError(preferences.weatherSettings)?.let { throw WeatherRequestException(it) }
             chain.proceed(chain.request())
         }.build()
 
@@ -105,7 +103,7 @@ class WeatherRepository @Inject constructor(
     // Keep a strong reference for Android's weak listener registry. This repository is a
     // process singleton; no timer or background weather job is attached to this listener.
     private val preferenceListener = SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
-        if (key == null || key == "weather_settings" || key == "local_network_only") synchronizeSettings()
+        if (key == null || key == "weather_settings") synchronizeSettings()
     }
 
     init {
@@ -123,19 +121,17 @@ class WeatherRepository @Inject constructor(
             // Read and apply under one lock: a delayed IO consumer must not restore a preference
             // snapshot from before a completed main-thread update.
             val next = preferences.weatherSettings
-            val nextLocalOnly = preferences.localNetworkOnly
             val old = _settings.value
             val oldKey = old.selectedLocation?.let { weatherCacheKey(it, old) }
             val nextKey = next.selectedLocation?.let { weatherCacheKey(it, next) }
-            val accessChanged = old.enabled != next.enabled || localOnly != nextLocalOnly
+            val accessChanged = old.enabled != next.enabled
             val changed = oldKey != nextKey || accessChanged
             _settings.value = next
-            localOnly = nextLocalOnly
             if (changed) {
                 generation++
                 _state.value = WeatherState(
                     data = if (next.enabled) cache[nextKey] ?: _state.value.data?.takeIf { it.matches(next) } else null,
-                    error = accessError(next, nextLocalOnly),
+                    error = accessError(next),
                 )
             }
             Triple(generation.takeIf { changed }, next.enabled, accessChanged)
@@ -162,7 +158,7 @@ class WeatherRepository @Inject constructor(
 
     suspend fun searchLocations(query: String, language: String): List<WeatherLocation> = withContext(Dispatchers.IO) {
         synchronizeSettings()
-        accessError(preferences.weatherSettings, preferences.localNetworkOnly)?.let { throw WeatherRequestException(it) }
+        accessError(preferences.weatherSettings)?.let { throw WeatherRequestException(it) }
         val term = query.trim().take(120)
         if (term.length < 2) return@withContext emptyList()
         val url = "https://geocoding-api.open-meteo.com/v1/search".toHttpUrl().newBuilder()
@@ -188,7 +184,7 @@ class WeatherRepository @Inject constructor(
             val place = selected.selectedLocation ?: return@withLock null
             val key = weatherCacheKey(place, selected)
             val saved = synchronized(gate) { cache[key] ?: _state.value.data?.takeIf { it.matches(selected) } }
-            accessError(preferences.weatherSettings, preferences.localNetworkOnly)?.let { error ->
+            accessError(preferences.weatherSettings)?.let { error ->
                 return@withLock publish(token, WeatherState(data = saved.takeIf { selected.enabled }, error = error))
             }
             val now = System.currentTimeMillis()
@@ -237,7 +233,7 @@ class WeatherRepository @Inject constructor(
     }
 
     private suspend fun get(url: HttpUrl, expectedGeneration: Long? = null): String {
-        accessError(preferences.weatherSettings, preferences.localNetworkOnly)?.let { throw WeatherRequestException(it) }
+        accessError(preferences.weatherSettings)?.let { throw WeatherRequestException(it) }
         val retryAt = rateLimitedUntil.get()
         if (System.currentTimeMillis() < retryAt) throw WeatherRequestException(WeatherError.RATE_LIMITED, retryAt)
         return suspendCancellableCoroutine { continuation ->
@@ -323,7 +319,7 @@ class WeatherRepository @Inject constructor(
     }
 
     private fun requestError(error: Exception): WeatherRequestException {
-        accessError(preferences.weatherSettings, preferences.localNetworkOnly)?.let { return WeatherRequestException(it) }
+        accessError(preferences.weatherSettings)?.let { return WeatherRequestException(it) }
         return when (error) {
             is WeatherRequestException -> error
             is UnknownHostException, is ConnectException, is SocketTimeoutException -> WeatherRequestException(WeatherError.OFFLINE)
@@ -338,11 +334,8 @@ class WeatherRepository @Inject constructor(
         private const val MAX_RESPONSE_BYTES = 1_000_000L
         private const val MIN_REQUEST_INTERVAL_MILLIS = 15_000L
 
-        private fun accessError(settings: WeatherSettings, localOnly: Boolean): WeatherError? = when {
-            !settings.enabled -> WeatherError.DISABLED
-            localOnly -> WeatherError.LOCAL_ONLY
-            else -> null
-        }
+        private fun accessError(settings: WeatherSettings): WeatherError? =
+            WeatherError.DISABLED.takeUnless { settings.enabled }
 
         private fun forecastUrl(location: WeatherLocation, settings: WeatherSettings): HttpUrl =
             "https://api.open-meteo.com/v1/forecast".toHttpUrl().newBuilder()

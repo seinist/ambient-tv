@@ -86,7 +86,7 @@ class WeatherMapViewModel internal constructor(
         preferences.changes().onStart { emit(Unit) }
             .map {
                 val settings = preferences.weatherSettings
-                WeatherMapPolicy(settings.enabled && !preferences.localNetworkOnly, settings.selectedLocation,
+                WeatherMapPolicy(settings.enabled, settings.selectedLocation,
                     settings.radarProvider, settings.satelliteProvider)
             }.distinctUntilChanged(),
     )

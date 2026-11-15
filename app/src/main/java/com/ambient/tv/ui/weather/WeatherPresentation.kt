@@ -11,7 +11,6 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.repeatOnLifecycle
 import com.ambient.tv.data.weather.WEATHER_CACHE_TTL_MILLIS
-import com.ambient.tv.data.weather.WeatherError
 import com.ambient.tv.data.weather.WeatherRepository
 import com.ambient.tv.data.weather.WeatherSnapshot
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -45,9 +44,8 @@ fun rememberWeatherPresentation(
     val lifecycle = LocalLifecycleOwner.current.lifecycle
     val active = settings.enabled && settings.selectedLocation != null &&
         ((headerVisible && settings.showInHeader) || (screensaverVisible && settings.showInScreensaver))
-    val localOnly = state.error == WeatherError.LOCAL_ONLY
-    LaunchedEffect(repository, lifecycle, active, settings.selectedLocation, settings.temperatureUnit, settings.windUnit, localOnly) {
-        if (active && !localOnly) lifecycle.repeatOnLifecycle(Lifecycle.State.RESUMED) {
+    LaunchedEffect(repository, lifecycle, active, settings.selectedLocation, settings.temperatureUnit, settings.windUnit) {
+        if (active) lifecycle.repeatOnLifecycle(Lifecycle.State.RESUMED) {
             while (true) {
                 repository.refresh()
                 delay(WEATHER_CACHE_TTL_MILLIS)
