@@ -36,7 +36,12 @@ object SettingsLevels {
 
     fun set(preferences: AppPreferences, level: SettingsLevel) {
         preferences.settingsLevelKey = level.key
-        chosen = level
+        refresh(preferences)
+    }
+
+    /** Apply an imported choice to settings surfaces that already observed the previous level. */
+    fun refresh(preferences: AppPreferences) {
+        chosen = SettingsLevel.fromKey(preferences.settingsLevelKey)
     }
 }
 

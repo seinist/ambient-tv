@@ -2,7 +2,7 @@
 
 **Sprachen:** [English](DOCUMENTATION.md) · **Deutsch**
 
-**App:** Ambient TV (`com.ambient.tv`) · Version `1.0` (versionCode siehe `version.properties`) · minSdk 29, target/compileSdk 37 · Backup-Schema 76
+**App:** Ambient TV (`com.ambient.tv`) · Version `1.0` (versionCode siehe `version.properties`) · minSdk 29, target/compileSdk 37 · Backup-Schema 80
 **Lizenz:** [CC0 1.0 Universal](../LICENSE)
 
 Dieses Kompendium beschreibt, was die App heute kann: jede Einstellungsseite, die Video- und Audio-Panels im Player und die Medienquellen. Die Bezeichnungen sind die echten Oberflächentexte aus `app/src/main/res/values*/`. Standardwerte stammen aus dem Code (`AppPreferences`, `AudioOptions`, `VideoImageOptions`, `SettingsUiState`). Geplante Funktionen stehen hier nicht.
@@ -889,11 +889,31 @@ Unter **App & Daten › Sicherung**:
 - **Ohne Zugangsdaten exportieren** (Standard): keine Plex-Tokens, kein TVHeadend-Passwort; Dateiquellen-Passwörter nur bei Export mit Zugangsdaten. Vor dem Speichern kann optional ein Passwort gesetzt werden (zweimal einzugeben, Anzeigen/Verbergen); leer lassen ergibt wie bisher eine unverschlüsselte JSON-Datei
 - **Mit Zugangsdaten exportieren:** nur bei Bedarf; die Datei wird mit einer Passphrase (mindestens 8 Zeichen, AES-256-GCM, PBKDF2) verschlüsselt, die beim Import abgefragt wird. Ohne Passphrase ist das Backup nicht wiederherstellbar. Die Übertragung per Companion bleibt TLS-geschützt.
 - Verschlüsselte Dateien sind ein kleiner JSON-Umschlag (`"format":"ambient-tv-encrypted-backup"`, Version 1, PBKDF2-HMAC-SHA256 mit 310 000 Iterationen, zufälliges 16-Byte-Salt und 12-Byte-IV, AES-256-GCM). Der Import erkennt unverschlüsselte und verschlüsselte Dateien automatisch und fragt nach dem Passwort; bei falschem Passwort oder beschädigter Datei erscheint ein Hinweis und der Dialog bleibt für einen neuen Versuch offen.
-- Import stellt Einstellungen und Serverprofile wieder her (Schema bis aktuell **79**), einschließlich Wetter-Orten, Anzeigeschaltern und getrennt gewählten Radar-/Satellitendiensten
+- Import stellt Einstellungen und Serverprofile wieder her (Schema bis aktuell **80**), einschließlich Wetter-Orten, Anzeigeschaltern und getrennt gewählten Radar-/Satellitendiensten
 - Monogram-Aktivierung, sechs Menü-/TV-Chips, Home-Reihen und Ansichtsmodi sind im normalen Backup enthalten; Telegram-API-ID/Hash nur im passwortverschlüsselten Export **mit Zugangsdaten**. Native Telegram-Anmeldung/2FA, Sitzungen und private Medien bleiben auf dem Gerät; auf neuen Geräten neu anmelden.
-- IPTV-Wiedergabelisten sowie OpenSubtitles-Schlüssel und -Konto sind nur in Backups **mit Zugangsdaten** enthalten (Listen-Adressen enthalten oft das Anbieterkonto); ein Backup ohne Zugangsdaten lässt die vorhandenen auf dem Gerät unverändert. Timeshift-Größe, Timeshift-/Direktaufnahme-Schalter (ab Schema 59) und Erinnerungs-Vorlauf werden immer gesichert, geplante Erinnerungen nicht.
+- IPTV-Wiedergabelisten sowie OpenSubtitles-Schlüssel und -Konto sind nur in Backups **mit Zugangsdaten** enthalten (Listen-Adressen enthalten oft das Anbieterkonto); ein Backup ohne Zugangsdaten lässt die vorhandenen auf dem Gerät unverändert. Timeshift-Größe, Timeshift-/Direktaufnahme-Schalter (ab Schema 59), Erinnerungs-Vorlauf und automatisches Umschalten bei Erinnerungen werden gesichert; geplante Erinnerungen bleiben auf dem Gerät.
 - Dateiquellen und WOL werden gesichert; **lokale Ordner-Berechtigungen (SAF) sind nicht übertragbar** und müssen auf dem neuen Gerät erneut erteilt werden
 - OAuth-Sitzungen und Gerätekennungen sind nicht als „übertragbare Anmeldung“ gedacht – Konten ggf. neu anmelden
+
+### Umfang der Einstellungssicherung
+
+Dateisicherung und Companion-Übertragung verwenden dieselben gespeicherten Einstellungen. Der Übertragungsmodus und die gesonderte Auswahl der Geräteeinstellungen bestimmen, welche Teile der Empfänger übernimmt.
+
+| Einstellungen | Dateisicherung | Einstellungen teilen |
+|---|---|---|
+| Wetter-Orte, Einheiten, Radar-/Satellitendienste und Anzeige in Menü, Kopfzeile und Bildschirmschoner | Enthalten | Im Modus Einstellungen bzw. Konten und Einstellungen |
+| Akzentstile und Bewegung, Uhr, Untertiteldarstellung, OSD, Home-Layout, Einstellungsstufe und Filterleiste | Enthalten | Im Modus Einstellungen bzw. Konten und Einstellungen |
+| Quellen der gemeinsamen Fortsetzen-Reihe, Gesehen-/Fortsetzen-Grenzen, lückenlose Musikwiedergabe, Liedtexte, Handy-PiP und Launcher-Integration | Enthalten | Im Modus Einstellungen bzw. Konten und Einstellungen |
+| ProjectM-Presetnamen, Zufallsauswahl und Favoriten eingebauter Presets; Spotify-Bitrate und Visualisierung | Enthalten | Im Modus Einstellungen bzw. Konten und Einstellungen |
+| Automatisches Umschalten bei TV-Erinnerungen und automatische Update-Prüfung | Enthalten | Im Modus Einstellungen bzw. Konten und Einstellungen |
+| UI-Auflösung, Bildcache-Größe und 1080p-Bildbegrenzung; gerätespezifische Bild-/Ton-/Player-Werte | Enthalten | Nur bei ausgewählten Geräteeinstellungen |
+| Gesonderter HTSP-Port von TVHeadend | Enthalten | Mit dem ausgewählten TVHeadend-Konto |
+| Gespeicherte Videoeinstellungen je Titel, Staffel, Serie und Sammlung | Enthalten | Konten und Einstellungen mit ausgewählten Geräteeinstellungen; Serverkennungen werden zugeordnet, Profile nicht ausgewählter Konten bleiben erhalten |
+| Sortierung, Filter und Ansichten je Bibliotheks-/EPG-Quelle; versteckte Serverbibliotheken und Fotoquelle des Bildschirmschoners | Enthalten | Bleiben wegen des Bezugs zu den eingerichteten Quellen auf dem Empfänger |
+
+Ältere Sicherungen ohne die neuen Einstellungen aus Schema 80 erhalten die Auswahl des Empfängers. Fehlende Werte unterscheiden sich von ausdrücklich ausgeschalteten Optionen, Automatik/Null und leeren Auswahlen. Importierte Einstellungsstufen und Bildcache-Größen aktualisieren die laufende Oberfläche bzw. den Cache; die automatische Update-Prüfung startet beim Import keine Anfrage. Zwischengespeicherte Bilder und Wetterdaten, heruntergeladene Medien, Kopplungen, Empfangsberechtigungen, vertraute Sender und HbbTV-Einwilligungen bleiben lokal.
+
+Neue Einstellungen benötigen eine Backup-Zuordnung oder eine begründete Ausnahme für lokalen Zustand. `SettingsPreferenceCoverageTest` prüft veränderliche Preferences unabhängig vom Exportmodell; der Companion-Klassifikationstest erfasst auch die verschachtelten Gruppen aus Schema 80. Roundtrip-Tests vergleichen die tatsächlich wiederhergestellten Einstellungen, damit ein in beiden Exporten fehlendes Feld auffällt.
 
 Unter **App & Daten › Diagnose** (Fehlerprotokoll für Release-Builds):
 

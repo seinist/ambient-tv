@@ -294,6 +294,8 @@ data class SettingsBackup(
     val playerBackMinimizes: Boolean = false,
     /** Since schema 73. */
     val networkBufferKey: String = "medium",
+    /** Since schema 80; nullable groups keep settings absent from older backups unchanged. */
+    val extras: SettingsBackupExtras? = null,
 )
 
 @Serializable
@@ -615,6 +617,30 @@ class SettingsBackupManager @Inject constructor(
             playerOsdSeconds = preferences.playerOsdSeconds,
             playerBackMinimizes = preferences.playerBackMinimizes,
             networkBufferKey = preferences.networkBufferKey,
+            extras = SettingsBackupExtras(
+                portable = PortableSettingsExtras(
+                    allContinueSystems = preferences.allContinueSystems,
+                    filterBarShown = preferences.filterBarShown,
+                    launcherIntegrationEnabled = preferences.launcherIntegrationEnabled,
+                    settingsLevelKey = preferences.settingsLevelKey,
+                    autoPictureInPicture = preferences.autoPictureInPicture,
+                    projectmShowPresetName = preferences.projectmShowPresetName,
+                    projectmPresetShuffle = preferences.projectmPresetShuffle,
+                    gaplessMusicEnabled = preferences.gaplessMusicEnabled,
+                    teletextSubtitleChoice = preferences.teletextSubtitleChoice,
+                    lyricsVisible = preferences.lyricsVisible,
+                    lyricsOnlineEnabled = preferences.lyricsOnlineEnabled,
+                    frameDropOverlayHistory = preferences.frameDropOverlayHistory,
+                    liveTvReminderAutoSwitch = context?.let { com.ambient.tv.livetv.LiveTvReminderScheduler.autoSwitch(it) },
+                    autoUpdateCheck = context?.let { com.ambient.tv.update.AppUpdater.automaticUpdatesEnabled(it) },
+                    projectmFavorites = context?.let { com.ambient.tv.ui.common.projectm.ProjectMFavorites(it).all().toSortedSet() },
+                ),
+                device = DeviceSettingsExtras(
+                    imageCacheMb = preferences.imageCacheMb,
+                    cardImages1080 = preferences.cardImages1080,
+                ),
+                connections = ConnectionSettingsExtras(tvheadendHtspPort = preferences.tvheadendHtspPort),
+            ),
         )
         return json.encodeToString(backup)
     }
@@ -1022,7 +1048,7 @@ class SettingsBackupManager @Inject constructor(
         if (backup.homeRows != null) preferences.homeRows = backup.homeRows
         else preferences.resetHomeRowsToLegacy()
         preferences.systemHomeHiddenRows = backup.systemHomeHiddenRows
-        preferences.restorePortableLibraryPreferences(backup.libraryPreferences)
+        preferences.restorePortableLibraryPreferences(backup.libraryPreferences, includeGuideOptions = backup.schemaVersion >= 80)
         preferences.clearRecentSearches()
         backup.recentSearches.asReversed().forEach(preferences::rememberSearch)
         preferences.wireGuardEnabled = backup.wireGuardEnabled
@@ -1058,6 +1084,7 @@ class SettingsBackupManager @Inject constructor(
             preferences.liveTimeshiftMb = backup.liveTimeshiftMb
             context?.let { com.ambient.tv.livetv.LiveTvReminderScheduler.setLeadMinutes(it, backup.liveTvReminderLeadMinutes) }
         }
+        if (backup.schemaVersion >= 80) applyExtras(backup.extras)
         // Last in the import: a partially failed settings restore must never leave the
         // credentials changed. Old/plain backups have null and preserve this device's keys.
         backup.monogramApiCredentials?.let { api ->
@@ -1067,8 +1094,41 @@ class SettingsBackupManager @Inject constructor(
         }
     }
 
+    private fun applyExtras(extras: SettingsBackupExtras?) {
+        extras?.portable?.let { settings ->
+            settings.allContinueSystems?.let { preferences.allContinueSystems = it }
+            settings.filterBarShown?.let { preferences.filterBarShown = it }
+            settings.launcherIntegrationEnabled?.let { preferences.launcherIntegrationEnabled = it }
+            settings.settingsLevelKey?.let {
+                preferences.settingsLevelKey = com.ambient.tv.ui.common.SettingsLevel.fromKey(it).key
+                com.ambient.tv.ui.common.SettingsLevels.refresh(preferences)
+            }
+            settings.autoPictureInPicture?.let { preferences.autoPictureInPicture = it }
+            settings.projectmShowPresetName?.let { preferences.projectmShowPresetName = it }
+            settings.projectmPresetShuffle?.let { preferences.projectmPresetShuffle = it }
+            settings.gaplessMusicEnabled?.let { preferences.gaplessMusicEnabled = it }
+            settings.teletextSubtitleChoice?.let { preferences.teletextSubtitleChoice = it }
+            settings.lyricsVisible?.let { preferences.lyricsVisible = it }
+            settings.lyricsOnlineEnabled?.let { preferences.lyricsOnlineEnabled = it }
+            settings.frameDropOverlayHistory?.let { preferences.frameDropOverlayHistory = it }
+            context?.let { appContext ->
+                settings.liveTvReminderAutoSwitch?.let { com.ambient.tv.livetv.LiveTvReminderScheduler.setAutoSwitch(appContext, it) }
+                settings.autoUpdateCheck?.let { com.ambient.tv.update.AppUpdater.restoreAutomaticUpdates(appContext, it) }
+                settings.projectmFavorites?.let { com.ambient.tv.ui.common.projectm.ProjectMFavorites(appContext).replace(it) }
+            }
+        }
+        extras?.device?.let { settings ->
+            settings.imageCacheMb?.let {
+                preferences.imageCacheMb = it
+                (context?.applicationContext as? com.ambient.tv.AmbientTvApplication)?.applyImageCacheMb(preferences.imageCacheMb)
+            }
+            settings.cardImages1080?.let { preferences.cardImages1080 = it }
+        }
+        extras?.connections?.tvheadendHtspPort?.let { preferences.tvheadendHtspPort = it }
+    }
+
     internal companion object {
-        const val CURRENT_SCHEMA_VERSION = 79
+        const val CURRENT_SCHEMA_VERSION = 80
         val PORTABLE_DISPLAY_MODES = setOf("system", AppPreferences.DISPLAY_MODE_AUTO_CONTENT, AppPreferences.DISPLAY_MODE_AUTO_DISPLAY)
     }
 }

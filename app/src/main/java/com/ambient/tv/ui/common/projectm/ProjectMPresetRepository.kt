@@ -1,6 +1,7 @@
 package com.ambient.tv.ui.common.projectm
 
 import android.content.Context
+import android.content.SharedPreferences
 import java.io.File
 
 data class ProjectMPreset(val assetPath: String) {
@@ -57,14 +58,32 @@ internal class ProjectMPresetRepository(private val context: Context) {
     }
 }
 
-internal class ProjectMFavorites(context: Context) {
-    private val prefs = context.getSharedPreferences("projectm_visualizer", Context.MODE_PRIVATE)
-    fun contains(path: String) = prefs.getStringSet("favorites", emptySet()).orEmpty().contains(path)
+internal class ProjectMFavorites private constructor(
+    private val prefs: SharedPreferences,
+    loadPresetPaths: () -> Set<String>,
+) {
+    constructor(context: Context) : this(
+        context.getSharedPreferences("projectm_visualizer", Context.MODE_PRIVATE),
+        { ProjectMPresetRepository(context).presets.map { it.assetPath }.toSet() },
+    )
+
+    internal constructor(prefs: SharedPreferences, builtInPaths: Set<String>) : this(prefs, { builtInPaths })
+
+    private val builtInPaths by lazy(loadPresetPaths)
+
+    fun contains(path: String) = path in builtInPaths && path in prefs.getStringSet("favorites", emptySet()).orEmpty()
     fun toggle(path: String): Boolean {
-        val set = prefs.getStringSet("favorites", emptySet()).orEmpty().toMutableSet()
+        if (path !in builtInPaths) return false
+        val set = all().toMutableSet()
         val nowFavorite = if (path in set) { set.remove(path); false } else { set.add(path); true }
-        prefs.edit().putStringSet("favorites", set).apply()
+        replace(set)
         return nowFavorite
     }
-    fun all(): Set<String> = prefs.getStringSet("favorites", emptySet()).orEmpty()
+
+    /** Only bundled preset identifiers travel in settings; never a local path or external asset. */
+    fun all(): Set<String> = prefs.getStringSet("favorites", emptySet()).orEmpty().intersect(builtInPaths)
+
+    fun replace(paths: Set<String>) {
+        prefs.edit().putStringSet("favorites", paths.intersect(builtInPaths)).apply()
+    }
 }

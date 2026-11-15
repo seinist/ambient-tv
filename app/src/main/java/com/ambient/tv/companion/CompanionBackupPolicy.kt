@@ -13,17 +13,17 @@ internal object CompanionBackupPolicy {
         "uiLanguageKey", "metadataLanguageKey", "audioLanguageKey", "preferredAudioLanguage",
         "preferredSubtitleLanguage", "subtitlesEnabled", "forcedSubtitlesEnabled", "subtitleModeKey",
         "subtitleLanguageKey", "subtitleFallbackLanguageKey", "fullSubtitlesOnForeignAudio", "forcedSubtitlesInUiLanguage", "mediaSelectionBehaviorKey",
-        "showLibraryRowsOnHome", "showContinueWatchingHub", "showRecentHomeHubs", "showCollectionHomeHubs",
+        "showLibraryRowsOnHome", "showContinueWatchingHub", "showRecentHomeHubs", "showCollectionHomeHubs", "homeRows", "systemHomeHiddenRows",
         "accentColorKey", "accentStyleKey", "accentMotionKey", "customAccentHex", "customPlaybackAccentHex", "dualAccentEnabled", "themeModeKey", "homeHeroStyleKey", "introAnimationKey", "notificationDisplayDurationKey",
         "trailersEnabled", "trailerLanguage", "youtubeSponsorBlockEnabled", "youtubeSponsorBlockModes", "youtubeSponsorBlockShowSegments", "youtubeAutoCaptions", "youtubeHistoryPaused", "youtubeHideShorts", "youtubeHideLiveInSubscriptions", "youtubeDeArrow", "youtubeFeedKeys", "youtubeStartFeedKey",
         "youtubeAutoplayNextEnabled", "youtubeSubtitlesEnabled", "youtubeMediaSelectionBehaviorKey", "telegramMediaSelectionBehaviorKey", "introSkipMode", "creditsSkipMode",
         "nextUpEnabled", "nextUpLeadSeconds", "nextUpCreditsDelaySeconds", "nextUpAutoplayEpisodes", "nextUpAutoplayCollections", "nextUpOverlayEnabled",
-        "nextUpStillWatchingEpisodes", "sleepAutoStartKey", "sleepWarningMinutes", "sleepDailyStopMinute", "bigSeekJumpSeconds", "pauseRewindSeconds", "pauseRewindMinPauseSeconds", "resumeRewindSeconds", "sidebarSystemOrder", "sidebarDividersAfter", "sidebarEntryOrder", "sidebarEntryDividers", "systemNames",
+        "nextUpStillWatchingEpisodes", "sleepAutoStartKey", "sleepWarningMinutes", "sleepDailyStopMinute", "bigSeekJumpSeconds", "pauseRewindSeconds", "pauseRewindMinPauseSeconds", "resumeRewindSeconds", "watchedThresholdPercent", "resumeIgnoreEndPercent", "sidebarSystemOrder", "sidebarDividersAfter", "sidebarEntryOrder", "sidebarEntryDividers", "systemNames",
         "spotifySubmenuKeys", "radioSubmenuKeys", "telegramSubmenuKeys", "tvheadendSubmenuKeys", "sidebarSettingsShortcutHidden",
         "homeHeroIntensityPercent", "homeHeroSpreadKey", "homeBackgroundEverywhere", "focusArtworkBackdrop", "chooseServerOnStartup", "themeMusicVolume", "plexAutoRefreshIntervalSeconds",
         "plexThemeMusicEnabled", "jellyfinThemeMusicEnabled", "embyThemeMusicEnabled", "tvheadendShowOnHome",
         "playerTechBadgesVisible", "playerOsdModeIconVisible", "osdHiddenButtons", "visibleBackgroundVideoPlayback", "backgroundVideoDimPercent",
-        "audioVisualizerModeKey", "projectmPresetIntervalSeconds", "projectmTransitionSeconds", "projectmPresetCategoryKey",
+        "audioVisualizerModeKey", "spotifyBitrateKbps", "spotifyVisualizerModeKey", "projectmPresetIntervalSeconds", "projectmTransitionSeconds", "projectmPresetCategoryKey",
         "screensaverEnabled", "screensaverTimeoutMinutes", "screensaverModeKey", "screensaverShowClock", "screensaverShowDate",
         "screensaverUse24HourClock", "clock", "subtitleAppearance", "nightSchedule", "screensaverUseArtwork", "screensaverArtworkIntervalSeconds", "screensaverDimPercent",
         "photoIncludeSubfolders", "photoSortKey",
@@ -37,10 +37,15 @@ internal object CompanionBackupPolicy {
     private val sinceSchema69 = setOf("titleVideoSettings", "scopedVideoSettings")
     private val sinceSchema74 = setOf("pauseRewindSeconds", "pauseRewindMinPauseSeconds", "resumeRewindSeconds")
     private val sinceSchema75 = setOf("radioEnabled", "radioFavorites")
+    // Older companion senders omitted these existing backup fields entirely. Their decoded
+    // defaults do not mean that the user asked to replace the receiving device's choices.
+    private val sinceSchema80 = setOf("spotifyBitrateKbps", "spotifyVisualizerModeKey", "systemHomeHiddenRows")
     private val profileKeys = setOf("titleVideoSettings", "scopedVideoSettings")
     @OptIn(kotlinx.serialization.ExperimentalSerializationApi::class)
     private val compact = Json { encodeDefaults = false; explicitNulls = false; ignoreUnknownKeys = true }
     private fun profilesOmittedIn(source: SettingsBackup) = source.titleVideoSettings.isEmpty() && source.scopedVideoSettings.isEmpty()
+    private fun profilePresent(source: SettingsBackup, key: String, presentFields: Set<String>?) =
+        presentFields?.contains(key) ?: !profilesOmittedIn(source)
     private val sinceSchema62 = setOf("sleepAutoStartKey", "sleepWarningMinutes")
     private val hardware = setOf(
         "autoSelectDisplayVersion", "displayRefreshAdjustmentKey", "displayModeWhitelist", "preferredDisplayModeKey",
@@ -64,25 +69,74 @@ internal object CompanionBackupPolicy {
         "iptvSources", "openSubtitlesApiKey", "openSubtitlesUsername", "openSubtitlesPassword",
         "monogramApiCredentials")
     /** Every backup field the companion knows about; a new field must be added to one of the sets. */
-    internal val classifiedFields: Set<String> get() = portable + hardware + accounts + deviceOnly
+    internal val classifiedFields: Set<String> get() = portable + hardware + accounts + deviceOnly + "extras"
+    /** Nested additions need the same explicit sharing decision as top-level settings. */
+    internal val classifiedExtraFields = mapOf(
+        "portable" to setOf(
+            "allContinueSystems", "filterBarShown", "launcherIntegrationEnabled", "settingsLevelKey",
+            "autoPictureInPicture", "projectmShowPresetName", "projectmPresetShuffle", "gaplessMusicEnabled",
+            "teletextSubtitleChoice", "lyricsVisible", "lyricsOnlineEnabled", "frameDropOverlayHistory",
+            "liveTvReminderAutoSwitch", "autoUpdateCheck", "projectmFavorites",
+        ),
+        "device" to setOf("imageCacheMb", "cardImages1080"),
+        "connections" to setOf("tvheadendHtspPort"),
+    )
     /**
      * Fields that are not synced through the companion today (unchanged behaviour, now explicit):
-     * hidden sections/home rows, WireGuard toggles, Spotify device data,
+     * source-specific hidden sections/library choices, WireGuard toggles, Spotify device identity,
      * search history and hardware probes. Moving one into a synced set is a product decision.
      */
     private val deviceOnly = setOf(
-        "telegramEnabled", "spotifyDeviceName", "spotifyBitrateKbps", "spotifyVisualizerModeKey", "plexHiddenSectionKeys",
+        "telegramEnabled", "spotifyDeviceName", "plexHiddenSectionKeys",
         "jellyfinHiddenSectionKeys", "embyHiddenSectionKeys", "localNetworkOnly", "wolRetryCount", "svpAvailable",
         "plexAudioPassthroughEnabled", "tvheadendAudioPassthroughEnabled", "screensaverPhotoAlbumKey",
-        "screensaverPhotoAlbumTitle", "homeRows", "systemHomeHiddenRows", "libraryPreferences", "recentSearches",
-        // Existing completion/resume thresholds were never part of Companion transfers.
-        // Classify without silently expanding the synchronization allowlist.
-        "watchedThresholdPercent", "resumeIgnoreEndPercent",
+        "screensaverPhotoAlbumTitle", "libraryPreferences", "recentSearches",
         "wireGuardEnabled", "wireGuardPlexEnabled", "wireGuardJellyfinEnabled", "wireGuardEmbyEnabled",
         "wireGuardTvheadendEnabled",
     )
     private fun normalizedHost(host: String) = host.trim().lowercase().trimEnd('.')
-    private fun obj(value: SettingsBackup) = json.encodeToJsonElement(value).jsonObject
+    private fun obj(value: SettingsBackup): JsonObject {
+        val fields = json.encodeToJsonElement(value).jsonObject.toMutableMap()
+        // The merged document carries the receiver's current schema, so migrations which
+        // depend on the sender's schema must happen before filtering or merging its fields.
+        if (value.schemaVersion < 44) fields["mediaAudioPassthroughEnabled"] = JsonPrimitive(
+            value.mediaAudioPassthroughEnabled || value.plexAudioPassthroughEnabled || value.tvheadendAudioPassthroughEnabled,
+        ) // Idempotent: a filtered old-schema payload already carries the migrated global value.
+        if (value.schemaVersion < 70) value.audioSettings?.let { audio ->
+            fields["audioSettings"] = json.encodeToJsonElement(audio.copy(
+                profiles = audio.profiles.mapValues { (_, options) -> options.copy(forceChannels = 0) },
+            ))
+        }
+        return JsonObject(fields)
+    }
+
+    /** Preserve wire presence across decoding: an omitted profile is not an explicitly empty one. */
+    internal fun presentFields(raw: String): Set<String> = json.parseToJsonElement(raw).jsonObject.keys
+
+    private fun preparedExtras(source: JsonObject, mode: String): JsonElement {
+        val extras = source["extras"] as? JsonObject ?: return JsonNull
+        val groups = buildSet {
+            if (mode in setOf("settings", "preferences")) addAll(listOf("portable", "device"))
+            if (mode in setOf("settings", "accounts") && source.text("tvheadendHost").isNotBlank()) add("connections")
+        }
+        return JsonObject(extras.filterKeys { it in groups }.mapValues { (group, value) ->
+            if (value is JsonObject) JsonObject(value.filterKeys { it in classifiedExtraFields.getValue(group) }) else JsonNull
+        })
+    }
+
+    /** Missing/null fields in an optional group preserve the receiver, including partial objects. */
+    private fun mergeExtras(incoming: JsonObject, result: MutableMap<String, JsonElement>, groups: Set<String>) {
+        val source = incoming["extras"] as? JsonObject ?: return
+        val extras = (result["extras"] as? JsonObject).orEmpty().toMutableMap()
+        for (group in groups) {
+            val values = (source[group] as? JsonObject)?.filter { (key, value) ->
+                key in classifiedExtraFields.getValue(group) && value != JsonNull
+            } ?: continue
+            if (values.isEmpty()) continue
+            extras[group] = JsonObject((extras[group] as? JsonObject).orEmpty() + values)
+        }
+        if (extras.isNotEmpty()) result["extras"] = JsonObject(extras)
+    }
     private fun JsonObject.text(key: String) = this[key]?.jsonPrimitive?.contentOrNull.orEmpty()
     private fun JsonObject.list(key: String) = this[key]?.jsonArray.orEmpty().map { it.jsonObject }
     private fun JsonObject.optional(key: String) = this[key]?.takeUnless { it == JsonNull }
@@ -102,7 +156,7 @@ internal object CompanionBackupPolicy {
      * and chosen separately; a Telegram user session is never part of either.
      */
     fun prepareWithInfo(source: SettingsBackup, credentials: Boolean, mode: String = "settings",
-        sessions: Boolean = credentials): Prepared {
+        sessions: Boolean = credentials, presentFields: Set<String>? = null): Prepared {
         require(mode in setOf("accounts", "settings", "preferences", "nav_sounds"))
         if (mode == "nav_sounds") {
             require(!credentials && !sessions)
@@ -112,11 +166,13 @@ internal object CompanionBackupPolicy {
                 .toString().also { require(it.toByteArray().size <= MAX_BYTES) }, false)
         }
         // Preferences never contain account fields, even with credentials requested by an old caller.
-        if (mode == "preferences") return fit(source, obj(source).filterKeys {
-            it in portable || it in hardware || it in setOf("schemaVersion", "exportedAtEpochMs")
-        }.toMutableMap())
+        val incoming = obj(source)
+        if (mode == "preferences") return fit(source, incoming.filterKeys {
+            it in portable || it in hardware && it !in profileKeys || it in setOf("schemaVersion", "exportedAtEpochMs")
+        }.toMutableMap().apply { put("extras", preparedExtras(incoming, mode)) }, presentFields)
         val allowed = accounts + if (mode == "settings") portable + hardware else emptySet()
-        val s = obj(source).filterKeys { it in allowed }.toMutableMap()
+        val s = incoming.filterKeys { it in allowed }.toMutableMap()
+        s["extras"] = preparedExtras(incoming, mode)
         if (!sessions) {
             for (field in listOf("servers", "jellyfinServers", "embyServers")) s[field] = JsonArray(s.getValue(field).jsonArray.map {
                 JsonObject(it.jsonObject.toMutableMap().apply { put("token", JsonNull) })
@@ -144,21 +200,24 @@ internal object CompanionBackupPolicy {
         s["fileSources"] = JsonArray(s.getValue("fileSources").jsonArray.filter { it.jsonObject.text("kind") != "local" }.map {
             JsonObject(it.jsonObject - "wireGuard")
         })
-        return fit(source, s)
+        return fit(source, s, presentFields)
     }
 
     /** Companion payload plus whether title/scope profiles had to stay on this TV to fit [MAX_BYTES]. */
     data class Prepared(val json: String, val profilesOmitted: Boolean)
 
-    fun prepare(source: SettingsBackup, credentials: Boolean, mode: String = "settings", sessions: Boolean = credentials): String =
-        prepareWithInfo(source, credentials, mode, sessions).json
+    fun prepare(source: SettingsBackup, credentials: Boolean, mode: String = "settings", sessions: Boolean = credentials,
+        presentFields: Set<String>? = null): String = prepareWithInfo(source, credentials, mode, sessions, presentFields).json
 
     /**
      * Title and season/series/collection profiles travel compactly (no nulls, no default values). If the
      * payload still exceeds [MAX_BYTES], they are left out instead of failing the transfer; the receiver
      * keeps its own (see [merge]) and the sender shows a hint.
      */
-    private fun fit(source: SettingsBackup, fields: MutableMap<String, JsonElement>): Prepared {
+    private fun fit(source: SettingsBackup, fields: MutableMap<String, JsonElement>, presentFields: Set<String>?): Prepared {
+        // Accent styles predate a dedicated schema bump. An older file's missing style must
+        // remain missing through both sanitization passes instead of acquiring today's default.
+        if (presentFields != null) (profileKeys + "accentStyleKey").filterNot { it in presentFields }.forEach(fields::remove)
         if ("titleVideoSettings" in fields) fields["titleVideoSettings"] = compact.encodeToJsonElement(source.titleVideoSettings)
         if ("scopedVideoSettings" in fields) fields["scopedVideoSettings"] = compact.encodeToJsonElement(source.scopedVideoSettings)
         val full = JsonObject(fields).toString()
@@ -167,7 +226,8 @@ internal object CompanionBackupPolicy {
         return Prepared(JsonObject(fields - profileKeys).toString().also { require(it.toByteArray().size <= MAX_BYTES) }, true)
     }
 
-    fun merge(source: SettingsBackup, target: SettingsBackup, mode: String, overwrite: Boolean, deviceSettings: Boolean): String {
+    fun merge(source: SettingsBackup, target: SettingsBackup, mode: String, overwrite: Boolean, deviceSettings: Boolean,
+        presentFields: Set<String>? = null): String {
         require(mode in setOf("accounts", "settings", "preferences", "nav_sounds"))
         val incoming = obj(source); val current = obj(target); val result = current.toMutableMap()
         if (mode == "nav_sounds") {
@@ -181,14 +241,25 @@ internal object CompanionBackupPolicy {
             (portable + if (deviceSettings) hardware else emptySet()).filter { source.schemaVersion >= 50 || it !in navSounds }.filter { source.schemaVersion >= 58 || it !in sinceSchema58 }.filter { source.schemaVersion >= 59 || it !in setOf("liveTimeshiftEnabled", "liveDirectRecordEnabled") }.filter { source.schemaVersion >= 60 || it != "playerOsdSeconds" }.filter { source.schemaVersion >= 61 || it != "displaySwitchPauseMs" }.filter { source.schemaVersion >= 62 || it !in sinceSchema62 }.filter { source.schemaVersion >= 63 || it != "sleepDailyStopMinute" }.filter { source.schemaVersion >= 64 || it != "mpvHdrGpuEnabled" }.filter { source.schemaVersion >= 65 || it != "sdrToHdrReferenceWhiteNits" }.filter { source.schemaVersion >= 66 || it !in sinceSchema66 }.filter { source.schemaVersion >= 67 || it != "syncPlaybackToDisplay" }.filter { source.schemaVersion >= 68 || it != "mpvImageExplicitChoice" }.filter { source.schemaVersion >= 69 || it !in sinceSchema69 }.filter { source.schemaVersion >= 71 || it != "preferDoubleRefreshRate" }.filter { source.schemaVersion >= 73 || it !in setOf("playerBackMinimizes", "networkBufferKey") }.filter { source.schemaVersion >= 74 || it !in sinceSchema74 }.filter { source.schemaVersion >= 75 || it !in sinceSchema75 }
                 .filter { source.schemaVersion >= 77 || it != "uiRenderResolutionKey" }
                 .filter { source.schemaVersion >= 78 || it != "accentMotionKey" }
+                .filter { it != "accentStyleKey" || presentFields == null || it in presentFields }
+                .filter { source.schemaVersion >= 72 || it != "introAnimationKey" }
+                .filter { source.schemaVersion >= 80 || it !in sinceSchema80 }
+                // A settings-only transfer has no account identities to map local profile keys.
+                .filter { mode != "preferences" || it !in profileKeys }
                 // A sender from before the clock page has no clock: the receiver keeps its own.
                 .filter { it != "clock" || source.clock != null }
                 .filter { it != "weather" || source.weather != null }
                 .filter { it != "subtitleAppearance" || source.subtitleAppearance != null }
                 .filter { it != "nightSchedule" || source.nightSchedule != null }
                 .filter { it != "playerOsdModeIconVisible" || source.playerOsdModeIconVisible != null }
+                .filter { it != "homeRows" || source.homeRows != null }
+                .filter { it != "watchedThresholdPercent" || source.watchedThresholdPercent != null }
+                .filter { it != "resumeIgnoreEndPercent" || source.resumeIgnoreEndPercent != null }
                 // Profiles left out by the sender (too large) arrive empty: the TV keeps its own.
-                .filter { it !in profileKeys || !profilesOmittedIn(source) }.forEach { key -> incoming[key]?.let { result[key] = it } }
+                .filter { it !in profileKeys || profilePresent(source, it, presentFields) }
+                .forEach { key -> incoming[key]?.let { result[key] = it } }
+            if (source.schemaVersion >= 80)
+                mergeExtras(incoming, result, setOf("portable") + if (deviceSettings) setOf("device") else emptySet())
         }
         if (mode == "preferences") return JsonObject(result).toString()
         val smb = current.getValue("smbPasswords").jsonObject.toMutableMap()
@@ -211,8 +282,18 @@ internal object CompanionBackupPolicy {
                 // A single malformed entry is skipped instead of aborting the whole merge.
                 if (sourceId.isBlank() || sourceId.length > 256) continue
                 if (index < 0 && values.size >= limit) continue
-                val id = oldProfile?.text("id") ?: sourceId.takeUnless { candidate -> values.any { (if (nested) it.getValue("profile").jsonObject else it).text("id") == candidate } }
-                    ?: "remote-${fingerprint(identity(profile, field).toByteArray()).take(24)}"
+                val id = oldProfile?.text("id") ?: run {
+                    val used = values.map { (if (nested) it.getValue("profile").jsonObject else it).text("id") }.toSet()
+                    if (sourceId !in used) sourceId else {
+                        val base = "remote-${fingerprint(identity(profile, field).toByteArray()).take(24)}"
+                        var candidate = base
+                        var suffix = 1
+                        // A previous imported endpoint can have been edited locally; its generated
+                        // identity still belongs to it and must not be reused by another account.
+                        while (candidate in used) candidate = "$base-${suffix++}"
+                        candidate
+                    }
+                }
                 val newProfile = JsonObject(profile.toMutableMap().apply {
                     put("id", JsonPrimitive(id))
                     // Routing belongs to the receiving device, including credential/hardware imports.
@@ -230,6 +311,13 @@ internal object CompanionBackupPolicy {
                 if (field == "fileSources") (incoming["sshKeys"] as? JsonObject)?.get(sourceId)?.let { ssh[id] = it }
             }
             result[field] = JsonArray(values)
+        }
+        if (mode == "settings" && deviceSettings && source.schemaVersion >= 69) {
+            val profiles = remapCompanionVideoProfiles(source, mappedIds, target)
+            if (profilePresent(source, "titleVideoSettings", presentFields))
+                result["titleVideoSettings"] = json.encodeToJsonElement(profiles.titles)
+            if (profilePresent(source, "scopedVideoSettings", presentFields))
+                result["scopedVideoSettings"] = json.encodeToJsonElement(profiles.scopes)
         }
         result["smbPasswords"] = JsonObject(smb)
         result["sshKeys"] = JsonObject(ssh)
@@ -253,6 +341,7 @@ internal object CompanionBackupPolicy {
             for (key in listOf("tvheadendEnabled", "tvheadendHost", "tvheadendPort", "tvheadendUseHttps", "tvheadendUsername", "tvheadendStreamProfile", "tvheadendMacAddress", "tvheadendAutoWakeEnabled")) result[key] = incoming.getValue(key)
             result["tvheadendPassword"] = incoming["tvheadendPassword"]?.takeUnless { it == JsonNull }
                 ?: if (same) current.getValue("tvheadendPassword") else JsonNull
+            if (source.schemaVersion >= 80) mergeExtras(incoming, result, setOf("connections"))
         }
         if (incoming["tmdbApiKey"] != JsonNull && (overwrite || current["tmdbApiKey"] == JsonNull)) result["tmdbApiKey"] = incoming.getValue("tmdbApiKey")
         // Adopt a Monogram API application identity only on a fresh receiver. Never change

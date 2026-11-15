@@ -32,6 +32,7 @@ internal fun SpotifyAccountBackup?.signedIn() = this != null && (refreshToken !=
 
 /** Provider-qualified IDs keep coincident IDs on different providers independent. */
 internal fun selectSyncAccounts(source: SettingsBackup, selected: Set<String>): SettingsBackup = source.copy(
+    extras = source.extras?.copy(connections = source.extras.connections.takeIf { "tvheadend" in selected }),
     iptvSources = source.iptvSources?.filter { "iptv:${it.id}" in selected },
     openSubtitlesApiKey = source.openSubtitlesApiKey.takeIf { "opensubtitles" in selected },
     openSubtitlesUsername = source.openSubtitlesUsername.takeIf { "opensubtitles" in selected },
