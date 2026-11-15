@@ -43,8 +43,9 @@ class ControlColorsTest {
         pressed = index and 8 != 0,
     )
 
-    /** A white material stop is worse than any actual style color, even in linear HDR. */
-    private fun worstWash(fill: Color, opacity: Float, headroom: Float): Color {
+    /** White static and animated stops bound every actual style, even in linear HDR. */
+    private fun worstWash(fill: Color, washOpacity: Float, headroom: Float, style: AccentStyle): Color {
+        val opacity = 1f - (1f - washOpacity) * (1f - controlAccentMotionMaxOpacity(style))
         val linear = controlDesignColor(fill, headroom).convert(ColorSpaces.LinearExtendedSrgb)
         return Color(
             linear.red * (1f - opacity) + opacity,
@@ -64,7 +65,7 @@ class ControlColorsTest {
                     val context = "$surface / $accent / $style / HDR $headroom / state $state"
                     assertEquals(context, 1f, colors.container.alpha, 0f)
                     assertEquals(context, uiHdrHighlight(AppOnSurface, headroom), colors.content)
-                    val background = worstWash(colors.container, colors.washOpacity, headroom)
+                    val background = worstWash(colors.container, colors.washOpacity, headroom, style)
                     val foreground = controlDesignColor(colors.content, headroom)
                     assertTrue(context, contrastRatio(foreground, background) >= 4.5f)
                     // The opaque base prevents any underlying poster/video from changing it.
@@ -90,7 +91,7 @@ class ControlColorsTest {
                         val fill = lerp(from.container, to.container, fraction)
                         // The old/new brush can change before either animated state settles.
                         val opacity = maxOf(from.washOpacity, to.washOpacity)
-                        val background = worstWash(fill, opacity, headroom)
+                        val background = worstWash(fill, opacity, headroom, style)
                         assertTrue(
                             "$style / HDR $headroom / $fromIndex -> $toIndex / $fraction",
                             contrastRatio(AppOnSurface, background) >= 4.5f,
@@ -113,9 +114,9 @@ class ControlColorsTest {
             assertNotEquals(focused.container, selectedFocused.container)
             assertEquals(focused.outline, selectedFocused.outline)
             assertEquals(AppOnSurface.copy(alpha = .94f), focused.outline)
-            val background = worstWash(selectedFocused.container, selectedFocused.washOpacity, 1f)
+            val background = worstWash(selectedFocused.container, selectedFocused.washOpacity, 1f, style)
             assertTrue(contrastRatio(focused.outline.compositeOver(background), background) >= 3f)
-            val selectedBackground = worstWash(selected.container, selected.washOpacity, 1f)
+            val selectedBackground = worstWash(selected.container, selected.washOpacity, 1f, style)
             assertTrue(
                 "Selected chip edge: $surface / $accent / $style",
                 contrastRatio(selected.outline.compositeOver(selectedBackground), selectedBackground) >= 3f,

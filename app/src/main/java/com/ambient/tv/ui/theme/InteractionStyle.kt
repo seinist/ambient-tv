@@ -139,6 +139,7 @@ fun Modifier.appControlSurface(
     val materialStyle = LocalAccentStyle.current
     val reducedEffects = LocalPerformanceProfile.current.reducedEffects
     val borderWidth = LocalUiTokens.current.focusBorder
+    val motion = rememberAccentMotionState(focused && enabled)
     this.drawWithCache {
         val strokePx = borderWidth.toPx()
         val fill = shape.createOutline(size, layoutDirection, this)
@@ -150,20 +151,30 @@ fun Modifier.appControlSurface(
         )
         val stroke = Stroke(strokePx)
         val material = colors.palette.materialBrush()
+        val glowStroke = if (materialStyle == AccentStyle.GLOW && !reducedEffects && focused && enabled)
+            Stroke(strokePx * 2.5f) else null
+        val motionPaints = if (motion != null && enabled)
+            AccentMotionPaints(colors.palette.input.accent, materialStyle) else null
         onDrawBehind {
+            val frame = motion?.value
             drawOutline(fill, colors.container.value)
             val wash = colors.washOpacity.value
             if (wash > 0f) {
                 drawOutline(fill, material, alpha = wash)
             }
+            // The palette reserves this additional wash before any draw-time animation.
+            motionPaints?.drawOutline(this, fill, frame, emphasis = CONTROL_ACCENT_MOTION_EMPHASIS)
             val outline = colors.outline.value
             if (outline.alpha > 0f && strokePx > 0f) {
                 translate(inset, inset) {
-                    if (materialStyle == AccentStyle.GLOW && !reducedEffects && focused && enabled) {
-                        drawOutline(strokeOutline, material, alpha = outline.alpha * .10f,
-                            style = Stroke(strokePx * 2.5f))
+                    if (glowStroke != null) {
+                        drawOutline(strokeOutline, material,
+                            alpha = outline.alpha * (.10f + .02f * (frame?.strength ?: 0f)),
+                            style = glowStroke)
                     }
-                    // Material styling must not replace the neutral focus boundary.
+                    motionPaints?.drawOutline(this, strokeOutline, frame,
+                        emphasis = outline.alpha, drawStyle = stroke)
+                    // Draw the neutral focus boundary last so material motion cannot replace it.
                     drawOutline(strokeOutline, outline, style = stroke)
                 }
             }
@@ -217,6 +228,7 @@ fun Modifier.animatedFocusBorder(
     val strokeWidth = width ?: LocalUiTokens.current.focusBorder
     val reduced = LocalPerformanceProfile.current.reducedEffects
     val materialStyle = LocalAccentStyle.current
+    val motion = rememberAccentMotionState(focused)
     // The outline's opacity fades on focus hops; its hue also crossfades when the user
     // changes the configured accent while a card is already focused.
     val accent = animateColorAsState(
@@ -243,21 +255,25 @@ fun Modifier.animatedFocusBorder(
         )
         val stroke = Stroke(strokePx)
         val material = accentBrush(focusedColor, materialStyle)
+        val glowStroke = if (materialStyle == AccentStyle.GLOW && !reduced) Stroke(strokePx * 2.6f) else null
+        val motionPaints = if (motion != null) AccentMotionPaints(focusedColor, materialStyle) else null
         onDrawWithContent {
             drawContent()
             if (strokePx > 0f) {
                 val color = lerp(unfocusedColor, accent.value, reveal.value)
                 if (color.alpha > 0f) {
+                    val frame = motion?.value
                     translate(inset, inset) {
                         if (materialStyle == AccentStyle.LIGHT) {
                             drawOutline(outline, color, style = stroke)
                         } else {
-                            if (materialStyle == AccentStyle.GLOW && !reduced) {
-                                drawOutline(outline, material, alpha = color.alpha * .13f,
-                                    style = Stroke(strokePx * 2.6f))
+                            if (glowStroke != null) {
+                                drawOutline(outline, material, alpha = color.alpha * (.13f + .025f * (frame?.strength ?: 0f)),
+                                    style = glowStroke)
                             }
                             drawOutline(outline, material, alpha = color.alpha, style = stroke)
                         }
+                        motionPaints?.drawOutline(this, outline, frame, emphasis = color.alpha, drawStyle = stroke)
                     }
                 }
             }
@@ -283,6 +299,7 @@ fun Modifier.animatedFocusSurface(
     val reduced = LocalPerformanceProfile.current.reducedEffects
     val materialStyle = LocalAccentStyle.current
     val primaryAccent = MaterialTheme.colorScheme.primary
+    val motion = rememberAccentMotionState(focused)
     val fade = tween<Color>(
         durationMillis = focusBorderFadeDurationMs(focused, reduced),
         easing = LinearOutSlowInEasing,
@@ -297,6 +314,14 @@ fun Modifier.animatedFocusSurface(
         animationSpec = fade,
         label = "focus surface stroke",
     )
+    val materialReveal = animateFloatAsState(
+        targetValue = if (focused) 1f else 0f,
+        animationSpec = tween(
+            durationMillis = focusBorderFadeDurationMs(focused, reduced),
+            easing = LinearOutSlowInEasing,
+        ),
+        label = "focus surface material",
+    )
     this.drawWithCache {
         val strokePx = borderWidth.toPx()
         val full = shape.createOutline(size, layoutDirection, this)
@@ -310,23 +335,29 @@ fun Modifier.animatedFocusSurface(
             this,
         )
         val material = accentBrush(primaryAccent, materialStyle)
+        val stroke = Stroke(strokePx)
+        val glowStroke = if (materialStyle == AccentStyle.GLOW && !reduced) Stroke(strokePx * 2.5f) else null
+        val motionPaints = if (motion != null) AccentMotionPaints(primaryAccent, materialStyle) else null
         onDrawWithContent {
+            val frame = motion?.value
             drawOutline(full, fill.value)
-            if (materialStyle != AccentStyle.LIGHT && focused) {
-                drawOutline(full, material, alpha = accentWashOpacity(materialStyle))
+            if (materialStyle != AccentStyle.LIGHT && materialReveal.value > 0f) {
+                drawOutline(full, material, alpha = accentWashOpacity(materialStyle) * materialReveal.value)
             }
+            motionPaints?.drawOutline(this, full, frame, emphasis = .25f * materialReveal.value)
             drawContent()
             if (strokePx > 0f && strokeColor.value.alpha > 0f) {
                 translate(inset, inset) {
                     if (materialStyle == AccentStyle.LIGHT) {
-                        drawOutline(inner, strokeColor.value, style = Stroke(strokePx))
+                        drawOutline(inner, strokeColor.value, style = stroke)
                     } else {
-                        if (materialStyle == AccentStyle.GLOW && !reduced) {
-                            drawOutline(inner, material, alpha = strokeColor.value.alpha * .12f,
-                                style = Stroke(strokePx * 2.5f))
+                        if (glowStroke != null) {
+                            drawOutline(inner, material, alpha = strokeColor.value.alpha * (.12f + .025f * (frame?.strength ?: 0f)) * materialReveal.value,
+                                style = glowStroke)
                         }
-                        drawOutline(inner, material, alpha = strokeColor.value.alpha, style = Stroke(strokePx))
+                        drawOutline(inner, material, alpha = strokeColor.value.alpha, style = stroke)
                     }
+                    motionPaints?.drawOutline(this, inner, frame, emphasis = strokeColor.value.alpha, drawStyle = stroke)
                 }
             }
         }

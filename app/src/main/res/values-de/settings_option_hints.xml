@@ -13,7 +13,7 @@
     <string name="renderer_sdr_curve_bt1886_hint">Feste SDR-Ausgabekurve BT.1886, unabhängig vom erkannten Displaymodus.</string>
     <string name="settings_ui_performance_auto_hint">Passt die Oberflächeneffekte an dein Gerät an.</string>
     <string name="settings_ui_performance_balanced_hint">Verwendet die normalen Oberflächeneffekte.</string>
-    <string name="settings_ui_performance_maximum_hint">Aktiviert zusätzliche Schatten für fokussierte Elemente.</string>
+    <string name="settings_ui_performance_maximum_hint">Aktiviert zusätzliche Schatten und optionale Accent-Animationen für fokussierte Elemente.</string>
     <string name="settings_ui_performance_low_hint">Reduziert Oberflächeneffekte und deaktiviert Navigationssounds.</string>
     <string name="settings_playback_performance_auto_hint">Passt die Bildverarbeitung an dein Gerät an.</string>
     <string name="settings_playback_performance_balanced_hint">Erlaubt Bildfilter ohne Bewegungsglättung.</string>
@@ -23,6 +23,9 @@
     <string name="settings_accent_style_glass_hint">Zeigt einen glänzenden Verlauf in Glasoptik.</string>
     <string name="settings_accent_style_glow_hint">Zeigt einen weichen Farbverlauf mit hellen Rändern.</string>
     <string name="settings_accent_style_pearl_hint">Zeigt einen perlmuttartigen Verlauf mit zarten Farbtönen.</string>
+    <string name="settings_accent_style_ceramic_hint">Zeigt eine satte, ruhige Farbe mit feiner Lichtkante.</string>
+    <string name="settings_accent_style_chrome_hint">Zeigt einen polierten Verlauf mit schmalem, hellem Reflex.</string>
+    <string name="settings_accent_style_facet_hint">Zeigt kantige Licht- und Schattenflächen in der gewählten Accent-Farbe.</string>
     <string name="settings_accent_style_light_hint">Verwendet eine Vollfarbe ohne Verlauf.</string>
     <string name="settings_audio_visualizer_projectm_hint">Zeigt animierte Muster passend zur Musik.</string>
     <string name="settings_audio_visualizer_spectrum_hint">Zeigt die Frequenzverteilung des Tons.</string>

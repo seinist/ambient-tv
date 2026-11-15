@@ -2,9 +2,14 @@
 
 package com.ambient.tv.ui.player
 
+import com.ambient.tv.ui.theme.AccentMotionPaints
+import com.ambient.tv.ui.theme.AccentMotionScope
+import com.ambient.tv.ui.theme.LocalAccentMotionState
+import com.ambient.tv.ui.theme.drawAccentProgressMotion
 import com.ambient.tv.ui.theme.appControlSurface
 import com.ambient.tv.ui.theme.LocalAccentStyle
 import com.ambient.tv.ui.theme.accentBrush
+import com.ambient.tv.ui.theme.drawAccentProgress
 import com.ambient.tv.ui.common.rememberPlayerPanelNavigation
 import com.ambient.tv.ui.common.LocalPlayerPanelNavigation
 import com.ambient.tv.ui.mobile.deviceDp
@@ -1119,6 +1124,9 @@ internal fun TvPlayerSeekBar(
     val progressAccent = com.ambient.tv.ui.theme.LocalPlaybackAccent.current.indicator
     val progressStyle = LocalAccentStyle.current
     val progressBrush = remember(progressAccent, progressStyle) { accentBrush(progressAccent, progressStyle) }
+    val progressMotionPaints = remember(progressAccent, progressStyle) { AccentMotionPaints(progressAccent, progressStyle) }
+    // ShaderBrush caches one size; the thumb must not invalidate the full track's shader.
+    val progressThumbBrush = remember(progressAccent, progressStyle) { accentBrush(progressAccent, progressStyle) }
     val osd = LocalPlayerChromeState.current?.osd
     val expandControls = rememberExpandPlayerControls()
     val acceptsInput = seekable && osd?.show != false
@@ -1327,82 +1335,86 @@ internal fun TvPlayerSeekBar(
         } else {
             CurrentChapterLabel(displayedPosition, Modifier.graphicsLayer { alpha = contextAlpha })
         }
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(if (highlighted) 7.dp else 6.dp)
-                .onGloballyPositioned { previewOverlay?.trackBoundsInRoot = it.boundsInRoot() },
-        ) {
-            // The neutral track is present immediately, at exactly the real track's height.
+        AccentMotionScope(active = acceptsInput && osd?.closing != true && !stowing &&
+            pointerTarget == null && pendingTarget == null) {
+            val motionState = LocalAccentMotionState.current
             Box(
-                Modifier.matchParentSize()
-                    .graphicsLayer { alpha = 1f - dataAlpha.value }
-                    .background(Color.White.copy(alpha = 0.24f), RoundedCornerShape(50)),
-            )
-            // Offscreen so chapter gaps can be cut out of track and progress alike.
-            Box(
-                Modifier.matchParentSize()
-                    .graphicsLayer {
-                        alpha = dataAlpha.value
-                        compositingStrategy = androidx.compose.ui.graphics.CompositingStrategy.Offscreen
-                    }
-                    .background(Color.White.copy(alpha = 0.24f), RoundedCornerShape(50)),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(if (highlighted) 7.dp else 6.dp)
+                    .onGloballyPositioned { previewOverlay?.trackBoundsInRoot = it.boundsInRoot() },
             ) {
+                // The neutral track is present immediately, at exactly the real track's height.
                 Box(
-                    modifier = Modifier
-                        .fillMaxWidth(progress)
-                        .fillMaxHeight()
-                        .background(progressBrush, RoundedCornerShape(50)),
+                    Modifier.matchParentSize()
+                        .graphicsLayer { alpha = 1f - dataAlpha.value }
+                        .background(Color.White.copy(alpha = 0.24f), RoundedCornerShape(50)),
                 )
-                if (durationMs > 0 && navigation != null) {
-                    val timeline = navigation.timeline
-                    val current = timeline.chapterAt(displayedPosition)
-                    androidx.compose.foundation.Canvas(Modifier.fillMaxSize()) {
-                        fun x(ms: Long) = (ms.toDouble() / durationMs).toFloat().coerceIn(0f, 1f) * size.width
-                        timeline.segments.forEach { segment ->
-                            val end = if (segment.endMs < 0) durationMs else segment.endMs
-                            drawRect(seekBarSegmentColor(segment.type), androidx.compose.ui.geometry.Offset(x(segment.startMs), 0f),
-                                androidx.compose.ui.geometry.Size(x(end) - x(segment.startMs), size.height))
+                // Offscreen so chapter gaps can be cut out of track and progress alike.
+                Box(
+                    Modifier.matchParentSize()
+                        .graphicsLayer {
+                            alpha = dataAlpha.value
+                            compositingStrategy = androidx.compose.ui.graphics.CompositingStrategy.Offscreen
                         }
-                        if (highlighted && current != null) {
-                            val next = timeline.chapters.firstOrNull { it.startMs > current.startMs }?.startMs ?: durationMs
-                            val end = current.endMs?.takeIf { it > current.startMs }?.coerceAtMost(next) ?: next
-                            drawRect(Color.White.copy(alpha = 0.18f), androidx.compose.ui.geometry.Offset(x(current.startMs), 0f),
-                                androidx.compose.ui.geometry.Size(x(end) - x(current.startMs), size.height))
-                        }
-                        timeline.chapters.forEach { chapter ->
-                            if (chapter.startMs <= 0) return@forEach
-                            val cx = x(chapter.startMs)
-                            drawLine(Color.Black, androidx.compose.ui.geometry.Offset(cx, 0f), androidx.compose.ui.geometry.Offset(cx, size.height),
-                                2.5.dp.toPx(), blendMode = androidx.compose.ui.graphics.BlendMode.Clear)
+                        .background(Color.White.copy(alpha = 0.24f), RoundedCornerShape(50)),
+                ) {
+                    androidx.compose.foundation.Canvas(Modifier.matchParentSize()) {
+                        drawAccentProgress(progressBrush, progress,
+                            fromRight = layoutDirection == androidx.compose.ui.unit.LayoutDirection.Rtl)
+                        drawAccentProgressMotion(progressMotionPaints, motionState?.value, progress,
+                            fromRight = layoutDirection == androidx.compose.ui.unit.LayoutDirection.Rtl)
+                    }
+                    if (durationMs > 0 && navigation != null) {
+                        val timeline = navigation.timeline
+                        val current = timeline.chapterAt(displayedPosition)
+                        androidx.compose.foundation.Canvas(Modifier.fillMaxSize()) {
+                            fun x(ms: Long) = (ms.toDouble() / durationMs).toFloat().coerceIn(0f, 1f) * size.width
+                            timeline.segments.forEach { segment ->
+                                val end = if (segment.endMs < 0) durationMs else segment.endMs
+                                drawRect(seekBarSegmentColor(segment.type), androidx.compose.ui.geometry.Offset(x(segment.startMs), 0f),
+                                    androidx.compose.ui.geometry.Size(x(end) - x(segment.startMs), size.height))
+                            }
+                            if (highlighted && current != null) {
+                                val next = timeline.chapters.firstOrNull { it.startMs > current.startMs }?.startMs ?: durationMs
+                                val end = current.endMs?.takeIf { it > current.startMs }?.coerceAtMost(next) ?: next
+                                drawRect(Color.White.copy(alpha = 0.18f), androidx.compose.ui.geometry.Offset(x(current.startMs), 0f),
+                                    androidx.compose.ui.geometry.Size(x(end) - x(current.startMs), size.height))
+                            }
+                            timeline.chapters.forEach { chapter ->
+                                if (chapter.startMs <= 0) return@forEach
+                                val cx = x(chapter.startMs)
+                                drawLine(Color.Black, androidx.compose.ui.geometry.Offset(cx, 0f), androidx.compose.ui.geometry.Offset(cx, size.height),
+                                    2.5.dp.toPx(), blendMode = androidx.compose.ui.graphics.BlendMode.Clear)
+                            }
                         }
                     }
                 }
-            }
-            // Outside the offscreen layer: the ticks reach a little above and below the track.
-            if (bookmarks.isNotEmpty()) androidx.compose.foundation.Canvas(
-                Modifier.matchParentSize().graphicsLayer {
-                    alpha = dataAlpha.value
-                    compositingStrategy = androidx.compose.ui.graphics.CompositingStrategy.ModulateAlpha
-                },
-            ) {
-                drawBookmarkTicks(bookmarks, durationMs, 0f, size.height)
-            }
-            if (highlighted && durationMs > 0) {
-                Box(
-                    modifier = Modifier
-                        .align(Alignment.CenterStart)
-                        .fillMaxWidth(progress.coerceAtLeast(0.001f))
-                        .height(1.dp),
+                // Outside the offscreen layer: the ticks reach a little above and below the track.
+                if (bookmarks.isNotEmpty()) androidx.compose.foundation.Canvas(
+                    Modifier.matchParentSize().graphicsLayer {
+                        alpha = dataAlpha.value
+                        compositingStrategy = androidx.compose.ui.graphics.CompositingStrategy.ModulateAlpha
+                    },
                 ) {
+                    drawBookmarkTicks(bookmarks, durationMs, 0f, size.height)
+                }
+                if (highlighted && durationMs > 0) {
                     Box(
                         modifier = Modifier
-                            .align(Alignment.CenterEnd)
-                            .size(15.dp)
-                            .graphicsLayer { alpha = dataAlpha.value }
-                            .background(progressBrush, CircleShape)
-                            .border(2.5.dp, Color.White, CircleShape),
-                    )
+                            .align(Alignment.CenterStart)
+                            .fillMaxWidth(progress.coerceAtLeast(0.001f))
+                            .height(1.dp),
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .align(Alignment.CenterEnd)
+                                .size(15.dp)
+                                .graphicsLayer { alpha = dataAlpha.value }
+                                .background(progressThumbBrush, CircleShape)
+                                .border(2.5.dp, Color.White, CircleShape),
+                        )
+                    }
                 }
             }
         }

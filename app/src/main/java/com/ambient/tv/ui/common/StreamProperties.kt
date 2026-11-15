@@ -1,7 +1,5 @@
 package com.ambient.tv.ui.common
 
-import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
@@ -153,8 +151,12 @@ private fun PropertyIconBadge(property: StreamProperty) {
     Box(
         modifier = Modifier
             .size(26.dp)
-            .background(ArtworkChipFill, RoundedCornerShape(7.dp))
-            .border(1.dp, border, RoundedCornerShape(7.dp)),
+            .artworkAccentSurface(
+                shape = RoundedCornerShape(7.dp),
+                accent = MaterialTheme.colorScheme.primary,
+                borderColor = border,
+                emphasized = property.emphasized,
+            ),
         contentAlignment = Alignment.Center,
     ) {
         Icon(
@@ -226,7 +228,6 @@ fun StreamPropertyColumn(
 
 @Composable
 private fun PropertyBadge(property: StreamProperty) {
-    val background = ArtworkChipFill
     val border = if (property.emphasized) {
         MaterialTheme.colorScheme.primary.copy(alpha = 0.85f)
     } else {
@@ -235,8 +236,12 @@ private fun PropertyBadge(property: StreamProperty) {
     val foreground = if (property.emphasized) MaterialTheme.colorScheme.primary else Color.White
     Row(
         modifier = Modifier
-            .background(background, RoundedCornerShape(6.dp))
-            .border(1.dp, border, RoundedCornerShape(6.dp))
+            .artworkAccentSurface(
+                shape = RoundedCornerShape(6.dp),
+                accent = MaterialTheme.colorScheme.primary,
+                borderColor = border,
+                emphasized = property.emphasized,
+            )
             .padding(horizontal = 8.dp, vertical = 4.dp),
         horizontalArrangement = Arrangement.spacedBy(5.dp),
         verticalAlignment = Alignment.CenterVertically,

@@ -12,6 +12,19 @@ import com.ambient.tv.ui.display.uiHdrHighlight
 
 internal val LocalControlPalette = staticCompositionLocalOf<ControlPalette?> { null }
 
+internal const val CONTROL_ACCENT_MOTION_EMPHASIS = .25f
+
+/** Conservative sum of the drawing passes, even where their reflections do not overlap. */
+internal fun controlAccentMotionMaxOpacity(style: AccentStyle): Float =
+    CONTROL_ACCENT_MOTION_EMPHASIS * when (style) {
+        AccentStyle.SATIN, AccentStyle.GLASS, AccentStyle.CERAMIC -> .10f
+        AccentStyle.CHROME -> .14f
+        AccentStyle.PEARL -> .12f
+        AccentStyle.FACET -> .19f
+        AccentStyle.GLOW -> .08f
+        AccentStyle.LIGHT -> .075f
+    }
+
 @Immutable
 internal data class ControlPaletteInput(
     val surface: Color,
@@ -112,14 +125,17 @@ internal fun controlPalette(
     val raised = controlDesignColor(raisedSurface, headroom).copy(alpha = 1f)
     val foreground = controlDesignColor(content, headroom).copy(alpha = 1f)
     val accentColor = controlDesignColor(accent, headroom).copy(alpha = 1f)
-    // Reserve the brightest possible material stop, in linear light (the more demanding
-    // HDR blend), rather than just testing the accent's average color. The 5:1 target
-    // leaves headroom for sRGB quantization and Oklab color-animation intermediates.
+    // Reserve the brightest possible material stop plus its optional animated reflection,
+    // in linear light (the more demanding HDR blend). Keeping that reservation even while
+    // motion is off avoids a brightness jump when focus starts/stops the clock. The 5:1
+    // target leaves headroom for sRGB quantization and Oklab color-animation intermediates.
     val washOpacity = accentWashOpacity(style) * .5f
+    val maximumOverlayOpacity = 1f - (1f - washOpacity) * (1f - controlAccentMotionMaxOpacity(style))
     val maxDrawnLuminance = ((foreground.luminance() + .05f) / 5f - .05f).coerceAtLeast(0f)
     val maxFillLuminance = minOf(
         .06f,
-        ((maxDrawnLuminance - washOpacity) / (1f - washOpacity)).coerceAtLeast(0f) * .95f,
+        ((maxDrawnLuminance - maximumOverlayOpacity) / (1f - maximumOverlayOpacity))
+            .coerceAtLeast(0f) * .95f,
     )
     val idle = lerp(base, raised, .35f)
     val containers = List(16) { index ->

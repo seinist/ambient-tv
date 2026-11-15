@@ -12,8 +12,8 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class AccentMaterialStyleTest {
-    @Test fun allFiveStylesHaveStableDistinctKeysAndUnknownFallsBackToSatin() {
-        assertEquals(listOf("satin", "glass", "glow", "pearl", "light"), AccentStyle.entries.map { it.key })
+    @Test fun stylesHaveStableDistinctKeysAndUnknownFallsBackToSatin() {
+        assertEquals(listOf("satin", "glass", "glow", "pearl", "ceramic", "chrome", "facet", "light"), AccentStyle.entries.map { it.key })
         assertEquals(AccentStyle.SATIN, AccentStyle.fromKey(null))
         assertEquals(AccentStyle.SATIN, AccentStyle.fromKey("invalid"))
         AccentStyle.entries.forEach { assertEquals(it, AccentStyle.fromKey(it.key)) }
@@ -23,8 +23,10 @@ class AccentMaterialStyleTest {
         val storage = memoryPreferences()
         val p = AppPreferences(storage)
         assertEquals("satin", p.accentStyleKey)
-        p.accentStyleKey = "light"
-        assertEquals("light", AppPreferences(storage).accentStyleKey)
+        AccentStyle.entries.forEach { style ->
+            p.accentStyleKey = style.key
+            assertEquals(style.key, AppPreferences(storage).accentStyleKey)
+        }
         p.accentStyleKey = "unknown"
         assertEquals("satin", AppPreferences(storage).accentStyleKey)
     }
@@ -33,11 +35,13 @@ class AccentMaterialStyleTest {
         val storage = memoryPreferences()
         val p = AppPreferences(storage)
         val manager = SettingsBackupManager(p, TokenStore(memoryPreferences(), p))
-        p.accentStyleKey = "pearl"
-        val exported = manager.exportJson(false)
-        p.accentStyleKey = "glass"
-        manager.importJson(exported)
-        assertEquals("pearl", AppPreferences(storage).accentStyleKey)
+        for (style in listOf("pearl", "ceramic", "chrome", "facet")) {
+            p.accentStyleKey = style
+            val exported = manager.exportJson(false)
+            p.accentStyleKey = "glass"
+            manager.importJson(exported)
+            assertEquals(style, AppPreferences(storage).accentStyleKey)
+        }
         manager.importJson("""{"schemaVersion":51,"exportedAtEpochMs":0,"accentColorKey":"blue"}""")
         assertEquals("satin", p.accentStyleKey)
     }

@@ -1,7 +1,5 @@
 package com.ambient.tv.ui.common
 
-import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
@@ -39,8 +37,12 @@ fun MetaBadge(
     val foreground = if (emphasized) MaterialTheme.colorScheme.primary else Color.White
     Box(
         modifier = modifier
-            .background(ArtworkChipFill, shape)
-            .then(if (emphasized) Modifier.border(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.85f), shape) else Modifier)
+            .artworkAccentSurface(
+                shape = shape,
+                accent = MaterialTheme.colorScheme.primary,
+                borderColor = if (emphasized) MaterialTheme.colorScheme.primary.copy(alpha = 0.85f) else Color.Transparent,
+                emphasized = emphasized,
+            )
             .padding(horizontal = 9.dp, vertical = 4.dp),
         contentAlignment = Alignment.Center,
     ) {
@@ -58,8 +60,7 @@ fun ArtworkCornerIconBadge(
     val shape = RoundedCornerShape(6.dp)
     Box(
         modifier = modifier
-            .background(ArtworkChipFill, shape)
-            .border(1.dp, ArtworkChipBorder, shape)
+            .artworkAccentSurface(shape, MaterialTheme.colorScheme.primary, borderColor = ArtworkChipBorder, emphasized = true)
             .padding(horizontal = 7.dp, vertical = 4.dp),
         contentAlignment = Alignment.Center,
     ) {
@@ -82,8 +83,7 @@ fun ContentRatingBadge(
     val shape = RoundedCornerShape(6.dp)
     Row(
         modifier = modifier
-            .background(ArtworkChipFill, shape)
-            .border(1.dp, ArtworkChipBorder, shape)
+            .artworkAccentSurface(shape, MaterialTheme.colorScheme.primary, borderColor = ArtworkChipBorder)
             .padding(horizontal = 7.dp, vertical = 4.dp),
         horizontalArrangement = Arrangement.spacedBy(5.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -110,8 +110,7 @@ fun WatchedBadge(modifier: Modifier = Modifier) {
     val shape = RoundedCornerShape(6.dp)
     Row(
         modifier = modifier
-            .background(ArtworkChipFill, shape)
-            .border(1.dp, ArtworkChipBorder, shape)
+            .artworkAccentSurface(shape, MaterialTheme.colorScheme.primary, borderColor = ArtworkChipBorder, emphasized = true)
             .padding(horizontal = 7.dp, vertical = 4.dp),
         horizontalArrangement = Arrangement.spacedBy(5.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -183,8 +182,7 @@ fun RatingScoreBadge(
     val shape = RoundedCornerShape(6.dp)
     Row(
         modifier = modifier
-            .background(ArtworkChipFill, shape)
-            .border(1.dp, ArtworkChipBorder, shape)
+            .artworkAccentSurface(shape, MaterialTheme.colorScheme.primary, borderColor = ArtworkChipBorder)
             .padding(horizontal = 8.dp, vertical = 4.dp),
         horizontalArrangement = Arrangement.spacedBy(6.dp),
         verticalAlignment = Alignment.CenterVertically,

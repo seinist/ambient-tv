@@ -1,0 +1,10 @@
+<resources>
+    <string name="settings_accent_motion">Accent animations</string>
+    <string name="settings_accent_motion_off">Off</string>
+    <string name="settings_accent_motion_focus">On focus</string>
+    <string name="settings_accent_motion_ambient">Ambient</string>
+    <string name="settings_accent_motion_off_hint">No additional material animations.</string>
+    <string name="settings_accent_motion_focus_hint">One subtle material effect on focus and when the playback bar opens.</string>
+    <string name="settings_accent_motion_ambient_hint">Gentle material effects with longer pauses on active elements.</string>
+    <string name="settings_accent_motion_unavailable">Active with Interface → Maximum performance. Your choice is retained.</string>
+</resources>
