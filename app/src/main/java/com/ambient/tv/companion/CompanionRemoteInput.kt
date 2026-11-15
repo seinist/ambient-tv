@@ -5,7 +5,6 @@ import android.view.InputDevice
 import android.view.KeyEvent
 import android.view.MotionEvent
 import android.view.View
-import android.view.ViewGroup
 import android.view.Window
 import android.view.inputmethod.EditorInfo
 import androidx.compose.foundation.Canvas
@@ -15,7 +14,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalView
-import androidx.compose.ui.window.DialogWindowProvider
+import com.ambient.tv.ui.display.UiRenderInputRoot
+import com.ambient.tv.ui.display.findUiRenderWindow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.serialization.Serializable
 
@@ -50,32 +50,60 @@ internal class CompanionInputLease {
 
 /** In-process input only. No AccessibilityService, root, ADB, global injection, or text readback. */
 object CompanionRemoteInput {
-    private val windows = LinkedHashMap<Window, (() -> Unit)?>()
+    private data class Registration(val inputRoot: (() -> View?)?, val interaction: (() -> Unit)?)
+    private val windows = LinkedHashMap<Window, Registration>()
     private var point = Offset(0.5f, 0.5f)
     private data class Cursor(val window: Window?, val point: Offset)
     private val cursor = MutableStateFlow(Cursor(null, point))
-    private data class Hover(val window: Window, val x: Float, val y: Float)
+
+    /** Native callbacks take window pixels; embedded roots take their own render pixels. */
+    private data class Endpoint(val window: Window, val root: View, val embedded: Boolean) {
+        fun dispatchKeyEvent(event: KeyEvent): Boolean = if (embedded) root.dispatchKeyEvent(event)
+            else window.callback?.dispatchKeyEvent(event) ?: false
+        fun dispatchTouchEvent(event: MotionEvent): Boolean = if (embedded) root.dispatchTouchEvent(event)
+            else window.callback?.dispatchTouchEvent(event) ?: false
+        fun dispatchGenericMotionEvent(event: MotionEvent): Boolean = if (embedded) root.dispatchGenericMotionEvent(event)
+            else window.callback?.dispatchGenericMotionEvent(event) ?: false
+    }
+
+    private data class Hover(val endpoint: Endpoint, val x: Float, val y: Float)
     private var hover: Hover? = null
-    fun register(window: Window, interaction: (() -> Unit)? = null) {
+
+    /**
+     * SurfaceControlViewHost owns focus independently of the native Window. Resolve its root
+     * for each command: the same composition can return to native rendering after a failure.
+     * Embedded dispatch goes through its input callbacks once, without a second pixel mapping.
+     */
+    fun register(window: Window, inputRoot: (() -> View?)? = null, interaction: (() -> Unit)? = null) {
         if (!windows.containsKey(window)) hide()
-        windows[window] = interaction
+        windows[window] = Registration(inputRoot, interaction)
     }
     fun unregister(window: Window) {
-        if (cursor.value.window === window || hover?.window === window) hide()
+        if (cursor.value.window === window || hover?.endpoint?.window === window) hide()
         windows.remove(window)
     }
     private fun endHover() {
         val previous = hover ?: return
         hover = null
         val event = mouseEvent(MotionEvent.ACTION_HOVER_EXIT, previous.x, previous.y)
-        try { previous.window.callback?.dispatchGenericMotionEvent(event) } finally { event.recycle() }
+        try { previous.endpoint.dispatchGenericMotionEvent(event) } finally { event.recycle() }
     }
     fun hide() {
         endHover()
         cursor.value = Cursor(null, point)
         com.ambient.tv.ui.common.suppressTvPointerFocus()
     }
-    private fun active(): Window? = windows.keys.lastOrNull { it.decorView.isShown && it.decorView.hasWindowFocus() }
+    private fun active(): Endpoint? {
+        for ((window, registration) in windows.entries.toList().asReversed()) {
+            val embedded = registration.inputRoot?.invoke()
+            if (embedded != null && embedded.isShown && embedded.hasWindowFocus()) {
+                return Endpoint(window, embedded, embedded = true)
+            }
+            val decor = window.decorView
+            if (decor.isShown && decor.hasWindowFocus()) return Endpoint(window, decor, embedded = false)
+        }
+        return null
+    }
 
     private fun mouseEvent(action: Int, x: Float, y: Float, scrollX: Float = 0f, scrollY: Float = 0f,
         time: Long = SystemClock.uptimeMillis()): MotionEvent {
@@ -95,12 +123,12 @@ object CompanionRemoteInput {
     fun dispatch(input: CompanionInput): Boolean {
         input.validate()
         if (input.action == "key" || input.action == "text") hide()
-        val window = active() ?: return false
-        if (hover?.window?.let { it !== window } == true) hide()
-        windows.values.lastOrNull { it != null }?.invoke()
-        val decor = window.decorView
+        val endpoint = active() ?: run { hide(); return false }
+        if (hover?.endpoint?.let { it != endpoint } == true) hide()
+        windows.values.lastOrNull { it.interaction != null }?.interaction?.invoke()
+        val root = endpoint.root
         if (input.action == "text" || input.action == "key" && input.key in setOf("enter", "delete")) {
-            val focused = decor.findFocus() ?: return false
+            val focused = root.findFocus() ?: return false
             val info = EditorInfo()
             val connection = focused.onCreateInputConnection(info) ?: return false
             // Never obtain existing text (including passwords) from the receiver.
@@ -118,28 +146,28 @@ object CompanionRemoteInput {
                 else -> return false
             }
             val time = SystemClock.uptimeMillis()
-            window.callback.dispatchKeyEvent(KeyEvent(time, time, KeyEvent.ACTION_DOWN, code, 0))
-            window.callback.dispatchKeyEvent(KeyEvent(time, time, KeyEvent.ACTION_UP, code, 0))
+            endpoint.dispatchKeyEvent(KeyEvent(time, time, KeyEvent.ACTION_DOWN, code, 0))
+            endpoint.dispatchKeyEvent(KeyEvent(time, time, KeyEvent.ACTION_UP, code, 0))
             return true
         }
         if (input.action == "move") point = Offset((point.x + input.x).coerceIn(0.01f, 0.99f), (point.y + input.y).coerceIn(0.01f, 0.99f))
-        cursor.value = Cursor(window, point)
-        val x = point.x * decor.width; val y = point.y * decor.height
+        cursor.value = Cursor(endpoint.window, point)
+        val x = point.x * root.width; val y = point.y * root.height
         val time = SystemClock.uptimeMillis()
         fun event(action: Int) = mouseEvent(action, x, y, input.x, input.y, time)
         if (input.action == "click") {
             endHover()
-            event(MotionEvent.ACTION_DOWN).also { window.callback.dispatchTouchEvent(it); it.recycle() }
-            event(MotionEvent.ACTION_UP).also { window.callback.dispatchTouchEvent(it); it.recycle() }
+            event(MotionEvent.ACTION_DOWN).also { try { endpoint.dispatchTouchEvent(it) } finally { it.recycle() } }
+            event(MotionEvent.ACTION_UP).also { try { endpoint.dispatchTouchEvent(it) } finally { it.recycle() } }
         } else {
             if (hover == null) {
                 val enter = event(MotionEvent.ACTION_HOVER_ENTER)
-                hover = Hover(window, x, y)
-                try { window.callback.dispatchGenericMotionEvent(enter) } finally { enter.recycle() }
+                hover = Hover(endpoint, x, y)
+                try { endpoint.dispatchGenericMotionEvent(enter) } finally { enter.recycle() }
             }
             val motion = event(if (input.action == "scroll") MotionEvent.ACTION_SCROLL else MotionEvent.ACTION_HOVER_MOVE)
-            hover = Hover(window, x, y)
-            try { window.callback.dispatchGenericMotionEvent(motion) } finally { motion.recycle() }
+            hover = Hover(endpoint, x, y)
+            try { endpoint.dispatchGenericMotionEvent(motion) } finally { motion.recycle() }
         }
         return true
     }
@@ -159,10 +187,15 @@ object CompanionRemoteInput {
 @Composable
 fun CompanionDialogInputSurface() {
     val view = LocalView.current
-    val window = remember(view) { generateSequence(view as View?) { it.parent as? View }.mapNotNull { (it.parent as? DialogWindowProvider)?.window }.firstOrNull() }
-    DisposableEffect(window) {
-        window?.let(CompanionRemoteInput::register)
+    val window = remember(view) { view.findUiRenderWindow() }
+    DisposableEffect(window, view) {
+        window?.let { CompanionRemoteInput.register(it, inputRoot = { view.findCompanionEmbeddedInputRoot() }) }
         onDispose { window?.let(CompanionRemoteInput::unregister) }
     }
     CompanionRemoteInput.Overlay(window)
 }
+
+/** Re-evaluate ancestry after a hosted dialog's content is returned to its native window. */
+internal fun View.findCompanionEmbeddedInputRoot(): View? =
+    generateSequence(this) { it.parent as? View }.filterIsInstance<UiRenderInputRoot>()
+        .firstOrNull()?.takeIf { it.isAttachedToWindow && it.isShown }

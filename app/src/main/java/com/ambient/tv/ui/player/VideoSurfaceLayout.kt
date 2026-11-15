@@ -4,12 +4,10 @@ package com.ambient.tv.ui.player
 
 import android.content.Context
 import android.graphics.Rect
-import android.graphics.Point
 import android.hardware.display.DisplayManager
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
-import android.view.Surface
 import android.view.SurfaceView
 import android.view.View
 import androidx.compose.runtime.Composable
@@ -17,6 +15,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import com.ambient.tv.ui.display.UI_HDR_HEADROOM_CAP
+import com.ambient.tv.ui.display.observeUiRenderViewport
 import android.widget.FrameLayout
 
 /**
@@ -49,20 +48,17 @@ internal fun SurfaceView.applyUiHdrHeadroom(headroom: Float) {
 
 internal open class VideoSurfaceLayout(context: Context) : FrameLayout(context) {
     /** Only GPU renderers own buffer sizing. Never constrain MediaCodec's native video plane. */
-    var renderAtDisplayResolution: Boolean = false
+    var renderResolutionTarget: VideoRenderTargetMode = VideoRenderTargetMode.UI
         set(value) {
             if (field == value) return
             field = value
-            if (!value) {
-                // Back to the layout size: the GPU output renders at the logical window size again.
-                fixedBufferSize = null
-                videoSurface.holder.setSizeFromLayout()
-            } else updateRenderTarget()
+            updateRenderTarget()
             requestLayout()
         }
-    /** Buffer size currently forced at the physical mode, null while it follows the layout. */
+    /** Buffer size forced for GPU output, null while the native surface follows its layout. */
     val forcedRenderSize: Pair<Int, Int>? get() = fixedBufferSize
     private var fixedBufferSize: Pair<Int, Int>? = null
+    private var viewportObservation: AutoCloseable? = null
     private val displayManager = context.getSystemService(Context.DISPLAY_SERVICE) as DisplayManager
     private val displayListener = object : DisplayManager.DisplayListener {
         override fun onDisplayAdded(displayId: Int) = Unit
@@ -80,6 +76,7 @@ internal open class VideoSurfaceLayout(context: Context) : FrameLayout(context) 
     override fun onAttachedToWindow() {
         super.onAttachedToWindow()
         displayManager.registerDisplayListener(displayListener, Handler(Looper.getMainLooper()))
+        viewportObservation = videoSurface.observeUiRenderViewport { updateRenderTarget() }
         updateRenderTarget()
         AmbientVideoBackdrop.attach(videoSurface)
         // A replacement AndroidView can be laid out without another Compose draw. SurfaceView
@@ -89,28 +86,37 @@ internal open class VideoSurfaceLayout(context: Context) : FrameLayout(context) 
 
     override fun onDetachedFromWindow() {
         displayManager.unregisterDisplayListener(displayListener)
+        viewportObservation?.close()
+        viewportObservation = null
         AmbientVideoBackdrop.detach(videoSurface)
         super.onDetachedFromWindow()
     }
 
     protected open fun onDisplayRefreshRateChanged(refreshRate: Float) = Unit
 
-    @Suppress("DEPRECATION")
     private fun updateRenderTarget() {
         val output = display ?: return
         onDisplayRefreshRateChanged(output.refreshRate)
-        if (!renderAtDisplayResolution) return
-        val logical = Point().also(output::getRealSize)
-        val mode = output.mode
-        val rotated = output.rotation == Surface.ROTATION_90 || output.rotation == Surface.ROTATION_270
-        val target = physicalVideoRenderSize(
-            videoSurface.width, videoSurface.height, logical.x, logical.y,
-            if (rotated) mode.physicalHeight else mode.physicalWidth,
-            if (rotated) mode.physicalWidth else mode.physicalHeight,
-        ) ?: return
+        // Direct codecs and the explicit UI choice must release a prior GPU buffer even
+        // while a hosted UI is waiting for its new viewport layout.
+        if (renderResolutionTarget == VideoRenderTargetMode.UI) {
+            restoreLayoutSize()
+            return
+        }
+        val target = videoSurface.videoRenderTargetSize(renderResolutionTarget) ?: return
+        if (!renderResolutionTarget.fixesBuffer(videoSurface.hasScaledUiRenderViewport())) {
+            restoreLayoutSize()
+            return
+        }
         if (target == fixedBufferSize) return
         fixedBufferSize = target
         videoSurface.holder.setFixedSize(target.first, target.second)
+    }
+
+    private fun restoreLayoutSize() {
+        if (fixedBufferSize == null) return
+        fixedBufferSize = null
+        videoSurface.holder.setSizeFromLayout()
     }
     private val surfaceClip = Rect()
     val videoSurface = SurfaceView(context).apply {

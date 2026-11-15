@@ -483,7 +483,10 @@ class SettingsViewModel @Inject constructor(
         fullSubtitlesOnForeignAudio = appPreferences.fullSubtitlesOnForeignAudio,
         forcedSubtitlesInUiLanguage = appPreferences.forcedSubtitlesInUiLanguage,
         forcedSubtitlesEnabled = appPreferences.forcedSubtitlesEnabled,
-        uiScale = appPreferences.uiScale,
+        uiDisplay = UiDisplayDraft(
+            scale = appPreferences.uiScale,
+            renderResolutionKey = appPreferences.uiRenderResolutionKey,
+        ),
         accentColorKey = appPreferences.accentColorKey,
         customAccentHex = appPreferences.customAccentHex,
         customPlaybackAccentHex = appPreferences.customPlaybackAccentHex,
@@ -2378,7 +2381,12 @@ class SettingsViewModel @Inject constructor(
 
     fun onUiScaleChanged(value: Float) {
         val normalized = com.ambient.tv.data.local.UiScalePolicy.normalize(value)
-        _uiState.update { it.copy(uiScale = normalized) }
+        _uiState.update { it.copy(uiDisplay = it.uiDisplay.copy(scale = normalized)) }
+    }
+
+    fun onUiRenderResolutionChanged(value: String) {
+        val normalized = com.ambient.tv.data.local.UiRenderResolutionPolicy.normalize(value)
+        _uiState.update { it.copy(uiDisplay = it.uiDisplay.copy(renderResolutionKey = normalized)) }
     }
 
     fun onAccentStyleChanged(value: String) {
@@ -3024,6 +3032,7 @@ class SettingsViewModel @Inject constructor(
             viewModelScope.launch(Dispatchers.IO) { suspendResult { smartTubeEngine.applyMetadataLanguage() } }
         }
         appPreferences.uiScale = state.uiScale
+        appPreferences.uiRenderResolutionKey = state.uiRenderResolutionKey
         appPreferences.accentColorKey = state.accentColorKey
         appPreferences.accentStyleKey = state.accentStyleKey
         appPreferences.customAccentHex = state.customAccentHex

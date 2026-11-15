@@ -31,6 +31,7 @@ class GpuFramedropWashoutPolicyTest {
             assertFalse(gpuRenderAtPanelResolution(key, gpuOutput = false, lowEndDevice = false, userImageProcessing = true))
         assertEquals("Panel 3840×2160", gpuRenderResolutionLabel(true, true, 3840, 2160))
         assertEquals("UI 1920×1080", gpuRenderResolutionLabel(true, false, 1920, 1080))
+        assertEquals("Window 3840×2160", gpuRenderResolutionLabel(true, false, 3840, 2160, windowResolution = true))
         assertEquals("Direct", gpuRenderResolutionLabel(false, false, null, null))
     }
 

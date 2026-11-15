@@ -1,0 +1,12 @@
+<resources>
+    <string name="settings_ui_render_resolution">Auflösung der Oberfläche</string>
+    <string name="settings_ui_render_resolution_system">Systemvorgabe</string>
+    <string name="settings_ui_render_resolution_1080">1080p</string>
+    <string name="settings_ui_render_resolution_panel">Bildschirmauflösung</string>
+    <string name="settings_ui_render_resolution_system_hint">Nutzt die vom System vorgegebene Oberflächenauflösung.</string>
+    <string name="settings_ui_render_resolution_1080_hint">Rendert die Oberfläche mit maximal 1080p.</string>
+    <string name="settings_ui_render_resolution_panel_hint">Rendert die Oberfläche in Bildschirmauflösung.</string>
+    <string name="settings_ui_render_resolution_restart">Gilt ab dem nächsten App-Start.</string>
+    <string name="settings_ui_render_resolution_hdr_hint">UI-HDR benötigt die Systemauflösung.</string>
+    <string name="settings_ui_render_resolution_unavailable">Separate Oberflächenauflösung erfordert Android 12 oder neuer.</string>
+</resources>

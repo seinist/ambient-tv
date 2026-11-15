@@ -397,6 +397,9 @@ internal class MpvPlaybackEngine(
     private var linearDownscalingDefault: String? = null
     private var surfaceWidth = 0
     private var surfaceHeight = 0
+    /** SurfaceHolder dimensions, not a display-mode estimate or the decoded source size. */
+    val renderSurfaceSize: Pair<Int, Int>?
+        get() = if (attached && surfaceWidth > 0 && surfaceHeight > 0) surfaceWidth to surfaceHeight else null
     internal var renderCheckSignature: String? = null
         private set
     private var renderCheckJob: Job? = null

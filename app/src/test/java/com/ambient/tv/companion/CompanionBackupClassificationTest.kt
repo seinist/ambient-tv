@@ -21,6 +21,20 @@ class CompanionBackupClassificationTest {
         assertTrue("sidebarDividersAfter" in CompanionBackupPolicy.classifiedFields)
     }
 
+    @Test fun uiResolutionTravelsOnlyWithDeviceSettingsFromSchema77() {
+        val target = SettingsBackup(schemaVersion = 77, exportedAtEpochMs = 1, uiRenderResolutionKey = "panel")
+        val source = SettingsBackup(schemaVersion = 77, exportedAtEpochMs = 2, uiRenderResolutionKey = "1080p")
+        fun merged(source: SettingsBackup, device: Boolean) = CompanionBackupPolicy.json.decodeFromString<SettingsBackup>(
+            CompanionBackupPolicy.merge(source, target, "preferences", overwrite = true, deviceSettings = device))
+        assertTrue("uiRenderResolutionKey" in CompanionBackupPolicy.classifiedFields)
+        assertEquals("1080p", merged(source, device = true).uiRenderResolutionKey)
+        assertEquals("panel", merged(source, device = false).uiRenderResolutionKey)
+        assertEquals("panel", merged(source.copy(schemaVersion = 76), device = true).uiRenderResolutionKey)
+        val accountsOnly = CompanionBackupPolicy.json.decodeFromString<SettingsBackup>(
+            CompanionBackupPolicy.merge(source, target, "accounts", overwrite = true, deviceSettings = true))
+        assertEquals("panel", accountsOnly.uiRenderResolutionKey)
+    }
+
     @Test fun displaySwitchPauseTravelsOnlyWithDeviceSettingsFromNewBackups() {
         val json = CompanionBackupPolicy.json
         val target = SettingsBackup(exportedAtEpochMs = 1, displaySwitchPauseMs = 1_500)

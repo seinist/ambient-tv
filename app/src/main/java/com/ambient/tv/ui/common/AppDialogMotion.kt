@@ -1,9 +1,10 @@
 package com.ambient.tv.ui.common
 
+import com.ambient.tv.ui.display.findUiRenderWindow
+
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.ui.platform.LocalView
-import androidx.compose.ui.window.DialogWindowProvider
 import com.ambient.tv.R
 
 /** Motion shared by all centered [AppDialog] cards. Side drawers keep their own slide animation. */
@@ -38,7 +39,7 @@ internal fun appDialogWindowExitStyle(reducedEffects: Boolean): Int =
 internal fun AppDialogWindowExitMotion(reducedEffects: Boolean) {
     val view = LocalView.current
     DisposableEffect(view, reducedEffects) {
-        (view.parent as? DialogWindowProvider)?.window
+        view.findUiRenderWindow()
             ?.setWindowAnimations(appDialogWindowExitStyle(reducedEffects))
         // Do not restore the previous style here: onDispose runs during the actual window
         // dismissal, and restoring it would discard the closing animation before it can play.

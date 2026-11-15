@@ -1,12 +1,11 @@
 package com.ambient.tv.ui.player
 
-import android.graphics.Point
 import android.hardware.display.DisplayManager
 import android.os.Handler
 import android.os.Looper
-import android.view.Surface
 import android.view.SurfaceView
 import android.view.View
+import com.ambient.tv.ui.display.observeUiRenderViewport
 
 /** Tracks physical display changes even when Android TV keeps the same logical UI dimensions. */
 internal class Media3SurfaceResolutionController(
@@ -22,6 +21,7 @@ internal class Media3SurfaceResolutionController(
     private var released = false
     private var fixedBufferSize: Pair<Int, Int>? = null
     private var publishedTarget: Pair<Int, Int>? = null
+    private var viewportObservation: AutoCloseable? = null
 
     init {
         view.addOnAttachStateChangeListener(this)
@@ -39,12 +39,15 @@ internal class Media3SurfaceResolutionController(
         if (released) return
         onAttached()
         observeDisplay()
+        if (viewportObservation == null) viewportObservation = view.observeUiRenderViewport { updateRenderTarget() }
         updateRenderTarget(reapply = true)
     }
 
     override fun onViewDetachedFromWindow(v: View) {
         if (released) return
         stopObservingDisplay()
+        viewportObservation?.close()
+        viewportObservation = null
         publish(null)
         onDetached()
     }
@@ -66,6 +69,8 @@ internal class Media3SurfaceResolutionController(
         view.removeOnAttachStateChangeListener(this)
         view.removeOnLayoutChangeListener(this)
         stopObservingDisplay()
+        viewportObservation?.close()
+        viewportObservation = null
         restoreLayoutSize()
         publish(null)
         onDetached()
@@ -83,28 +88,25 @@ internal class Media3SurfaceResolutionController(
         observingDisplay = false
     }
 
-    @Suppress("DEPRECATION")
     private fun updateRenderTarget(reapply: Boolean = false) {
         if (released || !view.isAttachedToWindow) return
         val current = policy ?: return
+        // Drop a previous GPU constraint immediately when output returns to the direct/UI path,
+        // including during an embedded UI relayout before the next target is measurable.
         if (!current.fixSurfaceSize) restoreLayoutSize()
-        val target = if (current.targetAtDisplayResolution) {
-            val output = view.display ?: return
-            val logical = Point().also(output::getRealSize)
-            val mode = output.mode
-            val rotated = output.rotation == Surface.ROTATION_90 || output.rotation == Surface.ROTATION_270
-            physicalVideoRenderSize(view.width, view.height, logical.x, logical.y,
-                if (rotated) mode.physicalHeight else mode.physicalWidth,
-                if (rotated) mode.physicalWidth else mode.physicalHeight)
-        } else {
-            (view.width to view.height).takeIf { it.first > 0 && it.second > 0 }
-        }
+        val target = view.videoRenderTargetSize(current.targetMode) ?: return
+        val fixBuffer = current.fixesBuffer(view.hasScaledUiRenderViewport())
+        if (!fixBuffer) restoreLayoutSize()
         // Advertise the intended viewport before the GPU path is enabled, without changing the
         // direct decoder surface. Actual effect sizes still come from onSurfaceSizeChanged.
         publish(target)
-        if (current.fixSurfaceSize && target != null && (reapply || target != fixedBufferSize)) {
-            fixedBufferSize = target
-            view.holder.setFixedSize(target.first, target.second)
+        if (fixBuffer) {
+            val bufferTarget = if (current.bufferTargetMode == current.targetMode) target
+                else view.videoRenderTargetSize(current.bufferTargetMode) ?: return
+            if (reapply || bufferTarget != fixedBufferSize) {
+                fixedBufferSize = bufferTarget
+                view.holder.setFixedSize(bufferTarget.first, bufferTarget.second)
+            }
         }
     }
 

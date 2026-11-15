@@ -2,6 +2,8 @@
 
 package com.ambient.tv.ui.player.teletext
 
+import com.ambient.tv.ui.display.findUiRenderWindow
+
 import android.content.Context
 import android.graphics.Paint
 import android.graphics.Typeface
@@ -75,9 +77,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.window.Dialog
+import com.ambient.tv.ui.display.UiResolutionDialog as Dialog
 import androidx.compose.ui.window.DialogProperties
-import androidx.compose.ui.window.DialogWindowProvider
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
 import com.ambient.tv.R
@@ -344,7 +345,7 @@ private fun TeletextViewer(onClose: () -> Unit) {
     Dialog(onDismissRequest = onClose, properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false)) {
         val view = LocalView.current
         DisposableEffect(view) {
-            (view.parent as? DialogWindowProvider)?.window?.setDimAmount(0f)
+            view.findUiRenderWindow()?.setDimAmount(0f)
             onDispose { }
         }
         val status by LiveTeletext.status.collectAsState()

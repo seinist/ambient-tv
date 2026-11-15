@@ -1,8 +1,5 @@
 package com.ambient.tv.ui.player
 
-import android.content.Context
-import android.hardware.display.DisplayManager
-import android.view.Display
 import com.ambient.tv.data.local.AppPreferences
 
 /**
@@ -12,11 +9,12 @@ import com.ambient.tv.data.local.AppPreferences
  * (GPU) composition in SurfaceFlinger; those dropped frames on TVs even without filters.
  *
  * - [AppPreferences.GPU_RENDER_PANEL]: always physical.
- * - [AppPreferences.GPU_RENDER_UI]: always logical; the display/HWC scales.
+ * - [AppPreferences.GPU_RENDER_UI]: follows the UI render buffer; the display/HWC scales.
  * - Auto: physical on capable devices with selected GPU image work; MPV also permits a
  *   deliberately selected upscaler to request physical output on low-end devices, because a
  *   1080p logical buffer would otherwise disable 1080p→4K GPU upscaling entirely. Untouched
- *   defaults, HDR→SDR tone mapping and direct MediaCodec output retain UI resolution.
+ *   defaults and HDR→SDR tone mapping retain the original logical window resolution, even
+ *   if the UI renders at a different size. Direct MediaCodec output keeps its native plane.
  *
  * [gpuOutput] false (direct MediaCodec/Android surface) never fixes the buffer size.
  */
@@ -31,6 +29,17 @@ internal fun gpuRenderAtPanelResolution(
     else -> !lowEndDevice && userImageProcessing
 }
 
+/** A UI-only resolution preference must not silently lower Auto's original video target. */
+internal fun gpuRenderTargetMode(
+    resolutionKey: String,
+    gpuOutput: Boolean,
+    atDisplayResolution: Boolean,
+): VideoRenderTargetMode = when {
+    !gpuOutput || resolutionKey == AppPreferences.GPU_RENDER_UI -> VideoRenderTargetMode.UI
+    atDisplayResolution -> VideoRenderTargetMode.DISPLAY
+    else -> VideoRenderTargetMode.WINDOW
+}
+
 /**
  * A deliberately selected MPV scaler needs a real GPU output target. On low-end devices
  * Render Resolution=Auto previously always kept the 1080p UI buffer even if a user explicitly
@@ -43,24 +52,15 @@ internal fun mpvExplicitUpscalerRequestsPanel(options: com.ambient.tv.data.local
     return scaler != com.ambient.tv.data.local.MpvImageOptions().scaler && scaler != "bilinear"
 }
 
-/** Stats label: "Panel 3840×2160" / "UI 1920×1080" / "Direkt". */
-internal fun gpuRenderResolutionLabel(gpuOutput: Boolean, panel: Boolean, width: Int?, height: Int?): String {
+/** Stats describe the selected coordinate space and the confirmed native surface dimensions. */
+internal fun gpuRenderResolutionLabel(
+    gpuOutput: Boolean, panel: Boolean, width: Int?, height: Int?, windowResolution: Boolean = false,
+): String {
     val size = if (width != null && height != null && width > 0 && height > 0) " ${width}×$height" else ""
     return when {
         !gpuOutput -> "Direct$size"
         panel -> "Panel$size"
+        windowResolution -> "Window$size"
         else -> "UI$size"
     }
-}
-
-/** Physical HDMI mode for Panel, logical window metrics for UI (stats only). */
-internal fun gpuRenderSize(context: Context, panel: Boolean): Pair<Int?, Int?> {
-    if (panel) {
-        val mode = runCatching {
-            context.getSystemService(DisplayManager::class.java)?.getDisplay(Display.DEFAULT_DISPLAY)?.mode
-        }.getOrNull()
-        if (mode != null) return maxOf(mode.physicalWidth, mode.physicalHeight) to minOf(mode.physicalWidth, mode.physicalHeight)
-    }
-    val metrics = context.resources.displayMetrics
-    return maxOf(metrics.widthPixels, metrics.heightPixels) to minOf(metrics.widthPixels, metrics.heightPixels)
 }

@@ -28,7 +28,7 @@ class UiHdrSettingsTest {
         val baseline = SettingsUiState()
         val draft = baseline.copy(sdrToHdrPeakNits = 400)
         assertNotEquals(baseline.editableValues(), draft.editableValues())
-        assertEquals(400, mergeStoredSettings(draft, baseline, baseline.copy(uiScale = .9f)).sdrToHdrPeakNits)
+        assertEquals(400, mergeStoredSettings(draft, baseline, baseline.copy(uiDisplay = baseline.uiDisplay.copy(scale = .9f))).sdrToHdrPeakNits)
         assertEquals(400, mergeStoredSettings(baseline, baseline, draft).sdrToHdrPeakNits)
     }
 
@@ -57,7 +57,7 @@ class UiHdrSettingsTest {
         val baseline = SettingsUiState()
         val draft = baseline.copy(uiHdrModeKey = "sdr")
         assertNotEquals(baseline.editableValues(), draft.editableValues())
-        val merged = mergeStoredSettings(draft, baseline, baseline.copy(uiScale = .9f))
+        val merged = mergeStoredSettings(draft, baseline, baseline.copy(uiDisplay = baseline.uiDisplay.copy(scale = .9f)))
         assertEquals("sdr", merged.uiHdrModeKey)
         assertEquals(.9f, merged.uiScale, 0f)
         val imported = mergeStoredSettings(baseline, baseline, draft)
@@ -106,7 +106,7 @@ class UiHdrSettingsTest {
             val draft = baseline.copy(sdrToHdrEnabled = !enabled)
             assertNotEquals(baseline.editableValues(), draft.editableValues())
 
-            val merged = mergeStoredSettings(draft, baseline, baseline.copy(uiScale = .9f, uiHdrModeKey = "sdr"))
+            val merged = mergeStoredSettings(draft, baseline, baseline.copy(uiDisplay = baseline.uiDisplay.copy(scale = .9f), uiHdrModeKey = "sdr"))
             assertEquals(!enabled, merged.sdrToHdrEnabled)
             assertEquals(.9f, merged.uiScale, 0f)
             assertEquals("sdr", merged.uiHdrModeKey)
@@ -116,7 +116,7 @@ class UiHdrSettingsTest {
     @Test fun untouchedSdrToHdrDraftAcceptsStoredChangesInEitherDirection() {
         for (enabled in listOf(false, true)) {
             val baseline = SettingsUiState(sdrToHdrEnabled = enabled)
-            val draft = baseline.copy(uiScale = .9f)
+            val draft = baseline.copy(uiDisplay = baseline.uiDisplay.copy(scale = .9f))
             val merged = mergeStoredSettings(draft, baseline, baseline.copy(sdrToHdrEnabled = !enabled))
             assertEquals(!enabled, merged.sdrToHdrEnabled)
             assertEquals(.9f, merged.uiScale, 0f)

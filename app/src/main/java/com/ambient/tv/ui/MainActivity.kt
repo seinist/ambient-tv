@@ -23,7 +23,6 @@ import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
 import androidx.activity.ComponentActivity
-import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
@@ -163,6 +162,11 @@ private val browseUiSessionPolicy = BrowseUiSessionPolicy()
 @AndroidEntryPoint
 open class MainActivity : ComponentActivity() {
 
+    private var uiResolutionHost: com.ambient.tv.ui.display.UiRenderResolutionHost? = null
+    private val uiRenderBackKeyGate = com.ambient.tv.ui.display.UiRenderBackKeyGate()
+    private var uiRenderViewport by mutableStateOf<com.ambient.tv.ui.display.UiRenderViewport?>(null)
+    private var uiRenderMode by mutableStateOf(com.ambient.tv.data.local.UiRenderResolutionPolicy.SYSTEM)
+
     override fun attachBaseContext(newBase: Context) {
         super.attachBaseContext(UiLocaleContext.wrap(newBase))
     }
@@ -298,7 +302,9 @@ open class MainActivity : ComponentActivity() {
         appUpdater.onAppStart()
         BackgroundPlaybackSession.retryBlockedPlaybackService(this)
         com.ambient.tv.data.browse.BrowseWorkBudget.foreground = true
-        if (com.ambient.tv.ui.mobile.isTelevision(this)) com.ambient.tv.companion.CompanionRemoteInput.register(window) {
+        if (com.ambient.tv.ui.mobile.isTelevision(this)) com.ambient.tv.companion.CompanionRemoteInput.register(
+            window, inputRoot = { uiResolutionHost?.inputRoot },
+        ) {
             registerUserInteraction(); setScreensaverActive(false)
         }
         if (this is com.ambient.tv.ui.mobile.HandheldActivity || com.ambient.tv.ui.mobile.isTelevision(this)) companionManager.foreground(true, com.ambient.tv.ui.mobile.isTelevision(this))
@@ -337,6 +343,8 @@ open class MainActivity : ComponentActivity() {
     override fun onDestroy() {
         stopDismissedPipIfFinishing()
         if (ownsBrowseUiSession) browseUiSessionPolicy.destroy(browseUiOwner, isChangingConfigurations)
+        uiResolutionHost?.close()
+        uiResolutionHost = null
         super.onDestroy()
     }
 
@@ -435,13 +443,20 @@ open class MainActivity : ComponentActivity() {
     }
 
     override fun onWindowFocusChanged(hasFocus: Boolean) {
-        if (!hasFocus) com.ambient.tv.companion.CompanionRemoteInput.hide()
+        if (!hasFocus) {
+            uiRenderBackKeyGate.reset()
+            com.ambient.tv.companion.CompanionRemoteInput.hide()
+        }
         super.onWindowFocusChanged(hasFocus)
     }
 
     // Public Activity/Window.Callback override; core's intermediate implementation is restricted.
     @android.annotation.SuppressLint("RestrictedApi")
-    override fun dispatchKeyEvent(event: KeyEvent): Boolean {
+    override fun dispatchKeyEvent(event: KeyEvent): Boolean = dispatchUiKeyEvent(event) {
+        uiResolutionHost?.dispatchKeyEventToContent(event) ?: super.dispatchKeyEvent(event)
+    }
+
+    private fun dispatchUiKeyEvent(event: KeyEvent, dispatchToContent: () -> Boolean): Boolean {
         // The start intro covers the UI: a key only skips it, volume keeps working.
         if (com.ambient.tv.ui.intro.IntroPresentation.active && event.keyCode !in setOf(
                 KeyEvent.KEYCODE_VOLUME_UP, KeyEvent.KEYCODE_VOLUME_DOWN, KeyEvent.KEYCODE_VOLUME_MUTE)) {
@@ -489,7 +504,14 @@ open class MainActivity : ComponentActivity() {
             KeyEvent.ACTION_DOWN -> uiSoundPlayer.navigationInput(event.keyCode, event.eventTime)
             KeyEvent.ACTION_UP -> uiSoundPlayer.navigationInputReleased(event.keyCode)
         }
-        if (super.dispatchKeyEvent(event)) return true
+        val consumedByContent = dispatchToContent()
+        // An embedded ViewRoot has no Activity key fallback. Keep Compose's BackHandler and
+        // the activity's existing back stack in charge after focused controls get first refusal.
+        if (uiResolutionHost != null && event.keyCode == KeyEvent.KEYCODE_BACK) {
+            if (uiRenderBackKeyGate.onKeyEvent(event, consumedByContent)) onBackPressedDispatcher.onBackPressed()
+            return true
+        }
+        if (consumedByContent) return true
         if (!com.ambient.tv.ui.mobile.isTelevision(this)) return false
 
         val action = kodiKeyboardAction(
@@ -547,7 +569,13 @@ open class MainActivity : ComponentActivity() {
         }
     }
 
-    override fun dispatchGenericMotionEvent(event: MotionEvent): Boolean {
+    override fun dispatchGenericMotionEvent(event: MotionEvent): Boolean = withUiInputCoordinates(event) { input ->
+        dispatchUiGenericMotionEvent(input) {
+            uiResolutionHost?.dispatchGenericMotionEventToContent(input) ?: super.dispatchGenericMotionEvent(input)
+        }
+    }
+
+    private fun dispatchUiGenericMotionEvent(event: MotionEvent, dispatchToContent: () -> Boolean): Boolean {
         com.ambient.tv.data.browse.BrowseWorkBudget.interact()
         // Hover/remote pointer noise is not a new press and must not cancel a preview.
         if (event.actionMasked == MotionEvent.ACTION_BUTTON_PRESS || event.actionMasked == MotionEvent.ACTION_BUTTON_RELEASE) {
@@ -570,7 +598,7 @@ open class MainActivity : ComponentActivity() {
         }
         // Text editors and other Compose controls get the first chance to show a native context
         // menu. Unhandled secondary/back clicks then behave like Android/Kodi Back.
-        if (super.dispatchGenericMotionEvent(event)) return true
+        if (dispatchToContent()) return true
         if (!com.ambient.tv.ui.mobile.isTelevision(this) || event.actionMasked != MotionEvent.ACTION_BUTTON_PRESS) {
             return false
         }
@@ -609,7 +637,8 @@ open class MainActivity : ComponentActivity() {
                         middleMouseDownY,
                         event.x,
                         event.y,
-                        android.view.ViewConfiguration.get(this).scaledTouchSlop,
+                        kotlin.math.round(android.view.ViewConfiguration.get(this).scaledTouchSlop *
+                            (uiRenderViewport?.let { it.renderWidth.toFloat() / it.windowWidth } ?: 1f)).toInt(),
                     )) {
                     dispatchSyntheticMouseDrag(MotionEvent.ACTION_DOWN, middleMouseDownX, middleMouseDownY, middleMouseDownTimeMs)
                     middleMouseDragging = true
@@ -649,7 +678,7 @@ open class MainActivity : ComponentActivity() {
         )
         synthetic.source = android.view.InputDevice.SOURCE_TOUCHSCREEN
         try {
-            super.dispatchTouchEvent(synthetic)
+            uiResolutionHost?.dispatchTouchEventToContent(synthetic) ?: super.dispatchTouchEvent(synthetic)
         } finally {
             synthetic.recycle()
         }
@@ -662,7 +691,13 @@ open class MainActivity : ComponentActivity() {
         middleMouseDragging = false
     }
 
-    override fun dispatchTouchEvent(event: MotionEvent): Boolean {
+    override fun dispatchTouchEvent(event: MotionEvent): Boolean = withUiInputCoordinates(event) { input ->
+        dispatchUiTouchEvent(input) {
+            uiResolutionHost?.dispatchTouchEventToContent(input) ?: super.dispatchTouchEvent(input)
+        }
+    }
+
+    private fun dispatchUiTouchEvent(event: MotionEvent, dispatchToContent: () -> Boolean): Boolean {
         com.ambient.tv.data.browse.BrowseWorkBudget.interact()
         val phase = when (event.actionMasked) {
             MotionEvent.ACTION_DOWN -> ScreensaverInputPhase.DOWN
@@ -675,7 +710,21 @@ open class MainActivity : ComponentActivity() {
         if (com.ambient.tv.ui.mobile.isTelevision(this) &&
             event.isFromSource(android.view.InputDevice.SOURCE_MOUSE) &&
             handleMiddleMousePan(event)) return true
-        return super.dispatchTouchEvent(event)
+        return dispatchToContent()
+    }
+
+    /** Activity-injected pointers start in window pixels; native embedded input is already mapped. */
+    private inline fun withUiInputCoordinates(event: MotionEvent, dispatch: (MotionEvent) -> Boolean): Boolean {
+        val viewport = uiRenderViewport
+        if (uiResolutionHost == null || viewport == null || viewport.windowWidth <= 0 || viewport.windowHeight <= 0) {
+            return dispatch(event)
+        }
+        val mapped = MotionEvent.obtain(event)
+        mapped.transform(android.graphics.Matrix().apply {
+            setScale(viewport.renderWidth.toFloat() / viewport.windowWidth,
+                viewport.renderHeight.toFloat() / viewport.windowHeight)
+        })
+        return try { dispatch(mapped) } finally { mapped.recycle() }
     }
 
     /**
@@ -762,7 +811,7 @@ open class MainActivity : ComponentActivity() {
         val spotify = spotifyRepository.get()
         connectionNotifications.start()
         recordingNotifications.start()
-        setContent {
+        setUiContent {
             com.ambient.tv.notifications.DisplayChangeNotifications(this@MainActivity, appPreferences)
             var uiScale by remember { mutableStateOf(appPreferences.uiScale) }
             var introStyle by remember { mutableStateOf(startIntro) }
@@ -800,7 +849,8 @@ open class MainActivity : ComponentActivity() {
                     storedWhite = white
                 }
             }
-            val uiHdrState = com.ambient.tv.ui.display.rememberUiHdrState(this, uiHdrModeKey, sdrToHdrEnabled, sdrToHdrPeakNits, sdrToHdrReferenceWhiteNits)
+            val uiHdrState = com.ambient.tv.ui.display.rememberUiHdrState(this, uiHdrModeKey, sdrToHdrEnabled, sdrToHdrPeakNits, sdrToHdrReferenceWhiteNits,
+                canvasHdrSupported = !com.ambient.tv.ui.display.LocalUiRenderEnvironment.current.embedded)
             var uiPerformanceModeKey by remember { mutableStateOf(appPreferences.effectiveUiPerformanceModeKey()) }
             var playbackPerformanceModeKey by remember { mutableStateOf(appPreferences.effectivePlaybackPerformanceModeKey()) }
             var backgroundVideoDimPercent by remember { mutableStateOf(appPreferences.backgroundVideoDimPercent) }
@@ -932,6 +982,64 @@ open class MainActivity : ComponentActivity() {
         disableDefaultFocusHighlight()
     }
 
+    /** Apply only at UI creation, so saving this preference never rebuilds a playing video. */
+    private fun setUiContent(content: @Composable () -> Unit) {
+        uiRenderMode = com.ambient.tv.data.local.UiRenderResolutionPolicy.effectiveKey(
+            appPreferences.uiRenderResolutionKey,
+            com.ambient.tv.ui.mobile.isTelevision(this),
+            android.os.Build.VERSION.SDK_INT,
+        )
+        val compose = createUiRenderContentView(
+            modeKey = { uiRenderMode },
+            viewport = { uiRenderViewport },
+            content = content,
+        )
+        if (uiRenderMode == com.ambient.tv.data.local.UiRenderResolutionPolicy.SYSTEM) {
+            setContentView(compose)
+            return
+        }
+        val host = try { com.ambient.tv.ui.display.UiRenderResolutionHost(
+            activity = this,
+            modeKey = uiRenderMode,
+            contentView = compose,
+            callbacks = com.ambient.tv.ui.display.UiRenderHostCallbacks(
+                onViewportChanged = { uiRenderViewport = it },
+                dispatchKeyEvent = ::dispatchUiKeyEvent,
+                dispatchTouchEvent = ::dispatchUiTouchEvent,
+                dispatchGenericMotionEvent = ::dispatchUiGenericMotionEvent,
+                onWindowFocusChanged = { focused ->
+                    if (!focused) {
+                        uiRenderBackKeyGate.reset()
+                        com.ambient.tv.companion.CompanionRemoteInput.hide()
+                    }
+                },
+                onFailure = { error ->
+                    timber.log.Timber.w(error, "UI resolution host unavailable; returning to system rendering")
+                    window.decorView.post {
+                        if (isFinishing || isDestroyed) return@post
+                        val failed = uiResolutionHost ?: return@post
+                        val savedContent = failed.takeContentView()
+                        uiResolutionHost = null
+                        uiRenderMode = com.ambient.tv.data.local.UiRenderResolutionPolicy.SYSTEM
+                        uiRenderViewport = null
+                        setContentView(savedContent)
+                        savedContent.requestFocus()
+                    }
+                },
+            ),
+        )
+        } catch (error: Exception) {
+            timber.log.Timber.w(error, "Cannot create UI resolution host; using system rendering")
+            (compose.parent as? ViewGroup)?.removeView(compose)
+            uiRenderMode = com.ambient.tv.data.local.UiRenderResolutionPolicy.SYSTEM
+            uiRenderViewport = null
+            setContentView(compose)
+            return
+        }
+        uiResolutionHost = host
+        setContentView(host)
+    }
+
     /** Compose keeps a single View; Android TV's default highlight would frame the whole screen. */
     private fun disableDefaultFocusHighlight() {
         fun View.clearHighlight() {
@@ -941,6 +1049,23 @@ open class MainActivity : ComponentActivity() {
             }
         }
         window?.decorView?.clearHighlight()
+    }
+}
+
+/**
+ * Both render paths enter the same composition and saveable namespace. A configuration recreation
+ * can apply a saved resolution preference while restoring navigation from the previous mode.
+ */
+internal fun ComponentActivity.createUiRenderContentView(
+    modeKey: () -> String,
+    viewport: () -> com.ambient.tv.ui.display.UiRenderViewport?,
+    content: @Composable () -> Unit,
+): androidx.compose.ui.platform.ComposeView = androidx.compose.ui.platform.ComposeView(this).apply {
+    // Keep Activity.setContent's original namespace, SaveableStateRegistry:-1, in every mode.
+    id = View.NO_ID
+    setViewCompositionStrategy(androidx.compose.ui.platform.ViewCompositionStrategy.DisposeOnViewTreeLifecycleDestroyed)
+    setContent {
+        com.ambient.tv.ui.display.ProvideUiRenderEnvironment(modeKey(), viewport(), content = content)
     }
 }
 

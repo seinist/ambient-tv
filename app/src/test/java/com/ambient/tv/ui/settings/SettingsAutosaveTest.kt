@@ -21,7 +21,8 @@ class SettingsAutosaveTest {
     }
 
     @Test fun `ordinary settings are saved immediately`() {
-        val changed = saved.copy(nextUpEnabled = !saved.nextUpEnabled, uiScale = saved.uiScale + 0.1f, host = "typing")
+        val changed = saved.copy(nextUpEnabled = !saved.nextUpEnabled,
+            uiDisplay = saved.uiDisplay.copy(scale = saved.uiScale + 0.1f), host = "typing")
         val target = changed.deferredSettingsFrom(saved)
         assertEquals(changed.nextUpEnabled, target.nextUpEnabled)
         assertEquals(changed.uiScale, target.uiScale)

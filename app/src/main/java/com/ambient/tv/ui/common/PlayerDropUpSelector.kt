@@ -73,7 +73,7 @@ import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.window.Popup
+import com.ambient.tv.ui.display.UiResolutionPopup as Popup
 import androidx.compose.ui.window.PopupPositionProvider
 import androidx.compose.ui.window.PopupProperties
 import androidx.tv.material3.Icon
@@ -399,6 +399,7 @@ private fun SelectorListPopup(
     closeOnSelection: Boolean, close: () -> Unit, onSelected: (String) -> Unit,
 ) {
     val density = LocalDensity.current
+    val embeddedUi = com.ambient.tv.ui.display.LocalUiRenderEnvironment.current.embedded
     val gap = with(density) { SelectMenuGap.roundToPx() }
     val margin = with(density) { SelectMenuScreenMargin.roundToPx() }
     // Headings participate in layout but never in option navigation.
@@ -423,7 +424,9 @@ private fun SelectorListPopup(
         com.ambient.tv.ui.sound.SilenceSystemMenuSounds()
         com.ambient.tv.ui.display.SuspendUiHdrForPopup()
         ReportPlayerPanelPopupWindow()
-        CompositionLocalProvider(LocalDensity provides density) {
+        // The independent UI dialog preserves the theme scale and can recover to native pixels.
+        val popupDensity = if (embeddedUi) LocalDensity.current else density
+        CompositionLocalProvider(LocalDensity provides popupDensity) {
             LaunchedEffect(optionKeys) {
                 scroll.scrollToItem(rowIndices.getOrElse(initialIndex) { 0 }.coerceAtLeast(0))
                 repeat(12) {

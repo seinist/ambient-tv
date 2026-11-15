@@ -152,6 +152,9 @@ class VlcPlaybackController(
         com.ambient.tv.ui.player.performanceProfile(context).lowEndDevice,
         effectiveImage().copy(svpMode = "off", svp = VlcImageOptions().svp) != VlcImageOptions().normalized().copy(svp = VlcImageOptions().svp),
     )
+    /** Confirmed SurfaceHolder size, independent of the UI and decoded source dimensions. */
+    var renderSurfaceSize by mutableStateOf<Pair<Int, Int>?>(null)
+        private set
     val videoOutputDescription: String get() = when {
         vulkanOutput -> "libplacebo / Vulkan"
         toneMappingRequired -> "OpenGL ES / HDR → SDR"
@@ -484,11 +487,14 @@ class VlcPlaybackController(
         }
         override fun surfaceChanged(holder: SurfaceHolder, format: Int, width: Int, height: Int) =
             reportWindowSize(width, height)
-        override fun surfaceDestroyed(holder: SurfaceHolder) = Unit
+        override fun surfaceDestroyed(holder: SurfaceHolder) {
+            if (attachedView?.holder === holder) renderSurfaceSize = null
+        }
     }
 
     private fun reportWindowSize(width: Int, height: Int) {
         if (released || width <= 0 || height <= 0) return
+        renderSurfaceSize = width to height
         runCatching {
             // The host already fits the surface. Fill it instead of preserving source DAR again.
             player.setAspectRatio("$width:$height")
@@ -881,6 +887,7 @@ class VlcPlaybackController(
         player.setVideoTrackEnabled(false)
         player.vlcVout.detachViews()
         attachedView = null
+        renderSurfaceSize = null
     }
 
     override fun detachVideoOutput() {
@@ -2052,7 +2059,10 @@ fun VlcVideoSurface(
     key(controller) { AndroidView(
         factory = { context ->
             VlcSurfaceHost(context).also {
-                it.renderAtDisplayResolution = controller.gpuRenderAtPanel
+                it.renderResolutionTarget = com.ambient.tv.ui.player.gpuRenderTargetMode(
+                    videoImagePreferences(context).gpuRenderResolutionKey,
+                    controller.rendersVideoOnGpu, controller.gpuRenderAtPanel,
+                )
                 it.layoutParams = ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
                 // Keep Android View focus off the video surface so it never competes with the
                 // Compose Box that owns onPreviewKeyEvent for the on-screen buttons.
@@ -2064,7 +2074,10 @@ fun VlcVideoSurface(
         },
         onRelease = { controller.detach(it.videoSurface) },
         update = {
-            it.renderAtDisplayResolution = controller.gpuRenderAtPanel
+            it.renderResolutionTarget = com.ambient.tv.ui.player.gpuRenderTargetMode(
+                videoImagePreferences(it.context).gpuRenderResolutionKey,
+                controller.rendersVideoOnGpu, controller.gpuRenderAtPanel,
+            )
             it.presentation = presentation
             it.sourceAspectRatio = sourceAspectRatio
             it.ambientBackdrop = com.ambient.tv.ui.player.AmbientVideoBackdrop.active
