@@ -107,7 +107,7 @@ fun Media3VideoSurface(
         processing.updatePerformancePolicy(performance.gateExpensiveVideoVisuals)
     }
     // The selectable upscalers use the intended viewport even before processing is enabled.
-    // The GPU surface itself is resized only on an eligible, enabled processing path.
+    // An initialized sink keeps owning its output size even after the last effect is removed.
     val resolutionPolicy = media3SurfaceResolutionPolicy(
         resolutionKey = videoImagePreferences(context).gpuRenderResolutionKey,
         lowEndDevice = performance.lowEndDevice,
@@ -116,6 +116,7 @@ fun Media3VideoSurface(
         processingEnabled = processing.options.enabled,
         reducedEffects = performance.gateExpensiveVideoVisuals,
         effectsFailed = processing.effectsFailed,
+        gpuPipelineInitialized = processing.gpuPipelineInitialized,
     )
     AndroidView(
         factory = { context ->

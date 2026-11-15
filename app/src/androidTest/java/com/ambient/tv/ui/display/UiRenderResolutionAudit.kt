@@ -23,8 +23,11 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.MutableState
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -39,12 +42,18 @@ import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.layout.boundsInRoot
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.ComposeView
+import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.window.DialogProperties
 import androidx.compose.ui.window.PopupProperties
 import androidx.tv.material3.Text
+import com.ambient.tv.companion.CompanionDialogInputSurface
+import com.ambient.tv.companion.CompanionInput
+import com.ambient.tv.companion.CompanionRemoteInput
 import com.ambient.tv.data.local.UiRenderResolutionPolicy
 import com.ambient.tv.ui.catalog.UiCatalogActivity
 import com.ambient.tv.ui.common.TvActionButton
@@ -104,6 +113,8 @@ internal class UiRenderResolutionAudit(
         val mode = mutableStateOf(UiRenderResolutionPolicy.FULL_HD)
         val dialogVisible = mutableStateOf(false)
         val popupVisible = mutableStateOf(false)
+        val editorVisible = mutableStateOf(false)
+        val editorText = mutableStateOf("")
         val activations = mutableIntStateOf(0)
         val focus = FocusRequester()
         var rootFocused = false
@@ -116,6 +127,10 @@ internal class UiRenderResolutionAudit(
         var dialogEnvironment: UiRenderEnvironment? = null
         var popupView: View? = null
         var popupEnvironment: UiRenderEnvironment? = null
+        var editorFocused = false
+        var observedDensity = 0f
+        var observedDensityDpi = 0
+        var observedScreenHeightDp = 0
         lateinit var compose: ComposeView
         lateinit var host: UiRenderResolutionHost
         lateinit var outer: FrameLayout
@@ -189,6 +204,13 @@ internal class UiRenderResolutionAudit(
                         val identity = remember { Any() }
                         SideEffect { rememberedIdentity = identity }
                         ProvideUiRenderEnvironment(mode.value, viewport.value) {
+                            val density = LocalDensity.current
+                            val configuration = LocalConfiguration.current
+                            SideEffect {
+                                observedDensity = density.density
+                                observedDensityDpi = configuration.densityDpi
+                                observedScreenHeightDp = configuration.screenHeightDp
+                            }
                             AmbientTvTheme {
                                 Box(Modifier.fillMaxSize()) {
                                     AndroidView(
@@ -218,6 +240,9 @@ internal class UiRenderResolutionAudit(
                                                 .onGloballyPositioned { pointerBounds = it.boundsInRoot() },
                                             contentAlignment = Alignment.Center,
                                         ) { Text("Pointer probe") }
+                                        if (editorVisible.value && !dialogVisible.value) {
+                                            CompanionAuditEditor(editorText) { editorFocused = it }
+                                        }
                                     }
                                     LaunchedEffect(dialogVisible.value) {
                                         if (!dialogVisible.value) {
@@ -233,6 +258,7 @@ internal class UiRenderResolutionAudit(
                                                 decorFitsSystemWindows = false,
                                             ),
                                         ) {
+                                            CompanionDialogInputSurface()
                                             val view = LocalView.current
                                             val environment = LocalUiRenderEnvironment.current
                                             val dialogFocus = remember { FocusRequester() }
@@ -240,12 +266,16 @@ internal class UiRenderResolutionAudit(
                                             DisposableEffect(Unit) {
                                                 onDispose { dialogView = null; dialogEnvironment = null }
                                             }
-                                            TvActionButton(
-                                                "Close resolution dialog",
-                                                { dialogVisible.value = false },
-                                                Modifier.focusRequester(dialogFocus),
-                                            )
-                                            LaunchedEffect(Unit) { withFrameNanos { }; dialogFocus.requestFocus() }
+                                            if (editorVisible.value) {
+                                                CompanionAuditEditor(editorText) { editorFocused = it }
+                                            } else {
+                                                TvActionButton(
+                                                    "Close resolution dialog",
+                                                    { dialogVisible.value = false },
+                                                    Modifier.focusRequester(dialogFocus),
+                                                )
+                                                LaunchedEffect(Unit) { withFrameNanos { }; dialogFocus.requestFocus() }
+                                            }
                                         }
                                     }
                                     if (popupVisible.value) {
@@ -278,6 +308,7 @@ internal class UiRenderResolutionAudit(
                     ),
                 )
                 hostCreated = true
+                CompanionRemoteInput.register(activity.window, inputRoot = { host.inputRoot })
                 outer.addView(host, FrameLayout.LayoutParams(-1, -1))
                 activity.setContentView(outer)
             }
@@ -387,6 +418,83 @@ internal class UiRenderResolutionAudit(
             main { check(rememberedIdentity === initialIdentity && activations.intValue == 3) }
             log("PASS background/foreground resumes the original composition and input focus")
 
+            main { check(CompanionRemoteInput.dispatch(CompanionInput("key", key = "ok"))) }
+            await("Companion opens embedded dialog") {
+                activations.intValue == 4 && dialogView?.rootView?.hasWindowFocus() == true
+            }
+            main { check(CompanionRemoteInput.dispatch(CompanionInput("key", key = "ok"))) }
+            await("Companion closes focused dialog control") {
+                !dialogVisible.value && rootFocused && compose.rootView.hasWindowFocus()
+            }
+            main {
+                check(CompanionRemoteInput.dispatch(CompanionInput("move", x = -1f, y = -1f)))
+                check(CompanionRemoteInput.dispatch(CompanionInput("move",
+                    x = pointerBounds.center.x / compose.rootView.width - 0.01f,
+                    y = pointerBounds.center.y / compose.rootView.height - 0.01f)))
+                check(CompanionRemoteInput.dispatch(CompanionInput("click")))
+            }
+            await("Companion pointer uses embedded viewport") {
+                activations.intValue == 5 && dialogView?.rootView?.hasWindowFocus() == true
+            }
+            main { check(CompanionRemoteInput.dispatch(CompanionInput("key", key = "back"))) }
+            await("Companion Back returns to embedded activity") {
+                !dialogVisible.value && rootFocused && compose.rootView.hasWindowFocus()
+            }
+            for (inDialog in listOf(false, true)) {
+                main {
+                    editorText.value = ""
+                    editorFocused = false
+                    editorVisible.value = true
+                    dialogVisible.value = inDialog
+                }
+                await("Companion editor focus (dialog=$inDialog)") {
+                    val inputRoot = if (inDialog) dialogView?.rootView else compose.rootView
+                    editorFocused && inputRoot?.hasWindowFocus() == true &&
+                        inputRoot.findFocus()?.onCreateInputConnection(android.view.inputmethod.EditorInfo()) != null
+                }
+                main { check(CompanionRemoteInput.dispatch(CompanionInput("text", text = "Auflösung 4K"))) }
+                await("Companion inserts into focused Compose editor") { editorText.value == "Auflösung 4K" }
+                main { check(CompanionRemoteInput.dispatch(CompanionInput("key", key = "delete"))) }
+                await("Companion deletes in focused Compose editor") { editorText.value == "Auflösung 4" }
+                main { editorVisible.value = false; dialogVisible.value = false }
+                await("Companion editor removed") { !editorFocused && dialogView == null }
+                main {
+                    activity.window.insetsController?.hide(WindowInsets.Type.ime())
+                    focus.requestFocus()
+                }
+                await("Companion editor returns control focus without IME") {
+                    rootFocused && compose.rootView.hasWindowFocus() &&
+                        activity.window.decorView.rootWindowInsets?.isVisible(WindowInsets.Type.ime()) != true
+                }
+            }
+            log("PASS Companion dispatch reaches embedded activity/dialog keys, Back, pointer and Compose text InputConnection")
+
+            val originalDensityDpi = main { activity.resources.configuration.densityDpi }
+            val originalOverride = Regex("Override density: (\\d+)").find(shell("wm density"))?.groupValues?.get(1)
+            val changedDensityDpi = if (originalDensityDpi == 320) 400 else 320
+            fun awaitDisplayDensity(dpi: Int) {
+                await("real Configuration density $dpi reaches retained Compose", timeoutMs = 45_000) {
+                    val geometry = viewport.value ?: return@await false
+                    val config = activity.resources.configuration
+                    val expectedDensity = dpi / 160f * geometry.renderWidth / geometry.windowWidth
+                    ready() && config.densityDpi == dpi && observedDensityDpi == dpi &&
+                        kotlin.math.abs(observedDensity - expectedDensity) < 0.001f &&
+                        observedScreenHeightDp == config.screenHeightDp &&
+                        compose.rootView.hasWindowFocus()
+                }
+                main { check(rememberedIdentity === initialIdentity && activations.intValue == 5) }
+            }
+            try {
+                shell("wm density $changedDensityDpi")
+                awaitDisplayDensity(changedDensityDpi)
+            } finally {
+                // Restore the actual override state even if the first assertion fails. A second
+                // assertion in finally would replace the original failure and its diagnostics.
+                shell(if (originalOverride == null) "wm density reset" else "wm density $originalOverride")
+            }
+            awaitDisplayDensity(originalDensityDpi)
+            log("PASS real Android density Configuration round trip updates Compose density/configuration and preserves state")
+
             main {
                 val savedContent = host.takeContentView()
                 mode.value = UiRenderResolutionPolicy.SYSTEM
@@ -396,27 +504,48 @@ internal class UiRenderResolutionAudit(
             }
             await("native fallback reuses live composition") { compose.isAttachedToWindow && compose.width == 3840 && !compose.isUiRenderHosted() }
             main {
-                check(rememberedIdentity === initialIdentity && activations.intValue == 3)
+                check(rememberedIdentity === initialIdentity && activations.intValue == 5)
                 check(focus.requestFocus())
             }
             await("native fallback input focus restored") { rootFocused && compose.rootView.hasWindowFocus() }
-            key(KeyEvent.KEYCODE_DPAD_CENTER)
+            main { check(CompanionRemoteInput.dispatch(CompanionInput("key", key = "ok"))) }
             await("native fallback remains interactive") {
-                activations.intValue == 4 && dialogVisible.value &&
+                activations.intValue == 6 && dialogVisible.value &&
                     dialogView?.rootView?.hasWindowFocus() == true
             }
-            key(KeyEvent.KEYCODE_BACK)
+            main { check(CompanionRemoteInput.dispatch(CompanionInput("key", key = "back"))) }
             await("native fallback dialog closes") { !dialogVisible.value }
             log("PASS native fallback preserves remember state and continues composing and handling DPAD/Back")
         } finally {
             onTimeout = null
             main {
+                CompanionRemoteInput.unregister(activity.window)
                 if (hostCreated) host.close()
                 if (contentCreated) compose.disposeComposition()
                 activity.finish()
             }
         }
     }
+
+    @Composable
+    private fun CompanionAuditEditor(text: MutableState<String>, onFocusChanged: (Boolean) -> Unit) {
+        val focus = remember { FocusRequester() }
+        val keyboard = LocalSoftwareKeyboardController.current
+        BasicTextField(
+            value = text.value,
+            onValueChange = { text.value = it },
+            modifier = Modifier.size(320.dp, 64.dp).focusRequester(focus)
+                .onFocusChanged { onFocusChanged(it.hasFocus) },
+            singleLine = true,
+        )
+        LaunchedEffect(Unit) { withFrameNanos { }; focus.requestFocus() }
+        DisposableEffect(Unit) { onDispose { keyboard?.hide(); onFocusChanged(false) } }
+    }
+
+    private fun shell(command: String): String =
+        instrumentation.uiAutomation.executeShellCommand(command).use { descriptor ->
+            android.os.ParcelFileDescriptor.AutoCloseInputStream(descriptor).bufferedReader().use { it.readText() }
+        }
 
     private fun drawNativeVideo(surface: SurfaceView): Pair<Int, Int> {
         val holder = surface.holder

@@ -45,8 +45,6 @@ import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.platform.LocalConfiguration
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.Dp
@@ -136,10 +134,7 @@ fun AppDialog(
     val effectiveMaxHeightFraction = appDialogHeightFraction(maxHeightFraction, handheld, wideHandheld)
     // Measured in the page's (UI-scaled) density: Configuration.screenHeightDp is in system dp
     // and would shrink every dialog by the UI scale factor, forcing content to scroll.
-    val screenPixels = com.ambient.tv.ui.display.LocalUiRenderEnvironment.current.viewport?.renderHeight
-        ?: LocalContext.current.resources.displayMetrics.heightPixels
-    val screenHeight = with(density) { screenPixels.toDp() }
-        .takeIf { it > 0.dp } ?: LocalConfiguration.current.screenHeightDp.dp
+    val screenHeight = com.ambient.tv.ui.display.uiRenderScreenHeight()
     val maxHeight = screenHeight * effectiveMaxHeightFraction
     val verticalInset = screenHeight * ((1f - effectiveMaxHeightFraction) / 2f)
     val listScroll = rememberScrollState()

@@ -108,8 +108,7 @@ private fun CompanionDialogsContent(viewModel: CompanionViewModel) {
     }
     // The guided pairing page shows the comparison code itself.
     state.prompt?.takeUnless { handheld && state.pairingFlow }?.let { prompt ->
-        val screenPixels = androidx.compose.ui.platform.LocalContext.current.resources.displayMetrics.heightPixels
-        val compact = with(androidx.compose.ui.platform.LocalDensity.current) { screenPixels.toDp() } < 500.dp
+        val compact = com.ambient.tv.ui.display.uiRenderScreenHeight() < 500.dp
         com.ambient.tv.ui.common.AppDialog(onDismiss = { manager.confirm(false) },
             title = stringResource(R.string.companion_confirm_title),
             maxWidth = 520.dp,

@@ -119,7 +119,12 @@ internal fun UiResolutionDialog(
                                     true
                                 } else consumedByContent
                             },
-                            onWindowFocusChanged = { focused -> if (!focused) backKeyGate.reset() },
+                            onWindowFocusChanged = { focused ->
+                                if (!focused) {
+                                    backKeyGate.reset()
+                                    com.ambient.tv.companion.CompanionRemoteInput.hide()
+                                }
+                            },
                             onFailure = { error ->
                                 backKeyGate.reset()
                                 Timber.w(error, "Dialog UI surface unavailable; retaining native dialog content")

@@ -6,13 +6,15 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class Media3SurfaceResolutionPolicyTest {
-    @Test fun targetIsAvailableBeforeProcessingAndStableAcrossItsToggle() {
+    @Test fun prospectiveTargetStaysAvailableBeforeAndAfterTheFirstEffect() {
         for (key in listOf("auto", "panel")) {
-            for (enabled in listOf(false, true, false)) {
-                val policy = policy(resolutionKey = key, processingEnabled = enabled)
-                assertTrue("$key / processing=$enabled", policy.targetAtDisplayResolution)
-                assertEquals("$key / processing=$enabled", enabled, policy.fixSurfaceSize)
-            }
+            val before = policy(resolutionKey = key, processingEnabled = false)
+            val active = policy(resolutionKey = key, gpuPipelineInitialized = true)
+            val removed = policy(resolutionKey = key, processingEnabled = false, gpuPipelineInitialized = true)
+            assertTrue(key, listOf(before, active, removed).all { it.targetAtDisplayResolution })
+            assertFalse(key, before.fixSurfaceSize)
+            assertTrue(key, active.fixSurfaceSize)
+            assertTrue(key, removed.fixSurfaceSize)
         }
     }
 
@@ -21,7 +23,10 @@ class Media3SurfaceResolutionPolicyTest {
             assertEquals(Media3SurfaceResolutionPolicy(false, false),
                 policy(resolutionKey = "ui", processingEnabled = enabled))
             val auto = policy(resolutionKey = "auto", lowEndDevice = true, processingEnabled = enabled)
-            assertEquals(Media3SurfaceResolutionPolicy(false, enabled, targetAtWindowResolution = true), auto)
+            assertEquals(VideoRenderTargetMode.WINDOW, auto.targetMode)
+            assertEquals(if (enabled) VideoRenderTargetMode.WINDOW else VideoRenderTargetMode.UI,
+                auto.bufferTargetMode)
+            assertEquals(enabled, auto.fixSurfaceSize)
             assertFalse(auto.fixesBuffer(uiScaled = false))
             assertEquals(enabled, auto.fixesBuffer(uiScaled = true))
         }
@@ -45,7 +50,7 @@ class Media3SurfaceResolutionPolicyTest {
         assertFalse(policy(resolutionKey = "ui").fixesBuffer(uiScaled = true))
     }
 
-    @Test fun unavailableOrFailedEffectsDoNotForceANativeSurfaceBuffer() {
+    @Test fun neverInitializedOutputStaysDirectWhenEffectsAreUnavailableOrFailed() {
         val blocked = listOf(
             "unsupported GPU" to policy(gpuEffectsSupported = false),
             "HDR, DRM or unknown source" to policy(sdrEffectsAllowed = false),
@@ -59,7 +64,53 @@ class Media3SurfaceResolutionPolicyTest {
         }
     }
 
-    @Test fun sourceAndFailureTransitionsRestoreSizingOnlyWhenEligible() {
+    @Test fun removingLastEffectKeepsTheInitializedGpuOutputAtTheOriginalWindow() {
+        val active = policy(resolutionKey = "auto", gpuPipelineInitialized = true)
+        val removed = policy(resolutionKey = "auto", processingEnabled = false, gpuPipelineInitialized = true)
+        val direct = policy(resolutionKey = "auto", processingEnabled = false, gpuPipelineInitialized = false)
+
+        assertEquals(VideoRenderTargetMode.DISPLAY, active.bufferTargetMode)
+        // Keep offering the panel scaler even though Auto's empty sink uses the window budget.
+        assertEquals(VideoRenderTargetMode.DISPLAY, removed.targetMode)
+        assertEquals(VideoRenderTargetMode.WINDOW, removed.bufferTargetMode)
+        assertTrue(removed.fixesBuffer(uiScaled = true))
+        assertFalse(removed.fixesBuffer(uiScaled = false))
+        assertEquals(VideoRenderTargetMode.UI, direct.bufferTargetMode)
+        assertFalse(direct.fixesBuffer(uiScaled = true))
+    }
+
+    @Test fun retainedGpuOutputUsesWindowWhenEffectsAreReducedFailedOrSourceBlocked() {
+        val retained = listOf(
+            policy(resolutionKey = "auto", reducedEffects = true, gpuPipelineInitialized = true),
+            policy(resolutionKey = "auto", effectsFailed = true, gpuPipelineInitialized = true),
+            // Restricting HDR/DRM effects does not turn an existing sink back into direct output.
+            policy(resolutionKey = "auto", sdrEffectsAllowed = false, gpuPipelineInitialized = true),
+        )
+        for (policy in retained) {
+            assertEquals(VideoRenderTargetMode.DISPLAY, policy.targetMode)
+            assertEquals(VideoRenderTargetMode.WINDOW, policy.bufferTargetMode)
+            assertTrue(policy.fixesBuffer(uiScaled = true))
+            assertFalse(policy.fixesBuffer(uiScaled = false))
+        }
+    }
+
+    @Test fun retainedGpuOutputHonorsExplicitPanelAndUiWithoutActiveEffects() {
+        for (lowEnd in listOf(false, true)) {
+            val panel = policy(resolutionKey = "panel", lowEndDevice = lowEnd,
+                processingEnabled = false, gpuPipelineInitialized = true)
+            assertEquals(VideoRenderTargetMode.DISPLAY, panel.bufferTargetMode)
+            assertTrue(panel.fixesBuffer(uiScaled = false))
+            assertTrue(panel.fixesBuffer(uiScaled = true))
+
+            val ui = policy(resolutionKey = "ui", lowEndDevice = lowEnd,
+                processingEnabled = false, gpuPipelineInitialized = true)
+            assertEquals(VideoRenderTargetMode.UI, ui.bufferTargetMode)
+            assertFalse(ui.fixSurfaceSize)
+            assertFalse(ui.fixesBuffer(uiScaled = true))
+        }
+    }
+
+    @Test fun neverInitializedOutputOnlyAcceptsEligibleEffectRequests() {
         val states = listOf(
             policy(sdrEffectsAllowed = false),
             policy(),
@@ -129,6 +180,7 @@ class Media3SurfaceResolutionPolicyTest {
         processingEnabled: Boolean = true,
         reducedEffects: Boolean = false,
         effectsFailed: Boolean = false,
+        gpuPipelineInitialized: Boolean = false,
     ) = media3SurfaceResolutionPolicy(
         resolutionKey = resolutionKey,
         lowEndDevice = lowEndDevice,
@@ -137,5 +189,6 @@ class Media3SurfaceResolutionPolicyTest {
         processingEnabled = processingEnabled,
         reducedEffects = reducedEffects,
         effectsFailed = effectsFailed,
+        gpuPipelineInitialized = gpuPipelineInitialized,
     )
 }

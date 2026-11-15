@@ -100,6 +100,13 @@ internal class UiRenderResolutionHost(
     var viewport: UiRenderViewport? = null
         private set
 
+    /** The live embedded input tree; its coordinates already use the render viewport. */
+    val inputRoot: View?
+        get() = embeddedRoot.takeIf {
+            interactive && !closed && !failed && host != null && surfaceAvailable &&
+                it.isAttachedToWindow && it.isShown
+        }
+
     private val refresh = Runnable { updateViewportAndHost() }
     private val lifecycleObserver = LifecycleEventObserver { _, event ->
         if (event == Lifecycle.Event.ON_DESTROY) close()
@@ -199,10 +206,16 @@ internal class UiRenderResolutionHost(
 
     override fun onConfigurationChanged(newConfig: Configuration) {
         super.onConfigurationChanged(newConfig)
+        if (closed || failed) return
         // The windowless manager snapshots Configuration at construction. Public forwarding
         // exists only from API 33, so recreate its ViewRoot on every supported API instead of
-        // retaining stale locale/density on API 30-32. The stable parent recomposer survives.
+        // retaining stale locale/density on API 31-32. The stable parent recomposer survives.
         coordinates.invalidate()
+        // This hierarchy is not a child of the native host, so super cannot notify it. Resources
+        // are already updated when the native ViewRoot dispatches this callback. A new ViewRoot
+        // starts with that new Configuration and does not notify the retained AndroidComposeView,
+        // whose cached LocalConfiguration/LocalDensity must also be updated before its next layout.
+        embeddedRoot.dispatchConfigurationChanged(newConfig)
         releaseEmbeddedHost()
         scheduleRefresh()
     }

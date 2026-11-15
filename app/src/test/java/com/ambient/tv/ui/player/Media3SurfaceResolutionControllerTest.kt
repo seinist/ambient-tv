@@ -81,6 +81,80 @@ class Media3SurfaceResolutionControllerTest {
 
     @Test
     @Config(qualifiers = "w3840dp-h2160dp-land-mdpi")
+    fun removingLastEffectAfterPanelToAutoKeepsFourKBufferBehindFullHdUi() {
+        val source = hostedViewport(UiRenderViewport(1920, 1080, 3840, 2160))
+        val view = newSurface()
+        changePhysicalMode(checkNotNull(view.display), 3840, 2160)
+        settleViewport(source, 1920, 1080)
+        val targets = mutableListOf<Pair<Int, Int>?>()
+        val controller = controller(view, targets)
+
+        controller.update(outputPolicy(resolutionKey = "panel"))
+        controller.update(outputPolicy(gpuPipelineInitialized = true))
+        controller.update(outputPolicy(processingEnabled = false, gpuPipelineInitialized = true))
+
+        assertEquals(listOf(3840 to 2160), view.recording.fixedRequests)
+        assertEquals(0, view.recording.layoutRequests)
+        assertEquals(3840 to 2160, targets.last())
+        assertEquals(1920 to 1080, view.width to view.height)
+
+        // Only the explicit UI choice allows that retained sink to use the smaller UI buffer.
+        controller.update(outputPolicy(resolutionKey = "ui", processingEnabled = false,
+            gpuPipelineInitialized = true))
+        assertEquals(1, view.recording.layoutRequests)
+        assertEquals(1920 to 1080, targets.last())
+    }
+
+    @Test fun retainedEmptySinkUsesWindowBufferWhileScalerPreviewStaysAtPanel() {
+        val source = hostedViewport(UiRenderViewport(960, 540, 1920, 1080))
+        val view = newSurface(960, 540)
+        changePhysicalMode(checkNotNull(view.display), 3840, 2160)
+        settleViewport(source, 960, 540)
+        val targets = mutableListOf<Pair<Int, Int>?>()
+        val controller = controller(view, targets)
+
+        controller.update(outputPolicy(resolutionKey = "panel", gpuPipelineInitialized = true))
+        controller.update(outputPolicy(processingEnabled = false, gpuPipelineInitialized = true))
+
+        // Auto sheds the panel workload, while compensating for the independently scaled UI.
+        assertEquals(listOf(3840 to 2160, 1920 to 1080), view.recording.fixedRequests)
+        assertEquals(0, view.recording.layoutRequests)
+        assertEquals(listOf(3840 to 2160), targets)
+
+        controller.update(outputPolicy(gpuPipelineInitialized = true))
+        assertEquals(3840 to 2160, view.recording.fixedRequests.last())
+        assertEquals(listOf(3840 to 2160), targets)
+    }
+
+    @Test
+    @Config(qualifiers = "w3840dp-h2160dp-land-mdpi")
+    fun reducedAndFailedEffectsKeepRetainedBufferButNeverInitializedOutputStaysDirect() {
+        val source = hostedViewport(UiRenderViewport(1920, 1080, 3840, 2160))
+        val view = newSurface()
+        changePhysicalMode(checkNotNull(view.display), 3840, 2160)
+        settleViewport(source, 1920, 1080)
+        val targets = mutableListOf<Pair<Int, Int>?>()
+        val controller = controller(view, targets)
+
+        for (blocked in listOf(
+            outputPolicy(processingEnabled = false),
+            outputPolicy(reducedEffects = true),
+            outputPolicy(effectsFailed = true),
+            outputPolicy(sdrEffectsAllowed = false),
+        )) controller.update(blocked)
+        assertTrue(view.recording.fixedRequests.isEmpty())
+        assertEquals(0, view.recording.layoutRequests)
+
+        controller.update(outputPolicy(gpuPipelineInitialized = true))
+        controller.update(outputPolicy(reducedEffects = true, gpuPipelineInitialized = true))
+        controller.update(outputPolicy(effectsFailed = true, gpuPipelineInitialized = true))
+        assertEquals(listOf(3840 to 2160), view.recording.fixedRequests)
+        assertEquals(0, view.recording.layoutRequests)
+        assertEquals(3840 to 2160, targets.last())
+    }
+
+    @Test
+    @Config(qualifiers = "w3840dp-h2160dp-land-mdpi")
     fun hostedMiniPlayerKeepsItsFractionOfTheWindowAndDirectOutputUnconstrained() {
         val source = hostedViewport(UiRenderViewport(1920, 1080, 3840, 2160))
         val view = newSurface(480, 270)
@@ -179,7 +253,7 @@ class Media3SurfaceResolutionControllerTest {
         assertEquals(0, viewResizes)
     }
 
-    @Test fun disabledProcessingPublishesFourKWithoutFixingTheNativeSurface() {
+    @Test fun directOutputPublishesFourKWithoutFixingTheNativeSurface() {
         val view = newSurface()
         changePhysicalMode(checkNotNull(view.display), 3840, 2160)
         val targets = mutableListOf<Pair<Int, Int>?>()
@@ -280,6 +354,24 @@ class Media3SurfaceResolutionControllerTest {
 
     private fun controller(view: SurfaceView, targets: MutableList<Pair<Int, Int>?>) =
         Media3SurfaceResolutionController(view, Any(), { targets.add(it) }).also(controllers::add)
+
+    private fun outputPolicy(
+        resolutionKey: String = "auto",
+        processingEnabled: Boolean = true,
+        reducedEffects: Boolean = false,
+        effectsFailed: Boolean = false,
+        sdrEffectsAllowed: Boolean = true,
+        gpuPipelineInitialized: Boolean = false,
+    ) = media3SurfaceResolutionPolicy(
+        resolutionKey = resolutionKey,
+        lowEndDevice = false,
+        gpuEffectsSupported = true,
+        sdrEffectsAllowed = sdrEffectsAllowed,
+        processingEnabled = processingEnabled,
+        reducedEffects = reducedEffects,
+        effectsFailed = effectsFailed,
+        gpuPipelineInitialized = gpuPipelineInitialized,
+    )
 
     private fun ownedController(view: SurfaceView, owner: Any, geometry: Media3RenderGeometry) =
         Media3SurfaceResolutionController(

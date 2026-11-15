@@ -23,7 +23,6 @@ import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
 import androidx.activity.ComponentActivity
-import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
@@ -303,7 +302,9 @@ open class MainActivity : ComponentActivity() {
         appUpdater.onAppStart()
         BackgroundPlaybackSession.retryBlockedPlaybackService(this)
         com.ambient.tv.data.browse.BrowseWorkBudget.foreground = true
-        if (com.ambient.tv.ui.mobile.isTelevision(this)) com.ambient.tv.companion.CompanionRemoteInput.register(window) {
+        if (com.ambient.tv.ui.mobile.isTelevision(this)) com.ambient.tv.companion.CompanionRemoteInput.register(
+            window, inputRoot = { uiResolutionHost?.inputRoot },
+        ) {
             registerUserInteraction(); setScreensaverActive(false)
         }
         if (this is com.ambient.tv.ui.mobile.HandheldActivity || com.ambient.tv.ui.mobile.isTelevision(this)) companionManager.foreground(true, com.ambient.tv.ui.mobile.isTelevision(this))
@@ -988,15 +989,14 @@ open class MainActivity : ComponentActivity() {
             com.ambient.tv.ui.mobile.isTelevision(this),
             android.os.Build.VERSION.SDK_INT,
         )
+        val compose = createUiRenderContentView(
+            modeKey = { uiRenderMode },
+            viewport = { uiRenderViewport },
+            content = content,
+        )
         if (uiRenderMode == com.ambient.tv.data.local.UiRenderResolutionPolicy.SYSTEM) {
-            setContent(content = content)
+            setContentView(compose)
             return
-        }
-        val compose = androidx.compose.ui.platform.ComposeView(this).apply {
-            id = R.id.ui_render_content
-            setContent {
-                com.ambient.tv.ui.display.ProvideUiRenderEnvironment(uiRenderMode, uiRenderViewport) { content() }
-            }
         }
         val host = try { com.ambient.tv.ui.display.UiRenderResolutionHost(
             activity = this,
@@ -1007,6 +1007,12 @@ open class MainActivity : ComponentActivity() {
                 dispatchKeyEvent = ::dispatchUiKeyEvent,
                 dispatchTouchEvent = ::dispatchUiTouchEvent,
                 dispatchGenericMotionEvent = ::dispatchUiGenericMotionEvent,
+                onWindowFocusChanged = { focused ->
+                    if (!focused) {
+                        uiRenderBackKeyGate.reset()
+                        com.ambient.tv.companion.CompanionRemoteInput.hide()
+                    }
+                },
                 onFailure = { error ->
                     timber.log.Timber.w(error, "UI resolution host unavailable; returning to system rendering")
                     window.decorView.post {
@@ -1043,6 +1049,23 @@ open class MainActivity : ComponentActivity() {
             }
         }
         window?.decorView?.clearHighlight()
+    }
+}
+
+/**
+ * Both render paths enter the same composition and saveable namespace. A configuration recreation
+ * can apply a saved resolution preference while restoring navigation from the previous mode.
+ */
+internal fun ComponentActivity.createUiRenderContentView(
+    modeKey: () -> String,
+    viewport: () -> com.ambient.tv.ui.display.UiRenderViewport?,
+    content: @Composable () -> Unit,
+): androidx.compose.ui.platform.ComposeView = androidx.compose.ui.platform.ComposeView(this).apply {
+    // Keep Activity.setContent's original namespace, SaveableStateRegistry:-1, in every mode.
+    id = View.NO_ID
+    setViewCompositionStrategy(androidx.compose.ui.platform.ViewCompositionStrategy.DisposeOnViewTreeLifecycleDestroyed)
+    setContent {
+        com.ambient.tv.ui.display.ProvideUiRenderEnvironment(modeKey(), viewport(), content = content)
     }
 }
 

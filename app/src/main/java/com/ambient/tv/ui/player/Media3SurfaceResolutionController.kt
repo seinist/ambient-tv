@@ -91,7 +91,7 @@ internal class Media3SurfaceResolutionController(
     private fun updateRenderTarget(reapply: Boolean = false) {
         if (released || !view.isAttachedToWindow) return
         val current = policy ?: return
-        // Drop a previous GPU constraint immediately when processing becomes ineligible,
+        // Drop a previous GPU constraint immediately when output returns to the direct/UI path,
         // including during an embedded UI relayout before the next target is measurable.
         if (!current.fixSurfaceSize) restoreLayoutSize()
         val target = view.videoRenderTargetSize(current.targetMode) ?: return
@@ -100,9 +100,13 @@ internal class Media3SurfaceResolutionController(
         // Advertise the intended viewport before the GPU path is enabled, without changing the
         // direct decoder surface. Actual effect sizes still come from onSurfaceSizeChanged.
         publish(target)
-        if (fixBuffer && (reapply || target != fixedBufferSize)) {
-            fixedBufferSize = target
-            view.holder.setFixedSize(target.first, target.second)
+        if (fixBuffer) {
+            val bufferTarget = if (current.bufferTargetMode == current.targetMode) target
+                else view.videoRenderTargetSize(current.bufferTargetMode) ?: return
+            if (reapply || bufferTarget != fixedBufferSize) {
+                fixedBufferSize = bufferTarget
+                view.holder.setFixedSize(bufferTarget.first, bufferTarget.second)
+            }
         }
     }
 
