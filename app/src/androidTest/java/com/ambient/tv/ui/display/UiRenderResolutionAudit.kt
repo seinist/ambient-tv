@@ -143,6 +143,15 @@ internal class UiRenderResolutionAudit(
                 val carrier = if (hostCreated) host.getChildAt(0) as? SurfaceView else null
                 buildString {
                     appendLine("Timeout: $label")
+                    appendLine("host.size=${if (hostCreated) "${host.width}x${host.height}" else null}")
+                    appendLine("compose.size=${if (contentCreated) "${compose.width}x${compose.height}" else null}")
+                    appendLine("compose.rootView.size=${if (contentCreated) "${compose.rootView.width}x${compose.rootView.height}" else null}")
+                    appendLine("compose.rootView.layoutRequested=${if (contentCreated) compose.rootView.isLayoutRequested else null}")
+                    appendLine("carrier.size=${carrier?.let { "${it.width}x${it.height}" }}")
+                    appendLine("carrier.surfaceFrame=${carrier?.holder?.surfaceFrame}")
+                    appendLine("host.viewport=${if (hostCreated) host.viewport else null}")
+                    appendLine("providedViewport=${viewport.value}")
+                    appendLine("settledViewport=${if (contentCreated) compose.uiRenderViewport() else null}")
                     appendLine("rootFocused=$rootFocused")
                     appendLine("compose.hasFocus=${if (contentCreated) compose.hasFocus() else null}")
                     appendLine("compose.rootView.hasWindowFocus=${if (contentCreated) compose.rootView.hasWindowFocus() else null}")

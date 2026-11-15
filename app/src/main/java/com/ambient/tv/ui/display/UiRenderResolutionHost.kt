@@ -89,6 +89,7 @@ internal class UiRenderResolutionHost(
         ?: contentView.findViewTreeLifecycleOwner() ?: activity
     private var host: SurfaceControlViewHost? = null
     private var hostedDisplayId: Int? = null
+    private var hostedRenderSize: Pair<Int, Int>? = null
     private var surfaceAvailable = false
     private var displayListenerRegistered = false
     private var fixedSize: Pair<Int, Int>? = null
@@ -248,10 +249,11 @@ internal class UiRenderResolutionHost(
             val existingHost = host
             if (existingHost == null) {
                 createEmbeddedHost(display, next)
-            } else if (embeddedRoot.layoutParams?.width != next.renderWidth ||
-                embeddedRoot.layoutParams?.height != next.renderHeight
-            ) {
+            } else if (hostedRenderSize != size) {
+                // relayout changes ViewRoot's window attributes, not the View.layoutParams
+                // assigned by setView. Track the requested size so A -> B -> A restores A.
                 existingHost.relayout(next.renderWidth, next.renderHeight)
+                hostedRenderSize = size
             }
             requestEmbeddedFocus()
         } catch (error: Exception) {
@@ -277,6 +279,7 @@ internal class UiRenderResolutionHost(
         host = created
         hostedDisplayId = display.displayId
         created.setView(embeddedRoot, viewport.renderWidth, viewport.renderHeight)
+        hostedRenderSize = viewport.renderWidth to viewport.renderHeight
         val surfacePackage = checkNotNull(created.surfacePackage) { "No embedded UI surface package" }
         try {
             surfaceView.setChildSurfacePackage(surfacePackage)
@@ -366,6 +369,7 @@ internal class UiRenderResolutionHost(
         val previous = host
         host = null
         hostedDisplayId = null
+        hostedRenderSize = null
         if (previous != null) {
             runCatching { previous.release() }
                 .onFailure { Log.w("UiRenderHost", "Releasing embedded UI", it) }
