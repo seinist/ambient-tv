@@ -19,6 +19,8 @@ import androidx.compose.foundation.focusable
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectTransformGestures
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -57,6 +59,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
@@ -91,6 +94,7 @@ import com.ambient.tv.ui.common.RightSidePanel
 import com.ambient.tv.ui.common.TvActionButton
 import com.ambient.tv.ui.common.TvSettingRow
 import com.ambient.tv.ui.mobile.LocalHandheldUi
+import com.ambient.tv.ui.theme.appControlSurface
 import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.min
@@ -410,11 +414,15 @@ private fun PhotoTouchButton(
     selected: Boolean = false,
     onClick: () -> Unit,
 ) {
-    val background = if (selected) MaterialTheme.colorScheme.primary else Color.White.copy(alpha = 0.10f)
-    val foreground = if (selected) MaterialTheme.colorScheme.onPrimary else Color.White
+    var focused by remember { mutableStateOf(false) }
+    val interactions = remember { MutableInteractionSource() }
+    val pressed by interactions.collectIsPressedAsState()
+    val foreground = MaterialTheme.colorScheme.onSurface
     Box(
-        Modifier.size(52.dp).background(background, CircleShape)
-            .clickable(role = Role.Button, onClick = onClick)
+        Modifier.size(52.dp)
+            .onFocusChanged { focused = it.isFocused }
+            .appControlSurface(focused = focused, selected = selected, shape = CircleShape, prominent = selected, pressed = pressed)
+            .clickable(interactionSource = interactions, indication = null, role = Role.Button, onClick = onClick)
             .semantics { contentDescription = label },
         contentAlignment = Alignment.Center,
     ) {

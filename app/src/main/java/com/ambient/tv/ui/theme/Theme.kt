@@ -107,6 +107,21 @@ fun AmbientTvTheme(
         onSurfaceVariant = AppOnSurfaceMuted.lift(),
         outline = AppOutline.lift(),
     )
+    val accentStyle = AccentStyle.fromKey(accentStyleKey)
+    val controls = remember(
+        tvScheme.surface, tvScheme.surfaceVariant, tvScheme.onSurface, tvScheme.onSurfaceVariant,
+        tvScheme.primary, accentStyle, headroom,
+    ) {
+        controlPalette(
+            surface = tvScheme.surface,
+            raisedSurface = tvScheme.surfaceVariant,
+            content = tvScheme.onSurface,
+            mutedContent = tvScheme.onSurfaceVariant,
+            accent = tvScheme.primary,
+            style = accentStyle,
+            headroom = headroom,
+        )
+    }
 
     val baseDensity = LocalDensity.current
     val effectiveScale = com.ambient.tv.data.local.UiScalePolicy.normalize(uiScale)
@@ -127,7 +142,8 @@ fun AmbientTvTheme(
         LocalDensity provides scaledDensity,
         LocalUiTokens provides tokens,
         LocalAccentModeKey provides accentColorKey,
-        LocalAccentStyle provides AccentStyle.fromKey(accentStyleKey),
+        LocalAccentStyle provides accentStyle,
+        LocalControlPalette provides controls,
         LocalPlaybackAccent provides PlaybackAccent(
             indicator = playback.lift(),
             text = accessibleAccent(playback, surface).lift(),

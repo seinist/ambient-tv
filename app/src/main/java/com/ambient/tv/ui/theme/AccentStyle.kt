@@ -27,29 +27,41 @@ enum class AccentStyle(val key: String) {
 val LocalAccentStyle = staticCompositionLocalOf { AccentStyle.SATIN }
 
 /** Material shader palette derived from the main or separate playback accent. */
-fun accentBrush(accent: Color, style: AccentStyle): Brush = when (style) {
-    AccentStyle.LIGHT -> SolidColor(accent)
-    AccentStyle.SATIN -> Brush.linearGradient(
+fun accentBrush(accent: Color, style: AccentStyle): Brush =
+    accentMaterialBrush(accentMaterialStops(accent, style), style)
+
+/** Shared stops let controls bound/lift their material without duplicating the style palette. */
+internal fun accentMaterialStops(accent: Color, style: AccentStyle): List<Pair<Float, Color>> = when (style) {
+    AccentStyle.LIGHT -> listOf(0f to accent)
+    AccentStyle.SATIN -> listOf(
         0f to lerp(accent, Color.White, 0.40f),
         0.23f to lerp(accent, Color.Black, 0.12f),
         0.58f to lerp(accent, Color.White, 0.25f),
         1f to lerp(accent, Color.Black, 0.16f),
     )
-    AccentStyle.GLASS -> Brush.linearGradient(
+    AccentStyle.GLASS -> listOf(
         0f to lerp(accent, Color.White, 0.48f),
         0.25f to lerp(accent, Color.White, 0.16f),
         0.60f to accent,
         1f to lerp(accent, Color.Black, 0.22f),
     )
-    AccentStyle.GLOW -> Brush.horizontalGradient(
-        listOf(lerp(accent, Color.White, 0.18f), accent, lerp(accent, Color.White, 0.30f)),
+    AccentStyle.GLOW -> listOf(
+        0f to lerp(accent, Color.White, 0.18f),
+        .5f to accent,
+        1f to lerp(accent, Color.White, 0.30f),
     )
-    AccentStyle.PEARL -> Brush.linearGradient(
+    AccentStyle.PEARL -> listOf(
         0f to lerp(accent, Color.White, 0.44f),
         0.32f to lerp(accent, Color(0xFFA9C6FF), 0.30f),
         0.69f to lerp(accent, Color(0xFFFFB9D7), 0.28f),
         1f to lerp(accent, Color.White, 0.26f),
     )
+}
+
+internal fun accentMaterialBrush(stops: List<Pair<Float, Color>>, style: AccentStyle): Brush = when (style) {
+    AccentStyle.LIGHT -> SolidColor(stops.first().second)
+    AccentStyle.GLOW -> Brush.horizontalGradient(*stops.toTypedArray())
+    else -> Brush.linearGradient(*stops.toTypedArray())
 }
 
 /** Keep unfocused content neutral; only active elements receive a material wash. */

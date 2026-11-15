@@ -8,6 +8,9 @@ import kotlinx.coroutines.launch
 import androidx.compose.ui.input.key.onKeyEvent
 import androidx.compose.foundation.focusGroup
 import androidx.compose.foundation.focusable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsFocusedAsState
+import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.Crossfade
 import androidx.compose.animation.animateColorAsState
@@ -47,6 +50,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -119,10 +123,6 @@ import com.ambient.tv.ui.sound.LocalUiSoundPlayer
 import com.ambient.tv.ui.sound.rememberUiSoundAction
 import com.ambient.tv.ui.theme.LocalUiTokens
 import com.ambient.tv.ui.theme.appControlSurface
-import com.ambient.tv.ui.theme.accentMaterialFill
-import com.ambient.tv.ui.theme.accentMaterialBorder
-import com.ambient.tv.ui.theme.AccentStyle
-import com.ambient.tv.ui.theme.LocalAccentStyle
 import com.ambient.tv.ui.theme.interactionColors
 import com.ambient.tv.ui.theme.menuFocusMotion
 import com.ambient.tv.ui.navigation.LocalSidebarContentPending
@@ -805,6 +805,21 @@ fun StatePanel(
 }
 
 /**
+ * Keep custom slots consistent across TV and mobile Material. Press feedback comes from the
+ * shared dark control surface: a second, light Material ripple would wash out its contrast.
+ */
+@OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
+@Composable
+fun ProvideControlContent(color: Color, content: @Composable () -> Unit) {
+    CompositionLocalProvider(
+        androidx.tv.material3.LocalContentColor provides color,
+        androidx.compose.material3.LocalContentColor provides color,
+        androidx.compose.material3.LocalRippleConfiguration provides null,
+        content = content,
+    )
+}
+
+/**
  * Compact control for tabs, filters and page-header actions (see [PageHeader]).
  *
  * [loading] marks the chip's own action as running: it keeps its look and focus, ignores clicks
@@ -830,59 +845,78 @@ fun TvChip(
     val clickable = enabled && !loading
     val uiSounds = LocalUiSoundPlayer.current
     val activate = rememberUiSoundAction(enabled = clickable, onClick = onClick)
+    val scheme = MaterialTheme.colorScheme
+    val foreground = if (enabled) scheme.onSurface else scheme.onSurfaceVariant.copy(alpha = .55f)
     if (com.ambient.tv.ui.mobile.LocalHandheldUi.current) {
+        val interactions = remember { MutableInteractionSource() }
+        val focused by interactions.collectIsFocusedAsState()
+        val pressed by interactions.collectIsPressedAsState()
+        val shape = RoundedCornerShape(LocalUiTokens.current.controlRadius)
         if (iconOnly && (icon != null || leadingContent != null)) {
             val buttonModifier = modifier
                 .sizeIn(minWidth = 48.dp, minHeight = 48.dp)
-                .then(if (selected && LocalAccentStyle.current != AccentStyle.LIGHT)
-                    Modifier.accentMaterialBorder(2.dp, MaterialTheme.colorScheme.primary,
-                        RoundedCornerShape(LocalUiTokens.current.controlRadius),
-                        MaterialTheme.colorScheme.primary, true)
-                    else Modifier)
+                .appControlSurface(focused, selected, enabled, shape, pressed = pressed)
                 .semantics { contentDescription = text }
-            val glyph: @Composable () -> Unit = {
-                if (loading) {
-                    ButtonProgress(androidx.compose.material3.LocalContentColor.current, Modifier.size(20.dp))
-                } else if (leadingContent != null) {
-                    leadingContent()
-                } else {
-                    androidx.compose.material3.Icon(checkNotNull(icon), contentDescription = null, modifier = Modifier.size(20.dp))
-                }
-            }
-            if (selected) {
-                androidx.compose.material3.FilledIconButton(
-                    onClick = activate,
-                    enabled = enabled,
-                    modifier = buttonModifier,
-                    content = glyph,
-                )
-            } else {
+            ProvideControlContent(foreground) {
                 androidx.compose.material3.FilledTonalIconButton(
                     onClick = activate,
                     enabled = enabled,
                     modifier = buttonModifier,
-                    content = glyph,
-                )
+                    shape = shape,
+                    interactionSource = interactions,
+                    colors = androidx.compose.material3.IconButtonDefaults.filledTonalIconButtonColors(
+                        containerColor = Color.Transparent,
+                        contentColor = foreground,
+                        disabledContainerColor = Color.Transparent,
+                        disabledContentColor = foreground,
+                    ),
+                ) {
+                    if (loading) {
+                        ButtonProgress(foreground, Modifier.size(20.dp))
+                    } else if (leadingContent != null) {
+                        leadingContent()
+                    } else {
+                        androidx.compose.material3.Icon(checkNotNull(icon), contentDescription = null, modifier = Modifier.size(20.dp))
+                    }
+                }
             }
             return
         }
-        androidx.compose.material3.FilterChip(
-            selected = selected, onClick = activate, enabled = enabled,
-            modifier = modifier.sizeIn(minHeight = 48.dp)
-                .then(if (selected && LocalAccentStyle.current != AccentStyle.LIGHT)
-                    Modifier.accentMaterialBorder(2.dp, MaterialTheme.colorScheme.primary,
-                        RoundedCornerShape(LocalUiTokens.current.controlRadius),
-                        MaterialTheme.colorScheme.primary, true)
-                    else Modifier),
-            label = { androidx.compose.material3.Text(text, maxLines = textMaxLines, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis) },
-            leadingIcon = if (loading) {
-                { ButtonProgress(androidx.compose.material3.LocalContentColor.current, Modifier.size(18.dp)) }
-            } else leadingContent ?: icon?.let { image -> { androidx.compose.material3.Icon(image, null, Modifier.size(18.dp)) } },
-        )
+        ProvideControlContent(foreground) {
+            androidx.compose.material3.FilterChip(
+                selected = selected, onClick = activate, enabled = enabled,
+                modifier = modifier.sizeIn(minHeight = 48.dp)
+                    .appControlSurface(focused, selected, enabled, shape, pressed = pressed),
+                shape = shape,
+                border = null,
+                interactionSource = interactions,
+                colors = androidx.compose.material3.FilterChipDefaults.filterChipColors(
+                    containerColor = Color.Transparent,
+                    labelColor = foreground,
+                    iconColor = foreground,
+                    disabledContainerColor = Color.Transparent,
+                    disabledLabelColor = foreground,
+                    disabledLeadingIconColor = foreground,
+                    disabledTrailingIconColor = foreground,
+                    selectedContainerColor = Color.Transparent,
+                    disabledSelectedContainerColor = Color.Transparent,
+                    selectedLabelColor = foreground,
+                    selectedLeadingIconColor = foreground,
+                    selectedTrailingIconColor = foreground,
+                ),
+                label = { androidx.compose.material3.Text(text, maxLines = textMaxLines, overflow = TextOverflow.Ellipsis) },
+                leadingIcon = if (loading) {
+                    { ButtonProgress(foreground, Modifier.size(18.dp)) }
+                } else leadingContent ?: icon?.let { image -> { androidx.compose.material3.Icon(image, null, Modifier.size(18.dp)) } },
+            )
+        }
         return
     }
 
     var focused by remember { mutableStateOf(false) }
+    var keyPressed by remember { mutableStateOf(false) }
+    val interactions = remember { MutableInteractionSource() }
+    val pointerPressed by interactions.collectIsPressedAsState()
     val uiScale = rememberUhdScale()
     val tokens = LocalUiTokens.current
     val chipShape = remember(tokens.controlRadius) { RoundedCornerShape(tokens.controlRadius) }
@@ -897,44 +931,58 @@ fun TvChip(
         border = noSurfaceBorder(),
         // Surface clips its content, so it must use the exact same shape as the visible frame.
         shape = ClickableSurfaceDefaults.shape(shape = chipShape),
+        interactionSource = interactions,
         modifier = modifier
             .sizeIn(minHeight = 48.dp * uiScale)
             .padding(2.dp)
             .menuFocusMotion(focused, focusedScale = 1.01f)
+            .onPreviewKeyEvent { event ->
+                if (event.key == Key.Enter || event.key == Key.NumPadEnter ||
+                    event.key == Key.DirectionCenter || event.key == Key.Spacebar) {
+                    if (event.type == KeyEventType.KeyUp) keyPressed = false
+                    else if (event.type == KeyEventType.KeyDown && clickable) keyPressed = true
+                }
+                false
+            }
             .activateOnTvKey(clickable, activate)
-            .onFocusChanged { focused = it.isFocused; if (it.isFocused) uiSounds?.playFocus() },
+            .onFocusChanged {
+                focused = it.isFocused
+                if (it.isFocused) uiSounds?.playFocus() else keyPressed = false
+            },
     ) {
         // The drawn chip is shorter than its focus target; centred, it lines up with titles,
         // rows and buttons next to it instead of sitting at the top of that slot.
         Box(Modifier.sizeIn(minHeight = 44.dp * uiScale), contentAlignment = Alignment.Center) {
             Row(
                 modifier = Modifier
-                    .appControlSurface(focused, selected, enabled, chipShape)
+                    .appControlSurface(focused, selected, enabled, chipShape, pressed = keyPressed || pointerPressed)
                     .padding(horizontal = 14.dp * uiScale, vertical = 9.dp * uiScale),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                if (loading) {
-                    ButtonProgress(MaterialTheme.colorScheme.onSurface, Modifier.size(18.dp * uiScale))
-                    Spacer(Modifier.width(8.dp * uiScale))
-                } else if (leadingContent != null) {
-                    leadingContent()
-                    Spacer(Modifier.width(8.dp * uiScale))
-                } else icon?.let {
-                    androidx.compose.material3.Icon(
-                        imageVector = it,
-                        contentDescription = null,
-                        tint = if (selected && !focused) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
-                        modifier = Modifier.size(18.dp * uiScale),
+                ProvideControlContent(foreground) {
+                    if (loading) {
+                        ButtonProgress(foreground, Modifier.size(18.dp * uiScale))
+                        Spacer(Modifier.width(8.dp * uiScale))
+                    } else if (leadingContent != null) {
+                        leadingContent()
+                        Spacer(Modifier.width(8.dp * uiScale))
+                    } else icon?.let {
+                        androidx.compose.material3.Icon(
+                            imageVector = it,
+                            contentDescription = null,
+                            tint = foreground,
+                            modifier = Modifier.size(18.dp * uiScale),
+                        )
+                        Spacer(Modifier.width(8.dp * uiScale))
+                    }
+                    Text(
+                        text = text,
+                        maxLines = textMaxLines,
+                        overflow = TextOverflow.Ellipsis,
+                        style = MaterialTheme.typography.labelMedium,
+                        color = foreground,
                     )
-                    Spacer(Modifier.width(8.dp * uiScale))
                 }
-                Text(
-                    text = text,
-                    maxLines = textMaxLines,
-                    overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
-                    style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.onSurface,
-                )
             }
         }
     }
@@ -1347,9 +1395,8 @@ fun rememberPendingAction(busy: Boolean): androidx.compose.runtime.MutableState<
 }
 
 /**
- * App-wide TV action button with deterministic dark focus colors. TV Material's default focused
- * button can invert to a very light container; several screens also supplied light text, producing
- * low-contrast light-on-light states. This component keeps every state WCAG-friendly on a TV.
+ * Shared dark action surface with the same stable light content as [TvChip]. [prominent]
+ * gives a primary action a stronger accent tint without inverting its text on focus changes.
  *
  * [loading] marks this button's own action as running: it keeps its normal (not dimmed) look and
  * its focus, ignores clicks and shows a spinner in the icon slot. Pass it instead of disabling a
@@ -1365,6 +1412,7 @@ fun TvActionButton(
     icon: androidx.compose.ui.graphics.vector.ImageVector? = null,
     fillWidth: Boolean = false,
     loading: Boolean = false,
+    prominent: Boolean = selected,
 ) {
     val visuallyEnabled = enabled || loading
     val clickable = enabled && !loading
@@ -1372,31 +1420,39 @@ fun TvActionButton(
     val activate = rememberUiSoundAction(enabled = clickable, onClick = onClick)
     // An empty [text] with an [icon] draws a square icon button.
     val iconOnly = text.isEmpty() && icon != null
+    val scheme = MaterialTheme.colorScheme
+    val foreground = if (visuallyEnabled) scheme.onSurface else scheme.onSurfaceVariant.copy(alpha = .55f)
     if (com.ambient.tv.ui.mobile.LocalHandheldUi.current) {
-        androidx.compose.material3.FilledTonalButton(
-            onClick = activate, enabled = visuallyEnabled,
-            modifier = (if (fillWidth) modifier.fillMaxWidth() else modifier).sizeIn(minHeight = 48.dp)
-                .then(if (selected && LocalAccentStyle.current != AccentStyle.LIGHT)
-                    Modifier.accentMaterialBorder(2.dp, MaterialTheme.colorScheme.primary,
-                        RoundedCornerShape(LocalUiTokens.current.controlRadius),
-                        MaterialTheme.colorScheme.primary, true)
-                    else Modifier),
-            shape = RoundedCornerShape(LocalUiTokens.current.controlRadius),
-            colors = if (selected) androidx.compose.material3.ButtonDefaults.filledTonalButtonColors(
-                containerColor = MaterialTheme.colorScheme.primary, contentColor = MaterialTheme.colorScheme.onPrimary,
-            ) else androidx.compose.material3.ButtonDefaults.filledTonalButtonColors(
-                containerColor = MaterialTheme.colorScheme.surfaceVariant, contentColor = MaterialTheme.colorScheme.onSurface,
-            ),
-        ) {
-            if (loading) ButtonProgress(androidx.compose.material3.LocalContentColor.current, Modifier.padding(end = 6.dp).size(20.dp))
-            else if (icon != null) androidx.compose.material3.Icon(icon, null, Modifier.size(20.dp).padding(end = if (text.isEmpty()) 0.dp else 4.dp))
-            if (text.isNotEmpty()) androidx.compose.material3.Text(text, maxLines = 2, overflow = TextOverflow.Ellipsis)
+        val interactions = remember { MutableInteractionSource() }
+        val focused by interactions.collectIsFocusedAsState()
+        val pressed by interactions.collectIsPressedAsState()
+        val shape = RoundedCornerShape(LocalUiTokens.current.controlRadius)
+        ProvideControlContent(foreground) {
+            androidx.compose.material3.FilledTonalButton(
+                onClick = activate, enabled = visuallyEnabled,
+                modifier = (if (fillWidth) modifier.fillMaxWidth() else modifier).sizeIn(minHeight = 48.dp)
+                    .appControlSurface(focused, selected, visuallyEnabled, shape, prominent = prominent, pressed = pressed),
+                shape = shape,
+                interactionSource = interactions,
+                colors = androidx.compose.material3.ButtonDefaults.filledTonalButtonColors(
+                    containerColor = Color.Transparent,
+                    contentColor = foreground,
+                    disabledContainerColor = Color.Transparent,
+                    disabledContentColor = foreground,
+                ),
+            ) {
+                if (loading) ButtonProgress(foreground, Modifier.padding(end = 6.dp).size(20.dp))
+                else if (icon != null) androidx.compose.material3.Icon(icon, null, Modifier.size(20.dp).padding(end = if (text.isEmpty()) 0.dp else 4.dp))
+                if (text.isNotEmpty()) androidx.compose.material3.Text(text, maxLines = 2, overflow = TextOverflow.Ellipsis)
+            }
         }
         return
     }
 
     var focused by remember { mutableStateOf(false) }
     var keyPressed by remember { mutableStateOf(false) }
+    val interactions = remember { MutableInteractionSource() }
+    val pointerPressed by interactions.collectIsPressedAsState()
     val uiScale = rememberUhdScale()
     val tokens = LocalUiTokens.current
     // One shared geometry for shadow, background and border. Do not clip the border
@@ -1409,6 +1465,7 @@ fun TvActionButton(
         colors = transparentSurfaceColors(),
         scale = noSurfaceScale(),
         border = noSurfaceBorder(),
+        interactionSource = interactions,
         // Surface itself clips its slot. Matching its interaction shape to the frame avoids
         // truncating anti-aliased border pixels at the rounded corners.
         shape = ClickableSurfaceDefaults.shape(shape = buttonShape),
@@ -1445,28 +1502,10 @@ fun TvActionButton(
                 else keyPressed = false
             },
     ) {
-        val interaction = interactionColors(focused, selected, visuallyEnabled)
-        // A white custom accent must still show an unmistakable focus change on a primary action.
-        val primaryFill = selected && visuallyEnabled && !focused
-        val fadeMs = com.ambient.tv.ui.theme.focusBorderFadeDurationMs(
-            focused, LocalPerformanceProfile.current.reducedEffects,
-        )
-        val container by animateColorAsState(
-            if (primaryFill) MaterialTheme.colorScheme.primary else interaction.container,
-            tween(fadeMs), label = "action surface",
-        )
-        val foreground by animateColorAsState(
-            if (primaryFill) MaterialTheme.colorScheme.onPrimary else interaction.content,
-            tween(fadeMs), label = "action foreground",
-        )
-        val outline = interaction.outline
-        // Keep the stroke geometry invariant across focus/selected/pressed states.
-        // Only its color changes; changing width can produce sub-pixel edge shimmer on TVs.
-        val borderWidth = 2.dp
         Row(
             modifier = (if (fillWidth) Modifier.fillMaxWidth() else Modifier)
-                .accentMaterialFill(container, buttonShape, MaterialTheme.colorScheme.primary, focused || primaryFill)
-                .accentMaterialBorder(borderWidth, outline, buttonShape, MaterialTheme.colorScheme.primary, focused || primaryFill)
+                .appControlSurface(focused, selected, visuallyEnabled, buttonShape,
+                    prominent = prominent, pressed = keyPressed || pointerPressed)
                 .padding(horizontal = (if (iconOnly) 12.dp else 18.dp) * uiScale, vertical = 12.dp * uiScale),
             horizontalArrangement = Arrangement.Center,
             verticalAlignment = Alignment.CenterVertically,

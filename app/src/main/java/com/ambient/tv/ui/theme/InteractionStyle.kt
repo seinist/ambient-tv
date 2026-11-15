@@ -11,6 +11,8 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.State
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
+import androidx.compose.runtime.remember
 import androidx.compose.ui.draw.drawWithCache
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.drawOutline
@@ -41,19 +43,22 @@ fun interactionColors(
     selected: Boolean = false,
     enabled: Boolean = true,
     animate: Boolean? = null,
+    prominent: Boolean = false,
+    pressed: Boolean = false,
 ): InteractionColors {
-    val state = rememberInteractionColorState(focused, selected, enabled, animate)
-    return InteractionColors(state.container.value, state.outline(), state.content)
+    val state = rememberInteractionColorState(
+        focused, selected, enabled, animate, prominent = prominent, pressed = pressed,
+    )
+    return InteractionColors(state.container.value, state.outline.value, state.content)
 }
 
 private class InteractionColorState(
     val container: State<Color>,
-    private val outlineState: State<Color>,
-    private val highlight: Float,
+    val outline: State<Color>,
+    val washOpacity: State<Float>,
+    val palette: ControlPalette,
     val content: Color,
-) {
-    fun outline(): Color = com.ambient.tv.ui.display.uiHdrHighlight(outlineState.value, highlight)
-}
+)
 
 @Composable
 private fun rememberInteractionColorState(
@@ -62,31 +67,56 @@ private fun rememberInteractionColorState(
     enabled: Boolean,
     animate: Boolean?,
     focusedAccent: Boolean = false,
+    prominent: Boolean = false,
+    pressed: Boolean = false,
 ): InteractionColorState {
     val scheme = MaterialTheme.colorScheme
-    val animationSpec = if (animate == false) snap() else focusColorSpec()
-    val container = animateColorAsState(
-        when {
-            !enabled -> scheme.surfaceVariant.copy(alpha = .30f)
-            focused -> lerp(scheme.surfaceVariant, scheme.onSurface, .12f)
-            selected -> lerp(scheme.surface, scheme.primary, .16f)
-            else -> scheme.surface.copy(alpha = .68f)
-        }, animationSpec, label = "control surface",
-    )
-    val outline = animateColorAsState(
-        when {
-            focused -> if (focusedAccent) scheme.primary.copy(alpha = .95f) else scheme.onSurface.copy(alpha = .90f)
-            selected -> accessibleAccent(scheme.primary, scheme.surface).copy(alpha = .70f)
-            else -> Color.Transparent
-        }, animationSpec, label = "control outline",
-    )
+    val materialStyle = LocalAccentStyle.current
     val hdrHeadroom = com.ambient.tv.ui.display.LocalUiHdrState.current?.headroom ?: 1f
-    return InteractionColorState(
-        container,
-        outline,
-        if (focused && enabled && !focusedAccent) hdrHeadroom else 1f,
-        if (enabled) scheme.onSurface else scheme.onSurfaceVariant.copy(alpha = .55f),
-    )
+    val sharedPalette = LocalControlPalette.current?.takeIf { palette ->
+        val input = palette.input
+        input.surface == scheme.surface && input.raisedSurface == scheme.surfaceVariant &&
+            input.content == scheme.onSurface && input.mutedContent == scheme.onSurfaceVariant &&
+            input.accent == scheme.primary && input.style == materialStyle && input.headroom == hdrHeadroom
+    }
+    // Normal app controls share the palette prepared by AmbientTvTheme. A nested theme
+    // or isolated preview gets a local cache keyed by its actual colors.
+    val palette = sharedPalette ?: remember(
+        scheme.surface, scheme.surfaceVariant, scheme.onSurface, scheme.onSurfaceVariant,
+        scheme.primary, materialStyle, hdrHeadroom,
+    ) {
+        controlPalette(
+            surface = scheme.surface,
+            raisedSurface = scheme.surfaceVariant,
+            content = scheme.onSurface,
+            mutedContent = scheme.onSurfaceVariant,
+            accent = scheme.primary,
+            style = materialStyle,
+            headroom = hdrHeadroom,
+        )
+    }
+    val target = palette.colors(focused, selected, enabled, prominent, pressed, focusedAccent)
+    val animationSpec = if (animate == false) snap() else focusColorSpec()
+    // Brightness changes must settle together: fading an old HDR surface after its
+    // content has already returned to SDR could briefly reduce the text contrast.
+    return key(hdrHeadroom) {
+        val container = animateColorAsState(
+            target.container, animationSpec, label = "control surface",
+        )
+        val outline = animateColorAsState(
+            target.outline, animationSpec, label = "control outline",
+        )
+        val washOpacity = animateFloatAsState(
+            target.washOpacity,
+            animationSpec = when {
+                animate == false -> snap()
+                LocalPerformanceProfile.current.allowSpringFocus -> tween(LocalUiTokens.current.animationFastMs)
+                else -> tween(REDUCED_FOCUS_FADE_MS, easing = LinearOutSlowInEasing)
+            },
+            label = "control material wash",
+        )
+        InteractionColorState(container, outline, washOpacity, palette, target.content)
+    }
 }
 
 /**
@@ -100,10 +130,13 @@ fun Modifier.appControlSurface(
     shape: Shape,
     animate: Boolean? = null,
     focusedAccent: Boolean = false,
+    prominent: Boolean = false,
+    pressed: Boolean = false,
 ): Modifier = composed {
-    val colors = rememberInteractionColorState(focused, selected, enabled, animate, focusedAccent)
+    val colors = rememberInteractionColorState(
+        focused, selected, enabled, animate, focusedAccent, prominent, pressed,
+    )
     val materialStyle = LocalAccentStyle.current
-    val primaryAccent = MaterialTheme.colorScheme.primary
     val reducedEffects = LocalPerformanceProfile.current.reducedEffects
     val borderWidth = LocalUiTokens.current.focusBorder
     this.drawWithCache {
@@ -116,24 +149,22 @@ fun Modifier.appControlSurface(
             this,
         )
         val stroke = Stroke(strokePx)
-        val material = accentBrush(primaryAccent, materialStyle)
+        val material = colors.palette.materialBrush()
         onDrawBehind {
             drawOutline(fill, colors.container.value)
-            if (materialStyle != AccentStyle.LIGHT && (focused || selected)) {
-                drawOutline(fill, material, alpha = accentWashOpacity(materialStyle))
+            val wash = colors.washOpacity.value
+            if (wash > 0f) {
+                drawOutline(fill, material, alpha = wash)
             }
-            val outline = colors.outline()
+            val outline = colors.outline.value
             if (outline.alpha > 0f && strokePx > 0f) {
                 translate(inset, inset) {
-                    if (materialStyle == AccentStyle.LIGHT) {
-                        drawOutline(strokeOutline, outline, style = stroke)
-                    } else {
-                        if (materialStyle == AccentStyle.GLOW && !reducedEffects && focused) {
-                            drawOutline(strokeOutline, material, alpha = outline.alpha * .12f,
-                                style = Stroke(strokePx * 2.5f))
-                        }
-                        drawOutline(strokeOutline, material, alpha = outline.alpha, style = stroke)
+                    if (materialStyle == AccentStyle.GLOW && !reducedEffects && focused && enabled) {
+                        drawOutline(strokeOutline, material, alpha = outline.alpha * .10f,
+                            style = Stroke(strokePx * 2.5f))
                     }
+                    // Material styling must not replace the neutral focus boundary.
+                    drawOutline(strokeOutline, outline, style = stroke)
                 }
             }
         }

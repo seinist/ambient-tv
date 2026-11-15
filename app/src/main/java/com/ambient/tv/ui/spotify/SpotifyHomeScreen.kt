@@ -5,6 +5,7 @@ import com.ambient.tv.ui.common.claimBrowseStartupFocusOnInput
 import com.ambient.tv.spotify.SpotifyEntityType
 
 import com.ambient.tv.ui.theme.animatedFocusSurface
+import com.ambient.tv.ui.theme.appControlSurface
 import com.ambient.tv.ui.theme.screenGutter
 import androidx.activity.compose.BackHandler
 import com.ambient.tv.ui.mobile.deviceDp
@@ -275,14 +276,13 @@ private fun SpotifyTile(
                         Modifier
                             .align(Alignment.BottomEnd)
                             .padding(6.dp)
-                            .clip(RoundedCornerShape(999.dp))
-                            .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.92f))
+                            .appControlSurface(focused = focused, shape = RoundedCornerShape(999.dp), prominent = true)
                             .padding(horizontal = 10.dp, vertical = 6.dp),
                         contentAlignment = Alignment.Center,
                     ) {
                         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                            androidx.compose.material3.Icon(Icons.Default.PlayArrow, contentDescription = null, tint = MaterialTheme.colorScheme.onPrimary)
-                            Text(stringResource(R.string.spotify_play), color = MaterialTheme.colorScheme.onPrimary, style = MaterialTheme.typography.labelMedium)
+                            androidx.compose.material3.Icon(Icons.Default.PlayArrow, contentDescription = null, tint = MaterialTheme.colorScheme.onSurface)
+                            Text(stringResource(R.string.spotify_play), color = MaterialTheme.colorScheme.onSurface, style = MaterialTheme.typography.labelMedium)
                         }
                     }
                 }
