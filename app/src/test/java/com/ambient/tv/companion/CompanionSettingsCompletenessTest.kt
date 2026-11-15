@@ -327,4 +327,41 @@ class CompanionSettingsCompletenessTest {
         assertNull(selectSyncAccounts(incoming, emptySet()).extras?.connections)
         assertEquals(10982, selectSyncAccounts(incoming, setOf("tvheadend")).extras?.connections?.tvheadendHtspPort)
     }
+
+    @Test fun explicitlyStoredOlderFileValuesTravelAfterBecomingShareable() {
+        val target = preferences().apply {
+            spotifyBitrateKbps = 96
+            spotifyVisualizerModeKey = "cover"
+            systemHomeHiddenRows = setOf("emby.recent")
+        }
+        receive("""{"schemaVersion":79,"exportedAtEpochMs":0,
+            "spotifyBitrateKbps":160,"spotifyVisualizerModeKey":"projectm","systemHomeHiddenRows":[]}""", target)
+        assertEquals(160, target.spotifyBitrateKbps)
+        assertEquals("projectm", target.spotifyVisualizerModeKey)
+        assertTrue(target.systemHomeHiddenRows.isEmpty())
+    }
+
+    @Test fun missingNewlyShareableFieldsStayMissingEvenInAPartialCurrentFile() {
+        for (version in listOf(79, schema)) {
+            val target = preferences().apply {
+                spotifyBitrateKbps = 96
+                spotifyVisualizerModeKey = "projectm"
+                systemHomeHiddenRows = setOf("emby.recent")
+            }
+            receive("""{"schemaVersion":$version,"exportedAtEpochMs":0}""", target)
+            assertEquals(96, target.spotifyBitrateKbps)
+            assertEquals("projectm", target.spotifyVisualizerModeKey)
+            assertEquals(setOf("emby.recent"), target.systemHomeHiddenRows)
+        }
+    }
+
+    @Test fun oldDecodedModelsWithoutPresenceCannotManufactureExplicitFileValues() {
+        val wire = CompanionBackupPolicy.prepare(source().copy(schemaVersion = 79,
+            spotifyBitrateKbps = 160, spotifyVisualizerModeKey = "projectm", systemHomeHiddenRows = emptySet()),
+            false, "preferences")
+        val fields = CompanionBackupPolicy.presentFields(wire)
+        assertFalse("spotifyBitrateKbps" in fields)
+        assertFalse("spotifyVisualizerModeKey" in fields)
+        assertFalse("systemHomeHiddenRows" in fields)
+    }
 }
