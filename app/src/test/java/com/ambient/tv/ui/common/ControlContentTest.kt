@@ -15,14 +15,19 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.SemanticsActions
+import androidx.compose.ui.test.ExperimentalTestApi
 import androidx.compose.ui.test.assertIsFocused
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performKeyInput
 import androidx.compose.ui.test.performSemanticsAction
+import androidx.compose.ui.test.pressKey
 import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.unit.dp
 import androidx.tv.material3.MaterialTheme
@@ -39,6 +44,7 @@ import org.robolectric.annotation.Config
 /** Exercises the production controls: native mobile defaults and TV focus must not invert text. */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [35], application = Application::class, qualifiers = "w960dp-h720dp-land-mdpi")
+@OptIn(ExperimentalTestApi::class)
 class ControlContentTest {
     @get:Rule val rule = createAndroidComposeRule<ComponentActivity>()
 
@@ -110,14 +116,23 @@ class ControlContentTest {
                 assertTrue("Controls retain their 48dp touch target", bounds.height >= 48f)
             }
         }
-        rule.onNodeWithTag("action").performClick()
+        fun activateAction() {
+            if (handheld) rule.onNodeWithTag("action").performClick()
+            else {
+                // TV Surface activates through remote keys; performClick injects a touch.
+                rule.runOnIdle { actionFocus.requestFocus() }
+                rule.onNodeWithTag("action").assertIsFocused()
+                rule.onRoot().performKeyInput { pressKey(Key.DirectionCenter) }
+            }
+        }
+        activateAction()
         rule.runOnIdle { assertEquals(1, clicks); enabled = false }
         rule.waitForIdle()
         assertEquals(muted, textColor("Play"))
         rule.runOnIdle { loading = true }
         rule.waitForIdle()
         assertEquals("A running action keeps its readable content", expected, textColor("Play"))
-        rule.onNodeWithTag("action").performClick()
+        activateAction()
         rule.runOnIdle { assertEquals("Running action cannot be started twice", 1, clicks) }
     }
 
