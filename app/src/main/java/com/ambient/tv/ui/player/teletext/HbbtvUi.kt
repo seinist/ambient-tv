@@ -39,6 +39,7 @@ import androidx.compose.material.icons.filled.SettingsRemote
 import androidx.compose.material.icons.filled.Tv
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -56,20 +57,25 @@ import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.unit.Density
 import androidx.compose.ui.viewinterop.AndroidView
-import com.ambient.tv.ui.display.UiResolutionDialog as Dialog
+import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.tv.material3.Text
 import com.ambient.tv.R
+import com.ambient.tv.data.local.UiRenderResolutionPolicy
 import com.ambient.tv.livetv.teletext.HbbtvApplication
 import com.ambient.tv.ui.common.AppDialog
 import com.ambient.tv.ui.common.TvActionButton
 import com.ambient.tv.ui.common.TvChip
+import com.ambient.tv.ui.display.LocalUiRenderEnvironment
+import com.ambient.tv.ui.display.ProvideUiRenderEnvironment
 import com.ambient.tv.ui.mobile.LocalHandheldUi
 import com.ambient.tv.ui.player.BackgroundPlaybackSession
 import com.ambient.tv.ui.player.PlaybackVideoWindow
@@ -127,6 +133,24 @@ internal fun HbbtvHost(channelName: String?, channelKey: String) {
 private enum class HbbtvPageState { LOADING, CONTENT, ERROR }
 private val hbbtvVideoWindow = HbbtvWindowOwnership<VideoWindowFraction> { PlaybackVideoWindow.window = it }
 
+/** Chromium derives CSS density from the display. Keep sender-defined viewports at native size. */
+@Composable
+private fun HbbtvBrowserDialog(onDismissRequest: () -> Unit, content: @Composable () -> Unit) {
+    val environment = LocalUiRenderEnvironment.current
+    val density = LocalDensity.current
+    val nativeDensity = remember(density, environment.densityScale) {
+        Density(density.density / environment.densityScale, density.fontScale)
+    }
+    CompositionLocalProvider(LocalDensity provides nativeDensity) {
+        Dialog(
+            onDismissRequest = onDismissRequest,
+            properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false),
+        ) {
+            ProvideUiRenderEnvironment(UiRenderResolutionPolicy.SYSTEM, null, nativeDensity, content)
+        }
+    }
+}
+
 @Composable
 private fun HbbtvViewer(app: HbbtvApplication, channelName: String?, channelKey: String, onClose: () -> Unit) {
     var browser by remember { mutableStateOf<HbbtvWebView?>(null) }
@@ -143,7 +167,7 @@ private fun HbbtvViewer(app: HbbtvApplication, channelName: String?, channelKey:
         browser?.cancelBackPress()
         controlsVisible = true
     }
-    Dialog(
+    HbbtvBrowserDialog(
         onDismissRequest = {
             when {
                 controlsVisible -> controlsVisible = false
@@ -151,7 +175,6 @@ private fun HbbtvViewer(app: HbbtvApplication, channelName: String?, channelKey:
                 else -> browser?.pageBack()
             }
         },
-        properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false),
     ) {
         val view = LocalView.current
         val focusManager = LocalFocusManager.current
