@@ -81,7 +81,13 @@ internal class UiRenderResolutionAudit(
         error("UI render audit timed out: $label")
     }
 
-    private fun key(code: Int) = instrumentation.sendKeyDownUpSync(code)
+    private fun key(code: Int) {
+        // sendKeyDownUpSync assigns each event a fresh downTime on Android 12. A physical
+        // key press, and the production Back gate, require the same downTime for both events.
+        val downTime = SystemClock.uptimeMillis()
+        instrumentation.sendKeySync(KeyEvent(downTime, downTime, KeyEvent.ACTION_DOWN, code, 0))
+        instrumentation.sendKeySync(KeyEvent(downTime, SystemClock.uptimeMillis(), KeyEvent.ACTION_UP, code, 0))
+    }
 
     fun run() {
         check(Build.VERSION.SDK_INT >= 31) { "Embedded window focus requires Android 12 / API 31" }
