@@ -127,6 +127,10 @@ class RowColumnFocus(initialMemory: Map<String, String> = emptyMap()) {
 
     internal fun canScrollToEntry(rowKey: Any): Boolean = handles[rowKey] != null && entry(rowKey) != null
 
+    internal fun isEntryPlaced(rowKey: Any): Boolean = entry(rowKey)?.first?.let { itemKey ->
+        rows[rowKey]?.get(itemKey)?.coordinates?.isAttached == true
+    } == true
+
     internal suspend fun scrollToEntry(rowKey: Any) {
         val handle = handles[rowKey] ?: return
         val (_, index) = entry(rowKey) ?: return
@@ -422,7 +426,7 @@ fun Modifier.rowColumnFocusNavigation(
                 // The row's tiles compose after the vertical scroll. Wait for them before
                 // scrolling sideways to the remembered one.
                 var waited = 0
-                while (waited < 12 && !focus.canScrollToEntry(rowKey)) {
+                while (waited < 12 && !focus.canScrollToEntry(rowKey) && !focus.isEntryPlaced(rowKey)) {
                     withFrameNanos { }
                     waited++
                 }
@@ -455,9 +459,10 @@ fun Modifier.rowColumnFocusNavigation(
 
         val next = focus.nextRow(order, down, pendingAnchor)
         if (next != null) {
-            // During a retarget the old row may still own focus. Requesting it again would stop
-            // the list halfway through; finish the new vertical destination first.
-            if (!hadActiveMove && focus.focusEntry(next)) {
+            // A placed row can still sit behind Home's hero or an unfinished earlier move.
+            // Its explicit scroll hook also publishes the new visual row; always finish that
+            // transaction before transferring focus. Containers without one can enter directly.
+            if (!hadActiveMove && scrollToRow == null && focus.focusEntry(next)) {
                 // Exactly one tick per move: self-sounding tiles already play it on focus.
                 if (focus.lastMoveNeedsSound) uiSounds?.playFocus()
                 return@onPreviewKeyEvent true

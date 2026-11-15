@@ -103,8 +103,8 @@ import androidx.lifecycle.repeatOnLifecycle
     onSelectFeed:((YouTubeFeed)->Unit)?=null,
     viewModel:YouTubeViewModel=hiltViewModel(),
 ) {
-    val storedState by viewModel.uiState.collectAsState()
-    val pendingReturn by viewModel.pendingPlaybackReturn.collectAsState()
+    val storedState = viewModel.uiState.collectAsCurrentState()
+    val pendingReturn = viewModel.pendingPlaybackReturn.collectAsCurrentState()
     val preview = viewModel.preparePlaybackReturn(storedState, pendingReturn, pendingReturn?.revision)
     val entryReturn = rememberPlaybackReturnOnEntry(pendingReturn.takeIf { preview != null }) { it.revision }
     val playbackVisitRevision = rememberPlaybackReturnVisitToken(entryReturn?.revision)

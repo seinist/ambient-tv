@@ -1,5 +1,6 @@
 package com.ambient.tv.ui.detail
 
+import com.ambient.tv.ui.common.collectAsCurrentState
 import com.ambient.tv.ui.theme.animatedFocusSurface
 import com.ambient.tv.ui.theme.screenGutter
 import com.ambient.tv.ui.mobile.DeviceActionRow
@@ -181,7 +182,7 @@ fun DetailScreen(
 ) {
     com.ambient.tv.ui.common.RetryOfflineBrowse(viewModel::retryOffline)
     com.ambient.tv.ui.common.RefreshOnEnterAndReconnect(viewModel.reconnectSources, viewModel::load)
-    val uiState by viewModel.uiState.collectAsState()
+    val uiState = viewModel.uiState.collectAsCurrentState()
     ThemeMusicEffect(viewModel.themeMusicPlayer, (uiState as? DetailUiState.Loaded)?.themeMusic)
     BrowseFocusReturnScope {
     Box(modifier = Modifier.fillMaxSize()) {

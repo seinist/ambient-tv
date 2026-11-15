@@ -1,5 +1,6 @@
 package com.ambient.tv.ui.spotify
 
+import com.ambient.tv.ui.common.collectAsCurrentState
 import com.ambient.tv.ui.theme.animatedFocusSurface
 import com.ambient.tv.ui.theme.screenGutter
 import com.ambient.tv.ui.mobile.deviceDp
@@ -77,7 +78,7 @@ fun SpotifyDetailScreen(
     onOpenAlbum: (String) -> Unit,
     viewModel: SpotifyDetailViewModel = hiltViewModel(),
 ) {
-    val state by viewModel.state.collectAsState()
+    val state = viewModel.state.collectAsCurrentState()
     val navigationReturn = rememberNavigationPlaybackReturn()
     com.ambient.tv.ui.common.RetryOfflineBrowse(viewModel::retryOffline)
     com.ambient.tv.ui.common.RefreshOnEnterAndReconnect(setOf("spotify"), viewModel::load)

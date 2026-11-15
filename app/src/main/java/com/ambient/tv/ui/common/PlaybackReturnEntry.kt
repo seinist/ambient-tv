@@ -9,6 +9,7 @@ import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.navigation.NavBackStackEntry
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 
 /** The actual top entry, unlike STARTED which also includes a predictive-back preview. */
@@ -24,6 +25,21 @@ internal fun isActiveNavigationDestination(): Boolean {
     val entry = LocalLifecycleOwner.current as? NavBackStackEntry ?: return true
     val activeId = LocalActiveNavigationEntryId.current ?: return true
     return entry.id == activeId
+}
+
+/**
+ * Keep observing updates, but make a one-shot entry decision from the value already published
+ * by the player. Navigation can recompose this page before collectAsState's coroutine catches
+ * up; accepting that older value would lock the wrong revision for the whole visit. Read the
+ * matching UI state this way too, so committing state and clearing its return cannot briefly
+ * expose the old layout through independently scheduled collectors.
+ */
+@Suppress("StateFlowValueCalledInComposition")
+@Composable
+internal fun <T> StateFlow<T>.collectAsCurrentState(): T {
+    val observed by collectAsState()
+    val current = value
+    return if (observed === current) observed else current
 }
 
 /**
@@ -120,7 +136,7 @@ internal class NavigationPlaybackReturnEntry {
 @Composable
 internal fun rememberNavigationPlaybackReturn(): NavigationPlaybackReturn? {
     val owner = LocalLifecycleOwner.current as? NavBackStackEntry ?: return null
-    val pending by NavigationPlaybackReturns.pending.collectAsState()
+    val pending = NavigationPlaybackReturns.pending.collectAsCurrentState()
     val entry = remember(owner.id) { NavigationPlaybackReturnEntry() }
     val accepted = entry.select(isActiveNavigationDestination(), pending[owner.id])
     SideEffect { accepted?.let(NavigationPlaybackReturns::consume) }

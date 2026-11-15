@@ -101,6 +101,7 @@ import com.ambient.tv.ui.common.BrowseFocusInitialTarget
 import com.ambient.tv.ui.common.BrowseFocusKey
 import com.ambient.tv.ui.common.rememberBrowsePlaybackReturn
 import com.ambient.tv.ui.common.rememberPlaybackReturnOnEntry
+import com.ambient.tv.ui.common.collectAsCurrentState
 import com.ambient.tv.ui.common.RegisterBrowseFocusGrid
 import com.ambient.tv.ui.common.RegisterBrowseFocusList
 import com.ambient.tv.ui.common.browseFocusTarget
@@ -142,8 +143,8 @@ fun RadioScreen(
         viewModel.selectSection(section)
     }
     val requestedSection = RadioSection.fromKey(liveSectionKey.value) ?: RadioSection.POPULAR
-    val storedState by viewModel.state.collectAsState()
-    val pendingReturn by viewModel.pendingPlaybackReturn.collectAsState()
+    val storedState = viewModel.state.collectAsCurrentState()
+    val pendingReturn = viewModel.pendingPlaybackReturn.collectAsCurrentState()
     val returnCandidate = pendingReturn?.takeIf {
         storedState.section == requestedSection && it.source?.focusScope == storedState.focusScope()
     }

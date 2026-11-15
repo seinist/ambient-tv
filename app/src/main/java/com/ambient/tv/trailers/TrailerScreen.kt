@@ -561,7 +561,7 @@ private fun TrailerTitleScreen(onBack: () -> Unit, onPlay: (String, Long?) -> Un
     var serverTrailers by snapshot.serverTrailers
     val playbackContext = dependencies.playbackContext()
     val playbackScope = "trailer-title:$ratingKey:$tmdbType:$tmdbId"
-    val pendingReturn by playbackContext.pendingReturn.collectAsState()
+    val pendingReturn = playbackContext.pendingReturn.collectAsCurrentState()
     val pendingTitleReturn = prepareTrailerTitleReturn(playbackScope, requestKey,
         snapshot.playbackOrigin.value, pendingReturn,
         dependencies.trailers().configured && dependencies.preferences().trailersEnabled)
