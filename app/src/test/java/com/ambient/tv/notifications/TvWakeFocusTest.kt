@@ -187,9 +187,11 @@ class TvWakeFocusTest {
     private fun cancelButtons() = rule.onAllNodesWithText(rule.activity.getString(R.string.home_cancel_wake))
 
     private fun awaitWakeFocus(fixture: Fixture, index: Int = 0) {
-        rule.waitUntil(timeoutMillis = 2_000) { fixture.wakeFocus.hasFocus }
         rule.waitForIdle()
-        cancelButtons()[index].assertIsFocused()
+        rule.waitUntil(timeoutMillis = 2_000) {
+            runCatching { cancelButtons()[index].assertIsFocused() }.isSuccess
+        }
+        rule.runOnIdle { assertTrue(fixture.wakeFocus.hasFocus) }
     }
 
     @Test fun wakeAppearingAfterContentFocusTakesAndKeepsFocusPastSidebarCollapse() {
@@ -375,6 +377,7 @@ class TvWakeFocusTest {
         awaitWakeFocus(fixture)
 
         rule.runOnIdle { fixture.wakes = emptyList() }
+        rule.waitForIdle()
         rule.waitUntil(timeoutMillis = 2_000) { fixture.releases == 1 }
         rule.onNodeWithTag("content").assertIsFocused()
         rule.runOnIdle {
