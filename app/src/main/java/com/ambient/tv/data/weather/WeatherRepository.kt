@@ -61,7 +61,8 @@ class WeatherRepository @Inject constructor(
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val gate = Any()
     private val refreshMutex = Mutex()
-    private val activeCalls = ConcurrentHashMap<Call, Long>()
+    private data class ActiveRequest(val generation: Long, val forecast: Boolean)
+    private val activeCalls = ConcurrentHashMap<Call, ActiveRequest>()
     private val rateLimitedUntil = AtomicLong(0)
     private val cacheFile = AtomicFile(File(context.cacheDir, "weather/forecasts-v1.json"))
     private var cacheLoaded = false // Accessed only under refreshMutex.
@@ -77,7 +78,7 @@ class WeatherRepository @Inject constructor(
 
     // A standalone client must never inherit a Plex token, server URL rewrite, cookies or an
     // authentication interceptor. Only the connection pool/dispatcher are shared.
-    private val client = OkHttpClient.Builder()
+    private var client = OkHttpClient.Builder()
         .connectionPool(connectionPool)
         .dispatcher(dispatcher)
         .dns(LanOnlyDns({ preferences.localNetworkOnly || !preferences.weatherSettings.enabled }))
@@ -90,6 +91,16 @@ class WeatherRepository @Inject constructor(
             accessError(preferences.weatherSettings, preferences.localNetworkOnly)?.let { throw WeatherRequestException(it) }
             chain.proceed(chain.request())
         }.build()
+
+    /** Controlled HTTP responses in repository regression tests; production uses the client above. */
+    internal constructor(
+        context: Context,
+        preferences: AppPreferences,
+        regularPreferences: SharedPreferences,
+        client: OkHttpClient,
+    ) : this(context, preferences, regularPreferences, client.connectionPool, client.dispatcher) {
+        this.client = client
+    }
 
     // Keep a strong reference for Android's weak listener registry. This repository is a
     // process singleton; no timer or background weather job is attached to this listener.
@@ -108,13 +119,16 @@ class WeatherRepository @Inject constructor(
     }
 
     private fun synchronizeSettings(restoreCache: Boolean = false) {
-        val next = preferences.weatherSettings
-        val nextLocalOnly = preferences.localNetworkOnly
-        val changedGeneration = synchronized(gate) {
+        val (changedGeneration, enabled, accessChanged) = synchronized(gate) {
+            // Read and apply under one lock: a delayed IO consumer must not restore a preference
+            // snapshot from before a completed main-thread update.
+            val next = preferences.weatherSettings
+            val nextLocalOnly = preferences.localNetworkOnly
             val old = _settings.value
             val oldKey = old.selectedLocation?.let { weatherCacheKey(it, old) }
             val nextKey = next.selectedLocation?.let { weatherCacheKey(it, next) }
-            val changed = oldKey != nextKey || old.enabled != next.enabled || localOnly != nextLocalOnly
+            val accessChanged = old.enabled != next.enabled || localOnly != nextLocalOnly
+            val changed = oldKey != nextKey || accessChanged
             _settings.value = next
             localOnly = nextLocalOnly
             if (changed) {
@@ -124,14 +138,15 @@ class WeatherRepository @Inject constructor(
                     error = accessError(next, nextLocalOnly),
                 )
             }
-            generation.takeIf { changed }
+            Triple(generation.takeIf { changed }, next.enabled, accessChanged)
         }
         // A new consumer may already have started the newly selected place by this point.
         // Cancel only requests from an older selection/policy generation.
-        if (changedGeneration != null) activeCalls.forEach { (call, callGeneration) ->
-            if (callGeneration < changedGeneration) call.cancel()
+        if (changedGeneration != null) activeCalls.forEach { (call, request) ->
+            // Geocoding depends on its query, not on the forecast's selected place or units.
+            if (request.generation < changedGeneration && (accessChanged || request.forecast)) call.cancel()
         }
-        if ((changedGeneration != null || restoreCache) && next.enabled) scope.launch {
+        if ((changedGeneration != null || restoreCache) && enabled) scope.launch {
             refreshMutex.withLock {
                 loadCache()
                 synchronized(gate) {
@@ -164,30 +179,28 @@ class WeatherRepository @Inject constructor(
         }
     }
 
-    suspend fun refresh(force: Boolean = false): Unit = withContext(Dispatchers.IO) {
+    /** The outcome belongs to this call. Superseded and throttled calls return no result. */
+    suspend fun refresh(force: Boolean = false): WeatherState? = withContext(Dispatchers.IO) {
         synchronizeSettings()
         refreshMutex.withLock {
             loadCache()
             val (selected, token) = synchronized(gate) { _settings.value to generation }
-            val place = selected.selectedLocation ?: return@withLock
+            val place = selected.selectedLocation ?: return@withLock null
             val key = weatherCacheKey(place, selected)
             val saved = synchronized(gate) { cache[key] ?: _state.value.data?.takeIf { it.matches(selected) } }
             accessError(preferences.weatherSettings, preferences.localNetworkOnly)?.let { error ->
-                publish(token, WeatherState(data = saved.takeIf { selected.enabled }, error = error))
-                return@withLock
+                return@withLock publish(token, WeatherState(data = saved.takeIf { selected.enabled }, error = error))
             }
             val now = System.currentTimeMillis()
             if (!force && saved?.isStale(now) == false) {
-                publish(token, WeatherState(data = saved))
-                return@withLock
+                return@withLock publish(token, WeatherState(data = saved))
             }
             val retryAt = rateLimitedUntil.get()
             if (now < retryAt) {
-                publish(token, WeatherState(saved, error = WeatherError.RATE_LIMITED, retryAfterMillis = retryAt))
-                return@withLock
+                return@withLock publish(token, WeatherState(saved, error = WeatherError.RATE_LIMITED, retryAfterMillis = retryAt))
             }
             // Coalesce simultaneous consumers and repeated Retry clicks, including forced ones.
-            if (lastAttemptKey == key && now - lastAttemptMillis in 0 until MIN_REQUEST_INTERVAL_MILLIS) return@withLock
+            if (lastAttemptKey == key && now - lastAttemptMillis in 0 until MIN_REQUEST_INTERVAL_MILLIS) return@withLock null
             lastAttemptKey = key
             lastAttemptMillis = now
             publish(token, WeatherState(saved, loading = true))
@@ -200,17 +213,27 @@ class WeatherRepository @Inject constructor(
                 saveCache()
                 publish(token, WeatherState(snapshot))
             } catch (cancelled: CancellationException) {
+                // Returning to a visible consumer must retry immediately after its predecessor
+                // was cancelled, otherwise an empty state can remain until the 30-minute poll.
+                lastAttemptKey = null
+                lastAttemptMillis = 0L
                 publish(token, WeatherState(saved))
                 throw cancelled
             } catch (error: Exception) {
+                // Preference changes cancel the OkHttp call with IOException, not coroutine
+                // cancellation. Such an obsolete attempt must not throttle the new consumer.
+                if (synchronized(gate) { generation != token }) {
+                    lastAttemptKey = null
+                    lastAttemptMillis = 0L
+                }
                 val failure = requestError(error)
                 publish(token, WeatherState(saved, error = failure.reason, retryAfterMillis = failure.retryAfterMillis))
             }
         }
     }
 
-    private fun publish(token: Long, value: WeatherState) = synchronized(gate) {
-        if (generation == token) _state.value = value
+    private fun publish(token: Long, value: WeatherState): WeatherState? = synchronized(gate) {
+        if (generation == token) value.also { _state.value = it } else null
     }
 
     private suspend fun get(url: HttpUrl, expectedGeneration: Long? = null): String {
@@ -224,13 +247,22 @@ class WeatherRepository @Inject constructor(
                     continuation.resumeWithException(WeatherRequestException(WeatherError.UNAVAILABLE))
                     return@suspendCancellableCoroutine
                 }
-                activeCalls[call] = generation
+                activeCalls[call] = ActiveRequest(generation, forecast = expectedGeneration != null)
             }
             continuation.invokeOnCancellation { call.cancel(); activeCalls.remove(call) }
             call.enqueue(object : Callback {
+                private fun fail(call: Call, error: Exception) {
+                    if (!continuation.isActive) return
+                    // A local policy change can cancel a search even if the settings flow later
+                    // conflates disable/re-enable. It is not a provider outage or failed Retry.
+                    if (expectedGeneration == null && call.isCanceled()) continuation.cancel(
+                        CancellationException("Weather search cancelled by settings change", error),
+                    ) else continuation.resumeWithException(error)
+                }
+
                 override fun onFailure(call: Call, e: IOException) {
                     activeCalls.remove(call)
-                    if (continuation.isActive) continuation.resumeWithException(e)
+                    fail(call, e)
                 }
 
                 override fun onResponse(call: Call, response: Response) {
@@ -249,7 +281,7 @@ class WeatherRepository @Inject constructor(
                         }
                         if (continuation.isActive) continuation.resume(text)
                     } catch (error: Exception) {
-                        if (continuation.isActive) continuation.resumeWithException(error)
+                        fail(call, error)
                     } finally {
                         activeCalls.remove(call)
                     }

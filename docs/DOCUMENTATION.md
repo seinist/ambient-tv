@@ -253,6 +253,8 @@ Provider documentation: [RainViewer](https://www.rainviewer.com/api/weather-maps
 
 Weather preferences, saved places, menu/display switches and both explicit provider choices are included in settings backups and preference transfers. Older backups without a weather field preserve the receiving device's choices. Forecasts and map images are cache data and are not transferred.
 
+Weather, map and location-search failures use the app's shared feedback components. Cached data stays visible alongside a compact status card; missing coverage is informational. Retry controls stay mounted while loading, and the map page scrolls so all controls remain reachable. Automatic refresh failures stay on their page. An explicitly retried operation can send one normal app notification if it finishes with an error after its view has been hidden; cancelled or superseded attempts never notify and weather feedback does not interrupt playback.
+
 ---
 
 ## 4. Media sources & accounts

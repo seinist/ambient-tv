@@ -31,6 +31,9 @@ import com.ambient.tv.data.weather.WeatherLocation
 import com.ambient.tv.data.weather.WeatherMapKind
 import com.ambient.tv.data.weather.WeatherMapProvider
 import com.ambient.tv.data.weather.WeatherSettings
+import com.ambient.tv.ui.common.FeedbackLayout
+import com.ambient.tv.ui.common.OperationFeedbackContent
+import com.ambient.tv.ui.common.OperationFeedbackScope
 import com.ambient.tv.ui.common.PageHeader
 import com.ambient.tv.ui.common.PlayerDropUpSelector
 import com.ambient.tv.ui.common.TvActionButton
@@ -55,11 +58,13 @@ fun WeatherSettingsScreen(
     val settings by viewModel.settings.collectAsState()
     val search by viewModel.search.collectAsState()
     val networkAllowed by viewModel.networkAllowed.collectAsState()
+    val contentVisible = LocalWeatherPresentation.current.contentVisible
     val locale = LocalConfiguration.current.locales[0]
     val language = locale?.language ?: "en"
     val tokens = LocalUiTokens.current
     val chain = rememberPageFocusChain()
     val muted = MaterialTheme.colorScheme.onSurfaceVariant
+    OperationFeedbackScope(viewModel.feedbackReporter, WEATHER_SEARCH_SCOPE, enabled = contentVisible)
     if (!embedded) {
         BackHandler(enabled = onBack != null) { onBack?.invoke() }
         ReportSidebarContentReady(true)
@@ -86,7 +91,8 @@ fun WeatherSettingsScreen(
                     checked = settings.enabled, onCheckedChange = viewModel::setEnabled)
             }
             if (!networkAllowed) item(key = "local-only") {
-                Text(stringResource(R.string.weather_local_only_hint), style = MaterialTheme.typography.bodyMedium, color = muted)
+                OperationFeedbackContent(weatherForecastFeedback(WeatherError.LOCAL_ONLY, cached = false),
+                    modifier = Modifier.fillMaxWidth(), layout = FeedbackLayout.COMPACT)
             }
             item(key = "places-title") {
                 Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -120,17 +126,12 @@ fun WeatherSettingsScreen(
                     }
                 }
                 if (search.loading || search.failed || search.completed && search.results.isEmpty()) item(key = "search-status") {
-                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Text(stringResource(when {
-                            search.loading -> R.string.weather_searching
-                            search.error == WeatherError.RATE_LIMITED -> R.string.weather_rate_limited
-                            search.error == WeatherError.LOCAL_ONLY -> R.string.weather_local_only
-                            search.failed -> R.string.weather_search_failed
-                            else -> R.string.weather_search_empty
-                        }), style = MaterialTheme.typography.bodySmall, color = muted)
-                        if (search.failed) TvChip(stringResource(R.string.weather_retry),
-                            onClick = { viewModel.searchLocations(search.query, language) })
-                    }
+                    if (search.failed) OperationFeedbackContent(weatherSearchFeedback(search.error),
+                        modifier = Modifier.fillMaxWidth(), layout = FeedbackLayout.FIELD,
+                        actionLabel = stringResource(R.string.weather_retry),
+                        actionLoading = search.loading, onAction = { viewModel.retrySearch(language) })
+                    else Text(stringResource(if (search.loading) R.string.weather_searching else R.string.weather_search_empty),
+                        style = MaterialTheme.typography.bodySmall, color = muted)
                 }
                 items(search.results, key = { "result:${it.id}" }) { location ->
                     TvActionButton(locationLabel(location), icon = Icons.Filled.LocationOn, fillWidth = true,

@@ -110,14 +110,11 @@ class MpvPlaybackController(
     @Volatile private var opening = true
     /** [MpvOwnerStep.reopens] as of the last sample; the watchdog reads it on the main thread. */
     @Volatile private var seenReopens = 0
+    private val ownerDispatcher = MpvOwnerDispatcher(ownerReady) { task -> worker.post { task() } }
     private val mailbox = MpvCommandQueue(
-        schedule = { task ->
-            // Construction can happen inside remember(). Let that composition commit before
-            // the owner reads the AudioSession's Compose state for the first time.
-            ownerReady.whenComplete { _, _ ->
-                main.post { worker.post { task() } }
-            }
-        },
+        // Surface destruction waits on the main thread. Once startup is ready, dispatch
+        // straight to the owner so detaching never depends on that same thread responding.
+        schedule = ownerDispatcher::dispatch,
         failed = { error ->
             Timber.e(error, "MPV owner operation failed")
             main.post { if (!released) failure = context.getString(com.ambient.tv.R.string.mpv_command_failed, -1) }
@@ -150,8 +147,12 @@ class MpvPlaybackController(
         audioSession.routeChanged = { _, _ -> main.post { command("audio") { applyAudioOptions() } } }
         audioSession.startRouteMonitoring(context)
         previousAudioRelease.whenSettled(delay = { ms, block -> main.postDelayed(block, ms) }) { outcome ->
-            main.post { waitingForPreviousPlayer = false }
-            ownerReady.complete(outcome)
+            // Construction can happen inside remember(). Cross the main queue once so that
+            // composition commits before the owner reads AudioSession's Compose state.
+            main.post {
+                waitingForPreviousPlayer = false
+                ownerReady.complete(outcome)
+            }
         }
         mailbox.submit("initialize") {
             // Already settled: the mailbox only runs once ownerReady completed. Never blocks.

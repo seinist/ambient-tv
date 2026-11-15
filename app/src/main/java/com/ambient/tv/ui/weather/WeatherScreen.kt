@@ -59,7 +59,11 @@ import com.ambient.tv.data.weather.WeatherError
 import com.ambient.tv.data.weather.WeatherMapKind
 import com.ambient.tv.data.weather.WeatherSnapshot
 import com.ambient.tv.data.weather.WeatherState
+import com.ambient.tv.notifications.FeedbackPhase
 import com.ambient.tv.ui.sound.LocalUiSoundPlayer
+import com.ambient.tv.ui.common.FeedbackLayout
+import com.ambient.tv.ui.common.OperationFeedbackContent
+import com.ambient.tv.ui.common.OperationFeedbackScope
 import com.ambient.tv.ui.common.PageChipRow
 import com.ambient.tv.ui.common.PageFocusChain
 import com.ambient.tv.ui.common.PageFocusLevel
@@ -107,8 +111,18 @@ fun WeatherScreen(
     var tab by rememberSaveable { mutableStateOf("overview") }
     val location = settings.selectedLocation
     val snapshot = state.data?.takeIf { it.matches(settings) }
+    var settledError by remember(settings.enabled, location, settings.temperatureUnit, settings.windUnit, networkAllowed) {
+        mutableStateOf<WeatherError?>(null)
+    }
+    LaunchedEffect(state.error, state.loading) {
+        if (!state.loading) settledError = state.error
+    }
+    // Keep retry controls mounted until their result arrives; a loading transition must not drop TV focus.
+    val displayedError = state.error ?: settledError.takeIf { state.loading }
     val tick by rememberWallClock()
     val nowMillis = remember(tick) { System.currentTimeMillis() }
+    OperationFeedbackScope(viewModel.feedbackReporter, WEATHER_FORECAST_SCOPE,
+        enabled = contentVisible && tab == "overview")
 
     // These controls are usable before a response arrives. Do not make sidebar focus wait on HTTP.
     ReportSidebarContentReady(true)
@@ -135,7 +149,7 @@ fun WeatherScreen(
             }
             TvChip(stringResource(R.string.weather_refresh), icon = Icons.Filled.Refresh, iconOnly = true,
                 enabled = settings.enabled && location != null && networkAllowed,
-                loading = state.loading, onClick = { viewModel.refresh(force = true) })
+                loading = state.loading, onClick = viewModel::retryForecast)
             TvChip(stringResource(R.string.weather_settings), icon = Icons.Filled.Settings,
                 iconOnly = true, onClick = onOpenSettings)
         }) {
@@ -159,10 +173,12 @@ fun WeatherScreen(
         when {
             !settings.enabled -> StatePanel(stringResource(R.string.weather_disabled),
                 body = stringResource(R.string.weather_disabled_hint), actionLabel = stringResource(R.string.weather_setup),
-                onAction = onOpenSettings, modifier = Modifier.fillMaxWidth().weight(1f))
+                onAction = onOpenSettings, phase = FeedbackPhase.INFO,
+                modifier = Modifier.fillMaxWidth().weight(1f))
             location == null -> StatePanel(stringResource(R.string.weather_choose_location),
                 body = stringResource(R.string.weather_choose_location_hint), actionLabel = stringResource(R.string.weather_manage_locations),
-                onAction = onOpenSettings, modifier = Modifier.fillMaxWidth().weight(1f))
+                onAction = onOpenSettings, phase = FeedbackPhase.INFO,
+                modifier = Modifier.fillMaxWidth().weight(1f))
             else -> {
                 if (settings.locations.size > 1) LazyRow(
                     modifier = Modifier.pageFocusStage(focusChain, PageFocusLevel.CONTEXT, locationFocus),
@@ -185,14 +201,17 @@ fun WeatherScreen(
                     )
                     else -> {
                         if (snapshot != null) {
-                            WeatherOverview(snapshot, state, nowMillis, focusChain,
-                                Modifier.fillMaxWidth().weight(1f))
-                        } else if (state.error != null && !state.loading) {
-                            StatePanel(stringResource(weatherErrorRes(state.error)),
-                                body = stringResource(if (state.error == WeatherError.LOCAL_ONLY)
-                                    R.string.weather_local_only_hint else R.string.weather_unavailable_hint),
+                            WeatherOverview(snapshot, state.copy(error = displayedError), nowMillis, focusChain,
+                                networkAllowed = networkAllowed, onRetry = viewModel::retryForecast,
+                                onOpenSettings = onOpenSettings, modifier = Modifier.fillMaxWidth().weight(1f))
+                        } else if (displayedError != null) {
+                            val feedback = weatherForecastFeedback(displayedError, cached = false, subject = location.name)
+                            StatePanel(stringResource(feedback.message, *feedback.args.toTypedArray()),
+                                body = feedback.detail?.let { stringResource(it) },
+                                phase = feedback.phase,
                                 actionLabel = stringResource(if (networkAllowed) R.string.weather_retry else R.string.weather_settings),
-                                onAction = if (networkAllowed) ({ viewModel.refresh(true) }) else onOpenSettings,
+                                actionLoading = state.loading,
+                                onAction = if (networkAllowed) ({ if (!state.loading) viewModel.retryForecast() }) else onOpenSettings,
                                 modifier = Modifier.fillMaxWidth().weight(1f))
                         } else {
                             WeatherLoadingOverview(location.name, handheld, Modifier.fillMaxWidth().weight(1f))
@@ -204,20 +223,15 @@ fun WeatherScreen(
     }
 }
 
-internal fun weatherErrorRes(error: WeatherError?): Int = when (error) {
-    WeatherError.DISABLED -> R.string.weather_disabled
-    WeatherError.LOCAL_ONLY -> R.string.weather_local_only
-    WeatherError.OFFLINE -> R.string.weather_offline
-    WeatherError.RATE_LIMITED -> R.string.weather_rate_limited
-    else -> R.string.weather_unavailable
-}
-
 @Composable
 private fun WeatherOverview(
     snapshot: WeatherSnapshot,
     state: WeatherState,
     nowMillis: Long,
     focusChain: PageFocusChain,
+    networkAllowed: Boolean,
+    onRetry: () -> Unit,
+    onOpenSettings: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val locale = LocalConfiguration.current.locales[0] ?: Locale.ROOT
@@ -242,10 +256,13 @@ private fun WeatherOverview(
         item(key = "status") {
             Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
                 if (state.error != null || snapshot.isStale(nowMillis)) {
-                    Text(stringResource(if (state.error != null) weatherErrorRes(state.error) else R.string.weather_stale),
-                        style = MaterialTheme.typography.bodySmall, color = muted)
-                    if (state.error != null) Text(stringResource(R.string.weather_stale),
-                        style = MaterialTheme.typography.bodySmall, color = muted)
+                    OperationFeedbackContent(
+                        weatherForecastFeedback(state.error, cached = true, subject = snapshot.location.name),
+                        modifier = Modifier.fillMaxWidth(), layout = FeedbackLayout.COMPACT,
+                        actionLabel = stringResource(if (networkAllowed) R.string.weather_retry else R.string.weather_settings),
+                        onAction = if (networkAllowed) onRetry else onOpenSettings,
+                        actionLoading = state.loading && networkAllowed, requestActionFocus = false,
+                    )
                 }
                 Text(stringResource(R.string.weather_updated,
                     weatherTimestamp(snapshot.fetchedAtMillis, snapshot.timezone, locale, use24Hour)),
@@ -256,7 +273,11 @@ private fun WeatherOverview(
         item(key = "hours") {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Text(stringResource(R.string.weather_next_hours), style = MaterialTheme.typography.titleLarge)
-                if (hours.isEmpty()) Text(stringResource(R.string.weather_forecast_expired), color = muted)
+                if (hours.isEmpty()) OperationFeedbackContent(
+                    weatherForecastFeedback(null, cached = true, subject = snapshot.location.name).copy(
+                        message = R.string.weather_forecast_expired, detail = null, phase = FeedbackPhase.INFO),
+                    modifier = Modifier.fillMaxWidth(), layout = FeedbackLayout.COMPACT,
+                )
                 else {
                     LazyRow(horizontalArrangement = Arrangement.spacedBy(10.dp), contentPadding = PaddingValues(2.dp)) {
                         items(hours, key = { it.timeEpochSeconds }) { entry ->
@@ -285,7 +306,11 @@ private fun WeatherOverview(
         item(key = "days") {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Text(stringResource(R.string.weather_seven_days), style = MaterialTheme.typography.titleLarge)
-                if (days.isEmpty()) Text(stringResource(R.string.weather_forecast_expired), color = muted)
+                if (days.isEmpty()) OperationFeedbackContent(
+                    weatherForecastFeedback(null, cached = true, subject = snapshot.location.name).copy(
+                        message = R.string.weather_forecast_expired, detail = null, phase = FeedbackPhase.INFO),
+                    modifier = Modifier.fillMaxWidth(), layout = FeedbackLayout.COMPACT,
+                )
                 else LazyRow(horizontalArrangement = Arrangement.spacedBy(10.dp), contentPadding = PaddingValues(2.dp)) {
                     items(days, key = { it.date }) { day ->
                         WeatherForecastCard(

@@ -790,6 +790,7 @@ fun StatePanel(
     icon: ImageVector? = null,
     centered: Boolean = false,
     phase: com.ambient.tv.notifications.FeedbackPhase? = null,
+    actionLoading: Boolean = false,
 ) {
     // Callers often hand in fillMaxSize/fillMaxWidth for placement; the panel itself only takes
     // the width its text needs and wraps long text at a readable line length.
@@ -799,7 +800,7 @@ fun StatePanel(
             actionLabel = actionLabel, onAction = onAction,
             secondaryActionLabel = secondaryActionLabel, onSecondaryAction = onSecondaryAction,
             requestActionFocus = onAction != null && actionLabel != null,
-            icon = icon, centered = centered,
+            icon = icon, centered = centered, actionLoading = actionLoading,
         )
     }
 }

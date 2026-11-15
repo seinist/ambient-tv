@@ -52,6 +52,11 @@ class OperationFeedbackReporter(
     @Synchronized fun begin(key: String): Ticket = Ticket(key, ++revision).also { latest[key] = it.revision }
     @Synchronized fun cancel(key: String) { latest.remove(key) }
 
+    /** Cancellation of an older coroutine must not invalidate a newer attempt with the same key. */
+    @Synchronized fun cancel(ticket: Ticket) {
+        if (latest[ticket.key] == ticket.revision) latest.remove(ticket.key)
+    }
+
     /** A superseded or already completed attempt cannot update state or send a notification. */
     @Synchronized fun complete(ticket: Ticket, result: OperationFeedback): OperationFeedback? {
         if (latest[ticket.key] != ticket.revision) return null

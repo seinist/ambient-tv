@@ -8,6 +8,9 @@ import com.ambient.tv.data.weather.WeatherLocation
 import com.ambient.tv.data.weather.WeatherRepository
 import com.ambient.tv.data.weather.WeatherRequestException
 import com.ambient.tv.data.weather.WeatherSettings
+import com.ambient.tv.data.weather.weatherCacheKey
+import com.ambient.tv.notifications.FeedbackDelivery
+import com.ambient.tv.notifications.OperationFeedbackReporter
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
@@ -40,12 +43,17 @@ class WeatherViewModel @Inject constructor(
 ) : ViewModel() {
     val settings = repository.settings
     val state = repository.state
+    val feedbackReporter = OperationFeedbackReporter()
     val networkAllowed = preferences.changes().onStart { emit(Unit) }
         .map { !preferences.localNetworkOnly }.distinctUntilChanged()
         .stateIn(viewModelScope, SharingStarted.Eagerly, !preferences.localNetworkOnly)
     private val mutableSearch = MutableStateFlow(WeatherLocationSearch())
     val search = mutableSearch.asStateFlow()
     private var searchJob: Job? = null
+    private var searchTicket: OperationFeedbackReporter.Ticket? = null
+    private var searchGeneration = 0L
+    private var forecastRetryJob: Job? = null
+    private var forecastTicket: OperationFeedbackReporter.Ticket? = null
 
     init {
         viewModelScope.launch {
@@ -53,6 +61,7 @@ class WeatherViewModel @Inject constructor(
                 .distinctUntilChanged().collect { allowed ->
                     if (!allowed) {
                         clearSearch()
+                        cancelForecastRetry()
                     }
                 }
         }
@@ -62,11 +71,52 @@ class WeatherViewModel @Inject constructor(
         viewModelScope.launch { repository.refresh(force) }
     }
 
+    /** Only an explicit Retry may report a failure after its inline scope has disappeared. */
+    fun retryForecast() {
+        val selected = settings.value
+        val place = selected.selectedLocation ?: return
+        if (!selected.enabled || preferences.localNetworkOnly) return
+        val identity = weatherCacheKey(place, selected)
+        cancelForecastRetry()
+        val ticket = feedbackReporter.begin(WEATHER_FORECAST_SCOPE)
+        forecastTicket = ticket
+        forecastRetryJob = viewModelScope.launch {
+            try {
+                val result = repository.refresh(force = true)
+                val current = settings.value
+                val stillSelected = current.selectedLocation?.let { weatherCacheKey(it, current) } == identity
+                val error = result?.error
+                if (current.enabled && !preferences.localNetworkOnly && stillSelected && error != null &&
+                    error != WeatherError.DISABLED && error != WeatherError.LOCAL_ONLY
+                ) {
+                    feedbackReporter.complete(ticket, weatherForecastFeedback(error, result.data != null,
+                        subject = place.name, delivery = FeedbackDelivery.ACTION))
+                }
+            } finally {
+                feedbackReporter.cancel(ticket)
+                if (forecastTicket == ticket) forecastTicket = null
+            }
+        }
+    }
+
+    private fun cancelForecastRetry() {
+        forecastTicket?.let(feedbackReporter::cancel)
+        forecastTicket = null
+        forecastRetryJob?.cancel()
+        forecastRetryJob = null
+    }
+
     /** A visible-page refresh belongs to the caller's lifecycle, including cancellation. */
     suspend fun refreshVisible() { repository.refresh() }
 
     fun changeSettings(change: (WeatherSettings) -> WeatherSettings) {
-        repository.updateSettings(change(settings.value))
+        val current = settings.value
+        val next = change(current).normalized()
+        val previousKey = current.selectedLocation?.let { weatherCacheKey(it, current) }
+        val nextKey = next.selectedLocation?.let { weatherCacheKey(it, next) }
+        if (!next.enabled || previousKey != nextKey) cancelForecastRetry()
+        if (!next.enabled) clearSearch()
+        repository.updateSettings(next)
     }
 
     fun setEnabled(enabled: Boolean) {
@@ -109,33 +159,67 @@ class WeatherViewModel @Inject constructor(
     }
 
     fun clearSearch() {
+        searchGeneration++
+        searchTicket?.let(feedbackReporter::cancel)
+        searchTicket = null
         searchJob?.cancel()
         mutableSearch.value = WeatherLocationSearch()
     }
 
     fun searchLocations(query: String, language: String) {
+        searchLocations(query, language, manualRetry = false)
+    }
+
+    fun retrySearch(language: String) {
+        searchLocations(mutableSearch.value.query, language, manualRetry = true)
+    }
+
+    private fun searchLocations(query: String, language: String, manualRetry: Boolean) {
         searchJob?.cancel()
+        searchTicket?.let(feedbackReporter::cancel)
+        searchTicket = null
+        val generation = ++searchGeneration
         val boundedQuery = query.take(100)
         val requestedQuery = boundedQuery.trim()
         val allowed = settings.value.enabled && !preferences.localNetworkOnly
-        mutableSearch.value = WeatherLocationSearch(query = boundedQuery,
-            loading = requestedQuery.length >= 2 && allowed)
+        val previous = mutableSearch.value
+        val loading = requestedQuery.length >= 2 && allowed
+        mutableSearch.value = if (manualRetry && previous.query == boundedQuery && previous.failed)
+            previous.copy(loading = loading, completed = false)
+        else WeatherLocationSearch(query = boundedQuery, loading = loading)
         if (requestedQuery.length < 2 || !allowed) return
+        val ticket = if (manualRetry) feedbackReporter.begin(WEATHER_SEARCH_SCOPE) else null
+        searchTicket = ticket
         searchJob = viewModelScope.launch {
-            delay(450)
             try {
+                if (!manualRetry) delay(450)
                 val locations = repository.searchLocations(requestedQuery, language)
-                if (mutableSearch.value.query == boundedQuery) {
+                if (searchGeneration == generation && settings.value.enabled && !preferences.localNetworkOnly) {
                     mutableSearch.value = WeatherLocationSearch(boundedQuery, locations, completed = true)
                 }
             } catch (cancelled: CancellationException) {
+                if (searchGeneration == generation) {
+                    mutableSearch.value = mutableSearch.value.copy(loading = false)
+                }
                 throw cancelled
             } catch (error: Exception) {
-                if (mutableSearch.value.query == boundedQuery) {
+                if (searchGeneration == generation && settings.value.enabled && !preferences.localNetworkOnly) {
+                    val reason = (error as? WeatherRequestException)?.reason ?: WeatherError.UNAVAILABLE
                     mutableSearch.value = WeatherLocationSearch(query = boundedQuery, completed = true, failed = true,
-                        error = (error as? WeatherRequestException)?.reason ?: WeatherError.UNAVAILABLE)
+                        error = reason)
+                    ticket?.let { feedbackReporter.complete(it, weatherSearchFeedback(reason,
+                        subject = requestedQuery, delivery = FeedbackDelivery.ACTION)) }
                 }
+            } finally {
+                ticket?.let(feedbackReporter::cancel)
+                if (searchTicket == ticket) searchTicket = null
             }
         }
+    }
+
+    override fun onCleared() {
+        cancelForecastRetry()
+        clearSearch()
+        super.onCleared()
     }
 }

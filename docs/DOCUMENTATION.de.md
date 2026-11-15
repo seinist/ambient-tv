@@ -253,6 +253,8 @@ Anbieterdokumentation: [RainViewer](https://www.rainviewer.com/api/weather-maps-
 
 Wetter-Einstellungen, Orte, Menü-/Anzeigeschalter und beide ausdrücklich gewählten Kartendienste sind in Sicherungen und Einstellungsübertragungen enthalten. Ältere Sicherungen ohne Wetter-Feld erhalten die Auswahl auf dem empfangenden Gerät. Vorhersagen und Kartenbilder werden als Cache nicht übertragen.
 
+Fehler bei Wetter, Karten und Ortssuche verwenden die gemeinsamen Hinweis-Komponenten der App. Gespeicherte Daten bleiben mit einem kompakten Statushinweis sichtbar; fehlende Abdeckung wird als Information angezeigt. Wiederholen-Schaltflächen bleiben beim Laden erhalten, und die Kartenansicht lässt sich scrollen, damit alle Bedienelemente erreichbar bleiben. Automatische Aktualisierungsfehler bleiben in ihrer Ansicht. Ein ausdrücklich wiederholter Abruf kann einmal über das normale Benachrichtigungssystem auf einen Fehler hinweisen, wenn seine Ansicht inzwischen ausgeblendet ist. Abgebrochene oder überholte Versuche melden nichts; Wetterhinweise unterbrechen keine Wiedergabe.
+
 ---
 
 ## 4. Medienquellen & Konten
