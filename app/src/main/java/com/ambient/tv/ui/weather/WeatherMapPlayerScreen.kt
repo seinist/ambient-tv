@@ -636,27 +636,27 @@ private fun WeatherMedia3MapContent(
                         )
                     }
                 } else {
-                    Text(location.name + " · " + frameLabel, color = Color.White)
+                    Text(location.name + " · " + frameLabel, color = MaterialTheme.colorScheme.onSurface)
                     Text(stringResource(R.string.weather_player_product,
                         when (provider) {
                             WeatherMapProvider.RAINVIEWER, WeatherMapProvider.DWD ->
                                 stringResource(R.string.weather_player_radar_product)
                             WeatherMapProvider.NASA -> stringResource(R.string.weather_player_nasa_product)
                             WeatherMapProvider.EUMETSAT -> stringResource(R.string.weather_player_eumetsat_product)
-                        }), color = Color.White)
+                        }), color = MaterialTheme.colorScheme.onSurface)
                     Text(stringResource(R.string.weather_player_frame_counter,
-                        currentIndex + 1, frames.size), color = Color.White)
-                    Text(stringResource(R.string.weather_player_zoom, viewport.zoom), color = Color.White)
+                        currentIndex + 1, frames.size), color = MaterialTheme.colorScheme.onSurface)
+                    Text(stringResource(R.string.weather_player_zoom, viewport.zoom), color = MaterialTheme.colorScheme.onSurface)
                     Text(stringResource(R.string.weather_maps_width,
-                        viewport.widthKilometres.roundToInt()), color = Color.White)
+                        viewport.widthKilometres.roundToInt()), color = MaterialTheme.colorScheme.onSurface)
                     Text(stringResource(R.string.weather_player_manifest,
                         DateTimeFormatter.ofPattern("dd.MM.yyyy HH:mm z", locale).withZone(zone)
-                            .format(Instant.ofEpochMilli(series.fetchedAtMillis))), color = Color.White)
+                            .format(Instant.ofEpochMilli(series.fetchedAtMillis))), color = MaterialTheme.colorScheme.onSurface)
                     if ((initialCached && currentIndex == selected) || stale || sourceError != null) {
-                        Text(stringResource(R.string.weather_maps_stored), color = Color.White)
+                        Text(stringResource(R.string.weather_maps_stored), color = MaterialTheme.colorScheme.onSurface)
                     }
-                    if (frameBaseMissing) Text(stringResource(R.string.weather_maps_base_missing), color = Color.White)
-                    if (frameCoverageMissing) Text(stringResource(R.string.weather_maps_coverage_missing), color = Color.White)
+                    if (frameBaseMissing) Text(stringResource(R.string.weather_maps_base_missing), color = MaterialTheme.colorScheme.onSurface)
+                    if (frameCoverageMissing) Text(stringResource(R.string.weather_maps_coverage_missing), color = MaterialTheme.colorScheme.onSurface)
                     if (provider.kind == WeatherMapKind.RADAR) {
                         Box(Modifier.background(MaterialTheme.colorScheme.surface).padding(8.dp)) {
                             WeatherMapLegend(provider)
