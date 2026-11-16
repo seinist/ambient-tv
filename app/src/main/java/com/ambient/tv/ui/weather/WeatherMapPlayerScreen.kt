@@ -72,7 +72,7 @@ import com.ambient.tv.ui.common.StatePanel
 import com.ambient.tv.ui.common.TvChip
 import com.ambient.tv.ui.mobile.LocalHandheldUi
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.withFrameNanos
+import androidx.compose.runtime.withFrameNanos
 import java.time.Instant
 import java.time.ZoneId
 import java.time.ZoneOffset
