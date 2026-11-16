@@ -1,7 +1,12 @@
 package com.ambient.tv.ui.weather
 
+import com.ambient.tv.data.weather.WeatherLocation
 import com.ambient.tv.data.weather.WeatherMapFrame
+import com.ambient.tv.data.weather.WeatherMapProvider
+import com.ambient.tv.data.weather.WeatherMapViewport
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class WeatherMapPlaylistTest {
@@ -22,5 +27,25 @@ class WeatherMapPlaylistTest {
 
     @Test fun noFramesReturnsSafeIndex() {
         assertEquals(0, weatherPlayerFrameIndex(emptyList(), 7_000))
+    }
+
+    @Test fun onlyExplicitRetryForTheSameRequestForcesAManifestRefresh() {
+        val location = WeatherLocation("erfurt", "Erfurt", "DE", latitude = 50.98,
+            longitude = 11.03, timezone = "Europe/Berlin")
+        val previous = WeatherPlayerRequest(location, WeatherMapProvider.RAINVIEWER,
+            WeatherMapViewport.at(location.latitude, location.longitude), networkAllowed = true)
+        assertFalse(weatherPlayerManualRefresh(null, -1, previous, 0))
+        assertFalse(weatherPlayerManualRefresh(previous, 0, previous, 0))
+        assertTrue(weatherPlayerManualRefresh(previous, 0, previous, 1))
+        assertFalse(weatherPlayerManualRefresh(previous, 1, previous.copy(viewport = previous.viewport.zoomed(1)), 1))
+        assertFalse(weatherPlayerManualRefresh(previous, 1,
+            previous.copy(provider = WeatherMapProvider.DWD), 2))
+    }
+
+    @Test fun manifestPollingRespectsHourlyVsRadarTimelines() {
+        assertEquals(5 * 60_000L, weatherPlayerRefreshIntervalMillis(WeatherMapProvider.RAINVIEWER))
+        assertEquals(5 * 60_000L, weatherPlayerRefreshIntervalMillis(WeatherMapProvider.DWD))
+        assertEquals(60 * 60_000L, weatherPlayerRefreshIntervalMillis(WeatherMapProvider.NASA))
+        assertEquals(5 * 60_000L, weatherPlayerRefreshIntervalMillis(WeatherMapProvider.EUMETSAT))
     }
 }

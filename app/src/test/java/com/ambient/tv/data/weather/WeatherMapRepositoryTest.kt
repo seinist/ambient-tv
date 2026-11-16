@@ -143,6 +143,34 @@ class WeatherMapRepositoryTest {
         }
     }
 
+    @Test fun media3FrameFileCarriesItsActualLayerStatusAndReusesTheCache() = runBlocking {
+        fixture { response(it) }.use { fixture ->
+            val first = fixture.repository.playbackFrameFile(
+                WeatherMapProvider.DWD, viewport, series, 0, networkAllowed = true)
+            assertNotNull(first)
+            assertTrue(first!!.file.isFile)
+            assertFalse(first.baseMissing)
+            assertFalse(first.coverageMissing)
+            val again = fixture.repository.playbackFrameFile(
+                WeatherMapProvider.DWD, viewport, series, 0, networkAllowed = true)
+            assertEquals(first.file, again!!.file)
+            assertEquals(2, fixture.requests.get())
+        }
+    }
+
+    @Test fun media3FrameFileReportsAnUnavailableBaseLayer() = runBlocking {
+        fixture { chain ->
+            response(chain, if (chain.request().url.host == "tile.openstreetmap.org") 503 else 200)
+        }.use { fixture ->
+            val frame = fixture.repository.playbackFrameFile(
+                WeatherMapProvider.DWD, viewport, series, 1, networkAllowed = true)
+            assertNotNull(frame)
+            assertTrue(frame!!.baseMissing)
+            assertFalse(frame.coverageMissing)
+            assertTrue(frame.file.isFile)
+        }
+    }
+
     @Test fun concurrentRequestsAndPlaybackReuseTheDecodedFrame() = runBlocking {
         val weatherStarted = CountDownLatch(1)
         val weather = CountDownLatch(1)

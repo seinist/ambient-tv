@@ -36,6 +36,7 @@
     <string name="weather_maps_full_legend">Provider colour legend</string>
     <string name="weather_player_fullscreen">Open weather player</string>
     <string name="weather_player_close">Close</string>
+    <string name="weather_player_frame_error">This map image could not be loaded or decoded. Try again.</string>
     <string name="weather_player_repeat">Repeat</string>
     <string name="weather_player_info">Information</string>
     <string name="weather_player_hide">Hide controls</string>
