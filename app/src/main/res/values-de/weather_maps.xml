@@ -36,6 +36,7 @@
     <string name="weather_maps_full_legend">Farblegende des Anbieters</string>
     <string name="weather_player_fullscreen">Im Wetter-Player öffnen</string>
     <string name="weather_player_close">Schließen</string>
+    <string name="weather_player_frame_error">Dieses Kartenbild konnte nicht geladen oder dargestellt werden. Erneut versuchen.</string>
     <string name="weather_player_repeat">Wiederholen</string>
     <string name="weather_player_info">Informationen</string>
     <string name="weather_player_hide">Steuerung ausblenden</string>
