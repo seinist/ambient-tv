@@ -184,6 +184,37 @@ class PageFocusTraversalTest {
         rule.onNodeWithTag("category-2").assertIsFocused()
     }
 
+    @Test fun offscreenSelectedCategoryIsFocusedAfterLazyChipRowScroll() {
+        val selected = mutableIntStateOf(0)
+        val first = FocusRequester()
+        rule.setContent {
+            AmbientTvTheme {
+                val chain = rememberPageFocusChain()
+                PageChipRow(chain, modifier = Modifier.width(96.dp), selectedIndex = selected.intValue) {
+                    items((0..7).toList(), key = { it }) { index ->
+                        Box(
+                            Modifier.size(64.dp)
+                                .then(if (index == selected.intValue)
+                                    Modifier.focusRequester(chain.selectedChip) else Modifier)
+                                .then(if (index == 0) Modifier.focusRequester(first) else Modifier)
+                                .testTag("offscreen-category-$index")
+                                .focusable(),
+                        )
+                    }
+                }
+            }
+        }
+        rule.waitForIdle()
+        rule.runOnIdle { first.requestFocus() }
+        rule.onNodeWithTag("offscreen-category-0").assertIsFocused()
+
+        // A selected chip far beyond the LazyRow viewport must be attached before focus
+        // returns to it, even if scrolling temporarily detaches the old focused chip.
+        rule.runOnIdle { selected.intValue = 7 }
+        rule.waitForIdle()
+        rule.onNodeWithTag("offscreen-category-7").assertIsFocused()
+    }
+
     @Test fun rightFromContentWithoutScrollbarStaysInBrowseArea() {
         val content = FocusRequester()
         rule.setContent {
