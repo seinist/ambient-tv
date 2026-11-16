@@ -2,6 +2,7 @@ package com.ambient.tv.ui.weather
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.focusable
@@ -24,6 +25,7 @@ import androidx.compose.material3.Slider
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -41,6 +43,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.key.KeyEventType
@@ -54,6 +57,7 @@ import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.lifecycle.repeatOnLifecycle
 import androidx.media3.common.MediaItem
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
@@ -83,6 +87,8 @@ import java.time.format.DateTimeFormatter
 import java.util.Locale
 import kotlin.math.roundToInt
 
+private data class WeatherMapPreview(val image: com.ambient.tv.data.weather.WeatherMapImage, val locationId: String)
+
 /** Fullscreen weather-only player. No shared video settings, tracks, service, history or OSD panels. */
 @Composable
 fun WeatherMapPlayerScreen(
@@ -105,6 +111,10 @@ fun WeatherMapPlayerScreen(
     }
     var frameEpoch by rememberSaveable(kind.name) { mutableLongStateOf(initialFrameEpochMillis) }
     var refreshSerial by remember { mutableIntStateOf(0) }
+    // Keep the last good map visible only while replacing its zoom/source, rather than
+    // flashing the full-screen loading background before the next image arrives.
+    var mapPreview by remember { mutableStateOf<WeatherMapPreview?>(null) }
+    var playIntent by rememberSaveable(kind.name) { mutableStateOf(true) }
     val provider = providers.firstOrNull { it.id == providerId } ?: providers.firstOrNull()
     val viewport = remember(location, zoom) {
         location?.let { WeatherMapViewport.at(it.latitude, it.longitude, zoom) }
@@ -115,6 +125,9 @@ fun WeatherMapPlayerScreen(
     }
     val result = state.result.takeIf { state.request == request }
     val loading = state.loading && state.request == request
+    if (result?.image != null && location != null) SideEffect {
+        mapPreview = WeatherMapPreview(result.image, location.id)
+    }
 
     BackHandler { onBack() }
     DisposableEffect(model, request, lifecycle, contentVisible, refreshSerial) {
@@ -127,6 +140,16 @@ fun WeatherMapPlayerScreen(
         lifecycle.addObserver(observer)
         update()
         onDispose { lifecycle.removeObserver(observer); model.pauseRequests() }
+    }
+    // Map manifests can change during a long fullscreen session. Refresh the currently
+    // visible source periodically, but never start polling when hidden or paused.
+    LaunchedEffect(model, request, contentVisible, lifecycle, refreshSerial) {
+        if (contentVisible && request != null) lifecycle.repeatOnLifecycle(Lifecycle.State.RESUMED) {
+            while (true) {
+                delay(weatherPlayerRefreshIntervalMillis(request.provider))
+                model.present(request, refreshSerial)
+            }
+        }
     }
     val surface = Color(0xff09131c)
     Box(Modifier.fillMaxSize().background(surface)) {
@@ -150,6 +173,8 @@ fun WeatherMapPlayerScreen(
                     onChangeProvider = { providerId = it },
                     onZoom = { newZoom, epoch -> frameEpoch = epoch; zoom = newZoom },
                     onRetry = { refreshSerial++ },
+                    startPlaying = playIntent,
+                    onPlayIntentChanged = { playIntent = it },
                     onBack = onBack,
                     repository = model.mapRepository,
                     initialCached = result.image.fromCache,
@@ -157,17 +182,28 @@ fun WeatherMapPlayerScreen(
                     baseMissing = result.image.baseMissing,
                     coverageMissing = result.image.coverageMissing,
                 )
-            else -> Column(Modifier.align(Alignment.Center).padding(24.dp),
-                verticalArrangement = Arrangement.spacedBy(12.dp),
-                horizontalAlignment = Alignment.CenterHorizontally) {
-                Text(provider.title, style = MaterialTheme.typography.titleLarge, color = Color.White)
-                Text(stringResource(if (loading) R.string.weather_maps_loading
-                    else weatherPlayerErrorMessage(result?.error)),
-                    color = Color.White)
-                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    TvChip(stringResource(R.string.back), onClick = onBack)
-                    if (!loading) TvChip(stringResource(R.string.weather_maps_retry),
-                        onClick = { refreshSerial++ })
+            else -> {
+                if (loading && contentVisible && location != null && mapPreview?.locationId == location.id) {
+                    mapPreview?.image?.let { previous ->
+                        BoxWithConstraints(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                            Image(previous.bitmap.asImageBitmap(), contentDescription = null,
+                                modifier = Modifier.size(minOf(maxWidth, maxHeight)))
+                        }
+                    }
+                }
+                Column(Modifier.align(Alignment.Center)
+                    .background(surface.copy(alpha = .90f)).padding(24.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally) {
+                    Text(provider.title, style = MaterialTheme.typography.titleLarge, color = Color.White)
+                    Text(stringResource(if (loading) R.string.weather_maps_loading
+                        else weatherPlayerErrorMessage(result?.error)),
+                        color = Color.White)
+                    Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                        TvChip(stringResource(R.string.back), onClick = onBack)
+                        if (!loading) TvChip(stringResource(R.string.weather_maps_retry),
+                            onClick = { refreshSerial++ })
+                    }
                 }
             }
         }
@@ -185,6 +221,8 @@ private fun WeatherMedia3MapContent(
     onChangeProvider: (String) -> Unit,
     onZoom: (Int, Long) -> Unit,
     onRetry: () -> Unit,
+    startPlaying: Boolean,
+    onPlayIntentChanged: (Boolean) -> Unit,
     onBack: () -> Unit,
     repository: com.ambient.tv.data.weather.WeatherMapRepository,
     initialCached: Boolean,
@@ -206,9 +244,11 @@ private fun WeatherMedia3MapContent(
             .setMediaSourceFactory(DefaultMediaSourceFactory(playlist.dataSourceFactory))
             .build()
     }
+    val frameStatuses by playlist.frameStatuses.collectAsState()
     var currentIndex by remember(playlist) { mutableIntStateOf(selected) }
-    var playing by remember(playlist) { mutableStateOf(true) }
+    var wantsPlayback by remember(playlist) { mutableStateOf(startPlaying) }
     var buffering by remember(playlist) { mutableStateOf(true) }
+    var ended by remember(playlist) { mutableStateOf(false) }
     var failed by remember(playlist) { mutableStateOf(false) }
     var loop by rememberSaveable { mutableStateOf(true) }
     var infoVisible by rememberSaveable { mutableStateOf(false) }
@@ -219,6 +259,7 @@ private fun WeatherMedia3MapContent(
     val surfaceRequester = remember { FocusRequester() }
     val playRequester = remember { FocusRequester() }
     val latestOnFrameChanged by rememberUpdatedState(onFrameChanged)
+    val latestOnPlayIntentChanged by rememberUpdatedState(onPlayIntentChanged)
 
     DisposableEffect(player, playlist) {
         val listener = object : Player.Listener {
@@ -227,9 +268,17 @@ private fun WeatherMedia3MapContent(
                 currentIndex = index
                 latestOnFrameChanged(frames[index].epochMillis)
             }
-            override fun onIsPlayingChanged(isPlaying: Boolean) { playing = isPlaying }
+            override fun onPlayWhenReadyChanged(playWhenReady: Boolean, reason: Int) {
+                if (!ended) wantsPlayback = playWhenReady
+            }
             override fun onPlaybackStateChanged(playbackState: Int) {
                 buffering = playbackState == Player.STATE_BUFFERING
+                ended = playbackState == Player.STATE_ENDED
+                if (ended) {
+                    wantsPlayback = false
+                    latestOnPlayIntentChanged(false)
+                }
+                if (playbackState == Player.STATE_READY) failed = false
             }
             override fun onPlayerError(error: PlaybackException) {
                 failed = true
@@ -240,7 +289,7 @@ private fun WeatherMedia3MapContent(
         player.repeatMode = if (loop) Player.REPEAT_MODE_ALL else Player.REPEAT_MODE_OFF
         player.setMediaItems(playlist.mediaItems(), selected, 0L)
         player.prepare()
-        player.playWhenReady = true
+        player.playWhenReady = startPlaying
         onDispose {
             playlist.close() // Cancel any on-demand HTTP work before releasing its image source.
             player.removeListener(listener)
@@ -248,8 +297,8 @@ private fun WeatherMedia3MapContent(
         }
     }
     LaunchedEffect(loop, player) { player.repeatMode = if (loop) Player.REPEAT_MODE_ALL else Player.REPEAT_MODE_OFF }
-    LaunchedEffect(controlsVisible, infoVisible, chromeSerial) {
-        if (controlsVisible && !infoVisible) {
+    LaunchedEffect(controlsVisible, infoVisible, chromeSerial, failed, buffering) {
+        if (controlsVisible && !infoVisible && !failed && !buffering) {
             delay(8_000)
             controlsVisible = false
         }
@@ -272,6 +321,9 @@ private fun WeatherMedia3MapContent(
     val currentShortLabel = weatherPlayerShortTime(currentFrame, provider, zone, locale)
     val lastLabel = weatherPlayerShortTime(frames.last(), provider, zone, locale)
     val stale = System.currentTimeMillis() - currentFrame.epochMillis > provider.freshnessMillis
+    val currentStatus = frameStatuses[currentIndex]
+    val frameBaseMissing = currentStatus?.baseMissing ?: (currentIndex == selected && baseMissing)
+    val frameCoverageMissing = currentStatus?.coverageMissing ?: (currentIndex == selected && coverageMissing)
 
     Box(Modifier.fillMaxSize()
         .onPreviewKeyEvent {
@@ -365,8 +417,8 @@ private fun WeatherMedia3MapContent(
                         if ((initialCached && currentIndex == selected) || stale || sourceError != null) {
                             Text(stringResource(R.string.weather_maps_stored), color = Color.White)
                         }
-                        if (baseMissing) Text(stringResource(R.string.weather_maps_base_missing), color = Color.White)
-                        if (coverageMissing) Text(stringResource(R.string.weather_maps_coverage_missing), color = Color.White)
+                        if (frameBaseMissing) Text(stringResource(R.string.weather_maps_base_missing), color = Color.White)
+                        if (frameCoverageMissing) Text(stringResource(R.string.weather_maps_coverage_missing), color = Color.White)
                         if (provider.kind == WeatherMapKind.RADAR) {
                             Box(Modifier.background(MaterialTheme.colorScheme.surface).padding(8.dp)) {
                                 WeatherMapLegend(provider)
@@ -404,9 +456,28 @@ private fun WeatherMedia3MapContent(
                     verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     TvChip(stringResource(R.string.weather_maps_previous), enabled = frames.size > 1,
                         onClick = { player.seekTo((currentIndex - 1).coerceAtLeast(0), 0L) })
-                    TvChip(stringResource(if (playing) R.string.weather_maps_pause else R.string.weather_maps_play),
+                    TvChip(stringResource(if (wantsPlayback && !ended && !failed) R.string.weather_maps_pause
+                        else R.string.weather_maps_play),
                         modifier = Modifier.focusRequester(playRequester),
-                        onClick = { if (playing) player.pause() else player.play() })
+                        onClick = {
+                            if (wantsPlayback && !ended && !failed) {
+                                wantsPlayback = false
+                                onPlayIntentChanged(false)
+                                player.pause()
+                            } else {
+                                if (ended) {
+                                    player.seekTo(0, 0L)
+                                    player.prepare()
+                                } else if (failed) {
+                                    player.prepare()
+                                }
+                                ended = false
+                                failed = false
+                                wantsPlayback = true
+                                onPlayIntentChanged(true)
+                                player.play()
+                            }
+                        })
                     TvChip(stringResource(R.string.weather_maps_next), enabled = frames.size > 1,
                         onClick = { player.seekTo((currentIndex + 1).coerceAtMost(frames.lastIndex), 0L) })
                     TvChip(stringResource(R.string.weather_maps_zoom_out),
@@ -423,10 +494,19 @@ private fun WeatherMedia3MapContent(
                 }
                 if (buffering || failed || sourceError != null) {
                     Text(stringResource(when {
-                        failed || sourceError != null -> weatherPlayerErrorMessage(sourceError)
+                        failed -> R.string.weather_maps_unavailable
+                        sourceError != null -> weatherPlayerErrorMessage(sourceError)
                         else -> R.string.weather_maps_loading
                     }), color = Color.White, style = MaterialTheme.typography.bodySmall)
-                    if (failed) TvChip(stringResource(R.string.weather_maps_retry), onClick = onRetry)
+                    if (failed || sourceError != null) TvChip(stringResource(R.string.weather_maps_retry),
+                        onClick = {
+                            failed = false
+                            buffering = true
+                            ended = false
+                            player.prepare()
+                            player.playWhenReady = wantsPlayback
+                            onRetry()
+                        })
                 }
             }
         }
