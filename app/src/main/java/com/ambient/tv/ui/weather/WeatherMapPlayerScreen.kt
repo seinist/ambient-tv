@@ -11,18 +11,24 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.ExperimentalLayoutApi
-import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.Slider
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.Layers
+import androidx.compose.material.icons.filled.Pause
+import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Repeat
+import androidx.compose.material.icons.filled.SkipNext
+import androidx.compose.material.icons.filled.SkipPrevious
+import androidx.compose.material.icons.filled.ZoomIn
+import androidx.compose.material.icons.filled.ZoomOut
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
@@ -41,12 +47,13 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
@@ -78,6 +85,26 @@ import com.ambient.tv.data.weather.WeatherMapProvider
 import com.ambient.tv.data.weather.WeatherMapSeries
 import com.ambient.tv.data.weather.WeatherMapViewport
 import com.ambient.tv.ui.common.StatePanel
+import com.ambient.tv.ui.common.MetaBadge
+import com.ambient.tv.ui.common.PlayerControlBar
+import com.ambient.tv.ui.common.PlayerExitButton
+import com.ambient.tv.ui.common.PlayerIconButton
+import com.ambient.tv.ui.common.RightPanelChoice
+import com.ambient.tv.ui.common.RightPanelOverlay
+import com.ambient.tv.ui.common.RightSidePanel
+import com.ambient.tv.ui.player.LocalPlayerChromeState
+import com.ambient.tv.ui.player.LocalPlayerControlFocus
+import com.ambient.tv.ui.player.PlayerChromeState
+import com.ambient.tv.ui.player.PlayerControlsAutoHide
+import com.ambient.tv.ui.player.PlayerOverlayVisibility
+import com.ambient.tv.ui.player.PlayerTechBadgeRow
+import com.ambient.tv.ui.player.PlayerTimelineSlot
+import com.ambient.tv.ui.player.ReferencePlayerBottomContent
+import com.ambient.tv.ui.player.ReferencePlayerClock
+import com.ambient.tv.ui.player.ReferencePlayerHeader
+import com.ambient.tv.ui.player.ReferencePlayerOverlayBackground
+import com.ambient.tv.ui.player.TvPlayerSeekBar
+import com.ambient.tv.ui.player.rememberPlayerOsdController
 import com.ambient.tv.ui.common.TvChip
 import com.ambient.tv.ui.mobile.LocalHandheldUi
 import kotlinx.coroutines.delay
@@ -91,7 +118,7 @@ import kotlin.math.roundToInt
 
 private data class WeatherMapPreview(val image: WeatherMapImage, val locationId: String)
 
-/** Fullscreen weather-only player. No shared video settings, tracks, service, history or OSD panels. */
+/** Fullscreen weather playback with the shared player OSD, but no video/audio settings or playback service. */
 @Composable
 fun WeatherMapPlayerScreen(
     kind: WeatherMapKind,
@@ -117,12 +144,13 @@ fun WeatherMapPlayerScreen(
     // flashing the full-screen loading background before the next image arrives.
     var mapPreview by remember { mutableStateOf<WeatherMapPreview?>(null) }
     var playIntent by rememberSaveable(kind.name) { mutableStateOf(true) }
-    // The child player is deliberately replaced on zoom/source changes, but its controls
-    // are a single session and must retain repeat, info, visibility and TV focus state.
+    // The Media3 playlist changes on zoom/source changes; the shared chrome belongs to the
+    // fullscreen route and must survive those temporary loading states.
     val repeatState = rememberSaveable(kind.name, "repeat") { mutableStateOf(true) }
-    val infoState = rememberSaveable(kind.name, "info") { mutableStateOf(false) }
-    val controlsState = rememberSaveable(kind.name, "controls") { mutableStateOf(true) }
+    var playerPanel by rememberSaveable(kind.name, "weather-panel") { mutableStateOf<String?>(null) }
     var focusTarget by rememberSaveable(kind.name, "focus") { mutableStateOf("play") }
+    val chrome = remember(kind) { PlayerChromeState() }
+    LaunchedEffect(chrome) { chrome.osd.expand() }
     val provider = providers.firstOrNull { it.id == providerId } ?: providers.firstOrNull()
     val viewport = remember(location, zoom) {
         location?.let { WeatherMapViewport.at(it.latitude, it.longitude, zoom) }
@@ -160,6 +188,10 @@ fun WeatherMapPlayerScreen(
         }
     }
     val surface = Color(0xff09131c)
+    CompositionLocalProvider(
+        LocalPlayerChromeState provides chrome,
+        LocalPlayerControlFocus provides chrome.focus,
+    ) {
     Box(Modifier.fillMaxSize().background(surface)) {
         when {
             !settings.enabled -> StatePanel(stringResource(R.string.weather_disabled),
@@ -178,14 +210,14 @@ fun WeatherMapPlayerScreen(
                     providers = providers,
                     initialFrameEpoch = frameEpoch,
                     onFrameChanged = { frameEpoch = it },
-                    onChangeProvider = { providerId = it },
+                    onChangeProvider = { providerId = it; playerPanel = null },
                     onZoom = { newZoom, epoch -> frameEpoch = epoch; zoom = newZoom },
                     onRetry = { refreshSerial++ },
                     startPlaying = playIntent,
                     onPlayIntentChanged = { playIntent = it },
                     repeatState = repeatState,
-                    infoState = infoState,
-                    controlsState = controlsState,
+                    panel = playerPanel,
+                    onPanelChanged = { playerPanel = it },
                     focusTarget = focusTarget,
                     onFocusTargetChanged = { focusTarget = it },
                     onBack = onBack,
@@ -227,9 +259,10 @@ fun WeatherMapPlayerScreen(
             }
         }
     }
+    }
 }
 
-@OptIn(ExperimentalLayoutApi::class, UnstableApi::class)
+@OptIn(UnstableApi::class)
 @Composable
 private fun WeatherMedia3MapContent(
     request: WeatherPlayerRequest,
@@ -243,8 +276,8 @@ private fun WeatherMedia3MapContent(
     startPlaying: Boolean,
     onPlayIntentChanged: (Boolean) -> Unit,
     repeatState: MutableState<Boolean>,
-    infoState: MutableState<Boolean>,
-    controlsState: MutableState<Boolean>,
+    panel: String?,
+    onPanelChanged: (String?) -> Unit,
     focusTarget: String,
     onFocusTargetChanged: (String) -> Unit,
     onBack: () -> Unit,
@@ -277,16 +310,14 @@ private fun WeatherMedia3MapContent(
     var ended by remember(playlist) { mutableStateOf(false) }
     var failed by remember(playlist) { mutableStateOf(false) }
     var loop by repeatState
-    var infoVisible by infoState
-    var controlsVisible by controlsState
-    var chromeSerial by remember { mutableIntStateOf(0) }
-    var scrubbing by remember { mutableStateOf(false) }
-    var scrubIndex by remember { mutableIntStateOf(selected) }
+    val osd = rememberPlayerOsdController()
+    val panelOpen = panel != null
     val surfaceRequester = remember { FocusRequester() }
     val playRequester = remember { FocusRequester() }
     val zoomOutRequester = remember { FocusRequester() }
     val zoomInRequester = remember { FocusRequester() }
     val sourceRequester = remember { FocusRequester() }
+    val infoRequester = remember { FocusRequester() }
     val latestOnFrameChanged by rememberUpdatedState(onFrameChanged)
     val latestOnPlayIntentChanged by rememberUpdatedState(onPlayIntentChanged)
 
@@ -320,34 +351,15 @@ private fun WeatherMedia3MapContent(
         player.prepare()
         player.playWhenReady = startPlaying
         onDispose {
-            playlist.close() // Cancel any on-demand HTTP work before releasing its image source.
+            playlist.close()
             player.removeListener(listener)
             player.release()
         }
     }
-    LaunchedEffect(loop, player) { player.repeatMode = if (loop) Player.REPEAT_MODE_ALL else Player.REPEAT_MODE_OFF }
-    LaunchedEffect(controlsVisible, infoVisible, chromeSerial, failed, buffering) {
-        if (controlsVisible && !infoVisible && !failed && !buffering) {
-            delay(8_000)
-            controlsVisible = false
-        }
+    LaunchedEffect(loop, player) {
+        player.repeatMode = if (loop) Player.REPEAT_MODE_ALL else Player.REPEAT_MODE_OFF
     }
-    LaunchedEffect(controlsVisible) {
-        withFrameNanos { }
-        runCatching {
-            if (!controlsVisible) surfaceRequester.requestFocus()
-            else when (focusTarget) {
-                "zoom-out" -> if (viewport.zoom > WeatherMapViewport.MIN_ZOOM) zoomOutRequester.requestFocus()
-                    else playRequester.requestFocus()
-                "zoom-in" -> if (viewport.zoom < WeatherMapViewport.MAX_ZOOM) zoomInRequester.requestFocus()
-                    else playRequester.requestFocus()
-                "provider" -> if (providers.size > 1) sourceRequester.requestFocus()
-                    else playRequester.requestFocus()
-                else -> playRequester.requestFocus()
-            }
-        }
-    }
-    BackHandler(infoVisible) { infoVisible = false; controlsVisible = true }
+
     val currentFrame = frames[currentIndex.coerceIn(0, frames.lastIndex)]
     val location = request.location
     val zone = remember(location.timezone) {
@@ -362,16 +374,84 @@ private fun WeatherMedia3MapContent(
     val currentStatus = frameStatuses[currentIndex]
     val frameBaseMissing = currentStatus?.baseMissing ?: (currentIndex == selected && baseMissing)
     val frameCoverageMissing = currentStatus?.coverageMissing ?: (currentIndex == selected && coverageMissing)
+    val mapType = stringResource(if (provider.kind == WeatherMapKind.RADAR)
+        R.string.weather_radar else R.string.weather_satellite)
+    val timelineStart = frames.first().epochMillis
+    val timelineDuration = (frames.last().epochMillis - timelineStart).coerceAtLeast(0L)
+    val paused = !wantsPlayback || ended || failed
 
-    Box(Modifier.fillMaxSize()
-        .onPreviewKeyEvent {
-            if (it.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
-            if (!controlsVisible) {
-                controlsVisible = true
-                chromeSerial++
-                true
-            } else { chromeSerial++; false }
-        }) {
+    val togglePlayback: () -> Unit = {
+        osd.interact()
+        if (wantsPlayback && !ended && !failed) {
+            wantsPlayback = false
+            onPlayIntentChanged(false)
+            player.pause()
+        } else {
+            if (ended) {
+                player.seekTo(0, 0L)
+                player.prepare()
+            } else if (failed) {
+                player.prepare()
+            }
+            ended = false
+            failed = false
+            wantsPlayback = true
+            onPlayIntentChanged(true)
+            player.play()
+        }
+    }
+    val retryPlayback: () -> Unit = {
+        osd.interact()
+        if (failed) {
+            failed = false
+            ended = false
+            player.prepare()
+            player.playWhenReady = wantsPlayback
+            buffering = player.playbackState == Player.STATE_BUFFERING
+        }
+        onRetry()
+    }
+    // Same OSD timeout and compact/expanded navigation as the video players. Weather has
+    // no audio, subtitle, renderer, playback-settings or persistent mini-player panels.
+    PlayerControlsAutoHide(
+        visible = osd.visible.value,
+        playing = wantsPlayback && !failed && !ended,
+        panelOpen = panelOpen,
+        onVisibilityChanged = { osd.visible.value = it },
+    )
+    LaunchedEffect(playlist, panel, osd.mode) {
+        if (panel == null) {
+            withFrameNanos { }
+            runCatching {
+                if (!osd.expanded) surfaceRequester.requestFocus()
+                else when (focusTarget) {
+                    "zoom-out" -> if (viewport.zoom > WeatherMapViewport.MIN_ZOOM)
+                        zoomOutRequester.requestFocus() else playRequester.requestFocus()
+                    "zoom-in" -> if (viewport.zoom < WeatherMapViewport.MAX_ZOOM)
+                        zoomInRequester.requestFocus() else playRequester.requestFocus()
+                    "provider" -> if (providers.size > 1)
+                        sourceRequester.requestFocus() else playRequester.requestFocus()
+                    "info" -> infoRequester.requestFocus()
+                    else -> playRequester.requestFocus()
+                }
+            }
+        }
+    }
+    BackHandler(enabled = !panelOpen) {
+        if (osd.visible.value) osd.close() else onBack()
+    }
+
+    Box(Modifier.fillMaxSize().onPreviewKeyEvent { event ->
+        if (event.type != KeyEventType.KeyDown || panelOpen ||
+            event.key == Key.Back || event.key == Key.Escape) return@onPreviewKeyEvent false
+        if (!osd.show) {
+            osd.expand()
+            true
+        } else {
+            osd.interact()
+            false
+        }
+    }) {
         BoxWithConstraints(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
             val mapSide = minOf(maxWidth, maxHeight)
             val pinchZoom = if (handheld) Modifier.pointerInput(viewport.zoom, currentFrame.epochMillis) {
@@ -390,7 +470,9 @@ private fun WeatherMedia3MapContent(
             Box(Modifier.size(mapSide)
                 .then(pinchZoom)
                 .focusRequester(surfaceRequester).focusable()
-                .clickable { controlsVisible = !controlsVisible; chromeSerial++ }) {
+                .clickable {
+                    if (osd.show) osd.close() else osd.expand()
+                }) {
                 AndroidView(factory = { viewContext ->
                     PlayerView(viewContext).apply {
                         useController = false
@@ -413,149 +495,174 @@ private fun WeatherMedia3MapContent(
                         .background(Color.Black.copy(alpha = .65f)).padding(4.dp))
             }
         }
-        if (controlsVisible) {
-            Column(Modifier.align(Alignment.BottomCenter).fillMaxWidth()
-                .background(Color(0xff101c28).copy(alpha = .96f))
-                .padding(horizontal = 20.dp, vertical = 12.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween) {
-                    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                        Text(stringResource(if (provider.kind == WeatherMapKind.RADAR)
-                            R.string.weather_radar else R.string.weather_satellite) + " · " + provider.title,
-                            color = Color.White, style = MaterialTheme.typography.titleMedium)
-                        Text(location.name + " · " + frameLabel, color = Color.White,
-                            style = MaterialTheme.typography.bodySmall)
+
+        PlayerOverlayVisibility(visible = osd.visible.value && !panelOpen) {
+            ReferencePlayerOverlayBackground()
+            ReferencePlayerClock(
+                modifier = Modifier.align(Alignment.TopEnd).padding(top = 34.dp, end = 48.dp),
+            )
+            ReferencePlayerBottomContent(onTogglePlayback = togglePlayback) {
+                ReferencePlayerHeader(
+                    title = mapType + " · " + provider.title,
+                    artworkUrl = null,
+                    contextLine = location.name,
+                    subtitle = frameLabel,
+                    showPaused = paused,
+                )
+                PlayerTimelineSlot {
+                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                            Text(firstLabel, modifier = Modifier.weight(1f), color = Color.White,
+                                style = MaterialTheme.typography.labelSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            Text(currentShortLabel, modifier = Modifier.weight(1f), color = Color.White,
+                                style = MaterialTheme.typography.labelSmall, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                                textAlign = androidx.compose.ui.text.style.TextAlign.Center)
+                            Text(lastLabel, modifier = Modifier.weight(1f), color = Color.White,
+                                style = MaterialTheme.typography.labelSmall, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                                textAlign = androidx.compose.ui.text.style.TextAlign.End)
+                        }
+                        TvPlayerSeekBar(
+                            positionMs = (currentFrame.epochMillis - timelineStart).coerceIn(0L, timelineDuration),
+                            durationMs = timelineDuration,
+                            interactive = frames.size > 1 && timelineDuration > 0L,
+                            onSeekBy = { delta ->
+                                player.seekTo(weatherPlayerSeekTargetIndex(frames, currentIndex, delta), 0L)
+                            },
+                            onInteraction = osd::interact,
+                            onTogglePlayback = togglePlayback,
+                            onPlay = { if (paused) togglePlayback() },
+                            paused = paused,
+                            showEndTime = false,
+                            timelineContext = { relativeMs ->
+                                val frame = frames[weatherPlayerFrameIndex(frames, timelineStart + relativeMs)]
+                                Text(weatherPlayerFrameTime(frame, provider, zone, locale),
+                                    color = Color.White.copy(alpha = .82f),
+                                    style = MaterialTheme.typography.labelSmall)
+                            },
+                        )
                     }
-                    TvChip(stringResource(R.string.weather_player_close), onClick = onBack)
                 }
-                if (providers.size > 1) FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                PlayerTechBadgeRow {
+                    MetaBadge("Media3", emphasized = true)
+                    MetaBadge(provider.title)
+                    MetaBadge(stringResource(R.string.weather_player_frame_counter, currentIndex + 1, frames.size))
+                    MetaBadge(stringResource(R.string.weather_player_zoom, viewport.zoom))
+                }
+                if (failed || sourceError != null) {
+                    Text(stringResource(if (failed) R.string.weather_player_frame_error
+                        else weatherPlayerErrorMessage(sourceError)),
+                        color = Color.White, style = MaterialTheme.typography.bodySmall)
+                }
+                PlayerControlBar(
+                    leftContent = {
+                        PlayerIconButton(Icons.Filled.SkipPrevious,
+                            stringResource(R.string.weather_maps_previous), {
+                                osd.interact()
+                                player.seekTo(if (currentIndex > 0) currentIndex - 1
+                                    else if (loop) frames.lastIndex else 0, 0L)
+                            }, enabled = frames.size > 1)
+                        PlayerIconButton(
+                            if (paused) Icons.Filled.PlayArrow else Icons.Filled.Pause,
+                            stringResource(if (paused) R.string.weather_maps_play else R.string.weather_maps_pause),
+                            togglePlayback,
+                            modifier = Modifier.focusRequester(playRequester),
+                            primary = true,
+                            loading = buffering && wantsPlayback,
+                        )
+                        PlayerIconButton(Icons.Filled.SkipNext,
+                            stringResource(R.string.weather_maps_next), {
+                                osd.interact()
+                                player.seekTo(if (currentIndex < frames.lastIndex) currentIndex + 1
+                                    else if (loop) 0 else frames.lastIndex, 0L)
+                            }, enabled = frames.size > 1)
+                    },
+                    rightContent = {
+                        PlayerIconButton(Icons.Filled.ZoomOut,
+                            stringResource(R.string.weather_maps_zoom_out), {
+                                osd.interact()
+                                onFocusTargetChanged("zoom-out")
+                                onZoom((viewport.zoom - 1).coerceAtLeast(WeatherMapViewport.MIN_ZOOM), currentFrame.epochMillis)
+                            }, modifier = Modifier.focusRequester(zoomOutRequester),
+                            enabled = viewport.zoom > WeatherMapViewport.MIN_ZOOM)
+                        PlayerIconButton(Icons.Filled.ZoomIn,
+                            stringResource(R.string.weather_maps_zoom_in), {
+                                osd.interact()
+                                onFocusTargetChanged("zoom-in")
+                                onZoom((viewport.zoom + 1).coerceAtMost(WeatherMapViewport.MAX_ZOOM), currentFrame.epochMillis)
+                            }, modifier = Modifier.focusRequester(zoomInRequester),
+                            enabled = viewport.zoom < WeatherMapViewport.MAX_ZOOM)
+                        if (providers.size > 1) PlayerIconButton(Icons.Filled.Layers,
+                            stringResource(R.string.weather_maps_choose_provider), {
+                                osd.interact()
+                                onFocusTargetChanged("provider")
+                                onPanelChanged("provider")
+                            }, modifier = Modifier.focusRequester(sourceRequester))
+                        PlayerIconButton(Icons.Filled.Repeat,
+                            stringResource(R.string.weather_player_repeat), {
+                                osd.interact()
+                                loop = !loop
+                            }, selected = loop)
+                        PlayerIconButton(Icons.Filled.Info,
+                            stringResource(R.string.weather_player_info), {
+                                osd.interact()
+                                onFocusTargetChanged("info")
+                                onPanelChanged("info")
+                            }, modifier = Modifier.focusRequester(infoRequester))
+                        if (failed || sourceError != null) PlayerIconButton(Icons.Filled.Refresh,
+                            stringResource(R.string.weather_maps_retry), retryPlayback)
+                        PlayerExitButton(onBack)
+                    },
+                )
+            }
+        }
+
+        if (panelOpen) RightPanelOverlay(onOutsideTap = { onPanelChanged(null) }) {
+            RightSidePanel(
+                title = if (panel == "provider") stringResource(R.string.weather_maps_choose_provider)
+                    else stringResource(R.string.weather_player_info),
+                onBack = { onPanelChanged(null) },
+                closeInsteadOfBack = true,
+            ) {
+                if (panel == "provider") {
                     providers.forEach { choice ->
-                        TvChip(choice.title, selected = choice == provider,
-                            modifier = if (choice == provider) Modifier.focusRequester(sourceRequester) else Modifier,
-                            onClick = { onFocusTargetChanged("provider"); onChangeProvider(choice.id) })
+                        RightPanelChoice(
+                            text = choice.title,
+                            selected = choice == provider,
+                            onClick = {
+                                onFocusTargetChanged("provider")
+                                onChangeProvider(choice.id)
+                                onPanelChanged(null)
+                            },
+                        )
                     }
-                }
-                if (infoVisible) {
-                    Column(Modifier.fillMaxWidth().heightIn(max = 210.dp).verticalScroll(rememberScrollState()),
-                        verticalArrangement = Arrangement.spacedBy(5.dp)) {
-                        Text(stringResource(R.string.weather_player_product,
-                            when (provider) {
-                                WeatherMapProvider.RAINVIEWER, WeatherMapProvider.DWD ->
-                                    stringResource(R.string.weather_player_radar_product)
-                                WeatherMapProvider.NASA -> stringResource(R.string.weather_player_nasa_product)
-                                WeatherMapProvider.EUMETSAT -> stringResource(R.string.weather_player_eumetsat_product)
-                            }), color = Color.White)
-                        Text(stringResource(R.string.weather_player_frame_counter,
-                            currentIndex + 1, frames.size), color = Color.White)
-                        Text(stringResource(R.string.weather_player_zoom, viewport.zoom), color = Color.White)
-                        Text(stringResource(R.string.weather_maps_width, viewport.widthKilometres.roundToInt()), color = Color.White)
-                        Text(stringResource(R.string.weather_player_manifest,
-                            DateTimeFormatter.ofPattern("dd.MM.yyyy HH:mm z", locale).withZone(zone)
-                                .format(Instant.ofEpochMilli(series.fetchedAtMillis))), color = Color.White)
-                        if ((initialCached && currentIndex == selected) || stale || sourceError != null) {
-                            Text(stringResource(R.string.weather_maps_stored), color = Color.White)
-                        }
-                        if (frameBaseMissing) Text(stringResource(R.string.weather_maps_base_missing), color = Color.White)
-                        if (frameCoverageMissing) Text(stringResource(R.string.weather_maps_coverage_missing), color = Color.White)
-                        if (provider.kind == WeatherMapKind.RADAR) {
-                            Box(Modifier.background(MaterialTheme.colorScheme.surface).padding(8.dp)) {
-                                WeatherMapLegend(provider)
-                            }
-                        }
+                } else {
+                    Text(location.name + " · " + frameLabel, color = Color.White)
+                    Text(stringResource(R.string.weather_player_product,
+                        when (provider) {
+                            WeatherMapProvider.RAINVIEWER, WeatherMapProvider.DWD ->
+                                stringResource(R.string.weather_player_radar_product)
+                            WeatherMapProvider.NASA -> stringResource(R.string.weather_player_nasa_product)
+                            WeatherMapProvider.EUMETSAT -> stringResource(R.string.weather_player_eumetsat_product)
+                        }), color = Color.White)
+                    Text(stringResource(R.string.weather_player_frame_counter,
+                        currentIndex + 1, frames.size), color = Color.White)
+                    Text(stringResource(R.string.weather_player_zoom, viewport.zoom), color = Color.White)
+                    Text(stringResource(R.string.weather_maps_width,
+                        viewport.widthKilometres.roundToInt()), color = Color.White)
+                    Text(stringResource(R.string.weather_player_manifest,
+                        DateTimeFormatter.ofPattern("dd.MM.yyyy HH:mm z", locale).withZone(zone)
+                            .format(Instant.ofEpochMilli(series.fetchedAtMillis))), color = Color.White)
+                    if ((initialCached && currentIndex == selected) || stale || sourceError != null) {
+                        Text(stringResource(R.string.weather_maps_stored), color = Color.White)
+                    }
+                    if (frameBaseMissing) Text(stringResource(R.string.weather_maps_base_missing), color = Color.White)
+                    if (frameCoverageMissing) Text(stringResource(R.string.weather_maps_coverage_missing), color = Color.White)
+                    if (provider.kind == WeatherMapKind.RADAR) {
                         Box(Modifier.background(MaterialTheme.colorScheme.surface).padding(8.dp)) {
-                            WeatherSourceLink(provider.attribution, provider.sourceUrl)
+                            WeatherMapLegend(provider)
                         }
                     }
-                }
-                if (frames.size > 1) {
-                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                        Text(firstLabel, modifier = Modifier.weight(1f), color = Color.White,
-                            style = MaterialTheme.typography.labelSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                        Text(currentShortLabel, modifier = Modifier.weight(1f), color = Color.White,
-                            textAlign = TextAlign.Center, style = MaterialTheme.typography.labelSmall,
-                            maxLines = 1, overflow = TextOverflow.Ellipsis)
-                        Text(lastLabel, modifier = Modifier.weight(1f), color = Color.White,
-                            textAlign = TextAlign.End, style = MaterialTheme.typography.labelSmall,
-                            maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    }
-                    Slider(
-                        value = if (scrubbing) scrubIndex.toFloat() else currentIndex.toFloat(),
-                        onValueChange = { scrubbing = true; scrubIndex = it.roundToInt().coerceIn(0, frames.lastIndex) },
-                        onValueChangeFinished = {
-                            player.seekTo(scrubIndex, 0L)
-                            scrubbing = false
-                        },
-                        valueRange = 0f..frames.lastIndex.toFloat(),
-                        steps = (frames.size - 2).coerceAtLeast(0),
-                        modifier = Modifier.fillMaxWidth(),
-                    )
-                }
-                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    TvChip(stringResource(R.string.weather_maps_previous), enabled = frames.size > 1,
-                        onClick = { player.seekTo((currentIndex - 1).coerceAtLeast(0), 0L) })
-                    TvChip(stringResource(if (wantsPlayback && !ended && !failed) R.string.weather_maps_pause
-                        else R.string.weather_maps_play),
-                        modifier = Modifier.focusRequester(playRequester),
-                        onClick = {
-                            if (wantsPlayback && !ended && !failed) {
-                                wantsPlayback = false
-                                onPlayIntentChanged(false)
-                                player.pause()
-                            } else {
-                                if (ended) {
-                                    player.seekTo(0, 0L)
-                                    player.prepare()
-                                } else if (failed) {
-                                    player.prepare()
-                                }
-                                ended = false
-                                failed = false
-                                wantsPlayback = true
-                                onPlayIntentChanged(true)
-                                player.play()
-                            }
-                        })
-                    TvChip(stringResource(R.string.weather_maps_next), enabled = frames.size > 1,
-                        onClick = { player.seekTo((currentIndex + 1).coerceAtMost(frames.lastIndex), 0L) })
-                    TvChip(stringResource(R.string.weather_maps_zoom_out),
-                        enabled = viewport.zoom > WeatherMapViewport.MIN_ZOOM,
-                        modifier = Modifier.focusRequester(zoomOutRequester),
-                        onClick = {
-                            onFocusTargetChanged("zoom-out")
-                            onZoom((viewport.zoom - 1).coerceAtLeast(WeatherMapViewport.MIN_ZOOM), currentFrame.epochMillis)
-                        })
-                    TvChip(stringResource(R.string.weather_maps_zoom_in),
-                        enabled = viewport.zoom < WeatherMapViewport.MAX_ZOOM,
-                        modifier = Modifier.focusRequester(zoomInRequester),
-                        onClick = {
-                            onFocusTargetChanged("zoom-in")
-                            onZoom((viewport.zoom + 1).coerceAtMost(WeatherMapViewport.MAX_ZOOM), currentFrame.epochMillis)
-                        })
-                    TvChip(stringResource(R.string.weather_player_repeat), selected = loop,
-                        onClick = { loop = !loop })
-                    TvChip(stringResource(R.string.weather_player_info), selected = infoVisible,
-                        onClick = { infoVisible = !infoVisible })
-                    TvChip(stringResource(R.string.weather_player_hide), onClick = { controlsVisible = false })
-                }
-                if (buffering || failed || sourceError != null) {
-                    Text(stringResource(when {
-                        failed -> R.string.weather_player_frame_error
-                        sourceError != null -> weatherPlayerErrorMessage(sourceError)
-                        else -> R.string.weather_maps_loading
-                    }), color = Color.White, style = MaterialTheme.typography.bodySmall)
-                    if (failed || sourceError != null) TvChip(stringResource(R.string.weather_maps_retry),
-                        onClick = {
-                            if (failed) {
-                                failed = false
-                                ended = false
-                                player.prepare()
-                                player.playWhenReady = wantsPlayback
-                                buffering = player.playbackState == Player.STATE_BUFFERING
-                            }
-                            onRetry()
-                        })
+                    WeatherSourceLink(provider.attribution, provider.sourceUrl)
                 }
             }
         }
