@@ -62,6 +62,13 @@ data class WeatherMapResult(
     val error: WeatherMapError? = null,
 )
 
+/** File and layer diagnostics for the exact frame decoded by Media3. */
+data class WeatherMapPlaybackFrame(
+    val file: File,
+    val baseMissing: Boolean,
+    val coverageMissing: Boolean,
+)
+
 private class WeatherMapRequestException(val reason: WeatherMapError) : IOException()
 
 /**
@@ -144,13 +151,13 @@ class WeatherMapRepository @Inject constructor(
      * repository cache remains the source of truth: no raw provider image bypasses its
      * centring, coverage or cache rules. The resolver loads frames only as requested.
      */
-    suspend fun playbackImageFile(
+    suspend fun playbackFrameFile(
         provider: WeatherMapProvider,
         viewport: WeatherMapViewport,
         series: WeatherMapSeries,
         index: Int,
         networkAllowed: Boolean,
-    ): File? = withContext(Dispatchers.IO) {
+    ): WeatherMapPlaybackFrame? = withContext(Dispatchers.IO) {
         val loaded = frame(provider, viewport, series, index, networkAllowed).image ?: return@withContext null
         val imageFile = compositeFile(provider, viewport, loaded.frame)
         if (!imageFile.isFile || imageFile.length() == 0L) {
@@ -162,7 +169,9 @@ class WeatherMapRepository @Inject constructor(
                 }
             }
         }
-        imageFile.takeIf { it.isFile && it.length() in 1L..(8L * 1024 * 1024) }
+        imageFile.takeIf { it.isFile && it.length() in 1L..(8L * 1024 * 1024) }?.let {
+            WeatherMapPlaybackFrame(it, loaded.baseMissing, loaded.coverageMissing)
+        }
     }
 
     // The server LAN restriction does not apply to this explicitly enabled public weather service.
