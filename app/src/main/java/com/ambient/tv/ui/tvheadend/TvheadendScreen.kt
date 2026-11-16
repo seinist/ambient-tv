@@ -635,11 +635,11 @@ internal fun TvheadendHeader(
         focusChain,
         selectedIndex = visibleTabs.indexOf(state.tab),
     ) {
-        item { Tab(TvheadendTab.LIVE, R.string.tvh_live, Icons.Filled.Tv) }
-        if (state.capabilities.guide) item { Tab(TvheadendTab.GUIDE, R.string.tvh_guide, Icons.Filled.Schedule) }
-        if (state.capabilities.recordings) item { Tab(TvheadendTab.RECORDINGS, R.string.tvh_recordings, Icons.Filled.FiberManualRecord) }
-        if (state.capabilities.timers) item { Tab(TvheadendTab.TIMERS, R.string.tvh_timers, Icons.Filled.Timer) }
-        if (TvheadendTab.HBBTV in visibleTabs) item {
+        item(key = "live") { Tab(TvheadendTab.LIVE, R.string.tvh_live, Icons.Filled.Tv) }
+        if (state.capabilities.guide) item(key = "guide") { Tab(TvheadendTab.GUIDE, R.string.tvh_guide, Icons.Filled.Schedule) }
+        if (state.capabilities.recordings) item(key = "recordings") { Tab(TvheadendTab.RECORDINGS, R.string.tvh_recordings, Icons.Filled.FiberManualRecord) }
+        if (state.capabilities.timers) item(key = "timers") { Tab(TvheadendTab.TIMERS, R.string.tvh_timers, Icons.Filled.Timer) }
+        if (TvheadendTab.HBBTV in visibleTabs) item(key = "hbbtv") {
             Tab(TvheadendTab.HBBTV, R.string.guide_hbbtv, Icons.Filled.ConnectedTv)
         }
     }
