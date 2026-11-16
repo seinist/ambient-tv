@@ -124,7 +124,7 @@ fun WeatherMapPlayerScreen(
             WeatherPlayerRequest(location, provider, viewport, networkAllowed = true) else null
     }
     val result = state.result.takeIf { state.request == request }
-    val loading = state.loading && state.request == request
+    val loading = request != null && (state.request != request || state.loading)
     if (result?.image != null && location != null) SideEffect {
         mapPreview = WeatherMapPreview(result.image, location.id)
     }
@@ -186,8 +186,14 @@ fun WeatherMapPlayerScreen(
                 if (loading && contentVisible && location != null && mapPreview?.locationId == location.id) {
                     mapPreview?.image?.let { previous ->
                         BoxWithConstraints(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                            Image(previous.bitmap.asImageBitmap(), contentDescription = null,
-                                modifier = Modifier.size(minOf(maxWidth, maxHeight)))
+                            Box(Modifier.size(minOf(maxWidth, maxHeight))) {
+                                Image(previous.bitmap.asImageBitmap(), contentDescription = null,
+                                    modifier = Modifier.fillMaxSize())
+                                Text("© OpenStreetMap contributors",
+                                    color = Color.White, style = MaterialTheme.typography.labelSmall,
+                                    modifier = Modifier.align(Alignment.BottomEnd)
+                                        .background(Color.Black.copy(alpha = .65f)).padding(4.dp))
+                            }
                         }
                     }
                 }
@@ -500,11 +506,13 @@ private fun WeatherMedia3MapContent(
                     }), color = Color.White, style = MaterialTheme.typography.bodySmall)
                     if (failed || sourceError != null) TvChip(stringResource(R.string.weather_maps_retry),
                         onClick = {
-                            failed = false
-                            buffering = true
-                            ended = false
-                            player.prepare()
-                            player.playWhenReady = wantsPlayback
+                            if (failed) {
+                                failed = false
+                                ended = false
+                                player.prepare()
+                                player.playWhenReady = wantsPlayback
+                                buffering = player.playbackState == Player.STATE_BUFFERING
+                            }
                             onRetry()
                         })
                 }
