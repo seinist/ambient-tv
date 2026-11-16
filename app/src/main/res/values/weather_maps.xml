@@ -34,4 +34,16 @@
     <string name="weather_maps_width">Map width: approximately %1$d km at the centre</string>
     <string name="weather_maps_legend_samples">Radar reflectivity (dBZ) · selected colour values</string>
     <string name="weather_maps_full_legend">Provider colour legend</string>
+    <string name="weather_player_fullscreen">Open weather player</string>
+    <string name="weather_player_close">Close</string>
+    <string name="weather_player_repeat">Repeat</string>
+    <string name="weather_player_info">Information</string>
+    <string name="weather_player_hide">Hide controls</string>
+    <string name="weather_player_product">Product: %1$s</string>
+    <string name="weather_player_radar_product">Precipitation radar / reflectivity</string>
+    <string name="weather_player_nasa_product">Visible satellite image · NOAA-20 VIIRS</string>
+    <string name="weather_player_eumetsat_product">Infrared satellite image</string>
+    <string name="weather_player_frame_counter">Image %1$d of %2$d</string>
+    <string name="weather_player_zoom">Zoom level %1$d</string>
+    <string name="weather_player_manifest">Map timeline updated: %1$s</string>
 </resources>

@@ -18,6 +18,9 @@ object Destinations {
     const val DLNA_SERVER = "dlna/{serverId}"
     const val HOME = "home"
     const val WEATHER = "weather"
+    const val WEATHER_PLAYER = "weather_player/{kind}/{providerId}?zoom={zoom}&frame={frame}"
+    fun weatherPlayer(kind: String, providerId: String, zoom: Int, frameEpochMillis: Long): String =
+        "weather_player/${Uri.encode(kind)}/${Uri.encode(providerId)}?zoom=$zoom&frame=$frameEpochMillis"
     const val PLEX = "plex"
     const val JELLYFIN = "jellyfin"
     const val EMBY = "emby"

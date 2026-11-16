@@ -1,31 +1,32 @@
-# Weather animation playback — Media3 feasibility
+# Weather animation playback — Media3 implementation
 
-Status: feasibility review only; no change to the video player.
+Status: implemented in weather PR #354 (Android TV and phone physical-device verification still required).
 
-The weather animation currently consists of separately downloaded composited Bitmap frames
-(base map, weather overlay and coverage). The location marker and map attribution
-are Compose overlays. WeatherMapViewModel already prefetches two upcoming frames,
-caches completed loops, displays one frame about every 1.1 seconds, and cancels playback
-on pause, hiding the view or switching provider/location. The frames are not video streams.
+The Radar/Satellite map tabs open a separate fullscreen navigation destination; it does not
+use the normal video/audio player, session, renderers, config panels or resume history.
 
-Media3 ExoPlayer supports PNG/JPEG images in a playlist: use MediaItem.Builder with
-setImageDurationMs(duration). A future full-screen weather player could expose composited
-frames through stable local content URIs or a bounded temporary cache and pass the ordered
-images to Media3, rendering the location marker and attribution over the image output.
+The fullscreen player uses Media3 ExoPlayer image `MediaItem` playlists with a fixed
+frame duration of 1100 ms. A `ResolvingDataSource` resolves a synthetic frame URI to
+a local PNG created on demand through `WeatherMapRepository.playbackImageFile`.
+The repository composites the weather overlay and OSM background at the exact
+centred map extent, so the original provider URLs never bypass coverage/caching rules.
+Only the requested frame is loaded (Media3 may also preload its next frame); opening
+a timeline does not download every available frame. There is no generated video,
+no new server endpoint, and no normal playback service or history entry.
 
-Caveats:
-- Ambient TV's shared player is currently built for media URIs, video/audio tracks and
-  metadata, not the repository's in-memory Bitmaps. Passing upstream WMS/RainViewer
-  image URLs directly bypasses compositing, centre/zoom, and cache/error handling.
-- Loading and decoding an entire map timeline can increase latency, disk I/O and memory;
-  image playlists are not equivalent to hardware-decoded H.264/HEVC video.
-- The image output used by Ambient TV's player needs TV and phone tests. Preserve
-  weather timestamps, provider credits, repeat/pause, zoom, offline/stale indications,
-  cancellation on leave, and avoid adding weather to playback history.
-- VLC/MPV are not direct substitutes for an in-memory bitmap playlist without encoding.
+`PlayerView` renders the image with Media3's image mode. Compose draws the saved
+location marker and attribution above the square map image. The weather-only OSD
+offers image time scrubbing, previous/next, pause/play, repeat, zoom, source chips,
+and a collapsible info panel with provider/product/time/zoom/width/coverage metadata.
+The displayed time comes from the provider's published frame (UTC date for NASA),
+not from local download time. A separate manifest refresh timestamp is shown.
+Changing zoom keeps the closest matching published image timestamp.
 
-Recommendation: retain the existing in-view animation. If full-screen playback is
-desired, prototype a separate Media3 image-playlist mode with bounded cached frames,
-then measure first-frame latency, loop smoothness and memory before enabling it.
+When changing provider, zoom, location, leaving navigation, or hiding the viewer,
+the old player is released and its pending resolver requests cancelled. Only
+explicitly enabled providers may play. Existing map caches are still bounded by
+the weather repository's 64 MB disk cache and normal on-demand network policy.
 
+Main follow-up: verify image timing and surface/OSD focus on physical Android TV,
+ARMv7, handheld landscape, cache eviction under load, and service outages.
 Reference: https://developer.android.com/media/media3/exoplayer/images

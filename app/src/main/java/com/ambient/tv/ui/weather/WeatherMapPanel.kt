@@ -71,6 +71,7 @@ fun WeatherMapPanel(
     providerId: String,
     onOpenSettings: () -> Unit,
     networkAllowed: Boolean,
+    onOpenPlayer: ((WeatherMapProvider, Int, Long) -> Unit)? = null,
     modifier: Modifier = Modifier,
     viewModel: WeatherMapViewModel = hiltViewModel(),
 ) {
@@ -145,6 +146,10 @@ fun WeatherMapPanel(
                         enabled = canPlay, onClick = viewModel::togglePlayback)
                     TvActionButton(stringResource(R.string.weather_maps_next), enabled = canPlay && state.selectedFrame < count - 1,
                         onClick = { viewModel.step(1) })
+                    if (onOpenPlayer != null) {
+                        TvActionButton(stringResource(R.string.weather_player_fullscreen),
+                            onClick = { onOpenPlayer(source, zoom, image?.frame?.epochMillis ?: 0L) })
+                    }
                     TvActionButton(stringResource(R.string.weather_maps_retry), enabled = networkAllowed,
                         loading = state.loading, onClick = viewModel::refresh)
                 }
