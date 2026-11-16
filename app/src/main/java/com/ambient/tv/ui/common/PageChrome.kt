@@ -454,13 +454,29 @@ fun PageChipRow(
     var lastFocusedSelection by remember { mutableStateOf<Int?>(null) }
     LaunchedEffect(selectedIndex, handheld) {
         val index = selectedIndex?.takeIf { it >= 0 } ?: return@LaunchedEffect
+        // Capture the old row focus before scrolling: an offscreen new selection may detach
+        // the old focused child, momentarily making chipsFocused false.
+        val shouldFollowSelection = !handheld && chipsFocused && lastFocusedSelection != index
+        val confirmedAt = PageChipFocusHold.armedAt
         if (handheld) {
             state.animateScrollToItem(index)
-        } else if (index != state.firstVisibleItemIndex &&
-            state.layoutInfo.visibleItemsInfo.none { it.index == index }) {
-            // A LazyRow cannot focus an offscreen item. Attach the selected chip without
-            // stealing focus from content or sidebar when the selection changes externally.
-            state.scrollToItem(index)
+        } else {
+            if (index != state.firstVisibleItemIndex &&
+                state.layoutInfo.visibleItemsInfo.none { it.index == index }) {
+                // Attach the selected chip without stealing focus from content/sidebar.
+                state.scrollToItem(index)
+            }
+            if (shouldFollowSelection) {
+                repeat(4) {
+                    withFrameNanos { }
+                    // Down/Up/Left/Right after confirming a TV chip cancels this handoff.
+                    if (confirmedAt != 0L && !PageChipFocusHold.active) return@LaunchedEffect
+                    if (runCatching { chain.selectedChip.requestFocus() }.getOrDefault(false)) {
+                        lastFocusedSelection = index
+                        return@LaunchedEffect
+                    }
+                }
+            }
         }
     }
     LaunchedEffect(chipsFocused, selectedIndex, handheld) {
@@ -481,7 +497,9 @@ fun PageChipRow(
     LaunchedEffect(chain, handheld, armedAt) {
         if (handheld) return@LaunchedEffect
         while (PageChipFocusHold.active) {
-            if (!chipsFocused) runCatching { chain.chips.requestFocus() }
+            if (!chipsFocused && !runCatching { chain.selectedChip.requestFocus() }.getOrDefault(false)) {
+                runCatching { chain.chips.requestFocus() }
+            }
             withFrameNanos { }
             kotlinx.coroutines.delay(50)
         }
