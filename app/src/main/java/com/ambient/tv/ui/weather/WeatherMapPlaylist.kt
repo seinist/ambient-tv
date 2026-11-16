@@ -20,9 +20,14 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.runBlocking
 
 internal const val WEATHER_PLAYER_FRAME_DURATION_MS = 1_100L
+
+internal data class WeatherMapFrameStatus(val baseMissing: Boolean, val coverageMissing: Boolean)
 
 /** Preserve the observed frame timestamp when changing zoom, without assuming uniform source intervals. */
 internal fun weatherPlayerFrameIndex(frames: List<WeatherMapFrame>, requestedEpoch: Long): Int =
@@ -47,6 +52,8 @@ internal class WeatherMapPlaylist(
     private val networkAllowed: Boolean,
 ) : Closeable {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val mutableFrameStatuses = MutableStateFlow<Map<Int, WeatherMapFrameStatus>>(emptyMap())
+    val frameStatuses = mutableFrameStatuses.asStateFlow()
     private val resolver = ResolvingDataSource.Resolver { spec ->
         val uri = spec.uri
         val index = if (uri.scheme == "weatherframe" && uri.host == "timeline")
@@ -55,10 +62,10 @@ internal class WeatherMapPlaylist(
         if (index == null || index !in series.frames.indices) {
             throw IOException("Invalid weather frame")
         }
-        val file = try {
+        val resolved = try {
             runBlocking {
                 scope.async {
-                    repository.playbackImageFile(provider, viewport, series, index, networkAllowed)
+                    repository.playbackFrameFile(provider, viewport, series, index, networkAllowed)
                 }.await()
             }
         } catch (cancelled: CancellationException) {
@@ -66,7 +73,10 @@ internal class WeatherMapPlaylist(
         } catch (error: Exception) {
             throw IOException("Weather frame unavailable", error)
         } ?: throw IOException("Weather frame unavailable")
-        spec.withUri(Uri.fromFile(file))
+        mutableFrameStatuses.update {
+            it + (index to WeatherMapFrameStatus(resolved.baseMissing, resolved.coverageMissing))
+        }
+        spec.withUri(Uri.fromFile(resolved.file))
     }
 
     val dataSourceFactory = ResolvingDataSource.Factory(DefaultDataSource.Factory(context), resolver)
