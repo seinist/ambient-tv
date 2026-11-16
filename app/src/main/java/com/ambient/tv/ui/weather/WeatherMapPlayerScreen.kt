@@ -362,7 +362,7 @@ private fun WeatherMedia3MapContent(
                         Text(stringResource(R.string.weather_player_manifest,
                             DateTimeFormatter.ofPattern("dd.MM.yyyy HH:mm z", locale).withZone(zone)
                                 .format(Instant.ofEpochMilli(series.fetchedAtMillis))), color = Color.White)
-                        if (initialCached && currentIndex == selected || stale || sourceError) {
+                        if ((initialCached && currentIndex == selected) || stale || sourceError != null) {
                             Text(stringResource(R.string.weather_maps_stored), color = Color.White)
                         }
                         if (baseMissing) Text(stringResource(R.string.weather_maps_base_missing), color = Color.White)
