@@ -447,18 +447,59 @@ fun PageChipRow(
 ) {
     val state = rememberLazyListState()
     val handheld = LocalHandheldUi.current
+    var chipsFocused by remember { mutableStateOf(false) }
+    // focusRestorer remembers the last focused child even if another category becomes active.
+    // Keep that D-pad history while the selection is unchanged, but follow a newly selected
+    // chip whenever focus is in (or later re-enters) the category row.
+    var lastFocusedSelection by remember { mutableStateOf<Int?>(null) }
     LaunchedEffect(selectedIndex, handheld) {
-        val index = selectedIndex ?: return@LaunchedEffect
-        if (handheld && index >= 0) state.animateScrollToItem(index)
+        val index = selectedIndex?.takeIf { it >= 0 } ?: return@LaunchedEffect
+        // Capture the old row focus before scrolling: an offscreen new selection may detach
+        // the old focused child, momentarily making chipsFocused false.
+        val shouldFollowSelection = !handheld && chipsFocused && lastFocusedSelection != index
+        val confirmedAt = PageChipFocusHold.armedAt
+        if (handheld) {
+            state.animateScrollToItem(index)
+        } else {
+            if (index != state.firstVisibleItemIndex &&
+                state.layoutInfo.visibleItemsInfo.none { it.index == index }) {
+                // Attach the selected chip without stealing focus from content/sidebar.
+                state.scrollToItem(index)
+            }
+            if (shouldFollowSelection) {
+                repeat(4) {
+                    withFrameNanos { }
+                    // Down/Up/Left/Right after confirming a TV chip cancels this handoff.
+                    if (confirmedAt != 0L && !PageChipFocusHold.active) return@LaunchedEffect
+                    if (runCatching { chain.selectedChip.requestFocus() }.getOrDefault(false)) {
+                        lastFocusedSelection = index
+                        return@LaunchedEffect
+                    }
+                }
+            }
+        }
+    }
+    LaunchedEffect(chipsFocused, selectedIndex, handheld) {
+        val index = selectedIndex?.takeIf { it >= 0 } ?: return@LaunchedEffect
+        if (handheld || !chipsFocused || lastFocusedSelection == index) return@LaunchedEffect
+        repeat(3) {
+            withFrameNanos { }
+            if (!chipsFocused || selectedIndex != index) return@LaunchedEffect
+            if (runCatching { chain.selectedChip.requestFocus() }.getOrDefault(false)) {
+                lastFocusedSelection = index
+                return@LaunchedEffect
+            }
+        }
     }
     // TV: a chosen category keeps the focus on its chip; the page's own initial focus must not
     // pull it into the grid. The hold ends with the next key press (Down enters the content).
-    var chipsFocused by remember { mutableStateOf(false) }
     val armedAt = PageChipFocusHold.armedAt
     LaunchedEffect(chain, handheld, armedAt) {
         if (handheld) return@LaunchedEffect
         while (PageChipFocusHold.active) {
-            if (!chipsFocused) runCatching { chain.chips.requestFocus() }
+            if (!chipsFocused && !runCatching { chain.selectedChip.requestFocus() }.getOrDefault(false)) {
+                runCatching { chain.chips.requestFocus() }
+            }
             withFrameNanos { }
             kotlinx.coroutines.delay(50)
         }

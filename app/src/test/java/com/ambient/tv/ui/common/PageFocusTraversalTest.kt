@@ -14,6 +14,7 @@ import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -117,6 +118,101 @@ class PageFocusTraversalTest {
         rule.onNodeWithTag("content").assertIsFocused()
         press(AndroidKeyEvent.KEYCODE_DPAD_UP)
         rule.onNodeWithTag("chips").assertIsFocused()
+    }
+
+    private class CategoryChipFixture {
+        val selection = mutableIntStateOf(0)
+        val firstChip = FocusRequester()
+        val content = FocusRequester()
+        lateinit var focusChain: PageFocusChain
+    }
+
+    private fun categoryChipPage(): CategoryChipFixture {
+        val fixture = CategoryChipFixture()
+        rule.setContent {
+            AmbientTvTheme {
+                val chain = rememberPageFocusChain()
+                fixture.focusChain = chain
+                Column {
+                    PageChipRow(chain, selectedIndex = fixture.selection.intValue) {
+                        items(listOf(0, 1, 2), key = { it }) { index ->
+                            Box(
+                                Modifier.size(64.dp)
+                                    .then(if (index == fixture.selection.intValue)
+                                        Modifier.focusRequester(chain.selectedChip) else Modifier)
+                                    .then(if (index == 0) Modifier.focusRequester(fixture.firstChip) else Modifier)
+                                    .testTag("category-$index")
+                                    .focusable(),
+                            )
+                        }
+                    }
+                    Box(Modifier.size(96.dp).focusRequester(fixture.content)
+                        .testTag("category-content").focusable())
+                }
+            }
+        }
+        rule.waitForIdle()
+        return fixture
+    }
+
+    @Test fun switchedCategoryFollowsSelectedChipWhileChipRowOwnsFocus() {
+        val page = categoryChipPage()
+        rule.runOnIdle { page.firstChip.requestFocus() }
+        rule.onNodeWithTag("category-0").assertIsFocused()
+
+        // Asynchronous SmartTube/Radio category selection updates the active chip after
+        // the row's focusRestorer has remembered an older category.
+        rule.runOnIdle { page.selection.intValue = 2 }
+        rule.waitForIdle()
+        rule.onNodeWithTag("category-2").assertIsFocused()
+    }
+
+    @Test fun externalCategoryChangeDoesNotStealContentFocusAndRestoresSelectedChipOnReturn() {
+        val page = categoryChipPage()
+        rule.runOnIdle { page.firstChip.requestFocus() }
+        rule.waitForIdle()
+        rule.runOnIdle { page.content.requestFocus() }
+        rule.onNodeWithTag("category-content").assertIsFocused()
+
+        // Sidebar selection can change the category while focus remains in the content.
+        rule.runOnIdle { page.selection.intValue = 2 }
+        rule.waitForIdle()
+        rule.onNodeWithTag("category-content").assertIsFocused()
+
+        rule.runOnIdle { page.focusChain.chips.requestFocus() }
+        rule.waitForIdle()
+        rule.onNodeWithTag("category-2").assertIsFocused()
+    }
+
+    @Test fun offscreenSelectedCategoryIsFocusedAfterLazyChipRowScroll() {
+        val selected = mutableIntStateOf(0)
+        val first = FocusRequester()
+        rule.setContent {
+            AmbientTvTheme {
+                val chain = rememberPageFocusChain()
+                PageChipRow(chain, modifier = Modifier.width(96.dp), selectedIndex = selected.intValue) {
+                    items((0..7).toList(), key = { it }) { index ->
+                        Box(
+                            Modifier.size(64.dp)
+                                .then(if (index == selected.intValue)
+                                    Modifier.focusRequester(chain.selectedChip) else Modifier)
+                                .then(if (index == 0) Modifier.focusRequester(first) else Modifier)
+                                .testTag("offscreen-category-$index")
+                                .focusable(),
+                        )
+                    }
+                }
+            }
+        }
+        rule.waitForIdle()
+        rule.runOnIdle { first.requestFocus() }
+        rule.onNodeWithTag("offscreen-category-0").assertIsFocused()
+
+        // A selected chip far beyond the LazyRow viewport must be attached before focus
+        // returns to it, even if scrolling temporarily detaches the old focused chip.
+        rule.runOnIdle { selected.intValue = 7 }
+        rule.waitForIdle()
+        rule.onNodeWithTag("offscreen-category-7").assertIsFocused()
     }
 
     @Test fun rightFromContentWithoutScrollbarStaysInBrowseArea() {
