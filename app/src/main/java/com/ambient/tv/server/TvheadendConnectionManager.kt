@@ -63,6 +63,8 @@ class TvheadendConnectionManager @Inject constructor(
     private val connectRun = SharedConnectRun(CoroutineScope(SupervisorJob() + Dispatchers.IO))
     private val reconnectPause = ReconnectPause()
 
+    fun isAutomaticReconnectPaused(): Boolean = reconnectPause.isPaused(endpointKey())
+
     private val configured get() = preferences.isTvheadendConfigured && !preferences.tvheadendLoginRejected
 
     /** "Continue" in the unreachable dialog: no automatic reconnects or wakes until it answers again. */
@@ -197,7 +199,7 @@ class TvheadendConnectionManager @Inject constructor(
             _state.value = ServerConnectionState.Error(context.getString(R.string.server_non_local_blocked)); return false
         }
         if (!wireGuardRoute.ensureForTvheadend().fold(onSuccess = { true }, onFailure = { error ->
-                _state.value = ServerConnectionState.Error(error.message ?: context.getString(R.string.wg_failed))
+                _state.value = ServerConnectionState.Error(error.message ?: context.getString(R.string.wg_failed), ServerConnectionFailure.VPN)
                 false
             })) return false
         val endpointKey = endpointKey()

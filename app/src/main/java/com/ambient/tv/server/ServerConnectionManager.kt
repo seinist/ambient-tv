@@ -27,6 +27,8 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.SupervisorJob
 
+enum class ServerConnectionFailure { VPN }
+
 sealed interface ServerConnectionState {
     data object NotConfigured : ServerConnectionState
     data object Checking : ServerConnectionState
@@ -46,7 +48,7 @@ sealed interface ServerConnectionState {
     data object Connecting : ServerConnectionState
     data class Online(val identity: PlexServerIdentity) : ServerConnectionState
     data object WakeTimedOut : ServerConnectionState
-    data class Error(val message: String) : ServerConnectionState
+    data class Error @JvmOverloads constructor(val message: String, val cause: ServerConnectionFailure? = null) : ServerConnectionState
 }
 
 @Singleton
@@ -84,6 +86,8 @@ class ServerConnectionManager @Inject constructor(
 
 
     private val reconnectPause = ReconnectPause()
+
+    fun isAutomaticReconnectPaused(): Boolean = reconnectPause.isPaused(endpointKey())
 
     fun pauseAutomaticReconnect() { reconnectPause.pause(endpointKey()) }
 
@@ -203,7 +207,7 @@ class ServerConnectionManager @Inject constructor(
             return false
         }
         if (!wireGuardRoute.ensureForPlex().fold(onSuccess = { true }, onFailure = { error ->
-                _state.value = ServerConnectionState.Error(error.message ?: context.getString(R.string.wg_failed))
+                _state.value = ServerConnectionState.Error(error.message ?: context.getString(R.string.wg_failed), ServerConnectionFailure.VPN)
                 false
             })) return false
 
@@ -291,7 +295,7 @@ class ServerConnectionManager @Inject constructor(
         val vpn = wireGuardRoute.ensureForPlex()
         if (vpn.isFailure) {
             val error = IllegalStateException(vpn.exceptionOrNull()?.message ?: context.getString(R.string.wg_failed))
-            _state.value = ServerConnectionState.Error(error.message.orEmpty())
+            _state.value = ServerConnectionState.Error(error.message.orEmpty(), ServerConnectionFailure.VPN)
             return Result.failure(error)
         }
         _state.value = ServerConnectionState.Checking

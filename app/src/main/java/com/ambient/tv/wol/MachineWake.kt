@@ -1,16 +1,29 @@
 package com.ambient.tv.wol
 
 import com.ambient.tv.data.local.AppPreferences
+import com.ambient.tv.R
+import com.ambient.tv.notifications.AppNotice
+import com.ambient.tv.notifications.AppNotifications
+import com.ambient.tv.notifications.ConnectivityDependency
+import com.ambient.tv.notifications.NoticeKind
+import com.ambient.tv.notifications.NoticePhase
+import com.ambient.tv.notifications.sanitizeFailureDetail
 import com.ambient.tv.notifications.WakeNoticeTracker
 import com.ambient.tv.notifications.WakeNotices
 import com.ambient.tv.notifications.withCancellableWake
+import com.ambient.tv.vpn.WireGuardRouteController
 import java.net.InetSocketAddress
 import java.net.Socket
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runInterruptible
 
@@ -56,6 +69,7 @@ class ManualWakeCoordinator(
             // One burst per NIC of the machine; WolManager coalesces equal MACs across callers.
             suspend fun burst(retry: Boolean) {
                 val results = macs.map { mac ->
+                    currentCoroutineContext().ensureActive()
                     if (mac == own) send(mac, request.broadcast, request.wolPort, request.wireGuardHost, retry)
                     else send(mac, "255.255.255.255", 9, null, retry)
                 }
@@ -63,7 +77,10 @@ class ManualWakeCoordinator(
             }
             val ok = if (host == null || port == null) {
                 // Nothing to probe: a sent burst is the result.
-                burst(retry = false); notices.sent(machine, 0, 1, 0L); true
+                burst(retry = false)
+                currentCoroutineContext().ensureActive()
+                notices.sent(machine, 0, 1, 0L)
+                true
             } else wakeWithRetries(
                 retries = retries(),
                 windowMs = windowMs,
@@ -71,8 +88,12 @@ class ManualWakeCoordinator(
                 send = { attempt -> burst(retry = attempt > 0) },
                 reachable = { reachable(host, port) },
                 onAnswered = { answered(macs) },
-                onSent = { attempt, attempts -> notices.sent(machine, attempt, attempts, windowMs) },
+                onSent = { attempt, attempts ->
+                    currentCoroutineContext().ensureActive()
+                    notices.sent(machine, attempt, attempts, windowMs)
+                },
             )
+            currentCoroutineContext().ensureActive()
             notices.finish(machine, request.system, success = ok, member = request.member)
             return if (ok) Outcome.AWAKE else Outcome.FAILED
         } catch (cancelled: kotlinx.coroutines.CancellationException) {
@@ -91,8 +112,15 @@ class MachineWake @Inject constructor(
     private val wolManager: WolManager,
     private val machines: WakeMachines,
     private val preferences: AppPreferences,
+    private val wireGuardRoute: WireGuardRouteController,
 ) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val lock = Any()
+    private val jobs = mutableMapOf<String, Job>()
+    private val lastRequests = linkedMapOf<String, ManualWakeRequest>()
+
+    /** Bounded, process-local endpoint data; no credentials and no Activity references. */
+    fun retryRequests(): Map<String, ManualWakeRequest> = synchronized(lock) { lastRequests.toMap() }
 
     private val coordinator = ManualWakeCoordinator(
         notices = WakeNotices,
@@ -114,16 +142,65 @@ class MachineWake @Inject constructor(
 
     /** Fire-and-forget: progress and result appear on the machine's shared wake card. */
     fun wake(request: ManualWakeRequest) {
-        scope.launch {
-            // A private server outside every local network: say so instead of a wake that
-            // cannot reach it and only times out.
-            // No Wi-Fi/Ethernet (mobile data without a tunnel) is the same: nothing can be sent.
-            // (Without a MAC the coordinator reports that itself.)
-            if (!request.mac.isNullOrBlank() && !wolManager.wakePossible(request.mac,
-                    request.host?.takeIf { it.isNotBlank() }, request.wireGuardHost, request.broadcast,
-                    report = true)) return@launch
-            val machine = machines.keyFor(request.system, request.host, request.mac)
-            withCancellableWake(machine) { coordinator.wake(request) }
+        val machine = machines.keyFor(request.system, request.host, request.mac)
+        val job = synchronized(lock) {
+            val previous = jobs[machine]
+            if ((previous != null && !previous.isCompleted && !previous.isCancelled) || WakeNotices.isWaking(machine)) return
+            lastRequests.remove(machine)
+            lastRequests[machine] = request
+            while (lastRequests.size > 32) lastRequests.remove(lastRequests.keys.first())
+            scope.launch(start = CoroutineStart.LAZY) {
+                withCancellableWake(machine) {
+                    // A quick retry cannot be overwritten by the previous attempt's cleanup.
+                    previous?.join()
+                    var coordinated = false
+                    fun report(phase: NoticePhase, message: Int, blockedBy: ConnectivityDependency? = null,
+                        cancelled: Boolean = false, args: List<String> = emptyList()) = AppNotifications.post(AppNotice(
+                        key = WakeNotices.noticeKey(machine), message = message, systems = listOf(request.system),
+                        subject = request.subject, phase = phase, kind = NoticeKind.WAKE,
+                        machine = machine, blockedBy = blockedBy, cancelled = cancelled, args = args,
+                    ))
+                    try {
+                        val vpnHost = request.wireGuardHost?.takeIf(String::isNotBlank)
+                        report(NoticePhase.WORKING, R.string.notice_connecting,
+                            ConnectivityDependency.VPN.takeIf { vpnHost != null })
+                        if (vpnHost != null) {
+                            val activation = wireGuardRoute.ensureForWakeHost(vpnHost)
+                            if (activation.isFailure) {
+                                val reason = activation.exceptionOrNull()?.message?.let(::sanitizeFailureDetail)?.takeIf(String::isNotBlank)
+                                report(NoticePhase.ERROR,
+                                    if (reason != null) R.string.notice_vpn_failed_reason else R.string.notice_vpn_failed,
+                                    ConnectivityDependency.VPN, args = listOfNotNull(reason))
+                                return@withCancellableWake
+                            }
+                        }
+                        currentCoroutineContext().ensureActive()
+                        if (!request.mac.isNullOrBlank() && !wolManager.wakePossible(request.mac,
+                                request.host?.takeIf(String::isNotBlank), request.wireGuardHost, request.broadcast)) {
+                            val outside = wolManager.serverUnreachableFromHere(request.host, request.wireGuardHost)
+                            report(NoticePhase.ERROR,
+                                if (outside) R.string.wol_not_local_network else R.string.wol_network_unavailable)
+                            return@withCancellableWake
+                        }
+                        currentCoroutineContext().ensureActive()
+                        coordinated = true
+                        if (coordinator.wake(request) == ManualWakeCoordinator.Outcome.NO_MAC) {
+                            report(NoticePhase.ERROR, R.string.notice_wake_failed)
+                        }
+                    } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                        if (!coordinated) report(NoticePhase.INFO, R.string.notice_wake_cancelled, cancelled = true)
+                        throw cancelled
+                    } catch (_: Exception) {
+                        if (!currentCoroutineContext().isActive) {
+                            if (!coordinated) report(NoticePhase.INFO, R.string.notice_wake_cancelled, cancelled = true)
+                            currentCoroutineContext().ensureActive()
+                        }
+                        report(NoticePhase.ERROR, R.string.notice_wake_failed)
+                    }
+                }
+            }.also { jobs[machine] = it }
         }
+        job.invokeOnCompletion { synchronized(lock) { if (jobs[machine] === job) jobs.remove(machine) } }
+        job.start()
     }
 }

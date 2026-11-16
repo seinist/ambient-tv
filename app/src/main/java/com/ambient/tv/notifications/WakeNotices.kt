@@ -12,7 +12,7 @@ class WakeNoticeTracker(
     private val dismiss: (String) -> Unit,
     private val nowMs: () -> Long = System::currentTimeMillis,
 ) {
-    private enum class State { WORKING, AWAKE, FAILED }
+    private enum class State { WORKING, AWAKE, FAILED, CANCELLED }
     private class Member(val system: String, var state: State)
     private class Group(
         val members: LinkedHashMap<String, Member> = linkedMapOf(),
@@ -85,19 +85,29 @@ class WakeNoticeTracker(
     fun finish(machine: String, system: String, success: Boolean, member: String = system) {
         val group = groups[machine] ?: return
         val entry = group.members[member] ?: return
+        if (entry.state != State.WORKING) return
         entry.state = if (success) State.AWAKE else State.FAILED
         publish(machine, group)
     }
 
-    /** The caller stopped without a result (cancelled); it no longer holds the notice open. */
+    /** Cancellation stays in session details, while no longer holding the wake open. */
     @Synchronized
     fun cancel(machine: String, system: String, member: String = system) {
         val group = groups[machine] ?: return
-        group.members.remove(member) ?: return
-        if (group.members.isEmpty()) {
-            groups.remove(machine)
-            dismiss(noticeKey(machine))
-        } else publish(machine, group)
+        val entry = group.members[member] ?: return
+        if (entry.state != State.WORKING) return
+        entry.state = State.CANCELLED
+        publish(machine, group)
+    }
+
+    /** User intent is recorded before cancelling jobs, so their late completion cannot revive it. */
+    @Synchronized
+    fun cancelMachine(machine: String) {
+        val group = groups[machine] ?: return
+        val waiting = group.members.values.filter { it.state == State.WORKING }
+        if (waiting.isEmpty()) return
+        waiting.forEach { it.state = State.CANCELLED }
+        publish(machine, group)
     }
 
     /**
@@ -126,13 +136,16 @@ class WakeNoticeTracker(
                 AppNotice(noticeKey(machine), R.string.notice_waking, all, subject, NoticePhase.WORKING, NoticeKind.WAKE,
                     progressStartedAt = if (group.deadline > 0) group.startedAt else 0L,
                     progressTotalMs = if (group.deadline > 0) (group.deadline - group.startedAt).coerceAtLeast(0L) else 0L,
-                    packetsSent = group.packetsSent, packets = group.packets, nextPacketAt = group.nextPacketAt)
+                    packetsSent = group.packetsSent, packets = group.packets, nextPacketAt = group.nextPacketAt, machine = machine)
             members.any { it.state == State.FAILED } ->
                 AppNotice(noticeKey(machine), R.string.notice_wake_failed,
                     members.filter { it.state == State.FAILED }.map { it.system }.distinct(), subject, NoticePhase.ERROR, NoticeKind.WAKE,
-                    packetsSent = group.packetsSent, packets = group.packets)
+                    packetsSent = group.packetsSent, packets = group.packets, machine = machine)
+            members.any { it.state == State.CANCELLED } ->
+                AppNotice(noticeKey(machine), R.string.notice_wake_cancelled, all, subject, NoticePhase.INFO, NoticeKind.WAKE,
+                    packetsSent = group.packetsSent, packets = group.packets, machine = machine, cancelled = true)
             else -> AppNotice(noticeKey(machine), R.string.notice_awake, all, subject, NoticePhase.SUCCESS, NoticeKind.WAKE,
-                packetsSent = group.packetsSent, packets = group.packets)
+                packetsSent = group.packetsSent, packets = group.packets, machine = machine)
         }
         // A finished machine starts a fresh card on its next wake.
         if (notice.phase != NoticePhase.WORKING) groups.remove(machine)
@@ -141,4 +154,4 @@ class WakeNoticeTracker(
 }
 
 /** Process-wide tracker feeding [AppNotifications]. */
-val WakeNotices = WakeNoticeTracker(AppNotifications::post, AppNotifications::dismiss)
+val WakeNotices = WakeNoticeTracker(AppNotifications::post, AppNotifications::removeConnectivity)

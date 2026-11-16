@@ -1,0 +1,6 @@
+<resources>
+    <string name="notice_waiting_for_vpn">Wartet auf VPN</string>
+    <string name="notice_waiting_for_network">Wartet auf Netzwerk</string>
+    <string name="notice_wake_cancelled">Wecken abgebrochen</string>
+    <string name="notice_vpn_failed_reason">VPN-Verbindung fehlgeschlagen: %1$s</string>
+</resources>

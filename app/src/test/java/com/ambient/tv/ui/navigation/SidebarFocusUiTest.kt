@@ -63,11 +63,15 @@ class SidebarFocusUiTest {
     private val entryOrders = mutableListOf<Pair<String, List<String>>>()
     private var entryArmed = true
     private val ownership = mutableListOf<Boolean>()
+    private var startStatusAvailable by mutableStateOf(false)
+    private var closeStartStatus: (() -> Unit)? = null
 
     private fun setUp(startRoute: String) {
         rule.setContent {
             var route by remember { mutableStateOf(startRoute) }
+            var statusOpen by remember { mutableStateOf(false) }
             val content = remember { FocusRequester() }
+            val status = remember { FocusRequester() }
             Row(Modifier.fillMaxSize()) {
                 SidebarContent(
                     sidebarState = state,
@@ -78,8 +82,18 @@ class SidebarFocusUiTest {
                     requestContentFocus = { runCatching { content.requestFocus() }.isSuccess },
                     isEntryRequested = { entryArmed },
                     onFocusOwnershipChanged = { ownership += it },
+                    onOpenStartStatus = if (startStatusAvailable) {
+                        { onClosed ->
+                            closeStartStatus = { statusOpen = false; onClosed() }
+                            statusOpen = true
+                        }
+                    } else null,
                 )
                 Box(Modifier.padding(start = 40.dp).size(200.dp).focusRequester(content).testTag("content").focusable())
+            }
+            if (statusOpen) {
+                Box(Modifier.size(200.dp).focusRequester(status).testTag("start-status-panel").focusable())
+                androidx.compose.runtime.LaunchedEffect(Unit) { status.requestFocus() }
             }
             androidx.compose.runtime.LaunchedEffect(Unit) { content.requestFocus() }
         }
@@ -98,6 +112,52 @@ class SidebarFocusUiTest {
     }
 
     private fun focused(tag: String) = rule.onNodeWithTag(tag, useUnmergedTree = true).assertIsFocused()
+
+    @Test fun startStatusIsReachableAboveSettingsAndReturnsToItsOwnRow() {
+        startStatusAvailable = true
+        setUp(Destinations.HOME)
+        key(Key.DirectionLeft)
+        repeat(2) { key(Key.DirectionUp) }
+        focused("sidebar:settings")
+        key(Key.DirectionUp)
+        focused("sidebar:start-status")
+        key(Key.Enter)
+        focused("start-status-panel")
+        rule.runOnIdle { requireNotNull(closeStartStatus).invoke() }
+        rule.waitForIdle()
+        focused("sidebar:start-status")
+        key(Key.DirectionDown)
+        focused("sidebar:settings")
+    }
+
+    @Test fun completedStatusDoesNotLeaveFocusOnARemovedSidebarRow() {
+        startStatusAvailable = true
+        setUp(Destinations.HOME)
+        key(Key.DirectionLeft)
+        repeat(3) { key(Key.DirectionUp) }
+        focused("sidebar:start-status")
+        rule.runOnIdle { startStatusAvailable = false }
+        rule.waitForIdle()
+        rule.onAllNodesWithTag("sidebar:start-status", useUnmergedTree = true).assertCountEquals(0)
+        focused("sidebar:search")
+    }
+
+    @Test fun closingACompletedStatusPanelReturnsToAnExistingSidebarRow() {
+        startStatusAvailable = true
+        setUp(Destinations.HOME)
+        key(Key.DirectionLeft)
+        repeat(3) { key(Key.DirectionUp) }
+        focused("sidebar:start-status")
+        key(Key.Enter)
+        focused("start-status-panel")
+        rule.runOnIdle {
+            startStatusAvailable = false
+            requireNotNull(closeStartStatus).invoke()
+        }
+        rule.waitForIdle()
+        rule.onAllNodesWithTag("sidebar:start-status", useUnmergedTree = true).assertCountEquals(0)
+        focused("sidebar:search")
+    }
 
     @Test fun inlineSingleSystemKeepsBothProviderConfigurationAndGlobalSettings() {
         state = SidebarUiState(trailersEnabled = true, trailersConfigured = true)

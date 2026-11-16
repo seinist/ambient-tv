@@ -60,6 +60,13 @@ class WireGuardRouteController @Inject constructor(
         return ensureSystem(true, source.host)
     }
 
+    /** Manual WOL can target an unsaved Settings host, just like a NAS connection test. */
+    suspend fun ensureForWakeHost(host: String): Result<Unit> {
+        pendingFileHost = host.trim()
+        manuallyStopped = false
+        return ensureSystem(true, host)
+    }
+
     fun ownsCompanionNetwork(properties: android.net.LinkProperties?): Boolean =
         _status.value is WireGuardRouteState.Up && properties?.linkAddresses?.any {
             it.address.hostAddress == preferences.wireGuardProfile()?.address

@@ -458,15 +458,7 @@ fun HomeScreen(
 
         }
     }
-        // The shared TV wake bar now handles cancellation on every screen; keep the
-        // Home-specific button on handhelds, where notification cards remain touch-through.
-        if (canCancelStartupWake && LocalHandheldUi.current) {
-            TvActionButton(
-                text = stringResource(R.string.home_cancel_wake),
-                onClick = viewModel::cancelStartupWake,
-                modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 24.dp).zIndex(3f),
-            )
-        }
+        // The global compact status owns wake cancellation on TV and handhelds.
         // The app home has no header row: the clock floats where the library pages put it.
         if (!systemOverview && !LocalHandheldUi.current && (com.ambient.tv.ui.common.LocalClockSettings.current.onHome || com.ambient.tv.ui.weather.LocalWeatherPresentation.current.header != null)) {
             com.ambient.tv.ui.common.HeaderClock(

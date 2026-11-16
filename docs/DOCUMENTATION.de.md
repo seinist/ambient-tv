@@ -780,6 +780,12 @@ Oberfläche und Wiedergabe haben getrennte Modi (*Aussehen*). Solange eine Seite
 | Diagnose | Fehlerprotokoll schreiben | An / Aus | Aus | Bis etwa 3 MB. „Protokoll herunterladen (ZIP)“, „Protokoll löschen“. Geheimnisse werden entfernt. |
 | Über die App | Player, Mediendienste, Lizenzen | — | — | App beenden (TV). |
 
+**Verbindungsstatus beim Start:** VPN, Aufwecken und Dienststart erscheinen gemeinsam in einer kompakten Anzeige. Dienste desselben Geräts teilen sich einen Eintrag; ein VPN-Fehler steht als gemeinsame Ursache über den wartenden Diensten. Daneben erscheint höchstens eine weitere Meldung. Das Intro endet nach spätestens fünf Sekunden einschließlich Ausblendung. Überspringen per Taste oder Tippen lässt die Verbindungsversuche weiterlaufen.
+
+Am TV öffnen **Details** oder der Eintrag **Verbindungsstatus** in der Seitenleiste die Geräteübersicht. Auf dem Handy steht die Anzeige über Navigation und Miniplayer; Wischen minimiert sie auf einen Statusknopf. **Abbrechen** beendet den Weckvorgang des gewählten Geräts. Zurück, Schließen und Minimieren beenden keine Verbindung. Fehler und abgebrochene Versuche bleiben für **Erneut versuchen** erreichbar; gesunde Dienste werden dabei nicht neu verbunden.
+
+**Technische Details** zeigen bei Bedarf Paketanzahl und verbleibendes Wartebudget. Die Zeit beschreibt die erlaubte Wartezeit, keinen gemessenen Bootfortschritt. Auch bei Anzeigedauer **Aus** bleiben laufende Vorgänge bedienbar.
+
 ---
 
 ## 10. Einrichtung

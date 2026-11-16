@@ -184,6 +184,31 @@ class ResumeConnectivityMonitor @Inject constructor(
         recheckRequests.trySend(reason)
     }
 
+    /**
+     * The connection-status Network action checks the prerequisite before retrying its failed
+     * targets. It never schedules the full resume sweep or invalidates healthy service state.
+     */
+    fun recheckNetworkForRetry(): Boolean {
+        com.ambient.tv.network.LocalNetworkPolicy.clearCache()
+        val available = isNetworkAvailable()
+        if (!available) {
+            _status.value = ResumeConnectivityStatus.NoNetwork
+        } else {
+            val restored = ResumeConnectivityStatus.Progress(networkOk = true, vpnLabel = null, servers = emptyList())
+            if (_status.compareAndSet(ResumeConnectivityStatus.NoNetwork, restored)) {
+                scope.launch {
+                    delay(COMPLETED_STATUS_DISPLAY_MS)
+                    _status.compareAndSet(restored, ResumeConnectivityStatus.Idle)
+                }
+            }
+        }
+        AppNotifications.post(AppNotice(
+            "network", if (available) R.string.notice_network_restored else R.string.notice_network_lost,
+            phase = if (available) NoticePhase.SUCCESS else NoticePhase.ERROR,
+        ))
+        return available
+    }
+
     private fun onNetworkChanged(reason: String) {
         if (!foreground) return
         networkChangeJob?.cancel()

@@ -780,6 +780,12 @@ Interface and playback have separate modes (*Look & feel*). Until a side is save
 | Diagnostics | Write error log | On / Off | Off | Up to about 3 MB. "Download log (ZIP)", "Clear log". Secrets are removed. |
 | About this app | Players, media services, licenses | — | — | Exit app (TV). |
 
+**Connection status at startup:** VPN, waking and service startup share one compact status. Services on the same device share an entry; a VPN failure appears as the common cause above its waiting services. At most one other notice appears alongside it. The intro ends within five seconds, including its fade. Skipping by key or tap leaves connection attempts running.
+
+On TV, **Details** or **Connection status** in the sidebar opens the device overview. On a phone, the status sits above navigation and the mini-player; swiping minimizes it to a status button. **Cancel** stops the selected device's wake operation. Back, closing and minimizing do not end a connection. Failed and cancelled attempts remain accessible for **Try again**, without reconnecting healthy services.
+
+**Technical details** reveal packet counts and the remaining wait budget when needed. The time describes the allowed wait, not a measured boot percentage. Running operations remain accessible even with the notification duration set to **Off**.
+
 ---
 
 ## 10. Setup
