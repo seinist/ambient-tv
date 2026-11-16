@@ -15,14 +15,18 @@ a timeline does not download every available frame. There is no generated video,
 no new server endpoint, and no normal playback service or history entry.
 
 `PlayerView` renders the image with Media3's image mode. Compose draws the saved
-location marker and attribution above the square map image. The weather-only OSD
-offers image time scrubbing, previous/next, pause/play, repeat, zoom, source chips,
-and a collapsible info panel with provider/product/time/zoom/width/coverage metadata.
+location marker and attribution above the square map image. The fullscreen OSD reuses
+the other Ambient TV players' chrome: gradient, title/metadata header, clock, time
+seekbar, tech badges, icon control bar, TV focus behavior and automatic hide.
+It adds weather-only actions for frame stepping, pause/play, repeat and centered
+zoom. Provider selection and the detailed product/time/width/coverage/legend
+information are in standard right-side panels, not inline chips or a custom
+control strip. There are no video/audio/renderer settings panels.
 The displayed time comes from the provider's published frame (UTC date for NASA),
 not from local download time. A separate manifest refresh timestamp is shown.
 Changing zoom keeps the closest matching published image timestamp. A static preview
 of the previous map remains visible while the new viewport loads; repeat, play/pause,
-info-panel state and TV zoom/source-button focus survive player replacement. Media3
+source selection, repeat/play intent, and TV zoom/source-button focus survive player replacement. Media3
 frame errors have a dedicated Retry action instead of being mislabeled as buffering.
 Layer availability metadata follows the actual image being decoded, not just the
 initial preview frame.
