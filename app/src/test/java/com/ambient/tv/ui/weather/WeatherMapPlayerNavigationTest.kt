@@ -15,6 +15,23 @@ class WeatherMapPlayerNavigationTest {
         assertFalse(returnsFromFullscreenPlayer(Destinations.WEATHER, Destinations.WEATHER_PLAYER))
     }
 
+    @Test fun weatherMapPlayerUsesTheSharedChromeAndWeatherOnlyPanels() {
+        val source = java.io.File("src/main/java/com/ambient/tv/ui/weather/WeatherMapPlayerScreen.kt").readText()
+        assertTrue(source.contains("ReferencePlayerOverlayBackground("))
+        assertTrue(source.contains("ReferencePlayerHeader("))
+        assertTrue(source.contains("ReferencePlayerClock("))
+        assertTrue(source.contains("ReferencePlayerBottomContent("))
+        assertTrue(source.contains("PlayerOverlayVisibility("))
+        assertTrue(source.contains("PlayerControlBar("))
+        assertTrue(source.contains("PlayerTechBadgeRow"))
+        assertTrue(source.contains("TvPlayerSeekBar("))
+        assertTrue(source.contains("RightPanelOverlay("))
+        assertTrue(source.contains("RightSidePanel("))
+        assertTrue(source.contains("PlayerControlsAutoHide("))
+        assertFalse(source.contains("Slider("))
+        assertFalse(source.contains("PlayerPanelVisibility("))
+    }
+
     @Test fun weatherPlayerDoesNotExposeSharedVideoAudioConfigUI() {
         val source = java.io.File("src/main/java/com/ambient/tv/ui/weather/WeatherMapPlayerScreen.kt").readText()
         assertFalse(source.contains("UnifiedPlayerPanel"))

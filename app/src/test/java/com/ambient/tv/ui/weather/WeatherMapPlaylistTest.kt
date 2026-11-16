@@ -25,6 +25,17 @@ class WeatherMapPlaylistTest {
         assertEquals(2, weatherPlayerFrameIndex(frames, 100_000))
     }
 
+    @Test fun sharedSeekBarStepsDiscreteWeatherFramesWithoutSkippingOrStalling() {
+        assertEquals(1, weatherPlayerSeekTargetIndex(frames, 0, 1))
+        assertEquals(0, weatherPlayerSeekTargetIndex(frames, 1, -1))
+        assertEquals(2, weatherPlayerSeekTargetIndex(frames, 0, 9_000))
+        assertEquals(0, weatherPlayerSeekTargetIndex(frames, 2, -25_000))
+        assertEquals(0, weatherPlayerSeekTargetIndex(frames, 0, -100))
+        assertEquals(2, weatherPlayerSeekTargetIndex(frames, 2, 100))
+        assertEquals(1, weatherPlayerSeekTargetIndex(frames, 1, 0))
+        assertEquals(0, weatherPlayerSeekTargetIndex(emptyList(), 0, 100))
+    }
+
     @Test fun noFramesReturnsSafeIndex() {
         assertEquals(0, weatherPlayerFrameIndex(emptyList(), 7_000))
     }
