@@ -26,6 +26,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
+import androidx.compose.runtime.MutableState
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -116,6 +117,12 @@ fun WeatherMapPlayerScreen(
     // flashing the full-screen loading background before the next image arrives.
     var mapPreview by remember { mutableStateOf<WeatherMapPreview?>(null) }
     var playIntent by rememberSaveable(kind.name) { mutableStateOf(true) }
+    // The child player is deliberately replaced on zoom/source changes, but its controls
+    // are a single session and must retain repeat, info, visibility and TV focus state.
+    val repeatState = rememberSaveable(kind.name, "repeat") { mutableStateOf(true) }
+    val infoState = rememberSaveable(kind.name, "info") { mutableStateOf(false) }
+    val controlsState = rememberSaveable(kind.name, "controls") { mutableStateOf(true) }
+    var focusTarget by rememberSaveable(kind.name, "focus") { mutableStateOf("play") }
     val provider = providers.firstOrNull { it.id == providerId } ?: providers.firstOrNull()
     val viewport = remember(location, zoom) {
         location?.let { WeatherMapViewport.at(it.latitude, it.longitude, zoom) }
@@ -176,6 +183,11 @@ fun WeatherMapPlayerScreen(
                     onRetry = { refreshSerial++ },
                     startPlaying = playIntent,
                     onPlayIntentChanged = { playIntent = it },
+                    repeatState = repeatState,
+                    infoState = infoState,
+                    controlsState = controlsState,
+                    focusTarget = focusTarget,
+                    onFocusTargetChanged = { focusTarget = it },
                     onBack = onBack,
                     repository = model.mapRepository,
                     initialCached = result.image.fromCache,
@@ -230,6 +242,11 @@ private fun WeatherMedia3MapContent(
     onRetry: () -> Unit,
     startPlaying: Boolean,
     onPlayIntentChanged: (Boolean) -> Unit,
+    repeatState: MutableState<Boolean>,
+    infoState: MutableState<Boolean>,
+    controlsState: MutableState<Boolean>,
+    focusTarget: String,
+    onFocusTargetChanged: (String) -> Unit,
     onBack: () -> Unit,
     repository: com.ambient.tv.data.weather.WeatherMapRepository,
     initialCached: Boolean,
@@ -259,14 +276,17 @@ private fun WeatherMedia3MapContent(
     var buffering by remember(playlist) { mutableStateOf(true) }
     var ended by remember(playlist) { mutableStateOf(false) }
     var failed by remember(playlist) { mutableStateOf(false) }
-    var loop by rememberSaveable { mutableStateOf(true) }
-    var infoVisible by rememberSaveable { mutableStateOf(false) }
-    var controlsVisible by rememberSaveable { mutableStateOf(true) }
+    var loop by repeatState
+    var infoVisible by infoState
+    var controlsVisible by controlsState
     var chromeSerial by remember { mutableIntStateOf(0) }
     var scrubbing by remember { mutableStateOf(false) }
     var scrubIndex by remember { mutableIntStateOf(selected) }
     val surfaceRequester = remember { FocusRequester() }
     val playRequester = remember { FocusRequester() }
+    val zoomOutRequester = remember { FocusRequester() }
+    val zoomInRequester = remember { FocusRequester() }
+    val sourceRequester = remember { FocusRequester() }
     val latestOnFrameChanged by rememberUpdatedState(onFrameChanged)
     val latestOnPlayIntentChanged by rememberUpdatedState(onPlayIntentChanged)
 
@@ -315,7 +335,16 @@ private fun WeatherMedia3MapContent(
     LaunchedEffect(controlsVisible) {
         withFrameNanos { }
         runCatching {
-            if (controlsVisible) playRequester.requestFocus() else surfaceRequester.requestFocus()
+            if (!controlsVisible) surfaceRequester.requestFocus()
+            else when (focusTarget) {
+                "zoom-out" -> if (viewport.zoom > WeatherMapViewport.MIN_ZOOM) zoomOutRequester.requestFocus()
+                    else playRequester.requestFocus()
+                "zoom-in" -> if (viewport.zoom < WeatherMapViewport.MAX_ZOOM) zoomInRequester.requestFocus()
+                    else playRequester.requestFocus()
+                "provider" -> if (providers.size > 1) sourceRequester.requestFocus()
+                    else playRequester.requestFocus()
+                else -> playRequester.requestFocus()
+            }
         }
     }
     BackHandler(infoVisible) { infoVisible = false; controlsVisible = true }
@@ -403,7 +432,8 @@ private fun WeatherMedia3MapContent(
                 if (providers.size > 1) FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     providers.forEach { choice ->
                         TvChip(choice.title, selected = choice == provider,
-                            onClick = { onChangeProvider(choice.id) })
+                            modifier = if (choice == provider) Modifier.focusRequester(sourceRequester) else Modifier,
+                            onClick = { onFocusTargetChanged("provider"); onChangeProvider(choice.id) })
                     }
                 }
                 if (infoVisible) {
@@ -491,10 +521,18 @@ private fun WeatherMedia3MapContent(
                         onClick = { player.seekTo((currentIndex + 1).coerceAtMost(frames.lastIndex), 0L) })
                     TvChip(stringResource(R.string.weather_maps_zoom_out),
                         enabled = viewport.zoom > WeatherMapViewport.MIN_ZOOM,
-                        onClick = { onZoom((viewport.zoom - 1).coerceAtLeast(WeatherMapViewport.MIN_ZOOM), currentFrame.epochMillis) })
+                        modifier = Modifier.focusRequester(zoomOutRequester),
+                        onClick = {
+                            onFocusTargetChanged("zoom-out")
+                            onZoom((viewport.zoom - 1).coerceAtLeast(WeatherMapViewport.MIN_ZOOM), currentFrame.epochMillis)
+                        })
                     TvChip(stringResource(R.string.weather_maps_zoom_in),
                         enabled = viewport.zoom < WeatherMapViewport.MAX_ZOOM,
-                        onClick = { onZoom((viewport.zoom + 1).coerceAtMost(WeatherMapViewport.MAX_ZOOM), currentFrame.epochMillis) })
+                        modifier = Modifier.focusRequester(zoomInRequester),
+                        onClick = {
+                            onFocusTargetChanged("zoom-in")
+                            onZoom((viewport.zoom + 1).coerceAtMost(WeatherMapViewport.MAX_ZOOM), currentFrame.epochMillis)
+                        })
                     TvChip(stringResource(R.string.weather_player_repeat), selected = loop,
                         onClick = { loop = !loop })
                     TvChip(stringResource(R.string.weather_player_info), selected = infoVisible,
