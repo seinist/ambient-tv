@@ -38,6 +38,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
@@ -63,6 +65,7 @@ import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
 import com.ambient.tv.R
 import com.ambient.tv.data.weather.WeatherLocation
+import com.ambient.tv.data.weather.WeatherMapError
 import com.ambient.tv.data.weather.WeatherMapFrame
 import com.ambient.tv.data.weather.WeatherMapKind
 import com.ambient.tv.data.weather.WeatherMapProvider
@@ -150,7 +153,7 @@ fun WeatherMapPlayerScreen(
                     onBack = onBack,
                     repository = model.mapRepository,
                     initialCached = result.image.fromCache,
-                    sourceError = result.error != null,
+                    sourceError = result.error,
                     baseMissing = result.image.baseMissing,
                     coverageMissing = result.image.coverageMissing,
                 )
@@ -158,8 +161,8 @@ fun WeatherMapPlayerScreen(
                 verticalArrangement = Arrangement.spacedBy(12.dp),
                 horizontalAlignment = Alignment.CenterHorizontally) {
                 Text(provider.title, style = MaterialTheme.typography.titleLarge, color = Color.White)
-                Text(stringResource(if (result?.error != null && !loading)
-                    R.string.weather_maps_unavailable else R.string.weather_maps_loading),
+                Text(stringResource(if (loading) R.string.weather_maps_loading
+                    else weatherPlayerErrorMessage(result?.error)),
                     color = Color.White)
                 Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                     TvChip(stringResource(R.string.back), onClick = onBack)
@@ -185,7 +188,7 @@ private fun WeatherMedia3MapContent(
     onBack: () -> Unit,
     repository: com.ambient.tv.data.weather.WeatherMapRepository,
     initialCached: Boolean,
-    sourceError: Boolean,
+    sourceError: WeatherMapError?,
     baseMissing: Boolean,
     coverageMissing: Boolean,
 ) {
@@ -265,8 +268,9 @@ private fun WeatherMedia3MapContent(
     }
     val locale = context.resources.configuration.locales[0] ?: Locale.getDefault()
     val frameLabel = weatherPlayerFrameTime(currentFrame, provider, zone, locale)
-    val firstLabel = weatherPlayerFrameTime(frames.first(), provider, zone, locale)
-    val lastLabel = weatherPlayerFrameTime(frames.last(), provider, zone, locale)
+    val firstLabel = weatherPlayerShortTime(frames.first(), provider, zone, locale)
+    val currentShortLabel = weatherPlayerShortTime(currentFrame, provider, zone, locale)
+    val lastLabel = weatherPlayerShortTime(frames.last(), provider, zone, locale)
     val stale = System.currentTimeMillis() - currentFrame.epochMillis > provider.freshnessMillis
 
     Box(Modifier.fillMaxSize()
@@ -363,15 +367,26 @@ private fun WeatherMedia3MapContent(
                         }
                         if (baseMissing) Text(stringResource(R.string.weather_maps_base_missing), color = Color.White)
                         if (coverageMissing) Text(stringResource(R.string.weather_maps_coverage_missing), color = Color.White)
-                        if (provider.kind == WeatherMapKind.RADAR) WeatherMapLegend(provider)
-                        WeatherSourceLink(provider.attribution, provider.sourceUrl)
+                        if (provider.kind == WeatherMapKind.RADAR) {
+                            Box(Modifier.background(MaterialTheme.colorScheme.surface).padding(8.dp)) {
+                                WeatherMapLegend(provider)
+                            }
+                        }
+                        Box(Modifier.background(MaterialTheme.colorScheme.surface).padding(8.dp)) {
+                            WeatherSourceLink(provider.attribution, provider.sourceUrl)
+                        }
                     }
                 }
                 if (frames.size > 1) {
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                        Text(firstLabel, color = Color.White, style = MaterialTheme.typography.labelSmall)
-                        Text(frameLabel, color = Color.White, style = MaterialTheme.typography.labelSmall)
-                        Text(lastLabel, color = Color.White, style = MaterialTheme.typography.labelSmall)
+                        Text(firstLabel, modifier = Modifier.weight(1f), color = Color.White,
+                            style = MaterialTheme.typography.labelSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Text(currentShortLabel, modifier = Modifier.weight(1f), color = Color.White,
+                            textAlign = TextAlign.Center, style = MaterialTheme.typography.labelSmall,
+                            maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Text(lastLabel, modifier = Modifier.weight(1f), color = Color.White,
+                            textAlign = TextAlign.End, style = MaterialTheme.typography.labelSmall,
+                            maxLines = 1, overflow = TextOverflow.Ellipsis)
                     }
                     Slider(
                         value = if (scrubbing) scrubIndex.toFloat() else currentIndex.toFloat(),
@@ -406,9 +421,9 @@ private fun WeatherMedia3MapContent(
                         onClick = { infoVisible = !infoVisible })
                     TvChip(stringResource(R.string.weather_player_hide), onClick = { controlsVisible = false })
                 }
-                if (buffering || failed || sourceError) {
+                if (buffering || failed || sourceError != null) {
                     Text(stringResource(when {
-                        failed || sourceError -> R.string.weather_maps_unavailable
+                        failed || sourceError != null -> weatherPlayerErrorMessage(sourceError)
                         else -> R.string.weather_maps_loading
                     }), color = Color.White, style = MaterialTheme.typography.bodySmall)
                     if (failed) TvChip(stringResource(R.string.weather_maps_retry), onClick = onRetry)
@@ -423,3 +438,19 @@ private fun weatherPlayerFrameTime(frame: WeatherMapFrame, provider: WeatherMapP
     if (provider.daily) frame.time
     else DateTimeFormatter.ofPattern("dd.MM. HH:mm z", locale).withZone(zone)
         .format(Instant.ofEpochMilli(frame.epochMillis))
+
+private fun weatherPlayerShortTime(frame: WeatherMapFrame, provider: WeatherMapProvider,
+    zone: ZoneId, locale: Locale): String =
+    if (provider.daily) frame.time
+    else DateTimeFormatter.ofPattern("HH:mm", locale).withZone(zone)
+        .format(Instant.ofEpochMilli(frame.epochMillis))
+
+private fun weatherPlayerErrorMessage(error: WeatherMapError?): Int = when (error) {
+    WeatherMapError.NETWORK_DISABLED -> R.string.weather_maps_network_disabled
+    WeatherMapError.OFFLINE -> R.string.weather_maps_offline
+    WeatherMapError.UNAVAILABLE -> R.string.weather_maps_unavailable
+    WeatherMapError.RATE_LIMITED -> R.string.weather_maps_rate_limited
+    WeatherMapError.ACCESS_DENIED -> R.string.weather_maps_access_denied
+    WeatherMapError.NO_COVERAGE -> R.string.weather_maps_no_coverage
+    null -> R.string.weather_maps_loading
+}
