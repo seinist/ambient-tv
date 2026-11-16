@@ -21,8 +21,8 @@ class WeatherSettingsBackupTest {
         showInScreensaver = true,
         temperatureUnit = "fahrenheit",
         windUnit = "mph",
-        radarProvider = "rainviewer",
-        satelliteProvider = "eumetsat",
+        radarProvider = "rainviewer,dwd",
+        satelliteProvider = "eumetsat,nasa_gibs",
     )
 
     @Test fun locationsDisplayChoicesUnitsAndManualProvidersRoundTrip() {
@@ -33,6 +33,8 @@ class WeatherSettingsBackupTest {
         val wire = Json.parseToJsonElement(exported).jsonObject
         assertEquals(SettingsBackupManager.CURRENT_SCHEMA_VERSION.toString(), wire.getValue("schemaVersion").jsonPrimitive.content)
         assertEquals("false", wire.getValue("weather").jsonObject.getValue("showInSidebar").jsonPrimitive.content)
+        assertEquals("rainviewer,dwd", wire.getValue("weather").jsonObject.getValue("radarProvider").jsonPrimitive.content)
+        assertEquals("eumetsat,nasa_gibs", wire.getValue("weather").jsonObject.getValue("satelliteProvider").jsonPrimitive.content)
 
         val target = AppPreferences(memoryPreferences())
         manager(target).importJson(exported)

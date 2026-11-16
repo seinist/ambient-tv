@@ -35,12 +35,29 @@ data class WeatherSettings(
     val showInScreensaver: Boolean = false,
     val temperatureUnit: String = "celsius",
     val windUnit: String = "kmh",
-    /** Empty means that no map provider has been explicitly selected. */
+    /** Existing backup keys support one id or ordered comma-separated ids. Empty means no selection. */
     val radarProvider: String = "",
     val satelliteProvider: String = "",
 ) {
     val selectedLocation: WeatherLocation?
         get() = locations.firstOrNull { it.id == selectedLocationId } ?: locations.firstOrNull()
+
+    fun selectedMapProviders(kind: WeatherMapKind): List<WeatherMapProvider> =
+        WeatherMapProvider.selectedMany(
+            if (kind == WeatherMapKind.RADAR) radarProvider else satelliteProvider, kind)
+
+    /** Toggle a source without replacing the other selected providers or changing their order. */
+    fun withMapProvider(kind: WeatherMapKind, providerId: String, enabled: Boolean): WeatherSettings {
+        if (WeatherMapProvider.selected(providerId, kind) == null) return this
+        val ids = selectedMapProviders(kind).map { it.id }.toMutableList()
+        if (enabled && providerId !in ids) ids += providerId
+        if (!enabled) ids.remove(providerId)
+        val value = ids.joinToString(",")
+        return when (kind) {
+            WeatherMapKind.RADAR -> copy(radarProvider = value)
+            WeatherMapKind.SATELLITE -> copy(satelliteProvider = value)
+        }
+    }
 
     fun normalized(): WeatherSettings {
         val validPlaces = locations.mapNotNull(WeatherLocation::normalizedOrNull).distinctBy { it.id }.take(MAX_LOCATIONS)
@@ -50,8 +67,8 @@ data class WeatherSettings(
                 ?: validPlaces.firstOrNull()?.id,
             temperatureUnit = temperatureUnit.takeIf { it in TEMPERATURE_UNITS } ?: "celsius",
             windUnit = windUnit.takeIf { it in WIND_UNITS } ?: "kmh",
-            radarProvider = radarProvider.takeIf { it in RADAR_PROVIDERS }.orEmpty(),
-            satelliteProvider = satelliteProvider.takeIf { it in SATELLITE_PROVIDERS }.orEmpty(),
+            radarProvider = WeatherMapProvider.canonicalIds(radarProvider, WeatherMapKind.RADAR),
+            satelliteProvider = WeatherMapProvider.canonicalIds(satelliteProvider, WeatherMapKind.SATELLITE),
         )
     }
 

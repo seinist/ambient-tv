@@ -40,6 +40,13 @@ enum class WeatherMapProvider(
     companion object {
         fun forKind(kind: WeatherMapKind): List<WeatherMapProvider> = entries.filter { it.kind == kind }
         fun selected(id: String, kind: WeatherMapKind): WeatherMapProvider? = entries.firstOrNull { it.id == id && it.kind == kind }
+
+        /** Reads historical single choices and ordered comma-separated multi-selections. */
+        fun selectedMany(ids: String, kind: WeatherMapKind): List<WeatherMapProvider> =
+            ids.split(',').map { it.trim() }.distinct().mapNotNull { selected(it, kind) }
+
+        fun canonicalIds(ids: String, kind: WeatherMapKind): String =
+            selectedMany(ids, kind).joinToString(",") { it.id }
     }
 }
 
