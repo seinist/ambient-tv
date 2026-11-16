@@ -21,7 +21,6 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.runBlocking
-import kotlin.math.abs
 
 internal const val WEATHER_PLAYER_FRAME_DURATION_MS = 1_100L
 

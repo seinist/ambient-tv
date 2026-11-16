@@ -5,6 +5,7 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.focusable
+import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -39,11 +40,11 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
@@ -69,7 +70,7 @@ import com.ambient.tv.data.weather.WeatherMapSeries
 import com.ambient.tv.data.weather.WeatherMapViewport
 import com.ambient.tv.ui.common.StatePanel
 import com.ambient.tv.ui.common.TvChip
-import com.ambient.tv.ui.theme.LocalUiTokens
+import com.ambient.tv.ui.mobile.LocalHandheldUi
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withFrameNanos
 import java.time.Instant
@@ -189,6 +190,7 @@ private fun WeatherMedia3MapContent(
     coverageMissing: Boolean,
 ) {
     val context = LocalContext.current
+    val handheld = LocalHandheldUi.current
     val provider = request.provider
     val viewport = request.viewport
     val frames = series.frames
@@ -278,7 +280,21 @@ private fun WeatherMedia3MapContent(
         }) {
         BoxWithConstraints(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
             val mapSide = minOf(maxWidth, maxHeight)
+            val pinchZoom = if (handheld) Modifier.pointerInput(viewport.zoom, currentFrame.epochMillis) {
+                var cumulative = 1f
+                detectTransformGestures { _, _, change, _ ->
+                    cumulative *= change
+                    if (cumulative > 1.20f && viewport.zoom < WeatherMapViewport.MAX_ZOOM) {
+                        onZoom(viewport.zoom + 1, currentFrame.epochMillis)
+                        cumulative = 1f
+                    } else if (cumulative < .80f && viewport.zoom > WeatherMapViewport.MIN_ZOOM) {
+                        onZoom(viewport.zoom - 1, currentFrame.epochMillis)
+                        cumulative = 1f
+                    }
+                }
+            } else Modifier
             Box(Modifier.size(mapSide)
+                .then(pinchZoom)
                 .focusRequester(surfaceRequester).focusable()
                 .clickable { controlsVisible = !controlsVisible; chromeSerial++ }) {
                 AndroidView(factory = { viewContext ->
