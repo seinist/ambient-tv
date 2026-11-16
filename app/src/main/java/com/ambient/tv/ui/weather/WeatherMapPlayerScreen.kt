@@ -241,8 +241,10 @@ private fun WeatherMedia3MapContent(
     val provider = request.provider
     val viewport = request.viewport
     val frames = series.frames
-    val selected = remember(request, series) { weatherPlayerFrameIndex(frames, initialFrameEpoch) }
-    val playlist = remember(request, series) {
+    val selected = remember(request, frames) { weatherPlayerFrameIndex(frames, initialFrameEpoch) }
+    // A manifest poll may update fetchedAt without changing any frames or coverage. Keep the
+    // existing Media3 player in that case instead of visibly restarting the same animation.
+    val playlist = remember(request, frames, series.bounds) {
         WeatherMapPlaylist(context, repository, provider, viewport, series, request.networkAllowed)
     }
     val player = remember(playlist) {
