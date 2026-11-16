@@ -38,6 +38,25 @@ internal fun weatherPlayerFrameIndex(frames: List<WeatherMapFrame>, requestedEpo
     } ?: frames.lastIndex
 
 /**
+ * The shared player seek bar works in elapsed milliseconds, while radar and satellite playlists
+ * are discrete observations (often minutes or days apart). A short remote-key step must still
+ * move at least one frame, while a large touch jump should select the closest timestamp.
+ */
+internal fun weatherPlayerSeekTargetIndex(
+    frames: List<WeatherMapFrame>,
+    currentIndex: Int,
+    deltaMs: Long,
+): Int {
+    if (frames.isEmpty()) return 0
+    val current = currentIndex.coerceIn(0, frames.lastIndex)
+    if (deltaMs == 0L) return current
+    val timestamp = frames[current].epochMillis + deltaMs
+    val closest = weatherPlayerFrameIndex(frames, timestamp)
+    return if (deltaMs > 0) closest.coerceAtLeast(current + 1).coerceAtMost(frames.lastIndex)
+    else closest.coerceAtMost(current - 1).coerceAtLeast(0)
+}
+
+/**
  * Media3 resolves each image as needed, so opening a long radar timeline does not download
  * every frame before the first picture appears. Only images already composited by the same
  * weather repository used in the Weather view can reach the player.
