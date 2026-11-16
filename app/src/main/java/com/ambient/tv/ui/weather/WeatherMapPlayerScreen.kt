@@ -70,6 +70,7 @@ import androidx.tv.material3.Text
 import com.ambient.tv.R
 import com.ambient.tv.data.weather.WeatherLocation
 import com.ambient.tv.data.weather.WeatherMapError
+import com.ambient.tv.data.weather.WeatherMapImage
 import com.ambient.tv.data.weather.WeatherMapFrame
 import com.ambient.tv.data.weather.WeatherMapKind
 import com.ambient.tv.data.weather.WeatherMapProvider
@@ -87,7 +88,7 @@ import java.time.format.DateTimeFormatter
 import java.util.Locale
 import kotlin.math.roundToInt
 
-private data class WeatherMapPreview(val image: com.ambient.tv.data.weather.WeatherMapImage, val locationId: String)
+private data class WeatherMapPreview(val image: WeatherMapImage, val locationId: String)
 
 /** Fullscreen weather-only player. No shared video settings, tracks, service, history or OSD panels. */
 @Composable
@@ -502,7 +503,7 @@ private fun WeatherMedia3MapContent(
                 }
                 if (buffering || failed || sourceError != null) {
                     Text(stringResource(when {
-                        failed -> R.string.weather_maps_unavailable
+                        failed -> R.string.weather_player_frame_error
                         sourceError != null -> weatherPlayerErrorMessage(sourceError)
                         else -> R.string.weather_maps_loading
                     }), color = Color.White, style = MaterialTheme.typography.bodySmall)
