@@ -1086,7 +1086,7 @@ internal fun radioSectionTransitionIsInstant(fromRoute: String?, toRoute: String
 }
 
 internal val SIDEBAR_ROUTES = setOf(Destinations.TRAILERS, Destinations.TRAILER_FEED, Destinations.FILES, Destinations.FILE_SOURCE, Destinations.FILE_FAVORITES, Destinations.FILE_RECENT, Destinations.FILE_CONTINUE, Destinations.DLNA, Destinations.DLNA_SERVER, Destinations.HOME, Destinations.WEATHER, Destinations.PLEX, Destinations.JELLYFIN, Destinations.EMBY, Destinations.SEARCH, Destinations.YOUTUBE, Destinations.YOUTUBE_FEED, Destinations.TELEGRAM, Destinations.TELEGRAM_SECTION, Destinations.SPOTIFY, Destinations.SPOTIFY_SECTION, Destinations.RADIO, Destinations.RADIO_SECTION, Destinations.LIVE_TV, Destinations.LIVE_TV_SECTION, Destinations.SETTINGS, Destinations.SECTION)
-internal val FULLSCREEN_ROUTES = setOf(Destinations.ITEM_TRAILERS, Destinations.TMDB_TRAILERS, Destinations.PHOTO_VIEWER, Destinations.SETUP_COMPLETE, Destinations.INITIAL_SETUP, Destinations.SETUP_SETTINGS, Destinations.PLAYER, Destinations.TVH_PLAYER, Destinations.YOUTUBE_PLAYER, Destinations.TELEGRAM_PLAYER, Destinations.TELEGRAM_DETAIL, Destinations.YOUTUBE_DETAIL, Destinations.YOUTUBE_CHANNEL, Destinations.SPOTIFY_PLAYER, Destinations.RADIO_PLAYER, Destinations.RADIO_DETAIL, Destinations.SPOTIFY_DETAIL, Destinations.SERVER_SELECT, Destinations.DETAIL, Destinations.DETAIL_FILTERED_BROWSE)
+internal val FULLSCREEN_ROUTES = setOf(Destinations.ITEM_TRAILERS, Destinations.TMDB_TRAILERS, Destinations.PHOTO_VIEWER, Destinations.SETUP_COMPLETE, Destinations.INITIAL_SETUP, Destinations.SETUP_SETTINGS, Destinations.WEATHER_PLAYER, Destinations.PLAYER, Destinations.TVH_PLAYER, Destinations.YOUTUBE_PLAYER, Destinations.TELEGRAM_PLAYER, Destinations.TELEGRAM_DETAIL, Destinations.YOUTUBE_DETAIL, Destinations.YOUTUBE_CHANNEL, Destinations.SPOTIFY_PLAYER, Destinations.RADIO_PLAYER, Destinations.RADIO_DETAIL, Destinations.SPOTIFY_DETAIL, Destinations.SERVER_SELECT, Destinations.DETAIL, Destinations.DETAIL_FILTERED_BROWSE)
 // Saved on the Settings back stack entry by a sidebar shortcut: the page to open, plus a serial
 // that changes with every request.
 private const val SETTINGS_PAGE_KEY = "settings_page"
@@ -1854,7 +1854,7 @@ private fun AmbientTvApp(
     // The photo viewer is a presentation too: a running slideshow must not start the screensaver.
     val onPlayerRoute = currentRoute in setOf(Destinations.PLAYER, Destinations.TVH_PLAYER, Destinations.YOUTUBE_PLAYER, Destinations.TELEGRAM_PLAYER, Destinations.SPOTIFY_PLAYER, Destinations.RADIO_PLAYER)
     androidx.compose.runtime.SideEffect { com.ambient.tv.ui.player.SleepWarningKeyGate.playerRoute = onPlayerRoute }
-    val playbackActive = currentRoute == Destinations.PHOTO_VIEWER || currentRoute == Destinations.PLAYER || currentRoute == Destinations.TVH_PLAYER || currentRoute == Destinations.YOUTUBE_PLAYER || currentRoute == Destinations.TELEGRAM_PLAYER || currentRoute == Destinations.SPOTIFY_PLAYER || currentRoute == Destinations.RADIO_PLAYER || backgroundPlayback.active || spotifyPlaying
+    val playbackActive = currentRoute == Destinations.PHOTO_VIEWER || currentRoute == Destinations.WEATHER_PLAYER || currentRoute == Destinations.PLAYER || currentRoute == Destinations.TVH_PLAYER || currentRoute == Destinations.YOUTUBE_PLAYER || currentRoute == Destinations.TELEGRAM_PLAYER || currentRoute == Destinations.SPOTIFY_PLAYER || currentRoute == Destinations.RADIO_PLAYER || backgroundPlayback.active || spotifyPlaying
 
     // Handheld video pages are fullscreen exactly while the window is landscape, so turning the
     // device switches into fullscreen and back. Television keeps its manifest orientation.
@@ -1868,7 +1868,7 @@ private fun AmbientTvApp(
     val weatherPresentation = com.ambient.tv.ui.weather.rememberWeatherPresentation(
         headerVisible = !introVisible && !standbyRequested && !screensaverOverlayPresent && !pipPresentation &&
             !onPlayerRoute && currentRoute !in setOf(Destinations.PHOTO_VIEWER, Destinations.ITEM_TRAILERS,
-                Destinations.TMDB_TRAILERS, Destinations.SERVER_SELECT, Destinations.INITIAL_SETUP, Destinations.SETUP_COMPLETE),
+                Destinations.TMDB_TRAILERS, Destinations.WEATHER_PLAYER, Destinations.SERVER_SELECT, Destinations.INITIAL_SETUP, Destinations.SETUP_COMPLETE),
         screensaverVisible = !introVisible && !standbyRequested && !pipPresentation &&
             ScreensaverPresentation.shouldShow(screensaverActive, screensaverPreview != null, playbackActive),
         contentVisible = !introVisible && !standbyRequested && !screensaverOverlayPresent && !pipPresentation,
@@ -1877,7 +1877,7 @@ private fun AmbientTvApp(
         handheld = handheld,
         appScreensaverEnabled = screensaverEnabled,
         screensaverOverlayPresent = screensaverOverlayPresent,
-        photoViewer = currentRoute == Destinations.PHOTO_VIEWER,
+        photoViewer = currentRoute == Destinations.PHOTO_VIEWER || currentRoute == Destinations.WEATHER_PLAYER,
         playerPageVisible = onPlayerRoute,
         pipVisible = pipPresentation,
         sessionActive = backgroundPlayback.active,
@@ -2716,8 +2716,31 @@ private fun AmbientTvApp(
                             com.ambient.tv.ui.weather.WeatherScreen(
                                 onBack = ::focusSidebar,
                                 onOpenSettings = { openSystemSettings("weather") },
+                                onOpenPlayer = { kind, providerId, zoom, frameEpoch ->
+                                    navController.navigate(Destinations.weatherPlayer(
+                                        kind.name.lowercase(), providerId, zoom, frameEpoch))
+                                },
                             )
                         }
+                    }
+                    composable(
+                        route = Destinations.WEATHER_PLAYER,
+                        arguments = listOf(
+                            navArgument("kind") { type = NavType.StringType },
+                            navArgument("providerId") { type = NavType.StringType },
+                            navArgument("zoom") { type = NavType.IntType; defaultValue = 6 },
+                            navArgument("frame") { type = NavType.LongType; defaultValue = 0L },
+                        ),
+                    ) { entry ->
+                        com.ambient.tv.ui.weather.WeatherMapPlayerScreen(
+                            kind = if (entry.arguments?.getString("kind") == "satellite")
+                                com.ambient.tv.data.weather.WeatherMapKind.SATELLITE
+                            else com.ambient.tv.data.weather.WeatherMapKind.RADAR,
+                            initialProviderId = entry.arguments?.getString("providerId").orEmpty(),
+                            initialZoom = entry.arguments?.getInt("zoom") ?: 6,
+                            initialFrameEpochMillis = entry.arguments?.getLong("frame") ?: 0L,
+                            onBack = { if (navController.currentBackStackEntry === entry) navigateBack() },
+                        )
                     }
                     composable(Destinations.RADIO) {
                         RestorableSidebarContent {

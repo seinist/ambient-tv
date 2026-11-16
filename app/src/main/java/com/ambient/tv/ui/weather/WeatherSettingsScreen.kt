@@ -170,21 +170,25 @@ fun WeatherSettingsScreen(
             item(key = "map-providers-title") {
                 Text(stringResource(R.string.weather_map_providers), style = MaterialTheme.typography.titleLarge)
             }
-            item(key = "radar-provider") {
-                val options = listOf("" to stringResource(R.string.weather_provider_none)) +
-                    WeatherMapProvider.forKind(WeatherMapKind.RADAR).map { it.id to it.title }
-                PlayerDropUpSelector(label = stringResource(R.string.weather_radar_provider),
-                    value = options.firstOrNull { it.first == settings.radarProvider }?.second ?: options.first().second,
-                    options = options, selectedKey = settings.radarProvider,
-                    onSelected = { provider -> viewModel.changeSettings { it.copy(radarProvider = provider) } })
+            item(key = "radar-provider-title") {
+                Text(stringResource(R.string.weather_radar_provider), style = MaterialTheme.typography.titleMedium)
             }
-            item(key = "satellite-provider") {
-                val options = listOf("" to stringResource(R.string.weather_provider_none)) +
-                    WeatherMapProvider.forKind(WeatherMapKind.SATELLITE).map { it.id to it.title }
-                PlayerDropUpSelector(label = stringResource(R.string.weather_satellite_provider),
-                    value = options.firstOrNull { it.first == settings.satelliteProvider }?.second ?: options.first().second,
-                    options = options, selectedKey = settings.satelliteProvider,
-                    onSelected = { provider -> viewModel.changeSettings { it.copy(satelliteProvider = provider) } })
+            items(WeatherMapProvider.forKind(WeatherMapKind.RADAR), key = { "radar-provider:${it.id}" }) { provider ->
+                TvSettingRow(title = provider.title,
+                    checked = provider in settings.selectedMapProviders(WeatherMapKind.RADAR),
+                    onCheckedChange = { enabled ->
+                        viewModel.changeSettings { it.withMapProvider(WeatherMapKind.RADAR, provider.id, enabled) }
+                    })
+            }
+            item(key = "satellite-provider-title") {
+                Text(stringResource(R.string.weather_satellite_provider), style = MaterialTheme.typography.titleMedium)
+            }
+            items(WeatherMapProvider.forKind(WeatherMapKind.SATELLITE), key = { "satellite-provider:${it.id}" }) { provider ->
+                TvSettingRow(title = provider.title,
+                    checked = provider in settings.selectedMapProviders(WeatherMapKind.SATELLITE),
+                    onCheckedChange = { enabled ->
+                        viewModel.changeSettings { it.withMapProvider(WeatherMapKind.SATELLITE, provider.id, enabled) }
+                    })
             }
             item(key = "map-settings-hint") {
                 Text(stringResource(R.string.weather_maps_manual_hint), style = MaterialTheme.typography.bodySmall, color = muted)

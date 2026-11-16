@@ -57,6 +57,7 @@ import com.ambient.tv.data.weather.WEATHER_CACHE_TTL_MILLIS
 import com.ambient.tv.data.weather.WeatherDay
 import com.ambient.tv.data.weather.WeatherError
 import com.ambient.tv.data.weather.WeatherMapKind
+import com.ambient.tv.data.weather.WeatherMapProvider
 import com.ambient.tv.data.weather.WeatherSnapshot
 import com.ambient.tv.data.weather.WeatherState
 import com.ambient.tv.notifications.FeedbackPhase
@@ -100,6 +101,7 @@ private val WEATHER_TABS = listOf("overview", "radar", "satellite")
 fun WeatherScreen(
     onBack: (() -> Unit)? = null,
     onOpenSettings: () -> Unit,
+    onOpenPlayer: ((WeatherMapKind, String, Int, Long) -> Unit)? = null,
     viewModel: WeatherViewModel = hiltViewModel(),
 ) {
     val settings by viewModel.settings.collectAsState()
@@ -202,6 +204,11 @@ fun WeatherScreen(
                         kind = if (tab == "radar") WeatherMapKind.RADAR else WeatherMapKind.SATELLITE,
                         providerId = if (tab == "radar") settings.radarProvider else settings.satelliteProvider,
                         onOpenSettings = onOpenSettings,
+                        onOpenPlayer = onOpenPlayer?.let { launch ->
+                            { chosen: WeatherMapProvider, zoom: Int, epoch: Long ->
+                                launch(chosen.kind, chosen.id, zoom, epoch)
+                            }
+                        },
                         networkAllowed = settings.enabled,
                         modifier = Modifier.fillMaxWidth().weight(1f).pageContentUp(focusChain),
                     )

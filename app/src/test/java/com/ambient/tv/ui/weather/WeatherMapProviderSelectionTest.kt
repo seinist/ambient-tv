@@ -70,6 +70,24 @@ class WeatherMapProviderSelectionTest {
         }
     }
 
+    @Test fun multipleEnabledSourcesShowChipsButLoadOnlyTheVisibleMap() {
+        val providers = mutableStateOf("dwd,rainviewer")
+        showPanel(WeatherMapKind.RADAR, providerId = { providers.value })
+        rule.onAllNodesWithText("DWD")[0].assertExists()
+        rule.onAllNodesWithText("RainViewer")[0].assertExists()
+        rule.runOnIdle { assertEquals(listOf(WeatherMapProvider.DWD), loader.loads) }
+
+        rule.onAllNodesWithText("RainViewer")[0].performClick()
+        rule.runOnIdle {
+            assertEquals(listOf(WeatherMapProvider.DWD, WeatherMapProvider.RAINVIEWER), loader.loads)
+        }
+        rule.runOnIdle { providers.value = "rainviewer" }
+        rule.onAllNodesWithText("DWD", substring = true).assertCountEquals(0)
+        rule.runOnIdle {
+            assertEquals(listOf(WeatherMapProvider.DWD, WeatherMapProvider.RAINVIEWER), loader.loads)
+        }
+    }
+
     @Test fun noSelectionOffersSettingsWithoutLoadingOrShowingOtherProviders() {
         val provider = mutableStateOf("")
         var settingsOpened = 0

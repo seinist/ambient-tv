@@ -64,10 +64,10 @@
     <string name="weather_source">Weather data: Open-Meteo</string>
     <string name="weather_location_source">Location data: GeoNames via Open-Meteo</string>
     <string name="weather_map_providers">Map providers</string>
-    <string name="weather_radar_provider">Radar provider</string>
-    <string name="weather_satellite_provider">Satellite provider</string>
+    <string name="weather_radar_provider">Radar providers</string>
+    <string name="weather_satellite_provider">Satellite providers</string>
     <string name="weather_provider_none">No selection</string>
-    <string name="weather_maps_manual_hint">Choose radar and satellite providers separately here. Each map tab shows only its selected provider. Your selection is kept when a service is unavailable. Maps load when opened.</string>
+    <string name="weather_maps_manual_hint">Enable any combination of radar and satellite sources, or leave all unchecked. When multiple sources are enabled, switch between them in the map tab. Only the active source loads; an outage never switches sources automatically.</string>
     <string name="weather_clear">Clear</string>
     <string name="weather_mostly_clear">Mainly clear</string>
     <string name="weather_partly_cloudy">Partly cloudy</string>

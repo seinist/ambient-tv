@@ -47,6 +47,7 @@ internal fun returnsFromFullscreenPlayer(previousRoute: String?, currentRoute: S
         Destinations.TELEGRAM_PLAYER,
         Destinations.SPOTIFY_PLAYER,
         Destinations.RADIO_PLAYER,
+        Destinations.WEATHER_PLAYER,
     ) && currentRoute !in setOf(
         Destinations.PLAYER,
         Destinations.TVH_PLAYER,
@@ -54,6 +55,7 @@ internal fun returnsFromFullscreenPlayer(previousRoute: String?, currentRoute: S
         Destinations.TELEGRAM_PLAYER,
         Destinations.SPOTIFY_PLAYER,
         Destinations.RADIO_PLAYER,
+        Destinations.WEATHER_PLAYER,
     )
 
 /** Rebuild the concrete route represented by Navigation Compose's parameterized route pattern. */

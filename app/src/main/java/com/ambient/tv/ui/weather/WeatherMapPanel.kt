@@ -20,6 +20,7 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
@@ -61,7 +62,7 @@ import java.time.format.DateTimeFormatter
 import java.util.Locale
 import kotlin.math.roundToInt
 
-/** Display only the provider selected in weather settings; an outage never replaces it. */
+/** Display one enabled provider at a time, without eagerly loading the others. */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun WeatherMapPanel(
@@ -70,12 +71,15 @@ fun WeatherMapPanel(
     providerId: String,
     onOpenSettings: () -> Unit,
     networkAllowed: Boolean,
+    onOpenPlayer: ((WeatherMapProvider, Int, Long) -> Unit)? = null,
     modifier: Modifier = Modifier,
     viewModel: WeatherMapViewModel = hiltViewModel(),
 ) {
     val lifecycle = LocalLifecycleOwner.current.lifecycle
     val contentVisible = LocalWeatherPresentation.current.contentVisible
-    val source = WeatherMapProvider.selected(providerId, kind)
+    val providers = remember(providerId, kind) { WeatherMapProvider.selectedMany(providerId, kind) }
+    var activeProviderId by rememberSaveable(location.id, kind.name) { mutableStateOf("") }
+    val source = providers.firstOrNull { it.id == activeProviderId } ?: providers.firstOrNull()
     // The chosen place remains the centre at every zoom. Provider changes retain the zoom;
     // selecting another place starts at its own local view.
     val initial = remember(location.id, location.latitude, location.longitude) { WeatherMapViewport.at(location.latitude, location.longitude) }
@@ -114,6 +118,15 @@ fun WeatherMapPanel(
                 )
             }
         } else {
+            if (providers.size > 1) item(key = "provider-choices") {
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    providers.forEach { provider ->
+                        TvChip(provider.title, selected = provider.id == source.id,
+                            onClick = { activeProviderId = provider.id })
+                    }
+                }
+            }
             item(key = "provider") {
                 Text(source.title, style = MaterialTheme.typography.titleMedium)
             }
@@ -133,6 +146,10 @@ fun WeatherMapPanel(
                         enabled = canPlay, onClick = viewModel::togglePlayback)
                     TvActionButton(stringResource(R.string.weather_maps_next), enabled = canPlay && state.selectedFrame < count - 1,
                         onClick = { viewModel.step(1) })
+                    if (onOpenPlayer != null) {
+                        TvActionButton(stringResource(R.string.weather_player_fullscreen),
+                            onClick = { onOpenPlayer(source, zoom, image?.frame?.epochMillis ?: 0L) })
+                    }
                     TvActionButton(stringResource(R.string.weather_maps_retry), enabled = networkAllowed,
                         loading = state.loading, onClick = viewModel::refresh)
                 }

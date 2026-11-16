@@ -144,6 +144,33 @@ class WeatherMapViewModelTest {
         }
     }
 
+    @Test fun switchingBetweenEnabledProvidersKeepsTheActiveMapAuthorized() = runTest {
+        fixture { model, loader, notices, selection ->
+            selection.value = selection.value.copy(radarProvider = "rainviewer,dwd")
+            runCurrent()
+            model.present(request, true)
+            runCurrent()
+            val dwd = request.copy(provider = WeatherMapProvider.DWD)
+            model.present(dwd, true)
+            runCurrent()
+            assertEquals(listOf(WeatherMapProvider.RAINVIEWER, WeatherMapProvider.DWD),
+                loader.calls.map { it.provider })
+            assertEquals(dwd, model.state.value.request)
+            assertNotNull(model.state.value.result)
+
+            selection.value = selection.value.copy(radarProvider = "dwd")
+            runCurrent()
+            assertEquals(dwd, model.state.value.request)
+            assertNotNull(model.state.value.result)
+            assertEquals(2, loader.calls.size)
+            assertTrue(notices.isEmpty())
+
+            selection.value = selection.value.copy(radarProvider = "rainviewer")
+            runCurrent()
+            assertNull(model.state.value.result)
+        }
+    }
+
     @Test fun disablingOnlineAccessAlsoCancelsAHiddenManualRequest() = runTest {
         fixture { model, loader, notices, policy ->
             val pending = CompletableDeferred<WeatherMapResult>()

@@ -35,6 +35,24 @@ class WeatherDataTest {
         assertEquals("", WeatherSettings().satelliteProvider)
     }
 
+    @Test fun `multiple map sources preserve order and reject invalid values`() {
+        val selected = settings.copy(
+            radarProvider = "dwd,rainviewer,dwd,eumetsat,unknown",
+            satelliteProvider = "eumetsat,nasa_gibs,rainviewer",
+        ).normalized()
+        assertEquals("dwd,rainviewer", selected.radarProvider)
+        assertEquals("eumetsat,nasa_gibs", selected.satelliteProvider)
+        assertEquals(listOf(WeatherMapProvider.DWD, WeatherMapProvider.RAINVIEWER),
+            selected.selectedMapProviders(WeatherMapKind.RADAR))
+
+        val withoutDwd = selected.withMapProvider(WeatherMapKind.RADAR, "dwd", false)
+        assertEquals("rainviewer", withoutDwd.radarProvider)
+        assertEquals("rainviewer,dwd", withoutDwd.withMapProvider(WeatherMapKind.RADAR, "dwd", true).radarProvider)
+        assertEquals("", withoutDwd.withMapProvider(WeatherMapKind.RADAR, "rainviewer", false).radarProvider)
+        assertEquals(withoutDwd, withoutDwd.withMapProvider(WeatherMapKind.RADAR, "eumetsat", true))
+        assertEquals("nasa_gibs", WeatherSettings(satelliteProvider = "nasa_gibs").normalized().satelliteProvider)
+    }
+
     @Test fun `forecast cache identity includes coordinates timezone and units`() {
         val snapshot = parseWeatherForecast(minimalForecast, place, settings, 10_000L)
         assertTrue(snapshot.matches(settings))

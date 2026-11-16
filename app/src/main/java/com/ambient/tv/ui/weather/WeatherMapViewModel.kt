@@ -55,11 +55,17 @@ internal data class WeatherMapPolicy(
     val radarProvider: String,
     val satelliteProvider: String,
 ) {
-    fun matches(request: WeatherMapRequest): Boolean = location?.let {
-        it.id == request.location.id && it.latitude == request.location.latitude && it.longitude == request.location.longitude
-    } == true && request.provider?.id == when (request.kind) {
-        WeatherMapKind.RADAR -> radarProvider
-        WeatherMapKind.SATELLITE -> satelliteProvider
+    fun matches(request: WeatherMapRequest): Boolean {
+        val placeMatches = location?.let {
+            it.id == request.location.id && it.latitude == request.location.latitude && it.longitude == request.location.longitude
+        } == true
+        val ids = when (request.kind) {
+            WeatherMapKind.RADAR -> radarProvider
+            WeatherMapKind.SATELLITE -> satelliteProvider
+        }
+        return placeMatches && request.provider?.let {
+            it in WeatherMapProvider.selectedMany(ids, request.kind)
+        } == true
     }
 }
 

@@ -64,10 +64,10 @@
     <string name="weather_source">Wetterdaten: Open-Meteo</string>
     <string name="weather_location_source">Ortsdaten: GeoNames über Open-Meteo</string>
     <string name="weather_map_providers">Kartenanbieter</string>
-    <string name="weather_radar_provider">Radardienst</string>
-    <string name="weather_satellite_provider">Satellitendienst</string>
+    <string name="weather_radar_provider">Radardienste</string>
+    <string name="weather_satellite_provider">Satellitendienste</string>
     <string name="weather_provider_none">Keine Auswahl</string>
-    <string name="weather_maps_manual_hint">Radar- und Satellitendienst wählst du hier getrennt aus. Jeder Kartenbereich zeigt nur den gewählten Anbieter. Deine Auswahl bleibt bei einem Ausfall erhalten. Karten werden beim Öffnen geladen.</string>
+    <string name="weather_maps_manual_hint">Wähle mehrere Radar- und Satellitendienste aus oder lasse alle deaktiviert. Bei Mehrfachauswahl wechselst du im jeweiligen Kartenbereich zwischen den Quellen. Nur die aktive Quelle wird geladen; bei Ausfall erfolgt kein automatischer Wechsel.</string>
     <string name="weather_clear">Klar</string>
     <string name="weather_mostly_clear">Überwiegend klar</string>
     <string name="weather_partly_cloudy">Teilweise bewölkt</string>

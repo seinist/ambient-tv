@@ -139,6 +139,32 @@ class WeatherMapRepository @Inject constructor(
             }
         }
 
+    /**
+     * Resolve a single already-composited map frame for Media3 image playback. The ordinary
+     * repository cache remains the source of truth: no raw provider image bypasses its
+     * centring, coverage or cache rules. The resolver loads frames only as requested.
+     */
+    suspend fun playbackImageFile(
+        provider: WeatherMapProvider,
+        viewport: WeatherMapViewport,
+        series: WeatherMapSeries,
+        index: Int,
+        networkAllowed: Boolean,
+    ): File? = withContext(Dispatchers.IO) {
+        val loaded = frame(provider, viewport, series, index, networkAllowed).image ?: return@withContext null
+        val imageFile = compositeFile(provider, viewport, loaded.frame)
+        if (!imageFile.isFile || imageFile.length() == 0L) {
+            storeSafely {
+                atomicWrite(imageFile) { output ->
+                    if (!loaded.bitmap.compress(Bitmap.CompressFormat.PNG, 100, output)) {
+                        throw IOException("Weather image encoding failed")
+                    }
+                }
+            }
+        }
+        imageFile.takeIf { it.isFile && it.length() in 1L..(8L * 1024 * 1024) }
+    }
+
     // The server LAN restriction does not apply to this explicitly enabled public weather service.
     private fun allowed(networkAllowed: Boolean) = networkAllowed && preferences.weatherSettings.enabled
 
