@@ -31,6 +31,18 @@ internal data class WeatherPlayerData(
     val loading: Boolean = false,
 )
 
+/** Periodic checks respect each provider's published manifest cadence. */
+internal fun weatherPlayerRefreshIntervalMillis(provider: WeatherMapProvider): Long =
+    if (provider.daily) 60 * 60_000L else 5 * 60_000L
+
+/** A new source or zoom is not itself a manual force-refresh. */
+internal fun weatherPlayerManualRefresh(
+    previous: WeatherPlayerRequest?,
+    previousSerial: Int,
+    next: WeatherPlayerRequest,
+    nextSerial: Int,
+): Boolean = previous == next && previousSerial != nextSerial
+
 /** The player only loads a manifest/latest frame; the Media3 resolver loads future images on demand. */
 @HiltViewModel
 class WeatherMapPlayerViewModel @Inject constructor(
@@ -43,14 +55,23 @@ class WeatherMapPlayerViewModel @Inject constructor(
     private var loadJob: Job? = null
     private var generation = 0L
     private var refreshedSerial = -1
+    private var lastAttemptCompletedAt = 0L
 
     internal fun present(request: WeatherPlayerRequest, refreshSerial: Int = 0) {
-        if (mutable.value.request == request && refreshedSerial == refreshSerial &&
-            (mutable.value.loading || mutable.value.result != null)) return
+        val previous = mutable.value
+        val manualRefresh = weatherPlayerManualRefresh(previous.request, refreshedSerial, request, refreshSerial)
+        val sameRequest = previous.request == request
+        val withinRefreshInterval = System.currentTimeMillis() - lastAttemptCompletedAt in
+            0 until weatherPlayerRefreshIntervalMillis(request.provider)
+        if (sameRequest && !manualRefresh &&
+            (previous.loading || (previous.result != null && withinRefreshInterval))) return
+
         loadJob?.cancel()
         val serial = ++generation
         refreshedSerial = refreshSerial
-        mutable.value = WeatherPlayerData(request, loading = true)
+        // Keep the currently rendered map and Media3 surface alive while refreshing the same
+        // extent. A new provider/zoom must never display an old response as the new one.
+        mutable.value = WeatherPlayerData(request, result = previous.result.takeIf { sameRequest }, loading = true)
         loadJob = viewModelScope.launch {
             try {
                 val cached = mapRepository.cached(request.provider, request.viewport)
@@ -58,7 +79,7 @@ class WeatherMapPlayerViewModel @Inject constructor(
                     mutable.value = mutable.value.copy(result = cached)
                 }
                 val result = mapRepository.load(request.provider, request.viewport,
-                    request.networkAllowed, force = refreshSerial > 0)
+                    request.networkAllowed, force = manualRefresh)
                 if (generation != serial || mutable.value.request != request) return@launch
                 val previous = mutable.value.result
                 mutable.value = mutable.value.copy(
@@ -75,6 +96,7 @@ class WeatherMapPlayerViewModel @Inject constructor(
                 }
             } finally {
                 if (generation == serial) {
+                    lastAttemptCompletedAt = System.currentTimeMillis()
                     mutable.value = mutable.value.copy(loading = false)
                     loadJob = null
                 }
