@@ -20,6 +20,10 @@ import com.ambient.tv.data.local.AppPreferences
 import com.ambient.tv.data.weather.WeatherLocation
 import com.ambient.tv.data.weather.WeatherRepository
 import com.ambient.tv.data.weather.WeatherSettings
+import com.ambient.tv.data.weather.WeatherState
+import com.ambient.tv.data.weather.WeatherError
+import com.ambient.tv.data.weather.WeatherCurrent
+import com.ambient.tv.data.weather.WeatherSnapshot
 import java.io.File
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.CountDownLatch
@@ -90,7 +94,7 @@ class WeatherPresentationUiTest {
             rule.setContent { fixture.Content(headerVisible = true, screensaverVisible = false) }
             fixture.assertNoWork()
             // Layout reserves the header slot even though lifecycle gating has not fetched data.
-            assertTrue(fixture.presentation.get().headerEnabled)
+            assertTrue(fixture.presentation.get().headerPending)
             assertTrue(fixture.presentation.get().hasHeader)
             assertNull(fixture.presentation.get().header)
 
@@ -149,10 +153,79 @@ class WeatherPresentationUiTest {
         }
     }
 
+    @Test fun disabledOrUnselectedWeatherDoesNotAllocateAnyHeaderSpace() {
+        val ready = sampleCurrent()
+        val disabled = weatherPresentationFromState(
+            settings.copy(enabled = false), WeatherState(data = ready))
+        assertFalse(disabled.hasHeader)
+        assertNull(disabled.header)
+        assertNull(disabled.screensaver)
+
+        val missingLocation = weatherPresentationFromState(
+            settings.copy(locations = emptyList(), selectedLocationId = null), WeatherState())
+        assertFalse(missingLocation.hasHeader)
+
+        fixture(weatherSettings = settings.copy(enabled = false)).use { fixture ->
+            rule.setContent { fixture.Content(headerVisible = true, screensaverVisible = false) }
+            fixture.assertNoWork()
+            assertFalse(fixture.presentation.get().hasHeader)
+        }
+    }
+
+    @Test fun failedApiResponseWithoutCacheLeavesClockAlone() {
+        fixture(responseCode = 503, responseBody = """{"error":true}""").use { fixture ->
+            rule.setContent { fixture.Content(headerVisible = true, screensaverVisible = false) }
+            rule.waitUntil(8_000) { fixture.repository.state.value.error != null }
+            rule.waitForIdle()
+            assertNull(fixture.presentation.get().header)
+            assertFalse(fixture.presentation.get().headerPending)
+            assertFalse(fixture.presentation.get().hasHeader)
+        }
+    }
+
+    @Test fun hourlyOnlyResponseWithoutCurrentTemperatureNeverCreatesBlankWeatherWidget() {
+        fixture(responseBody = """{"hourly":{"time":[1794754800],"temperature_2m":[7]}}""").use { fixture ->
+            rule.setContent { fixture.Content(headerVisible = true, screensaverVisible = false) }
+            rule.waitUntil(8_000) { fixture.repository.state.value.data != null }
+            rule.waitForIdle()
+            assertNull(fixture.repository.state.value.data?.current)
+            assertNull(fixture.presentation.get().header)
+            assertFalse(fixture.presentation.get().hasHeader)
+        }
+    }
+
+    @Test fun matchingCachedCurrentWeatherSurvivesApiFailureAndUnrelatedDataDoesNot() {
+        val cached = sampleCurrent()
+        val valid = weatherPresentationFromState(
+            settings, WeatherState(data = cached, error = WeatherError.UNAVAILABLE))
+        assertEquals(cached, valid.header)
+        assertTrue(valid.hasHeader)
+        assertEquals(cached, valid.screensaver)
+
+        val otherLocation = cached.copy(location = place.copy(id = "other"))
+        val mismatch = weatherPresentationFromState(
+            settings, WeatherState(data = otherLocation, error = WeatherError.UNAVAILABLE))
+        assertFalse(mismatch.hasHeader)
+
+        val unusable = weatherPresentationFromState(
+            settings, WeatherState(data = cached.copy(current = cached.current?.copy(temperature = null)),
+                error = WeatherError.INVALID_DATA))
+        assertFalse(unusable.hasHeader)
+        assertNull(unusable.screensaver)
+    }
+
+    private fun sampleCurrent(): WeatherSnapshot = WeatherSnapshot(
+        place, place.timezone, "celsius", "kmh", System.currentTimeMillis(),
+        WeatherCurrent(1794754800, 7.0, null, 2, true, null, null, null),
+        hourly = emptyList(), daily = emptyList(),
+    )
+
     private fun fixture(
         weatherSettings: WeatherSettings = settings,
         lifecycleState: Lifecycle.State = Lifecycle.State.RESUMED,
         beforeResponse: (Interceptor.Chain, Int) -> Unit = { _, _ -> },
+        responseCode: Int = 200,
+        responseBody: String = """{"current":{"time":1794754800,"temperature_2m":7}}""",
     ): Fixture {
         val directory = temporary.newFolder()
         val cacheAccesses = AtomicInteger()
@@ -170,8 +243,8 @@ class WeatherPresentationUiTest {
             calls.add(chain.call())
             firstRequest.countDown()
             beforeResponse(chain, calls.size)
-            Response.Builder().request(chain.request()).protocol(Protocol.HTTP_1_1).code(200).message("fixture")
-                .body("""{"current":{"time":1794754800,"temperature_2m":7}}""".toResponseBody("application/json".toMediaType()))
+            Response.Builder().request(chain.request()).protocol(Protocol.HTTP_1_1).code(responseCode).message("fixture")
+                .body(responseBody.toResponseBody("application/json".toMediaType()))
                 .build()
         }.build()
         val owner = Owner()
