@@ -23,6 +23,19 @@ import java.util.concurrent.TimeUnit
 
 data class AvailableLiveTvSource(val source: LiveTvSource, val capabilities: LiveTvCapabilities)
 
+/**
+ * Keep configured IPTV playlists selectable when an initial capability check fails. An offline
+ * playlist is not an unconfigured playlist; losing its menu row also loses the current focus.
+ * A successful discovery supplies its real capabilities instead of the provisional fallback.
+ */
+internal fun reconcileSidebarLiveTvSources(
+    discovered: List<AvailableLiveTvSource>,
+    configuredSnapshot: List<AvailableLiveTvSource>,
+): List<AvailableLiveTvSource> {
+    val seen = discovered.mapTo(hashSetOf()) { it.source.id }
+    return discovered + configuredSnapshot.filter { it.source.system == "iptv" && it.source.id !in seen }
+}
+
 /** Does not change the active VOD server. A repository captures one endpoint and one login. */
 @Singleton
 class LiveTvRegistry @Inject constructor(
