@@ -351,6 +351,8 @@ private fun ClockBlock(
             com.ambient.tv.ui.weather.WeatherCompactSummary(
                 snapshot = it, textColor = detailColor, iconColor = iconTint,
                 animateChanges = clock.weatherTransitions,
+                iconSize = (typeSize * 0.24f).coerceIn(20f, 32f).dp,
+                temperatureTextSize = (typeSize * 0.22f).coerceIn(16f, 28f).sp,
             )
         }
     }
