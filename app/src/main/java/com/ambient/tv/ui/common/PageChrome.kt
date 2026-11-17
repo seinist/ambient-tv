@@ -209,7 +209,7 @@ fun PageUtilityBar(
             )
             // Detail pages use this rail instead of PageHeader. They follow the same
             // clock setting, while the buttons keep their full touch/focus targets.
-            if (LocalClockSettings.current.inHeader || com.ambient.tv.ui.weather.LocalWeatherPresentation.current.header != null) HeaderClock(Modifier.weight(1f, fill = false))
+            if (LocalClockSettings.current.inHeader || com.ambient.tv.ui.weather.LocalWeatherPresentation.current.hasHeader) HeaderClock(Modifier.weight(1f, fill = false))
         }
     }
 }
@@ -257,7 +257,7 @@ fun PageHeader(
     // A list's own Up exit at its top follows the page chain (filter, chips, then these actions).
     val chainUp = remember(focusChain) { focusChain?.let { chain -> { chain.upTarget() } } }
     RegisterScrollListActions(actionFocus, chainUp)
-    val clockVisible = showClock && (LocalClockSettings.current.inHeader || com.ambient.tv.ui.weather.LocalWeatherPresentation.current.header != null)
+    val clockVisible = showClock && (LocalClockSettings.current.inHeader || com.ambient.tv.ui.weather.LocalWeatherPresentation.current.hasHeader)
     Column(modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         // On a phone the full-width clock row keeps long dates and large type away from
         // page actions. It is real layout space, so it never covers the first content row.
