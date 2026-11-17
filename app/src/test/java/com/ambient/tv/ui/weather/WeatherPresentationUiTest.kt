@@ -89,6 +89,10 @@ class WeatherPresentationUiTest {
         fixture(settings.copy(showInScreensaver = false), Lifecycle.State.STARTED).use { fixture ->
             rule.setContent { fixture.Content(headerVisible = true, screensaverVisible = false) }
             fixture.assertNoWork()
+            // Layout reserves the header slot even though lifecycle gating has not fetched data.
+            assertTrue(fixture.presentation.get().headerEnabled)
+            assertTrue(fixture.presentation.get().hasHeader)
+            assertNull(fixture.presentation.get().header)
 
             rule.runOnIdle { fixture.owner.registry.currentState = Lifecycle.State.RESUMED }
             rule.waitForIdle()
