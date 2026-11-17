@@ -42,8 +42,8 @@ class TrailerServiceUnavailable(status: Int) : TrailerRequestFailed(status)
 /** Dedicated client: never attach media-server credentials or log the TMDB Authorization header. */
 @Singleton
 class TmdbTrailerRepository internal constructor(private val tokens: TokenStore, private val client: OkHttpClient,
-    private val nanoTime: () -> Long = System::nanoTime,
-    private val onlineServices: OnlineServiceAvailability? = null) {
+    private val onlineServices: OnlineServiceAvailability? = null,
+    private val nanoTime: () -> Long = System::nanoTime) {
     @Inject constructor(
         tokens: TokenStore,
         @com.ambient.tv.di.SharedOkHttp connectionPool: okhttp3.ConnectionPool,
@@ -51,7 +51,7 @@ class TmdbTrailerRepository internal constructor(private val tokens: TokenStore,
         onlineServices: OnlineServiceAvailability,
     ) : this(tokens,
         OkHttpClient.Builder().connectionPool(connectionPool).dispatcher(dispatcher).callTimeout(15, TimeUnit.SECONDS).addInterceptor(com.ambient.tv.diagnostics.DiagnosticHttpInterceptor).build(),
-        System::nanoTime, onlineServices)
+        onlineServices)
     val configuration = tokens.tmdbCredentialVersion
     val configured: Boolean get() = !tokens.tmdbApiKey.isNullOrBlank()
     private var cacheGeneration = -1L

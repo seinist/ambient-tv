@@ -287,7 +287,10 @@ class TelegramViewModel @Inject constructor(
                 throw cancelled
             } catch (failure: Exception) {
                 if (generation == pageGeneration) {
-                    onlineServices.failed("telegram", failure)
+                    if (com.ambient.tv.data.telegram.classifyTelegramFailure(failure.message) ==
+                        com.ambient.tv.data.telegram.TelegramFailureKind.NETWORK) {
+                        onlineServices.unavailable("telegram")
+                    } else onlineServices.failed("telegram", failure)
                     val old = mutableState.value
                     val message = failure.message ?: context.getString(com.ambient.tv.R.string.monogram_error_request)
                     mutableState.value = old.copy(

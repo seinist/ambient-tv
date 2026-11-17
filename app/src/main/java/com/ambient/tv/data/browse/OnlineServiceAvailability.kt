@@ -154,7 +154,7 @@ class OnlineServiceAvailability @Inject constructor(@ApplicationContext context:
             if (shouldNotifyInternet && !internetNotified) {
                 AppNotifications.post(AppNotice(
                     key = "online:internet", message = R.string.notice_internet_unavailable,
-                    phase = NoticePhase.ERROR, kind = NoticeKind.CONNECTION,
+                    phase = NoticePhase.INFO, kind = NoticeKind.CONNECTION,
                     interruptPlayback = false,
                 ))
             } else if (!internetDown && internetNotified) {
@@ -173,7 +173,7 @@ class OnlineServiceAvailability @Inject constructor(@ApplicationContext context:
                 AppNotifications.post(AppNotice(
                     key = "online:services", message = R.string.notice_online_services_unavailable,
                     systems = snapshot.failed.toList(),
-                    phase = NoticePhase.ERROR, kind = NoticeKind.CONNECTION,
+                    phase = NoticePhase.INFO, kind = NoticeKind.CONNECTION,
                     interruptPlayback = false,
                 ))
             } else if (!failedProviders && servicesFailed && !internetDown) {
