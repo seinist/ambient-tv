@@ -23,6 +23,8 @@ data class WeatherPresentation(
     val screensaver: WeatherSnapshot? = null,
     /** NavHost stays composed below screensaver/standby/PiP; its pages must suspend their work. */
     val contentVisible: Boolean = true,
+    /** Reserve geometry even before the cached or online forecast becomes available. */
+    val headerEnabled: Boolean = false,
 )
 
 val LocalWeatherPresentation = staticCompositionLocalOf { WeatherPresentation() }
@@ -57,5 +59,6 @@ fun rememberWeatherPresentation(
         header = data.takeIf { settings.showInHeader },
         screensaver = data.takeIf { settings.showInScreensaver },
         contentVisible = contentVisible,
+        headerEnabled = settings.enabled && settings.selectedLocation != null && settings.showInHeader,
     )
 }
