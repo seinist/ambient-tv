@@ -2220,6 +2220,7 @@ private fun AmbientTvApp(
                 "youtube" -> currentRoute == Destinations.YOUTUBE_PLAYER
                 else -> false
             }
+            backgroundPlayerReturn.markNextPlayerContinuation()
             if (replaceTop) navController.popBackStack()
             navController.navigate(route)
         }

@@ -87,6 +87,10 @@ class BackgroundPlayerReturnNavigationTest {
         navigation.enterPlayer("player-2-next", null) // Next/Previous replaced a player entry
         assertEquals(smartTube, navigation.origin)
 
+        navigation.markNextPlayerContinuation()
+        navigation.enterPlayer("player-2-mininext", plex) // Next from sidebar while Plex is visible
+        assertEquals(smartTube, navigation.origin)
+
         navigation.enterPlayer("player-3", plex) // a newly selected item
         assertEquals(plex, navigation.origin)
         navigation.clearStoppedPlayback()

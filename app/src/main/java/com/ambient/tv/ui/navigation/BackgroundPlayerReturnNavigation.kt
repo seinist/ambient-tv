@@ -91,14 +91,24 @@ internal class BackgroundPlayerReturnNavigation {
 
     private var lastPlayerEntryId: String? = null
     private var reopenedPlayerEntryId: String? = null
+    private var keepOriginForNextPlayer = false
 
     fun enterPlayer(entryId: String, predecessor: BackgroundPlayerOrigin?) {
         if (lastPlayerEntryId == entryId) return
         lastPlayerEntryId = entryId
         // Auto-Next and in-player link navigation may replace one player entry with another
         // without a browse entry underneath. That is still the same playback origin.
-        if (reopenedPlayerEntryId != entryId && predecessor != null) origin = predecessor
+        if (reopenedPlayerEntryId != entryId && !keepOriginForNextPlayer && predecessor != null) {
+            origin = predecessor
+        }
         reopenedPlayerEntryId = null
+        keepOriginForNextPlayer = false
+        armedBySidebarBack = false
+    }
+
+    /** Next/Previous started from the mini-player belongs to its original browse queue. */
+    fun markNextPlayerContinuation() {
+        keepOriginForNextPlayer = true
         armedBySidebarBack = false
     }
 
@@ -122,6 +132,7 @@ internal class BackgroundPlayerReturnNavigation {
         origin = null
         armedBySidebarBack = false
         reopenedPlayerEntryId = null
+        keepOriginForNextPlayer = false
         lastPlayerEntryId = null
     }
 }
