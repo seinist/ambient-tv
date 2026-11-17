@@ -27,7 +27,7 @@ class BrowseLoadCoordinatorTest {
         }
         withTimeout(2_000) { started.await() }
         val second = async(start = CoroutineStart.UNDISPATCHED) {
-            scheduler.load("plex:sections", BrowseLoadPriority.VISIBLE) {
+            scheduler.load<String>("plex:sections", BrowseLoadPriority.VISIBLE) {
                 error("A duplicate provider request was started")
             }
         }
@@ -68,7 +68,7 @@ class BrowseLoadCoordinatorTest {
             scheduler.load("same-key", BrowseLoadPriority.BACKGROUND) { "promoted" }
         }
         val visible = async(start = CoroutineStart.UNDISPATCHED) {
-            scheduler.load("same-key", BrowseLoadPriority.VISIBLE) { error("duplicate") }
+            scheduler.load<String>("same-key", BrowseLoadPriority.VISIBLE) { error("duplicate") }
         }
         assertEquals("promoted", withTimeout(2_000) { visible.await() })
         assertEquals("promoted", withTimeout(2_000) { background.await() })
