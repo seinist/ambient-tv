@@ -95,7 +95,9 @@ internal class BackgroundPlayerReturnNavigation {
     fun enterPlayer(entryId: String, predecessor: BackgroundPlayerOrigin?) {
         if (lastPlayerEntryId == entryId) return
         lastPlayerEntryId = entryId
-        if (reopenedPlayerEntryId != entryId) origin = predecessor
+        // Auto-Next and in-player link navigation may replace one player entry with another
+        // without a browse entry underneath. That is still the same playback origin.
+        if (reopenedPlayerEntryId != entryId && predecessor != null) origin = predecessor
         reopenedPlayerEntryId = null
         armedBySidebarBack = false
     }
