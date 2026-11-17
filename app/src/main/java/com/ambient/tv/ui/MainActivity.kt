@@ -105,6 +105,10 @@ import com.ambient.tv.ui.emby.EmbyLibraryScreen
 import com.ambient.tv.data.local.HomeRowDefinition
 import com.ambient.tv.domain.repository.MediaRepository
 import com.ambient.tv.ui.navigation.Destinations
+import com.ambient.tv.ui.navigation.BackgroundPlayerReturnNavigation
+import com.ambient.tv.ui.navigation.PLAYBACK_DESTINATIONS
+import com.ambient.tv.ui.navigation.playbackBrowseOrigin
+import com.ambient.tv.ui.navigation.displayedPlaybackBrowseRoute
 import com.ambient.tv.ui.navigation.openAppHome
 import com.ambient.tv.ui.navigation.configuredContentRoute
 import com.ambient.tv.ui.navigation.isParameterizedSidebarRoute
@@ -1424,6 +1428,9 @@ private fun AmbientTvApp(
         Destinations.SERVER_SELECT else rootRoute
     val currentBackStackEntry = navController.currentBackStackEntryAsState().value
     val currentRoute = currentBackStackEntry?.destination?.route ?: startDestination
+    // A mini-player preserves the route that originally launched this playback, even if
+    // subsequent sidebar navigation has removed that route from the current back stack.
+    val backgroundPlayerReturn = remember { BackgroundPlayerReturnNavigation() }
     val companionRoute by rememberUpdatedState(currentRoute)
     var companionServerSwitch by remember {
         mutableStateOf<Pair<com.ambient.tv.companion.CompanionMediaMapper.ServerSwitch, com.ambient.tv.companion.CompanionMedia>?>(null)
@@ -1852,7 +1859,34 @@ private fun AmbientTvApp(
         }
     }
     // The photo viewer is a presentation too: a running slideshow must not start the screensaver.
-    val onPlayerRoute = currentRoute in setOf(Destinations.PLAYER, Destinations.TVH_PLAYER, Destinations.YOUTUBE_PLAYER, Destinations.TELEGRAM_PLAYER, Destinations.SPOTIFY_PLAYER, Destinations.RADIO_PLAYER)
+    val onPlayerRoute = currentRoute in PLAYBACK_DESTINATIONS
+    val lastVisibleBrowseOrigin = remember { mutableStateOf<com.ambient.tv.ui.navigation.BackgroundPlayerOrigin?>(null) }
+    androidx.compose.runtime.SideEffect {
+        if (!onPlayerRoute) {
+            playbackBrowseOrigin(currentBackStackEntry)?.let { entry ->
+                val displayed = displayedPlaybackBrowseRoute(
+                    entry.route, currentRoute, currentFeedKey, appPreferences.youtubeStartFeedKey,
+                    currentTelegramSectionKey, currentRadioSectionKey,
+                )
+                lastVisibleBrowseOrigin.value = entry.copy(route = displayed)
+            }
+        }
+    }
+    LaunchedEffect(currentBackStackEntry?.id) {
+        val entry = currentBackStackEntry ?: return@LaunchedEffect
+        if (entry.destination.route in PLAYBACK_DESTINATIONS) {
+            // Capture the actual back-stack entry, not the selected sidebar tab. Its route
+            // includes feed/channel, source and detail parameters needed for an exact return.
+            val previous = playbackBrowseOrigin(navController.previousBackStackEntry)
+            val displayedPrevious = lastVisibleBrowseOrigin.value?.takeIf { it.entryId == previous?.entryId }
+            backgroundPlayerReturn.enterPlayer(entry.id, displayedPrevious ?: previous)
+        } else {
+            backgroundPlayerReturn.enterBrowse()
+        }
+    }
+    LaunchedEffect(backgroundPlayback.active, onPlayerRoute) {
+        if (!backgroundPlayback.active && !onPlayerRoute) backgroundPlayerReturn.clearStoppedPlayback()
+    }
     androidx.compose.runtime.SideEffect { com.ambient.tv.ui.player.SleepWarningKeyGate.playerRoute = onPlayerRoute }
     val playbackActive = currentRoute == Destinations.PHOTO_VIEWER || currentRoute == Destinations.WEATHER_PLAYER || currentRoute == Destinations.PLAYER || currentRoute == Destinations.TVH_PLAYER || currentRoute == Destinations.YOUTUBE_PLAYER || currentRoute == Destinations.TELEGRAM_PLAYER || currentRoute == Destinations.SPOTIFY_PLAYER || currentRoute == Destinations.RADIO_PLAYER || backgroundPlayback.active || spotifyPlaying
 
@@ -2083,8 +2117,44 @@ private fun AmbientTvApp(
         }
     }
 
+    /** Reattach the already running session; never go through a new playback selection. */
+    fun reopenBackgroundPlayer(): Boolean {
+        val snapshot = BackgroundPlaybackSession.snapshot.value
+        val playerRoute = snapshot.metadata?.route?.takeIf { it.isNotBlank() } ?: return false
+        if (!snapshot.active || onPlayerRoute) return false
+        backgroundPlayerReturn.disarm()
+        guardedSettingsExit {
+            // Put the original browse/detail page directly under the player. When that exact
+            // destination still exists, pop back to it to retain its ViewModel and focus state.
+            // Otherwise re-create its concrete route; the provider's playback-return mailbox
+            // will select the last played item when the player is subsequently dismissed.
+            backgroundPlayerReturn.origin?.let { origin ->
+                if (navController.currentBackStackEntry?.id != origin.entryId) {
+                    val restored = runCatching {
+                        navController.popBackStack(origin.backStackRoute, inclusive = false)
+                    }.getOrDefault(false)
+                    if (!restored) runCatching {
+                        navController.navigate(origin.route) { launchSingleTop = true }
+                    }
+                }
+            }
+            navController.navigate(playerRoute) { launchSingleTop = true }
+            backgroundPlayerReturn.markMiniPlayerReentry(
+                navController.currentBackStackEntry?.takeIf { it.destination.route in PLAYBACK_DESTINATIONS }?.id,
+            )
+        }
+        return true
+    }
+
     /** Files-style root Back: keep the route, move focus to the sidebar. */
     fun focusSidebar() {
+        // Child browse screens register their own BackHandler after the shell's handler.
+        // When Back just closed the sidebar, consume it here before the browse page
+        // reopens the rail. This is also why the shell has a fallback BackHandler.
+        if (!handheld && backgroundPlayerReturn.canResumeAfterSidebarBack(
+                BackgroundPlaybackSession.snapshot.value.active,
+            ) && reopenBackgroundPlayer()
+        ) return
         // Handhelds have no sidebar to take focus, so root Back leaves the page instead.
         if (handheld) {
             if (currentRoute == rootRoute) {
@@ -2150,8 +2220,19 @@ private fun AmbientTvApp(
                 "youtube" -> currentRoute == Destinations.YOUTUBE_PLAYER
                 else -> false
             }
+            backgroundPlayerReturn.markNextPlayerContinuation()
             if (replaceTop) navController.popBackStack()
             navController.navigate(route)
+        }
+    }
+
+    // Back immediately after collapsing the TV sidebar is a shortcut to a running
+    // mini-player. Ordinary Back on browse/detail pages retains its existing behaviour.
+    if (!handheld && !sidebarHasFocus && currentRoute in SIDEBAR_ROUTES &&
+        currentRoute != Destinations.SETTINGS &&
+        backgroundPlayerReturn.canResumeAfterSidebarBack(backgroundPlayback.active)) {
+        androidx.activity.compose.BackHandler {
+            if (!reopenBackgroundPlayer()) navigateBack()
         }
     }
 
@@ -2233,7 +2314,10 @@ private fun AmbientTvApp(
                 showNavigation = currentRoute !in FULLSCREEN_ROUTES || (handheld && onPlayerScreen && !handheldFullscreen.enabled),
                 playerVisible = onPlayerScreen || currentRoute == Destinations.SPOTIFY_PLAYER || currentRoute == Destinations.RADIO_PLAYER,
                 onNavigate = ::navigateSidebar,
-                onOpenPlayback = { route -> guardedSettingsExit { navController.navigate(route) { launchSingleTop = true } } },
+                onOpenPlayback = { route ->
+                    if (BackgroundPlaybackSession.snapshot.value.metadata?.route == route) reopenBackgroundPlayer()
+                    else guardedSettingsExit { navController.navigate(route) { launchSingleTop = true } }
+                },
                 onOpenSystemSettings = ::openSystemSettings,
                 onOverlayBottomInsetChanged = { handheldNotificationBottomInset = it },
             ) {
@@ -2252,9 +2336,14 @@ private fun AmbientTvApp(
                             }
                             return@onPreviewKeyEvent true
                         }
-                        if (sidebarContentPending && event.type == KeyEventType.KeyDown && event.key in setOf(
+                        if (event.type == KeyEventType.KeyDown && event.key in setOf(
                                 ComposeKey.DirectionLeft, ComposeKey.DirectionRight, ComposeKey.DirectionUp, ComposeKey.DirectionDown,
-                            )) initialContentEntryPending = false
+                            )) {
+                            // Moving focus away from the returned browse tile ends the one-shot
+                            // Back-to-player chain; it must not hijack later navigation.
+                            backgroundPlayerReturn.disarm()
+                            if (sidebarContentPending) initialContentEntryPending = false
+                        }
                         if (!contentHasFocus && !sidebarHasFocus && currentRoute !in FULLSCREEN_ROUTES &&
                             event.type == KeyEventType.KeyDown && event.key in setOf(ComposeKey.DirectionLeft, ComposeKey.DirectionRight, ComposeKey.DirectionUp, ComposeKey.DirectionDown)) {
                             sidebarEntryRequested.value = true
@@ -2305,7 +2394,20 @@ private fun AmbientTvApp(
                     currentDlnaServerId = currentDlnaServerId,
                     onNavigate = ::navigateSidebar,
                     onOpenSystemSettings = ::openSystemSettings,
-                    onOpenPlayback = { route -> guardedSettingsExit { navController.navigate(route) { launchSingleTop = true } } },
+                    onOpenPlayback = { route ->
+                        if (BackgroundPlaybackSession.snapshot.value.metadata?.route == route) reopenBackgroundPlayer()
+                        else guardedSettingsExit { navController.navigate(route) { launchSingleTop = true } }
+                    },
+                    onSidebarClosedByBack = {
+                        backgroundPlayerReturn.armAfterSidebarBack(
+                            currentRoute in SIDEBAR_ROUTES && currentRoute != Destinations.SETTINGS &&
+                                BackgroundPlaybackSession.snapshot.value.metadata != null,
+                        )
+                    },
+                    onResumePlaybackAfterBack = {
+                        backgroundPlayerReturn.canResumeAfterSidebarBack(BackgroundPlaybackSession.snapshot.value.active) &&
+                            reopenBackgroundPlayer()
+                    },
                     onPlayNext = ::playNextFromSidebar,
                     requestContentFocus = ::requestContentFocus,
                     contentReady = !sidebarContentPending || wakeFocus.isAvailable,

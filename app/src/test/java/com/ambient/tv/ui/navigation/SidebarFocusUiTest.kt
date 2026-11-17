@@ -28,6 +28,7 @@ import androidx.compose.ui.test.performKeyInput
 import androidx.compose.ui.test.pressKey
 import androidx.compose.ui.unit.dp
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertEquals
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -65,6 +66,10 @@ class SidebarFocusUiTest {
     private val ownership = mutableListOf<Boolean>()
     private var startStatusAvailable by mutableStateOf(false)
     private var closeStartStatus: (() -> Unit)? = null
+    private var testPlaybackBackChain = false
+    private var playbackBackArmed = false
+    private var sidebarBackCloses = 0
+    private var backgroundPlayerOpens = 0
 
     private fun setUp(startRoute: String) {
         rule.setContent {
@@ -79,6 +84,19 @@ class SidebarFocusUiTest {
                     currentRoute = route,
                     currentSectionKey = null,
                     onNavigate = { route = it },
+                    onSidebarClosedByBack = {
+                        if (testPlaybackBackChain) {
+                            sidebarBackCloses++
+                            playbackBackArmed = true
+                        }
+                    },
+                    onResumePlaybackAfterBack = {
+                        if (testPlaybackBackChain && playbackBackArmed) {
+                            playbackBackArmed = false
+                            backgroundPlayerOpens++
+                            true
+                        } else false
+                    },
                     requestContentFocus = { runCatching { content.requestFocus() }.isSuccess },
                     isEntryRequested = { entryArmed },
                     onFocusOwnershipChanged = { ownership += it },
@@ -112,6 +130,21 @@ class SidebarFocusUiTest {
     }
 
     private fun focused(tag: String) = rule.onNodeWithTag(tag, useUnmergedTree = true).assertIsFocused()
+
+    @Test fun quickSecondBackAfterClosingSidebarReopensMiniPlayerOnce() {
+        testPlaybackBackChain = true
+        setUp(Destinations.HOME)
+        key(Key.DirectionLeft)
+        // The content-focus handoff is asynchronous: both Back presses may arrive while the
+        // sidebar still owns its registered callback. The second one must go to the player.
+        rule.runOnUiThread {
+            rule.activity.onBackPressedDispatcher.onBackPressed()
+            rule.activity.onBackPressedDispatcher.onBackPressed()
+        }
+        rule.waitForIdle()
+        assertEquals(1, sidebarBackCloses)
+        assertEquals(1, backgroundPlayerOpens)
+    }
 
     @Test fun startStatusIsReachableAboveSettingsAndReturnsToItsOwnRow() {
         startStatusAvailable = true
