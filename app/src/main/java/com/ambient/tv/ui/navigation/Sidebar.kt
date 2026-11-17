@@ -2,6 +2,8 @@
 
 package com.ambient.tv.ui.navigation
 
+import com.ambient.tv.ui.theme.selectedStateMarker
+import com.ambient.tv.ui.theme.SelectionIndicator
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 import com.ambient.tv.ui.theme.appControlSurface

@@ -2,6 +2,7 @@
 
 package com.ambient.tv.ui.common
 
+import com.ambient.tv.ui.theme.SelectionIndicator
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.tween

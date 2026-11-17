@@ -2,6 +2,8 @@
 
 package com.ambient.tv.ui.player
 
+import com.ambient.tv.ui.theme.SelectionIndicator
+import com.ambient.tv.ui.theme.appOsdControlSurface
 import com.ambient.tv.ui.theme.AccentMotionPaints
 import com.ambient.tv.ui.theme.AccentMotionScope
 import com.ambient.tv.ui.theme.LocalAccentMotionState

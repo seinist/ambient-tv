@@ -2,6 +2,7 @@
 
 package com.ambient.tv.ui.common
 
+import com.ambient.tv.ui.theme.appOsdControlSurface
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
