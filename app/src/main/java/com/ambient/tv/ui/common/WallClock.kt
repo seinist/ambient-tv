@@ -8,6 +8,7 @@ import android.text.format.DateFormat
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.Row
@@ -247,8 +248,10 @@ fun ClockWeatherDisplay(
 /** Bounded right-side widget for headers, Home and settings. The left-side actions keep their space. */
 @Composable
 fun HeaderClock(modifier: Modifier = Modifier, showClock: Boolean = LocalClockSettings.current.inHeader) {
-    val weather = com.ambient.tv.ui.weather.LocalWeatherPresentation.current.header
-    if (!showClock && weather == null) return
+    val presentation = com.ambient.tv.ui.weather.LocalWeatherPresentation.current
+    val weather = presentation.header
+    val showWeather = presentation.headerEnabled || weather != null
+    if (!showClock && !showWeather) return
     val settings = LocalClockSettings.current
     // A long date or a horizontal weather layout must yield to navigation and search actions.
     val maxWidth = if (LocalHandheldUi.current) {
@@ -259,12 +262,15 @@ fun HeaderClock(modifier: Modifier = Modifier, showClock: Boolean = LocalClockSe
     val weatherIcon = if (settings.weatherAccent) MaterialTheme.colorScheme.primary.copy(alpha = opacity)
         else weatherText
     Box(modifier.padding(start = 12.dp).widthIn(max = maxWidth), contentAlignment = Alignment.TopEnd) {
-        ClockWeatherDisplay(settings, showClock, weather != null, Modifier.widthIn(max = maxWidth)) {
-            weather?.let {
-                com.ambient.tv.ui.weather.WeatherCompactSummary(
-                    snapshot = it, textColor = weatherText, iconColor = weatherIcon,
-                    animateChanges = settings.weatherTransitions,
-                )
+        ClockWeatherDisplay(settings, showClock, showWeather, Modifier.widthIn(max = maxWidth)) {
+            // Reserve the same weather slot for a pending forecast; no data is fetched here.
+            Box(Modifier.widthIn(min = 82.dp).heightIn(min = 24.dp), contentAlignment = Alignment.CenterEnd) {
+                weather?.let {
+                    com.ambient.tv.ui.weather.WeatherCompactSummary(
+                        snapshot = it, textColor = weatherText, iconColor = weatherIcon,
+                        animateChanges = settings.weatherTransitions,
+                    )
+                }
             }
         }
     }
