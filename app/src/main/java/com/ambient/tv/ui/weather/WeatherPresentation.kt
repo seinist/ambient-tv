@@ -12,7 +12,9 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.repeatOnLifecycle
 import com.ambient.tv.data.weather.WEATHER_CACHE_TTL_MILLIS
 import com.ambient.tv.data.weather.WeatherRepository
+import com.ambient.tv.data.weather.WeatherSettings
 import com.ambient.tv.data.weather.WeatherSnapshot
+import com.ambient.tv.data.weather.WeatherState
 import dagger.hilt.android.lifecycle.HiltViewModel
 import javax.inject.Inject
 import kotlinx.coroutines.delay
@@ -23,10 +25,38 @@ data class WeatherPresentation(
     val screensaver: WeatherSnapshot? = null,
     /** NavHost stays composed below screensaver/standby/PiP; its pages must suspend their work. */
     val contentVisible: Boolean = true,
-    /** Reserve geometry even before the cached or online forecast becomes available. */
-    val headerEnabled: Boolean = false,
+    /** Reserve geometry only during an unresolved load, never after a failed/empty result. */
+    val headerPending: Boolean = false,
 ) {
-    val hasHeader: Boolean get() = headerEnabled || header != null
+    val hasHeader: Boolean get() = headerPending || header != null
+}
+
+/**
+ * A forecast may have only hourly/daily values (accepted for the full weather page).
+ * Compact clock/weather views need an actual current temperature: without it they
+ * fall back to the original standalone clock rather than drawing an empty widget.
+ */
+internal fun weatherPresentationFromState(
+    settings: WeatherSettings,
+    state: WeatherState,
+    contentVisible: Boolean = true,
+): WeatherPresentation {
+    val canShow = settings.enabled && settings.selectedLocation != null
+    val usable = state.data?.takeIf {
+        canShow && it.matches(settings) && it.current?.temperature?.isFinite() == true
+    }
+    val header = usable.takeIf { settings.showInHeader }
+    // An enabled weather widget can reserve a small slot while a response is pending.
+    // On HTTP/parser/offline errors without cached conditions the slot disappears, too.
+    // A complete response with no current temperature is likewise not usable here.
+    val pending = canShow && settings.showInHeader && header == null &&
+        state.error == null && (state.loading || state.data == null)
+    return WeatherPresentation(
+        header = header,
+        screensaver = usable.takeIf { settings.showInScreensaver },
+        contentVisible = contentVisible,
+        headerPending = pending,
+    )
 }
 
 val LocalWeatherPresentation = staticCompositionLocalOf { WeatherPresentation() }
@@ -56,11 +86,5 @@ fun rememberWeatherPresentation(
             }
         }
     }
-    val data = state.data?.takeIf { settings.enabled && it.matches(settings) }
-    return WeatherPresentation(
-        header = data.takeIf { settings.showInHeader },
-        screensaver = data.takeIf { settings.showInScreensaver },
-        contentVisible = contentVisible,
-        headerEnabled = settings.enabled && settings.selectedLocation != null && settings.showInHeader,
-    )
+    return weatherPresentationFromState(settings, state, contentVisible)
 }
