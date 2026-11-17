@@ -149,6 +149,8 @@ fun Sidebar(
     onNavigate: (String) -> Unit,
     onOpenSystemSettings: (String) -> Unit = {},
     onOpenPlayback: (String) -> Unit = {},
+    onSidebarClosedByBack: () -> Unit = {},
+    onResumePlaybackAfterBack: () -> Boolean = { false },
     onPlayNext: (NextUpCandidate) -> Unit = {},
     requestContentFocus: () -> Boolean = { false },
     contentReady: Boolean = true,
@@ -180,7 +182,8 @@ fun Sidebar(
     SidebarContent(
         state, actions, currentRoute, currentSectionKey, currentYouTubeFeedKey, currentTrailerFeedKey, currentSpotifySectionKey,
         currentTvheadendTab, currentLiveTvSourceId, currentFileSourceId, currentDlnaServerId, onNavigate, onOpenSystemSettings,
-        onOpenPlayback, onPlayNext, requestContentFocus, contentReady, isEntryRequested, onEntryRequestConsumed,
+        onOpenPlayback, onSidebarClosedByBack, onResumePlaybackAfterBack, onPlayNext,
+        requestContentFocus, contentReady, isEntryRequested, onEntryRequestConsumed,
         onFocusOwnershipChanged, modifier, currentRadioSectionKey, currentTelegramSectionKey, onExitApp, onOpenStartStatus,
     )
 }
@@ -212,6 +215,8 @@ internal fun SidebarContent(
     onNavigate: (String) -> Unit,
     onOpenSystemSettings: (String) -> Unit = {},
     onOpenPlayback: (String) -> Unit = {},
+    onSidebarClosedByBack: () -> Unit = {},
+    onResumePlaybackAfterBack: () -> Boolean = { false },
     onPlayNext: (NextUpCandidate) -> Unit = {},
     requestContentFocus: () -> Boolean = { false },
     contentReady: Boolean = true,
@@ -650,10 +655,19 @@ internal fun SidebarContent(
         }
     }
     val currentBackHandler = rememberUpdatedState<() -> Unit> {
-        when (sidebarBackAction(miniPlayerHasFocus = miniPlayerHasFocus, hasParentLevel = inSubmenu)) {
-            SidebarBackAction.FOCUS_SETTINGS -> pendingFocus = "settings"
-            SidebarBackAction.LEAVE_NESTED_LEVEL -> leaveLevel()
-            SidebarBackAction.RETURN_TO_CONTENT -> closePanel()
+        // The rail keeps its Back callback until content has accepted focus. A second quick
+        // press after closing must reopen the player even during that focus handoff.
+        if (!expanded && !miniPlayerHasFocus && onResumePlaybackAfterBack()) {
+            // The activity navigated to the running player.
+        } else {
+            when (sidebarBackAction(miniPlayerHasFocus = miniPlayerHasFocus, hasParentLevel = inSubmenu)) {
+                SidebarBackAction.FOCUS_SETTINGS -> pendingFocus = "settings"
+                SidebarBackAction.LEAVE_NESTED_LEVEL -> leaveLevel()
+                SidebarBackAction.RETURN_TO_CONTENT -> {
+                    closePanel()
+                    onSidebarClosedByBack()
+                }
+            }
         }
     }
     // Dialog changes also update ownership; focus events register synchronously below.
