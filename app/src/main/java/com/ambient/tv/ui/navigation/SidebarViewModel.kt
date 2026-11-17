@@ -430,8 +430,15 @@ class SidebarViewModel @Inject constructor(
                 jellyfinSections = jellyfinRepository.cachedLibrarySections().orEmpty().filterNot { section -> section.key in appPreferences.jellyfinHiddenSectionKeys },
                 embySections = embyRepository.cachedLibrarySections().orEmpty().filterNot { section -> section.key in appPreferences.embyHiddenSectionKeys },
             ) }
-            if (deferExpensiveWorkMs > 0L) delay(deferExpensiveWorkMs)
-            launch { val sources = if (forceLiveTv) liveTv.discover(force = true) else liveTv.sidebarSnapshot(); _uiState.update { it.copy(liveTvSources = sources) } }
+            // Saved IPTV sources belong to initial navigation, not the delayed network phase.
+            // Restore before any intentional Home/intro deferral so menu entries never pop in later.
+            val savedSources = liveTv.sidebarSnapshot()
+            _uiState.update { it.copy(liveTvSources = savedSources) }
+            if (deferExpensiveWorkMs > 0L && forceLiveTv) delay(deferExpensiveWorkMs)
+            if (forceLiveTv) launch {
+                val sources = liveTv.discover(force = true)
+                _uiState.update { it.copy(liveTvSources = sources) }
+            }
             if (forceLiveTv && appPreferences.isTvheadendConfigured) launch {
                 val channels = com.ambient.tv.util.suspendResult { tvheadendRepository.channels(force = forceLiveTv) }.getOrNull()
                 if (channels != null) _uiState.update { it.copy(
