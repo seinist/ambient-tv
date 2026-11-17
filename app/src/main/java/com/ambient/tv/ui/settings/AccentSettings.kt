@@ -180,7 +180,7 @@ private fun AccentControlStatePreview(
     focused: Boolean,
     selected: Boolean,
 ) {
-    Column(Modifier.width(86.dp), horizontalAlignment = Alignment.CenterHorizontally,
+    Column(Modifier.width(76.dp), horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(5.dp)) {
         Box(
             Modifier.fillMaxWidth().height(38.dp)
