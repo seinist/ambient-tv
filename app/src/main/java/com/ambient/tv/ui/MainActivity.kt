@@ -2148,6 +2148,13 @@ private fun AmbientTvApp(
 
     /** Files-style root Back: keep the route, move focus to the sidebar. */
     fun focusSidebar() {
+        // Child browse screens register their own BackHandler after the shell's handler.
+        // When Back just closed the sidebar, consume it here before the browse page
+        // reopens the rail. This is also why the shell has a fallback BackHandler.
+        if (!handheld && backgroundPlayerReturn.canResumeAfterSidebarBack(
+                BackgroundPlaybackSession.snapshot.value.active,
+            ) && reopenBackgroundPlayer()
+        ) return
         // Handhelds have no sidebar to take focus, so root Back leaves the page instead.
         if (handheld) {
             if (currentRoute == rootRoute) {
