@@ -11,7 +11,7 @@ import kotlinx.coroutines.channels.Channel
 
 /** At most one cancellable metadata request; never creates a ViewModel or requests artwork. */
 @Singleton
-class MetadataPrefetcher @Inject constructor(private val repository: MediaRepository, private val availability: SourceAvailability, private val scopes: BrowseScopes) {
+class MetadataPrefetcher @Inject constructor(private val repository: MediaRepository, private val availability: SourceAvailability, private val scopes: BrowseScopes, private val coordinator: BrowseLoadCoordinator) {
     private val scope = CoroutineScope(SupervisorJob() + Executors.newSingleThreadExecutor { work ->
         Thread({ Process.setThreadPriority(Process.THREAD_PRIORITY_BACKGROUND); work.run() }, "browse-prefetch")
     }.asCoroutineDispatcher())
@@ -28,7 +28,13 @@ class MetadataPrefetcher @Inject constructor(private val repository: MediaReposi
                         pending.entries.firstOrNull()?.let { it.key to pending.remove(it.key)!! }
                     } ?: break
                     val job = launch(SpeculativeRequest, start = CoroutineStart.LAZY) {
-                        try { withTimeoutOrNull(3_000) { next.second() } }
+                        try {
+                            withTimeoutOrNull(3_000) {
+                                coordinator.request("prefetch", next.first, BrowseLoadPriority.BACKGROUND) {
+                                    next.second()
+                                }
+                            }
+                        }
                         catch (cancelled: CancellationException) { throw cancelled }
                         catch (_: Exception) { /* Speculation must never fail foreground work. */ }
                     }
