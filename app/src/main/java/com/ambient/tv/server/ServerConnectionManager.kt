@@ -129,6 +129,8 @@ class ServerConnectionManager @Inject constructor(
             if (preferences.localNetworkOnly &&
                 !LocalNetworkPolicy.isPotentiallyLocalHost(preferences.host)) return@withLock false
             val checkedEndpoint = endpointKey()
+            val previousState = _state.value
+            val previouslyConnectedEndpoint = lastConnectedServerId
             val connectGeneration = connectRun.generation
             val identity = retryTransient(System.currentTimeMillis() + retryForMs) { repository.getIdentity() }.getOrNull()
                 ?: return@withLock false
@@ -139,7 +141,9 @@ class ServerConnectionManager @Inject constructor(
             reconnectPause.onlineAgain()
             lastSuccessfulCheckMs = System.currentTimeMillis()
             lastConnectedServerId = checkedEndpoint
-            browseReconnects.request("plex")
+            if (shouldRequestBrowseRecovery(previousState, previouslyConnectedEndpoint, checkedEndpoint)) {
+                browseReconnects.request("plex")
+            }
             true
         }
     }
