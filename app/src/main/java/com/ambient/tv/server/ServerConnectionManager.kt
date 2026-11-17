@@ -171,6 +171,7 @@ class ServerConnectionManager @Inject constructor(
 
     private suspend fun connect(forceNewWake: Boolean = false): Boolean {
         val before = _state.value
+        val previouslyConnectedEndpoint = $field
         var freshlyConfirmed = false
         val check = hosts.begin("plex")
         val endpoint = endpointKey()
@@ -178,7 +179,8 @@ class ServerConnectionManager @Inject constructor(
             connectService(forceNewWake = forceNewWake, onConnected = { freshlyConfirmed = true }).also { connected ->
                 if (endpoint == endpointKey()) {
                     if (!connected) hosts.failure(check)
-                    else if (freshlyConfirmed) browseReconnects.request("plex")
+                    else if (freshlyConfirmed && shouldRequestBrowseRecovery(before, previouslyConnectedEndpoint, endpoint))
+                        browseReconnects.request("plex")
                 }
             }
         } catch (cancelled: kotlinx.coroutines.CancellationException) {
