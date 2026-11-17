@@ -1212,6 +1212,7 @@ internal fun SettingsHubRow(title: String, subtitle: String?, selected: Boolean,
                 focusedBorder = MaterialTheme.colorScheme.onSurface,
                 unfocusedBorder = if (selected) MaterialTheme.colorScheme.primary.copy(alpha = 0.35f) else Color.Transparent,
                 borderWidth = 2.dp,
+                focusBorderMaterial = false,
             )
             .selectedStateMarker(selected, SelectionIndicator.LEADING_BAR)
             .padding(12.dp), horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {

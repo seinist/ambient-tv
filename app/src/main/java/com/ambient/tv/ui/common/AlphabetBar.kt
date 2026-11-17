@@ -173,6 +173,7 @@ private fun AlphabetBarEntry(
                     unfocusedBackground = if (selected) accent.copy(alpha = 0.08f) else Color.Transparent,
                     focusedBorder = MaterialTheme.colorScheme.onSurface,
                     borderWidth = 1.5.dp,
+                    focusBorderMaterial = false,
                 )
                 .selectedStateMarker(selected, SelectionIndicator.LEADING_BAR),
             contentAlignment = Alignment.Center,

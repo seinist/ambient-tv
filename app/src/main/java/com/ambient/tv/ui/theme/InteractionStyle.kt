@@ -391,6 +391,8 @@ fun Modifier.animatedFocusSurface(
     focusedBorder: Color,
     unfocusedBorder: Color = Color.Transparent,
     borderWidth: Dp = 2.dp,
+    /** False for screens whose focus boundary is intentionally neutral/white. */
+    focusBorderMaterial: Boolean = true,
 ): Modifier = composed {
     val reduced = LocalPerformanceProfile.current.reducedEffects
     val materialStyle = LocalAccentStyle.current
@@ -431,7 +433,7 @@ fun Modifier.animatedFocusSurface(
             this,
         )
         val material = accentBrush(primaryAccent, materialStyle)
-        val accentOutline = focusedBorder == primaryAccent && focused
+        val accentOutline = focusBorderMaterial
         val stroke = Stroke(strokePx)
         val glowStroke = if (materialStyle == AccentStyle.GLOW && !reduced) Stroke(strokePx * 2.5f) else null
         val motionPaints = if (motion != null) AccentMotionPaints(primaryAccent, materialStyle) else null
