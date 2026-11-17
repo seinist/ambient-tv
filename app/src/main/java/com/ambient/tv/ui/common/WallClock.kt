@@ -146,25 +146,18 @@ fun AmbientClock(
         else -> TextStyle(shadow = Shadow(Color.Black.copy(alpha = 0.55f), Offset(0f, 2f), 8f))
     }
     val time: @Composable () -> Unit = {
-        if (com.ambient.tv.ui.mobile.LocalHandheldUi.current) {
-            // Large 12-hour clocks with seconds can exceed the space beside a detail
-            // page's two buttons. Fit the actual text without changing the saved size
-            // or increasing that overlay's fixed height. The configured size is the cap.
-            BasicText(
-                text = now.format(timeFormatter),
-                style = LocalTextStyle.current.merge(style).merge(TextStyle(
-                    color = timeColor, fontSize = timeSize, fontWeight = weight, fontFamily = family,
-                )),
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                autoSize = remember(timeSize) {
-                    TextAutoSize.StepBased(minFontSize = 12.sp, maxFontSize = timeSize, stepSize = 0.5.sp)
-                },
-            )
-        } else {
-            Text(now.format(timeFormatter), color = timeColor, fontSize = timeSize, fontWeight = weight,
-                fontFamily = family, maxLines = 1, style = style)
-        }
+        // Text can shrink before a crowded TV header steals space from the action buttons.
+        BasicText(
+            text = now.format(timeFormatter),
+            style = LocalTextStyle.current.merge(style).merge(TextStyle(
+                color = timeColor, fontSize = timeSize, fontWeight = weight, fontFamily = family,
+            )),
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            autoSize = remember(timeSize) {
+                TextAutoSize.StepBased(minFontSize = 12.sp, maxFontSize = timeSize, stepSize = 0.5.sp)
+            },
+        )
     }
     val date: @Composable (Modifier) -> Unit = { dateModifier ->
         if (dateFormatter != null) Text(now.format(dateFormatter), modifier = dateModifier, color = dateColor, fontSize = dateSize,
@@ -172,22 +165,16 @@ fun AmbientClock(
     }
     if (settings.dateBeside) {
         // Keep Kodi's date-before-time option; put the integrated weather on its own short line.
-        val dateAndTime: @Composable () -> Unit = {
-            Row(Modifier.width(IntrinsicSize.Max), horizontalArrangement = Arrangement.spacedBy(12.dp),
+        val dateAndTime: @Composable (Modifier) -> Unit = { rowModifier ->
+            Row(rowModifier.width(IntrinsicSize.Max), horizontalArrangement = Arrangement.spacedBy(12.dp),
                 verticalAlignment = Alignment.CenterVertically) {
                 date(Modifier.weight(1f, fill = false)); time()
             }
         }
-        if (dateTrailing == null) {
-            Row(modifier.width(IntrinsicSize.Max), horizontalArrangement = Arrangement.spacedBy(12.dp),
-                verticalAlignment = Alignment.CenterVertically) {
-                date(Modifier.weight(1f, fill = false)); time()
-            }
-        } else {
-            Column(modifier, horizontalAlignment = Alignment.End) {
-                dateAndTime()
-                dateTrailing()
-            }
+        if (dateTrailing == null) dateAndTime(modifier)
+        else Column(modifier, horizontalAlignment = Alignment.End) {
+            dateAndTime(Modifier)
+            dateTrailing()
         }
     } else {
         Column(modifier, horizontalAlignment = Alignment.End) {
