@@ -108,7 +108,7 @@ internal class BrowseLoadScheduler(
                         // Speculation has no business competing with an active D-pad scroll,
                         // decoder or foreground browse. A newly visible waiter promotes the task.
                         while (fresh.priority == BrowseLoadPriority.BACKGROUND && !idle()) delay(200)
-                        Timber.tag("browse-load").d("start %s (%s)", fresh.key, fresh.priority)
+                        Timber.tag("browse-load").d("start priority=%s", fresh.priority)
                         block()
                     }
                 }
@@ -146,7 +146,13 @@ class BrowseLoadCoordinator @Inject constructor(private val scopes: BrowseScopes
         resource: String,
         priority: BrowseLoadPriority,
         block: suspend () -> T,
-    ): T = scheduler.load("${scopes.forProvider(provider)}:$resource", priority, block)
+    ): T = scheduler.load("${scopes.forProvider(provider)}:$resource", priority) {
+        val tracked = priority != BrowseLoadPriority.BACKGROUND
+        if (tracked) BrowseWorkBudget.foregroundRequests.incrementAndGet()
+        try { block() } finally {
+            if (tracked) BrowseWorkBudget.foregroundRequests.decrementAndGet()
+        }
+    }
 
     suspend fun librarySections(
         provider: String,
