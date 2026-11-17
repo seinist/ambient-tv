@@ -4,6 +4,9 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -12,11 +15,16 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.res.stringResource
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Cloud
 import androidx.compose.ui.unit.dp
+import androidx.tv.material3.Icon
+import androidx.tv.material3.Text
+import androidx.tv.material3.MaterialTheme
+import androidx.compose.ui.res.stringResource
 import com.ambient.tv.R
 import com.ambient.tv.data.local.ClockSettings
-import com.ambient.tv.ui.common.AmbientClock
+import com.ambient.tv.ui.common.ClockWeatherDisplay
 import com.ambient.tv.ui.common.PlayerDropUpSelector
 import com.ambient.tv.ui.common.RightPanelValueSlider
 import com.ambient.tv.ui.common.TvSettingRow
@@ -67,6 +75,26 @@ internal fun LazyListScope.clockSettingsItems(clock: ClockSettings, onChange: ((
             ClockChoice(R.string.settings_clock_shadow, clock.shadow, ClockSettings.shadows, ::shadowLabel) { v -> onChange { it.copy(shadow = v) } }
         }
     }
+    item { SettingsSubheader(stringResource(R.string.settings_clock_weather_group)) }
+    item {
+        SettingsGroup {
+            ClockChoice(R.string.settings_clock_weather_layout, clock.weatherLayout, ClockSettings.weatherLayouts, ::weatherLayoutLabel) {
+                value -> onChange { it.copy(weatherLayout = value) }
+            }
+            TvSettingRow(
+                title = stringResource(R.string.settings_clock_weather_accent),
+                body = stringResource(R.string.settings_clock_weather_accent_hint),
+                checked = clock.weatherAccent,
+                onCheckedChange = { value -> onChange { it.copy(weatherAccent = value) } },
+            )
+            TvSettingRow(
+                title = stringResource(R.string.settings_clock_weather_motion),
+                body = stringResource(R.string.settings_clock_weather_motion_hint),
+                checked = clock.weatherTransitions,
+                onCheckedChange = { value -> onChange { it.copy(weatherTransitions = value) } },
+            )
+        }
+    }
     item { SettingsSubheader(stringResource(R.string.settings_section_general_playback)) }
     item {
         TvSettingRow(
@@ -82,13 +110,23 @@ internal fun LazyListScope.clockSettingsItems(clock: ClockSettings, onChange: ((
 @Composable
 private fun ClockPreview(clock: ClockSettings) {
     Box(
-        Modifier.fillMaxWidth().height(96.dp)
+        Modifier.fillMaxWidth().height(136.dp)
             .background(
                 Brush.horizontalGradient(listOf(Color(0xFF1B2433), Color(0xFF4A5B70), Color(0xFFB7C3CF))),
                 RoundedCornerShape(10.dp),
             ),
     ) {
-        AmbientClock(clock.copy(display = ClockSettings.DISPLAY_PLAYER), Modifier.align(Alignment.TopEnd).padding(top = 14.dp, end = 18.dp))
+        // A static sample keeps this preview useful without triggering a forecast fetch.
+        ClockWeatherDisplay(
+            settings = clock, showClock = true, showWeather = true,
+            modifier = Modifier.align(Alignment.TopEnd).padding(top = 14.dp, end = 18.dp),
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                Icon(Icons.Filled.Cloud, null, Modifier.size(20.dp),
+                    tint = if (clock.weatherAccent) MaterialTheme.colorScheme.primary else Color.White)
+                Text("7°", color = Color.White, style = MaterialTheme.typography.bodyMedium)
+            }
+        }
     }
 }
 
@@ -147,4 +185,13 @@ private fun shadowLabel(key: String) = when (key) {
     ClockSettings.SHADOW_OFF -> R.string.settings_clock_shadow_off
     ClockSettings.SHADOW_STRONG -> R.string.settings_clock_shadow_strong
     else -> R.string.settings_clock_shadow_soft
+}
+
+private fun weatherLayoutLabel(key: String) = when (key) {
+    ClockSettings.WEATHER_LAYOUT_INTEGRATED -> R.string.settings_clock_weather_integrated
+    ClockSettings.WEATHER_LAYOUT_ABOVE -> R.string.settings_clock_weather_above
+    ClockSettings.WEATHER_LAYOUT_BELOW -> R.string.settings_clock_weather_below
+    ClockSettings.WEATHER_LAYOUT_LEFT -> R.string.settings_clock_weather_left
+    ClockSettings.WEATHER_LAYOUT_RIGHT -> R.string.settings_clock_weather_right
+    else -> R.string.settings_clock_weather_auto
 }
