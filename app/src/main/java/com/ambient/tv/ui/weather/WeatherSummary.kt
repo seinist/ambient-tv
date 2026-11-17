@@ -1,5 +1,7 @@
 package com.ambient.tv.ui.weather
 
+import androidx.compose.animation.Crossfade
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -30,6 +32,8 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.tv.material3.Icon
 import androidx.tv.material3.MaterialTheme
@@ -39,6 +43,7 @@ import com.ambient.tv.data.weather.WeatherSnapshot
 import com.ambient.tv.ui.common.AppDialog
 import com.ambient.tv.ui.common.LoginLinkPanel
 import com.ambient.tv.ui.common.rememberWallClock
+import com.ambient.tv.ui.performance.LocalPerformanceProfile
 import com.ambient.tv.ui.theme.LocalUiTokens
 import com.ambient.tv.ui.theme.appControlSurface
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -53,6 +58,8 @@ internal fun weatherIcon(code: Int?, isDay: Boolean = true): ImageVector = when 
     else -> Icons.Filled.Cloud
 }
 
+private data class CompactWeatherVisual(val code: Int?, val isDay: Boolean, val temperature: String)
+
 /** Shared current conditions for the header and the screensaver. The snapshot owns its units. */
 @Composable
 fun WeatherCompactSummary(
@@ -60,6 +67,10 @@ fun WeatherCompactSummary(
     temperatureUnit: String = snapshot.temperatureUnit,
     modifier: Modifier = Modifier,
     textColor: Color? = null,
+    iconColor: Color? = null,
+    animateChanges: Boolean = false,
+    iconSize: Dp = 20.dp,
+    temperatureTextSize: TextUnit? = null,
 ) {
     // A setting change may briefly precede the new-unit response. Never relabel the old value.
     val unit = snapshot.temperatureUnit
@@ -71,10 +82,22 @@ fun WeatherCompactSummary(
     val value = weatherTemperature(current.temperature, unit, locale)
     val description = stringResource(R.string.weather_compact_description, snapshot.location.name, value,
         stringResource(weatherConditionRes(current.weatherCode)))
+    val visual = CompactWeatherVisual(current.weatherCode, current.isDay, value)
+    val temperatureStyle = temperatureTextSize?.let { MaterialTheme.typography.bodyMedium.copy(fontSize = it) }
+        ?: MaterialTheme.typography.bodyMedium
+    val conditions: @Composable (CompactWeatherVisual) -> Unit = { shown ->
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            Icon(weatherIcon(shown.code, shown.isDay), null, Modifier.size(iconSize), tint = iconColor ?: color)
+            Text(shown.temperature, style = temperatureStyle, color = color, maxLines = 1)
+        }
+    }
     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp),
         modifier = modifier.semantics { contentDescription = description }) {
-        Icon(weatherIcon(current.weatherCode, current.isDay), null, Modifier.size(20.dp), tint = color)
-        Text(value, style = MaterialTheme.typography.bodyMedium, color = color, maxLines = 1)
+        if (animateChanges && !LocalPerformanceProfile.current.reducedEffects) {
+            Crossfade(targetState = visual, animationSpec = tween(240), label = "weatherCondition") { shown ->
+                conditions(shown)
+            }
+        } else conditions(visual)
         if (snapshot.isStale(nowMillis) || temperatureUnit != unit) {
             Text(stringResource(R.string.weather_cached), style = MaterialTheme.typography.labelSmall,
                 color = color.copy(alpha = color.alpha * .8f), maxLines = 1)

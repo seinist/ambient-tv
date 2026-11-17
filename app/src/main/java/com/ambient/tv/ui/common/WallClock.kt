@@ -6,6 +6,9 @@ import android.content.Intent
 import android.content.IntentFilter
 import android.text.format.DateFormat
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.Row
@@ -38,6 +41,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.ambient.tv.data.local.ClockSettings
+import com.ambient.tv.ui.mobile.LocalHandheldUi
 import kotlinx.coroutines.delay
 import java.time.LocalDateTime
 import java.time.format.DateTimeFormatter
@@ -109,7 +113,12 @@ fun rememberDateFormatter(style: String): DateTimeFormatter? {
 
 /** Time with the date beneath or beside it, styled by [settings]. */
 @Composable
-fun AmbientClock(settings: ClockSettings, modifier: Modifier = Modifier) {
+fun AmbientClock(
+    settings: ClockSettings,
+    modifier: Modifier = Modifier,
+    /** An integrated second-line accessory shares the date baseline without moving the time. */
+    dateTrailing: (@Composable () -> Unit)? = null,
+) {
     val now by rememberWallClock(settings.seconds)
     val timeFormatter = rememberTimeFormatter(rememberUse24Hour(settings), settings.seconds)
     val dateFormatter = rememberDateFormatter(settings.date)
@@ -137,48 +146,119 @@ fun AmbientClock(settings: ClockSettings, modifier: Modifier = Modifier) {
         else -> TextStyle(shadow = Shadow(Color.Black.copy(alpha = 0.55f), Offset(0f, 2f), 8f))
     }
     val time: @Composable () -> Unit = {
-        if (com.ambient.tv.ui.mobile.LocalHandheldUi.current) {
-            // Large 12-hour clocks with seconds can exceed the space beside a detail
-            // page's two buttons. Fit the actual text without changing the saved size
-            // or increasing that overlay's fixed height. The configured size is the cap.
-            BasicText(
-                text = now.format(timeFormatter),
-                style = LocalTextStyle.current.merge(style).merge(TextStyle(
-                    color = timeColor, fontSize = timeSize, fontWeight = weight, fontFamily = family,
-                )),
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                autoSize = remember(timeSize) {
-                    TextAutoSize.StepBased(minFontSize = 12.sp, maxFontSize = timeSize, stepSize = 0.5.sp)
-                },
-            )
-        } else {
-            Text(now.format(timeFormatter), color = timeColor, fontSize = timeSize, fontWeight = weight,
-                fontFamily = family, maxLines = 1, style = style)
-        }
+        // Text can shrink before a crowded TV header steals space from the action buttons.
+        BasicText(
+            text = now.format(timeFormatter),
+            style = LocalTextStyle.current.merge(style).merge(TextStyle(
+                color = timeColor, fontSize = timeSize, fontWeight = weight, fontFamily = family,
+            )),
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            autoSize = remember(timeSize) {
+                TextAutoSize.StepBased(minFontSize = 12.sp, maxFontSize = timeSize, stepSize = 0.5.sp)
+            },
+        )
     }
     val date: @Composable (Modifier) -> Unit = { dateModifier ->
         if (dateFormatter != null) Text(now.format(dateFormatter), modifier = dateModifier, color = dateColor, fontSize = dateSize,
             fontWeight = FontWeight.Medium, fontFamily = family, maxLines = 1, overflow = TextOverflow.Ellipsis, style = style)
     }
     if (settings.dateBeside) {
-        // Like Kodi: the date leads, the time closes the line at the screen edge.
-        // Keep the time readable in a narrow header; a long date gives up space first.
-        Row(modifier.width(IntrinsicSize.Max), horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
-            date(Modifier.weight(1f, fill = false)); time()
+        // Keep Kodi's date-before-time option; put the integrated weather on its own short line.
+        val dateAndTime: @Composable (Modifier) -> Unit = { rowModifier ->
+            Row(rowModifier.width(IntrinsicSize.Max), horizontalArrangement = Arrangement.spacedBy(12.dp),
+                verticalAlignment = Alignment.CenterVertically) {
+                date(Modifier.weight(1f, fill = false)); time()
+            }
+        }
+        if (dateTrailing == null) dateAndTime(modifier)
+        else Column(modifier, horizontalAlignment = Alignment.End) {
+            dateAndTime(Modifier)
+            dateTrailing()
         }
     } else {
-        Column(modifier, horizontalAlignment = Alignment.End) { time(); date(Modifier) }
+        Column(modifier, horizontalAlignment = Alignment.End) {
+            time()
+            if (dateTrailing != null) {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                    if (dateFormatter != null) date(Modifier.weight(1f, fill = false))
+                    dateTrailing()
+                }
+            } else date(Modifier)
+        }
     }
 }
 
-/** The clock at the right end of a [PageHeader] and floating over the app home. */
+/** Arranges the clock and forecast as one trailing accessory. It never draws over header buttons. */
+@Composable
+fun ClockWeatherDisplay(
+    settings: ClockSettings,
+    showClock: Boolean,
+    showWeather: Boolean,
+    modifier: Modifier = Modifier,
+    weatherContent: @Composable () -> Unit,
+) {
+    if (!showClock && !showWeather) return
+    if (!showWeather) {
+        if (showClock) AmbientClock(settings, modifier)
+        return
+    }
+    if (!showClock) {
+        Box(modifier, contentAlignment = Alignment.TopEnd) { weatherContent() }
+        return
+    }
+    when (settings.resolvedWeatherLayout()) {
+        ClockSettings.WEATHER_LAYOUT_INTEGRATED ->
+            AmbientClock(settings, modifier, dateTrailing = weatherContent)
+        ClockSettings.WEATHER_LAYOUT_LEFT, ClockSettings.WEATHER_LAYOUT_RIGHT -> {
+            val left = settings.weatherLayout == ClockSettings.WEATHER_LAYOUT_LEFT
+            Row(modifier, horizontalArrangement = Arrangement.spacedBy(10.dp),
+                verticalAlignment = Alignment.CenterVertically) {
+                if (left) weatherContent()
+                AmbientClock(settings, Modifier.weight(1f, fill = false))
+                if (!left) weatherContent()
+            }
+        }
+        ClockSettings.WEATHER_LAYOUT_ABOVE -> Column(modifier, horizontalAlignment = Alignment.End,
+            verticalArrangement = Arrangement.spacedBy(3.dp)) {
+            weatherContent()
+            AmbientClock(settings)
+        }
+        else -> Column(modifier, horizontalAlignment = Alignment.End,
+            verticalArrangement = Arrangement.spacedBy(3.dp)) {
+            AmbientClock(settings)
+            weatherContent()
+        }
+    }
+}
+
+/** Bounded right-side widget for headers, Home and settings. The left-side actions keep their space. */
 @Composable
 fun HeaderClock(modifier: Modifier = Modifier, showClock: Boolean = LocalClockSettings.current.inHeader) {
-    val weather = com.ambient.tv.ui.weather.LocalWeatherPresentation.current.header
-    if (!showClock && weather == null) return
-    Row(modifier.padding(start = 18.dp), horizontalArrangement = Arrangement.spacedBy(18.dp), verticalAlignment = Alignment.Top) {
-        weather?.let { com.ambient.tv.ui.weather.WeatherCompactSummary(snapshot = it) }
-        if (showClock) AmbientClock(LocalClockSettings.current)
+    val presentation = com.ambient.tv.ui.weather.LocalWeatherPresentation.current
+    val weather = presentation.header
+    val showWeather = presentation.hasHeader
+    if (!showClock && !showWeather) return
+    val settings = LocalClockSettings.current
+    // A long date or a horizontal weather layout must yield to navigation and search actions.
+    val maxWidth = if (LocalHandheldUi.current) {
+        (LocalConfiguration.current.screenWidthDp - 64).coerceIn(140, 290).dp
+    } else 320.dp
+    val opacity = settings.opacityPercent / 100f
+    val weatherText = Color.White.copy(alpha = 0.86f * opacity)
+    val weatherIcon = if (settings.weatherAccent) MaterialTheme.colorScheme.primary.copy(alpha = opacity)
+        else weatherText
+    Box(modifier.padding(start = 12.dp).widthIn(max = maxWidth), contentAlignment = Alignment.TopEnd) {
+        ClockWeatherDisplay(settings, showClock, showWeather, Modifier.widthIn(max = maxWidth)) {
+            // Reserve the same weather slot for a pending forecast; no data is fetched here.
+            Box(Modifier.widthIn(min = 82.dp).heightIn(min = 24.dp), contentAlignment = Alignment.CenterEnd) {
+                weather?.let {
+                    com.ambient.tv.ui.weather.WeatherCompactSummary(
+                        snapshot = it, textColor = weatherText, iconColor = weatherIcon,
+                        animateChanges = settings.weatherTransitions,
+                    )
+                }
+            }
+        }
     }
 }
