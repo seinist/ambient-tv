@@ -51,7 +51,8 @@ Ambient TV ist eine APK mit zwei Oberflächen: eine D-Pad-Oberfläche mit Seiten
 | TVHeadend | Live-TV, Programmführer, Aufnahmen, Timer, eigene Player-Wahl, Deinterlacing | Alle |
 | IPTV | M3U-Wiedergabelisten, XMLTV-Programmführer, Sendergruppen, Live-Player | Alle |
 | SmartTube | YouTube-Bereiche, Anmeldung per Gerätecode, SponsorBlock, „Auf dem Fernseher ansehen“ | Alle |
-| Monogram (optionaler GPL-/MTProto-Build) | Telegram-Kanalmedien, vollständige Beitragstexte, sechs Home-Reihen, YouTube-Links via SmartTube, Anmeldung per TV-QR oder Telefoncode/2FA | Alle |
+| Radio (Radio Browser) | Internetradio, Genres/Länder/Sprachen, Favoriten, Verlauf und Suche, gemeinsamer Audioplayer | Alle |
+| Monogram (Telegram; GPL-3.0-only) | Telegram-Kanalmedien, vollständige Beitragstexte, sechs Home-Reihen, YouTube-Links via SmartTube, Anmeldung per TV-QR oder Telefoncode/2FA | Alle |
 | Trailer | TMDB-Trailer und Reihe „Jetzt im Kino“; braucht einen eigenen TMDB-Schlüssel | Alle |
 | DLNA | UPnP-/DLNA-Medienserver im LAN durchsuchen | Alle |
 | Dateien | Lokale/USB-Ordner, SMB-1/2/3- und NFSv3/v4-Freigaben, Favoriten, zuletzt geöffnet, Weiterschauen | Alle |
@@ -62,6 +63,8 @@ Ambient TV ist eine APK mit zwei Oberflächen: eine D-Pad-Oberfläche mit Seiten
 
 Gemeinsame Bausteine: globale Suche über alle aktiven Systeme, Miniplayer, Hintergrundwiedergabe, Bildschirmschoner, Benachrichtigungskarten mit Verlauf, Einstellungs-Backup, Oberfläche auf Deutsch oder Englisch.
 
+**Spotify ist derzeit deaktiviert:** Spotify stellt dem von Ambient TV verwendeten librespot-Wiedergabekern keine funktionierenden Audioschlüssel mehr bereit. Die Wiedergabe funktioniert deshalb nicht; in regulären Builds wird Spotify ausgeblendet. Android Auto bietet stattdessen die unterstützten Audioquellen.
+
 ---
 
 ## 2. Aufbau der Einstellungen und Speichern
@@ -70,8 +73,8 @@ Die Einstellungen haben fünf Bereiche. Jeder Bereich listet seine Seiten; die S
 
 | Bereich | Seiten |
 | --- | --- |
-| **Oberfläche & Bedienung** | Startseiten-Reihen · Beim Auswählen eines Mediums · Sprache · Mediathek · Aussehen · Hintergrundvideo · Bildschirmschoner · Menütöne · Uhr |
-| **Medienquellen & Konten** | Plex · Jellyfin · Emby · TVHeadend · IPTV · SmartTube · Monogram (optionaler Build) · Trailer · DLNA · Dateien (eingerichtete Systeme zuerst, dann „hinzufügen“) |
+| **Oberfläche & Bedienung** | Startseiten-Reihen · Beim Auswählen eines Mediums · Sprache · Mediathek · Aussehen · Hintergrundvideo · Bildschirmschoner · Menütöne · Uhr · Wetter |
+| **Medienquellen & Konten** | Plex · Jellyfin · Emby · TVHeadend · IPTV · SmartTube · Radio · Monogram · Trailer · DLNA · Dateien (eingerichtete Systeme zuerst, dann „hinzufügen“) |
 | **Geräte & Netzwerk** | Handy & Geräte · UPnP-Receiver · WireGuard / VPN · Server & Wake-on-LAN |
 | **Wiedergabe** | Standard-Player · Untertitel · Intros, Abspann und nächste Folge · Spulen & Fortsetzen · Bildprofile · Audioprofile · Audio-Visualisierung · Fotos |
 | **App & Daten** | Benachrichtigungen · Accounts und Einstellungen übertragen · Einstellungen sichern · Diagnose · Über die App |
@@ -96,7 +99,7 @@ Jede Seite eines Mediensystems hat zusätzlich:
 | Einstellung | Optionen / Werte | Standard | Geräte | Beschreibung |
 | --- | --- | --- | --- | --- |
 | Startseite gestalten | Reihen anzeigen, verschieben, entfernen | Plex: Weiterschauen, Kürzlich hinzugefügt, Sammlungen; TVHeadend: Live-TV | Alle | Reihen-Editor für die Startseite der App. |
-| Reihe hinzufügen | Weiterschauen · Alle Systeme; je System: Weiterschauen, Kürzlich hinzugefügt, Sammlungen, Bibliotheken; Zuletzt gesehene TV-Sender; TVHeadend Live-TV / Programm / Aufnahmen / Timer; SmartTube Startseite / Abos / Verlauf / Playlists / Shorts / Musik / News / Gaming / Live / Kids; Monogram Neue Medien / Kanäle / Videos / YouTube-Links / Musik und Audio (optional); Trailer / Jetzt im Kino; Zuletzt hinzugefügte Fotos; Top im Genre; Direktzugänge zu Systembereichen | — | Alle | Inhaltsreihen oder Direktzugänge zu einem Bereich eines Systems. |
+| Reihe hinzufügen | Weiterschauen · Alle Systeme; je System: Weiterschauen, Kürzlich hinzugefügt, Sammlungen, Bibliotheken; Zuletzt gesehene TV-Sender; TVHeadend Live-TV / Programm / Aufnahmen / Timer; SmartTube Startseite / Abos / Verlauf / Playlists / Shorts / Musik / News / Gaming / Live / Kids; Monogram Neue Medien / Kanäle / Videos / YouTube-Links / Musik und Audio / Fotos; Radio-Verknüpfung; Trailer / Jetzt im Kino; Zuletzt hinzugefügte Fotos; Top im Genre; Direktzugänge zu Systembereichen | — | Alle | Inhaltsreihen oder Direktzugänge zu einem Bereich eines Systems. |
 | Systeme in „Weiterschauen · Alle Systeme“ | Plex, Jellyfin, Emby | Alle an | Alle | Welche Server die gemeinsame Reihe füllen. Sichtbar, wenn diese Reihe auf der Startseite liegt. |
 | Auf dem Startbildschirm zeigen | An / Aus | An | TV | Watch Next sowie die Kanäle „Weiterschauen“ und „Kürzlich hinzugefügt“ im Android-TV-Launcher. Sichtbar, wenn der Launcher es unterstützt. |
 | TV-Senderverlauf löschen | Aktion | — | Alle | Die Reihe der zuletzt gesehenen Sender speichert bis zu 12 Sender auf dem Gerät; nicht im Backup. |
@@ -145,6 +148,7 @@ Beim Ändern von Filtern, Sortierung oder Ansicht bleibt der Fokus auf dem bearb
 | --- | --- | --- | --- | --- |
 | Design | Dunkel · OLED Schwarz · Gedimmt | Dunkel | Alle | Theme. Live-Vorschau oben. |
 | Oberflächengröße | Regler 50–150 % | 100 %; am TV 90 % bei 1440p und 70 % bei 4K | Alle | Größe von Texten, Karten und Bedienelementen. Der TV-Standard wird einmal anhand der Display-Auflösung gesetzt. |
+| Auflösung der Oberfläche | Systemvorgabe · 1080p · Display-Auflösung | Systemvorgabe | TV (ab Android 12) | Steuert die UI-Auflösung **unabhängig von der Videoauflösung**. Gilt ab dem nächsten App-Start. HDR-Oberfläche benötigt die Systemvorgabe. |
 | Accent-Darstellung | Satin / Metallic · Glass · Soft Glow · Pearl · Keramik · Chrom · Facette · Light | Satin / Metallic | Alle | Materialwirkung für Fokusrahmen, Chips, Buttons, Artwork-Badges, Poster-Overlays, Wiedergabefortschritt und Scrollbars. Die Materialien sind standardmäßig statisch. Keramik zeigt eine feine Lichtkante, Chrom einen polierten Reflex und Facette kantige Lichtflächen. Die Vorschau enthält eine Beispielkarte und beide Akzentfarben. Light bleibt einfarbig; Sparsam lässt zusätzliche Glow-Lagen weg. |
 | Accent-Animationen | Aus · Bei Fokus · Ambient | Aus | Alle | Optionale Bewegung für alle acht Accent-Stile, nur bei ausdrücklich maximaler Oberflächenleistung aktiv. Bei Fokus zeigt einen kurzen Materialeffekt, sobald der Fokus ruht oder die Wiedergabeleiste geöffnet wird; Ambient ergänzt ruhige Wiederholungen mit längeren Pausen auf aktiven Elementen. Andere Leistungsprofile behalten die Auswahl und zeigen statische Materialien. Die Live-Vorschau berücksichtigt dieselbe Leistungsgrenze. |
 | Akzentfarbe | Gold, Orange, Blau, Türkis, Grün, Violett, Pink, Rot, Artwork, Benutzerdefiniert | Gold | Alle | Artwork färbt Detailseiten nach dem Cover, sonst Gold. Benutzerdefiniert öffnet einen Farbwähler (Standard `#E5A00D`). |
@@ -226,6 +230,8 @@ Uhrzeit und Datum in den Seiten-Kopfzeilen einschließlich Detailseiten, auf der
 | Deckkraft | 40–100 % | 92 % | |
 | Schatten | Aus · Weich · Kräftig | Weich | |
 | Endzeit im Player | An / Aus | An | Zeigt „Endet um …“ neben der Restzeit. |
+
+Auf Home bilden Uhr und optionales Wetter eine gemeinsam ausgerichtete Kopfzeilengruppe. Bei ausgeschaltetem Wetter oder einem vorübergehend nicht erreichbaren Wetterdienst bleibt die Uhr sichtbar und korrekt positioniert, ohne Wetter-Platzhalter.
 
 Die Uhr-Einstellungen sind Teil der Einstellungssicherung; ältere Sicherungen übernehmen ihren bisherigen 24-Stunden-Schalter.
 
@@ -335,6 +341,16 @@ Reine Kanallisten bieten passende Sortierungen (Anbieterreihenfolge oder Titel),
 Die Kennzeichnung **Neue Videos** auf einer Kanalkarte zeigt an, dass YouTube/SmartTube für dieses Abo neue Inhalte meldet. Sie ist kein Online- oder Live-Status des Kanals. Laufende und geplante Live-Videos haben ihre eigene Kennzeichnung am jeweiligen Video.
 
 
+### 4.5 Radio (Radio Browser)
+
+**Radio** ist das eingebaute Internetradiosystem von Ambient TV auf Basis von [Radio Browser](https://www.radio-browser.info/). Unter *Medienquellen & Konten* lässt es sich ohne Server, Benutzerkonto oder API-Schlüssel aktivieren – auch als einziges Mediensystem.
+
+- **Beliebt**, **Favoriten**, **Zuletzt gehört**, **Genres**, **Länder** und **Sprachen** bieten durchsuchbare Senderlisten mit Seitenabruf, A–Z-Leiste und Fernbedienungs-/Touch-Navigation.
+- Sender sind über die Radio-Ansicht und die globale Suche auffindbar. Name, Logo, Land, Codec und Bitrate erscheinen, soweit verfügbar. Favoriten verwenden stabile Senderkennungen; der Hörverlauf bleibt lokal.
+- Die Wiedergabe nutzt den gemeinsamen **Audio-Player und das OSD** mit Hintergrundwiedergabe, Live-Metadaten, Vor/Zurück für die aktuelle Liste und begrenzten Wiederverbindungsversuchen. Live-Radio bietet keine spulbare Zeitleiste.
+- Sender- und Kategorienlisten werden zwischengespeichert. Gespeicherte Favoriten bleiben bei Katalogausfall sichtbar; für den Ton wird weiterhin ein erreichbarer Stream benötigt.
+- Aktivierung und Favoriten werden gesichert. Android Auto bietet Radiofavoriten, Verlauf, beliebte Sender und Kategorien. Siehe [technische Radio-Notizen](RADIO_BROWSER_INTEGRATION.md).
+
 ### 4.6 Trailer
 
 | Einstellung | Optionen / Werte | Standard | Beschreibung |
@@ -376,9 +392,9 @@ Einstellungen › Systeme & Konten › **IPTV**: beliebig viele M3U-Wiedergabeli
 
 ---
 
-### 4.11 Monogram (Telegram-Medien; optionaler nativer Build)
+### 4.11 Monogram (Telegram-Medien)
 
-**Verfügbarkeit:** `./build.sh release` enthält die gepinnte native MTProto-Bibliothek unter GPL-3.0-only. Debug- und Einzel-ABI-APKs enthalten sie nicht, außer mit `MONOGRAM_NATIVE=1`. Anleitung im [README](../README.de.md#monogram-einrichten-optionale-telegram-medien) und in der [technischen Doku](monogram-integration.md). Die Native-ABIs, Renderer und Gerätetests sind noch nicht vollständig verifiziert.
+**Verfügbarkeit:** Monogram ist in regulären Release-APKs enthalten, muss aber mit eigenen Telegram-API-Zugangsdaten aktiviert werden. Entwickler-/Debug-Builds können es auslassen. Die Integration steht unter GPL-3.0-only; siehe [Einrichtung](../README.de.md#monogram-einrichten-optionale-telegram-medien) und [technische Integrationsdoku](monogram-integration.md). Die drei Renderer benötigen weiterhin geräteabhängige Tests.
 
 | Einstellung | Optionen / Werte | Standard | Geräte | Beschreibung |
 | --- | --- | --- | --- | --- |
@@ -433,6 +449,12 @@ Für alle Systeme gemeinsam, am Ende der Seite:
 | Einstellung | Optionen / Werte | Standard | Beschreibung |
 | --- | --- | --- | --- |
 | Wake-on-LAN-Wiederholungen | Aus · 1× · 2× · 3× · 5× | 2× | Antwortet der Server nach Ablauf der Wartezeit nicht, werden neue Pakete gesendet und erneut gewartet, höchstens so oft. Gilt für Plex, Jellyfin, Emby, TVHeadend, NAS-Quellen (SMB, NFS, WebDAV, SFTP; jeder Durchgang nutzt die Wartezeit der Quelle) und DLNA; die kurze Prüfung beim Zurückkehren in die App wird nie wiederholt. |
+
+### 5.4 Android Auto (Audio)
+
+Auf unterstützten Android-Auto-Geräten erscheint Ambient TV als **Audiobrowser** in der normalen, fahrergerechten Bedienoberfläche. Verfügbar sind Radio Browser (Favoriten, Verlauf und Kategorien), konfigurierte **Radiosender** aus IPTV/TVHeadend, Musikbibliotheken aus Plex/Jellyfin/Emby, DLNA-Audio und lokale/SMB-/NAS-Audiodateien. Durchsuchen und Sprachsuche hängen von der Unterstützung des Auto-Hosts ab. Titelinformationen, Vor/Zurück und Benachrichtigungen nutzen die gemeinsame Mediensitzung.
+
+**Videos und reine TV-Sender werden in Android Auto nicht angeboten.** Eine eigene Videooberfläche für die Fahrt gibt es nicht. Siehe [Android-Auto-Integration](ANDROID_AUTO_AUDIO.md).
 
 ---
 
@@ -908,9 +930,10 @@ Dateisicherung und Companion-Übertragung verwenden dieselben gespeicherten Eins
 | Einstellungen | Dateisicherung | Einstellungen teilen |
 |---|---|---|
 | Wetter-Orte, Einheiten, Radar-/Satellitendienste und Anzeige in Menü, Kopfzeile und Bildschirmschoner | Enthalten | Im Modus Einstellungen bzw. Konten und Einstellungen |
+| Radio-Aktivierung und Favoriten (Hörverlauf bleibt auf dem Gerät) | Enthalten | Im Modus Einstellungen bzw. Konten und Einstellungen |
 | Akzentstile und Bewegung, Uhr, Untertiteldarstellung, OSD, Home-Layout, Einstellungsstufe und Filterleiste | Enthalten | Im Modus Einstellungen bzw. Konten und Einstellungen |
 | Quellen der gemeinsamen Fortsetzen-Reihe, Gesehen-/Fortsetzen-Grenzen, lückenlose Musikwiedergabe, Liedtexte, Handy-PiP und Launcher-Integration | Enthalten | Im Modus Einstellungen bzw. Konten und Einstellungen |
-| ProjectM-Presetnamen, Zufallsauswahl und Favoriten eingebauter Presets; Spotify-Bitrate und Visualisierung | Enthalten | Im Modus Einstellungen bzw. Konten und Einstellungen |
+| ProjectM-Presetnamen, Zufallsauswahl und Favoriten eingebauter Presets | Enthalten | Im Modus Einstellungen bzw. Konten und Einstellungen |
 | Automatisches Umschalten bei TV-Erinnerungen und automatische Update-Prüfung | Enthalten | Im Modus Einstellungen bzw. Konten und Einstellungen |
 | UI-Auflösung, Bildcache-Größe und 1080p-Bildbegrenzung; gerätespezifische Bild-/Ton-/Player-Werte | Enthalten | Nur bei ausgewählten Geräteeinstellungen |
 | Gesonderter HTSP-Port von TVHeadend | Enthalten | Mit dem ausgewählten TVHeadend-Konto |

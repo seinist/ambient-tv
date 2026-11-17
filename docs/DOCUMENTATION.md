@@ -51,7 +51,8 @@ Ambient TV is one APK with two interfaces: a D-pad UI with a sidebar for Android
 | TVHeadend | Live TV, guide, recordings, timers, own player choice, deinterlacing | All |
 | IPTV | M3U playlists, XMLTV guide, channel groups, live player | All |
 | SmartTube | YouTube feeds, sign-in by device code, SponsorBlock, "Watch on TV" phone link | All |
-| Monogram (optional GPL/MTProto build) | Telegram channel media, full post captions, six Home rows, YouTube links via SmartTube; TV QR or phone code/2FA login | All |
+| Radio (Radio Browser) | Internet radio, genre/country/language categories, favorites, history and search, shared audio-only player | All |
+| Monogram (Telegram; GPL-3.0-only) | Telegram channel media, full post captions, six Home rows, YouTube links via SmartTube; TV QR or phone code/2FA login | All |
 | Trailers | TMDB trailers and a "Now in cinemas" row; needs your own TMDB key | All |
 | DLNA | Browse UPnP/DLNA media servers on the LAN | All |
 | Files | Local/USB folders, SMB 1/2/3, NFSv3/v4, WebDAV and SFTP sources, favorites, recently opened, continue watching | All |
@@ -60,7 +61,9 @@ Ambient TV is one APK with two interfaces: a D-pad UI with a sidebar for Android
 | Companion | Pair a phone with a TV: remote control, send playback, transfer accounts | Phone ↔ TV |
 | WireGuard | Built-in tunnel, switchable per media system | All |
 
-Shared building blocks: global search across enabled systems, mini-player, background playback, screensaver, notification cards with history, settings backup, UI in English or German.
+Shared building blocks: global search across enabled systems, mini-player, background playback, screensaver, notification cards with history, settings backup, UI in English or German. Android Auto exposes supported audio sources through its standard media browser.
+
+**Spotify is currently disabled:** Spotify no longer provides working audio keys to the librespot playback backend used by Ambient TV. Playback therefore does not work, and Spotify is hidden in regular builds.
 
 ---
 
@@ -70,8 +73,8 @@ Settings has five areas. Each area lists its pages; the settings search finds pa
 
 | Area | Pages |
 | --- | --- |
-| **Interface & controls** | Home rows · When selecting media · Language · Library · Look & feel · Background video · Screensaver · Menu sounds · Clock |
-| **Media sources & accounts** | Plex · Jellyfin · Emby · TVHeadend · IPTV · SmartTube · Monogram (opt-in build) · Trailers · DLNA · Files (configured systems first, then "add" entries) |
+| **Interface & controls** | Home rows · When selecting media · Language · Library · Look & feel · Background video · Screensaver · Menu sounds · Clock · Weather |
+| **Media sources & accounts** | Plex · Jellyfin · Emby · TVHeadend · IPTV · SmartTube · Radio · Monogram · Trailers · DLNA · Files (configured systems first, then "add" entries) |
 | **Devices & network** | Phone & devices · UPnP receiver · WireGuard / VPN · Servers & Wake-on-LAN |
 | **Playback** | Default player · Subtitles · Intros, credits & next up · Seek & resume · Picture profiles · Audio profiles · Audio visualization · Photos |
 | **App & data** | Notifications · Transfer accounts and settings · Settings backup · Diagnostics · About this app |
@@ -96,7 +99,7 @@ Every media system page also has:
 | Setting | Options / values | Default | Devices | Description |
 | --- | --- | --- | --- | --- |
 | Customize Home | Show, reorder, remove rows | Plex: Continue watching, Recently added, Collections; TVHeadend: Live TV | All | Row editor for the app's Home. |
-| Add a row | Continue watching · All systems; per system: Continue watching, Recently added, Collections, Libraries; Recently watched TV channels; TVHeadend Live TV / Guide / Recordings / Timers; SmartTube Home / Subscriptions / History / Playlists / Shorts / Music / News / Gaming / Live / Kids; Monogram Recent media / Channels / Videos / YouTube links / Music & audio (opt-in); Trailers / Now in cinemas; Recently added photos; Top in genre; shortcuts to system sections | — | All | Content rows or shortcuts to a section of a system. |
+| Add a row | Continue watching · All systems; per system: Continue watching, Recently added, Collections, Libraries; Recently watched TV channels; TVHeadend Live TV / Guide / Recordings / Timers; SmartTube Home / Subscriptions / History / Playlists / Shorts / Music / News / Gaming / Live / Kids; Monogram Recent media / Channels / Videos / YouTube links / Music & audio / Photos; Radio shortcut; Trailers / Now in cinemas; Recently added photos; Top in genre; shortcuts to system sections | — | All | Content rows or shortcuts to a section of a system. |
 | Systems in "Continue watching · All systems" | Plex, Jellyfin, Emby | All on | All | Which servers feed the combined row. Shown when that row is on Home. |
 | Show on the home screen | On / Off | On | TV | Watch Next plus the channels "Continue watching" and "Recently added" on the Android TV launcher. Shown when the launcher supports it. |
 | Clear TV channel history | Action | — | All | The recent-channels row keeps up to 12 channels on this device; not in backups. |
@@ -145,6 +148,7 @@ Changing filters, sort or layout keeps focus on the control being edited while r
 | --- | --- | --- | --- | --- |
 | Appearance | Dark · OLED black · Dim | Dark | All | Theme. Live preview at the top. |
 | Interface size | Slider 50–150 % | 100 %; on TVs 90 % at 1440p and 70 % at 4K | All | Size of text, cards and controls. The TV default is set once from the display resolution. |
+| Interface resolution | System default · 1080p · Display resolution | System default | TV (Android 12+) | Controls UI rendering **independently from video resolution**. Applies on next app start. UI HDR requires System default. |
 | Accent style | Satin / Metallic · Glass · Soft Glow · Pearl · Ceramic · Chrome · Facet · Light | Satin / Metallic | All | Material treatment for focused cards, chips, buttons, artwork badges, poster overlays, playback progress and scrollbars. Materials are static by default. Ceramic has a subtle light edge, Chrome a polished reflection, and Facet angular light planes. The preview includes a sample card and both accent roles. Light stays solid; low UI performance removes extra glow layers. |
 | Accent animations | Off · On focus · Ambient | Off | All | Optional motion for all eight accent styles, active only when interface performance is explicitly Maximum. On focus plays one subtle material effect after focus settles or when the playback bar opens; Ambient adds gentle repetitions with longer pauses on active elements. Other performance profiles keep the saved choice but render static materials. The live sample uses the same performance gate. |
 | Accent color | Gold, Orange, Blue, Teal, Green, Purple, Pink, Red, Artwork, Custom | Gold | All | Artwork tints detail pages from the cover; elsewhere gold. Custom opens a color picker (default `#E5A00D`). |
@@ -226,6 +230,8 @@ Time and date in page headers including detail pages, on Home and in the player,
 | Opacity | 40–100 % | 92 % | |
 | Shadow | Off · Soft · Strong | Soft | |
 | End time in the player | On / Off | On | Shows "Ends at …" next to the remaining time. |
+
+On Home, the clock and optional weather form one aligned header group. If weather is turned off or temporarily unavailable, the clock remains visible and correctly positioned without a weather placeholder.
 
 The clock settings are part of the settings backup; older backups take over their former 24-hour switch.
 
@@ -337,6 +343,16 @@ Channel directories offer channel-appropriate sorting (provider order or title),
 The **New videos** label on a channel card means YouTube/SmartTube reports new content for that subscription. It is not an online or live status for the channel. Running and scheduled live videos have their own labels on the individual video.
 
 
+### 4.5 Radio (Radio Browser)
+
+Radio is Ambient TV's built-in internet-radio system, powered by [Radio Browser](https://www.radio-browser.info/). Enable **Radio** under *Media sources & accounts*: no server, account or API key is needed. Radio can be the only configured media system.
+
+- Browse **Popular**, **Favorites**, **Recently played**, **Genres**, **Countries** and **Languages**, with paged station lists, A–Z browsing and remote/touch navigation.
+- Find stations on the Radio page or in global search. Station names, logos, country, codec and bitrate appear when provided by the catalog. Favorites use stable station IDs; listening history remains device-local.
+- Playback uses the shared audio-only player/OSD and background media session, with live metadata, previous/next for the active list and bounded reconnect attempts. Live radio has no seekable timeline.
+- Station lists and categories are cached and revalidated as necessary. Saved favorites remain visible if the catalog is unavailable; playback still requires a reachable audio stream.
+- Radio activation and favorites are included in settings backups. Android Auto supports Radio favorites, recent, popular and category browsing. See the [Radio implementation notes](RADIO_BROWSER_INTEGRATION.md).
+
 ### 4.6 Trailers
 
 | Setting | Options / values | Default | Description |
@@ -378,9 +394,9 @@ Settings › Systems & accounts › **IPTV**: any number of M3U playlists (http/
 
 ---
 
-### 4.11 Monogram (Telegram media; optional native build)
+### 4.11 Monogram (Telegram media)
 
-**Availability:** `./build.sh release` ships the pinned GPL-3.0-only native MTProto module. Debug and single-ABI APKs do not, unless built with `MONOGRAM_NATIVE=1`. See the [README setup guide](../README.md#monogram-setup-optional-telegram-media-integration) and [native build notes](monogram-integration.md). Native ABI, renderer and device testing is still in progress.
+**Availability:** Monogram is included in regular release APKs but needs your own Telegram API credentials and activation. Developer/debug builds may omit it. This is GPL-3.0-only; see the [setup guide](../README.md#monogram-setup-optional-telegram-media-integration) and [technical integration notes](monogram-integration.md). Device tests of all three renderers are still needed.
 
 | Setting | Options / values | Default | Devices | Description |
 | --- | --- | --- | --- | --- |
@@ -435,6 +451,12 @@ For all systems together, at the end of the page:
 | Setting | Options / values | Default | Description |
 | --- | --- | --- | --- |
 | Wake-on-LAN retries | Off · 1× · 2× · 3× · 5× | 2× | If the server has not answered when the wait time runs out, new packets are sent and the wait starts again, at most this many times. Applies to Plex, Jellyfin, Emby, TVHeadend, NAS sources (SMB, NFS, WebDAV, SFTP; each cycle uses the source's own wait time) and DLNA; the quick check when the app returns is never repeated. |
+
+### 5.4 Android Auto (audio)
+
+On supported Android Auto hosts, Ambient TV is an **audio media browser** using the standard driver-safe car interface. It includes Radio Browser (favorites, recent, popular and categories), configured IPTV/TVHeadend **radio** channels, Plex/Jellyfin/Emby music libraries, DLNA audio and local/SMB/NAS audio files. Browsing and voice search are available where supported by the host. Previous/next, playback metadata and notifications use the shared media session.
+
+**Video titles and TV-only channels are not exposed in Android Auto.** There is no custom driving-time video UI. See the [Android Auto integration notes](ANDROID_AUTO_AUDIO.md).
 
 ---
 
@@ -800,7 +822,7 @@ On TV, **Details** or **Connection status** in the sidebar opens the device over
 | Local network permission | Android may ask for local servers, SMB/NFS, WOL, UPnP receiver |
 | Camera | Only for "Scan QR code" during phone pairing |
 
-On first launch a setup screen offers Plex, Jellyfin, Emby, TVHeadend, SmartTube (with or without sign-in) and Files. More systems can be added later under *Media sources & accounts*. Plex, Jellyfin, Emby and TVHeadend appear in menu, Home and search only after the server accepted address and sign-in; a later HTTP 401 hides the system until a sign-in succeeds again.
+On first launch a setup screen offers Plex, Jellyfin, Emby, TVHeadend, SmartTube (with or without sign-in) and Files. Radio can be enabled later without a login. More systems can be added later under *Media sources & accounts*. Plex, Jellyfin, Emby and TVHeadend appear in menu, Home and search only after the server accepted address and sign-in; a later HTTP 401 hides the system until a sign-in succeeds again.
 
 ---
 
@@ -912,9 +934,10 @@ The same saved configuration supplies file backups and Companion transfers. The 
 | Settings | File backup | Share settings |
 |---|---|---|
 | Weather locations, units, radar/satellite providers, sidebar/header/screensaver display | Included | Included in preferences/settings mode |
+| Radio activation and favorites (recent listening remains local) | Included | Included in preferences/settings mode |
 | Accent styles and motion, clock, subtitle appearance, OSD, Home layout, settings level, browse filter bar | Included | Included in preferences/settings mode |
 | Continue-watching sources, watched/resume thresholds, gapless music, lyrics, phone auto-PiP, launcher integration | Included | Included in preferences/settings mode |
-| ProjectM preset names, shuffle and favorite bundled presets; Spotify bitrate and visualization | Included | Included in preferences/settings mode |
+| ProjectM preset names, shuffle and favorite bundled presets | Included | Included in preferences/settings mode |
 | Live-TV reminder automatic switching and automatic update checking | Included | Included in preferences/settings mode |
 | UI resolution, image-cache budget and 1080p card-image limit; display/audio/player tuning | Included | Only with device settings selected |
 | TVHeadend's separate HTSP port | Included | With the selected TVHeadend account |
