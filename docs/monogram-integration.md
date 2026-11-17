@@ -106,9 +106,9 @@ an arbitrary commit. Upstream publishes every release as a *pre-release*
 
 | Key | Value | Meaning |
 |---|---|---|
-| `MONOGRAM_VERSION` | `0.4.3` | Upstream release tag (published 2026-11-01, pre-release; the tag has no `v` prefix) |
-| `MONOGRAM_REF` | `04ce208ed1cd49067226f3f28e4adef47f779114` | Commit the tag pointed to when reviewed |
-| `MONOGRAM_MONO_RS_REF` | `0bc5195bf004d7fec8038626edf680c5edbdb906` | `vendor/mono-rs` submodule commit at that tag |
+| `MONOGRAM_VERSION` | `0.5.0` | Upstream release tag (tag commit dated 2026-11-15, pre-release; the tag has no `v` prefix) |
+| `MONOGRAM_REF` | `712b1d1718ac9ca65ce46a56911bfe7cb99ac0f0` | Commit the tag pointed to when reviewed |
+| `MONOGRAM_MONO_RS_REF` | `ccb2ea4606e1d90c173a7f1dbe5a66e0fd0a9a72` | `vendor/mono-rs` submodule commit at that tag |
 
 `scripts/build_monogram_native.sh` fetches only the tag, and fails if the tag
 no longer points to `MONOGRAM_REF` or the submodule is not at
@@ -120,10 +120,12 @@ rustls version together with the other managed libraries. `./build.sh libs-updat
 writes that pin. `monogram-check` and `monogram-update` do the same for Monogram
 only.
 
-The previous pin, commit `075cca21`, differs from release 0.4.3 only in
-upstream `app/build.gradle.kts` (version 0.4.2 → 0.4.3); `native/` and the
-mono-rs submodule are identical, so `scripts/patch_monogram_leave.py` applies
-unchanged.
+Release 0.5.0 (previous pin 0.4.3) changes `native/` and mono-rs substantially.
+It adds an upstream media-filtered `search_global_filtered` and reformats the
+Kotlin adapter, so `scripts/patch_monogram_leave.py` was re-anchored (see
+[Filtered global search](#filtered-global-search)). `scripts/build_monogram_native.sh`
+force-resets the mono-rs submodule, because the previous build's patched files
+otherwise block switching it to a new pinned commit.
 
 External pins are in `gradle/external-versions.properties`. `./build.sh libs-check`
 and `./build.sh libs-update` include the Monogram release pin with the other
@@ -215,9 +217,12 @@ invalidation and all four ABIs on real devices before marking the PR ready.
 
 ### Filtered global search
 
-The same script adds `search_global_filtered`: Telegram's `messages.searchGlobal`
-with a media filter (videos, music, URLs) and `broadcasts_only`, which upstream
-always sends with an empty filter. The Videos, YouTube and Music categories load
+The same script exports `search_global_filtered` to Kotlin: Telegram's
+`messages.searchGlobal` with a media filter (videos, music, URLs) and
+`broadcasts_only`. Since 0.5.0 upstream mono-rs has its own media-filtered
+`search_global_filtered` (with a folder, but no channels-only scope), so the patch
+adds `search_global_channels` in mono-rs on top of upstream's request builder and
+routes the UniFFI export through it; the Kotlin signature is unchanged. The Videos, YouTube and Music categories load
 one global page per request instead of one `messages.search` per channel, which
 ran into FLOOD_WAIT on a first load without cache. If Telegram rejects the empty
 query with a filter, the app falls back to the per-channel search.

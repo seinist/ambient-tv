@@ -59,7 +59,9 @@ submodule_commit="$(git -C "$source_dir" ls-tree HEAD vendor/mono-rs | awk '{pri
     { echo "Monogram $version pins mono-rs $submodule_commit, not the reviewed $mono_rs_ref" >&2; exit 1; }
 # Only mono-rs is required after the pinned Ambient TV media-only Rust patch.
 # Do not fetch the huge tlottie submodule for sticker animations we do not ship.
-git -C "$source_dir" submodule update --init --recursive vendor/mono-rs
+# --force discards the previous build's patch_monogram_leave.py edits, which otherwise
+# block switching mono-rs to a new pinned commit; the patch is re-applied below.
+git -C "$source_dir" submodule update --init --force --recursive vendor/mono-rs
 [[ "$(git -C "$source_dir/vendor/mono-rs" rev-parse HEAD)" == "$mono_rs_ref" ]] ||
     { echo "mono-rs checkout is not at the pinned commit" >&2; exit 1; }
 python3 "$patch_script" "$source_dir"

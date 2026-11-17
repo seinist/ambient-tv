@@ -25,7 +25,7 @@ MODIFICATIONS = {
     "vendor/mono-rs/crates/mono-proto-client/src/membership.rs":
         "added leave_chat client call",
     "vendor/mono-rs/crates/mono-proto-client/src/dispatch.rs":
-        "added leave_chat and search_global_filtered dispatch",
+        "added leave_chat and search_global_channels dispatch",
     "native/mtproto-rs/src/ffi.rs":
         "added leave_chat and search_global_filtered exports; removed sticker, VPX, waveform and QR exports",
     "native/mtproto-rs/src/lib.rs":
@@ -33,7 +33,7 @@ MODIFICATIONS = {
     "native/mtproto-rs/Cargo.toml":
         "removed rxing (QR) and tlottie (sticker) dependencies",
     "vendor/mono-rs/crates/mono-proto-messages/src/messages/search_rpc.rs":
-        "added search_global_filtered (messages.searchGlobal with media filter, channels only)",
+        "added search_global_channels (messages.searchGlobal with media filter, channels only)",
     "native/mtproto/src/main/java/org/monogram/mtproto/MtprotoNative.kt":
         "added leaveChat",
     "native/mtproto/src/main/java/org/monogram/mtproto/MtprotoNativeUniFfi.kt":
@@ -144,7 +144,7 @@ amend(adapter,
       "import uniffi.monogram_mtproto.joinChat as nativeJoinChat",
       "import uniffi.monogram_mtproto.joinChat as nativeJoinChat\nimport uniffi.monogram_mtproto.leaveChat as nativeLeaveChat")
 add_before(adapter,
-           "    override fun unblockUser(handle: Long, chatId: Long)",
+           "    override fun unblockUser(\n",
            """    override fun leaveChat(handle: Long, chatId: Long) {
         nativeLeaveChat(handle.toULong(), chatId)
     }
@@ -153,12 +153,14 @@ add_before(adapter,
 
 # Category timelines: one messages.searchGlobal with a media filter over all channels
 # instead of one messages.search per channel (FLOOD_WAIT on a first load without cache).
+# Upstream (since 0.5.0) has search_global_filtered with a folder but no broadcasts-only
+# scope; Ambient adds search_global_channels on top of upstream's request builder.
 search_rpc = "vendor/mono-rs/crates/mono-proto-messages/src/messages/search_rpc.rs"
 add_before(search_rpc,
-           "fn offset_input_peer(",
+           "fn global_search_request(",
            """/// Ambient TV: messages.searchGlobal with a media filter, optionally only channels.
 #[allow(clippy::too_many_arguments)]
-pub fn search_global_filtered(
+pub fn search_global_channels(
     snapshot: &mut Snapshot,
     api_id: i32,
     peers: &mut HashMap<i64, CachedPeer>,
@@ -171,32 +173,15 @@ pub fn search_global_filtered(
     offset_id: i32,
     limit: i32,
 ) -> Result<GlobalMessageSearchDto, MtprotoError> {
-    let offset_peer = offset_input_peer(peers, offset_peer_id)?;
-    let (mut flags, folder_id) = search_global_folder(0);
-    let broadcasts = if broadcasts_only {
-        flags |= MessagesSearchGlobalRequest::BROADCASTS_ONLY_FLAG;
-        Some(Box::new(mono_proto::latest::api::True::True(
+    let mut request = global_search_request(
+        peers, query, filter, offset_rate, offset_peer_id, offset_id, limit, 0,
+    )?;
+    if broadcasts_only {
+        request.flags |= MessagesSearchGlobalRequest::BROADCASTS_ONLY_FLAG;
+        request.broadcasts_only = Some(Box::new(mono_proto::latest::api::True::True(
             mono_proto::latest::api::TrueConstructor {},
-        )))
-    } else {
-        None
-    };
-    let request = MessagesSearchGlobalRequest {
-        flags,
-        broadcasts_only: broadcasts,
-        groups_only: None,
-        users_only: None,
-        folder_id,
-        community: None,
-        q: query.to_string(),
-        filter: Box::new(crate::messages_search::messages_filter(filter)),
-        min_date: 0,
-        max_date: 0,
-        offset_rate,
-        offset_peer: Box::new(offset_peer),
-        offset_id,
-        limit: clamp_search_limit(limit),
-    };
+        )));
+    }
     let response: mono_proto::latest::api::MessagesMessages =
         api_invoke::invoke_api(snapshot, api_id, request)?;
     let (messages, next_rate, _) = dialogs::dtos_from_messages_page(response, peers, media)?;
@@ -209,11 +194,11 @@ pub fn search_global_filtered(
     })
 }
 """,
-           "pub fn search_global_filtered(")
+           "pub fn search_global_channels(")
 add_before(dispatch,
            "pub fn get_pinned_messages(",
            """#[allow(clippy::too_many_arguments)]
-pub fn search_global_filtered(
+pub fn search_global_channels(
     handle: u64,
     query: String,
     filter: String,
@@ -225,7 +210,7 @@ pub fn search_global_filtered(
 ) -> Result<crate::GlobalMessageSearchDto, MtprotoError> {
     with_client_mut(handle, |state| {
         call_with_migrate(state, |state| {
-            crate::message_ops::search_rpc::search_global_filtered(
+            crate::message_ops::search_rpc::search_global_channels(
                 &mut state.snapshot,
                 state.api_id,
                 &mut state.peers,
@@ -242,7 +227,7 @@ pub fn search_global_filtered(
     })
 }
 """,
-           "pub fn search_global_filtered(")
+           "pub fn search_global_channels(")
 add_before(ffi,
            "#[uniffi::export]\npub fn get_pinned_messages(",
            """#[uniffi::export]
@@ -257,7 +242,7 @@ pub fn search_global_filtered(
     offset_id: i32,
     limit: i32,
 ) -> Result<GlobalMessageSearchDto, MtprotoError> {
-    mono_proto_client::dispatch::search_global_filtered(
+    mono_proto_client::dispatch::search_global_channels(
         handle, query, filter, broadcasts_only, offset_rate, offset_peer_id, offset_id, limit,
     )
 }
@@ -316,8 +301,8 @@ amend(ffi,
       "InstantViewDto, JoinChatDto, LottieSize, MessageDto, MessagesPageDto, MtprotoError,",
       "InstantViewDto, JoinChatDto, MessageDto, MessagesPageDto, MtprotoError,")
 amend(ffi,
-      "UpdateEventDto, UpdatesStateDto, UploadItemDto, VpxAlphaFrame, VpxFrame, WallpaperCatalogDto,",
-      "UpdateEventDto, UpdatesStateDto, UploadItemDto, WallpaperCatalogDto,")
+      "UpdatesStateDto, UploadItemDto, VpxAlphaFrame, VpxFrame, WallpaperCatalogDto,",
+      "UpdatesStateDto, UploadItemDto, WallpaperCatalogDto,")
 drop_span(
     ffi,
     "#[uniffi::export]\npub fn create_lottie(data: Vec<u8>)",
