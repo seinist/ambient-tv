@@ -504,7 +504,11 @@ class HomeViewModel @Inject constructor(
     init {
         // A system whose login was just confirmed or rejected joins or leaves Home.
         viewModelScope.launch {
-            com.ambient.tv.data.local.LoginStateSignal.generation.drop(1).collect { refresh() }
+            com.ambient.tv.data.local.LoginStateSignal.generation.drop(1).collect {
+                // Initial authentication can complete while Home restores disk rows.
+                // Reconcile the available systems without invalidating every provider cache.
+                refresh(invalidateCache = false)
+            }
         }
         // Address/login saved elsewhere (backup import, companion transfer) but not yet confirmed:
         // confirm it once here, so a working server appears without a manual connection test.
