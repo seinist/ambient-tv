@@ -304,6 +304,12 @@ class SidebarViewModel @Inject constructor(
         }
     }
 
+    fun closeSystemMenu() {
+        menuJob?.cancel()
+        menuJob = null
+        menuLoadingSystem = null
+    }
+
     /**
      * Entering a sidebar system page is an explicit demand for its navigation data. A normal
      * startup/route refresh only restores persisted lists; do not fetch every server merely to
