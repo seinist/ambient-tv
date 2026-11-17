@@ -2352,4 +2352,5 @@
     <string name="accent_state_preview_focus">Fokus</string>
     <string name="accent_state_preview_selected">Auswahl</string>
     <string name="accent_state_preview_both">Beides</string>
+    <string name="player_seek_target">Ziel: %1$s</string>
 </resources>

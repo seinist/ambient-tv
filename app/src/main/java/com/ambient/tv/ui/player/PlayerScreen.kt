@@ -1161,9 +1161,13 @@ internal fun TvPlayerSeekBar(
     val latestDurationMs by androidx.compose.runtime.rememberUpdatedState(durationMs)
     val latestOnSeekBy by androidx.compose.runtime.rememberUpdatedState(onSeekBy)
     val latestOnInteraction by androidx.compose.runtime.rememberUpdatedState(onInteraction)
+    // Keep the visual destination while a renderer still reports its pre-seek position.
+    // PlaybackSeekState remains the authority for issuing actual seek commands.
+    var awaitingVisualTarget by remember { mutableStateOf<Long?>(null) }
     // Input must read the live target: the persistent OSD model may be a frame behind.
     fun currentPosition() = latestSeekState?.positionMs ?: latestPositionMs
     fun submitTarget(target: Long) {
+        awaitingVisualTarget = target
         BackgroundPlaybackSession.userSeek()
         latestSeekState?.seekTo(target) ?: latestOnSeekBy(target - currentPosition())
     }
@@ -1173,16 +1177,31 @@ internal fun TvPlayerSeekBar(
     var pointerTarget by remember { mutableStateOf<Long?>(null) }
     var lastPreview by remember { mutableStateOf<Long?>(null) }
     var previewVersion by remember { mutableIntStateOf(0) }
+    LaunchedEffect(awaitingVisualTarget) {
+        if (awaitingVisualTarget != null) {
+            kotlinx.coroutines.delay(SEEK_VISUAL_ACK_TIMEOUT_MS)
+            awaitingVisualTarget = null
+        }
+    }
+    LaunchedEffect(positionMs, durationMs, awaitingVisualTarget) {
+        val target = awaitingVisualTarget ?: return@LaunchedEffect
+        if (durationMs <= 0L || kotlin.math.abs(positionMs - target) <= SEEK_VISUAL_ACK_TOLERANCE_MS) {
+            awaitingVisualTarget = null
+        }
+    }
     LaunchedEffect(acceptsInput) {
         if (!acceptsInput) {
             pendingTarget = null
             pendingDirection = 0
             pointerTarget = null
             lastPreview = null
+            awaitingVisualTarget = null
         }
     }
     LaunchedEffect(previewVersion) { if (pendingTarget == null) { kotlinx.coroutines.delay(1_100); lastPreview = null } }
-    val displayedPosition = pointerTarget ?: pendingTarget ?: positionMs
+    val displayedPosition = seekBarVisualPosition(
+        positionMs, durationMs, pointerTarget, pendingTarget, awaitingVisualTarget,
+    )
     // Seek feedback: the preview only accompanies a jump. It opens with the bar (a jump showed it),
     // reopens on every further jump and closes 1.1 s after the last one; the bar itself stays.
     val passiveFeedback = !interactive || osd?.seekFeedback == true
@@ -1200,11 +1219,22 @@ internal fun TvPlayerSeekBar(
     var focused by remember { mutableStateOf(false) }
     val progress = if (durationMs > 0) (displayedPosition.toFloat() / durationMs.toFloat()).coerceIn(0f, 1f) else 0f
     val remaining = (durationMs - displayedPosition).coerceAtLeast(0L)
-    val highlighted = focused || pointerTarget != null || passiveFeedback
+    val aiming = pointerTarget != null || pendingTarget != null || awaitingVisualTarget != null
+    val showingSeekTarget = seekBarHasDistinctTarget(positionMs, displayedPosition, aiming)
+    val highlighted = focused || aiming || passiveFeedback
+    val reducedSeekEffects = LocalPerformanceProfile.current.reducedEffects
+    val thumbAlpha by animateFloatAsState(
+        if (highlighted && durationMs > 0L) 1f else 0f,
+        animationSpec = tween(if (reducedSeekEffects) 95 else 150), label = "TV seek thumb fade",
+    )
+    val thumbScale by animateFloatAsState(
+        seekBarThumbScale(pointerTarget != null || pendingTarget != null),
+        animationSpec = tween(if (reducedSeekEffects) 95 else 150), label = "TV seek thumb scale",
+    )
     val previewTarget = if (stowing) null else if (passiveFeedback) {
         positionMs.takeIf { feedbackPreview }
     } else if (focused || pointerTarget != null) {
-        pointerTarget ?: pendingTarget ?: lastPreview
+        pointerTarget ?: pendingTarget ?: awaitingVisualTarget ?: lastPreview
     } else null
     val previewAvailable = previewTarget?.let { target ->
         navigation?.timeline?.let { it.previewFrameAt(target) != null || it.chapterAt(target) != null }
@@ -1343,7 +1373,8 @@ internal fun TvPlayerSeekBar(
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(if (highlighted) 7.dp else 6.dp)
+                    // No layout height change when D-pad focus moves between the bar and buttons.
+                    .height(7.dp)
                     .onGloballyPositioned { previewOverlay?.trackBoundsInRoot = it.boundsInRoot() },
             ) {
                 // The neutral track is present immediately, at exactly the real track's height.
@@ -1401,7 +1432,18 @@ internal fun TvPlayerSeekBar(
                 ) {
                     drawBookmarkTicks(bookmarks, durationMs, 0f, size.height)
                 }
-                if (highlighted && durationMs > 0) {
+                // Neutral marker shows the previously reported position during a seek;
+                // the accent thumb follows the requested destination.
+                if (showingSeekTarget) androidx.compose.foundation.Canvas(
+                    Modifier.matchParentSize().graphicsLayer { alpha = dataAlpha.value },
+                ) {
+                    val played = seekBarFraction(positionMs, durationMs)
+                    val x = size.width * (if (layoutDirection == androidx.compose.ui.unit.LayoutDirection.Rtl) 1f - played else played)
+                    drawLine(Color.White.copy(alpha = .62f),
+                        androidx.compose.ui.geometry.Offset(x, -3.dp.toPx()),
+                        androidx.compose.ui.geometry.Offset(x, size.height + 3.dp.toPx()), 1.5.dp.toPx())
+                }
+                if (durationMs > 0L) {
                     Box(
                         modifier = Modifier
                             .align(Alignment.CenterStart)
@@ -1412,7 +1454,11 @@ internal fun TvPlayerSeekBar(
                             modifier = Modifier
                                 .align(Alignment.CenterEnd)
                                 .size(15.dp)
-                                .graphicsLayer { alpha = dataAlpha.value }
+                                .graphicsLayer {
+                                    alpha = dataAlpha.value * thumbAlpha
+                                    scaleX = thumbScale
+                                    scaleY = thumbScale
+                                }
                                 .background(progressThumbBrush, CircleShape)
                                 .border(2.5.dp, Color.White, CircleShape),
                         )
@@ -1425,7 +1471,7 @@ internal fun TvPlayerSeekBar(
                 PlayerOsdNavigationIndicator(paused)
                 PlayerTimelineTimeText(
                     ready = durationMs > 0L,
-                    text = "${formatDuration(displayedPosition)} / ${formatDuration(durationMs)}",
+                    text = "${formatDuration(if (showingSeekTarget) positionMs else displayedPosition)} / ${formatDuration(durationMs)}",
                     color = Color.White.copy(alpha = 0.82f),
                     placeholder = "--:-- / --:--",
                 )
@@ -1436,7 +1482,9 @@ internal fun TvPlayerSeekBar(
             } else null
             PlayerTimelineTimeText(
                 ready = durationMs > 0L,
-                text = endsAt?.let { "−${formatDuration(remaining)} · ${stringResource(R.string.player_ends_at, it)}" } ?: "−${formatDuration(remaining)}",
+                text = if (showingSeekTarget) {
+                    stringResource(R.string.player_seek_target, formatDuration(displayedPosition))
+                } else endsAt?.let { "−${formatDuration(remaining)} · ${stringResource(R.string.player_ends_at, it)}" } ?: "−${formatDuration(remaining)}",
                 color = Color.White.copy(alpha = 0.72f),
             )
         }
