@@ -562,7 +562,7 @@ private fun PlayerDropUpOptionRow(
             .onFocusChanged { optionFocused = it.isFocused || it.hasFocus; if (it.isFocused) uiSounds?.playFocus() }
             .background(fill, shape)
             .border(LocalUiTokens.current.focusBorder, outline, shape)
-            .selectedStateMarker(selected && matchTrigger, SelectionIndicator.LEADING_BAR)
+            .selectedStateMarker(selected && matchTrigger, SelectionIndicator.LEADING_BAR, focused = optionFocused)
             .onPreviewKeyEvent { event ->
                 selectorMenuKey(event.key) {
                     val dismissal = event.key == Key.Back || event.key == Key.Escape || event.key == Key.DirectionLeft

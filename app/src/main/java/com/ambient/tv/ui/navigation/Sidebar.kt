@@ -1192,7 +1192,8 @@ private fun SidebarItem(
             .graphicsLayer { scaleX = lift; scaleY = lift }
             .clip(RoundedCornerShape(LocalUiTokens.current.controlRadius * uiScale))
             .background(fill)
-            .selectedStateMarker(selected, SelectionIndicator.LEADING_BAR, focusedOnLightSurface = isFocused)
+            .selectedStateMarker(selected, SelectionIndicator.LEADING_BAR,
+                focusedOnLightSurface = isFocused, focused = isFocused)
             .padding(horizontal = padH * uiScale, vertical = 6.dp * uiScale),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(iconGap * uiScale),

@@ -1214,7 +1214,7 @@ internal fun SettingsHubRow(title: String, subtitle: String?, selected: Boolean,
                 borderWidth = 2.dp,
                 focusBorderMaterial = false,
             )
-            .selectedStateMarker(selected, SelectionIndicator.LEADING_BAR)
+            .selectedStateMarker(selected, SelectionIndicator.LEADING_BAR, focused = focused)
             .padding(12.dp), horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
             Icon(icon, null, modifier = Modifier.size(22.dp))
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
