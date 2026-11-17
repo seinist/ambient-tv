@@ -246,7 +246,7 @@ internal class UiPerformanceAudit(private val instrumentation: Instrumentation, 
                 finally { android.os.Trace.endAsyncSection("browse-fetch", requestId) }
             }
         }
-        val prefetch = com.ambient.tv.data.browse.MetadataPrefetcher(repository, deps.sourceAvailability(), deps.browseScopes())
+        val prefetch = com.ambient.tv.data.browse.MetadataPrefetcher(repository, deps.sourceAvailability(), deps.browseScopes(), com.ambient.tv.data.browse.BrowseLoadCoordinator(deps.browseScopes()))
         val budget = com.ambient.tv.data.browse.BrowseWorkBudget
         budget.foreground = true
         val decodeStarts = AtomicInteger()

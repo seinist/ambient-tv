@@ -24,6 +24,8 @@ import com.ambient.tv.data.jellyfin.JellyfinBackend
 import com.ambient.tv.data.emby.EmbyRepository
 import com.ambient.tv.data.emby.EmbyBackend
 import com.ambient.tv.data.radio.RADIO_HOME_ITEM_PREFIX
+import com.ambient.tv.data.browse.BrowseLoadCoordinator
+import com.ambient.tv.data.browse.BrowseLoadPriority
 import com.ambient.tv.data.radio.RadioBrowserRepository
 import com.ambient.tv.data.radio.RadioStation
 import com.ambient.tv.data.radio.localizedLanguageNames
@@ -198,6 +200,7 @@ class HomeViewModel @Inject constructor(
     private val performanceProfileResolver: PerformanceProfileResolver,
     private val unreachableServers: UnreachableServerGate,
     private val launcherPublisher: com.ambient.tv.launcher.LauncherPublisher,
+    private val loadCoordinator: BrowseLoadCoordinator,
 ) : ViewModel() {
 
     val homeHeroStyleKey: String get() = appPreferences.homeHeroStyleKey
@@ -299,9 +302,6 @@ class HomeViewModel @Inject constructor(
     // step from recomposing the Home LazyColumn and all currently visible rows.
     private val _heroContent = MutableStateFlow<HomeHeroContent?>(null)
     val heroContent: StateFlow<HomeHeroContent?> = _heroContent.asStateFlow()
-
-    /** Caps parallel Home metadata fetches across section/ranked/hubs waves. */
-    private val homeFetchLimiter = Semaphore(HOME_FETCH_CONCURRENCY)
 
     private val _uiState = MutableStateFlow<HomeUiState>(
         if (appPreferences.isConfigured || appPreferences.isJellyfinConfigured || appPreferences.isEmbyConfigured ||
@@ -504,7 +504,11 @@ class HomeViewModel @Inject constructor(
     init {
         // A system whose login was just confirmed or rejected joins or leaves Home.
         viewModelScope.launch {
-            com.ambient.tv.data.local.LoginStateSignal.generation.drop(1).collect { refresh() }
+            com.ambient.tv.data.local.LoginStateSignal.generation.drop(1).collect {
+                // Initial authentication can complete while Home restores disk rows.
+                // Reconcile the available systems without invalidating every provider cache.
+                refresh(invalidateCache = false)
+            }
         }
         // Address/login saved elsewhere (backup import, companion transfer) but not yet confirmed:
         // confirm it once here, so a working server appears without a manual connection test.
@@ -931,7 +935,9 @@ class HomeViewModel @Inject constructor(
     private suspend fun loadLibrary(onFailure: (HomeUiState) -> Unit): Boolean {
         if (_uiState.value !is HomeUiState.Loaded) _uiState.value = HomeUiState.LoadingLibrary
 
-        val sections = mediaRepository.getLibrarySections().getOrElse { error ->
+        val sections = loadCoordinator.librarySections("plex", BrowseLoadPriority.HOME) {
+            mediaRepository.getLibrarySections()
+        }.getOrElse { error ->
             onFailure(HomeUiState.Error(error.message ?: context.getString(R.string.error_generic)))
             return false
         }.filter { it.type != "photo" }
@@ -1018,7 +1024,9 @@ class HomeViewModel @Inject constructor(
         }
         coroutineScope {
             if (hasEnabledRow(system, "continue") || (allContinueRow() != null && system in appPreferences.allContinueSystems)) launch {
-                val result = repository.getOnDeck()
+                val result = loadCoordinator.request(system, "home:ondeck", BrowseLoadPriority.HOME) {
+                    repository.getOnDeck()
+                }
                 onDeck = result.counted(repository.cachedOnDeck().orEmpty())
                 // Feeds the cross-system row; a failed answer keeps the last list of that server.
                 if (result.isSuccess) continueBySystem[system] = onDeck
@@ -1032,7 +1040,7 @@ class HomeViewModel @Inject constructor(
             }
             if (listOf("recent", "collections", "libraries").any { hasEnabledRow(system, it) }) {
                 sections.forEach { section -> launch {
-                    previews[section.key] = limitedHomeFetch {
+                    previews[section.key] = limitedHomeFetch(system, "home:preview:${section.key}:addedAt:$previewLimit") {
                         repository.getSectionPreview(section.key, "addedAt:desc", previewLimit).counted(repository.cachedSectionPreview(section.key, "addedAt:desc", previewLimit).orEmpty())
                     }
                     partialPublisher.request()
@@ -1040,7 +1048,7 @@ class HomeViewModel @Inject constructor(
             }
             if (hasEnabledRow(system, "recent")) {
                 sections.forEach { section -> launch {
-                    releases[section.key] = limitedHomeFetch {
+                    releases[section.key] = limitedHomeFetch(system, "home:preview:${section.key}:release:$releaseLimit") {
                         repository.getSectionPreview(section.key, "originallyAvailableAt:desc", releaseLimit).counted(repository.cachedSectionPreview(section.key, "originallyAvailableAt:desc", releaseLimit).orEmpty())
                     }
                     partialPublisher.request()
@@ -1095,7 +1103,9 @@ class HomeViewModel @Inject constructor(
 
     private suspend fun loadEmbyRows(): List<ContentRowData> {
 
-        val sections = embyRepository.getLibrarySections().getOrElse { error ->
+        val sections = loadCoordinator.librarySections("emby", BrowseLoadPriority.HOME) {
+            embyRepository.getLibrarySections()
+        }.getOrElse { error ->
 
             if (_uiState.value !is HomeUiState.Loaded) _uiState.value = HomeUiState.Error(error.message ?: context.getString(R.string.error_generic))
             return emptyList()
@@ -1132,7 +1142,9 @@ class HomeViewModel @Inject constructor(
 
     private suspend fun loadJellyfinRows(): List<ContentRowData> {
 
-        val sections = jellyfinRepository.getLibrarySections().getOrElse { error ->
+        val sections = loadCoordinator.librarySections("jellyfin", BrowseLoadPriority.HOME) {
+            jellyfinRepository.getLibrarySections()
+        }.getOrElse { error ->
 
             if (_uiState.value !is HomeUiState.Loaded) _uiState.value = HomeUiState.Error(error.message ?: context.getString(R.string.error_generic))
             return emptyList()
@@ -1186,7 +1198,7 @@ class HomeViewModel @Inject constructor(
         return coroutineScope {
             sections.filter { it.type in EPISODE_SECTION_TYPES }.map { section ->
                 async {
-                    limitedHomeFetch {
+                    limitedHomeFetch(system, "home:episodes:${section.key}:$HOME_EPISODE_PREVIEW_LIMIT") {
                         repository.getRecentEpisodes(section.key, HOME_EPISODE_PREVIEW_LIMIT).getOrElse { repository.cachedRecentEpisodes(section.key, HOME_EPISODE_PREVIEW_LIMIT).orEmpty() }
                     }
                 }
@@ -1244,7 +1256,7 @@ class HomeViewModel @Inject constructor(
             async {
                 val items = libraries.map { section ->
                     async {
-                        limitedHomeFetch {
+                        limitedHomeFetch(system, "home:rank:${section.key}:$recommendation:$HOME_RANKED_LIMIT") {
                             repository.getRecommendation(section.key, recommendation, HOME_RANKED_LIMIT).getOrElse { repository.cachedRecommendation(section.key, recommendation, HOME_RANKED_LIMIT).orEmpty() }
                         }
                     }
@@ -1254,7 +1266,7 @@ class HomeViewModel @Inject constructor(
         }
         val hubs = if (wantsHubs(system)) libraries.map { section ->
             async {
-                limitedHomeFetch {
+                limitedHomeFetch(system, "home:hubs:${section.key}:$HOME_ROW_LIMIT") {
                     repository.getHubs(section.key, HOME_ROW_LIMIT).getOrElse { repository.cachedHubs(section.key, HOME_ROW_LIMIT).orEmpty() }.take(HUB_ROWS_PER_LIBRARY).map { section.key to it }
                 }
             }
@@ -1263,7 +1275,7 @@ class HomeViewModel @Inject constructor(
         val similar = if (hasEnabledRow(system, HomeRowDefinition.CONTENT_BECAUSE_WATCHED)) {
             becauseSeeds(ranked[LibraryRecommendation.RecentlyWatched].orEmpty()).map { (key, _) ->
                 async {
-                    limitedHomeFetch { key to repository.getSimilar(key).getOrElse { repository.cachedSimilar(key).orEmpty() } }
+                    limitedHomeFetch(system, "home:similar:$key") { key to repository.getSimilar(key).getOrElse { repository.cachedSimilar(key).orEmpty() } }
                 }
             }.awaitAll().toMap()
         } else emptyMap()
@@ -1446,8 +1458,12 @@ class HomeViewModel @Inject constructor(
                         tvheadendRepository.probeServerInfo().isFailure
                     ) return@suspendResult HomeTvPreview()
                 }
-                if (!repo.capabilities().available) return@suspendResult HomeTvPreview()
-                val channels = repo.channels()
+                if (!loadCoordinator.request(repo.source.id, "home:capabilities", BrowseLoadPriority.HOME) {
+                        repo.capabilities()
+                    }.available) return@suspendResult HomeTvPreview()
+                val channels = loadCoordinator.request(repo.source.id, "home:channels", BrowseLoadPriority.HOME) {
+                    repo.channels()
+                }
                 val historyScope = if (repo.source.system == "tvheadend") appPreferences.tvheadendHistoryScope else repo.source.id
                 val recent = appPreferences.recentTvChannelIds(historyScope)
                 val showLive = hasEnabledRow(repo.source.system, "live")
@@ -1463,7 +1479,11 @@ class HomeViewModel @Inject constructor(
                     tvPreview.recent.filterNot { it.channel.sourceId == repo.source.id } + preview.recent,
                 )
                 (_uiState.value as? HomeUiState.Loaded)?.let { publishRows(it.rows) }
-                val events = suspendResult { repo.nowEvents() }.getOrDefault(emptyList()).associateBy { it.channelUuid }
+                val events = suspendResult {
+                    loadCoordinator.request(repo.source.id, "home:now-events", BrowseLoadPriority.HOME) {
+                        repo.nowEvents()
+                    }
+                }.getOrDefault(emptyList()).associateBy { it.channelUuid }
                 HomeTvPreview(preview.live.map { it.copy(event = events[it.channel.uuid]) },
                     preview.recent.map { it.copy(event = events[it.channel.uuid]) })
             }.getOrDefault(HomeTvPreview())
@@ -1480,7 +1500,9 @@ class HomeViewModel @Inject constructor(
         photoRowPending = true
         photoJob = viewModelScope.launch {
             try {
-            val photos = photoRepository.recent()
+            val photos = loadCoordinator.request("photos", "home:recent", BrowseLoadPriority.HOME) {
+                photoRepository.recent()
+            }
             if (generation != photoRowGeneration) return@launch
             photoRow = photos.takeIf { it.isNotEmpty() }?.let { entries ->
                 ContentRowData(
@@ -1601,7 +1623,11 @@ class HomeViewModel @Inject constructor(
                             youtubeHomePins.cachedShown(key, mode)
                         }
                 }
-                val supportedResult = suspendResult { smartTubeEngine.supportedFeedKeys() }
+                val supportedResult = suspendResult {
+                    loadCoordinator.request("youtube", "supported-feeds", BrowseLoadPriority.HOME) {
+                        smartTubeEngine.supportedFeedKeys()
+                    }
+                }
                 // If the probe failed (rather than reporting an explicit signed-out state),
                 // retain the cached feeds and retry later; do not erase them as "unsupported".
                 val supported = supportedResult.getOrElse { definitions.mapTo(hashSetOf()) { it.contentKey } }
@@ -1619,6 +1645,7 @@ class HomeViewModel @Inject constructor(
                             val cacheKey = "feed:${definition.contentKey}"
                             var partialRows = emptyList<YouTubeRow>()
                             val result = suspendResult {
+                                loadCoordinator.request("youtube", "home-feed:${definition.contentKey}:$revision", BrowseLoadPriority.HOME) {
                                 smartTubeEngine.feed(definition.contentKey) { partial ->
                                     partialRows = partial
                                     // Reactive SmartTube can take a while to finish: publish the
@@ -1630,6 +1657,7 @@ class HomeViewModel @Inject constructor(
                                             updateHomeYouTubeRow(generation, definition, it)
                                         }
                                     }
+                                }
                                 }
                             }
                             val failure = result.exceptionOrNull()
@@ -1772,7 +1800,8 @@ class HomeViewModel @Inject constructor(
                 coroutineScope {
                     definitions.map { definition ->
                         async {
-                            val items = if (definition.contentKey == "channels") {
+                            val items = loadCoordinator.request("telegram", "home:${definition.contentKey}:${telegramRepository.catalogRevision.value}", BrowseLoadPriority.HOME) {
+                            if (definition.contentKey == "channels") {
                                 telegramRepository.channels().map { channel -> channel.toBrowseItem() }
                             } else {
                                 val entries = telegramRepository.browse(definition.contentKey, HOME_ROW_LIMIT) {
@@ -1781,6 +1810,7 @@ class HomeViewModel @Inject constructor(
                                 com.ambient.tv.ui.telegram.telegramRows(definition.contentKey, entries,
                                     includeYouTubeLinks = smartTubeUsableForMonogram())
                                     .flatMap { it.items }.distinctBy(MediaItem::ratingKey)
+                            }
                             }
                             live["telegram.${definition.contentKey}"] = if (items.isEmpty()) null else ContentRowData(
                                 id = "telegram.${definition.contentKey}",
@@ -1871,6 +1901,7 @@ class HomeViewModel @Inject constructor(
                         it.contentKey in setOf(HomeRowDefinition.RADIO_FAVORITES, HomeRowDefinition.RADIO_RECENT)
                     }.map { definition -> async {
                         val result = suspendResult {
+                            loadCoordinator.request("radio", "home:${definition.contentKey}:force=$forceRefresh", BrowseLoadPriority.HOME) {
                             when {
                                 definition.contentKey in setOf("home", HomeRowDefinition.RADIO_POPULAR) ->
                                     radioRepository.popular(HOME_ROW_LIMIT, forceRefresh)
@@ -1881,6 +1912,7 @@ class HomeViewModel @Inject constructor(
                                 definition.contentKey.startsWith("${HomeRowDefinition.RADIO_LANGUAGE}:") ->
                                     radioRepository.search(language = definition.contentKey.substringAfter(':'), limit = HOME_ROW_LIMIT, forceRefresh = forceRefresh).items
                                 else -> emptyList()
+                            }
                             }
                         }
                         if (result.isFailure) null
@@ -1988,7 +2020,9 @@ class HomeViewModel @Inject constructor(
                 for (definition in definitions) {
                     val feed = com.ambient.tv.trailers.TrailerFeed.entries.firstOrNull { it.name == definition.contentKey } ?: continue
                     val language = when (appPreferences.trailerLanguage) { "de" -> "de-DE"; "en" -> "en-US"; else -> locale.toLanguageTag() }
-                    val result = trailerRepository.feed(feed, language, locale.country.ifBlank { "US" })
+                    val result = loadCoordinator.request("trailers", "home:${feed.name}:$language:${locale.country}", BrowseLoadPriority.HOME) {
+                        trailerRepository.feed(feed, language, locale.country.ifBlank { "US" })
+                    }
                     if (generation != trailerRowsGeneration) return@launch
                     if (result.isFailure) continue
                     val entries = result.getOrThrow()
@@ -2319,8 +2353,10 @@ class HomeViewModel @Inject constructor(
         // Artwork is decoded only by visible cards. Speculation warms metadata, never bitmaps.
     }
 
-    private suspend fun <T> limitedHomeFetch(block: suspend () -> T): T =
-        homeFetchLimiter.withPermit { block() }
+    /** All Home provider requests share a process budget with sidebar and speculative loads. */
+    private suspend fun <T> limitedHomeFetch(
+        provider: String, resource: String, block: suspend () -> T,
+    ): T = loadCoordinator.request(provider, resource, BrowseLoadPriority.HOME, block)
 
     fun onItemFocused(rowId: String, item: MediaItem) {
         trailerPlaybackReturn.focused(rowId, item.ratingKey)
@@ -2549,7 +2585,6 @@ class HomeViewModel @Inject constructor(
         const val LIVE_TV_PREFETCH_TOTAL_LIMIT = 12
         const val LIVE_TV_PREFETCH_SIZE = 160
         /** Parallel Home metadata fetches (section/ranked/hubs) across backends. */
-        const val HOME_FETCH_CONCURRENCY = 6
         const val HOME_LIVE_TV_LIMIT = 12
     }
 

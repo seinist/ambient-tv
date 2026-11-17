@@ -116,6 +116,8 @@ class TvheadendConnectionManager @Inject constructor(
             if (preferences.localNetworkOnly &&
                 !LocalNetworkPolicy.isPotentiallyLocalHost(preferences.tvheadendHost)) return@withLock false
             val checkedEndpoint = endpointKey()
+            val previousState = _state.value
+            val previouslyConnectedEndpoint = lastServerId
             val connectGeneration = connectRun.generation
             if (!repository.portReachable()) return@withLock false
             val info = retryTransient(System.currentTimeMillis() + retryForMs) { repository.probeServerInfo() }.getOrNull()
@@ -127,7 +129,9 @@ class TvheadendConnectionManager @Inject constructor(
             resumeAutomaticReconnect()
             lastSuccessfulCheckMs = System.currentTimeMillis()
             lastServerId = checkedEndpoint
-            browseReconnects.request("tvheadend")
+            if (shouldRequestBrowseRecovery(previousState, previouslyConnectedEndpoint, checkedEndpoint)) {
+                browseReconnects.request("tvheadend")
+            }
             true
         }
     }
@@ -158,6 +162,7 @@ class TvheadendConnectionManager @Inject constructor(
 
     private suspend fun connect(forceNewWake: Boolean = false): Boolean {
         val before = _state.value
+        val previouslyConnectedEndpoint = lastServerId
         var freshlyConfirmed = false
         val check = hosts.begin("tvheadend")
         val endpoint = endpointKey()
@@ -165,7 +170,8 @@ class TvheadendConnectionManager @Inject constructor(
             connectService(forceNewWake = forceNewWake, onConnected = { freshlyConfirmed = true }).also { connected ->
                 if (endpoint == endpointKey()) {
                     if (!connected) hosts.failure(check)
-                    else if (freshlyConfirmed) browseReconnects.request("tvheadend")
+                    else if (freshlyConfirmed && shouldRequestBrowseRecovery(before, previouslyConnectedEndpoint, endpoint))
+                        browseReconnects.request("tvheadend")
                 }
             }
         } catch (cancelled: kotlinx.coroutines.CancellationException) {

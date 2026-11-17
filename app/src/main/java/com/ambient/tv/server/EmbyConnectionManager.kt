@@ -115,6 +115,8 @@ class EmbyConnectionManager @Inject constructor(
             if (preferences.localNetworkOnly &&
                 !LocalNetworkPolicy.isPotentiallyLocalHost(preferences.embyHost)) return@withLock false
             val checkedEndpoint = endpointKey()
+            val previousState = _state.value
+            val previouslyConnectedEndpoint = lastServerId
             val connectGeneration = connectRun.generation
             val identity = retryTransient(System.currentTimeMillis() + retryForMs) { repository.getIdentity() }.getOrNull()
                 ?: return@withLock false
@@ -125,7 +127,9 @@ class EmbyConnectionManager @Inject constructor(
             reconnectPause.onlineAgain()
             lastSuccessfulCheckMs = System.currentTimeMillis()
             lastServerId = checkedEndpoint
-            browseReconnects.request("emby")
+            if (shouldRequestBrowseRecovery(previousState, previouslyConnectedEndpoint, checkedEndpoint)) {
+                browseReconnects.request("emby")
+            }
             true
         }
     }
@@ -156,6 +160,7 @@ class EmbyConnectionManager @Inject constructor(
 
     private suspend fun connect(forceNewWake: Boolean = false): Boolean {
         val before = _state.value
+        val previouslyConnectedEndpoint = lastServerId
         var freshlyConfirmed = false
         val check = hosts.begin("emby")
         val endpoint = endpointKey()
@@ -163,7 +168,8 @@ class EmbyConnectionManager @Inject constructor(
             connectService(forceNewWake = forceNewWake, onConnected = { freshlyConfirmed = true }).also { connected ->
                 if (endpoint == endpointKey()) {
                     if (!connected) hosts.failure(check)
-                    else if (freshlyConfirmed) browseReconnects.request("emby")
+                    else if (freshlyConfirmed && shouldRequestBrowseRecovery(before, previouslyConnectedEndpoint, endpoint))
+                        browseReconnects.request("emby")
                 }
             }
         } catch (cancelled: kotlinx.coroutines.CancellationException) {

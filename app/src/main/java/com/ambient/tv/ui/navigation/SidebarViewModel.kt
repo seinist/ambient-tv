@@ -8,6 +8,8 @@ import com.ambient.tv.data.dlna.DlnaServer
 import com.ambient.tv.data.dlna.DlnaStore
 import com.ambient.tv.connectivity.UnreachableServerGate
 import com.ambient.tv.connectivity.HostConnectivity
+import com.ambient.tv.data.browse.BrowseLoadCoordinator
+import com.ambient.tv.data.browse.BrowseLoadPriority
 import com.ambient.tv.data.local.AppPreferences
 import com.ambient.tv.data.telegram.TelegramRepository
 import com.ambient.tv.data.local.SystemNameOverrides
@@ -97,6 +99,7 @@ class SidebarViewModel @Inject constructor(
     private val photoRepository: com.ambient.tv.data.photos.PhotoRepository,
     private val unreachableServers: UnreachableServerGate,
     private val hosts: HostConnectivity,
+    private val loadCoordinator: BrowseLoadCoordinator,
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(
@@ -111,6 +114,8 @@ class SidebarViewModel @Inject constructor(
             jellyfinEnabled = appPreferences.isJellyfinConfigured,
             embyEnabled = appPreferences.isEmbyConfigured,
             youtubeEnabled = appPreferences.youtubeEnabled,
+            youtubeFeedKeys = appPreferences.youtubeFeedKeys.ifEmpty { listOf("home") },
+            youtubeStartFeedKey = appPreferences.youtubeStartFeedKey,
             spotifyEnabled = appPreferences.spotifyEnabled,
             radioEnabled = appPreferences.radioEnabled,
             weatherEnabled = appPreferences.weatherSettings.let { it.enabled && it.showInSidebar },
@@ -181,6 +186,8 @@ class SidebarViewModel @Inject constructor(
     }
 
     private var refreshJob: Job? = null
+    private var menuJob: Job? = null
+    private var menuLoadingSystem: String? = null
     private var spotifyAuthJob: Job? = null
 
     val reconnectSources: Set<String>
@@ -297,6 +304,90 @@ class SidebarViewModel @Inject constructor(
         }
     }
 
+    fun closeSystemMenu() {
+        menuJob?.cancel()
+        menuJob = null
+        menuLoadingSystem = null
+    }
+
+    /**
+     * Entering a sidebar system page is an explicit demand for its navigation data. A normal
+     * startup/route refresh only restores persisted lists; do not fetch every server merely to
+     * draw a collapsed sidebar. An abandoned menu cancels its unused request.
+     */
+    fun openSystemMenu(system: String) {
+        if (menuLoadingSystem == system && menuJob?.isActive == true) return
+        menuJob?.cancel()
+        menuLoadingSystem = system
+        menuJob = viewModelScope.launch {
+            when (system) {
+                "plex" -> if (appPreferences.isConfigured) {
+                    mediaRepository.restoreCache()
+                    val sections = loadCoordinator.librarySections("plex", BrowseLoadPriority.VISIBLE) {
+                        mediaRepository.getLibrarySections()
+                    }.getOrElse { mediaRepository.cachedLibrarySections().orEmpty() }
+                        .filterNot { it.key in appPreferences.plexHiddenSectionKeys }
+                    photoRepository.registerPhotoSections(
+                        sections.filter { it.type == "photo" }.associate {
+                            it.key to com.ambient.tv.data.photos.PhotoLibrary(
+                                com.ambient.tv.data.photos.PlexPhotoSource.sectionKey(it.key),
+                                it.title, com.ambient.tv.data.photos.PhotoSystem.PLEX,
+                            )
+                        },
+                        com.ambient.tv.data.photos.PhotoSystem.PLEX,
+                    )
+                    _uiState.update { it.copy(sections = sections) }
+                }
+                "jellyfin" -> if (appPreferences.isJellyfinConfigured && jellyfinConnectionManager.ensureConnected()) {
+                    val sections = loadCoordinator.librarySections("jellyfin", BrowseLoadPriority.VISIBLE) {
+                        jellyfinRepository.getLibrarySections()
+                    }.getOrElse { jellyfinRepository.cachedLibrarySections().orEmpty() }
+                    _uiState.update { it.copy(jellyfinSections = withPhotoLibraries(
+                        sections, com.ambient.tv.data.photos.PhotoSystem.JELLYFIN
+                    ).filterNot { section -> section.key in appPreferences.jellyfinHiddenSectionKeys }) }
+                }
+                "emby" -> if (appPreferences.isEmbyConfigured && embyConnectionManager.ensureConnected()) {
+                    val sections = loadCoordinator.librarySections("emby", BrowseLoadPriority.VISIBLE) {
+                        embyRepository.getLibrarySections()
+                    }.getOrElse { embyRepository.cachedLibrarySections().orEmpty() }
+                    _uiState.update { it.copy(embySections = withPhotoLibraries(
+                        sections, com.ambient.tv.data.photos.PhotoSystem.EMBY
+                    ).filterNot { section -> section.key in appPreferences.embyHiddenSectionKeys }) }
+                }
+                "youtube" -> if (appPreferences.youtubeEnabled && smartTubeEngine.available) {
+                    val supported = suspendResult {
+                        loadCoordinator.request("youtube", "supported-feeds", BrowseLoadPriority.VISIBLE) {
+                            smartTubeEngine.supportedFeedKeys()
+                        }
+                    }.getOrDefault(setOf("home"))
+                    val keys = appPreferences.youtubeFeedKeys.filter { it in supported }
+                        .ifEmpty { AppPreferences.YOUTUBE_FEED_KEYS.filter { it in supported } }
+                        .ifEmpty { listOf("home") }
+                    val start = appPreferences.youtubeStartFeedKey.takeIf { it in keys } ?: keys.first()
+                    _uiState.update { it.copy(youtubeFeedKeys = keys, youtubeStartFeedKey = start) }
+                }
+                "tvheadend" -> if (appPreferences.isTvheadendConfigured) {
+                    val channels = suspendResult {
+                        loadCoordinator.request("tvheadend", "sidebar-channels", BrowseLoadPriority.VISIBLE) {
+                            tvheadendRepository.channels()
+                        }
+                    }.getOrNull()
+                    if (channels != null) _uiState.update { it.copy(
+                        tvheadendHbbtvAvailable = channels.any { channel ->
+                            com.ambient.tv.livetv.liveTvHbbtvMenuApps(channel).isNotEmpty()
+                        },
+                    ) }
+                }
+                "iptv" -> {
+                    val sources = loadCoordinator.request("iptv", "sidebar-capabilities", BrowseLoadPriority.VISIBLE) {
+                        liveTv.discover()
+                    }
+                    _uiState.update { it.copy(liveTvSources = com.ambient.tv.livetv.reconcileSidebarLiveTvSources(sources, liveTv.sidebarSnapshot())) }
+                }
+            }
+        }
+    }
+
     fun refreshAfterReconnect() = refresh(forceLiveTv = true)
 
     fun refresh(deferExpensiveWorkMs: Long = 0L, forceLiveTv: Boolean = false) {
@@ -313,6 +404,8 @@ class SidebarViewModel @Inject constructor(
                 jellyfinEnabled = appPreferences.isJellyfinConfigured,
                 embyEnabled = appPreferences.isEmbyConfigured,
                 youtubeEnabled = appPreferences.youtubeEnabled,
+                youtubeFeedKeys = appPreferences.youtubeFeedKeys.ifEmpty { listOf("home") },
+                youtubeStartFeedKey = appPreferences.youtubeStartFeedKey,
                 spotifyEnabled = appPreferences.spotifyEnabled,
                 radioEnabled = appPreferences.radioEnabled,
                 weatherEnabled = appPreferences.weatherSettings.let { it.enabled && it.showInSidebar },
@@ -343,17 +436,34 @@ class SidebarViewModel @Inject constructor(
                 jellyfinSections = jellyfinRepository.cachedLibrarySections().orEmpty().filterNot { section -> section.key in appPreferences.jellyfinHiddenSectionKeys },
                 embySections = embyRepository.cachedLibrarySections().orEmpty().filterNot { section -> section.key in appPreferences.embyHiddenSectionKeys },
             ) }
-            if (deferExpensiveWorkMs > 0L) delay(deferExpensiveWorkMs)
-            launch { val sources = liveTv.discover(force = forceLiveTv); _uiState.update { it.copy(liveTvSources = sources) } }
-            if (appPreferences.isTvheadendConfigured) launch {
-                val channels = com.ambient.tv.util.suspendResult { tvheadendRepository.channels(force = forceLiveTv) }.getOrNull()
+            // Saved IPTV sources belong to initial navigation, not the delayed network phase.
+            // Restore before any intentional Home/intro deferral so menu entries never pop in later.
+            val savedSources = liveTv.sidebarSnapshot()
+            _uiState.update { it.copy(liveTvSources = savedSources) }
+            if (deferExpensiveWorkMs > 0L && forceLiveTv) delay(deferExpensiveWorkMs)
+            if (forceLiveTv) launch {
+                val sources = loadCoordinator.request("iptv", "sidebar-capabilities:force", BrowseLoadPriority.HOME) {
+                    liveTv.discover(force = true)
+                }
+                _uiState.update { it.copy(liveTvSources = com.ambient.tv.livetv.reconcileSidebarLiveTvSources(sources, liveTv.sidebarSnapshot())) }
+            }
+            if (forceLiveTv && appPreferences.isTvheadendConfigured) launch {
+                val channels = com.ambient.tv.util.suspendResult {
+                    loadCoordinator.request("tvheadend", "sidebar-channels:force", BrowseLoadPriority.HOME) {
+                        tvheadendRepository.channels(force = true)
+                    }
+                }.getOrNull()
                 if (channels != null) _uiState.update { it.copy(
                     tvheadendHbbtvAvailable = channels.any { channel -> com.ambient.tv.livetv.liveTvHbbtvMenuApps(channel).isNotEmpty() }
                 ) }
             }
             val youtubeOn = _uiState.value.youtubeEnabled
-            if (youtubeOn) launch {
-                val supported = suspendResult { smartTubeEngine.supportedFeedKeys() }.getOrDefault(setOf("home"))
+            if (forceLiveTv && youtubeOn) launch {
+                val supported = suspendResult {
+                    loadCoordinator.request("youtube", "supported-feeds", BrowseLoadPriority.HOME) {
+                        smartTubeEngine.supportedFeedKeys()
+                    }
+                }.getOrDefault(setOf("home"))
                 // Signed out, none of the configured feeds may be available. Falling back to Home
                 // would offer the one feed that cannot load anything then, so offer what works.
                 val keys = appPreferences.youtubeFeedKeys.filter { it in supported }
@@ -366,7 +476,10 @@ class SidebarViewModel @Inject constructor(
                 _uiState.update { it.copy(sections = emptyList()) }
             } else launch {
                 val hidden = appPreferences.plexHiddenSectionKeys
-                val sections = mediaRepository.getLibrarySections().getOrElse { mediaRepository.cachedLibrarySections().orEmpty() }.filterNot { it.key in hidden }
+                val sections = (if (forceLiveTv) loadCoordinator.librarySections("plex", BrowseLoadPriority.HOME) {
+                    mediaRepository.getLibrarySections()
+                }.getOrElse { mediaRepository.cachedLibrarySections().orEmpty() }
+                else mediaRepository.cachedLibrarySections().orEmpty()).filterNot { it.key in hidden }
                 // Plex photo libraries open the photo browser instead of the media grid.
                 photoRepository.registerPhotoSections(
                     sections.filter { it.type == "photo" }.associate {
@@ -382,9 +495,11 @@ class SidebarViewModel @Inject constructor(
                 _uiState.update { it.copy(jellyfinSections = emptyList()) }
             } else launch {
                 val hidden = appPreferences.jellyfinHiddenSectionKeys
-                val jellyfinSections = if (jellyfinConnectionManager.ensureConnected()) {
+                val jellyfinSections = if (forceLiveTv && jellyfinConnectionManager.ensureConnected()) {
                     withPhotoLibraries(
-                        jellyfinRepository.getLibrarySections().getOrElse { jellyfinRepository.cachedLibrarySections().orEmpty() },
+                        loadCoordinator.librarySections("jellyfin", BrowseLoadPriority.HOME) {
+                            jellyfinRepository.getLibrarySections()
+                        }.getOrElse { jellyfinRepository.cachedLibrarySections().orEmpty() },
                         com.ambient.tv.data.photos.PhotoSystem.JELLYFIN,
                     ).filterNot { it.key in hidden }
                 } else jellyfinRepository.cachedLibrarySections().orEmpty().filterNot { it.key in hidden }
@@ -394,9 +509,11 @@ class SidebarViewModel @Inject constructor(
                 _uiState.update { it.copy(embySections = emptyList()) }
             } else launch {
                 val hidden = appPreferences.embyHiddenSectionKeys
-                val embySections = if (embyConnectionManager.ensureConnected()) {
+                val embySections = if (forceLiveTv && embyConnectionManager.ensureConnected()) {
                     withPhotoLibraries(
-                        embyRepository.getLibrarySections().getOrElse { embyRepository.cachedLibrarySections().orEmpty() },
+                        loadCoordinator.librarySections("emby", BrowseLoadPriority.HOME) {
+                            embyRepository.getLibrarySections()
+                        }.getOrElse { embyRepository.cachedLibrarySections().orEmpty() },
                         com.ambient.tv.data.photos.PhotoSystem.EMBY,
                     ).filterNot { it.key in hidden }
                 } else embyRepository.cachedLibrarySections().orEmpty().filterNot { it.key in hidden }

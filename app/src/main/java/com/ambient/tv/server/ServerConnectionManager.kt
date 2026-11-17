@@ -129,6 +129,8 @@ class ServerConnectionManager @Inject constructor(
             if (preferences.localNetworkOnly &&
                 !LocalNetworkPolicy.isPotentiallyLocalHost(preferences.host)) return@withLock false
             val checkedEndpoint = endpointKey()
+            val previousState = _state.value
+            val previouslyConnectedEndpoint = lastConnectedServerId
             val connectGeneration = connectRun.generation
             val identity = retryTransient(System.currentTimeMillis() + retryForMs) { repository.getIdentity() }.getOrNull()
                 ?: return@withLock false
@@ -139,7 +141,9 @@ class ServerConnectionManager @Inject constructor(
             reconnectPause.onlineAgain()
             lastSuccessfulCheckMs = System.currentTimeMillis()
             lastConnectedServerId = checkedEndpoint
-            browseReconnects.request("plex")
+            if (shouldRequestBrowseRecovery(previousState, previouslyConnectedEndpoint, checkedEndpoint)) {
+                browseReconnects.request("plex")
+            }
             true
         }
     }
@@ -171,6 +175,7 @@ class ServerConnectionManager @Inject constructor(
 
     private suspend fun connect(forceNewWake: Boolean = false): Boolean {
         val before = _state.value
+        val previouslyConnectedEndpoint = lastConnectedServerId
         var freshlyConfirmed = false
         val check = hosts.begin("plex")
         val endpoint = endpointKey()
@@ -178,7 +183,8 @@ class ServerConnectionManager @Inject constructor(
             connectService(forceNewWake = forceNewWake, onConnected = { freshlyConfirmed = true }).also { connected ->
                 if (endpoint == endpointKey()) {
                     if (!connected) hosts.failure(check)
-                    else if (freshlyConfirmed) browseReconnects.request("plex")
+                    else if (freshlyConfirmed && shouldRequestBrowseRecovery(before, previouslyConnectedEndpoint, endpoint))
+                        browseReconnects.request("plex")
                 }
             }
         } catch (cancelled: kotlinx.coroutines.CancellationException) {

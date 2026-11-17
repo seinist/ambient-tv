@@ -11,6 +11,9 @@ import com.ambient.tv.domain.model.MediaTag
 import com.ambient.tv.domain.repository.MediaRepository
 import com.ambient.tv.ui.common.PlexRefreshBus
 import com.ambient.tv.data.browse.BrowseWorkBudget
+import com.ambient.tv.data.browse.BrowseLoadCoordinator
+import com.ambient.tv.data.browse.BrowseLoadPriority
+import com.ambient.tv.data.browse.mediaProvider
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import javax.inject.Inject
@@ -73,6 +76,7 @@ class SectionViewModel @Inject constructor(
     val availability: com.ambient.tv.data.browse.SourceAvailability,
     private val preferences: AppPreferences,
     private val plexRefreshBus: PlexRefreshBus,
+    private val loadCoordinator: BrowseLoadCoordinator,
 ) : ViewModel() {
 
     val sectionKey: String = checkNotNull(savedStateHandle["sectionKey"])
@@ -175,14 +179,18 @@ class SectionViewModel @Inject constructor(
             mediaRepository.cachedProviderOnDeck(sectionKey)?.let { onDeck = it }
             // Recovered libraries may have been renamed; do not race the sidebar's independent load.
             val libraryHeaders = launch {
-                mediaRepository.getProviderLibrarySections(sectionKey).onSuccess {
+                loadCoordinator.librarySections(mediaProvider(sectionKey), BrowseLoadPriority.VISIBLE) {
+                    mediaRepository.getProviderLibrarySections(sectionKey)
+                }.onSuccess {
                     if (generation != loadGeneration) return@onSuccess
                     if (sourceItems.isNotEmpty() || _uiState.value is SectionUiState.Loaded) rebuild(background = true)
                 }
             }
             // Independent of library pagination: a slow feed must not hold back the library.
             val continueWatching = launch {
-                mediaRepository.getProviderOnDeck(sectionKey).onSuccess {
+                loadCoordinator.request(mediaProvider(sectionKey), "view:ondeck:$sectionKey", BrowseLoadPriority.VISIBLE) {
+                    mediaRepository.getProviderOnDeck(sectionKey)
+                }.onSuccess {
                     if (generation != loadGeneration) return@onSuccess
                     onDeck = it
                     if (sourceItems.isNotEmpty()) rebuild(background = true)
@@ -197,7 +205,8 @@ class SectionViewModel @Inject constructor(
             val showPagesWhileLoading = sourceItems.isEmpty()
             val progressiveItems = mutableListOf<MediaItem>()
             var publishedItemCount = 0
-            val result = mediaRepository.getSectionItems(sectionKey) { pageItems ->
+            val result = loadCoordinator.request(mediaProvider(sectionKey), "view:items:$sectionKey", BrowseLoadPriority.VISIBLE) {
+                mediaRepository.getSectionItems(sectionKey) { pageItems ->
                 if (showPagesWhileLoading && generation == loadGeneration) {
                     progressiveItems += pageItems
                     // Publish the first page immediately, then update in coarse batches so a
@@ -213,6 +222,7 @@ class SectionViewModel @Inject constructor(
                         }
                     }
                 }
+            }
             }
             if (generation != loadGeneration) return@launch
             result.fold(

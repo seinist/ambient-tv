@@ -23,6 +23,19 @@ import java.util.concurrent.TimeUnit
 
 data class AvailableLiveTvSource(val source: LiveTvSource, val capabilities: LiveTvCapabilities)
 
+/**
+ * Keep configured IPTV playlists selectable when an initial capability check fails. An offline
+ * playlist is not an unconfigured playlist; losing its menu row also loses the current focus.
+ * A successful discovery supplies its real capabilities instead of the provisional fallback.
+ */
+internal fun reconcileSidebarLiveTvSources(
+    discovered: List<AvailableLiveTvSource>,
+    configuredSnapshot: List<AvailableLiveTvSource>,
+): List<AvailableLiveTvSource> {
+    val seen = discovered.mapTo(hashSetOf()) { it.source.id }
+    return discovered + configuredSnapshot.filter { it.source.system == "iptv" && it.source.id !in seen }
+}
+
 /** Does not change the active VOD server. A repository captures one endpoint and one login. */
 @Singleton
 class LiveTvRegistry @Inject constructor(
@@ -154,6 +167,22 @@ class LiveTvRegistry @Inject constructor(
     /** Reset browsing positions across sources without discarding their dashboard caches. */
     @Synchronized fun clearBrowsePositions() {
         browseStates.values.forEach { (_, state) -> state.clearPositions() }
+    }
+
+    /**
+     * Sidebar cold-start snapshot. Disk restore and configured IPTV entries do not contact
+     * providers; an unprobed playlist still has a navigable Live tab. Capabilities learned on
+     * previous visits are retained (guide, recordings etc.).
+     */
+    suspend fun sidebarSnapshot(): List<AvailableLiveTvSource> {
+        restoreKnown()
+        val saved = known.snapshot().map(KnownLiveTvSource::toAvailable)
+        val savedIds = saved.mapTo(hashSetOf()) { it.source.id }
+        val configured = configured()
+        val ids = configured.mapTo(hashSetOf()) { it.source.id }
+        val iptvEntries = configured.filter { it.source.system == "iptv" && it.source.id !in savedIds }
+            .map { AvailableLiveTvSource(it.source, LiveTvCapabilities(available = true)) }
+        return saved.filter { it.source.id in ids } + iptvEntries
     }
 
     suspend fun discover(force: Boolean = false): List<AvailableLiveTvSource> = coroutineScope {

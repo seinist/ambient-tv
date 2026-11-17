@@ -8,6 +8,8 @@ import com.ambient.tv.data.radio.RadioSearchPage
 import com.ambient.tv.data.radio.RadioFacet
 import com.ambient.tv.data.radio.RadioStation
 import com.ambient.tv.data.browse.BrowseWorkBudget
+import com.ambient.tv.data.browse.BrowseLoadCoordinator
+import com.ambient.tv.data.browse.BrowseLoadPriority
 import com.ambient.tv.util.suspendResult
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.Job
@@ -161,6 +163,7 @@ class RadioViewModel @Inject constructor(
     private val preferences: AppPreferences,
     private val playbackLauncher: RadioPlaybackLauncher,
     private val playbackQueue: RadioPlaybackQueue,
+    private val loadCoordinator: BrowseLoadCoordinator,
 ) : ViewModel() {
     private val _state = MutableStateFlow(RadioUiState(
         visibleSections = radioVisibleSections(preferences.radioSubmenuKeys),
@@ -551,11 +554,13 @@ class RadioViewModel @Inject constructor(
             }
             if (cached?.fresh == true && !forceRefresh) return@launch
             suspendResult {
+                loadCoordinator.request("radio", "view:facets:${section.key}:$forceRefresh", BrowseLoadPriority.VISIBLE) {
                 when (section) {
                     RadioSection.GENRES -> repository.tags(RADIO_FACET_LIMIT, forceRefresh)
                     RadioSection.COUNTRIES -> repository.countries(RADIO_FACET_LIMIT, forceRefresh)
                     RadioSection.LANGUAGES -> repository.languages(RADIO_FACET_LIMIT, forceRefresh)
                     else -> emptyList()
+                }
                 }
             }.onSuccess { facets ->
                 if (_state.value.section == section && _state.value.selectedFacet == null) {
@@ -644,6 +649,7 @@ class RadioViewModel @Inject constructor(
             }
 
             suspendResult {
+                loadCoordinator.request("radio", "view:stations:${section.key}:${facet?.id}:$query:$offset:$pageLimit:$descending:$forceRefresh", BrowseLoadPriority.VISIBLE) {
                 if (popular) {
                     val stations = repository.popular(POPULAR_LIMIT, forceRefresh)
                     RadioSearchPage(stations, offset = 0, limit = POPULAR_LIMIT, hasMore = false)
@@ -655,6 +661,7 @@ class RadioViewModel @Inject constructor(
                     offset = offset, limit = pageLimit, order = "name", reverse = descending,
                     forceRefresh = forceRefresh,
                 )
+                }
             }.onSuccess { page ->
                 publish(page)
             }.onFailure { error ->

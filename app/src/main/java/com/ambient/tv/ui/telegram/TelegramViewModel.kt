@@ -5,6 +5,8 @@ import androidx.lifecycle.viewModelScope
 import com.ambient.tv.data.telegram.TelegramChannel
 import com.ambient.tv.data.telegram.TelegramMedia
 import com.ambient.tv.data.telegram.TelegramMediaKind
+import com.ambient.tv.data.browse.BrowseLoadCoordinator
+import com.ambient.tv.data.browse.BrowseLoadPriority
 import com.ambient.tv.data.telegram.TelegramRepository
 import com.ambient.tv.data.local.AppPreferences
 import com.ambient.tv.data.telegram.toMediaItem
@@ -98,6 +100,7 @@ class TelegramViewModel @Inject constructor(
     @dagger.hilt.android.qualifiers.ApplicationContext private val context: android.content.Context,
     private val playbackContext: TelegramPlaybackContext,
     private val smartTubeEngine: com.ambient.tv.youtube.SmartTubeEngine,
+    private val loadCoordinator: BrowseLoadCoordinator,
 ) : ViewModel() {
     /** YouTube link posts play through SmartTube: its category exists only while it is usable. */
     val smartTubeUsable: Boolean get() = preferences.youtubeEnabled && smartTubeEngine.available
@@ -147,9 +150,10 @@ class TelegramViewModel @Inject constructor(
                 if (repository.available) open(mutableState.value.section, refresh = true)
             }
         }
-        // A restored session is asynchronous; repaint without re-entering the route.
+        // The first visible-page entry owns its initial load. Observe later session changes
+        // only, so an already-authenticated cold start does not request the same feed twice.
         viewModelScope.launch {
-            repository.authorized.collect { signedIn ->
+            repository.authorized.drop(1).collect { signedIn ->
                 if (signedIn) open(mutableState.value.section, refresh = true)
                 else {
                     loadJob?.cancel()
@@ -252,7 +256,9 @@ class TelegramViewModel @Inject constructor(
                     if (generation != pageGeneration || mutableState.value.section != section) return@launch
                     if (!seen.add(requestCursor)) break
                     if (section == "channels") {
-                        val page = repository.channelsPage(requestCursor)
+                        val page = loadCoordinator.request("telegram", "view:channels:${repository.catalogRevision.value}:$requestCursor", BrowseLoadPriority.VISIBLE) {
+                            repository.channelsPage(requestCursor)
+                        }
                         pageRows = if (page.items.isEmpty()) emptyList() else listOf(ContentRowData(
                             id = "telegram.channels",
                             title = "Monogram",
@@ -262,7 +268,9 @@ class TelegramViewModel @Inject constructor(
                         pageMedia = emptyList()
                         next = page.nextCursor
                     } else {
-                        val page = repository.browsePage(section, requestCursor)
+                        val page = loadCoordinator.request("telegram", "view:$section:${repository.catalogRevision.value}:$requestCursor", BrowseLoadPriority.VISIBLE) {
+                            repository.browsePage(section, requestCursor)
+                        }
                         pageRows = telegramRows(section, page.items, smartTubeUsable)
                         pageMedia = page.items
                         next = page.nextCursor
