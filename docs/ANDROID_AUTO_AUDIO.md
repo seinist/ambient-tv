@@ -42,8 +42,9 @@ playback engine starts, `PlaybackService.onStartCommand()` enters foreground
 promptly and publishes the Media3 session's platform token in the existing
 notification. The service retains its own notification/foreground policy through
 `onUpdateNotificationAsync`, including sleep controls and final progress reports.
-Spotify's Connect service continues to own Spotify playback and audio focus;
-the Auto session mirrors its state and routes transport commands to it.
+Spotify is disabled in regular builds because Spotify no longer supplies usable
+playback audio keys to the librespot backend. Android Auto therefore documents
+the active radio and music sources above, not Spotify Connect.
 
 `PlaybackLibraryCallback` serves asynchronous library and search results, validates
 trusted controllers, and resolves only catalog IDs. The existing synthetic
