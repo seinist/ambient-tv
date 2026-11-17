@@ -175,7 +175,7 @@ private fun AlphabetBarEntry(
                     borderWidth = 1.5.dp,
                     focusBorderMaterial = false,
                 )
-                .selectedStateMarker(selected, SelectionIndicator.LEADING_BAR),
+                .selectedStateMarker(selected, SelectionIndicator.LEADING_BAR, focused = focused, compactMotion = true),
             contentAlignment = Alignment.Center,
         ) {
             Text(
