@@ -156,6 +156,22 @@ class LiveTvRegistry @Inject constructor(
         browseStates.values.forEach { (_, state) -> state.clearPositions() }
     }
 
+    /**
+     * Sidebar cold-start snapshot. Disk restore and configured IPTV entries do not contact
+     * providers; an unprobed playlist still has a navigable Live tab. Capabilities learned on
+     * previous visits are retained (guide, recordings etc.).
+     */
+    suspend fun sidebarSnapshot(): List<AvailableLiveTvSource> {
+        restoreKnown()
+        val saved = known.snapshot().map(KnownLiveTvSource::toAvailable)
+        val savedIds = saved.mapTo(hashSetOf()) { it.source.id }
+        val configured = configured()
+        val ids = configured.mapTo(hashSetOf()) { it.source.id }
+        val iptvEntries = configured.filter { it.source.system == "iptv" && it.source.id !in savedIds }
+            .map { AvailableLiveTvSource(it.source, LiveTvCapabilities(available = true)) }
+        return saved.filter { it.source.id in ids } + iptvEntries
+    }
+
     suspend fun discover(force: Boolean = false): List<AvailableLiveTvSource> = coroutineScope {
         restoreKnown()
         val before = known.snapshot()
