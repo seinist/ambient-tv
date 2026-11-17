@@ -158,7 +158,7 @@ class TvheadendConnectionManager @Inject constructor(
 
     private suspend fun connect(forceNewWake: Boolean = false): Boolean {
         val before = _state.value
-        val previouslyConnectedEndpoint = $field
+        val previouslyConnectedEndpoint = lastServerId
         var freshlyConfirmed = false
         val check = hosts.begin("tvheadend")
         val endpoint = endpointKey()
