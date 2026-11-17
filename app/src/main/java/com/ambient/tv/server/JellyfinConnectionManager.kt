@@ -115,6 +115,8 @@ class JellyfinConnectionManager @Inject constructor(
             if (preferences.localNetworkOnly &&
                 !LocalNetworkPolicy.isPotentiallyLocalHost(preferences.jellyfinHost)) return@withLock false
             val checkedEndpoint = endpointKey()
+            val previousState = _state.value
+            val previouslyConnectedEndpoint = lastServerId
             val connectGeneration = connectRun.generation
             val identity = retryTransient(System.currentTimeMillis() + retryForMs) { repository.getIdentity() }.getOrNull()
                 ?: return@withLock false
@@ -125,7 +127,9 @@ class JellyfinConnectionManager @Inject constructor(
             reconnectPause.onlineAgain()
             lastSuccessfulCheckMs = System.currentTimeMillis()
             lastServerId = checkedEndpoint
-            browseReconnects.request("jellyfin")
+            if (shouldRequestBrowseRecovery(previousState, previouslyConnectedEndpoint, checkedEndpoint)) {
+                browseReconnects.request("jellyfin")
+            }
             true
         }
     }
