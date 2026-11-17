@@ -32,10 +32,14 @@ internal class BrowseLoadGate(private val limit: Int) {
     private class Waiter(val priority: () -> BrowseLoadPriority) {
         val ready = CompletableDeferred<Unit>()
         var granted = false
+        var lowerPrioritySlot = false
     }
     private val mutex = Mutex()
     private val pending = mutableListOf<Waiter>()
     private var active = 0
+    // One slot stays available for newly opened views even if Home has a slow response.
+    private val lowerPriorityLimit = if (limit > 1) limit - 1 else limit
+    private var lowerPriorityActive = 0
 
     suspend fun <T> withPermit(priority: () -> BrowseLoadPriority, block: suspend () -> T): T {
         val waiter = Waiter(priority)
@@ -51,7 +55,10 @@ internal class BrowseLoadGate(private val limit: Int) {
             // after being granted but before resuming its suspended caller.
             withContext(NonCancellable) {
                 mutex.withLock {
-                    if (waiter.granted) active-- else pending.remove(waiter)
+                    if (waiter.granted) {
+                        active--
+                        if (waiter.lowerPrioritySlot) lowerPriorityActive--
+                    } else pending.remove(waiter)
                     grantAvailable()
                 }
             }
@@ -60,10 +67,14 @@ internal class BrowseLoadGate(private val limit: Int) {
 
     private fun grantAvailable() {
         while (active < limit && pending.isNotEmpty()) {
-            val next = pending.minByOrNull { it.priority().ordinal }!!
+            val next = pending.filter {
+                it.priority() == BrowseLoadPriority.VISIBLE || lowerPriorityActive < lowerPriorityLimit
+            }.minByOrNull { it.priority().ordinal } ?: break
             pending.remove(next)
             next.granted = true
+            next.lowerPrioritySlot = next.priority() != BrowseLoadPriority.VISIBLE
             active++
+            if (next.lowerPrioritySlot) lowerPriorityActive++
             next.ready.complete(Unit)
         }
     }
