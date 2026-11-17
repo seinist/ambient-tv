@@ -52,6 +52,8 @@ data class PerformanceProfile(
     /** Decorative accent motion is opt-in and requires the explicitly selected highest UI profile. */
     val allowAccentMaterialMotion: Boolean get() = mode == PerformanceMode.MAXIMUM
     val allowSpringFocus: Boolean get() = !reducedEffects
+    /** Selected-state markers animate only with full interface effects (not Low/Sparsam or reduced Auto). */
+    val allowSelectionIndicatorMotion: Boolean get() = !reducedEffects
     /** Kodi-like nav clicks; hard-off under interface Sparsam/Low. */
     val allowUiSounds: Boolean get() = !reducedEffects
     val allowComplexHero: Boolean get() = !reducedEffects
