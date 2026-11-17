@@ -195,7 +195,7 @@ fun Sidebar(
 internal interface SidebarActions {
     fun prefetch(route: String)
     fun refresh(delayMs: Long)
-    fun openSystemMenu(systemId: String)
+    fun openSystemMenu(systemId: String) = Unit
     fun applySystemOrder(order: List<String>)
     fun renameSystems(names: Map<String, String>, edited: Set<String>)
     fun toggleDivider(id: String)
