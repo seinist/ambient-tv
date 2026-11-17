@@ -75,6 +75,29 @@ class BrowseLoadCoordinatorTest {
         assertEquals(0, scheduler.inFlightCount)
     }
 
+    @Test fun coldStartHomeRequestsCannotOccupyTheLastVisibleSlot() = runBlocking {
+        val gate = BrowseLoadGate(limit = 2)
+        val firstStarted = CompletableDeferred<Unit>()
+        val releaseHome = CompletableDeferred<Unit>()
+        val firstHome = async(start = CoroutineStart.UNDISPATCHED) {
+            gate.withPermit({ BrowseLoadPriority.HOME }) {
+                firstStarted.complete(Unit)
+                releaseHome.await()
+            }
+        }
+        firstStarted.await()
+        val secondHome = async(start = CoroutineStart.UNDISPATCHED) {
+            gate.withPermit({ BrowseLoadPriority.HOME }) { "home-done" }
+        }
+        val opened = async(start = CoroutineStart.UNDISPATCHED) {
+            gate.withPermit({ BrowseLoadPriority.VISIBLE }) { "view-ready" }
+        }
+        assertEquals("view-ready", withTimeout(2_000) { opened.await() })
+        releaseHome.complete(Unit)
+        assertEquals("home-done", withTimeout(2_000) { secondHome.await() })
+        firstHome.await()
+    }
+
     @Test fun idleWaitingBackgroundNeverOccupiesTheVisiblePermit() = runBlocking {
         val scheduler = BrowseLoadScheduler(maxConcurrent = 1) { false }
         val background = async(start = CoroutineStart.UNDISPATCHED) {
