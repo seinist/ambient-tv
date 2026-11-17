@@ -27,8 +27,6 @@
     <string name="notice_network_lost">Keine Netzwerkverbindung</string>
     <string name="notice_network_restored">Netzwerkverbindung wiederhergestellt</string>
     <string name="notice_internet_unavailable">Internet nicht verfügbar – Online-Dienste eingeschränkt. Lokale Medien bleiben nutzbar.</string>
-    <string name="notice_internet_vpn_unavailable">Internet nicht verfügbar – Online-Dienste und entfernte WireGuard-Verbindungen können ausfallen; LAN-Medien bleiben nutzbar.</string>
-    <string name="sidebar_vpn_unavailable">VPN nicht verfügbar</string>
     <string name="notice_internet_restored">Internetverbindung wiederhergestellt</string>
     <string name="notice_online_services_unavailable">Einige Online-Dienste sind vorübergehend nicht erreichbar</string>
     <string name="notice_online_services_restored">Online-Dienste wieder erreichbar</string>

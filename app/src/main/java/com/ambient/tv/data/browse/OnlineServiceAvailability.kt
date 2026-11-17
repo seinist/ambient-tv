@@ -5,7 +5,6 @@ import android.net.ConnectivityManager
 import android.net.Network
 import android.net.NetworkCapabilities
 import com.ambient.tv.R
-import com.ambient.tv.data.local.AppPreferences
 import com.ambient.tv.notifications.AppNotice
 import com.ambient.tv.notifications.AppNotifications
 import com.ambient.tv.notifications.NoticeKind
@@ -69,10 +68,7 @@ internal fun onlineServiceRequestFailed(error: Throwable): Boolean {
  * A successful service response overrides a missing Android validation until the network changes.
  */
 @Singleton
-class OnlineServiceAvailability @Inject constructor(
-    @ApplicationContext context: Context,
-    private val preferences: AppPreferences,
-) {
+class OnlineServiceAvailability @Inject constructor(@ApplicationContext context: Context) {
     private val connectivity = context.getSystemService(ConnectivityManager::class.java)
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private val mutable = MutableStateFlow(OnlineServiceSnapshot())
@@ -148,11 +144,6 @@ class OnlineServiceAvailability @Inject constructor(
         }
     }
 
-    private fun wireGuardUsed(): Boolean =
-        preferences.wireGuardPlexEnabled || preferences.wireGuardJellyfinEnabled ||
-            preferences.wireGuardEmbyEnabled || preferences.wireGuardTvheadendEnabled ||
-            preferences.fileSources.any { it.wireGuard && it.kind != "local" }
-
     private suspend fun observeNotices() {
         var internetNotified = false
         var servicesFailed = false
@@ -162,8 +153,7 @@ class OnlineServiceAvailability @Inject constructor(
             val shouldNotifyInternet = internetDown && snapshot.hasNetwork
             if (shouldNotifyInternet && !internetNotified) {
                 AppNotifications.post(AppNotice(
-                    key = "online:internet", message = if (wireGuardUsed())
-                        R.string.notice_internet_vpn_unavailable else R.string.notice_internet_unavailable,
+                    key = "online:internet", message = R.string.notice_internet_unavailable,
                     phase = NoticePhase.INFO, kind = NoticeKind.CONNECTION,
                     interruptPlayback = false,
                 ))
