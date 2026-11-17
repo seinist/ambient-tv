@@ -104,10 +104,11 @@ internal class BrowseLoadScheduler(
             } ?: Shared(key, priority).also { fresh ->
                 fresh.consumers = 1
                 fresh.job = scope.async(start = CoroutineStart.LAZY) {
+                    // Do not hold a scarce network permit while waiting for idle: otherwise four
+                    // background jobs can starve a visible screen indefinitely during scrolling.
+                    // A visible join promotes this request and makes the wait finish immediately.
+                    while (fresh.priority == BrowseLoadPriority.BACKGROUND && !idle()) delay(200)
                     gate.withPermit({ fresh.priority }) {
-                        // Speculation has no business competing with an active D-pad scroll,
-                        // decoder or foreground browse. A newly visible waiter promotes the task.
-                        while (fresh.priority == BrowseLoadPriority.BACKGROUND && !idle()) delay(200)
                         Timber.tag("browse-load").d("start priority=%s", fresh.priority)
                         block()
                     }
