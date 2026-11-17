@@ -349,9 +349,11 @@ class SidebarViewModel @Inject constructor(
                     ).filterNot { section -> section.key in appPreferences.embyHiddenSectionKeys }) }
                 }
                 "youtube" -> if (appPreferences.youtubeEnabled && smartTubeEngine.available) {
-                    val supported = loadCoordinator.request("youtube", "supported-feeds", BrowseLoadPriority.VISIBLE) {
-                        suspendResult { smartTubeEngine.supportedFeedKeys() }.getOrDefault(setOf("home"))
-                    }
+                    val supported = suspendResult {
+                        loadCoordinator.request("youtube", "supported-feeds", BrowseLoadPriority.VISIBLE) {
+                            smartTubeEngine.supportedFeedKeys()
+                        }
+                    }.getOrDefault(setOf("home"))
                     val keys = appPreferences.youtubeFeedKeys.filter { it in supported }
                         .ifEmpty { AppPreferences.YOUTUBE_FEED_KEYS.filter { it in supported } }
                         .ifEmpty { listOf("home") }
