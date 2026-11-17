@@ -75,6 +75,21 @@ class BrowseLoadCoordinatorTest {
         assertEquals(0, scheduler.inFlightCount)
     }
 
+    @Test fun idleWaitingBackgroundNeverOccupiesTheVisiblePermit() = runBlocking {
+        val scheduler = BrowseLoadScheduler(maxConcurrent = 1) { false }
+        val background = async(start = CoroutineStart.UNDISPATCHED) {
+            scheduler.load("background-only", BrowseLoadPriority.BACKGROUND) {
+                error("Idle-waiting work should never run")
+            }
+        }
+        val visible = async(start = CoroutineStart.UNDISPATCHED) {
+            scheduler.load("visible-screen", BrowseLoadPriority.VISIBLE) { "ready" }
+        }
+        assertEquals("ready", withTimeout(2_000) { visible.await() })
+        background.cancelAndJoin()
+        assertEquals(0, scheduler.inFlightCount)
+    }
+
     @Test fun lastConsumerCancelsUnusedWork() = runBlocking {
         val scheduler = BrowseLoadScheduler()
         val started = CompletableDeferred<Unit>()
