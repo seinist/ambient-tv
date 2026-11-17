@@ -856,7 +856,8 @@ fun RightPanelChoice(
         modifier = modifier
             .onFocusChanged { focused = it.isFocused; if (it.isFocused) uiSounds?.playFocus() }
             .menuFocusMotion(focused, focusedScale = 1.006f)
-            .appControlSurface(focused, selected, enabled = enabled, shape = shape)
+            .appControlSurface(focused, selected, enabled = enabled, shape = shape,
+                selectionIndicator = SelectionIndicator.LEADING_BAR)
             .semantics { this.selected = selected }
             .activateOnTvKey(enabled = enabled, onClick = activate)
             .clickable(enabled = enabled, role = Role.Button, onClick = activate)

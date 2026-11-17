@@ -1,5 +1,6 @@
 package com.ambient.tv.ui.common
 
+import com.ambient.tv.ui.theme.SelectionIndicator
 import androidx.compose.foundation.Canvas
 import kotlinx.coroutines.delay
 import androidx.compose.ui.unit.IntSize
@@ -257,7 +258,8 @@ fun ViewPreviewChoice(option: ViewOption, selected: Boolean, onClick: () -> Unit
         shape = ClickableSurfaceDefaults.shape(shape),
         modifier = modifier.mediaFocusMotion(focused).onFocusChanged { focused = it.isFocused }
             .activateOnTvKey(onClick = onClick).semantics { this.selected = selected; role = Role.RadioButton }) {
-        Column(Modifier.fillMaxWidth().appControlSurface(focused, selected, shape = shape).padding(14.dp),
+        Column(Modifier.fillMaxWidth().appControlSurface(focused, selected, shape = shape,
+                selectionIndicator = SelectionIndicator.LEADING_BAR).padding(14.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp)) {
             ViewLayoutPreview(option.preview, Modifier.fillMaxWidth().height(64.dp))
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {

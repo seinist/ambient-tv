@@ -792,7 +792,8 @@ fun PlayerIconButton(
             .onFocusChanged { focused = it.isFocused }
             .menuFocusMotion(focused)
             // Size identifies the main action; only actual focus draws the focus treatment.
-            .appControlSurface(focused, selected, shape = shape)
+            .appControlSurface(focused, selected, shape = shape,
+                selectionIndicator = SelectionIndicator.DOT)
             .activateOnTvKey(onClick = click)
             .clickable(enabled = barInteractive, role = Role.Button, onClick = click),
         horizontalArrangement = Arrangement.Center,

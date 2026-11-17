@@ -483,7 +483,7 @@ internal fun FilesBrowserRow(
                     .activateOnTvKey(onClick = onOpen).onFocusChanged { focused = it.isFocused },
             ) {
                 Row(
-                    Modifier.fillMaxWidth().heightIn(min = 44.dp).appControlSurface(focused, shape = shape, focusedAccent = true).padding(horizontal = 16.dp, vertical = 8.dp),
+                    Modifier.fillMaxWidth().heightIn(min = 44.dp).appControlSurface(focused, shape = shape).padding(horizontal = 16.dp, vertical = 8.dp),
                     horizontalArrangement = Arrangement.spacedBy(12.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {

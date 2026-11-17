@@ -1,5 +1,6 @@
 package com.ambient.tv.ui.common
 
+import com.ambient.tv.ui.theme.SelectionIndicator
 import coil3.request.crossfade
 import coil3.request.bitmapConfig
 import androidx.activity.compose.BackHandler
@@ -856,7 +857,8 @@ fun TvChip(
         if (iconOnly && (icon != null || leadingContent != null)) {
             val buttonModifier = modifier
                 .sizeIn(minWidth = 48.dp, minHeight = 48.dp)
-                .appControlSurface(focused, selected, enabled, shape, pressed = pressed)
+                .appControlSurface(focused, selected, enabled, shape, pressed = pressed,
+                    selectionIndicator = if (iconOnly) SelectionIndicator.DOT else SelectionIndicator.UNDERLINE)
                 .semantics { contentDescription = text }
             ProvideControlContent(foreground) {
                 androidx.compose.material3.FilledTonalIconButton(
@@ -887,7 +889,8 @@ fun TvChip(
             androidx.compose.material3.FilterChip(
                 selected = selected, onClick = activate, enabled = enabled,
                 modifier = modifier.sizeIn(minHeight = 48.dp)
-                    .appControlSurface(focused, selected, enabled, shape, pressed = pressed),
+                    .appControlSurface(focused, selected, enabled, shape, pressed = pressed,
+                    selectionIndicator = if (iconOnly) SelectionIndicator.DOT else SelectionIndicator.UNDERLINE),
                 shape = shape,
                 border = null,
                 interactionSource = interactions,
@@ -956,7 +959,8 @@ fun TvChip(
         Box(Modifier.sizeIn(minHeight = 44.dp * uiScale), contentAlignment = Alignment.Center) {
             Row(
                 modifier = Modifier
-                    .appControlSurface(focused, selected, enabled, chipShape, pressed = keyPressed || pointerPressed)
+                    .appControlSurface(focused, selected, enabled, chipShape, pressed = keyPressed || pointerPressed,
+                        selectionIndicator = if (iconOnly) SelectionIndicator.DOT else SelectionIndicator.UNDERLINE)
                     .padding(horizontal = 14.dp * uiScale, vertical = 9.dp * uiScale),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
@@ -1319,7 +1323,8 @@ fun TvSettingRow(
         Row(
             Modifier
                 .fillMaxWidth()
-                .appControlSurface(focused, selected = checked, shape = settingRowShape)
+                .appControlSurface(focused, selected = checked, shape = settingRowShape,
+                    selectionIndicator = SelectionIndicator.LEADING_BAR)
                 .padding(horizontal = 20.dp * uiScale, vertical = 16.dp * uiScale),
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically,
@@ -1432,7 +1437,8 @@ fun TvActionButton(
             androidx.compose.material3.FilledTonalButton(
                 onClick = activate, enabled = visuallyEnabled,
                 modifier = (if (fillWidth) modifier.fillMaxWidth() else modifier).sizeIn(minHeight = 48.dp)
-                    .appControlSurface(focused, selected, visuallyEnabled, shape, prominent = prominent, pressed = pressed),
+                    .appControlSurface(focused, selected, visuallyEnabled, shape, prominent = prominent, pressed = pressed,
+                        selectionIndicator = if (iconOnly) SelectionIndicator.DOT else SelectionIndicator.UNDERLINE),
                 shape = shape,
                 interactionSource = interactions,
                 colors = androidx.compose.material3.ButtonDefaults.filledTonalButtonColors(
@@ -1506,7 +1512,8 @@ fun TvActionButton(
         Row(
             modifier = (if (fillWidth) Modifier.fillMaxWidth() else Modifier)
                 .appControlSurface(focused, selected, visuallyEnabled, buttonShape,
-                    prominent = prominent, pressed = keyPressed || pointerPressed)
+                    prominent = prominent, pressed = keyPressed || pointerPressed,
+                    selectionIndicator = if (iconOnly) SelectionIndicator.DOT else SelectionIndicator.UNDERLINE)
                 .padding(horizontal = (if (iconOnly) 12.dp else 18.dp) * uiScale, vertical = 12.dp * uiScale),
             horizontalArrangement = Arrangement.Center,
             verticalAlignment = Alignment.CenterVertically,

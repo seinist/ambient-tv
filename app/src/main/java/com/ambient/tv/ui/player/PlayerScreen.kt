@@ -1475,7 +1475,8 @@ private fun OsdIconButton(
             .height(height)
             .shadow(elevation, shape)
             .onFocusChanged { focused = it.isFocused }
-            .appControlSurface(focused = focused, selected = selected, shape = shape, prominent = primary, pressed = pressed)
+            .appControlSurface(focused = focused, selected = selected, shape = shape, prominent = primary, pressed = pressed,
+                selectionIndicator = SelectionIndicator.DOT)
             .activateOnTvKey(onClick = onClick)
             .clickable(interactionSource = interactions, indication = null, onClick = onClick)
             .focusable()

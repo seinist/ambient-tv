@@ -600,7 +600,7 @@ private fun DlnaNodeRow(
             .pointerInput(Unit) { detectTapGestures(onTap = { currentAction.value() }) },
     ) {
         Row(
-            Modifier.fillMaxWidth().heightIn(min = 44.dp * rowScale).appControlSurface(focused, shape = shape, focusedAccent = true)
+            Modifier.fillMaxWidth().heightIn(min = 44.dp * rowScale).appControlSurface(focused, shape = shape)
                 .padding(horizontal = 16.dp * rowScale, vertical = 8.dp * rowScale),
             horizontalArrangement = Arrangement.spacedBy(12.dp * rowScale),
             verticalAlignment = Alignment.CenterVertically,
