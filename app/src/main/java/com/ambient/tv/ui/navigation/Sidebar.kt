@@ -174,6 +174,7 @@ fun Sidebar(
         object : SidebarActions {
             override fun prefetch(route: String) = viewModel.metadataPrefetcher.route(route)
             override fun refresh(delayMs: Long) = viewModel.refresh(delayMs)
+        override fun openSystemMenu(systemId: String) = viewModel.openSystemMenu(systemId)
             override fun applySystemOrder(order: List<String>) = viewModel.applySystemOrder(order)
             override fun renameSystems(names: Map<String, String>, edited: Set<String>) = viewModel.renameSystems(names, edited)
             override fun toggleDivider(id: String) = viewModel.toggleDivider(id)
@@ -194,6 +195,7 @@ fun Sidebar(
 internal interface SidebarActions {
     fun prefetch(route: String)
     fun refresh(delayMs: Long)
+    fun openSystemMenu(systemId: String)
     fun applySystemOrder(order: List<String>)
     fun renameSystems(names: Map<String, String>, edited: Set<String>)
     fun toggleDivider(id: String)
@@ -474,6 +476,11 @@ internal fun SidebarContent(
     val requesters = remember { mutableMapOf<String, FocusRequester>() }
     fun requester(id: String) = requesters.getOrPut(id) { FocusRequester() }
     val openGroup = if (singleSystem != null) null else systems.firstOrNull { it.id == openSystemId }
+    // A closed menu must not load every provider's library navigation during cold start.
+    // The system page, including the lone-system inline layout, is the demand signal.
+    LaunchedEffect(expanded, openGroup?.id, singleSystem?.id) {
+        if (expanded) (openGroup?.id ?: singleSystem?.id)?.let(viewModel::openSystemMenu)
+    }
     // Derived, never stored separately: on a system page there is a parent level.
     val inSubmenu = openGroup != null
     val navRows = rowsFor(openGroup?.id)
