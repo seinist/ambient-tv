@@ -25,7 +25,8 @@ class OnlineServiceAvailabilityTest {
             reachable = setOf("radio"),
             failed = setOf("youtube"),
         )
-        assertEquals(setOf("youtube", "weather"), snapshot.unavailableServices(setOf(
+        // Radio's real response disproves a *global* internet outage. Only YouTube failed.
+        assertEquals(setOf("youtube"), snapshot.unavailableServices(setOf(
             "plex", "youtube", "weather", "radio")))
         assertEquals(setOf("youtube"), snapshot.copy(internet = InternetReachability.AVAILABLE)
             .unavailableServices(setOf("youtube", "radio", "plex")))

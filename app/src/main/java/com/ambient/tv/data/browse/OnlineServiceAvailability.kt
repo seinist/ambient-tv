@@ -39,7 +39,10 @@ internal data class OnlineServiceSnapshot(
 ) {
     fun unavailableServices(configured: Set<String>): Set<String> {
         val onlineOnly = configured.intersect(ONLINE_SERVICE_KEYS)
-        val internetBlocked = if (internet == InternetReachability.UNAVAILABLE) onlineOnly - reachable else emptySet()
+        // A successful public API response proves internet access even when the platform's
+        // connectivity probe is blocked. Without a route, no such override is possible.
+        val internetBlocked = if (internet == InternetReachability.UNAVAILABLE &&
+            (!hasNetwork || reachable.isEmpty())) onlineOnly else emptySet()
         return internetBlocked + failed.intersect(onlineOnly)
     }
 }
@@ -129,8 +132,11 @@ class OnlineServiceAvailability @Inject constructor(@ApplicationContext context:
                     val changedRoute = networkId != id
                     val restored = previous.internet == InternetReachability.UNAVAILABLE &&
                         reachability == InternetReachability.AVAILABLE
+                    val lost = previous.internet == InternetReachability.AVAILABLE &&
+                        reachability == InternetReachability.UNAVAILABLE
+                    // Successes from the old route/online period cannot mask a new outage.
                     networkId = id
-                    mutable.value = if (changedRoute || restored) OnlineServiceSnapshot(
+                    mutable.value = if (changedRoute || restored || lost) OnlineServiceSnapshot(
                         internet = reachability, hasNetwork = network != null,
                     ) else previous.copy(internet = reachability, hasNetwork = network != null)
                 }
