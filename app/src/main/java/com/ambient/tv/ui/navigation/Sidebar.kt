@@ -175,6 +175,7 @@ fun Sidebar(
             override fun prefetch(route: String) = viewModel.metadataPrefetcher.route(route)
             override fun refresh(delayMs: Long) = viewModel.refresh(delayMs)
         override fun openSystemMenu(systemId: String) = viewModel.openSystemMenu(systemId)
+        override fun closeSystemMenu() = viewModel.closeSystemMenu()
             override fun applySystemOrder(order: List<String>) = viewModel.applySystemOrder(order)
             override fun renameSystems(names: Map<String, String>, edited: Set<String>) = viewModel.renameSystems(names, edited)
             override fun toggleDivider(id: String) = viewModel.toggleDivider(id)
@@ -196,6 +197,7 @@ internal interface SidebarActions {
     fun prefetch(route: String)
     fun refresh(delayMs: Long)
     fun openSystemMenu(systemId: String) = Unit
+    fun closeSystemMenu() = Unit
     fun applySystemOrder(order: List<String>)
     fun renameSystems(names: Map<String, String>, edited: Set<String>)
     fun toggleDivider(id: String)
@@ -480,6 +482,7 @@ internal fun SidebarContent(
     // The system page, including the lone-system inline layout, is the demand signal.
     LaunchedEffect(expanded, openGroup?.id, singleSystem?.id) {
         if (expanded) (openGroup?.id ?: singleSystem?.id)?.let(viewModel::openSystemMenu)
+        else viewModel.closeSystemMenu()
     }
     // Derived, never stored separately: on a system page there is a parent level.
     val inSubmenu = openGroup != null
