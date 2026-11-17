@@ -10,6 +10,9 @@ Vollständige Nutzer- und Entwicklerdokumentation:
 Aktuelle Funktionen im Kompendium:
 
 - [IPTV mit M3U/XMLTV](DOCUMENTATION.de.md#410-iptv-m3uxmltv)
+- [Radio Browser: Internetradio, Favoriten, Kategorien und Suche](DOCUMENTATION.de.md#45-radio-radio-browser)
+- [Android Auto (Audiobrowser)](DOCUMENTATION.de.md#54-android-auto-audio)
+- [Separate TV-Oberflächenauflösung](DOCUMENTATION.de.md#35-aussehen)
 - [Timeshift, Direktaufnahme und Erinnerungen](DOCUMENTATION.de.md#69-live-tv-timeshift-direktaufnahme-und-erinnerungen)
 - [Dateien/NAS mit WebDAV, SFTP und Musik-Tags](DOCUMENTATION.de.md#48-dateien)
 - [Externe und Online-Untertitel](DOCUMENTATION.de.md#62-untertitel)
@@ -22,8 +25,8 @@ Aktuelle Funktionen im Kompendium:
 - [Nachtmodus nach Uhrzeit](DOCUMENTATION.de.md#66-audioprofile)
 - [Player-Werkzeuge: A-B, Einzelbild, Lesezeichen, Bildschirmfotos, Songtexte, lückenlos](DOCUMENTATION.de.md#71-menü-wiedergabeeinstellungen)
 - [Startseiten-Ansicht und Offline-Server](DOCUMENTATION.de.md#31-startseiten-reihen)
-- [Monogram (optionale Telegram-Medien): Funktionen, sechs Home-Reihen und Anmeldung](DOCUMENTATION.de.md#411-monogram-telegram-medien-optionaler-nativer-build)
-- [Monogram-API-ID/-Hash, QR-Anmeldung und GPL-Native-Build](monogram-integration.md)
+- [Monogram (optionale Telegram-Medien): Funktionen, sechs Home-Reihen und Anmeldung](DOCUMENTATION.de.md#411-monogram-telegram-medien)
+- [Monogram-API-ID/-Hash, QR-Anmeldung und technische Integration](monogram-integration.md)
 - [System- und Sprachsuche](DOCUMENTATION.de.md#111-android-tv)
 
 ## Weitere Projektnotizen (Repo-Root)
@@ -35,5 +38,7 @@ Technische Notizen im Repository:
 | [`EXTERNAL_LIBRARIES.md`](../EXTERNAL_LIBRARIES.md) | Gepinnte Engines und Update-Workflow |
 | [`MPV_NATIVE_INTEGRATION.md`](../MPV_NATIVE_INTEGRATION.md) | Nativer MPV-Build und JNI-Anbindung |
 | [`BRANDING.md`](../BRANDING.md) | Anzeigename und Grafiken |
+
+**Spotify:** in regulären Builds deaktiviert, weil Spotify dem verwendeten Wiedergabekern keine funktionierenden Audioschlüssel mehr bereitstellt. Siehe den [Überblick](DOCUMENTATION.de.md#1-überblick).
 
 Maßgeblich für Nutzerfunktionen sind die App-Strings und [`DOCUMENTATION.md`](DOCUMENTATION.md) / [`DOCUMENTATION.de.md`](DOCUMENTATION.de.md).
