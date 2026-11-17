@@ -41,6 +41,19 @@ class PerformanceProfileTest {
         assertEquals(PerformanceMode.MAXIMUM, PerformanceMode.fromKey("maximum"))
     }
     @Test
+    fun selectionMarkerMotionIsOffInLowAndReducedAutoOnly() {
+        assertFalse(PerformanceProfile.resolve(PerformanceMode.LOW, lowEndDevice = false).allowSelectionIndicatorMotion)
+        assertFalse(PerformanceProfile.resolve(PerformanceMode.LOW, lowEndDevice = true).allowSelectionIndicatorMotion)
+        assertFalse(PerformanceProfile.resolve(PerformanceMode.AUTO, lowEndDevice = true).allowSelectionIndicatorMotion)
+        assertTrue(PerformanceProfile.resolve(PerformanceMode.AUTO, lowEndDevice = false).allowSelectionIndicatorMotion)
+        assertTrue(PerformanceProfile.resolve(PerformanceMode.BALANCED, lowEndDevice = true).allowSelectionIndicatorMotion)
+        assertTrue(PerformanceProfile.resolve(PerformanceMode.MAXIMUM, lowEndDevice = true).allowSelectionIndicatorMotion)
+        // The interface marker policy is independent of playback performance settings.
+        assertTrue(PerformanceProfile.resolve(PerformanceMode.BALANCED, lowEndDevice = false,
+            playbackMode = PerformanceMode.LOW).allowSelectionIndicatorMotion)
+    }
+
+    @Test
     fun lowAlwaysReducesEvenOnHighEnd() {
         val profile = PerformanceProfile.resolve(PerformanceMode.LOW, lowEndDevice = false)
         assertTrue(profile.reducedEffects)
