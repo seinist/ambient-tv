@@ -15,11 +15,21 @@ data class ClockSettings(
     val color: String = COLOR_WHITE,
     val opacityPercent: Int = 92,
     val shadow: String = SHADOW_SOFT,
+    /** Shared placement in headers, Home and screensaver; auto uses each surface's best fit. */
+    val weatherLayout: String = WEATHER_LAYOUT_AUTO,
+    val weatherAccent: Boolean = true,
+    val weatherTransitions: Boolean = true,
     val endTime: Boolean = true,
 ) {
     val inHeader: Boolean get() = display == DISPLAY_EVERYWHERE || display == DISPLAY_PLAYER
     val onHome: Boolean get() = display != DISPLAY_OFF
     val inPlayer: Boolean get() = display == DISPLAY_PLAYER
+
+    /** In auto mode headers stay compact, while screensavers keep a centered vertical block. */
+    fun resolvedWeatherLayout(screensaver: Boolean = false): String =
+        if (weatherLayout == WEATHER_LAYOUT_AUTO) {
+            if (screensaver) WEATHER_LAYOUT_BELOW else WEATHER_LAYOUT_INTEGRATED
+        } else weatherLayout
 
     fun use24Hour(systemIs24Hour: Boolean): Boolean = when (format) {
         FORMAT_12 -> false
@@ -37,6 +47,7 @@ data class ClockSettings(
         color = color.takeIf { it in colors } ?: COLOR_WHITE,
         opacityPercent = opacityPercent.coerceIn(40, 100),
         shadow = shadow.takeIf { it in shadows } ?: SHADOW_SOFT,
+        weatherLayout = weatherLayout.takeIf { it in weatherLayouts } ?: WEATHER_LAYOUT_AUTO,
     )
 
     companion object {
@@ -77,5 +88,16 @@ data class ClockSettings(
         const val SHADOW_SOFT = "soft"
         const val SHADOW_STRONG = "strong"
         val shadows = listOf(SHADOW_OFF, SHADOW_SOFT, SHADOW_STRONG)
+
+        const val WEATHER_LAYOUT_AUTO = "auto"
+        const val WEATHER_LAYOUT_INTEGRATED = "integrated"
+        const val WEATHER_LAYOUT_ABOVE = "above"
+        const val WEATHER_LAYOUT_BELOW = "below"
+        const val WEATHER_LAYOUT_LEFT = "left"
+        const val WEATHER_LAYOUT_RIGHT = "right"
+        val weatherLayouts = listOf(
+            WEATHER_LAYOUT_AUTO, WEATHER_LAYOUT_INTEGRATED, WEATHER_LAYOUT_ABOVE,
+            WEATHER_LAYOUT_BELOW, WEATHER_LAYOUT_LEFT, WEATHER_LAYOUT_RIGHT,
+        )
     }
 }
