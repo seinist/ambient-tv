@@ -5,6 +5,8 @@ import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
@@ -97,6 +99,8 @@ internal class BrowseLoadScheduler(
         block: suspend () -> T,
     ): T {
         require(key.isNotBlank())
+        // The first caller owns UI/Compose dispatch; the shared task itself owns cancellation.
+        val callerContext = currentCoroutineContext().minusKey(Job)
         val shared = synchronized(lock) {
             flights[key]?.also { current ->
                 current.consumers++
@@ -110,7 +114,7 @@ internal class BrowseLoadScheduler(
                     while (fresh.priority == BrowseLoadPriority.BACKGROUND && !idle()) delay(200)
                     gate.withPermit({ fresh.priority }) {
                         Timber.tag("browse-load").d("start priority=%s", fresh.priority)
-                        block()
+                        withContext(callerContext) { block() }
                     }
                 }
                 flights[key] = fresh
