@@ -103,6 +103,8 @@ class ResumeConnectivityMonitor @Inject constructor(
     val vpnDropGeneration: StateFlow<Long> = _vpnDropGeneration.asStateFlow()
 
     private val ownedVpnNetworks = ConcurrentHashMap.newKeySet<Network>()
+    /** Last validated state of physical underlay networks, not Ambient TV's VPN tunnel. */
+    private val validatedUnderlays = ConcurrentHashMap<Network, Boolean>()
     private val vpnNetworkCallback = object : ConnectivityManager.NetworkCallback() {
         override fun onAvailable(network: Network) {
             val cm = context.getSystemService(ConnectivityManager::class.java)
@@ -220,7 +222,20 @@ class ResumeConnectivityMonitor @Inject constructor(
 
     private val connectivityCallback = object : ConnectivityManager.NetworkCallback() {
         override fun onAvailable(network: Network) = onNetworkChanged("network-available")
-        override fun onLost(network: Network) = onNetworkChanged("network-lost")
+        override fun onLost(network: Network) {
+            validatedUnderlays.remove(network)
+            onNetworkChanged("network-lost")
+        }
+
+        override fun onCapabilitiesChanged(network: Network, capabilities: NetworkCapabilities) {
+            if (capabilities.hasTransport(NetworkCapabilities.TRANSPORT_VPN)) return
+            val validated = capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) &&
+                capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)
+            val before = validatedUnderlays.put(network, validated)
+            // The transport can be connected well before the Internet becomes usable.
+            // A skipped WireGuard connection must be retried after validation succeeds.
+            if (validated && before != true) onNetworkChanged("internet-validated")
+        }
     }
 
     private fun registerNetworkCallback() {
