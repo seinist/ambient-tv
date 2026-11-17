@@ -2,6 +2,7 @@ package com.ambient.tv.notifications
 
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.ProcessLifecycleOwner
+import androidx.lifecycle.repeatOnLifecycle
 import com.ambient.tv.R
 import com.ambient.tv.livetv.LiveTvRegistry
 import com.ambient.tv.livetv.RecordingEventKind
@@ -35,9 +36,15 @@ class RecordingNotifications @Inject constructor(
         if (started) return
         started = true
         scope.launch {
-            while (true) {
-                if (ProcessLifecycleOwner.get().lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)) poll()
-                delay(POLL_MS)
+            // Foreground observation is lifecycle-owned. The previous periodic check could
+            // start before onStart and then not poll for two minutes, or start full Live TV
+            // discovery simultaneously with the cold-start Home/Sidebar hydration.
+            ProcessLifecycleOwner.get().lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
+                delay(INITIAL_FOREGROUND_SETTLE_MS)
+                while (true) {
+                    poll()
+                    delay(POLL_MS)
+                }
             }
         }
     }
@@ -81,6 +88,7 @@ class RecordingNotifications @Inject constructor(
     }
 
     private companion object {
+        const val INITIAL_FOREGROUND_SETTLE_MS = 15_000L
         const val POLL_MS = 120_000L
     }
 }
