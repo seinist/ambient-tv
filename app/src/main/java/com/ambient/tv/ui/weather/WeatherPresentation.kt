@@ -25,7 +25,9 @@ data class WeatherPresentation(
     val contentVisible: Boolean = true,
     /** Reserve geometry even before the cached or online forecast becomes available. */
     val headerEnabled: Boolean = false,
-)
+) {
+    val hasHeader: Boolean get() = headerEnabled || header != null
+}
 
 val LocalWeatherPresentation = staticCompositionLocalOf { WeatherPresentation() }
 
