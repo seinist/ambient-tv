@@ -1475,8 +1475,8 @@ private fun OsdIconButton(
             .height(height)
             .shadow(elevation, shape)
             .onFocusChanged { focused = it.isFocused }
-            .appControlSurface(focused = focused, selected = selected, shape = shape, prominent = primary, pressed = pressed,
-                selectionIndicator = SelectionIndicator.DOT)
+            .appOsdControlSurface(focused = focused, selected = selected, shape = shape,
+                prominent = primary, pressed = pressed)
             .activateOnTvKey(onClick = onClick)
             .clickable(interactionSource = interactions, indication = null, onClick = onClick)
             .focusable()
@@ -1581,7 +1581,8 @@ private fun OsdSpeedChip(label: String, selected: Boolean, onClick: () -> Unit) 
     val pressed by interactions.collectIsPressedAsState()
     Box(
         modifier = Modifier.width(70.dp).height(40.dp).onFocusChanged { focused = it.isFocused }
-            .appControlSurface(focused = focused, selected = selected, shape = RoundedCornerShape(6.dp), pressed = pressed)
+            .appOsdControlSurface(focused = focused, selected = selected, shape = RoundedCornerShape(6.dp),
+                pressed = pressed, selectionIndicator = SelectionIndicator.UNDERLINE)
             .activateOnTvKey(onClick = onClick)
             .clickable(interactionSource = interactions, indication = null, onClick = onClick).focusable(),
         contentAlignment = Alignment.Center,

@@ -20,6 +20,7 @@ import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.graphics.drawOutline
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.translate
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.composed
@@ -221,6 +222,8 @@ fun Modifier.appControlSurface(
     prominent: Boolean = false,
     pressed: Boolean = false,
     selectionIndicator: SelectionIndicator = SelectionIndicator.UNDERLINE,
+    /** Low-intensity accent material on OSD controls, without styling their idle chrome. */
+    osdChrome: Boolean = false,
 ): Modifier = composed {
     val colors = rememberInteractionColorState(
         focused, selected, enabled, animate, focusedAccent, prominent, pressed,
@@ -274,9 +277,44 @@ fun Modifier.appControlSurface(
             // A selected control retains this small accent marker even under a white focus ring.
             // It uses the cached static material, never another animation or layout pass.
             drawSelectionIndicator(marker, material)
+            // A narrow static reflection makes the chosen accent material legible on OSD
+            // controls without turning the complete button into a colored tile. The base
+            // and the neutral focus border remain unchanged; no new frame clock is used.
+            if (osdChrome && enabled && (focused || selected)) {
+                val insetX = 10.dp.toPx()
+                val endX = size.width - insetX
+                if (endX > insetX && size.height > 12.dp.toPx()) {
+                    drawLine(
+                        brush = material,
+                        start = Offset(insetX, 5.dp.toPx()),
+                        end = Offset(endX, 5.dp.toPx()),
+                        strokeWidth = 1.dp.toPx(),
+                        cap = StrokeCap.Round,
+                        alpha = if (selected) .42f else .25f,
+                    )
+                }
+            }
         }
     }
 }
+
+/**
+ * OSD-specific palette treatment shared by Media3, MPV, VLC, LiveTV, radio, weather,
+ * photos, SmartTube and Monogram. Selection and focus never replace one another.
+ */
+fun Modifier.appOsdControlSurface(
+    focused: Boolean,
+    selected: Boolean = false,
+    enabled: Boolean = true,
+    shape: Shape,
+    prominent: Boolean = false,
+    pressed: Boolean = false,
+    selectionIndicator: SelectionIndicator = SelectionIndicator.DOT,
+): Modifier = appControlSurface(
+    focused = focused, selected = selected, enabled = enabled, shape = shape,
+    prominent = prominent, pressed = pressed, selectionIndicator = selectionIndicator,
+    osdChrome = true,
+)
 
 /**
  * Focus color crossfade. Reduced-performance profiles still fade (a short color tween only

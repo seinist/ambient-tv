@@ -698,7 +698,7 @@ fun PlayerSleepTimerButton(onClick: () -> Unit, selected: Boolean) {
         if (active) Icons.Filled.Bedtime else Icons.Outlined.BedtimeOutlined,
         stringResource(R.string.player_sleep_timer),
         onClick,
-        selected = selected,
+        selected = selected || active,
         osd = com.ambient.tv.ui.player.OsdButton.SLEEP,
     )
 }
@@ -792,8 +792,10 @@ fun PlayerIconButton(
             .onFocusChanged { focused = it.isFocused }
             .menuFocusMotion(focused)
             // Size identifies the main action; only actual focus draws the focus treatment.
-            .appControlSurface(focused, selected, shape = shape,
-                selectionIndicator = SelectionIndicator.DOT)
+            .appOsdControlSurface(
+                focused = focused, selected = selected, enabled = enabled || loading,
+                shape = shape, pressed = false,
+            )
             .activateOnTvKey(onClick = click)
             .clickable(enabled = barInteractive, role = Role.Button, onClick = click),
         horizontalArrangement = Arrangement.Center,

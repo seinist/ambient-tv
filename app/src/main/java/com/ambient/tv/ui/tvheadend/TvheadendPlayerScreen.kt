@@ -1154,7 +1154,7 @@ private fun TvhOsdAction(
     Row(
         modifier = modifier.width(if (primary) 58.dp else 48.dp).height(40.dp)
             .onFocusChanged { focused = it.isFocused }
-            .appControlSurface(focused = focused, shape = shape, prominent = primary, pressed = pressed)
+            .appOsdControlSurface(focused = focused, shape = shape, prominent = primary, pressed = pressed)
             .activateOnTvKey(onClick = onClick)
             .clickable(interactionSource = interactions, indication = null, onClick = onClick).focusable(),
         verticalAlignment = Alignment.CenterVertically,
