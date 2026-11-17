@@ -1020,7 +1020,9 @@ class HomeViewModel @Inject constructor(
         }
         coroutineScope {
             if (hasEnabledRow(system, "continue") || (allContinueRow() != null && system in appPreferences.allContinueSystems)) launch {
-                val result = repository.getOnDeck()
+                val result = loadCoordinator.request(system, "home:ondeck", BrowseLoadPriority.HOME) {
+                    repository.getOnDeck()
+                }
                 onDeck = result.counted(repository.cachedOnDeck().orEmpty())
                 // Feeds the cross-system row; a failed answer keeps the last list of that server.
                 if (result.isSuccess) continueBySystem[system] = onDeck
@@ -1473,7 +1475,11 @@ class HomeViewModel @Inject constructor(
                     tvPreview.recent.filterNot { it.channel.sourceId == repo.source.id } + preview.recent,
                 )
                 (_uiState.value as? HomeUiState.Loaded)?.let { publishRows(it.rows) }
-                val events = suspendResult { repo.nowEvents() }.getOrDefault(emptyList()).associateBy { it.channelUuid }
+                val events = suspendResult {
+                    loadCoordinator.request(repo.source.id, "home:now-events", BrowseLoadPriority.HOME) {
+                        repo.nowEvents()
+                    }
+                }.getOrDefault(emptyList()).associateBy { it.channelUuid }
                 HomeTvPreview(preview.live.map { it.copy(event = events[it.channel.uuid]) },
                     preview.recent.map { it.copy(event = events[it.channel.uuid]) })
             }.getOrDefault(HomeTvPreview())
