@@ -8,6 +8,7 @@ import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
@@ -146,7 +147,7 @@ private fun ScreensaverClock(showClock: Boolean, showDate: Boolean, clock: com.a
         val safeY = ((height - clockSize.height) / 2f - margin).coerceAtLeast(0f)
         val typeSize = (min(maxWidth.value * 0.18f / density.fontScale, maxHeight.value * 0.28f / density.fontScale))
             .coerceIn(32f, if (oled) 94f else 132f)
-        ClockBlock(timeText, dateText, periodText, showDate, oled, brightness, typeSize, showClock, weather,
+        ClockBlock(timeText, dateText, periodText, showDate, oled, brightness, typeSize, showClock, clock, weather,
             Modifier.align(Alignment.Center)
                 // Also clamp the in-flight animation after a window/font-size change.
                 .offset { IntOffset(x.coerceIn(-safeX, safeX).roundToInt(), y.coerceIn(-safeY, safeY).roundToInt()) }
@@ -300,6 +301,7 @@ private fun PhotoBackground(intervalSeconds: Int, brightness: Float, hdrHeadroom
 private fun ClockBlock(
     timeText: String, dateText: String, periodText: String?, showDate: Boolean,
     oled: Boolean, brightness: Float, typeSize: Float, showClock: Boolean,
+    clock: com.ambient.tv.data.local.ClockSettings,
     weather: com.ambient.tv.data.weather.WeatherSnapshot?, modifier: Modifier = Modifier,
 ) {
     val timeColor = Color(0xFFF0F2F5).copy(alpha = (if (oled) 0.36f else 0.92f) * brightness)
@@ -313,8 +315,8 @@ private fun ClockBlock(
         fontFeatureSettings = "tnum",
         shadow = if (oled) null else Shadow(Color.Black.copy(alpha = 0.30f), Offset(0f, 2f), 14f),
     )
-    Column(modifier.padding(horizontal = 24.dp, vertical = 18.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-        if (showClock) Row(verticalAlignment = Alignment.Bottom) {
+    val timePart: @Composable () -> Unit = {
+        Row(verticalAlignment = Alignment.Bottom) {
             Crossfade(timeText, animationSpec = tween(500), label = "clockMinute") { text ->
                 Text(text, style = face, color = timeColor, maxLines = 1, softWrap = false, textAlign = TextAlign.Center)
             }
@@ -323,15 +325,67 @@ private fun ClockBlock(
                 fontSize = (typeSize * 0.14f).coerceIn(12f, 18f).sp,
                 fontWeight = FontWeight.Medium, letterSpacing = 1.sp, color = detailColor)
         }
-        if (showClock && showDate) {
-            Spacer(Modifier.height(8.dp))
-            Text(dateText, fontSize = (typeSize * 0.13f).coerceIn(12f, 17f).sp,
-                fontWeight = FontWeight.Normal, letterSpacing = 1.3.sp,
-                color = detailColor, textAlign = TextAlign.Center, maxLines = 1, overflow = TextOverflow.Ellipsis)
+    }
+    val datePart: @Composable () -> Unit = {
+        Text(dateText, fontSize = (typeSize * 0.13f).coerceIn(12f, 17f).sp,
+            fontWeight = FontWeight.Normal, letterSpacing = 1.3.sp,
+            color = detailColor, textAlign = TextAlign.Center, maxLines = 1, overflow = TextOverflow.Ellipsis)
+    }
+    val clockPart: @Composable () -> Unit = {
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            if (showClock) {
+                timePart()
+                if (showDate) {
+                    Spacer(Modifier.height(8.dp))
+                    datePart()
+                }
+            }
         }
+    }
+    val weatherPart: @Composable () -> Unit = {
         weather?.let {
-            if (showClock) Spacer(Modifier.height(12.dp))
-            com.ambient.tv.ui.weather.WeatherCompactSummary(snapshot = it, textColor = detailColor)
+            // OLED keeps every weather pixel dim regardless of the chosen accent.
+            val iconTint = if (clock.weatherAccent && !oled) {
+                MaterialTheme.colorScheme.primary.copy(alpha = detailColor.alpha)
+            } else detailColor
+            com.ambient.tv.ui.weather.WeatherCompactSummary(
+                snapshot = it, textColor = detailColor, iconColor = iconTint,
+                animateChanges = clock.weatherTransitions,
+            )
+        }
+    }
+    Column(modifier.padding(horizontal = 24.dp, vertical = 18.dp),
+        horizontalAlignment = Alignment.CenterHorizontally) {
+        if (weather == null || !showClock) {
+            if (showClock) clockPart() else weatherPart()
+        } else when (clock.resolvedWeatherLayout(screensaver = true)) {
+            com.ambient.tv.data.local.ClockSettings.WEATHER_LAYOUT_INTEGRATED -> {
+                timePart()
+                Spacer(Modifier.height(8.dp))
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+                    if (showDate) datePart()
+                    weatherPart()
+                }
+            }
+            com.ambient.tv.data.local.ClockSettings.WEATHER_LAYOUT_ABOVE -> {
+                weatherPart()
+                Spacer(Modifier.height(12.dp))
+                clockPart()
+            }
+            com.ambient.tv.data.local.ClockSettings.WEATHER_LAYOUT_LEFT,
+            com.ambient.tv.data.local.ClockSettings.WEATHER_LAYOUT_RIGHT -> {
+                val left = clock.weatherLayout == com.ambient.tv.data.local.ClockSettings.WEATHER_LAYOUT_LEFT
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(18.dp)) {
+                    if (left) weatherPart()
+                    clockPart()
+                    if (!left) weatherPart()
+                }
+            }
+            else -> {
+                clockPart()
+                Spacer(Modifier.height(12.dp))
+                weatherPart()
+            }
         }
     }
 }
