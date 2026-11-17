@@ -237,7 +237,7 @@ fun ClockWeatherDisplay(
 fun HeaderClock(modifier: Modifier = Modifier, showClock: Boolean = LocalClockSettings.current.inHeader) {
     val presentation = com.ambient.tv.ui.weather.LocalWeatherPresentation.current
     val weather = presentation.header
-    val showWeather = presentation.headerEnabled || weather != null
+    val showWeather = presentation.hasHeader
     if (!showClock && !showWeather) return
     val settings = LocalClockSettings.current
     // A long date or a horizontal weather layout must yield to navigation and search actions.
