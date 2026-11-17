@@ -128,6 +128,12 @@ internal data class MenuDestination(val id: String, val label: String, val icon:
 private fun offlineLabel(name: String, offline: Boolean): String =
     if (offline) "$name · ${stringResource(R.string.offline_badge)}" else name
 
+@Composable
+private fun availabilityLabel(name: String, system: String, state: SidebarUiState): String = when {
+    system in state.vpnUnavailableSystems -> "$name · VPN"
+    else -> offlineLabel(name, system in state.offlineSystems)
+}
+
 private data class MenuSystem(
     val id: String,
     val label: String,
@@ -270,11 +276,11 @@ internal fun SidebarContent(
             dlnaMenuDestinations(sidebarState)))
         if (filesEnabled) add(MenuSystem("files", menuSystemName(MediaSystem.FILES), Icons.Filled.Folder, system = MediaSystem.FILES, entries =
             filesMenuDestinations(sidebarState)))
-        if (plexShown) add(MenuSystem("plex", offlineLabel(menuSystemName(MediaSystem.PLEX), "plex" in sidebarState.offlineSystems), Icons.Filled.VideoLibrary, system = MediaSystem.PLEX, entries =
+        if (plexShown) add(MenuSystem("plex", availabilityLabel(menuSystemName(MediaSystem.PLEX), "plex", sidebarState), Icons.Filled.VideoLibrary, system = MediaSystem.PLEX, entries =
             providerMenuDestinations(sidebarState, "plex")))
-        if (jellyfinShown) add(MenuSystem("jellyfin", offlineLabel(menuSystemName(MediaSystem.JELLYFIN), "jellyfin" in sidebarState.offlineSystems), Icons.Filled.VideoLibrary, system = MediaSystem.JELLYFIN, entries =
+        if (jellyfinShown) add(MenuSystem("jellyfin", availabilityLabel(menuSystemName(MediaSystem.JELLYFIN), "jellyfin", sidebarState), Icons.Filled.VideoLibrary, system = MediaSystem.JELLYFIN, entries =
             providerMenuDestinations(sidebarState, "jellyfin")))
-        if (embyShown) add(MenuSystem("emby", offlineLabel(menuSystemName(MediaSystem.EMBY), "emby" in sidebarState.offlineSystems), Icons.Filled.VideoLibrary, system = MediaSystem.EMBY, entries =
+        if (embyShown) add(MenuSystem("emby", availabilityLabel(menuSystemName(MediaSystem.EMBY), "emby", sidebarState), Icons.Filled.VideoLibrary, system = MediaSystem.EMBY, entries =
             providerMenuDestinations(sidebarState, "emby")))
         if (sidebarState.trailersConfigured) add(MenuSystem("trailers", offlineLabel(menuSystemName(MediaSystem.TRAILERS), "trailers" in sidebarState.offlineSystems), Icons.Filled.Movie, system = MediaSystem.TRAILERS,
             entries = TrailerFeed.entries.map { feed ->
@@ -366,7 +372,7 @@ internal fun SidebarContent(
             // Rejected login: keep TVHeadend in the menu, pointing at its settings instead of vanishing.
             val entries = listOf(MenuDestination("tvheadend:login", stringResource(R.string.tvh_login_check), Icons.AutoMirrored.Filled.Login,
                 Destinations.SETTINGS, settingsCategory = MediaSystem.TVHEADEND.key))
-            add(MenuSystem("tvheadend", offlineLabel(menuSystemName(MediaSystem.TVHEADEND), "tvheadend" in sidebarState.offlineSystems), Icons.Filled.Tv, entries, system = MediaSystem.TVHEADEND))
+            add(MenuSystem("tvheadend", availabilityLabel(menuSystemName(MediaSystem.TVHEADEND), "tvheadend", sidebarState), Icons.Filled.Tv, entries, system = MediaSystem.TVHEADEND))
         } else if (tvheadendEnabled) {
             val entries = listOfNotNull(
                 Triple("live", stringResource(R.string.tvh_live), liveTvMenuIcon("live")),
@@ -378,7 +384,7 @@ internal fun SidebarContent(
             ).filter { it.first in tvheadendSubmenuKeys }.map { (key, label, icon) ->
                 MenuDestination("tvheadend:$key", label, icon, if (key == "live") Destinations.LIVE_TV else Destinations.liveTvSection(key))
             }.ifEmpty { listOf(MenuDestination("tvheadend:live", stringResource(R.string.tvh_live), liveTvMenuIcon("live"), Destinations.LIVE_TV)) }
-            val label = offlineLabel(menuSystemName(MediaSystem.TVHEADEND), "tvheadend" in sidebarState.offlineSystems)
+            val label = availabilityLabel(menuSystemName(MediaSystem.TVHEADEND), "tvheadend", sidebarState)
             add(MenuSystem("tvheadend", label, Icons.Filled.Tv, entries, system = MediaSystem.TVHEADEND))
         }
         // IPTV playlists (M3U + XMLTV): one entry per playlist and tab, through the shared Live TV screens.
@@ -1245,7 +1251,7 @@ private fun rememberSidebarBackRegistration(): ((() -> Unit)?) -> Unit {
 internal fun filesMenuDestinations(state: SidebarUiState): List<MenuDestination> = listOf(
     MenuDestination("files:browse", stringResource(R.string.files_browse), Icons.Filled.Folder, Destinations.FILES),
 ) + state.networkFileSources.map { source ->
-    MenuDestination("files:source:${source.id}", offlineLabel(source.name, "files:${source.id}" in state.offlineSystems),
+    MenuDestination("files:source:${source.id}", availabilityLabel(source.name, "files:${source.id}", state),
         Icons.Filled.Storage, Destinations.fileSource(source.id))
 } + listOf(
     MenuDestination("files:favorites", stringResource(R.string.files_favorites), Icons.Filled.Favorite, Destinations.FILE_FAVORITES),
@@ -1256,7 +1262,7 @@ internal fun filesMenuDestinations(state: SidebarUiState): List<MenuDestination>
 @Composable
 internal fun dlnaMenuDestinations(state: SidebarUiState): List<MenuDestination> =
     listOf(MenuDestination("dlna:manage", stringResource(R.string.dlna_servers), Icons.Filled.Settings, Destinations.DLNA)) +
-        state.dlnaServers.map { server -> MenuDestination("dlna:${server.id}", offlineLabel(server.name, "dlna:${server.id}" in state.offlineSystems),
+        state.dlnaServers.map { server -> MenuDestination("dlna:${server.id}", availabilityLabel(server.name, "dlna:${server.id}", state),
             Icons.Filled.Storage, Destinations.dlnaServer(server.id)) }
 
 

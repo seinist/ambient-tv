@@ -1,6 +1,8 @@
 package com.ambient.tv.ui.navigation
 
 import com.ambient.tv.connectivity.HostHealth
+import com.ambient.tv.data.browse.InternetReachability
+import com.ambient.tv.vpn.WireGuardRouteState
 import com.ambient.tv.data.local.AppPreferences
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.distinctUntilChanged
@@ -27,6 +29,22 @@ internal fun sidebarOfflineSources(
     healthOf: (String) -> HostHealth,
 ): Set<String> = configuredSources.filterTo(linkedSetOf()) { healthOf(it) == HostHealth.OFFLINE }
 
+
+/**
+ * Only explicitly tunnelled sources depend on WireGuard. Up is authoritative:
+ * a local tunnel can work without Android validating public Internet access.
+ * At process startup Idle alone is not a confirmed failure on a healthy network.
+ */
+internal fun sidebarVpnUnavailableSources(
+    vpnSources: Collection<String>,
+    route: WireGuardRouteState,
+    internet: InternetReachability,
+): Set<String> = when {
+    route is WireGuardRouteState.Up -> emptySet()
+    route is WireGuardRouteState.Failed -> vpnSources.toSet()
+    internet == InternetReachability.UNAVAILABLE -> vpnSources.toSet()
+    else -> emptySet()
+}
 
 /** Preference subset whose changes alter the contents of provider pages in the sidebar. */
 internal data class SidebarSubmenuSnapshot(
