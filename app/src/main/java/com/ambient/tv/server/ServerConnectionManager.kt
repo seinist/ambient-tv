@@ -171,7 +171,7 @@ class ServerConnectionManager @Inject constructor(
 
     private suspend fun connect(forceNewWake: Boolean = false): Boolean {
         val before = _state.value
-        val previouslyConnectedEndpoint = $field
+        val previouslyConnectedEndpoint = lastConnectedServerId
         var freshlyConfirmed = false
         val check = hosts.begin("plex")
         val endpoint = endpointKey()
