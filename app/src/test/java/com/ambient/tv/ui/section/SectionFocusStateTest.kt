@@ -260,7 +260,7 @@ class SectionFocusStateTest {
         private val availability = SourceAvailability(context, scopes, preferences, hosts)
         private val prefetcher = MetadataPrefetcher(repository, availability, scopes, com.ambient.tv.data.browse.BrowseLoadCoordinator(scopes))
         val model = SectionViewModel(context, SavedStateHandle(mapOf("sectionKey" to SECTION_KEY)),
-            repository, prefetcher, availability, preferences, PlexRefreshBus())
+            repository, prefetcher, availability, preferences, PlexRefreshBus(), com.ambient.tv.data.browse.BrowseLoadCoordinator(scopes))
         private val store = ViewModelStore().apply { put("section", model) }
 
         fun pauseNextRebuild(): RebuildGate = RebuildGate().also {
