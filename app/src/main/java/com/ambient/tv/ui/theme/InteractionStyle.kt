@@ -15,12 +15,17 @@ import androidx.compose.runtime.key
 import androidx.compose.runtime.remember
 import androidx.compose.ui.draw.drawWithCache
 import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.graphics.drawOutline
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.translate
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.composed
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.lerp
@@ -29,6 +34,7 @@ import androidx.compose.ui.zIndex
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.tv.material3.MaterialTheme
 import com.ambient.tv.ui.performance.LocalPerformanceProfile
@@ -36,6 +42,88 @@ import com.ambient.tv.ui.performance.LocalPerformanceProfile
 /** A neutral focus signal remains visible with even a black or white custom accent. */
 @Immutable
 data class InteractionColors(val container: Color, val outline: Color, val content: Color)
+
+/** Selected state is persistent; focus remains a separate neutral boundary. */
+enum class SelectionIndicator { UNDERLINE, LEADING_BAR, DOT, NONE }
+
+/**
+ * Fixed, inset geometry prevents layout shifts and keeps the selection mark separate
+ * from the focus outline. Pure geometry is shared by TV and handheld controls.
+ */
+internal fun selectionIndicatorRect(
+    selected: Boolean,
+    surface: Size,
+    indicator: SelectionIndicator,
+    dp: Float,
+    rtl: Boolean = false,
+): Rect? {
+    if (!selected || indicator == SelectionIndicator.NONE || dp <= 0f ||
+        !surface.width.isFinite() || !surface.height.isFinite()) return null
+    val inset = 4f * dp
+    val roomW = surface.width - 2f * inset
+    val roomH = surface.height - 2f * inset
+    if (roomW <= 0f || roomH <= 0f) return null
+    val thickness = minOf(3f * dp, roomW * .25f, roomH * .25f)
+    return when (indicator) {
+        SelectionIndicator.UNDERLINE -> {
+            val width = minOf(32f * dp, roomW * .50f)
+            val left = (surface.width - width) / 2f
+            Rect(left, surface.height - inset - thickness,
+                left + width, surface.height - inset)
+        }
+        SelectionIndicator.LEADING_BAR -> {
+            val length = minOf(24f * dp, roomH * .58f)
+            val left = if (rtl) surface.width - inset - thickness else inset
+            val top = (surface.height - length) / 2f
+            Rect(left, top, left + thickness, top + length)
+        }
+        SelectionIndicator.DOT -> {
+            val diameter = minOf(6f * dp, roomW * .30f, roomH * .50f)
+            val left = if (rtl) inset else surface.width - inset - diameter
+            Rect(left, inset, left + diameter, inset + diameter)
+        }
+        SelectionIndicator.NONE -> null
+    }
+}
+
+private fun DrawScope.drawSelectionIndicator(
+    bounds: Rect?,
+    brush: Brush,
+    onLightBackground: Boolean = false,
+) {
+    if (bounds == null) return
+    val radius = CornerRadius(minOf(bounds.width, bounds.height) / 2f)
+    // The sidebar keeps its white focus pill. A dark rim makes its accent strip
+    // visible even with yellow/white custom accents on the light pill.
+    if (onLightBackground) {
+        val spread = 1.5.dp.toPx()
+        drawRoundRect(
+            color = Color.Black.copy(alpha = .80f),
+            topLeft = Offset(bounds.left - spread, bounds.top - spread),
+            size = Size(bounds.width + spread * 2f, bounds.height + spread * 2f),
+            cornerRadius = CornerRadius(radius.x + spread),
+        )
+    }
+    drawRoundRect(brush = brush, topLeft = bounds.topLeft, size = bounds.size, cornerRadius = radius)
+}
+
+/** Extra selection treatment for surfaces that already own their focus drawing. */
+fun Modifier.selectedStateMarker(
+    selected: Boolean,
+    indicator: SelectionIndicator = SelectionIndicator.LEADING_BAR,
+    focusedOnLightSurface: Boolean = false,
+): Modifier = composed {
+    val accent = MaterialTheme.colorScheme.primary
+    val style = LocalAccentStyle.current
+    if (!selected) this else this.drawWithCache {
+        val bounds = selectionIndicatorRect(true, size, indicator, 1.dp.toPx(), layoutDirection == LayoutDirection.Rtl)
+        val brush = accentBrush(accent, style)
+        onDrawWithContent {
+            drawContent()
+            drawSelectionIndicator(bounds, brush, focusedOnLightSurface)
+        }
+    }
+}
 
 @Composable
 fun interactionColors(
@@ -132,6 +220,7 @@ fun Modifier.appControlSurface(
     focusedAccent: Boolean = false,
     prominent: Boolean = false,
     pressed: Boolean = false,
+    selectionIndicator: SelectionIndicator = SelectionIndicator.UNDERLINE,
 ): Modifier = composed {
     val colors = rememberInteractionColorState(
         focused, selected, enabled, animate, focusedAccent, prominent, pressed,
@@ -151,6 +240,10 @@ fun Modifier.appControlSurface(
         )
         val stroke = Stroke(strokePx)
         val material = colors.palette.materialBrush()
+        val marker = selectionIndicatorRect(
+            selected && enabled, size, selectionIndicator, 1.dp.toPx(),
+            layoutDirection == LayoutDirection.Rtl,
+        )
         val glowStroke = if (materialStyle == AccentStyle.GLOW && !reducedEffects && focused && enabled)
             Stroke(strokePx * 2.5f) else null
         val motionPaints = if (motion != null && enabled)
@@ -178,6 +271,9 @@ fun Modifier.appControlSurface(
                     drawOutline(strokeOutline, outline, style = stroke)
                 }
             }
+            // A selected control retains this small accent marker even under a white focus ring.
+            // It uses the cached static material, never another animation or layout pass.
+            drawSelectionIndicator(marker, material)
         }
     }
 }
@@ -335,6 +431,7 @@ fun Modifier.animatedFocusSurface(
             this,
         )
         val material = accentBrush(primaryAccent, materialStyle)
+        val accentOutline = focusedBorder == primaryAccent && focused
         val stroke = Stroke(strokePx)
         val glowStroke = if (materialStyle == AccentStyle.GLOW && !reduced) Stroke(strokePx * 2.5f) else null
         val motionPaints = if (motion != null) AccentMotionPaints(primaryAccent, materialStyle) else null
@@ -348,7 +445,8 @@ fun Modifier.animatedFocusSurface(
             drawContent()
             if (strokePx > 0f && strokeColor.value.alpha > 0f) {
                 translate(inset, inset) {
-                    if (materialStyle == AccentStyle.LIGHT) {
+                    if (materialStyle == AccentStyle.LIGHT || !accentOutline) {
+                        // Honor a requested neutral outline; material must not recolor it.
                         drawOutline(inner, strokeColor.value, style = stroke)
                     } else {
                         if (glowStroke != null) {
@@ -356,8 +454,8 @@ fun Modifier.animatedFocusSurface(
                                 style = glowStroke)
                         }
                         drawOutline(inner, material, alpha = strokeColor.value.alpha, style = stroke)
+                        motionPaints?.drawOutline(this, inner, frame, emphasis = strokeColor.value.alpha, drawStyle = stroke)
                     }
-                    motionPaints?.drawOutline(this, inner, frame, emphasis = strokeColor.value.alpha, drawStyle = stroke)
                 }
             }
         }
