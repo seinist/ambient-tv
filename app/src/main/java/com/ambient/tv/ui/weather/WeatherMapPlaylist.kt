@@ -29,17 +29,13 @@ internal const val WEATHER_PLAYER_FRAME_DURATION_MS = 1_100L
 
 internal data class WeatherMapFrameStatus(val baseMissing: Boolean, val coverageMissing: Boolean)
 
-/** Pure nearest observation lookup; never interprets zero/negative values as sentinels. */
-private fun closestWeatherFrameIndex(frames: List<WeatherMapFrame>, requestedEpoch: Long): Int =
-    frames.indices.minByOrNull { index ->
-        val millis = frames[index].epochMillis
-        if (millis >= requestedEpoch) millis - requestedEpoch else requestedEpoch - millis
-    } ?: 0
-
-/** Preserve the observed timestamp on zoom, but use the latest frame for an unset request. */
+/** Preserve the observed frame timestamp when changing zoom, without assuming uniform source intervals. */
 internal fun weatherPlayerFrameIndex(frames: List<WeatherMapFrame>, requestedEpoch: Long): Int =
     if (frames.isEmpty()) 0 else if (requestedEpoch <= 0L) frames.lastIndex
-    else closestWeatherFrameIndex(frames, requestedEpoch)
+    else frames.indices.minByOrNull { index ->
+        val millis = frames[index].epochMillis
+        if (millis >= requestedEpoch) millis - requestedEpoch else requestedEpoch - millis
+    } ?: frames.lastIndex
 
 /**
  * The shared player seek bar works in elapsed milliseconds, while radar and satellite playlists
@@ -55,8 +51,13 @@ internal fun weatherPlayerSeekTargetIndex(
     val current = currentIndex.coerceIn(0, frames.lastIndex)
     if (deltaMs == 0L) return current
     val timestamp = frames[current].epochMillis + deltaMs
-    // Seeking below epoch zero is a valid backward step, not the unset/latest sentinel.
-    val closest = closestWeatherFrameIndex(frames, timestamp)
+    // weatherPlayerFrameIndex() treats <= 0 as the special "latest" startup request.
+    // A legitimate backward seek can cross epoch zero; here it must choose the first
+    // observed frame instead of incorrectly jumping toward the end of the playlist.
+    val closest = frames.indices.minByOrNull { index ->
+        val epoch = frames[index].epochMillis
+        if (epoch >= timestamp) epoch - timestamp else timestamp - epoch
+    } ?: current
     return if (deltaMs > 0) closest.coerceAtLeast(current + 1).coerceAtMost(frames.lastIndex)
     else closest.coerceAtMost(current - 1).coerceAtLeast(0)
 }
