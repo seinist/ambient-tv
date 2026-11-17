@@ -8,7 +8,6 @@ import com.ambient.tv.data.dlna.DlnaServer
 import com.ambient.tv.data.dlna.DlnaStore
 import com.ambient.tv.connectivity.UnreachableServerGate
 import com.ambient.tv.connectivity.HostConnectivity
-import com.ambient.tv.vpn.WireGuardRouteController
 import com.ambient.tv.data.browse.BrowseLoadCoordinator
 import com.ambient.tv.data.browse.BrowseLoadPriority
 import com.ambient.tv.data.local.AppPreferences
@@ -78,8 +77,6 @@ data class SidebarUiState(
     val embySections: List<LibrarySection> = emptyList(),
     /** Confirmed host outages and unavailable public services; entries and focus IDs stay stable. */
     val offlineSystems: Set<String> = emptySet(),
-    /** VPN-dependent sources, separate from a real host failure or public service outage. */
-    val vpnUnavailableSystems: Set<String> = emptySet(),
 )
 
 @HiltViewModel
@@ -102,7 +99,6 @@ class SidebarViewModel @Inject constructor(
     private val photoRepository: com.ambient.tv.data.photos.PhotoRepository,
     private val unreachableServers: UnreachableServerGate,
     private val hosts: HostConnectivity,
-    private val vpn: WireGuardRouteController,
     private val onlineServices: com.ambient.tv.data.browse.OnlineServiceAvailability,
     private val loadCoordinator: BrowseLoadCoordinator,
 ) : ViewModel() {
@@ -223,11 +219,11 @@ class SidebarViewModel @Inject constructor(
                 fileStore.revision,
                 dlnaStore.serverRevision,
                 com.ambient.tv.data.local.LoginStateSignal.generation,
-                onlineServices.state, vpn.status,
-                snapshot = { currentOfflineSources() to currentVpnUnavailableSources() },
-            ).collect { (offline, vpnBlocked) ->
-                _uiState.update { it.copy(offlineSystems = offline, vpnUnavailableSystems = vpnBlocked) }
-            }
+                snapshot = ::currentOfflineSources,
+            ).collect { offline -> _uiState.update { it.copy(offlineSystems = offline) } }
+        }
+        viewModelScope.launch {
+            onlineServices.state.collect { _uiState.update { state -> state.copy(offlineSystems = currentOfflineSources()) } }
         }
         viewModelScope.launch {
             fileStore.revision.collect {
@@ -302,28 +298,6 @@ class SidebarViewModel @Inject constructor(
         }
         return sidebarOfflineSources(configured, hosts::health) +
             onlineServices.state.value.unavailableServices(remote)
-    }
-
-    /** Never blanket-mark Plex or a NAS offline just because the public Internet is lost. */
-    private fun currentVpnUnavailableSources(): Set<String> {
-        val selected = buildSet {
-            if (appPreferences.isConfigured && appPreferences.wireGuardPlexEnabled) add("plex")
-            if (appPreferences.isJellyfinConfigured && appPreferences.wireGuardJellyfinEnabled) add("jellyfin")
-            if (appPreferences.isEmbyConfigured && appPreferences.wireGuardEmbyEnabled) add("emby")
-            if (appPreferences.hasTvheadendEndpoint && appPreferences.wireGuardTvheadendEnabled) add("tvheadend")
-            if (appPreferences.filesEnabled) networkFileSourcesFromStore()
-                .filter { it.wireGuard && it.kind != "local" }
-                .forEach { add("files:${it.id}") }
-            val vpnHosts = vpn.tunnelHosts().mapTo(hashSetOf()) {
-                com.ambient.tv.network.NetworkEndpoint.normalizeHost(it).lowercase()
-            }
-            if (vpnHosts.isNotEmpty()) dlnaStore.servers().forEach { server ->
-                val host = com.ambient.tv.data.dlna.dlnaWakeEndpoint(server)?.first
-                if (host != null && com.ambient.tv.network.NetworkEndpoint.normalizeHost(host).lowercase() in vpnHosts)
-                    add("dlna:${server.id}")
-            }
-        }
-        return sidebarVpnUnavailableSources(selected, vpn.status.value, onlineServices.state.value.internet)
     }
 
     private fun observeSpotifyAuthorization() {

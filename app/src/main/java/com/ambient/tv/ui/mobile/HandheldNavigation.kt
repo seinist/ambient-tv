@@ -246,7 +246,6 @@ private data class SourceEntry(
     val route: String,
     val settingsCategory: String? = null,
     val offline: Boolean = false,
-    val vpnUnavailable: Boolean = false,
 )
 private data class SourceGroup(val system: MediaSystem, val entries: List<SourceEntry>)
 
@@ -311,12 +310,10 @@ private fun HandheldSources(
     }
     val groups = buildList {
         if (dlnaServers.isNotEmpty()) add(withSettings(MediaSystem.DLNA,
-            dlnaServers.map { SourceEntry(it.id, it.name, Destinations.dlnaServer(it.id), offline = "dlna:${it.id}" in sidebarState.offlineSystems,
-                    vpnUnavailable = "dlna:${it.id}" in sidebarState.vpnUnavailableSystems) } +
+            dlnaServers.map { SourceEntry(it.id, it.name, Destinations.dlnaServer(it.id), offline = "dlna:${it.id}" in sidebarState.offlineSystems) } +
                 listOf(SourceEntry("manage", stringResource(R.string.dlna_servers), Destinations.DLNA))))
         if (files) add(withSettings(MediaSystem.FILES,
-            networkFileSources.map { SourceEntry("source:${it.id}", it.name, Destinations.fileSource(it.id), offline = "files:${it.id}" in sidebarState.offlineSystems,
-                    vpnUnavailable = "files:${it.id}" in sidebarState.vpnUnavailableSystems) } + listOf(
+            networkFileSources.map { SourceEntry("source:${it.id}", it.name, Destinations.fileSource(it.id), offline = "files:${it.id}" in sidebarState.offlineSystems) } + listOf(
                 SourceEntry("browse", stringResource(R.string.files_browse), Destinations.FILES),
                 SourceEntry("favorites", stringResource(R.string.files_favorites), Destinations.FILE_FAVORITES),
                 SourceEntry("recent", stringResource(R.string.files_recent), Destinations.FILE_RECENT),
@@ -434,9 +431,7 @@ private fun HandheldSources(
                 item(group.system.key) {
                     ListItem(
                         headlineContent = { Text(menuItem.label) },
-                        supportingContent = if (group.system.key in sidebarState.vpnUnavailableSystems) {
-                            { Text(stringResource(R.string.sidebar_vpn_unavailable)) }
-                        } else if (group.system.key in sidebarState.offlineSystems) {
+                        supportingContent = if (group.system.key in sidebarState.offlineSystems) {
                             { Text(stringResource(R.string.offline_badge)) }
                         } else null,
                         leadingContent = { SystemLogo(group.system) },
@@ -446,9 +441,7 @@ private fun HandheldSources(
                 }
                 if (open) items(group.entries, key = { "${group.system.key}:${it.key}" }) { entry ->
                     ListItem(headlineContent = { Text(entry.title) },
-                        supportingContent = if (entry.vpnUnavailable) {
-                            { Text(stringResource(R.string.sidebar_vpn_unavailable)) }
-                        } else if (entry.offline) { { Text(stringResource(R.string.offline_badge)) } } else null,
+                        supportingContent = if (entry.offline) { { Text(stringResource(R.string.offline_badge)) } } else null,
                         trailingContent = { Icon(Icons.Default.ChevronRight, null) },
                         modifier = Modifier.padding(start = 32.dp).clickable {
                             if (entry.settingsCategory != null) onOpenSystemSettings(entry.settingsCategory)

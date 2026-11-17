@@ -6,8 +6,6 @@ import com.ambient.tv.livetv.AvailableLiveTvSource
 import com.ambient.tv.livetv.LiveTvCapabilities
 import com.ambient.tv.livetv.LiveTvSource
 import com.ambient.tv.ui.common.MediaSystem
-import com.ambient.tv.data.browse.InternetReachability
-import com.ambient.tv.vpn.WireGuardRouteState
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -16,27 +14,6 @@ import org.junit.Test
 class SidebarRulesTest {
     private fun row(id: String, system: String? = null) =
         SidebarNavRow.Item(MenuDestination(id, id, Icons.Filled.Home, id), active = false, systemId = system, opensPage = system != null)
-
-    @Test fun onlyExplicitVpnSourcesAreBlockedWhenInternetUnavailable() {
-        val configuredVpn = setOf("plex", "files:remote-nas", "dlna:vpn")
-        val blocked = sidebarVpnUnavailableSources(
-            configuredVpn, WireGuardRouteState.Connecting, InternetReachability.UNAVAILABLE)
-        assertEquals(configuredVpn, blocked)
-        assertFalse("jellyfin" in blocked)
-        assertFalse("files:local" in blocked)
-        assertFalse("tvheadend" in blocked)
-    }
-
-    @Test fun healthyLanWireGuardWinsOverMissingAndroidInternetValidation() {
-        val vpn = setOf("plex", "files:remote")
-        assertTrue(sidebarVpnUnavailableSources(
-            vpn, WireGuardRouteState.Up, InternetReachability.UNAVAILABLE).isEmpty())
-        assertEquals(vpn, sidebarVpnUnavailableSources(
-            vpn, WireGuardRouteState.Failed("handshake failed"), InternetReachability.AVAILABLE))
-        // Idle at cold start with a working network is not evidence of an outage.
-        assertTrue(sidebarVpnUnavailableSources(
-            vpn, WireGuardRouteState.Idle, InternetReachability.UNKNOWN).isEmpty())
-    }
 
     @Test fun dividerOfAHiddenSystemStaysAtItsPlaceInTheStoredOrder() {
         val rows = listOf(row("home"), row("system:plex", "plex"), row("system:tvheadend", "tvheadend"))
