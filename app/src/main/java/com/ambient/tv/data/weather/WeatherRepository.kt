@@ -53,6 +53,7 @@ class WeatherRepository @Inject constructor(
     @RegularPrefs private val regularPreferences: SharedPreferences,
     @SharedOkHttp connectionPool: ConnectionPool,
     @SharedOkHttp dispatcher: Dispatcher,
+    private val onlineServices: com.ambient.tv.data.browse.OnlineServiceAvailability? = null,
 ) {
     private val json = Json { ignoreUnknownKeys = true }
     private val gate = Any()
@@ -193,6 +194,7 @@ class WeatherRepository @Inject constructor(
                         .take(MAX_CACHE_ENTRIES).associate { it.key to it.value }
                 }
                 saveCache()
+                onlineServices?.succeeded("weather")
                 publish(token, WeatherState(snapshot))
             } catch (cancelled: CancellationException) {
                 // Returning to a visible consumer must retry immediately after its predecessor
@@ -209,6 +211,10 @@ class WeatherRepository @Inject constructor(
                     lastAttemptMillis = 0L
                 }
                 val failure = requestError(error)
+                if (synchronized(gate) { generation == token } &&
+                    failure.reason in setOf(WeatherError.OFFLINE, WeatherError.UNAVAILABLE)) {
+                    onlineServices?.unavailable("weather")
+                }
                 publish(token, WeatherState(saved, error = failure.reason, retryAfterMillis = failure.retryAfterMillis))
             }
         }

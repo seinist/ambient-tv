@@ -1,6 +1,8 @@
 package com.ambient.tv.trailers
 
 import com.ambient.tv.data.local.TokenStore
+import com.ambient.tv.data.browse.OnlineServiceAvailability
+import kotlinx.coroutines.CancellationException
 import com.ambient.tv.domain.model.MediaItem
 import com.ambient.tv.util.suspendResult
 import java.util.concurrent.TimeUnit
@@ -40,13 +42,16 @@ class TrailerServiceUnavailable(status: Int) : TrailerRequestFailed(status)
 /** Dedicated client: never attach media-server credentials or log the TMDB Authorization header. */
 @Singleton
 class TmdbTrailerRepository internal constructor(private val tokens: TokenStore, private val client: OkHttpClient,
-    private val nanoTime: () -> Long = System::nanoTime) {
+    private val nanoTime: () -> Long = System::nanoTime,
+    private val onlineServices: OnlineServiceAvailability? = null) {
     @Inject constructor(
         tokens: TokenStore,
         @com.ambient.tv.di.SharedOkHttp connectionPool: okhttp3.ConnectionPool,
         @com.ambient.tv.di.SharedOkHttp dispatcher: okhttp3.Dispatcher,
+        onlineServices: OnlineServiceAvailability,
     ) : this(tokens,
-        OkHttpClient.Builder().connectionPool(connectionPool).dispatcher(dispatcher).callTimeout(15, TimeUnit.SECONDS).addInterceptor(com.ambient.tv.diagnostics.DiagnosticHttpInterceptor).build())
+        OkHttpClient.Builder().connectionPool(connectionPool).dispatcher(dispatcher).callTimeout(15, TimeUnit.SECONDS).addInterceptor(com.ambient.tv.diagnostics.DiagnosticHttpInterceptor).build(),
+        System::nanoTime, onlineServices)
     val configuration = tokens.tmdbCredentialVersion
     val configured: Boolean get() = !tokens.tmdbApiKey.isNullOrBlank()
     private var cacheGeneration = -1L
@@ -108,7 +113,8 @@ class TmdbTrailerRepository internal constructor(private val tokens: TokenStore,
                 val remaining = retryDeadlineNanos?.let { it - nanoTime() } ?: 0L
                 if (remaining > 0) throw TrailerRateLimited((remaining + 999_999_999L) / 1_000_000_000L)
             }
-            withContext(Dispatchers.IO) {
+            try {
+                withContext(Dispatchers.IO) {
                 client.newCall(Request.Builder().url(url).apply {
                     header("Accept", "application/json")
                     if (!v3Key) header("Authorization", "Bearer $credential")
@@ -137,8 +143,16 @@ class TmdbTrailerRepository internal constructor(private val tokens: TokenStore,
                             refreshGeneration == requestRefreshGeneration)
                             cache[key] = Cached(nanoTime(), result)
                     }
+                    onlineServices?.succeeded("trailers")
                     result
                 }
+                }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                if (error is TrailerServiceUnavailable) onlineServices?.unavailable("trailers")
+                else onlineServices?.failed("trailers", error)
+                throw error
             }
         }
         if (!cacheable) return execute()

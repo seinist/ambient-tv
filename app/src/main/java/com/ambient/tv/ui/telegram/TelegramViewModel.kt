@@ -101,6 +101,7 @@ class TelegramViewModel @Inject constructor(
     private val playbackContext: TelegramPlaybackContext,
     private val smartTubeEngine: com.ambient.tv.youtube.SmartTubeEngine,
     private val loadCoordinator: BrowseLoadCoordinator,
+    private val onlineServices: com.ambient.tv.data.browse.OnlineServiceAvailability,
 ) : ViewModel() {
     /** YouTube link posts play through SmartTube: its category exists only while it is usable. */
     val smartTubeUsable: Boolean get() = preferences.youtubeEnabled && smartTubeEngine.available
@@ -279,12 +280,14 @@ class TelegramViewModel @Inject constructor(
                     requestCursor = next
                 }
                 if (generation != pageGeneration || mutableState.value.section != section) return@launch
+                onlineServices.succeeded("telegram")
                 publishPage(section, append = cursor != null, pageRows, pageMedia,
                     next?.takeUnless { it == requestCursor })
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (failure: Exception) {
                 if (generation == pageGeneration) {
+                    onlineServices.failed("telegram", failure)
                     val old = mutableState.value
                     val message = failure.message ?: context.getString(com.ambient.tv.R.string.monogram_error_request)
                     mutableState.value = old.copy(

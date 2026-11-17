@@ -9,6 +9,7 @@ import javax.inject.Singleton
 @Singleton
 class RadioBrowserFailoverInterceptor @Inject constructor(
     private val servers: RadioBrowserServerPool,
+    private val onlineServices: com.ambient.tv.data.browse.OnlineServiceAvailability,
 ) : Interceptor {
     override fun intercept(chain: Interceptor.Chain): Response {
         val original = chain.request()
@@ -26,10 +27,15 @@ class RadioBrowserFailoverInterceptor @Inject constructor(
                 // A mirror may be alive but overloaded. Try the next one for transient failures.
                 val retryable = response.code == 408 || response.code == 429 || response.code in 500..599
                 if (!retryable) {
-                    if (response.isSuccessful) servers.markSuccessful(host)
+                    if (response.isSuccessful) {
+                        servers.markSuccessful(host)
+                        onlineServices.succeeded("radio")
+                    }
                     return response
                 }
                 if (index == hosts.lastIndex) {
+                    // 429 is rate limiting, not proof that Radio Browser is offline.
+                    if (response.code != 429) onlineServices.unavailable("radio")
                     servers.clear()
                     return response
                 }
@@ -37,6 +43,7 @@ class RadioBrowserFailoverInterceptor @Inject constructor(
             } catch (error: IOException) {
                 lastFailure = error
                 if (index == hosts.lastIndex) {
+                    onlineServices.failed("radio", error)
                     servers.clear()
                     throw error
                 }

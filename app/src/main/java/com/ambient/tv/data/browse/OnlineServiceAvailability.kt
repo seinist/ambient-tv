@@ -121,7 +121,7 @@ class OnlineServiceAvailability @Inject constructor(@ApplicationContext context:
                     capabilities == null -> InternetReachability.UNKNOWN
                     capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED) -> InternetReachability.AVAILABLE
                     capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) -> InternetReachability.UNAVAILABLE
-                    else -> InternetReachability.UNKNOWN
+                    else -> InternetReachability.UNAVAILABLE
                 }
                 val id = network?.toString()
                 synchronized(this@OnlineServiceAvailability) {
@@ -139,18 +139,19 @@ class OnlineServiceAvailability @Inject constructor(@ApplicationContext context:
     }
 
     private suspend fun observeNotices() {
-        var internetFailed = false
+        var internetNotified = false
         var servicesFailed = false
         mutable.collect { snapshot ->
             val internetDown = snapshot.internet == InternetReachability.UNAVAILABLE
             // A physically missing LAN is already reported by ResumeConnectivityMonitor.
-            if (internetDown && !internetFailed && snapshot.hasNetwork) {
+            val shouldNotifyInternet = internetDown && snapshot.hasNetwork
+            if (shouldNotifyInternet && !internetNotified) {
                 AppNotifications.post(AppNotice(
                     key = "online:internet", message = R.string.notice_internet_unavailable,
                     phase = NoticePhase.ERROR, kind = NoticeKind.CONNECTION,
                     interruptPlayback = false,
                 ))
-            } else if (!internetDown && internetFailed) {
+            } else if (!internetDown && internetNotified) {
                 AppNotifications.post(AppNotice(
                     key = "online:internet", message = R.string.notice_internet_restored,
                     phase = NoticePhase.SUCCESS, kind = NoticeKind.CONNECTION,
@@ -158,7 +159,7 @@ class OnlineServiceAvailability @Inject constructor(@ApplicationContext context:
                 ))
             }
             if (internetDown && !snapshot.hasNetwork) AppNotifications.removeConnectivity("online:internet")
-            internetFailed = internetDown
+            internetNotified = shouldNotifyInternet
 
             // One shared message, never one notification per failed row, category or provider.
             val failedProviders = snapshot.failed.isNotEmpty() && !internetDown
