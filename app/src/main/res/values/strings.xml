@@ -2349,4 +2349,8 @@
     <string name="monogram_info_channel">Channel</string>
     <string name="monogram_info_media_id">Media ID</string>
     <string name="monogram_info_size">Size</string>
+    <string name="accent_state_preview_idle">Normal</string>
+    <string name="accent_state_preview_focus">Focused</string>
+    <string name="accent_state_preview_selected">Selected</string>
+    <string name="accent_state_preview_both">Both</string>
 </resources>
