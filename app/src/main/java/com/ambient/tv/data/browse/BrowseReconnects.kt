@@ -53,6 +53,7 @@ class BrowseReconnects @Inject constructor(
     private val mutable = MutableStateFlow<Map<String, Long>>(emptyMap())
     val revisions = mutable.asStateFlow()
     private val refreshQueue = BrowseRefreshQueue()
+    private val entryRefreshPolicy = BrowseEntryRefreshPolicy()
     private val sourceLocks = BrowseSourceLocks()
     private val networkRecovery = BrowseNetworkRecovery()
     private var started = false
@@ -81,8 +82,11 @@ class BrowseReconnects @Inject constructor(
 
     /** Expire once for entering destinations, without making sidebar/auxiliary observers reload. */
     suspend fun prepareEntry(sources: Set<String>): Map<String, Long> {
-        if (sources.isEmpty()) return revisions.value
-        val ready = refreshQueue.enter(sources)
+        // On a cold start, repository TTLs decide freshness. Repeated navigation within
+        // the same minute must not expire caches or refetch identical content.
+        val expired = entryRefreshPolicy.sourcesToExpire(sources)
+        if (expired.isEmpty()) return revisions.value
+        val ready = refreshQueue.enter(expired)
         return try { ready.await() } finally { ready.cancel() }
     }
 
