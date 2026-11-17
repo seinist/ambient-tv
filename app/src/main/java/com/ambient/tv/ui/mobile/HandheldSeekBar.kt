@@ -6,6 +6,8 @@ import com.ambient.tv.ui.theme.LocalAccentMotionState
 import com.ambient.tv.ui.theme.drawAccentProgressMotion
 import com.ambient.tv.ui.player.LocalPlayerChromeState
 import com.ambient.tv.ui.player.LocalPlayerOsdStow
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import com.ambient.tv.ui.player.drawBookmarkTicks
 import com.ambient.tv.ui.theme.LocalAccentStyle
@@ -52,6 +54,13 @@ import com.ambient.tv.R
 import com.ambient.tv.ui.common.LocalPlayerPlayPauseFocus
 import com.ambient.tv.ui.player.LocalPlaybackNavigation
 import com.ambient.tv.ui.player.LocalSeekPreviewOverlayState
+import com.ambient.tv.ui.player.SEEK_VISUAL_ACK_TIMEOUT_MS
+import com.ambient.tv.ui.player.SEEK_VISUAL_ACK_TOLERANCE_MS
+import com.ambient.tv.ui.player.seekBarVisualPosition
+import com.ambient.tv.ui.player.seekBarFraction
+import com.ambient.tv.ui.player.seekBarThumbScale
+import com.ambient.tv.ui.player.seekBarHasDistinctTarget
+import com.ambient.tv.ui.performance.LocalPerformanceProfile
 
 /** Plex-styled touch scrubber. Its track matches the TV player inside a compact 32dp touch strip. */
 @Composable
@@ -72,6 +81,8 @@ fun HandheldSeekBar(
     val style = LocalAccentStyle.current
     val progressBrush = remember(accent, style) { accentBrush(accent, style) }
     val progressMotionPaints = remember(accent, style) { AccentMotionPaints(accent, style) }
+    // Different ShaderBrush owners: the progress stays anchored as the thumb moves.
+    val thumbBrush = remember(accent, style) { accentBrush(accent, style) }
     val navigation = LocalPlaybackNavigation.current
     val osd = LocalPlayerChromeState.current?.osd
     val stowing = LocalPlayerOsdStow.current?.closing == true
@@ -81,12 +92,39 @@ fun HandheldSeekBar(
     val latestOnInteraction by rememberUpdatedState(onInteraction)
     var dragFraction by remember { mutableStateOf<Float?>(null) }
     var dragStartMs by remember { mutableStateOf(positionMs) }
-    LaunchedEffect(canSeek) { if (!canSeek) dragFraction = null }
-    val fraction = dragFraction ?: (positionMs.toDouble() / durationMs.coerceAtLeast(1L))
-        .toFloat().coerceIn(0f, 1f)
-    val shownPosition = if (dragFraction != null) (fraction * durationMs).toLong() else positionMs
+    var awaitingVisualTarget by remember { mutableStateOf<Long?>(null) }
+    LaunchedEffect(canSeek) {
+        if (!canSeek) { dragFraction = null; awaitingVisualTarget = null }
+    }
+    LaunchedEffect(awaitingVisualTarget) {
+        if (awaitingVisualTarget != null) {
+            kotlinx.coroutines.delay(SEEK_VISUAL_ACK_TIMEOUT_MS)
+            awaitingVisualTarget = null
+        }
+    }
+    LaunchedEffect(positionMs, durationMs, awaitingVisualTarget) {
+        val target = awaitingVisualTarget ?: return@LaunchedEffect
+        if (durationMs <= 0L || kotlin.math.abs(positionMs - target) <= SEEK_VISUAL_ACK_TOLERANCE_MS) {
+            awaitingVisualTarget = null
+        }
+    }
+    val dragTarget = dragFraction?.let { (it * durationMs).toLong() }
+    val shownPosition = seekBarVisualPosition(positionMs, durationMs, dragTarget, null, awaitingVisualTarget)
+    val fraction = seekBarFraction(shownPosition, durationMs)
+    val showingSeekTarget = seekBarHasDistinctTarget(
+        positionMs, shownPosition, dragFraction != null || awaitingVisualTarget != null,
+    )
+    val reducedEffects = LocalPerformanceProfile.current.reducedEffects
+    val thumbAlpha by animateFloatAsState(
+        if (dragFraction != null) 1f else 0f,
+        animationSpec = tween(if (reducedEffects) 95 else 145), label = "Touch seek thumb fade",
+    )
+    val thumbScale by animateFloatAsState(
+        seekBarThumbScale(dragFraction != null),
+        animationSpec = tween(if (reducedEffects) 95 else 145), label = "Touch seek thumb scale",
+    )
     val preview = LocalSeekPreviewOverlayState.current
-    val previewTarget = dragFraction?.let { shownPosition }
+    val previewTarget = dragTarget
     val previewAvailable = previewTarget?.let { target ->
         navigation?.timeline?.let { it.previewFrameAt(target) != null || it.chapterAt(target) != null }
     } == true
@@ -126,6 +164,7 @@ fun HandheldSeekBar(
                             com.ambient.tv.ui.player.BackgroundPlaybackSession.userSeek()
                             navigation?.interact()
                             latestOnInteraction()
+                            awaitingVisualTarget = (target.coerceIn(0f, 1f) * durationMs).toLong()
                             latestOnSeekBy(handheldSeekDelta(target, latestPositionMs, durationMs))
                             true
                         }
@@ -136,6 +175,7 @@ fun HandheldSeekBar(
                             val target = (point.x / size.width.coerceAtLeast(1).toFloat()).coerceIn(0f, 1f)
                             navigation?.interact()
                             latestOnInteraction()
+                            awaitingVisualTarget = (target * durationMs).toLong()
                             latestOnSeekBy(handheldSeekDelta(target, latestPositionMs, durationMs))
                         }
                     } else Modifier)
@@ -144,6 +184,7 @@ fun HandheldSeekBar(
                             onDragStart = { point ->
                                 com.ambient.tv.ui.player.BackgroundPlaybackSession.userSeek()
                                 dragStartMs = latestPositionMs
+                                awaitingVisualTarget = null
                                 dragFraction = (point.x / size.width.coerceAtLeast(1).toFloat()).coerceIn(0f, 1f)
                                 navigation?.interact()
                                 latestOnInteraction()
@@ -155,7 +196,10 @@ fun HandheldSeekBar(
                                 latestOnInteraction()
                             },
                             onDragEnd = {
-                                dragFraction?.let { latestOnSeekBy(handheldSeekDelta(it, dragStartMs, durationMs)) }
+                                dragFraction?.let {
+                                    awaitingVisualTarget = (it * durationMs).toLong()
+                                    latestOnSeekBy(handheldSeekDelta(it, dragStartMs, durationMs))
+                                }
                                 dragFraction = null
                                 latestOnInteraction()
                             },
@@ -183,15 +227,39 @@ fun HandheldSeekBar(
                             drawAccentProgress(progressBrush, fraction)
                             drawAccentProgressMotion(progressMotionPaints, motionState?.value, fraction)
                         }
+                        // Restrained chapter emphasis only while actively scrubbing.
+                        // The existing tick marks and progress shader remain untouched.
+                        if (dragFraction != null) navigation?.timeline?.let { timeline ->
+                            val chapter = timeline.chapterAt(shownPosition)
+                            if (chapter != null) {
+                                val next = timeline.chapters.firstOrNull { it.startMs > chapter.startMs }?.startMs ?: durationMs
+                                val end = chapter.endMs?.takeIf { it > chapter.startMs }?.coerceAtMost(next) ?: next
+                                val xStart = seekBarFraction(chapter.startMs, durationMs) * endX
+                                val xEnd = seekBarFraction(end, durationMs) * endX
+                                if (xEnd > xStart) drawRect(
+                                    Color.White.copy(alpha = .13f),
+                                    topLeft = Offset(xStart, centerY - trackWidth / 2f),
+                                    size = androidx.compose.ui.geometry.Size(xEnd - xStart, trackWidth),
+                                )
+                            }
+                        }
                         navigation?.timeline?.chapters?.forEach { chapter ->
                             val x = (chapter.startMs.toDouble() / durationMs).toFloat().coerceIn(0f, 1f) * endX
                             drawLine(Color.Black.copy(alpha = 0.76f), Offset(x, centerY - trackWidth / 2), Offset(x, centerY + trackWidth / 2), 2.dp.toPx())
                         }
                         drawBookmarkTicks(bookmarks, durationMs, centerY - trackWidth / 2, centerY + trackWidth / 2)
-                        if (dragFraction != null) {
-                            val radius = 8.5.dp.toPx()
-                            drawCircle(Color.White, radius = radius, center = Offset(endX * fraction, centerY))
-                            drawCircle(accent, radius = radius - 3.dp.toPx(), center = Offset(endX * fraction, centerY))
+                        if (showingSeekTarget) {
+                            val x = seekBarFraction(positionMs, durationMs) * endX
+                            drawLine(Color.White.copy(alpha = .64f),
+                                Offset(x, centerY - 5.dp.toPx()),
+                                Offset(x, centerY + 5.dp.toPx()), 1.5.dp.toPx())
+                        }
+                        if (thumbAlpha > 0f) {
+                            val radius = 8.5.dp.toPx() * thumbScale
+                            val center = Offset(endX * fraction, centerY)
+                            drawCircle(Color.White, radius = radius, center = center, alpha = thumbAlpha)
+                            drawCircle(brush = thumbBrush, radius = radius - 3.dp.toPx() * thumbScale,
+                                center = center, alpha = thumbAlpha)
                         }
                     }
                 }
@@ -204,7 +272,7 @@ fun HandheldSeekBar(
                 com.ambient.tv.ui.player.PlayerOsdNavigationIndicator(paused)
                 com.ambient.tv.ui.player.PlayerTimelineTimeText(
                     ready = durationMs > 0L,
-                    text = "${elapsedLabel(shownPosition)} / ${elapsedLabel(durationMs)}",
+                    text = "${elapsedLabel(if (showingSeekTarget) positionMs else shownPosition)} / ${elapsedLabel(durationMs)}",
                     color = Color.White.copy(alpha = 0.82f),
                     placeholder = "--:-- / --:--",
                 )
@@ -214,7 +282,9 @@ fun HandheldSeekBar(
             } else null
             com.ambient.tv.ui.player.PlayerTimelineTimeText(
                 ready = durationMs > 0L,
-                text = endsAt?.let { "−${elapsedLabel(remaining)} · ${stringResource(R.string.player_ends_at, it)}" } ?: "−${elapsedLabel(remaining)}",
+                text = if (showingSeekTarget) {
+                    stringResource(R.string.player_seek_target, elapsedLabel(shownPosition))
+                } else endsAt?.let { "−${elapsedLabel(remaining)} · ${stringResource(R.string.player_ends_at, it)}" } ?: "−${elapsedLabel(remaining)}",
                 color = Color.White.copy(alpha = 0.72f),
             )
         }
