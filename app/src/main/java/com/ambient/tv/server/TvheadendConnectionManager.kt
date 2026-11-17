@@ -116,6 +116,8 @@ class TvheadendConnectionManager @Inject constructor(
             if (preferences.localNetworkOnly &&
                 !LocalNetworkPolicy.isPotentiallyLocalHost(preferences.tvheadendHost)) return@withLock false
             val checkedEndpoint = endpointKey()
+            val previousState = _state.value
+            val previouslyConnectedEndpoint = lastServerId
             val connectGeneration = connectRun.generation
             if (!repository.portReachable()) return@withLock false
             val info = retryTransient(System.currentTimeMillis() + retryForMs) { repository.probeServerInfo() }.getOrNull()
@@ -127,7 +129,9 @@ class TvheadendConnectionManager @Inject constructor(
             resumeAutomaticReconnect()
             lastSuccessfulCheckMs = System.currentTimeMillis()
             lastServerId = checkedEndpoint
-            browseReconnects.request("tvheadend")
+            if (shouldRequestBrowseRecovery(previousState, previouslyConnectedEndpoint, checkedEndpoint)) {
+                browseReconnects.request("tvheadend")
+            }
             true
         }
     }
