@@ -51,6 +51,54 @@ class SelectionIndicatorTest {
         assertEquals(4f, ltr.top, .001f)
     }
 
+    @Test fun revealKeepsUnderlineCenteredAndItsThicknessFixed() {
+        val full = selectionIndicatorRect(true, size, SelectionIndicator.UNDERLINE, 1f)!!
+        assertNull(selectionIndicatorRevealRect(full, SelectionIndicator.UNDERLINE, 0f))
+        val half = selectionIndicatorRevealRect(full, SelectionIndicator.UNDERLINE, .5f)!!
+        assertEquals(full.center.x, half.center.x, .001f)
+        assertEquals(full.width / 2f, half.width, .001f)
+        assertEquals(full.height, half.height, .001f)
+        assertEquals(full.top, half.top, .001f)
+        assertEquals(full, selectionIndicatorRevealRect(full, SelectionIndicator.UNDERLINE, 1f))
+    }
+
+    @Test fun revealKeepsLeadingBarCenteredInBothLtrAndRtl() {
+        for (rtl in listOf(false, true)) {
+            val full = selectionIndicatorRect(true, size, SelectionIndicator.LEADING_BAR, 1f, rtl)!!
+            val half = selectionIndicatorRevealRect(full, SelectionIndicator.LEADING_BAR, .5f)!!
+            assertEquals(full.left, half.left, .001f)
+            assertEquals(full.right, half.right, .001f)
+            assertEquals(full.center.y, half.center.y, .001f)
+            assertEquals(full.height / 2f, half.height, .001f)
+        }
+    }
+
+    @Test fun dotExpandsFromCenterWithoutMovingItsAnchor() {
+        val full = selectionIndicatorRect(true, size, SelectionIndicator.DOT, 1f)!!
+        val half = selectionIndicatorRevealRect(full, SelectionIndicator.DOT, .5f)!!
+        assertEquals(full.center.x, half.center.x, .001f)
+        assertEquals(full.center.y, half.center.y, .001f)
+        assertEquals(3f, half.width, .001f)
+        assertEquals(3f, half.height, .001f)
+    }
+
+    @Test fun revealRejectsInvalidProgressAndClampsOverflow() {
+        val full = selectionIndicatorRect(true, size, SelectionIndicator.UNDERLINE, 1f)!!
+        assertNull(selectionIndicatorRevealRect(full, SelectionIndicator.UNDERLINE, Float.NaN))
+        assertNull(selectionIndicatorRevealRect(full, SelectionIndicator.UNDERLINE, -1f))
+        assertNull(selectionIndicatorRevealRect(full, SelectionIndicator.NONE, .5f))
+        assertEquals(full, selectionIndicatorRevealRect(full, SelectionIndicator.UNDERLINE, 2f))
+    }
+
+    @Test fun selectionTransitionsAreShortAndAlphabetRailIsFaster() {
+        assertEquals(220, selectionIndicatorMotionDurationMs(selecting = true))
+        assertEquals(160, selectionIndicatorMotionDurationMs(selecting = false))
+        assertEquals(180, selectionIndicatorMotionDurationMs(selecting = true, focusPulse = true))
+        assertEquals(140, selectionIndicatorMotionDurationMs(selecting = true, compact = true))
+        assertEquals(100, selectionIndicatorMotionDurationMs(selecting = false, compact = true))
+        assertEquals(110, selectionIndicatorMotionDurationMs(selecting = true, focusPulse = true, compact = true))
+    }
+
     @Test fun tinyOrNonfiniteControlsDoNotCreateInvalidMarkers() {
         assertNull(selectionIndicatorRect(true, Size(5f, 5f), SelectionIndicator.UNDERLINE, 1f))
         assertNull(selectionIndicatorRect(true, Size(Float.NaN, 48f), SelectionIndicator.DOT, 1f))
