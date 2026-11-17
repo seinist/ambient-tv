@@ -2,12 +2,15 @@ package com.ambient.tv.vpn
 
 import android.content.Context
 import android.content.Intent
+import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
 import android.net.VpnService
 import com.ambient.tv.R
 import com.ambient.tv.data.files.FileSource
 import com.ambient.tv.data.local.AppPreferences
 import com.ambient.tv.data.local.TokenStore
 import com.ambient.tv.network.NetworkEndpoint
+import com.ambient.tv.network.LocalNetworkPolicy
 import java.net.Inet4Address
 import java.net.InetAddress
 import java.security.MessageDigest
@@ -196,6 +199,9 @@ class WireGuardRouteController @Inject constructor(
         if (!enabled) return Result.success(Unit)
         val profile = preferences.wireGuardProfile()
         if (profile == null || !profile.ready()) return Result.failure(IllegalStateException(context.getString(R.string.wg_missing)))
+        // Do not DNS-probe remote media hosts when a new tunnel cannot be established.
+        if (!mayStartTunnel(profile.endpointHost))
+            return Result.failure(IllegalStateException(context.getString(R.string.wg_internet_required)))
         val covered = withContext(Dispatchers.IO) { resolvedHostCovered(profile.allowedIps, host) }
         if (!covered) return Result.failure(IllegalStateException(context.getString(hostProblem(host))))
         return bringUp()
@@ -207,6 +213,13 @@ class WireGuardRouteController @Inject constructor(
         val generation = stopGeneration.get()
         val profile = preferences.wireGuardProfile()
         if (profile == null || !profile.ready()) return fail(context.getString(R.string.wg_missing))
+        // An existing, unchanged tunnel needs no new handshake even when Internet drops.
+        if (_status.value is WireGuardRouteState.Up && appliedRoutes == routeSignature())
+            return Result.success(Unit)
+        // Skip connection setup entirely: no DNS checks, VpnService launch or handshake timeout.
+        // Leave VPN status unchanged so an Internet outage is not misreported as a tunnel error.
+        if (!mayStartTunnel(profile.endpointHost))
+            return Result.failure(IllegalStateException(context.getString(R.string.wg_internet_required)))
         val selectedHosts = tunnelHosts()
         val hostsValid = withContext(Dispatchers.IO) { selectedHosts.all { resolvedHostCovered(profile.allowedIps, it) } }
         if (generation != stopGeneration.get() || manuallyStopped) return Result.success(Unit)
@@ -230,6 +243,33 @@ class WireGuardRouteController @Inject constructor(
             }
         }
         fail(context.getString(R.string.wg_failed))
+    }
+
+    /**
+     * Fast, read-only gate for new VPN attempts. LAN remains usable without public Internet.
+     * Check physical transports, not the VPN's own default route (it would be circular).
+     * Android may not validate Internet for a local WireGuard endpoint: local peers still work.
+     */
+    @Suppress("DEPRECATION") // Synchronous underlay snapshot; the VPN can own activeNetwork.
+    private suspend fun mayStartTunnel(endpointHost: String): Boolean {
+        if (_status.value is WireGuardRouteState.Up && appliedRoutes == routeSignature()) return true
+        return withContext(Dispatchers.IO) {
+            val manager = context.getSystemService(ConnectivityManager::class.java)
+            val validated = if (manager == null) null else runCatching {
+                manager.allNetworks.any { network ->
+                    val caps = manager.getNetworkCapabilities(network)
+                    caps != null && !caps.hasTransport(NetworkCapabilities.TRANSPORT_VPN) &&
+                        caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) &&
+                        caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)
+                }
+            }.getOrNull()
+            // Without connectivity permission/metadata there is no evidence of an outage.
+            if (validated == null) true else shouldAttemptWireGuardTunnel(
+                validatedInternet = validated,
+                localPeer = !validated && LocalNetworkPolicy.isPotentiallyLocalHost(endpointHost),
+                established = false,
+            )
+        }
     }
 
     /** Hosts of systems whose VPN switch is on and that actually have a server configured. */
@@ -299,3 +339,10 @@ class WireGuardRouteController @Inject constructor(
     @Volatile private var pendingFileHost: String? = null
     @Volatile private var manuallyStopped = false
 }
+
+/** A confirmed offline remote peer must not trigger a new handshake. Existing routes are retained. */
+internal fun shouldAttemptWireGuardTunnel(
+    validatedInternet: Boolean,
+    localPeer: Boolean,
+    established: Boolean,
+): Boolean = established || validatedInternet || localPeer
