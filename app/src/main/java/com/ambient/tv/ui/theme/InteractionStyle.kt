@@ -2,12 +2,14 @@ package com.ambient.tv.ui.theme
 
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.AnimationSpec
+import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.LinearOutSlowInEasing
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.snap
 import androidx.compose.animation.core.tween
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.State
 import androidx.compose.runtime.getValue
@@ -87,25 +89,119 @@ internal fun selectionIndicatorRect(
     }
 }
 
+/**
+ * Reveal only the marker's long axis, symmetrically from its center. Dots expand on
+ * both axes. The full rect never changes, keeping all layout and RTL offsets stable.
+ */
+internal fun selectionIndicatorRevealRect(
+    bounds: Rect?,
+    indicator: SelectionIndicator,
+    progress: Float,
+): Rect? {
+    if (bounds == null || !progress.isFinite() || progress <= 0f) return null
+    val fraction = progress.coerceIn(0f, 1f)
+    return when (indicator) {
+        SelectionIndicator.UNDERLINE -> {
+            val halfWidth = bounds.width * fraction / 2f
+            Rect(bounds.center.x - halfWidth, bounds.top, bounds.center.x + halfWidth, bounds.bottom)
+        }
+        SelectionIndicator.LEADING_BAR -> {
+            val halfHeight = bounds.height * fraction / 2f
+            Rect(bounds.left, bounds.center.y - halfHeight, bounds.right, bounds.center.y + halfHeight)
+        }
+        SelectionIndicator.DOT -> {
+            val halfWidth = bounds.width * fraction / 2f
+            val halfHeight = bounds.height * fraction / 2f
+            Rect(bounds.center.x - halfWidth, bounds.center.y - halfHeight,
+                bounds.center.x + halfWidth, bounds.center.y + halfHeight)
+        }
+        SelectionIndicator.NONE -> null
+    }
+}
+
 private fun DrawScope.drawSelectionIndicator(
     bounds: Rect?,
     brush: Brush,
+    indicator: SelectionIndicator,
+    progress: Float,
     onLightBackground: Boolean = false,
 ) {
-    if (bounds == null) return
-    val radius = CornerRadius(minOf(bounds.width, bounds.height) / 2f)
+    val revealed = selectionIndicatorRevealRect(bounds, indicator, progress) ?: return
+    val radius = CornerRadius(minOf(revealed.width, revealed.height) / 2f)
     // The sidebar keeps its white focus pill. A dark rim makes its accent strip
     // visible even with yellow/white custom accents on the light pill.
     if (onLightBackground) {
         val spread = 1.5.dp.toPx()
         drawRoundRect(
             color = Color.Black.copy(alpha = .80f),
-            topLeft = Offset(bounds.left - spread, bounds.top - spread),
-            size = Size(bounds.width + spread * 2f, bounds.height + spread * 2f),
+            topLeft = Offset(revealed.left - spread, revealed.top - spread),
+            size = Size(revealed.width + spread * 2f, revealed.height + spread * 2f),
             cornerRadius = CornerRadius(radius.x + spread),
         )
     }
-    drawRoundRect(brush = brush, topLeft = bounds.topLeft, size = bounds.size, cornerRadius = radius)
+    drawRoundRect(brush = brush, topLeft = revealed.topLeft, size = revealed.size, cornerRadius = radius)
+}
+
+/** Selected state uses one finite animation; no separate timer or layout invalidation. */
+internal fun selectionIndicatorMotionDurationMs(
+    selecting: Boolean,
+    focusPulse: Boolean = false,
+    compact: Boolean = false,
+): Int = when {
+    compact && focusPulse -> 110
+    compact && selecting -> 140
+    compact -> 100
+    focusPulse -> 180
+    selecting -> 220
+    else -> 160
+}
+
+private class SelectionIndicatorHistory(var selected: Boolean, var focused: Boolean)
+
+/**
+ * The initial marker is drawn at its final state, avoiding a reveal when a cached
+ * screen first appears. Only later selection/focus changes animate the drawing.
+ * Sparsam and Auto-on-low-end snap immediately, without requesting animation frames.
+ */
+@Composable
+private fun rememberSelectionIndicatorProgress(
+    selected: Boolean,
+    focused: Boolean,
+    compact: Boolean = false,
+): State<Float> {
+    val allowMotion = LocalPerformanceProfile.current.allowSelectionIndicatorMotion
+    val marker = remember { Animatable(if (selected) 1f else 0f) }
+    val history = remember { SelectionIndicatorHistory(selected, focused) }
+    LaunchedEffect(selected, focused, compact, allowMotion) {
+        val wasSelected = history.selected
+        val gainedFocus = focused && !history.focused
+        history.selected = selected
+        history.focused = focused
+        val target = if (selected) 1f else 0f
+        when {
+            !allowMotion -> marker.snapTo(target)
+            wasSelected != selected -> marker.animateTo(
+                target,
+                tween(selectionIndicatorMotionDurationMs(selected, compact = compact),
+                    easing = FastOutSlowInEasing),
+            )
+            selected && gainedFocus && marker.value >= .999f -> {
+                // Already selected: briefly contract to ~20dp, then reveal the full 32dp.
+                marker.snapTo(.625f)
+                marker.animateTo(1f, tween(selectionIndicatorMotionDurationMs(
+                    selecting = true, focusPulse = true, compact = compact),
+                    easing = FastOutSlowInEasing))
+            }
+            // A rapid focus exit must finish any in-flight reveal rather than freeze halfway.
+            marker.value != target -> marker.animateTo(
+                target,
+                tween(selectionIndicatorMotionDurationMs(
+                    selecting = selected, focusPulse = selected, compact = compact),
+                    easing = FastOutSlowInEasing),
+            )
+        }
+    }
+    return marker.asState()
 }
 
 /** Extra selection treatment for surfaces that already own their focus drawing. */
@@ -113,15 +209,19 @@ fun Modifier.selectedStateMarker(
     selected: Boolean,
     indicator: SelectionIndicator = SelectionIndicator.LEADING_BAR,
     focusedOnLightSurface: Boolean = false,
+    focused: Boolean = false,
+    compactMotion: Boolean = false,
 ): Modifier = composed {
     val accent = MaterialTheme.colorScheme.primary
     val style = LocalAccentStyle.current
-    if (!selected) this else this.drawWithCache {
+    val progress = rememberSelectionIndicatorProgress(selected, focused, compactMotion)
+    // Keep this draw node while deselecting, so the old marker can shrink to zero.
+    this.drawWithCache {
         val bounds = selectionIndicatorRect(true, size, indicator, 1.dp.toPx(), layoutDirection == LayoutDirection.Rtl)
         val brush = accentBrush(accent, style)
         onDrawWithContent {
             drawContent()
-            drawSelectionIndicator(bounds, brush, focusedOnLightSurface)
+            drawSelectionIndicator(bounds, brush, indicator, progress.value, focusedOnLightSurface)
         }
     }
 }
@@ -232,6 +332,7 @@ fun Modifier.appControlSurface(
     val reducedEffects = LocalPerformanceProfile.current.reducedEffects
     val borderWidth = LocalUiTokens.current.focusBorder
     val motion = rememberAccentMotionState(focused && enabled)
+    val markerProgress = rememberSelectionIndicatorProgress(selected && enabled, focused && enabled)
     this.drawWithCache {
         val strokePx = borderWidth.toPx()
         val fill = shape.createOutline(size, layoutDirection, this)
@@ -244,7 +345,7 @@ fun Modifier.appControlSurface(
         val stroke = Stroke(strokePx)
         val material = colors.palette.materialBrush()
         val marker = selectionIndicatorRect(
-            selected && enabled, size, selectionIndicator, 1.dp.toPx(),
+            true, size, selectionIndicator, 1.dp.toPx(),
             layoutDirection == LayoutDirection.Rtl,
         )
         val glowStroke = if (materialStyle == AccentStyle.GLOW && !reducedEffects && focused && enabled)
@@ -274,9 +375,9 @@ fun Modifier.appControlSurface(
                     drawOutline(strokeOutline, outline, style = stroke)
                 }
             }
-            // A selected control retains this small accent marker even under a white focus ring.
-            // It uses the cached static material, never another animation or layout pass.
-            drawSelectionIndicator(marker, material)
+            // The selection marker expands/collapses inside its fixed geometry; its animation
+            // only invalidates drawing, never the control's layout or the focus boundary.
+            drawSelectionIndicator(marker, material, selectionIndicator, markerProgress.value)
             // A narrow static reflection makes the chosen accent material legible on OSD
             // controls without turning the complete button into a colored tile. The base
             // and the neutral focus border remain unchanged; no new frame clock is used.
