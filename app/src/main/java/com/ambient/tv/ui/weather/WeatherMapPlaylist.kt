@@ -51,7 +51,13 @@ internal fun weatherPlayerSeekTargetIndex(
     val current = currentIndex.coerceIn(0, frames.lastIndex)
     if (deltaMs == 0L) return current
     val timestamp = frames[current].epochMillis + deltaMs
-    val closest = weatherPlayerFrameIndex(frames, timestamp)
+    // weatherPlayerFrameIndex() treats <= 0 as the special "latest" startup request.
+    // A legitimate backward seek can cross epoch zero; here it must choose the first
+    // observed frame instead of incorrectly jumping toward the end of the playlist.
+    val closest = frames.indices.minByOrNull { index ->
+        val epoch = frames[index].epochMillis
+        if (epoch >= timestamp) epoch - timestamp else timestamp - epoch
+    } ?: current
     return if (deltaMs > 0) closest.coerceAtLeast(current + 1).coerceAtMost(frames.lastIndex)
     else closest.coerceAtMost(current - 1).coerceAtLeast(0)
 }
