@@ -356,7 +356,7 @@ fun HomeScreen(
         val handheldHeader = LocalHandheldUi.current
         // Phones have no tall hero corner: reserve a real row so the configured clock
         // stays visible without covering the first cards or update notice.
-        if (!systemOverview && handheldHeader && (com.ambient.tv.ui.common.LocalClockSettings.current.onHome || com.ambient.tv.ui.weather.LocalWeatherPresentation.current.header != null)) {
+        if (!systemOverview && handheldHeader && (com.ambient.tv.ui.common.LocalClockSettings.current.onHome || com.ambient.tv.ui.weather.LocalWeatherPresentation.current.hasHeader)) {
             Box(Modifier.fillMaxWidth().padding(horizontal = screenGutter(), vertical = 8.dp)) {
                 com.ambient.tv.ui.common.HeaderClock(Modifier.align(Alignment.TopEnd), showClock = com.ambient.tv.ui.common.LocalClockSettings.current.onHome)
             }
@@ -460,7 +460,7 @@ fun HomeScreen(
     }
         // The global compact status owns wake cancellation on TV and handhelds.
         // The app home has no header row: the clock floats where the library pages put it.
-        if (!systemOverview && !LocalHandheldUi.current && (com.ambient.tv.ui.common.LocalClockSettings.current.onHome || com.ambient.tv.ui.weather.LocalWeatherPresentation.current.header != null)) {
+        if (!systemOverview && !LocalHandheldUi.current && (com.ambient.tv.ui.common.LocalClockSettings.current.onHome || com.ambient.tv.ui.weather.LocalWeatherPresentation.current.hasHeader)) {
             com.ambient.tv.ui.common.HeaderClock(
                 Modifier.align(Alignment.TopEnd).padding(top = com.ambient.tv.ui.common.PageHeaderTopTv, end = screenGutter()).zIndex(2f),
                 showClock = com.ambient.tv.ui.common.LocalClockSettings.current.onHome,
@@ -1177,7 +1177,7 @@ internal fun LibraryContent(
             titleActions = heroTitleActions,
             atScreenTop = true,
             // The overview's floating actions and clock, or the app home's clock.
-            clockCorner = externalBackdropScrolling != null || com.ambient.tv.ui.common.LocalClockSettings.current.onHome || com.ambient.tv.ui.weather.LocalWeatherPresentation.current.header != null,
+            clockCorner = externalBackdropScrolling != null || com.ambient.tv.ui.common.LocalClockSettings.current.onHome || com.ambient.tv.ui.weather.LocalWeatherPresentation.current.hasHeader,
             modifier = Modifier
                 .align(Alignment.TopCenter)
                 .zIndex(1f),
@@ -1739,7 +1739,7 @@ internal fun HomeHero(
                     if (clockCorner) {
                         // Still centred on the metadata, so only the height shrinks to stay under the clock.
                         val reserve = homeClockReserve(com.ambient.tv.ui.common.LocalClockSettings.current,
-                            com.ambient.tv.ui.weather.LocalWeatherPresentation.current.header != null)
+                            com.ambient.tv.ui.weather.LocalWeatherPresentation.current.hasHeader)
                         (heroHeight - HomeHeroFadeTail - reserve * 2).coerceIn(48.dp, deviceDp(160.dp, 120.dp))
                     } else deviceDp(160.dp, 120.dp),
                 ),
