@@ -588,7 +588,7 @@ internal fun SettingsHub(
                 }
                 // Same corner as every page header (PageHeader) and Home.
                 if (com.ambient.tv.ui.common.LocalClockSettings.current.inHeader || com.ambient.tv.ui.weather.LocalWeatherPresentation.current.header != null) {
-                    com.ambient.tv.ui.common.HeaderClock(Modifier.align(Alignment.Top))
+                    com.ambient.tv.ui.common.HeaderClock(Modifier.weight(2f, fill = false).align(Alignment.Top))
                 }
             }
         }
