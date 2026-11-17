@@ -1,5 +1,7 @@
 package com.ambient.tv.ui.spotify
 
+import com.ambient.tv.data.browse.BrowseLoadCoordinator
+import com.ambient.tv.data.browse.BrowseLoadPriority
 import com.ambient.tv.util.suspendResult
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
@@ -42,6 +44,7 @@ class SpotifyHomeViewModel @Inject constructor(
     private val scopes: com.ambient.tv.data.browse.BrowseScopes,
     val availability: com.ambient.tv.data.browse.SourceAvailability,
     private val companion: com.ambient.tv.companion.CompanionManager,
+    private val loadCoordinator: BrowseLoadCoordinator,
 ) : ViewModel() {
     private val _state = MutableStateFlow(SpotifyHomeUiState(nativeAvailable = repo.nativeAvailable, webAuthorized = repo.authState.value.authorized, accountName = repo.authState.value.accountName))
     val state: StateFlow<SpotifyHomeUiState> = _state.asStateFlow()
@@ -118,7 +121,11 @@ class SpotifyHomeViewModel @Inject constructor(
                 currentCoroutineContext().ensureActive()
                 if (generation != loadGeneration) return@launch
                 if (!repo.webAuthorized) { _state.value = _state.value.copy(loading = false, items = emptyList(), errorRes = R.string.spotify_error_not_authorized); return@launch }
-                val result = suspendResult { repo.librarySection(section) }
+                val result = suspendResult {
+                    loadCoordinator.request("spotify", "view:section:$section", BrowseLoadPriority.VISIBLE) {
+                        repo.librarySection(section)
+                    }
+                }
                 currentCoroutineContext().ensureActive()
                 if (generation != loadGeneration) return@launch
                 result
@@ -154,7 +161,11 @@ class SpotifyHomeViewModel @Inject constructor(
                     return@launch
                 }
                 if (query.isNotBlank() && !manual) delay(350)
-                val result = suspendResult { if (query.isBlank()) repo.home() else repo.search(query) }
+                val result = suspendResult {
+                    loadCoordinator.request("spotify", "view:$cacheKey", BrowseLoadPriority.VISIBLE) {
+                        if (query.isBlank()) repo.home() else repo.search(query)
+                    }
+                }
                 currentCoroutineContext().ensureActive()
                 if (generation != loadGeneration) return@launch
                 result
