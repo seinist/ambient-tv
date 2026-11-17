@@ -2075,7 +2075,16 @@ private fun homeClockReserve(clock: com.ambient.tv.data.local.ClockSettings, wea
         com.ambient.tv.data.local.ClockSettings.SIZE_LARGE -> if (twoLines) 88.dp else 70.dp
         else -> if (twoLines) 72.dp else 58.dp
     }
-    return if (weatherVisible) maxOf(clockHeight, 80.dp) else clockHeight
+    if (!weatherVisible) return clockHeight
+    return when (clock.resolvedWeatherLayout()) {
+        com.ambient.tv.data.local.ClockSettings.WEATHER_LAYOUT_ABOVE,
+        com.ambient.tv.data.local.ClockSettings.WEATHER_LAYOUT_BELOW -> clockHeight + 38.dp
+        com.ambient.tv.data.local.ClockSettings.WEATHER_LAYOUT_INTEGRATED ->
+            if (clock.dateBeside || clock.date == com.ambient.tv.data.local.ClockSettings.DATE_OFF) {
+                clockHeight + 26.dp
+            } else maxOf(clockHeight, 80.dp)
+        else -> maxOf(clockHeight, 80.dp)
+    }
 }
 
 // Keep the metadata/logo above the ambient surface's transparent lower edge.
