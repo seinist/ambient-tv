@@ -12,6 +12,8 @@ import com.ambient.tv.data.jellyfin.JellyfinRepository
 import com.ambient.tv.data.local.AppPreferences
 import com.ambient.tv.data.repository.PlexRepository
 import com.ambient.tv.livetv.LiveTvRegistry
+import com.ambient.tv.vpn.WireGuardRouteController
+import com.ambient.tv.vpn.WireGuardRouteState
 import com.ambient.tv.trailers.TmdbTrailerRepository
 import com.ambient.tv.tvheadend.data.TvheadendRepository
 import dagger.hilt.android.qualifiers.ApplicationContext
@@ -44,6 +46,7 @@ class BrowseReconnects @Inject constructor(
     private val tvheadend: Provider<TvheadendRepository>,
     private val trailers: Provider<TmdbTrailerRepository>,
     private val resumeConnectivity: Provider<ResumeConnectivityMonitor>,
+    private val wireGuard: Provider<WireGuardRouteController>,
 ) {
     private val connectivity = context.getSystemService(ConnectivityManager::class.java)
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -128,6 +131,34 @@ class BrowseReconnects @Inject constructor(
             }
         }
         scope.launch { tvheadend.get().revalidated.collect { request("tvheadend") } }
+        scope.launch {
+            // An already-configured tunnel can recover its handshake without Android announcing
+            // a new network. Revalidate only the systems routed through this VPN, not LAN siblings.
+            val route = wireGuard.get()
+            var previousUp = route.status.value is WireGuardRouteState.Up
+            route.status.collect { state ->
+                val up = state is WireGuardRouteState.Up
+                if (up && !previousUp) {
+                    val selected = buildSet {
+                        if (preferences.isConfigured && preferences.wireGuardPlexEnabled) add("plex")
+                        if (preferences.isJellyfinConfigured && preferences.wireGuardJellyfinEnabled) add("jellyfin")
+                        if (preferences.isEmbyConfigured && preferences.wireGuardEmbyEnabled) add("emby")
+                        if (preferences.hasTvheadendEndpoint && preferences.wireGuardTvheadendEnabled) add("tvheadend")
+                        preferences.fileSources.filter { it.wireGuard && it.kind != "local" }
+                            .forEach { add("files:${it.id}") }
+                        val routedHosts = route.tunnelHosts().mapTo(hashSetOf()) { it.trim().lowercase() }
+                        hosts.endpoints().filter { it.system.startsWith("dlna:") &&
+                            it.host.trim().lowercase() in routedHosts }
+                            .forEach { add(it.system) }
+                    }
+                    if (selected.isNotEmpty()) {
+                        hosts.recheckOffline()
+                        request(selected)
+                    }
+                }
+                previousUp = up
+            }
+        }
         scope.launch {
             val monitor = resumeConnectivity.get()
             var seen = monitor.recheckGeneration.value

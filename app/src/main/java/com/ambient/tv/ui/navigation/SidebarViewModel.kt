@@ -75,7 +75,7 @@ data class SidebarUiState(
     val sections: List<LibrarySection> = emptyList(),
     val jellyfinSections: List<LibrarySection> = emptyList(),
     val embySections: List<LibrarySection> = emptyList(),
-    /** Confirmed host outages, including concrete files:<id>/dlna:<id> sources; entries stay usable. */
+    /** Confirmed host outages and unavailable public services; entries and focus IDs stay stable. */
     val offlineSystems: Set<String> = emptySet(),
 )
 
@@ -99,6 +99,7 @@ class SidebarViewModel @Inject constructor(
     private val photoRepository: com.ambient.tv.data.photos.PhotoRepository,
     private val unreachableServers: UnreachableServerGate,
     private val hosts: HostConnectivity,
+    private val onlineServices: com.ambient.tv.data.browse.OnlineServiceAvailability,
     private val loadCoordinator: BrowseLoadCoordinator,
 ) : ViewModel() {
 
@@ -222,6 +223,9 @@ class SidebarViewModel @Inject constructor(
             ).collect { offline -> _uiState.update { it.copy(offlineSystems = offline) } }
         }
         viewModelScope.launch {
+            onlineServices.state.collect { _uiState.update { state -> state.copy(offlineSystems = currentOfflineSources()) } }
+        }
+        viewModelScope.launch {
             fileStore.revision.collect {
                 _uiState.update { state -> state.copy(networkFileSources = networkFileSourcesFromStore()) }
             }
@@ -285,7 +289,15 @@ class SidebarViewModel @Inject constructor(
             if (appPreferences.filesEnabled) addAll(networkFileSourcesFromStore().map { "files:${it.id}" })
             addAll(dlnaStore.servers().map { "dlna:${it.id}" })
         }
-        return sidebarOfflineSources(configured, hosts::health)
+        val remote = buildSet {
+            if (appPreferences.youtubeEnabled) add("youtube")
+            if (appPreferences.radioEnabled) add("radio")
+            if (appPreferences.weatherSettings.enabled && appPreferences.weatherSettings.showInSidebar) add("weather")
+            if (appPreferences.telegramEnabled && telegramRepository.authorized.value) add("telegram")
+            if (appPreferences.trailersEnabled && !tokens.tmdbApiKey.isNullOrBlank()) add("trailers")
+        }
+        return sidebarOfflineSources(configured, hosts::health) +
+            onlineServices.state.value.unavailableServices(remote)
     }
 
     private fun observeSpotifyAuthorization() {

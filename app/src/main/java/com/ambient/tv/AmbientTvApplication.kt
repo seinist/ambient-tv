@@ -40,6 +40,7 @@ class AmbientTvApplication : Application(), coil3.SingletonImageLoader.Factory {
         super.attachBaseContext(UiLocaleContext.wrap(base))
     }
 
+    @Inject lateinit var onlineServiceAvailability: com.ambient.tv.data.browse.OnlineServiceAvailability
     @Inject lateinit var hostConnectivity: com.ambient.tv.connectivity.HostConnectivity
     @Inject lateinit var preferences: AppPreferences
     @Inject lateinit var spotifyRepository: Provider<SpotifyRepository>
@@ -193,6 +194,7 @@ class AmbientTvApplication : Application(), coil3.SingletonImageLoader.Factory {
         }
         com.ambient.tv.companion.CompanionShareTargets.syncShareEntry(this)
         hostConnectivity.start()
+        onlineServiceAvailability.start()
         resumeConnectivityMonitor.start()
         // Video pauses and then stops, live TV stops when the app leaves the screen.
         com.ambient.tv.ui.player.BackgroundPlaybackGuard.install(this)

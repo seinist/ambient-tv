@@ -1,0 +1,3 @@
+<resources>
+    <string name="wg_internet_required">Kein Internet – WireGuard-Verbindung wurde nicht gestartet</string>
+</resources>

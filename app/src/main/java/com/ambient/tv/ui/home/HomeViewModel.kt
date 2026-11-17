@@ -201,6 +201,7 @@ class HomeViewModel @Inject constructor(
     private val unreachableServers: UnreachableServerGate,
     private val launcherPublisher: com.ambient.tv.launcher.LauncherPublisher,
     private val loadCoordinator: BrowseLoadCoordinator,
+    private val onlineServices: com.ambient.tv.data.browse.OnlineServiceAvailability,
 ) : ViewModel() {
 
     val homeHeroStyleKey: String get() = appPreferences.homeHeroStyleKey
@@ -1662,6 +1663,7 @@ class HomeViewModel @Inject constructor(
                             }
                             val failure = result.exceptionOrNull()
                             if (generation == youtubeRowsGeneration && result.isSuccess) {
+                                onlineServices.succeeded("youtube")
                                 val rows = result.getOrThrow()
                                 // The common SmartTube cache reconciles by ID, preserving
                                 // the positions of focused tiles while fresh results arrive.
@@ -1687,6 +1689,8 @@ class HomeViewModel @Inject constructor(
                                     homeYouTubeSourceRow(stored, HOME_ROW_LIMIT)?.let { updateHomeYouTubeRow(generation, definition, it) }
                                 }
                             }
+                            if (generation == youtubeRowsGeneration && failure != null)
+                                onlineServices.failed("youtube", failure)
                         }
                     } }.awaitAll()
                 }

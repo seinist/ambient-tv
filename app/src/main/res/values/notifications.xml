@@ -26,6 +26,10 @@
     <string name="notice_network">Network</string>
     <string name="notice_network_lost">No network connection</string>
     <string name="notice_network_restored">Network connection restored</string>
+    <string name="notice_internet_unavailable">Internet unavailable – online services are limited. Local media remain available.</string>
+    <string name="notice_internet_restored">Internet connection restored</string>
+    <string name="notice_online_services_unavailable">Some online services are temporarily unavailable</string>
+    <string name="notice_online_services_restored">Online services are reachable again</string>
     <string name="notice_signing_in">Signing in…</string>
     <string name="notice_signed_in">Signed in successfully</string>
     <string name="notice_signed_in_as">Signed in as %1$s</string>
