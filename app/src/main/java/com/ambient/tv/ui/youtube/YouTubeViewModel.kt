@@ -3,6 +3,8 @@ package com.ambient.tv.ui.youtube
 import com.ambient.tv.notifications.notifyLogin
 import com.ambient.tv.notifications.NoticePhase
 
+import com.ambient.tv.data.browse.BrowseLoadCoordinator
+import com.ambient.tv.data.browse.BrowseLoadPriority
 import com.ambient.tv.util.suspendResult
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
@@ -90,6 +92,7 @@ class YouTubeViewModel @Inject constructor(
     private val preferences: AppPreferences,
     private val contentCache: YouTubeContentCache,
     private val playbackContext: YouTubeBrowsePlaybackContext,
+    private val loadCoordinator: BrowseLoadCoordinator,
 ) : ViewModel() {
     /** Set on the channel page route: the screen shows that channel instead of a feed. */
     private val channelId: String? = savedStateHandle.get<String>("channelId")?.takeIf(String::isNotBlank)
@@ -809,7 +812,11 @@ class YouTubeViewModel @Inject constructor(
                     _uiState.value = _uiState.value.copy(available = false, loading = false, error = null)
                     return@launch
                 }
-                val supported = suspendResult { engine.supportedFeedKeys() }.getOrDefault(setOf("home"))
+                val supported = suspendResult {
+                    loadCoordinator.request("youtube", "supported-feeds", BrowseLoadPriority.VISIBLE) {
+                        engine.supportedFeedKeys()
+                    }
+                }.getOrDefault(setOf("home"))
                 if (generation != contentGeneration) return@launch
                 // A transient capability/auth probe during recovery must not change the open tab.
                 // A transient SmartTube capability probe must never switch a clicked category
@@ -857,15 +864,19 @@ class YouTubeViewModel @Inject constructor(
                         withYouTubeRefreshBatches(onBatch = { batch ->
                             showRows(cacheKey, batch, cacheRevision, generation, preferIncomingOrder = true)
                         }) { publish ->
-                            engine.feed(selectedFeed.key) { partial ->
-                                partialRows = partial
-                                publish(partial)
+                            loadCoordinator.request("youtube", "view-feed:${selectedFeed.key}:$cacheRevision:$generation", BrowseLoadPriority.VISIBLE) {
+                                engine.feed(selectedFeed.key) { partial ->
+                                    partialRows = partial
+                                    publish(partial)
+                                }
                             }
                         }
-                    } else engine.feed(selectedFeed.key) { partial ->
-                        partialRows = partial
-                        if (refreshRows.isEmpty() || streamingFeed) {
-                            showRows(cacheKey, partial, cacheRevision, generation, preferIncomingOrder)
+                    } else loadCoordinator.request("youtube", "view-feed:${selectedFeed.key}:$cacheRevision:$generation", BrowseLoadPriority.VISIBLE) {
+                        engine.feed(selectedFeed.key) { partial ->
+                            partialRows = partial
+                            if (refreshRows.isEmpty() || streamingFeed) {
+                                showRows(cacheKey, partial, cacheRevision, generation, preferIncomingOrder)
+                            }
                         }
                     }
                     // MediaServiceCore can report an empty Home feed while its services are still
@@ -874,7 +885,9 @@ class YouTubeViewModel @Inject constructor(
                     if (selectedFeed == YouTubeFeed.HOME && rows.isEmpty() && contentCache.get(cacheKey) == null) {
                         for (attempt in 0..2) {
                             delay(400L * (attempt + 1))
-                            rows = engine.feed(selectedFeed.key) { rows -> showRows(cacheKey, rows, cacheRevision, generation) }
+                            rows = loadCoordinator.request("youtube", "view-retry:${selectedFeed.key}:$cacheRevision:$generation:$attempt", BrowseLoadPriority.VISIBLE) {
+                                engine.feed(selectedFeed.key) { rows -> showRows(cacheKey, rows, cacheRevision, generation) }
+                            }
                             if (rows.isNotEmpty()) break
                         }
                     }
@@ -931,9 +944,11 @@ class YouTubeViewModel @Inject constructor(
                     val signed = engine.isSignedIn()
                     if (generation != contentGeneration) return@launch
                     _uiState.value = _uiState.value.copy(signedIn = signed, visibleFeeds = emptyList())
-                    val rows = engine.channel(channelId, cacheKey) { rows ->
-                        partialRows = rows
-                        if (refreshRows.isEmpty()) showRows(cacheKey, rows, cacheRevision, generation)
+                    val rows = loadCoordinator.request("youtube", "view-channel:$channelId:$cacheRevision:$generation", BrowseLoadPriority.VISIBLE) {
+                        engine.channel(channelId, cacheKey) { rows ->
+                            partialRows = rows
+                            if (refreshRows.isEmpty()) showRows(cacheKey, rows, cacheRevision, generation)
+                        }
                     }
                     refreshYouTubeRowExtents(rows, refreshRows) { rowId -> engine.continueRow(cacheKey, rowId) }
                 }.onSuccess { rows ->
@@ -994,8 +1009,10 @@ class YouTubeViewModel @Inject constructor(
                     val onRows: suspend (List<YouTubeRow>) -> Unit = { rows ->
                         if (refreshRows.isEmpty()) showRows(cacheKey, rows, cacheRevision, generation)
                     }
-                    val rows = if (channelId != null) engine.channelSearch(channelId, query, cacheKey, onRows)
+                    val rows = loadCoordinator.request("youtube", "view-search:$cacheKey:$cacheRevision:$generation", BrowseLoadPriority.VISIBLE) {
+                        if (channelId != null) engine.channelSearch(channelId, query, cacheKey, onRows)
                         else engine.search(query, cacheKey, onRows)
+                    }
                     refreshYouTubeRowExtents(rows, refreshRows) { rowId -> engine.continueRow(cacheKey, rowId) }
                 }
                     .onSuccess { rows ->
