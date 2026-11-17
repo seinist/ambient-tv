@@ -156,6 +156,7 @@ class JellyfinConnectionManager @Inject constructor(
 
     private suspend fun connect(forceNewWake: Boolean = false): Boolean {
         val before = _state.value
+        val previouslyConnectedEndpoint = $field
         var freshlyConfirmed = false
         val check = hosts.begin("jellyfin")
         val endpoint = endpointKey()
@@ -163,7 +164,8 @@ class JellyfinConnectionManager @Inject constructor(
             connectService(forceNewWake = forceNewWake, onConnected = { freshlyConfirmed = true }).also { connected ->
                 if (endpoint == endpointKey()) {
                     if (!connected) hosts.failure(check)
-                    else if (freshlyConfirmed) browseReconnects.request("jellyfin")
+                    else if (freshlyConfirmed && shouldRequestBrowseRecovery(before, previouslyConnectedEndpoint, endpoint))
+                        browseReconnects.request("jellyfin")
                 }
             }
         } catch (cancelled: kotlinx.coroutines.CancellationException) {
