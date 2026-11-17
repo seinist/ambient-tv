@@ -39,7 +39,7 @@ internal fun concretePlaybackOriginRoute(pattern: String?, arguments: Map<String
         }
         encoded.takeUnless { missingField }
     }
-    return if (query.isEmpty()) path else "$"+"{path}?$"+"{query.joinToString("&")}"
+    return if (query.isEmpty()) path else path + "?" + query.joinToString("&")
 }
 
 /** Only immutable identities are kept; no Activity, NavBackStackEntry, ViewModel or FocusRequester. */
