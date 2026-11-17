@@ -442,18 +442,28 @@ class SidebarViewModel @Inject constructor(
             _uiState.update { it.copy(liveTvSources = savedSources) }
             if (deferExpensiveWorkMs > 0L && forceLiveTv) delay(deferExpensiveWorkMs)
             if (forceLiveTv) launch {
-                val sources = liveTv.discover(force = true)
+                val sources = loadCoordinator.request("iptv", "sidebar-capabilities:force", BrowseLoadPriority.HOME) {
+                    liveTv.discover(force = true)
+                }
                 _uiState.update { it.copy(liveTvSources = com.ambient.tv.livetv.reconcileSidebarLiveTvSources(sources, liveTv.sidebarSnapshot())) }
             }
             if (forceLiveTv && appPreferences.isTvheadendConfigured) launch {
-                val channels = com.ambient.tv.util.suspendResult { tvheadendRepository.channels(force = forceLiveTv) }.getOrNull()
+                val channels = com.ambient.tv.util.suspendResult {
+                    loadCoordinator.request("tvheadend", "sidebar-channels:force", BrowseLoadPriority.HOME) {
+                        tvheadendRepository.channels(force = true)
+                    }
+                }.getOrNull()
                 if (channels != null) _uiState.update { it.copy(
                     tvheadendHbbtvAvailable = channels.any { channel -> com.ambient.tv.livetv.liveTvHbbtvMenuApps(channel).isNotEmpty() }
                 ) }
             }
             val youtubeOn = _uiState.value.youtubeEnabled
             if (forceLiveTv && youtubeOn) launch {
-                val supported = suspendResult { smartTubeEngine.supportedFeedKeys() }.getOrDefault(setOf("home"))
+                val supported = suspendResult {
+                    loadCoordinator.request("youtube", "supported-feeds", BrowseLoadPriority.HOME) {
+                        smartTubeEngine.supportedFeedKeys()
+                    }
+                }.getOrDefault(setOf("home"))
                 // Signed out, none of the configured feeds may be available. Falling back to Home
                 // would offer the one feed that cannot load anything then, so offer what works.
                 val keys = appPreferences.youtubeFeedKeys.filter { it in supported }
