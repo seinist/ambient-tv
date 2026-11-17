@@ -416,6 +416,9 @@ private fun HandheldSources(
                     item(menuItem.id) {
                         ListItem(
                             headlineContent = { Text(menuItem.label) },
+                            supportingContent = if ("weather" in sidebarState.offlineSystems) {
+                                { Text(stringResource(R.string.offline_badge)) }
+                            } else null,
                             leadingContent = { Icon(menuItem.icon, null) },
                             trailingContent = { Icon(Icons.Default.ChevronRight, null) },
                             modifier = Modifier.clickable { onNavigate(Destinations.WEATHER) },

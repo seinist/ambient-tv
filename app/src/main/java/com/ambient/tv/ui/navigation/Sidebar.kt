@@ -276,7 +276,7 @@ internal fun SidebarContent(
             providerMenuDestinations(sidebarState, "jellyfin")))
         if (embyShown) add(MenuSystem("emby", offlineLabel(menuSystemName(MediaSystem.EMBY), "emby" in sidebarState.offlineSystems), Icons.Filled.VideoLibrary, system = MediaSystem.EMBY, entries =
             providerMenuDestinations(sidebarState, "emby")))
-        if (sidebarState.trailersConfigured) add(MenuSystem("trailers", menuSystemName(MediaSystem.TRAILERS), Icons.Filled.Movie, system = MediaSystem.TRAILERS,
+        if (sidebarState.trailersConfigured) add(MenuSystem("trailers", offlineLabel(menuSystemName(MediaSystem.TRAILERS), "trailers" in sidebarState.offlineSystems), Icons.Filled.Movie, system = MediaSystem.TRAILERS,
             entries = TrailerFeed.entries.map { feed ->
                 MenuDestination(
                     id = "trailers:${feed.name.lowercase()}",
@@ -290,7 +290,7 @@ internal fun SidebarContent(
                     route = if (feed == TrailerFeed.CINEMA) Destinations.TRAILERS else Destinations.trailerFeed(feed.name),
                 )
             }))
-        if (youtubeEnabled) add(MenuSystem("youtube", menuSystemName(MediaSystem.YOUTUBE), Icons.Filled.SmartDisplay, system = MediaSystem.YOUTUBE, entries =
+        if (youtubeEnabled) add(MenuSystem("youtube", offlineLabel(menuSystemName(MediaSystem.YOUTUBE), "youtube" in sidebarState.offlineSystems), Icons.Filled.SmartDisplay, system = MediaSystem.YOUTUBE, entries =
             youtubeFeedKeys.ifEmpty { listOf("home") }.map { key ->
                 val label = stringResource(when (key) {
                     "subscriptions" -> R.string.nav_youtube_subscriptions
@@ -335,13 +335,13 @@ internal fun SidebarContent(
             add(MenuSystem("spotify", menuSystemName(MediaSystem.SPOTIFY), Icons.Filled.Headphones, entries, system = MediaSystem.SPOTIFY))
         }
         if (telegramEnabled) add(MenuSystem(
-            "telegram", menuSystemName(MediaSystem.TELEGRAM), Icons.Filled.Subscriptions, system = MediaSystem.TELEGRAM,
+            "telegram", offlineLabel(menuSystemName(MediaSystem.TELEGRAM), "telegram" in sidebarState.offlineSystems), Icons.Filled.Subscriptions, system = MediaSystem.TELEGRAM,
             entries = telegramMenuEntries(sidebarState.telegramSubmenuKeys).map { entry ->
                 MenuDestination("telegram:${entry.key}", stringResource(entry.title), telegramMenuIcon(entry.key), Destinations.telegramSection(entry.key))
             },
         ))
         if (radioEnabled) add(MenuSystem(
-            "radio", menuSystemName(MediaSystem.RADIO), Icons.Filled.Headphones, system = MediaSystem.RADIO,
+            "radio", offlineLabel(menuSystemName(MediaSystem.RADIO), "radio" in sidebarState.offlineSystems), Icons.Filled.Headphones, system = MediaSystem.RADIO,
             entries = listOf(
                 "popular" to stringResource(R.string.radio_popular),
                 "favorites" to stringResource(R.string.radio_favorites),
@@ -433,7 +433,7 @@ internal fun SidebarContent(
         if (systems.isEmpty()) add(MenuDestination("setup", stringResource(R.string.sidebar_add_system), Icons.Filled.Add, Destinations.INITIAL_SETUP))
     }
     val standalone = mainMenuItems.filter { it.id == WEATHER_MENU_ID }.map {
-        MenuDestination(it.id, it.label, it.icon, Destinations.WEATHER)
+        MenuDestination(it.id, offlineLabel(it.label, "weather" in sidebarState.offlineSystems), it.icon, Destinations.WEATHER)
     }
     val configurationLabel = stringResource(R.string.nav_configuration)
     // Row lists are built once per data change, not on every recomposition.

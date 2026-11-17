@@ -26,6 +26,10 @@
     <string name="notice_network">Netzwerk</string>
     <string name="notice_network_lost">Keine Netzwerkverbindung</string>
     <string name="notice_network_restored">Netzwerkverbindung wiederhergestellt</string>
+    <string name="notice_internet_unavailable">Internet nicht verfügbar – Online-Dienste eingeschränkt. Lokale Medien bleiben nutzbar.</string>
+    <string name="notice_internet_restored">Internetverbindung wiederhergestellt</string>
+    <string name="notice_online_services_unavailable">Einige Online-Dienste sind vorübergehend nicht erreichbar</string>
+    <string name="notice_online_services_restored">Online-Dienste wieder erreichbar</string>
     <string name="notice_signing_in">Anmeldung läuft …</string>
     <string name="notice_signed_in">Erfolgreich angemeldet</string>
     <string name="notice_signed_in_as">Angemeldet als %1$s</string>
