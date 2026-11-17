@@ -150,9 +150,10 @@ class TelegramViewModel @Inject constructor(
                 if (repository.available) open(mutableState.value.section, refresh = true)
             }
         }
-        // A restored session is asynchronous; repaint without re-entering the route.
+        // The first visible-page entry owns its initial load. Observe later session changes
+        // only, so an already-authenticated cold start does not request the same feed twice.
         viewModelScope.launch {
-            repository.authorized.collect { signedIn ->
+            repository.authorized.drop(1).collect { signedIn ->
                 if (signedIn) open(mutableState.value.section, refresh = true)
                 else {
                     loadJob?.cancel()
