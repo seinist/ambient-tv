@@ -289,8 +289,10 @@ private fun SpotifyPlayerContent(onBack: () -> Unit, viewModel: SpotifyPlayerVie
                     rightContent = {
                         PlayerExitButton(onBack)
                         com.ambient.tv.ui.common.PlayerSleepTimerButton({ panel = UnifiedPlayerPanel.SLEEP }, selected = panel == UnifiedPlayerPanel.SLEEP)
-                        PlayerIconButton(Icons.Default.Shuffle, stringResource(R.string.spotify_shuffle), viewModel::shuffle, osd = com.ambient.tv.ui.player.OsdButton.SHUFFLE)
-                        PlayerIconButton(Icons.Default.Repeat, stringResource(R.string.spotify_repeat, state.repeatMode), viewModel::repeat, osd = com.ambient.tv.ui.player.OsdButton.REPEAT)
+                        PlayerIconButton(Icons.Default.Shuffle, stringResource(R.string.spotify_shuffle), viewModel::shuffle,
+                            selected = state.shuffle, osd = com.ambient.tv.ui.player.OsdButton.SHUFFLE)
+                        PlayerIconButton(Icons.Default.Repeat, stringResource(R.string.spotify_repeat, state.repeatMode), viewModel::repeat,
+                            selected = state.repeatMode != 0, osd = com.ambient.tv.ui.player.OsdButton.REPEAT)
                         PlayerIconButton(Icons.AutoMirrored.Filled.VolumeDown, stringResource(R.string.spotify_volume_down), { viewModel.volume(-5) }, osd = com.ambient.tv.ui.player.OsdButton.VOLUME)
                         PlayerIconButton(Icons.AutoMirrored.Filled.VolumeUp, stringResource(R.string.spotify_volume_up), { viewModel.volume(5) }, osd = com.ambient.tv.ui.player.OsdButton.VOLUME)
                         PlayerIconButton(Icons.Default.GraphicEq, stringResource(R.string.player_visualizer), { panel = UnifiedPlayerPanel.VISUALIZER }, selected = panel.isVisualizer, osd = com.ambient.tv.ui.player.OsdButton.VISUALIZER)

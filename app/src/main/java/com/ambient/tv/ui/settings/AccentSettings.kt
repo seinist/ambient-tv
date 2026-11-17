@@ -160,18 +160,40 @@ private fun AccentStyleCardPreview(modifier: Modifier = Modifier) {
 @OptIn(ExperimentalLayoutApi::class)
 private fun AccentStyleControlsPreview(modifier: Modifier = Modifier) {
     Column(modifier, verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        FlowRow(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Box(
-                Modifier.width(72.dp).height(36.dp)
-                    .appControlSurface(focused = false, selected = true, shape = RoundedCornerShape(9.dp), animate = false),
-                contentAlignment = Alignment.Center,
-            ) {
-                Text("Aa", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurface)
-            }
-            WatchedBadge()
+        // Show the full visual state contract for the actual chosen material. The
+        // samples are not focus targets, so the preview never hijacks the settings.
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            AccentControlStatePreview(R.string.accent_state_preview_idle, focused = false, selected = false)
+            AccentControlStatePreview(R.string.accent_state_preview_focus, focused = true, selected = false)
+            AccentControlStatePreview(R.string.accent_state_preview_selected, focused = false, selected = true)
+            AccentControlStatePreview(R.string.accent_state_preview_both, focused = true, selected = true)
         }
+        WatchedBadge()
         PlaybackStatusBar(.55f, Modifier.fillMaxWidth(),
             trackColor = MaterialTheme.colorScheme.onSurface.copy(alpha = .16f))
+    }
+}
+
+@Composable
+private fun AccentControlStatePreview(
+    @androidx.annotation.StringRes labelRes: Int,
+    focused: Boolean,
+    selected: Boolean,
+) {
+    Column(Modifier.width(76.dp), horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(5.dp)) {
+        Box(
+            Modifier.fillMaxWidth().height(38.dp)
+                .appControlSurface(focused = focused, selected = selected,
+                    shape = RoundedCornerShape(9.dp), animate = false),
+            contentAlignment = Alignment.Center,
+        ) {
+            Text("Aa", style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurface)
+        }
+        Text(stringResource(labelRes), style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1,
+            overflow = TextOverflow.Ellipsis)
     }
 }
 

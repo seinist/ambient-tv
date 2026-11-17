@@ -36,6 +36,14 @@ class WeatherMapPlaylistTest {
         assertEquals(0, weatherPlayerSeekTargetIndex(emptyList(), 0, 100))
     }
 
+    @Test fun seekingPastTheFirstObservationNeverWrapsToTheLatestFrame() {
+        assertEquals(0, weatherPlayerSeekTargetIndex(frames, 2, -25_000))
+        assertEquals(0, weatherPlayerSeekTargetIndex(frames, 1, -4_000))
+        assertEquals(0, weatherPlayerSeekTargetIndex(frames, 0, -1_000))
+        // The unset request sentinel still defaults the map to the latest observation.
+        assertEquals(2, weatherPlayerFrameIndex(frames, -1))
+    }
+
     @Test fun noFramesReturnsSafeIndex() {
         assertEquals(0, weatherPlayerFrameIndex(emptyList(), 7_000))
     }

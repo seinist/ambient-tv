@@ -1,5 +1,7 @@
 package com.ambient.tv.ui.photos
 
+import com.ambient.tv.ui.theme.appOsdControlSurface
+import com.ambient.tv.ui.theme.SelectionIndicator
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
@@ -421,7 +423,8 @@ private fun PhotoTouchButton(
     Box(
         Modifier.size(52.dp)
             .onFocusChanged { focused = it.isFocused }
-            .appControlSurface(focused = focused, selected = selected, shape = CircleShape, prominent = selected, pressed = pressed)
+            .appOsdControlSurface(focused = focused, selected = selected, shape = CircleShape,
+                prominent = selected, pressed = pressed)
             .clickable(interactionSource = interactions, indication = null, role = Role.Button, onClick = onClick)
             .semantics { contentDescription = label },
         contentAlignment = Alignment.Center,

@@ -596,7 +596,7 @@ private fun WeatherMedia3MapContent(
                                 osd.interact()
                                 onFocusTargetChanged("provider")
                                 onPanelChanged("provider")
-                            }, modifier = Modifier.focusRequester(sourceRequester))
+                            }, modifier = Modifier.focusRequester(sourceRequester), selected = panel == "provider")
                         PlayerIconButton(Icons.Filled.Repeat,
                             stringResource(R.string.weather_player_repeat), {
                                 osd.interact()
@@ -607,7 +607,7 @@ private fun WeatherMedia3MapContent(
                                 osd.interact()
                                 onFocusTargetChanged("info")
                                 onPanelChanged("info")
-                            }, modifier = Modifier.focusRequester(infoRequester))
+                            }, modifier = Modifier.focusRequester(infoRequester), selected = panel == "info")
                         if (failed || sourceError != null) PlayerIconButton(Icons.Filled.Refresh,
                             stringResource(R.string.weather_maps_retry), retryPlayback)
                         PlayerExitButton(onBack)

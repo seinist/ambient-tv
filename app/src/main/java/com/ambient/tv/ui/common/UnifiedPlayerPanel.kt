@@ -2,6 +2,7 @@
 
 package com.ambient.tv.ui.common
 
+import com.ambient.tv.ui.theme.appOsdControlSurface
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -698,7 +699,7 @@ fun PlayerSleepTimerButton(onClick: () -> Unit, selected: Boolean) {
         if (active) Icons.Filled.Bedtime else Icons.Outlined.BedtimeOutlined,
         stringResource(R.string.player_sleep_timer),
         onClick,
-        selected = selected,
+        selected = selected || active,
         osd = com.ambient.tv.ui.player.OsdButton.SLEEP,
     )
 }
@@ -792,7 +793,10 @@ fun PlayerIconButton(
             .onFocusChanged { focused = it.isFocused }
             .menuFocusMotion(focused)
             // Size identifies the main action; only actual focus draws the focus treatment.
-            .appControlSurface(focused, selected, shape = shape)
+            .appOsdControlSurface(
+                focused = focused, selected = selected, enabled = enabled || loading,
+                shape = shape, pressed = false,
+            )
             .activateOnTvKey(onClick = click)
             .clickable(enabled = barInteractive, role = Role.Button, onClick = click),
         horizontalArrangement = Arrangement.Center,

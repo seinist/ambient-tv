@@ -2,6 +2,8 @@
 
 package com.ambient.tv.ui.player
 
+import com.ambient.tv.ui.theme.SelectionIndicator
+import com.ambient.tv.ui.theme.appOsdControlSurface
 import com.ambient.tv.ui.theme.AccentMotionPaints
 import com.ambient.tv.ui.theme.AccentMotionScope
 import com.ambient.tv.ui.theme.LocalAccentMotionState
@@ -1475,7 +1477,8 @@ private fun OsdIconButton(
             .height(height)
             .shadow(elevation, shape)
             .onFocusChanged { focused = it.isFocused }
-            .appControlSurface(focused = focused, selected = selected, shape = shape, prominent = primary, pressed = pressed)
+            .appOsdControlSurface(focused = focused, selected = selected, shape = shape,
+                prominent = primary, pressed = pressed)
             .activateOnTvKey(onClick = onClick)
             .clickable(interactionSource = interactions, indication = null, onClick = onClick)
             .focusable()
@@ -1580,7 +1583,8 @@ private fun OsdSpeedChip(label: String, selected: Boolean, onClick: () -> Unit) 
     val pressed by interactions.collectIsPressedAsState()
     Box(
         modifier = Modifier.width(70.dp).height(40.dp).onFocusChanged { focused = it.isFocused }
-            .appControlSurface(focused = focused, selected = selected, shape = RoundedCornerShape(6.dp), pressed = pressed)
+            .appOsdControlSurface(focused = focused, selected = selected, shape = RoundedCornerShape(6.dp),
+                pressed = pressed, selectionIndicator = SelectionIndicator.UNDERLINE)
             .activateOnTvKey(onClick = onClick)
             .clickable(interactionSource = interactions, indication = null, onClick = onClick).focusable(),
         contentAlignment = Alignment.Center,
