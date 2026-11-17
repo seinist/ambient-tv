@@ -108,6 +108,7 @@ import com.ambient.tv.ui.navigation.Destinations
 import com.ambient.tv.ui.navigation.BackgroundPlayerReturnNavigation
 import com.ambient.tv.ui.navigation.PLAYBACK_DESTINATIONS
 import com.ambient.tv.ui.navigation.playbackBrowseOrigin
+import com.ambient.tv.ui.navigation.displayedPlaybackBrowseRoute
 import com.ambient.tv.ui.navigation.openAppHome
 import com.ambient.tv.ui.navigation.configuredContentRoute
 import com.ambient.tv.ui.navigation.isParameterizedSidebarRoute
@@ -1859,12 +1860,26 @@ private fun AmbientTvApp(
     }
     // The photo viewer is a presentation too: a running slideshow must not start the screensaver.
     val onPlayerRoute = currentRoute in PLAYBACK_DESTINATIONS
+    val lastVisibleBrowseOrigin = remember { mutableStateOf<com.ambient.tv.ui.navigation.BackgroundPlayerOrigin?>(null) }
+    androidx.compose.runtime.SideEffect {
+        if (!onPlayerRoute) {
+            playbackBrowseOrigin(currentBackStackEntry)?.let { entry ->
+                val displayed = displayedPlaybackBrowseRoute(
+                    entry.route, currentRoute, currentFeedKey, appPreferences.youtubeStartFeedKey,
+                    currentTelegramSectionKey, currentRadioSectionKey,
+                )
+                lastVisibleBrowseOrigin.value = entry.copy(route = displayed)
+            }
+        }
+    }
     LaunchedEffect(currentBackStackEntry?.id) {
         val entry = currentBackStackEntry ?: return@LaunchedEffect
         if (entry.destination.route in PLAYBACK_DESTINATIONS) {
             // Capture the actual back-stack entry, not the selected sidebar tab. Its route
             // includes feed/channel, source and detail parameters needed for an exact return.
-            backgroundPlayerReturn.enterPlayer(entry.id, playbackBrowseOrigin(navController.previousBackStackEntry))
+            val previous = playbackBrowseOrigin(navController.previousBackStackEntry)
+            val displayedPrevious = lastVisibleBrowseOrigin.value?.takeIf { it.entryId == previous?.entryId }
+            backgroundPlayerReturn.enterPlayer(entry.id, displayedPrevious ?: previous)
         } else {
             backgroundPlayerReturn.enterBrowse()
         }
@@ -2116,7 +2131,7 @@ private fun AmbientTvApp(
             backgroundPlayerReturn.origin?.let { origin ->
                 if (navController.currentBackStackEntry?.id != origin.entryId) {
                     val restored = runCatching {
-                        navController.popBackStack(origin.route, inclusive = false)
+                        navController.popBackStack(origin.backStackRoute, inclusive = false)
                     }.getOrDefault(false)
                     if (!restored) runCatching {
                         navController.navigate(origin.route) { launchSingleTop = true }

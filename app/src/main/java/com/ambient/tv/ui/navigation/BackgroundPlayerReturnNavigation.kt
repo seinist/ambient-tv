@@ -12,7 +12,32 @@ internal val PLAYBACK_DESTINATIONS = setOf(
     Destinations.TELEGRAM_PLAYER, Destinations.SPOTIFY_PLAYER, Destinations.RADIO_PLAYER,
 )
 
-internal data class BackgroundPlayerOrigin(val route: String, val entryId: String)
+internal data class BackgroundPlayerOrigin(
+    /** The screen and selected in-place category to show if the original entry was removed. */
+    val route: String,
+    val entryId: String,
+    /** Actual argument route of the existing NavBackStackEntry, which may show another chip. */
+    val backStackRoute: String = route,
+)
+
+/** Some TV browse chips switch category in-place without updating the NavBackStackEntry. */
+internal fun displayedPlaybackBrowseRoute(
+    stackRoute: String,
+    destination: String?,
+    youtubeFeedKey: String?,
+    youtubeStartFeedKey: String,
+    telegramSectionKey: String?,
+    radioSectionKey: String?,
+): String = when (destination) {
+    Destinations.YOUTUBE, Destinations.YOUTUBE_FEED -> youtubeFeedKey?.let {
+        Destinations.youtubeSection(it, youtubeStartFeedKey)
+    } ?: stackRoute
+    Destinations.TELEGRAM, Destinations.TELEGRAM_SECTION -> telegramSectionKey?.let(Destinations::telegramSection)
+        ?: stackRoute
+    Destinations.RADIO, Destinations.RADIO_SECTION -> radioSectionKey?.let(Destinations::radioSection)
+        ?: stackRoute
+    else -> stackRoute
+}
 
 /** The route is a Navigation pattern, but the return address must contain its actual arguments. */
 internal fun concretePlaybackOriginRoute(pattern: String?, arguments: Map<String, Any?>): String? {

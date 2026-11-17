@@ -34,6 +34,24 @@ class BackgroundPlayerReturnNavigationTest {
         assertEquals("youtube_channel/UC123",
             concretePlaybackOriginRoute(Destinations.YOUTUBE_CHANNEL, mapOf("channelId" to "UC123")))
         assertEquals(Destinations.HOME, concretePlaybackOriginRoute(Destinations.HOME, emptyMap()))
+        assertEquals(
+            "youtube_feed/subscriptions",
+            displayedPlaybackBrowseRoute(
+                "youtube_feed/history", Destinations.YOUTUBE_FEED, "subscriptions", "home", null, null,
+            ),
+        )
+        assertEquals(
+            "radio_section/favorites",
+            displayedPlaybackBrowseRoute(
+                "radio", Destinations.RADIO, null, "home", null, "favorites",
+            ),
+        )
+        assertEquals(
+            "telegram_section/channel%3A100",
+            displayedPlaybackBrowseRoute(
+                "telegram", Destinations.TELEGRAM, null, "home", "channel:100", null,
+            ),
+        )
         assertNull(concretePlaybackOriginRoute(Destinations.YOUTUBE_FEED, emptyMap()))
         assertNull(concretePlaybackOriginRoute(null, emptyMap()))
     }
@@ -52,10 +70,13 @@ class BackgroundPlayerReturnNavigationTest {
 
     @Test fun fullScreenReturnPreservesOriginAndARealNewPlayReplacesIt() {
         val navigation = BackgroundPlayerReturnNavigation()
-        val smartTube = BackgroundPlayerOrigin("youtube_feed/subscriptions", "feed-1")
+        val smartTube = BackgroundPlayerOrigin(
+            "youtube_feed/subscriptions", "feed-1", "youtube_feed/history",
+        )
         val plex = BackgroundPlayerOrigin("section/movies", "section-2")
         navigation.enterPlayer("player-1", smartTube)
         assertEquals(smartTube, navigation.origin)
+        assertEquals("youtube_feed/history", navigation.origin?.backStackRoute)
         navigation.enterBrowse() // player minimized
         navigation.armAfterSidebarBack(true)
         navigation.markMiniPlayerReentry("player-2")
