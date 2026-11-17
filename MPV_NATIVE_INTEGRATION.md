@@ -67,12 +67,14 @@ MPV_ANDROID_REF=<git-tag-or-commit> ./scripts/build_mpv_android.sh --clean
 The app's `minSdk` is 29, so the JNI shim is compiled for API 29 by default. Override with
 `ANDROID_API` only if the application minimum changes.
 
-Important: successful native compilation makes `MpvBackendAvailability.nativeRuntimeAvailable`
-true, but MPV remains hidden as a selectable renderer until the Kotlin/JNI player controller
-and Android render surface are fully implemented. This prevents a misleading "MPV" setting
-that would silently play through Media3.
+The MPV renderer is selectable when `MpvBackendAvailability.nativeRuntimeAvailable` is
+true and the player backend is available. On devices without a working MPV runtime,
+Ambient TV falls back to a supported renderer rather than silently claiming MPV.
 
 ## Spotify note
+
+Spotify is disabled in regular builds because its audio-key exchange no longer works
+with the librespot playback backend. The following notes apply only to developer opt-in builds.
 
 Rusty upstream prebuilts are ARM-only. `scripts/build_spotify_engine.sh` builds `x86` and
 `x86_64` from source via cargo-ndk; the prebuilt fetch path cannot supply emulator ABIs.

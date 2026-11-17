@@ -1,4 +1,4 @@
-# Minimal Monogram MTProto integration (optional GPL build)
+# Monogram MTProto integration (GPL-3.0-only)
 
 Ambient TV uses the name and icon **Monogram** for its Telegram-backed media
 system. The app's stable internal `telegram` key is retained for preference and

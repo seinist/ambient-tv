@@ -10,6 +10,9 @@ Full user and developer documentation:
 Current features in the compendium:
 
 - [IPTV with M3U/XMLTV](DOCUMENTATION.md#410-iptv-m3uxmltv)
+- [Radio Browser: internet radio, favorites, categories and search](DOCUMENTATION.md#45-radio-radio-browser)
+- [Android Auto audio browsing](DOCUMENTATION.md#54-android-auto-audio)
+- [Separate TV interface resolution](DOCUMENTATION.md#35-look--feel)
 - [Timeshift, direct recording and reminders](DOCUMENTATION.md#69-live-tv-timeshift-direct-recording-and-reminders)
 - [Files/NAS with WebDAV, SFTP and music tags](DOCUMENTATION.md#48-files)
 - [Sidecar and online subtitles](DOCUMENTATION.md#62-subtitles)
@@ -22,8 +25,8 @@ Current features in the compendium:
 - [Night mode by the clock](DOCUMENTATION.md#66-audio-profiles)
 - [Player tools: A-B, frame step, bookmarks, screenshots, lyrics, gapless](DOCUMENTATION.md#71-playback-settings-menu)
 - [Home layout and offline servers](DOCUMENTATION.md#31-home-rows)
-- [Monogram (optional Telegram media): features, six Home rows and sign-in](DOCUMENTATION.md#411-monogram-telegram-media-optional-native-build)
-- [Monogram API ID/hash, QR login and GPL native build](monogram-integration.md)
+- [Monogram (optional Telegram media): features, six Home rows and sign-in](DOCUMENTATION.md#411-monogram-telegram-media)
+- [Monogram API ID/hash, QR login and technical integration](monogram-integration.md)
 - [System and voice search](DOCUMENTATION.md#111-android-tv)
 
 ## Other project notes (repo root)
@@ -35,5 +38,7 @@ Technical notes in the repository:
 | [`EXTERNAL_LIBRARIES.md`](../EXTERNAL_LIBRARIES.md) | Pinned engines and update workflow |
 | [`MPV_NATIVE_INTEGRATION.md`](../MPV_NATIVE_INTEGRATION.md) | MPV native build and JNI integration |
 | [`BRANDING.md`](../BRANDING.md) | Display name and artwork |
+
+**Spotify:** disabled in regular builds because Spotify no longer supplies usable audio keys to the app's playback backend. See the compendium's [overview](DOCUMENTATION.md#1-overview).
 
 Authoritative user-facing behaviour is the app strings plus [`DOCUMENTATION.md`](DOCUMENTATION.md) / [`DOCUMENTATION.de.md`](DOCUMENTATION.de.md).
