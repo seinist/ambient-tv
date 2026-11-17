@@ -32,6 +32,8 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.tv.material3.Icon
 import androidx.tv.material3.MaterialTheme
@@ -67,6 +69,8 @@ fun WeatherCompactSummary(
     textColor: Color? = null,
     iconColor: Color? = null,
     animateChanges: Boolean = false,
+    iconSize: Dp = 20.dp,
+    temperatureTextSize: TextUnit? = null,
 ) {
     // A setting change may briefly precede the new-unit response. Never relabel the old value.
     val unit = snapshot.temperatureUnit
@@ -79,10 +83,12 @@ fun WeatherCompactSummary(
     val description = stringResource(R.string.weather_compact_description, snapshot.location.name, value,
         stringResource(weatherConditionRes(current.weatherCode)))
     val visual = CompactWeatherVisual(current.weatherCode, current.isDay, value)
+    val temperatureStyle = temperatureTextSize?.let { MaterialTheme.typography.bodyMedium.copy(fontSize = it) }
+        ?: MaterialTheme.typography.bodyMedium
     val conditions: @Composable (CompactWeatherVisual) -> Unit = { shown ->
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            Icon(weatherIcon(shown.code, shown.isDay), null, Modifier.size(20.dp), tint = iconColor ?: color)
-            Text(shown.temperature, style = MaterialTheme.typography.bodyMedium, color = color, maxLines = 1)
+            Icon(weatherIcon(shown.code, shown.isDay), null, Modifier.size(iconSize), tint = iconColor ?: color)
+            Text(shown.temperature, style = temperatureStyle, color = color, maxLines = 1)
         }
     }
     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp),
