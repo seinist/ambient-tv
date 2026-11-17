@@ -67,6 +67,8 @@ import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 import com.ambient.tv.ui.performance.PerformanceProfileResolver
 import com.ambient.tv.util.suspendResult
 
@@ -1450,8 +1452,12 @@ class HomeViewModel @Inject constructor(
                         tvheadendRepository.probeServerInfo().isFailure
                     ) return@suspendResult HomeTvPreview()
                 }
-                if (!repo.capabilities().available) return@suspendResult HomeTvPreview()
-                val channels = repo.channels()
+                if (!loadCoordinator.request(repo.source.id, "home:capabilities", BrowseLoadPriority.HOME) {
+                        repo.capabilities()
+                    }.available) return@suspendResult HomeTvPreview()
+                val channels = loadCoordinator.request(repo.source.id, "home:channels", BrowseLoadPriority.HOME) {
+                    repo.channels()
+                }
                 val historyScope = if (repo.source.system == "tvheadend") appPreferences.tvheadendHistoryScope else repo.source.id
                 val recent = appPreferences.recentTvChannelIds(historyScope)
                 val showLive = hasEnabledRow(repo.source.system, "live")
@@ -1784,7 +1790,8 @@ class HomeViewModel @Inject constructor(
                 coroutineScope {
                     definitions.map { definition ->
                         async {
-                            val items = if (definition.contentKey == "channels") {
+                            val items = loadCoordinator.request("telegram", "home:${definition.contentKey}:${telegramRepository.catalogRevision.value}", BrowseLoadPriority.HOME) {
+                            if (definition.contentKey == "channels") {
                                 telegramRepository.channels().map { channel -> channel.toBrowseItem() }
                             } else {
                                 val entries = telegramRepository.browse(definition.contentKey, HOME_ROW_LIMIT) {
@@ -1793,6 +1800,7 @@ class HomeViewModel @Inject constructor(
                                 com.ambient.tv.ui.telegram.telegramRows(definition.contentKey, entries,
                                     includeYouTubeLinks = smartTubeUsableForMonogram())
                                     .flatMap { it.items }.distinctBy(MediaItem::ratingKey)
+                            }
                             }
                             live["telegram.${definition.contentKey}"] = if (items.isEmpty()) null else ContentRowData(
                                 id = "telegram.${definition.contentKey}",
@@ -1883,6 +1891,7 @@ class HomeViewModel @Inject constructor(
                         it.contentKey in setOf(HomeRowDefinition.RADIO_FAVORITES, HomeRowDefinition.RADIO_RECENT)
                     }.map { definition -> async {
                         val result = suspendResult {
+                            loadCoordinator.request("radio", "home:${definition.contentKey}:force=$forceRefresh", BrowseLoadPriority.HOME) {
                             when {
                                 definition.contentKey in setOf("home", HomeRowDefinition.RADIO_POPULAR) ->
                                     radioRepository.popular(HOME_ROW_LIMIT, forceRefresh)
@@ -1893,6 +1902,7 @@ class HomeViewModel @Inject constructor(
                                 definition.contentKey.startsWith("${HomeRowDefinition.RADIO_LANGUAGE}:") ->
                                     radioRepository.search(language = definition.contentKey.substringAfter(':'), limit = HOME_ROW_LIMIT, forceRefresh = forceRefresh).items
                                 else -> emptyList()
+                            }
                             }
                         }
                         if (result.isFailure) null
@@ -2000,7 +2010,9 @@ class HomeViewModel @Inject constructor(
                 for (definition in definitions) {
                     val feed = com.ambient.tv.trailers.TrailerFeed.entries.firstOrNull { it.name == definition.contentKey } ?: continue
                     val language = when (appPreferences.trailerLanguage) { "de" -> "de-DE"; "en" -> "en-US"; else -> locale.toLanguageTag() }
-                    val result = trailerRepository.feed(feed, language, locale.country.ifBlank { "US" })
+                    val result = loadCoordinator.request("trailers", "home:${feed.name}:$language:${locale.country}", BrowseLoadPriority.HOME) {
+                        trailerRepository.feed(feed, language, locale.country.ifBlank { "US" })
+                    }
                     if (generation != trailerRowsGeneration) return@launch
                     if (result.isFailure) continue
                     val entries = result.getOrThrow()
