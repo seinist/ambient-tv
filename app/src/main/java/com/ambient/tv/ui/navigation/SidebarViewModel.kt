@@ -382,7 +382,7 @@ class SidebarViewModel @Inject constructor(
                     val sources = loadCoordinator.request("iptv", "sidebar-capabilities", BrowseLoadPriority.VISIBLE) {
                         liveTv.discover()
                     }
-                    _uiState.update { it.copy(liveTvSources = sources) }
+                    _uiState.update { it.copy(liveTvSources = com.ambient.tv.livetv.reconcileSidebarLiveTvSources(sources, liveTv.sidebarSnapshot())) }
                 }
             }
         }
@@ -443,7 +443,7 @@ class SidebarViewModel @Inject constructor(
             if (deferExpensiveWorkMs > 0L && forceLiveTv) delay(deferExpensiveWorkMs)
             if (forceLiveTv) launch {
                 val sources = liveTv.discover(force = true)
-                _uiState.update { it.copy(liveTvSources = sources) }
+                _uiState.update { it.copy(liveTvSources = com.ambient.tv.livetv.reconcileSidebarLiveTvSources(sources, liveTv.sidebarSnapshot())) }
             }
             if (forceLiveTv && appPreferences.isTvheadendConfigured) launch {
                 val channels = com.ambient.tv.util.suspendResult { tvheadendRepository.channels(force = forceLiveTv) }.getOrNull()
