@@ -6,7 +6,7 @@ Ambient TV uses **Radio Browser** as its only built-in internet-radio catalog.
 SHOUTcast and TuneIn are intentionally out of scope. The user-facing system is simply
 **Radio**; Radio Browser remains an implementation/source label.
 
-## Implemented on `feat/radio-browser-foundation`
+## Implemented in Ambient TV
 
 ### Catalog and network
 
@@ -48,7 +48,7 @@ SHOUTcast and TuneIn are intentionally out of scope. The user-facing system is s
 
 ### Backup
 
-- Radio enabled state and Favorites are included in settings backup schema 75;
+- Radio enabled state and Favorites are included in the current settings backup (schema 80);
 - Recently played intentionally stays device-local, matching the existing treatment of live-TV watch history.
 
 ### Browse facets
