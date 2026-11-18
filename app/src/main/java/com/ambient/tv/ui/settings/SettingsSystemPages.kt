@@ -54,6 +54,7 @@ import com.ambient.tv.ui.common.liveTvMenuIcon
 import com.ambient.tv.ui.common.spotifyMenuIcon
 import com.ambient.tv.ui.common.youtubeFeedIcon
 import com.ambient.tv.ui.common.TvActionButton
+import com.ambient.tv.ui.common.SettingsSingleAction
 import com.ambient.tv.ui.common.TvSettingRow
 import com.ambient.tv.ui.common.TvTextField
 import com.ambient.tv.ui.common.activateOnTvKey
@@ -137,7 +138,7 @@ internal fun LazyListScope.settingsSystemCategoryItems(
                     }
                 }
                 item {
-                    TvActionButton(
+                    SettingsSingleAction(
                         text = stringResource(R.string.action_server_search),
                         onClick = viewModel::discoverServers,
                         loading = uiState.isDiscoveringServers,
@@ -192,7 +193,7 @@ internal fun LazyListScope.settingsSystemCategoryItems(
                             }
                             // Keep this action in the same composition slot when linking starts or
                             // stops. Replacing the entire subtree discarded DPAD focus.
-                            TvActionButton(
+                            SettingsSingleAction(
                                 text = stringResource(
                                     when {
                                         uiState.isLinkingAccount -> R.string.settings_link_cancel
@@ -316,7 +317,7 @@ internal fun LazyListScope.settingsSystemCategoryItems(
                     item { Text(stringResource(R.string.settings_jellyfin_configured, uiState.jellyfinUsername), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant) }
                 }
                 item {
-                    TvActionButton(
+                    SettingsSingleAction(
                         text = stringResource(R.string.action_server_search),
                         onClick = viewModel::discoverJellyfinServers,
                         loading = uiState.isDiscoveringJellyfin,
@@ -453,7 +454,7 @@ internal fun LazyListScope.settingsSystemCategoryItems(
                     item { Text(stringResource(R.string.settings_emby_configured, uiState.embyUsername), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant) }
                 }
                 item {
-                    TvActionButton(
+                    SettingsSingleAction(
                         text = stringResource(R.string.action_server_search),
                         onClick = viewModel::discoverEmbyServers,
                         loading = uiState.isDiscoveringEmby,
@@ -579,7 +580,7 @@ internal fun LazyListScope.settingsSystemCategoryItems(
                     }
                 }
                 item {
-                    TvActionButton(
+                    SettingsSingleAction(
                         text = if (uiState.isTestingTvheadend) stringResource(R.string.settings_test_connection_progress) else stringResource(R.string.settings_reconnect_server),
                         onClick = viewModel::testTvheadendConnection,
                         loading = uiState.isTestingTvheadend,
@@ -884,7 +885,7 @@ internal fun LazyListScope.settingsSystemCategoryItems(
                 ) {
                     // Successful sign-in used to replace the focused button with Text and leave
                     // Compose without a focus owner. Retain the action node in a disabled state.
-                    TvActionButton(
+                    SettingsSingleAction(
                         text = when {
                             uiState.youtubeSignedIn && uiState.youtubeAuthBusy -> stringResource(R.string.action_signing_out)
                             uiState.youtubeSignedIn -> stringResource(R.string.action_sign_out)
@@ -1231,7 +1232,7 @@ internal fun WireGuardRouteSection(uiState: SettingsUiState, viewModel: Settings
                     )
                 }
             } else {
-                TvActionButton(
+                SettingsSingleAction(
                     text = stringResource(if (uiState.wireGuard.testing) R.string.wg_testing else R.string.wg_test),
                     // A handshake test only: no VPN consent, no tunnel.
                     onClick = viewModel::testWireGuard,
@@ -1551,8 +1552,8 @@ private fun YouTubeTvLinkSection(viewModel: SettingsViewModel) {
             onCheckedChange = { enabled = it; viewModel.setYouTubeTvLinkEnabled(it) },
         )
         if (enabled) {
-            TvActionButton(stringResource(R.string.youtube_link_show_code), { showCode = true })
-            TvActionButton(stringResource(R.string.youtube_link_reset), viewModel::unlinkYouTubeDevices)
+            SettingsSingleAction(stringResource(R.string.youtube_link_show_code), { showCode = true })
+            SettingsSingleAction(stringResource(R.string.youtube_link_reset), viewModel::unlinkYouTubeDevices)
         }
     }
     if (showCode) {
