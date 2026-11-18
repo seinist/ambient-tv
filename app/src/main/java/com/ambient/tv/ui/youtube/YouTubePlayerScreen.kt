@@ -755,7 +755,12 @@ private fun YouTubeMedia3Playback(
                 audioPassthroughEnabled = audioPassthroughEnabled,
                 preferredAudioLanguage = startupAudioLanguage,
                 maxVideoHeight = target.height,
-                preferredVideoMimeType = youtubeFamilyMimeType(target.family),
+                // Choose the codec at the highest playable source resolution. A blanket VP9
+                // preference could keep Media3 on a 360p-only group while H.264 has 1080p.
+                preferredVideoMimeType = com.ambient.tv.youtube.youtubeMedia3PreferredVideoFamily(
+                    playback.adaptiveFormats, target,
+                    com.ambient.tv.youtube.YouTubeDeviceVideo.decodeCheck(context),
+                )?.let(::youtubeFamilyMimeType),
                 maxVideoFrameRate = target.fps,
                 preferOriginalAudio = true,
                 centerYouTubeCaptions = true,
