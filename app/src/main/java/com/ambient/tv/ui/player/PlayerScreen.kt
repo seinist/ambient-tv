@@ -1222,9 +1222,12 @@ internal fun TvPlayerSeekBar(
     val aiming = pointerTarget != null || pendingTarget != null || awaitingVisualTarget != null
     val showingSeekTarget = seekBarHasDistinctTarget(positionMs, displayedPosition, aiming)
     val highlighted = focused || aiming || passiveFeedback
+    // The actual playhead is always a vertical line, in compact seek mode *and* when
+    // the button row is expanded. Only an active target gets a circular scrub thumb.
+    val playheadFraction = seekBarPlayheadFraction(positionMs, durationMs)
     val reducedSeekEffects = LocalPerformanceProfile.current.reducedEffects
     val thumbAlpha by animateFloatAsState(
-        if (highlighted && durationMs > 0L) 1f else 0f,
+        if (aiming && durationMs > 0L) 1f else 0f,
         animationSpec = tween(if (reducedSeekEffects) 95 else 150), label = "TV seek thumb fade",
     )
     val thumbScale by animateFloatAsState(
@@ -1432,17 +1435,6 @@ internal fun TvPlayerSeekBar(
                 ) {
                     drawBookmarkTicks(bookmarks, durationMs, 0f, size.height)
                 }
-                // Neutral marker shows the previously reported position during a seek;
-                // the accent thumb follows the requested destination.
-                if (showingSeekTarget) androidx.compose.foundation.Canvas(
-                    Modifier.matchParentSize().graphicsLayer { alpha = dataAlpha.value },
-                ) {
-                    val played = seekBarFraction(positionMs, durationMs)
-                    val x = size.width * (if (layoutDirection == androidx.compose.ui.unit.LayoutDirection.Rtl) 1f - played else played)
-                    drawLine(Color.White.copy(alpha = .62f),
-                        androidx.compose.ui.geometry.Offset(x, -3.dp.toPx()),
-                        androidx.compose.ui.geometry.Offset(x, size.height + 3.dp.toPx()), 1.5.dp.toPx())
-                }
                 if (durationMs > 0L) {
                     Box(
                         modifier = Modifier
@@ -1463,6 +1455,22 @@ internal fun TvPlayerSeekBar(
                                 .border(2.5.dp, Color.White, CircleShape),
                         )
                     }
+                }
+                // Keep the line outside the clipped progress/shader layer. It must not
+                // disappear beneath the thumb or when the OSD collapses to seek mode.
+                if (playheadFraction != null) androidx.compose.foundation.Canvas(
+                    Modifier.matchParentSize(),
+                ) {
+                    val played = if (layoutDirection == androidx.compose.ui.unit.LayoutDirection.Rtl)
+                        1f - playheadFraction else playheadFraction
+                    val insetX = 1.5.dp.toPx()
+                    val x = (size.width * played).coerceIn(insetX, (size.width - insetX).coerceAtLeast(insetX))
+                    drawLine(
+                        Color.White.copy(alpha = .84f * dataAlpha.value),
+                        androidx.compose.ui.geometry.Offset(x, -3.dp.toPx()),
+                        androidx.compose.ui.geometry.Offset(x, size.height + 3.dp.toPx()),
+                        2.dp.toPx(), cap = androidx.compose.ui.graphics.StrokeCap.Round,
+                    )
                 }
             }
         }
@@ -1632,7 +1640,7 @@ private fun OsdSpeedChip(label: String, selected: Boolean, onClick: () -> Unit) 
     Box(
         modifier = Modifier.width(70.dp).height(40.dp).onFocusChanged { focused = it.isFocused }
             .appOsdControlSurface(focused = focused, selected = selected, shape = RoundedCornerShape(6.dp),
-                pressed = pressed, selectionIndicator = SelectionIndicator.UNDERLINE)
+                pressed = pressed, selectionIndicator = SelectionIndicator.DOT)
             .activateOnTvKey(onClick = onClick)
             .clickable(interactionSource = interactions, indication = null, onClick = onClick).focusable(),
         contentAlignment = Alignment.Center,
