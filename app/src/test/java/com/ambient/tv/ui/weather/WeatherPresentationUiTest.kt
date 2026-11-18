@@ -17,6 +17,7 @@ import androidx.lifecycle.LifecycleRegistry
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.test.core.app.ApplicationProvider
 import com.ambient.tv.data.local.AppPreferences
+import com.ambient.tv.data.weather.WEATHER_CACHE_TTL_MILLIS
 import com.ambient.tv.data.weather.WeatherLocation
 import com.ambient.tv.data.weather.WeatherRepository
 import com.ambient.tv.data.weather.WeatherSettings
@@ -30,6 +31,8 @@ import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicReference
+import kotlinx.serialization.encodeToString
+import kotlinx.serialization.json.Json
 import okhttp3.Call
 import okhttp3.Interceptor
 import okhttp3.MediaType.Companion.toMediaType
@@ -93,9 +96,8 @@ class WeatherPresentationUiTest {
         fixture(settings.copy(showInScreensaver = false), Lifecycle.State.STARTED).use { fixture ->
             rule.setContent { fixture.Content(headerVisible = true, screensaverVisible = false) }
             fixture.assertNoWork()
-            // Layout reserves the header slot even though lifecycle gating has not fetched data.
-            assertTrue(fixture.presentation.get().headerPending)
-            assertTrue(fixture.presentation.get().hasHeader)
+            // Without valid data, the weather reserves no blank header space.
+            assertFalse(fixture.presentation.get().hasHeader)
             assertNull(fixture.presentation.get().header)
 
             rule.runOnIdle { fixture.owner.registry.currentState = Lifecycle.State.RESUMED }
@@ -178,7 +180,6 @@ class WeatherPresentationUiTest {
             rule.waitUntil(8_000) { fixture.repository.state.value.error != null }
             rule.waitForIdle()
             assertNull(fixture.presentation.get().header)
-            assertFalse(fixture.presentation.get().headerPending)
             assertFalse(fixture.presentation.get().hasHeader)
         }
     }
@@ -214,6 +215,43 @@ class WeatherPresentationUiTest {
         assertNull(unusable.screensaver)
     }
 
+    @Test fun expiredCacheIsHiddenFromHeaderAndScreensaverWithoutStatusText() {
+        val now = System.currentTimeMillis()
+        val valid = sampleCurrent().copy(fetchedAtMillis = now - WEATHER_CACHE_TTL_MILLIS + 1)
+        val expired = valid.copy(fetchedAtMillis = now - WEATHER_CACHE_TTL_MILLIS)
+
+        val cached = weatherPresentationFromState(
+            settings, WeatherState(data = valid, error = WeatherError.OFFLINE), nowMillis = now)
+        assertEquals(valid, cached.header)
+        assertEquals(valid, cached.screensaver)
+
+        val hidden = weatherPresentationFromState(
+            settings, WeatherState(data = expired, error = WeatherError.OFFLINE), nowMillis = now)
+        assertNull(hidden.header)
+        assertNull(hidden.screensaver)
+        assertFalse(hidden.hasHeader)
+    }
+
+    @Test fun freshDiskCacheAppearsBeforeLiveDataAndIsReplaced() {
+        val releaseLiveResponse = CountDownLatch(1)
+        val cached = sampleCurrent().copy(current = sampleCurrent().current?.copy(temperature = 4.0))
+        fixture(cachedForecast = cached, beforeResponse = { _, _ ->
+            check(releaseLiveResponse.await(10, TimeUnit.SECONDS)) { "Live forecast was not released" }
+        }, responseBody = """{"current":{"time":1794754800,"temperature_2m":11}}""").use { fixture ->
+            try {
+                rule.setContent { fixture.Content(headerVisible = true, screensaverVisible = false) }
+                rule.waitUntil(5_000) { fixture.presentation.get().header?.current?.temperature == 4.0 }
+                rule.waitUntil(5_000) { fixture.calls.size == 1 }
+                assertTrue(fixture.presentation.get().hasHeader)
+                releaseLiveResponse.countDown()
+                rule.waitUntil(5_000) { fixture.presentation.get().header?.current?.temperature == 11.0 }
+                assertNull(fixture.repository.state.value.error)
+            } finally {
+                releaseLiveResponse.countDown()
+            }
+        }
+    }
+
     private fun sampleCurrent(): WeatherSnapshot = WeatherSnapshot(
         place, place.timezone, "celsius", "kmh", System.currentTimeMillis(),
         WeatherCurrent(1794754800, 7.0, null, 2, true, null, null, null),
@@ -226,6 +264,7 @@ class WeatherPresentationUiTest {
         beforeResponse: (Interceptor.Chain, Int) -> Unit = { _, _ -> },
         responseCode: Int = 200,
         responseBody: String = """{"current":{"time":1794754800,"temperature_2m":7}}""",
+        cachedForecast: WeatherSnapshot? = null,
     ): Fixture {
         val directory = temporary.newFolder()
         val cacheAccesses = AtomicInteger()
@@ -234,6 +273,11 @@ class WeatherPresentationUiTest {
                 cacheAccesses.incrementAndGet()
                 return directory
             }
+        }
+        cachedForecast?.let {
+            val cacheFile = File(directory, "weather/forecasts-v1.json")
+            cacheFile.parentFile!!.mkdirs()
+            cacheFile.writeText("""{"version":1,"snapshots":[${Json.encodeToString(it)}]}""")
         }
         val storage = context.getSharedPreferences("weather-presentation-${directory.name}", Context.MODE_PRIVATE)
         val preferences = AppPreferences(storage).apply { this.weatherSettings = weatherSettings }
