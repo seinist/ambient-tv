@@ -1941,11 +1941,16 @@ private fun AmbientTvApp(
     LaunchedEffect(standbyRequested, screensaverActive) {
         if (standbyRequested && screensaverActive) onScreensaverActiveChanged(false)
     }
+    // Playback counts as activity: the idle wait restarts when playback stops being active, so a
+    // brief reload/renderer rebuild after a long input-free viewing session cannot start it at once.
+    val screensaverIdleClock = remember { com.ambient.tv.ui.common.ScreensaverIdleClock(playbackActive) }
     LaunchedEffect(screensaverEnabled, screensaverTimeoutMs, playbackActive, lastInteractionElapsedMs, screensaverOverlayPresent, windowInfo.isWindowFocused, standbyRequested) {
+        screensaverIdleClock.observe(playbackActive, SystemClock.elapsedRealtime())
         if (standbyRequested || !screensaverEnabled || playbackActive || screensaverOverlayPresent || !windowInfo.isWindowFocused) return@LaunchedEffect
-        val remaining = screensaverTimeoutMs - (SystemClock.elapsedRealtime() - lastInteractionElapsedMs)
+        val remaining = screensaverIdleClock.remainingMs(lastInteractionElapsedMs, SystemClock.elapsedRealtime(), screensaverTimeoutMs)
         if (remaining > 0) kotlinx.coroutines.delay(remaining)
-        if (!standbyRequested && !playbackActive && screensaverEnabled && SystemClock.elapsedRealtime() - lastInteractionElapsedMs >= screensaverTimeoutMs) {
+        if (!standbyRequested && !playbackActive && screensaverEnabled &&
+            screensaverIdleClock.remainingMs(lastInteractionElapsedMs, SystemClock.elapsedRealtime(), screensaverTimeoutMs) <= 0L) {
             onScreensaverActiveChanged(true)
         }
     }

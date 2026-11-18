@@ -72,6 +72,8 @@ fun PersistentPlaybackVideoHost(modifier: Modifier = Modifier, systemPip: Boolea
             else -> Box(modifier.background(Color.Black))
         }
     }
+    // Same-title renderer rebuilds show the last picture (dimmed) instead of black.
+    if (!systemPip) VideoFrameHoldLayer(handle, modifier)
 }
 
 @Composable
