@@ -12,7 +12,11 @@ internal fun youtubeHasPlayableDashTracks(formats: List<YouTubeAdaptiveFormat>, 
         usable.any { it.mimeType?.startsWith("audio/") == true }
 }
 
-/** Prefer complete adaptive playback; never wait for DASH when live HLS is already ready. */
+/**
+ * Prefer complete adaptive playback; never wait for DASH when live HLS is already ready.
+ * A video+audio DASH response topping out at 480p gets one additional client attempt:
+ * some YouTube clients expose only 360p while another offers the video's real 1080p.
+ */
 internal fun youtubePlayableFormatScore(
     unplayable: Boolean,
     live: Boolean,
@@ -27,7 +31,15 @@ internal fun youtubePlayableFormatScore(
     // live fallback instead of calling an HLS-only response playable for that renderer.
     if (live && !preferLiveHls) return if (hasProgressive()) 4 else 0
     if (live && hasHls) return 4
-    if (youtubeHasPlayableDashTracks(formats, allowOtf)) return 4
+    if (youtubeHasPlayableDashTracks(formats, allowOtf)) {
+        val playableVideos = formats.filter {
+            it.mimeType?.startsWith("video/", ignoreCase = true) == true &&
+                !it.url.isNullOrBlank() && (allowOtf || !it.isOtf)
+        }
+        // Unknown sizes may already be high quality; don't delay them. A known low-only DASH
+        // response is playable (score 3) but gets exactly one quality upgrade attempt.
+        return if (playableVideos.isNotEmpty() && playableVideos.all { it.qualityHeight() in 1..480 }) 3 else 4
+    }
     if (hasProgressive()) return 2
     return if (hasHls) 1 else 0
 }
