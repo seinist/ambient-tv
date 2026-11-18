@@ -12,16 +12,14 @@ import com.ambient.tv.ui.display.uiHdrHighlight
 
 internal val LocalControlPalette = staticCompositionLocalOf<ControlPalette?> { null }
 
-internal const val CONTROL_ACCENT_MOTION_EMPHASIS = .25f
+internal const val CONTROL_ACCENT_MOTION_EMPHASIS = .33f
 
 /** Conservative sum of the drawing passes, even where their reflections do not overlap. */
 internal fun controlAccentMotionMaxOpacity(style: AccentStyle): Float =
     CONTROL_ACCENT_MOTION_EMPHASIS * when (style) {
-        AccentStyle.SATIN, AccentStyle.GLASS, AccentStyle.CERAMIC -> .10f
-        AccentStyle.CHROME -> .14f
-        AccentStyle.PEARL -> .12f
-        AccentStyle.FACET -> .19f
-        AccentStyle.GLOW -> .08f
+        AccentStyle.SATIN, AccentStyle.GLASS, AccentStyle.CERAMIC -> .14f
+        AccentStyle.CHROME, AccentStyle.PEARL, AccentStyle.FACET -> .18f
+        AccentStyle.GLOW -> .13f
         AccentStyle.LIGHT -> .075f
     }
 
@@ -87,6 +85,9 @@ internal class ControlPalette(
     }
 
     fun materialBrush(): Brush = accentMaterialBrush(materialStops, style)
+
+    /** Style-bearing focus outline without the washed-out white material highlights. */
+    fun focusBorderBrush(): Brush = accentFocusBorderBrush(accentFocusOutline.copy(alpha = 1f), style)
 }
 
 @Immutable
@@ -171,7 +172,7 @@ internal fun controlPalette(
         disabledContainer = uiHdrHighlight(scaleControlLuminance(idle, .70f), headroom),
         content = content.copy(alpha = 1f),
         disabledContent = mutedContent.copy(alpha = .55f),
-        focusOutline = content.copy(alpha = .94f),
+        focusOutline = uiHdrHighlight(accentFocus, headroom).copy(alpha = .94f),
         accentFocusOutline = uiHdrHighlight(accentFocus, headroom),
         selectedOutline = uiHdrHighlight(accentFocus, headroom).copy(alpha = .85f),
         prominentOutline = uiHdrHighlight(edge, headroom).copy(alpha = .48f),

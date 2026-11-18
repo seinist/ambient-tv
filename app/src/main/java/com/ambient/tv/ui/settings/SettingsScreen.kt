@@ -1791,7 +1791,7 @@ private fun AboutComponentCard(component: AboutComponent) {
             .onFocusChanged { focused = it.isFocused }
             .focusable()
             .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.30f), shape)
-            .animatedFocusBorder(focused, shape, MaterialTheme.colorScheme.onSurface.copy(alpha = 0.90f), unfocusedColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.07f))
+            .animatedFocusBorder(focused, shape, MaterialTheme.colorScheme.primary.copy(alpha = 0.96f), unfocusedColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.07f))
             .padding(horizontal = 14.dp, vertical = 12.dp),
         horizontalArrangement = Arrangement.spacedBy(14.dp),
         verticalAlignment = Alignment.CenterVertically,

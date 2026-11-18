@@ -82,22 +82,22 @@ internal class AccentMotionPaints(private val accent: Color, val style: AccentSt
         when (style) {
             AccentStyle.SATIN, AccentStyle.CHROME, AccentStyle.GLASS -> {
                 matrix.reset()
-                if (style == AccentStyle.GLASS) matrix.translate(y = size.height * .035f * phase)
-                else matrix.translate(x = size.width * .06f * (phase - .5f))
+                if (style == AccentStyle.GLASS) matrix.translate(y = size.height * .18f * phase)
+                else matrix.translate(x = size.width * .66f * (phase - .5f))
                 (primary as ShaderBrush).transform = matrix
-                draw(primary, strength * if (style == AccentStyle.CHROME) .14f else .10f)
+                draw(primary, strength * if (style == AccentStyle.CHROME) .18f else .14f)
             }
             AccentStyle.PEARL -> {
-                draw(primary, strength * .12f * (1f - phase))
-                draw(checkNotNull(secondary), strength * .12f * phase)
+                draw(primary, strength * .09f * (1f - phase))
+                draw(checkNotNull(secondary), strength * .09f * phase)
             }
             AccentStyle.FACET -> {
-                draw(primary, strength * .10f * (1f - phase))
-                draw(checkNotNull(secondary), strength * .09f)
-                draw(checkNotNull(tertiary), strength * .10f * phase)
+                draw(primary, strength * .06f * (1f - phase))
+                draw(checkNotNull(secondary), strength * .06f)
+                draw(checkNotNull(tertiary), strength * .06f * phase)
             }
-            AccentStyle.GLOW -> draw(primary, strength * .08f)
-            AccentStyle.CERAMIC -> draw(primary, strength * .10f)
+            AccentStyle.GLOW -> draw(primary, strength * .13f)
+            AccentStyle.CERAMIC -> draw(primary, strength * .14f)
             AccentStyle.LIGHT -> draw(primary, strength * .075f)
         }
     }
@@ -124,7 +124,7 @@ internal class AccentMotionPaints(private val accent: Color, val style: AccentSt
         if (width <= 0f || scope.size.height <= 0f) return
         // Draw exactly the filled geometry in the full-track scope. Neither the gradient's
         // coordinates nor the progress endpoint depends on the decorative phase.
-        passes(scope.size, frame, .65f) { brush, alpha ->
+        passes(scope.size, frame, .75f) { brush, alpha ->
             scope.drawRoundRect(
                 brush = brush,
                 topLeft = Offset(if (fromRight) scope.size.width - width else 0f, 0f),

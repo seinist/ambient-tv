@@ -56,19 +56,19 @@ internal fun accentMotionAllowed(mode: AccentMotionMode, profile: PerformancePro
     mode != AccentMotionMode.OFF && profile.allowAccentMaterialMotion
 
 internal fun accentMotionDurationMs(style: AccentStyle): Long = when (style) {
-    AccentStyle.SATIN -> 1_400L
-    AccentStyle.GLASS, AccentStyle.CHROME -> 1_000L
-    AccentStyle.GLOW -> 2_600L
-    AccentStyle.PEARL -> 2_400L
-    AccentStyle.CERAMIC -> 650L
-    AccentStyle.FACET -> 900L
-    AccentStyle.LIGHT -> 550L
+    AccentStyle.SATIN -> 1_700L
+    AccentStyle.GLASS, AccentStyle.CHROME -> 1_450L
+    AccentStyle.GLOW -> 2_400L
+    AccentStyle.PEARL -> 2_200L
+    AccentStyle.CERAMIC -> 1_100L
+    AccentStyle.FACET -> 1_400L
+    AccentStyle.LIGHT -> 850L
 }
 
 internal fun accentMotionPeriodMs(style: AccentStyle): Long = when (style) {
-    AccentStyle.GLOW -> 8_000L
-    AccentStyle.SATIN, AccentStyle.CERAMIC -> 10_000L
-    else -> 12_000L
+    AccentStyle.GLOW -> 7_000L
+    AccentStyle.SATIN, AccentStyle.CERAMIC -> 8_000L
+    else -> 9_000L
 }
 
 /** A zero-slope envelope starts and ends at the unchanged static material. */
@@ -81,7 +81,7 @@ internal fun accentMotionFrame(
     if (elapsedMs <= 0L || elapsedMs >= duration) return AccentMotionFrame.Rest
     val phase = elapsedMs.toFloat() / duration
     val wave = sin(PI * phase).toFloat()
-    return AccentMotionFrame(phase, wave * wave * if (ambientRepeat) .6f else 1f)
+    return AccentMotionFrame(phase, wave * wave * if (ambientRepeat) .8f else 1f)
 }
 
 private const val ACCENT_MOTION_FOCUS_DELAY_MS = 350L

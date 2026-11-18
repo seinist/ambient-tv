@@ -46,7 +46,7 @@ import com.ambient.tv.ui.performance.LocalPerformanceProfile
 data class InteractionColors(val container: Color, val outline: Color, val content: Color)
 
 /** Selected state is persistent; focus remains a separate neutral boundary. */
-enum class SelectionIndicator { UNDERLINE, LEADING_BAR, DOT, NONE }
+enum class SelectionIndicator { UNDERLINE, CHIP_UNDERLINE, LEADING_BAR, DOT, NONE }
 
 /**
  * Fixed, inset geometry prevents layout shifts and keeps the selection mark separate
@@ -65,16 +65,19 @@ internal fun selectionIndicatorRect(
     val roomW = surface.width - 2f * inset
     val roomH = surface.height - 2f * inset
     if (roomW <= 0f || roomH <= 0f) return null
-    val thickness = minOf(1.75f * dp, roomW * .25f, roomH * .25f)
+    val thickness = minOf((if (indicator == SelectionIndicator.CHIP_UNDERLINE) 2f else 1.75f) * dp,
+        roomW * .25f, roomH * .25f)
     return when (indicator) {
-        SelectionIndicator.UNDERLINE -> {
-            val width = minOf(24f * dp, roomW * .50f)
+        SelectionIndicator.UNDERLINE, SelectionIndicator.CHIP_UNDERLINE -> {
+            // Text chips carry a longer persistent selection mark; compact OSD actions do not.
+            val chip = indicator == SelectionIndicator.CHIP_UNDERLINE
+            val width = minOf((if (chip) 40f else 24f) * dp, roomW * if (chip) .60f else .50f)
             val left = (surface.width - width) / 2f
             Rect(left, surface.height - inset - thickness,
                 left + width, surface.height - inset)
         }
         SelectionIndicator.LEADING_BAR -> {
-            val length = minOf(17f * dp, roomH * .58f)
+            val length = minOf(23f * dp, roomH * .68f)
             val left = if (rtl) surface.width - inset - thickness else inset
             val top = (surface.height - length) / 2f
             Rect(left, top, left + thickness, top + length)
@@ -111,7 +114,7 @@ internal fun selectionIndicatorRevealRect(
     if (bounds == null || !progress.isFinite() || progress <= 0f) return null
     val fraction = progress.coerceIn(0f, 1f)
     return when (indicator) {
-        SelectionIndicator.UNDERLINE -> {
+        SelectionIndicator.UNDERLINE, SelectionIndicator.CHIP_UNDERLINE -> {
             val halfWidth = bounds.width * fraction / 2f
             Rect(bounds.center.x - halfWidth, bounds.top, bounds.center.x + halfWidth, bounds.bottom)
         }
@@ -195,7 +198,7 @@ private fun rememberSelectionIndicatorProgress(
                     easing = FastOutSlowInEasing),
             )
             selected && gainedFocus && marker.value >= .999f -> {
-                // Already selected: briefly contract to ~20dp, then reveal the full 32dp.
+                // Already selected: briefly contract, then reveal the full fixed-width marker.
                 marker.snapTo(.625f)
                 marker.animateTo(1f, tween(selectionIndicatorMotionDurationMs(
                     selecting = true, focusPulse = true, compact = compact),
@@ -351,8 +354,10 @@ fun Modifier.appControlSurface(
             layoutDirection,
             this,
         )
-        val stroke = Stroke(strokePx)
+        // Keep selected-only outlines slimmer than the active focus boundary.
+        val stroke = Stroke(if (selected && !focused) strokePx * .68f else strokePx)
         val material = colors.palette.materialBrush()
+        val focusBorder = colors.palette.focusBorderBrush()
         val marker = selectionIndicatorRect(
             true, size, selectionIndicator, 1.dp.toPx(),
             layoutDirection == LayoutDirection.Rtl,
@@ -380,8 +385,13 @@ fun Modifier.appControlSurface(
                     }
                     motionPaints?.drawOutline(this, strokeOutline, frame,
                         emphasis = outline.alpha, drawStyle = stroke)
-                    // Draw the neutral focus boundary last so material motion cannot replace it.
-                    drawOutline(strokeOutline, outline, style = stroke)
+                    // Draw the focus boundary last. It follows the configured material and accent
+                    // instead of replacing every focus state with an almost white edge.
+                    if (focused && enabled && materialStyle != AccentStyle.LIGHT) {
+                        drawOutline(strokeOutline, focusBorder, alpha = outline.alpha, style = stroke)
+                    } else {
+                        drawOutline(strokeOutline, outline, style = stroke)
+                    }
                 }
             }
             // The selection marker expands/collapses inside its fixed geometry; its animation
@@ -494,6 +504,7 @@ fun Modifier.animatedFocusBorder(
         )
         val stroke = Stroke(strokePx)
         val material = accentBrush(focusedColor, materialStyle)
+        val focusBorder = accentFocusBorderBrush(focusedColor, materialStyle)
         val glowStroke = if (materialStyle == AccentStyle.GLOW && !reduced) Stroke(strokePx * 2.6f) else null
         val motionPaints = if (motion != null) AccentMotionPaints(focusedColor, materialStyle) else null
         onDrawWithContent {
@@ -510,7 +521,7 @@ fun Modifier.animatedFocusBorder(
                                 drawOutline(outline, material, alpha = color.alpha * (.13f + .025f * (frame?.strength ?: 0f)),
                                     style = glowStroke)
                             }
-                            drawOutline(outline, material, alpha = color.alpha, style = stroke)
+                            drawOutline(outline, focusBorder, alpha = color.alpha, style = stroke)
                         }
                         motionPaints?.drawOutline(this, outline, frame, emphasis = color.alpha, drawStyle = stroke)
                     }
@@ -576,6 +587,7 @@ fun Modifier.animatedFocusSurface(
             this,
         )
         val material = accentBrush(primaryAccent, materialStyle)
+        val focusBorder = accentFocusBorderBrush(focusedBorder, materialStyle)
         val accentOutline = focusBorderMaterial
         val stroke = Stroke(strokePx)
         val glowStroke = if (materialStyle == AccentStyle.GLOW && !reduced) Stroke(strokePx * 2.5f) else null
@@ -586,19 +598,19 @@ fun Modifier.animatedFocusSurface(
             if (materialStyle != AccentStyle.LIGHT && materialReveal.value > 0f) {
                 drawOutline(full, material, alpha = accentWashOpacity(materialStyle) * materialReveal.value)
             }
-            motionPaints?.drawOutline(this, full, frame, emphasis = .25f * materialReveal.value)
+            motionPaints?.drawOutline(this, full, frame, emphasis = CONTROL_ACCENT_MOTION_EMPHASIS * materialReveal.value)
             drawContent()
             if (strokePx > 0f && strokeColor.value.alpha > 0f) {
                 translate(inset, inset) {
-                    if (materialStyle == AccentStyle.LIGHT || !accentOutline) {
-                        // Honor a requested neutral outline; material must not recolor it.
+                    if (materialStyle == AccentStyle.LIGHT || !accentOutline || !focused) {
+                        // Unfocused selected edges use their explicit subdued color.
                         drawOutline(inner, strokeColor.value, style = stroke)
                     } else {
                         if (glowStroke != null) {
                             drawOutline(inner, material, alpha = strokeColor.value.alpha * (.12f + .025f * (frame?.strength ?: 0f)) * materialReveal.value,
                                 style = glowStroke)
                         }
-                        drawOutline(inner, material, alpha = strokeColor.value.alpha, style = stroke)
+                        drawOutline(inner, focusBorder, alpha = strokeColor.value.alpha, style = stroke)
                         motionPaints?.drawOutline(this, inner, frame, emphasis = strokeColor.value.alpha, drawStyle = stroke)
                     }
                 }

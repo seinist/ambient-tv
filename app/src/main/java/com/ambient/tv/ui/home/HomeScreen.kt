@@ -1551,7 +1551,7 @@ private fun LiveChannelTile(
                 .fillMaxSize()
                 .clip(shape)
                 .background(liveTileBrush())
-                .animatedFocusBorder(focused, shape, scheme.onSurface.copy(alpha = 0.90f), unfocusedColor = scheme.onSurface.copy(alpha = 0.08f)),
+                .animatedFocusBorder(focused, shape, scheme.primary.copy(alpha = 0.96f), unfocusedColor = scheme.primary.copy(alpha = 0.08f)),
         ) {
             logo?.let {
                 ArtworkImage(

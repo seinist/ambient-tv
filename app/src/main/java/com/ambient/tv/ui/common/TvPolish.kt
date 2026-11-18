@@ -858,7 +858,7 @@ fun TvChip(
             val buttonModifier = modifier
                 .sizeIn(minWidth = 48.dp, minHeight = 48.dp)
                 .appControlSurface(focused, selected, enabled, shape, pressed = pressed,
-                    selectionIndicator = if (iconOnly) SelectionIndicator.DOT else SelectionIndicator.UNDERLINE)
+                    selectionIndicator = if (iconOnly) SelectionIndicator.DOT else SelectionIndicator.CHIP_UNDERLINE)
                 .semantics { contentDescription = text }
             ProvideControlContent(foreground) {
                 androidx.compose.material3.FilledTonalIconButton(
@@ -890,7 +890,7 @@ fun TvChip(
                 selected = selected, onClick = activate, enabled = enabled,
                 modifier = modifier.sizeIn(minHeight = 48.dp)
                     .appControlSurface(focused, selected, enabled, shape, pressed = pressed,
-                    selectionIndicator = if (iconOnly) SelectionIndicator.DOT else SelectionIndicator.UNDERLINE),
+                    selectionIndicator = if (iconOnly) SelectionIndicator.DOT else SelectionIndicator.CHIP_UNDERLINE),
                 shape = shape,
                 border = null,
                 interactionSource = interactions,
@@ -962,17 +962,17 @@ fun TvChip(
             Row(
                 modifier = Modifier
                     .appControlSurface(focused, selected, enabled, chipShape, pressed = keyPressed || pointerPressed,
-                        selectionIndicator = if (iconOnly) SelectionIndicator.DOT else SelectionIndicator.UNDERLINE)
-                    .padding(horizontal = 16.dp * uiScale, vertical = 10.dp * uiScale),
+                        selectionIndicator = if (iconOnly) SelectionIndicator.DOT else SelectionIndicator.CHIP_UNDERLINE)
+                    .padding(horizontal = 14.dp * uiScale, vertical = 9.dp * uiScale),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 ProvideControlContent(foreground) {
                     if (loading) {
                         ButtonProgress(foreground, Modifier.size(20.dp * uiScale))
-                        Spacer(Modifier.width(8.dp * uiScale))
+                        Spacer(Modifier.width(6.dp * uiScale))
                     } else if (leadingContent != null) {
                         leadingContent()
-                        Spacer(Modifier.width(8.dp * uiScale))
+                        Spacer(Modifier.width(6.dp * uiScale))
                     } else icon?.let {
                         androidx.compose.material3.Icon(
                             imageVector = it,
@@ -980,7 +980,7 @@ fun TvChip(
                             tint = foreground,
                             modifier = Modifier.size(20.dp * uiScale),
                         )
-                        Spacer(Modifier.width(8.dp * uiScale))
+                        Spacer(Modifier.width(6.dp * uiScale))
                     }
                     Text(
                         text = text,
@@ -1516,7 +1516,7 @@ fun TvActionButton(
                 .appControlSurface(focused, selected, visuallyEnabled, buttonShape,
                     prominent = prominent, pressed = keyPressed || pointerPressed,
                     selectionIndicator = if (iconOnly) SelectionIndicator.DOT else SelectionIndicator.UNDERLINE)
-                .padding(horizontal = (if (iconOnly) 12.dp else 18.dp) * uiScale, vertical = 12.dp * uiScale),
+                .padding(horizontal = (if (iconOnly) 11.dp else 16.dp) * uiScale, vertical = 11.dp * uiScale),
             horizontalArrangement = Arrangement.Center,
             verticalAlignment = Alignment.CenterVertically,
         ) {
