@@ -46,7 +46,7 @@ import com.ambient.tv.ui.performance.LocalPerformanceProfile
 data class InteractionColors(val container: Color, val outline: Color, val content: Color)
 
 /** Selected state is persistent; focus remains a separate neutral boundary. */
-enum class SelectionIndicator { UNDERLINE, CHIP_UNDERLINE, LEADING_BAR, DOT, NONE }
+enum class SelectionIndicator { UNDERLINE, LEADING_BAR, DOT, NONE }
 
 /**
  * Fixed, inset geometry prevents layout shifts and keeps the selection mark separate
@@ -65,13 +65,11 @@ internal fun selectionIndicatorRect(
     val roomW = surface.width - 2f * inset
     val roomH = surface.height - 2f * inset
     if (roomW <= 0f || roomH <= 0f) return null
-    val thickness = minOf((if (indicator == SelectionIndicator.CHIP_UNDERLINE) 2f else 1.75f) * dp,
+    val thickness = minOf(1.75f * dp,
         roomW * .25f, roomH * .25f)
     return when (indicator) {
-        SelectionIndicator.UNDERLINE, SelectionIndicator.CHIP_UNDERLINE -> {
-            // Text chips carry a longer persistent selection mark; compact OSD actions do not.
-            val chip = indicator == SelectionIndicator.CHIP_UNDERLINE
-            val width = minOf((if (chip) 40f else 24f) * dp, roomW * if (chip) .60f else .50f)
+        SelectionIndicator.UNDERLINE -> {
+            val width = minOf(24f * dp, roomW * .50f)
             val left = (surface.width - width) / 2f
             Rect(left, surface.height - inset - thickness,
                 left + width, surface.height - inset)
@@ -103,7 +101,7 @@ internal fun selectionIndicatorRevealRect(
     if (bounds == null || !progress.isFinite() || progress <= 0f) return null
     val fraction = progress.coerceIn(0f, 1f)
     return when (indicator) {
-        SelectionIndicator.UNDERLINE, SelectionIndicator.CHIP_UNDERLINE -> {
+        SelectionIndicator.UNDERLINE -> {
             val halfWidth = bounds.width * fraction / 2f
             Rect(bounds.center.x - halfWidth, bounds.top, bounds.center.x + halfWidth, bounds.bottom)
         }
