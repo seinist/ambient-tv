@@ -58,6 +58,7 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.layout
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalLayoutDirection
 import com.ambient.tv.ui.sound.LocalUiSoundPlayer
@@ -73,6 +74,27 @@ import com.ambient.tv.ui.common.*
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
+
+/** The same right-anchored clock contract as PageHeader: the title absorbs all
+ * spare space, action chips keep their intrinsic width, and the clock is NEVER weighted.
+ * A weighted clock with fill=false leaves a blank slot at the right edge and shifts
+ * every action to the left (the November Settings header regression).
+ */
+@Composable
+internal fun SettingsHeaderRow(
+    clockVisible: Boolean,
+    modifier: Modifier = Modifier,
+    content: @Composable RowScope.() -> Unit,
+) {
+    Row(
+        modifier = modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalAlignment = Alignment.Top,
+    ) {
+        content()
+        if (clockVisible) HeaderClock(Modifier.align(Alignment.Top).testTag("settings-header-clock"))
+    }
+}
 
 /** Owns navigation only. Drafts and all source actions remain in SettingsViewModel. */
 @OptIn(androidx.compose.ui.ExperimentalComposeUiApi::class, androidx.compose.foundation.ExperimentalFoundationApi::class)
@@ -536,17 +558,16 @@ internal fun SettingsHub(
                 com.ambient.tv.ui.common.SettingsLevels.set(levelPreferences, levels[(settingsLevel.ordinal + 1) % levels.size])
             }
         } else {
-            Row(
-                Modifier
-                    .fillMaxWidth()
+            SettingsHeaderRow(
+                clockVisible = LocalClockSettings.current.inHeader ||
+                    com.ambient.tv.ui.weather.LocalWeatherPresentation.current.hasHeader,
+                modifier = Modifier
                     .focusProperties {
                         onEnter = {
                             if (settlingPageFocus) cancelFocusChange()
                         }
                     }
                     .focusGroup(),
-                horizontalArrangement = Arrangement.spacedBy(12.dp),
-                verticalAlignment = Alignment.CenterVertically,
             ) {
                 Icon(Icons.Filled.Settings, null, Modifier.size(32.dp))
                 Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(com.ambient.tv.ui.theme.LocalUiTokens.current.compactGap)) {
@@ -586,10 +607,7 @@ internal fun SettingsHub(
                         openPage(SettingsCategory.NOTIFICATIONS)
                     }
                 }
-                // Same corner as every page header (PageHeader) and Home.
-                if (com.ambient.tv.ui.common.LocalClockSettings.current.inHeader || com.ambient.tv.ui.weather.LocalWeatherPresentation.current.hasHeader) {
-                    com.ambient.tv.ui.common.HeaderClock(Modifier.weight(2f, fill = false).align(Alignment.Top))
-                }
+
             }
         }
         state.statusMessage?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary) }

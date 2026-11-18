@@ -54,6 +54,7 @@ import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.ClickableSurfaceDefaults
@@ -209,7 +210,7 @@ fun PageUtilityBar(
             )
             // Detail pages use this rail instead of PageHeader. They follow the same
             // clock setting, while the buttons keep their full touch/focus targets.
-            if (LocalClockSettings.current.inHeader || com.ambient.tv.ui.weather.LocalWeatherPresentation.current.hasHeader) HeaderClock()
+            if (LocalClockSettings.current.inHeader || com.ambient.tv.ui.weather.LocalWeatherPresentation.current.hasHeader) HeaderClock(Modifier.testTag("utility-header-clock"))
         }
     }
 }
@@ -270,7 +271,7 @@ fun PageHeader(
             else DeviceActionRow(modifier = Modifier.focusRequester(actionFocus).browseFocusTarget("page-actions", content = false).focusRestorer().downTo(focusChain).focusGroup(), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically, content = actions)
             // Top-aligned, not centred: with every header starting at [pageHeaderTop] the clock sits at the
             // same spot on every page, also where Home's floating clock is.
-            if (!handheld && clockVisible) HeaderClock(Modifier.align(Alignment.Top))
+            if (!handheld && clockVisible) HeaderClock(Modifier.align(Alignment.Top).testTag("page-header-clock"))
         }
     }
 }
