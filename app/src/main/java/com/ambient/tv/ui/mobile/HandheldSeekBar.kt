@@ -59,6 +59,7 @@ import com.ambient.tv.ui.player.SEEK_VISUAL_ACK_TOLERANCE_MS
 import com.ambient.tv.ui.player.seekBarVisualPosition
 import com.ambient.tv.ui.player.seekBarFraction
 import com.ambient.tv.ui.player.seekBarPlayheadFraction
+import com.ambient.tv.ui.player.rememberSeekPlayheadVisual
 import com.ambient.tv.ui.player.rememberRecentPlayerSeekFeedback
 import com.ambient.tv.ui.player.seekBarThumbScale
 import com.ambient.tv.ui.player.seekBarHasDistinctTarget
@@ -131,6 +132,7 @@ fun HandheldSeekBar(
         positionMs, durationMs,
         seeking = dragFraction != null || awaitingVisualTarget != null || remoteSeekFeedback || recentSeek,
     )
+    val playheadVisual = rememberSeekPlayheadVisual(playheadFraction)
     val showingSeekTarget = seekBarHasDistinctTarget(
         positionMs, shownPosition, dragFraction != null || awaitingVisualTarget != null,
     )
@@ -275,13 +277,13 @@ fun HandheldSeekBar(
                             drawCircle(brush = thumbBrush, radius = radius - 3.dp.toPx() * thumbScale,
                                 center = center, alpha = thumbAlpha)
                         }
-                        // Draw last while seeking: the current position stays separate
-                        // from the touch target/thumb and never appears when idle.
-                        if (playheadFraction != null) {
+                        // Keep the last playback position while fading out, rather than
+                        // removing the line as soon as scrubbing finishes.
+                        if (playheadVisual.alpha > 0f) {
                             val insetX = 1.5.dp.toPx()
-                            val x = (playheadFraction * endX).coerceIn(insetX, (endX - insetX).coerceAtLeast(insetX))
+                            val x = (playheadVisual.fraction * endX).coerceIn(insetX, (endX - insetX).coerceAtLeast(insetX))
                             drawLine(
-                                Color.White.copy(alpha = .84f),
+                                Color.White.copy(alpha = .84f * playheadVisual.alpha),
                                 Offset(x, centerY - 6.dp.toPx()),
                                 Offset(x, centerY + 6.dp.toPx()),
                                 2.dp.toPx(), cap = androidx.compose.ui.graphics.StrokeCap.Round,

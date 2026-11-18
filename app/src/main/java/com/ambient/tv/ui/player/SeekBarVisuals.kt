@@ -24,6 +24,21 @@ internal fun seekBarFraction(positionMs: Long, durationMs: Long): Float =
 internal fun seekBarPlayheadFraction(positionMs: Long, durationMs: Long, seeking: Boolean): Float? =
     if (seeking && durationMs > 0L) seekBarFraction(positionMs, durationMs) else null
 
+/** Fade just the seek playhead's opacity; low-performance mode uses shorter tweens.
+ * The OSD layout, track, progress brush, input handling and preview timing do not move.
+ */
+internal fun seekBarPlayheadFadeDurationMs(showing: Boolean, reducedEffects: Boolean): Int =
+    when {
+        reducedEffects && showing -> 90
+        reducedEffects -> 120
+        showing -> 150
+        else -> 220
+    }
+
+/** Hold the last plotted position only for the trailing opacity fade. */
+internal fun seekBarPlayheadDrawFraction(current: Float?, previous: Float): Float =
+    current ?: previous
+
 internal fun seekBarHasDistinctTarget(publishedMs: Long, targetMs: Long, seeking: Boolean): Boolean =
     seeking && kotlin.math.abs(publishedMs - targetMs) >= 1_000L
 

@@ -1230,6 +1230,7 @@ internal fun TvPlayerSeekBar(
         positionMs, durationMs,
         seeking = aiming || recentSeek || (osd?.seekFeedback == true && feedbackPreview),
     )
+    val playheadVisual = rememberSeekPlayheadVisual(playheadFraction)
     val reducedSeekEffects = LocalPerformanceProfile.current.reducedEffects
     val thumbAlpha by animateFloatAsState(
         if (aiming && durationMs > 0L) 1f else 0f,
@@ -1461,17 +1462,17 @@ internal fun TvPlayerSeekBar(
                         )
                     }
                 }
-                // Keep an active seek marker outside the clipped progress/shader layer.
-                // It disappears after the seek acknowledgement/brief direct-seek feedback.
-                if (playheadFraction != null) androidx.compose.foundation.Canvas(
+                // Keep the playhead outside the clipped progress/shader layer while
+                // its alpha fades in or out. On exit the last drawn position is retained.
+                if (playheadVisual.alpha > 0f) androidx.compose.foundation.Canvas(
                     Modifier.matchParentSize(),
                 ) {
                     val played = if (layoutDirection == androidx.compose.ui.unit.LayoutDirection.Rtl)
-                        1f - playheadFraction else playheadFraction
+                        1f - playheadVisual.fraction else playheadVisual.fraction
                     val insetX = 1.5.dp.toPx()
                     val x = (size.width * played).coerceIn(insetX, (size.width - insetX).coerceAtLeast(insetX))
                     drawLine(
-                        Color.White.copy(alpha = .84f * dataAlpha.value),
+                        Color.White.copy(alpha = .84f * dataAlpha.value * playheadVisual.alpha),
                         androidx.compose.ui.geometry.Offset(x, -3.dp.toPx()),
                         androidx.compose.ui.geometry.Offset(x, size.height + 3.dp.toPx()),
                         2.dp.toPx(), cap = androidx.compose.ui.graphics.StrokeCap.Round,

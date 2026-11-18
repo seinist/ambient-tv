@@ -13,8 +13,10 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.State
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -56,6 +58,36 @@ internal fun rememberPlayerTimelineDuration(
 @Composable
 private fun playerTimelineMotionMs(): Int =
     if (LocalPerformanceProfile.current.reducedEffects) 120 else 180
+
+/**
+ * One shared fade for the thin current-position line on TV and handheld timelines.
+ *
+ * Retain its last on-screen coordinate while the alpha tweens to zero; conditional
+ * composition used to remove the Canvas immediately, skipping the exit animation.
+ * Changing opacity only never changes the seekbar's measured height or focus targets.
+ */
+internal data class SeekPlayheadVisual(val fraction: Float, val alpha: Float)
+
+@Composable
+internal fun rememberSeekPlayheadVisual(fraction: Float?): SeekPlayheadVisual {
+    val lastPosition = remember { mutableFloatStateOf(fraction ?: 0f) }
+    SideEffect { if (fraction != null) lastPosition.floatValue = fraction }
+    val reducedEffects = LocalPerformanceProfile.current.reducedEffects
+    val visible = fraction != null
+    // Start at zero even if the OSD is first composed during a direct seek. Unlike
+    // animateFloatAsState(target = 1), this also fades *in* on that first frame.
+    val opacity = remember { Animatable(0f) }
+    LaunchedEffect(visible, reducedEffects) {
+        opacity.animateTo(
+            if (visible) 1f else 0f,
+            tween(
+                seekBarPlayheadFadeDurationMs(showing = visible, reducedEffects = reducedEffects),
+                easing = FastOutSlowInEasing,
+            ),
+        )
+    }
+    return SeekPlayheadVisual(seekBarPlayheadDrawFraction(fraction, lastPosition.floatValue), opacity.value)
+}
 
 /** Passive live/radio OSD timeline: same accent material and track geometry as the seekbar. */
 internal fun playerOsdProgressFraction(value: Float): Float =
