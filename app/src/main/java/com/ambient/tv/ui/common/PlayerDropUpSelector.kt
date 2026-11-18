@@ -550,7 +550,7 @@ private fun PlayerDropUpOptionRow(
         else -> Color.Transparent
     }
     val outlineTarget = if (optionFocused) colors.outline else Color.Transparent
-    val animationSpec = com.ambient.tv.ui.theme.focusColorSpec()
+    val animationSpec = com.ambient.tv.ui.theme.focusColorSpec(focused = optionFocused, osd = inPlayer)
     val fill by animateColorAsState(fillTarget, animationSpec, label = "selectorOptionFill")
     val outline by animateColorAsState(outlineTarget, animationSpec, label = "selectorOptionOutline")
     Row(
