@@ -3,7 +3,9 @@ package com.ambient.tv.ui.weather
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.Lifecycle
@@ -16,7 +18,6 @@ import com.ambient.tv.data.weather.WeatherRepository
 import com.ambient.tv.data.weather.WeatherSettings
 import com.ambient.tv.data.weather.WeatherSnapshot
 import com.ambient.tv.data.weather.WeatherState
-import com.ambient.tv.ui.common.rememberWallClock
 import dagger.hilt.android.lifecycle.HiltViewModel
 import javax.inject.Inject
 import kotlinx.coroutines.delay
@@ -73,12 +74,19 @@ fun rememberWeatherPresentation(
     val lifecycle = LocalLifecycleOwner.current.lifecycle
     val active = settings.enabled && settings.selectedLocation != null &&
         ((headerVisible && settings.showInHeader) || (screensaverVisible && settings.showInScreensaver))
-    // The compact forecast vanishes as soon as its existing 30-minute cache TTL expires,
-    // even without a new response or another navigation event.
-    val nowMillis = if (active) {
-        val minute by rememberWallClock()
-        remember(minute) { System.currentTimeMillis() }
-    } else System.currentTimeMillis()
+    // Recompose once when the cached reading expires, without a repeating clock ticker.
+    // The time sample MUST be refreshed when HTTP publishes new data: retaining the
+    // pre-request timestamp can make a newer snapshot look as if it came from the future.
+    var freshnessTick by remember { mutableIntStateOf(0) }
+    LaunchedEffect(active, state.data?.fetchedAtMillis) {
+        val expiresAt = state.data?.fetchedAtMillis?.plus(WEATHER_CACHE_TTL_MILLIS) ?: return@LaunchedEffect
+        if (active) {
+            val remaining = expiresAt - System.currentTimeMillis()
+            if (remaining > 0L) delay(remaining)
+            freshnessTick++
+        }
+    }
+    val nowMillis = remember(state, active, freshnessTick) { System.currentTimeMillis() }
     LaunchedEffect(repository, lifecycle, active, settings.selectedLocation, settings.temperatureUnit, settings.windUnit) {
         if (active) lifecycle.repeatOnLifecycle(Lifecycle.State.RESUMED) {
             while (true) {
