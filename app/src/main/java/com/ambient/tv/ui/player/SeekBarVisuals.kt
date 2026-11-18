@@ -35,6 +35,10 @@ internal fun seekBarPlayheadFadeDurationMs(showing: Boolean, reducedEffects: Boo
         else -> 220
     }
 
+/** Hold the last plotted position only for the trailing opacity fade. */
+internal fun seekBarPlayheadDrawFraction(current: Float?, previous: Float): Float =
+    current ?: previous
+
 internal fun seekBarHasDistinctTarget(publishedMs: Long, targetMs: Long, seeking: Boolean): Boolean =
     seeking && kotlin.math.abs(publishedMs - targetMs) >= 1_000L
 
