@@ -78,6 +78,19 @@ internal class BackgroundPlayerReturnNavigation {
     fun canResumeAfterSidebarBack(hasActivePlayback: Boolean): Boolean =
         armedBySidebarBack && hasActivePlayback
 
+    /** Detail pages have no sidebar; a stale sidebar-focus flag must not swallow their Back. */
+    fun canInterceptBackToPlayer(
+        route: String?,
+        hasActivePlayback: Boolean,
+        sidebarVisible: Boolean,
+        sidebarHasFocus: Boolean,
+    ): Boolean =
+        route != null &&
+            route !in PLAYBACK_DESTINATIONS &&
+            route != Destinations.SETTINGS &&
+            canResumeAfterSidebarBack(hasActivePlayback) &&
+            (!sidebarVisible || !sidebarHasFocus)
+
     fun disarm() { armedBySidebarBack = false }
 
     fun clearStoppedPlayback() {
