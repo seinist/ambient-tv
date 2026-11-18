@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.State
 import androidx.compose.runtime.mutableFloatStateOf
@@ -72,15 +73,20 @@ internal fun rememberSeekPlayheadVisual(fraction: Float?): SeekPlayheadVisual {
     val lastPosition = remember { mutableFloatStateOf(fraction ?: 0f) }
     SideEffect { if (fraction != null) lastPosition.floatValue = fraction }
     val reducedEffects = LocalPerformanceProfile.current.reducedEffects
-    val opacity = animateFloatAsState(
-        targetValue = if (fraction != null) 1f else 0f,
-        animationSpec = tween(
-            seekBarPlayheadFadeDurationMs(showing = fraction != null, reducedEffects = reducedEffects),
-            easing = FastOutSlowInEasing,
-        ),
-        label = "Seek playhead fade",
-    ).value
-    return SeekPlayheadVisual(seekBarPlayheadDrawFraction(fraction, lastPosition.floatValue), opacity)
+    val visible = fraction != null
+    // Start at zero even if the OSD is first composed during a direct seek. Unlike
+    // animateFloatAsState(target = 1), this also fades *in* on that first frame.
+    val opacity = remember { Animatable(0f) }
+    LaunchedEffect(visible, reducedEffects) {
+        opacity.animateTo(
+            if (visible) 1f else 0f,
+            tween(
+                seekBarPlayheadFadeDurationMs(showing = visible, reducedEffects = reducedEffects),
+                easing = FastOutSlowInEasing,
+            ),
+        )
+    }
+    return SeekPlayheadVisual(seekBarPlayheadDrawFraction(fraction, lastPosition.floatValue), opacity.value)
 }
 
 /** Passive live/radio OSD timeline: same accent material and track geometry as the seekbar. */
