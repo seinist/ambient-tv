@@ -16,12 +16,7 @@ internal const val CONTROL_ACCENT_MOTION_EMPHASIS = .33f
 
 /** Conservative sum of the drawing passes, even where their reflections do not overlap. */
 internal fun controlAccentMotionMaxOpacity(style: AccentStyle): Float =
-    CONTROL_ACCENT_MOTION_EMPHASIS * when (style) {
-        AccentStyle.SATIN, AccentStyle.GLASS, AccentStyle.CERAMIC -> .14f
-        AccentStyle.CHROME, AccentStyle.PEARL, AccentStyle.FACET -> .18f
-        AccentStyle.GLOW -> .13f
-        AccentStyle.LIGHT -> .075f
-    }
+    CONTROL_ACCENT_MOTION_EMPHASIS * accentMotionPeakAlpha(style, stroke = false)
 
 @Immutable
 internal data class ControlPaletteInput(
