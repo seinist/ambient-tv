@@ -35,11 +35,11 @@ import org.robolectric.annotation.Config
 class HeaderClockAlignmentTest {
     @get:Rule val rule = createAndroidComposeRule<ComponentActivity>()
 
-    private fun clockSettings() = ClockSettings(
+    private fun clockSettings(weatherLayout: String = ClockSettings.WEATHER_LAYOUT_LEFT) = ClockSettings(
         display = ClockSettings.DISPLAY_EVERYWHERE,
         size = ClockSettings.SIZE_LARGE,
         date = ClockSettings.DATE_LONG,
-        weatherLayout = ClockSettings.WEATHER_LAYOUT_LEFT,
+        weatherLayout = weatherLayout,
     )
 
     @Test fun settingsActionsStayImmediatelyLeftOfRightAnchoredClock() {
@@ -99,5 +99,86 @@ class HeaderClockAlignmentTest {
         val action = rule.onNodeWithTag("page-action").fetchSemanticsNode().boundsInRoot
         assertEquals("Shared PageHeader clock must end at the right edge", header.right, clock.right, 1.01f)
         assertTrue("Page controls remain to the left of the clock", action.right <= clock.left)
+    }
+
+    @Test fun topBarsShareExactlyTheSameActionBaselineWithTallClockAndWeather() {
+        rule.setContent {
+            CompositionLocalProvider(
+                LocalClockSettings provides clockSettings(ClockSettings.WEATHER_LAYOUT_ABOVE),
+                LocalWeatherPresentation provides WeatherPresentation(headerPending = true),
+            ) {
+                AmbientTvTheme {
+                    Column {
+                        PageHeader(
+                            modifier = Modifier.testTag("page-header"),
+                            actions = { TvChip("Browse", modifier = Modifier.testTag("page-action"), onClick = {}) },
+                        ) { Text("SmartTube and library") }
+                        SettingsHeaderRow(clockVisible = true, modifier = Modifier.testTag("settings-header")) {
+                            Box(Modifier.size(32.dp))
+                            Column(Modifier.weight(1f)) { Text("Settings") }
+                            TvChip("Search", modifier = Modifier.testTag("settings-action"), onClick = {})
+                        }
+                        PageUtilityBar(onBack = {}, onSettings = {})
+                    }
+                }
+            }
+        }
+        rule.waitForIdle()
+        val page = rule.onNodeWithTag("page-header").fetchSemanticsNode().boundsInRoot
+        val action = rule.onNodeWithTag("page-action").fetchSemanticsNode().boundsInRoot
+        val pageClock = rule.onNodeWithTag("page-header-clock").fetchSemanticsNode().boundsInRoot
+        val settings = rule.onNodeWithTag("settings-header").fetchSemanticsNode().boundsInRoot
+        val settingsAction = rule.onNodeWithTag("settings-action").fetchSemanticsNode().boundsInRoot
+        val settingsClock = rule.onNodeWithTag("settings-header-clock").fetchSemanticsNode().boundsInRoot
+        val utilityBack = rule.onNodeWithTag("utility-header-back").fetchSemanticsNode().boundsInRoot
+        val utilitySettings = rule.onNodeWithTag("utility-header-settings").fetchSemanticsNode().boundsInRoot
+        val utilityClock = rule.onNodeWithTag("utility-header-clock").fetchSemanticsNode().boundsInRoot
+
+        assertEquals("PageHeader action must start at header top", page.top, action.top, 1.01f)
+        assertEquals("Settings action must start at header top", settings.top, settingsAction.top, 1.01f)
+        assertEquals("Detail Back and Settings must share a top line", utilityBack.top, utilitySettings.top, 1.01f)
+        assertEquals("Page action-to-clock gap", 20f, pageClock.left - action.right, 1.01f)
+        assertEquals("Settings action-to-clock gap", 20f, settingsClock.left - settingsAction.right, 1.01f)
+        assertEquals("Detail action-to-clock gap", 20f, utilityClock.left - utilitySettings.right, 1.01f)
+    }
+
+    @Test fun switchingWeatherLayoutNeverMovesPageActionsVertically() {
+        val weatherLayout = mutableStateOf(ClockSettings.WEATHER_LAYOUT_LEFT)
+        rule.setContent {
+            CompositionLocalProvider(
+                LocalClockSettings provides clockSettings(weatherLayout.value),
+                LocalWeatherPresentation provides WeatherPresentation(headerPending = true),
+            ) {
+                AmbientTvTheme {
+                    PageHeader(
+                        modifier = Modifier.testTag("page-header"),
+                        actions = { TvChip("Browse", modifier = Modifier.testTag("page-action"), onClick = {}) },
+                    ) { Text("SmartTube") }
+                }
+            }
+        }
+        rule.waitForIdle()
+        val originalTop = rule.onNodeWithTag("page-action").fetchSemanticsNode().boundsInRoot.top
+        rule.runOnIdle { weatherLayout.value = ClockSettings.WEATHER_LAYOUT_ABOVE }
+        rule.waitForIdle()
+        val newTop = rule.onNodeWithTag("page-action").fetchSemanticsNode().boundsInRoot.top
+        assertEquals("Top-bar actions should not jump when weather changes height", originalTop, newTop, 1.01f)
+    }
+
+    @Test fun pageActionsStillReachRightEdgeWhenClockIsDisabled() {
+        rule.setContent {
+            AmbientTvTheme {
+                PageHeader(
+                    showClock = false,
+                    modifier = Modifier.testTag("page-header"),
+                    actions = { TvChip("Search", modifier = Modifier.testTag("page-action"), onClick = {}) },
+                ) { Text("Library") }
+            }
+        }
+        rule.waitForIdle()
+        val page = rule.onNodeWithTag("page-header").fetchSemanticsNode().boundsInRoot
+        val action = rule.onNodeWithTag("page-action").fetchSemanticsNode().boundsInRoot
+        assertEquals("No empty clock gap when the clock is hidden", page.right, action.right, 1.01f)
+        assertEquals("No vertical shift without a clock", page.top, action.top, 1.01f)
     }
 }

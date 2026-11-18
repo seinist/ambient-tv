@@ -10,6 +10,8 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -159,6 +161,9 @@ fun PageUtilityBar(
     modifier: Modifier = Modifier,
 ) {
     val tokens = LocalUiTokens.current
+    val handheld = LocalHandheldUi.current
+    val clockVisible = LocalClockSettings.current.inHeader ||
+        com.ambient.tv.ui.weather.LocalWeatherPresentation.current.hasHeader
     val backFocus = remember { FocusRequester() }
     val settingsFocus = remember { FocusRequester() }
     RegisterScrollListActions(backFocus)
@@ -189,12 +194,12 @@ fun PageUtilityBar(
             .fillMaxWidth()
             .padding(start = tokens.screenPadding, end = tokens.screenPadding, top = pageHeaderTop(tokens.screenPadding)),
         horizontalArrangement = Arrangement.SpaceBetween,
-        verticalAlignment = Alignment.CenterVertically,
+        verticalAlignment = if (handheld) Alignment.CenterVertically else Alignment.Top,
     ) {
         // Same icon chips as every page header (Settings, Files, …), so Back looks alike everywhere.
         TvChip(
             stringResource(R.string.back),
-            modifier = Modifier.focusRequester(backFocus).downAction(onDown)
+            modifier = Modifier.testTag("utility-header-back").focusRequester(backFocus).downAction(onDown)
                 .then(if (leftNavigatesBack) Modifier.leftKeyAction(onBack) else Modifier),
             icon = Icons.AutoMirrored.Filled.ArrowBack,
             iconOnly = true,
@@ -203,14 +208,18 @@ fun PageUtilityBar(
         Row(Modifier.weight(1f), horizontalArrangement = Arrangement.End, verticalAlignment = Alignment.Top) {
             TvChip(
                 stringResource(R.string.nav_settings),
-                modifier = Modifier.focusRequester(settingsFocus).downAction(onDown),
+                modifier = Modifier.testTag("utility-header-settings").focusRequester(settingsFocus).downAction(onDown),
                 icon = Icons.Filled.Settings,
                 iconOnly = true,
                 onClick = { restoreSettings = true; onSettings() },
             )
             // Detail pages use this rail instead of PageHeader. They follow the same
             // clock setting, while the buttons keep their full touch/focus targets.
-            if (LocalClockSettings.current.inHeader || com.ambient.tv.ui.weather.LocalWeatherPresentation.current.hasHeader) HeaderClock(Modifier.testTag("utility-header-clock"))
+            if (clockVisible) {
+                // A real, fixed gap keeps tall date/weather layouts from crowding the controls.
+                if (!handheld) Spacer(Modifier.width(HeaderActionClockGapTv))
+                HeaderClock(Modifier.testTag("utility-header-clock"), leadingPadding = if (handheld) 8.dp else 0.dp)
+            }
         }
     }
 }
@@ -240,6 +249,9 @@ private fun Modifier.downAction(onDown: (() -> Unit)?): Modifier =
 /** Distance of a TV page header from the screen top, where the clock and Home's floating clock sit too. */
 val PageHeaderTopTv = 24.dp
 
+/** Consistent visible gap between the last TV header action and the clock/weather widget. */
+internal val HeaderActionClockGapTv = 20.dp
+
 /** Header top for a page: the shared TV value, or the page's own [phone] spacing on handhelds. */
 @Composable
 fun pageHeaderTop(phone: androidx.compose.ui.unit.Dp): androidx.compose.ui.unit.Dp = if (LocalHandheldUi.current) phone else PageHeaderTopTv
@@ -263,7 +275,8 @@ fun PageHeader(
         // On a phone the full-width clock row keeps long dates and large type away from
         // page actions. It is real layout space, so it never covers the first content row.
         if (handheld && clockVisible) HeaderClock(Modifier.align(Alignment.End))
-        DeviceActionRow(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+        DeviceActionRow(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = if (handheld) Alignment.CenterVertically else Alignment.Top) {
             // The title yields to the actions, so a long library or folder name ellipsizes instead of pushing them out.
             Column(if (handheld) Modifier else Modifier.weight(1f).padding(end = 18.dp), verticalArrangement = Arrangement.spacedBy(3.dp), content = title)
             // On handheld the actions never wrap among themselves: they sit beside the title or move as one block to the next line, right-aligned.
@@ -271,7 +284,10 @@ fun PageHeader(
             else DeviceActionRow(modifier = Modifier.focusRequester(actionFocus).browseFocusTarget("page-actions", content = false).focusRestorer().downTo(focusChain).focusGroup(), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically, content = actions)
             // Top-aligned, not centred: with every header starting at [pageHeaderTop] the clock sits at the
             // same spot on every page, also where Home's floating clock is.
-            if (!handheld && clockVisible) HeaderClock(Modifier.align(Alignment.Top).testTag("page-header-clock"))
+            if (!handheld && clockVisible) {
+                Spacer(Modifier.width(HeaderActionClockGapTv))
+                HeaderClock(Modifier.align(Alignment.Top).testTag("page-header-clock"), leadingPadding = 0.dp)
+            }
         }
     }
 }
