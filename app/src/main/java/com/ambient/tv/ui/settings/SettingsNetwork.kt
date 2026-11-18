@@ -31,6 +31,7 @@ import com.ambient.tv.ui.common.MediaSystem
 import com.ambient.tv.ui.common.SettingsActionRow
 import com.ambient.tv.ui.common.SettingsNavigationRow
 import com.ambient.tv.ui.common.TvActionButton
+import com.ambient.tv.ui.common.SettingsSingleAction
 import com.ambient.tv.ui.common.TvSettingRow
 import com.ambient.tv.ui.common.TvTextField
 import com.ambient.tv.ui.common.rememberPendingAction
@@ -85,7 +86,7 @@ internal fun LazyListScope.networkReceiverItems(viewModel: SettingsViewModel) {
                 enabled = enabled,
             )
             if (enabled) {
-                TvActionButton(
+                SettingsSingleAction(
                     stringResource(R.string.renderer_forget_senders, trusted),
                     { receiverFocus.requestFocus(); viewModel.forgetDlnaRendererSenders(); trusted = 0 },
                     enabled = trusted > 0,
@@ -208,7 +209,7 @@ private fun WakeGroupCard(group: WakeHostGroup, viewModel: SettingsViewModel) {
             }
             if (group.macConflict) {
                 Text(stringResource(R.string.settings_wake_mac_conflict, group.macs.joinToString(", ")))
-                TvActionButton(stringResource(R.string.settings_wake_apply_mac, group.mac),
+                SettingsSingleAction(stringResource(R.string.settings_wake_apply_mac, group.mac),
                     { mac = group.mac; viewModel.setGroupWakeMac(group, group.mac) })
             }
             SettingsActionRow {
