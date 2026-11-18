@@ -1222,9 +1222,13 @@ internal fun TvPlayerSeekBar(
     val aiming = pointerTarget != null || pendingTarget != null || awaitingVisualTarget != null
     val showingSeekTarget = seekBarHasDistinctTarget(positionMs, displayedPosition, aiming)
     val highlighted = focused || aiming || passiveFeedback
-    // The actual playhead is always a vertical line, in compact seek mode *and* when
-    // the button row is expanded. Only an active target gets a circular scrub thumb.
-    val playheadFraction = seekBarPlayheadFraction(positionMs, durationMs)
+    // Draw the current-position line only during scrubbing or brief direct-seek
+    // feedback. Moving focus onto the timeline or expanding the button row is not
+    // a seek. The same condition applies to every renderer using this TV OSD.
+    val playheadFraction = seekBarPlayheadFraction(
+        positionMs, durationMs,
+        seeking = aiming || (osd?.seekFeedback == true && feedbackPreview),
+    )
     val reducedSeekEffects = LocalPerformanceProfile.current.reducedEffects
     val thumbAlpha by animateFloatAsState(
         if (aiming && durationMs > 0L) 1f else 0f,
@@ -1456,8 +1460,8 @@ internal fun TvPlayerSeekBar(
                         )
                     }
                 }
-                // Keep the line outside the clipped progress/shader layer. It must not
-                // disappear beneath the thumb or when the OSD collapses to seek mode.
+                // Keep an active seek marker outside the clipped progress/shader layer.
+                // It disappears after the seek acknowledgement/brief direct-seek feedback.
                 if (playheadFraction != null) androidx.compose.foundation.Canvas(
                     Modifier.matchParentSize(),
                 ) {
