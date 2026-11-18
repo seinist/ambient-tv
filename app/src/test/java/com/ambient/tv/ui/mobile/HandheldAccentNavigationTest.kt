@@ -29,8 +29,10 @@ class HandheldAccentNavigationTest {
     }
 
     @Test fun sourceHighlightsOnlyTheCurrentConcreteRouteNotEveryLibrarySection() {
-        val movies = Destinations.section("plex:movies")
-        val series = Destinations.section("plex:series")
+        // Concrete URLs are already encoded by navigation. Keep pure JVM tests
+        // independent of android.net.Uri (which needs Robolectric).
+        val movies = "section/plex%3Amovies"
+        val series = "section/plex%3Aseries"
         assertTrue(handheldSourceSelected(movies, movies))
         assertFalse(handheldSourceSelected(movies, series))
         assertFalse(handheldSourceSelected(Destinations.SECTION, movies))
