@@ -42,7 +42,6 @@ import com.ambient.tv.R
 import com.ambient.tv.data.weather.WeatherSnapshot
 import com.ambient.tv.ui.common.AppDialog
 import com.ambient.tv.ui.common.LoginLinkPanel
-import com.ambient.tv.ui.common.rememberWallClock
 import com.ambient.tv.ui.performance.LocalPerformanceProfile
 import com.ambient.tv.ui.theme.LocalUiTokens
 import com.ambient.tv.ui.theme.appControlSurface
@@ -64,7 +63,6 @@ private data class CompactWeatherVisual(val code: Int?, val isDay: Boolean, val 
 @Composable
 fun WeatherCompactSummary(
     snapshot: WeatherSnapshot,
-    temperatureUnit: String = snapshot.temperatureUnit,
     modifier: Modifier = Modifier,
     textColor: Color? = null,
     iconColor: Color? = null,
@@ -72,13 +70,12 @@ fun WeatherCompactSummary(
     iconSize: Dp = 20.dp,
     temperatureTextSize: TextUnit? = null,
 ) {
-    // A setting change may briefly precede the new-unit response. Never relabel the old value.
+    // Only usable, fresh data belongs next to the clock; do not show cache status text.
+    if (snapshot.isStale()) return
     val unit = snapshot.temperatureUnit
     val locale = LocalConfiguration.current.locales[0] ?: Locale.ROOT
     val color = textColor ?: MaterialTheme.colorScheme.onSurface
     val current = snapshot.current ?: return
-    val tick by rememberWallClock()
-    val nowMillis = remember(tick) { System.currentTimeMillis() }
     val value = weatherTemperature(current.temperature, unit, locale)
     val description = stringResource(R.string.weather_compact_description, snapshot.location.name, value,
         stringResource(weatherConditionRes(current.weatherCode)))
@@ -98,10 +95,6 @@ fun WeatherCompactSummary(
                 conditions(shown)
             }
         } else conditions(visual)
-        if (snapshot.isStale(nowMillis) || temperatureUnit != unit) {
-            Text(stringResource(R.string.weather_cached), style = MaterialTheme.typography.labelSmall,
-                color = color.copy(alpha = color.alpha * .8f), maxLines = 1)
-        }
     }
 }
 
