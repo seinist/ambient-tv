@@ -403,6 +403,9 @@ object BackgroundPlaybackSession {
         if (samePlayback) subtitlePolicy.replaceRenderer(previous, current.metadata.subtitleTracks)
         else subtitlePolicy = SubtitleSessionPolicy()
         lastSubtitleCheck = 0L
+        // Same title, new renderer (reload, renderer switch, output change): keep its last picture
+        // on screen until the replacement draws. Copy before the outgoing output is detached.
+        if (previous != null && samePlayback) VideoFrameHold.captureForHandOff() else VideoFrameHold.clear()
         previous?.detachVideoOutput()
         // A renderer replacement is not a stopped playback. Reporting it as stopped makes Plex/
         // Jellyfin briefly close the active session and can also move the resume point backwards.
@@ -428,6 +431,7 @@ object BackgroundPlaybackSession {
             // (a renderer switch had deliberately not queued it above).
             if (previous != null && samePlayback) completed.addLast(current.copy(status = previousStatus ?: current.status, replacingSource = false))
             PlaybackOutputTransition.clear()
+            VideoFrameHold.clear()
             handle = null
             identity = null
             mutableVideoPresentation.value = VideoPresentation()
@@ -440,6 +444,7 @@ object BackgroundPlaybackSession {
             throw error
         }
         handle = created
+        VideoFrameHold.handOffTo(created)
         // A destination renderer may have read title defaults before the outgoing save completed.
         // Carry current edits directly so a quick renderer switch cannot restore stale audio.
         previousAudio?.let { playbackProfileAudio(created)?.restoreFromSession(it) }
@@ -913,6 +918,7 @@ object BackgroundPlaybackSession {
         com.ambient.tv.diagnostics.CrashBreadcrumbs.add("session",
             "stop backend=${snapshot.value.backend} live=${snapshot.value.metadata?.isLive} keepTimer=$keepSleepTimer")
         PlaybackOutputTransition.clear()
+        VideoFrameHold.clear()
         if (keepSleepTimer || preserveNextUpChain) SleepSession.end(sleepTarget, keep = true) else SleepSession.end(sleepTarget)
         val previous = handle
         DisplayPlaybackStartup.clearFor(previous)
