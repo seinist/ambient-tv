@@ -86,8 +86,17 @@ internal class ControlPalette(
 
     fun materialBrush(): Brush = accentMaterialBrush(materialStops, style)
 
-    /** Style-bearing focus outline without the washed-out white material highlights. */
-    fun focusBorderBrush(): Brush = accentFocusBorderBrush(accentFocusOutline.copy(alpha = 1f), style)
+    /**
+     * The high-contrast semantic outline is intentionally light, but MUST NOT feed the
+     * material shader: it had already been lifted toward white for accessibility,
+     * washing out Gold, Red, Blue etc. until every style looked alike.
+     * Theme.primary is contrast-adjusted against the dark base, so use its actual hue
+     * for the visible stroke; keep the semantic alpha for selected/focused strength.
+     */
+    fun focusBorderBrush(): Brush = accentFocusBorderBrush(input.accent.copy(alpha = 1f), style)
+
+    /** The same material, thinner and static until focused. */
+    fun selectedBorderBrush(): Brush = accentFocusBorderBrush(input.accent.copy(alpha = 1f), style)
 }
 
 @Immutable

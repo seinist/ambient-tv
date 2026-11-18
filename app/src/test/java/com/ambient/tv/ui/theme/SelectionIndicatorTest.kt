@@ -19,9 +19,9 @@ class SelectionIndicatorTest {
         assertNull(selectionIndicatorRect(true, size, SelectionIndicator.NONE, 1f))
     }
 
-    @Test fun selectedChipsKeepAnInsetUnderlineWithEveryAccentMaterial() {
-        // The geometry remains stable for all eight materials and focus transitions;
-        // the brush changes, not the indicator's meaning, size or location.
+    @Test fun compactUnderlineKeepsItsInsetForControlsThatStillUseIt() {
+        // OSD controls may retain this compact marker. TV chips intentionally use NONE;
+        // changing material style must not change this shared geometry.
         for (style in AccentStyle.entries) {
             val marker = selectionIndicatorRect(true, size, SelectionIndicator.UNDERLINE, 1f)
             assertNotNull(style.toString(), marker)
@@ -31,17 +31,6 @@ class SelectionIndicatorTest {
             assertEquals(style.toString(), 39.25f, marker.top, .001f)
             assertTrue(style.toString(), marker.height < 2f)
         }
-    }
-
-    @Test fun textChipsHaveALongerUnderlineWithoutChangingCompactOsdMarkers() {
-        val chip = selectionIndicatorRect(true, size, SelectionIndicator.CHIP_UNDERLINE, 1f)!!
-        val compact = selectionIndicatorRect(true, size, SelectionIndicator.UNDERLINE, 1f)!!
-        assertEquals(40f, chip.width, .001f)
-        assertEquals(2f, chip.height, .001f)
-        assertEquals(30f, chip.left, .001f)
-        assertEquals(compact.center.x, chip.center.x, .001f)
-        assertEquals(24f, compact.width, .001f)
-        assertEquals(chip, selectionIndicatorRevealRect(chip, SelectionIndicator.CHIP_UNDERLINE, 1f))
     }
 
     @Test fun sidebarAndOptionsMarkersFollowReadingDirection() {
@@ -61,20 +50,6 @@ class SelectionIndicatorTest {
         assertEquals(88f, ltr.left, .001f)
         assertEquals(7f, rtl.left, .001f)
         assertEquals(7f, ltr.top, .001f)
-    }
-
-    @Test fun everyFocusedOsdActionUsesASlimInsetGlint() {
-        // Selected state is not required for the *focus* cue.
-        val line = osdFocusAccentRect(Size(48f, 40f), 1f)!!
-        assertEquals(16f, line.width, .001f)
-        assertEquals(1f, line.height, .001f)
-        assertEquals(16f, line.left, .001f)
-        assertEquals(32f, line.right, .001f)
-        assertEquals(8f, line.top, .001f)
-        assertTrue(line.bottom < 12f)
-        assertNull(osdFocusAccentRect(Size(20f, 40f), 1f))
-        assertNull(osdFocusAccentRect(Size(48f, 20f), 1f))
-        assertNull(osdFocusAccentRect(Size(Float.NaN, 40f), 1f))
     }
 
     @Test fun revealKeepsUnderlineCenteredAndItsThicknessFixed() {

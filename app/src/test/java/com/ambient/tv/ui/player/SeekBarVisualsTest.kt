@@ -29,6 +29,18 @@ class SeekBarVisualsTest {
         assertTrue(seekBarHasDistinctTarget(25_000, 40_000, true))
     }
 
+    @Test fun verticalPlayheadAlwaysTracksPublishedPlaybackAndNeverDependsOnSeekTarget() {
+        // These assertions apply to the same helper in TV compact seek mode, expanded
+        // button mode and the handheld scrubber; the target/preview can move separately.
+        val previewMs = seekBarVisualPosition(25_000, 100_000, keyboardTargetMs = 75_000)
+        assertEquals(.75f, seekBarFraction(previewMs, 100_000), 0f)
+        assertEquals(.25f, seekBarPlayheadFraction(25_000, 100_000)!!, 0f)
+        assertEquals(0f, seekBarPlayheadFraction(-1_000, 100_000)!!, 0f)
+        assertEquals(1f, seekBarPlayheadFraction(120_000, 100_000)!!, 0f)
+        assertEquals(null, seekBarPlayheadFraction(25_000, 0))
+        assertEquals(null, seekBarPlayheadFraction(25_000, -1))
+    }
+
     @Test fun scrubbingScalesThumbButDoesNotChangeTrackSize() {
         assertEquals(1f, seekBarThumbScale(false), 0f)
         assertEquals(1.18f, seekBarThumbScale(true), 0f)

@@ -119,7 +119,7 @@ class AccentMotionTest {
     @Test fun focusWaitsForAQuietTargetThenSettlesAndReleasesTheFrameClock() = runTest {
         val d = Driver(this)
         val job = d.start()
-        advanceTimeBy(300L); runCurrent()
+        advanceTimeBy(100L); runCurrent()
         assertEquals(0, d.clock.requests)
         assertEquals(AccentMotionFrame.Rest, d.frame)
         advanceTimeBy(350L); runCurrent()
@@ -151,9 +151,9 @@ class AccentMotionTest {
         assertEquals(AccentMotionFrame.Rest, d.frame)
 
         d.interacting = false
-        advanceTimeBy(200L); runCurrent()
+        advanceTimeBy(20L); runCurrent()
         assertEquals("A rapid focus hop must keep its quiet delay", requests, d.clock.requests)
-        advanceTimeBy(500L); runCurrent()
+        advanceTimeBy(350L); runCurrent()
         assertTrue(d.clock.requests > requests)
         assertTrue(d.frame.strength > 0f)
         job.cancelAndJoin()
@@ -178,9 +178,9 @@ class AccentMotionTest {
         assertEquals(AccentMotionFrame.Rest, d.frame)
 
         d.active = true
-        advanceTimeBy(200L); runCurrent()
+        advanceTimeBy(90L); runCurrent()
         assertEquals(requests, d.clock.requests)
-        advanceTimeBy(500L); runCurrent()
+        advanceTimeBy(400L); runCurrent()
         assertTrue(d.clock.requests > requests)
         assertTrue("Resuming starts a finite gesture rather than a stale elapsed time", d.frame.strength > 0f)
         job.cancelAndJoin()

@@ -101,17 +101,54 @@ internal fun accentMaterialBrush(stops: List<Pair<Float, Color>>, style: AccentS
 }
 
 /**
- * Focus boundaries inherit the material's directional sheen, not its full white reflections.
- * Retain the accessible accent hue even for Chrome, Glass and Pearl. A dedicated stroke
- * brush avoids making a selected chip indistinguishable from a focused one.
+ * Focus and selected borders are material accents, not the full glossy *surface* brush.
+ * Each style has its own reflection geometry and tonal range, including on a thin
+ * 2dp stroke. The former 68% lerp back to a single color flattened all the materials
+ * into near-identical outlines. Never blend the whole border to white.
+ *
+ * A selected-only control uses the same material at a thinner stroke with a separate
+ * persistent marker; focus adds stroke weight and the optional moving reflection.
  */
-internal fun accentFocusBorderBrush(accent: Color, style: AccentStyle): Brush =
-    if (style == AccentStyle.LIGHT) SolidColor(accent) else accentMaterialBrush(
-        accentMaterialStops(accent, style).map { (position, stop) ->
-            position to lerp(stop, accent.convert(stop.colorSpace), .68f)
-        },
-        style,
-    )
+internal fun accentFocusBorderBrush(accent: Color, style: AccentStyle): Brush {
+    if (style == AccentStyle.LIGHT) return SolidColor(accent)
+    val lip = accentLerp(accent, Color.White, .20f)
+    val highlight = accentLerp(accent, Color.White, .42f)
+    val shadow = accentLerp(accent, Color.Black, .19f)
+    val deepShadow = accentLerp(accent, Color.Black, .29f)
+    val cool = accentLerp(accent, Color(0xFF8EBEFF), .30f)
+    val warm = accentLerp(accent, Color(0xFFFFADCF), .30f)
+    val stops = when (style) {
+        AccentStyle.SATIN -> listOf(
+            0f to lip, .24f to shadow, .55f to highlight, 1f to shadow,
+        )
+        AccentStyle.GLASS -> listOf(
+            0f to highlight, .17f to lip, .45f to accent, 1f to shadow,
+        )
+        AccentStyle.GLOW -> listOf(0f to lip)
+        AccentStyle.PEARL -> listOf(
+            0f to lip, .32f to cool, .69f to warm, 1f to lip,
+        )
+        AccentStyle.CERAMIC -> listOf(
+            0f to highlight, .12f to highlight, .14f to accent,
+            .84f to accent, 1f to shadow,
+        )
+        AccentStyle.CHROME -> listOf(
+            0f to shadow, .34f to deepShadow, .46f to highlight,
+            .54f to highlight, .64f to deepShadow, 1f to lip,
+        )
+        AccentStyle.FACET -> listOf(
+            0f to lip, .33f to lip, .35f to accent,
+            .66f to accent, .68f to shadow, 1f to shadow,
+        )
+        AccentStyle.LIGHT -> error("Light is a flat-color border")
+    }
+    return when (style) {
+        AccentStyle.GLOW -> SolidColor(lip)
+        // A vertical upper lip is what distinguishes Glass from the diagonal Satin.
+        AccentStyle.GLASS -> Brush.verticalGradient(*stops.toTypedArray())
+        else -> accentMaterialBrush(stops, style)
+    }
+}
 
 /** Keep unfocused content neutral; only active elements receive a material wash. */
 fun accentWashOpacity(style: AccentStyle): Float = when (style) {

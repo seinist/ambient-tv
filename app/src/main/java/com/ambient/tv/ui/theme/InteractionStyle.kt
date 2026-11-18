@@ -46,7 +46,7 @@ import com.ambient.tv.ui.performance.LocalPerformanceProfile
 data class InteractionColors(val container: Color, val outline: Color, val content: Color)
 
 /** Selected state is persistent; focus remains a separate neutral boundary. */
-enum class SelectionIndicator { UNDERLINE, CHIP_UNDERLINE, LEADING_BAR, DOT, NONE }
+enum class SelectionIndicator { UNDERLINE, LEADING_BAR, DOT, NONE }
 
 /**
  * Fixed, inset geometry prevents layout shifts and keeps the selection mark separate
@@ -65,13 +65,11 @@ internal fun selectionIndicatorRect(
     val roomW = surface.width - 2f * inset
     val roomH = surface.height - 2f * inset
     if (roomW <= 0f || roomH <= 0f) return null
-    val thickness = minOf((if (indicator == SelectionIndicator.CHIP_UNDERLINE) 2f else 1.75f) * dp,
+    val thickness = minOf(1.75f * dp,
         roomW * .25f, roomH * .25f)
     return when (indicator) {
-        SelectionIndicator.UNDERLINE, SelectionIndicator.CHIP_UNDERLINE -> {
-            // Text chips carry a longer persistent selection mark; compact OSD actions do not.
-            val chip = indicator == SelectionIndicator.CHIP_UNDERLINE
-            val width = minOf((if (chip) 40f else 24f) * dp, roomW * if (chip) .60f else .50f)
+        SelectionIndicator.UNDERLINE -> {
+            val width = minOf(24f * dp, roomW * .50f)
             val left = (surface.width - width) / 2f
             Rect(left, surface.height - inset - thickness,
                 left + width, surface.height - inset)
@@ -91,17 +89,6 @@ internal fun selectionIndicatorRect(
     }
 }
 
-/** Consistent quiet accent cue for *focused* OSD buttons, even without selection.
- * Its rect is independent of animations and cannot overlap the outer focus border. */
-internal fun osdFocusAccentRect(surface: Size, dp: Float): Rect? {
-    if (!dp.isFinite() || dp <= 0f || !surface.width.isFinite() || !surface.height.isFinite() ||
-        surface.height < 24f * dp || surface.width < 26f * dp) return null
-    val width = minOf(16f * dp, surface.width - 16f * dp)
-    val left = (surface.width - width) / 2f
-    val top = 8f * dp
-    return Rect(left, top, left + width, top + 1f * dp)
-}
-
 /**
  * Reveal only the marker's long axis, symmetrically from its center. Dots expand on
  * both axes. The full rect never changes, keeping all layout and RTL offsets stable.
@@ -114,7 +101,7 @@ internal fun selectionIndicatorRevealRect(
     if (bounds == null || !progress.isFinite() || progress <= 0f) return null
     val fraction = progress.coerceIn(0f, 1f)
     return when (indicator) {
-        SelectionIndicator.UNDERLINE, SelectionIndicator.CHIP_UNDERLINE -> {
+        SelectionIndicator.UNDERLINE -> {
             val halfWidth = bounds.width * fraction / 2f
             Rect(bounds.center.x - halfWidth, bounds.top, bounds.center.x + halfWidth, bounds.bottom)
         }
@@ -334,8 +321,6 @@ fun Modifier.appControlSurface(
     prominent: Boolean = false,
     pressed: Boolean = false,
     selectionIndicator: SelectionIndicator = SelectionIndicator.UNDERLINE,
-    /** Low-intensity accent material on OSD controls, without styling their idle chrome. */
-    osdChrome: Boolean = false,
 ): Modifier = composed {
     val colors = rememberInteractionColorState(
         focused, selected, enabled, animate, focusedAccent, prominent, pressed,
@@ -343,7 +328,9 @@ fun Modifier.appControlSurface(
     val materialStyle = LocalAccentStyle.current
     val reducedEffects = LocalPerformanceProfile.current.reducedEffects
     val borderWidth = LocalUiTokens.current.focusBorder
-    val motion = rememberAccentMotionState(focused && enabled)
+    // A parent may own the shared clock (e.g. the whole OSD). Only its actually
+    // focused child may paint a moving outline; selected-only/idle remain stable.
+    val motion = rememberAccentMotionState(focused && enabled).takeIf { focused && enabled }
     val markerProgress = rememberSelectionIndicatorProgress(selected && enabled, focused && enabled)
     this.drawWithCache {
         val strokePx = borderWidth.toPx()
@@ -356,8 +343,10 @@ fun Modifier.appControlSurface(
         )
         // Keep selected-only outlines slimmer than the active focus boundary.
         val stroke = Stroke(if (selected && !focused) strokePx * .68f else strokePx)
+        val motionStroke = Stroke(strokePx * 2f)
         val material = colors.palette.materialBrush()
         val focusBorder = colors.palette.focusBorderBrush()
+        val selectedBorder = colors.palette.selectedBorderBrush()
         val marker = selectionIndicatorRect(
             true, size, selectionIndicator, 1.dp.toPx(),
             layoutDirection == LayoutDirection.Rtl,
@@ -383,32 +372,30 @@ fun Modifier.appControlSurface(
                             alpha = outline.alpha * (.10f + .02f * (frame?.strength ?: 0f)),
                             style = glowStroke)
                     }
-                    motionPaints?.drawOutline(this, strokeOutline, frame,
-                        emphasis = outline.alpha, drawStyle = stroke)
-                    // Draw the focus boundary last. It follows the configured material and accent
-                    // instead of replacing every focus state with an almost white edge.
-                    if (focused && enabled && materialStyle != AccentStyle.LIGHT) {
-                        drawOutline(strokeOutline, focusBorder, alpha = outline.alpha, style = stroke)
+                    // Draw the chosen material *before* the motion. Previously the
+                    // opaque base stroke hid almost the entire animated reflection.
+                    // Selected-only controls get a quieter thin material stroke,
+                    // rather than the same plain colored border for every style.
+                    if (enabled && materialStyle != AccentStyle.LIGHT && (focused || selected)) {
+                        drawOutline(strokeOutline,
+                            if (focused) focusBorder else selectedBorder,
+                            alpha = outline.alpha, style = stroke)
                     } else {
                         drawOutline(strokeOutline, outline, style = stroke)
                     }
+                    if (materialStyle != AccentStyle.LIGHT) {
+                        // A narrow traveling halo makes the opt-in gesture readable
+                        // from TV distance without changing layout or idle chrome.
+                        motionPaints?.drawOutline(this, strokeOutline, frame,
+                            emphasis = outline.alpha * .45f, drawStyle = motionStroke)
+                    }
+                    motionPaints?.drawOutline(this, strokeOutline, frame,
+                        emphasis = outline.alpha, drawStyle = stroke)
                 }
             }
             // The selection marker expands/collapses inside its fixed geometry; its animation
             // only invalidates drawing, never the control's layout or the focus boundary.
             drawSelectionIndicator(marker, material, selectionIndicator, markerProgress.value)
-            // Every focused OSD action (Plex/SmartTube/MPV/VLC/weather/etc.) receives
-            // the same short material glint. Selection is represented separately by the
-            // small persistent dot/underline, never by a second wide accent edge.
-            if (osdChrome && enabled && focused) {
-                osdFocusAccentRect(size, 1.dp.toPx())?.let { line ->
-                    drawRoundRect(
-                        brush = material, alpha = .48f,
-                        topLeft = line.topLeft, size = line.size,
-                        cornerRadius = CornerRadius(line.height / 2f),
-                    )
-                }
-            }
         }
     }
 }
@@ -427,8 +414,9 @@ fun Modifier.appOsdControlSurface(
     selectionIndicator: SelectionIndicator = SelectionIndicator.DOT,
 ): Modifier = appControlSurface(
     focused = focused, selected = selected, enabled = enabled, shape = shape,
+    // Focus is shown by the outer accent border/material motion, never an extra line
+    // inside an OSD button. Selected states keep their separate marker.
     prominent = prominent, pressed = pressed, selectionIndicator = selectionIndicator,
-    osdChrome = true,
 )
 
 /**
@@ -477,7 +465,7 @@ fun Modifier.animatedFocusBorder(
     val strokeWidth = width ?: LocalUiTokens.current.focusBorder
     val reduced = LocalPerformanceProfile.current.reducedEffects
     val materialStyle = LocalAccentStyle.current
-    val motion = rememberAccentMotionState(focused)
+    val motion = rememberAccentMotionState(focused).takeIf { focused }
     // The outline's opacity fades on focus hops; its hue also crossfades when the user
     // changes the configured accent while a card is already focused.
     val accent = animateColorAsState(
@@ -503,6 +491,7 @@ fun Modifier.animatedFocusBorder(
             this,
         )
         val stroke = Stroke(strokePx)
+        val motionStroke = Stroke(strokePx * 2f)
         val material = accentBrush(focusedColor, materialStyle)
         val focusBorder = accentFocusBorderBrush(focusedColor, materialStyle)
         val glowStroke = if (materialStyle == AccentStyle.GLOW && !reduced) Stroke(strokePx * 2.6f) else null
@@ -522,6 +511,8 @@ fun Modifier.animatedFocusBorder(
                                     style = glowStroke)
                             }
                             drawOutline(outline, focusBorder, alpha = color.alpha, style = stroke)
+                            motionPaints?.drawOutline(this, outline, frame,
+                                emphasis = color.alpha * .45f, drawStyle = motionStroke)
                         }
                         motionPaints?.drawOutline(this, outline, frame, emphasis = color.alpha, drawStyle = stroke)
                     }
@@ -547,11 +538,13 @@ fun Modifier.animatedFocusSurface(
     borderWidth: Dp = 2.dp,
     /** False for screens whose focus boundary is intentionally neutral/white. */
     focusBorderMaterial: Boolean = true,
+    /** Persistent selection retains a thinner material outline even when not focused. */
+    selected: Boolean = false,
 ): Modifier = composed {
     val reduced = LocalPerformanceProfile.current.reducedEffects
     val materialStyle = LocalAccentStyle.current
     val primaryAccent = MaterialTheme.colorScheme.primary
-    val motion = rememberAccentMotionState(focused)
+    val motion = rememberAccentMotionState(focused).takeIf { focused }
     val fade = tween<Color>(
         durationMillis = focusBorderFadeDurationMs(focused, reduced),
         easing = LinearOutSlowInEasing,
@@ -587,9 +580,11 @@ fun Modifier.animatedFocusSurface(
             this,
         )
         val material = accentBrush(primaryAccent, materialStyle)
-        val focusBorder = accentFocusBorderBrush(focusedBorder, materialStyle)
+        val focusBorder = accentFocusBorderBrush(focusedBorder.copy(alpha = 1f), materialStyle)
+        val selectedBorder = accentFocusBorderBrush(unfocusedBorder.copy(alpha = 1f), materialStyle)
         val accentOutline = focusBorderMaterial
         val stroke = Stroke(strokePx)
+        val motionStroke = Stroke(strokePx * 2f)
         val glowStroke = if (materialStyle == AccentStyle.GLOW && !reduced) Stroke(strokePx * 2.5f) else null
         val motionPaints = if (motion != null) AccentMotionPaints(primaryAccent, materialStyle) else null
         onDrawWithContent {
@@ -602,15 +597,22 @@ fun Modifier.animatedFocusSurface(
             drawContent()
             if (strokePx > 0f && strokeColor.value.alpha > 0f) {
                 translate(inset, inset) {
-                    if (materialStyle == AccentStyle.LIGHT || !accentOutline || !focused) {
-                        // Unfocused selected edges use their explicit subdued color.
+                    if (materialStyle == AccentStyle.LIGHT || !accentOutline) {
                         drawOutline(inner, strokeColor.value, style = stroke)
+                    } else if (!focused) {
+                        // Only explicitly selected rows receive a persistent material
+                        // stroke; ordinary idle borders retain their original color.
+                        if (selected) drawOutline(inner, selectedBorder,
+                            alpha = strokeColor.value.alpha, style = stroke)
+                        else drawOutline(inner, strokeColor.value, style = stroke)
                     } else {
                         if (glowStroke != null) {
                             drawOutline(inner, material, alpha = strokeColor.value.alpha * (.12f + .025f * (frame?.strength ?: 0f)) * materialReveal.value,
                                 style = glowStroke)
                         }
                         drawOutline(inner, focusBorder, alpha = strokeColor.value.alpha, style = stroke)
+                        motionPaints?.drawOutline(this, inner, frame,
+                            emphasis = strokeColor.value.alpha * .45f, drawStyle = motionStroke)
                         motionPaints?.drawOutline(this, inner, frame, emphasis = strokeColor.value.alpha, drawStyle = stroke)
                     }
                 }
