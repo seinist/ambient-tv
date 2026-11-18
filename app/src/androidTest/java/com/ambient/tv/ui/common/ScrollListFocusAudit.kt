@@ -104,6 +104,7 @@ internal class ScrollListFocusAudit(private val instrumentation: Instrumentation
             auditLazyList(activity, settings = true)
             auditLazyList(activity, settings = false)
             auditSettingsControls(activity)
+            auditSettingsActionFocus(activity)
             auditDetailOverlay(activity)
             auditNestedSettings(activity)
             auditGrid(activity)
@@ -472,6 +473,88 @@ internal class ScrollListFocusAudit(private val instrumentation: Instrumentation
         key(KeyEvent.KEYCODE_DPAD_DOWN, "settings-select")
         key(KeyEvent.KEYCODE_DPAD_UP, "settings-last-right")
         log("PASS settings: real select after popup dismissal, focusRestorer, final nested row and disabled/footer exclusion")
+    }
+
+    /** Narrow actions between full-width settings must never be skipped by remote Up/Down. */
+    private fun auditSettingsActionFocus(activity: UiCatalogActivity) {
+        val first = FocusRequester()
+        main {
+            focused = null
+            focusHistory.clear()
+            activity.setContent {
+                AmbientTvTheme {
+                    androidx.compose.runtime.CompositionLocalProvider(
+                        LocalSettingsPresentation provides SettingsPresentation.Page,
+                    ) {
+                        val listState = androidx.compose.foundation.lazy.rememberLazyListState()
+                        LazyColumn(
+                            state = listState,
+                            modifier = Modifier.fillMaxSize().padding(32.dp).focusGroup().wrapFocusDownToTop(listState),
+                            verticalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            item {
+                                TvSettingRow("Separate playback color", checked = true, onCheckedChange = {},
+                                    modifier = mark("dual-accent").focusRequester(first))
+                            }
+                            item {
+                                SettingsSingleAction("Swap main and playback colors", {}, modifier = mark("swap-colors"))
+                            }
+                            item {
+                                TvSettingRow("Playback color", checked = true, onCheckedChange = {},
+                                    modifier = mark("playback-color"))
+                            }
+                            item {
+                                SettingsSingleAction("Check playback performance", {}, modifier = mark("performance-test"))
+                            }
+                            item {
+                                TvSettingRow("Image cache", checked = false, onCheckedChange = {},
+                                    modifier = mark("image-cache"))
+                            }
+                            item {
+                                SettingsActionRow {
+                                    TvActionButton("Test connection", {}, modifier = mark("connection-test"))
+                                }
+                            }
+                            item {
+                                SettingsSingleAction("Unavailable action", {}, modifier = mark("disabled-action"),
+                                    enabled = false)
+                            }
+                            item {
+                                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    SettingsSingleAction("Show link code", {}, modifier = mark("link-code"))
+                                    SettingsSingleAction("Unlink devices", {}, modifier = mark("unlink-devices"))
+                                }
+                            }
+                            item {
+                                TvSettingRow("Next setting", checked = false, onCheckedChange = {},
+                                    modifier = mark("next-setting"))
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        Thread.sleep(600)
+        requestFocus(first)
+        key(KeyEvent.KEYCODE_DPAD_DOWN, "swap-colors")
+        key(KeyEvent.KEYCODE_DPAD_DOWN, "playback-color")
+        key(KeyEvent.KEYCODE_DPAD_UP, "swap-colors")
+        key(KeyEvent.KEYCODE_DPAD_UP, "dual-accent")
+        key(KeyEvent.KEYCODE_DPAD_DOWN, "swap-colors")
+        key(KeyEvent.KEYCODE_DPAD_DOWN, "playback-color")
+        key(KeyEvent.KEYCODE_DPAD_DOWN, "performance-test")
+        key(KeyEvent.KEYCODE_DPAD_DOWN, "image-cache")
+        key(KeyEvent.KEYCODE_DPAD_DOWN, "connection-test")
+        key(KeyEvent.KEYCODE_DPAD_DOWN, "link-code")
+        key(KeyEvent.KEYCODE_DPAD_DOWN, "unlink-devices")
+        key(KeyEvent.KEYCODE_DPAD_DOWN, "next-setting")
+        key(KeyEvent.KEYCODE_DPAD_UP, "unlink-devices")
+        key(KeyEvent.KEYCODE_DPAD_UP, "link-code")
+        key(KeyEvent.KEYCODE_DPAD_UP, "connection-test")
+        key(KeyEvent.KEYCODE_DPAD_UP, "image-cache")
+        key(KeyEvent.KEYCODE_DPAD_UP, "performance-test")
+        main { check("disabled-action" !in focusHistory) { "Disabled setting acquired focus" } }
+        log("PASS settings: Up/Down enters every narrow action and grouped row, skips only disabled actions")
     }
 
     private fun auditDetailOverlay(activity: UiCatalogActivity) {
