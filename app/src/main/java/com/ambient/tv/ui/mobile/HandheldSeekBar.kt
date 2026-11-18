@@ -59,6 +59,7 @@ import com.ambient.tv.ui.player.SEEK_VISUAL_ACK_TOLERANCE_MS
 import com.ambient.tv.ui.player.seekBarVisualPosition
 import com.ambient.tv.ui.player.seekBarFraction
 import com.ambient.tv.ui.player.seekBarPlayheadFraction
+import com.ambient.tv.ui.player.rememberRecentPlayerSeekFeedback
 import com.ambient.tv.ui.player.seekBarThumbScale
 import com.ambient.tv.ui.player.seekBarHasDistinctTarget
 import com.ambient.tv.ui.performance.LocalPerformanceProfile
@@ -86,6 +87,17 @@ fun HandheldSeekBar(
     val thumbBrush = remember(accent, style) { accentBrush(accent, style) }
     val navigation = LocalPlaybackNavigation.current
     val osd = LocalPlayerChromeState.current?.osd
+    // Remote/media-key direct seeking may show passive feedback without a touch
+    // target. Keep its line brief even if the compact OSD remains on screen.
+    var remoteSeekFeedback by remember(osd) { mutableStateOf(false) }
+    val remoteSeekVersion = if (osd?.seekFeedback == true) osd.interactionVersion else -1
+    LaunchedEffect(remoteSeekVersion) {
+        remoteSeekFeedback = remoteSeekVersion >= 0
+        if (remoteSeekFeedback) {
+            kotlinx.coroutines.delay(1_100L)
+            remoteSeekFeedback = false
+        }
+    }
     val stowing = LocalPlayerOsdStow.current?.closing == true
     val playPauseFocus = LocalPlayerPlayPauseFocus.current
     val latestPositionMs by rememberUpdatedState(positionMs)
@@ -112,8 +124,13 @@ fun HandheldSeekBar(
     val dragTarget = dragFraction?.let { (it * durationMs).toLong() }
     val shownPosition = seekBarVisualPosition(positionMs, durationMs, dragTarget, null, awaitingVisualTarget)
     val fraction = seekBarFraction(shownPosition, durationMs)
-    // Compact touch OSD and expanded controls must share the same persistent playhead.
-    val playheadFraction = seekBarPlayheadFraction(positionMs, durationMs)
+    // Only touch scrubbing, an unacknowledged seek or direct remote seek feedback
+    // displays the current-position line; idle compact/expanded OSDs stay clean.
+    val recentSeek = rememberRecentPlayerSeekFeedback()
+    val playheadFraction = seekBarPlayheadFraction(
+        positionMs, durationMs,
+        seeking = dragFraction != null || awaitingVisualTarget != null || remoteSeekFeedback || recentSeek,
+    )
     val showingSeekTarget = seekBarHasDistinctTarget(
         positionMs, shownPosition, dragFraction != null || awaitingVisualTarget != null,
     )
@@ -258,8 +275,8 @@ fun HandheldSeekBar(
                             drawCircle(brush = thumbBrush, radius = radius - 3.dp.toPx() * thumbScale,
                                 center = center, alpha = thumbAlpha)
                         }
-                        // Draw last: the current position remains a vertical line even when
-                        // a separate target/thumb is being previewed by a tap or drag.
+                        // Draw last while seeking: the current position stays separate
+                        // from the touch target/thumb and never appears when idle.
                         if (playheadFraction != null) {
                             val insetX = 1.5.dp.toPx()
                             val x = (playheadFraction * endX).coerceIn(insetX, (endX - insetX).coerceAtLeast(insetX))

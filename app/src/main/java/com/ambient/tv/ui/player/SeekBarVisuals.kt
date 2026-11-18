@@ -17,12 +17,12 @@ internal fun seekBarVisualPosition(
 internal fun seekBarFraction(positionMs: Long, durationMs: Long): Float =
     if (durationMs <= 0L) 0f else (positionMs.toDouble() / durationMs.toDouble()).toFloat().coerceIn(0f, 1f)
 
-/** Current playback position, always visible as a thin playhead in every seekable OSD.
- * A separate preview target can move the progress fill without replacing this marker.
- * No focus, expanded-button or active-scrubbing flag may gate the playhead.
+/** Current playback position during a real seek, not a permanently displayed marker.
+ * A separate preview target can move the progress fill without replacing this position.
+ * Focus, selection and expanded/compact OSD mode alone must never enable the line.
  */
-internal fun seekBarPlayheadFraction(positionMs: Long, durationMs: Long): Float? =
-    if (durationMs > 0L) seekBarFraction(positionMs, durationMs) else null
+internal fun seekBarPlayheadFraction(positionMs: Long, durationMs: Long, seeking: Boolean): Float? =
+    if (seeking && durationMs > 0L) seekBarFraction(positionMs, durationMs) else null
 
 internal fun seekBarHasDistinctTarget(publishedMs: Long, targetMs: Long, seeking: Boolean): Boolean =
     seeking && kotlin.math.abs(publishedMs - targetMs) >= 1_000L
