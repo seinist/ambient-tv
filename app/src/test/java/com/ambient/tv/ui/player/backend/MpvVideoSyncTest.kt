@@ -14,4 +14,19 @@ class MpvVideoSyncTest {
         assertEquals("SVP re-times frames itself", "audio",
             mpvVideoSync(syncToDisplay = true, gpuOutput = true, encodedAudio = false, svpActive = true))
     }
+
+    @Test fun liveStreamsNeverResampleTheirClockToTheDisplay() {
+        assertEquals("audio", mpvVideoSync(
+            syncToDisplay = true, gpuOutput = true, encodedAudio = false,
+            svpActive = false, liveStream = true,
+        ))
+        assertEquals("audio", mpvVideoSync(
+            syncToDisplay = true, gpuOutput = false, encodedAudio = false,
+            svpActive = false, liveStream = true,
+        ))
+        assertEquals("display-resample", mpvVideoSync(
+            syncToDisplay = true, gpuOutput = true, encodedAudio = false,
+            svpActive = false, liveStream = false,
+        ))
+    }
 }
