@@ -28,8 +28,10 @@ data class WeatherPresentation(
     val screensaver: WeatherSnapshot? = null,
     /** NavHost stays composed below screensaver/standby/PiP; its pages must suspend their work. */
     val contentVisible: Boolean = true,
+    /** Keep the previously introduced invisible weather slot while the first response is pending. */
+    val headerPending: Boolean = false,
 ) {
-    val hasHeader: Boolean get() = header != null
+    val hasHeader: Boolean get() = headerPending || header != null
 }
 
 /**
@@ -48,10 +50,15 @@ internal fun weatherPresentationFromState(
         canShow && it.matches(settings) && it.current?.temperature?.isFinite() == true && !it.isStale(nowMillis)
     }
     val header = usable.takeIf { settings.showInHeader }
+    // Keep the header geometry from the earlier clock/weather change while fetching,
+    // but never render stale conditions or a cached-data status.
+    val pending = canShow && settings.showInHeader && header == null &&
+        state.error == null && (state.loading || state.data == null)
     return WeatherPresentation(
         header = header,
         screensaver = usable.takeIf { settings.showInScreensaver },
         contentVisible = contentVisible,
+        headerPending = pending,
     )
 }
 
