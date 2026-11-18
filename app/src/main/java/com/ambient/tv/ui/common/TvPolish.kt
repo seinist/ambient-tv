@@ -1440,7 +1440,7 @@ fun TvActionButton(
                 onClick = activate, enabled = visuallyEnabled,
                 modifier = (if (fillWidth) modifier.fillMaxWidth() else modifier).sizeIn(minHeight = 48.dp)
                     .appControlSurface(focused, selected, visuallyEnabled, shape, prominent = prominent, pressed = pressed,
-                        selectionIndicator = if (iconOnly) SelectionIndicator.DOT else SelectionIndicator.UNDERLINE),
+                        selectionIndicator = if (iconOnly) SelectionIndicator.DOT else SelectionIndicator.NONE),
                 shape = shape,
                 interactionSource = interactions,
                 colors = androidx.compose.material3.ButtonDefaults.filledTonalButtonColors(
@@ -1515,8 +1515,8 @@ fun TvActionButton(
             modifier = (if (fillWidth) Modifier.fillMaxWidth() else Modifier)
                 .appControlSurface(focused, selected, visuallyEnabled, buttonShape,
                     prominent = prominent, pressed = keyPressed || pointerPressed,
-                    selectionIndicator = if (iconOnly) SelectionIndicator.DOT else SelectionIndicator.UNDERLINE)
-                .padding(horizontal = (if (iconOnly) 11.dp else 16.dp) * uiScale, vertical = 11.dp * uiScale),
+                    selectionIndicator = if (iconOnly) SelectionIndicator.DOT else SelectionIndicator.NONE)
+                .padding(horizontal = (if (iconOnly) 11.dp else 16.dp) * uiScale, vertical = 12.dp * uiScale),
             horizontalArrangement = Arrangement.Center,
             verticalAlignment = Alignment.CenterVertically,
         ) {
