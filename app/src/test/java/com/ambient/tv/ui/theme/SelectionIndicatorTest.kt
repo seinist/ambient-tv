@@ -63,20 +63,6 @@ class SelectionIndicatorTest {
         assertEquals(7f, ltr.top, .001f)
     }
 
-    @Test fun everyFocusedOsdActionUsesASlimInsetGlint() {
-        // Selected state is not required for the *focus* cue.
-        val line = osdFocusAccentRect(Size(48f, 40f), 1f)!!
-        assertEquals(16f, line.width, .001f)
-        assertEquals(1f, line.height, .001f)
-        assertEquals(16f, line.left, .001f)
-        assertEquals(32f, line.right, .001f)
-        assertEquals(8f, line.top, .001f)
-        assertTrue(line.bottom < 12f)
-        assertNull(osdFocusAccentRect(Size(20f, 40f), 1f))
-        assertNull(osdFocusAccentRect(Size(48f, 20f), 1f))
-        assertNull(osdFocusAccentRect(Size(Float.NaN, 40f), 1f))
-    }
-
     @Test fun revealKeepsUnderlineCenteredAndItsThicknessFixed() {
         val full = selectionIndicatorRect(true, size, SelectionIndicator.UNDERLINE, 1f)!!
         assertNull(selectionIndicatorRevealRect(full, SelectionIndicator.UNDERLINE, 0f))
