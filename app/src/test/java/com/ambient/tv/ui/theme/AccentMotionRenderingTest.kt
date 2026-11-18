@@ -55,6 +55,68 @@ class AccentMotionRenderingTest {
         }
     }
 
+    @Test fun everyStyleKeepsADistinctBorderForFocusAndSelection() {
+        val focusedSignatures = mutableSetOf<List<Int>>()
+        val selectedSignatures = mutableSetOf<List<Int>>()
+        for (style in AccentStyle.entries) {
+            val palette = controlPalette(AppSurface, AppSurfaceRaised, AppOnSurface,
+                AppOnSurfaceMuted, gold, style)
+            val focused = render {
+                drawOutline(Outline.Rectangle(Rect(4f, 4f, 76f, 20f)),
+                    palette.focusBorderBrush(), style = Stroke(3f))
+            }
+            val selected = render {
+                drawOutline(Outline.Rectangle(Rect(4f, 4f, 76f, 20f)),
+                    palette.selectedBorderBrush(), style = Stroke(2f))
+            }
+            try {
+                fun Bitmap.signature() = (8..72 step 4).map { getColor(it, 4).toArgb() } +
+                    (5..19 step 2).map { getColor(4, it).toArgb() }
+                assertTrue("$style selected must remain thinner than focused", !focused.sameAs(selected))
+                focusedSignatures += focused.signature()
+                selectedSignatures += selected.signature()
+            } finally {
+                focused.recycle()
+                selected.recycle()
+            }
+        }
+        assertEquals("Focus materials must not collapse into a flat common border",
+            AccentStyle.entries.size, focusedSignatures.size)
+        assertEquals("Selection must also reflect the configured material",
+            AccentStyle.entries.size, selectedSignatures.size)
+    }
+
+    @Test fun movingReflectionIsVisibleAboveTheOpaqueFocusBorder() {
+        val bounds = Outline.Rectangle(Rect(4f, 4f, 76f, 20f))
+        for (style in AccentStyle.entries) {
+            val paints = AccentMotionPaints(gold, style)
+            val static = render {
+                drawOutline(bounds, accentFocusBorderBrush(gold, style), style = Stroke(3f))
+            }
+            val moving = render {
+                drawOutline(bounds, accentFocusBorderBrush(gold, style), style = Stroke(3f))
+                // Match the production order: opaque base first, transient motion last.
+                paints.drawOutline(this, bounds, AccentMotionFrame(.5f, 1f),
+                    emphasis = 1f, drawStyle = Stroke(3f))
+            }
+            try {
+                var strongestDifference = 0f
+                for (y in 3..21) for (x in 3..77) {
+                    val before = static.getColor(x, y)
+                    val after = moving.getColor(x, y)
+                    strongestDifference = maxOf(strongestDifference,
+                        abs(before.red() - after.red()), abs(before.green() - after.green()),
+                        abs(before.blue() - after.blue()))
+                }
+                assertTrue("$style focused border must show its optional moving reflection",
+                    strongestDifference > .003f)
+            } finally {
+                static.recycle()
+                moving.recycle()
+            }
+        }
+    }
+
     @Test fun restAndInvalidFramesPreserveTheStaticMaterialExactlyAfterCachedMotion() {
         val inactive = listOf(null, AccentMotionFrame.Rest, AccentMotionFrame(.5f, 0f),
             AccentMotionFrame(.5f, -1f), AccentMotionFrame(Float.NaN, 1f),
