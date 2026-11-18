@@ -136,6 +136,22 @@ class ControlContentTest {
         rule.runOnIdle { assertEquals("Running action cannot be started twice", 1, clicks) }
     }
 
+    @Test fun tvChipMaintainsItsRestored52dpTarget() {
+        rule.setContent {
+            AmbientTvTheme {
+                TvChip(
+                    text = "Browse",
+                    modifier = Modifier.testTag("full-size-tv-chip"),
+                    icon = Icons.Default.PlayArrow,
+                    onClick = {},
+                )
+            }
+        }
+        rule.waitForIdle()
+        val bounds = rule.onNodeWithTag("full-size-tv-chip").fetchSemanticsNode().boundsInRoot
+        assertTrue("TV chips must retain the restored >=52dp target", bounds.height >= 52f)
+    }
+
     private fun textColor(label: String): Color {
         val layouts = mutableListOf<TextLayoutResult>()
         rule.onNodeWithText(label, useUnmergedTree = true)

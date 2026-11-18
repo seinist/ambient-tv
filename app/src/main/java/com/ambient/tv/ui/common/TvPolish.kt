@@ -937,7 +937,9 @@ fun TvChip(
         shape = ClickableSurfaceDefaults.shape(shape = chipShape),
         interactionSource = interactions,
         modifier = modifier
-            .sizeIn(minHeight = 48.dp * uiScale)
+            // 52dp total TV target, 48dp visible chrome: the previous 44dp pill
+            // looked shrunken beside the header clock and regular action buttons.
+            .sizeIn(minHeight = 52.dp * uiScale)
             .padding(2.dp)
             .menuFocusMotion(focused, focusedScale = 1.01f)
             .onPreviewKeyEvent { event ->
@@ -956,17 +958,17 @@ fun TvChip(
     ) {
         // The drawn chip is shorter than its focus target; centred, it lines up with titles,
         // rows and buttons next to it instead of sitting at the top of that slot.
-        Box(Modifier.sizeIn(minHeight = 44.dp * uiScale), contentAlignment = Alignment.Center) {
+        Box(Modifier.sizeIn(minHeight = 48.dp * uiScale), contentAlignment = Alignment.Center) {
             Row(
                 modifier = Modifier
                     .appControlSurface(focused, selected, enabled, chipShape, pressed = keyPressed || pointerPressed,
                         selectionIndicator = if (iconOnly) SelectionIndicator.DOT else SelectionIndicator.UNDERLINE)
-                    .padding(horizontal = 14.dp * uiScale, vertical = 9.dp * uiScale),
+                    .padding(horizontal = 16.dp * uiScale, vertical = 10.dp * uiScale),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 ProvideControlContent(foreground) {
                     if (loading) {
-                        ButtonProgress(foreground, Modifier.size(18.dp * uiScale))
+                        ButtonProgress(foreground, Modifier.size(20.dp * uiScale))
                         Spacer(Modifier.width(8.dp * uiScale))
                     } else if (leadingContent != null) {
                         leadingContent()
@@ -976,7 +978,7 @@ fun TvChip(
                             imageVector = it,
                             contentDescription = null,
                             tint = foreground,
-                            modifier = Modifier.size(18.dp * uiScale),
+                            modifier = Modifier.size(20.dp * uiScale),
                         )
                         Spacer(Modifier.width(8.dp * uiScale))
                     }
@@ -984,7 +986,7 @@ fun TvChip(
                         text = text,
                         maxLines = textMaxLines,
                         overflow = TextOverflow.Ellipsis,
-                        style = MaterialTheme.typography.labelMedium,
+                        style = MaterialTheme.typography.labelLarge,
                         color = foreground,
                     )
                 }
