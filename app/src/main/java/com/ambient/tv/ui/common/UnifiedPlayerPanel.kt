@@ -733,6 +733,16 @@ fun PlayerDiagnosticsButtons(hasVideo: Boolean = true) {
  */
 internal val LocalPlayerFullscreenMinimize = compositionLocalOf<() -> Unit> { {} }
 
+/** First notify navigation, then pop the player; handheld Back keeps its existing semantics. */
+internal fun playerFullscreenExitAction(
+    handheld: Boolean,
+    onMinimize: () -> Unit,
+    onBack: () -> Unit,
+) {
+    if (!handheld) onMinimize()
+    onBack()
+}
+
 @Composable
 fun PlayerExitButton(onBack: () -> Unit) {
     val handheld = com.ambient.tv.ui.mobile.LocalHandheldUi.current
@@ -740,12 +750,7 @@ fun PlayerExitButton(onBack: () -> Unit) {
     PlayerIconButton(
         icon = if (handheld) Icons.AutoMirrored.Filled.ArrowBack else Icons.Filled.FullscreenExit,
         label = stringResource(if (handheld) R.string.back else R.string.player_exit_fullscreen),
-        onClick = {
-            // On TV, the fullscreen-exit control intentionally keeps the session playing.
-            // Register the return path before onBack invokes the destination's pop callback.
-            if (!handheld) onMinimize()
-            onBack()
-        },
+        onClick = { playerFullscreenExitAction(handheld, onMinimize, onBack) },
         osd = com.ambient.tv.ui.player.OsdButton.EXIT,
     )
 }
