@@ -95,6 +95,7 @@ import com.ambient.tv.ui.common.AppDialog
 import com.ambient.tv.ui.common.QrCodeDialog
 import com.ambient.tv.ui.common.OverlayLazyScrollbar
 import com.ambient.tv.ui.common.TvActionButton
+import com.ambient.tv.ui.common.SettingsSingleAction
 import com.ambient.tv.ui.common.TvChip
 import com.ambient.tv.ui.common.rememberPendingAction
 import com.ambient.tv.ui.common.noSurfaceScale
@@ -464,7 +465,7 @@ fun SettingsScreen(
                                 )
                             }
                             if (uiState.dualAccentEnabled) item {
-                                TvActionButton(
+                                SettingsSingleAction(
                                     text = stringResource(R.string.settings_swap_accent_colors),
                                     onClick = viewModel::onSwapAccentColors,
                                 )
@@ -529,7 +530,7 @@ fun SettingsScreen(
                                         )
                                     })
                                     if (uiState.introAnimationKey != IntroAnimation.OFF) {
-                                        TvActionButton(
+                                        SettingsSingleAction(
                                             text = stringResource(R.string.settings_intro_preview),
                                             onClick = { com.ambient.tv.ui.intro.IntroPreviewRequests.requests.tryEmit(uiState.introAnimationKey) },
                                         )
@@ -548,11 +549,9 @@ fun SettingsScreen(
                                     )
                                 }
                             }
-                            // Above the check button: a narrow button between two full-width rows
-                            // is skipped by Up/Down.
                             item(key = "appearance:image-cache") { ImageCacheSettings() }
                             item {
-                                TvActionButton(
+                                SettingsSingleAction(
                                     text = stringResource(R.string.settings_check_ui),
                                     onClick = viewModel::checkUiPerformance,
                                     loading = uiState.performanceProbe != null,
@@ -714,7 +713,7 @@ fun SettingsScreen(
                                 }
                             }
                             item {
-                                TvActionButton(
+                                SettingsSingleAction(
                                     text = stringResource(R.string.settings_screensaver_test),
                                     onClick = { onTestScreensaver(uiState) },
                                     // The overlay consumes KeyUp; avoid retaining the button's
@@ -826,7 +825,7 @@ fun SettingsScreen(
                                 })
                             }
                             item {
-                                TvActionButton(
+                                SettingsSingleAction(
                                     text = stringResource(R.string.settings_check_playback),
                                     onClick = viewModel::checkPlaybackPerformance,
                                     loading = uiState.performanceProbe != null,
@@ -1464,7 +1463,7 @@ fun SettingsScreen(
                                 // LazyColumn items stack children in a Box; without a Column the button covers the hint.
                                 androidx.compose.foundation.layout.Column(verticalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(8.dp)) {
                                     Text(stringResource(R.string.settings_recent_tv_hint), style = MaterialTheme.typography.bodySmall)
-                                    TvActionButton(stringResource(R.string.settings_recent_tv_clear), viewModel::clearRecentTvChannels)
+                                    SettingsSingleAction(stringResource(R.string.settings_recent_tv_clear), viewModel::clearRecentTvChannels)
                                 }
                             }
                         }
@@ -1532,7 +1531,7 @@ fun SettingsScreen(
                             item { Text(stringResource(R.string.settings_backup_warning), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
                             item { SettingsSubheader(stringResource(R.string.settings_section_general_restore)) }
                             item {
-                                TvActionButton(
+                                SettingsSingleAction(
                                     text = if (uiState.isImportingSettings) stringResource(R.string.settings_importing) else stringResource(R.string.settings_import),
                                     onClick = { requestExit { launchBackupPicker { importLauncher.launch(arrayOf("application/json", "text/json", "text/plain")) } } },
                                     enabled = !uiState.isExportingSettings && !uiState.isImportingSettings,
@@ -2195,7 +2194,7 @@ private fun HomeRowAddButtons(
                 })
             }
         }
-        TvActionButton(text = stringResource(R.string.settings_home_genre_done), onClick = onCloseGenrePicker)
+        SettingsSingleAction(text = stringResource(R.string.settings_home_genre_done), onClick = onCloseGenrePicker)
     }
 }
 
