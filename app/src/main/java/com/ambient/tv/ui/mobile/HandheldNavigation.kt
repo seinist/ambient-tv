@@ -232,7 +232,7 @@ private fun HandheldNavAccentIcon(icon: ImageVector, label: String, selected: Bo
 }
 
 @Composable
-private fun HandheldBottomTab(
+private fun RowScope.HandheldBottomTab(
     selected: Boolean, icon: ImageVector, label: String, onClick: () -> Unit,
 ) {
     NavigationBarItem(
