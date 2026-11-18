@@ -229,7 +229,8 @@ object PlaybackEngineFactory {
                     // maxVideoHeight is a quality step (short side): a square box also keeps portrait Shorts.
                     if (maxVideoHeight > 0) trackSelectionParameters = trackSelectionParameters.buildUpon()
                         .youtubeMaxVideoSize(com.ambient.tv.youtube.youtubeMedia3MaxVideoSize(maxVideoHeight)).build()
-                    // The box keeps square streams of a higher step: restrict the selected group by step too.
+                    // Only square/odd-aspect higher-step streams that fit the box need a
+                    // group override. Ordinary over-cap tracks must not pin Auto to one group.
                     if (maxVideoHeight > 0) addListener(object : androidx.media3.common.Player.Listener {
                         override fun onTracksChanged(tracks: androidx.media3.common.Tracks) {
                             youtubeConstrainSquareVideo(this@apply, tracks, maxVideoHeight)

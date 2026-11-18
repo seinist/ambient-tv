@@ -40,6 +40,42 @@ class YouTubeFormatResolutionTest {
         assertEquals(0, youtubePlayableFormatScore(true, true, true, listOf(video, audio)) { true })
     }
 
+    @Test fun `360p-only DASH gets one quality upgrade with playable fallback retained`() {
+        val audio = YouTubeAdaptiveFormat("audio/mp4", "https://g/audio")
+        val low = YouTubeAdaptiveFormat("video/mp4", "https://g/video-360", width = 640, height = 360)
+        val high = low.copy(url = "https://g/video-1080", width = 1920, height = 1080)
+        fun score(video: YouTubeAdaptiveFormat) =
+            youtubePlayableFormatScore(false, false, false, listOf(video, audio)) { false }
+
+        assertEquals(3, score(low))
+        assertEquals(4, score(high))
+        assertEquals(4, youtubePlayableFormatScore(false, false, false, listOf(low, high, audio)) { false })
+        // Unknown dimensions must not trigger a second request.
+        assertEquals(4, score(low.copy(width = 0, height = 0)))
+
+        var calls = 0
+        var switches = 0
+        val upgraded = resolveYouTubeFormatInfo(
+            load = { Info(if (calls++ == 0) score(low) else score(high)) },
+            switchClient = { switches++; true },
+            score = { it.quality },
+        )
+        assertEquals(4, upgraded.quality)
+        assertEquals(2, calls)
+        assertEquals(1, switches)
+
+        calls = 0
+        switches = 0
+        val fallback = resolveYouTubeFormatInfo(
+            load = { calls++; Info(score(low)) },
+            switchClient = { switches++; true },
+            score = { it.quality },
+        )
+        assertEquals(3, fallback.quality)
+        assertEquals(2, calls)
+        assertEquals(1, switches)
+    }
+
     @Test fun `VLC live keeps recovery until a muxed stream exists`() {
         val hlsOnly = youtubePlayableFormatScore(false, true, true, emptyList(), preferLiveHls = false) { false }
         assertEquals(0, hlsOnly)

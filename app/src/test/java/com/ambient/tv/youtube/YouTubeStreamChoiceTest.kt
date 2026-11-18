@@ -65,6 +65,27 @@ class YouTubeStreamChoiceTest {
         assertEquals("https://g/1080p60vp9", youtubePickVideo(formats, YOUTUBE_STREAM_AUTO, YouTubeVideoPreset(1080, 60, "av1"), uhdTv)?.url)
     }
 
+    @Test fun `Auto prefers 1080p over a preferred codec stranded at 360p`() {
+        val limitedVp9 = listOf(
+            v(360, 30, "vp09.00.31.08", "https://g/vp9-360"),
+            v(1080, 30, "avc1.640028", "https://g/avc-1080"),
+        )
+        // MPV/VLC use a fixed pair; the codec preference must not sacrifice resolution.
+        assertEquals("https://g/avc-1080", youtubePickVideo(limitedVp9, YOUTUBE_STREAM_AUTO, vp9_1080, uhdTv)?.url)
+        // Media3 must prefer the 1080p-capable codec so DASH can adapt within that group.
+        assertEquals("avc", youtubeMedia3PreferredVideoFamily(limitedVp9, vp9_1080, uhdTv))
+
+        // At equal resolution the user's/default codec is still preferred.
+        val fullVp9 = limitedVp9 + v(1080, 30, "vp09.00.41.08", "https://g/vp9-1080")
+        assertEquals("https://g/vp9-1080", youtubePickVideo(fullVp9, YOUTUBE_STREAM_AUTO, vp9_1080, uhdTv)?.url)
+        assertEquals("vp9", youtubeMedia3PreferredVideoFamily(fullVp9, vp9_1080, uhdTv))
+
+        // Only Media3 can play an OTF representation from the generated MPD.
+        val otfVp9 = v(1080, 30, "vp09.00.41.08", "https://g/vp9-otf").copy(isOtf = true)
+        assertEquals("https://g/avc-1080", youtubePickVideo(limitedVp9 + otfVp9, YOUTUBE_STREAM_AUTO, vp9_1080, uhdTv)?.url)
+        assertEquals("vp9", youtubeMedia3PreferredVideoFamily(limitedVp9 + otfVp9, vp9_1080, uhdTv))
+    }
+
     @Test fun `the panel lists every stream and a choice is honoured`() {
         val options = youtubeVideoOptions(formats, uhdTv)
         // Streams without a hardware decoder stay selectable (software decoding in VLC/MPV).

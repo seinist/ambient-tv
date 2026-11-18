@@ -102,6 +102,9 @@ class YouTubeDisplayLimitTest {
         assertEquals(listOf(0, 3, 4), youtubeMedia3AllowedVideoTracks(sizes, 1080))
         // Everything fits: no override.
         assertNull(youtubeMedia3AllowedVideoTracks(listOf(1080 to 1080, 1920 to 1080), 1080))
+        // Common 360p -> 1080p -> 1440p landscape ladders need no group override.
+        // Media3's size box already excludes 1440p, and Auto must remain free to switch groups.
+        assertNull(youtubeMedia3AllowedVideoTracks(listOf(640 to 360, 1920 to 1080, 2560 to 1440), 1080))
         // Nothing fits: the box stays the only limit (never an empty selection).
         assertNull(youtubeMedia3AllowedVideoTracks(listOf(1440 to 1440), 720))
         assertNull(youtubeMedia3AllowedVideoTracks(sizes, 0))
