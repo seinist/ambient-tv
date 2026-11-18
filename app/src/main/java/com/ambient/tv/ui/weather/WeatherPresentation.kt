@@ -3,6 +3,7 @@ package com.ambient.tv.ui.weather
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.Lifecycle
@@ -15,6 +16,7 @@ import com.ambient.tv.data.weather.WeatherRepository
 import com.ambient.tv.data.weather.WeatherSettings
 import com.ambient.tv.data.weather.WeatherSnapshot
 import com.ambient.tv.data.weather.WeatherState
+import com.ambient.tv.ui.common.rememberWallClock
 import dagger.hilt.android.lifecycle.HiltViewModel
 import javax.inject.Inject
 import kotlinx.coroutines.delay
@@ -25,10 +27,8 @@ data class WeatherPresentation(
     val screensaver: WeatherSnapshot? = null,
     /** NavHost stays composed below screensaver/standby/PiP; its pages must suspend their work. */
     val contentVisible: Boolean = true,
-    /** Reserve geometry only during an unresolved load, never after a failed/empty result. */
-    val headerPending: Boolean = false,
 ) {
-    val hasHeader: Boolean get() = headerPending || header != null
+    val hasHeader: Boolean get() = header != null
 }
 
 /**
@@ -40,22 +40,17 @@ internal fun weatherPresentationFromState(
     settings: WeatherSettings,
     state: WeatherState,
     contentVisible: Boolean = true,
+    nowMillis: Long = System.currentTimeMillis(),
 ): WeatherPresentation {
     val canShow = settings.enabled && settings.selectedLocation != null
     val usable = state.data?.takeIf {
-        canShow && it.matches(settings) && it.current?.temperature?.isFinite() == true
+        canShow && it.matches(settings) && it.current?.temperature?.isFinite() == true && !it.isStale(nowMillis)
     }
     val header = usable.takeIf { settings.showInHeader }
-    // An enabled weather widget can reserve a small slot while a response is pending.
-    // On HTTP/parser/offline errors without cached conditions the slot disappears, too.
-    // A complete response with no current temperature is likewise not usable here.
-    val pending = canShow && settings.showInHeader && header == null &&
-        state.error == null && (state.loading || state.data == null)
     return WeatherPresentation(
         header = header,
         screensaver = usable.takeIf { settings.showInScreensaver },
         contentVisible = contentVisible,
-        headerPending = pending,
     )
 }
 
@@ -78,13 +73,20 @@ fun rememberWeatherPresentation(
     val lifecycle = LocalLifecycleOwner.current.lifecycle
     val active = settings.enabled && settings.selectedLocation != null &&
         ((headerVisible && settings.showInHeader) || (screensaverVisible && settings.showInScreensaver))
+    // The compact forecast vanishes as soon as its existing 30-minute cache TTL expires,
+    // even without a new response or another navigation event.
+    val nowMillis = if (active) {
+        val minute by rememberWallClock()
+        remember(minute) { System.currentTimeMillis() }
+    } else System.currentTimeMillis()
     LaunchedEffect(repository, lifecycle, active, settings.selectedLocation, settings.temperatureUnit, settings.windUnit) {
         if (active) lifecycle.repeatOnLifecycle(Lifecycle.State.RESUMED) {
             while (true) {
-                repository.refresh()
+                // Show a still-fresh disk snapshot immediately, then replace it with live data.
+                repository.refresh(force = true)
                 delay(WEATHER_CACHE_TTL_MILLIS)
             }
         }
     }
-    return weatherPresentationFromState(settings, state, contentVisible)
+    return weatherPresentationFromState(settings, state, contentVisible, nowMillis)
 }
