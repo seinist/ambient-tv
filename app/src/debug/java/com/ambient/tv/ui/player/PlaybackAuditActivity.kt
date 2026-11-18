@@ -101,7 +101,6 @@ class PlaybackAuditActivity : ComponentActivity() {
                     } else Text("Browsing while playback continues", Modifier.align(Alignment.Center))
                     if (!showOutputPanel && !showScalingPanel) BackgroundPlaybackBar(
                         onOpen = { showPlayer = true },
-                        onPlayNext = {},
                         modifier = Modifier.align(Alignment.BottomCenter),
                     )
                 }
