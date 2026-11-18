@@ -18,7 +18,7 @@ class CinematicViewportTest {
         val poster = libraryCinematicTileWidth(available, poster = true, 172.dp)
         assertTrue(landscape < 252.dp)
         assertTrue(poster < 172.dp)
-        assertTrue(landscape * (9f / 16f) + 130.dp + 120.dp <= available)
+        assertTrue(landscape * (9f / 16f) + 122.dp + 120.dp <= available)
         assertTrue(poster * 1.5f + 54.dp + 110.dp <= available)
     }
 

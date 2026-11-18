@@ -15,9 +15,9 @@ internal fun libraryCinematicTileWidth(viewportHeight: Dp, poster: Boolean, pref
     )
     // Tile row top/bottom padding and its preceding spacer. Landscape cards also have
     // title/metadata below the artwork and a 16dp focus gutter.
-    val rowChrome = if (poster) 54.dp else 130.dp
+    val rowChrome = if (poster) 54.dp else 122.dp
     val availableArtworkHeight = (viewportHeight - reservedHero - rowChrome).coerceAtLeast(0.dp)
-    return minOf(preferredWidth, availableArtworkHeight * if (poster) 2f / 3f else 16f / 9f)
+    return minOf(preferredWidth, availableArtworkHeight * (if (poster) 2f / 3f else 16f / 9f))
 }
 
 /** SmartTube cinematic cards are thumbnail-only, with no text below the artwork. */
