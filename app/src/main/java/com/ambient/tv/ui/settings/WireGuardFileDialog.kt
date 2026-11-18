@@ -206,10 +206,10 @@ internal fun TextFileImportDialog(
                 )
             }
             if (onSystemPicker != null) {
-                TvActionButton(stringResource(R.string.wg_file_system_picker), onSystemPicker, focusFirst(), icon = Icons.Default.Description)
+                TvActionButton(stringResource(R.string.wg_file_system_picker), onSystemPicker, focusFirst(), icon = Icons.Default.Description, fillWidth = true)
             }
         } else {
-            TvActionButton(stringResource(R.string.files_back), ::goUp, Modifier.focusRequester(first))
+            TvActionButton(stringResource(R.string.files_back), ::goUp, Modifier.focusRequester(first), fillWidth = true)
             when {
                 loading -> Text(stringResource(R.string.files_connecting), style = MaterialTheme.typography.bodySmall)
                 failed -> Text(stringResource(R.string.files_connection_error), color = MaterialTheme.colorScheme.error)
