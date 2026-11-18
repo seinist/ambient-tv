@@ -34,9 +34,23 @@ class InteractionStyleTest {
         assertEquals(110, focusBorderFadeDurationMs(focused = false, reducedEffects = true))
     }
 
-    @Test fun focusOutlineKeepsShortFadesForBalancedAndMaximumProfiles() {
-        assertEquals(160, focusBorderFadeDurationMs(focused = true, reducedEffects = false))
-        assertEquals(130, focusBorderFadeDurationMs(focused = false, reducedEffects = false))
+    @Test fun focusOutlineSoftensBalancedAndMaximumProfiles() {
+        assertEquals(200, focusBorderFadeDurationMs(focused = true, reducedEffects = false))
+        assertEquals(170, focusBorderFadeDurationMs(focused = false, reducedEffects = false))
+    }
+
+    @Test fun controlFocusFadesAreSmoothAndExitQuickerForBothButtonTypes() {
+        assertEquals(200, controlFocusFadeDurationMs(focused = true, reducedEffects = false))
+        assertEquals(170, controlFocusFadeDurationMs(focused = false, reducedEffects = false))
+        assertEquals(190, controlFocusFadeDurationMs(focused = true, reducedEffects = false, osd = true))
+        assertEquals(160, controlFocusFadeDurationMs(focused = false, reducedEffects = false, osd = true))
+    }
+
+    @Test fun reducedEffectsKeepShortDrawOnlyFadesForAllButtonTypes() {
+        for (osd in listOf(false, true)) {
+            assertEquals(140, controlFocusFadeDurationMs(focused = true, reducedEffects = true, osd = osd))
+            assertEquals(110, controlFocusFadeDurationMs(focused = false, reducedEffects = true, osd = osd))
+        }
     }
 
     @Test fun foregroundSwitchesWithTheActionFill() {
