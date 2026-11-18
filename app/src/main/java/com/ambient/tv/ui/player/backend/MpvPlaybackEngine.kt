@@ -628,6 +628,7 @@ internal class MpvPlaybackEngine(
         gpuOutput = gpuQualityMode,
         encodedAudio = audioSession.outputPlan().encoded,
         svpActive = "plex-svp" in activeCpuImageFilters,
+        liveStream = liveStream,
     )
 
     fun applyAudioOptions() {

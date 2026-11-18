@@ -107,8 +107,6 @@ import com.ambient.tv.domain.repository.MediaRepository
 import com.ambient.tv.ui.navigation.Destinations
 import com.ambient.tv.ui.navigation.BackgroundPlayerReturnNavigation
 import com.ambient.tv.ui.navigation.PLAYBACK_DESTINATIONS
-import com.ambient.tv.ui.navigation.playbackBrowseOrigin
-import com.ambient.tv.ui.navigation.displayedPlaybackBrowseRoute
 import com.ambient.tv.ui.navigation.openAppHome
 import com.ambient.tv.ui.navigation.configuredContentRoute
 import com.ambient.tv.ui.navigation.isParameterizedSidebarRoute
@@ -136,6 +134,7 @@ import com.ambient.tv.ui.player.PlayerScreen
 import com.ambient.tv.ui.player.LocalPersistentPlaybackVideoHost
 import com.ambient.tv.ui.player.LocalVisibleBackgroundVideo
 import com.ambient.tv.ui.player.PersistentPlaybackVideoHost
+import com.ambient.tv.ui.player.shouldRetainMpvLiveVideoSurface
 import com.ambient.tv.ui.search.SearchScreen
 import com.ambient.tv.ui.server.ServerSelectScreen
 import com.ambient.tv.ui.server.ServerSelectViewModel
@@ -1428,8 +1427,8 @@ private fun AmbientTvApp(
         Destinations.SERVER_SELECT else rootRoute
     val currentBackStackEntry = navController.currentBackStackEntryAsState().value
     val currentRoute = currentBackStackEntry?.destination?.route ?: startDestination
-    // A mini-player preserves the route that originally launched this playback, even if
-    // subsequent sidebar navigation has removed that route from the current back stack.
+    // A reopened background player returns to the browse page currently underneath it;
+    // never reconstruct the original playback launch destination.
     val backgroundPlayerReturn = remember { BackgroundPlayerReturnNavigation() }
     val companionRoute by rememberUpdatedState(currentRoute)
     var companionServerSwitch by remember {
@@ -1592,6 +1591,7 @@ private fun AmbientTvApp(
                 ShellPlaybackState(
                     it.active,
                     it.active && it.metadata?.hasVideo == true,
+                    it.metadata?.isLive == true,
                     it.playing,
                     it.wantsToPlay,
                     it.metadata?.isTrailer == true,
@@ -1604,6 +1604,7 @@ private fun AmbientTvApp(
         ShellPlaybackState(
             it.active,
             it.active && it.metadata?.hasVideo == true,
+            it.metadata?.isLive == true,
             it.playing,
             it.wantsToPlay,
             it.metadata?.isTrailer == true,
@@ -1628,12 +1629,18 @@ private fun AmbientTvApp(
     // session becomes active and the root host takes over.
     val persistentVideoHost = onPlayerScreen || backgroundPlayback.activeVideo
     val showVisibleBackgroundVideo = visibleBackgroundVideoPlayback && persistentVideoHost && !onPlayerScreen
-    // Minimized playback used to keep decoding and filtering a full-screen video plane behind an
-    // opaque background, which is what made browsing choppy while the mini player ran. The video
-    // plane only exists while something can see it: the player screen, or the ambient backdrop.
-    // Its surface going away detaches the renderer's video output the same way a screen change
-    // does (audio and the session keep running) and comes back on the next frame it is shown.
-    val videoPlaneVisible = persistentVideoHost && (onPlayerScreen || showVisibleBackgroundVideo || pipPresentation)
+    // Ordinary minimized playback releases the invisible video surface to keep browse smooth.
+    // Exception: a live MPV stream must retain its Surface/VO across the in-app minimization:
+    // deselecting its video track while live audio continues can force a fresh decoder to catch
+    // up with the live clock on fullscreen return (slow/frozen picture).
+    // The normal opaque AppBackground still hides this output when background video is off.
+    val retainLiveMpvSurface = shouldRetainMpvLiveVideoSurface(
+        activeVideo = backgroundPlayback.activeVideo,
+        isLive = backgroundPlayback.isLive,
+        mpvActive = BackgroundPlaybackSession.activeHandle() is com.ambient.tv.ui.player.backend.MpvPlaybackController,
+    )
+    val videoPlaneVisible = persistentVideoHost &&
+        (onPlayerScreen || showVisibleBackgroundVideo || pipPresentation || retainLiveMpvSurface)
     // Sidebar selections target this group directly. Spatial focus search is unreliable while
     // Navigation Compose is replacing one destination tree with another.
     val contentFocusRequester = remember { FocusRequester() }
@@ -1860,26 +1867,13 @@ private fun AmbientTvApp(
     }
     // The photo viewer is a presentation too: a running slideshow must not start the screensaver.
     val onPlayerRoute = currentRoute in PLAYBACK_DESTINATIONS
-    val lastVisibleBrowseOrigin = remember { mutableStateOf<com.ambient.tv.ui.navigation.BackgroundPlayerOrigin?>(null) }
-    androidx.compose.runtime.SideEffect {
-        if (!onPlayerRoute) {
-            playbackBrowseOrigin(currentBackStackEntry)?.let { entry ->
-                val displayed = displayedPlaybackBrowseRoute(
-                    entry.route, currentRoute, currentFeedKey, appPreferences.youtubeStartFeedKey,
-                    currentTelegramSectionKey, currentRadioSectionKey,
-                )
-                lastVisibleBrowseOrigin.value = entry.copy(route = displayed)
-            }
-        }
-    }
     LaunchedEffect(currentBackStackEntry?.id) {
         val entry = currentBackStackEntry ?: return@LaunchedEffect
         if (entry.destination.route in PLAYBACK_DESTINATIONS) {
-            // Capture the actual back-stack entry, not the selected sidebar tab. Its route
-            // includes feed/channel, source and detail parameters needed for an exact return.
-            val previous = playbackBrowseOrigin(navController.previousBackStackEntry)
-            val displayedPrevious = lastVisibleBrowseOrigin.value?.takeIf { it.entryId == previous?.entryId }
-            backgroundPlayerReturn.enterPlayer(entry.id, displayedPrevious ?: previous)
+            backgroundPlayerReturn.enterPlayer(
+                entry.id,
+                previousIsPlayer = navController.previousBackStackEntry?.destination?.route in PLAYBACK_DESTINATIONS,
+            )
         } else {
             backgroundPlayerReturn.enterBrowse()
         }
@@ -2124,27 +2118,9 @@ private fun AmbientTvApp(
         if (!snapshot.active || onPlayerRoute) return false
         backgroundPlayerReturn.disarm()
         guardedSettingsExit {
-            // Put the original browse/detail page directly under the player. When that exact
-            // destination still exists, pop back to it to retain its ViewModel and focus state.
-            // Otherwise re-create its concrete route; the provider's playback-return mailbox
-            // will select the last played item when the player is subsequently dismissed.
-            backgroundPlayerReturn.origin?.let { origin ->
-                if (navController.currentBackStackEntry?.id != origin.entryId) {
-                    val restored = runCatching {
-                        navController.popBackStack(origin.backStackRoute, inclusive = false)
-                    }.getOrDefault(false)
-                    if (!restored) runCatching {
-                        navController.navigate(origin.route) { launchSingleTop = true }
-                    }
-                }
-            }
-            // Prepare the exact currently playing media focus for the browse entry placed
-            // beneath fullscreen. This also covers Next/Previous while the mini-player ran.
-            if (backgroundPlayerReturn.origin != null) {
-                com.ambient.tv.ui.common.NavigationPlaybackReturns.prepare(
-                    navController.currentBackStackEntry?.id, snapshot.metadata?.mediaId,
-                )
-            }
+            // One navigation operation: fullscreen is placed above the *current* browse/detail
+            // entry. Do not pop to the media origin or prepare a playing-item focus return.
+            // The existing entry retains its selected chip, scroll position and focused item.
             navController.navigate(playerRoute) { launchSingleTop = true }
             backgroundPlayerReturn.markMiniPlayerReentry(
                 navController.currentBackStackEntry?.takeIf { it.destination.route in PLAYBACK_DESTINATIONS }?.id,
@@ -2800,7 +2776,8 @@ private fun AmbientTvApp(
                             onBack = {
                                 if (navController.currentBackStackEntry === entry) {
                                     val previous = navController.previousBackStackEntry
-                                    if (previous?.destination?.route == Destinations.SEARCH) {
+                                    if (!backgroundPlayerReturn.isMiniPlayerReentry(entry.id) &&
+                                        previous?.destination?.route == Destinations.SEARCH) {
                                         com.ambient.tv.ui.common.NavigationPlaybackReturns.prepare(previous.id, playerModel.media.value?.mediaKey)
                                     }
                                     navigateBack()
@@ -2896,10 +2873,12 @@ private fun AmbientTvApp(
                         val playerModel = androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel<com.ambient.tv.ui.radio.RadioPlayerViewModel>()
                         com.ambient.tv.ui.radio.RadioPlayerScreen(viewModel = playerModel, onBack = {
                             if (navController.currentBackStackEntry === entry) {
-                                com.ambient.tv.ui.common.NavigationPlaybackReturns.prepare(
-                                    navController.previousBackStackEntry?.id,
-                                    playerModel.currentStation()?.id?.let { com.ambient.tv.data.radio.RADIO_HOME_ITEM_PREFIX + it },
-                                )
+                                if (!backgroundPlayerReturn.isMiniPlayerReentry(entry.id)) {
+                                    com.ambient.tv.ui.common.NavigationPlaybackReturns.prepare(
+                                        navController.previousBackStackEntry?.id,
+                                        playerModel.currentStation()?.id?.let { com.ambient.tv.data.radio.RADIO_HOME_ITEM_PREFIX + it },
+                                    )
+                                }
                                 navigateBack()
                             }
                         })
@@ -2943,9 +2922,11 @@ private fun AmbientTvApp(
                         LaunchedEffect(Unit) { BackgroundPlaybackSession.stop() }
                         SpotifyPlayerScreen(onBack = { playedTrackId ->
                             if (navController.currentBackStackEntry === entry) {
-                                com.ambient.tv.ui.common.NavigationPlaybackReturns.prepare(
-                                    navController.previousBackStackEntry?.id, playedTrackId?.let { "spotify:track:$it" },
-                                )
+                                if (!backgroundPlayerReturn.isMiniPlayerReentry(entry.id)) {
+                                    com.ambient.tv.ui.common.NavigationPlaybackReturns.prepare(
+                                        navController.previousBackStackEntry?.id, playedTrackId?.let { "spotify:track:$it" },
+                                    )
+                                }
                                 navigateBack()
                             }
                         })
@@ -3037,7 +3018,8 @@ private fun AmbientTvApp(
                             onBack = {
                                 if (navController.currentBackStackEntry === entry) {
                                     val previous = navController.previousBackStackEntry
-                                    if (previous?.destination?.route == Destinations.SEARCH) {
+                                    if (!backgroundPlayerReturn.isMiniPlayerReentry(entry.id) &&
+                                        previous?.destination?.route == Destinations.SEARCH) {
                                         com.ambient.tv.ui.common.NavigationPlaybackReturns.prepare(
                                             previous.id, playerModel.uiState.value.playback?.videoId?.let { "youtube:$it" },
                                         )
@@ -3370,9 +3352,11 @@ private fun AmbientTvApp(
                         val playerModel = androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel<com.ambient.tv.ui.tvheadend.TvheadendPlayerViewModel>()
                         TvheadendPlayerScreen(viewModel = playerModel, onBack = {
                             if (navController.currentBackStackEntry === entry) {
-                                com.ambient.tv.ui.common.NavigationPlaybackReturns.prepare(
-                                    navController.previousBackStackEntry?.id, playerModel.playbackReturnItemId(),
-                                )
+                                if (!backgroundPlayerReturn.isMiniPlayerReentry(entry.id)) {
+                                    com.ambient.tv.ui.common.NavigationPlaybackReturns.prepare(
+                                        navController.previousBackStackEntry?.id, playerModel.playbackReturnItemId(),
+                                    )
+                                }
                                 navController.popBackStack()
                             }
                         })
@@ -3397,6 +3381,14 @@ private fun AmbientTvApp(
                         PlayerScreen(
                             onBack = { playedRatingKey, mediaType ->
                                 if (navController.currentBackStackEntry !== entry) return@PlayerScreen
+                                if (backgroundPlayerReturn.isMiniPlayerReentry(entry.id)) {
+                                    // Reopening a running session isn't a new item selection.
+                                    // Back must restore the browse page/focus that was visible
+                                    // immediately before fullscreen, not a played episode detail.
+                                    navController.popBackStack()
+                                    plexRefreshBus.requestRefresh()
+                                    return@PlayerScreen
+                                }
                                 val previous = navController.previousBackStackEntry
                                 val episodeDetail = episodeDetailAfterPlayback(
                                     detailOrigin = entry.arguments?.getBoolean("detailOrigin") == true,
@@ -3647,6 +3639,7 @@ private fun spotifyWebAuthorized(tokenStore: TokenStore): Boolean {
 private data class ShellPlaybackState(
     val active: Boolean,
     val activeVideo: Boolean,
+    val isLive: Boolean,
     val playing: Boolean,
     val wantsToPlay: Boolean,
     val isTrailer: Boolean,

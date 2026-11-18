@@ -35,6 +35,10 @@ import org.robolectric.annotation.Config
 class HeaderClockAlignmentTest {
     @get:Rule val rule = createAndroidComposeRule<ComponentActivity>()
 
+    // TvChip reserves 2.dp around its visible/focus surface. Semantics boundaries refer to
+    // that visible chip, not the outer layout slot; mdpi qualifiers make 1.dp == 1 px here.
+    private val tvChipInsetPx = 2f
+
     private fun clockSettings(weatherLayout: String = ClockSettings.WEATHER_LAYOUT_LEFT) = ClockSettings(
         display = ClockSettings.DISPLAY_EVERYWHERE,
         size = ClockSettings.SIZE_LARGE,
@@ -73,8 +77,8 @@ class HeaderClockAlignmentTest {
         rule.runOnIdle { visible.value = false }
         rule.waitForIdle()
         val withoutClock = rule.onNodeWithTag("settings-history").fetchSemanticsNode().boundsInRoot
-        assertEquals("Without a clock, the last action ends at the right edge",
-            header.right, withoutClock.right, 1.01f)
+        assertEquals("Without a clock, only TvChip's focus inset remains",
+            header.right - tvChipInsetPx, withoutClock.right, 1.01f)
     }
 
     @Test fun sharedPageHeaderUsesTheSameRightEdgeAsSettings() {
@@ -134,12 +138,12 @@ class HeaderClockAlignmentTest {
         val utilitySettings = rule.onNodeWithTag("utility-header-settings").fetchSemanticsNode().boundsInRoot
         val utilityClock = rule.onNodeWithTag("utility-header-clock").fetchSemanticsNode().boundsInRoot
 
-        assertEquals("PageHeader action must start at header top", page.top, action.top, 1.01f)
-        assertEquals("Settings action must start at header top", settings.top, settingsAction.top, 1.01f)
+        assertEquals("PageHeader action keeps its 2dp focus inset", page.top + tvChipInsetPx, action.top, 1.01f)
+        assertEquals("Settings action keeps its 2dp focus inset", settings.top + tvChipInsetPx, settingsAction.top, 1.01f)
         assertEquals("Detail Back and Settings must share a top line", utilityBack.top, utilitySettings.top, 1.01f)
-        assertEquals("Page action-to-clock gap", 20f, pageClock.left - action.right, 1.01f)
-        assertEquals("Settings action-to-clock gap", 20f, settingsClock.left - settingsAction.right, 1.01f)
-        assertEquals("Detail action-to-clock gap", 20f, utilityClock.left - utilitySettings.right, 1.01f)
+        assertEquals("Page action-to-clock gap includes TvChip inset", 20f + tvChipInsetPx, pageClock.left - action.right, 1.01f)
+        assertEquals("Settings action-to-clock gap includes TvChip inset", 20f + tvChipInsetPx, settingsClock.left - settingsAction.right, 1.01f)
+        assertEquals("Detail action-to-clock gap includes TvChip inset", 20f + tvChipInsetPx, utilityClock.left - utilitySettings.right, 1.01f)
     }
 
     @Test fun switchingWeatherLayoutNeverMovesPageActionsVertically() {
@@ -178,7 +182,7 @@ class HeaderClockAlignmentTest {
         rule.waitForIdle()
         val page = rule.onNodeWithTag("page-header").fetchSemanticsNode().boundsInRoot
         val action = rule.onNodeWithTag("page-action").fetchSemanticsNode().boundsInRoot
-        assertEquals("No empty clock gap when the clock is hidden", page.right, action.right, 1.01f)
-        assertEquals("No vertical shift without a clock", page.top, action.top, 1.01f)
+        assertEquals("No empty clock gap beyond TvChip's focus inset", page.right - tvChipInsetPx, action.right, 1.01f)
+        assertEquals("No vertical shift beyond TvChip's focus inset", page.top + tvChipInsetPx, action.top, 1.01f)
     }
 }
