@@ -6,6 +6,8 @@ import com.ambient.tv.ui.theme.appOsdControlSurface
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.focusGroup
 import androidx.compose.foundation.layout.Arrangement
@@ -765,6 +767,9 @@ fun PlayerIconButton(
     val handheld = com.ambient.tv.ui.mobile.LocalHandheldUi.current
     val barInteractive = LocalPlayerBarInteractive.current
     var focused by remember { mutableStateOf(false) }
+    val interactions = remember { MutableInteractionSource() }
+    val pressed by interactions.collectIsPressedAsState()
+    val visuallyFocused = focused && barInteractive
     val playPauseFocus = LocalPlayerPlayPauseFocus.current
     val shape = RoundedCornerShape(LocalUiTokens.current.controlRadius)
     // Action-bar buttons root the panel click path; closing it focuses the button again.
@@ -791,14 +796,16 @@ fun PlayerIconButton(
             // 48 dp target even when the visible glyph remains deliberately small.
             .size(if (primary) 58.dp else 48.dp, if (handheld) 48.dp else 40.dp)
             .onFocusChanged { focused = it.isFocused }
-            .menuFocusMotion(focused)
-            // Size identifies the main action; only actual focus draws the focus treatment.
+            .menuFocusMotion(visuallyFocused)
+            // A retained row must never render ghost focus while compact or closing.
+            // Pressed/touch and D-pad feedback use the same OSD material on every engine.
             .appOsdControlSurface(
-                focused = focused, selected = selected, enabled = enabled || loading,
-                shape = shape, pressed = false,
+                focused = visuallyFocused, selected = selected, enabled = enabled || loading,
+                shape = shape, pressed = pressed && enabled && barInteractive,
             )
             .activateOnTvKey(onClick = click)
-            .clickable(enabled = barInteractive, role = Role.Button, onClick = click),
+            .clickable(interactionSource = interactions, indication = null,
+                enabled = barInteractive, role = Role.Button, onClick = click),
         horizontalArrangement = Arrangement.Center,
         verticalAlignment = Alignment.CenterVertically,
     ) {

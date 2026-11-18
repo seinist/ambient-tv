@@ -54,6 +54,7 @@ import com.ambient.tv.ui.player.ReferencePlayerHeader
 import com.ambient.tv.ui.player.ReferencePlayerOverlayBackground
 import com.ambient.tv.ui.player.TvPlayerSeekBar
 import com.ambient.tv.ui.player.PlayerTimelineSlot
+import com.ambient.tv.ui.player.PlayerOsdProgressTrack
 import com.ambient.tv.ui.player.rememberPlayerTimelineDuration
 
 /** TVHeadend OSD rendered with the same chrome hierarchy and controls as the Plex/Jellyfin player. */
@@ -187,13 +188,10 @@ fun BoxScope.TvhReferencePlayerChrome(
                             )
                         }
                     }
-                    if (!showTimeshift) LinearProgressIndicator(
-                        progress = {
-                            if (liveEventDurationMs > 0L)
-                                (liveEventPositionMs.toFloat() / liveEventDurationMs.toFloat()).coerceIn(0f, 1f)
-                            else 0f
-                        },
-                        color = com.ambient.tv.ui.theme.LocalPlaybackAccent.current.indicator,
+                    if (!showTimeshift) PlayerOsdProgressTrack(
+                        progress = if (liveEventDurationMs > 0L)
+                            (liveEventPositionMs.toFloat() / liveEventDurationMs.toFloat()).coerceIn(0f, 1f)
+                            else 0f,
                         modifier = Modifier.fillMaxWidth(),
                     )
                     // EPG is fetched separately from the stream. Empty text retains the line height

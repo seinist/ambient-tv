@@ -85,6 +85,7 @@ import com.ambient.tv.ui.player.ReferencePlayerHeader
 import com.ambient.tv.ui.player.ReferencePlayerOverlayBackground
 import com.ambient.tv.ui.player.TvPlayerSeekBar
 import com.ambient.tv.ui.player.PlayerTimelineSlot
+import com.ambient.tv.ui.player.PlayerOsdProgressTrack
 import com.ambient.tv.ui.player.rememberPlayerTimelineDuration
 import com.ambient.tv.ui.player.RequestPlayerOverlayFocus
 import com.ambient.tv.ui.player.handlePlayerOsdKey
@@ -543,9 +544,8 @@ internal data class RadioOsdModel(
                             modifier = Modifier.focusRequester(seekFocusRequester),
                         )
                     } else {
-                        LinearProgressIndicator(
-                            progress = { radioTimelineAccentFill(positionMs, timelineDurationMs) },
-                            color = com.ambient.tv.ui.theme.LocalPlaybackAccent.current.indicator,
+                        PlayerOsdProgressTrack(
+                            progress = radioTimelineAccentFill(positionMs, timelineDurationMs),
                             modifier = Modifier.fillMaxWidth(),
                         )
                     }

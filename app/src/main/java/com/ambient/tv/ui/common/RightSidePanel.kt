@@ -89,6 +89,8 @@ import com.ambient.tv.ui.sound.LocalUiSoundPlayer
 import com.ambient.tv.ui.performance.LocalPerformanceProfile
 import com.ambient.tv.ui.player.playerPanelInteractionGuard
 import com.ambient.tv.ui.theme.appControlSurface
+import com.ambient.tv.ui.theme.appOsdControlSurface
+import com.ambient.tv.ui.player.LocalPlayerChromeState
 import com.ambient.tv.ui.theme.menuFocusMotion
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.selected
@@ -857,8 +859,11 @@ fun RightPanelChoice(
         modifier = modifier
             .onFocusChanged { focused = it.isFocused; if (it.isFocused) uiSounds?.playFocus() }
             .menuFocusMotion(focused, focusedScale = 1.006f)
-            .appControlSurface(focused, selected, enabled = enabled, shape = shape,
-                selectionIndicator = SelectionIndicator.LEADING_BAR)
+            .then(if (LocalPlayerChromeState.current != null) Modifier.appOsdControlSurface(
+                focused = focused, selected = selected, enabled = enabled, shape = shape,
+                selectionIndicator = SelectionIndicator.LEADING_BAR,
+            ) else Modifier.appControlSurface(focused, selected, enabled = enabled, shape = shape,
+                selectionIndicator = SelectionIndicator.LEADING_BAR))
             .semantics { this.selected = selected }
             .activateOnTvKey(enabled = enabled, onClick = activate)
             .clickable(enabled = enabled, role = Role.Button, onClick = activate)
@@ -952,7 +957,9 @@ fun RightPanelInfoRow(text: String, modifier: Modifier = Modifier) {
         modifier = modifier
             .fillMaxWidth()
             .onFocusChanged { focused = it.isFocused }
-            .appControlSurface(focused, false, shape = shape)
+            .then(if (LocalPlayerChromeState.current != null) Modifier.appOsdControlSurface(
+                focused = focused, shape = shape,
+            ) else Modifier.appControlSurface(focused, false, shape = shape))
             .focusable()
             .padding(horizontal = 10.dp, vertical = 4.dp),
     )
