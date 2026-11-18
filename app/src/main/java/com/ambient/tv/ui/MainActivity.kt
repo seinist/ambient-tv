@@ -2138,6 +2138,13 @@ private fun AmbientTvApp(
                     }
                 }
             }
+            // Prepare the exact currently playing media focus for the browse entry placed
+            // beneath fullscreen. This also covers Next/Previous while the mini-player ran.
+            if (backgroundPlayerReturn.origin != null) {
+                com.ambient.tv.ui.common.NavigationPlaybackReturns.prepare(
+                    navController.currentBackStackEntry?.id, snapshot.metadata?.mediaId,
+                )
+            }
             navController.navigate(playerRoute) { launchSingleTop = true }
             backgroundPlayerReturn.markMiniPlayerReentry(
                 navController.currentBackStackEntry?.takeIf { it.destination.route in PLAYBACK_DESTINATIONS }?.id,
@@ -2226,16 +2233,6 @@ private fun AmbientTvApp(
         }
     }
 
-    // Back immediately after collapsing the TV sidebar is a shortcut to a running
-    // mini-player. Ordinary Back on browse/detail pages retains its existing behaviour.
-    if (!handheld && !sidebarHasFocus && currentRoute in SIDEBAR_ROUTES &&
-        currentRoute != Destinations.SETTINGS &&
-        backgroundPlayerReturn.canResumeAfterSidebarBack(backgroundPlayback.active)) {
-        androidx.activity.compose.BackHandler {
-            if (!reopenBackgroundPlayer()) navigateBack()
-        }
-    }
-
     if (handheld && onPlayerScreen) {
         androidx.activity.compose.BackHandler {
             navigateBack()
@@ -2309,6 +2306,7 @@ private fun AmbientTvApp(
             ) {
             com.ambient.tv.ui.mobile.HandheldNavigationHost(
                 currentRoute = currentRoute,
+                activeSidebarRoute = sidebarDestinationKey,
                 // A windowed video page is browsable chrome again: the bottom navigation returns
                 // with the system bars and only the fullscreen orientation hides it.
                 showNavigation = currentRoute !in FULLSCREEN_ROUTES || (handheld && onPlayerScreen && !handheldFullscreen.enabled),
@@ -2400,8 +2398,8 @@ private fun AmbientTvApp(
                     },
                     onSidebarClosedByBack = {
                         backgroundPlayerReturn.armAfterSidebarBack(
-                            currentRoute in SIDEBAR_ROUTES && currentRoute != Destinations.SETTINGS &&
-                                BackgroundPlaybackSession.snapshot.value.metadata != null,
+                            currentRoute !in FULLSCREEN_ROUTES && currentRoute != Destinations.SETTINGS &&
+                                BackgroundPlaybackSession.snapshot.value.metadata?.route?.isNotBlank() == true,
                         )
                     },
                     onResumePlaybackAfterBack = {
@@ -3592,6 +3590,18 @@ private fun AmbientTvApp(
         }
     }
     } // PlaybackPresentationProvider
+    // Destination BackHandlers are composed inside NavHost. Register this one-shot handler
+    // after them so a second Back after closing the sidebar cannot be eaten by a nested view.
+    if (!handheld && !sidebarHasFocus && currentRoute !in FULLSCREEN_ROUTES &&
+        currentRoute != Destinations.SETTINGS &&
+        backgroundPlayerReturn.canResumeAfterSidebarBack(backgroundPlayback.active)) {
+        androidx.activity.compose.BackHandler {
+            if (!reopenBackgroundPlayer()) {
+                backgroundPlayerReturn.disarm()
+                navigateBack()
+            }
+        }
+    }
 }
 
 @Composable
