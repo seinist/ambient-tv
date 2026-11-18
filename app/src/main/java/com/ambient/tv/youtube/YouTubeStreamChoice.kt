@@ -106,11 +106,22 @@ fun youtubeMedia3MaxVideoSize(maxQualityHeight: Int): Int = (maxQualityHeight * 
  * The square box alone lets square (and near-square) streams of a higher step through: 1440×1440
  * is a 1440p stream but fits the 2016 box of 1080p. Of the [sizes] (width to height) of the selected
  * video group, the indices whose quality step ([youtubeQualityHeight]) is within [maxQualityHeight]
- * (+5 %). Null when nothing needs excluding, or when nothing would remain (the box stays the limit).
+ * (+5 %). An override is needed only when an over-cap stream also fits Media3's square size
+ * box: normal over-cap landscape tracks are already excluded by setMaxVideoSize. Avoid pinning
+ * Auto to its initially chosen track group when that is unnecessary.
+ * Null when nothing needs excluding, or when nothing would remain (the box stays the limit).
  */
 fun youtubeMedia3AllowedVideoTracks(sizes: List<Pair<Int, Int>>, maxQualityHeight: Int): List<Int>? {
     if (maxQualityHeight <= 0) return null
     val limit = maxQualityHeight * 105 / 100
+    val box = youtubeMedia3MaxVideoSize(maxQualityHeight)
+    // Only square or unusual aspect ratios can exceed the quality step while fitting the box.
+    // Returning an override for ordinary 4K tracks would lock a 360p starting group and block
+    // Media3 from choosing a better codec group at 1080p.
+    if (sizes.none { (width, height) ->
+            width > 0 && height > 0 && width <= box && height <= box &&
+                youtubeQualityHeight(width, height) > limit
+        }) return null
     val allowed = sizes.indices.filter { youtubeQualityHeight(sizes[it].first, sizes[it].second) <= limit }
     return allowed.takeIf { it.isNotEmpty() && it.size < sizes.size }
 }
