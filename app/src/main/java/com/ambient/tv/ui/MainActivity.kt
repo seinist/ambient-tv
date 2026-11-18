@@ -129,7 +129,6 @@ import com.ambient.tv.ui.youtube.YouTubeSelectionDialog
 import com.ambient.tv.ui.youtube.YouTubeSelectionRoute
 import com.ambient.tv.ui.youtube.youtubeSelectionRoute
 import com.ambient.tv.ui.player.BackgroundPlaybackSession
-import com.ambient.tv.ui.player.NextUpCandidate
 import com.ambient.tv.ui.player.PlayerScreen
 import com.ambient.tv.ui.player.LocalPersistentPlaybackVideoHost
 import com.ambient.tv.ui.player.LocalVisibleBackgroundVideo
@@ -2183,32 +2182,6 @@ private fun AmbientTvApp(
         openSystemSettings(category)
     }
 
-    fun playNextFromSidebar(candidate: NextUpCandidate) {
-        val route = when (candidate.source.lowercase()) {
-            "plex", "jellyfin", "emby", "files", "dlna", "shared" -> Destinations.player(candidate.mediaId)
-            "youtube" -> Destinations.youtubePlayer(candidate.mediaId)
-            else -> return
-        }
-        guardedSettingsExit {
-            if (handheld && companionVm.manager.state.value.paired.isNotEmpty()) {
-                playOnSelectedTarget(route)
-                return@guardedSettingsExit
-            }
-            BackgroundPlaybackSession.recordManualNextUp(candidate)
-            if (onPlayerScreen && com.ambient.tv.ui.player.PlayerItemNavigation.playNext(candidate)) return@guardedSettingsExit
-            // Same route-pattern pitfall as in-player Next: if a matching fullscreen player is
-            // already on top, replace it so a fresh ViewModel loads the next media id.
-            val replaceTop = when (candidate.source.lowercase()) {
-                "plex", "jellyfin", "emby", "files", "dlna", "shared" -> currentRoute == Destinations.PLAYER
-                "youtube" -> currentRoute == Destinations.YOUTUBE_PLAYER
-                else -> false
-            }
-            backgroundPlayerReturn.markNextPlayerContinuation()
-            if (replaceTop) navController.popBackStack()
-            navController.navigate(route)
-        }
-    }
-
     if (handheld && onPlayerScreen) {
         androidx.activity.compose.BackHandler {
             navigateBack()
@@ -2382,7 +2355,6 @@ private fun AmbientTvApp(
                         backgroundPlayerReturn.canResumeAfterSidebarBack(BackgroundPlaybackSession.snapshot.value.active) &&
                             reopenBackgroundPlayer()
                     },
-                    onPlayNext = ::playNextFromSidebar,
                     requestContentFocus = ::requestContentFocus,
                     contentReady = !sidebarContentPending || wakeFocus.isAvailable,
                     isEntryRequested = { sidebarEntryRequested.value },
