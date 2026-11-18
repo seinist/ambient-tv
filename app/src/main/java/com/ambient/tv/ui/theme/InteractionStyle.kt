@@ -397,6 +397,12 @@ fun Modifier.appControlSurface(
                     } else {
                         drawOutline(strokeOutline, outline, style = stroke)
                     }
+                    if (materialStyle != AccentStyle.LIGHT) {
+                        // A narrow traveling halo makes the opt-in gesture readable
+                        // from TV distance without changing layout or idle chrome.
+                        motionPaints?.drawOutline(this, strokeOutline, frame,
+                            emphasis = outline.alpha * .45f, drawStyle = Stroke(strokePx * 2f))
+                    }
                     motionPaints?.drawOutline(this, strokeOutline, frame,
                         emphasis = outline.alpha, drawStyle = stroke)
                 }
@@ -529,6 +535,8 @@ fun Modifier.animatedFocusBorder(
                                     style = glowStroke)
                             }
                             drawOutline(outline, focusBorder, alpha = color.alpha, style = stroke)
+                            motionPaints?.drawOutline(this, outline, frame,
+                                emphasis = color.alpha * .45f, drawStyle = Stroke(strokePx * 2f))
                         }
                         motionPaints?.drawOutline(this, outline, frame, emphasis = color.alpha, drawStyle = stroke)
                     }
@@ -618,6 +626,8 @@ fun Modifier.animatedFocusSurface(
                                 style = glowStroke)
                         }
                         drawOutline(inner, focusBorder, alpha = strokeColor.value.alpha, style = stroke)
+                        motionPaints?.drawOutline(this, inner, frame,
+                            emphasis = strokeColor.value.alpha * .45f, drawStyle = Stroke(strokePx * 2f))
                         motionPaints?.drawOutline(this, inner, frame, emphasis = strokeColor.value.alpha, drawStyle = stroke)
                     }
                 }
