@@ -56,8 +56,8 @@ class AccentMotionRenderingTest {
     }
 
     @Test fun everyStyleKeepsADistinctBorderForFocusAndSelection() {
-        val focusedSignatures = mutableSetOf<List<Int>>()
-        val selectedSignatures = mutableSetOf<List<Int>>()
+        val focusedSignatures = linkedMapOf<List<Int>, AccentStyle>()
+        val selectedSignatures = linkedMapOf<List<Int>, AccentStyle>()
         for (style in AccentStyle.entries) {
             val palette = controlPalette(AppSurface, AppSurfaceRaised, AppOnSurface,
                 AppOnSurfaceMuted, gold, style)
@@ -70,11 +70,20 @@ class AccentMotionRenderingTest {
                     palette.selectedBorderBrush(), style = Stroke(2f))
             }
             try {
-                fun Bitmap.signature() = (8..72 step 4).map { getColor(it, 4).toArgb() } +
-                    (5..19 step 2).map { getColor(4, it).toArgb() }
+                // A sparse top/left-edge sample missed distinctions visible elsewhere on
+                // the full 2–3px outline, falsely reporting identical material borders.
+                fun Bitmap.signature() = buildList {
+                    for (y in 2 until height - 2) for (x in 2 until width - 2) {
+                        add(getColor(x, y).toArgb())
+                    }
+                }
                 assertTrue("$style selected must remain thinner than focused", !focused.sameAs(selected))
-                focusedSignatures += focused.signature()
-                selectedSignatures += selected.signature()
+                val focusedSignature = focused.signature()
+                val selectedSignature = selected.signature()
+                val identicalFocus = focusedSignatures.putIfAbsent(focusedSignature, style)
+                val identicalSelection = selectedSignatures.putIfAbsent(selectedSignature, style)
+                assertTrue("$style focus duplicated $identicalFocus", identicalFocus == null)
+                assertTrue("$style selection duplicated $identicalSelection", identicalSelection == null)
             } finally {
                 focused.recycle()
                 selected.recycle()

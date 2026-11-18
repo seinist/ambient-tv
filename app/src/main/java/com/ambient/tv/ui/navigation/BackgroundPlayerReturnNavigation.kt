@@ -11,10 +11,9 @@ internal val PLAYBACK_DESTINATIONS = setOf(
 )
 
 /**
- * The TV sidebar's second Back press opens the active fullscreen player. The browse page
- * beneath it is the one the user was actually viewing, NOT the media's launch origin.
- *
- * A reopened player does not send "focus the playing item" commands when returning to that page.
+ * A one-shot Back from browsing resumes active background playback after either collapsing
+ * the TV sidebar or minimizing with the fullscreen-exit OSD button.
+ * The browse page and its focused item are never replaced by the media's launch origin.
  */
 internal class BackgroundPlayerReturnNavigation {
     var armedBySidebarBack by mutableStateOf(false)
@@ -22,6 +21,8 @@ internal class BackgroundPlayerReturnNavigation {
 
     private var reopenedPlayerEntryId: String? = null
     private var inheritReentryForNextPlayer = false
+    /** Set before an OSD exit callback pops its player destination; consumed on browse entry. */
+    private var fullscreenExitEntryId: String? = null
 
     fun enterPlayer(entryId: String, previousIsPlayer: Boolean) {
         if (reopenedPlayerEntryId != entryId) {
@@ -38,15 +39,28 @@ internal class BackgroundPlayerReturnNavigation {
     fun markMiniPlayerReentry(entryId: String?) {
         reopenedPlayerEntryId = entryId
         inheritReentryForNextPlayer = false
+        fullscreenExitEntryId = null
         armedBySidebarBack = false
     }
+
+    /** Called by the shared fullscreen-exit OSD control, before the player's onBack callback. */
+    fun beginFullscreenExit(entryId: String?) {
+        if (entryId == null) return
+        fullscreenExitEntryId = entryId
+        armedBySidebarBack = true
+    }
+
+    /** Do not focus a played item/episode when this exit only minimized a running session. */
+    fun preservesBrowseContextOnExit(entryId: String?): Boolean =
+        entryId != null && (entryId == reopenedPlayerEntryId || entryId == fullscreenExitEntryId)
 
     fun isMiniPlayerReentry(entryId: String?): Boolean =
         entryId != null && reopenedPlayerEntryId == entryId
 
-    /** The existing browse entry, its selected category and its focus are left untouched. */
+    /** Only a fullscreen-exit transition arms Back on the newly revealed browse destination. */
     fun enterBrowse() {
-        armedBySidebarBack = false
+        armedBySidebarBack = fullscreenExitEntryId != null
+        fullscreenExitEntryId = null
         reopenedPlayerEntryId = null
         inheritReentryForNextPlayer = false
     }
@@ -64,11 +78,25 @@ internal class BackgroundPlayerReturnNavigation {
     fun canResumeAfterSidebarBack(hasActivePlayback: Boolean): Boolean =
         armedBySidebarBack && hasActivePlayback
 
+    /** Detail pages have no sidebar; a stale sidebar-focus flag must not swallow their Back. */
+    fun canInterceptBackToPlayer(
+        route: String?,
+        hasActivePlayback: Boolean,
+        sidebarVisible: Boolean,
+        sidebarHasFocus: Boolean,
+    ): Boolean =
+        route != null &&
+            route !in PLAYBACK_DESTINATIONS &&
+            route != Destinations.SETTINGS &&
+            canResumeAfterSidebarBack(hasActivePlayback) &&
+            (!sidebarVisible || !sidebarHasFocus)
+
     fun disarm() { armedBySidebarBack = false }
 
     fun clearStoppedPlayback() {
         armedBySidebarBack = false
         reopenedPlayerEntryId = null
         inheritReentryForNextPlayer = false
+        fullscreenExitEntryId = null
     }
 }

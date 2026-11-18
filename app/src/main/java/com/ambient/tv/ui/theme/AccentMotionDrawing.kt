@@ -52,8 +52,15 @@ internal class AccentMotionPaints(private val accent: Color, val style: AccentSt
             Brush.linearGradient(0f to cool.copy(alpha = 0f), .28f to cool,
                 .66f to cool.copy(alpha = 0f), 1f to cool.copy(alpha = 0f))
         }
-        AccentStyle.CERAMIC -> Brush.verticalGradient(0f to edgeLight,
-            .12f to edgeLight.copy(alpha = 0f), 1f to edgeLight.copy(alpha = 0f))
+        // Ceramic's original 12% highlight faded out before reaching the inset 2–3dp
+        // focus stroke. Keep a short glazed lip through the top/side border so motion
+        // remains visible even on small chips, without washing the full control.
+        AccentStyle.CERAMIC -> Brush.verticalGradient(
+            0f to edgeLight,
+            .25f to edgeLight.copy(alpha = .55f),
+            .48f to edgeLight.copy(alpha = 0f),
+            1f to edgeLight.copy(alpha = 0f),
+        )
         AccentStyle.CHROME -> Brush.linearGradient(
             0f to clear, .41f to clear, .48f to light, .52f to light, .59f to clear, 1f to clear,
         )
