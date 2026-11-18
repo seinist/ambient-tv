@@ -343,7 +343,9 @@ fun Modifier.appControlSurface(
     val materialStyle = LocalAccentStyle.current
     val reducedEffects = LocalPerformanceProfile.current.reducedEffects
     val borderWidth = LocalUiTokens.current.focusBorder
-    val motion = rememberAccentMotionState(focused && enabled)
+    // A parent may own the shared clock (e.g. the whole OSD). Only its actually
+    // focused child may paint a moving outline; selected-only/idle remain stable.
+    val motion = rememberAccentMotionState(focused && enabled).takeIf { focused && enabled }
     val markerProgress = rememberSelectionIndicatorProgress(selected && enabled, focused && enabled)
     this.drawWithCache {
         val strokePx = borderWidth.toPx()
@@ -358,6 +360,7 @@ fun Modifier.appControlSurface(
         val stroke = Stroke(if (selected && !focused) strokePx * .68f else strokePx)
         val material = colors.palette.materialBrush()
         val focusBorder = colors.palette.focusBorderBrush()
+        val selectedBorder = colors.palette.selectedBorderBrush()
         val marker = selectionIndicatorRect(
             true, size, selectionIndicator, 1.dp.toPx(),
             layoutDirection == LayoutDirection.Rtl,
@@ -383,15 +386,19 @@ fun Modifier.appControlSurface(
                             alpha = outline.alpha * (.10f + .02f * (frame?.strength ?: 0f)),
                             style = glowStroke)
                     }
-                    motionPaints?.drawOutline(this, strokeOutline, frame,
-                        emphasis = outline.alpha, drawStyle = stroke)
-                    // Draw the focus boundary last. It follows the configured material and accent
-                    // instead of replacing every focus state with an almost white edge.
-                    if (focused && enabled && materialStyle != AccentStyle.LIGHT) {
-                        drawOutline(strokeOutline, focusBorder, alpha = outline.alpha, style = stroke)
+                    // Draw the chosen material *before* the motion. Previously the
+                    // opaque base stroke hid almost the entire animated reflection.
+                    // Selected-only controls get a quieter thin material stroke,
+                    // rather than the same plain colored border for every style.
+                    if (enabled && materialStyle != AccentStyle.LIGHT && (focused || selected)) {
+                        drawOutline(strokeOutline,
+                            if (focused) focusBorder else selectedBorder,
+                            alpha = outline.alpha, style = stroke)
                     } else {
                         drawOutline(strokeOutline, outline, style = stroke)
                     }
+                    motionPaints?.drawOutline(this, strokeOutline, frame,
+                        emphasis = outline.alpha, drawStyle = stroke)
                 }
             }
             // The selection marker expands/collapses inside its fixed geometry; its animation
@@ -477,7 +484,7 @@ fun Modifier.animatedFocusBorder(
     val strokeWidth = width ?: LocalUiTokens.current.focusBorder
     val reduced = LocalPerformanceProfile.current.reducedEffects
     val materialStyle = LocalAccentStyle.current
-    val motion = rememberAccentMotionState(focused)
+    val motion = rememberAccentMotionState(focused).takeIf { focused }
     // The outline's opacity fades on focus hops; its hue also crossfades when the user
     // changes the configured accent while a card is already focused.
     val accent = animateColorAsState(
@@ -551,7 +558,7 @@ fun Modifier.animatedFocusSurface(
     val reduced = LocalPerformanceProfile.current.reducedEffects
     val materialStyle = LocalAccentStyle.current
     val primaryAccent = MaterialTheme.colorScheme.primary
-    val motion = rememberAccentMotionState(focused)
+    val motion = rememberAccentMotionState(focused).takeIf { focused }
     val fade = tween<Color>(
         durationMillis = focusBorderFadeDurationMs(focused, reduced),
         easing = LinearOutSlowInEasing,
