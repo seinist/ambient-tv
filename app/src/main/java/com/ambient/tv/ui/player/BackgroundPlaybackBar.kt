@@ -4,13 +4,10 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.interaction.MutableInteractionSource
-import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -18,11 +15,8 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Fullscreen
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
-import androidx.compose.material.icons.filled.SkipNext
-import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material3.Icon
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -42,31 +36,24 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
-import com.ambient.tv.R
 import com.ambient.tv.ui.common.activateOnTvKey
-import com.ambient.tv.ui.theme.appControlSurface
 import kotlinx.coroutines.delay
 
 /**
- * Compact global controller for the service-owned background playback session.
- *
- * This deliberately is not a miniature copy of the fullscreen player. The sidebar only needs a
- * recognisable artwork tile, the current title/progress and the actions that are useful while the
- * user is browsing the app. Provider-specific artwork is supplied through [PlaybackMetadata].
+ * Focusable background playback shortcut, showing cover, title and progress.
+ * Opening the card resumes fullscreen playback; transport controls live in the player OSD.
+ * Provider-specific artwork is supplied through [PlaybackMetadata].
  */
 @Composable
 fun BackgroundPlaybackBar(
     onOpen: (String) -> Unit,
-    onPlayNext: (NextUpCandidate) -> Unit,
     onFocusExit: () -> Unit = {},
     onClose: () -> Unit = {},
     modifier: Modifier = Modifier,
@@ -79,22 +66,20 @@ fun BackgroundPlaybackBar(
     var barHasFocus by remember { mutableStateOf(false) }
     var compactHadFocus by remember { mutableStateOf(false) }
     var barHadFocus by remember { mutableStateOf(false) }
-    var focusedAction by remember { mutableStateOf<String?>(null) }
-    val fullscreenFocus = remember { FocusRequester() }
+    val artworkFocus = remember { FocusRequester() }
     DisposableEffect(Unit) { onDispose { onFocusOwnershipChanged(false) } }
 
     LaunchedEffect(barHasFocus, metadata) {
         if (!barHasFocus && metadata != null) {
             delay(80)
             barHadFocus = false
-            focusedAction = null
             if (compact) compactHadFocus = false
         }
     }
     LaunchedEffect(compact) {
         if (!compact && compactHadFocus) {
             withFrameNanos { }
-            runCatching { fullscreenFocus.requestFocus() }
+            runCatching { artworkFocus.requestFocus() }
             compactHadFocus = false
         }
     }
@@ -103,12 +88,6 @@ fun BackgroundPlaybackBar(
             delay(16)
             onFocusExit()
             barHadFocus = false
-        }
-    }
-    LaunchedEffect(metadata?.nextUp, focusedAction, compact, barHadFocus) {
-        if (!compact && barHadFocus && metadata != null && metadata.nextUp == null && focusedAction == "next") {
-            delay(16)
-            runCatching { fullscreenFocus.requestFocus() }
         }
     }
     metadata ?: return
@@ -173,15 +152,11 @@ fun BackgroundPlaybackBar(
         modifier = modifier
             .fillMaxWidth()
             .onFocusChanged { onFocusOwnershipChanged(it.hasFocus); barHasFocus = it.hasFocus; if (it.hasFocus) barHadFocus = true }
-            // Left/Right close the menu only from the outer edges (artwork row, first/last button);
-            // between the buttons they move focus as usual.
+            // The card is the only focus target. Left/Right leave the sidebar as before.
             .onPreviewKeyEvent { event ->
-                if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
-                when (event.key) {
-                    Key.DirectionLeft -> if (focusedAction == "artwork" || focusedAction == "play") { onClose(); true } else false
-                    Key.DirectionRight -> if (focusedAction == "artwork" || focusedAction == "fullscreen") { onClose(); true } else false
-                    else -> false
-                }
+                if (event.type == KeyEventType.KeyDown &&
+                    (event.key == Key.DirectionLeft || event.key == Key.DirectionRight)
+                ) { onClose(); true } else false
             }
             .focusGroup()
             .background(Color.White.copy(alpha = 0.045f), RoundedCornerShape(12.dp))
@@ -192,7 +167,8 @@ fun BackgroundPlaybackBar(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .onFocusChanged { artworkFocused = it.isFocused; if (it.isFocused) focusedAction = "artwork" }
+                .focusRequester(artworkFocus)
+                .onFocusChanged { artworkFocused = it.isFocused }
                 .border(1.5.dp, if (artworkFocused) MaterialTheme.colorScheme.primary else Color.Transparent, RoundedCornerShape(8.dp))
                 .activateOnTvKey(onClick = { onOpen(metadata.route) })
                 .clickable { onOpen(metadata.route) }
@@ -255,46 +231,6 @@ fun BackgroundPlaybackBar(
             )
         }
 
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.End,
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            MiniPlaybackAction(
-                icon = if (session.playing) Icons.Filled.Pause else Icons.Filled.PlayArrow,
-                label = stringResource(if (session.playing) R.string.player_pause else R.string.player_play),
-                onClick = BackgroundPlaybackSession::userToggle,
-                primary = true,
-                onFocusedChanged = { if (it) focusedAction = "play" },
-            )
-            Spacer(Modifier.width(3.dp))
-            MiniPlaybackAction(
-                icon = Icons.Filled.Stop,
-                label = stringResource(R.string.player_stop),
-                onClick = {
-                    onFocusExit()
-                    BackgroundPlaybackSession.stop()
-                },
-                onFocusedChanged = { if (it) focusedAction = "stop" },
-            )
-            metadata.nextUp?.let { next ->
-                Spacer(Modifier.width(3.dp))
-                MiniPlaybackAction(
-                    icon = Icons.Filled.SkipNext,
-                    label = stringResource(R.string.player_next),
-                    onClick = { onPlayNext(next) },
-                    onFocusedChanged = { if (it) focusedAction = "next" },
-                )
-            }
-            Spacer(Modifier.width(3.dp))
-            MiniPlaybackAction(
-                icon = Icons.Filled.Fullscreen,
-                label = stringResource(R.string.player_fullscreen),
-                onClick = { onOpen(metadata.route) },
-                modifier = Modifier.focusRequester(fullscreenFocus),
-                onFocusedChanged = { if (it) focusedAction = "fullscreen" },
-            )
-        }
     }
 }
 
@@ -374,37 +310,6 @@ fun BackgroundPlaybackIndicator(modifier: Modifier = Modifier) {
             modifier = Modifier.align(Alignment.BottomEnd).background(Color.Black.copy(alpha = 0.8f), androidx.compose.foundation.shape.CircleShape).size(16.dp),
             tint = Color.White,
         )
-    }
-}
-
-@Composable
-private fun MiniPlaybackAction(
-    icon: ImageVector,
-    label: String,
-    onClick: () -> Unit,
-    modifier: Modifier = Modifier,
-    primary: Boolean = false,
-    onFocusedChanged: (Boolean) -> Unit = {},
-) {
-    var focused by remember { mutableStateOf(false) }
-    val interactions = remember { MutableInteractionSource() }
-    val pressed by interactions.collectIsPressedAsState()
-    val shape = RoundedCornerShape(8.dp)
-    val foreground = MaterialTheme.colorScheme.onSurface
-
-    Box(
-        modifier = modifier
-            .size(30.dp)
-            .onFocusChanged {
-                focused = it.isFocused
-                onFocusedChanged(it.isFocused)
-            }
-            .appControlSurface(focused = focused, shape = shape, prominent = primary, pressed = pressed)
-            .activateOnTvKey(onClick = onClick)
-            .clickable(interactionSource = interactions, indication = null, onClick = onClick),
-        contentAlignment = Alignment.Center,
-    ) {
-        Icon(icon, contentDescription = label, tint = foreground, modifier = Modifier.size(18.dp))
     }
 }
 

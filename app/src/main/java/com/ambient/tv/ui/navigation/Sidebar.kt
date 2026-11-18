@@ -94,7 +94,6 @@ import com.ambient.tv.ui.common.liveTvMenuIcon
 import com.ambient.tv.ui.common.spotifyMenuIcon
 import com.ambient.tv.ui.common.youtubeFeedIcon
 import com.ambient.tv.ui.player.BackgroundPlaybackBar
-import com.ambient.tv.ui.player.NextUpCandidate
 import com.ambient.tv.ui.theme.LocalUiTokens
 import com.ambient.tv.ui.theme.Gold
 import com.ambient.tv.ui.performance.LocalPerformanceProfile
@@ -153,7 +152,6 @@ fun Sidebar(
     onOpenPlayback: (String) -> Unit = {},
     onSidebarClosedByBack: () -> Unit = {},
     onResumePlaybackAfterBack: () -> Boolean = { false },
-    onPlayNext: (NextUpCandidate) -> Unit = {},
     requestContentFocus: () -> Boolean = { false },
     contentReady: Boolean = true,
     isEntryRequested: () -> Boolean = { true },
@@ -186,7 +184,7 @@ fun Sidebar(
     SidebarContent(
         state, actions, currentRoute, currentSectionKey, currentYouTubeFeedKey, currentTrailerFeedKey, currentSpotifySectionKey,
         currentTvheadendTab, currentLiveTvSourceId, currentFileSourceId, currentDlnaServerId, onNavigate, onOpenSystemSettings,
-        onOpenPlayback, onSidebarClosedByBack, onResumePlaybackAfterBack, onPlayNext,
+        onOpenPlayback, onSidebarClosedByBack, onResumePlaybackAfterBack,
         requestContentFocus, contentReady, isEntryRequested, onEntryRequestConsumed,
         onFocusOwnershipChanged, modifier, currentRadioSectionKey, currentTelegramSectionKey, onExitApp, onOpenStartStatus,
     )
@@ -223,7 +221,6 @@ internal fun SidebarContent(
     onOpenPlayback: (String) -> Unit = {},
     onSidebarClosedByBack: () -> Unit = {},
     onResumePlaybackAfterBack: () -> Boolean = { false },
-    onPlayNext: (NextUpCandidate) -> Unit = {},
     requestContentFocus: () -> Boolean = { false },
     contentReady: Boolean = true,
     isEntryRequested: () -> Boolean = { true },
@@ -869,7 +866,9 @@ internal fun SidebarContent(
                             MaterialTheme.colorScheme.background.copy(alpha = 0.96f),
                         )))
                         .border(1.dp, Color.White.copy(alpha = 0.06f), RoundedCornerShape(LocalUiTokens.current.panelRadius * uiScale))
-                        .padding(horizontal = 14.dp * uiScale, vertical = 12.dp * uiScale),
+                        .padding(start = 14.dp * uiScale, end = 14.dp * uiScale,
+                            top = 12.dp * uiScale,
+                            bottom = if (miniPlayerVisible) 8.dp * uiScale else 12.dp * uiScale),
                 ) {
                     androidx.compose.runtime.CompositionLocalProvider(LocalSidebarLabelAlpha provides labelAlpha) {
                     SidebarPanelHead(uiScale)
@@ -1009,7 +1008,7 @@ internal fun SidebarContent(
                         }
                     }
                     BackgroundPlaybackBar(
-                        onOpen = onOpenPlayback, onPlayNext = onPlayNext,
+                        onOpen = onOpenPlayback,
                         compact = false,
                         onFocusOwnershipChanged = { miniPlayerHasFocus = it },
                         onFocusExit = { pendingFocus = "settings"; expanded = true },
