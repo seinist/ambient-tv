@@ -84,6 +84,8 @@ import androidx.tv.material3.Text
 import com.ambient.tv.ui.mobile.LocalHandheldUi
 import com.ambient.tv.ui.theme.LocalUiTokens
 import com.ambient.tv.ui.theme.appControlSurface
+import com.ambient.tv.ui.theme.appOsdControlSurface
+import com.ambient.tv.ui.player.LocalPlayerChromeState
 import com.ambient.tv.ui.theme.interactionColors
 import com.ambient.tv.ui.theme.menuFocusMotion
 import kotlin.math.roundToInt
@@ -288,7 +290,10 @@ private fun PlayerDropUpSelectorImpl(
                     if (it.isFocused) uiSounds?.playFocus()
                 }
                 .menuFocusMotion(focused, focusedScale = 1.006f)
-                .appControlSurface(focused = focused, enabled = enabled, shape = shape)
+                .then(if (LocalPlayerChromeState.current != null) Modifier.appOsdControlSurface(
+                    focused = focused, enabled = enabled, shape = shape,
+                    selectionIndicator = SelectionIndicator.LEADING_BAR,
+                ) else Modifier.appControlSurface(focused = focused, enabled = enabled, shape = shape))
                 .onPreviewKeyEvent { event ->
                     if (!expanded) return@onPreviewKeyEvent false
                     selectorMenuKey(event.key) {
@@ -520,6 +525,7 @@ private fun PlayerDropUpOptionRow(
     focusScrollbar: (() -> Unit)? = null,
 ) {
     val uiSounds = com.ambient.tv.ui.sound.LocalUiSoundPlayer.current
+    val inPlayer = LocalPlayerChromeState.current != null
     var optionFocused by remember(key) { mutableStateOf(false) }
     val singleSelection = closeOnSelection || LocalVideoPanelState.current != null
     val selected = key in selectedKeys
@@ -560,9 +566,13 @@ private fun PlayerDropUpOptionRow(
             }
             .focusRequester(optionFocus[index])
             .onFocusChanged { optionFocused = it.isFocused || it.hasFocus; if (it.isFocused) uiSounds?.playFocus() }
-            .background(fill, shape)
-            .border(LocalUiTokens.current.focusBorder, outline, shape)
-            .selectedStateMarker(selected && matchTrigger, SelectionIndicator.LEADING_BAR, focused = optionFocused)
+            .then(if (inPlayer) Modifier.appOsdControlSurface(
+                focused = optionFocused, selected = selected && matchTrigger,
+                enabled = enabled, shape = shape,
+                selectionIndicator = SelectionIndicator.LEADING_BAR,
+            ) else Modifier.background(fill, shape)
+                .border(LocalUiTokens.current.focusBorder, outline, shape)
+                .selectedStateMarker(selected && matchTrigger, SelectionIndicator.LEADING_BAR, focused = optionFocused))
             .onPreviewKeyEvent { event ->
                 selectorMenuKey(event.key) {
                     val dismissal = event.key == Key.Back || event.key == Key.Escape || event.key == Key.DirectionLeft

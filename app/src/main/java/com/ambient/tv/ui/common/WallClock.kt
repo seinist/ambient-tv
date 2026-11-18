@@ -38,6 +38,7 @@ import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.ambient.tv.data.local.ClockSettings
@@ -235,7 +236,12 @@ fun ClockWeatherDisplay(
 
 /** Bounded right-side widget for headers, Home and settings. The left-side actions keep their space. */
 @Composable
-fun HeaderClock(modifier: Modifier = Modifier, showClock: Boolean = LocalClockSettings.current.inHeader) {
+fun HeaderClock(
+    modifier: Modifier = Modifier,
+    showClock: Boolean = LocalClockSettings.current.inHeader,
+    /** Standalone clocks retain their original 8dp inset; shared TV headers own the 20dp gap. */
+    leadingPadding: Dp = 8.dp,
+) {
     val presentation = com.ambient.tv.ui.weather.LocalWeatherPresentation.current
     val weather = presentation.header
     val showWeather = presentation.hasHeader
@@ -249,7 +255,7 @@ fun HeaderClock(modifier: Modifier = Modifier, showClock: Boolean = LocalClockSe
     val weatherText = Color.White.copy(alpha = 0.86f * opacity)
     val weatherIcon = if (settings.weatherAccent) MaterialTheme.colorScheme.primary.copy(alpha = opacity)
         else weatherText
-    Box(modifier.padding(start = 8.dp).widthIn(max = maxWidth), contentAlignment = Alignment.TopEnd) {
+    Box(modifier.padding(start = leadingPadding).widthIn(max = maxWidth), contentAlignment = Alignment.TopEnd) {
         ClockWeatherDisplay(settings, showClock, showWeather, Modifier.widthIn(max = maxWidth)) {
             // Reserve the same weather slot for a pending forecast; no data is fetched here.
             Box(if (weather == null) Modifier.widthIn(min = 68.dp).heightIn(min = 20.dp) else Modifier,

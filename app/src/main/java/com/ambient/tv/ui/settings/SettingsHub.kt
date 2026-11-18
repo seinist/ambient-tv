@@ -88,11 +88,20 @@ internal fun SettingsHeaderRow(
 ) {
     Row(
         modifier = modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
         verticalAlignment = Alignment.Top,
     ) {
-        content()
-        if (clockVisible) HeaderClock(Modifier.align(Alignment.Top).testTag("settings-header-clock"))
+        // Group settings actions separately: their 8dp internal spacing must not
+        // add another gap in front of the clock compared with PageHeader.
+        Row(
+            modifier = Modifier.weight(1f),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.Top,
+            content = content,
+        )
+        if (clockVisible) {
+            Spacer(Modifier.width(HeaderActionClockGapTv))
+            HeaderClock(Modifier.align(Alignment.Top).testTag("settings-header-clock"), leadingPadding = 0.dp)
+        }
     }
 }
 
