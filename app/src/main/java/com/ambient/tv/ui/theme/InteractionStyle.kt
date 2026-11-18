@@ -62,11 +62,11 @@ internal fun selectionIndicatorRect(
 ): Rect? {
     if (!selected || indicator == SelectionIndicator.NONE || dp <= 0f ||
         !surface.width.isFinite() || !surface.height.isFinite()) return null
-    val inset = 4f * dp
+    val inset = 7f * dp
     val roomW = surface.width - 2f * inset
     val roomH = surface.height - 2f * inset
     if (roomW <= 0f || roomH <= 0f) return null
-    val thickness = minOf(3f * dp, roomW * .25f, roomH * .25f)
+    val thickness = minOf(2.5f * dp, roomW * .25f, roomH * .25f)
     return when (indicator) {
         SelectionIndicator.UNDERLINE -> {
             val width = minOf(32f * dp, roomW * .50f)
@@ -131,15 +131,16 @@ private fun DrawScope.drawSelectionIndicator(
     // The sidebar keeps its white focus pill. A dark rim makes its accent strip
     // visible even with yellow/white custom accents on the light pill.
     if (onLightBackground) {
-        val spread = 1.5.dp.toPx()
+        val spread = 0.8.dp.toPx()
         drawRoundRect(
-            color = Color.Black.copy(alpha = .80f),
+            color = Color.Black.copy(alpha = .56f),
             topLeft = Offset(revealed.left - spread, revealed.top - spread),
             size = Size(revealed.width + spread * 2f, revealed.height + spread * 2f),
             cornerRadius = CornerRadius(radius.x + spread),
         )
     }
-    drawRoundRect(brush = brush, topLeft = revealed.topLeft, size = revealed.size, cornerRadius = radius)
+    drawRoundRect(brush = brush, alpha = if (onLightBackground) .8f else 1f,
+        topLeft = revealed.topLeft, size = revealed.size, cornerRadius = radius)
 }
 
 /** Selected state uses one finite animation; no separate timer or layout invalidation. */

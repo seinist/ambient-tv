@@ -166,13 +166,14 @@ fun AmbientClock(
     if (settings.dateBeside) {
         // Keep Kodi's date-before-time option; put the integrated weather on its own short line.
         val dateAndTime: @Composable (Modifier) -> Unit = { rowModifier ->
-            Row(rowModifier.width(IntrinsicSize.Max), horizontalArrangement = Arrangement.spacedBy(12.dp),
+            Row(rowModifier.width(IntrinsicSize.Max), horizontalArrangement = Arrangement.spacedBy(8.dp),
                 verticalAlignment = Alignment.CenterVertically) {
                 date(Modifier.weight(1f, fill = false)); time()
             }
         }
         if (dateTrailing == null) dateAndTime(modifier)
-        else Column(modifier, horizontalAlignment = Alignment.End) {
+        else Column(modifier, horizontalAlignment = Alignment.End,
+            verticalArrangement = Arrangement.spacedBy(1.dp)) {
             dateAndTime(Modifier)
             dateTrailing()
         }
@@ -180,7 +181,7 @@ fun AmbientClock(
         Column(modifier, horizontalAlignment = Alignment.End) {
             time()
             if (dateTrailing != null) {
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                Row(horizontalArrangement = Arrangement.spacedBy(5.dp), verticalAlignment = Alignment.CenterVertically) {
                     if (dateFormatter != null) date(Modifier.weight(1f, fill = false))
                     dateTrailing()
                 }
@@ -212,20 +213,20 @@ fun ClockWeatherDisplay(
             AmbientClock(settings, modifier, dateTrailing = weatherContent)
         ClockSettings.WEATHER_LAYOUT_LEFT, ClockSettings.WEATHER_LAYOUT_RIGHT -> {
             val left = settings.weatherLayout == ClockSettings.WEATHER_LAYOUT_LEFT
-            Row(modifier, horizontalArrangement = Arrangement.spacedBy(10.dp),
+            Row(modifier, horizontalArrangement = Arrangement.spacedBy(5.dp),
                 verticalAlignment = Alignment.CenterVertically) {
                 if (left) weatherContent()
-                AmbientClock(settings, Modifier.weight(1f, fill = false))
+                AmbientClock(settings)
                 if (!left) weatherContent()
             }
         }
         ClockSettings.WEATHER_LAYOUT_ABOVE -> Column(modifier, horizontalAlignment = Alignment.End,
-            verticalArrangement = Arrangement.spacedBy(3.dp)) {
+            verticalArrangement = Arrangement.spacedBy(1.dp)) {
             weatherContent()
             AmbientClock(settings)
         }
         else -> Column(modifier, horizontalAlignment = Alignment.End,
-            verticalArrangement = Arrangement.spacedBy(3.dp)) {
+            verticalArrangement = Arrangement.spacedBy(1.dp)) {
             AmbientClock(settings)
             weatherContent()
         }
@@ -248,10 +249,11 @@ fun HeaderClock(modifier: Modifier = Modifier, showClock: Boolean = LocalClockSe
     val weatherText = Color.White.copy(alpha = 0.86f * opacity)
     val weatherIcon = if (settings.weatherAccent) MaterialTheme.colorScheme.primary.copy(alpha = opacity)
         else weatherText
-    Box(modifier.padding(start = 12.dp).widthIn(max = maxWidth), contentAlignment = Alignment.TopEnd) {
+    Box(modifier.padding(start = 8.dp).widthIn(max = maxWidth), contentAlignment = Alignment.TopEnd) {
         ClockWeatherDisplay(settings, showClock, showWeather, Modifier.widthIn(max = maxWidth)) {
             // Reserve the same weather slot for a pending forecast; no data is fetched here.
-            Box(Modifier.widthIn(min = 82.dp).heightIn(min = 24.dp), contentAlignment = Alignment.CenterEnd) {
+            Box(if (weather == null) Modifier.widthIn(min = 68.dp).heightIn(min = 20.dp) else Modifier,
+                contentAlignment = Alignment.CenterEnd) {
                 weather?.let {
                     com.ambient.tv.ui.weather.WeatherCompactSummary(
                         snapshot = it, textColor = weatherText, iconColor = weatherIcon,

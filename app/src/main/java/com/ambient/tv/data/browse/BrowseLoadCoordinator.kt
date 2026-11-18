@@ -37,8 +37,13 @@ internal class BrowseLoadGate(private val limit: Int) {
     private val mutex = Mutex()
     private val pending = mutableListOf<Waiter>()
     private var active = 0
-    // One slot stays available for newly opened views even if Home has a slow response.
-    private val lowerPriorityLimit = if (limit > 1) limit - 1 else limit
+    // Keep two slots for newly opened visible views in larger pools, even if Home
+    // refreshes or speculative provider reads are slow.
+    private val lowerPriorityLimit = when {
+        limit >= 4 -> limit - 2
+        limit > 1 -> limit - 1
+        else -> limit
+    }
     private var lowerPriorityActive = 0
 
     suspend fun <T> withPermit(priority: () -> BrowseLoadPriority, block: suspend () -> T): T {
@@ -110,7 +115,8 @@ internal class BrowseLoadScheduler(
         block: suspend () -> T,
     ): T {
         require(key.isNotBlank())
-        // The first caller owns UI/Compose dispatch; the shared task itself owns cancellation.
+        // Retain request-local context without inheriting the caller's Main dispatcher.
+        // Provider work and large response parsing must not block Compose grid navigation.
         val callerContext = currentCoroutineContext().minusKey(Job)
         val shared = synchronized(lock) {
             flights[key]?.also { current ->
@@ -125,7 +131,7 @@ internal class BrowseLoadScheduler(
                     while (fresh.priority == BrowseLoadPriority.BACKGROUND && !idle()) delay(200)
                     gate.withPermit({ fresh.priority }) {
                         Timber.tag("browse-load").d("start priority=%s", fresh.priority)
-                        withContext(callerContext) { block() }
+                        withContext(callerContext + Dispatchers.IO) { block() }
                     }
                 }
                 flights[key] = fresh
@@ -151,7 +157,7 @@ internal class BrowseLoadScheduler(
 @Singleton
 class BrowseLoadCoordinator @Inject constructor(private val scopes: BrowseScopes) {
     private val scheduler = BrowseLoadScheduler(
-        maxConcurrent = 4,
+        maxConcurrent = 6,
         idle = BrowseWorkBudget::idle,
     )
 

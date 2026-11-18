@@ -1139,12 +1139,11 @@ private fun SidebarItem(
     val activate = com.ambient.tv.ui.sound.rememberUiSoundAction(onClick = onSelect)
     // Focused row: solid white pill, dark text and icon. Active row: a faint white wash.
     val scheme = MaterialTheme.colorScheme
-    val hdrHeadroom = com.ambient.tv.ui.display.LocalUiHdrState.current?.headroom ?: 1f
     val fill by androidx.compose.animation.animateColorAsState(
         when {
             // Plex-style white focus pill, lifted in HDR UI like focused tiles (MediaTile).
-            isFocused -> com.ambient.tv.ui.display.uiHdrHighlight(scheme.onSurface, hdrHeadroom)
-            selected -> androidx.compose.ui.graphics.lerp(scheme.surface, scheme.primary, .16f)
+            isFocused -> scheme.onSurface.copy(alpha = .88f)
+            selected -> androidx.compose.ui.graphics.lerp(scheme.surface, scheme.primary, .12f)
             else -> scheme.surface.copy(alpha = 0f)
         },
         animationSpec = androidx.compose.animation.core.tween(focusFadeMs, easing = androidx.compose.animation.core.FastOutSlowInEasing),
@@ -1157,7 +1156,7 @@ private fun SidebarItem(
     )
     // Small, bounce-free lift on focus; graphicsLayer only, so no relayout.
     val lift by androidx.compose.animation.core.animateFloatAsState(
-        if (isFocused && menuMotionEnabled) 1.02f else 1f,
+        if (isFocused && menuMotionEnabled) 1.012f else 1f,
         animationSpec = androidx.compose.animation.core.spring(dampingRatio = 1f, stiffness = 800f),
         label = "sidebarItemLift",
     )
@@ -1193,7 +1192,7 @@ private fun SidebarItem(
             .clip(RoundedCornerShape(LocalUiTokens.current.controlRadius * uiScale))
             .background(fill)
             .selectedStateMarker(selected, SelectionIndicator.LEADING_BAR,
-                focusedOnLightSurface = isFocused, focused = isFocused)
+                focusedOnLightSurface = isFocused)
             .padding(horizontal = padH * uiScale, vertical = 6.dp * uiScale),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(iconGap * uiScale),
