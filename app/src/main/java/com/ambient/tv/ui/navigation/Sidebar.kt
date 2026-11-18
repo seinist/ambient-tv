@@ -1141,8 +1141,8 @@ private fun SidebarItem(
     val scheme = MaterialTheme.colorScheme
     val fill by androidx.compose.animation.animateColorAsState(
         when {
-            // Plex-style white focus pill, lifted in HDR UI like focused tiles (MediaTile).
-            isFocused -> scheme.onSurface.copy(alpha = .88f)
+            // Focus gets a neutral, high-contrast pill without the previous over-bright lift.
+            isFocused -> scheme.onSurface.copy(alpha = .78f)
             selected -> androidx.compose.ui.graphics.lerp(scheme.surface, scheme.primary, .12f)
             else -> scheme.surface.copy(alpha = 0f)
         },
