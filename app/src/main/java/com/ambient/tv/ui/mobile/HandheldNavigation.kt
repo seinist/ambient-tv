@@ -2,7 +2,12 @@ package com.ambient.tv.ui.mobile
 
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInWindow
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.snap
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -13,6 +18,12 @@ import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
@@ -33,11 +44,19 @@ import com.ambient.tv.ui.navigation.sidebarShowsGlobalSearch
 import com.ambient.tv.ui.player.BackgroundPlaybackSession
 import com.ambient.tv.ui.player.PlaybackArtworkCard
 import com.ambient.tv.ui.player.miniFormatDuration
+import com.ambient.tv.ui.performance.LocalPerformanceProfile
+import com.ambient.tv.ui.theme.LocalAccentStyle
+import com.ambient.tv.ui.theme.LocalPlaybackAccent
+import com.ambient.tv.ui.theme.SelectionIndicator
+import com.ambient.tv.ui.theme.accentBrush
+import com.ambient.tv.ui.theme.selectedStateMarker
 
 /** No TV layout wrapper: the existing television composition is invoked verbatim. */
 @Composable
 fun HandheldNavigationHost(
     currentRoute: String,
+    /** Concrete selected menu entry, including section/feed/source IDs. */
+    activeSidebarRoute: String? = currentRoute,
     showNavigation: Boolean,
     playerVisible: Boolean,
     onNavigate: (String) -> Unit,
@@ -152,6 +171,7 @@ fun HandheldNavigationHost(
         }
     }
     if (showSources) HandheldSources(
+        activeRoute = activeSidebarRoute,
         onDismiss = { showSources = false },
         onNavigate = { showSources = false; onNavigate(it) },
         onOpenSystemSettings = { showSources = false; onOpenSystemSettings(it) },
@@ -170,6 +190,79 @@ fun HandheldNavigationHost(
     }
 }
 
+/** A selected destination is different from touch focus; companion screens own the
+ * selection exclusively, so Sources and Remote never appear selected at the same time. */
+internal enum class HandheldNavTab { HOME, SOURCES, SEARCH, REMOTE, SETTINGS }
+
+internal fun handheldNavTabSelected(
+    route: String,
+    companionActive: Boolean,
+    tab: HandheldNavTab,
+): Boolean = if (companionActive) {
+    tab == HandheldNavTab.REMOTE
+} else when (tab) {
+    HandheldNavTab.HOME -> route == Destinations.HOME
+    HandheldNavTab.SEARCH -> route == Destinations.SEARCH
+    HandheldNavTab.SETTINGS -> route == Destinations.SETTINGS
+    HandheldNavTab.REMOTE -> false
+    HandheldNavTab.SOURCES -> route !in setOf(Destinations.HOME, Destinations.SEARCH, Destinations.SETTINGS)
+}
+
+/** Small inset material underline, not another large filled focus ring. The native
+ * Material3 item still handles the whole tap target and ripple. */
+@Composable
+private fun HandheldNavAccentIcon(icon: ImageVector, label: String, selected: Boolean) {
+    val accent = MaterialTheme.colorScheme.primary
+    val style = LocalAccentStyle.current
+    val underline = remember(accent, style) { accentBrush(accent, style) }
+    val allowMotion = LocalPerformanceProfile.current.allowSelectionIndicatorMotion
+    val visible by animateFloatAsState(
+        targetValue = if (selected) 1f else 0f,
+        animationSpec = if (allowMotion) tween(if (selected) 160 else 110) else snap(),
+        label = "handheld navigation selection",
+    )
+    Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        Icon(icon, label, Modifier.size(24.dp))
+        Box(
+            Modifier.width(24.dp).height(2.dp)
+                .graphicsLayer { alpha = visible; scaleX = visible }
+                .background(underline, RoundedCornerShape(50)),
+        )
+    }
+}
+
+@Composable
+private fun HandheldBottomTab(
+    selected: Boolean, icon: ImageVector, label: String, onClick: () -> Unit,
+) {
+    NavigationBarItem(
+        selected = selected, onClick = onClick,
+        icon = { HandheldNavAccentIcon(icon, label, selected) },
+        label = { Text(label, maxLines = 1) },
+        colors = NavigationBarItemDefaults.colors(
+            selectedIconColor = MaterialTheme.colorScheme.onSurface,
+            selectedTextColor = MaterialTheme.colorScheme.onSurface,
+            indicatorColor = MaterialTheme.colorScheme.primary.copy(alpha = .10f),
+        ),
+    )
+}
+
+@Composable
+private fun HandheldRailTab(
+    selected: Boolean, icon: ImageVector, label: String, onClick: () -> Unit,
+) {
+    NavigationRailItem(
+        selected = selected, onClick = onClick,
+        icon = { HandheldNavAccentIcon(icon, label, selected) },
+        label = { Text(label, maxLines = 1) },
+        colors = NavigationRailItemDefaults.colors(
+            selectedIconColor = MaterialTheme.colorScheme.onSurface,
+            selectedTextColor = MaterialTheme.colorScheme.onSurface,
+            indicatorColor = MaterialTheme.colorScheme.primary.copy(alpha = .10f),
+        ),
+    )
+}
+
 @Composable
 private fun HandheldNavigationBar(
     currentRoute: String,
@@ -185,19 +278,21 @@ private fun HandheldNavigationBar(
     val companion: com.ambient.tv.companion.CompanionViewModel = hiltViewModel()
     val companionState by companion.manager.state.collectAsState()
     val remote = stringResource(R.string.companion_remote_control)
+    val companionActive = companionState.handheldPageOpen()
+    fun selected(tab: HandheldNavTab) = handheldNavTabSelected(currentRoute, companionActive, tab)
     NavigationBar(windowInsets = WindowInsets(0, 0, 0, 0), tonalElevation = 0.dp) {
-        if (showHome) NavigationBarItem(!companionState.handheldPageOpen() && currentRoute == Destinations.HOME, { onNavigate(Destinations.HOME) },
-            { Icon(Icons.Default.Home, home) }, label = { Text(home) })
-        NavigationBarItem(!companionState.handheldPageOpen() && currentRoute !in setOf(Destinations.HOME, Destinations.SEARCH, Destinations.SETTINGS), onOpenSources,
-            { Icon(Icons.Default.Apps, sources) }, label = { Text(sources) })
-        if (showSearch) {
-            NavigationBarItem(!companionState.handheldPageOpen() && currentRoute == Destinations.SEARCH, { onNavigate(Destinations.SEARCH) },
-                { Icon(Icons.Default.Search, search) }, label = { Text(search) })
+        if (showHome) HandheldBottomTab(selected(HandheldNavTab.HOME), Icons.Default.Home, home) {
+            onNavigate(Destinations.HOME)
         }
-        NavigationBarItem(companionState.handheldPageOpen(), companion.manager::showRemoteOrDevices,
-            { Icon(Icons.Default.SettingsRemote, remote) }, label = { Text(remote, maxLines = 1) })
-        NavigationBarItem(!companionState.handheldPageOpen() && currentRoute == Destinations.SETTINGS, { onNavigate(Destinations.SETTINGS) },
-            { Icon(Icons.Default.Settings, settings) }, label = { Text(settings, maxLines = 1) })
+        HandheldBottomTab(selected(HandheldNavTab.SOURCES), Icons.Default.Apps, sources, onOpenSources)
+        if (showSearch) HandheldBottomTab(selected(HandheldNavTab.SEARCH), Icons.Default.Search, search) {
+            onNavigate(Destinations.SEARCH)
+        }
+        HandheldBottomTab(selected(HandheldNavTab.REMOTE), Icons.Default.SettingsRemote, remote,
+            companion.manager::showRemoteOrDevices)
+        HandheldBottomTab(selected(HandheldNavTab.SETTINGS), Icons.Default.Settings, settings) {
+            onNavigate(Destinations.SETTINGS)
+        }
     }
 }
 
@@ -216,26 +311,26 @@ private fun HandheldNavigationRail(
     val companion: com.ambient.tv.companion.CompanionViewModel = hiltViewModel()
     val companionState by companion.manager.state.collectAsState()
     val remote = stringResource(R.string.companion_remote_control)
-    // Parent padding no longer reserves the side status/cutout (that was the dead column).
-    // Keep the inset inside the rail so its icons clear the notch while the rail itself
-    // still reaches the screen edge.
+    val companionActive = companionState.handheldPageOpen()
+    fun selected(tab: HandheldNavTab) = handheldNavTabSelected(currentRoute, companionActive, tab)
+    // Preserve the old notch/safe-area behavior and native Material3 item touch targets.
     NavigationRail(
         windowInsets = WindowInsets.statusBars.union(WindowInsets.displayCutout)
             .only(WindowInsetsSides.Horizontal),
     ) {
         Spacer(Modifier.weight(1f))
-        if (showHome) NavigationRailItem(!companionState.handheldPageOpen() && currentRoute == Destinations.HOME, { onNavigate(Destinations.HOME) },
-            { Icon(Icons.Default.Home, home) }, label = { Text(home, maxLines = 1) })
-        NavigationRailItem(!companionState.handheldPageOpen() && currentRoute !in setOf(Destinations.HOME, Destinations.SEARCH, Destinations.SETTINGS), onOpenSources,
-            { Icon(Icons.Default.Apps, sources) }, label = { Text(sources, maxLines = 1) })
-        if (showSearch) {
-            NavigationRailItem(!companionState.handheldPageOpen() && currentRoute == Destinations.SEARCH, { onNavigate(Destinations.SEARCH) },
-                { Icon(Icons.Default.Search, search) }, label = { Text(search, maxLines = 1) })
+        if (showHome) HandheldRailTab(selected(HandheldNavTab.HOME), Icons.Default.Home, home) {
+            onNavigate(Destinations.HOME)
         }
-        NavigationRailItem(companionState.handheldPageOpen(), companion.manager::showRemoteOrDevices,
-            { Icon(Icons.Default.SettingsRemote, remote) }, label = { Text(remote, maxLines = 1) })
-        NavigationRailItem(!companionState.handheldPageOpen() && currentRoute == Destinations.SETTINGS, { onNavigate(Destinations.SETTINGS) },
-            { Icon(Icons.Default.Settings, settings) }, label = { Text(settings, maxLines = 1) })
+        HandheldRailTab(selected(HandheldNavTab.SOURCES), Icons.Default.Apps, sources, onOpenSources)
+        if (showSearch) HandheldRailTab(selected(HandheldNavTab.SEARCH), Icons.Default.Search, search) {
+            onNavigate(Destinations.SEARCH)
+        }
+        HandheldRailTab(selected(HandheldNavTab.REMOTE), Icons.Default.SettingsRemote, remote,
+            companion.manager::showRemoteOrDevices)
+        HandheldRailTab(selected(HandheldNavTab.SETTINGS), Icons.Default.Settings, settings) {
+            onNavigate(Destinations.SETTINGS)
+        }
         Spacer(Modifier.weight(1f))
     }
 }
@@ -249,6 +344,26 @@ private data class SourceEntry(
 )
 private data class SourceGroup(val system: MediaSystem, val entries: List<SourceEntry>)
 
+/** A submenu only marks its exact active concrete route; settings shortcuts and
+ * unrelated sections must never be highlighted just because they share a route pattern. */
+internal fun handheldSourceSelected(activeRoute: String?, entryRoute: String, settingsCategory: String? = null): Boolean =
+    settingsCategory == null && !activeRoute.isNullOrBlank() && activeRoute == entryRoute
+
+/** Same muted marker treatment as TV controls, with native touch ripples intact. */
+private fun Modifier.handheldSourceRow(selected: Boolean, onClick: () -> Unit): Modifier = this
+    .fillMaxWidth()
+    .padding(horizontal = 8.dp, vertical = 1.dp)
+    .clip(RoundedCornerShape(12.dp))
+    .selectedStateMarker(selected, SelectionIndicator.LEADING_BAR)
+    .clickable(onClick = onClick)
+    .semantics { this.selected = selected }
+
+@Composable
+private fun handheldSourceColors(selected: Boolean): ListItemColors = ListItemDefaults.colors(
+    containerColor = if (selected) MaterialTheme.colorScheme.primary.copy(alpha = .08f) else Color.Transparent,
+    leadingIconColor = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+)
+
 /** Same enabled Radio Browser categories and fallback as the TV sidebar. */
 internal fun handheldRadioSubmenuKeys(enabled: List<String>): List<String> =
     listOf("popular", "favorites", "recent", "genres", "countries", "languages")
@@ -258,6 +373,7 @@ internal fun handheldRadioSubmenuKeys(enabled: List<String>): List<String> =
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun HandheldSources(
+    activeRoute: String?,
     onDismiss: () -> Unit,
     onNavigate: (String) -> Unit,
     onOpenSystemSettings: (String) -> Unit = {},
@@ -414,6 +530,7 @@ private fun HandheldSources(
             menuItems.forEach { menuItem ->
                 if (menuItem.id == WEATHER_MENU_ID) {
                     item(menuItem.id) {
+                        val active = handheldSourceSelected(activeRoute, Destinations.WEATHER)
                         ListItem(
                             headlineContent = { Text(menuItem.label) },
                             supportingContent = if ("weather" in sidebarState.offlineSystems) {
@@ -421,13 +538,15 @@ private fun HandheldSources(
                             } else null,
                             leadingContent = { Icon(menuItem.icon, null) },
                             trailingContent = { Icon(Icons.Default.ChevronRight, null) },
-                            modifier = Modifier.clickable { onNavigate(Destinations.WEATHER) },
+                            colors = handheldSourceColors(active),
+                            modifier = Modifier.handheldSourceRow(active) { onNavigate(Destinations.WEATHER) },
                         )
                     }
                     return@forEach
                 }
                 val group = groupsById[menuItem.id] ?: return@forEach
                 val open = groups.size == 1 || expanded == group.system.key
+                val groupActive = group.entries.any { handheldSourceSelected(activeRoute, it.route, it.settingsCategory) }
                 item(group.system.key) {
                     ListItem(
                         headlineContent = { Text(menuItem.label) },
@@ -436,17 +555,22 @@ private fun HandheldSources(
                         } else null,
                         leadingContent = { SystemLogo(group.system) },
                         trailingContent = { Icon(if (open) Icons.Default.ExpandLess else Icons.Default.ExpandMore, null) },
-                        modifier = Modifier.clickable { expanded = if (open) null else group.system.key },
+                        colors = handheldSourceColors(groupActive),
+                        modifier = Modifier.handheldSourceRow(groupActive) { expanded = if (open) null else group.system.key },
                     )
                 }
                 if (open) items(group.entries, key = { "${group.system.key}:${it.key}" }) { entry ->
-                    ListItem(headlineContent = { Text(entry.title) },
+                    val active = handheldSourceSelected(activeRoute, entry.route, entry.settingsCategory)
+                    ListItem(
+                        headlineContent = { Text(entry.title) },
                         supportingContent = if (entry.offline) { { Text(stringResource(R.string.offline_badge)) } } else null,
                         trailingContent = { Icon(Icons.Default.ChevronRight, null) },
-                        modifier = Modifier.padding(start = 32.dp).clickable {
+                        colors = handheldSourceColors(active),
+                        modifier = Modifier.padding(start = 24.dp).handheldSourceRow(active) {
                             if (entry.settingsCategory != null) onOpenSystemSettings(entry.settingsCategory)
                             else onNavigate(entry.route)
-                        })
+                        },
+                    )
                 }
             }
             if (canManageMenu) item("order") {
@@ -460,6 +584,10 @@ private fun HandheldSources(
         }
     }
 }
+
+/** No false progress for radio/live/unknown durations; always clamp stale decoder positions. */
+internal fun handheldMiniPlayerProgress(positionMs: Long, durationMs: Long, live: Boolean): Float =
+    if (live || durationMs <= 0L) 0f else (positionMs.toDouble() / durationMs.toDouble()).toFloat().coerceIn(0f, 1f)
 
 @Composable
 private fun HandheldMiniPlayer(onOpen: (String) -> Unit) {
@@ -479,7 +607,12 @@ private fun HandheldMiniPlayer(onOpen: (String) -> Unit) {
     val durationMs = if (useSpotify) spotify.durationMs
         else metadata.durationMs.takeIf { it > 0L }
             ?: (session.status.durationMs + metadata.timelineOffsetMs).coerceAtLeast(0L)
+    val progress = handheldMiniPlayerProgress(positionMs, durationMs, metadata.isLive)
+    val accent = LocalPlaybackAccent.current.indicator
+    val accentStyle = LocalAccentStyle.current
+    val progressBrush = remember(accent, accentStyle) { accentBrush(accent, accentStyle) }
     Surface(tonalElevation = 3.dp) {
+        Column {
         Row(Modifier.fillMaxWidth().heightIn(min = 64.dp).padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
             Row(Modifier.weight(1f).clickable { onOpen(metadata.route) }.padding(vertical = 8.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 PlaybackArtworkCard(metadata.artworkUrl, metadata.title, Modifier.size(44.dp),
@@ -499,8 +632,24 @@ private fun HandheldMiniPlayer(onOpen: (String) -> Unit) {
                     )
                 }
             }
-            IconButton(onClick = { if (useSpotify) controls.toggleSpotify() else BackgroundPlaybackSession.userToggle() }) { Icon(if (playing) Icons.Default.Pause else Icons.Default.PlayArrow, stringResource(if (playing) R.string.player_pause else R.string.player_play)) }
-            IconButton(onClick = { if (useSpotify) controls.stopSpotify() else BackgroundPlaybackSession.stop() }) { Icon(Icons.Default.Close, stringResource(R.string.player_stop)) }
+            IconButton(
+                onClick = { if (useSpotify) controls.toggleSpotify() else BackgroundPlaybackSession.userToggle() },
+                colors = IconButtonDefaults.iconButtonColors(contentColor = MaterialTheme.colorScheme.primary),
+            ) {
+                Icon(if (playing) Icons.Default.Pause else Icons.Default.PlayArrow,
+                    stringResource(if (playing) R.string.player_pause else R.string.player_play))
+            }
+            IconButton(onClick = { if (useSpotify) controls.stopSpotify() else BackgroundPlaybackSession.stop() }) {
+                Icon(Icons.Default.Close, stringResource(R.string.player_stop))
+            }
+        }
+        // Reserve the slim accent timeline even while metadata loads; never advertise
+        // seek progress for a live/unknown-duration stream. No extra focus or click target.
+        Box(Modifier.fillMaxWidth().height(2.dp)
+            .graphicsLayer { alpha = if (!metadata.isLive && durationMs > 0L) 1f else 0f }
+            .background(MaterialTheme.colorScheme.onSurface.copy(alpha = .10f))) {
+            Box(Modifier.fillMaxHeight().fillMaxWidth(progress).background(progressBrush))
+        }
         }
     }
 }
