@@ -1,6 +1,7 @@
 package com.ambient.tv.ui.player
 
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.MutableState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -118,6 +119,30 @@ internal class PlayerOsdController(initialZapOsd: Boolean = false) {
 @Composable
 internal fun rememberPlayerOsdController(): PlayerOsdController =
     LocalPlayerChromeState.current?.osd ?: remember { PlayerOsdController() }
+
+/**
+ * Short, engine-independent indicator for explicit user seeks (OSD rewind/forward
+ * buttons, hardware media keys and external seek controls). The existing session
+ * version increments only for user-originated seeks; it does not change on normal
+ * playback ticks or automatic segment skipping.
+ *
+ * Start from the current version so simply opening a player never replays an old
+ * seek animation. Repeat commands restart the short feedback window.
+ */
+@Composable
+internal fun rememberRecentPlayerSeekFeedback(): Boolean {
+    val version = BackgroundPlaybackSession.externalSeekVersion
+    var seenVersion by remember { mutableIntStateOf(version) }
+    var visible by remember { mutableStateOf(false) }
+    LaunchedEffect(version) {
+        if (version == seenVersion) return@LaunchedEffect
+        seenVersion = version
+        visible = true
+        kotlinx.coroutines.delay(1_100L)
+        visible = false
+    }
+    return visible
+}
 
 /** Ignore the first metadata emission and repeated ICY/EPG updates for the same station. */
 internal fun channelIdentityChanged(previousId: String?, currentId: String?): Boolean =
