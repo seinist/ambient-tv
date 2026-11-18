@@ -458,6 +458,8 @@
     <string name="settings_live_preview">Preview</string>
     <string name="settings_preview_summary">%1$d%% · %2$s</string>
     <string name="settings_preview_title">Preview item</string>
+    <string name="settings_scene_preview_caption">Preview · %1$s</string>
+    <string name="settings_scene_preview_player">Player</string>
     <string name="settings_preview_body">Accent color, size and appearance update immediately in the preview.</string>
     <string name="settings_nav_sounds">Menu sounds</string>
     <string name="settings_nav_sounds_hint">Soft clicks on focus and select; silent during playback.</string>

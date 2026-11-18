@@ -1,22 +1,17 @@
 package com.ambient.tv.ui.settings
 
-import androidx.compose.foundation.background
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyListScope
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.TransformOrigin
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.Color
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Cloud
 import androidx.compose.ui.unit.dp
 import androidx.tv.material3.Icon
 import androidx.tv.material3.Text
@@ -106,25 +101,36 @@ internal fun LazyListScope.clockSettingsItems(clock: ClockSettings, onChange: ((
     }
 }
 
-/** A strip of dimmed artwork stand-in, so shadow and opacity read as they will over the hero. */
+/**
+ * The clock in the context its display setting places it: the Home hero, a browse header or
+ * the player OSD. Opacity, shadow, accent and weather layout apply as in the app; overlays are
+ * scaled to the stage so their proportions match the TV screen. No forecast is fetched.
+ */
 @Composable
 private fun ClockPreview(clock: ClockSettings) {
-    Box(
-        Modifier.fillMaxWidth().height(136.dp)
-            .background(
-                Brush.horizontalGradient(listOf(Color(0xFF1B2433), Color(0xFF4A5B70), Color(0xFFB7C3CF))),
-                RoundedCornerShape(10.dp),
-            ),
-    ) {
-        // A static sample keeps this preview useful without triggering a forecast fetch.
+    SettingsScenePreview(stringResource(R.string.settings_scene_preview_caption, stringResource(displayLabel(clock.display)))) {
+        when (clock.display) {
+            ClockSettings.DISPLAY_PLAYER -> ScenePlayer()
+            ClockSettings.DISPLAY_EVERYWHERE -> SceneBrowseHeader()
+            else -> SceneHomeHero()
+        }
+        if (clock.display == ClockSettings.DISPLAY_OFF) return@SettingsScenePreview
+        val scale = (maxWidth / SCENE_DESIGN_WIDTH).coerceIn(.7f, 1f)
+        val opacity = clock.opacityPercent / 100f
+        val weatherText = Color.White.copy(alpha = .86f * opacity)
+        val weatherIcon = if (clock.weatherAccent) MaterialTheme.colorScheme.primary.copy(alpha = opacity) else weatherText
         ClockWeatherDisplay(
             settings = clock, showClock = true, showWeather = true,
-            modifier = Modifier.align(Alignment.TopEnd).padding(top = 14.dp, end = 18.dp),
+            modifier = Modifier.align(Alignment.TopEnd).padding(top = 12.dp, end = 14.dp)
+                .graphicsLayer {
+                    scaleX = scale
+                    scaleY = scale
+                    transformOrigin = TransformOrigin(1f, 0f)
+                },
         ) {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                Icon(Icons.Filled.Cloud, null, Modifier.size(20.dp),
-                    tint = if (clock.weatherAccent) MaterialTheme.colorScheme.primary else Color.White)
-                Text("7°", color = Color.White, style = MaterialTheme.typography.bodyMedium)
+                Icon(com.ambient.tv.ui.weather.weatherIcon(2, isDay = true), null, Modifier.size(20.dp), tint = weatherIcon)
+                Text("7°", color = weatherText, style = MaterialTheme.typography.bodyMedium)
             }
         }
     }
