@@ -562,6 +562,8 @@ fun Modifier.animatedFocusSurface(
     borderWidth: Dp = 2.dp,
     /** False for screens whose focus boundary is intentionally neutral/white. */
     focusBorderMaterial: Boolean = true,
+    /** Persistent selection retains a thinner material outline even when not focused. */
+    selected: Boolean = false,
 ): Modifier = composed {
     val reduced = LocalPerformanceProfile.current.reducedEffects
     val materialStyle = LocalAccentStyle.current
@@ -602,7 +604,8 @@ fun Modifier.animatedFocusSurface(
             this,
         )
         val material = accentBrush(primaryAccent, materialStyle)
-        val focusBorder = accentFocusBorderBrush(focusedBorder, materialStyle)
+        val focusBorder = accentFocusBorderBrush(focusedBorder.copy(alpha = 1f), materialStyle)
+        val selectedBorder = accentFocusBorderBrush(unfocusedBorder.copy(alpha = 1f), materialStyle)
         val accentOutline = focusBorderMaterial
         val stroke = Stroke(strokePx)
         val glowStroke = if (materialStyle == AccentStyle.GLOW && !reduced) Stroke(strokePx * 2.5f) else null
@@ -617,9 +620,14 @@ fun Modifier.animatedFocusSurface(
             drawContent()
             if (strokePx > 0f && strokeColor.value.alpha > 0f) {
                 translate(inset, inset) {
-                    if (materialStyle == AccentStyle.LIGHT || !accentOutline || !focused) {
-                        // Unfocused selected edges use their explicit subdued color.
+                    if (materialStyle == AccentStyle.LIGHT || !accentOutline) {
                         drawOutline(inner, strokeColor.value, style = stroke)
+                    } else if (!focused) {
+                        // Only explicitly selected rows receive a persistent material
+                        // stroke; ordinary idle borders retain their original color.
+                        if (selected) drawOutline(inner, selectedBorder,
+                            alpha = strokeColor.value.alpha, style = stroke)
+                        else drawOutline(inner, strokeColor.value, style = stroke)
                     } else {
                         if (glowStroke != null) {
                             drawOutline(inner, material, alpha = strokeColor.value.alpha * (.12f + .025f * (frame?.strength ?: 0f)) * materialReveal.value,
