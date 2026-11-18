@@ -2011,9 +2011,8 @@ internal data class YouTubeOsdModel(
                         )
                     } else {
                         // Non-DVR live streams retain their passive LIVE indicator.
-                        androidx.compose.material3.LinearProgressIndicator(
-                            progress = { 1f },
-                            color = com.ambient.tv.ui.theme.LocalPlaybackAccent.current.indicator,
+                        com.ambient.tv.ui.player.PlayerOsdProgressTrack(
+                            progress = 1f,
                             modifier = Modifier.fillMaxWidth(),
                         )
                     }

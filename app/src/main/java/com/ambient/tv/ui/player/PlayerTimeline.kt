@@ -26,6 +26,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.clipRect
 import androidx.compose.ui.layout.layout
 import androidx.compose.ui.unit.constrainHeight
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.tv.material3.Text
@@ -61,12 +62,12 @@ internal fun playerOsdProgressFraction(value: Float): Float =
     if (value.isFinite()) value.coerceIn(0f, 1f) else 0f
 
 @Composable
-internal fun PlayerOsdProgressTrack(progress: Float, modifier: Modifier = Modifier) {
+internal fun PlayerOsdProgressTrack(progress: Float, modifier: Modifier = Modifier, height: Dp = 4.dp) {
     val accent = LocalPlaybackAccent.current.indicator
     val style = LocalAccentStyle.current
     val fill = remember(accent, style) { accentBrush(accent, style) }
     val shape = RoundedCornerShape(50)
-    Box(modifier.fillMaxWidth().height(4.dp)
+    Box(modifier.fillMaxWidth().height(height)
         .clip(shape).background(Color.White.copy(alpha = .24f), shape)) {
         Box(Modifier.fillMaxHeight().fillMaxWidth(playerOsdProgressFraction(progress))
             .background(fill, shape))

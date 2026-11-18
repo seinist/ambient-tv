@@ -22,7 +22,6 @@ import androidx.compose.material.icons.filled.SkipPrevious
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material.icons.filled.Subtitles
 import androidx.compose.material.icons.automirrored.filled.VolumeUp
-import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.mutableStateOf
@@ -254,17 +253,17 @@ fun BoxScope.TvhReferencePlayerChrome(
                                     color = androidx.tv.material3.MaterialTheme.colorScheme.primary,
                                     fontSize = 12.sp,
                                 )
-                                LinearProgressIndicator(
-                                    progress = { (programmeMs.toDouble() / liveEventDurationMs).toFloat().coerceIn(0f, 1f) },
-                                    color = androidx.tv.material3.MaterialTheme.colorScheme.primary,
-                                    modifier = Modifier.fillMaxWidth().height(3.dp),
+                                PlayerOsdProgressTrack(
+                                    progress = (programmeMs.toDouble() / liveEventDurationMs).toFloat().coerceIn(0f, 1f),
+                                    modifier = Modifier.fillMaxWidth(),
+                                    height = 3.dp,
                                 )
                             } else {
                                 Text("", fontSize = 12.sp)
-                                LinearProgressIndicator(
-                                    progress = { 0f },
-                                    color = androidx.tv.material3.MaterialTheme.colorScheme.primary,
-                                    modifier = Modifier.fillMaxWidth().height(3.dp),
+                                PlayerOsdProgressTrack(
+                                    progress = 0f,
+                                    modifier = Modifier.fillMaxWidth(),
+                                    height = 3.dp,
                                 )
                             }
                         },
