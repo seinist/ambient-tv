@@ -45,8 +45,13 @@ import com.ambient.tv.ui.performance.LocalPerformanceProfile
 @Immutable
 data class InteractionColors(val container: Color, val outline: Color, val content: Color)
 
-/** Selected state is persistent; focus remains a separate neutral boundary. */
-enum class SelectionIndicator { UNDERLINE, LEADING_BAR, DOT, NONE }
+/**
+ * Selected state is persistent; focus remains a separate boundary.
+ * No control carries a line marker: buttons, chips, menu rows and the sidebar show
+ * selection through their selected tint/border alone. Only icon-only buttons, which
+ * have no room for a readable selected border, keep the small [DOT].
+ */
+enum class SelectionIndicator { DOT, NONE }
 
 /**
  * Fixed, inset geometry prevents layout shifts and keeps the selection mark separate
@@ -65,21 +70,7 @@ internal fun selectionIndicatorRect(
     val roomW = surface.width - 2f * inset
     val roomH = surface.height - 2f * inset
     if (roomW <= 0f || roomH <= 0f) return null
-    val thickness = minOf(1.75f * dp,
-        roomW * .25f, roomH * .25f)
     return when (indicator) {
-        SelectionIndicator.UNDERLINE -> {
-            val width = minOf(24f * dp, roomW * .50f)
-            val left = (surface.width - width) / 2f
-            Rect(left, surface.height - inset - thickness,
-                left + width, surface.height - inset)
-        }
-        SelectionIndicator.LEADING_BAR -> {
-            val length = minOf(23f * dp, roomH * .68f)
-            val left = if (rtl) surface.width - inset - thickness else inset
-            val top = (surface.height - length) / 2f
-            Rect(left, top, left + thickness, top + length)
-        }
         SelectionIndicator.DOT -> {
             val diameter = minOf(5f * dp, roomW * .30f, roomH * .50f)
             val left = if (rtl) inset else surface.width - inset - diameter
@@ -101,14 +92,6 @@ internal fun selectionIndicatorRevealRect(
     if (bounds == null || !progress.isFinite() || progress <= 0f) return null
     val fraction = progress.coerceIn(0f, 1f)
     return when (indicator) {
-        SelectionIndicator.UNDERLINE -> {
-            val halfWidth = bounds.width * fraction / 2f
-            Rect(bounds.center.x - halfWidth, bounds.top, bounds.center.x + halfWidth, bounds.bottom)
-        }
-        SelectionIndicator.LEADING_BAR -> {
-            val halfHeight = bounds.height * fraction / 2f
-            Rect(bounds.left, bounds.center.y - halfHeight, bounds.right, bounds.center.y + halfHeight)
-        }
         SelectionIndicator.DOT -> {
             val halfWidth = bounds.width * fraction / 2f
             val halfHeight = bounds.height * fraction / 2f
@@ -124,21 +107,11 @@ private fun DrawScope.drawSelectionIndicator(
     brush: Brush,
     indicator: SelectionIndicator,
     progress: Float,
-    onLightBackground: Boolean = false,
 ) {
     val revealed = selectionIndicatorRevealRect(bounds, indicator, progress) ?: return
     val radius = CornerRadius(minOf(revealed.width, revealed.height) / 2f)
-    // On the light sidebar focus pill, avoid an expanded dark halo plus a bright
-    // material border. Keep the persistent selection mark thin and restrained.
-    if (onLightBackground) {
-        drawRoundRect(color = Color.Black.copy(alpha = .42f),
-            topLeft = revealed.topLeft, size = revealed.size, cornerRadius = radius)
-        drawRoundRect(brush = brush, alpha = .30f,
-            topLeft = revealed.topLeft, size = revealed.size, cornerRadius = radius)
-    } else {
-        drawRoundRect(brush = brush, alpha = .80f,
-            topLeft = revealed.topLeft, size = revealed.size, cornerRadius = radius)
-    }
+    drawRoundRect(brush = brush, alpha = .80f,
+        topLeft = revealed.topLeft, size = revealed.size, cornerRadius = radius)
 }
 
 /** Selected state uses one finite animation; no separate timer or layout invalidation. */
@@ -201,28 +174,6 @@ private fun rememberSelectionIndicatorProgress(
         }
     }
     return marker.asState()
-}
-
-/** Extra selection treatment for surfaces that already own their focus drawing. */
-fun Modifier.selectedStateMarker(
-    selected: Boolean,
-    indicator: SelectionIndicator = SelectionIndicator.LEADING_BAR,
-    focusedOnLightSurface: Boolean = false,
-    focused: Boolean = false,
-    compactMotion: Boolean = false,
-): Modifier = composed {
-    val accent = MaterialTheme.colorScheme.primary
-    val style = LocalAccentStyle.current
-    val progress = rememberSelectionIndicatorProgress(selected, focused, compactMotion)
-    // Keep this draw node while deselecting, so the old marker can shrink to zero.
-    this.drawWithCache {
-        val bounds = selectionIndicatorRect(true, size, indicator, 1.dp.toPx(), layoutDirection == LayoutDirection.Rtl)
-        val brush = accentBrush(accent, style)
-        onDrawWithContent {
-            drawContent()
-            drawSelectionIndicator(bounds, brush, indicator, progress.value, focusedOnLightSurface)
-        }
-    }
 }
 
 @Composable
@@ -320,7 +271,7 @@ fun Modifier.appControlSurface(
     focusedAccent: Boolean = false,
     prominent: Boolean = false,
     pressed: Boolean = false,
-    selectionIndicator: SelectionIndicator = SelectionIndicator.UNDERLINE,
+    selectionIndicator: SelectionIndicator = SelectionIndicator.NONE,
 ): Modifier = composed {
     val colors = rememberInteractionColorState(
         focused, selected, enabled, animate, focusedAccent, prominent, pressed,

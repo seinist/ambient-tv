@@ -1,7 +1,5 @@
 package com.ambient.tv.ui.common
 
-import com.ambient.tv.ui.theme.selectedStateMarker
-import com.ambient.tv.ui.theme.SelectionIndicator
 import androidx.tv.material3.LocalTextStyle
 import com.ambient.tv.ui.sound.navigationSoundInput
 
@@ -292,7 +290,6 @@ private fun PlayerDropUpSelectorImpl(
                 .menuFocusMotion(focused, focusedScale = 1.006f)
                 .then(if (LocalPlayerChromeState.current != null) Modifier.appOsdControlSurface(
                     focused = focused, enabled = enabled, shape = shape,
-                    selectionIndicator = SelectionIndicator.LEADING_BAR,
                 ) else Modifier.appControlSurface(focused = focused, enabled = enabled, shape = shape))
                 .onPreviewKeyEvent { event ->
                     if (!expanded) return@onPreviewKeyEvent false
@@ -569,10 +566,8 @@ private fun PlayerDropUpOptionRow(
             .then(if (inPlayer) Modifier.appOsdControlSurface(
                 focused = optionFocused, selected = selected && matchTrigger,
                 enabled = enabled, shape = shape,
-                selectionIndicator = SelectionIndicator.LEADING_BAR,
             ) else Modifier.background(fill, shape)
-                .border(LocalUiTokens.current.focusBorder, outline, shape)
-                .selectedStateMarker(selected && matchTrigger, SelectionIndicator.LEADING_BAR, focused = optionFocused))
+                .border(LocalUiTokens.current.focusBorder, outline, shape))
             .onPreviewKeyEvent { event ->
                 selectorMenuKey(event.key) {
                     val dismissal = event.key == Key.Back || event.key == Key.Escape || event.key == Key.DirectionLeft

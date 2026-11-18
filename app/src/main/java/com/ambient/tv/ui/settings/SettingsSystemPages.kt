@@ -1,6 +1,5 @@
 package com.ambient.tv.ui.settings
 
-import com.ambient.tv.ui.theme.SelectionIndicator
 import com.ambient.tv.ui.mobile.DeviceActionRow
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -1528,8 +1527,7 @@ internal fun ServerSurface(
         Column(
             Modifier
                 .fillMaxWidth()
-                .appControlSurface(focused, selected, shape = serverShape,
-                    selectionIndicator = SelectionIndicator.LEADING_BAR)
+                .appControlSurface(focused, selected, shape = serverShape)
                 .padding(14.dp),
             verticalArrangement = Arrangement.spacedBy(4.dp),
         ) {

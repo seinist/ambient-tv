@@ -1,7 +1,5 @@
 package com.ambient.tv.ui.settings
 
-import com.ambient.tv.ui.theme.selectedStateMarker
-import com.ambient.tv.ui.theme.SelectionIndicator
 import com.ambient.tv.ui.theme.animatedFocusSurface
 import com.ambient.tv.ui.common.withTvFocusInsets
 import com.ambient.tv.ui.common.TvTextFieldFocus
@@ -1260,7 +1258,6 @@ internal fun SettingsHubRow(title: String, subtitle: String?, selected: Boolean,
                 focusBorderMaterial = true,
                 selected = selected,
             )
-            .selectedStateMarker(selected, SelectionIndicator.LEADING_BAR, focused = focused)
             .padding(12.dp), horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
             Icon(icon, null, modifier = Modifier.size(22.dp))
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {

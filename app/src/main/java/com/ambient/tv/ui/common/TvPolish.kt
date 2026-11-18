@@ -1325,8 +1325,7 @@ fun TvSettingRow(
         Row(
             Modifier
                 .fillMaxWidth()
-                .appControlSurface(focused, selected = checked, shape = settingRowShape,
-                    selectionIndicator = SelectionIndicator.LEADING_BAR)
+                .appControlSurface(focused, selected = checked, shape = settingRowShape)
                 .padding(horizontal = 20.dp * uiScale, vertical = 16.dp * uiScale),
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically,
