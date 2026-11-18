@@ -72,7 +72,7 @@ fun Modifier.accentMaterialFill(
                 if (style != AccentStyle.LIGHT && reveal > 0f) {
                     drawOutline(outline, material, alpha = reveal * accentWashOpacity(style))
                 }
-                motionPaints?.drawOutline(this, outline, motion?.value, emphasis = .25f * reveal)
+                motionPaints?.drawOutline(this, outline, motion?.value, emphasis = CONTROL_ACCENT_MOTION_EMPHASIS * reveal)
             }
         }
     }
@@ -99,6 +99,7 @@ fun Modifier.accentMaterialBorder(
                 layoutDirection, this,
             )
             val material = accentBrush(accent, style)
+            val focusBorder = accentFocusBorderBrush(accent, style)
             val stroke = Stroke(strokePx)
             val glowStroke = if (style == AccentStyle.GLOW && active && !reduced) Stroke(strokePx * 2.5f) else null
             val motionPaints = if (motion != null) AccentMotionPaints(accent, style) else null
@@ -111,8 +112,8 @@ fun Modifier.accentMaterialBorder(
                             drawOutline(outline, material, alpha = color.alpha * (.12f + .025f * (frame?.strength ?: 0f)),
                                 style = glowStroke)
                         }
-                        if (style == AccentStyle.LIGHT) drawOutline(outline, color, style = stroke)
-                        else drawOutline(outline, material, alpha = color.alpha, style = stroke)
+                        if (style == AccentStyle.LIGHT || !active) drawOutline(outline, color, style = stroke)
+                        else drawOutline(outline, focusBorder, alpha = color.alpha, style = stroke)
                         motionPaints?.drawOutline(this, outline, frame, emphasis = color.alpha, drawStyle = stroke)
                     }
                 }

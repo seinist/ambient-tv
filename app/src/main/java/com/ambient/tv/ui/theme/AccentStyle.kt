@@ -100,6 +100,19 @@ internal fun accentMaterialBrush(stops: List<Pair<Float, Color>>, style: AccentS
     else -> Brush.linearGradient(*stops.toTypedArray())
 }
 
+/**
+ * Focus boundaries inherit the material's directional sheen, not its full white reflections.
+ * Retain the accessible accent hue even for Chrome, Glass and Pearl. A dedicated stroke
+ * brush avoids making a selected chip indistinguishable from a focused one.
+ */
+internal fun accentFocusBorderBrush(accent: Color, style: AccentStyle): Brush =
+    if (style == AccentStyle.LIGHT) SolidColor(accent) else accentMaterialBrush(
+        accentMaterialStops(accent, style).map { (position, stop) ->
+            position to lerp(stop, accent.convert(stop.colorSpace), .68f)
+        },
+        style,
+    )
+
 /** Keep unfocused content neutral; only active elements receive a material wash. */
 fun accentWashOpacity(style: AccentStyle): Float = when (style) {
     AccentStyle.LIGHT -> 0f

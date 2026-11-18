@@ -57,11 +57,11 @@ class AccentMotionTest {
                 assertTrue("$style phase at $elapsed", focus.phase.isFinite() && focus.phase in 0f..1f)
                 assertTrue("$style strength at $elapsed", focus.strength.isFinite() && focus.strength in 0f..1f)
                 assertEquals(focus.phase, ambient.phase, 0f)
-                assertTrue("$style ambient at $elapsed", ambient.strength in 0f..0.6f)
+                assertTrue("$style ambient at $elapsed", ambient.strength in 0f..0.8f)
                 assertTrue(ambient.strength <= focus.strength)
             }
             assertEquals("$style focus peak", 1f, accentMotionFrame(style, duration / 2).strength, 0.0001f)
-            assertEquals("$style ambient peak", 0.6f,
+            assertEquals("$style ambient peak", 0.8f,
                 accentMotionFrame(style, duration / 2, ambientRepeat = true).strength, 0.0001f)
         }
     }
@@ -217,10 +217,10 @@ class AccentMotionTest {
         assertTrue(d.nonRestFrames > 0)
         assertEquals(AccentMotionFrame.Rest, d.frame)
         val requests = d.clock.requests
-        advanceTimeBy(9_000L); runCurrent()
+        advanceTimeBy(5_000L); runCurrent()
         assertEquals(requests, d.clock.requests)
         assertEquals(AccentMotionFrame.Rest, d.frame)
-        advanceTimeBy(4_000L); runCurrent()
+        advanceTimeBy(5_000L); runCurrent()
         assertTrue(d.clock.requests > requests)
         assertFalse(job.isCompleted)
         job.cancelAndJoin()

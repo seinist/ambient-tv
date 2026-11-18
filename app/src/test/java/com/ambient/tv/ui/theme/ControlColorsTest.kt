@@ -113,7 +113,10 @@ class ControlColorsTest {
             assertNotEquals(idle.container, prominent.container)
             assertNotEquals(focused.container, selectedFocused.container)
             assertEquals(focused.outline, selectedFocused.outline)
-            assertEquals(AppOnSurface.copy(alpha = .94f), focused.outline)
+            // Focus is accented, selected remains a thinner persistent edge.
+            assertEquals(.94f, focused.outline.alpha, .003f)
+            assertEquals(.85f, selected.outline.alpha, .003f)
+            assertNotEquals(focused.outline, selected.outline)
             val background = worstWash(selectedFocused.container, selectedFocused.washOpacity, 1f, style)
             assertTrue(contrastRatio(focused.outline.compositeOver(background), background) >= 3f)
             val selectedBackground = worstWash(selected.container, selected.washOpacity, 1f, style)
@@ -130,7 +133,7 @@ class ControlColorsTest {
             val disabled = palette.colors(focused = true, selected = true, enabled = false, prominent = true)
             assertEquals(1f, disabled.container.alpha, 0f)
             assertEquals(.55f, disabled.content.alpha, .001f)
-            assertEquals(AppOnSurface.copy(alpha = .65f), disabled.outline)
+            assertEquals(palette.colors(focused = true).outline.copy(alpha = .65f), disabled.outline)
             assertEquals(0f, disabled.washOpacity, 0f)
             assertEquals(Color.Transparent, palette.colors(focused = false, enabled = false).outline)
             assertTrue(palette.colors(focused = true).outline.alpha > disabled.outline.alpha)
@@ -141,10 +144,12 @@ class ControlColorsTest {
         for (headroom in listOf(1.25f, 1.5f, 2f)) for (style in AccentStyle.entries) {
             val palette = palette(surfaces.last(), Color.Cyan, style, headroom)
             val colors = palette.colors(focused = true, selected = true, prominent = true)
-            val expected = uiHdrHighlight(AppOnSurface, headroom)
-            assertEquals(expected.red, colors.outline.red, 0f)
-            assertEquals(expected.green, colors.outline.green, 0f)
-            assertEquals(expected.blue, colors.outline.blue, 0f)
+            val sdrFocused = palette(surfaces.last(), Color.Cyan, style)
+                .colors(focused = true, selected = true, prominent = true).outline
+            val expected = uiHdrHighlight(sdrFocused.copy(alpha = 1f), headroom)
+            assertEquals(expected.red, colors.outline.red, .0001f)
+            assertEquals(expected.green, colors.outline.green, .0001f)
+            assertEquals(expected.blue, colors.outline.blue, .0001f)
             for ((_, stop) in palette.materialStops) {
                 val linear = stop.convert(ColorSpaces.LinearExtendedSrgb)
                 assertTrue(linear.red <= headroom + .002f)

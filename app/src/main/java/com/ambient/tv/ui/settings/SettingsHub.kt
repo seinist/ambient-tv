@@ -1236,10 +1236,10 @@ internal fun SettingsHubRow(title: String, subtitle: String?, selected: Boolean,
                 focused = focused, shape = shape,
                 focusedBackground = MaterialTheme.colorScheme.primary.copy(alpha = 0.17f),
                 unfocusedBackground = if (selected) MaterialTheme.colorScheme.primary.copy(alpha = 0.07f) else Color.Transparent,
-                focusedBorder = MaterialTheme.colorScheme.onSurface,
+                focusedBorder = MaterialTheme.colorScheme.primary,
                 unfocusedBorder = if (selected) MaterialTheme.colorScheme.primary.copy(alpha = 0.35f) else Color.Transparent,
                 borderWidth = 2.dp,
-                focusBorderMaterial = false,
+                focusBorderMaterial = true,
             )
             .selectedStateMarker(selected, SelectionIndicator.LEADING_BAR, focused = focused)
             .padding(12.dp), horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
