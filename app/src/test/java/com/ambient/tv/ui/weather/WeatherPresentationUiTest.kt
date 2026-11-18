@@ -96,8 +96,9 @@ class WeatherPresentationUiTest {
         fixture(settings.copy(showInScreensaver = false), Lifecycle.State.STARTED).use { fixture ->
             rule.setContent { fixture.Content(headerVisible = true, screensaverVisible = false) }
             fixture.assertNoWork()
-            // Without valid data, the weather reserves no blank header space.
-            assertFalse(fixture.presentation.get().hasHeader)
+            // Keep the earlier stable header geometry during the initial forecast request.
+            assertTrue(fixture.presentation.get().headerPending)
+            assertTrue(fixture.presentation.get().hasHeader)
             assertNull(fixture.presentation.get().header)
 
             rule.runOnIdle { fixture.owner.registry.currentState = Lifecycle.State.RESUMED }
