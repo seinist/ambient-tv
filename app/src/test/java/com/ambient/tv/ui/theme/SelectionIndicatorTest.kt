@@ -19,9 +19,9 @@ class SelectionIndicatorTest {
         assertNull(selectionIndicatorRect(true, size, SelectionIndicator.NONE, 1f))
     }
 
-    @Test fun selectedChipsKeepAnInsetUnderlineWithEveryAccentMaterial() {
-        // The geometry remains stable for all eight materials and focus transitions;
-        // the brush changes, not the indicator's meaning, size or location.
+    @Test fun compactUnderlineKeepsItsInsetForControlsThatStillUseIt() {
+        // OSD controls may retain this compact marker. TV chips intentionally use NONE;
+        // changing material style must not change this shared geometry.
         for (style in AccentStyle.entries) {
             val marker = selectionIndicatorRect(true, size, SelectionIndicator.UNDERLINE, 1f)
             assertNotNull(style.toString(), marker)
