@@ -2247,6 +2247,14 @@ private fun AmbientTvApp(
                 LocalSidebarContentReadyReporter provides reportSidebarContentReady,
                 LocalSidebarContentPending provides sidebarContentPending,
                 com.ambient.tv.ui.common.LocalActiveNavigationEntryId provides currentBackStackEntry?.id,
+                com.ambient.tv.ui.common.LocalPlayerFullscreenMinimize provides {
+                    val currentPlayer = navController.currentBackStackEntry
+                    if (!handheld && currentPlayer?.destination?.route in PLAYBACK_DESTINATIONS &&
+                        BackgroundPlaybackSession.snapshot.value.active) {
+                        // Shared OSD exit: arm before the player's onBack pops this destination.
+                        backgroundPlayerReturn.beginFullscreenExit(currentPlayer?.id)
+                    }
+                },
                 com.ambient.tv.ui.common.LocalPlaybackFocusRequest provides { request ->
                     if (!shellFocusAllowed() || onPlayerScreen || wakeFocus.hasFocus) {
                         false
@@ -2755,7 +2763,7 @@ private fun AmbientTvApp(
                             onBack = {
                                 if (navController.currentBackStackEntry === entry) {
                                     val previous = navController.previousBackStackEntry
-                                    if (!backgroundPlayerReturn.isMiniPlayerReentry(entry.id) &&
+                                    if (!backgroundPlayerReturn.preservesBrowseContextOnExit(entry.id) &&
                                         previous?.destination?.route == Destinations.SEARCH) {
                                         com.ambient.tv.ui.common.NavigationPlaybackReturns.prepare(previous.id, playerModel.media.value?.mediaKey)
                                     }
@@ -2852,7 +2860,7 @@ private fun AmbientTvApp(
                         val playerModel = androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel<com.ambient.tv.ui.radio.RadioPlayerViewModel>()
                         com.ambient.tv.ui.radio.RadioPlayerScreen(viewModel = playerModel, onBack = {
                             if (navController.currentBackStackEntry === entry) {
-                                if (!backgroundPlayerReturn.isMiniPlayerReentry(entry.id)) {
+                                if (!backgroundPlayerReturn.preservesBrowseContextOnExit(entry.id)) {
                                     com.ambient.tv.ui.common.NavigationPlaybackReturns.prepare(
                                         navController.previousBackStackEntry?.id,
                                         playerModel.currentStation()?.id?.let { com.ambient.tv.data.radio.RADIO_HOME_ITEM_PREFIX + it },
@@ -2901,7 +2909,7 @@ private fun AmbientTvApp(
                         LaunchedEffect(Unit) { BackgroundPlaybackSession.stop() }
                         SpotifyPlayerScreen(onBack = { playedTrackId ->
                             if (navController.currentBackStackEntry === entry) {
-                                if (!backgroundPlayerReturn.isMiniPlayerReentry(entry.id)) {
+                                if (!backgroundPlayerReturn.preservesBrowseContextOnExit(entry.id)) {
                                     com.ambient.tv.ui.common.NavigationPlaybackReturns.prepare(
                                         navController.previousBackStackEntry?.id, playedTrackId?.let { "spotify:track:$it" },
                                     )
@@ -2997,7 +3005,7 @@ private fun AmbientTvApp(
                             onBack = {
                                 if (navController.currentBackStackEntry === entry) {
                                     val previous = navController.previousBackStackEntry
-                                    if (!backgroundPlayerReturn.isMiniPlayerReentry(entry.id) &&
+                                    if (!backgroundPlayerReturn.preservesBrowseContextOnExit(entry.id) &&
                                         previous?.destination?.route == Destinations.SEARCH) {
                                         com.ambient.tv.ui.common.NavigationPlaybackReturns.prepare(
                                             previous.id, playerModel.uiState.value.playback?.videoId?.let { "youtube:$it" },
@@ -3331,7 +3339,7 @@ private fun AmbientTvApp(
                         val playerModel = androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel<com.ambient.tv.ui.tvheadend.TvheadendPlayerViewModel>()
                         TvheadendPlayerScreen(viewModel = playerModel, onBack = {
                             if (navController.currentBackStackEntry === entry) {
-                                if (!backgroundPlayerReturn.isMiniPlayerReentry(entry.id)) {
+                                if (!backgroundPlayerReturn.preservesBrowseContextOnExit(entry.id)) {
                                     com.ambient.tv.ui.common.NavigationPlaybackReturns.prepare(
                                         navController.previousBackStackEntry?.id, playerModel.playbackReturnItemId(),
                                     )
@@ -3360,10 +3368,9 @@ private fun AmbientTvApp(
                         PlayerScreen(
                             onBack = { playedRatingKey, mediaType ->
                                 if (navController.currentBackStackEntry !== entry) return@PlayerScreen
-                                if (backgroundPlayerReturn.isMiniPlayerReentry(entry.id)) {
-                                    // Reopening a running session isn't a new item selection.
-                                    // Back must restore the browse page/focus that was visible
-                                    // immediately before fullscreen, not a played episode detail.
+                                if (backgroundPlayerReturn.preservesBrowseContextOnExit(entry.id)) {
+                                    // An OSD minimize or exit from a reentered player must restore
+                                    // the current browse view/focus, not a played episode detail.
                                     navController.popBackStack()
                                     plexRefreshBus.requestRefresh()
                                     return@PlayerScreen
