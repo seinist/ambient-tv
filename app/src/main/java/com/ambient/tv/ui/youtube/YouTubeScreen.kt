@@ -14,6 +14,7 @@ import com.ambient.tv.ui.mobile.deviceDensityGridCells
 
 import com.ambient.tv.ui.mobile.deviceDp
 import com.ambient.tv.ui.mobile.deviceHeroHeight
+import com.ambient.tv.ui.common.youtubeCinematicTileWidth
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
@@ -1070,7 +1071,8 @@ private fun Cinematic(
     RegisterRowColumnFocus(rowFocus, "youtube-cinematic", rowState, itemKeys)
     KeepYouTubeLeadingInsertVisible(rowState, itemKeys)
     ObserveYouTubeListViewport(null, rowState)
-    Box(Modifier.fillMaxSize().rowColumnFocusWrapRight(rowFocus)) {
+    BoxWithConstraints(Modifier.fillMaxSize().rowColumnFocusWrapRight(rowFocus)) {
+        val tileWidth = youtubeCinematicTileWidth((maxHeight - 30.dp).coerceAtLeast(0.dp), landscapeCardWidth())
         if (!com.ambient.tv.ui.common.LocalHomeBackgroundVisible.current && com.ambient.tv.ui.common.LocalFocusArtworkBackdrop.current) {
             YouTubeCinematicBackdrop(hero)
             Box(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Color.Transparent, MaterialTheme.colorScheme.background.copy(alpha = .96f)))))
@@ -1086,7 +1088,7 @@ private fun Cinematic(
             ) {
                 itemsIndexed(items, key = { _, it -> it.videoId }) { _, item ->
                     Card(
-                        item, click, youtubeItemMotionModifier().width(landscapeCardWidth())
+                        item, click, youtubeItemMotionModifier().width(tileWidth)
                             .rowColumnFocusTarget(rowFocus, "youtube-cinematic", item.videoId), false,
                         focusRequester = if (item.videoId == focusTarget.itemId) initialFocusRequester else null,
                         onFocused = {
@@ -1171,7 +1173,7 @@ private fun SectionedYouTubeCinematic(
         ) {
             itemsIndexed(rows, key = { _, row -> "youtube-cinematic:${row.id}" },
                 contentType = { _, _ -> "youtube-cinematic-row" }) { sectionIndex, row ->
-                Box(youtubeItemMotionModifier()) {
+                Box(youtubeItemMotionModifier().then(if (handheld) Modifier else Modifier.fillParentMaxHeight())) {
                     YouTubeCinematicSection(
                         row = row,
                         click = click,
@@ -1205,11 +1207,15 @@ private fun YouTubeCinematicSection(
 ) {
     if (row.items.isEmpty()) return
     val hero = rememberYouTubeCinematicHero(row.items, focusTarget.itemId.takeIf { focusTarget.rowId == rowId })
-    val placeholderModifier = Modifier.width(landscapeCardWidth())
+    val handheld = LocalHandheldUi.current
     BrowseFocusRow(rowId) {
-    Column(Modifier.fillMaxWidth()) {
+    Column(Modifier.fillMaxWidth().then(if (handheld) Modifier else Modifier.fillMaxHeight())) {
         ContentSectionHeader(title = row.title)
-        Box(Modifier.fillMaxWidth().height(deviceHeroHeight(500.dp, 390.dp))) {
+        BoxWithConstraints(Modifier.fillMaxWidth().then(
+            if (handheld) Modifier.height(deviceHeroHeight(500.dp, 390.dp)) else Modifier.weight(1f)
+        )) {
+            val tileWidth = youtubeCinematicTileWidth(maxHeight, landscapeCardWidth())
+            val placeholderModifier = Modifier.width(tileWidth)
             if (com.ambient.tv.ui.common.LocalFocusArtworkBackdrop.current) YouTubeCinematicBackdrop(hero)
             Box(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Color.Transparent, MaterialTheme.colorScheme.background.copy(alpha = .96f)))))
             Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.SpaceBetween) {
@@ -1235,7 +1241,7 @@ private fun YouTubeCinematicSection(
                         Card(
                             item,
                             { tapped -> onItemFocused(rowId, tapped); click(tapped) },
-                            youtubeItemMotionModifier().width(landscapeCardWidth()).rowColumnFocusTarget(rowFocus, rowId, item.videoId),
+                            youtubeItemMotionModifier().width(tileWidth).rowColumnFocusTarget(rowFocus, rowId, item.videoId),
                             false,
                             focusRequester = if (rowId == focusTarget.rowId && item.videoId == focusTarget.itemId) initialFocusRequester else null,
                             onFocused = {

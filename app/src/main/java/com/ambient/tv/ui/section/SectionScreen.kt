@@ -137,6 +137,7 @@ import com.ambient.tv.ui.common.ArtworkImage
 import com.ambient.tv.ui.common.CrossfadeBackdropImage
 import com.ambient.tv.ui.common.TitleLogo
 import com.ambient.tv.ui.common.HeroTextLayout
+import com.ambient.tv.ui.common.libraryCinematicTileWidth
 import com.ambient.tv.ui.common.lineHeightDp
 import com.ambient.tv.ui.common.acceleratedDpadNavigation
 import com.ambient.tv.ui.common.activateOnTvKey
@@ -1546,7 +1547,7 @@ private fun RecommendationCinematicSection(
         ContentSectionHeader(title = row.title)
         Box(Modifier.fillMaxWidth().then(if (handheld) Modifier.height(deviceHeroHeight(500.dp, 390.dp)) else Modifier.weight(1f))) {
             CinematicHeroBackdrop(artworkUrl = heroArtwork, title = hero.title, accent = heroAccent, fadeBottom = true)
-            CinematicHeroContent(hero = hero, poster = poster, infoWidthFraction = 0.72f, showStreamProperties = false) {
+            CinematicHeroContent(hero = hero, poster = poster, infoWidthFraction = 0.72f, showStreamProperties = false) { tileWidth ->
                 LazyRow(
                     state = rowState,
                     modifier = Modifier.containRowFocusExit(),
@@ -1557,6 +1558,7 @@ private fun RecommendationCinematicSection(
                         CinematicTile(
                             item = item,
                             poster = poster,
+                            width = tileWidth,
                             onClick = { onItemClick(item.ratingKey) },
                             onFocused = { hero = item; onItemFocused(item) },
                             requestInitialFocus = restorePending && (item.ratingKey == focusedKey || (focusedKey == null && requestFallbackFocus && itemIndex == 0)),
@@ -1581,9 +1583,14 @@ private fun CinematicHeroContent(
     poster: Boolean,
     infoWidthFraction: Float,
     showStreamProperties: Boolean,
-    tiles: @Composable () -> Unit,
+    tiles: @Composable (androidx.compose.ui.unit.Dp) -> Unit,
 ) {
     BoxWithConstraints(Modifier.fillMaxSize()) {
+        // Prefer original tile sizes on roomy TVs. If the app's actual content viewport is
+        // shorter (e.g. a different UI scale on Shield), shrink cards before they are measured:
+        // a weighted hero cannot reclaim space from an oversized fixed-height row.
+        val preferredWidth = if (poster) deviceDp(172.dp, 84.dp) else deviceDp(252.dp, 240.dp)
+        val tileWidth = libraryCinematicTileWidth(maxHeight, poster, preferredWidth)
         val logoHeight = (maxHeight * if (poster) 0.13f else 0.15f).coerceIn(deviceDp(48.dp, 36.dp), deviceDp(92.dp, 64.dp))
         val summaryText = hero.summary?.takeIf { it.isNotBlank() }
         val summaryContent: (@Composable () -> Unit)? = if (summaryText != null) {
@@ -1616,7 +1623,7 @@ private fun CinematicHeroContent(
                 summary = summaryContent,
             )
             Spacer(Modifier.height(deviceDp(18.dp, 12.dp)))
-            tiles()
+            tiles(tileWidth)
         }
     }
 }
@@ -1629,6 +1636,7 @@ private fun CinematicHeroContent(
 private fun CinematicTile(
     item: MediaItem,
     poster: Boolean,
+    width: androidx.compose.ui.unit.Dp,
     onClick: () -> Unit,
     onFocused: () -> Unit,
     requestInitialFocus: Boolean,
@@ -1641,7 +1649,7 @@ private fun CinematicTile(
             onClick = onClick,
             onFocused = onFocused,
             requestInitialFocus = requestInitialFocus,
-            modifier = modifier.width(deviceDp(172.dp, 84.dp) * rememberUhdScale()),
+            modifier = modifier.width(width * rememberUhdScale()),
         )
     } else {
         MediaTile(
@@ -1649,6 +1657,7 @@ private fun CinematicTile(
             onClick = onClick,
             style = MediaTileStyle.LANDSCAPE,
             showDescription = false,
+            overrideWidth = width,
             onFocused = onFocused,
             requestInitialFocus = requestInitialFocus,
             modifier = modifier,
@@ -2153,7 +2162,7 @@ private fun CinematicView(
     val heroAccent = if (LocalAccentModeKey.current == "artwork") sampledAccent else MaterialTheme.colorScheme.primary
     Box(Modifier.fillMaxSize().rowColumnFocusWrapRight(rowFocus)) {
         CinematicHeroBackdrop(artworkUrl = heroArtwork, title = hero.title, accent = heroAccent)
-        CinematicHeroContent(hero = hero, poster = poster, infoWidthFraction = 0.58f, showStreamProperties = true) {
+        CinematicHeroContent(hero = hero, poster = poster, infoWidthFraction = 0.58f, showStreamProperties = true) { tileWidth ->
             LazyRow(
                 state = rowState,
                 modifier = Modifier.containRowFocusExit(),
@@ -2164,6 +2173,7 @@ private fun CinematicView(
                     CinematicTile(
                         item = item,
                         poster = poster,
+                        width = tileWidth,
                         onClick = { onItemClick(item.ratingKey) },
                         onFocused = { restorePending = false; hero = item; onItemFocused(item) },
                         requestInitialFocus = restorePending && item.ratingKey == restoreKey,
