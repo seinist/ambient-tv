@@ -59,6 +59,7 @@ import com.ambient.tv.ui.player.SEEK_VISUAL_ACK_TOLERANCE_MS
 import com.ambient.tv.ui.player.seekBarVisualPosition
 import com.ambient.tv.ui.player.seekBarFraction
 import com.ambient.tv.ui.player.seekBarPlayheadFraction
+import com.ambient.tv.ui.player.rememberRecentPlayerSeekFeedback
 import com.ambient.tv.ui.player.seekBarThumbScale
 import com.ambient.tv.ui.player.seekBarHasDistinctTarget
 import com.ambient.tv.ui.performance.LocalPerformanceProfile
@@ -125,9 +126,10 @@ fun HandheldSeekBar(
     val fraction = seekBarFraction(shownPosition, durationMs)
     // Only touch scrubbing, an unacknowledged seek or direct remote seek feedback
     // displays the current-position line; idle compact/expanded OSDs stay clean.
+    val recentSeek = rememberRecentPlayerSeekFeedback()
     val playheadFraction = seekBarPlayheadFraction(
         positionMs, durationMs,
-        seeking = dragFraction != null || awaitingVisualTarget != null || remoteSeekFeedback,
+        seeking = dragFraction != null || awaitingVisualTarget != null || remoteSeekFeedback || recentSeek,
     )
     val showingSeekTarget = seekBarHasDistinctTarget(
         positionMs, shownPosition, dragFraction != null || awaitingVisualTarget != null,
