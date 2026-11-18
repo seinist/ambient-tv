@@ -162,8 +162,8 @@ class DlnaBrowserViewModel @Inject constructor(
     private val serverId: String = checkNotNull(saved["serverId"])
     private val _state = MutableStateFlow(DlnaBrowserUiState(
         server = store.server(serverId),
-        gridColumns = preferences.libraryGridColumns,
-        listRows = preferences.libraryListRows,
+        gridColumns = preferences.layoutGridColumns("dlna:$serverId", DlnaViewMode.LIST.name),
+        listRows = preferences.layoutListRows("dlna:$serverId", DlnaViewMode.LIST.name),
     ))
     val state = _state.asStateFlow()
     private var job: Job? = null
@@ -193,17 +193,23 @@ class DlnaBrowserViewModel @Inject constructor(
 
     fun setViewMode(mode: DlnaViewMode) {
         preferences.setSectionViewMode(viewKey(_state.value.path), mode.name)
-        _state.update { it.copy(viewMode = mode) }
+        _state.update { it.copy(
+            viewMode = mode,
+            gridColumns = preferences.layoutGridColumns("dlna:$serverId", mode.name),
+            listRows = preferences.layoutListRows("dlna:$serverId", mode.name),
+        ) }
     }
 
     fun setGridColumns(columns: Int) {
-        preferences.libraryGridColumns = columns
-        _state.update { it.copy(gridColumns = preferences.libraryGridColumns) }
+        val mode = _state.value.viewMode.name
+        preferences.setLayoutGridColumns("dlna:$serverId", mode, columns)
+        _state.update { it.copy(gridColumns = preferences.layoutGridColumns("dlna:$serverId", mode)) }
     }
 
     fun setListRows(rows: Int) {
-        preferences.libraryListRows = rows
-        _state.update { it.copy(listRows = preferences.libraryListRows) }
+        val mode = _state.value.viewMode.name
+        preferences.setLayoutListRows("dlna:$serverId", mode, rows)
+        _state.update { it.copy(listRows = preferences.layoutListRows("dlna:$serverId", mode)) }
     }
 
     private fun viewKey(path: List<DlnaBrowserLocation>) =
@@ -292,15 +298,19 @@ class DlnaBrowserViewModel @Inject constructor(
         if (server == null) {
             _state.value = DlnaBrowserUiState(
                 loading = false,
-                gridColumns = preferences.libraryGridColumns,
-                listRows = preferences.libraryListRows,
+                gridColumns = preferences.layoutGridColumns("dlna:$serverId", DlnaViewMode.LIST.name),
+                listRows = preferences.layoutListRows("dlna:$serverId", DlnaViewMode.LIST.name),
                 error = OperationFeedback(
                     "dlna:removed:$serverId", "browse", R.string.feedback_source_removed, delivery = FeedbackDelivery.INLINE,
                 ),
             )
             return
         }
-        _state.update { it.copy(server = server, path = path, viewMode = dlnaViewMode(preferences.sectionViewMode(viewKey(path))), page = it.page.takeIf { _ -> it.path == path }, loading = !silent || it.page == null || it.path != path, refreshing = true, loadingMore = false, nextIndex = refreshThrough, pageSize = DlnaRepository.PAGE_SIZE, pageError = null, hasMore = false, error = null) }
+        val mode = dlnaViewMode(preferences.sectionViewMode(viewKey(path)))
+        _state.update { it.copy(server = server, path = path, viewMode = mode,
+            gridColumns = preferences.layoutGridColumns("dlna:$serverId", mode.name),
+            listRows = preferences.layoutListRows("dlna:$serverId", mode.name),
+            page = it.page.takeIf { _ -> it.path == path }, loading = !silent || it.page == null || it.path != path, refreshing = true, loadingMore = false, nextIndex = refreshThrough, pageSize = DlnaRepository.PAGE_SIZE, pageError = null, hasMore = false, error = null) }
         job = viewModelScope.launch {
             val refreshedNodes = linkedMapOf<String, DlnaNode>()
             val namespace = snapshots.namespace("dlna:$serverId", "${server.udn}|${server.contentDirectoryUrl}")

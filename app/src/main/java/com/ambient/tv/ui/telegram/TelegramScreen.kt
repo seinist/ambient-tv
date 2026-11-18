@@ -199,9 +199,9 @@ fun TelegramScreen(
     val focusMemory = rememberMonogramFocusMemory(sectionKey, returnedKey, state.playbackReturnRevision)
     var layoutKey by rememberSaveable(sectionKey) { mutableStateOf(viewModel.viewMode(sectionKey).name) }
     val layout = MonogramBrowseLayout.valueOf(layoutKey)
-    var gridColumns by remember { mutableIntStateOf(viewModel.gridColumns) }
+    var gridColumns by remember(sectionKey, layoutKey) { mutableIntStateOf(viewModel.gridColumns(sectionKey, layout)) }
     var mediaSelection by remember { mutableStateOf(viewModel.mediaSelectionBehavior) }
-    var listRows by remember { mutableIntStateOf(viewModel.listRows) }
+    var listRows by remember(sectionKey, layoutKey) { mutableIntStateOf(viewModel.listRows(sectionKey, layout)) }
     var sortKey by rememberSaveable(sectionKey) { mutableStateOf(MonogramBrowseSort.DATE.name) }
     val sort = MonogramBrowseSort.valueOf(sortKey)
     var descending by rememberSaveable(sectionKey) { mutableStateOf(true) }
@@ -663,11 +663,11 @@ fun TelegramScreen(
                         gridColumns = gridColumns, listRows = listRows,
                         onGridColumns = {
                             gridColumns = it
-                            viewModel.setGridColumns(it)
+                            viewModel.setGridColumns(sectionKey, layout, it)
                         },
                         onListRows = {
                             listRows = it
-                            viewModel.setListRows(it)
+                            viewModel.setListRows(sectionKey, layout, it)
                         },
                         sorts = sortOptions, selectedSort = sortKey,
                         onSort = { sortKey = it },

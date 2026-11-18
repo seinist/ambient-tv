@@ -148,6 +148,8 @@ fun MediaTile(
     reserveEpisodeLines: Boolean = false,
     /** Grid cells: take the cell's width so fewer columns mean bigger tiles, not wider gaps. */
     fillCell: Boolean = false,
+    /** Optional constrained width for a viewport-limited cinematic tile. */
+    overrideWidth: androidx.compose.ui.unit.Dp? = null,
     /** Menu, Info, or a long press. OK and a short tap stay [onClick]. */
     onInfo: (() -> Unit)? = null,
 ) {
@@ -174,7 +176,7 @@ fun MediaTile(
     val handheld = LocalHandheldUi.current
     val heroRowTiles = LocalHeroRowTiles.current
     val resolvedStyle = resolveMediaTileStyle(style, visualItem.type, handheld)
-    val width = mediaTileWidth(resolvedStyle)
+    val width = overrideWidth ?: mediaTileWidth(resolvedStyle)
     val aspectRatio = when (resolvedStyle) {
         MediaTileStyle.POSTER, MediaTileStyle.AUTO -> 2f / 3f
         MediaTileStyle.LANDSCAPE, MediaTileStyle.EPISODE, MediaTileStyle.CONTINUE -> 16f / 9f

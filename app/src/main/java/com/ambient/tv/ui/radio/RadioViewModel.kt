@@ -240,13 +240,14 @@ class RadioViewModel @Inject constructor(
         }
         entered = true
         val section = initialSection ?: _state.value.section
+        val mode = runCatching {
+            RadioViewMode.valueOf(preferences.sectionViewMode(RADIO_VIEW_STATE_KEY) ?: RadioViewMode.GRID.name)
+        }.getOrDefault(RadioViewMode.GRID)
         _state.value = _state.value.copy(
             section = section,
-            viewMode = runCatching {
-                RadioViewMode.valueOf(preferences.sectionViewMode(RADIO_VIEW_STATE_KEY) ?: RadioViewMode.GRID.name)
-            }.getOrDefault(RadioViewMode.GRID),
-            gridColumns = preferences.libraryGridColumns,
-            listRows = preferences.libraryListRows,
+            viewMode = mode,
+            gridColumns = preferences.layoutGridColumns(RADIO_VIEW_STATE_KEY, mode.name),
+            listRows = preferences.layoutListRows(RADIO_VIEW_STATE_KEY, mode.name),
             sortDescending = preferences.sectionSortOrder(RADIO_VIEW_STATE_KEY) == "DESCENDING",
         )
         refreshLocalState()
@@ -406,7 +407,11 @@ class RadioViewModel @Inject constructor(
 
     fun selectViewMode(mode: RadioViewMode) {
         preferences.setSectionViewMode(RADIO_VIEW_STATE_KEY, mode.name)
-        _state.value = _state.value.copy(viewMode = mode)
+        _state.value = _state.value.copy(
+            viewMode = mode,
+            gridColumns = preferences.layoutGridColumns(RADIO_VIEW_STATE_KEY, mode.name),
+            listRows = preferences.layoutListRows(RADIO_VIEW_STATE_KEY, mode.name),
+        )
     }
 
     /** Persist sort direction for all Radio Browser indexes and remote station pages. */
@@ -436,13 +441,15 @@ class RadioViewModel @Inject constructor(
     }
 
     fun setGridColumns(columns: Int) {
-        preferences.libraryGridColumns = columns
-        _state.value = _state.value.copy(gridColumns = preferences.libraryGridColumns)
+        val mode = _state.value.viewMode.name
+        preferences.setLayoutGridColumns(RADIO_VIEW_STATE_KEY, mode, columns)
+        _state.value = _state.value.copy(gridColumns = preferences.layoutGridColumns(RADIO_VIEW_STATE_KEY, mode))
     }
 
     fun setListRows(rows: Int) {
-        preferences.libraryListRows = rows
-        _state.value = _state.value.copy(listRows = preferences.libraryListRows)
+        val mode = _state.value.viewMode.name
+        preferences.setLayoutListRows(RADIO_VIEW_STATE_KEY, mode, rows)
+        _state.value = _state.value.copy(listRows = preferences.layoutListRows(RADIO_VIEW_STATE_KEY, mode))
     }
 
     fun loadMore() {
