@@ -84,7 +84,9 @@ internal fun accentMotionFrame(
     return AccentMotionFrame(phase, wave * wave * if (ambientRepeat) .8f else 1f)
 }
 
-private const val ACCENT_MOTION_FOCUS_DELAY_MS = 350L
+// Start shortly after the focused target settles; a 350 ms hold made the entire
+// optional gesture easy to miss during normal D-pad navigation.
+private const val ACCENT_MOTION_FOCUS_DELAY_MS = 140L
 private const val ACCENT_MOTION_POLL_MS = 100L
 
 /**
