@@ -727,13 +727,25 @@ fun PlayerDiagnosticsButtons(hasVideo: Boolean = true) {
     )
 }
 
+/**
+ * The shell can arm its one-shot Back-to-fullscreen chain before an OSD minimize callback
+ * pops the player. Without the shell (previews/tests), the button remains an ordinary exit.
+ */
+internal val LocalPlayerFullscreenMinimize = compositionLocalOf<() -> Unit> { {} }
+
 @Composable
 fun PlayerExitButton(onBack: () -> Unit) {
     val handheld = com.ambient.tv.ui.mobile.LocalHandheldUi.current
+    val onMinimize = LocalPlayerFullscreenMinimize.current
     PlayerIconButton(
         icon = if (handheld) Icons.AutoMirrored.Filled.ArrowBack else Icons.Filled.FullscreenExit,
         label = stringResource(if (handheld) R.string.back else R.string.player_exit_fullscreen),
-        onClick = onBack,
+        onClick = {
+            // On TV, the fullscreen-exit control intentionally keeps the session playing.
+            // Register the return path before onBack invokes the destination's pop callback.
+            if (!handheld) onMinimize()
+            onBack()
+        },
         osd = com.ambient.tv.ui.player.OsdButton.EXIT,
     )
 }
