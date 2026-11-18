@@ -11,6 +11,7 @@ import androidx.tv.material3.Text
 import com.ambient.tv.R
 import com.ambient.tv.data.local.AppPreferences
 import com.ambient.tv.ui.common.TvActionButton
+import com.ambient.tv.ui.common.SettingsSingleAction
 import com.ambient.tv.ui.player.HdrMedia3Hint
 import com.ambient.tv.ui.player.ImageHint
 import com.ambient.tv.ui.player.RuntimeCodecSupport
@@ -178,7 +179,7 @@ internal fun RendererVideoSettings(
             }))
             // Keep this D-pad target focusable during the asynchronous probe.
             // Disabling it moves focus back to the first output chip on TV.
-            TvActionButton(stringResource(if (checking) R.string.renderer_test_running else R.string.renderer_test_again),
+            SettingsSingleAction(stringResource(if (checking) R.string.renderer_test_running else R.string.renderer_test_again),
                 onClick = { if (!checking) checkAgain() })
         }
         if (outputAvailable) ImageHint(stringResource(R.string.renderer_svp_compute_hint))
@@ -263,7 +264,7 @@ private fun ZeroCopyLockRow(model: SettingsViewModel) {
     if (!locked && !reset) return
     ImageHint(stringResource(if (locked) R.string.settings_mpv_zero_copy_locked else R.string.settings_mpv_zero_copy_reset_done))
     // Stays visible after the reset so D-pad focus does not jump away.
-    TvActionButton(stringResource(R.string.settings_mpv_zero_copy_reset), onClick = {
+    SettingsSingleAction(stringResource(R.string.settings_mpv_zero_copy_reset), onClick = {
         if (locked) {
             model.resetMpvZeroCopyLock()
             locked = false
