@@ -86,6 +86,17 @@ fun HandheldSeekBar(
     val thumbBrush = remember(accent, style) { accentBrush(accent, style) }
     val navigation = LocalPlaybackNavigation.current
     val osd = LocalPlayerChromeState.current?.osd
+    // Remote/media-key direct seeking may show passive feedback without a touch
+    // target. Keep its line brief even if the compact OSD remains on screen.
+    var remoteSeekFeedback by remember(osd) { mutableStateOf(false) }
+    val remoteSeekVersion = if (osd?.seekFeedback == true) osd.interactionVersion else -1
+    LaunchedEffect(remoteSeekVersion) {
+        remoteSeekFeedback = remoteSeekVersion >= 0
+        if (remoteSeekFeedback) {
+            kotlinx.coroutines.delay(1_100L)
+            remoteSeekFeedback = false
+        }
+    }
     val stowing = LocalPlayerOsdStow.current?.closing == true
     val playPauseFocus = LocalPlayerPlayPauseFocus.current
     val latestPositionMs by rememberUpdatedState(positionMs)
@@ -116,7 +127,7 @@ fun HandheldSeekBar(
     // displays the current-position line; idle compact/expanded OSDs stay clean.
     val playheadFraction = seekBarPlayheadFraction(
         positionMs, durationMs,
-        seeking = dragFraction != null || awaitingVisualTarget != null || osd?.seekFeedback == true,
+        seeking = dragFraction != null || awaitingVisualTarget != null || remoteSeekFeedback,
     )
     val showingSeekTarget = seekBarHasDistinctTarget(
         positionMs, shownPosition, dragFraction != null || awaitingVisualTarget != null,
