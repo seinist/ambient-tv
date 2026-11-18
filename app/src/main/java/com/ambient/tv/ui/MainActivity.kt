@@ -3569,10 +3569,14 @@ private fun AmbientTvApp(
     }
     } // PlaybackPresentationProvider
     // Destination BackHandlers are composed inside NavHost. Register this one-shot handler
-    // after them so a second Back after closing the sidebar cannot be eaten by a nested view.
-    if (!handheld && !sidebarHasFocus && currentRoute !in FULLSCREEN_ROUTES &&
-        currentRoute != Destinations.SETTINGS &&
-        backgroundPlayerReturn.canResumeAfterSidebarBack(backgroundPlayback.active)) {
+    // after them so Back returns directly to an active minimized player, whether minimized
+    // via the OSD exit button (including from a fullscreen detail page) or sidebar Back.
+    if (!handheld && backgroundPlayerReturn.canInterceptBackToPlayer(
+            route = currentRoute,
+            hasActivePlayback = backgroundPlayback.active,
+            sidebarVisible = currentRoute !in FULLSCREEN_ROUTES,
+            sidebarHasFocus = sidebarHasFocus,
+        )) {
         androidx.activity.compose.BackHandler {
             if (!reopenBackgroundPlayer()) {
                 backgroundPlayerReturn.disarm()
