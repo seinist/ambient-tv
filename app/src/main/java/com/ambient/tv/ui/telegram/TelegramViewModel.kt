@@ -127,18 +127,18 @@ class TelegramViewModel @Inject constructor(
         }
     internal fun changeViewMode(section: String, mode: MonogramBrowseLayout) =
         preferences.setSectionViewMode("monogram.$section", mode.name)
-    fun gridColumns(section: String, mode: MonogramBrowseLayout): Int =
+    internal fun gridColumns(section: String, mode: MonogramBrowseLayout): Int =
         preferences.layoutGridColumns("monogram.$section", mode.name)
-    fun listRows(section: String, mode: MonogramBrowseLayout): Int =
+    internal fun listRows(section: String, mode: MonogramBrowseLayout): Int =
         preferences.layoutListRows("monogram.$section", mode.name)
-    fun setGridColumns(section: String, mode: MonogramBrowseLayout, columns: Int) {
+    internal fun setGridColumns(section: String, mode: MonogramBrowseLayout, columns: Int) {
         preferences.setLayoutGridColumns("monogram.$section", mode.name, columns)
     }
     /** What selecting a post does (post page, play, ask); Monogram's own setting like SmartTube's. */
     var mediaSelectionBehavior: String
         get() = preferences.telegramMediaSelectionBehaviorKey
         set(value) { preferences.telegramMediaSelectionBehaviorKey = value }
-    fun setListRows(section: String, mode: MonogramBrowseLayout, rows: Int) {
+    internal fun setListRows(section: String, mode: MonogramBrowseLayout, rows: Int) {
         preferences.setLayoutListRows("monogram.$section", mode.name, rows)
     }
 
