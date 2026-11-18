@@ -112,8 +112,12 @@ fun HandheldSeekBar(
     val dragTarget = dragFraction?.let { (it * durationMs).toLong() }
     val shownPosition = seekBarVisualPosition(positionMs, durationMs, dragTarget, null, awaitingVisualTarget)
     val fraction = seekBarFraction(shownPosition, durationMs)
-    // Compact touch OSD and expanded controls must share the same persistent playhead.
-    val playheadFraction = seekBarPlayheadFraction(positionMs, durationMs)
+    // Only touch scrubbing, an unacknowledged seek or direct remote seek feedback
+    // displays the current-position line; idle compact/expanded OSDs stay clean.
+    val playheadFraction = seekBarPlayheadFraction(
+        positionMs, durationMs,
+        seeking = dragFraction != null || awaitingVisualTarget != null || osd?.seekFeedback == true,
+    )
     val showingSeekTarget = seekBarHasDistinctTarget(
         positionMs, shownPosition, dragFraction != null || awaitingVisualTarget != null,
     )
@@ -258,8 +262,8 @@ fun HandheldSeekBar(
                             drawCircle(brush = thumbBrush, radius = radius - 3.dp.toPx() * thumbScale,
                                 center = center, alpha = thumbAlpha)
                         }
-                        // Draw last: the current position remains a vertical line even when
-                        // a separate target/thumb is being previewed by a tap or drag.
+                        // Draw last while seeking: the current position stays separate
+                        // from the touch target/thumb and never appears when idle.
                         if (playheadFraction != null) {
                             val insetX = 1.5.dp.toPx()
                             val x = (playheadFraction * endX).coerceIn(insetX, (endX - insetX).coerceAtLeast(insetX))
