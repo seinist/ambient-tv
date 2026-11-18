@@ -17,6 +17,7 @@ import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
 import com.ambient.tv.R
 import com.ambient.tv.ui.common.TvActionButton
+import com.ambient.tv.ui.common.SettingsSingleAction
 import com.ambient.tv.ui.mobile.isTelevision
 import com.ambient.tv.ui.player.TvSleepStandby
 
@@ -42,10 +43,10 @@ internal fun TvSleepStandbySettings() {
     }
     Text(stringResource(R.string.settings_sleep_standby_hint), style = MaterialTheme.typography.bodySmall,
         color = MaterialTheme.colorScheme.onSurfaceVariant)
-    TvActionButton(
+    SettingsSingleAction(
         text = stringResource(if (enabled) R.string.settings_sleep_standby_disable else R.string.settings_sleep_standby_enable),
         onClick = {
-            if (!isTelevision(context)) return@TvActionButton
+            if (!isTelevision(context)) return@SettingsSingleAction
             if (enabled) {
                 runCatching {
                     context.getSystemService(DevicePolicyManager::class.java)
