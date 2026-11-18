@@ -247,8 +247,9 @@ private fun compareVideo(a: YouTubeAdaptiveFormat, b: YouTubeAdaptiveFormat): In
 
 /**
  * The video stream for [key]; [YOUTUBE_STREAM_AUTO] works like SmartTube's track selector: among
- * the hardware-decodable streams within [target], the target's codec if it has any; the best
- * of them by HDR, frame rate and resolution; equal ones by codec (VP9, H.264, AV1). Nothing
+ * the hardware-decodable streams within [target], take the highest available quality step
+ * first, then prefer the target codec within that step. This avoids selecting 360p VP9 instead
+ * of a playable 1080p H.264 stream. Within that step prefer HDR and frame rate; nothing
  * within the target: the smallest playable stream.
  */
 fun youtubePickVideo(
@@ -263,11 +264,38 @@ fun youtubePickVideo(
     val playable = youtubePlayableVideos(formats, decode)
     val within = playable.filter { it.within(target) }
     if (within.isEmpty()) return playable.minWithOrNull(compareBy<YouTubeAdaptiveFormat> { it.qualityHeight() }.thenByDescending { codecWeight(youtubeVideoFamily(it.mimeType)) })
-    val candidates = within.filter { youtubeVideoFamily(it.mimeType) == target.family }.ifEmpty { within }
+    // Prefer the codec only among comparable quality steps; otherwise an available VP9 360p
+    // would win against a smooth H.264 1080p stream and VLC/MPV cannot upgrade afterwards.
+    val highestStep = within.maxOf { it.qualityHeight() }
+    val atHighestStep = within.filter { !sizeLess(it.qualityHeight(), highestStep) }
+    val candidates = atHighestStep.filter { youtubeVideoFamily(it.mimeType) == target.family }.ifEmpty { atHighestStep }
     return candidates.reduce { best, next ->
         val compared = compareVideo(next, best)
         if (compared > 0 || (compared == 0 && codecWeight(youtubeVideoFamily(next.mimeType)) > codecWeight(youtubeVideoFamily(best.mimeType)))) next else best
     }
+}
+
+/**
+ * The preferred Media3 DASH codec should have a stream at the highest playable quality step.
+ * Media3 adapts within the chosen track group; preferring a codec that tops out at 360p can
+ * strand Auto there when another codec offers 1080p. OTF formats are included because the
+ * generated MPD handles them (unlike the fixed URLs for VLC/MPV).
+ */
+fun youtubeMedia3PreferredVideoFamily(
+    formats: List<YouTubeAdaptiveFormat>, target: YouTubeVideoPreset, decode: YouTubeDecodeCheck,
+): String? {
+    val playable = formats.filter {
+        it.isVideo() && it.url?.startsWith("http", ignoreCase = true) == true &&
+            youtubeVideoFamily(it.mimeType) != null && it.decodable(decode) && it.within(target)
+    }
+    val highestStep = playable.maxOfOrNull { it.qualityHeight() } ?: return null
+    val atHighestStep = playable.filter { !sizeLess(it.qualityHeight(), highestStep) }
+    val candidates = atHighestStep.filter { youtubeVideoFamily(it.mimeType) == target.family }.ifEmpty { atHighestStep }
+    val best = candidates.reduce { current, next ->
+        val score = compareVideo(next, current)
+        if (score > 0 || (score == 0 && codecWeight(youtubeVideoFamily(next.mimeType)) > codecWeight(youtubeVideoFamily(current.mimeType)))) next else current
+    }
+    return youtubeVideoFamily(best.mimeType)
 }
 
 private val XTAG_LANG = Regex("""(?:^|[;&:])lang=([A-Za-z0-9-]+)""")
