@@ -383,13 +383,13 @@ fun Modifier.appControlSurface(
             // controls without turning the complete button into a colored tile. The base
             // and the neutral focus border remain unchanged; no new frame clock is used.
             if (osdChrome && enabled && (focused || selected)) {
-                val insetX = 10.dp.toPx()
+                val insetX = 12.dp.toPx()
                 val endX = size.width - insetX
-                if (endX > insetX && size.height > 12.dp.toPx()) {
+                if (endX > insetX && size.height > 18.dp.toPx()) {
                     drawLine(
                         brush = material,
-                        start = Offset(insetX, 5.dp.toPx()),
-                        end = Offset(endX, 5.dp.toPx()),
+                        start = Offset(insetX, 8.dp.toPx()),
+                        end = Offset(endX, 8.dp.toPx()),
                         strokeWidth = 1.dp.toPx(),
                         cap = StrokeCap.Round,
                         alpha = if (selected) .42f else .25f,
