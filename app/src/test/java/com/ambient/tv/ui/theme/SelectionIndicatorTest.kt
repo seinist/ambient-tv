@@ -19,20 +19,12 @@ class SelectionIndicatorTest {
         assertNull(selectionIndicatorRect(true, size, SelectionIndicator.NONE, 1f))
     }
 
-    @Test fun buttonsAndChipsHaveNoLineMarker() {
-        // Buttons and TV chips show selection by their selected border only. A horizontal
-        // underline variant no longer exists, so no control can reintroduce it by default.
-        assertEquals(listOf(SelectionIndicator.LEADING_BAR, SelectionIndicator.DOT, SelectionIndicator.NONE),
+    @Test fun noControlHasALineMarker() {
+        // Buttons, TV chips, menu rows and the sidebar show selection by their selected
+        // tint/border only. Neither an underline nor a vertical bar exists any more, so no
+        // control can bring a line back; only icon-only buttons keep the small dot.
+        assertEquals(listOf(SelectionIndicator.DOT, SelectionIndicator.NONE),
             SelectionIndicator.entries.toList())
-    }
-
-    @Test fun sidebarAndOptionsMarkersFollowReadingDirection() {
-        val ltr = selectionIndicatorRect(true, size, SelectionIndicator.LEADING_BAR, 1f, rtl = false)!!
-        val rtl = selectionIndicatorRect(true, size, SelectionIndicator.LEADING_BAR, 1f, rtl = true)!!
-        assertEquals(7f, ltr.left, .001f)
-        assertEquals(93f, rtl.right, .001f)
-        assertEquals(ltr.width, rtl.width, .001f)
-        assertEquals(ltr.height, rtl.height, .001f)
     }
 
     @Test fun activeOsdButtonsUseACompactAccentDot() {
@@ -45,17 +37,6 @@ class SelectionIndicatorTest {
         assertEquals(7f, ltr.top, .001f)
     }
 
-    @Test fun revealKeepsLeadingBarCenteredInBothLtrAndRtl() {
-        for (rtl in listOf(false, true)) {
-            val full = selectionIndicatorRect(true, size, SelectionIndicator.LEADING_BAR, 1f, rtl)!!
-            val half = selectionIndicatorRevealRect(full, SelectionIndicator.LEADING_BAR, .5f)!!
-            assertEquals(full.left, half.left, .001f)
-            assertEquals(full.right, half.right, .001f)
-            assertEquals(full.center.y, half.center.y, .001f)
-            assertEquals(full.height / 2f, half.height, .001f)
-        }
-    }
-
     @Test fun dotExpandsFromCenterWithoutMovingItsAnchor() {
         val full = selectionIndicatorRect(true, size, SelectionIndicator.DOT, 1f)!!
         val half = selectionIndicatorRevealRect(full, SelectionIndicator.DOT, .5f)!!
@@ -66,11 +47,11 @@ class SelectionIndicatorTest {
     }
 
     @Test fun revealRejectsInvalidProgressAndClampsOverflow() {
-        val full = selectionIndicatorRect(true, size, SelectionIndicator.LEADING_BAR, 1f)!!
-        assertNull(selectionIndicatorRevealRect(full, SelectionIndicator.LEADING_BAR, Float.NaN))
-        assertNull(selectionIndicatorRevealRect(full, SelectionIndicator.LEADING_BAR, -1f))
+        val full = selectionIndicatorRect(true, size, SelectionIndicator.DOT, 1f)!!
+        assertNull(selectionIndicatorRevealRect(full, SelectionIndicator.DOT, Float.NaN))
+        assertNull(selectionIndicatorRevealRect(full, SelectionIndicator.DOT, -1f))
         assertNull(selectionIndicatorRevealRect(full, SelectionIndicator.NONE, .5f))
-        assertEquals(full, selectionIndicatorRevealRect(full, SelectionIndicator.LEADING_BAR, 2f))
+        assertEquals(full, selectionIndicatorRevealRect(full, SelectionIndicator.DOT, 2f))
     }
 
     @Test fun selectionTransitionsAreShortAndAlphabetRailIsFaster() {
@@ -83,7 +64,7 @@ class SelectionIndicatorTest {
     }
 
     @Test fun tinyOrNonfiniteControlsDoNotCreateInvalidMarkers() {
-        assertNull(selectionIndicatorRect(true, Size(5f, 5f), SelectionIndicator.LEADING_BAR, 1f))
+        assertNull(selectionIndicatorRect(true, Size(5f, 5f), SelectionIndicator.DOT, 1f))
         assertNull(selectionIndicatorRect(true, Size(Float.NaN, 48f), SelectionIndicator.DOT, 1f))
         assertNull(selectionIndicatorRect(true, size, SelectionIndicator.DOT, 0f))
         val compact = selectionIndicatorRect(true, Size(18f, 18f), SelectionIndicator.DOT, 1f)

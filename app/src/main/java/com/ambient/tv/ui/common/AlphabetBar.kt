@@ -1,7 +1,5 @@
 package com.ambient.tv.ui.common
 
-import com.ambient.tv.ui.theme.selectedStateMarker
-import com.ambient.tv.ui.theme.SelectionIndicator
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
@@ -176,8 +174,7 @@ private fun AlphabetBarEntry(
                     borderWidth = 1.5.dp,
                     focusBorderMaterial = true,
                     selected = selected,
-                )
-                .selectedStateMarker(selected, SelectionIndicator.LEADING_BAR, focused = focused, compactMotion = true),
+                ),
             contentAlignment = Alignment.Center,
         ) {
             Text(

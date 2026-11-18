@@ -2,8 +2,6 @@
 
 package com.ambient.tv.ui.navigation
 
-import com.ambient.tv.ui.theme.selectedStateMarker
-import com.ambient.tv.ui.theme.SelectionIndicator
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 import com.ambient.tv.ui.theme.appControlSurface
@@ -1203,8 +1201,6 @@ private fun SidebarItem(
             .graphicsLayer { scaleX = lift; scaleY = lift }
             .clip(RoundedCornerShape(LocalUiTokens.current.controlRadius * uiScale))
             .background(fill)
-            .selectedStateMarker(selected, SelectionIndicator.LEADING_BAR,
-                focusedOnLightSurface = isFocused)
             .padding(horizontal = padH * uiScale, vertical = 6.dp * uiScale),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(iconGap * uiScale),

@@ -2,7 +2,6 @@
 
 package com.ambient.tv.ui.common
 
-import com.ambient.tv.ui.theme.SelectionIndicator
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.tween
@@ -861,9 +860,7 @@ fun RightPanelChoice(
             .menuFocusMotion(focused, focusedScale = 1.006f)
             .then(if (LocalPlayerChromeState.current != null) Modifier.appOsdControlSurface(
                 focused = focused, selected = selected, enabled = enabled, shape = shape,
-                selectionIndicator = SelectionIndicator.LEADING_BAR,
-            ) else Modifier.appControlSurface(focused, selected, enabled = enabled, shape = shape,
-                selectionIndicator = SelectionIndicator.LEADING_BAR))
+            ) else Modifier.appControlSurface(focused, selected, enabled = enabled, shape = shape))
             .semantics { this.selected = selected }
             .activateOnTvKey(enabled = enabled, onClick = activate)
             .clickable(enabled = enabled, role = Role.Button, onClick = activate)

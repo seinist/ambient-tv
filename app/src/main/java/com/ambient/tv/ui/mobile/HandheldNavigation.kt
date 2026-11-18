@@ -47,9 +47,7 @@ import com.ambient.tv.ui.player.miniFormatDuration
 import com.ambient.tv.ui.performance.LocalPerformanceProfile
 import com.ambient.tv.ui.theme.LocalAccentStyle
 import com.ambient.tv.ui.theme.LocalPlaybackAccent
-import com.ambient.tv.ui.theme.SelectionIndicator
 import com.ambient.tv.ui.theme.accentBrush
-import com.ambient.tv.ui.theme.selectedStateMarker
 
 /** No TV layout wrapper: the existing television composition is invoked verbatim. */
 @Composable
@@ -349,12 +347,11 @@ private data class SourceGroup(val system: MediaSystem, val entries: List<Source
 internal fun handheldSourceSelected(activeRoute: String?, entryRoute: String, settingsCategory: String? = null): Boolean =
     settingsCategory == null && !activeRoute.isNullOrBlank() && activeRoute == entryRoute
 
-/** Same muted marker treatment as TV controls, with native touch ripples intact. */
+/** Selection shows through the row's accent tint and icon (no line marker); native ripples stay. */
 private fun Modifier.handheldSourceRow(selected: Boolean, onClick: () -> Unit): Modifier = this
     .fillMaxWidth()
     .padding(horizontal = 8.dp, vertical = 1.dp)
     .clip(RoundedCornerShape(12.dp))
-    .selectedStateMarker(selected, SelectionIndicator.LEADING_BAR)
     .clickable(onClick = onClick)
     .semantics { this.selected = selected }
 
