@@ -105,6 +105,56 @@ class BackgroundPlayerReturnNavigationTest {
         assertFalse(navigation.preservesBrowseContextOnExit("third-player"))
     }
 
+    @Test fun fullscreenOsdExitOnDetailCanResumeEvenWithStaleSidebarFocus() {
+        val navigation = BackgroundPlayerReturnNavigation()
+        navigation.enterPlayer("youtube-player", previousIsPlayer = false)
+        navigation.beginFullscreenExit("youtube-player")
+        navigation.enterBrowse() // e.g. YouTubeDetail or Plex Detail was beneath the player
+
+        assertTrue(navigation.canInterceptBackToPlayer(
+            route = Destinations.DETAIL,
+            hasActivePlayback = true,
+            sidebarVisible = false,
+            sidebarHasFocus = true,
+        ))
+        assertTrue(navigation.canInterceptBackToPlayer(
+            route = Destinations.YOUTUBE_DETAIL,
+            hasActivePlayback = true,
+            sidebarVisible = false,
+            sidebarHasFocus = true,
+        ))
+        assertFalse(navigation.canInterceptBackToPlayer(
+            route = Destinations.DETAIL,
+            hasActivePlayback = false,
+            sidebarVisible = false,
+            sidebarHasFocus = false,
+        ))
+        assertFalse(navigation.canInterceptBackToPlayer(
+            route = Destinations.YOUTUBE_PLAYER,
+            hasActivePlayback = true,
+            sidebarVisible = false,
+            sidebarHasFocus = false,
+        ))
+        assertFalse(navigation.canInterceptBackToPlayer(
+            route = Destinations.SETTINGS,
+            hasActivePlayback = true,
+            sidebarVisible = true,
+            sidebarHasFocus = false,
+        ))
+        assertFalse(navigation.canInterceptBackToPlayer(
+            route = Destinations.HOME,
+            hasActivePlayback = true,
+            sidebarVisible = true,
+            sidebarHasFocus = true,
+        ))
+        assertTrue(navigation.canInterceptBackToPlayer(
+            route = Destinations.HOME,
+            hasActivePlayback = true,
+            sidebarVisible = true,
+            sidebarHasFocus = false,
+        ))
+    }
+
     @Test fun stoppingPlaybackClearsReentryAndSidebarBackState() {
         val navigation = BackgroundPlayerReturnNavigation()
         navigation.armAfterSidebarBack(true)
