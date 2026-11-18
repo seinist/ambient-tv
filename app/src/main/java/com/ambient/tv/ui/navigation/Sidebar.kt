@@ -165,6 +165,8 @@ fun Sidebar(
     onExitApp: (() -> Unit)? = null,
     /** Opens the global status panel and receives a callback restoring this menu's focus. */
     onOpenStartStatus: ((() -> Unit) -> Unit)? = null,
+    /** The previous fullscreen page is gone, but its browse destination has not restored focus. */
+    suppressTransientFocus: Boolean = false,
 ) {
     val state by viewModel.uiState.collectAsState()
     com.ambient.tv.ui.common.RefreshOnReconnect(viewModel.reconnectSources, viewModel::refreshAfterReconnect)
@@ -187,6 +189,7 @@ fun Sidebar(
         onOpenPlayback, onSidebarClosedByBack, onResumePlaybackAfterBack,
         requestContentFocus, contentReady, isEntryRequested, onEntryRequestConsumed,
         onFocusOwnershipChanged, modifier, currentRadioSectionKey, currentTelegramSectionKey, onExitApp, onOpenStartStatus,
+        suppressTransientFocus,
     )
 }
 
@@ -231,6 +234,7 @@ internal fun SidebarContent(
     currentTelegramSectionKey: String? = null,
     onExitApp: (() -> Unit)? = null,
     onOpenStartStatus: ((() -> Unit) -> Unit)? = null,
+    suppressTransientFocus: Boolean = false,
 ) {
     val uiScale = rememberUhdScale()
     var showExitConfirmation by remember { mutableStateOf(false) }
@@ -574,6 +578,7 @@ internal fun SidebarContent(
         return true
     }
     fun markFocus(id: String, systemId: String? = null) {
+        if (suppressTransientFocus) return // Android focus fallback is not a user menu entry.
         systems.asSequence().flatMap { it.entries.asSequence() }.firstOrNull { it.id == id }?.let { viewModel.prefetch(it.route) }
         // Browsing elsewhere while a destination is loading cancels the old handoff.
         if (lastFocusedId != id && pendingFocus == null) contentFocusRequested = false
@@ -651,6 +656,14 @@ internal fun SidebarContent(
         expanded = true
         pendingFocus = lastFocusedId?.takeIf { it in visibleIds } ?: safeAnchor
     }
+    // If the destination cannot accept focus after Back, make the rail available again once
+    // the explicit content restoration has finished. An incidental focus must not animate it.
+    LaunchedEffect(suppressTransientFocus, hasFocus) {
+        if (!suppressTransientFocus && hasFocus && !expanded && !contentFocusRequested) {
+            expanded = true
+            restoreEntry()
+        }
+    }
     LaunchedEffect(hasFocus, showOrderDialog, startStatusOpen) {
         if (!hasFocus && !showOrderDialog && !startStatusOpen) {
             delay(180)
@@ -681,8 +694,8 @@ internal fun SidebarContent(
     }
     // Dialog changes also update ownership; focus events register synchronously below.
     val registerBack = rememberSidebarBackRegistration()
-    DisposableEffect(hasFocus, showOrderDialog, startStatusOpen) {
-        if (hasFocus && !showOrderDialog && !startStatusOpen) {
+    DisposableEffect(hasFocus, showOrderDialog, startStatusOpen, suppressTransientFocus) {
+        if (hasFocus && !showOrderDialog && !startStatusOpen && !suppressTransientFocus) {
             registerBack { currentBackHandler.value() }
         } else {
             registerBack(null)
@@ -802,7 +815,7 @@ internal fun SidebarContent(
                 .focusProperties {
                     onEnter = {
                         val userEntry = isEntryRequested()
-                        if (contentFocusRequested && !userEntry) cancelFocusChange()
+                        if (suppressTransientFocus || (contentFocusRequested && !userEntry)) cancelFocusChange()
                         else if (!hasFocus && pendingFocus == null && !userEntry) cancelFocusChange()
                         else {
                             if (contentFocusRequested) {
@@ -824,7 +837,7 @@ internal fun SidebarContent(
                 .onFocusChanged {
                     hasFocus = it.hasFocus
                     // A remote Back can arrive before the next composition applies effects.
-                    registerBack(if (it.hasFocus && !showOrderDialog) ({ currentBackHandler.value() }) else null)
+                    registerBack(if (it.hasFocus && !showOrderDialog && !suppressTransientFocus) ({ currentBackHandler.value() }) else null)
                     onFocusOwnershipChanged(it.hasFocus)
                 }
                 .focusGroup(),

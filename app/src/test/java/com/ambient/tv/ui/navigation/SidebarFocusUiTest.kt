@@ -63,6 +63,8 @@ class SidebarFocusUiTest {
     }
     private val entryOrders = mutableListOf<Pair<String, List<String>>>()
     private var entryArmed = true
+    private var returnFocusPending by mutableStateOf(false)
+    private val sidebarFocusRequester = FocusRequester()
     private val ownership = mutableListOf<Boolean>()
     private var startStatusAvailable by mutableStateOf(false)
     private var closeStartStatus: (() -> Unit)? = null
@@ -100,6 +102,8 @@ class SidebarFocusUiTest {
                     requestContentFocus = { runCatching { content.requestFocus() }.isSuccess },
                     isEntryRequested = { entryArmed },
                     onFocusOwnershipChanged = { ownership += it },
+                    suppressTransientFocus = returnFocusPending,
+                    modifier = Modifier.focusRequester(sidebarFocusRequester),
                     onOpenStartStatus = if (startStatusAvailable) {
                         { onClosed ->
                             closeStartStatus = { statusOpen = false; onClosed() }
@@ -130,6 +134,21 @@ class SidebarFocusUiTest {
     }
 
     private fun focused(tag: String) = rule.onNodeWithTag(tag, useUnmergedTree = true).assertIsFocused()
+
+    @Test fun fullscreenBackDoesNotBrieflyOpenTheMenuBeforeContentRestoresFocus() {
+        setUp(Destinations.HOME)
+        rule.runOnIdle { returnFocusPending = true }
+        rule.waitForIdle()
+        // Mimic Android trying to park focus on the sidebar before the browse tree is ready.
+        rule.runOnIdle { sidebarFocusRequester.requestFocus() }
+        rule.waitForIdle()
+        rule.onNodeWithTag("content").assertIsFocused()
+        rule.onAllNodesWithTag("sidebar:home", useUnmergedTree = true).assertCountEquals(0)
+        rule.runOnIdle { returnFocusPending = false }
+        rule.waitForIdle()
+        key(Key.DirectionLeft)
+        focused("sidebar:home")
+    }
 
     @Test fun quickSecondBackAfterClosingSidebarReopensMiniPlayerOnce() {
         testPlaybackBackChain = true

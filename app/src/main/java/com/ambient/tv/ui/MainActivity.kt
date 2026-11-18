@@ -1692,6 +1692,9 @@ private fun AmbientTvApp(
     var requestedSettingsSerial by rememberSaveable { mutableIntStateOf(0) }
     var settingsOpen by remember { mutableStateOf(currentRoute == Destinations.SETTINGS) }
     var restoreFocusAfterNavigation by remember { mutableStateOf(false) }
+    // Back reveals the browse tree before its focusRestorer is ready. The sidebar must not
+    // interpret that temporary focus handoff as a request to open its animated panel.
+    val returnFocusPending = restoreFocusAfterNavigation || returnsFromFullscreenPlayer(previousRoute, currentRoute)
     fun shellFocusAllowed(): Boolean = windowInfo.isWindowFocused && !screensaverOverlayPresent &&
         !com.ambient.tv.ui.intro.IntroPresentation.active && !connectionStatusUi.isDetailsOpen
     fun requestContentFocus(): Boolean {
@@ -1778,7 +1781,10 @@ private fun AmbientTvApp(
             settingsSession++
             requestedSettingsPage = null
         }
-        if (returnsFromFullscreenPlayer(previousRoute, currentRoute) ||
+        val fromFullscreenPlayer = returnsFromFullscreenPlayer(previousRoute, currentRoute)
+        // Disarm a Left press from before playback, so it cannot open the rail on return.
+        if (fromFullscreenPlayer) sidebarEntryRequested.value = false
+        if (fromFullscreenPlayer ||
             (previousRoute == Destinations.SETTINGS && currentRoute != Destinations.SETTINGS)) {
             restoreFocusAfterNavigation = true
         }
@@ -2360,6 +2366,7 @@ private fun AmbientTvApp(
                     isEntryRequested = { sidebarEntryRequested.value },
                     onEntryRequestConsumed = { sidebarEntryRequested.value = false },
                     onFocusOwnershipChanged = { sidebarHasFocus = it },
+                    suppressTransientFocus = returnFocusPending,
                     onExitApp = ::exitApp,
                     onOpenStartStatus = if (connectionStatusUi.isAvailable) {
                         { onClosed -> connectionStatusUi.openDetails(onClosed) }
