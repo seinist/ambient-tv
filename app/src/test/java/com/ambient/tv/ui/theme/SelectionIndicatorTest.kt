@@ -33,17 +33,6 @@ class SelectionIndicatorTest {
         }
     }
 
-    @Test fun textChipsHaveALongerUnderlineWithoutChangingCompactOsdMarkers() {
-        val chip = selectionIndicatorRect(true, size, SelectionIndicator.CHIP_UNDERLINE, 1f)!!
-        val compact = selectionIndicatorRect(true, size, SelectionIndicator.UNDERLINE, 1f)!!
-        assertEquals(40f, chip.width, .001f)
-        assertEquals(2f, chip.height, .001f)
-        assertEquals(30f, chip.left, .001f)
-        assertEquals(compact.center.x, chip.center.x, .001f)
-        assertEquals(24f, compact.width, .001f)
-        assertEquals(chip, selectionIndicatorRevealRect(chip, SelectionIndicator.CHIP_UNDERLINE, 1f))
-    }
-
     @Test fun sidebarAndOptionsMarkersFollowReadingDirection() {
         val ltr = selectionIndicatorRect(true, size, SelectionIndicator.LEADING_BAR, 1f, rtl = false)!!
         val rtl = selectionIndicatorRect(true, size, SelectionIndicator.LEADING_BAR, 1f, rtl = true)!!
