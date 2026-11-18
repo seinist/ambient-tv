@@ -58,6 +58,7 @@ import com.ambient.tv.ui.player.SEEK_VISUAL_ACK_TIMEOUT_MS
 import com.ambient.tv.ui.player.SEEK_VISUAL_ACK_TOLERANCE_MS
 import com.ambient.tv.ui.player.seekBarVisualPosition
 import com.ambient.tv.ui.player.seekBarFraction
+import com.ambient.tv.ui.player.seekBarPlayheadFraction
 import com.ambient.tv.ui.player.seekBarThumbScale
 import com.ambient.tv.ui.player.seekBarHasDistinctTarget
 import com.ambient.tv.ui.performance.LocalPerformanceProfile
@@ -111,12 +112,14 @@ fun HandheldSeekBar(
     val dragTarget = dragFraction?.let { (it * durationMs).toLong() }
     val shownPosition = seekBarVisualPosition(positionMs, durationMs, dragTarget, null, awaitingVisualTarget)
     val fraction = seekBarFraction(shownPosition, durationMs)
+    // Compact touch OSD and expanded controls must share the same persistent playhead.
+    val playheadFraction = seekBarPlayheadFraction(positionMs, durationMs)
     val showingSeekTarget = seekBarHasDistinctTarget(
         positionMs, shownPosition, dragFraction != null || awaitingVisualTarget != null,
     )
     val reducedEffects = LocalPerformanceProfile.current.reducedEffects
     val thumbAlpha by animateFloatAsState(
-        if (dragFraction != null) 1f else 0f,
+        if (dragFraction != null || awaitingVisualTarget != null) 1f else 0f,
         animationSpec = tween(if (reducedEffects) 95 else 145), label = "Touch seek thumb fade",
     )
     val thumbScale by animateFloatAsState(
@@ -248,18 +251,24 @@ fun HandheldSeekBar(
                             drawLine(Color.Black.copy(alpha = 0.76f), Offset(x, centerY - trackWidth / 2), Offset(x, centerY + trackWidth / 2), 2.dp.toPx())
                         }
                         drawBookmarkTicks(bookmarks, durationMs, centerY - trackWidth / 2, centerY + trackWidth / 2)
-                        if (showingSeekTarget) {
-                            val x = seekBarFraction(positionMs, durationMs) * endX
-                            drawLine(Color.White.copy(alpha = .64f),
-                                Offset(x, centerY - 5.dp.toPx()),
-                                Offset(x, centerY + 5.dp.toPx()), 1.5.dp.toPx())
-                        }
                         if (thumbAlpha > 0f) {
                             val radius = 8.5.dp.toPx() * thumbScale
                             val center = Offset(endX * fraction, centerY)
                             drawCircle(Color.White, radius = radius, center = center, alpha = thumbAlpha)
                             drawCircle(brush = thumbBrush, radius = radius - 3.dp.toPx() * thumbScale,
                                 center = center, alpha = thumbAlpha)
+                        }
+                        // Draw last: the current position remains a vertical line even when
+                        // a separate target/thumb is being previewed by a tap or drag.
+                        if (playheadFraction != null) {
+                            val insetX = 1.5.dp.toPx()
+                            val x = (playheadFraction * endX).coerceIn(insetX, (endX - insetX).coerceAtLeast(insetX))
+                            drawLine(
+                                Color.White.copy(alpha = .84f),
+                                Offset(x, centerY - 6.dp.toPx()),
+                                Offset(x, centerY + 6.dp.toPx()),
+                                2.dp.toPx(), cap = androidx.compose.ui.graphics.StrokeCap.Round,
+                            )
                         }
                     }
                 }
