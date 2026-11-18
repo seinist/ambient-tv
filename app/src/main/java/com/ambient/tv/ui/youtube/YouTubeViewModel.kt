@@ -367,6 +367,11 @@ class YouTubeViewModel @Inject constructor(
         ?.let { runCatching { YouTubeFilter.valueOf(it) }.getOrNull() } ?: YouTubeFilter.ALL
     private val configuredFeeds: List<YouTubeFeed>
         get() = preferences.youtubeFeedKeys.mapNotNull(YouTubeFeed::fromKey).ifEmpty { listOf(YouTubeFeed.HOME) }
+
+    private fun gridColumns(feed: YouTubeFeed, mode: YouTubeViewMode = viewMode(feed)): Int =
+        preferences.layoutGridColumns(stateKey(feed), mode.name)
+    private fun listRows(feed: YouTubeFeed, mode: YouTubeViewMode = viewMode(feed)): Int =
+        preferences.layoutListRows(stateKey(feed), mode.name)
     private val _uiState = MutableStateFlow(
         YouTubeUiState(
             available = engine.available,
@@ -376,8 +381,8 @@ class YouTubeViewModel @Inject constructor(
             sort = sort(entryFeed),
             sortDescending = storedDescending(entryFeed, sort(entryFeed)),
             filter = filter(entryFeed),
-            gridColumns = preferences.libraryGridColumns,
-            listRows = preferences.libraryListRows,
+            gridColumns = gridColumns(entryFeed),
+            listRows = listRows(entryFeed),
             mediaSelectionBehaviorKey = preferences.youtubeMediaSelectionBehaviorKey,
             channel = channelId?.let {
                 com.ambient.tv.youtube.YouTubeChannelInfo(
@@ -503,6 +508,8 @@ class YouTubeViewModel @Inject constructor(
         _uiState.value = _uiState.value.copy(
             feed = feed,
             viewMode = viewMode(feed),
+            gridColumns = gridColumns(feed),
+            listRows = listRows(feed),
             sort = nextSort,
             sortDescending = storedDescending(feed, nextSort),
             filter = filter(feed),
@@ -516,8 +523,11 @@ class YouTubeViewModel @Inject constructor(
         if (feed != _uiState.value.feed || _uiState.value.query.isNotEmpty()) selectFeed(feed)
     }
     fun selectViewMode(mode: YouTubeViewMode) {
-        preferences.setSectionViewMode(stateKey(_uiState.value.feed), mode.name)
-        _uiState.value = _uiState.value.copy(viewMode = mode)
+        val feed = _uiState.value.feed
+        preferences.setSectionViewMode(stateKey(feed), mode.name)
+        _uiState.value = _uiState.value.copy(
+            viewMode = mode, gridColumns = gridColumns(feed, mode), listRows = listRows(feed, mode),
+        )
     }
     fun selectSort(sort: YouTubeSort) {
         val descending = sort == YouTubeSort.DURATION
@@ -535,12 +545,14 @@ class YouTubeViewModel @Inject constructor(
         _uiState.value = _uiState.value.copy(filter = filter)
     }
     fun setGridColumns(columns: Int) {
-        preferences.libraryGridColumns = columns
-        _uiState.value = _uiState.value.copy(gridColumns = preferences.libraryGridColumns)
+        val current = _uiState.value
+        preferences.setLayoutGridColumns(stateKey(current.feed), current.viewMode.name, columns)
+        _uiState.value = current.copy(gridColumns = gridColumns(current.feed, current.viewMode))
     }
     fun setListRows(rows: Int) {
-        preferences.libraryListRows = rows
-        _uiState.value = _uiState.value.copy(listRows = preferences.libraryListRows)
+        val current = _uiState.value
+        preferences.setLayoutListRows(stateKey(current.feed), current.viewMode.name, rows)
+        _uiState.value = current.copy(listRows = listRows(current.feed, current.viewMode))
     }
     fun setMediaSelectionBehavior(value: String) {
         preferences.youtubeMediaSelectionBehaviorKey = value
@@ -668,6 +680,8 @@ class YouTubeViewModel @Inject constructor(
             signedIn = true,
             feed = home,
             viewMode = viewMode(home),
+            gridColumns = gridColumns(home),
+            listRows = listRows(home),
             sort = sort(home),
             filter = filter(home),
             query = "",
@@ -831,6 +845,8 @@ class YouTubeViewModel @Inject constructor(
                         visibleFeeds = feeds,
                         feed = selectedFeed,
                         viewMode = viewMode(selectedFeed),
+                        gridColumns = gridColumns(selectedFeed),
+                        listRows = listRows(selectedFeed),
                         sort = sort(selectedFeed),
                         filter = filter(selectedFeed),
                     )

@@ -883,6 +883,22 @@ class AppPreferences @Inject constructor(
         get() = prefs.getInt(KEY_LIBRARY_LIST_ROWS, 7).coerceIn(4, 10)
         set(value) = prefs.edit { putInt(KEY_LIBRARY_LIST_ROWS, value.coerceIn(4, 10)) }
 
+    /** Density choices are independent per source and view mode. Existing global values
+     * are the fallback for every view until that view is configured explicitly. */
+    fun layoutGridColumns(scope: String, mode: String): Int =
+        prefs.getInt("layout_grid_columns_$scope|$mode", libraryGridColumns).coerceIn(4, 12)
+
+    fun setLayoutGridColumns(scope: String, mode: String, columns: Int) {
+        prefs.edit { putInt("layout_grid_columns_$scope|$mode", columns.coerceIn(4, 12)) }
+    }
+
+    fun layoutListRows(scope: String, mode: String): Int =
+        prefs.getInt("layout_list_rows_$scope|$mode", libraryListRows).coerceIn(4, 10)
+
+    fun setLayoutListRows(scope: String, mode: String, rows: Int) {
+        prefs.edit { putInt("layout_list_rows_$scope|$mode", rows.coerceIn(4, 10)) }
+    }
+
     /**
      * Requests larger artwork from media providers for 4K/high-density TV UIs.
      * Kept opt-in because the larger images increase network traffic, server work and disk cache use.
@@ -2273,28 +2289,52 @@ class AppPreferences @Inject constructor(
     )
 
     fun portableLibraryPreferences(): Map<String, String> = prefs.all
-        .filterKeys { isPortableLibraryPreference(it, includeGuideOptions = true) }
-        .mapNotNull { (key, value) -> (value as? String)?.let { key to it } }
+        .filterKeys { isPortableLibraryPreference(it, includeGuideOptions = true, includeDensityOptions = true) }
+        .mapNotNull { (key, value) ->
+            when {
+                isPortableDensityPreference(key) && value is Int -> key to value.toString()
+                !isPortableDensityPreference(key) && value is String -> key to value
+                else -> null
+            }
+        }
         .toMap()
 
     /** Backups before schema 80 did not include guide options and must leave them untouched. */
-    fun restorePortableLibraryPreferences(values: Map<String, String>, includeGuideOptions: Boolean = false) {
+    fun restorePortableLibraryPreferences(
+        values: Map<String, String>,
+        includeGuideOptions: Boolean = false,
+        includeDensityOptions: Boolean = false,
+    ) {
         prefs.edit {
             prefs.all.keys
-                .filter { isPortableLibraryPreference(it, includeGuideOptions) || it.startsWith("section_focus_") }
+                .filter { isPortableLibraryPreference(it, includeGuideOptions, includeDensityOptions) || it.startsWith("section_focus_") }
                 .forEach(::remove)
             withPosterSectionViews(values).forEach { (key, value) ->
-                if (isPortableLibraryPreference(key, includeGuideOptions)) {
-                    putString(key, value)
+                if (isPortableLibraryPreference(key, includeGuideOptions, includeDensityOptions)) {
+                    if (isPortableDensityPreference(key)) {
+                        value.toIntOrNull()?.let { density ->
+                            val range = if (key.startsWith("layout_grid_columns_")) 4..12 else 4..10
+                            putInt(key, density.coerceIn(range))
+                        }
+                    } else {
+                        putString(key, value)
+                    }
                 }
             }
         }
     }
 
-    private fun isPortableLibraryPreference(key: String, includeGuideOptions: Boolean): Boolean =
+    private fun isPortableDensityPreference(key: String): Boolean =
+        key.startsWith("layout_grid_columns_") || key.startsWith("layout_list_rows_")
+
+    private fun isPortableLibraryPreference(
+        key: String, includeGuideOptions: Boolean, includeDensityOptions: Boolean = false,
+    ): Boolean =
         key.startsWith("section_sort_") || key.startsWith("section_filter_") ||
             key.startsWith("section_view_") || key.startsWith("section_page_") ||
-            key.startsWith("overview_view_") || includeGuideOptions && key.startsWith("guide_options_")
+            key.startsWith("overview_view_") ||
+            (includeDensityOptions && isPortableDensityPreference(key)) ||
+            (includeGuideOptions && key.startsWith("guide_options_"))
 
     /** Only legacy library layouts turn landscape/rows into posters. SmartTube and
      * Monogram use a native landscape/ROWS mode and must keep it across backup import. */

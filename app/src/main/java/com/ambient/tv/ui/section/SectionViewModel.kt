@@ -84,8 +84,8 @@ class SectionViewModel @Inject constructor(
     val refreshGeneration = plexRefreshBus.generation
     val loadingViewMode: SectionViewMode get() = viewMode()
     val loadingPage: SectionPage get() = page
-    val loadingGridColumns: Int get() = preferences.libraryGridColumns
-    val loadingListRows: Int get() = preferences.libraryListRows
+    val loadingGridColumns: Int get() = preferences.layoutGridColumns(stateKey(), viewMode().name)
+    val loadingListRows: Int get() = preferences.layoutListRows(stateKey(), viewMode().name)
     private var sourceItems: List<MediaItem> = mediaRepository.cachedSectionItems(sectionKey).orEmpty()
     private var onDeck: List<MediaItem> = mediaRepository.cachedProviderOnDeck(sectionKey).orEmpty()
     private var page = preferences.sectionPage(sectionKey)?.let { runCatching { SectionPage.valueOf(it) }.getOrNull() } ?: SectionPage.RECOMMENDATIONS
@@ -371,12 +371,12 @@ class SectionViewModel @Inject constructor(
     }
 
     fun setGridColumns(value: Int) {
-        preferences.libraryGridColumns = value
+        preferences.setLayoutGridColumns(stateKey(), viewMode().name, value)
         rebuild()
     }
 
     fun setListRows(value: Int) {
-        preferences.libraryListRows = value
+        preferences.setLayoutListRows(stateKey(), viewMode().name, value)
         rebuild()
     }
 
@@ -506,8 +506,8 @@ class SectionViewModel @Inject constructor(
             collectionsLoading = collectionsLoading,
             availableLetters = letters,
             selectedLetter = selectedLetter,
-            gridColumns = preferences.libraryGridColumns,
-            listRows = preferences.libraryListRows,
+            gridColumns = preferences.layoutGridColumns(stateKey(), view.name),
+            listRows = preferences.layoutListRows(stateKey(), view.name),
             playbackReturnRevision = playbackReturnRevision,
         )
     }

@@ -127,14 +127,20 @@ class TelegramViewModel @Inject constructor(
         }
     internal fun changeViewMode(section: String, mode: MonogramBrowseLayout) =
         preferences.setSectionViewMode("monogram.$section", mode.name)
-    val gridColumns get() = preferences.libraryGridColumns
-    val listRows get() = preferences.libraryListRows
-    fun setGridColumns(columns: Int) { preferences.libraryGridColumns = columns }
+    fun gridColumns(section: String, mode: MonogramBrowseLayout): Int =
+        preferences.layoutGridColumns("monogram.$section", mode.name)
+    fun listRows(section: String, mode: MonogramBrowseLayout): Int =
+        preferences.layoutListRows("monogram.$section", mode.name)
+    fun setGridColumns(section: String, mode: MonogramBrowseLayout, columns: Int) {
+        preferences.setLayoutGridColumns("monogram.$section", mode.name, columns)
+    }
     /** What selecting a post does (post page, play, ask); Monogram's own setting like SmartTube's. */
     var mediaSelectionBehavior: String
         get() = preferences.telegramMediaSelectionBehaviorKey
         set(value) { preferences.telegramMediaSelectionBehaviorKey = value }
-    fun setListRows(rows: Int) { preferences.libraryListRows = rows }
+    fun setListRows(section: String, mode: MonogramBrowseLayout, rows: Int) {
+        preferences.setLayoutListRows("monogram.$section", mode.name, rows)
+    }
 
     private val mutableState = MutableStateFlow(TelegramBrowseState())
     val state: StateFlow<TelegramBrowseState> = mutableState.asStateFlow()

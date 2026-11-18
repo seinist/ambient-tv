@@ -1048,7 +1048,11 @@ class SettingsBackupManager @Inject constructor(
         if (backup.homeRows != null) preferences.homeRows = backup.homeRows
         else preferences.resetHomeRowsToLegacy()
         preferences.systemHomeHiddenRows = backup.systemHomeHiddenRows
-        preferences.restorePortableLibraryPreferences(backup.libraryPreferences, includeGuideOptions = backup.schemaVersion >= 80)
+        preferences.restorePortableLibraryPreferences(
+            backup.libraryPreferences,
+            includeGuideOptions = backup.schemaVersion >= 80,
+            includeDensityOptions = backup.schemaVersion >= 81,
+        )
         preferences.clearRecentSearches()
         backup.recentSearches.asReversed().forEach(preferences::rememberSearch)
         preferences.wireGuardEnabled = backup.wireGuardEnabled
@@ -1128,7 +1132,7 @@ class SettingsBackupManager @Inject constructor(
     }
 
     internal companion object {
-        const val CURRENT_SCHEMA_VERSION = 80
+        const val CURRENT_SCHEMA_VERSION = 81
         val PORTABLE_DISPLAY_MODES = setOf("system", AppPreferences.DISPLAY_MODE_AUTO_CONTENT, AppPreferences.DISPLAY_MODE_AUTO_DISPLAY)
     }
 }

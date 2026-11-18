@@ -161,8 +161,6 @@ internal fun TrailerCatalogContent(
     repository: TmdbTrailerRepository,
     preferences: com.ambient.tv.data.local.AppPreferences,
 ) {
-    var gridColumns by remember { mutableIntStateOf(preferences.libraryGridColumns) }
-    var listRows by remember { mutableIntStateOf(preferences.libraryListRows) }
     val locale = androidx.compose.ui.platform.LocalConfiguration.current.locales[0]
     val credentialVersion by repository.configuration.collectAsState()
     val configured = repository.configured
@@ -176,6 +174,8 @@ internal fun TrailerCatalogContent(
     val filterFocusState = rememberFilterFocusState(stateKey)
     var viewMode by remember(selectedFeedName) { mutableStateOf(preferences.sectionViewMode(stateKey)
         ?.let { runCatching { TrailerViewMode.valueOf(it) }.getOrNull() } ?: TrailerViewMode.POSTER) }
+    var gridColumns by remember(stateKey, viewMode) { mutableIntStateOf(preferences.layoutGridColumns(stateKey, viewMode.name)) }
+    var listRows by remember(stateKey, viewMode) { mutableIntStateOf(preferences.layoutListRows(stateKey, viewMode.name)) }
     var sort by remember(selectedFeedName) { mutableStateOf(preferences.sectionSort(stateKey)
         ?.let { runCatching { TrailerSort.valueOf(it) }.getOrNull() } ?: TrailerSort.DEFAULT) }
     var sortDescending by remember(selectedFeedName) {
@@ -423,8 +423,8 @@ internal fun TrailerCatalogContent(
             selectedView = viewMode.name,
             onView = { TrailerViewMode.valueOf(it).let { mode -> viewMode = mode; preferences.setSectionViewMode(stateKey, mode.name) } },
             gridColumns = gridColumns, listRows = listRows,
-            onGridColumns = { value -> preferences.libraryGridColumns = value; gridColumns = preferences.libraryGridColumns },
-            onListRows = { value -> preferences.libraryListRows = value; listRows = preferences.libraryListRows },
+            onGridColumns = { value -> preferences.setLayoutGridColumns(stateKey, viewMode.name, value); gridColumns = preferences.layoutGridColumns(stateKey, viewMode.name) },
+            onListRows = { value -> preferences.setLayoutListRows(stateKey, viewMode.name, value); listRows = preferences.layoutListRows(stateKey, viewMode.name) },
             onClose = { showViewOptions = false }, modifier = Modifier.align(Alignment.CenterEnd),
             sorts = filterModel.sorts, selectedSort = filterModel.selectedSort, onSort = filterModel.onSort,
             sortOrders = filterModel.sortOrders, selectedSortOrder = filterModel.selectedSortOrder, onSortOrder = filterModel.onSortOrder,
