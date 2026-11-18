@@ -134,6 +134,7 @@ import com.ambient.tv.ui.player.PlayerScreen
 import com.ambient.tv.ui.player.LocalPersistentPlaybackVideoHost
 import com.ambient.tv.ui.player.LocalVisibleBackgroundVideo
 import com.ambient.tv.ui.player.PersistentPlaybackVideoHost
+import com.ambient.tv.ui.player.shouldRetainMpvLiveVideoSurface
 import com.ambient.tv.ui.search.SearchScreen
 import com.ambient.tv.ui.server.ServerSelectScreen
 import com.ambient.tv.ui.server.ServerSelectViewModel
@@ -1590,6 +1591,7 @@ private fun AmbientTvApp(
                 ShellPlaybackState(
                     it.active,
                     it.active && it.metadata?.hasVideo == true,
+                    it.metadata?.isLive == true,
                     it.playing,
                     it.wantsToPlay,
                     it.metadata?.isTrailer == true,
@@ -1602,6 +1604,7 @@ private fun AmbientTvApp(
         ShellPlaybackState(
             it.active,
             it.active && it.metadata?.hasVideo == true,
+            it.metadata?.isLive == true,
             it.playing,
             it.wantsToPlay,
             it.metadata?.isTrailer == true,
@@ -1626,12 +1629,18 @@ private fun AmbientTvApp(
     // session becomes active and the root host takes over.
     val persistentVideoHost = onPlayerScreen || backgroundPlayback.activeVideo
     val showVisibleBackgroundVideo = visibleBackgroundVideoPlayback && persistentVideoHost && !onPlayerScreen
-    // Minimized playback used to keep decoding and filtering a full-screen video plane behind an
-    // opaque background, which is what made browsing choppy while the mini player ran. The video
-    // plane only exists while something can see it: the player screen, or the ambient backdrop.
-    // Its surface going away detaches the renderer's video output the same way a screen change
-    // does (audio and the session keep running) and comes back on the next frame it is shown.
-    val videoPlaneVisible = persistentVideoHost && (onPlayerScreen || showVisibleBackgroundVideo || pipPresentation)
+    // Ordinary minimized playback releases the invisible video surface to keep browse smooth.
+    // Exception: a live MPV stream must retain its Surface/VO across the in-app minimization:
+    // deselecting its video track while live audio continues can force a fresh decoder to catch
+    // up with the live clock on fullscreen return (slow/frozen picture).
+    // The normal opaque AppBackground still hides this output when background video is off.
+    val retainLiveMpvSurface = shouldRetainMpvLiveVideoSurface(
+        activeVideo = backgroundPlayback.activeVideo,
+        isLive = backgroundPlayback.isLive,
+        mpvActive = BackgroundPlaybackSession.activeHandle() is com.ambient.tv.ui.player.backend.MpvPlaybackController,
+    )
+    val videoPlaneVisible = persistentVideoHost &&
+        (onPlayerScreen || showVisibleBackgroundVideo || pipPresentation || retainLiveMpvSurface)
     // Sidebar selections target this group directly. Spatial focus search is unreliable while
     // Navigation Compose is replacing one destination tree with another.
     val contentFocusRequester = remember { FocusRequester() }
@@ -3630,6 +3639,7 @@ private fun spotifyWebAuthorized(tokenStore: TokenStore): Boolean {
 private data class ShellPlaybackState(
     val active: Boolean,
     val activeVideo: Boolean,
+    val isLive: Boolean,
     val playing: Boolean,
     val wantsToPlay: Boolean,
     val isTrailer: Boolean,
