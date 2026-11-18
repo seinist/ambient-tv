@@ -91,17 +91,6 @@ internal fun selectionIndicatorRect(
     }
 }
 
-/** Consistent quiet accent cue for *focused* OSD buttons, even without selection.
- * Its rect is independent of animations and cannot overlap the outer focus border. */
-internal fun osdFocusAccentRect(surface: Size, dp: Float): Rect? {
-    if (!dp.isFinite() || dp <= 0f || !surface.width.isFinite() || !surface.height.isFinite() ||
-        surface.height < 24f * dp || surface.width < 26f * dp) return null
-    val width = minOf(16f * dp, surface.width - 16f * dp)
-    val left = (surface.width - width) / 2f
-    val top = 8f * dp
-    return Rect(left, top, left + width, top + 1f * dp)
-}
-
 /**
  * Reveal only the marker's long axis, symmetrically from its center. Dots expand on
  * both axes. The full rect never changes, keeping all layout and RTL offsets stable.
@@ -334,8 +323,6 @@ fun Modifier.appControlSurface(
     prominent: Boolean = false,
     pressed: Boolean = false,
     selectionIndicator: SelectionIndicator = SelectionIndicator.UNDERLINE,
-    /** Low-intensity accent material on OSD controls, without styling their idle chrome. */
-    osdChrome: Boolean = false,
 ): Modifier = composed {
     val colors = rememberInteractionColorState(
         focused, selected, enabled, animate, focusedAccent, prominent, pressed,
@@ -411,18 +398,6 @@ fun Modifier.appControlSurface(
             // The selection marker expands/collapses inside its fixed geometry; its animation
             // only invalidates drawing, never the control's layout or the focus boundary.
             drawSelectionIndicator(marker, material, selectionIndicator, markerProgress.value)
-            // Every focused OSD action (Plex/SmartTube/MPV/VLC/weather/etc.) receives
-            // the same short material glint. Selection is represented separately by the
-            // small persistent dot/underline, never by a second wide accent edge.
-            if (osdChrome && enabled && focused) {
-                osdFocusAccentRect(size, 1.dp.toPx())?.let { line ->
-                    drawRoundRect(
-                        brush = material, alpha = .48f,
-                        topLeft = line.topLeft, size = line.size,
-                        cornerRadius = CornerRadius(line.height / 2f),
-                    )
-                }
-            }
         }
     }
 }
@@ -441,8 +416,9 @@ fun Modifier.appOsdControlSurface(
     selectionIndicator: SelectionIndicator = SelectionIndicator.DOT,
 ): Modifier = appControlSurface(
     focused = focused, selected = selected, enabled = enabled, shape = shape,
+    // Focus is shown by the outer accent border/material motion, never an extra line
+    // inside an OSD button. Selected states keep their separate marker.
     prominent = prominent, pressed = pressed, selectionIndicator = selectionIndicator,
-    osdChrome = true,
 )
 
 /**
