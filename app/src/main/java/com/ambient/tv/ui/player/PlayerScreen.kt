@@ -1225,9 +1225,10 @@ internal fun TvPlayerSeekBar(
     // Draw the current-position line only during scrubbing or brief direct-seek
     // feedback. Moving focus onto the timeline or expanding the button row is not
     // a seek. The same condition applies to every renderer using this TV OSD.
+    val recentSeek = rememberRecentPlayerSeekFeedback()
     val playheadFraction = seekBarPlayheadFraction(
         positionMs, durationMs,
-        seeking = aiming || (osd?.seekFeedback == true && feedbackPreview),
+        seeking = aiming || recentSeek || (osd?.seekFeedback == true && feedbackPreview),
     )
     val reducedSeekEffects = LocalPerformanceProfile.current.reducedEffects
     val thumbAlpha by animateFloatAsState(
