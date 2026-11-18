@@ -228,7 +228,7 @@ fun WeatherMapPlayerScreen(
                     coverageMissing = result.image.coverageMissing,
                 )
             else -> {
-                if (loading && contentVisible && location != null && mapPreview?.locationId == location.id) {
+                if (loading && contentVisible && mapPreview?.locationId == location.id) {
                     mapPreview?.image?.let { previous ->
                         BoxWithConstraints(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                             Box(Modifier.size(minOf(maxWidth, maxHeight))) {
@@ -262,7 +262,7 @@ fun WeatherMapPlayerScreen(
     }
 }
 
-@OptIn(UnstableApi::class)
+@androidx.annotation.OptIn(UnstableApi::class)
 @Composable
 private fun WeatherMedia3MapContent(
     request: WeatherPlayerRequest,

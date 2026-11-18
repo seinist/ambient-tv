@@ -118,7 +118,7 @@ class OnlineServiceAvailability @Inject constructor(@ApplicationContext context:
                 // Validation may arrive shortly after onAvailable. Ignore short transport changes.
                 delay(1_500)
                 val network = connectivity?.activeNetwork
-                val capabilities = network?.let { connectivity?.getNetworkCapabilities(it) }
+                val capabilities = network?.let { connectivity.getNetworkCapabilities(it) }
                 val reachability = when {
                     network == null -> InternetReachability.UNAVAILABLE
                     capabilities == null -> InternetReachability.UNKNOWN
