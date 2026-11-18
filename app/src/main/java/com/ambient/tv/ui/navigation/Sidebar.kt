@@ -866,7 +866,8 @@ internal fun SidebarContent(
                             MaterialTheme.colorScheme.background.copy(alpha = 0.96f),
                         )))
                         .border(1.dp, Color.White.copy(alpha = 0.06f), RoundedCornerShape(LocalUiTokens.current.panelRadius * uiScale))
-                        .padding(horizontal = 14.dp * uiScale, top = 12.dp * uiScale,
+                        .padding(start = 14.dp * uiScale, end = 14.dp * uiScale,
+                            top = 12.dp * uiScale,
                             bottom = if (miniPlayerVisible) 8.dp * uiScale else 12.dp * uiScale),
                 ) {
                     androidx.compose.runtime.CompositionLocalProvider(LocalSidebarLabelAlpha provides labelAlpha) {
