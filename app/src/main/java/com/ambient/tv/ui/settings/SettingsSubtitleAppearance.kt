@@ -56,34 +56,36 @@ internal fun LazyListScope.subtitleAppearanceItems(
     }
 }
 
-/** A 16:9 strip of picture stand-in with one subtitle line, drawn like Media3 will draw it. */
+/**
+ * One subtitle line over the shared 16:9 stage, sized and placed like Media3 draws it: the
+ * text height is the fractional size of the picture height, and outline, shadow and box
+ * padding scale with the text instead of using fixed pixels.
+ */
 @Composable
 private fun SubtitlePreview(appearance: SubtitleAppearance) {
-    BoxWithConstraints(
-        Modifier.fillMaxWidth().height(180.dp)
-            .background(
-                Brush.verticalGradient(listOf(Color(0xFF6F8FB0), Color(0xFFC9B48F), Color(0xFF3B3326))),
-                RoundedCornerShape(10.dp),
-            ),
-    ) {
-        val textSize = with(androidx.compose.ui.platform.LocalDensity.current) { (maxHeight * appearance.textFraction * 2.2f).toSp() }
+    SettingsScenePreview(stringResource(R.string.settings_scene_preview_caption,
+        stringResource(R.string.settings_scene_preview_player))) {
+        ScenePlayer(showTimeline = false)
+        val density = androidx.compose.ui.platform.LocalDensity.current
+        val textHeight = maxHeight * appearance.textFraction
+        val textPx = with(density) { textHeight.toPx() }
         val color = Color(appearance.textArgb)
         val base = TextStyle(
             color = color,
-            fontSize = textSize,
+            fontSize = with(density) { textHeight.toSp() },
             fontWeight = if (appearance.bold) FontWeight.Bold else FontWeight.Normal,
             shadow = if (appearance.edge == SubtitleAppearance.EDGE_SHADOW && appearance.background == SubtitleAppearance.BACKGROUND_NONE)
-                Shadow(Color.Black, Offset(3f, 3f), 4f) else null,
+                Shadow(Color.Black, Offset(textPx * .08f, textPx * .08f), textPx * .12f) else null,
         )
         val line = stringResource(R.string.subtitle_look_sample)
         Box(
             Modifier.align(Alignment.BottomCenter)
                 .padding(bottom = maxHeight * (appearance.positionPercent / 100f))
-                .background(Color(appearance.backgroundArgb), RoundedCornerShape(3.dp))
-                .padding(horizontal = 8.dp, vertical = 2.dp),
+                .background(Color(appearance.backgroundArgb), RoundedCornerShape(textHeight * .15f))
+                .padding(horizontal = textHeight * .35f, vertical = textHeight * .08f),
         ) {
             if (appearance.edge == SubtitleAppearance.EDGE_OUTLINE && appearance.background == SubtitleAppearance.BACKGROUND_NONE) {
-                Text(line, style = base.copy(color = Color.Black, drawStyle = Stroke(width = 5f)))
+                Text(line, style = base.copy(color = Color.Black, drawStyle = Stroke(width = (textPx * .14f).coerceAtLeast(1f))))
             }
             Text(line, style = base)
         }

@@ -458,6 +458,8 @@
     <string name="settings_live_preview">Vorschau</string>
     <string name="settings_preview_summary">%1$d%% · %2$s</string>
     <string name="settings_preview_title">Beispielansicht</string>
+    <string name="settings_scene_preview_caption">Vorschau · %1$s</string>
+    <string name="settings_scene_preview_player">Player</string>
     <string name="settings_preview_body">Akzent, Skalierung und Design werden sofort übernommen.</string>
     <string name="settings_performance_auto">Auto</string>
     <string name="settings_performance_balanced">Ausgewogen</string>
