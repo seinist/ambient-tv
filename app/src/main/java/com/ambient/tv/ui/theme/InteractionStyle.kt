@@ -208,6 +208,7 @@ private fun rememberInteractionColorState(
     focusedAccent: Boolean = false,
     prominent: Boolean = false,
     pressed: Boolean = false,
+    osd: Boolean = false,
 ): InteractionColorState {
     val scheme = MaterialTheme.colorScheme
     val materialStyle = LocalAccentStyle.current
@@ -235,7 +236,7 @@ private fun rememberInteractionColorState(
         )
     }
     val target = palette.colors(focused, selected, enabled, prominent, pressed, focusedAccent)
-    val animationSpec = if (animate == false) snap() else focusColorSpec()
+    val animationSpec = if (animate == false) snap<Color>() else focusColorSpec(focused, osd)
     // Brightness changes must settle together: fading an old HDR surface after its
     // content has already returned to SDR could briefly reduce the text contrast.
     return key(hdrHeadroom) {
@@ -247,11 +248,8 @@ private fun rememberInteractionColorState(
         )
         val washOpacity = animateFloatAsState(
             target.washOpacity,
-            animationSpec = when {
-                animate == false -> snap()
-                LocalPerformanceProfile.current.allowSpringFocus -> tween(LocalUiTokens.current.animationFastMs)
-                else -> tween(REDUCED_FOCUS_FADE_MS, easing = LinearOutSlowInEasing)
-            },
+            // Match fill and outline: a late material wash makes focus hops flicker.
+            animationSpec = if (animate == false) snap<Float>() else controlFocusFadeSpec(focused, osd),
             label = "control material wash",
         )
         InteractionColorState(container, outline, washOpacity, palette, target.content)
@@ -272,9 +270,11 @@ fun Modifier.appControlSurface(
     prominent: Boolean = false,
     pressed: Boolean = false,
     selectionIndicator: SelectionIndicator = SelectionIndicator.NONE,
+    /** The shared OSD controls use slightly faster fades than normal buttons. */
+    osd: Boolean = false,
 ): Modifier = composed {
     val colors = rememberInteractionColorState(
-        focused, selected, enabled, animate, focusedAccent, prominent, pressed,
+        focused, selected, enabled, animate, focusedAccent, prominent, pressed, osd,
     )
     val materialStyle = LocalAccentStyle.current
     val reducedEffects = LocalPerformanceProfile.current.reducedEffects
@@ -368,24 +368,36 @@ fun Modifier.appOsdControlSurface(
     // Focus is shown by the outer accent border/material motion, never an extra line
     // inside an OSD button. Selected states keep their separate marker.
     prominent = prominent, pressed = pressed, selectionIndicator = selectionIndicator,
+    osd = true,
 )
 
 /**
- * Focus color crossfade. Reduced-performance profiles still fade (a short color tween only
- * touches draw, no layout or layer), so focus hops between rows don't flicker hard.
+ * Asymmetric focus fades keep remote navigation responsive without harsh focus flashes.
+ * All control colors/washes share the same draw-only tween; selection remains separate.
  */
-@Composable
-fun focusColorSpec(): AnimationSpec<Color> {
-    val tokens = LocalUiTokens.current
-    return if (LocalPerformanceProfile.current.allowSpringFocus) {
-        tween(tokens.animationFastMs)
-    } else {
-        tween(REDUCED_FOCUS_FADE_MS, easing = LinearOutSlowInEasing)
+internal fun controlFocusFadeDurationMs(focused: Boolean, reducedEffects: Boolean, osd: Boolean = false): Int =
+    when {
+        reducedEffects && focused -> 140
+        reducedEffects -> 110
+        osd && focused -> 190
+        osd -> 160
+        focused -> 200
+        else -> 170
     }
+
+@Composable
+private fun <T> controlFocusFadeSpec(focused: Boolean, osd: Boolean): AnimationSpec<T> {
+    val reduced = LocalPerformanceProfile.current.reducedEffects
+    return tween(
+        durationMillis = controlFocusFadeDurationMs(focused, reduced, osd),
+        easing = if (reduced) LinearOutSlowInEasing else FastOutSlowInEasing,
+    )
 }
 
-
-private const val REDUCED_FOCUS_FADE_MS = 140
+/** Control outline, fill and accent wash use the same timing and easing. */
+@Composable
+fun focusColorSpec(focused: Boolean = true, osd: Boolean = false): AnimationSpec<Color> =
+    controlFocusFadeSpec(focused, osd)
 
 /**
  * The focus target changes immediately on D-pad input; only the border's draw color animates.
@@ -396,7 +408,7 @@ internal fun focusBorderFadeDurationMs(focused: Boolean, reducedEffects: Boolean
     if (reducedEffects) {
         if (focused) 140 else 110
     } else {
-        if (focused) 160 else 130
+        if (focused) 200 else 170
     }
 
 /**
@@ -417,18 +429,19 @@ fun Modifier.animatedFocusBorder(
     val reduced = LocalPerformanceProfile.current.reducedEffects
     val materialStyle = LocalAccentStyle.current
     val motion = rememberAccentMotionState(focused).takeIf { focused }
+    val focusEasing = if (reduced) LinearOutSlowInEasing else FastOutSlowInEasing
     // The outline's opacity fades on focus hops; its hue also crossfades when the user
     // changes the configured accent while a card is already focused.
     val accent = animateColorAsState(
         targetValue = focusedColor,
-        animationSpec = tween(200, easing = LinearOutSlowInEasing),
+        animationSpec = tween(200, easing = focusEasing),
         label = "focus outline accent",
     )
     val reveal = animateFloatAsState(
         targetValue = if (focused) 1f else 0f,
         animationSpec = tween(
             durationMillis = focusBorderFadeDurationMs(focused, reduced),
-            easing = LinearOutSlowInEasing,
+            easing = focusEasing,
         ),
         label = "focus outline fade",
     )
@@ -496,9 +509,10 @@ fun Modifier.animatedFocusSurface(
     val materialStyle = LocalAccentStyle.current
     val primaryAccent = MaterialTheme.colorScheme.primary
     val motion = rememberAccentMotionState(focused).takeIf { focused }
+    val focusEasing = if (reduced) LinearOutSlowInEasing else FastOutSlowInEasing
     val fade = tween<Color>(
         durationMillis = focusBorderFadeDurationMs(focused, reduced),
-        easing = LinearOutSlowInEasing,
+        easing = focusEasing,
     )
     val fill = animateColorAsState(
         targetValue = if (focused) focusedBackground else unfocusedBackground,
@@ -514,7 +528,7 @@ fun Modifier.animatedFocusSurface(
         targetValue = if (focused) 1f else 0f,
         animationSpec = tween(
             durationMillis = focusBorderFadeDurationMs(focused, reduced),
-            easing = LinearOutSlowInEasing,
+            easing = focusEasing,
         ),
         label = "focus surface material",
     )
