@@ -105,6 +105,28 @@ internal fun SettingsHeaderRow(
     }
 }
 
+/** One title hierarchy for every TV Settings view; only the location path changes. */
+@Composable
+internal fun SettingsHeaderLabel(
+    settingsTitle: String,
+    areaTitle: String,
+    pageTitle: String? = null,
+    addSystemTitle: String? = null,
+    modifier: Modifier = Modifier,
+) {
+    Column(
+        modifier = modifier,
+        verticalArrangement = Arrangement.spacedBy(com.ambient.tv.ui.theme.LocalUiTokens.current.compactGap),
+    ) {
+        SettingsPageTitle(settingsTitle)
+        Text(
+            listOfNotNull(areaTitle, pageTitle, addSystemTitle).joinToString(" › "),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
+}
+
 /** Owns navigation only. Drafts and all source actions remain in SettingsViewModel. */
 @OptIn(androidx.compose.ui.ExperimentalComposeUiApi::class, androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
@@ -579,17 +601,13 @@ internal fun SettingsHub(
                     .focusGroup(),
             ) {
                 Icon(Icons.Filled.Settings, null, Modifier.size(32.dp))
-                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(com.ambient.tv.ui.theme.LocalUiTokens.current.compactGap)) {
-                    if (page == null) {
-                        SettingsPageTitle(stringResource(R.string.settings_title))
-                        Text(listOfNotNull(stringResource(area.titleRes), stringResource(R.string.settings_add_system).takeIf { addingSystems }).joinToString(" › "),
-                            style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    } else {
-                        // The current page owns the content title below. This is its parent path only.
-                        Text(listOf(stringResource(R.string.settings_title), stringResource(area.titleRes)).joinToString(" › "),
-                            style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    }
-                }
+                SettingsHeaderLabel(
+                    settingsTitle = stringResource(R.string.settings_title),
+                    areaTitle = stringResource(area.titleRes),
+                    pageTitle = page?.let { settingsCategoryTitle(it) },
+                    addSystemTitle = stringResource(R.string.settings_add_system).takeIf { addingSystems },
+                    modifier = Modifier.weight(1f),
+                )
                 if (showBack) TvChip(stringResource(R.string.back),
                     // Left from the leftmost header chip stays put.
                     modifier = Modifier.onPreviewKeyEvent { event -> event.key == Key.DirectionLeft && event.type == KeyEventType.KeyDown },
