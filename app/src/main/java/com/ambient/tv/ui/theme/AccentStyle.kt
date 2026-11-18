@@ -142,7 +142,12 @@ internal fun accentFocusBorderBrush(accent: Color, style: AccentStyle): Brush {
         )
         AccentStyle.LIGHT -> error("Light is a flat-color border")
     }
-    return if (style == AccentStyle.GLOW) SolidColor(lip) else accentMaterialBrush(stops, style)
+    return when (style) {
+        AccentStyle.GLOW -> SolidColor(lip)
+        // A vertical upper lip is what distinguishes Glass from the diagonal Satin.
+        AccentStyle.GLASS -> Brush.verticalGradient(*stops.toTypedArray())
+        else -> accentMaterialBrush(stops, style)
+    }
 }
 
 /** Keep unfocused content neutral; only active elements receive a material wash. */
