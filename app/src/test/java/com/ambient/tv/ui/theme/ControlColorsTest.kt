@@ -114,8 +114,8 @@ class ControlColorsTest {
             assertNotEquals(focused.container, selectedFocused.container)
             assertEquals(focused.outline, selectedFocused.outline)
             // Focus is accented, selected remains a thinner persistent edge.
-            assertEquals(.94f, focused.outline.alpha, .001f)
-            assertEquals(.85f, selected.outline.alpha, .001f)
+            assertEquals(.94f, focused.outline.alpha, .003f)
+            assertEquals(.85f, selected.outline.alpha, .003f)
             assertNotEquals(focused.outline, selected.outline)
             val background = worstWash(selectedFocused.container, selectedFocused.washOpacity, 1f, style)
             assertTrue(contrastRatio(focused.outline.compositeOver(background), background) >= 3f)

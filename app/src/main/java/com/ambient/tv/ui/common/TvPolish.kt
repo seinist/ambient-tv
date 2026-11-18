@@ -940,7 +940,6 @@ fun TvChip(
             // 52dp total TV target, 48dp visible chrome: the previous 44dp pill
             // looked shrunken beside the header clock and regular action buttons.
             .sizeIn(minHeight = 52.dp * uiScale)
-            .padding(2.dp)
             .menuFocusMotion(focused, focusedScale = 1.01f)
             .onPreviewKeyEvent { event ->
                 if (event.key == Key.Enter || event.key == Key.NumPadEnter ||
@@ -958,7 +957,7 @@ fun TvChip(
     ) {
         // The drawn chip is shorter than its focus target; centred, it lines up with titles,
         // rows and buttons next to it instead of sitting at the top of that slot.
-        Box(Modifier.sizeIn(minHeight = 48.dp * uiScale), contentAlignment = Alignment.Center) {
+        Box(Modifier.padding(2.dp).sizeIn(minHeight = 48.dp * uiScale), contentAlignment = Alignment.Center) {
             Row(
                 modifier = Modifier
                     .appControlSurface(focused, selected, enabled, chipShape, pressed = keyPressed || pointerPressed,
