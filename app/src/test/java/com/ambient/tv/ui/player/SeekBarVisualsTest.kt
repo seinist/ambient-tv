@@ -45,6 +45,15 @@ class SeekBarVisualsTest {
         assertEquals(null, seekBarPlayheadFraction(25_000, -1, seeking = true))
     }
 
+    @Test fun playheadFadeKeepsItsLastCoordinateAfterSeekEnds() {
+        assertEquals(.65f, seekBarPlayheadDrawFraction(.65f, .1f), 0f)
+        assertEquals(.65f, seekBarPlayheadDrawFraction(null, .65f), 0f)
+        assertEquals(150, seekBarPlayheadFadeDurationMs(showing = true, reducedEffects = false))
+        assertEquals(220, seekBarPlayheadFadeDurationMs(showing = false, reducedEffects = false))
+        assertEquals(90, seekBarPlayheadFadeDurationMs(showing = true, reducedEffects = true))
+        assertEquals(120, seekBarPlayheadFadeDurationMs(showing = false, reducedEffects = true))
+    }
+
     @Test fun scrubbingScalesThumbButDoesNotChangeTrackSize() {
         assertEquals(1f, seekBarThumbScale(false), 0f)
         assertEquals(1.18f, seekBarThumbScale(true), 0f)
