@@ -88,6 +88,9 @@ internal class ControlPalette(
 
     /** Style-bearing focus outline without the washed-out white material highlights. */
     fun focusBorderBrush(): Brush = accentFocusBorderBrush(accentFocusOutline.copy(alpha = 1f), style)
+
+    /** Selected-only controls retain the chosen material at a thinner, steady stroke. */
+    fun selectedBorderBrush(): Brush = accentFocusBorderBrush(selectedOutline.copy(alpha = 1f), style)
 }
 
 @Immutable
