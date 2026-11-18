@@ -56,6 +56,55 @@ class BackgroundPlayerReturnNavigationTest {
         assertFalse(navigation.isMiniPlayerReentry("different-selection"))
     }
 
+    @Test fun fullscreenOsdMinimizeArmsDirectBackAndPreservesBrowseFocus() {
+        val navigation = BackgroundPlayerReturnNavigation()
+        navigation.enterPlayer("smarttube-live-player", previousIsPlayer = false)
+        assertFalse(navigation.preservesBrowseContextOnExit("smarttube-live-player"))
+
+        // The shared EXIT button arms the chain before its onBack callback pops the player.
+        navigation.beginFullscreenExit("smarttube-live-player")
+        assertTrue(navigation.preservesBrowseContextOnExit("smarttube-live-player"))
+        assertFalse(navigation.preservesBrowseContextOnExit("another-player"))
+        navigation.enterBrowse() // the exact view that was under the player is now visible
+        assertTrue(navigation.canResumeAfterSidebarBack(true))
+        assertFalse(navigation.canResumeAfterSidebarBack(false))
+        assertFalse(navigation.preservesBrowseContextOnExit("smarttube-live-player"))
+
+        // Back reopens the active session directly above the current view, without refocusing
+        // the video or opening its details on the next exit.
+        navigation.markMiniPlayerReentry("fullscreen-reopened")
+        navigation.enterPlayer("fullscreen-reopened", previousIsPlayer = false)
+        assertFalse(navigation.canResumeAfterSidebarBack(true))
+        assertTrue(navigation.preservesBrowseContextOnExit("fullscreen-reopened"))
+        navigation.enterBrowse()
+        assertFalse(navigation.canResumeAfterSidebarBack(true))
+    }
+
+    @Test fun fullscreenExitBackChainIsOneShotAndDoesNotHijackNormalBrowsing() {
+        val navigation = BackgroundPlayerReturnNavigation()
+        navigation.beginFullscreenExit(null) // no valid player entry
+        assertFalse(navigation.canResumeAfterSidebarBack(true))
+
+        navigation.enterPlayer("player", previousIsPlayer = false)
+        navigation.beginFullscreenExit("player")
+        navigation.enterBrowse()
+        navigation.disarm() // user moved with D-pad; keep regular Back navigation
+        assertFalse(navigation.canResumeAfterSidebarBack(true))
+
+        navigation.enterPlayer("second-player", previousIsPlayer = false)
+        navigation.beginFullscreenExit("second-player")
+        navigation.enterBrowse()
+        navigation.enterBrowse() // user navigated to another page instead of pressing Back
+        assertFalse(navigation.canResumeAfterSidebarBack(true))
+
+        navigation.enterPlayer("third-player", previousIsPlayer = false)
+        navigation.beginFullscreenExit("third-player")
+        navigation.clearStoppedPlayback() // Stop / no longer playing must win
+        navigation.enterBrowse()
+        assertFalse(navigation.canResumeAfterSidebarBack(true))
+        assertFalse(navigation.preservesBrowseContextOnExit("third-player"))
+    }
+
     @Test fun stoppingPlaybackClearsReentryAndSidebarBackState() {
         val navigation = BackgroundPlayerReturnNavigation()
         navigation.armAfterSidebarBack(true)
