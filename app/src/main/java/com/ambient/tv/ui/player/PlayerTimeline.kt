@@ -80,7 +80,7 @@ internal fun rememberSeekPlayheadVisual(fraction: Float?): SeekPlayheadVisual {
         ),
         label = "Seek playhead fade",
     ).value
-    return SeekPlayheadVisual(fraction ?: lastPosition.floatValue, opacity)
+    return SeekPlayheadVisual(seekBarPlayheadDrawFraction(fraction, lastPosition.floatValue), opacity)
 }
 
 /** Passive live/radio OSD timeline: same accent material and track geometry as the seekbar. */
