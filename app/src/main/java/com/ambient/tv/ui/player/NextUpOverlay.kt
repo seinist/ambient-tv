@@ -18,7 +18,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.remember
@@ -121,8 +120,8 @@ internal fun NextUpOverlay(
             Text(countdownText, color = MaterialTheme.colorScheme.primary, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
         }
         if (countdown == NextUpCountdown.COUNTDOWN) {
-            LinearProgressIndicator(
-                progress = { (secondsRemaining.toFloat() / leadSeconds.coerceAtLeast(1)).coerceIn(0f, 1f) },
+            PlayerOsdProgressTrack(
+                progress = (secondsRemaining.toFloat() / leadSeconds.coerceAtLeast(1)).coerceIn(0f, 1f),
                 modifier = Modifier.fillMaxWidth(),
             )
         }

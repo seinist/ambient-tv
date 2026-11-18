@@ -7,6 +7,10 @@ import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.SideEffect
@@ -17,14 +21,19 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.clipRect
 import androidx.compose.ui.layout.layout
 import androidx.compose.ui.unit.constrainHeight
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.tv.material3.Text
 import com.ambient.tv.ui.performance.LocalPerformanceProfile
+import com.ambient.tv.ui.theme.LocalAccentStyle
+import com.ambient.tv.ui.theme.LocalPlaybackAccent
+import com.ambient.tv.ui.theme.accentBrush
 import kotlin.math.roundToInt
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
@@ -47,6 +56,23 @@ internal fun rememberPlayerTimelineDuration(
 @Composable
 private fun playerTimelineMotionMs(): Int =
     if (LocalPerformanceProfile.current.reducedEffects) 120 else 180
+
+/** Passive live/radio OSD timeline: same accent material and track geometry as the seekbar. */
+internal fun playerOsdProgressFraction(value: Float): Float =
+    if (value.isFinite()) value.coerceIn(0f, 1f) else 0f
+
+@Composable
+internal fun PlayerOsdProgressTrack(progress: Float, modifier: Modifier = Modifier, height: Dp = 4.dp) {
+    val accent = LocalPlaybackAccent.current.indicator
+    val style = LocalAccentStyle.current
+    val fill = remember(accent, style) { accentBrush(accent, style) }
+    val shape = RoundedCornerShape(50)
+    Box(modifier.fillMaxWidth().height(height)
+        .clip(shape).background(Color.White.copy(alpha = .24f), shape)) {
+        Box(Modifier.fillMaxHeight().fillMaxWidth(playerOsdProgressFraction(progress))
+            .background(fill, shape))
+    }
+}
 
 /**
  * The loading bar already has its final device-specific track/time height. Only genuinely

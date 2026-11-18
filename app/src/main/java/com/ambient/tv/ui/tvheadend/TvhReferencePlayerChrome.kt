@@ -22,7 +22,6 @@ import androidx.compose.material.icons.filled.SkipPrevious
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material.icons.filled.Subtitles
 import androidx.compose.material.icons.automirrored.filled.VolumeUp
-import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.mutableStateOf
@@ -54,6 +53,7 @@ import com.ambient.tv.ui.player.ReferencePlayerHeader
 import com.ambient.tv.ui.player.ReferencePlayerOverlayBackground
 import com.ambient.tv.ui.player.TvPlayerSeekBar
 import com.ambient.tv.ui.player.PlayerTimelineSlot
+import com.ambient.tv.ui.player.PlayerOsdProgressTrack
 import com.ambient.tv.ui.player.rememberPlayerTimelineDuration
 
 /** TVHeadend OSD rendered with the same chrome hierarchy and controls as the Plex/Jellyfin player. */
@@ -187,13 +187,10 @@ fun BoxScope.TvhReferencePlayerChrome(
                             )
                         }
                     }
-                    if (!showTimeshift) LinearProgressIndicator(
-                        progress = {
-                            if (liveEventDurationMs > 0L)
-                                (liveEventPositionMs.toFloat() / liveEventDurationMs.toFloat()).coerceIn(0f, 1f)
-                            else 0f
-                        },
-                        color = com.ambient.tv.ui.theme.LocalPlaybackAccent.current.indicator,
+                    if (!showTimeshift) PlayerOsdProgressTrack(
+                        progress = if (liveEventDurationMs > 0L)
+                            (liveEventPositionMs.toFloat() / liveEventDurationMs.toFloat()).coerceIn(0f, 1f)
+                            else 0f,
                         modifier = Modifier.fillMaxWidth(),
                     )
                     // EPG is fetched separately from the stream. Empty text retains the line height
@@ -256,17 +253,17 @@ fun BoxScope.TvhReferencePlayerChrome(
                                     color = androidx.tv.material3.MaterialTheme.colorScheme.primary,
                                     fontSize = 12.sp,
                                 )
-                                LinearProgressIndicator(
-                                    progress = { (programmeMs.toDouble() / liveEventDurationMs).toFloat().coerceIn(0f, 1f) },
-                                    color = androidx.tv.material3.MaterialTheme.colorScheme.primary,
-                                    modifier = Modifier.fillMaxWidth().height(3.dp),
+                                PlayerOsdProgressTrack(
+                                    progress = (programmeMs.toDouble() / liveEventDurationMs).toFloat().coerceIn(0f, 1f),
+                                    modifier = Modifier.fillMaxWidth(),
+                                    height = 3.dp,
                                 )
                             } else {
                                 Text("", fontSize = 12.sp)
-                                LinearProgressIndicator(
-                                    progress = { 0f },
-                                    color = androidx.tv.material3.MaterialTheme.colorScheme.primary,
-                                    modifier = Modifier.fillMaxWidth().height(3.dp),
+                                PlayerOsdProgressTrack(
+                                    progress = 0f,
+                                    modifier = Modifier.fillMaxWidth(),
+                                    height = 3.dp,
                                 )
                             }
                         },
