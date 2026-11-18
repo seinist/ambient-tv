@@ -97,7 +97,8 @@ class AccentMotionRenderingTest {
 
     @Test fun movingReflectionIsVisibleAboveTheOpaqueFocusBorder() {
         val bounds = Outline.Rectangle(Rect(4f, 4f, 76f, 20f))
-        for (style in AccentStyle.entries) {
+        // Glow's gesture is its breathing halo, drawn by the control itself.
+        for (style in AccentStyle.entries.filter { it != AccentStyle.GLOW }) {
             val paints = AccentMotionPaints(gold, style)
             val static = render {
                 drawOutline(bounds, accentFocusBorderBrush(gold, style), style = Stroke(3f))
@@ -105,7 +106,7 @@ class AccentMotionRenderingTest {
             val moving = render {
                 drawOutline(bounds, accentFocusBorderBrush(gold, style), style = Stroke(3f))
                 // Match the production order: opaque base first, transient motion last.
-                paints.drawOutline(this, bounds, AccentMotionFrame(.5f, 1f),
+                paints.drawOutline(this, bounds, AccentMotionFrame(.4f, 1f),
                     emphasis = 1f, drawStyle = Stroke(3f))
             }
             try {
@@ -222,7 +223,7 @@ class AccentMotionRenderingTest {
 
     @Test fun whiteAccentsHaveVisibleMotionInEveryStyleIncludingHdr() {
         for (accent in listOf(Color.White, uiHdrHighlight(Color.White, 2f))) {
-            for (style in AccentStyle.entries) {
+            for (style in AccentStyle.entries.filter { it != AccentStyle.GLOW }) {
                 val paints = AccentMotionPaints(accent, style)
                 val baseline = progress(accent, style, paints, AccentMotionFrame.Rest, 1f)
                 val moving = progress(accent, style, paints, AccentMotionFrame(.5f, 1f), 1f)
@@ -239,6 +240,42 @@ class AccentMotionRenderingTest {
                     baseline.recycle()
                     moving.recycle()
                 }
+            }
+        }
+    }
+
+    @Test fun glowLeavesBorderAndSurfaceToItsBreathingHalo() {
+        val paints = AccentMotionPaints(gold, AccentStyle.GLOW)
+        for (drawStyle in listOf(Fill, Stroke(3f))) {
+            val baseline = outline(gold, AccentStyle.GLOW, null, null, drawStyle)
+            val moving = outline(gold, AccentStyle.GLOW, paints, AccentMotionFrame(.5f, 1f), drawStyle)
+            try {
+                assertTrue("Glow draws no sheen ($drawStyle)", baseline.sameAs(moving))
+            } finally {
+                baseline.recycle()
+                moving.recycle()
+            }
+        }
+        assertEquals(0f, accentMotionPeakAlpha(AccentStyle.GLOW, stroke = true), 0f)
+    }
+
+    @Test fun everyAnimatedStyleHasItsOwnBorderGesture() {
+        val bounds = Outline.Rectangle(Rect(4f, 4f, 76f, 20f))
+        val gestures = linkedMapOf<List<Int>, AccentStyle>()
+        for (style in AccentStyle.entries.filter { it != AccentStyle.GLOW }) {
+            val paints = AccentMotionPaints(gold, style)
+            // The gesture alone, on a transparent target: compare where and how it lights the border.
+            val frames = listOf(.25f, .4f, .7f).map { phase ->
+                render { paints.drawOutline(this, bounds, AccentMotionFrame(phase, 1f), drawStyle = Stroke(3f)) }
+            }
+            try {
+                val signature = frames.flatMap { bitmap ->
+                    buildList { for (y in 0 until HEIGHT step 2) for (x in 0 until WIDTH step 2) add(bitmap.getColor(x, y).toArgb()) }
+                }
+                val duplicate = gestures.putIfAbsent(signature, style)
+                assertTrue("$style gesture duplicates $duplicate", duplicate == null)
+            } finally {
+                frames.forEach(Bitmap::recycle)
             }
         }
     }

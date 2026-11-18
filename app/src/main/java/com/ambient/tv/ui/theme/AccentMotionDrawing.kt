@@ -8,9 +8,8 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.Matrix
+import androidx.compose.ui.graphics.TileMode
 import androidx.compose.ui.graphics.Outline
-import androidx.compose.ui.graphics.ShaderBrush
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.drawOutline
@@ -23,90 +22,150 @@ import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import kotlin.math.PI
+import kotlin.math.sin
 
 /**
- * Cache per surface/track, never globally: ShaderBrush caches its last drawing size and
- * owns the reflection transform. A frame only changes that matrix and draw-time alpha.
+ * Peak opacity of one style's motion, for a stroke (border) or a fill. Callers scale it by
+ * their own emphasis. The border carries each gesture; behind text the surface part stays
+ * subtle, because ControlColors reserves this fill peak plus the material wash in its 4.5:1
+ * text-contrast budget. Glow animates its halo stroke instead (see InteractionStyle).
+ */
+internal fun accentMotionPeakAlpha(style: AccentStyle, stroke: Boolean): Float = when (style) {
+    AccentStyle.LIGHT -> if (stroke) .28f else .30f
+    AccentStyle.SATIN -> if (stroke) .55f else .07f
+    AccentStyle.GLASS -> if (stroke) .95f else .10f
+    AccentStyle.CHROME -> if (stroke) .90f else .10f
+    AccentStyle.GLOW -> 0f
+    AccentStyle.PEARL -> if (stroke) .85f else .07f
+    AccentStyle.CERAMIC -> if (stroke) .70f else .045f
+    AccentStyle.FACET -> if (stroke) .90f else .10f
+}
+
+/** Thin progress tracks carry no text: they show the gesture at a share of the border peak. */
+private const val TRACK_MOTION_SHARE = .6f
+
+/**
+ * Each style has its own subtle gesture, on the border and on the surface:
+ * - Light: border and surface breathe once.
+ * - Satin: a broad, soft sheen glides across and briefly lifts top and bottom edge.
+ * - Glass: a glint runs along the upper edge, like light catching a glass rim.
+ * - Chrome (metal): a fast, narrow angled flash.
+ * - Glow: nothing here; its halo breathes.
+ * - Pearl: the accent's neighbouring hues travel once around the border and flow across.
+ * - Ceramic: a soft lamp reflection wanders along the top of the glaze.
+ * - Facet: the border's corners and a few planes sparkle one after another.
+ * Geometry is in dp, independent of the control's aspect ratio. Brushes that depend on the
+ * phase are created per frame; only the focused control (or its card) owns a clock.
  * All gradient stops, including transparent ones, retain the accent's color space.
  */
 internal class AccentMotionPaints(private val accent: Color, val style: AccentStyle) {
     private fun blend(target: Color, fraction: Float) = lerp(accent, target.convert(accent.colorSpace), fraction)
-    private val light = blend(Color.White, .55f)
-    private val clear = light.copy(alpha = 0f)
-    // White-on-white has no visible motion on opaque tracks. A tiny shaded reflection
-    // preserves the hue/headroom and gives these otherwise flat highlights a visible gesture.
-    private val edgeLight = if (accent.luminance() > .8f) blend(Color.Black, .22f) else light
-    private val matrix = Matrix()
+    // White-on-white has no visible motion. Very light accents use a slightly shaded light
+    // and glint, which keeps every gesture readable (including HDR white).
+    private val veryLight = accent.luminance() > .8f
+    private val light = if (veryLight) blend(Color.Black, .22f) else blend(Color.White, .55f)
+    private val glint = if (veryLight) blend(Color.Black, .22f) else blend(Color.White, .85f)
+    private val clearLight = light.copy(alpha = 0f)
+    private val clearGlint = glint.copy(alpha = 0f)
+    private val cool = accentHueShift(accent, -30f).let { lerp(it, light, .35f) }
+    private val warm = accentHueShift(accent, 30f).let { lerp(it, light, .35f) }
+    private val solidLight = SolidColor(light)
 
-    private val primary: Brush = when (style) {
-        AccentStyle.SATIN -> Brush.linearGradient(
-            0f to clear, .20f to clear, .44f to light, .70f to clear, 1f to clear,
-        )
-        AccentStyle.GLASS -> Brush.verticalGradient(
-            0f to edgeLight, .12f to edgeLight.copy(alpha = .55f),
-            .42f to edgeLight.copy(alpha = 0f), 1f to edgeLight.copy(alpha = 0f),
-        )
-        AccentStyle.GLOW -> SolidColor(edgeLight)
-        AccentStyle.PEARL -> {
-            val cool = blend(Color(0xFFA9C6FF), .45f)
-            Brush.linearGradient(0f to cool.copy(alpha = 0f), .28f to cool,
-                .66f to cool.copy(alpha = 0f), 1f to cool.copy(alpha = 0f))
-        }
-        // Ceramic's original 12% highlight faded out before reaching the inset 2–3dp
-        // focus stroke. Keep a short glazed lip through the top/side border so motion
-        // remains visible even on small chips, without washing the full control.
-        AccentStyle.CERAMIC -> Brush.verticalGradient(
-            0f to edgeLight,
-            .25f to edgeLight.copy(alpha = .55f),
-            .48f to edgeLight.copy(alpha = 0f),
-            1f to edgeLight.copy(alpha = 0f),
-        )
-        AccentStyle.CHROME -> Brush.linearGradient(
-            0f to clear, .41f to clear, .48f to light, .52f to light, .59f to clear, 1f to clear,
-        )
-        AccentStyle.FACET -> Brush.linearGradient(0f to light, .33f to light, .35f to clear, 1f to clear)
-        // A uniform, low-amplitude brightness change preserves Light's solid-color character.
-        AccentStyle.LIGHT -> SolidColor(edgeLight)
-    }
-    private val secondary: Brush? = when (style) {
-        AccentStyle.PEARL -> {
-            val warm = blend(Color(0xFFFFB9D7), .42f)
-            Brush.linearGradient(0f to warm.copy(alpha = 0f), .34f to warm.copy(alpha = 0f),
-                .75f to warm, 1f to warm.copy(alpha = 0f))
-        }
-        AccentStyle.FACET -> Brush.linearGradient(0f to clear, .33f to clear, .35f to light,
-            .66f to light, .68f to clear, 1f to clear)
-        else -> null
-    }
-    private val tertiary: Brush? = if (style == AccentStyle.FACET)
-        Brush.linearGradient(0f to clear, .66f to clear, .68f to light, 1f to light) else null
-
-    private fun passes(size: Size, frame: AccentMotionFrame?, emphasis: Float, draw: (Brush, Float) -> Unit) {
+    private fun passes(
+        scope: DrawScope,
+        frame: AccentMotionFrame?,
+        emphasis: Float,
+        stroke: Boolean,
+        peak: Float = accentMotionPeakAlpha(style, stroke),
+        draw: (Brush, Float) -> Unit,
+    ) {
         if (frame == null || !frame.strength.isFinite() || !frame.phase.isFinite() ||
             frame.strength <= 0f || !emphasis.isFinite() || emphasis <= 0f) return
+        val w = scope.size.width
+        val h = scope.size.height
+        if (w <= 0f || h <= 0f) return
         val phase = frame.phase.coerceIn(0f, 1f)
-        val strength = frame.strength.coerceIn(0f, 1f) * emphasis.coerceIn(0f, 1f)
+        val alpha = frame.strength.coerceIn(0f, 1f) * emphasis.coerceIn(0f, 1f) * peak
+        if (alpha <= 0f) return
+        val dp = scope.density
         when (style) {
-            AccentStyle.SATIN, AccentStyle.CHROME, AccentStyle.GLASS -> {
-                matrix.reset()
-                if (style == AccentStyle.GLASS) matrix.translate(y = size.height * .18f * phase)
-                else matrix.translate(x = size.width * .66f * (phase - .5f))
-                (primary as ShaderBrush).transform = matrix
-                draw(primary, strength * if (style == AccentStyle.CHROME) .18f else .14f)
+            AccentStyle.LIGHT -> draw(solidLight, alpha)
+            AccentStyle.SATIN -> {
+                val band = maxOf(60f * dp, w * .6f)
+                val x = -band + phase * (w + band)
+                draw(Brush.linearGradient(0f to clearLight, .5f to light, 1f to clearLight,
+                    start = Offset(x, 0f), end = Offset(x + band, 0f)), alpha)
             }
-            AccentStyle.PEARL -> {
-                draw(primary, strength * .09f * (1f - phase))
-                draw(checkNotNull(secondary), strength * .09f * phase)
+            AccentStyle.GLASS -> {
+                val radius = 17f * dp
+                val x = -radius + phase * (w + 2f * radius)
+                draw(Brush.radialGradient(0f to glint, 1f to clearGlint,
+                    center = Offset(x, 0f), radius = radius), alpha)
+            }
+            AccentStyle.CHROME -> {
+                val band = 12f * dp
+                // Band lines tilted 22° from vertical; the gradient runs along their normal.
+                val nx = .927f
+                val ny = .375f
+                val x = -2f * band + phase * (w + 4f * band)
+                val cx = x
+                val cy = h / 2f
+                draw(Brush.linearGradient(0f to clearGlint, .5f to glint, 1f to clearGlint,
+                    start = Offset(cx - nx * band / 2f, cy - ny * band / 2f),
+                    end = Offset(cx + nx * band / 2f, cy + ny * band / 2f)), alpha)
+            }
+            AccentStyle.GLOW -> Unit
+            AccentStyle.PEARL -> if (stroke) {
+                // One iridescent arc travels once around the outline.
+                val steps = 24
+                val stops = Array(steps + 1) { i ->
+                    val position = i / steps.toFloat()
+                    val t = ((position - phase) % 1f + 1f) % 1f
+                    position to pearlArc(t)
+                }
+                draw(Brush.sweepGradient(*stops, center = Offset(w / 2f, h / 2f)), alpha)
+            } else {
+                val span = w * 2f
+                val shift = phase * span
+                draw(Brush.linearGradient(
+                    0f to cool, .25f to accent, .5f to warm, .75f to accent, 1f to cool,
+                    start = Offset(-shift, 0f), end = Offset(-shift + span, 0f),
+                    tileMode = TileMode.Repeated,
+                ), alpha)
+            }
+            AccentStyle.CERAMIC -> {
+                val radius = minOf(32f * dp, maxOf(h * .65f, 16f * dp))
+                val x = -radius + phase * (w + 2f * radius)
+                val y = h * .05f - radius * .35f * sin(PI.toFloat() * phase)
+                draw(Brush.radialGradient(0f to light, 1f to clearLight,
+                    center = Offset(x, y), radius = radius), alpha)
             }
             AccentStyle.FACET -> {
-                draw(primary, strength * .06f * (1f - phase))
-                draw(checkNotNull(secondary), strength * .06f)
-                draw(checkNotNull(tertiary), strength * .06f * phase)
+                val points = if (stroke) listOf(Offset(0f, 0f), Offset(w, 0f), Offset(w, h), Offset(0f, h))
+                    else listOf(Offset(w * .25f, h * .6f), Offset(w * .55f, h * .3f), Offset(w * .8f, h * .6f))
+                val radius = (if (stroke) 8f else 9f) * dp
+                val k = phase * points.size
+                val index = k.toInt().coerceIn(0, points.size - 1)
+                val flash = sin(PI.toFloat() * (k - index)).let { it * it }
+                draw(Brush.radialGradient(0f to glint, 1f to clearGlint,
+                    center = points[index], radius = radius), alpha * flash)
             }
-            AccentStyle.GLOW -> draw(primary, strength * .13f)
-            AccentStyle.CERAMIC -> draw(primary, strength * .14f)
-            AccentStyle.LIGHT -> draw(primary, strength * .075f)
         }
+    }
+
+    /** Pearl's travelling arc: transparent, cool hue, light, warm hue, transparent. */
+    private fun pearlArc(t: Float): Color {
+        val stops = PEARL_ARC
+        if (t >= stops.last()) return clearLight
+        val colors = listOf(cool.copy(alpha = 0f), cool, light, warm, warm.copy(alpha = 0f))
+        for (i in 1 until stops.size) {
+            if (t <= stops[i]) {
+                val f = (t - stops[i - 1]) / (stops[i] - stops[i - 1])
+                return lerp(colors[i - 1], colors[i], f.coerceIn(0f, 1f))
+            }
+        }
+        return clearLight
     }
 
     fun drawOutline(
@@ -115,7 +174,7 @@ internal class AccentMotionPaints(private val accent: Color, val style: AccentSt
         frame: AccentMotionFrame?,
         emphasis: Float = 1f,
         drawStyle: DrawStyle = Fill,
-    ) = passes(scope.size, frame, emphasis) { brush, alpha ->
+    ) = passes(scope, frame, emphasis, drawStyle is Stroke) { brush, alpha ->
         scope.drawOutline(outline, brush, alpha = alpha, style = drawStyle)
     }
 
@@ -131,7 +190,8 @@ internal class AccentMotionPaints(private val accent: Color, val style: AccentSt
         if (width <= 0f || scope.size.height <= 0f) return
         // Draw exactly the filled geometry in the full-track scope. Neither the gradient's
         // coordinates nor the progress endpoint depends on the decorative phase.
-        passes(scope.size, frame, .75f) { brush, alpha ->
+        passes(scope, frame, .75f, stroke = false,
+            peak = accentMotionPeakAlpha(style, stroke = true) * TRACK_MOTION_SHARE) { brush, alpha ->
             scope.drawRoundRect(
                 brush = brush,
                 topLeft = Offset(if (fromRight) scope.size.width - width else 0f, 0f),
@@ -140,6 +200,10 @@ internal class AccentMotionPaints(private val accent: Color, val style: AccentSt
                 alpha = alpha,
             )
         }
+    }
+
+    private companion object {
+        val PEARL_ARC = floatArrayOf(0f, .11f, .19f, .28f, .39f)
     }
 }
 

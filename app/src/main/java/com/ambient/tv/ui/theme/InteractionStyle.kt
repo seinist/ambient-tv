@@ -320,7 +320,7 @@ fun Modifier.appControlSurface(
                 translate(inset, inset) {
                     if (glowStroke != null) {
                         drawOutline(strokeOutline, material,
-                            alpha = outline.alpha * (.10f + .02f * (frame?.strength ?: 0f)),
+                            alpha = outline.alpha * (.10f + .10f * (frame?.strength ?: 0f)),
                             style = glowStroke)
                     }
                     // Draw the chosen material *before* the motion. Previously the
@@ -338,7 +338,7 @@ fun Modifier.appControlSurface(
                         // A narrow traveling halo makes the opt-in gesture readable
                         // from TV distance without changing layout or idle chrome.
                         motionPaints?.drawOutline(this, strokeOutline, frame,
-                            emphasis = outline.alpha * .45f, drawStyle = motionStroke)
+                            emphasis = outline.alpha * .30f, drawStyle = motionStroke)
                     }
                     motionPaints?.drawOutline(this, strokeOutline, frame,
                         emphasis = outline.alpha, drawStyle = stroke)
@@ -471,12 +471,12 @@ fun Modifier.animatedFocusBorder(
                             drawOutline(outline, color, style = stroke)
                         } else {
                             if (glowStroke != null) {
-                                drawOutline(outline, material, alpha = color.alpha * (.13f + .025f * (frame?.strength ?: 0f)),
+                                drawOutline(outline, material, alpha = color.alpha * (.13f + .11f * (frame?.strength ?: 0f)),
                                     style = glowStroke)
                             }
                             drawOutline(outline, focusBorder, alpha = color.alpha, style = stroke)
                             motionPaints?.drawOutline(this, outline, frame,
-                                emphasis = color.alpha * .45f, drawStyle = motionStroke)
+                                emphasis = color.alpha * .30f, drawStyle = motionStroke)
                         }
                         motionPaints?.drawOutline(this, outline, frame, emphasis = color.alpha, drawStyle = stroke)
                     }
@@ -572,12 +572,12 @@ fun Modifier.animatedFocusSurface(
                         else drawOutline(inner, strokeColor.value, style = stroke)
                     } else {
                         if (glowStroke != null) {
-                            drawOutline(inner, material, alpha = strokeColor.value.alpha * (.12f + .025f * (frame?.strength ?: 0f)) * materialReveal.value,
+                            drawOutline(inner, material, alpha = strokeColor.value.alpha * (.12f + .11f * (frame?.strength ?: 0f)) * materialReveal.value,
                                 style = glowStroke)
                         }
                         drawOutline(inner, focusBorder, alpha = strokeColor.value.alpha, style = stroke)
                         motionPaints?.drawOutline(this, inner, frame,
-                            emphasis = strokeColor.value.alpha * .45f, drawStyle = motionStroke)
+                            emphasis = strokeColor.value.alpha * .30f, drawStyle = motionStroke)
                         motionPaints?.drawOutline(this, inner, frame, emphasis = strokeColor.value.alpha, drawStyle = stroke)
                     }
                 }

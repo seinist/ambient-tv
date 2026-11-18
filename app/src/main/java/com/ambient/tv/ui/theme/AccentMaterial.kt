@@ -109,7 +109,7 @@ fun Modifier.accentMaterialBorder(
                     val frame = motion?.value
                     translate(inset, inset) {
                         if (glowStroke != null) {
-                            drawOutline(outline, material, alpha = color.alpha * (.12f + .025f * (frame?.strength ?: 0f)),
+                            drawOutline(outline, material, alpha = color.alpha * (.12f + .11f * (frame?.strength ?: 0f)),
                                 style = glowStroke)
                         }
                         if (style == AccentStyle.LIGHT || !active) drawOutline(outline, color, style = stroke)

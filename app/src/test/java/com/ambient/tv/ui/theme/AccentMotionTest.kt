@@ -122,7 +122,10 @@ class AccentMotionTest {
         advanceTimeBy(100L); runCurrent()
         assertEquals(0, d.clock.requests)
         assertEquals(AccentMotionFrame.Rest, d.frame)
-        advanceTimeBy(350L); runCurrent()
+        // Passing focus (a D-pad step) must not start the gesture; a resting focus does.
+        advanceTimeBy(400L); runCurrent()
+        assertEquals(0, d.clock.requests)
+        advanceTimeBy(300L); runCurrent()
         assertTrue(d.frame.strength > 0f)
         advanceTimeBy(2_000L); runCurrent()
         assertTrue(job.isCompleted)
@@ -140,7 +143,7 @@ class AccentMotionTest {
         assertEquals(0, d.clock.requests)
 
         d.interacting = false
-        advanceTimeBy(700L); runCurrent()
+        advanceTimeBy(800L); runCurrent()
         assertTrue(d.frame.strength > 0f)
         val requests = d.clock.requests
         val nonRestFrames = d.nonRestFrames
@@ -153,7 +156,7 @@ class AccentMotionTest {
         d.interacting = false
         advanceTimeBy(20L); runCurrent()
         assertEquals("A rapid focus hop must keep its quiet delay", requests, d.clock.requests)
-        advanceTimeBy(350L); runCurrent()
+        advanceTimeBy(750L); runCurrent()
         assertTrue(d.clock.requests > requests)
         assertTrue(d.frame.strength > 0f)
         job.cancelAndJoin()
@@ -166,7 +169,7 @@ class AccentMotionTest {
         advanceTimeBy(10_000L); runCurrent()
         assertEquals(0, d.clock.requests)
         d.active = true
-        advanceTimeBy(700L); runCurrent()
+        advanceTimeBy(800L); runCurrent()
         assertTrue(d.frame.strength > 0f)
 
         val requests = d.clock.requests
@@ -180,7 +183,7 @@ class AccentMotionTest {
         d.active = true
         advanceTimeBy(90L); runCurrent()
         assertEquals(requests, d.clock.requests)
-        advanceTimeBy(400L); runCurrent()
+        advanceTimeBy(800L); runCurrent()
         assertTrue(d.clock.requests > requests)
         assertTrue("Resuming starts a finite gesture rather than a stale elapsed time", d.frame.strength > 0f)
         job.cancelAndJoin()
@@ -195,7 +198,7 @@ class AccentMotionTest {
             assertEquals("scale=$disabledScale", 0, d.clock.requests)
             assertEquals(AccentMotionFrame.Rest, d.frame)
             d.durationScale = 1f
-            advanceTimeBy(700L); runCurrent()
+            advanceTimeBy(800L); runCurrent()
             assertTrue(d.frame.strength > 0f)
 
             val requests = d.clock.requests
@@ -212,7 +215,8 @@ class AccentMotionTest {
     @Test fun ambientRestsForSecondsWithoutRequestingFramesThenRepeats() = runTest {
         val d = Driver(this, mode = AccentMotionMode.AMBIENT, style = AccentStyle.LIGHT)
         val job = d.start()
-        advanceTimeBy(1_500L); runCurrent()
+        // 600 ms resting delay, then Light's 2.8 s breath; the next one follows ~12 s later.
+        advanceTimeBy(3_600L); runCurrent()
         assertFalse(job.isCompleted)
         assertTrue(d.nonRestFrames > 0)
         assertEquals(AccentMotionFrame.Rest, d.frame)
@@ -229,7 +233,7 @@ class AccentMotionTest {
     @Test fun cancellingAnActiveGestureRestoresTheStaticMaterial() = runTest {
         val d = Driver(this, mode = AccentMotionMode.AMBIENT)
         val job = d.start()
-        advanceTimeBy(650L); runCurrent()
+        advanceTimeBy(750L); runCurrent()
         assertTrue(d.frame.strength > 0f)
         job.cancelAndJoin()
         assertEquals(AccentMotionFrame.Rest, d.frame)

@@ -55,21 +55,24 @@ internal data class AccentMotionFrame(val phase: Float, val strength: Float) {
 internal fun accentMotionAllowed(mode: AccentMotionMode, profile: PerformanceProfile): Boolean =
     mode != AccentMotionMode.OFF && profile.allowAccentMaterialMotion
 
+/** Each style's own gesture length: breathing is slow, the metal flash is quick. */
 internal fun accentMotionDurationMs(style: AccentStyle): Long = when (style) {
-    AccentStyle.SATIN -> 1_700L
-    AccentStyle.GLASS, AccentStyle.CHROME -> 1_450L
-    AccentStyle.GLOW -> 2_400L
-    AccentStyle.PEARL -> 2_200L
-    AccentStyle.CERAMIC -> 1_100L
-    AccentStyle.FACET -> 1_400L
-    AccentStyle.LIGHT -> 850L
+    AccentStyle.LIGHT -> 2_800L
+    AccentStyle.SATIN -> 2_600L
+    AccentStyle.GLASS -> 1_300L
+    AccentStyle.CHROME -> 620L
+    AccentStyle.GLOW -> 3_000L
+    AccentStyle.PEARL -> 4_200L
+    AccentStyle.CERAMIC -> 2_600L
+    AccentStyle.FACET -> 1_300L
 }
 
-internal fun accentMotionPeriodMs(style: AccentStyle): Long = when (style) {
-    AccentStyle.GLOW -> 7_000L
-    AccentStyle.SATIN, AccentStyle.CERAMIC -> 8_000L
-    else -> 9_000L
-}
+/** Ambient repeats the gesture about every 12 s while focus rests; any input restarts the wait. */
+@Suppress("UNUSED_PARAMETER")
+internal fun accentMotionPeriodMs(style: AccentStyle): Long = 12_000L
+
+/** Breathing styles swell and fade; travelling styles move at full strength between short fades. */
+private fun accentMotionBreathes(style: AccentStyle) = style == AccentStyle.LIGHT || style == AccentStyle.GLOW
 
 /** A zero-slope envelope starts and ends at the unchanged static material. */
 internal fun accentMotionFrame(
@@ -80,13 +83,19 @@ internal fun accentMotionFrame(
     val duration = accentMotionDurationMs(style)
     if (elapsedMs <= 0L || elapsedMs >= duration) return AccentMotionFrame.Rest
     val phase = elapsedMs.toFloat() / duration
-    val wave = sin(PI * phase).toFloat()
-    return AccentMotionFrame(phase, wave * wave * if (ambientRepeat) .8f else 1f)
+    val envelope = if (accentMotionBreathes(style)) {
+        sin(PI * phase).toFloat().let { it * it }
+    } else {
+        // Smooth 15 % fade in/out, a constant gesture in between.
+        val edge = (minOf(phase, 1f - phase) / .15f).coerceIn(0f, 1f)
+        edge * edge * (3f - 2f * edge)
+    }
+    return AccentMotionFrame(phase, envelope * if (ambientRepeat) .8f else 1f)
 }
 
-// Start shortly after the focused target settles; a 350 ms hold made the entire
-// optional gesture easy to miss during normal D-pad navigation.
-private const val ACCENT_MOTION_FOCUS_DELAY_MS = 140L
+// Start only once focus rests on a target. Firing after every D-pad step (140 ms) made
+// navigation through rows flicker; 600 ms separates a resting focus from passing through.
+internal const val ACCENT_MOTION_FOCUS_DELAY_MS = 600L
 private const val ACCENT_MOTION_POLL_MS = 100L
 
 /**
