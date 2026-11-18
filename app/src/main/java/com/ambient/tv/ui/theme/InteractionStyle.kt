@@ -358,6 +358,7 @@ fun Modifier.appControlSurface(
         )
         // Keep selected-only outlines slimmer than the active focus boundary.
         val stroke = Stroke(if (selected && !focused) strokePx * .68f else strokePx)
+        val motionStroke = Stroke(strokePx * 2f)
         val material = colors.palette.materialBrush()
         val focusBorder = colors.palette.focusBorderBrush()
         val selectedBorder = colors.palette.selectedBorderBrush()
@@ -401,7 +402,7 @@ fun Modifier.appControlSurface(
                         // A narrow traveling halo makes the opt-in gesture readable
                         // from TV distance without changing layout or idle chrome.
                         motionPaints?.drawOutline(this, strokeOutline, frame,
-                            emphasis = outline.alpha * .45f, drawStyle = Stroke(strokePx * 2f))
+                            emphasis = outline.alpha * .45f, drawStyle = motionStroke)
                     }
                     motionPaints?.drawOutline(this, strokeOutline, frame,
                         emphasis = outline.alpha, drawStyle = stroke)
@@ -516,6 +517,7 @@ fun Modifier.animatedFocusBorder(
             this,
         )
         val stroke = Stroke(strokePx)
+        val motionStroke = Stroke(strokePx * 2f)
         val material = accentBrush(focusedColor, materialStyle)
         val focusBorder = accentFocusBorderBrush(focusedColor, materialStyle)
         val glowStroke = if (materialStyle == AccentStyle.GLOW && !reduced) Stroke(strokePx * 2.6f) else null
@@ -536,7 +538,7 @@ fun Modifier.animatedFocusBorder(
                             }
                             drawOutline(outline, focusBorder, alpha = color.alpha, style = stroke)
                             motionPaints?.drawOutline(this, outline, frame,
-                                emphasis = color.alpha * .45f, drawStyle = Stroke(strokePx * 2f))
+                                emphasis = color.alpha * .45f, drawStyle = motionStroke)
                         }
                         motionPaints?.drawOutline(this, outline, frame, emphasis = color.alpha, drawStyle = stroke)
                     }
@@ -608,6 +610,7 @@ fun Modifier.animatedFocusSurface(
         val selectedBorder = accentFocusBorderBrush(unfocusedBorder.copy(alpha = 1f), materialStyle)
         val accentOutline = focusBorderMaterial
         val stroke = Stroke(strokePx)
+        val motionStroke = Stroke(strokePx * 2f)
         val glowStroke = if (materialStyle == AccentStyle.GLOW && !reduced) Stroke(strokePx * 2.5f) else null
         val motionPaints = if (motion != null) AccentMotionPaints(primaryAccent, materialStyle) else null
         onDrawWithContent {
@@ -635,7 +638,7 @@ fun Modifier.animatedFocusSurface(
                         }
                         drawOutline(inner, focusBorder, alpha = strokeColor.value.alpha, style = stroke)
                         motionPaints?.drawOutline(this, inner, frame,
-                            emphasis = strokeColor.value.alpha * .45f, drawStyle = Stroke(strokePx * 2f))
+                            emphasis = strokeColor.value.alpha * .45f, drawStyle = motionStroke)
                         motionPaints?.drawOutline(this, inner, frame, emphasis = strokeColor.value.alpha, drawStyle = stroke)
                     }
                 }
