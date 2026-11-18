@@ -24,6 +24,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
@@ -41,7 +42,10 @@ import androidx.compose.ui.unit.sp
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
 import com.ambient.tv.R
-import com.ambient.tv.ui.theme.appControlSurface
+import com.ambient.tv.ui.theme.LocalAccentStyle
+import com.ambient.tv.ui.theme.LocalPlaybackAccent
+import com.ambient.tv.ui.theme.accentBrush
+import com.ambient.tv.ui.theme.appOsdControlSurface
 import com.ambient.tv.ui.theme.menuFocusMotion
 import kotlin.math.roundToInt
 
@@ -153,7 +157,7 @@ fun PlayerValueSlider(
             .fillMaxWidth()
             .onFocusChanged { focused = it.isFocused || it.hasFocus }
             .menuFocusMotion(focused, focusedScale = 1.006f)
-            .appControlSurface(focused = focused, shape = shape)
+            .appOsdControlSurface(focused = focused, shape = shape)
             .semantics(mergeDescendants = true) {
                 contentDescription = a11y
                 progressBarRangeInfo = ProgressBarRangeInfo(
@@ -266,7 +270,7 @@ fun PlayerValueSlider(
             .fillMaxWidth()
             .onFocusChanged { focused = it.isFocused || it.hasFocus }
             .menuFocusMotion(focused, focusedScale = 1.006f)
-            .appControlSurface(focused = focused, shape = shape)
+            .appOsdControlSurface(focused = focused, shape = shape)
             .semantics(mergeDescendants = true) {
                 contentDescription = a11y
                 progressBarRangeInfo = ProgressBarRangeInfo(
@@ -349,7 +353,9 @@ fun PlayerValueSlider(
 @Composable
 private fun PlayerValueTrack(progress: Float, focused: Boolean) {
     val track = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.14f)
-    val fill = MaterialTheme.colorScheme.primary.copy(alpha = if (focused) 1f else 0.82f)
+    val accent = LocalPlaybackAccent.current.indicator
+    val style = LocalAccentStyle.current
+    val fill = remember(accent, style) { accentBrush(accent, style) }
     Box(
         Modifier
             .fillMaxWidth()
@@ -360,6 +366,7 @@ private fun PlayerValueTrack(progress: Float, focused: Boolean) {
             Modifier
                 .fillMaxHeight()
                 .fillMaxWidth(progress.coerceIn(0f, 1f))
+                .graphicsLayer { alpha = if (focused) 1f else .82f }
                 .background(fill, RoundedCornerShape(999.dp)),
         )
     }

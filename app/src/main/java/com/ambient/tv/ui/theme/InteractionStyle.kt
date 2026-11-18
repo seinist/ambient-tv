@@ -22,7 +22,6 @@ import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.graphics.drawOutline
 import androidx.compose.ui.graphics.drawscope.Stroke
-import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.translate
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.composed
@@ -62,31 +61,42 @@ internal fun selectionIndicatorRect(
 ): Rect? {
     if (!selected || indicator == SelectionIndicator.NONE || dp <= 0f ||
         !surface.width.isFinite() || !surface.height.isFinite()) return null
-    val inset = 4f * dp
+    val inset = 7f * dp
     val roomW = surface.width - 2f * inset
     val roomH = surface.height - 2f * inset
     if (roomW <= 0f || roomH <= 0f) return null
-    val thickness = minOf(3f * dp, roomW * .25f, roomH * .25f)
+    val thickness = minOf(1.75f * dp, roomW * .25f, roomH * .25f)
     return when (indicator) {
         SelectionIndicator.UNDERLINE -> {
-            val width = minOf(32f * dp, roomW * .50f)
+            val width = minOf(24f * dp, roomW * .50f)
             val left = (surface.width - width) / 2f
             Rect(left, surface.height - inset - thickness,
                 left + width, surface.height - inset)
         }
         SelectionIndicator.LEADING_BAR -> {
-            val length = minOf(24f * dp, roomH * .58f)
+            val length = minOf(17f * dp, roomH * .58f)
             val left = if (rtl) surface.width - inset - thickness else inset
             val top = (surface.height - length) / 2f
             Rect(left, top, left + thickness, top + length)
         }
         SelectionIndicator.DOT -> {
-            val diameter = minOf(6f * dp, roomW * .30f, roomH * .50f)
+            val diameter = minOf(5f * dp, roomW * .30f, roomH * .50f)
             val left = if (rtl) inset else surface.width - inset - diameter
             Rect(left, inset, left + diameter, inset + diameter)
         }
         SelectionIndicator.NONE -> null
     }
+}
+
+/** Consistent quiet accent cue for *focused* OSD buttons, even without selection.
+ * Its rect is independent of animations and cannot overlap the outer focus border. */
+internal fun osdFocusAccentRect(surface: Size, dp: Float): Rect? {
+    if (!dp.isFinite() || dp <= 0f || !surface.width.isFinite() || !surface.height.isFinite() ||
+        surface.height < 24f * dp || surface.width < 26f * dp) return null
+    val width = minOf(16f * dp, surface.width - 16f * dp)
+    val left = (surface.width - width) / 2f
+    val top = 8f * dp
+    return Rect(left, top, left + width, top + 1f * dp)
 }
 
 /**
@@ -128,18 +138,17 @@ private fun DrawScope.drawSelectionIndicator(
 ) {
     val revealed = selectionIndicatorRevealRect(bounds, indicator, progress) ?: return
     val radius = CornerRadius(minOf(revealed.width, revealed.height) / 2f)
-    // The sidebar keeps its white focus pill. A dark rim makes its accent strip
-    // visible even with yellow/white custom accents on the light pill.
+    // On the light sidebar focus pill, avoid an expanded dark halo plus a bright
+    // material border. Keep the persistent selection mark thin and restrained.
     if (onLightBackground) {
-        val spread = 1.5.dp.toPx()
-        drawRoundRect(
-            color = Color.Black.copy(alpha = .80f),
-            topLeft = Offset(revealed.left - spread, revealed.top - spread),
-            size = Size(revealed.width + spread * 2f, revealed.height + spread * 2f),
-            cornerRadius = CornerRadius(radius.x + spread),
-        )
+        drawRoundRect(color = Color.Black.copy(alpha = .42f),
+            topLeft = revealed.topLeft, size = revealed.size, cornerRadius = radius)
+        drawRoundRect(brush = brush, alpha = .30f,
+            topLeft = revealed.topLeft, size = revealed.size, cornerRadius = radius)
+    } else {
+        drawRoundRect(brush = brush, alpha = .80f,
+            topLeft = revealed.topLeft, size = revealed.size, cornerRadius = radius)
     }
-    drawRoundRect(brush = brush, topLeft = revealed.topLeft, size = revealed.size, cornerRadius = radius)
 }
 
 /** Selected state uses one finite animation; no separate timer or layout invalidation. */
@@ -378,20 +387,15 @@ fun Modifier.appControlSurface(
             // The selection marker expands/collapses inside its fixed geometry; its animation
             // only invalidates drawing, never the control's layout or the focus boundary.
             drawSelectionIndicator(marker, material, selectionIndicator, markerProgress.value)
-            // A narrow static reflection makes the chosen accent material legible on OSD
-            // controls without turning the complete button into a colored tile. The base
-            // and the neutral focus border remain unchanged; no new frame clock is used.
-            if (osdChrome && enabled && (focused || selected)) {
-                val insetX = 10.dp.toPx()
-                val endX = size.width - insetX
-                if (endX > insetX && size.height > 12.dp.toPx()) {
-                    drawLine(
-                        brush = material,
-                        start = Offset(insetX, 5.dp.toPx()),
-                        end = Offset(endX, 5.dp.toPx()),
-                        strokeWidth = 1.dp.toPx(),
-                        cap = StrokeCap.Round,
-                        alpha = if (selected) .42f else .25f,
+            // Every focused OSD action (Plex/SmartTube/MPV/VLC/weather/etc.) receives
+            // the same short material glint. Selection is represented separately by the
+            // small persistent dot/underline, never by a second wide accent edge.
+            if (osdChrome && enabled && focused) {
+                osdFocusAccentRect(size, 1.dp.toPx())?.let { line ->
+                    drawRoundRect(
+                        brush = material, alpha = .48f,
+                        topLeft = line.topLeft, size = line.size,
+                        cornerRadius = CornerRadius(line.height / 2f),
                     )
                 }
             }

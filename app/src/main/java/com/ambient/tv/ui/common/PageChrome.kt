@@ -209,7 +209,7 @@ fun PageUtilityBar(
             )
             // Detail pages use this rail instead of PageHeader. They follow the same
             // clock setting, while the buttons keep their full touch/focus targets.
-            if (LocalClockSettings.current.inHeader || com.ambient.tv.ui.weather.LocalWeatherPresentation.current.hasHeader) HeaderClock(Modifier.weight(1f, fill = false))
+            if (LocalClockSettings.current.inHeader || com.ambient.tv.ui.weather.LocalWeatherPresentation.current.hasHeader) HeaderClock()
         }
     }
 }
@@ -270,7 +270,7 @@ fun PageHeader(
             else DeviceActionRow(modifier = Modifier.focusRequester(actionFocus).browseFocusTarget("page-actions", content = false).focusRestorer().downTo(focusChain).focusGroup(), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically, content = actions)
             // Top-aligned, not centred: with every header starting at [pageHeaderTop] the clock sits at the
             // same spot on every page, also where Home's floating clock is.
-            if (!handheld && clockVisible) HeaderClock(Modifier.weight(2f, fill = false).align(Alignment.Top))
+            if (!handheld && clockVisible) HeaderClock(Modifier.align(Alignment.Top))
         }
     }
 }

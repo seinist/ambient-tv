@@ -113,6 +113,40 @@ class BrowseLoadCoordinatorTest {
         assertEquals(0, scheduler.inFlightCount)
     }
 
+    @Test fun extraVisibleSlotsRemainAvailableWhenHomeHasTwoSlowRequests() = runBlocking {
+        val gate = BrowseLoadGate(limit = 4)
+        val started = CompletableDeferred<Unit>()
+        val releaseHome = CompletableDeferred<Unit>()
+        val activeHome = (1..2).map { index ->
+            async(start = CoroutineStart.UNDISPATCHED) {
+                gate.withPermit({ BrowseLoadPriority.HOME }) {
+                    if (index == 2) started.complete(Unit)
+                    releaseHome.await()
+                }
+            }
+        }
+        started.await()
+        val queuedHome = async(start = CoroutineStart.UNDISPATCHED) {
+            gate.withPermit({ BrowseLoadPriority.HOME }) { "home" }
+        }
+        val visible = async(start = CoroutineStart.UNDISPATCHED) {
+            gate.withPermit({ BrowseLoadPriority.VISIBLE }) { "grid" }
+        }
+        assertEquals("grid", withTimeout(2_000) { visible.await() })
+        org.junit.Assert.assertFalse(queuedHome.isCompleted)
+        releaseHome.complete(Unit)
+        activeHome.forEach { it.await() }
+        assertEquals("home", withTimeout(2_000) { queuedHome.await() })
+    }
+
+    @Test fun sharedProviderWorkRunsOnIoInsteadOfCallersMainThread() = runBlocking {
+        val caller = Thread.currentThread().name
+        val worker = BrowseLoadScheduler().load("grid:page", BrowseLoadPriority.VISIBLE) {
+            Thread.currentThread().name
+        }
+        org.junit.Assert.assertNotEquals(caller, worker)
+    }
+
     @Test fun lastConsumerCancelsUnusedWork() = runBlocking {
         val scheduler = BrowseLoadScheduler()
         val started = CompletableDeferred<Unit>()

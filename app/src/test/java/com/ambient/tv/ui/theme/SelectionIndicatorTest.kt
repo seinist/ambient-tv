@@ -25,18 +25,19 @@ class SelectionIndicatorTest {
         for (style in AccentStyle.entries) {
             val marker = selectionIndicatorRect(true, size, SelectionIndicator.UNDERLINE, 1f)
             assertNotNull(style.toString(), marker)
-            assertEquals(style.toString(), 34f, marker!!.left, .001f)
-            assertEquals(style.toString(), 66f, marker.right, .001f)
-            assertEquals(style.toString(), 44f, marker.bottom, .001f)
-            assertEquals(style.toString(), 41f, marker.top, .001f)
+            assertEquals(style.toString(), 38f, marker!!.left, .001f)
+            assertEquals(style.toString(), 62f, marker.right, .001f)
+            assertEquals(style.toString(), 41f, marker.bottom, .001f)
+            assertEquals(style.toString(), 39.25f, marker.top, .001f)
+            assertTrue(style.toString(), marker.height < 2f)
         }
     }
 
     @Test fun sidebarAndOptionsMarkersFollowReadingDirection() {
         val ltr = selectionIndicatorRect(true, size, SelectionIndicator.LEADING_BAR, 1f, rtl = false)!!
         val rtl = selectionIndicatorRect(true, size, SelectionIndicator.LEADING_BAR, 1f, rtl = true)!!
-        assertEquals(4f, ltr.left, .001f)
-        assertEquals(96f, rtl.right, .001f)
+        assertEquals(7f, ltr.left, .001f)
+        assertEquals(93f, rtl.right, .001f)
         assertEquals(ltr.width, rtl.width, .001f)
         assertEquals(ltr.height, rtl.height, .001f)
     }
@@ -44,11 +45,25 @@ class SelectionIndicatorTest {
     @Test fun activeOsdButtonsUseACompactAccentDot() {
         val ltr = selectionIndicatorRect(true, size, SelectionIndicator.DOT, 1f, rtl = false)!!
         val rtl = selectionIndicatorRect(true, size, SelectionIndicator.DOT, 1f, rtl = true)!!
-        assertEquals(6f, ltr.width, .001f)
-        assertEquals(6f, ltr.height, .001f)
-        assertEquals(90f, ltr.left, .001f)
-        assertEquals(4f, rtl.left, .001f)
-        assertEquals(4f, ltr.top, .001f)
+        assertEquals(5f, ltr.width, .001f)
+        assertEquals(5f, ltr.height, .001f)
+        assertEquals(88f, ltr.left, .001f)
+        assertEquals(7f, rtl.left, .001f)
+        assertEquals(7f, ltr.top, .001f)
+    }
+
+    @Test fun everyFocusedOsdActionUsesASlimInsetGlint() {
+        // Selected state is not required for the *focus* cue.
+        val line = osdFocusAccentRect(Size(48f, 40f), 1f)!!
+        assertEquals(16f, line.width, .001f)
+        assertEquals(1f, line.height, .001f)
+        assertEquals(16f, line.left, .001f)
+        assertEquals(32f, line.right, .001f)
+        assertEquals(8f, line.top, .001f)
+        assertTrue(line.bottom < 12f)
+        assertNull(osdFocusAccentRect(Size(20f, 40f), 1f))
+        assertNull(osdFocusAccentRect(Size(48f, 20f), 1f))
+        assertNull(osdFocusAccentRect(Size(Float.NaN, 40f), 1f))
     }
 
     @Test fun revealKeepsUnderlineCenteredAndItsThicknessFixed() {
@@ -78,8 +93,8 @@ class SelectionIndicatorTest {
         val half = selectionIndicatorRevealRect(full, SelectionIndicator.DOT, .5f)!!
         assertEquals(full.center.x, half.center.x, .001f)
         assertEquals(full.center.y, half.center.y, .001f)
-        assertEquals(3f, half.width, .001f)
-        assertEquals(3f, half.height, .001f)
+        assertEquals(2.5f, half.width, .001f)
+        assertEquals(2.5f, half.height, .001f)
     }
 
     @Test fun revealRejectsInvalidProgressAndClampsOverflow() {
@@ -103,10 +118,10 @@ class SelectionIndicatorTest {
         assertNull(selectionIndicatorRect(true, Size(5f, 5f), SelectionIndicator.UNDERLINE, 1f))
         assertNull(selectionIndicatorRect(true, Size(Float.NaN, 48f), SelectionIndicator.DOT, 1f))
         assertNull(selectionIndicatorRect(true, size, SelectionIndicator.DOT, 0f))
-        val compact = selectionIndicatorRect(true, Size(12f, 12f), SelectionIndicator.DOT, 1f)
+        val compact = selectionIndicatorRect(true, Size(18f, 18f), SelectionIndicator.DOT, 1f)
         assertNotNull(compact)
         assertTrue(compact!!.left >= 0f && compact.top >= 0f)
-        assertTrue(compact.right <= 12f && compact.bottom <= 12f)
+        assertTrue(compact.right <= 18f && compact.bottom <= 18f)
         assertFalse(compact.isEmpty)
     }
 }
