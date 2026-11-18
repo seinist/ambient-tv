@@ -26,6 +26,7 @@ import com.ambient.tv.ui.common.SettingsActionRow
 import com.ambient.tv.ui.common.SettingsNavigationRow
 import com.ambient.tv.ui.common.RightPanelChoice
 import com.ambient.tv.ui.common.TvActionButton
+import com.ambient.tv.ui.common.SettingsSingleAction
 import com.ambient.tv.ui.common.TvSettingRow
 import com.ambient.tv.ui.mobile.LocalHandheldUi
 
@@ -54,7 +55,7 @@ private fun CompanionDevicesSection(vm: CompanionViewModel = hiltViewModel()) {
                 color = androidx.compose.material3.MaterialTheme.colorScheme.primaryContainer) {
                 Column(androidx.compose.ui.Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text(stringResource(R.string.companion_tv_controlled, state.controller))
-                    TvActionButton(stringResource(R.string.companion_end_control), { manager.releaseRemoteControl() })
+                    SettingsSingleAction(stringResource(R.string.companion_end_control), { manager.releaseRemoteControl() })
                 }
             }
         }
