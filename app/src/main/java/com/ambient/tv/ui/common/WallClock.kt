@@ -8,7 +8,6 @@ import android.text.format.DateFormat
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.widthIn
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.Row
@@ -251,15 +250,11 @@ fun HeaderClock(modifier: Modifier = Modifier, showClock: Boolean = LocalClockSe
         else weatherText
     Box(modifier.padding(start = 8.dp).widthIn(max = maxWidth), contentAlignment = Alignment.TopEnd) {
         ClockWeatherDisplay(settings, showClock, showWeather, Modifier.widthIn(max = maxWidth)) {
-            // Reserve the same weather slot for a pending forecast; no data is fetched here.
-            Box(if (weather == null) Modifier.widthIn(min = 68.dp).heightIn(min = 20.dp) else Modifier,
-                contentAlignment = Alignment.CenterEnd) {
-                weather?.let {
-                    com.ambient.tv.ui.weather.WeatherCompactSummary(
-                        snapshot = it, textColor = weatherText, iconColor = weatherIcon,
-                        animateChanges = settings.weatherTransitions,
-                    )
-                }
+            weather?.let {
+                com.ambient.tv.ui.weather.WeatherCompactSummary(
+                    snapshot = it, textColor = weatherText, iconColor = weatherIcon,
+                    animateChanges = settings.weatherTransitions,
+                )
             }
         }
     }
