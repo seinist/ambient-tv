@@ -8,7 +8,7 @@ class ScreensaverIdleClockTest {
     private val timeout = 10 * 60_000L
 
     @Test fun withoutPlaybackTheWaitFollowsTheLastInput() {
-        val clock = ScreensaverIdleClock(playbackActive = false)
+        val clock = ScreensaverIdleClock(initialPlaybackActive = false)
         clock.observe(false, 1_000L)
         assertEquals(timeout - 5_000L, clock.remainingMs(lastInteractionMs = 0L, nowMs = 5_000L, timeoutMs = timeout))
         assertTrue(clock.remainingMs(0L, timeout, timeout) <= 0L)
@@ -16,7 +16,7 @@ class ScreensaverIdleClockTest {
 
     @Test fun aBriefReloadAfterLongViewingDoesNotStartItAtOnce() {
         // Last key press long ago; playback ran for an hour, then a reload makes it inactive.
-        val clock = ScreensaverIdleClock(playbackActive = true)
+        val clock = ScreensaverIdleClock(initialPlaybackActive = true)
         val reloadAt = 60 * 60_000L
         clock.observe(false, reloadAt)
         assertEquals(timeout, clock.remainingMs(lastInteractionMs = 0L, nowMs = reloadAt, timeoutMs = timeout))
@@ -27,14 +27,14 @@ class ScreensaverIdleClockTest {
     }
 
     @Test fun laterInputStillWinsOverAnEarlierPlaybackEnd() {
-        val clock = ScreensaverIdleClock(playbackActive = true)
+        val clock = ScreensaverIdleClock(initialPlaybackActive = true)
         clock.observe(false, 1_000L)
         assertEquals(5_000L, clock.idleSince(lastInteractionMs = 5_000L))
         assertEquals(timeout - 1_000L, clock.remainingMs(5_000L, 6_000L, timeout))
     }
 
     @Test fun repeatedObservationsWithoutATransitionChangeNothing() {
-        val clock = ScreensaverIdleClock(playbackActive = false)
+        val clock = ScreensaverIdleClock(initialPlaybackActive = false)
         clock.observe(false, 50_000L)
         clock.observe(false, 90_000L)
         assertEquals(0L, clock.idleSince(lastInteractionMs = 0L))
