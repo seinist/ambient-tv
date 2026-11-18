@@ -45,8 +45,12 @@ import com.ambient.tv.ui.performance.LocalPerformanceProfile
 @Immutable
 data class InteractionColors(val container: Color, val outline: Color, val content: Color)
 
-/** Selected state is persistent; focus remains a separate neutral boundary. */
-enum class SelectionIndicator { UNDERLINE, LEADING_BAR, DOT, NONE }
+/**
+ * Selected state is persistent; focus remains a separate boundary.
+ * Buttons and chips carry no line marker: their selected state is the quieter selected
+ * border alone. Lists and the sidebar use [LEADING_BAR]; icon-only buttons use [DOT].
+ */
+enum class SelectionIndicator { LEADING_BAR, DOT, NONE }
 
 /**
  * Fixed, inset geometry prevents layout shifts and keeps the selection mark separate
@@ -68,12 +72,6 @@ internal fun selectionIndicatorRect(
     val thickness = minOf(1.75f * dp,
         roomW * .25f, roomH * .25f)
     return when (indicator) {
-        SelectionIndicator.UNDERLINE -> {
-            val width = minOf(24f * dp, roomW * .50f)
-            val left = (surface.width - width) / 2f
-            Rect(left, surface.height - inset - thickness,
-                left + width, surface.height - inset)
-        }
         SelectionIndicator.LEADING_BAR -> {
             val length = minOf(23f * dp, roomH * .68f)
             val left = if (rtl) surface.width - inset - thickness else inset
@@ -101,10 +99,6 @@ internal fun selectionIndicatorRevealRect(
     if (bounds == null || !progress.isFinite() || progress <= 0f) return null
     val fraction = progress.coerceIn(0f, 1f)
     return when (indicator) {
-        SelectionIndicator.UNDERLINE -> {
-            val halfWidth = bounds.width * fraction / 2f
-            Rect(bounds.center.x - halfWidth, bounds.top, bounds.center.x + halfWidth, bounds.bottom)
-        }
         SelectionIndicator.LEADING_BAR -> {
             val halfHeight = bounds.height * fraction / 2f
             Rect(bounds.left, bounds.center.y - halfHeight, bounds.right, bounds.center.y + halfHeight)
@@ -320,7 +314,7 @@ fun Modifier.appControlSurface(
     focusedAccent: Boolean = false,
     prominent: Boolean = false,
     pressed: Boolean = false,
-    selectionIndicator: SelectionIndicator = SelectionIndicator.UNDERLINE,
+    selectionIndicator: SelectionIndicator = SelectionIndicator.NONE,
 ): Modifier = composed {
     val colors = rememberInteractionColorState(
         focused, selected, enabled, animate, focusedAccent, prominent, pressed,
