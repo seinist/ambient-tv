@@ -974,7 +974,11 @@ internal fun LibraryContent(
                 if (index < 0) return@collectLatest
                 val alreadyCentered = rowCenteringGate.consume(key)
                 activeRowIndex.intValue = index
-                if (pending == key) pendingVisualRow.value = null
+                if (pending == key) {
+                    pendingVisualRow.value = null
+                    // Focus arrives while the D-pad glide is still running; it centers the row.
+                    if (rowListState.isScrollInProgress) return@collectLatest
+                }
                 // The return viewport is already placed at its initial row before drawing.
                 // Do not start a centering glide as that same row receives its first focus.
                 if (returningRow && key == initialFocusRowId) {
@@ -1022,6 +1026,7 @@ internal fun LibraryContent(
                                 rowCenteringGate.markCentered(rowKey)
                             }
                         },
+                        focusBeforeScroll = true,
                     ) { state.rowKeys }
                     .clipToBounds()
                     .acceleratedDpadNavigation()

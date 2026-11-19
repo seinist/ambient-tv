@@ -32,7 +32,8 @@ import kotlin.math.min
  * spring gives each row change a gentler acceleration and deceleration, without overshoot.
  */
 val TvScrollAnimationSpec: AnimationSpec<Float> =
-    spring(dampingRatio = Spring.DampingRatioNoBouncy, stiffness = 180f)
+    // Half a pixel ends the invisible sub-pixel tail (~250 ms) that kept the list "scrolling".
+    spring(dampingRatio = Spring.DampingRatioNoBouncy, stiffness = 180f, visibilityThreshold = 0.5f)
 
 /**
  * App-wide relocation policy for TV focus (provided in the theme).

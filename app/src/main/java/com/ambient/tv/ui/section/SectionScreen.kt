@@ -943,7 +943,11 @@ private fun RecommendationRowsPage(
             val pending = pendingVisualRowIndex.intValue
             if (pending >= 0 && pending != index) return@collectLatest
             val alreadyCentered = rowCenteringGate.consume(index)
-            if (pending == index) pendingVisualRowIndex.intValue = -1
+            if (pending == index) {
+                pendingVisualRowIndex.intValue = -1
+                // Focus arrives while the D-pad glide is still running; it centers the row.
+                if (rowsState.isScrollInProgress) return@collectLatest
+            }
             if (returningRow) {
                 if (index == restoreRowIndex) returningRow = false
                 return@collectLatest
@@ -1004,6 +1008,7 @@ private fun RecommendationRowsPage(
                                     rowCenteringGate.markCentered(index)
                                 }
                             },
+                            focusBeforeScroll = true,
                         ) { state.recommendationRows.map { it.id } }
                         .clipToBounds()
                         .then(if (handheld) Modifier else Modifier.fadeRowsBehindHomeHero(performance.allowRowFadeSaveLayer, heroHeight) {

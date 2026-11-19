@@ -1,5 +1,6 @@
 package com.ambient.tv.ui.common
 
+import androidx.compose.foundation.gestures.LocalBringIntoViewSpec
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -387,11 +388,18 @@ private class VerticalRowMoveState {
     var generation = 0L
 }
 
+@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 fun Modifier.rowColumnFocusNavigation(
     focus: RowColumnFocus,
     scrollToTop: (suspend () -> Unit)? = null,
     scrollToBottom: (suspend () -> Unit)? = null,
     scrollToRow: (suspend (Any) -> Unit)? = null,
+    /**
+     * Move focus to an already placed destination tile as soon as its glide starts, instead of
+     * after it ends (~1 s), so the focus frame appears immediately. Only for lists whose
+     * focused-row centering yields to an in-flight D-pad move.
+     */
+    focusBeforeScroll: Boolean = false,
     rowOrder: () -> List<Any>,
 ): Modifier = composed {
     if (LocalHandheldUi.current) return@composed Modifier
@@ -402,6 +410,8 @@ fun Modifier.rowColumnFocusNavigation(
     val focusManager = LocalFocusManager.current
     val scope = rememberCoroutineScope()
     val move = remember(focus) { VerticalRowMoveState() }
+    // Early focus is only safe where focusing a tile never relocates the column itself.
+    val earlyFocus = focusBeforeScroll && LocalBringIntoViewSpec.current === ExplicitRowScrollSpec
     DisposableEffect(move) {
         onDispose { move.job?.cancel() }
     }
@@ -422,7 +432,23 @@ fun Modifier.rowColumnFocusNavigation(
         move.pendingRow = rowKey
         move.job = scope.launch {
             try {
-                scroll()
+                var focusedEarly = false
+                if (earlyFocus) {
+                    // Start the glide (it publishes the pending row synchronously), then focus
+                    // the destination as soon as its row is composed, while the column glides.
+                    val glide = launch(start = kotlinx.coroutines.CoroutineStart.UNDISPATCHED) { scroll() }
+                    while (true) {
+                        if (!focus.isEntryPlaced(rowKey) && focus.canScrollToEntry(rowKey)) focus.scrollToEntry(rowKey)
+                        if (focus.isEntryPlaced(rowKey) && focus.focusEntry(rowKey)) {
+                            focusedEarly = true
+                            if (focus.lastMoveNeedsSound) uiSounds?.playFocus()
+                            break
+                        }
+                        if (!glide.isActive) break
+                        withFrameNanos { }
+                    }
+                    glide.join()
+                } else scroll()
                 // The row's tiles compose after the vertical scroll. Wait for them before
                 // scrolling sideways to the remembered one.
                 var waited = 0
@@ -431,7 +457,7 @@ fun Modifier.rowColumnFocusNavigation(
                     waited++
                 }
                 if (focus.canScrollToEntry(rowKey)) focus.scrollToEntry(rowKey)
-                focusSettled(rowKey)
+                if (!focusedEarly) focusSettled(rowKey)
             } finally {
                 // A newer Up/Down may already have retargeted the same shared motion state.
                 if (move.generation == generation) {
