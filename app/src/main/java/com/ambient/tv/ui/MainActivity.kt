@@ -3409,6 +3409,22 @@ private fun AmbientTvApp(
                     }
                 }
 
+                // Entering a player over a browse/detail page: the player is transparent so the
+                // video plane below can show through, which for the frames Navigation still draws
+                // the outgoing page made it flash up (e.g. the played item's detail page when
+                // Back brings the mini player to fullscreen). Cover it until it is gone.
+                val navVisibleEntries by navController.visibleEntries.collectAsState()
+                val outgoingPageVisible = persistentVideoHost && currentRoute in PLAYBACK_DESTINATIONS &&
+                    navVisibleEntries.any { it.destination.route !in PLAYBACK_DESTINATIONS }
+                // Safety net: never keep the cover beyond a short transition.
+                var outgoingCoverExpired by remember(navController.currentBackStackEntry?.id) { mutableStateOf(false) }
+                LaunchedEffect(outgoingPageVisible, navController.currentBackStackEntry?.id) {
+                    if (outgoingPageVisible) { kotlinx.coroutines.delay(500L); outgoingCoverExpired = true }
+                }
+                if (outgoingPageVisible && !outgoingCoverExpired) {
+                    Box(Modifier.fillMaxSize().background(Color.Black))
+                }
+
                 // Detail pages hide the sidebar, which normally owns this indicator.
                 // Draw above their backgrounds without adding a new D-pad focus target.
                 if (!handheld && currentRoute in setOf(

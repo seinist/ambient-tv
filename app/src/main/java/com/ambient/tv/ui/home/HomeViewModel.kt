@@ -773,6 +773,7 @@ class HomeViewModel @Inject constructor(
             // predecessor cannot make a replacement reload appear complete.
             job.invokeOnCompletion {
                 if (generation == loadGeneration) {
+                    viewModelScope.launch { flushRefreshHold() }
                     _refreshing.value = false
                     libraryLoading = false
                     (_uiState.value as? HomeUiState.Loaded)?.takeIf { it.loading }?.let { _uiState.value = it.copy(loading = false) }
@@ -816,7 +817,41 @@ class HomeViewModel @Inject constructor(
         }
     }
 
-    fun refresh() = refresh(invalidateCache = true)
+    /**
+     * Background refresh after playback or an action elsewhere. Visible rows stay as they are and
+     * the refreshed rows replace them in one step when the reload completes (at most
+     * [REFRESH_HOLD_MS] later), instead of tiles and rows visibly reloading one by one.
+     */
+    fun refresh() {
+        beginRefreshHold()
+        refresh(invalidateCache = true)
+    }
+
+    private var refreshHoldActive = false
+    private var heldPublication: Pair<List<ContentRowData>, Boolean>? = null
+    private var refreshHoldJob: Job? = null
+
+    private fun beginRefreshHold() {
+        val loaded = _uiState.value as? HomeUiState.Loaded ?: return
+        if (loaded.rows.isEmpty()) return
+        refreshHoldActive = true
+        refreshHoldJob?.cancel()
+        refreshHoldJob = viewModelScope.launch {
+            delay(REFRESH_HOLD_MS)
+            flushRefreshHold()
+        }
+    }
+
+    private fun flushRefreshHold() {
+        if (!refreshHoldActive) return
+        refreshHoldActive = false
+        refreshHoldJob?.cancel()
+        refreshHoldJob = null
+        heldPublication?.let { (rows, hasRows) ->
+            heldPublication = null
+            publishRowsInternal(rows, hasRows)
+        }
+    }
 
     fun reload() {
         if (_refreshing.value) return
@@ -2160,6 +2195,10 @@ class HomeViewModel @Inject constructor(
     }
 
     private fun publishRowsInternal(rows: List<ContentRowData>, hasRows: Boolean) {
+        if (refreshHoldActive) {
+            heldPublication = rows to hasRows
+            return
+        }
         // On handhelds there is no Android TV launcher. On TVs, convert potentially
         // hundreds of metadata records only after the debounce expires, on the IO worker.
         val mediaConfigured = appPreferences.isConfigured || appPreferences.isJellyfinConfigured || appPreferences.isEmbyConfigured
@@ -2669,6 +2708,8 @@ internal fun homeRowTileStyle(
     }
 }
 
+/** Upper bound for keeping visible Home rows while a background refresh completes. */
+private const val REFRESH_HOLD_MS = 4_000L
 private const val PHOTO_ROW_ID = "photos.recent"
 
 /** Home row key of an offline server's wake entry: prefix + system key. */
