@@ -1,5 +1,6 @@
 package com.ambient.tv.ui.common
 
+import androidx.compose.foundation.gestures.LocalBringIntoViewSpec
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -387,6 +388,7 @@ private class VerticalRowMoveState {
     var generation = 0L
 }
 
+@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 fun Modifier.rowColumnFocusNavigation(
     focus: RowColumnFocus,
     scrollToTop: (suspend () -> Unit)? = null,
@@ -408,6 +410,8 @@ fun Modifier.rowColumnFocusNavigation(
     val focusManager = LocalFocusManager.current
     val scope = rememberCoroutineScope()
     val move = remember(focus) { VerticalRowMoveState() }
+    // Early focus is only safe where focusing a tile never relocates the column itself.
+    val earlyFocus = focusBeforeScroll && LocalBringIntoViewSpec.current === ExplicitRowScrollSpec
     DisposableEffect(move) {
         onDispose { move.job?.cancel() }
     }
@@ -429,12 +433,19 @@ fun Modifier.rowColumnFocusNavigation(
         move.job = scope.launch {
             try {
                 var focusedEarly = false
-                if (focusBeforeScroll) {
-                    // Start the glide (it publishes the pending row synchronously), then focus.
+                if (earlyFocus) {
+                    // Start the glide (it publishes the pending row synchronously), then focus
+                    // the destination as soon as its row is composed, while the column glides.
                     val glide = launch(start = kotlinx.coroutines.CoroutineStart.UNDISPATCHED) { scroll() }
-                    if (focus.isEntryPlaced(rowKey) && focus.focusEntry(rowKey)) {
-                        focusedEarly = true
-                        if (focus.lastMoveNeedsSound) uiSounds?.playFocus()
+                    while (true) {
+                        if (!focus.isEntryPlaced(rowKey) && focus.canScrollToEntry(rowKey)) focus.scrollToEntry(rowKey)
+                        if (focus.isEntryPlaced(rowKey) && focus.focusEntry(rowKey)) {
+                            focusedEarly = true
+                            if (focus.lastMoveNeedsSound) uiSounds?.playFocus()
+                            break
+                        }
+                        if (!glide.isActive) break
+                        withFrameNanos { }
                     }
                     glide.join()
                 } else scroll()
