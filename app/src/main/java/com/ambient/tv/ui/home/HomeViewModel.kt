@@ -253,6 +253,10 @@ class HomeViewModel @Inject constructor(
     private var radioRowsPending = false
     private var radioRowsGeneration = 0
     private var youtubeRowsPending = false
+    // Declared before the init blocks: they can already publish rows.
+    private val createdAtElapsedMs = android.os.SystemClock.elapsedRealtime()
+    private var coldStartRevealSettled = false
+    private var lastPublication: Pair<List<ContentRowData>, Boolean>? = null
     private var youtubeRowsGeneration = 0
     /** Identifies which SmartTube account/language owns the Home preview currently on screen. */
     private var youtubeCacheRevision: Long? = null
@@ -464,6 +468,11 @@ class HomeViewModel @Inject constructor(
     }
 
     init {
+        // The ordered cold-start reveal never holds rows back longer than its cap.
+        viewModelScope.launch {
+            delay(COLD_START_REVEAL_CAP_MS)
+            settleColdStartReveal()
+        }
         viewModelScope.launch {
             telegramRepository.catalogRevision.drop(1).collect {
                 if (hasEntered && !plexOnly && !jellyfinOnly && !embyOnly &&
@@ -773,7 +782,7 @@ class HomeViewModel @Inject constructor(
             // predecessor cannot make a replacement reload appear complete.
             job.invokeOnCompletion {
                 if (generation == loadGeneration) {
-                    viewModelScope.launch { flushRefreshHold() }
+                    viewModelScope.launch { flushRefreshHold(); settleColdStartReveal() }
                     _refreshing.value = false
                     libraryLoading = false
                     (_uiState.value as? HomeUiState.Loaded)?.takeIf { it.loading }?.let { _uiState.value = it.copy(loading = false) }
@@ -2194,7 +2203,27 @@ class HomeViewModel @Inject constructor(
         return sortCombinedRows(others + row)
     }
 
+    /** Library systems whose first load is still running; empty once cold start has settled. */
+    private fun coldStartPendingSystems(): Set<String> {
+        if (coldStartRevealSettled || !libraryLoading ||
+            android.os.SystemClock.elapsedRealtime() - createdAtElapsedMs >= COLD_START_REVEAL_CAP_MS) return emptySet()
+        val offline = unreachableServers.current().offline
+        return buildSet {
+            if (appPreferences.isConfigured) add(HomeRowDefinition.SYSTEM_PLEX)
+            if (appPreferences.isJellyfinConfigured) add(HomeRowDefinition.SYSTEM_JELLYFIN)
+            if (appPreferences.isEmbyConfigured) add(HomeRowDefinition.SYSTEM_EMBY)
+        } - offline
+    }
+
+    /** Ends the ordered cold-start reveal and shows every row that was held back. */
+    private fun settleColdStartReveal() {
+        if (coldStartRevealSettled) return
+        coldStartRevealSettled = true
+        lastPublication?.let { (rows, hasRows) -> publishRowsInternal(rows, hasRows) }
+    }
+
     private fun publishRowsInternal(rows: List<ContentRowData>, hasRows: Boolean) {
+        lastPublication = rows to hasRows
         if (refreshHoldActive) {
             heldPublication = rows to hasRows
             return
@@ -2286,8 +2315,14 @@ class HomeViewModel @Inject constructor(
         }
         val tvRows = if (returnedTvRow == null) refreshedTvRows else refreshedTvRows +
             (checkNotNull(returnedTvRow.target.rowId) to checkNotNull(returnedTvRow.liveTvSource))
-        val contentRowKeys = orderedHomeRowKeys(if (plexOnly || jellyfinOnly || embyOnly) emptyList() else appPreferences.homeRows, rows.map { it.id },
-            shortcuts, tvRows.containsKey("live-tv"), tvRows.containsKey("recent-tv"), tvRows.keys.filter { ':' in it }.associateWith { key -> "${key.substringAfter(':')}.${if (key.startsWith("recent")) "recent_channels" else "live"}" })
+        val homeDefinitions = if (plexOnly || jellyfinOnly || embyOnly) emptyList() else appPreferences.homeRows
+        val tvRowSources = tvRows.keys.filter { ':' in it }.associateWith { key -> "${key.substringAfter(':')}.${if (key.startsWith("recent")) "recent_channels" else "live"}" }
+        val orderedRowKeys = orderedHomeRowKeys(homeDefinitions, rows.map { it.id },
+            shortcuts, tvRows.containsKey("live-tv"), tvRows.containsKey("recent-tv"), tvRowSources)
+        // Cold start reveals rows top-down, so Live TV etc. cannot show first and jump down.
+        val contentRowKeys = revealHomeRowsInOrder(homeDefinitions, orderedRowKeys,
+            homeRowKeySources(rows.map { it.id }, shortcuts, tvRows.containsKey("live-tv"), tvRows.containsKey("recent-tv"), tvRowSources),
+            coldStartPendingSystems())
         // An offline server whose rows are on Home keeps one entry there that wakes it. With no
         // other rows Home shows the full offline page instead.
         val rowKeys = if (contentRowKeys.isEmpty() || plexOnly || jellyfinOnly || embyOnly) contentRowKeys
@@ -2710,6 +2745,8 @@ internal fun homeRowTileStyle(
 
 /** Upper bound for keeping visible Home rows while a background refresh completes. */
 private const val REFRESH_HOLD_MS = 4_000L
+/** Upper bound for the ordered cold-start reveal; afterwards every loaded row shows. */
+private const val COLD_START_REVEAL_CAP_MS = 6_000L
 private const val PHOTO_ROW_ID = "photos.recent"
 
 /** Home row key of an offline server's wake entry: prefix + system key. */

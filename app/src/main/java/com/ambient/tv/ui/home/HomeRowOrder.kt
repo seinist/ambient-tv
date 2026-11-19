@@ -24,12 +24,41 @@ internal fun orderedHomeRowKeys(
     hasLive: Boolean, hasRecent: Boolean, tvRowSources: Map<String, String> = emptyMap(),
 ): List<String> {
     val order = definitions.filter { it.enabled }.distinctBy { it.system to it.contentKey }.withIndex().associate { "${it.value.system}.${it.value.contentKey}" to it.index }
-    val groups = buildMap<String, String> {
-        if (hasLive) put("live-tv", "tvheadend.live")
-        if (hasRecent) put("recent-tv", "tvheadend.recent_channels")
-        putAll(tvRowSources)
-        shortcuts.forEach { put("shortcut:${it.id}", "${it.system}.${it.contentKey}") }
-        contentIds.forEach { id -> put(id, homeRowSource(id)) }
-    }
+    val groups = homeRowKeySources(contentIds, shortcuts, hasLive, hasRecent, tvRowSources)
     return groups.keys.sortedBy { order[groups[it]] ?: Int.MAX_VALUE }
+}
+
+/**
+ * Cold start: rows appear top-down in the editor's order. A row stays back while an enabled row
+ * above it belongs to a source in [pendingSystems] that has not produced that row yet, so fast
+ * sources (Live TV, radio, shortcuts) cannot show first and then jump down when library rows
+ * arrive. Rows without an editor position are never held back.
+ */
+internal fun revealHomeRowsInOrder(
+    definitions: List<HomeRowDefinition>,
+    orderedKeys: List<String>,
+    keySources: Map<String, String>,
+    pendingSystems: Set<String>,
+): List<String> {
+    if (pendingSystems.isEmpty()) return orderedKeys
+    val enabled = definitions.filter { it.enabled }.distinctBy { it.system to it.contentKey }
+    val presentSources = orderedKeys.mapNotNullTo(HashSet()) { keySources[it] }
+    val firstGap = enabled.indexOfFirst {
+        it.system in pendingSystems && "${it.system}.${it.contentKey}" !in presentSources
+    }
+    if (firstGap < 0) return orderedKeys
+    val order = enabled.withIndex().associate { "${it.value.system}.${it.value.contentKey}" to it.index }
+    return orderedKeys.filter { key -> order[keySources[key]]?.let { it < firstGap } ?: true }
+}
+
+/** The widget source of every key [orderedHomeRowKeys] can produce. */
+internal fun homeRowKeySources(
+    contentIds: List<String>, shortcuts: List<HomeRowDefinition>,
+    hasLive: Boolean, hasRecent: Boolean, tvRowSources: Map<String, String> = emptyMap(),
+): Map<String, String> = buildMap {
+    if (hasLive) put("live-tv", "tvheadend.live")
+    if (hasRecent) put("recent-tv", "tvheadend.recent_channels")
+    putAll(tvRowSources)
+    shortcuts.forEach { put("shortcut:${it.id}", "${it.system}.${it.contentKey}") }
+    contentIds.forEach { id -> put(id, homeRowSource(id)) }
 }
