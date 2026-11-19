@@ -3,29 +3,29 @@ package com.ambient.tv.ui.gamepad.retro
 import android.view.KeyEvent
 import androidx.annotation.StringRes
 import androidx.compose.runtime.mutableStateOf
-import com.ambient.tv.R
+import com.ambient.tv.R as AppR
 
 /**
  * The libretro RetroPad (RETRO_DEVICE_JOYPAD). [id] is RETRO_DEVICE_ID_JOYPAD_*; [key] is stored,
  * never rename one. Face buttons follow SNES positions: B bottom, A right, Y left, X top.
  */
 enum class RetroPadButton(val key: String, val id: Int, @StringRes val titleRes: Int) {
-    UP("up", 4, R.string.retro_button_up),
-    DOWN("down", 5, R.string.retro_button_down),
-    LEFT("left", 6, R.string.retro_button_left),
-    RIGHT("right", 7, R.string.retro_button_right),
-    A("a", 8, R.string.retro_button_a),
-    B("b", 0, R.string.retro_button_b),
-    X("x", 9, R.string.retro_button_x),
-    Y("y", 1, R.string.retro_button_y),
-    L("l", 10, R.string.retro_button_l),
-    R("r", 11, R.string.retro_button_r),
-    L2("l2", 12, R.string.retro_button_l2),
-    R2("r2", 13, R.string.retro_button_r2),
-    L3("l3", 14, R.string.retro_button_l3),
-    R3("r3", 15, R.string.retro_button_r3),
-    START("start", 3, R.string.retro_button_start),
-    SELECT("select", 2, R.string.retro_button_select),
+    UP("up", 4, AppR.string.retro_button_up),
+    DOWN("down", 5, AppR.string.retro_button_down),
+    LEFT("left", 6, AppR.string.retro_button_left),
+    RIGHT("right", 7, AppR.string.retro_button_right),
+    A("a", 8, AppR.string.retro_button_a),
+    B("b", 0, AppR.string.retro_button_b),
+    X("x", 9, AppR.string.retro_button_x),
+    Y("y", 1, AppR.string.retro_button_y),
+    L("l", 10, AppR.string.retro_button_l),
+    R("r", 11, AppR.string.retro_button_r),
+    L2("l2", 12, AppR.string.retro_button_l2),
+    R2("r2", 13, AppR.string.retro_button_r2),
+    L3("l3", 14, AppR.string.retro_button_l3),
+    R3("r3", 15, AppR.string.retro_button_r3),
+    START("start", 3, AppR.string.retro_button_start),
+    SELECT("select", 2, AppR.string.retro_button_select),
     ;
 
     val mask: Int get() = 1 shl id
@@ -37,9 +37,9 @@ enum class RetroPadButton(val key: String, val id: Int, @StringRes val titleRes:
 
 /** Kinds of input device that can play; each has its own key layout. Stored by [key]. */
 enum class RetroInputKind(val key: String, @StringRes val titleRes: Int) {
-    GAMEPAD("gamepad", R.string.retro_kind_gamepad),
-    KEYBOARD("keyboard", R.string.retro_kind_keyboard),
-    REMOTE("remote", R.string.retro_kind_remote),
+    GAMEPAD("gamepad", AppR.string.retro_kind_gamepad),
+    KEYBOARD("keyboard", AppR.string.retro_kind_keyboard),
+    REMOTE("remote", AppR.string.retro_kind_remote),
     ;
 
     companion object {
