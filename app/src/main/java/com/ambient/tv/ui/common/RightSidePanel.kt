@@ -151,6 +151,7 @@ fun RightPanelOverlay(
 
     LaunchedEffect(motion, reducedEffects, motion.dismiss.closing) {
         if (motion.dismiss.closing) return@LaunchedEffect
+        com.ambient.tv.ui.player.awaitPanelEntranceFrames(motion.progress.value)
         motion.progress.animateTo(
             1f,
             tween(if (reducedEffects) com.ambient.tv.ui.player.PLAYER_PANEL_REDUCED_MS
@@ -514,6 +515,7 @@ private fun RightSidePanelChrome(
             // A fast Back, or a performance-profile update during dismissal, must never
             // restart the entrance animation and cancel the pending close callback.
             if (standaloneMotion.dismiss.closing) return@LaunchedEffect
+            com.ambient.tv.ui.player.awaitPanelEntranceFrames(standaloneMotion.progress.value)
             standaloneMotion.progress.animateTo(
                 1f,
                 tween(if (reducedEffects) com.ambient.tv.ui.player.PLAYER_PANEL_REDUCED_MS
