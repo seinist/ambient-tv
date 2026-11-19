@@ -82,8 +82,11 @@ private val RESERVED_KEYS = setOf(
     KeyEvent.KEYCODE_ALT_RIGHT, KeyEvent.KEYCODE_META_LEFT, KeyEvent.KEYCODE_META_RIGHT,
 )
 
+private const val MAX_BINDABLE_KEY_CODE = 1_000
+
 fun isBindableKey(keyCode: Int): Boolean =
-    keyCode > KeyEvent.KEYCODE_UNKNOWN && keyCode <= KeyEvent.getMaxKeyCode() && keyCode !in RESERVED_KEYS
+    // No framework call here: backups decode bindings outside Android too (constants inline).
+    keyCode > KeyEvent.KEYCODE_UNKNOWN && keyCode < MAX_BINDABLE_KEY_CODE && keyCode !in RESERVED_KEYS
 
 /** The user's bindings: at most one key per action, and one action per key, press and scope. */
 object KeyBindings {
