@@ -81,6 +81,7 @@ fun PersistentPlayerChrome(
         PlayerPanelAutoHide(chrome, changingItem)
         // Info opens the details dialog when its action-bar button is switched on.
         val detailsLabel = androidx.compose.ui.res.stringResource(com.ambient.tv.R.string.player_details)
+        PlayerKeyActions(chrome, detailsLabel)
         LaunchedEffect(chrome) {
             androidx.compose.runtime.snapshotFlow { chrome.visible.value }.collect { if (!it) chrome.shownByZap.value = false }
         }
@@ -117,6 +118,43 @@ fun PersistentPlayerChrome(
                 }
             }) { content() }
     }
+}
+
+/** Player actions of user key bindings (Settings → Keys & remote), shared by every player. */
+@Composable
+private fun PlayerKeyActions(chrome: PlayerChromeState, detailsLabel: String) {
+    fun openPanel(panel: com.ambient.tv.ui.common.UnifiedPlayerPanel): Boolean {
+        if (chrome.panelModel.value == null) return false
+        chrome.panels.open(panel)
+        return true
+    }
+    fun seek(forward: Boolean): Boolean {
+        val snapshot = BackgroundPlaybackSession.snapshot.value
+        if (!snapshot.active || snapshot.metadata?.isLive == true) return false
+        val step = com.ambient.tv.ui.keyboard.KeyBindings.seekStepMs()
+        BackgroundPlaybackSession.userSeek()
+        BackgroundPlaybackSession.seekTo(com.ambient.tv.ui.keyboard.kodiSeekTarget(
+            snapshot.status.positionMs, snapshot.status.durationMs, if (forward) step else -step,
+        ))
+        chrome.osd.showSeekFeedback()
+        return true
+    }
+    com.ambient.tv.ui.keyboard.RegisterKeyAction(com.ambient.tv.ui.keyboard.KeyAction.SHOW_OSD) { chrome.osd.reveal(); true }
+    com.ambient.tv.ui.keyboard.RegisterKeyAction(com.ambient.tv.ui.keyboard.KeyAction.PLAYBACK_SETTINGS) {
+        openPanel(com.ambient.tv.ui.common.UnifiedPlayerPanel.SETTINGS)
+    }
+    com.ambient.tv.ui.keyboard.RegisterKeyAction(com.ambient.tv.ui.keyboard.KeyAction.SUBTITLES) {
+        openPanel(com.ambient.tv.ui.common.UnifiedPlayerPanel.SUBTITLES)
+    }
+    com.ambient.tv.ui.keyboard.RegisterKeyAction(com.ambient.tv.ui.keyboard.KeyAction.AUDIO_TRACKS) {
+        openPanel(com.ambient.tv.ui.common.UnifiedPlayerPanel.AUDIO)
+    }
+    com.ambient.tv.ui.keyboard.RegisterKeyAction(com.ambient.tv.ui.keyboard.KeyAction.DETAILS) {
+        if (chrome.detail.value == null || !chrome.detailEnabled.value) false
+        else { toggleDetailsByInfoKey(chrome.panels, detailsLabel); true }
+    }
+    com.ambient.tv.ui.keyboard.RegisterKeyAction(com.ambient.tv.ui.keyboard.KeyAction.SEEK_BACK) { seek(forward = false) }
+    com.ambient.tv.ui.keyboard.RegisterKeyAction(com.ambient.tv.ui.keyboard.KeyAction.SEEK_FORWARD) { seek(forward = true) }
 }
 
 /** Info opens the details (recorded as opened from the Details button) or closes them again. */

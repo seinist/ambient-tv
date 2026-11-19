@@ -287,6 +287,8 @@ open class MainActivity : ComponentActivity() {
     private val consumedKodiKeyboardKeys = mutableSetOf<Int>()
     private val consumedMouseButtons = mutableSetOf<Int>()
     private var suppressMouseBackKeyUntilMs = 0L
+    private val keyBindingDispatcher = com.ambient.tv.ui.keyboard.KeyBindingDispatcher()
+    private var replayingBoundKey = false
     private var middleMouseDownTimeMs = 0L
     private var middleMouseDownX = 0f
     private var middleMouseDownY = 0f
@@ -488,6 +490,13 @@ open class MainActivity : ComponentActivity() {
         if (event.keyCode == KeyEvent.KEYCODE_BACK && SystemClock.elapsedRealtime() <= suppressMouseBackKeyUntilMs) {
             return true
         }
+        // User key bindings come before the focused control (text input keeps its keys).
+        if (!replayingBoundKey && !com.ambient.tv.ui.common.TvTextFieldFocus.anyFocused) {
+            keyBindingDispatcher.handle(event, ::performBoundKeyAction) { replay ->
+                replayingBoundKey = true
+                try { dispatchKeyEvent(replay) } finally { replayingBoundKey = false }
+            }?.let { return it }
+        }
         if (BackgroundPlaybackSession.snapshot.value.active && event.keyCode in setOf(
                 KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE, KeyEvent.KEYCODE_MEDIA_PLAY,
                 KeyEvent.KEYCODE_MEDIA_PAUSE, KeyEvent.KEYCODE_MEDIA_STOP)) {
@@ -534,6 +543,34 @@ open class MainActivity : ComponentActivity() {
             }
             KeyEvent.ACTION_UP -> consumedKodiKeyboardKeys.remove(event.keyCode)
             else -> false
+        }
+    }
+
+    private fun performBoundKeyAction(action: com.ambient.tv.ui.keyboard.KeyAction) {
+        if (com.ambient.tv.ui.keyboard.KeyActionHandlers.perform(action)) return
+        com.ambient.tv.notifications.AppNotifications.post(com.ambient.tv.notifications.AppNotice(
+            key = "key-binding-unavailable",
+            message = R.string.key_binding_unavailable,
+            phase = com.ambient.tv.notifications.NoticePhase.INFO,
+            kind = com.ambient.tv.notifications.NoticeKind.SETTINGS,
+            args = listOf(getString(action.titleRes)),
+            interruptPlayback = false,
+        ))
+    }
+
+    /** Actions that need no particular screen; navigation ones are added by the app shell. */
+    private fun registerKeyActionFallbacks() {
+        val handlers = com.ambient.tv.ui.keyboard.KeyActionHandlers
+        handlers.fallback(com.ambient.tv.ui.keyboard.KeyAction.SCREENSAVER) {
+            if (BackgroundPlaybackSession.snapshot.value.active || !appPreferences.screensaverEnabled) return@fallback false
+            // After the key's release, which would otherwise end the screensaver again.
+            window.decorView.postDelayed({ setScreensaverActive(true) }, 350)
+            true
+        }
+        handlers.fallback(com.ambient.tv.ui.keyboard.KeyAction.PLAY_PAUSE) {
+            if (!BackgroundPlaybackSession.snapshot.value.active) return@fallback false
+            BackgroundPlaybackSession.userToggle()
+            true
         }
     }
 
@@ -761,6 +798,9 @@ open class MainActivity : ComponentActivity() {
         super.onCreate(restoredState)
         // After super.onCreate: Hilt injects the preferences there.
         com.ambient.tv.ui.common.PlayerOsdTimeout.seconds = appPreferences.playerOsdSeconds
+        com.ambient.tv.ui.keyboard.KeyBindings.attach(appPreferences.keyBindings) { appPreferences.keyBindings = it }
+        com.ambient.tv.ui.keyboard.KeyBindings.seekStepMs = { appPreferences.bigSeekJumpSeconds.coerceAtLeast(1) * 1_000L }
+        registerKeyActionFallbacks()
         browseReconnects.start()
         companionIntentPending = restoredState?.getBoolean("companion.intent.pending", false) ?: true
         if (this is com.ambient.tv.ui.mobile.HandheldActivity && com.ambient.tv.ui.mobile.isTelevision(this)) {
@@ -2168,6 +2208,38 @@ private fun AmbientTvApp(
     }
 
     fun openSettingsPreservingContext() = openSettings()
+
+    // Key-binding actions that work from any page (Settings → Keys & remote). A fullscreen
+    // player keeps its own keys: these navigation actions report "not available" there.
+    val performNavigationKeyAction = rememberUpdatedState<(com.ambient.tv.ui.keyboard.KeyAction) -> Boolean> { action ->
+        if (onPlayerRoute) false else when (action) {
+            com.ambient.tv.ui.keyboard.KeyAction.START_PAGE -> { navigateSidebar(rootRoute); true }
+            com.ambient.tv.ui.keyboard.KeyAction.SEARCH -> { navigateSidebar(Destinations.SEARCH); true }
+            com.ambient.tv.ui.keyboard.KeyAction.SETTINGS -> { navigateSidebar(Destinations.SETTINGS); true }
+            com.ambient.tv.ui.keyboard.KeyAction.WEATHER -> { navigateSidebar(Destinations.WEATHER); true }
+            com.ambient.tv.ui.keyboard.KeyAction.LIVE_TV ->
+                if (appPreferences.isTvheadendConfigured || configuredIptvSourceId != null) {
+                    navigateSidebar(Destinations.LIVE_TV); true
+                } else false
+            com.ambient.tv.ui.keyboard.KeyAction.OPEN_PLAYER -> reopenBackgroundPlayer()
+            com.ambient.tv.ui.keyboard.KeyAction.SIDEBAR -> if (handheld) false else {
+                sidebarEntryRequested.value = true
+                runCatching { sidebarFocusRequester.requestFocus() }.getOrDefault(false)
+            }
+            else -> false
+        }
+    }
+    LaunchedEffect(Unit) {
+        listOf(
+            com.ambient.tv.ui.keyboard.KeyAction.START_PAGE, com.ambient.tv.ui.keyboard.KeyAction.SEARCH,
+            com.ambient.tv.ui.keyboard.KeyAction.SETTINGS, com.ambient.tv.ui.keyboard.KeyAction.WEATHER,
+            com.ambient.tv.ui.keyboard.KeyAction.LIVE_TV, com.ambient.tv.ui.keyboard.KeyAction.OPEN_PLAYER,
+            com.ambient.tv.ui.keyboard.KeyAction.SIDEBAR,
+        ).forEach { action ->
+            com.ambient.tv.ui.keyboard.KeyActionHandlers.fallback(action) { performNavigationKeyAction.value(action) }
+        }
+    }
+    androidx.compose.runtime.SideEffect { com.ambient.tv.ui.keyboard.KeyBindings.playerForeground = onPlayerRoute }
 
     fun youtubeFeedRoute(feedKey: String) = Destinations.youtubeSection(feedKey, appPreferences.youtubeStartFeedKey)
 

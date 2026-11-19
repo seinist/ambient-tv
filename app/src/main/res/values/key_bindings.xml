@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="key_bindings_title">Keys &amp; remote</string>
+    <string name="key_bindings_hint">Put your own actions on remote and keyboard keys</string>
+    <string name="key_bindings_explanation">Choose an action, then press the key briefly or hold it. OK removes the assignment, Back cancels. The arrow keys, OK, Back, Home and volume keep their meaning. In the player, player keys come before the ones for everywhere.</string>
+    <string name="key_bindings_scope_global">Everywhere</string>
+    <string name="key_bindings_scope_player">In the player</string>
+    <string name="key_bindings_reset">Remove all assignments</string>
+    <string name="key_binding_none">Not assigned</string>
+    <string name="key_binding_listening">Press a key … (hold for a long press)</string>
+    <string name="key_binding_long">%1$s (hold)</string>
+    <string name="key_binding_replaced">“%1$s” was “%2$s” and is now “%3$s”.</string>
+    <string name="key_binding_unavailable">“%1$s” is not available here.</string>
+    <string name="key_action_start_page">Start page</string>
+    <string name="key_action_sidebar">Open sidebar</string>
+    <string name="key_action_open_player">Open current playback</string>
+    <string name="key_action_live_tv">Live TV</string>
+    <string name="key_action_screensaver">Start screensaver</string>
+    <string name="key_action_play_pause">Play/Pause</string>
+    <string name="key_action_show_osd">Show controls</string>
+    <string name="key_action_seek_back">Jump back</string>
+    <string name="key_action_seek_forward">Jump forward</string>
+    <string name="key_action_previous_item">Previous</string>
+    <string name="key_action_next_item">Next</string>
+    <string name="key_action_subtitles">Subtitles</string>
+    <string name="key_action_audio_tracks">Audio track</string>
+    <string name="key_name_red">Red</string>
+    <string name="key_name_green">Green</string>
+    <string name="key_name_yellow">Yellow</string>
+    <string name="key_name_blue">Blue</string>
+    <string name="key_name_channel_up">Channel +</string>
+    <string name="key_name_channel_down">Channel −</string>
+    <string name="key_name_menu">Menu</string>
+    <string name="key_name_space">Space</string>
+    <string name="key_name_digit">Key %1$d</string>
+</resources>

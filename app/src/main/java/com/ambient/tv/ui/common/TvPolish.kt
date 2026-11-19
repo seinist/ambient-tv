@@ -48,6 +48,9 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Tune
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.runtime.Composable
@@ -821,6 +824,14 @@ fun ProvideControlContent(color: Color, content: @Composable () -> Unit) {
     )
 }
 
+private fun headerKeyAction(icon: ImageVector?): com.ambient.tv.ui.keyboard.KeyAction? = when (icon) {
+    null -> null
+    Icons.Filled.Refresh -> com.ambient.tv.ui.keyboard.KeyAction.REFRESH
+    Icons.Filled.Tune -> com.ambient.tv.ui.keyboard.KeyAction.VIEW_OPTIONS
+    Icons.Filled.Search -> com.ambient.tv.ui.keyboard.KeyAction.SEARCH
+    else -> null
+}
+
 /**
  * Compact control for tabs, filters and page-header actions (see [PageHeader]).
  *
@@ -847,6 +858,14 @@ fun TvChip(
     val clickable = enabled && !loading
     val uiSounds = LocalUiSoundPlayer.current
     val activate = rememberUiSoundAction(enabled = clickable, onClick = onClick)
+    // A page header's Refresh/View/Search answers its key binding on every page alike.
+    if (LocalPageHeaderActions.current) headerKeyAction(icon)?.let { action ->
+        com.ambient.tv.ui.keyboard.RegisterKeyAction(action, enabled = enabled) {
+            // Still loading: the refresh is already running, nothing else should happen.
+            if (clickable) activate()
+            true
+        }
+    }
     val scheme = MaterialTheme.colorScheme
     val foreground = if (enabled) scheme.onSurface else scheme.onSurfaceVariant.copy(alpha = .55f)
     if (com.ambient.tv.ui.mobile.LocalHandheldUi.current) {
