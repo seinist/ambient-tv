@@ -635,6 +635,7 @@ class SettingsBackupManager @Inject constructor(
                     autoUpdateCheck = context?.let { com.ambient.tv.update.AppUpdater.automaticUpdatesEnabled(it) },
                     projectmFavorites = context?.let { com.ambient.tv.ui.common.projectm.ProjectMFavorites(it).all().toSortedSet() },
                     keyBindings = preferences.keyBindings,
+                    gamepad = preferences.gamepadSettings,
                 ),
                 device = DeviceSettingsExtras(
                     imageCacheMb = preferences.imageCacheMb,
@@ -1116,9 +1117,20 @@ class SettingsBackupManager @Inject constructor(
             settings.lyricsVisible?.let { preferences.lyricsVisible = it }
             settings.lyricsOnlineEnabled?.let { preferences.lyricsOnlineEnabled = it }
             settings.frameDropOverlayHistory?.let { preferences.frameDropOverlayHistory = it }
-            settings.keyBindings?.let {
-                preferences.keyBindings = it
-                com.ambient.tv.ui.keyboard.KeyBindings.reload(it)
+            settings.gamepad?.let {
+                preferences.gamepadSettings = it
+                com.ambient.tv.ui.gamepad.GamepadInput.reload(it)
+            }
+            settings.keyBindings?.let { stored ->
+                // Older backups may hold controller buttons as remote keys: they move to the controller page.
+                val (remote, moved) = com.ambient.tv.ui.gamepad.splitLegacyGamepadBindings(stored)
+                preferences.keyBindings = remote
+                com.ambient.tv.ui.keyboard.KeyBindings.reload(remote)
+                if (moved.isNotEmpty()) {
+                    val merged = com.ambient.tv.ui.gamepad.GamepadConfig.decode(preferences.gamepadSettings).withLegacy(moved).encode()
+                    preferences.gamepadSettings = merged
+                    com.ambient.tv.ui.gamepad.GamepadInput.reload(merged)
+                }
             }
             context?.let { appContext ->
                 settings.liveTvReminderAutoSwitch?.let { com.ambient.tv.livetv.LiveTvReminderScheduler.setAutoSwitch(appContext, it) }

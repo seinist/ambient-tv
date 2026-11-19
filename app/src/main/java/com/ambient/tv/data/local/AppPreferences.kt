@@ -1561,6 +1561,11 @@ class AppPreferences @Inject constructor(
         get() = runCatching { json.decodeFromString<Map<String, String>>(prefs.getString("key_bindings", "{}")!!) }.getOrDefault(emptyMap())
         set(value) = prefs.edit { putString("key_bindings", json.encodeToString(value)) }
 
+    /** Controller options and button overrides (see ui.gamepad.GamepadConfig.encode). */
+    var gamepadSettings: Map<String, String>
+        get() = runCatching { json.decodeFromString<Map<String, String>>(prefs.getString("gamepad_settings", "{}")!!) }.getOrDefault(emptyMap())
+        set(value) = prefs.edit { putString("gamepad_settings", json.encodeToString(value)) }
+
     var bigSeekJumpSeconds: Int
         get() = prefs.getInt(KEY_BIG_SEEK_JUMP_SECONDS, 60).coerceIn(10, 300)
         set(value) = prefs.edit { putInt(KEY_BIG_SEEK_JUMP_SECONDS, value.coerceIn(10, 300)) }

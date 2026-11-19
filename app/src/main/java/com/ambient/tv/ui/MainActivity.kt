@@ -288,6 +288,30 @@ open class MainActivity : ComponentActivity() {
     private val consumedMouseButtons = mutableSetOf<Int>()
     private var suppressMouseBackKeyUntilMs = 0L
     private val keyBindingDispatcher = com.ambient.tv.ui.keyboard.KeyBindingDispatcher()
+    /** Controller buttons, triggers, sticks and the hat as the app's keys and actions (ui.gamepad). */
+    private val gamepadController = com.ambient.tv.ui.gamepad.GamepadController(object : com.ambient.tv.ui.gamepad.GamepadHost {
+        private val handler = android.os.Handler(android.os.Looper.getMainLooper())
+        override fun emitKey(event: KeyEvent) { this@MainActivity.dispatchKeyEvent(event) }
+        override fun perform(action: com.ambient.tv.ui.keyboard.KeyAction) = performBoundKeyAction(action)
+        override fun volume(command: com.ambient.tv.ui.gamepad.GamepadVolumeCommand) = adjustKeyboardVolume(when (command) {
+            com.ambient.tv.ui.gamepad.GamepadVolumeCommand.UP -> android.media.AudioManager.ADJUST_RAISE
+            com.ambient.tv.ui.gamepad.GamepadVolumeCommand.DOWN -> android.media.AudioManager.ADJUST_LOWER
+            com.ambient.tv.ui.gamepad.GamepadVolumeCommand.MUTE -> android.media.AudioManager.ADJUST_TOGGLE_MUTE
+        })
+        override val playerForeground: Boolean get() = com.ambient.tv.ui.keyboard.KeyBindings.playerForeground
+        override val recordingKey: Boolean get() = com.ambient.tv.ui.keyboard.KeyBindings.capture != null
+        override fun now(): Long = SystemClock.uptimeMillis()
+        override fun schedule(delayMs: Long, task: () -> Unit): () -> Unit {
+            val runnable = Runnable(task)
+            handler.postDelayed(runnable, delayMs)
+            return { handler.removeCallbacks(runnable) }
+        }
+    })
+    private val gamepadDeviceListener = object : android.hardware.input.InputManager.InputDeviceListener {
+        override fun onInputDeviceAdded(deviceId: Int) = Unit
+        override fun onInputDeviceChanged(deviceId: Int) = Unit
+        override fun onInputDeviceRemoved(deviceId: Int) = gamepadController.deviceRemoved(deviceId)
+    }
     private var replayingBoundKey = false
     private var middleMouseDownTimeMs = 0L
     private var middleMouseDownX = 0f
@@ -346,6 +370,7 @@ open class MainActivity : ComponentActivity() {
 
     override fun onDestroy() {
         stopDismissedPipIfFinishing()
+        getSystemService(android.hardware.input.InputManager::class.java)?.unregisterInputDeviceListener(gamepadDeviceListener)
         if (ownsBrowseUiSession) browseUiSessionPolicy.destroy(browseUiOwner, isChangingConfigurations)
         uiResolutionHost?.close()
         uiResolutionHost = null
@@ -391,6 +416,7 @@ open class MainActivity : ComponentActivity() {
         resetMiddleMousePan()
         consumedMouseButtons.clear()
         consumedKodiKeyboardKeys.clear()
+        gamepadController.releaseAll()
         super.onPause()
     }
     private val openPlaybackRequest = mutableLongStateOf(0)
@@ -449,6 +475,7 @@ open class MainActivity : ComponentActivity() {
 
     override fun onWindowFocusChanged(hasFocus: Boolean) {
         if (!hasFocus) {
+            gamepadController.releaseAll()
             uiRenderBackKeyGate.reset()
             com.ambient.tv.companion.CompanionRemoteInput.hide()
         }
@@ -479,6 +506,8 @@ open class MainActivity : ComponentActivity() {
         if (consumeScreensaverInput(screensaverInput.key(keyIdentity, phase, event.repeatCount,
                 screensaverActive.value, screensaverOverlayPresent.value))) return true
         if (event.action == KeyEvent.ACTION_DOWN) registerUserInteraction()
+        // Controller buttons become the app's keys and actions (or go to a game in front).
+        if (gamepadController.handleKey(event)) return true
         // Sleep pre-warning: OK extends by 30 min instead of reaching the focused control.
         if (com.ambient.tv.ui.player.SleepWarningKeyGate.takesOk(BackgroundPlaybackSession.sleepWarningDeadline != null) && event.keyCode in setOf(
                 KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER, KeyEvent.KEYCODE_NUMPAD_ENTER)) {
@@ -616,6 +645,8 @@ open class MainActivity : ComponentActivity() {
     }
 
     private fun dispatchUiGenericMotionEvent(event: MotionEvent, dispatchToContent: () -> Boolean): Boolean {
+        // Sticks, hat and triggers: before anything else, so a resting stick counts as no input.
+        if (gamepadController.handleMotion(event)) return true
         com.ambient.tv.data.browse.BrowseWorkBudget.interact()
         // Hover/remote pointer noise is not a new press and must not cancel a preview.
         if (event.actionMasked == MotionEvent.ACTION_BUTTON_PRESS || event.actionMasked == MotionEvent.ACTION_BUTTON_RELEASE) {
@@ -798,7 +829,15 @@ open class MainActivity : ComponentActivity() {
         super.onCreate(restoredState)
         // After super.onCreate: Hilt injects the preferences there.
         com.ambient.tv.ui.common.PlayerOsdTimeout.seconds = appPreferences.playerOsdSeconds
-        com.ambient.tv.ui.keyboard.KeyBindings.attach(appPreferences.keyBindings) { appPreferences.keyBindings = it }
+        // Controller buttons once stored as remote keys move to the controller page.
+        val (remoteKeyBindings, movedGamepadBindings) = com.ambient.tv.ui.gamepad.splitLegacyGamepadBindings(appPreferences.keyBindings)
+        com.ambient.tv.ui.gamepad.GamepadInput.attach(appPreferences.gamepadSettings) { appPreferences.gamepadSettings = it }
+        if (movedGamepadBindings.isNotEmpty()) {
+            com.ambient.tv.ui.gamepad.GamepadInput.importLegacy(movedGamepadBindings)
+            appPreferences.keyBindings = remoteKeyBindings
+        }
+        com.ambient.tv.ui.keyboard.KeyBindings.attach(remoteKeyBindings) { appPreferences.keyBindings = it }
+        getSystemService(android.hardware.input.InputManager::class.java)?.registerInputDeviceListener(gamepadDeviceListener, null)
         com.ambient.tv.ui.keyboard.KeyBindings.seekStepMs = { appPreferences.bigSeekJumpSeconds.coerceAtLeast(1) * 1_000L }
         registerKeyActionFallbacks()
         browseReconnects.start()

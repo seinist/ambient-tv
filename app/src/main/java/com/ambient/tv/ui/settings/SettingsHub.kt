@@ -407,6 +407,7 @@ internal fun SettingsHub(
             if (category == SettingsCategory.WAKE) append(" mac wol wake aufwecken server nas smb nfs plex jellyfin emby tvheadend dlna retry wiederholung wiederholen")
             if (category == SettingsCategory.RECEIVER) append(" upnp dlna receiver empfänger handy cast zuspielen")
             if (category == SettingsCategory.SPOTIFY) append(" advanced developer client id entwickler")
+            if (category == SettingsCategory.CONTROLLER) append(" controller gamepad joystick spielecontroller game pad xbox playstation dualsense dualshock nintendo stick steuerkreuz tasten belegung button mapping trigger schultertaste")
             if (category == SettingsCategory.KEY_BINDINGS) append(" taste tasten fernbedienung tastatur belegung shortcut kurzbefehl farbtaste rot grün gelb blau kanal key keys remote keyboard binding mapping color red green yellow blue channel")
         }
         // Search reaches every page; the area index only those of the chosen settings level.
