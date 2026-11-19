@@ -19,7 +19,7 @@ COMMIT="$(external_version LIBRETRODROID_COMMIT)"
 command -v git >/dev/null 2>&1 || fail "git is required"
 
 patch_hash="$( (cd "$PATCHES" && cat ./*.patch 2>/dev/null) | git hash-object --stdin)"
-marker="$COMMIT $patch_hash"
+marker="$COMMIT $patch_hash recursive"
 if [[ -f "$DEST/.ambient-libretrodroid" && "$(cat "$DEST/.ambient-libretrodroid")" == "$marker" ]]; then
     log "LibretroDroid $COMMIT already prepared"
     exit 0
@@ -35,7 +35,7 @@ git -C "$WORK" fetch -q --depth 1 origin "$COMMIT"
 git -C "$WORK" checkout -q FETCH_HEAD
 [[ "$(git -C "$WORK" rev-parse HEAD)" == "$COMMIT" ]] || fail "Fetched commit does not match the pin"
 # Only the module's own submodules, at the commit's gitlinks.
-git -C "$WORK" submodule update --init --depth 1 \
+git -C "$WORK" submodule update --init --recursive --depth 1 \
     libretrodroid/src/main/cpp/rcheevos libretrodroid/src/main/cpp/libadrenotools
 
 rm -rf "$DEST"
