@@ -401,4 +401,41 @@ class PlaybackSeekCoordinatorTest {
         }
         assertNull(seek.pendingTarget)
     }
+
+    @Test fun aSeekTheDecoderNeverReceivedDoesNotFreezeTheClock() {
+        var now = 0L
+        val seek = PlaybackSeekCoordinator(holdSeekTargetUntilReached = true, nowMs = { now })
+        // Resume/seek target sent while the next video was still being handed over.
+        seek.requestAbsolute(90_000)
+        assertEquals(90_000L, seek.consumeCommit())
+        var engine = 0L
+        repeat(10) {
+            now += 500
+            engine += 500
+            assertEquals(90_000L, seek.displayedPosition(engine))
+        }
+        repeat(12) {
+            now += 500
+            engine += 500
+            seek.displayedPosition(engine)
+        }
+        assertEquals(engine, seek.displayedPosition(engine))
+        assertNull(seek.pendingTarget)
+        // Further seeks start from the real position again.
+        assertEquals(engine + 10_000, seek.requestRelative(10_000, engine, 600_000))
+    }
+
+    @Test fun aClockPlayingFarPastTheTargetAlsoHandsBack() {
+        var now = 0L
+        val seek = PlaybackSeekCoordinator(nowMs = { now })
+        seek.requestAbsolute(5_000)
+        seek.consumeCommit()
+        var engine = 60_000L
+        repeat(16) {
+            now += 500
+            engine += 500
+            seek.displayedPosition(engine)
+        }
+        assertEquals(engine, seek.displayedPosition(engine))
+    }
 }
