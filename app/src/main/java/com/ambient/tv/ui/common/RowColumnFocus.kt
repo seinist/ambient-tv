@@ -388,6 +388,15 @@ private class VerticalRowMoveState {
     var generation = 0L
 }
 
+/**
+ * Share of a row move from rest after which focus moves to the destination, so the focus frame
+ * lands as the row arrives. Bound to the list's real movement ([RowGlideProgress]).
+ */
+internal const val ROW_FOCUS_HANDOFF_FRACTION = .75f
+
+/** Only for a glide that reports no progress: hand over after this long instead. */
+internal const val ROW_FOCUS_HANDOFF_FALLBACK_MS = 250L
+
 @OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 fun Modifier.rowColumnFocusNavigation(
     focus: RowColumnFocus,
@@ -395,9 +404,10 @@ fun Modifier.rowColumnFocusNavigation(
     scrollToBottom: (suspend () -> Unit)? = null,
     scrollToRow: (suspend (Any) -> Unit)? = null,
     /**
-     * Move focus to an already placed destination tile as soon as its glide starts, instead of
-     * after it ends (~1 s), so the focus frame appears immediately. Only for lists whose
-     * focused-row centering yields to an in-flight D-pad move.
+     * Move focus to the destination tile while its glide is still running (once the list has
+     * moved most of the way, see [ROW_FOCUS_HANDOFF_FRACTION]) instead of after the spring tail
+     * (~1 s). Only
+     * for lists whose focused-row centering yields to an in-flight D-pad move.
      */
     focusBeforeScroll: Boolean = false,
     rowOrder: () -> List<Any>,
@@ -427,25 +437,35 @@ fun Modifier.rowColumnFocusNavigation(
         }
     }
 
-    fun launchMove(rowKey: Any, scroll: suspend () -> Unit) {
+    /** [following]: a press while the column still glides; focus then follows at once. */
+    fun launchMove(rowKey: Any, following: Boolean = false, scroll: suspend () -> Unit) {
         val generation = ++move.generation
         move.pendingRow = rowKey
         move.job = scope.launch {
             try {
                 var focusedEarly = false
                 if (earlyFocus) {
-                    // Start the glide (it publishes the pending row synchronously), then focus
-                    // the destination as soon as its row is composed, while the column glides.
-                    val glide = launch(start = kotlinx.coroutines.CoroutineStart.UNDISPATCHED) { scroll() }
+                    // Start the glide (it publishes the pending row synchronously), then hand focus
+                    // over while the row arrives: not on the key press (focus jumped ahead of the
+                    // row), not after the whole spring tail (~1 s), but once the list has really
+                    // moved most of the way. A slow device that drops frames hands over later.
+                    val progress = RowGlideProgress()
+                    val glide = launch(progress, start = kotlinx.coroutines.CoroutineStart.UNDISPATCHED) { scroll() }
+                    var startNanos = -1L
                     while (true) {
+                        val frameNanos = withFrameNanos { it }
+                        if (startNanos < 0) startNanos = frameNanos
+                        val moved = progress.fraction
+                        val arriving = following || !glide.isActive ||
+                            (moved >= 0f && moved >= ROW_FOCUS_HANDOFF_FRACTION) ||
+                            (moved < 0f && frameNanos - startNanos >= ROW_FOCUS_HANDOFF_FALLBACK_MS * 1_000_000L)
                         if (!focus.isEntryPlaced(rowKey) && focus.canScrollToEntry(rowKey)) focus.scrollToEntry(rowKey)
-                        if (focus.isEntryPlaced(rowKey) && focus.focusEntry(rowKey)) {
+                        if (arriving && focus.isEntryPlaced(rowKey) && focus.focusEntry(rowKey)) {
                             focusedEarly = true
                             if (focus.lastMoveNeedsSound) uiSounds?.playFocus()
                             break
                         }
                         if (!glide.isActive) break
-                        withFrameNanos { }
                     }
                     glide.join()
                 } else scroll()
@@ -494,7 +514,7 @@ fun Modifier.rowColumnFocusNavigation(
                 return@onPreviewKeyEvent true
             }
             if (scrollToRow == null && !focus.canScrollToEntry(next)) return@onPreviewKeyEvent false
-            launchMove(next) { scrollToRow?.invoke(next) }
+            launchMove(next, following = hadActiveMove) { scrollToRow?.invoke(next) }
             return@onPreviewKeyEvent true
         }
 
