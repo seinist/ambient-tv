@@ -78,8 +78,14 @@ jobs:
           git -C src checkout -q FETCH_HEAD
           # Direct submodules are needed; some cores carry broken nested ones (mupen64plus-nx), which
           # libretro's own CI does not fetch either.
-          git -C src submodule update -q --init --depth 1 || git -C src submodule update -q --init
-          git -C src submodule update -q --init --recursive --depth 1 || echo "::warning::nested submodules incomplete"
+          # Only submodules .gitmodules declares (mupen64plus-nx carries a gitlink without one).
+          paths=$(git -C src config -f .gitmodules --get-regexp '\.path$' 2>/dev/null | awk '{ print $2 }' || true)
+          if [ -n "$paths" ]; then
+            # shellcheck disable=SC2086
+            git -C src submodule update -q --init --depth 1 -- $paths || git -C src submodule update -q --init -- $paths
+            # shellcheck disable=SC2086
+            git -C src submodule update -q --init --recursive --depth 1 -- $paths || echo "::warning::nested submodules incomplete"
+          fi
           test "$(git -C src rev-parse HEAD)" = "${{ matrix.commit }}"
 
       - name: Build
