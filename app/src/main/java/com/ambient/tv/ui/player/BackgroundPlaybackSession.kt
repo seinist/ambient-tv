@@ -826,7 +826,8 @@ object BackgroundPlaybackSession {
     /** Call when the user begins a seek, including an uncommitted timeline preview. */
     fun userSeek() {
         checkThread()
-        DisplayPlaybackStartup.userOverride(handle)
+        // A seek is no Play/Pause decision: a start still held for the display mode keeps its
+        // pending resume (cancelling it left the title paused at its new position).
         clearPauseRewind()
         clearUserEndSeek()
         externalSeekVersion++

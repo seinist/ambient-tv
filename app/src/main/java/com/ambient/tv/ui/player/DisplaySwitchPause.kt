@@ -63,6 +63,8 @@ internal interface DisplaySwitchPlayer {
     fun reopenGeneration(): Int = 0
     /** HDMI audio came back after the switch ([HdmiAudioWatch]); the engine reopens its sink. */
     fun reopenAudioOutput() = Unit
+    /** Bumped by every seek the user asks the app for (timeline, keys, phone, DLNA). */
+    fun userSeekVersion(): Int = 0
 }
 
 internal fun PlaybackHandle.asDisplaySwitchPlayer(): DisplaySwitchPlayer {
@@ -76,13 +78,16 @@ internal fun PlaybackHandle.asDisplaySwitchPlayer(): DisplaySwitchPlayer {
         override fun setOutputMuted(muted: Boolean) = handle.setOutputMuted(muted)
         override fun reopenGeneration() = handle.reopenGeneration()
         override fun reopenAudioOutput() = handle.reopenAudioOutput()
+        override fun userSeekVersion() = BackgroundPlaybackSession.externalSeekVersion
     }
 }
 
 /**
  * Holds playback around one display mode request: pause (or mute), request, wait for the
  * DisplayManager confirmation (bounded), wait the configured delay, then resume.
- * A user play/seek while paused ends the hold without auto-resume. When [stillOwned] is false
+ * A user play while paused ends the hold without auto-resume. A seek the user asked the app
+ * for keeps the hold and its resume (it is no Play/Pause decision); an unexplained jump of
+ * the position still counts as the user taking over. When [stillOwned] is false
  * (title or engine changed) nothing is resumed. Other cancellation resumes immediately.
  * With [hdmiAudio] the resume also waits for HDMI audio to come back (at least its minimum wait
  * after the request) and reopens the audio output first, like Kodi after a refresh change.
@@ -119,6 +124,7 @@ internal suspend fun holdForDisplaySwitch(
     }
     var pausedAt = player.positionMs()
     var generation = player.reopenGeneration()
+    val seekVersion = player.userSeekVersion()
     var userTookOver = false
     var completed = false
     var audioReplugged = false
@@ -139,7 +145,8 @@ internal suspend fun holdForDisplaySwitch(
             while (waiting.isActive) {
                 val reopened = player.reopenGeneration() != generation
                 if (effective == DisplaySwitchHold.PAUSE &&
-                    displaySwitchUserTookOver(player.wantsToPlay(), isLive || initiallyPaused, pausedAt, player.positionMs(), reopened)) {
+                    displaySwitchUserTookOver(player.wantsToPlay(), isLive || initiallyPaused ||
+                        player.userSeekVersion() != seekVersion, pausedAt, player.positionMs(), reopened)) {
                     userTookOver = true
                     waiting.cancel()
                     break

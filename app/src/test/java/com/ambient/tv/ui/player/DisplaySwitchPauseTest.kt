@@ -28,6 +28,8 @@ class DisplaySwitchPauseTest {
         override fun setOutputMuted(muted: Boolean) { events += if (muted) "mute" else "unmute" }
         var generation = 0
         override fun reopenGeneration() = generation
+        var seeks = 0
+        override fun userSeekVersion() = seeks
     }
 
     @Test fun holdOnlyForARealModeChangeEvenWithoutExtraDelay() {
@@ -204,6 +206,18 @@ class DisplaySwitchPauseTest {
         advanceTimeBy(1_000); seeker.position += 30_000
         assertEquals(DisplaySwitchOutcome.USER_TOOK_OVER, seeked.await())
         assertFalse(seeker.playing)
+    }
+
+    @Test fun aSeekTheUserAskedForKeepsTheHoldAndResumes() = runTest {
+        val player = FakePlayer()
+        val result = async {
+            holdForDisplaySwitch(player, DisplaySwitchHold.PAUSE, 3_000, isLive = false, request = {},
+                awaitConfirmed = { true }, stillOwned = { true })
+        }
+        advanceTimeBy(1_000); player.seeks++; player.position += 30_000
+        assertEquals(DisplaySwitchOutcome.RESUMED, result.await())
+        assertEquals(listOf("pause", "play"), player.events)
+        assertTrue(player.playing)
     }
 
     @Test fun titleChangeCancelsWithoutResumingAndOtherCancellationResumesAtOnce() = runTest {
