@@ -6,8 +6,6 @@ import com.ambient.tv.ui.theme.LocalAccentMotionState
 import com.ambient.tv.ui.theme.drawAccentProgressMotion
 import com.ambient.tv.ui.player.LocalPlayerChromeState
 import com.ambient.tv.ui.player.LocalPlayerOsdStow
-import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import com.ambient.tv.ui.player.drawBookmarkTicks
 import com.ambient.tv.ui.theme.LocalAccentStyle
@@ -61,9 +59,9 @@ import com.ambient.tv.ui.player.seekBarFraction
 import com.ambient.tv.ui.player.seekBarPlayheadFraction
 import com.ambient.tv.ui.player.rememberSeekPlayheadVisual
 import com.ambient.tv.ui.player.rememberRecentPlayerSeekFeedback
-import com.ambient.tv.ui.player.seekBarThumbScale
+import com.ambient.tv.ui.player.SEEK_PLAYHEAD_ALPHA
+import com.ambient.tv.ui.player.SEEK_PLAYHEAD_WIDTH_DP
 import com.ambient.tv.ui.player.seekBarHasDistinctTarget
-import com.ambient.tv.ui.performance.LocalPerformanceProfile
 
 /** Plex-styled touch scrubber. Its track matches the TV player inside a compact 32dp touch strip. */
 @Composable
@@ -84,8 +82,6 @@ fun HandheldSeekBar(
     val style = LocalAccentStyle.current
     val progressBrush = remember(accent, style) { accentBrush(accent, style) }
     val progressMotionPaints = remember(accent, style) { AccentMotionPaints(accent, style) }
-    // Different ShaderBrush owners: the progress stays anchored as the thumb moves.
-    val thumbBrush = remember(accent, style) { accentBrush(accent, style) }
     val navigation = LocalPlaybackNavigation.current
     val osd = LocalPlayerChromeState.current?.osd
     // Remote/media-key direct seeking may show passive feedback without a touch
@@ -135,15 +131,6 @@ fun HandheldSeekBar(
     val playheadVisual = rememberSeekPlayheadVisual(playheadFraction)
     val showingSeekTarget = seekBarHasDistinctTarget(
         positionMs, shownPosition, dragFraction != null || awaitingVisualTarget != null,
-    )
-    val reducedEffects = LocalPerformanceProfile.current.reducedEffects
-    val thumbAlpha by animateFloatAsState(
-        if (dragFraction != null || awaitingVisualTarget != null) 1f else 0f,
-        animationSpec = tween(if (reducedEffects) 95 else 145), label = "Touch seek thumb fade",
-    )
-    val thumbScale by animateFloatAsState(
-        seekBarThumbScale(dragFraction != null),
-        animationSpec = tween(if (reducedEffects) 95 else 145), label = "Touch seek thumb scale",
     )
     val preview = LocalSeekPreviewOverlayState.current
     val previewTarget = dragTarget
@@ -270,23 +257,16 @@ fun HandheldSeekBar(
                             drawLine(Color.Black.copy(alpha = 0.76f), Offset(x, centerY - trackWidth / 2), Offset(x, centerY + trackWidth / 2), 2.dp.toPx())
                         }
                         drawBookmarkTicks(bookmarks, durationMs, centerY - trackWidth / 2, centerY + trackWidth / 2)
-                        if (thumbAlpha > 0f) {
-                            val radius = 8.5.dp.toPx() * thumbScale
-                            val center = Offset(endX * fraction, centerY)
-                            drawCircle(Color.White, radius = radius, center = center, alpha = thumbAlpha)
-                            drawCircle(brush = thumbBrush, radius = radius - 3.dp.toPx() * thumbScale,
-                                center = center, alpha = thumbAlpha)
-                        }
                         // Keep the last playback position while fading out, rather than
                         // removing the line as soon as scrubbing finishes.
                         if (playheadVisual.alpha > 0f) {
                             val insetX = 1.5.dp.toPx()
                             val x = (playheadVisual.fraction * endX).coerceIn(insetX, (endX - insetX).coerceAtLeast(insetX))
                             drawLine(
-                                Color.White.copy(alpha = .84f * playheadVisual.alpha),
-                                Offset(x, centerY - 6.dp.toPx()),
-                                Offset(x, centerY + 6.dp.toPx()),
-                                2.dp.toPx(), cap = androidx.compose.ui.graphics.StrokeCap.Round,
+                                Color.White.copy(alpha = SEEK_PLAYHEAD_ALPHA * playheadVisual.alpha),
+                                Offset(x, centerY - trackWidth / 2),
+                                Offset(x, centerY + trackWidth / 2),
+                                SEEK_PLAYHEAD_WIDTH_DP.dp.toPx(),
                             )
                         }
                     }

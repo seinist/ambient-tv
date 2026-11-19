@@ -1472,10 +1472,10 @@ internal fun TvPlayerSeekBar(
                     val insetX = 1.5.dp.toPx()
                     val x = (size.width * played).coerceIn(insetX, (size.width - insetX).coerceAtLeast(insetX))
                     drawLine(
-                        Color.White.copy(alpha = .84f * dataAlpha.value * playheadVisual.alpha),
-                        androidx.compose.ui.geometry.Offset(x, -3.dp.toPx()),
-                        androidx.compose.ui.geometry.Offset(x, size.height + 3.dp.toPx()),
-                        2.dp.toPx(), cap = androidx.compose.ui.graphics.StrokeCap.Round,
+                        Color.White.copy(alpha = SEEK_PLAYHEAD_ALPHA * dataAlpha.value * playheadVisual.alpha),
+                        androidx.compose.ui.geometry.Offset(x, 0f),
+                        androidx.compose.ui.geometry.Offset(x, size.height),
+                        SEEK_PLAYHEAD_WIDTH_DP.dp.toPx(),
                     )
                 }
             }
