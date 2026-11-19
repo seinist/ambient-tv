@@ -110,7 +110,7 @@ class GamePlayerViewModel @Inject constructor(
         job = viewModelScope.launch {
             mutable.value = GameUiState.DownloadingCore(game, null)
             val file = try {
-                cores.download(game.system.core) { progress -> mutable.value = GameUiState.DownloadingCore(game, progress) }
+                cores.download(game.system.core, com.ambient.tv.games.GameSettings.state.coreSource) { progress -> mutable.value = GameUiState.DownloadingCore(game, progress) }
             } catch (error: GameCoreIncompatibleException) {
                 mutable.value = GameUiState.Failed(GameFailure.CORE_INCOMPATIBLE, error.message); return@launch
             } catch (error: kotlinx.coroutines.CancellationException) {

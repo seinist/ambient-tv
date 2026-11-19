@@ -79,3 +79,22 @@ class GameExtrasTest {
         assertNull(state.withControllerType(psx, 0, null).controllerType(psx, 0))
     }
 }
+
+class GameCoreChannelTest {
+    @Test fun signedManifestsVerifyAndTamperedOnesDoNot() {
+        val pair = java.security.KeyPairGenerator.getInstance("EC").apply { initialize(256) }.generateKeyPair()
+        val manifest = """{"version":1,"tag":"cores-1","cores":[]}""".toByteArray()
+        val signature = java.security.Signature.getInstance("SHA256withECDSA").run {
+            initSign(pair.private)
+            update(manifest)
+            sign()
+        }
+        val publicKey = java.util.Base64.getEncoder().encodeToString(pair.public.encoded)
+        org.junit.Assert.assertTrue(GameCoreChannel.verify(manifest, signature, publicKey))
+        org.junit.Assert.assertFalse(GameCoreChannel.verify(manifest + ' '.code.toByte(), signature, publicKey))
+        org.junit.Assert.assertFalse(GameCoreChannel.verify(manifest, signature, ""))
+        assertEquals("e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", GameCoreChannel.sha256(ByteArray(0)))
+        assertEquals(GameCoreSource.AUTO, GameCoreSource.fromKey(null))
+        assertEquals(GameCoreSource.BUILDBOT, GameSettingsState().withCoreSource(GameCoreSource.BUILDBOT).coreSource)
+    }
+}

@@ -21,6 +21,8 @@ import com.ambient.tv.games.GameCore
 import com.ambient.tv.games.GameCoreOption
 import com.ambient.tv.games.GameDataImporter
 import com.ambient.tv.games.RetroAchievementsClient
+import com.ambient.tv.games.GameCoreChannel
+import com.ambient.tv.games.GameCoreSource
 import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
 import com.ambient.tv.games.GameBiosManager
@@ -50,6 +52,13 @@ internal interface GamesSettingsEntryPoint {
     fun roms(): GameRomPreparer
     fun data(): GameDataImporter
     fun retroAchievements(): RetroAchievementsClient
+    fun channel(): GameCoreChannel
+}
+
+private fun GameCoreSource.titleRes(): Int = when (this) {
+    GameCoreSource.AUTO -> R.string.games_core_source_auto
+    GameCoreSource.AMBIENT -> R.string.games_core_source_ambient
+    GameCoreSource.BUILDBOT -> R.string.games_core_source_buildbot
 }
 
 /**
@@ -201,6 +210,17 @@ private fun GamesCores() {
     Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(LocalUiTokens.current.compactGap)) {
         SettingsSubheader(stringResource(R.string.games_cores))
         SettingsHint(stringResource(R.string.games_cores_hint))
+        val source = GameSettings.state.coreSource
+        SettingsNavigationRow(
+            title = stringResource(R.string.games_core_source),
+            summary = stringResource(source.titleRes()) + if (!entry.channel().available && source != GameCoreSource.BUILDBOT) {
+                " · " + stringResource(R.string.games_core_source_unavailable)
+            } else "",
+            onClick = {
+                val next = GameCoreSource.entries[(source.ordinal + 1) % GameCoreSource.entries.size]
+                GameSettings.update { it.withCoreSource(next) }
+            },
+        )
         failed?.let { SettingsHint(it) }
         GameSystems.cores.forEach { core ->
             key(core.id, version) {
@@ -216,6 +236,11 @@ private fun GamesCores() {
                         info == null -> stringResource(R.string.games_core_missing)
                         info.origin == GameCoreManager.SOURCE_BUILDBOT ->
                             stringResource(R.string.games_core_from_buildbot, dateFormat.format(java.util.Date(info.installedAt)))
+                        info.origin.startsWith(GameCoreManager.SOURCE_AMBIENT_PREFIX) -> stringResource(
+                            R.string.games_core_from_ambient,
+                            info.origin.removePrefix(GameCoreManager.SOURCE_AMBIENT_PREFIX),
+                            dateFormat.format(java.util.Date(info.installedAt)),
+                        )
                         else -> stringResource(R.string.games_core_from_file, info.origin, dateFormat.format(java.util.Date(info.installedAt)))
                     },
                     collapsible = true,
@@ -230,7 +255,7 @@ private fun GamesCores() {
                                 failed = null
                                 downloads[core.id] = null
                                 scope.launch {
-                                    runCatching { cores.download(core) { value -> downloads[core.id] = value } }
+                                    runCatching { cores.download(core, GameSettings.state.coreSource) { value -> downloads[core.id] = value } }
                                         .onFailure { failed = context.getString(R.string.games_core_download_failed, core.name, it.message.orEmpty()) }
                                     downloads.remove(core.id)
                                     version++

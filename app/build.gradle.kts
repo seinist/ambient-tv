@@ -235,6 +235,12 @@ android {
         buildConfigField("boolean", "SPOTIFY_ENABLED", spotifyEnabled.toString())
         buildConfigField("String", "MONOGRAM_REF", quotedBuildConfigString(externalVersion("MONOGRAM_REF")))
         buildConfigField("String", "MONOGRAM_VERSION", quotedBuildConfigString(externalVersion("MONOGRAM_VERSION")))
+        // Own core channel (.github/workflows/cores.yml): public key of its signed manifest, empty
+        // until scripts/cores_signing_key.sh has created cores/signing-public.pem.
+        val coresPublicKey = rootProject.file("cores/signing-public.pem").takeIf { it.isFile }
+            ?.readLines()?.filterNot { it.startsWith("-----") }?.joinToString("")?.trim().orEmpty()
+        buildConfigField("String", "CORES_PUBLIC_KEY", quotedBuildConfigString(coresPublicKey))
+        buildConfigField("String", "CORES_REPO", quotedBuildConfigString("seinist/ambient-tv"))
         resValue("string", "brand_app_name", quotedBuildConfigString(appDisplayName))
         buildConfigField("String", "SPOTIFY_REDIRECT_URI", quotedBuildConfigString(spotifyRedirectUriForBuild))
         buildConfigField("String", "SPOTIFY_QR_REDIRECT_URI", quotedBuildConfigString(spotifyQrRedirectUriForBuild))

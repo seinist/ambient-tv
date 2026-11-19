@@ -92,6 +92,11 @@ data class GameSettingsState(val values: Map<String, String> = emptyMap()) {
 
     fun withControllerType(core: GameCore, port: Int, type: Int?): GameSettingsState = set("device.${core.id}.$port", type?.toString())
 
+    /** Where cores are loaded from (the app's signed build, the libretro buildbot, or the first that has it). */
+    val coreSource: GameCoreSource get() = GameCoreSource.fromKey(values["core_source"])
+
+    fun withCoreSource(source: GameCoreSource): GameSettingsState = set("core_source", source.key.takeIf { source != GameCoreSource.AUTO })
+
     /** Options of [core] for all its games. */
     fun coreOptions(core: GameCore): Map<String, String> = withPrefix("core.${core.id}.")
 

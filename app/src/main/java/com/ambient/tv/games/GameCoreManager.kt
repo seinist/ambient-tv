@@ -36,7 +36,10 @@ class GameCoreIncompatibleException(message: String) : IOException(message)
  * buildbot for this device's ABI, checked (ELF, page alignment) and stored read-only in app storage.
  */
 @Singleton
-class GameCoreManager @Inject constructor(@ApplicationContext private val context: Context) {
+class GameCoreManager @Inject constructor(
+    @ApplicationContext private val context: Context,
+    private val channel: GameCoreChannel,
+) {
     private val directory: File get() = File(context.noBackupFilesDir, "games/cores")
 
     /** The buildbot ABI folder for this device, or null when none fits. */
@@ -53,8 +56,30 @@ class GameCoreManager @Inject constructor(@ApplicationContext private val contex
         infoFile(core).delete()
     }
 
-    /** Downloads and installs [core]; [onProgress] gets 0…1, or null while the size is unknown. */
-    suspend fun download(core: GameCore, onProgress: (Float?) -> Unit): File = withContext(Dispatchers.IO) {
+    /**
+     * Downloads and installs [core] from [source]: the app's own signed build (checked against its
+     * manifest) and/or the libretro buildbot. [onProgress] gets 0…1, or null while the size is unknown.
+     */
+    suspend fun download(core: GameCore, source: GameCoreSource = GameCoreSource.AUTO, onProgress: (Float?) -> Unit): File = withContext(Dispatchers.IO) {
+        val abi = abi ?: throw GameCoreIncompatibleException("No core build for ${Build.SUPPORTED_ABIS.joinToString()}")
+        if (source != GameCoreSource.BUILDBOT && channel.available) {
+            val found = try {
+                channel.build(core, abi)
+            } catch (error: IOException) {
+                if (source == GameCoreSource.AMBIENT) throw error
+                null
+            }
+            if (found != null) {
+                val (build, url) = found
+                val bytes = fetch(url, onProgress)
+                if (!GameCoreChannel.sha256(bytes).equals(build.sha256, ignoreCase = true)) {
+                    throw GameCoreSignatureException("${core.id}: checksum does not match the signed manifest")
+                }
+                val tag = channel.manifest()?.first?.tag.orEmpty()
+                return@withContext install(core, bytes.inputStream(), zipped = true, origin = SOURCE_AMBIENT_PREFIX + tag)
+            }
+            if (source == GameCoreSource.AMBIENT) throw GameCoreIncompatibleException("${core.id} is not in the app's core build for $abi")
+        }
         val url = sourceUrl(core) ?: throw GameCoreIncompatibleException("No core build for ${Build.SUPPORTED_ABIS.joinToString()}")
         val connection = (URL(url).openConnection() as HttpURLConnection).apply {
             connectTimeout = 15_000
@@ -125,6 +150,32 @@ class GameCoreManager @Inject constructor(@ApplicationContext private val contex
         }
     }
 
+    private fun fetch(url: String, onProgress: (Float?) -> Unit): ByteArray {
+        val connection = (URL(url).openConnection() as HttpURLConnection).apply {
+            connectTimeout = 15_000
+            readTimeout = 30_000
+            instanceFollowRedirects = true
+        }
+        try {
+            if (connection.responseCode != HttpURLConnection.HTTP_OK) throw IOException("HTTP ${connection.responseCode}")
+            val total = connection.contentLengthLong.takeIf { it > 0 }
+            val out = java.io.ByteArrayOutputStream()
+            connection.inputStream.use { input ->
+                val buffer = ByteArray(64 * 1024)
+                while (true) {
+                    val count = input.read(buffer)
+                    if (count < 0) break
+                    out.write(buffer, 0, count)
+                    if (out.size() > MAX_CORE_ZIP) throw IOException("Core archive too large")
+                    onProgress(total?.let { (out.size().toFloat() / it).coerceIn(0f, 1f) })
+                }
+            }
+            return out.toByteArray()
+        } finally {
+            connection.disconnect()
+        }
+    }
+
     /** Where the installed core came from and when, or null (older installs, none). */
     fun info(core: GameCore): GameCoreInfo? = installed(core)?.let {
         runCatching { json.decodeFromString(GameCoreInfo.serializer(), infoFile(core).readText()) }.getOrNull()
@@ -151,6 +202,9 @@ class GameCoreManager @Inject constructor(@ApplicationContext private val contex
     companion object {
         /** [GameCoreInfo.origin] of cores from the libretro buildbot. */
         const val SOURCE_BUILDBOT = "buildbot"
+        /** [GameCoreInfo.origin] prefix of cores from the app's own signed build, followed by the release tag. */
+        const val SOURCE_AMBIENT_PREFIX = "ambient:"
+        private const val MAX_CORE_ZIP = 128L * 1024 * 1024
         private val json = Json { ignoreUnknownKeys = true }
         private val declaredSerializer = kotlinx.serialization.builtins.ListSerializer(GameCoreDeclaredOption.serializer())
         const val BUILDBOT = "https://buildbot.libretro.com/nightly/android/latest"
