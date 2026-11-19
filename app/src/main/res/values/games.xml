@@ -96,7 +96,7 @@
     <string name="game_picture_graphics">Graphics interface</string>
     <string name="game_picture_graphics_gles">OpenGL ES</string>
     <string name="game_picture_graphics_vulkan">Vulkan where device and core support it</string>
-    <string name="game_picture_graphics_hint">For all %1$s games from the next start</string>
+    <string name="game_picture_graphics_hint">For all %1$s games; the game restarts for it</string>
     <string name="game_core_scope">Changes apply to</string>
     <string name="game_core_scope_game">This game only</string>
     <string name="game_core_scope_core">All games with %1$s</string>
@@ -161,7 +161,7 @@
     <string name="game_cheats_found">%1$d cheats added (off)</string>
     <string name="game_cheats_none_found">No cheats found for this name</string>
     <string name="game_cheats_failed">Cheat database not reachable</string>
-    <string name="game_netplay_hint">Two devices with Ambient TV in the same network, the same game file and the same core version. The host is player 1. Buttons are shared, analog sticks are not; loading, fast forward and cheats are off meanwhile.</string>
+    <string name="game_netplay_hint">Two devices with Ambient TV in the same network, the same game file and the same core version. The host is player 1. Buttons and analog sticks are shared; loading, fast forward and cheats are off meanwhile.</string>
     <string name="game_netplay_host">Host</string>
     <string name="game_netplay_host_hint">Others see this device as “%1$s”</string>
     <string name="game_netplay_searching">Looking for hosts of this game …</string>
@@ -195,4 +195,11 @@
     <string name="games_core_source_buildbot">libretro build server only (current nightly)</string>
     <string name="games_core_source_unavailable">not set up in this build</string>
     <string name="games_core_from_ambient">Own build %1$s · %2$s</string>
+    <string name="games_system_cores">Core per system</string>
+    <string name="games_system_cores_hint">Selecting switches to the next core for the system. Single games can choose their own core in the Info panel; missing cores are loaded at start.</string>
+    <string name="game_info_core_choice">Core for this game (restarts the game)</string>
+    <string name="game_info_core_system_default">System default</string>
+    <string name="game_info_core_needs_bios">needs BIOS</string>
+    <string name="files_archive">%1$s archive</string>
+    <string name="game_vulkan_fallback">Vulkan not available – running with OpenGL ES</string>
 </resources>

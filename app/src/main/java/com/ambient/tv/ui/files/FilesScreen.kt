@@ -279,6 +279,7 @@ fun FilesScreen(onPlay: (String, Boolean) -> Unit, onBack: () -> Unit, contentAc
                         FilesBrowserRow(
                             title = tags?.title?.let { title -> tags.track?.let { "%02d · %s".format(it, title) } ?: title } ?: entry.name,
                             detail = resume.ifEmpty {
+                                if (entry.game) gameSystemLabel(entry, viewModel) else
                                 // The album already stands in the header; the artist only where it differs per track.
                                 listOfNotNull(tags?.artist, tags?.album?.takeIf { it != album }).joinToString(" · ")
                             },
@@ -418,6 +419,18 @@ private fun FilesCrumb(name: String, current: Boolean, onClick: () -> Unit) {
 }
 
 /** Icon-only action at the end of a row; [active] tints it with the accent (e.g. a set favorite). */
+/** The system a game file is for: by extension, or for archives by a quick look inside (ZIP, 7z). */
+@Composable
+private fun gameSystemLabel(entry: com.ambient.tv.data.files.FileEntry, viewModel: FilesViewModel): String {
+    val extension = com.ambient.tv.games.GameSystems.extension(entry.name)
+    if (extension !in com.ambient.tv.games.GameSystems.archiveExtensions) {
+        return com.ambient.tv.games.GameSystems.forFile(entry.name)?.shortName.orEmpty()
+    }
+    LaunchedEffect(entry.id) { viewModel.inspectArchive(entry) }
+    val archive = stringResource(R.string.files_archive, extension.uppercase())
+    return viewModel.archiveSystems[entry.id]?.takeIf { it.isNotEmpty() }?.let { "$it · $archive" } ?: archive
+}
+
 @Composable
 private fun FilesRowAction(icon: androidx.compose.ui.graphics.vector.ImageVector, label: String, active: Boolean = false, onClick: () -> Unit) {
     val accent = accessibleAccent(MaterialTheme.colorScheme.primary, MaterialTheme.colorScheme.surface)

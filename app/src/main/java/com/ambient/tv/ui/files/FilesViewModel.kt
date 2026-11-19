@@ -303,6 +303,29 @@ class FilesViewModel @Inject constructor(
         }
         saved["focus"] = null; limit = 300; rememberFolders(); refresh()
     }
+    /** Systems of game archives looked into (file id → short system name, "" when unknown). */
+    val archiveSystems = androidx.compose.runtime.mutableStateMapOf<String, String>()
+    private val archiveLooks = kotlinx.coroutines.sync.Semaphore(2)
+
+    /** Reads the directory of a ZIP/7z (a few small reads at its end) to name the system inside. */
+    fun inspectArchive(entry: FileEntry) {
+        if (entry.id in archiveSystems) return
+        archiveSystems[entry.id] = ""
+        viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+            archiveLooks.acquire()
+            try {
+                val (sourceId, path) = FileKeys.parse(entry.id)
+                val source = store.sources().firstOrNull { it.id == sourceId } ?: return@launch
+                access.prepare(source)
+                val system = access.open(source, path).use { media -> com.ambient.tv.games.GameArchives.system(entry.name, media) }
+                if (system != null) archiveSystems[entry.id] = system.shortName
+            } catch (_: Exception) {
+            } finally {
+                archiveLooks.release()
+            }
+        }
+    }
+
     /** Installs a libretro core file (checked like a download) in app storage. */
     private fun importCore(entry: FileEntry) {
         viewModelScope.launch {

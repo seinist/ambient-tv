@@ -68,6 +68,7 @@ private fun GameCoreSource.titleRes(): Int = when (this) {
 internal fun LazyListScope.gamesSettingsItems() {
     item(key = "games-play") { GamesPlay() }
     item(key = "games-ra") { GamesRetroAchievements() }
+    item(key = "games-system-cores") { GamesSystemCores() }
     item(key = "games-cores") { GamesCores() }
     item(key = "games-bios") { GamesBios() }
     item(key = "games-files") { GamesSystemFiles() }
@@ -196,6 +197,31 @@ private fun GamesBios() {
     }
 }
 
+/** Which core plays a system when several can; single games can still choose their own (Info panel). */
+@Composable
+private fun GamesSystemCores() {
+    val settings = GameSettings.state
+    Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(LocalUiTokens.current.compactGap)) {
+        SettingsSubheader(stringResource(R.string.games_system_cores))
+        SettingsHint(stringResource(R.string.games_system_cores_hint))
+        GameSystems.all.filter { it.alternatives.isNotEmpty() }.forEach { system ->
+            val current = settings.systemCore(system)
+            SettingsNavigationRow(
+                title = system.name,
+                summary = listOfNotNull(
+                    current.name,
+                    stringResource(R.string.game_info_core_needs_bios).takeIf { current.needsBios },
+                    current.license.takeIf { !current.freeLicense },
+                ).joinToString(" · "),
+                onClick = {
+                    val next = system.cores[(system.cores.indexOfFirst { it.id == current.id } + 1) % system.cores.size]
+                    GameSettings.update { it.withSystemCore(system, next) }
+                },
+            )
+        }
+    }
+}
+
 @Composable
 private fun GamesCores() {
     val context = LocalContext.current
@@ -224,7 +250,7 @@ private fun GamesCores() {
         failed?.let { SettingsHint(it) }
         GameSystems.cores.forEach { core ->
             key(core.id, version) {
-                val systems = GameSystems.all.filter { it.core.id == core.id }.joinToString(", ") { it.name }
+                val systems = GameSystems.all.filter { system -> system.cores.any { it.id == core.id } }.joinToString(", ") { it.name }
                 val info = remember(version) { cores.info(core) }
                 val progress = downloads[core.id]
                 val downloading = core.id in downloads

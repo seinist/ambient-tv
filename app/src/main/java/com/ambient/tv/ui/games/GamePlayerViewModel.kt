@@ -32,6 +32,10 @@ import javax.inject.Inject
 /** Everything a running game needs. */
 data class GameSession(
     val game: PreparedGame,
+    /** The core playing it (the game's or the system's choice). */
+    val core: GameCore,
+    /** Ask GPU cores for Vulkan (setting); off after Vulkan failed in this run. */
+    val vulkan: Boolean,
     val coreFile: File,
     val coreStamp: String,
     val systemDirectory: File,
@@ -40,16 +44,17 @@ data class GameSession(
     /** The automatic state to continue from, if its core build matches. */
     val autoState: ByteArray?,
 ) {
-    override fun equals(other: Any?) = other is GameSession && other.game == game && other.coreFile == coreFile
-    override fun hashCode() = game.hashCode() * 31 + coreFile.hashCode()
+    override fun equals(other: Any?) =
+        other is GameSession && other.game == game && other.coreFile == coreFile && other.vulkan == vulkan
+    override fun hashCode() = (game.hashCode() * 31 + coreFile.hashCode()) * 31 + vulkan.hashCode()
 }
 
 sealed interface GameUiState {
     /** Copying the game; [progress] 0…1 or null while unknown. */
     data class Preparing(val progress: Float?) : GameUiState
     /** The system's core is not installed yet: the user decides whether to load it. */
-    data class NeedsCore(val game: PreparedGame, val sourceUrl: String?) : GameUiState
-    data class DownloadingCore(val game: PreparedGame, val progress: Float?) : GameUiState
+    data class NeedsCore(val game: PreparedGame, val core: GameCore, val sourceUrl: String?) : GameUiState
+    data class DownloadingCore(val game: PreparedGame, val core: GameCore, val progress: Float?) : GameUiState
     data class Ready(val session: GameSession) : GameUiState
     data class Failed(val reason: GameFailure, val detail: String? = null) : GameUiState
 }
@@ -80,6 +85,23 @@ class GamePlayerViewModel @Inject constructor(
 
     fun retry() = load()
 
+    /** Vulkan did not come up in this run: the game starts again with OpenGL ES. */
+    private var vulkanFailed = false
+
+    /** Starts the game again (after its core or graphics interface was changed). */
+    fun restart(retryVulkan: Boolean = false) {
+        if (retryVulkan) vulkanFailed = false
+        load()
+    }
+
+    /** The core failed while Vulkan was asked for: try once more with OpenGL ES. */
+    fun retryWithoutVulkan(): Boolean {
+        if (vulkanFailed) return false
+        vulkanFailed = true
+        load()
+        return true
+    }
+
     private fun load() {
         job?.cancel()
         job = viewModelScope.launch {
@@ -94,23 +116,28 @@ class GamePlayerViewModel @Inject constructor(
                 mutable.value = GameUiState.Failed(GameFailure.NOT_FOUND, error.message); return@launch
             }
             if (cores.abi == null) { mutable.value = GameUiState.Failed(GameFailure.NO_ABI); return@launch }
-            bios.missingRequired(game.system, GameSystems.extension(game.file.name))?.let { missing ->
+            val chosen = com.ambient.tv.games.GameSettings.state.gameCore(game.system, game.saveKey)
+            bios.missingRequired(game.system, GameSystems.extension(game.file.name), chosen)?.let { missing ->
                 mutable.value = GameUiState.Failed(GameFailure.BIOS_MISSING, missing.file); return@launch
             }
-            val core = cores.installed(game.system.core)
-            if (core == null) mutable.value = GameUiState.NeedsCore(game, cores.sourceUrl(game.system.core))
-            else start(game, core)
+            val core = cores.installed(chosen)
+            if (core == null) mutable.value = GameUiState.NeedsCore(game, chosen, cores.sourceUrl(chosen))
+            else start(game, chosen, core)
         }
     }
 
     /** The user agreed to load the core for this system. */
     fun downloadCore() {
-        val game = (state.value as? GameUiState.NeedsCore)?.game ?: return
+        val needed = state.value as? GameUiState.NeedsCore ?: return
+        val game = needed.game
+        val chosen = needed.core
         job?.cancel()
         job = viewModelScope.launch {
-            mutable.value = GameUiState.DownloadingCore(game, null)
+            mutable.value = GameUiState.DownloadingCore(game, chosen, null)
             val file = try {
-                cores.download(game.system.core, com.ambient.tv.games.GameSettings.state.coreSource) { progress -> mutable.value = GameUiState.DownloadingCore(game, progress) }
+                cores.download(chosen, com.ambient.tv.games.GameSettings.state.coreSource) { progress ->
+                    mutable.value = GameUiState.DownloadingCore(game, chosen, progress)
+                }
             } catch (error: GameCoreIncompatibleException) {
                 mutable.value = GameUiState.Failed(GameFailure.CORE_INCOMPATIBLE, error.message); return@launch
             } catch (error: kotlinx.coroutines.CancellationException) {
@@ -118,17 +145,19 @@ class GamePlayerViewModel @Inject constructor(
             } catch (error: Exception) {
                 mutable.value = GameUiState.Failed(GameFailure.CORE_DOWNLOAD, error.message); return@launch
             }
-            start(game, file)
+            start(game, chosen, file)
         }
     }
 
-    private suspend fun start(game: PreparedGame, core: File) {
+    private suspend fun start(game: PreparedGame, chosen: GameCore, core: File) {
         val stamp = GameStateStore.coreStamp(core)
         val session = withContext(Dispatchers.IO) {
             runCatching { files.record(game.entry) }
             val auto = states.entry(game, GameStateKind.AUTO)?.takeIf { it.coreStamp == stamp }
             GameSession(
                 game = game,
+                core = chosen,
+                vulkan = com.ambient.tv.games.GameSettings.state.vulkan(chosen) && !vulkanFailed,
                 coreFile = core,
                 coreStamp = stamp,
                 systemDirectory = storage.systemDirectory,
@@ -171,7 +200,7 @@ class GamePlayerViewModel @Inject constructor(
     fun saveSram(game: PreparedGame, bytes: ByteArray) = storage.write(storage.sramFile(game), bytes)
 
     fun saveState(session: GameSession, kind: GameStateKind, bytes: ByteArray, screenshot: Bitmap?): GameStateEntry {
-        val entry = states.save(session.game, kind, bytes, screenshot, session.coreStamp)
+        val entry = states.save(session.game, kind, bytes, screenshot, session.coreStamp, coreId = session.core.id)
         refreshStates(session.game)
         return entry
     }

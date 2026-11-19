@@ -1,0 +1,103 @@
+Ambient TV patch, 2026-11-19: setInputPortAnalog for netplay, so both analog sticks of every
+port reach the core while netplay drives the input (setInputPortState only carries buttons).
+
+diff --git a/src/main/cpp/input.cpp b/src/main/cpp/input.cpp
+index f27ac7b..94da153 100644
+--- a/src/main/cpp/input.cpp
++++ b/src/main/cpp/input.cpp
+@@ -170,6 +170,15 @@ void Input::setNetplayActive(bool active) {
+     }
+ }
+ 
++void Input::setInputPortAnalog(unsigned int port, float leftX, float leftY, float rightX, float rightY) {
++    if (port >= 4) return;
++    std::lock_guard<std::mutex> lock(inputMutex);
++    pads[port].joypadLeftXAxis = leftX;
++    pads[port].joypadLeftYAxis = leftY;
++    pads[port].joypadRightXAxis = rightX;
++    pads[port].joypadRightYAxis = rightY;
++}
++
+ void Input::setInputPortState(unsigned int port, uint32_t bitmask) {
+     if (port >= 4) return;
+ 
+diff --git a/src/main/cpp/input.h b/src/main/cpp/input.h
+index 7badd52..0c697c8 100644
+--- a/src/main/cpp/input.h
++++ b/src/main/cpp/input.h
+@@ -66,6 +66,8 @@ public:
+     void onMotionEvent(int port, int motionSource, float xAxis, float yAxis);
+ 
+     void setInputPortState(unsigned int port, uint32_t bitmask);
++    // Ambient TV: both sticks of a port for netplay (-1…1 each), next to the button bitmask.
++    void setInputPortAnalog(unsigned int port, float leftX, float leftY, float rightX, float rightY);
+     uint32_t getInputPortBitmask(unsigned port);
+     void setNetplayActive(bool active);
+ 
+diff --git a/src/main/cpp/libretrodroid.cpp b/src/main/cpp/libretrodroid.cpp
+index a955aee..04afd0b 100644
+--- a/src/main/cpp/libretrodroid.cpp
++++ b/src/main/cpp/libretrodroid.cpp
+@@ -461,6 +461,12 @@ void LibretroDroid::setInputPortState(unsigned int port, uint32_t bitmask) {
+     }
+ }
+ 
++void LibretroDroid::setInputPortAnalog(unsigned int port, float leftX, float leftY, float rightX, float rightY) {
++    if (input) {
++        input->setInputPortAnalog(port, leftX, leftY, rightX, rightY);
++    }
++}
++
+ uint32_t LibretroDroid::getInputPortBitmask(unsigned int port) {
+     if (input) {
+         return input->getInputPortBitmask(port);
+diff --git a/src/main/cpp/libretrodroid.h b/src/main/cpp/libretrodroid.h
+index 4de6bc9..9e38908 100644
+--- a/src/main/cpp/libretrodroid.h
++++ b/src/main/cpp/libretrodroid.h
+@@ -124,6 +124,7 @@ public:
+     void onMotionEvent(unsigned int port, unsigned int source, float xAxis, float yAxis);
+     void onTouchEvent(float xAxis, float yAxis);
+     void setInputPortState(unsigned int port, uint32_t bitmask);
++    void setInputPortAnalog(unsigned int port, float leftX, float leftY, float rightX, float rightY);
+     uint32_t getInputPortBitmask(unsigned int port);
+     void setNetplayActive(bool active);
+ 
+diff --git a/src/main/cpp/libretrodroidjni.cpp b/src/main/cpp/libretrodroidjni.cpp
+index e016661..50cbd50 100644
+--- a/src/main/cpp/libretrodroidjni.cpp
++++ b/src/main/cpp/libretrodroidjni.cpp
+@@ -755,6 +755,20 @@ JNIEXPORT void JNICALL Java_com_swordfish_libretrodroid_LibretroDroid_setInputPo
+     );
+ }
+ 
++JNIEXPORT void JNICALL Java_com_swordfish_libretrodroid_LibretroDroid_setInputPortAnalog(
++    JNIEnv* env,
++    jclass obj,
++    jint port,
++    jfloat leftX,
++    jfloat leftY,
++    jfloat rightX,
++    jfloat rightY
++) {
++    LibretroDroid::getInstance().setInputPortAnalog(
++        static_cast<unsigned int>(port), leftX, leftY, rightX, rightY
++    );
++}
++
+ JNIEXPORT jint JNICALL Java_com_swordfish_libretrodroid_LibretroDroid_getInputPortBitmask(
+     JNIEnv* env,
+     jclass obj,
+diff --git a/src/main/java/com/swordfish/libretrodroid/LibretroDroid.java b/src/main/java/com/swordfish/libretrodroid/LibretroDroid.java
+index 0e17e24..54bd269 100644
+--- a/src/main/java/com/swordfish/libretrodroid/LibretroDroid.java
++++ b/src/main/java/com/swordfish/libretrodroid/LibretroDroid.java
+@@ -114,6 +114,8 @@ public class LibretroDroid {
+     public static native void step(GLRetroView retroView);
+     public static native void stepForNetplay(GLRetroView retroView);
+     public static native void setInputPortState(int port, int bitmask);
++    // Ambient TV: both sticks of a port while netplay is active (-1…1).
++    public static native void setInputPortAnalog(int port, float leftX, float leftY, float rightX, float rightY);
+     public static native int getInputPortBitmask(int port);
+     public static native void setNetplayActive(boolean active);
+     public static native void renderFrameOnly();

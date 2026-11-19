@@ -48,15 +48,15 @@ enum class NetplayFailure { NETWORK, OTHER_GAME, OTHER_CORE, CLOSED, STATE }
  * Two-player netplay between two Ambient TV devices in the same network, as lockstep: both run the
  * same core build from the host's state, every frame with both players' buttons, each device's own
  * input [DELAY_FRAMES] frames ahead so the network round trip stays hidden. The host is player 1,
- * the guest player 2. Digital buttons only (sticks stay centred while playing together).
+ * the guest player 2. Buttons and both analog sticks are shared.
  *
  * Found by NSD (mDNS) in the local network; only hosts of the same game file and core build appear.
  */
 class GameNetplay(
     private val context: Context,
     private val scope: CoroutineScope,
-    /** The local player's buttons (RetroPad bitmask). */
-    private val localButtons: () -> Int,
+    /** The local player's input: buttons (RetroPad bitmask) and sticks. */
+    private val localInput: () -> NetplayInput,
 ) {
     var state by mutableStateOf<NetplayState>(NetplayState.Idle)
         private set
@@ -76,8 +76,8 @@ class GameNetplay(
     private val sender = Executors.newSingleThreadExecutor()
 
     // Lockstep, touched on the core's thread (tick) and the reader thread.
-    private val remote = ConcurrentHashMap<Int, Int>()
-    private val local = ConcurrentHashMap<Int, Int>()
+    private val remote = ConcurrentHashMap<Int, NetplayInput>()
+    private val local = ConcurrentHashMap<Int, NetplayInput>()
     @Volatile private var frame = 0
     @Volatile private var sentUpTo = -1
     @Volatile private var localPort = 0
@@ -215,17 +215,12 @@ class GameNetplay(
         localPort = port
         // The first frames run without input on both sides: that is the delay.
         for (f in 0 until DELAY_FRAMES) {
-            remote[f] = 0
-            local[f] = 0
+            remote[f] = NetplayInput.NONE
+            local[f] = NetplayInput.NONE
         }
         sentUpTo = DELAY_FRAMES - 1
         stalledSince = 0L
         withContext(Dispatchers.Main) {
-            // Sticks are not shared: centre them before the core reads only the shared buttons.
-            for (p in 0..1) {
-                view.sendMotionEvent(GLRetroView.MOTION_SOURCE_ANALOG_LEFT, 0f, 0f, p)
-                view.sendMotionEvent(GLRetroView.MOTION_SOURCE_ANALOG_RIGHT, 0f, 0f, p)
-            }
             view.frameSpeed = 1
             view.rewindEnabled = false
             LibretroDroid.setNetplayActive(true)
@@ -239,7 +234,7 @@ class GameNetplay(
                 when (input.readByte().toInt()) {
                     PACKET_INPUT -> {
                         val f = input.readInt()
-                        remote[f] = input.readInt()
+                        remote[f] = NetplayInput.read(input)
                     }
                     PACKET_BYE -> break
                     else -> throw IOException("packet")
@@ -255,15 +250,15 @@ class GameNetplay(
     private fun tick(view: GLRetroView, output: DataOutputStream) {
         val target = frame + DELAY_FRAMES
         if (sentUpTo < target) {
-            val bits = localButtons()
-            local[target] = bits
+            val state = localInput()
+            local[target] = state
             sentUpTo = target
             sender.execute {
                 runCatching {
                     synchronized(output) {
                         output.writeByte(PACKET_INPUT)
                         output.writeInt(target)
-                        output.writeInt(bits)
+                        state.write(output)
                         output.flush()
                     }
                 }
@@ -282,10 +277,10 @@ class GameNetplay(
             stalledSince = 0L
             scope.launch { waiting = false }
         }
-        val hostBits = if (localPort == 0) mine else theirs
-        val guestBits = if (localPort == 0) theirs else mine
-        LibretroDroid.setInputPortState(0, hostBits)
-        LibretroDroid.setInputPortState(1, guestBits)
+        val host = if (localPort == 0) mine else theirs
+        val guest = if (localPort == 0) theirs else mine
+        host.apply(0)
+        guest.apply(1)
         LibretroDroid.stepForNetplay(view)
         remote.remove(frame - 1)
         local.remove(frame - 1)
@@ -373,7 +368,7 @@ class GameNetplay(
         const val SERVICE_TYPE = "_ambienttv-np._tcp."
         const val DELAY_FRAMES = 3
         private const val MAGIC = 0x41544e50 // "ATNP"
-        private const val VERSION = 1
+        private const val VERSION = 2
         private const val PACKET_INPUT = 1
         private const val PACKET_BYE = 2
         private const val MAX_STATE = 64 * 1024 * 1024
@@ -408,3 +403,31 @@ class GameNetplay(
 }
 
 data class NetplayIdentity(val rom: String, val core: String, val title: String)
+
+/** One frame of one player: buttons and both sticks (each axis -0x7fff…0x7fff, as RetroPadInput reports). */
+data class NetplayInput(val buttons: Int, val leftX: Int, val leftY: Int, val rightX: Int, val rightY: Int) {
+    fun write(out: DataOutputStream) {
+        out.writeInt(buttons)
+        out.writeShort(leftX)
+        out.writeShort(leftY)
+        out.writeShort(rightX)
+        out.writeShort(rightY)
+    }
+
+    /** Hands this frame to the core as player [port]. */
+    fun apply(port: Int) {
+        LibretroDroid.setInputPortState(port, buttons)
+        LibretroDroid.setInputPortAnalog(port, axis(leftX), axis(leftY), axis(rightX), axis(rightY))
+    }
+
+    companion object {
+        val NONE = NetplayInput(0, 0, 0, 0, 0)
+        private const val MAX = 0x7fff
+
+        fun read(input: DataInputStream) = NetplayInput(
+            input.readInt(), input.readShort().toInt(), input.readShort().toInt(), input.readShort().toInt(), input.readShort().toInt(),
+        )
+
+        fun axis(value: Int): Float = (value.coerceIn(-MAX, MAX) / MAX.toFloat())
+    }
+}

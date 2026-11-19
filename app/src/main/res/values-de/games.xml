@@ -96,7 +96,7 @@
     <string name="game_picture_graphics">Grafikschnittstelle</string>
     <string name="game_picture_graphics_gles">OpenGL ES</string>
     <string name="game_picture_graphics_vulkan">Vulkan, wenn Gerät und Core es können</string>
-    <string name="game_picture_graphics_hint">Gilt für alle %1$s-Spiele ab dem nächsten Start</string>
+    <string name="game_picture_graphics_hint">Gilt für alle %1$s-Spiele; das Spiel startet dafür neu</string>
     <string name="game_core_scope">Änderungen gelten für</string>
     <string name="game_core_scope_game">Nur dieses Spiel</string>
     <string name="game_core_scope_core">Alle Spiele mit %1$s</string>
@@ -161,7 +161,7 @@
     <string name="game_cheats_found">%1$d Cheats hinzugefügt (aus)</string>
     <string name="game_cheats_none_found">Keine Cheats für diesen Namen gefunden</string>
     <string name="game_cheats_failed">Cheat-Datenbank nicht erreichbar</string>
-    <string name="game_netplay_hint">Zwei Geräte mit Ambient TV im selben Netzwerk, dieselbe Spieldatei und dieselbe Core-Version. Der Gastgeber ist Spieler 1. Geteilt werden die Tasten, keine Analogsticks; Laden, Vorspulen und Cheats sind dabei aus.</string>
+    <string name="game_netplay_hint">Zwei Geräte mit Ambient TV im selben Netzwerk, dieselbe Spieldatei und dieselbe Core-Version. Der Gastgeber ist Spieler 1. Geteilt werden Tasten und Analogsticks; Laden, Vorspulen und Cheats sind dabei aus.</string>
     <string name="game_netplay_host">Gastgeber sein</string>
     <string name="game_netplay_host_hint">Andere sehen dieses Gerät als „%1$s“</string>
     <string name="game_netplay_searching">Suche nach Gastgebern mit diesem Spiel …</string>
@@ -195,4 +195,11 @@
     <string name="games_core_source_buildbot">Nur libretro-Buildserver (aktuelle Nightly)</string>
     <string name="games_core_source_unavailable">in diesem Build nicht eingerichtet</string>
     <string name="games_core_from_ambient">Eigener Build %1$s · %2$s</string>
+    <string name="games_system_cores">Core je System</string>
+    <string name="games_system_cores_hint">Auswählen wechselt zum nächsten Core für das System. Einzelne Spiele können im Panel Info einen eigenen Core wählen; fehlende Cores werden beim Start geladen.</string>
+    <string name="game_info_core_choice">Core für dieses Spiel (startet das Spiel neu)</string>
+    <string name="game_info_core_system_default">Standard für das System</string>
+    <string name="game_info_core_needs_bios">braucht BIOS</string>
+    <string name="files_archive">%1$s-Archiv</string>
+    <string name="game_vulkan_fallback">Vulkan nicht verfügbar – läuft mit OpenGL ES</string>
 </resources>

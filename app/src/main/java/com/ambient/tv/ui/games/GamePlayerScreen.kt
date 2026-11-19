@@ -69,6 +69,7 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -156,7 +157,7 @@ fun GamePlayerScreen(onBack: () -> Unit, model: GamePlayerViewModel = hiltViewMo
                 modifier = center, centered = true, actionLoading = false,
             )
             is GameUiState.NeedsCore -> {
-                val core = current.game.system.core
+                val core = current.core
                 StatePanel(
                     title = stringResource(R.string.game_core_needed, core.name),
                     body = stringResource(
@@ -172,7 +173,7 @@ fun GamePlayerScreen(onBack: () -> Unit, model: GamePlayerViewModel = hiltViewMo
                 )
             }
             is GameUiState.DownloadingCore -> StatePanel(
-                title = stringResource(R.string.game_core_loading, current.game.system.core.name),
+                title = stringResource(R.string.game_core_loading, current.core.name),
                 body = current.progress?.let { stringResource(R.string.game_progress, (it * 100).roundToInt()) },
                 actionLabel = stringResource(R.string.back), onAction = onBack,
                 modifier = center, centered = true, actionLoading = false,
@@ -186,7 +187,8 @@ fun GamePlayerScreen(onBack: () -> Unit, model: GamePlayerViewModel = hiltViewMo
                 secondaryActionLabel = stringResource(R.string.back), onSecondaryAction = onBack,
                 modifier = center, centered = true,
             )
-            is GameUiState.Ready -> GameContent(current.session, model, onBack)
+            // A new session (other core, OpenGL ES after Vulkan) is a new player.
+            is GameUiState.Ready -> key(current.session) { GameContent(current.session, model, onBack) }
         }
     }
 }
@@ -265,7 +267,7 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
     val activityLifecycle = LocalLifecycleOwner.current.lifecycle
     val game = session.game
     val system = game.system
-    val core = system.core
+    val core = session.core
     val settings = GameSettings.state
     val shader = settings.shader(system)
     val aspect = settings.aspect(system)
@@ -298,7 +300,13 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
     val achievements = remember { GameAchievements(model.retroAchievements, scope) }
     /** The input layer (created below); netplay reads the local player's buttons from it. */
     val inputRef = remember { java.util.concurrent.atomic.AtomicReference<RetroPadInput?>(null) }
-    val netplay = remember { GameNetplay(context.applicationContext, scope) { inputRef.get()?.buttons(0) ?: 0 } }
+    val netplay = remember {
+        GameNetplay(context.applicationContext, scope) {
+            inputRef.get()?.let { pad ->
+                NetplayInput(pad.buttons(0), pad.analog(0, 0, 0), pad.analog(0, 0, 1), pad.analog(0, 1, 0), pad.analog(0, 1, 1))
+            } ?: NetplayInput.NONE
+        }
+    }
     var cheats by remember { mutableStateOf(model.cheats(game)) }
     var cheatsLoading by remember { mutableStateOf(false) }
     var cheatsDeleting by remember { mutableStateOf(false) }
@@ -318,12 +326,14 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
             gameFilePath = game.file.absolutePath
             systemDirectory = session.systemDirectory.absolutePath
             savesDirectory = session.savesDirectory.absolutePath
-            variables = settings.effectiveCoreOptions(core, game.saveKey).map { (key, value) -> Variable(key, value) }.toTypedArray()
+            // The graphics interface decides the GPU cores' renderer options.
+            variables = (settings.effectiveCoreOptions(core, game.saveKey) + if (session.vulkan) core.vulkanOptions else core.glOptions)
+                .map { (key, value) -> Variable(key, value) }.toTypedArray()
             saveRAMState = session.sram
             this.shader = shader.config()
             rumbleEventsEnabled = true
             preferLowLatencyAudio = true
-            preferVulkan = settings.vulkan(core)
+            preferVulkan = session.vulkan
         }).apply {
             // Input reaches the core through RetroPadInput only.
             isFocusable = false
@@ -501,6 +511,8 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
     }
     LaunchedEffect(retroView) {
         retroView.getGLRetroErrors().collect { code ->
+            // Vulkan not available after all: once more with OpenGL ES.
+            if (session.vulkan && !loaded && model.retryWithoutVulkan()) return@collect
             // A core that does not load is removed, so trying again loads it fresh.
             if (code == GLRetroView.ERROR_LOAD_LIBRARY) model.removeCore(core)
             model.failed(context.getString(R.string.game_error_code, code))
@@ -524,6 +536,9 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
     }
     // Vibration goes to the controllers of the player the core addresses.
     val runningNow by rememberUpdatedState(running)
+    LaunchedEffect(Unit) {
+        if (core.hardware && settings.vulkan(core) && !session.vulkan) message = context.getString(R.string.game_vulkan_fallback)
+    }
     LaunchedEffect(retroView) {
         retroView.getRumbleEvents().collect { event ->
             if (GameSettings.state.rumble && runningNow) {
@@ -651,7 +666,7 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
                     PlayerTechBadgeRow {
                         MetaBadge("libretro", emphasized = true)
                         MetaBadge(core.name)
-                        if (core.hardware) MetaBadge(if (settings.vulkan(core)) "Vulkan" else "OpenGL ES")
+                        if (core.hardware) MetaBadge(if (session.vulkan) "Vulkan" else "OpenGL ES")
                         MetaBadge(stringResource(shader.titleRes))
                         if (aspect != GameAspect.CORE) MetaBadge(aspect.key)
                         if (fastForward) MetaBadge("2×")
@@ -860,7 +875,15 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
                                         text = stringResource(if (vulkan) R.string.game_picture_graphics_vulkan else R.string.game_picture_graphics_gles),
                                         subtitle = stringResource(R.string.game_picture_graphics_hint, core.name),
                                         selected = settings.vulkan(core) == vulkan,
-                                        onClick = { GameSettings.update { it.withVulkan(core, vulkan) } },
+                                        onClick = {
+                                            GameSettings.update { it.withVulkan(core, vulkan) }
+                                            // The renderer is chosen when the core starts: start again with it.
+                                            if (vulkan != session.vulkan && !exiting && !netplay.active) {
+                                                exiting = true
+                                                destroy()
+                                                model.restart(retryVulkan = vulkan)
+                                            }
+                                        },
                                     )
                                 }
                             }
@@ -988,6 +1011,37 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
                         else -> {
                             GamePanelText(stringResource(R.string.game_info_system, system.name))
                             GamePanelText(stringResource(R.string.game_info_core, core.name, core.license))
+                            if (system.alternatives.isNotEmpty()) {
+                                GamePanelText(stringResource(R.string.game_info_core_choice))
+                                val own = settings.ownGameCore(system, game.saveKey)
+                                system.cores.forEach { choice ->
+                                    RightPanelChoice(
+                                        text = choice.name,
+                                        subtitle = listOfNotNull(
+                                            choice.license,
+                                            stringResource(R.string.game_info_core_system_default).takeIf {
+                                                choice.id == settings.systemCore(system).id
+                                            },
+                                            stringResource(R.string.game_info_core_needs_bios).takeIf { choice.needsBios },
+                                        ).joinToString(" · "),
+                                        selected = choice.id == core.id,
+                                        enabled = !netplay.active,
+                                        onClick = {
+                                            if (choice.id != core.id || own != null) {
+                                                GameSettings.update {
+                                                    it.withGameCore(system, game.saveKey, choice.takeIf { c -> c.id != it.systemCore(system).id })
+                                                }
+                                                if (choice.id != core.id && !exiting) {
+                                                    // Saves, ends this core and starts the game with the other one.
+                                                    exiting = true
+                                                    destroy()
+                                                    model.restart()
+                                                }
+                                            }
+                                        },
+                                    )
+                                }
+                            }
                             GamePanelText(stringResource(R.string.game_info_file, game.file.name, game.sourceName))
                             val bios = remember { model.biosStatus(game) }
                             bios.forEach { status ->

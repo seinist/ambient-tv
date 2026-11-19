@@ -92,6 +92,21 @@ data class GameSettingsState(val values: Map<String, String> = emptyMap()) {
 
     fun withControllerType(core: GameCore, port: Int, type: Int?): GameSettingsState = set("device.${core.id}.$port", type?.toString())
 
+    /** The core [system] plays with unless a game has its own: chosen in settings, else the default. */
+    fun systemCore(system: GameSystem): GameCore = system.core(values["syscore.${system.id}"]) ?: system.core
+
+    fun withSystemCore(system: GameSystem, core: GameCore): GameSettingsState =
+        set("syscore.${system.id}", core.id.takeIf { core.id != system.core.id && system.core(core.id) != null })
+
+    /** The core for one game ([gameKey]): its own choice, else the system's. */
+    fun gameCore(system: GameSystem, gameKey: String): GameCore = system.core(values["gamecore.$gameKey"]) ?: systemCore(system)
+
+    /** The game's own core, or null when it follows the system. */
+    fun ownGameCore(system: GameSystem, gameKey: String): GameCore? = system.core(values["gamecore.$gameKey"])
+
+    fun withGameCore(system: GameSystem, gameKey: String, core: GameCore?): GameSettingsState =
+        set("gamecore.$gameKey", core?.id?.takeIf { system.core(it) != null })
+
     /** Where cores are loaded from (the app's signed build, the libretro buildbot, or the first that has it). */
     val coreSource: GameCoreSource get() = GameCoreSource.fromKey(values["core_source"])
 

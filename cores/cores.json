@@ -1,19 +1,195 @@
 {
   "comment": "Pinned libretro cores built by .github/workflows/cores.yml (16 KB pages) and published as a signed cores-* release. Change a commit here to update a core.",
-  "abis": ["arm64-v8a", "armeabi-v7a", "x86_64", "x86"],
+  "abis": [
+    "arm64-v8a",
+    "armeabi-v7a",
+    "x86_64",
+    "x86"
+  ],
   "cores": [
-    { "core": "nestopia", "repo": "https://github.com/libretro/nestopia", "commit": "f1e02d12664834536edbf7352995a3d0cd1caef4", "build": "ndk", "jni": "libretro" },
-    { "core": "snes9x", "repo": "https://github.com/libretro/snes9x", "commit": "204ea1c0b851f960cbf223075eb1c25641cb483c", "build": "ndk", "jni": "libretro" },
-    { "core": "gambatte", "repo": "https://github.com/libretro/gambatte-libretro", "commit": "77f2567d718b8973d02caa2daa8dce4953faf811", "build": "ndk", "jni": "libgambatte/libretro" },
-    { "core": "mgba", "repo": "https://github.com/libretro/mgba", "commit": "7a12d6d4b9acb14c0ae62c9166b6a2f3d08007f6", "build": "cmake", "args": "-DLIBMGBA_ONLY=ON -DBUILD_LIBRETRO=ON" },
-    { "core": "genesis_plus_gx", "repo": "https://github.com/libretro/Genesis-Plus-GX", "commit": "b9c2316441978d4015ba30e9a95d9b0e6f8ee981", "build": "ndk", "jni": "libretro" },
-    { "core": "mednafen_pce_fast", "repo": "https://github.com/libretro/beetle-pce-fast-libretro", "commit": "2de1ce1c3f237b161c126c54ba407990bb86d1e9", "build": "ndk", "jni": "." },
-    { "core": "mednafen_ngp", "repo": "https://github.com/libretro/beetle-ngp-libretro", "commit": "a50d5ac288a81f2104ddf43195a4efdd15c72227", "build": "ndk", "jni": "." },
-    { "core": "mednafen_wswan", "repo": "https://github.com/libretro/beetle-wswan-libretro", "commit": "4b01295838ea89e3f1355bbe4cb5cf98aa6108cd", "build": "ndk", "jni": "." },
-    { "core": "handy", "repo": "https://github.com/libretro/libretro-handy", "commit": "bc55d462f0b2d6b073ea93dc552ebd73cec60fd1", "build": "ndk", "jni": "." },
-    { "core": "stella2014", "repo": "https://github.com/libretro/stella2014-libretro", "commit": "7d1361e407e63f29e52892655069e5fb4096e691", "build": "ndk", "jni": "." },
-    { "core": "mednafen_vb", "repo": "https://github.com/libretro/beetle-vb-libretro", "commit": "d5ae54c8e23b573a3b34e888b2d48a588027e92c", "build": "ndk", "jni": "." },
-    { "core": "mupen64plus_next_gles3", "repo": "https://github.com/libretro/mupen64plus-libretro-nx", "commit": "15bada85906593376e8fd697f1b0b3af3a20f512", "build": "ndk", "jni": "libretro", "env": "GLES3=1" },
-    { "core": "pcsx_rearmed", "repo": "https://github.com/libretro/pcsx_rearmed", "commit": "7b0e8f8fadfbce3d170d195b9d9eecaabfa08c8e", "build": "ndk", "jni": "." }
+    {
+      "core": "nestopia",
+      "repo": "https://github.com/libretro/nestopia",
+      "commit": "f1e02d12664834536edbf7352995a3d0cd1caef4",
+      "build": "ndk",
+      "jni": "libretro"
+    },
+    {
+      "core": "snes9x",
+      "repo": "https://github.com/libretro/snes9x",
+      "commit": "204ea1c0b851f960cbf223075eb1c25641cb483c",
+      "build": "ndk",
+      "jni": "libretro"
+    },
+    {
+      "core": "gambatte",
+      "repo": "https://github.com/libretro/gambatte-libretro",
+      "commit": "77f2567d718b8973d02caa2daa8dce4953faf811",
+      "build": "ndk",
+      "jni": "libgambatte/libretro"
+    },
+    {
+      "core": "mgba",
+      "repo": "https://github.com/libretro/mgba",
+      "commit": "7a12d6d4b9acb14c0ae62c9166b6a2f3d08007f6",
+      "build": "cmake",
+      "args": "-DLIBMGBA_ONLY=ON -DBUILD_LIBRETRO=ON"
+    },
+    {
+      "core": "genesis_plus_gx",
+      "repo": "https://github.com/libretro/Genesis-Plus-GX",
+      "commit": "b9c2316441978d4015ba30e9a95d9b0e6f8ee981",
+      "build": "ndk",
+      "jni": "libretro"
+    },
+    {
+      "core": "mednafen_pce_fast",
+      "repo": "https://github.com/libretro/beetle-pce-fast-libretro",
+      "commit": "2de1ce1c3f237b161c126c54ba407990bb86d1e9",
+      "build": "ndk",
+      "jni": "."
+    },
+    {
+      "core": "mednafen_ngp",
+      "repo": "https://github.com/libretro/beetle-ngp-libretro",
+      "commit": "a50d5ac288a81f2104ddf43195a4efdd15c72227",
+      "build": "ndk",
+      "jni": "."
+    },
+    {
+      "core": "mednafen_wswan",
+      "repo": "https://github.com/libretro/beetle-wswan-libretro",
+      "commit": "4b01295838ea89e3f1355bbe4cb5cf98aa6108cd",
+      "build": "ndk",
+      "jni": "."
+    },
+    {
+      "core": "handy",
+      "repo": "https://github.com/libretro/libretro-handy",
+      "commit": "bc55d462f0b2d6b073ea93dc552ebd73cec60fd1",
+      "build": "ndk",
+      "jni": "."
+    },
+    {
+      "core": "stella2014",
+      "repo": "https://github.com/libretro/stella2014-libretro",
+      "commit": "7d1361e407e63f29e52892655069e5fb4096e691",
+      "build": "ndk",
+      "jni": "."
+    },
+    {
+      "core": "mednafen_vb",
+      "repo": "https://github.com/libretro/beetle-vb-libretro",
+      "commit": "d5ae54c8e23b573a3b34e888b2d48a588027e92c",
+      "build": "ndk",
+      "jni": "."
+    },
+    {
+      "core": "mupen64plus_next_gles3",
+      "repo": "https://github.com/libretro/mupen64plus-libretro-nx",
+      "commit": "15bada85906593376e8fd697f1b0b3af3a20f512",
+      "build": "ndk",
+      "jni": "libretro",
+      "env": "GLES3=1"
+    },
+    {
+      "core": "pcsx_rearmed",
+      "repo": "https://github.com/libretro/pcsx_rearmed",
+      "commit": "7b0e8f8fadfbce3d170d195b9d9eecaabfa08c8e",
+      "build": "ndk",
+      "jni": "."
+    },
+    {
+      "core": "fceumm",
+      "repo": "https://github.com/libretro/libretro-fceumm",
+      "commit": "77468e568d9fe9c48d684ca911f1a3fe7259fdf7",
+      "build": "ndk",
+      "jni": "."
+    },
+    {
+      "core": "mesen",
+      "repo": "https://github.com/libretro/Mesen",
+      "commit": "0102910c39ad1a62bc3f784466f3f67ca9eae335",
+      "build": "ndk",
+      "jni": "Libretro"
+    },
+    {
+      "core": "snes9x2010",
+      "repo": "https://github.com/libretro/snes9x2010",
+      "commit": "82904a95e9bab2c3e63395e4b9ece8fdca8b785d",
+      "build": "ndk",
+      "jni": "."
+    },
+    {
+      "core": "bsnes",
+      "repo": "https://github.com/libretro/bsnes",
+      "commit": "63ee22f7af8f5d1ada295c2c98fd7bf261fa62a7",
+      "build": "ndk",
+      "jni": "bsnes/target-libretro"
+    },
+    {
+      "core": "sameboy",
+      "repo": "https://github.com/libretro/SameBoy",
+      "commit": "aa158a889a48b538a0302873704a34577c8eb67d",
+      "build": "ndk",
+      "jni": "libretro"
+    },
+    {
+      "core": "gpsp",
+      "repo": "https://github.com/libretro/gpsp",
+      "commit": "5819380c2ffb0900219d700a382ee68c464ebb99",
+      "build": "ndk",
+      "jni": "."
+    },
+    {
+      "core": "picodrive",
+      "repo": "https://github.com/libretro/picodrive",
+      "commit": "1890c2932234c9d30f4cd3851d02228baae8f09e",
+      "build": "ndk",
+      "jni": "."
+    },
+    {
+      "core": "mednafen_supergrafx",
+      "repo": "https://github.com/libretro/beetle-supergrafx-libretro",
+      "commit": "9c11dcd213a79d57d2c86313971631af801f2cdc",
+      "build": "ndk",
+      "jni": "."
+    },
+    {
+      "core": "race",
+      "repo": "https://github.com/libretro/RACE",
+      "commit": "c660d9ab5aafb47aefff90182ca90d319ad9b077",
+      "build": "ndk",
+      "jni": "."
+    },
+    {
+      "core": "mednafen_lynx",
+      "repo": "https://github.com/libretro/beetle-lynx-libretro",
+      "commit": "fcdefcfb3c11d6d2e71be076a5d3df2e88ab73ed",
+      "build": "ndk",
+      "jni": "."
+    },
+    {
+      "core": "parallel_n64",
+      "repo": "https://github.com/libretro/parallel-n64",
+      "commit": "ab48ad59754e561c721ba73ef1953823639ed611",
+      "build": "ndk",
+      "jni": "."
+    },
+    {
+      "core": "swanstation",
+      "repo": "https://github.com/libretro/swanstation",
+      "commit": "631f0fb31b809e0f889d7c551fe695788e39c1d3",
+      "build": "cmake",
+      "args": "-DCMAKE_BUILD_TYPE=Release"
+    },
+    {
+      "core": "mednafen_psx_hw",
+      "repo": "https://github.com/libretro/beetle-psx-libretro",
+      "commit": "cbc5a8d0271830a43417179c4ae29e18fdf9b579",
+      "build": "ndk",
+      "jni": ".",
+      "env": "HAVE_HW=1"
+    }
   ]
 }

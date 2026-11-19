@@ -497,6 +497,10 @@ dependencies {
         implementation("net.java.dev.jna:jna:5.19.1@aar")
         implementation("org.rustls:rustls-platform-verifier:${externalVersion("MONOGRAM_RUSTLS_PLATFORM_VERIFIER_VERSION")}")
     }
+    // Packed games: ZIP/7z (with LZMA via xz) and RAR4.
+    implementation(libs.commons.compress)
+    implementation(libs.xz)
+    implementation(libs.junrar)
     // libretro frontend for games (Argosy's LibretroDroid fork, GPL-3.0 like the APK), fetched and
     // patched by scripts/fetch_libretrodroid.sh. Cores are loaded on demand, never bundled.
     implementation(

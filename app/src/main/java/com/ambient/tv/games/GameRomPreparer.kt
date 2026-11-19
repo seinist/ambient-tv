@@ -15,7 +15,6 @@ import java.io.File
 import java.io.FileNotFoundException
 import java.io.IOException
 import java.security.MessageDigest
-import java.util.zip.ZipFile
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -119,19 +118,20 @@ class GameRomPreparer @Inject constructor(
         }
     }
 
-    /** The first file inside [archive] that a system plays, unpacked next to it. */
+    /**
+     * Unpacks [archive] completely into "content" next to it (once per archive version; a disc needs
+     * its tracks too) and returns the file to start: playlist, cue sheet, disc image or cartridge.
+     */
     private fun unpack(archive: File, folder: File): File {
-        ZipFile(archive).use { zip ->
-            val entry = zip.entries().asSequence()
-                .filter { !it.isDirectory && GameSystems.forFile(it.name) != null }
-                .minByOrNull { it.name.count { c -> c == '/' } }
-                ?: throw UnknownGameException(archive.name)
-            val target = File(folder, safeName(entry.name.substringAfterLast('/')))
-            if (!target.isFile || target.length() != entry.size) {
-                zip.getInputStream(entry).use { input -> target.outputStream().use { input.copyTo(it) } }
-            }
-            return target
+        val content = File(folder, "content")
+        val done = File(folder, ".unpacked")
+        val files = if (done.isFile && content.isDirectory) {
+            content.listFiles()?.toList().orEmpty()
+        } else {
+            content.deleteRecursively()
+            GameArchives.extract(archive, content).also { done.writeText(archive.length().toString()) }
         }
+        return GameArchives.choose(files) { it.name } ?: throw UnknownGameException(archive.name)
     }
 
     /** Bytes the copied games take up. */

@@ -74,3 +74,9 @@ App-owned native engines (mpv, projectM, Spotify/Rusty, Open-SVPFlow) are built 
 - `x86`, `x86_64` — emulators (and rare x86 Android TV images)
 
 `./build.sh release` packages ABI split APKs plus a universal APK. Use `./build.sh x86_64` (or `x86`) for a single emulator APK. Spotify x86 binaries require a cargo-ndk source build; Rusty upstream prebuilts are ARM-only.
+
+## Games (libretro)
+
+- **LibretroDroid** — the Argosy launcher's fork (GPL-3.0), pinned in `gradle/external-versions.properties` (`LIBRETRODROID_*`), fetched and patched by `scripts/fetch_libretrodroid.sh` (`scripts/patches/libretrodroid`: core options v2, netplay sticks). Moving the pin: change the commit, run the script, check that the patches still apply.
+- **libretro cores** — never bundled. Pinned in `cores/cores.json`, built by `.github/workflows/cores.yml` into a signed `cores-*` release (or loaded from the libretro buildbot, see the core source setting). Update a core by changing its commit.
+- **Apache Commons Compress** (Apache-2.0) with **XZ for Java** (0BSD) for ZIP/7z, **junrar** (UnRAR licence, extraction only) for RAR4 — versions in `gradle/libs.versions.toml`.

@@ -68,15 +68,16 @@ class GameStateStore @Inject constructor(private val storage: GameStorage) {
         screenshot: Bitmap?,
         coreStamp: String,
         now: Long = System.currentTimeMillis(),
+        coreId: String = game.system.core.id,
     ): GameStateEntry {
         val directory = storage.statesDirectory(game)
         val existing = list(game)
         val entry = when (kind) {
             GameStateKind.MANUAL -> GameStateEntry(
-                id = "m$now", kind = kind, createdAt = now, coreId = game.system.core.id, coreStamp = coreStamp,
+                id = "m$now", kind = kind, createdAt = now, coreId = coreId, coreStamp = coreStamp,
                 number = (existing.filter { it.kind == GameStateKind.MANUAL }.maxOfOrNull { it.number } ?: 0) + 1,
             )
-            else -> GameStateEntry(kind.name.lowercase(), kind, now, game.system.core.id, coreStamp)
+            else -> GameStateEntry(kind.name.lowercase(), kind, now, coreId, coreStamp)
         }
         storage.write(File(directory, "${entry.id}.state"), bytes)
         val image = File(directory, "${entry.id}.jpg")

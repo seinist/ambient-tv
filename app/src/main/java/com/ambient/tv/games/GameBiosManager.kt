@@ -44,8 +44,11 @@ class GameBiosManager @Inject constructor(
     }
 
     /** A required firmware file missing for a game with [extension], or null. */
-    fun missingRequired(system: GameSystem, extension: String): GameBios? =
+    /** A firmware file [core] cannot start [system]'s game without, or null when it has what it needs. */
+    fun missingRequired(system: GameSystem, extension: String, core: GameCore = system.core): GameBios? =
         system.bios.firstOrNull { it.requiredFor(extension) && !file(it).isFile }
+            // Cores without a built-in replacement need one of the system's firmware files.
+            ?: system.bios.takeIf { core.needsBios && it.isNotEmpty() && it.none { bios -> file(bios).isFile } }?.first()
 
     suspend fun import(fileId: String): GameBiosImport = withContext(Dispatchers.IO) {
         val (sourceId, path) = FileKeys.parse(fileId)
