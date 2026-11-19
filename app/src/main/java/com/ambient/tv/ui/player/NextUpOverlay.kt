@@ -71,12 +71,14 @@ internal fun NextUpOverlay(
     creditsCountdown: Boolean = false,
     /** Primary action; the host uses it to pull a stray remote key back into the card. */
     playFocus: FocusRequester = remember(candidate.source, candidate.mediaId) { FocusRequester() },
+    /** False while a player panel or dialog owns the remote: the card then does not take focus. */
+    claimFocus: Boolean = true,
 ) {
     val handheld = com.ambient.tv.ui.mobile.LocalHandheldUi.current
     var actionFocused by remember(candidate.source, candidate.mediaId) { mutableStateOf(false) }
     val footerButtons = remember { DialogButtonFocusScope(containSingleButton = true) }
     TransientPlayerActionFocus(
-        visible = true,
+        visible = claimFocus,
         requester = playFocus,
         hasActionFocus = actionFocused,
         onDismiss = onDismiss,

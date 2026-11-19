@@ -977,7 +977,11 @@ internal fun LibraryContent(
                 if (pending == key) {
                     pendingVisualRow.value = null
                     // Focus arrives while the D-pad glide is still running; it centers the row.
-                    if (rowListState.isScrollInProgress) return@collectLatest
+                    // A D-pad move ends a playback return like a settled one would below.
+                    if (rowListState.isScrollInProgress) {
+                        if (key == initialFocusRowId || !playbackReturn.pending) returningRow = false
+                        return@collectLatest
+                    }
                 }
                 // The return viewport is already placed at its initial row before drawing.
                 // Do not start a centering glide as that same row receives its first focus.

@@ -681,7 +681,10 @@ private fun SectionedYouTubeContent(
                     if (pending == key) {
                         pendingDpadRow.value = null
                         // Focus arrives while the D-pad glide is still running; it centers the row.
-                        if (listState.isScrollInProgress) return@collectLatest
+                        if (listState.isScrollInProgress) {
+                            initialRowFocus.value = false
+                            return@collectLatest
+                        }
                     }
                     if (initialRowFocus.value) {
                         initialRowFocus.value = false
@@ -1141,7 +1144,10 @@ private fun SectionedYouTubeCinematic(
             if (pending == key) {
                 pendingDpadRow.value = null
                 // Focus arrives while the D-pad glide is still running; it centers the row.
-                if (listState.isScrollInProgress) return@collectLatest
+                if (listState.isScrollInProgress) {
+                    initialRowFocus.value = false
+                    return@collectLatest
+                }
             }
             if (initialRowFocus.value) {
                 initialRowFocus.value = false
