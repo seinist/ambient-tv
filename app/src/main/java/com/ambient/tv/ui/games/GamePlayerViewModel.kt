@@ -65,6 +65,8 @@ class GamePlayerViewModel @Inject constructor(
     private val states: GameStateStore,
     private val bios: GameBiosManager,
     private val files: FileStore,
+    val retroAchievements: com.ambient.tv.games.RetroAchievementsClient,
+    private val cheatStore: com.ambient.tv.games.GameCheatStore,
 ) : ViewModel() {
     private val fileId: String = checkNotNull(saved.get<String>("fileId")) { "fileId" }
     private val mutable = MutableStateFlow<GameUiState>(GameUiState.Preparing(null))
@@ -152,6 +154,14 @@ class GamePlayerViewModel @Inject constructor(
 
     /** Removes a core (e.g. after it failed) so the next start loads it again. */
     fun removeCore(core: GameCore) = cores.remove(core)
+
+    fun cheats(game: PreparedGame): List<com.ambient.tv.games.GameCheat> = cheatStore.load(game)
+
+    fun saveCheats(game: PreparedGame, cheats: List<com.ambient.tv.games.GameCheat>) {
+        viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) { cheatStore.save(game, cheats) }
+    }
+
+    suspend fun databaseCheats(game: PreparedGame): List<com.ambient.tv.games.GameCheat> = cheatStore.fromDatabase(game)
 
     /** Remembers what [core] declares, so settings can offer its options outside a game. */
     fun saveDeclaredOptions(core: GameCore, options: List<Pair<String, String?>>) {

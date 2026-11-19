@@ -72,6 +72,26 @@ data class GameSettingsState(val values: Map<String, String> = emptyMap()) {
 
     fun withVulkan(core: GameCore, on: Boolean): GameSettingsState = set("vulkan.${core.id}", "1".takeIf { on })
 
+    /** RetroAchievements while playing (needs an account); on unless switched off. */
+    val achievements: Boolean get() = values["achievements"] != "0"
+
+    fun withAchievements(on: Boolean): GameSettingsState = set("achievements", "0".takeIf { !on })
+
+    /** RetroAchievements hardcore: no loading states, rewind or cheats; unlocks count double. */
+    val hardcore: Boolean get() = values["hardcore"] == "1"
+
+    fun withHardcore(on: Boolean): GameSettingsState = set("hardcore", "1".takeIf { on })
+
+    /** Controllers vibrate when the game asks for it; on unless switched off. */
+    val rumble: Boolean get() = values["rumble"] != "0"
+
+    fun withRumble(on: Boolean): GameSettingsState = set("rumble", "0".takeIf { !on })
+
+    /** The libretro device type of player [port] with [core] (e.g. analog pad, mouse), null = core default. */
+    fun controllerType(core: GameCore, port: Int): Int? = values["device.${core.id}.$port"]?.toIntOrNull()
+
+    fun withControllerType(core: GameCore, port: Int, type: Int?): GameSettingsState = set("device.${core.id}.$port", type?.toString())
+
     /** Options of [core] for all its games. */
     fun coreOptions(core: GameCore): Map<String, String> = withPrefix("core.${core.id}.")
 

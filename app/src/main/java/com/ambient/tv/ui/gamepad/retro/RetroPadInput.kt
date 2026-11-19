@@ -175,6 +175,9 @@ class RetroPadInput(
 
     private fun rewinding(): Int = devices.values.sumOf { it.rewindKeys.size }
 
+    /** Devices playing as player [port] right now (for vibration). */
+    fun deviceIds(port: Int): List<Int> = devices.filter { (_, state) -> port(state.info) == port }.keys.toList()
+
     /** Lets go of everything (game paused, menu opened, focus lost). */
     fun releaseAll() {
         if (rewinding() > 0) onRewind(false)

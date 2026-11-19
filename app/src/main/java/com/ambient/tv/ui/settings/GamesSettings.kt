@@ -20,6 +20,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import com.ambient.tv.games.GameCore
 import com.ambient.tv.games.GameCoreOption
 import com.ambient.tv.games.GameDataImporter
+import com.ambient.tv.games.RetroAchievementsClient
 import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
 import com.ambient.tv.games.GameBiosManager
@@ -33,6 +34,7 @@ import com.ambient.tv.ui.common.SettingsHint
 import com.ambient.tv.ui.common.SettingsNavigationRow
 import com.ambient.tv.ui.common.TvActionButton
 import com.ambient.tv.ui.common.TvSettingRow
+import com.ambient.tv.ui.common.TvTextField
 import com.ambient.tv.ui.games.titleRes
 import com.ambient.tv.ui.theme.LocalUiTokens
 import dagger.hilt.EntryPoint
@@ -47,6 +49,7 @@ internal interface GamesSettingsEntryPoint {
     fun cores(): GameCoreManager
     fun roms(): GameRomPreparer
     fun data(): GameDataImporter
+    fun retroAchievements(): RetroAchievementsClient
 }
 
 /**
@@ -55,6 +58,7 @@ internal interface GamesSettingsEntryPoint {
  */
 internal fun LazyListScope.gamesSettingsItems() {
     item(key = "games-play") { GamesPlay() }
+    item(key = "games-ra") { GamesRetroAchievements() }
     item(key = "games-cores") { GamesCores() }
     item(key = "games-bios") { GamesBios() }
     item(key = "games-files") { GamesSystemFiles() }
@@ -79,6 +83,75 @@ private fun GamesPlay() {
             checked = GameSettings.state.rewind,
             onCheckedChange = { on -> GameSettings.update { it.withRewind(on) } },
         )
+        TvSettingRow(
+            title = stringResource(R.string.game_settings_rumble),
+            body = stringResource(R.string.game_settings_rumble_hint),
+            checked = GameSettings.state.rumble,
+            onCheckedChange = { on -> GameSettings.update { it.withRumble(on) } },
+        )
+    }
+}
+
+/** RetroAchievements account (token only, in encrypted storage) and play options. */
+@Composable
+private fun GamesRetroAchievements() {
+    val client = gamesEntryPoint().retroAchievements()
+    val scope = rememberCoroutineScope()
+    var account by remember { mutableStateOf(client.account) }
+    var user by remember { mutableStateOf("") }
+    var password by remember { mutableStateOf("") }
+    var busy by remember { mutableStateOf(false) }
+    var error by remember { mutableStateOf<String?>(null) }
+    val settings = GameSettings.state
+    Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(LocalUiTokens.current.compactGap)) {
+        SettingsSubheader(stringResource(R.string.games_ra))
+        SettingsHint(stringResource(R.string.games_ra_hint))
+        val signedIn = account
+        if (signedIn == null) {
+            TvTextField(user, { user = it }, stringResource(R.string.games_ra_user))
+            TvTextField(password, { password = it }, stringResource(R.string.games_ra_password),
+                visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation())
+            error?.let { SettingsHint(it) }
+            SettingsActionRow {
+                TvActionButton(
+                    text = stringResource(R.string.games_ra_login),
+                    loading = busy,
+                    enabled = !busy && user.isNotBlank() && password.isNotBlank(),
+                    onClick = {
+                        busy = true
+                        error = null
+                        scope.launch {
+                            runCatching { client.login(user, password) }
+                                .onSuccess { account = it; password = "" }
+                                .onFailure { error = it.message }
+                            busy = false
+                        }
+                    },
+                )
+            }
+        } else {
+            SettingsNavigationRow(
+                title = stringResource(R.string.games_ra_signed_in, signedIn.user),
+                summary = stringResource(R.string.games_ra_logout),
+                onClick = {
+                    client.logout()
+                    account = null
+                },
+            )
+            TvSettingRow(
+                title = stringResource(R.string.games_ra_enabled),
+                body = stringResource(R.string.games_ra_enabled_hint),
+                checked = settings.achievements,
+                onCheckedChange = { on -> GameSettings.update { it.withAchievements(on) } },
+            )
+            TvSettingRow(
+                title = stringResource(R.string.games_ra_hardcore),
+                body = stringResource(R.string.games_ra_hardcore_hint),
+                checked = settings.hardcore,
+                enabled = settings.achievements,
+                onCheckedChange = { on -> GameSettings.update { it.withHardcore(on) } },
+            )
+        }
     }
 }
 

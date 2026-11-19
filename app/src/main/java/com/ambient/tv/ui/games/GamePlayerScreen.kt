@@ -23,7 +23,10 @@ import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.filled.Album
 import androidx.compose.material.icons.filled.Bookmarks
+import androidx.compose.material.icons.filled.Code
+import androidx.compose.material.icons.filled.EmojiEvents
 import androidx.compose.material.icons.filled.FastForward
+import androidx.compose.material.icons.filled.Groups
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.onFocusChanged
@@ -91,6 +94,7 @@ import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
 import com.ambient.tv.R
 import com.ambient.tv.games.GameAspect
+import com.ambient.tv.games.GameCheat
 import com.ambient.tv.games.GameCoreOption
 import com.ambient.tv.games.GameOptionOrigin
 import com.ambient.tv.games.GameSettings
@@ -237,7 +241,7 @@ private class GameLifecycleOwner : LifecycleOwner {
     }
 }
 
-private enum class GamePanel { PICTURE, CORE, DISC, CONTROLS, INFO }
+private enum class GamePanel { PICTURE, CORE, DISC, CONTROLS, INFO, ACHIEVEMENTS, CHEATS, NETPLAY }
 
 /** Rewind keeps this many seconds, within [REWIND_BUDGET_BYTES] of memory. */
 private const val REWIND_SECONDS = 20
@@ -291,6 +295,19 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
     var currentDisc by remember { mutableIntStateOf(0) }
     /** The picture when the menu opened: preview for every state saved from this menu. */
     var snapshot by remember { mutableStateOf<Bitmap?>(null) }
+    val achievements = remember { GameAchievements(model.retroAchievements, scope) }
+    /** The input layer (created below); netplay reads the local player's buttons from it. */
+    val inputRef = remember { java.util.concurrent.atomic.AtomicReference<RetroPadInput?>(null) }
+    val netplay = remember { GameNetplay(context.applicationContext, scope) { inputRef.get()?.buttons(0) ?: 0 } }
+    var cheats by remember { mutableStateOf(model.cheats(game)) }
+    var cheatsLoading by remember { mutableStateOf(false) }
+    var cheatsDeleting by remember { mutableStateOf(false) }
+    /** The cheat being typed in (description, code), or null. */
+    var cheatDraft by remember { mutableStateOf<Pair<String, String>?>(null) }
+    /** Hardcore was asked for with an account: the game starts fresh, without the "continue" state. */
+    val hardcoreRequested = remember {
+        settings.achievements && settings.hardcore && model.retroAchievements.account != null
+    }
     val playRequester = remember { FocusRequester() }
     val statesRequester = remember { FocusRequester() }
 
@@ -304,7 +321,7 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
             variables = settings.effectiveCoreOptions(core, game.saveKey).map { (key, value) -> Variable(key, value) }.toTypedArray()
             saveRAMState = session.sram
             this.shader = shader.config()
-            rumbleEventsEnabled = false
+            rumbleEventsEnabled = true
             preferLowLatencyAudio = true
             preferVulkan = settings.vulkan(core)
         }).apply {
@@ -321,6 +338,23 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
         }
     }
 
+    /** Cheats on (enabled ones) or all off: hardcore and netplay play without. */
+    fun applyCheats(list: List<GameCheat>) {
+        if (!loaded || destroyed) return
+        runCatching {
+            retroView.resetCheat()
+            if (!achievements.hardcore && !netplay.active) {
+                list.filter { it.enabled }.forEachIndexed { index, cheat -> retroView.setCheat(index, true, cheat.code) }
+            }
+        }
+    }
+
+    fun updateCheats(list: List<GameCheat>) {
+        cheats = list
+        model.saveCheats(game, list)
+        applyCheats(list)
+    }
+
     /** Battery save and the "continue" state. Runs on the core's thread between frames. */
     fun persist() {
         if (!loaded || destroyed) return
@@ -331,6 +365,8 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
     /** Ends the core while its thread still runs; nothing reaches it afterwards. */
     fun destroy() {
         if (destroyed) return
+        netplay.release()
+        achievements.stop(retroView)
         retroView.pauseEmulation()
         persist()
         destroyed = true
@@ -370,7 +406,11 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
     /** Loads [entry]; the moment before is kept as "Before loading" so the step can be undone. */
     val loadState: (GameStateEntry) -> Unit = { entry ->
         val bytes = model.readState(game, entry)
-        if (bytes == null) {
+        if (achievements.hardcore || netplay.active) {
+            message = context.getString(
+                if (achievements.hardcore) R.string.game_message_hardcore_blocked else R.string.game_message_netplay_blocked,
+            )
+        } else if (bytes == null) {
             message = context.getString(R.string.game_message_load_failed)
         } else {
             runCatching { model.saveState(session, GameStateKind.UNDO, retroView.serializeState(), snapshot) }
@@ -390,7 +430,9 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
         if (running) retroView.resumeEmulation() else retroView.pauseEmulation()
     }
     LaunchedEffect(fastForward) { retroView.frameSpeed = if (fastForward) 2 else 1 }
-    LaunchedEffect(rewinding, running) { retroView.isRewinding = rewinding && running }
+    LaunchedEffect(rewinding, running) {
+        retroView.isRewinding = rewinding && running && !achievements.hardcore && !netplay.active
+    }
 
     DisposableEffect(activityLifecycle) {
         val observer = LifecycleEventObserver { _, event ->
@@ -436,11 +478,17 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
                 loaded = true
                 runCatching { retroView.getVariables().mapNotNull { v -> v.key?.let { it to v.description } } }
                     .onSuccess { model.saveDeclaredOptions(core, it) }
-                session.autoState?.let { bytes ->
+                // Hardcore starts the game fresh: a continued state would not count.
+                if (!hardcoreRequested) session.autoState?.let { bytes ->
                     val restored = withContext(Dispatchers.Default) { runCatching { retroView.unserializeState(bytes) }.getOrDefault(false) }
                     if (restored) message = context.getString(R.string.game_message_continued)
                 }
-                if (GameSettings.state.rewind) withContext(Dispatchers.Default) {
+                (0 until RetroPorts.COUNT).forEach { port ->
+                    GameSettings.state.controllerType(core, port)?.let { type -> runCatching { retroView.setControllerType(port, type) } }
+                }
+                applyCheats(cheats)
+                achievements.start(retroView, game, GameSettings.state.achievements, hardcoreRequested)
+                if (GameSettings.state.rewind && !hardcoreRequested) withContext(Dispatchers.Default) {
                     runCatching {
                         if (retroView.getSerializeSize() <= 0) return@runCatching
                         val fps = LibretroDroid.getContentFps().takeIf { it in 1.0..240.0 } ?: 60.0
@@ -471,8 +519,34 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
             },
             onMenu = { latestOpenMenu() },
             onRewind = { held -> rewinding = held },
-            onFastForward = { fastForward = !fastForward },
-        )
+            onFastForward = { if (!netplay.active) fastForward = !fastForward },
+        ).also(inputRef::set)
+    }
+    // Vibration goes to the controllers of the player the core addresses.
+    val runningNow by rememberUpdatedState(running)
+    LaunchedEffect(retroView) {
+        retroView.getRumbleEvents().collect { event ->
+            if (GameSettings.state.rumble && runningNow) {
+                input.deviceIds(event.port).forEach { GameRumble.apply(it, event.strengthWeak, event.strengthStrong) }
+            }
+        }
+    }
+    LaunchedEffect(running) {
+        if (!running) (0 until RetroPorts.COUNT).forEach { GameRumble.stop(input.deviceIds(it)) }
+    }
+    // Hardcore (once the session confirms it) plays without cheats and rewind.
+    LaunchedEffect(achievements.state) {
+        applyCheats(cheats)
+        if (achievements.hardcore) runCatching { retroView.rewindEnabled = false }
+    }
+    // Playing together: the menu closes on both sides and the game runs.
+    LaunchedEffect(netplay.state) {
+        if (netplay.state is NetplayState.Connected) {
+            fastForward = false
+            rewinding = false
+            applyCheats(cheats)
+            resume()
+        }
     }
     DisposableEffect(input, retroView) {
         val sentButtons = IntArray(RetroPorts.COUNT)
@@ -557,6 +631,11 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
                 modifier = Modifier.fillMaxSize()
                     .then(if (handheld) Modifier.clickable { if (!menuOpen) openMenu() } else Modifier),
             )
+            GameAchievementBanner(achievements.banner, Modifier.align(Alignment.TopCenter).padding(top = 32.dp))
+            if (netplay.waiting && !menuOpen) GameOverlayNote(
+                stringResource(R.string.game_netplay_waiting),
+                Modifier.align(Alignment.TopCenter).padding(top = 32.dp),
+            )
 
             PlayerOverlayVisibility(visible = osd.visible.value && panel == null) {
                 ReferencePlayerOverlayBackground()
@@ -576,6 +655,13 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
                         MetaBadge(stringResource(shader.titleRes))
                         if (aspect != GameAspect.CORE) MetaBadge(aspect.key)
                         if (fastForward) MetaBadge("2×")
+                        (achievements.state as? GameAchievementState.Active)?.let { active ->
+                            MetaBadge(stringResource(
+                                if (active.hardcore) R.string.game_achievements_badge_hardcore else R.string.game_achievements_badge,
+                                achievements.unlocked.size, active.game.achievements.size,
+                            ))
+                        }
+                        (netplay.state as? NetplayState.Connected)?.let { MetaBadge(stringResource(R.string.game_netplay_badge, it.localPlayer)) }
                         if (discCount > 1) MetaBadge(stringResource(R.string.game_disc_number, currentDisc + 1, discCount))
                         MetaBadge(game.sourceName)
                     }
@@ -604,7 +690,7 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
                             }, enabled = loaded)
                             PlayerIconButton(Icons.Filled.SettingsBackupRestore, stringResource(R.string.game_quick_load), {
                                 model.latestManualState(game)?.let(loadState)
-                            }, enabled = loaded && saveStates.any { it.kind == GameStateKind.MANUAL })
+                            }, enabled = loaded && !achievements.hardcore && !netplay.active && saveStates.any { it.kind == GameStateKind.MANUAL })
                             PlayerIconButton(Icons.Filled.Bookmarks, stringResource(R.string.game_states), {
                                 osd.interact()
                                 statesOpen = !statesOpen
@@ -615,22 +701,32 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
                                 runCatching { retroView.clearRewindBuffer() }
                                 model.clearAutoState(game)
                                 resume()
-                            }, enabled = loaded)
+                            }, enabled = loaded && !netplay.active)
                         },
                         rightContent = {
                             PlayerIconButton(Icons.Filled.FastForward, stringResource(R.string.game_fast_forward), {
                                 fastForward = !fastForward
-                            }, selected = fastForward, enabled = loaded)
+                            }, selected = fastForward, enabled = loaded && !netplay.active)
+                            if (achievements.state != GameAchievementState.Off) PlayerIconButton(
+                                Icons.Filled.EmojiEvents, stringResource(R.string.game_panel_achievements), {
+                                    panel = GamePanel.ACHIEVEMENTS
+                                }, selected = panel == GamePanel.ACHIEVEMENTS)
+                            PlayerIconButton(Icons.Filled.Code, stringResource(R.string.game_panel_cheats), {
+                                panel = GamePanel.CHEATS
+                            }, selected = panel == GamePanel.CHEATS, enabled = loaded && !achievements.hardcore)
+                            PlayerIconButton(Icons.Filled.Groups, stringResource(R.string.game_panel_netplay), {
+                                panel = GamePanel.NETPLAY
+                            }, selected = panel == GamePanel.NETPLAY, enabled = loaded)
                             if (discCount > 1) PlayerIconButton(Icons.Filled.Album, stringResource(R.string.game_panel_disc), {
                                 panel = GamePanel.DISC
-                            }, selected = panel == GamePanel.DISC)
+                            }, selected = panel == GamePanel.DISC, enabled = !netplay.active)
                             PlayerIconButton(Icons.Filled.Wallpaper, stringResource(R.string.game_panel_picture), {
                                 panel = GamePanel.PICTURE
                             }, selected = panel == GamePanel.PICTURE)
                             PlayerIconButton(Icons.Filled.Tune, stringResource(R.string.game_panel_core), {
                                 optionsVersion++
                                 panel = GamePanel.CORE
-                            }, selected = panel == GamePanel.CORE, enabled = loaded)
+                            }, selected = panel == GamePanel.CORE, enabled = loaded && !netplay.active)
                             PlayerIconButton(Icons.Filled.SportsEsports, stringResource(R.string.game_panel_controls), {
                                 panel = GamePanel.CONTROLS
                             }, selected = panel == GamePanel.CONTROLS)
@@ -683,6 +779,9 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
                         open == GamePanel.CORE -> stringResource(R.string.game_panel_core)
                         open == GamePanel.DISC -> stringResource(R.string.game_panel_disc)
                         open == GamePanel.CONTROLS -> stringResource(R.string.game_panel_controls)
+                        open == GamePanel.ACHIEVEMENTS -> stringResource(R.string.game_panel_achievements)
+                        open == GamePanel.CHEATS -> stringResource(R.string.game_panel_cheats)
+                        open == GamePanel.NETPLAY -> stringResource(R.string.game_panel_netplay)
                         else -> stringResource(R.string.game_panel_info)
                     },
                     subtitle = when {
@@ -842,7 +941,50 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
                                 },
                             )
                         }
-                        open == GamePanel.CONTROLS -> GameControlsPanel()
+                        open == GamePanel.CONTROLS -> {
+                            GameControlsPanel()
+                            GameDeviceTypesPanel(
+                                controllers = remember(open) { runCatching { retroView.getControllers() }.getOrDefault(emptyArray()) },
+                                current = { port -> settings.controllerType(core, port) },
+                                enabled = !netplay.active,
+                                onChoose = { port, type ->
+                                    runCatching { retroView.setControllerType(port, type) }
+                                    GameSettings.update { it.withControllerType(core, port, type) }
+                                },
+                            )
+                        }
+                        open == GamePanel.ACHIEVEMENTS -> GameAchievementsPanel(achievements)
+                        open == GamePanel.CHEATS -> GameCheatsPanel(
+                            cheats = cheats,
+                            loading = cheatsLoading,
+                            deleting = cheatsDeleting,
+                            draft = cheatDraft,
+                            blocked = netplay.active,
+                            onToggle = { index -> updateCheats(cheats.mapIndexed { i, c -> if (i == index) c.copy(enabled = !c.enabled) else c }) },
+                            onDelete = { index -> updateCheats(cheats.filterIndexed { i, _ -> i != index }) },
+                            onDeleting = { cheatsDeleting = it },
+                            onDraft = { cheatDraft = it },
+                            onAdd = { description, code ->
+                                updateCheats(cheats + GameCheat(description.ifBlank { code }, code.trim(), enabled = true))
+                                cheatDraft = null
+                            },
+                            onDatabase = {
+                                cheatsLoading = true
+                                scope.launch {
+                                    val found = runCatching { model.databaseCheats(game) }
+                                    cheatsLoading = false
+                                    found.onSuccess { list ->
+                                        val known = cheats.map { it.code }.toSet()
+                                        val added = list.filter { it.code !in known }.map { it.copy(enabled = false) }
+                                        message = context.getString(
+                                            if (list.isEmpty()) R.string.game_cheats_none_found else R.string.game_cheats_found, added.size,
+                                        )
+                                        if (added.isNotEmpty()) updateCheats(cheats + added)
+                                    }.onFailure { message = context.getString(R.string.game_cheats_failed) }
+                                }
+                            },
+                        )
+                        open == GamePanel.NETPLAY -> GameNetplayPanel(netplay, retroView, game, session.coreStamp)
                         else -> {
                             GamePanelText(stringResource(R.string.game_info_system, system.name))
                             GamePanelText(stringResource(R.string.game_info_core, core.name, core.license))
@@ -961,7 +1103,7 @@ private fun GameStateStrip(
 }
 
 @Composable
-private fun GamePanelText(text: String) {
+internal fun GamePanelText(text: String) {
     Text(text, color = MaterialTheme.colorScheme.onSurface, style = MaterialTheme.typography.bodyMedium,
         modifier = Modifier.padding(horizontal = 14.dp, vertical = 4.dp))
 }
