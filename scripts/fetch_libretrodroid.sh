@@ -17,6 +17,17 @@ REPO="$(external_version LIBRETRODROID_REPO)"
 COMMIT="$(external_version LIBRETRODROID_COMMIT)"
 [[ -n "$REPO" && -n "$COMMIT" ]] || fail "LIBRETRODROID_REPO/COMMIT missing in $EXTERNAL_VERSIONS"
 command -v git >/dev/null 2>&1 || fail "git is required"
+# No background gc/maintenance in the throwaway clone: it would still write while it is removed.
+export GIT_CONFIG_COUNT=2 GIT_CONFIG_KEY_0=gc.auto GIT_CONFIG_VALUE_0=0 GIT_CONFIG_KEY_1=maintenance.auto GIT_CONFIG_VALUE_1=false
+
+remove_dir() {
+    local dir="$1" attempt
+    for attempt in 1 2 3 4 5; do
+        rm -rf "$dir" 2>/dev/null && return 0
+        sleep 1
+    done
+    rm -rf "$dir"
+}
 
 patch_hash="$( (cd "$PATCHES" && cat ./*.patch 2>/dev/null) | git hash-object --stdin)"
 marker="$COMMIT $patch_hash recursive"
@@ -26,7 +37,7 @@ if [[ -f "$DEST/.ambient-libretrodroid" && "$(cat "$DEST/.ambient-libretrodroid"
 fi
 
 log "Fetching LibretroDroid $COMMIT"
-rm -rf "$WORK"
+remove_dir "$WORK"
 mkdir -p "$WORK"
 git -C "$WORK" init -q
 git -C "$WORK" remote add origin "$REPO"
@@ -38,10 +49,10 @@ git -C "$WORK" checkout -q FETCH_HEAD
 git -C "$WORK" submodule update --init --recursive --depth 1 \
     libretrodroid/src/main/cpp/rcheevos libretrodroid/src/main/cpp/libadrenotools
 
-rm -rf "$DEST"
+remove_dir "$DEST"
 mkdir -p "$(dirname "$DEST")"
 cp -a "$WORK/libretrodroid" "$DEST"
-rm -rf "$WORK"
+remove_dir "$WORK"
 find "$DEST" -name .git -prune -exec rm -rf {} +
 
 for patch in "$PATCHES"/*.patch; do
