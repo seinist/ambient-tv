@@ -31,6 +31,8 @@ data class PortableSettingsExtras(
     val liveTvReminderAutoSwitch: Boolean? = null,
     val autoUpdateCheck: Boolean? = null,
     val projectmFavorites: Set<String>? = null,
+    /** Remote/keyboard key bindings (action key -> "keyCode:long"). */
+    val keyBindings: Map<String, String>? = null,
 )
 
 @Serializable

@@ -801,8 +801,11 @@ Interface and playback have separate modes (*Look & feel*). Until a side is save
 | Notifications | On-screen duration | Off · Short · Normal · Long | Normal | History keeps the last 20 results in this session. |
 | Transfer accounts and settings | Sync devices | Accounts / accounts with settings / menu sounds | — | Sends to a paired device; the receiver confirms. |
 | Settings backup | Export without credentials · Export with credentials · Import | — | — | Export uses saved values. Encrypted backups ask for a passphrase. |
+| Keys & remote | One action per key, pressed or held | Everywhere · In the player | Nothing assigned | See below. |
 | Diagnostics | Write error log | On / Off | Off | Up to about 3 MB. "Download log (ZIP)", "Clear log". Secrets are removed. |
 | About this app | Players, media services, licenses | — | — | Exit app (TV). |
+
+**Keys & remote:** Put your own actions on remote or keyboard keys, such as color keys, Channel +/−, Info, Guide, Menu, digits, media or function keys. Choose an action, then press the key briefly or hold it (0.6 s or longer counts as held). OK removes the assignment, Back cancels. The arrow keys, OK, Back, Home, volume and power keep their meaning. **Everywhere:** Refresh, View, Search (the page header actions, the same on every page; without a page search, the global search), Start page, Open sidebar, Open current playback, Live TV, Weather, Settings, Start screensaver. **In the player** (before the keys for everywhere): Play/Pause, Show controls, Jump back/forward (jump distance from Seek & resume), Previous/Next, Chapters, Subtitles, Audio track, Playback settings, Details. A key already used in the same group is replaced; the note names the previous action. If an action is not possible on the current page, a short note appears. If only holding is assigned, a brief press works as before. Text input keeps its keys. Assignments are part of backups and settings transfer.
 
 **Connection status at startup:** VPN, waking and service startup share one compact status. Services on the same device share an entry; a VPN failure appears as the common cause above its waiting services. At most one other notice appears alongside it. The intro ends within five seconds, including its fade. Skipping by key or tap leaves connection attempts running.
 

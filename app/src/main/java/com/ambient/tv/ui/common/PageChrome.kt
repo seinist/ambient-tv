@@ -256,6 +256,12 @@ internal val HeaderActionClockGapTv = 20.dp
 @Composable
 fun pageHeaderTop(phone: androidx.compose.ui.unit.Dp): androidx.compose.ui.unit.Dp = if (LocalHandheldUi.current) phone else PageHeaderTopTv
 
+/**
+ * True inside a [PageHeader]'s actions: its Refresh, View and Search chips then also answer
+ * the matching key bindings (Settings → Keys & remote), the same way on every page.
+ */
+internal val LocalPageHeaderActions = androidx.compose.runtime.staticCompositionLocalOf { false }
+
 @Composable
 fun PageHeader(
     modifier: Modifier = Modifier,
@@ -280,8 +286,10 @@ fun PageHeader(
             // The title yields to the actions, so a long library or folder name ellipsizes instead of pushing them out.
             Column(if (handheld) Modifier else Modifier.weight(1f).padding(end = 18.dp), verticalArrangement = Arrangement.spacedBy(3.dp), content = title)
             // On handheld the actions never wrap among themselves: they sit beside the title or move as one block to the next line, right-aligned.
+            androidx.compose.runtime.CompositionLocalProvider(LocalPageHeaderActions provides true) {
             if (handheld) Row(Modifier.weight(1f).focusRequester(actionFocus).browseFocusTarget("page-actions", content = false).focusRestorer().downTo(focusChain).focusGroup(), horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End), verticalAlignment = Alignment.CenterVertically, content = actions)
             else DeviceActionRow(modifier = Modifier.focusRequester(actionFocus).browseFocusTarget("page-actions", content = false).focusRestorer().downTo(focusChain).focusGroup(), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically, content = actions)
+            }
             // Top-aligned, not centred: with every header starting at [pageHeaderTop] the clock sits at the
             // same spot on every page, also where Home's floating clock is.
             if (!handheld && clockVisible) {

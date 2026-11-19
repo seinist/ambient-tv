@@ -77,9 +77,9 @@ class WeatherScreenSwipeTest {
 
     @Test fun televisionRetainsChipNavigationWithoutTouchSwipes() {
         showWeather(handheld = false)
-        rule.onNodeWithText("Refresh weather").assertExists()
+        rule.onNodeWithText("Refresh").assertExists()
         swipe(left = true)
-        rule.onNodeWithText("Refresh weather").assertExists()
+        rule.onNodeWithText("Refresh").assertExists()
         // Enter the row on its selected chip, then move with the remote. The row's
         // focus restorer intentionally overrides direct focus requests to another chip.
         rule.onNodeWithText("Overview").performSemanticsAction(SemanticsActions.RequestFocus) { it() }
@@ -87,15 +87,15 @@ class WeatherScreenSwipeTest {
         rule.onRoot().performKeyInput { pressKey(Key.DirectionRight) }
         rule.onNodeWithText("Radar").assertIsFocused()
         rule.onRoot().performKeyInput { pressKey(Key.DirectionCenter) }
-        rule.onNodeWithText("Refresh weather").assertDoesNotExist()
+        rule.onNodeWithText("Refresh").assertDoesNotExist()
         swipe(left = false)
-        rule.onNodeWithText("Refresh weather").assertDoesNotExist()
+        rule.onNodeWithText("Refresh").assertDoesNotExist()
         rule.onNodeWithText("Radar").performSemanticsAction(SemanticsActions.RequestFocus) { it() }
         rule.onNodeWithText("Radar").assertIsFocused()
         rule.onRoot().performKeyInput { pressKey(Key.DirectionLeft) }
         rule.onNodeWithText("Overview").assertIsFocused()
         rule.onRoot().performKeyInput { pressKey(Key.DirectionCenter) }
-        rule.onNodeWithText("Refresh weather").assertExists()
+        rule.onNodeWithText("Refresh").assertExists()
         rule.runOnIdle { assertEquals(0, requests.get()) }
     }
 

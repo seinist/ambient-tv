@@ -309,6 +309,23 @@ fun PlaybackSessionContent(
         hasPreviousItem = onPlayPrevious != null,
     ) else null
 
+    // Key bindings (Settings → Keys & remote) for the item and chapter controls.
+    com.ambient.tv.ui.keyboard.RegisterKeyAction(com.ambient.tv.ui.keyboard.KeyAction.NEXT_ITEM) {
+        itemControls?.next?.let { it(); true } ?: false
+    }
+    com.ambient.tv.ui.keyboard.RegisterKeyAction(com.ambient.tv.ui.keyboard.KeyAction.PREVIOUS_ITEM) {
+        itemControls?.previous?.let { it(); true } ?: false
+    }
+    com.ambient.tv.ui.keyboard.RegisterKeyAction(com.ambient.tv.ui.keyboard.KeyAction.CHAPTERS) {
+        if (navigation.timeline.chapters.isEmpty()) false else {
+            navigation.interact()
+            // The chapter row lives below the action bar and must be visible before focus enters it.
+            if (!handheld) chrome?.osd?.expand()
+            navigation.enterChapters()
+            true
+        }
+    }
+
     val creditsDue = earlyCreditsEnabled && finalCredits != null && creditsRemainingMs == 0L && snapshot.status.playing
     // The countdown runs on the known duration; autoplay used to wait for the engine's EOF only.
     // A stream that stalls in its last segment, or ends without reporting EOF, left Next Up at

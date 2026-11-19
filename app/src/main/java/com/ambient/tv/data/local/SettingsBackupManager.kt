@@ -634,6 +634,7 @@ class SettingsBackupManager @Inject constructor(
                     liveTvReminderAutoSwitch = context?.let { com.ambient.tv.livetv.LiveTvReminderScheduler.autoSwitch(it) },
                     autoUpdateCheck = context?.let { com.ambient.tv.update.AppUpdater.automaticUpdatesEnabled(it) },
                     projectmFavorites = context?.let { com.ambient.tv.ui.common.projectm.ProjectMFavorites(it).all().toSortedSet() },
+                    keyBindings = preferences.keyBindings,
                 ),
                 device = DeviceSettingsExtras(
                     imageCacheMb = preferences.imageCacheMb,
@@ -1115,6 +1116,10 @@ class SettingsBackupManager @Inject constructor(
             settings.lyricsVisible?.let { preferences.lyricsVisible = it }
             settings.lyricsOnlineEnabled?.let { preferences.lyricsOnlineEnabled = it }
             settings.frameDropOverlayHistory?.let { preferences.frameDropOverlayHistory = it }
+            settings.keyBindings?.let {
+                preferences.keyBindings = it
+                com.ambient.tv.ui.keyboard.KeyBindings.reload(it)
+            }
             context?.let { appContext ->
                 settings.liveTvReminderAutoSwitch?.let { com.ambient.tv.livetv.LiveTvReminderScheduler.setAutoSwitch(appContext, it) }
                 settings.autoUpdateCheck?.let { com.ambient.tv.update.AppUpdater.restoreAutomaticUpdates(appContext, it) }

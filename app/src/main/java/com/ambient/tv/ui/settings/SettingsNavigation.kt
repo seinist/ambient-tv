@@ -128,6 +128,8 @@ internal enum class SettingsCategory(val area: SettingsArea, val titleRes: Int, 
     TRANSFER(SettingsArea.APP, R.string.settings_companion_transfer, R.string.settings_companion_transfer_hint),
     BACKUP(SettingsArea.APP, R.string.settings_backup_title, R.string.settings_page_backup_hint),
     DIAGNOSTICS(SettingsArea.APP, R.string.settings_diagnostics_title, R.string.settings_page_diagnostics_hint),
+    /** Remote/keyboard keys the user put actions on (ui.keyboard.KeyBindings). */
+    KEY_BINDINGS(SettingsArea.APP, R.string.key_bindings_title, R.string.key_bindings_hint),
     /** Pointer page; Spotify developer client ID lives on the Spotify system page. */
     ADVANCED(SettingsArea.APP, R.string.settings_advanced_title, R.string.settings_page_advanced_hint),
     ABOUT(SettingsArea.APP, R.string.settings_about_title, R.string.settings_page_about_hint),
@@ -155,6 +157,7 @@ internal enum class SettingsCategory(val area: SettingsArea, val titleRes: Int, 
             "nav_sounds", "navigation_sounds", "sound_editor" -> NAV_SOUNDS
             "photo", "photos", "slideshow" -> PHOTOS
             "seek", "playback_behavior" -> SEEK
+            "keys", "key_bindings", "keybindings", "remote", "tasten" -> KEY_BINDINGS
             "log", "logs", "logging", "debug", "diagnostics" -> DIAGNOSTICS
             // Empty ADVANCED hub page removed; deep-link to the Spotify page (account section holds the client ID).
             "advanced", "developer", "clientid", "client_id" -> SPOTIFY

@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="key_bindings_title">Tasten &amp; Fernbedienung</string>
+    <string name="key_bindings_hint">Eigene Aktionen auf Fernbedienungs- und Tastaturtasten legen</string>
+    <string name="key_bindings_explanation">Aktion wählen, dann die Taste kurz drücken oder gedrückt halten. OK entfernt die Belegung, Zurück bricht ab. Steuerkreuz, OK, Zurück, Home und Lautstärke behalten ihre Funktion. Im Player gelten die Player-Tasten vor den allgemeinen.</string>
+    <string name="key_bindings_scope_global">Überall</string>
+    <string name="key_bindings_scope_player">Im Player</string>
+    <string name="key_bindings_reset">Alle Belegungen entfernen</string>
+    <string name="key_binding_none">Nicht belegt</string>
+    <string name="key_binding_listening">Taste drücken … (halten = langer Druck)</string>
+    <string name="key_binding_long">%1$s (halten)</string>
+    <string name="key_binding_replaced">„%1$s“ war „%2$s“ und ist jetzt „%3$s“.</string>
+    <string name="key_binding_unavailable">„%1$s“ ist hier nicht verfügbar.</string>
+    <string name="key_action_start_page">Startseite</string>
+    <string name="key_action_sidebar">Seitenleiste öffnen</string>
+    <string name="key_action_open_player">Laufende Wiedergabe öffnen</string>
+    <string name="key_action_live_tv">Live-TV</string>
+    <string name="key_action_screensaver">Bildschirmschoner starten</string>
+    <string name="key_action_play_pause">Wiedergabe/Pause</string>
+    <string name="key_action_show_osd">Bedienleiste einblenden</string>
+    <string name="key_action_seek_back">Zurückspringen</string>
+    <string name="key_action_seek_forward">Vorspringen</string>
+    <string name="key_action_previous_item">Vorheriges</string>
+    <string name="key_action_next_item">Nächstes</string>
+    <string name="key_action_subtitles">Untertitel</string>
+    <string name="key_action_audio_tracks">Tonspur</string>
+    <string name="key_name_red">Rot</string>
+    <string name="key_name_green">Grün</string>
+    <string name="key_name_yellow">Gelb</string>
+    <string name="key_name_blue">Blau</string>
+    <string name="key_name_channel_up">Kanal +</string>
+    <string name="key_name_channel_down">Kanal −</string>
+    <string name="key_name_menu">Menü</string>
+    <string name="key_name_space">Leertaste</string>
+    <string name="key_name_digit">Taste %1$d</string>
+</resources>

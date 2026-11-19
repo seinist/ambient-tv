@@ -374,6 +374,7 @@ fun SettingsScreen(
                     when (selectedCategory) {
                         SettingsCategory.NAV_SOUNDS -> Unit // Full-page editor above.
                         SettingsCategory.WEATHER -> Unit // Full-page weather settings above.
+                        SettingsCategory.KEY_BINDINGS -> keyBindingItems()
                         SettingsCategory.COMPANION -> companionSettingsItems()
                         SettingsCategory.TRANSFER -> {
                             item { CompanionTransferSection() }
