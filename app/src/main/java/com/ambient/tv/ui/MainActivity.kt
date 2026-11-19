@@ -2195,6 +2195,8 @@ private fun AmbientTvApp(
             } else navigateBack()
             return
         }
+        // Fullscreen → Back → page → Back (menu) → Back must return to the running player.
+        backgroundPlayerReturn.menuOpenedByBack(BackgroundPlaybackSession.snapshot.value.active)
         sidebarEntryRequested.value = true
         runCatching { sidebarFocusRequester.requestFocus() }
     }
@@ -2437,9 +2439,12 @@ private fun AmbientTvApp(
                         else guardedSettingsExit { navController.navigate(route) { launchSingleTop = true } }
                     },
                     onSidebarClosedByBack = {
-                        backgroundPlayerReturn.armAfterSidebarBack(
-                            currentRoute !in FULLSCREEN_ROUTES && currentRoute != Destinations.SETTINGS &&
-                                BackgroundPlaybackSession.snapshot.value.metadata?.route?.isNotBlank() == true,
+                        val browsing = currentRoute !in FULLSCREEN_ROUTES && currentRoute != Destinations.SETTINGS
+                        val backToPlayer = backgroundPlayerReturn.consumeMenuBackToPlayer(
+                            BackgroundPlaybackSession.snapshot.value.active,
+                        ) && browsing && reopenBackgroundPlayer()
+                        if (!backToPlayer) backgroundPlayerReturn.armAfterSidebarBack(
+                            browsing && BackgroundPlaybackSession.snapshot.value.metadata?.route?.isNotBlank() == true,
                         )
                     },
                     onResumePlaybackAfterBack = {
