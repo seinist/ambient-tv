@@ -95,7 +95,7 @@ class CompanionSettingsCompletenessTest {
             projectmPresetShuffle = false, gaplessMusicEnabled = false, teletextSubtitleChoice = "150",
             lyricsVisible = false, lyricsOnlineEnabled = false, frameDropOverlayHistory = true,
             liveTvReminderAutoSwitch = true, autoUpdateCheck = false, projectmFavorites = setOf("chosen.milk"),
-            keyBindings = mapOf("refresh" to "183:0"),
+            keyBindings = mapOf("refresh" to "183:0"), gamepadSettings = mapOf("confirm" to "b"),
         )
         val incoming = source().copy(tvheadendHost = "tvh.example", extras = SettingsBackupExtras(
             portable = portable, device = DeviceSettingsExtras(128, true), connections = ConnectionSettingsExtras(9984)))
@@ -121,6 +121,7 @@ class CompanionSettingsCompletenessTest {
             assertFalse(target.lyricsOnlineEnabled)
             assertTrue(target.frameDropOverlayHistory)
             assertEquals(mapOf("refresh" to "183:0"), target.keyBindings)
+            assertEquals(mapOf("confirm" to "b"), target.gamepadSettings)
             assertEquals(if (device) 128 else 256, target.imageCacheMb)
             assertEquals(device, target.cardImages1080)
             assertEquals(10002, target.tvheadendHtspPort)

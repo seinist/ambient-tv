@@ -76,7 +76,7 @@ internal object CompanionBackupPolicy {
             "allContinueSystems", "filterBarShown", "launcherIntegrationEnabled", "settingsLevelKey",
             "autoPictureInPicture", "projectmShowPresetName", "projectmPresetShuffle", "gaplessMusicEnabled",
             "teletextSubtitleChoice", "lyricsVisible", "lyricsOnlineEnabled", "frameDropOverlayHistory",
-            "liveTvReminderAutoSwitch", "autoUpdateCheck", "projectmFavorites", "keyBindings", "gamepad",
+            "liveTvReminderAutoSwitch", "autoUpdateCheck", "projectmFavorites", "keyBindings", "gamepadSettings",
         ),
         "device" to setOf("imageCacheMb", "cardImages1080"),
         "connections" to setOf("tvheadendHtspPort"),

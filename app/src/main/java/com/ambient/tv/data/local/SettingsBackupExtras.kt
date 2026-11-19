@@ -34,7 +34,7 @@ data class PortableSettingsExtras(
     /** Remote/keyboard key bindings (action key -> "keyCode:long"). */
     val keyBindings: Map<String, String>? = null,
     /** Controller options and button overrides (see ui.gamepad.GamepadConfig). */
-    val gamepad: Map<String, String>? = null,
+    val gamepadSettings: Map<String, String>? = null,
 )
 
 @Serializable
