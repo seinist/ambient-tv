@@ -377,6 +377,7 @@ fun SettingsScreen(
                         SettingsCategory.KEY_BINDINGS -> keyBindingItems()
                         SettingsCategory.CONTROLLER -> controllerSettingsItems()
                         SettingsCategory.GAME_CONTROLS -> gameControlsItems()
+                        SettingsCategory.GAMES -> gamesSettingsItems()
                         SettingsCategory.COMPANION -> companionSettingsItems()
                         SettingsCategory.TRANSFER -> {
                             item { CompanionTransferSection() }

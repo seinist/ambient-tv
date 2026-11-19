@@ -282,6 +282,7 @@ fun FilesScreen(onPlay: (String, Boolean) -> Unit, onBack: () -> Unit, contentAc
                                 entry.directory -> Icons.Default.Folder
                                 entry.image -> Icons.Default.Image
                                 entry.game -> Icons.Default.SportsEsports
+                                entry.bios -> Icons.Default.Memory
                                 entry.audio -> Icons.Default.AudioFile
                                 else -> Icons.Default.VideoFile
                             },

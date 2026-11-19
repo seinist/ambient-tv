@@ -17,11 +17,10 @@ class GameStorage @Inject constructor(@ApplicationContext private val context: C
     /** RETRO_ENVIRONMENT_GET_SAVE_DIRECTORY for cores that write their own files. */
     val savesDirectory: File get() = File(root, "saves").also { it.mkdirs() }
 
-    private fun states(game: PreparedGame): File = File(root, "states/${game.saveKey}").also { it.mkdirs() }
+    /** Save states of one game (see GameStateStore). */
+    fun statesDirectory(game: PreparedGame): File = File(root, "states/${game.saveKey}").also { it.mkdirs() }
 
     fun sramFile(game: PreparedGame): File = File(savesDirectory, "${game.saveKey}.srm")
-
-    fun stateFile(game: PreparedGame, slot: GameStateSlot): File = File(states(game), "${slot.key}.state")
 
     fun read(file: File): ByteArray? = runCatching { file.takeIf { it.isFile && it.length() > 0 }?.readBytes() }.getOrNull()
 
@@ -37,6 +36,3 @@ class GameStorage @Inject constructor(@ApplicationContext private val context: C
         }
     }
 }
-
-/** Save state slots: [AUTO] is written on leaving and loaded on the next start. */
-enum class GameStateSlot(val key: String) { AUTO("auto"), QUICK("quick") }

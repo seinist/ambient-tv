@@ -117,6 +117,8 @@ data class FileEntry(
     val image: Boolean get() = !directory && com.ambient.tv.data.photos.PhotoFormats.isImage(name, mime)
     /** A game file (ROM, disc image or archive) a libretro core can play. */
     val game: Boolean get() = !directory && com.ambient.tv.games.GameSystems.isGame(name)
+    /** A console firmware file (BIOS) a core needs; opening it takes it over for games. */
+    val bios: Boolean get() = !directory && com.ambient.tv.games.GameSystems.isBios(name)
 }
 
 @Serializable

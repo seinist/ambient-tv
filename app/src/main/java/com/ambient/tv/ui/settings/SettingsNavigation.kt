@@ -125,6 +125,8 @@ internal enum class SettingsCategory(val area: SettingsArea, val titleRes: Int, 
     NEXT_UP(SettingsArea.PLAYBACK, R.string.settings_skipping_title, R.string.settings_page_next_up_hint),
     VISUALIZER(SettingsArea.PICTURE, R.string.settings_audio_visualizer, R.string.settings_page_visualizer_hint),
     PHOTOS(SettingsArea.PLAYBACK, R.string.settings_photos_title, R.string.settings_page_photos_hint),
+    /** Games (libretro): BIOS files, loaded cores, game copy cache. */
+    GAMES(SettingsArea.PLAYBACK, R.string.games_settings_title, R.string.games_settings_hint),
     NOTIFICATIONS(SettingsArea.APP, R.string.notice_history, R.string.notice_history_hint),
     TRANSFER(SettingsArea.APP, R.string.settings_companion_transfer, R.string.settings_companion_transfer_hint),
     BACKUP(SettingsArea.APP, R.string.settings_backup_title, R.string.settings_page_backup_hint),
@@ -164,7 +166,8 @@ internal enum class SettingsCategory(val area: SettingsArea, val titleRes: Int, 
             "seek", "playback_behavior" -> SEEK
             "keys", "key_bindings", "keybindings", "remote", "tasten" -> KEY_BINDINGS
             "controller", "gamepad", "joystick" -> CONTROLLER
-            "game_controls", "games", "spiele", "retropad" -> GAME_CONTROLS
+            "game_controls", "retropad" -> GAME_CONTROLS
+            "games", "spiele", "bios", "cores", "libretro" -> GAMES
             "log", "logs", "logging", "debug", "diagnostics" -> DIAGNOSTICS
             // Empty ADVANCED hub page removed; deep-link to the Spotify page (account section holds the client ID).
             "advanced", "developer", "clientid", "client_id" -> SPOTIFY

@@ -1,5 +1,50 @@
 package com.ambient.tv.ui.games
 
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import android.view.PixelCopy
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.border
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.filled.Album
+import androidx.compose.material.icons.filled.Bookmarks
+import androidx.compose.material.icons.filled.FastForward
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
+import androidx.compose.ui.semantics.Role
+import com.ambient.tv.games.GameBiosState
+import com.ambient.tv.games.GameStateEntry
+import com.ambient.tv.games.GameStateKind
+import com.ambient.tv.ui.common.activateOnTvKey
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.withTimeoutOrNull
+import java.io.File
+import kotlin.coroutines.resume
 import android.os.Handler
 import android.os.Looper
 import android.view.KeyEvent
@@ -52,7 +97,6 @@ import com.ambient.tv.R
 import com.ambient.tv.games.GameCoreOption
 import com.ambient.tv.games.GameSettings
 import com.ambient.tv.games.GameShader
-import com.ambient.tv.games.GameStateSlot
 import com.ambient.tv.ui.common.MetaBadge
 import com.ambient.tv.ui.common.PlayerControlBar
 import com.ambient.tv.ui.common.PlayerExitButton
@@ -132,7 +176,9 @@ fun GamePlayerScreen(onBack: () -> Unit, model: GamePlayerViewModel = hiltViewMo
             )
             is GameUiState.Failed -> StatePanel(
                 title = stringResource(current.reason.titleRes()),
-                body = current.detail,
+                body = if (current.reason == GameFailure.BIOS_MISSING) {
+                    stringResource(R.string.game_failed_bios_missing_body, current.detail.orEmpty())
+                } else current.detail,
                 actionLabel = stringResource(R.string.game_retry), onAction = model::retry,
                 secondaryActionLabel = stringResource(R.string.back), onSecondaryAction = onBack,
                 modifier = center, centered = true,
@@ -149,6 +195,7 @@ private fun GameFailure.titleRes(): Int = when (this) {
     GameFailure.CORE_INCOMPATIBLE -> R.string.game_failed_core_incompatible
     GameFailure.NO_ABI -> R.string.game_failed_no_abi
     GameFailure.START -> R.string.game_failed_start
+    GameFailure.BIOS_MISSING -> R.string.game_failed_bios_missing
 }
 
 internal fun GameShader.config(): ShaderConfig = when (this) {
@@ -193,31 +240,54 @@ private class GameLifecycleOwner : LifecycleOwner {
     val running: Boolean get() = registry.currentState == Lifecycle.State.RESUMED
 }
 
-private enum class GamePanel { PICTURE, CORE, CONTROLS, INFO }
+private enum class GamePanel { PICTURE, CORE, DISC, CONTROLS, INFO }
+
+/** A frame of the game as shown, for save state previews; null when the surface cannot be read. */
+private suspend fun GLRetroView.capture(): Bitmap? = withTimeoutOrNull(500) {
+    if (width <= 0 || height <= 0 || !holder.surface.isValid) return@withTimeoutOrNull null
+    val bitmapWidth = minOf(width, 480)
+    val bitmapHeight = (height * bitmapWidth / width.toFloat()).roundToInt().coerceAtLeast(1)
+    val bitmap = Bitmap.createBitmap(bitmapWidth, bitmapHeight, Bitmap.Config.ARGB_8888)
+    suspendCancellableCoroutine { continuation ->
+        runCatching {
+            PixelCopy.request(this@capture, bitmap, { result ->
+                if (continuation.isActive) continuation.resume(if (result == PixelCopy.SUCCESS) bitmap else null)
+            }, Handler(Looper.getMainLooper()))
+        }.onFailure { if (continuation.isActive) continuation.resume(null) }
+    }
+}
 
 @Composable
 private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack: () -> Unit) {
     val context = LocalContext.current
     val handheld = LocalHandheldUi.current
+    val scope = rememberCoroutineScope()
     val activityLifecycle = LocalLifecycleOwner.current.lifecycle
     val game = session.game
     val system = game.system
     val core = system.core
     val settings = GameSettings.state
     val shader = settings.shader(system)
-    val hasQuickState by model.hasQuickState.collectAsState()
+    val saveStates by model.saveStates.collectAsState()
 
     val chrome = remember { PlayerChromeState() }
     val osd = chrome.osd
     var menuOpen by remember { mutableStateOf(false) }
     var panel by remember { mutableStateOf<GamePanel?>(null) }
     var optionKey by remember { mutableStateOf<String?>(null) }
+    var statesOpen by remember { mutableStateOf(false) }
     var activityResumed by remember { mutableStateOf(activityLifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)) }
     var exiting by remember { mutableStateOf(false) }
     var loaded by remember { mutableStateOf(false) }
-    var message by remember { mutableStateOf<Int?>(null) }
+    var message by remember { mutableStateOf<String?>(null) }
     var optionsVersion by remember { mutableIntStateOf(0) }
+    var fastForward by remember { mutableStateOf(false) }
+    var discCount by remember { mutableIntStateOf(0) }
+    var currentDisc by remember { mutableIntStateOf(0) }
+    /** The picture when the menu opened: preview for every state saved from this menu. */
+    var snapshot by remember { mutableStateOf<Bitmap?>(null) }
     val playRequester = remember { FocusRequester() }
+    val statesRequester = remember { FocusRequester() }
 
     val owner = remember { GameLifecycleOwner() }
     val retroView = remember {
@@ -245,7 +315,13 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
     fun persist() {
         if (!loaded || owner.running) return
         runCatching { model.saveSram(game, retroView.serializeSRAM(false)) }
-        runCatching { model.saveState(game, GameStateSlot.AUTO, retroView.serializeState(false)) }
+        runCatching { model.saveState(session, GameStateKind.AUTO, retroView.serializeState(false), snapshot) }
+    }
+
+    fun stateTitle(entry: GameStateEntry): String = when (entry.kind) {
+        GameStateKind.AUTO -> context.getString(R.string.game_state_auto)
+        GameStateKind.UNDO -> context.getString(R.string.game_state_undo)
+        GameStateKind.MANUAL -> context.getString(R.string.game_state_number, entry.number)
     }
 
     val exit: () -> Unit = {
@@ -259,16 +335,35 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
     val resume: () -> Unit = {
         panel = null
         optionKey = null
+        statesOpen = false
         menuOpen = false
         osd.close()
     }
     val openMenu: () -> Unit = {
-        message = null
-        menuOpen = true
+        if (!menuOpen) scope.launch {
+            snapshot = if (loaded) retroView.capture() else null
+            message = null
+            menuOpen = true
+        }
+    }
+    /** Loads [entry]; the moment before is kept as "Before loading" so the step can be undone. */
+    val loadState: (GameStateEntry) -> Unit = { entry ->
+        val bytes = model.readState(game, entry)
+        if (bytes == null) {
+            message = context.getString(R.string.game_message_load_failed)
+        } else {
+            runCatching { model.saveState(session, GameStateKind.UNDO, retroView.serializeState(false), snapshot) }
+            val restored = runCatching { retroView.unserializeState(bytes, false) }.getOrDefault(false)
+            if (restored) resume()
+            else message = context.getString(
+                if (entry.coreStamp != session.coreStamp) R.string.game_message_load_other_core else R.string.game_message_load_failed,
+            )
+        }
     }
 
     val running = activityResumed && !menuOpen && panel == null && !exiting
     LaunchedEffect(running) { owner.move(if (running) Lifecycle.State.RESUMED else Lifecycle.State.STARTED) }
+    LaunchedEffect(fastForward) { retroView.frameSpeed = if (fastForward) 2 else 1 }
 
     DisposableEffect(activityLifecycle) {
         val observer = LifecycleEventObserver { _, event ->
@@ -304,7 +399,7 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
                 loaded = true
                 session.autoState?.let { bytes ->
                     val restored = withContext(Dispatchers.Default) { runCatching { retroView.unserializeState(bytes) }.getOrDefault(false) }
-                    if (restored) message = R.string.game_message_continued
+                    if (restored) message = context.getString(R.string.game_message_continued)
                 }
             }
         }
@@ -372,16 +467,25 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
     }
 
     // The menu is the player OSD; closing it (Back, Continue) resumes the game.
-    LaunchedEffect(menuOpen) { if (menuOpen) osd.expand() }
+    LaunchedEffect(menuOpen) {
+        if (!menuOpen) return@LaunchedEffect
+        osd.expand()
+        // Paused from here on: disc information is safe to read.
+        owner.move(Lifecycle.State.STARTED)
+        if (loaded) {
+            discCount = runCatching { retroView.getAvailableDisks(false) }.getOrDefault(0)
+            currentDisc = runCatching { retroView.getCurrentDisk(false) }.getOrDefault(0)
+        }
+    }
     LaunchedEffect(osd.visible.value) { if (!osd.visible.value && panel == null) menuOpen = false }
-    LaunchedEffect(menuOpen, panel) {
-        if (menuOpen && panel == null) {
+    LaunchedEffect(menuOpen, panel, statesOpen) {
+        if (menuOpen && panel == null && !statesOpen) {
             withFrameNanos { }
             runCatching { playRequester.requestFocus() }
         }
     }
     // Back while playing (a device whose Back does not play) opens the menu; in the menu it continues.
-    BackHandler(enabled = panel == null) { if (menuOpen) resume() else openMenu() }
+    BackHandler(enabled = panel == null && !statesOpen) { if (menuOpen) resume() else openMenu() }
 
     CompositionLocalProvider(
         LocalPlayerChromeState provides chrome,
@@ -409,30 +513,48 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
                         title = game.title,
                         artworkUrl = null,
                         contextLine = system.name,
-                        subtitle = stringResource(message ?: R.string.game_paused),
+                        subtitle = message ?: stringResource(R.string.game_paused),
                         showPaused = true,
                     )
                     PlayerTechBadgeRow {
                         MetaBadge("libretro", emphasized = true)
                         MetaBadge(core.name)
                         MetaBadge(stringResource(shader.titleRes))
+                        if (fastForward) MetaBadge("2×")
+                        if (discCount > 1) MetaBadge(stringResource(R.string.game_disc_number, currentDisc + 1, discCount))
                         MetaBadge(game.sourceName)
                     }
+                    GameStateStrip(
+                        open = statesOpen,
+                        states = saveStates,
+                        coreStamp = session.coreStamp,
+                        title = ::stateTitle,
+                        screenshot = { model.screenshot(game, it) },
+                        onLoad = loadState,
+                        onDelete = { model.deleteState(game, it) },
+                        onClose = {
+                            statesOpen = false
+                            runCatching { statesRequester.requestFocus() }
+                        },
+                    )
                     PlayerControlBar(
                         leftContent = {
                             PlayerIconButton(Icons.Filled.PlayArrow, stringResource(R.string.game_continue), resume,
                                 modifier = Modifier.focusRequester(playRequester), primary = true)
-                            PlayerIconButton(Icons.Filled.Save, stringResource(R.string.game_quick_save), {
+                            PlayerIconButton(Icons.Filled.Save, stringResource(R.string.game_save_state), {
                                 osd.interact()
-                                runCatching { model.saveState(game, GameStateSlot.QUICK, retroView.serializeState(false)) }
-                                    .onSuccess { message = R.string.game_message_saved }
-                                    .onFailure { message = R.string.game_message_save_failed }
+                                runCatching { model.saveState(session, GameStateKind.MANUAL, retroView.serializeState(false), snapshot) }
+                                    .onSuccess { message = context.getString(R.string.game_message_saved, stateTitle(it)) }
+                                    .onFailure { message = context.getString(R.string.game_message_save_failed) }
                             }, enabled = loaded)
                             PlayerIconButton(Icons.Filled.SettingsBackupRestore, stringResource(R.string.game_quick_load), {
-                                val bytes = model.readState(game, GameStateSlot.QUICK)
-                                if (bytes != null && runCatching { retroView.unserializeState(bytes, false) }.getOrDefault(false)) resume()
-                                else message = R.string.game_message_load_failed
-                            }, enabled = loaded && hasQuickState)
+                                model.latestManualState(game)?.let(loadState)
+                            }, enabled = loaded && saveStates.any { it.kind == GameStateKind.MANUAL })
+                            PlayerIconButton(Icons.Filled.Bookmarks, stringResource(R.string.game_states), {
+                                osd.interact()
+                                statesOpen = !statesOpen
+                            }, modifier = Modifier.focusRequester(statesRequester),
+                                selected = statesOpen, enabled = loaded && saveStates.isNotEmpty())
                             PlayerIconButton(Icons.Filled.RestartAlt, stringResource(R.string.game_reset), {
                                 runCatching { retroView.reset(false) }
                                 model.clearAutoState(game)
@@ -440,6 +562,12 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
                             }, enabled = loaded)
                         },
                         rightContent = {
+                            PlayerIconButton(Icons.Filled.FastForward, stringResource(R.string.game_fast_forward), {
+                                fastForward = !fastForward
+                            }, selected = fastForward, enabled = loaded)
+                            if (discCount > 1) PlayerIconButton(Icons.Filled.Album, stringResource(R.string.game_panel_disc), {
+                                panel = GamePanel.DISC
+                            }, selected = panel == GamePanel.DISC)
                             PlayerIconButton(Icons.Filled.Wallpaper, stringResource(R.string.game_panel_picture), {
                                 panel = GamePanel.PICTURE
                             }, selected = panel == GamePanel.PICTURE)
@@ -472,6 +600,7 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
                         option != null -> option.title
                         open == GamePanel.PICTURE -> stringResource(R.string.game_panel_picture)
                         open == GamePanel.CORE -> stringResource(R.string.game_panel_core)
+                        open == GamePanel.DISC -> stringResource(R.string.game_panel_disc)
                         open == GamePanel.CONTROLS -> stringResource(R.string.game_panel_controls)
                         else -> stringResource(R.string.game_panel_info)
                     },
@@ -521,19 +650,130 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
                                 onClick = { GameSettings.update { it.withoutCoreOptions(core) } },
                             )
                         }
+                        open == GamePanel.DISC -> (0 until discCount).forEach { index ->
+                            RightPanelChoice(
+                                text = stringResource(R.string.game_disc, index + 1),
+                                selected = index == currentDisc,
+                                onClick = {
+                                    if (runCatching { retroView.changeDisk(index, false) }.isSuccess) {
+                                        currentDisc = index
+                                        message = context.getString(R.string.game_disc, index + 1)
+                                    }
+                                    panel = null
+                                },
+                            )
+                        }
                         open == GamePanel.CONTROLS -> GameControlsPanel()
                         else -> {
                             GamePanelText(stringResource(R.string.game_info_system, system.name))
                             GamePanelText(stringResource(R.string.game_info_core, core.name, core.license))
                             GamePanelText(stringResource(R.string.game_info_file, game.file.name, game.sourceName))
+                            val bios = remember { model.biosStatus(game) }
+                            bios.forEach { status ->
+                                GamePanelText(stringResource(R.string.game_info_bios, status.bios.file, stringResource(status.state.titleRes())))
+                            }
                             GamePanelText(stringResource(R.string.game_info_core_source))
                             RightPanelChoice(
                                 text = stringResource(R.string.game_core_remove),
                                 subtitle = stringResource(R.string.game_core_remove_hint),
                                 selected = false,
-                                onClick = { model.removeCore(core); message = R.string.game_message_core_removed; panel = null },
+                                onClick = {
+                                    model.removeCore(core)
+                                    message = context.getString(R.string.game_message_core_removed)
+                                    panel = null
+                                },
                             )
                         }
+                    }
+                }
+            }
+        }
+    }
+}
+
+internal fun GameBiosState.titleRes(): Int = when (this) {
+    GameBiosState.PRESENT -> R.string.game_bios_present
+    GameBiosState.OTHER_VERSION -> R.string.game_bios_other_version
+    GameBiosState.MISSING -> R.string.game_bios_missing
+}
+
+/**
+ * Save states as cards, styled like the video players' chapter row: the preview, the name and
+ * when it was saved. OK loads; holding OK (or Menu/Info) twice deletes.
+ */
+@Composable
+private fun GameStateStrip(
+    open: Boolean,
+    states: List<GameStateEntry>,
+    coreStamp: String,
+    title: (GameStateEntry) -> String,
+    screenshot: (GameStateEntry) -> File?,
+    onLoad: (GameStateEntry) -> Unit,
+    onDelete: (GameStateEntry) -> Unit,
+    onClose: () -> Unit,
+) {
+    val firstFocus = remember { FocusRequester() }
+    var pendingDelete by remember { mutableStateOf<String?>(null) }
+    LaunchedEffect(open, states.isEmpty()) {
+        pendingDelete = null
+        if (open && states.isNotEmpty()) {
+            withFrameNanos { }
+            runCatching { firstFocus.requestFocus() }
+        }
+    }
+    AnimatedVisibility(
+        visible = open && states.isNotEmpty(),
+        enter = expandVertically(tween(300, easing = FastOutSlowInEasing)) + fadeIn(tween(220)),
+        exit = shrinkVertically(tween(350, easing = FastOutSlowInEasing)) + fadeOut(tween(200)),
+    ) {
+        val formatter = LocalContext.current.let { remember(it) { android.text.format.DateFormat.getMediumDateFormat(it) to android.text.format.DateFormat.getTimeFormat(it) } }
+        LazyRow(
+            horizontalArrangement = Arrangement.spacedBy(14.dp, Alignment.CenterHorizontally),
+            contentPadding = PaddingValues(vertical = 12.dp, horizontal = 4.dp),
+            modifier = Modifier.fillMaxWidth().onPreviewKeyEvent { event ->
+                when (event.key) {
+                    Key.Back, Key.Escape -> { if (event.type == KeyEventType.KeyUp) onClose(); true }
+                    Key.DirectionUp -> { if (event.type == KeyEventType.KeyDown) onClose(); true }
+                    Key.DirectionDown -> true
+                    else -> false
+                }
+            },
+        ) {
+            itemsIndexed(states, key = { _, entry -> entry.id + entry.createdAt }) { index, entry ->
+                var focused by remember { mutableStateOf(false) }
+                val scale by animateFloatAsState(if (focused) 1.05f else 1f, tween(150), label = "stateScale")
+                val shape = RoundedCornerShape(10.dp)
+                val image = remember(entry.id, entry.createdAt) {
+                    screenshot(entry)?.let { file -> runCatching { BitmapFactory.decodeFile(file.path)?.asImageBitmap() }.getOrNull() }
+                }
+                val deleting = pendingDelete == entry.id
+                Column(
+                    Modifier.width(200.dp)
+                        .then(if (index == 0) Modifier.focusRequester(firstFocus) else Modifier)
+                        .graphicsLayer { scaleX = scale; scaleY = scale }
+                        .onFocusChanged { focused = it.isFocused; if (!it.isFocused && deleting) pendingDelete = null }
+                        .clip(shape).background(Color.Black.copy(alpha = if (focused) 0.72f else 0.5f))
+                        .border(if (focused) 2.dp else 1.dp, if (focused) Color.White else Color.White.copy(alpha = 0.12f), shape)
+                        .activateOnTvKey(onClick = { onLoad(entry) }, onLongClick = {
+                            if (deleting) { pendingDelete = null; onDelete(entry) } else pendingDelete = entry.id
+                        })
+                        .clickable(role = Role.Button) { onLoad(entry) },
+                ) {
+                    Box(Modifier.fillMaxWidth().aspectRatio(4f / 3f).background(Color.Black)) {
+                        if (image != null) Image(image, contentDescription = null, modifier = Modifier.fillMaxSize())
+                    }
+                    Column(Modifier.padding(horizontal = 10.dp, vertical = 7.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                        Text(title(entry), color = Color.White, maxLines = 1, style = MaterialTheme.typography.bodyMedium)
+                        val date = java.util.Date(entry.createdAt)
+                        Text(
+                            when {
+                                deleting -> stringResource(R.string.game_state_delete_confirm)
+                                entry.coreStamp != coreStamp -> stringResource(R.string.game_state_other_core)
+                                else -> formatter.first.format(date) + " " + formatter.second.format(date)
+                            },
+                            color = Color.White.copy(alpha = 0.72f), maxLines = 1,
+                            style = MaterialTheme.typography.labelSmall,
+                        )
                     }
                 }
             }

@@ -1,14 +1,21 @@
 package com.ambient.tv.ui.games
 
+import android.graphics.Bitmap
 import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.ambient.tv.data.files.FileStore
+import com.ambient.tv.games.GameBiosManager
+import com.ambient.tv.games.GameBiosStatus
 import com.ambient.tv.games.GameCore
 import com.ambient.tv.games.GameCoreIncompatibleException
 import com.ambient.tv.games.GameCoreManager
 import com.ambient.tv.games.GameRomPreparer
-import com.ambient.tv.games.GameStateSlot
+import com.ambient.tv.games.GameStateEntry
+import com.ambient.tv.games.GameStateKind
+import com.ambient.tv.games.GameStateStore
 import com.ambient.tv.games.GameStorage
+import com.ambient.tv.games.GameSystems
 import com.ambient.tv.games.PreparedGame
 import com.ambient.tv.games.UnknownGameException
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -26,9 +33,11 @@ import javax.inject.Inject
 data class GameSession(
     val game: PreparedGame,
     val coreFile: File,
+    val coreStamp: String,
     val systemDirectory: File,
     val savesDirectory: File,
     val sram: ByteArray?,
+    /** The automatic state to continue from, if its core build matches. */
     val autoState: ByteArray?,
 ) {
     override fun equals(other: Any?) = other is GameSession && other.game == game && other.coreFile == coreFile
@@ -45,7 +54,7 @@ sealed interface GameUiState {
     data class Failed(val reason: GameFailure, val detail: String? = null) : GameUiState
 }
 
-enum class GameFailure { NOT_FOUND, UNKNOWN_SYSTEM, CORE_DOWNLOAD, CORE_INCOMPATIBLE, NO_ABI, START }
+enum class GameFailure { NOT_FOUND, UNKNOWN_SYSTEM, CORE_DOWNLOAD, CORE_INCOMPATIBLE, NO_ABI, BIOS_MISSING, START }
 
 @HiltViewModel
 class GamePlayerViewModel @Inject constructor(
@@ -53,13 +62,16 @@ class GamePlayerViewModel @Inject constructor(
     private val preparer: GameRomPreparer,
     private val cores: GameCoreManager,
     private val storage: GameStorage,
+    private val states: GameStateStore,
+    private val bios: GameBiosManager,
+    private val files: FileStore,
 ) : ViewModel() {
     private val fileId: String = checkNotNull(saved.get<String>("fileId")) { "fileId" }
     private val mutable = MutableStateFlow<GameUiState>(GameUiState.Preparing(null))
     val state: StateFlow<GameUiState> = mutable.asStateFlow()
-    private val quick = MutableStateFlow(false)
-    /** A quick save exists for this game. */
-    val hasQuickState: StateFlow<Boolean> = quick.asStateFlow()
+    private val stateList = MutableStateFlow<List<GameStateEntry>>(emptyList())
+    /** Save states of the running game: automatic, undo, then the user's newest first. */
+    val saveStates: StateFlow<List<GameStateEntry>> = stateList.asStateFlow()
     private var job: Job? = null
 
     init { load() }
@@ -80,6 +92,9 @@ class GamePlayerViewModel @Inject constructor(
                 mutable.value = GameUiState.Failed(GameFailure.NOT_FOUND, error.message); return@launch
             }
             if (cores.abi == null) { mutable.value = GameUiState.Failed(GameFailure.NO_ABI); return@launch }
+            bios.missingRequired(game.system, GameSystems.extension(game.file.name))?.let { missing ->
+                mutable.value = GameUiState.Failed(GameFailure.BIOS_MISSING, missing.file); return@launch
+            }
             val core = cores.installed(game.system.core)
             if (core == null) mutable.value = GameUiState.NeedsCore(game, cores.sourceUrl(game.system.core))
             else start(game, core)
@@ -106,39 +121,60 @@ class GamePlayerViewModel @Inject constructor(
     }
 
     private suspend fun start(game: PreparedGame, core: File) {
+        val stamp = GameStateStore.coreStamp(core)
         val session = withContext(Dispatchers.IO) {
+            runCatching { files.record(game.entry) }
+            val auto = states.entry(game, GameStateKind.AUTO)?.takeIf { it.coreStamp == stamp }
             GameSession(
                 game = game,
                 coreFile = core,
+                coreStamp = stamp,
                 systemDirectory = storage.systemDirectory,
                 savesDirectory = storage.savesDirectory,
                 sram = storage.read(storage.sramFile(game)),
-                autoState = storage.read(storage.stateFile(game, GameStateSlot.AUTO)),
+                autoState = auto?.let { states.read(game, it) },
             )
         }
-        quick.value = storage.stateFile(game, GameStateSlot.QUICK).isFile
+        refreshStates(game)
         mutable.value = GameUiState.Ready(session)
     }
+
+    private fun refreshStates(game: PreparedGame) {
+        stateList.value = states.list(game)
+    }
+
+    fun biosStatus(game: PreparedGame): List<GameBiosStatus> = bios.status(game.system)
 
     /** The core failed to load or crashed while starting. */
     fun failed(detail: String?) {
         mutable.value = GameUiState.Failed(GameFailure.START, detail)
     }
 
-    /** Removes the core of the current game (e.g. after it failed) so it can be loaded again. */
+    /** Removes a core (e.g. after it failed) so the next start loads it again. */
     fun removeCore(core: GameCore) = cores.remove(core)
 
     fun saveSram(game: PreparedGame, bytes: ByteArray) = storage.write(storage.sramFile(game), bytes)
 
-    fun saveState(game: PreparedGame, slot: GameStateSlot, bytes: ByteArray) {
-        storage.write(storage.stateFile(game, slot), bytes)
-        if (slot == GameStateSlot.QUICK) quick.value = true
+    fun saveState(session: GameSession, kind: GameStateKind, bytes: ByteArray, screenshot: Bitmap?): GameStateEntry {
+        val entry = states.save(session.game, kind, bytes, screenshot, session.coreStamp)
+        refreshStates(session.game)
+        return entry
     }
 
-    fun readState(game: PreparedGame, slot: GameStateSlot): ByteArray? = storage.read(storage.stateFile(game, slot))
+    fun readState(game: PreparedGame, entry: GameStateEntry): ByteArray? = states.read(game, entry)
 
-    /** "Start over": the next start does not continue from the automatic save. */
+    fun screenshot(game: PreparedGame, entry: GameStateEntry): File? = states.screenshot(game, entry)
+
+    fun latestManualState(game: PreparedGame): GameStateEntry? = states.latestManual(game)
+
+    fun deleteState(game: PreparedGame, entry: GameStateEntry) {
+        states.delete(game, entry)
+        refreshStates(game)
+    }
+
+    /** "Start over": the next start does not continue from the automatic state. */
     fun clearAutoState(game: PreparedGame) {
-        storage.stateFile(game, GameStateSlot.AUTO).delete()
+        states.entry(game, GameStateKind.AUTO)?.let { states.delete(game, it) }
+        refreshStates(game)
     }
 }

@@ -27,6 +27,8 @@ data class PreparedGame(
     val system: GameSystem,
     val saveKey: String,
     val sourceName: String,
+    /** The original file, for the browser's recently played list. */
+    val entry: FileEntry,
 )
 
 class UnknownGameException(val name: String) : IOException("No system for $name")
@@ -80,6 +82,7 @@ class GameRomPreparer @Inject constructor(
             system = system,
             saveKey = key,
             sourceName = source.name,
+            entry = entry,
         )
     }
 
@@ -131,7 +134,13 @@ class GameRomPreparer @Inject constructor(
         }
     }
 
-    /** Keeps the cache below [CACHE_LIMIT_BYTES], oldest games first. */
+    /** Bytes the copied games take up. */
+    fun cacheBytes(): Long = cache.walkBottomUp().filter { it.isFile }.sumOf { it.length() }
+
+    /** Removes all copied games; saves and states stay. */
+    fun clearCache() { cache.deleteRecursively() }
+
+        /** Keeps the cache below [CACHE_LIMIT_BYTES], oldest games first. */
     private fun trim(keep: File) {
         val folders = cache.listFiles()?.filter { it.isDirectory } ?: return
         var total = folders.sumOf { folder -> folder.walkBottomUp().filter { it.isFile }.sumOf { it.length() } }

@@ -61,6 +61,7 @@ class FilesViewModel @Inject constructor(
     private val photoSession: com.ambient.tv.data.photos.PhotoViewerSession,
     private val snapshots: com.ambient.tv.data.browse.DisplaySnapshots,
     private val textFiles: com.ambient.tv.data.files.TextFileImporter,
+    private val gameBios: com.ambient.tv.games.GameBiosManager,
 ) : ViewModel() {
     val feedback = OperationFeedbackReporter()
     private fun fileError(message: Int) = OperationFeedback("files:browse", "browse", message,
@@ -178,7 +179,7 @@ class FilesViewModel @Inject constructor(
                 }
             }
             try {
-                val result = access.list(source, location.path, limit) { it.playable || it.image || it.game }
+                val result = access.list(source, location.path, limit) { it.playable || it.image || it.game || it.bios }
                 currentCoroutineContext().ensureActive()
                 if (store.sources().none { it.id == source.id && it.sameLocation(source) }) return@launch
                 snapshots.write(owner, namespace, cacheKey, result)
@@ -282,6 +283,7 @@ class FilesViewModel @Inject constructor(
 
     fun open(entry: FileEntry, play: (String, Boolean) -> Unit, restart: Boolean = false, openPhotos: () -> Unit = {}, openGame: (String) -> Unit = {}) {
         if (entry.image) { if (preparePhotos(entry)) openPhotos(); return }
+        if (entry.bios) { saved["focus"] = entry.id; importBios(entry); return }
         if (entry.game) { saved["focus"] = entry.id; openGame(entry.id); return }
         if (!entry.directory) { repository.setQueue(_state.value.entries); saved["focus"] = entry.id; play(entry.id, restart); return }
         if (folders.isEmpty()) {
@@ -297,6 +299,36 @@ class FilesViewModel @Inject constructor(
         }
         saved["focus"] = null; limit = 300; rememberFolders(); refresh()
     }
+    /** Copies a console firmware file into the games' system folder and reports whether it is the expected one. */
+    private fun importBios(entry: FileEntry) {
+        viewModelScope.launch {
+            val notice = runCatching { gameBios.import(entry.id) }.fold(
+                onSuccess = { result ->
+                    com.ambient.tv.notifications.AppNotice(
+                        key = "game-bios-import",
+                        message = if (result.verified) R.string.game_bios_imported else R.string.game_bios_imported_other,
+                        phase = if (result.verified) com.ambient.tv.notifications.NoticePhase.SUCCESS
+                            else com.ambient.tv.notifications.NoticePhase.INFO,
+                        kind = com.ambient.tv.notifications.NoticeKind.SETTINGS,
+                        args = listOf(result.file, result.systems.joinToString(", ")),
+                        interruptPlayback = false,
+                    )
+                },
+                onFailure = {
+                    com.ambient.tv.notifications.AppNotice(
+                        key = "game-bios-import",
+                        message = R.string.game_bios_import_failed,
+                        phase = com.ambient.tv.notifications.NoticePhase.ERROR,
+                        kind = com.ambient.tv.notifications.NoticeKind.SETTINGS,
+                        args = listOf(entry.name),
+                        interruptPlayback = false,
+                    )
+                },
+            )
+            com.ambient.tv.notifications.AppNotifications.post(notice)
+        }
+    }
+
     fun up(): Boolean {
         if (folders.isEmpty()) return false
         if (pinnedSourceId != null && folders.size == 1) return false
