@@ -7,7 +7,14 @@ import java.util.Locale
  * [freeLicense]: GPL-compatible; false = non-commercial use only. Ambient TV never bundles a core:
  * the user loads it on first use (see GameCoreManager).
  */
-data class GameCore(val id: String, val name: String, val license: String, val freeLicense: Boolean = true)
+data class GameCore(
+    val id: String,
+    val name: String,
+    val license: String,
+    val freeLicense: Boolean = true,
+    /** Renders through the GPU itself (OpenGL ES or Vulkan) instead of handing over finished frames. */
+    val hardware: Boolean = false,
+)
 
 /**
  * A firmware file a core reads from the system directory. [requiredFor]: null = optional (the core
@@ -65,7 +72,7 @@ object GameSystems {
         GameSystem("vb", "Virtual Boy", setOf("vb", "vboy"),
             GameCore("mednafen_vb", "Beetle VB", "GPL-2.0")),
         GameSystem("n64", "Nintendo 64", setOf("n64", "z64", "v64"),
-            GameCore("mupen64plus_next_gles3", "Mupen64Plus-Next", "GPL-2.0")),
+            GameCore("mupen64plus_next_gles3", "Mupen64Plus-Next", "GPL-2.0", hardware = true)),
         GameSystem("psx", "PlayStation", setOf("cue", "chd", "pbp", "m3u"),
             GameCore("pcsx_rearmed", "PCSX ReARMed", "GPL-2.0"),
             // Optional: without one the core uses its own BIOS replacement, which runs fewer games.

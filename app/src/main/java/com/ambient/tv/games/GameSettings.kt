@@ -3,6 +3,8 @@ package com.ambient.tv.games
 import androidx.annotation.StringRes
 import androidx.compose.runtime.mutableStateOf
 import com.ambient.tv.R
+import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.Json
 
 /** Picture filters LibretroDroid offers. Stored by [key]. */
 enum class GameShader(val key: String, @StringRes val titleRes: Int, @StringRes val hintRes: Int) {
@@ -18,9 +20,26 @@ enum class GameShader(val key: String, @StringRes val titleRes: Int, @StringRes 
     }
 }
 
+/** Picture shape. [ratio] null keeps the shape the core reports. */
+enum class GameAspect(val key: String, val ratio: Float?, @StringRes val titleRes: Int) {
+    CORE("core", null, R.string.game_aspect_core),
+    FOUR_THREE("4:3", 4f / 3f, R.string.game_aspect_4_3),
+    WIDE("16:9", 16f / 9f, R.string.game_aspect_16_9),
+    ;
+
+    companion object {
+        fun fromKey(key: String?) = entries.firstOrNull { it.key == key }
+    }
+}
+
+/** Where a core option's value comes from. */
+enum class GameOptionOrigin { DEFAULT, CORE, GAME }
+
 /**
- * Game settings: the picture filter (per system, falling back to all games) and core options
- * (per core). Values the core does not know any more are ignored when it starts.
+ * Game settings: picture (filter, shape, whole-number scaling; per system with the filter falling
+ * back to all games), rewind, the graphics interface of GPU cores, and core options. Core options
+ * apply to every game of a core ("core.<core>.<key>") unless a game has its own value
+ * ("game.<game>.<core>.<key>"). Values the core does not know any more are ignored when it starts.
  */
 data class GameSettingsState(val values: Map<String, String> = emptyMap()) {
     fun shader(system: GameSystem): GameShader =
@@ -34,18 +53,63 @@ data class GameSettingsState(val values: Map<String, String> = emptyMap()) {
         return copy(values = if (shader == null) values - key else values + (key to shader.key))
     }
 
-    fun coreOptions(core: GameCore): Map<String, String> {
-        val prefix = "core.${core.id}."
-        return values.filterKeys { it.startsWith(prefix) }.mapKeys { it.key.removePrefix(prefix) }
+    fun aspect(system: GameSystem): GameAspect = GameAspect.fromKey(values["aspect.${system.id}"]) ?: GameAspect.CORE
+
+    fun withAspect(system: GameSystem, aspect: GameAspect): GameSettingsState = set("aspect.${system.id}", aspect.key.takeIf { aspect != GameAspect.CORE })
+
+    /** Scales by whole numbers only: every source pixel the same size, black borders around. */
+    fun integerScaling(system: GameSystem): Boolean = values["integer.${system.id}"] == "1"
+
+    fun withIntegerScaling(system: GameSystem, on: Boolean): GameSettingsState = set("integer.${system.id}", "1".takeIf { on })
+
+    /** Rewind keeps the last seconds of play in memory; on unless switched off. */
+    val rewind: Boolean get() = values["rewind"] != "0"
+
+    fun withRewind(on: Boolean): GameSettingsState = set("rewind", "0".takeIf { !on })
+
+    /** GPU cores: ask for Vulkan instead of OpenGL ES (used when the device and core can). */
+    fun vulkan(core: GameCore): Boolean = core.hardware && values["vulkan.${core.id}"] == "1"
+
+    fun withVulkan(core: GameCore, on: Boolean): GameSettingsState = set("vulkan.${core.id}", "1".takeIf { on })
+
+    /** Options of [core] for all its games. */
+    fun coreOptions(core: GameCore): Map<String, String> = withPrefix("core.${core.id}.")
+
+    /** Options only [gameKey] uses with [core]. */
+    fun gameCoreOptions(core: GameCore, gameKey: String): Map<String, String> = withPrefix(gamePrefix(core, gameKey))
+
+    /** What [core] starts with for [gameKey]: the core's options, the game's own on top. */
+    fun effectiveCoreOptions(core: GameCore, gameKey: String?): Map<String, String> =
+        coreOptions(core) + (gameKey?.let { gameCoreOptions(core, it) } ?: emptyMap())
+
+    fun coreOptionOrigin(core: GameCore, gameKey: String?, key: String): GameOptionOrigin = when {
+        gameKey != null && values.containsKey(gamePrefix(core, gameKey) + key) -> GameOptionOrigin.GAME
+        values.containsKey("core.${core.id}.$key") -> GameOptionOrigin.CORE
+        else -> GameOptionOrigin.DEFAULT
     }
 
-    fun withCoreOption(core: GameCore, key: String, value: String?): GameSettingsState {
-        val stored = "core.${core.id}.$key"
-        return copy(values = if (value == null) values - stored else values + (stored to value))
+    /** For all games of [core]; the value replaces this game's own one, so the choice shows at once. */
+    fun withCoreOption(core: GameCore, key: String, value: String?, gameKey: String? = null): GameSettingsState {
+        val cleared = gameKey?.let { set(gamePrefix(core, it) + key, null) } ?: this
+        return cleared.set("core.${core.id}.$key", value)
     }
+
+    fun withGameCoreOption(core: GameCore, gameKey: String, key: String, value: String?): GameSettingsState =
+        set(gamePrefix(core, gameKey) + key, value)
 
     fun withoutCoreOptions(core: GameCore): GameSettingsState =
         copy(values = values.filterKeys { !it.startsWith("core.${core.id}.") })
+
+    fun withoutGameCoreOptions(core: GameCore, gameKey: String): GameSettingsState =
+        copy(values = values.filterKeys { !it.startsWith(gamePrefix(core, gameKey)) })
+
+    private fun gamePrefix(core: GameCore, gameKey: String) = "game.$gameKey.${core.id}."
+
+    private fun withPrefix(prefix: String): Map<String, String> =
+        values.filterKeys { it.startsWith(prefix) }.mapKeys { it.key.removePrefix(prefix) }
+
+    private fun set(key: String, value: String?): GameSettingsState =
+        copy(values = if (value == null) values - key else values + (key to value))
 }
 
 /** App-wide game settings; MainActivity attaches storage. Main thread only. */
@@ -69,15 +133,73 @@ object GameSettings {
     }
 }
 
-/** A core option as the core declares it ("Description; first|second|third"). */
-data class GameCoreOption(val key: String, val title: String, val values: List<String>, val value: String) {
+/** One value of a core option: what the core stores and what it shows. */
+data class GameCoreValue(val value: String, val label: String)
+
+/**
+ * A core option as the core declares it. Cores with core options v1/v2 describe it as JSON (title,
+ * info, category, labelled values, default, visibility; translated by the core for the device
+ * language); older cores as "Description; first|second|third".
+ */
+data class GameCoreOption(
+    val key: String,
+    val title: String,
+    val values: List<GameCoreValue>,
+    val value: String,
+    val info: String = "",
+    val category: GameCoreCategory? = null,
+    val default: String = values.firstOrNull()?.value.orEmpty(),
+    val visible: Boolean = true,
+) {
+    val label: String get() = values.firstOrNull { it.value == value }?.label ?: value
+
     companion object {
+        private val json = Json { ignoreUnknownKeys = true }
+
         fun parse(key: String, description: String?, value: String?): GameCoreOption? {
-            val text = description ?: return null
+            val text = description?.trim() ?: return null
+            if (text.startsWith("{")) return parseMeta(key, text, value)
             val title = text.substringBefore(';').trim().ifEmpty { key }
             val choices = text.substringAfter(';', "").split('|').map { it.trim() }.filter { it.isNotEmpty() }
             if (choices.isEmpty()) return null
-            return GameCoreOption(key, title, choices, value?.takeIf { it in choices } ?: choices.first())
+            return GameCoreOption(key, title, choices.map { GameCoreValue(it, it) }, value?.takeIf { it in choices } ?: choices.first())
+        }
+
+        private fun parseMeta(key: String, text: String, value: String?): GameCoreOption? {
+            val meta = runCatching { json.decodeFromString(GameCoreOptionMeta.serializer(), text) }.getOrNull() ?: return null
+            val values = meta.values.filter { it.value.isNotEmpty() }.map { GameCoreValue(it.value, it.label.ifBlank { it.value }) }
+            if (values.isEmpty()) return null
+            val default = meta.default.takeIf { d -> values.any { it.value == d } } ?: values.first().value
+            return GameCoreOption(
+                key = key,
+                title = meta.title.ifBlank { key },
+                values = values,
+                value = value?.takeIf { v -> values.any { it.value == v } } ?: default,
+                info = meta.info,
+                category = meta.category.takeIf { it.isNotBlank() }?.let {
+                    GameCoreCategory(it, meta.categoryTitle.ifBlank { it }, meta.categoryInfo)
+                },
+                default = default,
+                visible = meta.visible,
+            )
         }
     }
 }
+
+/** A group of core options (core options v2). */
+data class GameCoreCategory(val key: String, val title: String, val info: String)
+
+@Serializable
+private data class GameCoreOptionMeta(
+    val title: String = "",
+    val info: String = "",
+    val category: String = "",
+    val categoryTitle: String = "",
+    val categoryInfo: String = "",
+    val default: String = "",
+    val visible: Boolean = true,
+    val values: List<GameCoreOptionMetaValue> = emptyList(),
+)
+
+@Serializable
+private data class GameCoreOptionMetaValue(val value: String = "", val label: String = "")

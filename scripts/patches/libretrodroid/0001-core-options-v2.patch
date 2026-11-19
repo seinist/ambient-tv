@@ -1,0 +1,306 @@
+Ambient TV patch, 2026-11-19: core options v1/v2 (RETRO_ENVIRONMENT_SET_CORE_OPTIONS[_V2][_INTL],
+_DISPLAY, _UPDATE_DISPLAY_CALLBACK, GET_CORE_OPTIONS_VERSION = 2). Titles, info texts, categories,
+value labels (translated by the core for the device language), defaults and visibility reach Kotlin
+as JSON in Variable.description. Options are cleared between cores.
+
+diff --git a/src/main/cpp/environment.cpp b/src/main/cpp/environment.cpp
+index a3ebf17..3f9fbd5 100644
+--- a/src/main/cpp/environment.cpp
++++ b/src/main/cpp/environment.cpp
+@@ -21,6 +21,7 @@
+ #include <vector>
+ #include <string>
+ #include <cstring>
++#include <cstdio>
+ #include <cmath>
+ #include <EGL/egl.h>
+ #include <unordered_map>
+@@ -45,6 +46,11 @@ void Environment::initialize(
+ 
+ void Environment::deinitialize() {
+     callback_get_current_framebuffer = nullptr;
++    // Ambient TV: options belong to one core; another core must not inherit them.
++    variables.clear();
++    optionMeta.clear();
++    updateDisplayCallback = nullptr;
++    dirtyVariables = false;
+     hw_context_reset = nullptr;
+     hw_context_destroy = nullptr;
+ 
+@@ -94,7 +100,154 @@ void Environment::updateVariable(const std::string& key, const std::string& valu
+         current.value = value;
+         variables[key] = current;
+         dirtyVariables = true;
++        // Ambient TV: the core may show or hide other options depending on this one.
++        if (updateDisplayCallback != nullptr) updateDisplayCallback();
++    }
++}
++
++std::string Environment::optionMetaJson(const struct OptionMeta& meta) {
++    auto quote = [](const std::string& text) {
++        std::string out = "\"";
++        for (unsigned char c : text) {
++            switch (c) {
++                case '"': out += "\\\""; break;
++                case '\\': out += "\\\\"; break;
++                case '\n': out += "\\n"; break;
++                case '\r': out += "\\r"; break;
++                case '\t': out += "\\t"; break;
++                default:
++                    if (c < 0x20) {
++                        char buffer[8];
++                        snprintf(buffer, sizeof(buffer), "\\u%04x", c);
++                        out += buffer;
++                    } else {
++                        out += static_cast<char>(c);
++                    }
++            }
++        }
++        return out + "\"";
++    };
++    std::string json = "{\"v\":2,\"title\":" + quote(meta.title) +
++        ",\"info\":" + quote(meta.info) +
++        ",\"category\":" + quote(meta.category) +
++        ",\"categoryTitle\":" + quote(meta.categoryTitle) +
++        ",\"categoryInfo\":" + quote(meta.categoryInfo) +
++        ",\"default\":" + quote(meta.defaultValue) +
++        ",\"visible\":" + (meta.visible ? "true" : "false") +
++        ",\"values\":[";
++    for (size_t i = 0; i < meta.values.size(); i++) {
++        if (i > 0) json += ",";
++        json += "{\"value\":" + quote(meta.values[i].first) + ",\"label\":" + quote(meta.values[i].second) + "}";
++    }
++    return json + "]}";
++}
++
++void Environment::registerOption(const std::string& key, struct OptionMeta meta) {
++    auto current = variables[key];
++    current.key = key;
++    if (current.value.empty()) {
++        current.value = !meta.defaultValue.empty() ? meta.defaultValue
++            : (meta.values.empty() ? std::string() : meta.values.front().first);
++    }
++    auto previous = optionMeta.find(key);
++    if (previous != optionMeta.end()) meta.visible = previous->second.visible;
++    optionMeta[key] = meta;
++    variables[key] = current;
++}
++
++static const char* nonEmpty(const char* preferred, const char* fallback) {
++    return (preferred != nullptr && preferred[0] != '\0') ? preferred : (fallback != nullptr ? fallback : "");
++}
++
++bool Environment::environment_handle_set_core_options_v2(
++    const struct retro_core_options_v2* us, const struct retro_core_options_v2* local) {
++    if (us == nullptr || us->definitions == nullptr) return false;
++    std::unordered_map<std::string, std::pair<std::string, std::string>> categories;
++    auto collectCategories = [&](const struct retro_core_options_v2* options, bool override) {
++        if (options == nullptr || options->categories == nullptr) return;
++        for (auto* category = options->categories; category->key != nullptr; category++) {
++            auto& entry = categories[category->key];
++            if (override || entry.first.empty()) entry.first = category->desc != nullptr ? category->desc : "";
++            if (override || entry.second.empty()) entry.second = category->info != nullptr ? category->info : "";
++        }
++    };
++    collectCategories(us, false);
++    collectCategories(local, true);
++
++    for (auto* definition = us->definitions; definition->key != nullptr; definition++) {
++        const struct retro_core_option_v2_definition* translated = nullptr;
++        if (local != nullptr && local->definitions != nullptr) {
++            for (auto* candidate = local->definitions; candidate->key != nullptr; candidate++) {
++                if (strcmp(candidate->key, definition->key) == 0) { translated = candidate; break; }
++            }
++        }
++        OptionMeta meta;
++        bool categorized = definition->category_key != nullptr && definition->category_key[0] != '\0';
++        const char* title = categorized ? nonEmpty(definition->desc_categorized, definition->desc) : nonEmpty(definition->desc, "");
++        const char* info = categorized ? nonEmpty(definition->info_categorized, definition->info) : nonEmpty(definition->info, "");
++        if (translated != nullptr) {
++            title = categorized ? nonEmpty(translated->desc_categorized, nonEmpty(translated->desc, title)) : nonEmpty(translated->desc, title);
++            info = categorized ? nonEmpty(translated->info_categorized, nonEmpty(translated->info, info)) : nonEmpty(translated->info, info);
++        }
++        meta.title = title;
++        meta.info = info;
++        if (categorized) {
++            meta.category = definition->category_key;
++            auto category = categories.find(meta.category);
++            if (category != categories.end()) {
++                meta.categoryTitle = category->second.first;
++                meta.categoryInfo = category->second.second;
++            }
++        }
++        for (int i = 0; i < RETRO_NUM_CORE_OPTION_VALUES_MAX && definition->values[i].value != nullptr; i++) {
++            std::string value = definition->values[i].value;
++            std::string label = nonEmpty(definition->values[i].label, definition->values[i].value);
++            if (translated != nullptr) {
++                for (int j = 0; j < RETRO_NUM_CORE_OPTION_VALUES_MAX && translated->values[j].value != nullptr; j++) {
++                    if (value == translated->values[j].value && translated->values[j].label != nullptr) {
++                        label = translated->values[j].label;
++                        break;
++                    }
++                }
++            }
++            meta.values.emplace_back(value, label);
++        }
++        meta.defaultValue = definition->default_value != nullptr ? definition->default_value : "";
++        registerOption(definition->key, meta);
++    }
++    return true;
++}
++
++bool Environment::environment_handle_set_core_options_v1(
++    const struct retro_core_option_definition* us, const struct retro_core_option_definition* local) {
++    if (us == nullptr) return false;
++    for (auto* definition = us; definition->key != nullptr; definition++) {
++        const struct retro_core_option_definition* translated = nullptr;
++        if (local != nullptr) {
++            for (auto* candidate = local; candidate->key != nullptr; candidate++) {
++                if (strcmp(candidate->key, definition->key) == 0) { translated = candidate; break; }
++            }
++        }
++        OptionMeta meta;
++        meta.title = nonEmpty(translated != nullptr ? translated->desc : nullptr, definition->desc);
++        meta.info = nonEmpty(translated != nullptr ? translated->info : nullptr, definition->info);
++        for (int i = 0; i < RETRO_NUM_CORE_OPTION_VALUES_MAX && definition->values[i].value != nullptr; i++) {
++            std::string value = definition->values[i].value;
++            std::string label = nonEmpty(definition->values[i].label, definition->values[i].value);
++            if (translated != nullptr) {
++                for (int j = 0; j < RETRO_NUM_CORE_OPTION_VALUES_MAX && translated->values[j].value != nullptr; j++) {
++                    if (value == translated->values[j].value && translated->values[j].label != nullptr) {
++                        label = translated->values[j].label;
++                        break;
++                    }
++                }
++            }
++            meta.values.emplace_back(value, label);
++        }
++        meta.defaultValue = definition->default_value != nullptr ? definition->default_value : "";
++        registerOption(definition->key, meta);
+     }
++    return true;
+ }
+ 
+ void Environment::markVariablesApplied() {
+@@ -325,6 +478,42 @@ bool Environment::handle_callback_environment(unsigned cmd, void *data) {
+             LOGD("Called RETRO_ENVIRONMENT_SET_VARIABLES");
+             return environment_handle_set_variables(static_cast<const struct retro_variable*>(data));
+ 
++        // Ambient TV: core options v2 with categories, labels, info texts and translations.
++        case RETRO_ENVIRONMENT_GET_CORE_OPTIONS_VERSION:
++            if (data != nullptr) *((unsigned*) data) = 2;
++            return true;
++
++        case RETRO_ENVIRONMENT_SET_CORE_OPTIONS:
++            return environment_handle_set_core_options_v1(
++                static_cast<const struct retro_core_option_definition*>(data), nullptr);
++
++        case RETRO_ENVIRONMENT_SET_CORE_OPTIONS_INTL: {
++            auto* intl = static_cast<const struct retro_core_options_intl*>(data);
++            return intl != nullptr && environment_handle_set_core_options_v1(intl->us, intl->local);
++        }
++
++        case RETRO_ENVIRONMENT_SET_CORE_OPTIONS_V2:
++            return environment_handle_set_core_options_v2(
++                static_cast<const struct retro_core_options_v2*>(data), nullptr);
++
++        case RETRO_ENVIRONMENT_SET_CORE_OPTIONS_V2_INTL: {
++            auto* intl = static_cast<const struct retro_core_options_v2_intl*>(data);
++            return intl != nullptr && environment_handle_set_core_options_v2(intl->us, intl->local);
++        }
++
++        case RETRO_ENVIRONMENT_SET_CORE_OPTIONS_DISPLAY: {
++            auto* display = static_cast<const struct retro_core_option_display*>(data);
++            if (display == nullptr || display->key == nullptr) return false;
++            optionMeta[display->key].visible = display->visible;
++            return true;
++        }
++
++        case RETRO_ENVIRONMENT_SET_CORE_OPTIONS_UPDATE_DISPLAY_CALLBACK: {
++            auto* callback = static_cast<const struct retro_core_options_update_display_callback*>(data);
++            updateDisplayCallback = callback != nullptr ? callback->callback : nullptr;
++            return true;
++        }
++
+         case RETRO_ENVIRONMENT_GET_VARIABLE_UPDATE: {
+             LOGD("Called RETRO_ENVIRONMENT_GET_VARIABLE_UPDATE. Is dirty?: %d", dirtyVariables);
+             *((bool*) data) = dirtyVariables;
+@@ -637,6 +826,11 @@ const std::vector<struct Variable> Environment::getVariables() const {
+         variables.begin(),
+         variables.end(),
+         [&](std::pair<std::string, struct Variable> item) {
++            // Ambient TV: v1/v2 options describe themselves as JSON (see OptionMeta).
++            auto meta = optionMeta.find(item.first);
++            if (meta != optionMeta.end() && !meta->second.values.empty()) {
++                item.second.description = optionMetaJson(meta->second);
++            }
+             result.push_back(item.second);
+         }
+     );
+diff --git a/src/main/cpp/environment.h b/src/main/cpp/environment.h
+index 64582f2..552e43c 100644
+--- a/src/main/cpp/environment.h
++++ b/src/main/cpp/environment.h
+@@ -32,6 +32,25 @@
+ #include "log.h"
+ #include "rumblestate.h"
+ 
++struct Variable {
++public:
++    std::string key;
++    std::string value;
++    std::string description;
++};
++
++// Ambient TV: what a core declares about an option beyond its values (v1/v2 core options).
++struct OptionMeta {
++    std::string title;
++    std::string info;
++    std::string category;
++    std::string categoryTitle;
++    std::string categoryInfo;
++    std::vector<std::pair<std::string, std::string>> values;
++    std::string defaultValue;
++    bool visible = true;
++};
++
+ class Environment {
+ public:
+     static Environment& getInstance()
+@@ -128,6 +147,13 @@ public:
+ 
+ private:
+     bool environment_handle_set_variables(const struct retro_variable* received);
++    // Ambient TV: core options v1/v2 (categories, labels, info, translations, visibility).
++    bool environment_handle_set_core_options_v2(
++        const struct retro_core_options_v2* us, const struct retro_core_options_v2* local);
++    bool environment_handle_set_core_options_v1(
++        const struct retro_core_option_definition* us, const struct retro_core_option_definition* local);
++    void registerOption(const std::string& key, struct OptionMeta meta);
++    static std::string optionMetaJson(const struct OptionMeta& meta);
+     bool environment_handle_get_variable(struct retro_variable* requested);
+     bool environment_handle_set_controller_info(const struct retro_controller_info* received);
+     bool environment_handle_set_hw_render(struct retro_hw_render_callback* hw_render_callback);
+@@ -179,6 +205,8 @@ private:
+ 
+     std::unordered_map<std::string, struct Variable> variables;
+     bool dirtyVariables = false;
++    std::unordered_map<std::string, struct OptionMeta> optionMeta;
++    retro_core_options_update_display_callback_t updateDisplayCallback = nullptr;
+ 
+     std::vector<std::vector<struct Controller>> controllers;
+ 
+@@ -188,12 +216,7 @@ private:
+     bool hasMemoryMap = false;
+ };
+ 
+-struct Variable {
+-public:
+-    std::string key;
+-    std::string value;
+-    std::string description;
+-};
++
+ 
+ struct Controller {
+ public:

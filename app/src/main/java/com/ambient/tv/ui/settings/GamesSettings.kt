@@ -17,11 +17,13 @@ import com.ambient.tv.games.GameBiosManager
 import com.ambient.tv.games.GameBiosState
 import com.ambient.tv.games.GameCoreManager
 import com.ambient.tv.games.GameRomPreparer
+import com.ambient.tv.games.GameSettings
 import com.ambient.tv.games.GameSystems
 import com.ambient.tv.ui.common.SettingsActionRow
 import com.ambient.tv.ui.common.SettingsHint
 import com.ambient.tv.ui.common.SettingsNavigationRow
 import com.ambient.tv.ui.common.TvActionButton
+import com.ambient.tv.ui.common.TvSettingRow
 import com.ambient.tv.ui.games.titleRes
 import com.ambient.tv.ui.theme.LocalUiTokens
 import dagger.hilt.EntryPoint
@@ -39,6 +41,7 @@ internal interface GamesSettingsEntryPoint {
 
 /** Settings → Playback → Games: firmware (BIOS) per system, loaded cores and the game copy cache. */
 internal fun LazyListScope.gamesSettingsItems() {
+    item(key = "games-play") { GamesPlay() }
     item(key = "games-bios") { GamesBios() }
     item(key = "games-cores") { GamesCores() }
     item(key = "games-cache") { GamesCache() }
@@ -50,6 +53,16 @@ private fun gamesEntryPoint(): GamesSettingsEntryPoint {
     return remember(context) {
         EntryPointAccessors.fromApplication(context.applicationContext, GamesSettingsEntryPoint::class.java)
     }
+}
+
+@Composable
+private fun GamesPlay() {
+    TvSettingRow(
+        title = stringResource(R.string.game_settings_rewind),
+        body = stringResource(R.string.game_settings_rewind_hint),
+        checked = GameSettings.state.rewind,
+        onCheckedChange = { on -> GameSettings.update { it.withRewind(on) } },
+    )
 }
 
 @Composable

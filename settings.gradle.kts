@@ -1,4 +1,4 @@
-// AMBIENT_TV_SETTINGS_KTS_V66
+// AMBIENT_TV_SETTINGS_KTS_V67
 pluginManagement {
     repositories {
         google()
@@ -25,6 +25,13 @@ rootProject.name = "ambient-tv"
 rootProject.buildFileName = "build.gradle.kts"
 include(":app")
 project(":app").buildFileName = "build.gradle.kts"
+
+// Games: LibretroDroid (scripts/fetch_libretrodroid.sh). Required by :app.
+if (file("third_party/libretrodroid/src/main/cpp/CMakeLists.txt").isFile) {
+    include(":libretrodroid")
+    project(":libretrodroid").projectDir = file("libretrodroid_wrapper")
+    project(":libretrodroid").buildFileName = "build.gradle.kts"
+}
 
 val smartRoot = file("third_party/smarttube")
 val msc = smartRoot.resolve("MediaServiceCore")

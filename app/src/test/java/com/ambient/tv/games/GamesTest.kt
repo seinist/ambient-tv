@@ -51,11 +51,71 @@ class GamesTest {
     @Test fun coreOptionDescriptionsAreParsed() {
         val option = GameCoreOption.parse("region", "Region; Auto|NTSC|PAL", "PAL")!!
         assertEquals("Region", option.title)
-        assertEquals(listOf("Auto", "NTSC", "PAL"), option.values)
+        assertEquals(listOf("Auto", "NTSC", "PAL"), option.values.map { it.value })
         assertEquals("PAL", option.value)
         assertEquals("Auto", GameCoreOption.parse("region", "Region; Auto|NTSC", "bogus")!!.value)
         assertNull(GameCoreOption.parse("x", "No choices", null))
         assertNull(GameCoreOption.parse("x", null, null))
+    }
+
+    @Test fun gameOptionsOverrideCoreOptions() {
+        val n64 = GameSystems.byId("n64")!!.core
+        var state = GameSettingsState()
+            .withCoreOption(n64, "res", "640x480")
+            .withCoreOption(n64, "filter", "on")
+            .withGameCoreOption(n64, "game1", "res", "1280x960")
+        assertEquals(mapOf("res" to "1280x960", "filter" to "on"), state.effectiveCoreOptions(n64, "game1"))
+        assertEquals(mapOf("res" to "640x480", "filter" to "on"), state.effectiveCoreOptions(n64, "game2"))
+        assertEquals(GameOptionOrigin.GAME, state.coreOptionOrigin(n64, "game1", "res"))
+        assertEquals(GameOptionOrigin.CORE, state.coreOptionOrigin(n64, "game2", "res"))
+        assertEquals(GameOptionOrigin.DEFAULT, state.coreOptionOrigin(n64, "game1", "other"))
+        // A value for all games replaces this game's own one.
+        state = state.withCoreOption(n64, "res", "320x240", gameKey = "game1")
+        assertEquals("320x240", state.effectiveCoreOptions(n64, "game1")["res"])
+        state = state.withGameCoreOption(n64, "game1", "filter", "off").withoutGameCoreOptions(n64, "game1")
+        assertEquals(mapOf("res" to "320x240", "filter" to "on"), state.effectiveCoreOptions(n64, "game1"))
+        // Removing a core's options leaves games of other cores alone.
+        assertEquals(emptyMap<String, String>(), state.withoutCoreOptions(n64).coreOptions(n64))
+    }
+
+    @Test fun pictureRewindAndGraphicsSettings() {
+        val snes = GameSystems.byId("snes")!!
+        val n64 = GameSystems.byId("n64")!!
+        var state = GameSettingsState()
+        assertEquals(GameAspect.CORE, state.aspect(snes))
+        assertFalse(state.integerScaling(snes))
+        assertTrue(state.rewind)
+        assertFalse(state.vulkan(n64.core))
+        state = state.withAspect(snes, GameAspect.FOUR_THREE).withIntegerScaling(snes, true).withRewind(false)
+            .withVulkan(n64.core, true).withVulkan(snes.core, true)
+        assertEquals(GameAspect.FOUR_THREE, state.aspect(snes))
+        assertEquals(GameAspect.CORE, state.aspect(n64))
+        assertTrue(state.integerScaling(snes))
+        assertFalse(state.rewind)
+        assertTrue(state.vulkan(n64.core))
+        // Only cores that render on the GPU have a graphics interface to choose.
+        assertFalse(state.vulkan(snes.core))
+        assertEquals(GameAspect.CORE, state.withAspect(snes, GameAspect.CORE).aspect(snes))
+        assertFalse("aspect.snes" in state.withAspect(snes, GameAspect.CORE).values)
+    }
+
+    @Test fun coreOptionsV2MetadataIsParsed() {
+        val json = """{"v":2,"title":"Interne Auflösung","info":"Höher ist schärfer.","category":"video",""" +
+            """"categoryTitle":"Video","categoryInfo":"Bild","default":"640x480","visible":false,""" +
+            """"values":[{"value":"320x240","label":"320×240 (nativ)"},{"value":"640x480","label":""}]}"""
+        val option = GameCoreOption.parse("res", json, "320x240")!!
+        assertEquals("Interne Auflösung", option.title)
+        assertEquals("Höher ist schärfer.", option.info)
+        assertEquals(GameCoreCategory("video", "Video", "Bild"), option.category)
+        assertEquals(listOf(GameCoreValue("320x240", "320×240 (nativ)"), GameCoreValue("640x480", "640x480")), option.values)
+        assertEquals("320x240", option.value)
+        assertEquals("320×240 (nativ)", option.label)
+        assertEquals("640x480", option.default)
+        assertFalse(option.visible)
+        // An unknown stored value falls back to the core's default.
+        assertEquals("640x480", GameCoreOption.parse("res", json, "bogus")!!.value)
+        assertNull(GameCoreOption.parse("res", "{broken", null))
+        assertNull(GameCoreOption.parse("res", """{"title":"x","values":[]}""", null))
     }
 
     @Test fun cueAndM3uNameTheirFiles() {

@@ -36,4 +36,6 @@
     <string name="game_controls_listening">Press a key on this device …</string>
     <string name="game_controls_reset">Reset layout</string>
     <string name="game_controls_layout_hint">Choose a row, then press the key. It is removed from the other rows of this layout. A key for holding works as its button when pressed briefly.</string>
+    <string name="game_controls_rewind">Rewind (hold)</string>
+    <string name="game_controls_fast_forward">Fast forward on/off</string>
 </resources>

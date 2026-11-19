@@ -18,6 +18,8 @@ class RetroPadInputTest {
     private var time = 0L
     private val tasks = mutableListOf<Triple<Long, () -> Unit, BooleanArray>>()
     private var menus = 0
+    private val rewinds = mutableListOf<Boolean>()
+    private var fastForwards = 0
     private var config = RetroInputConfig()
     private val kinds = mapOf(
         1 to RetroInputKind.GAMEPAD, 2 to RetroInputKind.GAMEPAD,
@@ -33,6 +35,8 @@ class RetroPadInputTest {
         },
         axisLayout = { GamepadAxisLayout.STANDARD },
         onMenu = { menus++ },
+        onRewind = { rewinds += it },
+        onFastForward = { fastForwards++ },
     )
 
     private fun advance(ms: Long) {
@@ -126,6 +130,29 @@ class RetroPadInputTest {
         assertTrue(release(4, KeyEvent.KEYCODE_BACK))
         advance(500)
         assertEquals(0, input.buttons(0))
+    }
+
+    @Test fun hotkeysRewindWhileHeldAndToggleFastForward() {
+        press(4, KeyEvent.KEYCODE_MEDIA_REWIND)
+        press(3, KeyEvent.KEYCODE_DEL)
+        release(4, KeyEvent.KEYCODE_MEDIA_REWIND)
+        assertEquals(listOf(true), rewinds)
+        release(3, KeyEvent.KEYCODE_DEL)
+        assertEquals(listOf(true, false), rewinds)
+        assertEquals(0, input.buttons(0))
+
+        assertTrue(press(4, KeyEvent.KEYCODE_MEDIA_FAST_FORWARD))
+        release(4, KeyEvent.KEYCODE_MEDIA_FAST_FORWARD)
+        press(3, KeyEvent.KEYCODE_SPACE)
+        assertEquals(2, fastForwards)
+
+        // Opening the menu lets go of rewind.
+        press(3, KeyEvent.KEYCODE_DEL)
+        press(3, KeyEvent.KEYCODE_ESCAPE)
+        assertEquals(listOf(true, false, true, false), rewinds)
+        // Channel keys stay L and R on the remote.
+        press(4, KeyEvent.KEYCODE_CHANNEL_UP)
+        assertEquals(RetroPadButton.R.mask, input.buttons(0))
     }
 
     @Test fun menuKeysAndStartSelectOpenTheMenuAndReleaseEverything() {

@@ -47,12 +47,16 @@ enum class RetroInputKind(val key: String, @StringRes val titleRes: Int) {
     }
 }
 
-/** What a key can do in a game besides a RetroPad button. */
-enum class RetroMenuTrigger(val key: String) {
+/** What a key can do in a game besides a RetroPad button (game menu and hotkeys). */
+enum class RetroMenuTrigger(val key: String, @StringRes val titleRes: Int) {
     /** Opens the game menu (OSD) at once. */
-    PRESS("menu"),
+    PRESS("menu", AppR.string.game_controls_menu),
     /** Held for the long-press time opens the menu; a short press is the key's button. */
-    HOLD("menu_hold"),
+    HOLD("menu_hold", AppR.string.game_controls_menu_hold),
+    /** Rewinds while held. */
+    REWIND("rewind", AppR.string.game_controls_rewind),
+    /** Switches fast forward on and off. */
+    FAST_FORWARD("fast_forward", AppR.string.game_controls_fast_forward),
 }
 
 /** One kind's layout: key codes per RetroPad button plus the menu keys. */
@@ -67,7 +71,10 @@ data class RetroInputProfile(
     fun button(keyCode: Int): RetroPadButton? = byKey[keyCode]
     fun opensMenu(keyCode: Int): Boolean = keyCode in menu[RetroMenuTrigger.PRESS].orEmpty()
     fun holdOpensMenu(keyCode: Int): Boolean = keyCode in menu[RetroMenuTrigger.HOLD].orEmpty()
-    fun handles(keyCode: Int): Boolean = button(keyCode) != null || opensMenu(keyCode) || holdOpensMenu(keyCode)
+    fun rewinds(keyCode: Int): Boolean = keyCode in menu[RetroMenuTrigger.REWIND].orEmpty()
+    fun fastForwards(keyCode: Int): Boolean = keyCode in menu[RetroMenuTrigger.FAST_FORWARD].orEmpty()
+    fun handles(keyCode: Int): Boolean =
+        button(keyCode) != null || menu.values.any { keyCode in it }
 
     /** [keyCode] becomes the only key of [target]; it leaves every other button and menu entry. */
     fun assign(target: RetroInputTarget, keyCode: Int): RetroInputProfile {
@@ -137,7 +144,11 @@ private fun defaultLayout(kind: RetroInputKind): RetroInputProfile = when (kind)
             RetroPadButton.START to listOf(KeyEvent.KEYCODE_ENTER, KeyEvent.KEYCODE_NUMPAD_ENTER),
             RetroPadButton.SELECT to listOf(KeyEvent.KEYCODE_SHIFT_RIGHT),
         ),
-        menu = mapOf(RetroMenuTrigger.PRESS to listOf(KeyEvent.KEYCODE_ESCAPE, KeyEvent.KEYCODE_F1)),
+        menu = mapOf(
+            RetroMenuTrigger.PRESS to listOf(KeyEvent.KEYCODE_ESCAPE, KeyEvent.KEYCODE_F1),
+            RetroMenuTrigger.REWIND to listOf(KeyEvent.KEYCODE_DEL),
+            RetroMenuTrigger.FAST_FORWARD to listOf(KeyEvent.KEYCODE_SPACE),
+        ),
     )
     RetroInputKind.REMOTE -> RetroInputProfile(
         buttons = dpad() + mapOf(
@@ -147,12 +158,14 @@ private fun defaultLayout(kind: RetroInputKind): RetroInputProfile = when (kind)
             RetroPadButton.X to listOf(KeyEvent.KEYCODE_PROG_GREEN),
             RetroPadButton.SELECT to listOf(KeyEvent.KEYCODE_PROG_YELLOW, KeyEvent.KEYCODE_INFO),
             RetroPadButton.START to listOf(KeyEvent.KEYCODE_PROG_BLUE, KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE),
-            RetroPadButton.L to listOf(KeyEvent.KEYCODE_CHANNEL_DOWN, KeyEvent.KEYCODE_MEDIA_REWIND),
-            RetroPadButton.R to listOf(KeyEvent.KEYCODE_CHANNEL_UP, KeyEvent.KEYCODE_MEDIA_FAST_FORWARD),
+            RetroPadButton.L to listOf(KeyEvent.KEYCODE_CHANNEL_DOWN),
+            RetroPadButton.R to listOf(KeyEvent.KEYCODE_CHANNEL_UP),
         ),
         menu = mapOf(
             RetroMenuTrigger.PRESS to listOf(KeyEvent.KEYCODE_MENU),
             RetroMenuTrigger.HOLD to listOf(KeyEvent.KEYCODE_BACK),
+            RetroMenuTrigger.REWIND to listOf(KeyEvent.KEYCODE_MEDIA_REWIND),
+            RetroMenuTrigger.FAST_FORWARD to listOf(KeyEvent.KEYCODE_MEDIA_FAST_FORWARD),
         ),
     )
 }

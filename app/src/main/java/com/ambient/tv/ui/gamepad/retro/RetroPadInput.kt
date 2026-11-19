@@ -27,6 +27,10 @@ class RetroPadInput(
         { com.ambient.tv.ui.gamepad.GamepadAxisLayout.of(InputDevice.getDevice(it)) },
     /** Opens the game menu (the player OSD). */
     private val onMenu: () -> Unit,
+    /** Rewind hotkey held (true) or let go (false). */
+    private val onRewind: (Boolean) -> Unit = {},
+    /** Fast forward hotkey pressed: toggles. */
+    private val onFastForward: () -> Unit = {},
 ) {
     private class DeviceState(val info: RetroInputDevice, val layout: com.ambient.tv.ui.gamepad.GamepadAxisLayout) {
         val keys = mutableMapOf<Int, RetroPadButton>()
@@ -34,6 +38,8 @@ class RetroPadInput(
         val holds = mutableMapOf<Int, () -> Unit>()
         /** Keys whose press opened the menu; their release is swallowed. */
         val menuKeys = mutableSetOf<Int>()
+        /** Held rewind hotkeys. */
+        val rewindKeys = mutableSetOf<Int>()
         var axisButtons = 0
         var pulseButtons = 0
         val analog = IntArray(4)
@@ -84,6 +90,14 @@ class RetroPadInput(
     }
 
     private fun keyDown(state: DeviceState, profile: RetroInputProfile, code: Int) {
+        if (profile.rewinds(code)) {
+            if (state.rewindKeys.add(code) && rewinding() == 1) onRewind(true)
+            return
+        }
+        if (profile.fastForwards(code)) {
+            onFastForward()
+            return
+        }
         if (profile.opensMenu(code)) {
             state.menuKeys += code
             openMenu()
@@ -111,6 +125,10 @@ class RetroPadInput(
 
     private fun keyUp(state: DeviceState, profile: RetroInputProfile, code: Int, canceled: Boolean) {
         if (state.menuKeys.remove(code)) return
+        if (state.rewindKeys.remove(code)) {
+            if (rewinding() == 0) onRewind(false)
+            return
+        }
         state.holds.remove(code)?.let { cancel ->
             cancel()
             // A short press of a menu-hold key is its button, long enough for the core to see it.
@@ -155,8 +173,11 @@ class RetroPadInput(
         return true
     }
 
+    private fun rewinding(): Int = devices.values.sumOf { it.rewindKeys.size }
+
     /** Lets go of everything (game paused, menu opened, focus lost). */
     fun releaseAll() {
+        if (rewinding() > 0) onRewind(false)
         devices.values.forEach { state -> state.holds.values.forEach { it() } }
         devices.clear()
         for (port in 0 until RetroPorts.COUNT) recompute(port)
@@ -165,12 +186,15 @@ class RetroPadInput(
     fun deviceRemoved(deviceId: Int) {
         val state = devices.remove(deviceId) ?: return
         state.holds.values.forEach { it() }
+        if (state.rewindKeys.isNotEmpty() && rewinding() == 0) onRewind(false)
         recomputeAll()
     }
 
     private fun openMenu() {
+        if (rewinding() > 0) onRewind(false)
         // The game must not keep running with buttons held while its menu is open.
         devices.values.forEach { state ->
+            state.rewindKeys.clear()
             state.keys.clear()
             state.axisButtons = 0
             state.pulseButtons = 0

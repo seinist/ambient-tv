@@ -113,9 +113,7 @@ private fun targets(): List<RetroInputTarget> =
 @Composable
 private fun RetroInputTarget.title(): String = when (this) {
     is RetroInputTarget.Button -> stringResource(button.titleRes)
-    is RetroInputTarget.Menu -> stringResource(
-        if (trigger == RetroMenuTrigger.HOLD) R.string.game_controls_menu_hold else R.string.game_controls_menu,
-    )
+    is RetroInputTarget.Menu -> stringResource(trigger.titleRes)
 }
 
 /** One kind's layout: choose a row, then press the key on that device. */

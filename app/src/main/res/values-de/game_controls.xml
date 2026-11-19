@@ -36,4 +36,6 @@
     <string name="game_controls_listening">Taste auf diesem Gerät drücken …</string>
     <string name="game_controls_reset">Belegung zurücksetzen</string>
     <string name="game_controls_layout_hint">Zeile wählen, dann die Taste drücken. Sie wird aus den anderen Zeilen dieser Belegung entfernt. Eine Taste fürs Halten wirkt kurz gedrückt als ihre Spieltaste.</string>
+    <string name="game_controls_rewind">Zurückspulen (halten)</string>
+    <string name="game_controls_fast_forward">Vorspulen an/aus</string>
 </resources>

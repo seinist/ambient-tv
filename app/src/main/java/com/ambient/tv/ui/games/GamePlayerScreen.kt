@@ -2,7 +2,6 @@ package com.ambient.tv.ui.games
 
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
-import android.view.PixelCopy
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.animateFloatAsState
@@ -41,10 +40,7 @@ import com.ambient.tv.games.GameStateEntry
 import com.ambient.tv.games.GameStateKind
 import com.ambient.tv.ui.common.activateOnTvKey
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.suspendCancellableCoroutine
-import kotlinx.coroutines.withTimeoutOrNull
 import java.io.File
-import kotlin.coroutines.resume
 import android.os.Handler
 import android.os.Looper
 import android.view.KeyEvent
@@ -94,7 +90,9 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
 import com.ambient.tv.R
+import com.ambient.tv.games.GameAspect
 import com.ambient.tv.games.GameCoreOption
+import com.ambient.tv.games.GameOptionOrigin
 import com.ambient.tv.games.GameSettings
 import com.ambient.tv.games.GameShader
 import com.ambient.tv.ui.common.MetaBadge
@@ -125,6 +123,7 @@ import com.ambient.tv.ui.player.ReferencePlayerHeader
 import com.ambient.tv.ui.player.ReferencePlayerOverlayBackground
 import com.swordfish.libretrodroid.GLRetroView
 import com.swordfish.libretrodroid.GLRetroViewData
+import com.swordfish.libretrodroid.LibretroDroid
 import com.swordfish.libretrodroid.ShaderConfig
 import com.swordfish.libretrodroid.Variable
 import kotlinx.coroutines.Dispatchers
@@ -226,7 +225,7 @@ internal fun RetroPadButton.libretroDroidKey(): Int = when (this) {
     RetroPadButton.RIGHT -> KeyEvent.KEYCODE_DPAD_RIGHT
 }
 
-/** LibretroDroid follows a lifecycle; the game's own one pauses it while the menu is open. */
+/** LibretroDroid follows a lifecycle; it mirrors the activity (the menu pauses the emulation itself). */
 private class GameLifecycleOwner : LifecycleOwner {
     val registry = LifecycleRegistry(this)
     override val lifecycle: Lifecycle get() = registry
@@ -236,25 +235,22 @@ private class GameLifecycleOwner : LifecycleOwner {
         if (current == Lifecycle.State.DESTROYED || current == state) return
         registry.currentState = state
     }
-
-    val running: Boolean get() = registry.currentState == Lifecycle.State.RESUMED
 }
 
 private enum class GamePanel { PICTURE, CORE, DISC, CONTROLS, INFO }
 
-/** A frame of the game as shown, for save state previews; null when the surface cannot be read. */
-private suspend fun GLRetroView.capture(): Bitmap? = withTimeoutOrNull(500) {
-    if (width <= 0 || height <= 0 || !holder.surface.isValid) return@withTimeoutOrNull null
-    val bitmapWidth = minOf(width, 480)
-    val bitmapHeight = (height * bitmapWidth / width.toFloat()).roundToInt().coerceAtLeast(1)
-    val bitmap = Bitmap.createBitmap(bitmapWidth, bitmapHeight, Bitmap.Config.ARGB_8888)
-    suspendCancellableCoroutine { continuation ->
-        runCatching {
-            PixelCopy.request(this@capture, bitmap, { result ->
-                if (continuation.isActive) continuation.resume(if (result == PixelCopy.SUCCESS) bitmap else null)
-            }, Handler(Looper.getMainLooper()))
-        }.onFailure { if (continuation.isActive) continuation.resume(null) }
-    }
+/** Rewind keeps this many seconds, within [REWIND_BUDGET_BYTES] of memory. */
+private const val REWIND_SECONDS = 20
+private const val REWIND_BUDGET_BYTES = 64L * 1024 * 1024
+/** The category key of options without one, when others have one. */
+private const val OTHER_CATEGORY = "\u0000other"
+
+/** The game's current frame, scaled for save state previews; null when there is none yet. */
+private suspend fun GLRetroView.preview(): Bitmap? = withContext(Dispatchers.Default) {
+    val frame = runCatching { captureRawFrame() }.getOrNull() ?: return@withContext null
+    if (frame.width <= 480) return@withContext frame
+    val height = (frame.height * 480 / frame.width.toFloat()).roundToInt().coerceAtLeast(1)
+    Bitmap.createScaledBitmap(frame, 480, height, true).also { if (it !== frame) frame.recycle() }
 }
 
 @Composable
@@ -268,20 +264,29 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
     val core = system.core
     val settings = GameSettings.state
     val shader = settings.shader(system)
+    val aspect = settings.aspect(system)
+    val integerScaling = settings.integerScaling(system)
     val saveStates by model.saveStates.collectAsState()
 
     val chrome = remember { PlayerChromeState() }
     val osd = chrome.osd
     var menuOpen by remember { mutableStateOf(false) }
     var panel by remember { mutableStateOf<GamePanel?>(null) }
+    var optionCategory by remember { mutableStateOf<String?>(null) }
     var optionKey by remember { mutableStateOf<String?>(null) }
+    /** Core option changes go to this game only (true) or to every game of the core. */
+    var gameScope by remember { mutableStateOf(settings.gameCoreOptions(core, game.saveKey).isNotEmpty()) }
     var statesOpen by remember { mutableStateOf(false) }
     var activityResumed by remember { mutableStateOf(activityLifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)) }
     var exiting by remember { mutableStateOf(false) }
+    var destroyed by remember { mutableStateOf(false) }
+    /** The core has loaded the game (its surface exists); before that nothing may step it. */
+    var coreReady by remember { mutableStateOf(false) }
     var loaded by remember { mutableStateOf(false) }
     var message by remember { mutableStateOf<String?>(null) }
     var optionsVersion by remember { mutableIntStateOf(0) }
     var fastForward by remember { mutableStateOf(false) }
+    var rewinding by remember { mutableStateOf(false) }
     var discCount by remember { mutableIntStateOf(0) }
     var currentDisc by remember { mutableIntStateOf(0) }
     /** The picture when the menu opened: preview for every state saved from this menu. */
@@ -296,26 +301,40 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
             gameFilePath = game.file.absolutePath
             systemDirectory = session.systemDirectory.absolutePath
             savesDirectory = session.savesDirectory.absolutePath
-            variables = settings.coreOptions(core).map { (key, value) -> Variable(key, value) }.toTypedArray()
+            variables = settings.effectiveCoreOptions(core, game.saveKey).map { (key, value) -> Variable(key, value) }.toTypedArray()
             saveRAMState = session.sram
             this.shader = shader.config()
             rumbleEventsEnabled = false
             preferLowLatencyAudio = true
+            preferVulkan = settings.vulkan(core)
         }).apply {
             // Input reaches the core through RetroPadInput only.
             isFocusable = false
             isFocusableInTouchMode = false
+            // Starts paused: the first composition decides whether it runs.
+            suppressAutoResume = true
+            aspectRatioOverride = aspect.ratio ?: -1f
+            this.integerScaling = integerScaling
         }.also { view ->
             owner.registry.addObserver(view)
             owner.move(Lifecycle.State.CREATED)
         }
     }
 
-    /** Only while the game is paused: the emulation thread is idle then. */
+    /** Battery save and the "continue" state. Runs on the core's thread between frames. */
     fun persist() {
-        if (!loaded || owner.running) return
-        runCatching { model.saveSram(game, retroView.serializeSRAM(false)) }
-        runCatching { model.saveState(session, GameStateKind.AUTO, retroView.serializeState(false), snapshot) }
+        if (!loaded || destroyed) return
+        runCatching { model.saveSram(game, retroView.serializeSRAM()) }
+        runCatching { model.saveState(session, GameStateKind.AUTO, retroView.serializeState(), snapshot) }
+    }
+
+    /** Ends the core while its thread still runs; nothing reaches it afterwards. */
+    fun destroy() {
+        if (destroyed) return
+        retroView.pauseEmulation()
+        persist()
+        destroyed = true
+        runCatching { retroView.destroyNative() }
     }
 
     fun stateTitle(entry: GameStateEntry): String = when (entry.kind) {
@@ -327,23 +346,25 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
     val exit: () -> Unit = {
         if (!exiting) {
             exiting = true
-            owner.move(Lifecycle.State.STARTED)
-            persist()
+            destroy()
             onBack()
         }
     }
     val resume: () -> Unit = {
         panel = null
         optionKey = null
+        optionCategory = null
         statesOpen = false
         menuOpen = false
         osd.close()
     }
     val openMenu: () -> Unit = {
-        if (!menuOpen) scope.launch {
-            snapshot = if (loaded) retroView.capture() else null
-            message = null
+        if (!menuOpen) {
+            // Pause at once; the preview is the frame the player saw last.
+            retroView.pauseEmulation()
             menuOpen = true
+            message = null
+            scope.launch { snapshot = if (loaded) retroView.preview() else null }
         }
     }
     /** Loads [entry]; the moment before is kept as "Before loading" so the step can be undone. */
@@ -352,30 +373,47 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
         if (bytes == null) {
             message = context.getString(R.string.game_message_load_failed)
         } else {
-            runCatching { model.saveState(session, GameStateKind.UNDO, retroView.serializeState(false), snapshot) }
-            val restored = runCatching { retroView.unserializeState(bytes, false) }.getOrDefault(false)
-            if (restored) resume()
-            else message = context.getString(
+            runCatching { model.saveState(session, GameStateKind.UNDO, retroView.serializeState(), snapshot) }
+            val restored = runCatching { retroView.unserializeState(bytes) }.getOrDefault(false)
+            if (restored) {
+                runCatching { retroView.clearRewindBuffer() }
+                resume()
+            } else message = context.getString(
                 if (entry.coreStamp != session.coreStamp) R.string.game_message_load_other_core else R.string.game_message_load_failed,
             )
         }
     }
 
-    val running = activityResumed && !menuOpen && panel == null && !exiting
-    LaunchedEffect(running) { owner.move(if (running) Lifecycle.State.RESUMED else Lifecycle.State.STARTED) }
+    val running = coreReady && activityResumed && !menuOpen && panel == null && !exiting && !destroyed
+    LaunchedEffect(running) {
+        retroView.suppressAutoResume = !running
+        if (running) retroView.resumeEmulation() else retroView.pauseEmulation()
+    }
     LaunchedEffect(fastForward) { retroView.frameSpeed = if (fastForward) 2 else 1 }
+    LaunchedEffect(rewinding, running) { retroView.isRewinding = rewinding && running }
 
     DisposableEffect(activityLifecycle) {
         val observer = LifecycleEventObserver { _, event ->
             when (event) {
-                Lifecycle.Event.ON_RESUME -> activityResumed = true
+                Lifecycle.Event.ON_RESUME -> {
+                    if (!destroyed) {
+                        retroView.onResume()
+                        owner.move(Lifecycle.State.RESUMED)
+                    }
+                    activityResumed = true
+                }
                 Lifecycle.Event.ON_PAUSE -> {
                     activityResumed = false
-                    // Pause at once, not after the next composition: the app may stop right after.
-                    owner.move(Lifecycle.State.STARTED)
-                    menuOpen = true
+                    // Pause and save at once, not after the next composition: the app may stop right after.
+                    retroView.suppressAutoResume = true
+                    retroView.pauseEmulation()
+                    if (!menuOpen && !exiting) menuOpen = true
+                    persist()
+                    if (!destroyed) {
+                        owner.move(Lifecycle.State.STARTED)
+                        retroView.onPause()
+                    }
                 }
-                Lifecycle.Event.ON_STOP -> persist()
                 else -> Unit
             }
         }
@@ -384,22 +422,29 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
     }
     DisposableEffect(owner) {
         onDispose {
-            if (!exiting) {
-                owner.move(Lifecycle.State.STARTED)
-                persist()
-            }
+            // Leaving without Exit: only while the view (and with it the core's thread) still lives.
+            if (retroView.isAttachedToWindow) destroy()
             owner.move(Lifecycle.State.DESTROYED)
         }
     }
 
-    // First frame: the game is loaded; continue where the player left off.
+    // First frame: the game is loaded; continue where the player left off, then keep rewind ready.
     LaunchedEffect(retroView) {
         retroView.getGLRetroEvents().collect { event ->
+            if (event == GLRetroView.GLRetroEvents.SurfaceCreated) coreReady = true
             if (event == GLRetroView.GLRetroEvents.FrameRendered && !loaded) {
                 loaded = true
                 session.autoState?.let { bytes ->
                     val restored = withContext(Dispatchers.Default) { runCatching { retroView.unserializeState(bytes) }.getOrDefault(false) }
                     if (restored) message = context.getString(R.string.game_message_continued)
+                }
+                if (GameSettings.state.rewind) withContext(Dispatchers.Default) {
+                    runCatching {
+                        if (retroView.getSerializeSize() <= 0) return@runCatching
+                        val fps = LibretroDroid.getContentFps().takeIf { it in 1.0..240.0 } ?: 60.0
+                        retroView.initRewindBuffer((REWIND_SECONDS * fps).roundToInt(), REWIND_BUDGET_BYTES)
+                        retroView.rewindEnabled = true
+                    }
                 }
             }
         }
@@ -423,6 +468,8 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
                 ({ handler.removeCallbacks(runnable) })
             },
             onMenu = { latestOpenMenu() },
+            onRewind = { held -> rewinding = held },
+            onFastForward = { fastForward = !fastForward },
         )
     }
     DisposableEffect(input, retroView) {
@@ -470,11 +517,9 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
     LaunchedEffect(menuOpen) {
         if (!menuOpen) return@LaunchedEffect
         osd.expand()
-        // Paused from here on: disc information is safe to read.
-        owner.move(Lifecycle.State.STARTED)
-        if (loaded) {
-            discCount = runCatching { retroView.getAvailableDisks(false) }.getOrDefault(0)
-            currentDisc = runCatching { retroView.getCurrentDisk(false) }.getOrDefault(0)
+        if (loaded && !destroyed) {
+            discCount = withContext(Dispatchers.Default) { runCatching { retroView.getAvailableDisks() }.getOrDefault(0) }
+            currentDisc = withContext(Dispatchers.Default) { runCatching { retroView.getCurrentDisk() }.getOrDefault(0) }
         }
     }
     LaunchedEffect(osd.visible.value) { if (!osd.visible.value && panel == null) menuOpen = false }
@@ -486,6 +531,12 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
     }
     // Back while playing (a device whose Back does not play) opens the menu; in the menu it continues.
     BackHandler(enabled = panel == null && !statesOpen) { if (menuOpen) resume() else openMenu() }
+
+    val closePanel: () -> Unit = {
+        panel = null
+        optionKey = null
+        optionCategory = null
+    }
 
     CompositionLocalProvider(
         LocalPlayerChromeState provides chrome,
@@ -519,7 +570,9 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
                     PlayerTechBadgeRow {
                         MetaBadge("libretro", emphasized = true)
                         MetaBadge(core.name)
+                        if (core.hardware) MetaBadge(if (settings.vulkan(core)) "Vulkan" else "OpenGL ES")
                         MetaBadge(stringResource(shader.titleRes))
+                        if (aspect != GameAspect.CORE) MetaBadge(aspect.key)
                         if (fastForward) MetaBadge("2×")
                         if (discCount > 1) MetaBadge(stringResource(R.string.game_disc_number, currentDisc + 1, discCount))
                         MetaBadge(game.sourceName)
@@ -543,7 +596,7 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
                                 modifier = Modifier.focusRequester(playRequester), primary = true)
                             PlayerIconButton(Icons.Filled.Save, stringResource(R.string.game_save_state), {
                                 osd.interact()
-                                runCatching { model.saveState(session, GameStateKind.MANUAL, retroView.serializeState(false), snapshot) }
+                                runCatching { model.saveState(session, GameStateKind.MANUAL, retroView.serializeState(), snapshot) }
                                     .onSuccess { message = context.getString(R.string.game_message_saved, stateTitle(it)) }
                                     .onFailure { message = context.getString(R.string.game_message_save_failed) }
                             }, enabled = loaded)
@@ -556,7 +609,8 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
                             }, modifier = Modifier.focusRequester(statesRequester),
                                 selected = statesOpen, enabled = loaded && saveStates.isNotEmpty())
                             PlayerIconButton(Icons.Filled.RestartAlt, stringResource(R.string.game_reset), {
-                                runCatching { retroView.reset(false) }
+                                runCatching { retroView.reset() }
+                                runCatching { retroView.clearRewindBuffer() }
                                 model.clearAutoState(game)
                                 resume()
                             }, enabled = loaded)
@@ -588,78 +642,201 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
             }
 
             val open = panel
-            if (open != null) RightPanelOverlay(onOutsideTap = { panel = null; optionKey = null }) {
+            if (open != null) RightPanelOverlay(onOutsideTap = closePanel) {
                 val options = remember(optionsVersion, open) {
-                    if (open == GamePanel.CORE && loaded) runCatching {
-                        retroView.getVariables().mapNotNull { GameCoreOption.parse(it.key ?: return@mapNotNull null, it.description, it.value) }
+                    if (open == GamePanel.CORE && loaded && !destroyed) runCatching {
+                        retroView.getVariables()
+                            .mapNotNull { GameCoreOption.parse(it.key ?: return@mapNotNull null, it.description, it.value) }
+                            .filter { it.visible }
                     }.getOrDefault(emptyList()) else emptyList()
                 }
+                val categorized = options.any { it.category != null }
+                fun categoryOf(item: GameCoreOption) = item.category?.key ?: OTHER_CATEGORY
                 val option = options.firstOrNull { it.key == optionKey }
+                val category = optionCategory
+                val categoryTitle = category?.let { key ->
+                    options.firstOrNull { it.category?.key == key }?.category?.title ?: stringResource(R.string.game_core_other)
+                }
+                /** Applies [values] (key → value, null = the core's default) to the running core. */
+                fun applyOptions(values: Map<String, String?>) {
+                    val changes = options.mapNotNull { item ->
+                        if (!values.containsKey(item.key)) return@mapNotNull null
+                        val value = values[item.key] ?: item.default
+                        Variable(item.key, value).takeIf { value != item.value }
+                    }
+                    if (changes.isNotEmpty()) runCatching { retroView.updateVariables(*changes.toTypedArray()) }
+                    optionsVersion++
+                }
+                @Composable
+                fun originLabel(item: GameCoreOption): String = when (settings.coreOptionOrigin(core, game.saveKey, item.key)) {
+                    GameOptionOrigin.GAME -> stringResource(R.string.game_core_origin_game, item.label)
+                    GameOptionOrigin.CORE -> stringResource(R.string.game_core_origin_core, item.label)
+                    GameOptionOrigin.DEFAULT -> item.label
+                }
                 RightSidePanel(
                     title = when {
                         option != null -> option.title
+                        open == GamePanel.CORE && category != null -> categoryTitle.orEmpty()
                         open == GamePanel.PICTURE -> stringResource(R.string.game_panel_picture)
                         open == GamePanel.CORE -> stringResource(R.string.game_panel_core)
                         open == GamePanel.DISC -> stringResource(R.string.game_panel_disc)
                         open == GamePanel.CONTROLS -> stringResource(R.string.game_panel_controls)
                         else -> stringResource(R.string.game_panel_info)
                     },
-                    subtitle = when (open) {
-                        GamePanel.PICTURE -> stringResource(R.string.game_picture_scope, system.name)
-                        GamePanel.CORE -> if (option == null) core.name else null
+                    subtitle = when {
+                        open == GamePanel.PICTURE -> stringResource(R.string.game_picture_scope, system.name)
+                        open == GamePanel.CORE && option == null -> if (gameScope) {
+                            stringResource(R.string.game_core_scope_game)
+                        } else stringResource(R.string.game_core_scope_core, core.name)
                         else -> null
                     },
-                    onBack = { if (option != null) optionKey = null else panel = null },
-                    closeInsteadOfBack = option == null,
+                    onBack = {
+                        when {
+                            option != null -> optionKey = null
+                            category != null -> optionCategory = null
+                            else -> closePanel()
+                        }
+                    },
+                    closeInsteadOfBack = option == null && category == null,
                 ) {
                     when {
-                        option != null -> option.values.forEach { value ->
-                            RightPanelChoice(text = value, selected = value == option.value, onClick = {
-                                retroView.updateVariables(Variable(option.key, value))
-                                GameSettings.update { it.withCoreOption(core, option.key, value) }
-                                optionsVersion++
-                                optionKey = null
-                            })
+                        option != null -> {
+                            if (option.info.isNotBlank()) GamePanelText(option.info)
+                            option.values.forEach { choice ->
+                                RightPanelChoice(
+                                    text = choice.label,
+                                    subtitle = if (choice.value == option.default) stringResource(R.string.game_core_value_default) else null,
+                                    selected = choice.value == option.value,
+                                    onClick = {
+                                        runCatching { retroView.updateVariables(Variable(option.key, choice.value)) }
+                                        GameSettings.update {
+                                            if (gameScope) it.withGameCoreOption(core, game.saveKey, option.key, choice.value)
+                                            else it.withCoreOption(core, option.key, choice.value, gameKey = game.saveKey)
+                                        }
+                                        optionsVersion++
+                                        optionKey = null
+                                    },
+                                )
+                            }
                         }
-                        open == GamePanel.PICTURE -> GameShader.entries.forEach { choice ->
+                        open == GamePanel.PICTURE -> {
+                            GamePanelText(stringResource(R.string.game_picture_filter))
+                            GameShader.entries.forEach { choice ->
+                                RightPanelChoice(
+                                    text = stringResource(choice.titleRes),
+                                    subtitle = stringResource(choice.hintRes),
+                                    selected = choice == shader,
+                                    onClick = {
+                                        retroView.shader = choice.config()
+                                        GameSettings.update { it.withShader(system, choice) }
+                                    },
+                                )
+                            }
+                            GamePanelText(stringResource(R.string.game_picture_shape))
+                            GameAspect.entries.forEach { choice ->
+                                RightPanelChoice(
+                                    text = stringResource(choice.titleRes),
+                                    selected = choice == aspect,
+                                    onClick = {
+                                        retroView.aspectRatioOverride = choice.ratio ?: -1f
+                                        GameSettings.update { it.withAspect(system, choice) }
+                                    },
+                                )
+                            }
                             RightPanelChoice(
-                                text = stringResource(choice.titleRes),
-                                subtitle = stringResource(choice.hintRes),
-                                selected = choice == shader,
+                                text = stringResource(R.string.game_picture_integer),
+                                subtitle = stringResource(R.string.game_picture_integer_hint),
+                                selected = integerScaling,
                                 onClick = {
-                                    retroView.shader = choice.config()
-                                    GameSettings.update { it.withShader(system, choice) }
+                                    retroView.integerScaling = !integerScaling
+                                    GameSettings.update { it.withIntegerScaling(system, !integerScaling) }
                                 },
                             )
+                            if (core.hardware) {
+                                GamePanelText(stringResource(R.string.game_picture_graphics))
+                                listOf(false, true).forEach { vulkan ->
+                                    RightPanelChoice(
+                                        text = stringResource(if (vulkan) R.string.game_picture_graphics_vulkan else R.string.game_picture_graphics_gles),
+                                        subtitle = stringResource(R.string.game_picture_graphics_hint, core.name),
+                                        selected = settings.vulkan(core) == vulkan,
+                                        onClick = { GameSettings.update { it.withVulkan(core, vulkan) } },
+                                    )
+                                }
+                            }
                         }
                         open == GamePanel.CORE -> {
                             if (options.isEmpty()) GamePanelText(stringResource(R.string.game_core_no_options))
-                            options.forEach { item ->
+                            if (category == null) {
+                                if (options.isNotEmpty()) RightPanelChoice(
+                                    text = stringResource(R.string.game_core_scope),
+                                    subtitle = if (gameScope) stringResource(R.string.game_core_scope_game)
+                                    else stringResource(R.string.game_core_scope_core, core.name),
+                                    selected = false,
+                                    onClick = { gameScope = !gameScope },
+                                )
+                                if (categorized) {
+                                    options.groupBy(::categoryOf).forEach { (key, items) ->
+                                        val first = items.first().category
+                                        RightPanelChoice(
+                                            text = first?.title ?: stringResource(R.string.game_core_other),
+                                            subtitle = first?.info?.takeIf { it.isNotBlank() }
+                                                ?: stringResource(R.string.game_core_category_count, items.size),
+                                            selected = false,
+                                            trailingIcon = Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                                            onClick = { optionCategory = key },
+                                        )
+                                    }
+                                }
+                            }
+                            val shown = when {
+                                category != null -> options.filter { categoryOf(it) == category }
+                                categorized -> emptyList()
+                                else -> options
+                            }
+                            shown.forEach { item ->
                                 RightPanelChoice(
                                     text = item.title,
-                                    subtitle = item.value,
+                                    subtitle = originLabel(item),
                                     selected = false,
                                     trailingIcon = Icons.AutoMirrored.Filled.KeyboardArrowRight,
                                     onClick = { optionKey = item.key },
                                 )
                             }
-                            if (settings.coreOptions(core).isNotEmpty()) RightPanelChoice(
-                                text = stringResource(R.string.game_core_options_reset),
-                                subtitle = stringResource(R.string.game_core_options_reset_hint),
-                                selected = false,
-                                onClick = { GameSettings.update { it.withoutCoreOptions(core) } },
-                            )
+                            if (category == null) {
+                                val own = settings.gameCoreOptions(core, game.saveKey)
+                                if (own.isNotEmpty()) RightPanelChoice(
+                                    text = stringResource(R.string.game_core_game_reset),
+                                    subtitle = stringResource(R.string.game_core_game_reset_hint),
+                                    selected = false,
+                                    onClick = {
+                                        val forAll = settings.coreOptions(core)
+                                        GameSettings.update { it.withoutGameCoreOptions(core, game.saveKey) }
+                                        applyOptions(own.keys.associateWith { forAll[it] })
+                                    },
+                                )
+                                val forAll = settings.coreOptions(core)
+                                if (forAll.isNotEmpty()) RightPanelChoice(
+                                    text = stringResource(R.string.game_core_options_reset),
+                                    subtitle = stringResource(R.string.game_core_options_reset_hint),
+                                    selected = false,
+                                    onClick = {
+                                        val gameOwn = settings.gameCoreOptions(core, game.saveKey)
+                                        GameSettings.update { it.withoutCoreOptions(core) }
+                                        applyOptions((forAll.keys - gameOwn.keys).associateWith { null })
+                                    },
+                                )
+                            }
                         }
                         open == GamePanel.DISC -> (0 until discCount).forEach { index ->
                             RightPanelChoice(
                                 text = stringResource(R.string.game_disc, index + 1),
                                 selected = index == currentDisc,
                                 onClick = {
-                                    if (runCatching { retroView.changeDisk(index, false) }.isSuccess) {
+                                    if (runCatching { retroView.changeDisk(index) }.isSuccess) {
                                         currentDisc = index
                                         message = context.getString(R.string.game_disc, index + 1)
                                     }
-                                    panel = null
+                                    closePanel()
                                 },
                             )
                         }
@@ -680,7 +857,7 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
                                 onClick = {
                                     model.removeCore(core)
                                     message = context.getString(R.string.game_message_core_removed)
-                                    panel = null
+                                    closePanel()
                                 },
                             )
                         }
