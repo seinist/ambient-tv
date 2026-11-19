@@ -6,7 +6,6 @@
     <string name="weather_satellite">Satellit</string>
     <string name="weather_settings">Wetter-Einstellungen</string>
     <string name="weather_settings_hint">Orte, Anzeige, Einheiten und Kartenanbieter</string>
-    <string name="weather_refresh">Wetter aktualisieren</string>
     <string name="weather_retry">Erneut versuchen</string>
     <string name="weather_setup">Wetter einrichten</string>
     <string name="weather_enable">Wetter aktivieren</string>
