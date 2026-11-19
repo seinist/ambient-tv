@@ -77,6 +77,18 @@ internal fun playerPanelDrawerAlpha(progress: Float, reducedEffects: Boolean): F
 
 private val StaticPlayerPanelProgress = mutableFloatStateOf(1f)
 
+/**
+ * Frames a freshly opened drawer spends composing, measuring and first drawing its content.
+ * An entrance timed from the first of them is mostly over before anything is shown (one slow
+ * frame swallows a 250 ms slide), so a closed drawer starts moving only after them.
+ */
+internal const val PANEL_ENTRANCE_SETTLE_FRAMES = 2
+
+internal suspend fun awaitPanelEntranceFrames(progress: Float) {
+    if (progress > 0f) return
+    repeat(PANEL_ENTRANCE_SETTLE_FRAMES) { androidx.compose.runtime.withFrameNanos { } }
+}
+
 internal data class PlayerPanelMotionState(
     val active: Boolean = false,
     val panelProgress: State<Float> = StaticPlayerPanelProgress,
@@ -131,6 +143,7 @@ fun PlayerPanelVisibility(
         if (panel != UnifiedPlayerPanel.NONE) {
             visualPanel = panel
             visualDepth = currentDepth
+            awaitPanelEntranceFrames(panelProgress.value)
             coroutineScope {
                 launch {
                     panelProgress.animateTo(
