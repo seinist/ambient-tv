@@ -125,7 +125,8 @@
       "repo": "https://github.com/libretro/bsnes",
       "commit": "63ee22f7af8f5d1ada295c2c98fd7bf261fa62a7",
       "build": "ndk",
-      "jni": "bsnes/target-libretro"
+      "jni": "bsnes/target-libretro",
+      "cppflags": "-Wno-invalid-specialization"
     },
     {
       "core": "sameboy",

@@ -95,6 +95,7 @@ jobs:
           JNI: ${{ matrix.jni }}
           ARGS: ${{ matrix.args }}
           EXTRA_ENV: ${{ matrix.env }}
+          CPPFLAGS_EXTRA: ${{ matrix.cppflags }}
         run: |
           set -euo pipefail
           mkdir -p out
@@ -108,6 +109,10 @@ jobs:
             cmake --build build -j"$(nproc)"
             lib=$(find build -name '*libretro*.so' | head -n 1)
           else
+            # Flags newer compilers need (cores.json "cppflags"), added to the core's own Application.mk.
+            if [ -n "$CPPFLAGS_EXTRA" ]; then
+              printf '\nAPP_CPPFLAGS += %s\n' "$CPPFLAGS_EXTRA" >> "src/$JNI/jni/Application.mk"
+            fi
             # The same ndk-build call as libretro's buildbot (ci-templates android-jni), plus 16 KB pages.
             env $EXTRA_ENV "$NDK/ndk-build" --no-print-directory -j"$(nproc)" -C "src/$JNI/jni" \
               APP_ABI="$ABI" APP_SUPPORT_FLEXIBLE_PAGE_SIZES=true \
