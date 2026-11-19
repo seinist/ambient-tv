@@ -10,9 +10,9 @@
     <string name="gamepad_enabled">Use controller</string>
     <string name="gamepad_enabled_hint">Off: Android only maps a few buttons on its own (confirm and back).</string>
     <string name="gamepad_confirm_button">Confirm with</string>
-    <string name="gamepad_confirm_button_hint">Swaps the confirm and back buttons. Many Nintendo-style controllers confirm with the right button.</string>
-    <string name="gamepad_confirm_bottom">Bottom button (A / ✕)</string>
-    <string name="gamepad_confirm_right">Right button (B / ○)</string>
+    <string name="gamepad_confirm_button_hint">Swaps the confirm and back buttons by position. On Nintendo controllers the right button is labelled A; choose it to confirm as on the Switch.</string>
+    <string name="gamepad_confirm_bottom">Bottom button (Xbox A / ✕ / Nintendo B)</string>
+    <string name="gamepad_confirm_right">Right button (Xbox B / ○ / Nintendo A)</string>
     <string name="gamepad_left_stick">Left stick moves the selection</string>
     <string name="gamepad_left_stick_hint">Like the D-pad; held, it keeps moving and gets faster.</string>
     <string name="gamepad_right_stick">Right stick scrolls</string>

@@ -39,7 +39,9 @@ fun isGamepadButtonKeyCode(keyCode: Int): Boolean =
 
 /** Button names printed on the controller in front of the user. */
 enum class GamepadLabels {
-    XBOX, PLAYSTATION;
+    XBOX, PLAYSTATION,
+    /** Android maps Nintendo pads by position: the bottom button (labelled B) is BUTTON_A. */
+    NINTENDO;
 
     fun label(button: GamepadButton): String = when (this) {
         XBOX -> when (button) {
@@ -72,11 +74,31 @@ enum class GamepadLabels {
             GamepadButton.SELECT -> "Create"
             GamepadButton.MODE -> "PS"
         }
+        NINTENDO -> when (button) {
+            GamepadButton.A -> "B"
+            GamepadButton.B -> "A"
+            GamepadButton.X -> "Y"
+            GamepadButton.Y -> "X"
+            GamepadButton.L1 -> "L"
+            GamepadButton.R1 -> "R"
+            GamepadButton.L2 -> "ZL"
+            GamepadButton.R2 -> "ZR"
+            GamepadButton.THUMB_L -> "L3"
+            GamepadButton.THUMB_R -> "R3"
+            GamepadButton.START -> "+"
+            GamepadButton.SELECT -> "−"
+            GamepadButton.MODE -> "Home"
+        }
     }
 
     companion object {
         private const val VENDOR_SONY = 0x054C
+        private const val VENDOR_NINTENDO = 0x057E
 
-        fun forVendor(vendorId: Int?): GamepadLabels = if (vendorId == VENDOR_SONY) PLAYSTATION else XBOX
+        fun forVendor(vendorId: Int?): GamepadLabels = when (vendorId) {
+            VENDOR_SONY -> PLAYSTATION
+            VENDOR_NINTENDO -> NINTENDO
+            else -> XBOX
+        }
     }
 }

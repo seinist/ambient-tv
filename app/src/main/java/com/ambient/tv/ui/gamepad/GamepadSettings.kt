@@ -231,6 +231,9 @@ object GamepadInput {
      */
     var rawSink: ((android.view.InputEvent) -> Boolean)? = null
 
+    /** While Settings records a key for a game layout it receives every key first, untranslated. */
+    var capture: ((android.view.KeyEvent) -> Boolean)? = null
+
     fun attach(stored: Map<String, String>, save: (Map<String, String>) -> Unit) {
         persist = save
         mutable.value = GamepadConfig.decode(stored)

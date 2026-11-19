@@ -636,6 +636,7 @@ class SettingsBackupManager @Inject constructor(
                     projectmFavorites = context?.let { com.ambient.tv.ui.common.projectm.ProjectMFavorites(it).all().toSortedSet() },
                     keyBindings = preferences.keyBindings,
                     gamepadSettings = preferences.gamepadSettings,
+                    retroInputSettings = preferences.retroInputSettings,
                 ),
                 device = DeviceSettingsExtras(
                     imageCacheMb = preferences.imageCacheMb,
@@ -1117,6 +1118,10 @@ class SettingsBackupManager @Inject constructor(
             settings.lyricsVisible?.let { preferences.lyricsVisible = it }
             settings.lyricsOnlineEnabled?.let { preferences.lyricsOnlineEnabled = it }
             settings.frameDropOverlayHistory?.let { preferences.frameDropOverlayHistory = it }
+            settings.retroInputSettings?.let {
+                preferences.retroInputSettings = it
+                com.ambient.tv.ui.gamepad.retro.RetroInputSettings.reload(it)
+            }
             settings.gamepadSettings?.let {
                 preferences.gamepadSettings = it
                 com.ambient.tv.ui.gamepad.GamepadInput.reload(it)

@@ -832,6 +832,7 @@ open class MainActivity : ComponentActivity() {
         // Controller buttons once stored as remote keys move to the controller page.
         val (remoteKeyBindings, movedGamepadBindings) = com.ambient.tv.ui.gamepad.splitLegacyGamepadBindings(appPreferences.keyBindings)
         com.ambient.tv.ui.gamepad.GamepadInput.attach(appPreferences.gamepadSettings) { appPreferences.gamepadSettings = it }
+        com.ambient.tv.ui.gamepad.retro.RetroInputSettings.attach(appPreferences.retroInputSettings) { appPreferences.retroInputSettings = it }
         if (movedGamepadBindings.isNotEmpty()) {
             com.ambient.tv.ui.gamepad.GamepadInput.importLegacy(movedGamepadBindings)
             appPreferences.keyBindings = remoteKeyBindings

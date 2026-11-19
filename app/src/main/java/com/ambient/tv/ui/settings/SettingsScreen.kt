@@ -376,6 +376,7 @@ fun SettingsScreen(
                         SettingsCategory.WEATHER -> Unit // Full-page weather settings above.
                         SettingsCategory.KEY_BINDINGS -> keyBindingItems()
                         SettingsCategory.CONTROLLER -> controllerSettingsItems()
+                        SettingsCategory.GAME_CONTROLS -> gameControlsItems()
                         SettingsCategory.COMPANION -> companionSettingsItems()
                         SettingsCategory.TRANSFER -> {
                             item { CompanionTransferSection() }

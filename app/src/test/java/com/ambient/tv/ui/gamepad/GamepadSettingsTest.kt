@@ -121,5 +121,9 @@ class GamepadSettingsTest {
         assertEquals(GamepadLabels.XBOX, GamepadLabels.forVendor(0x045E))
         assertEquals("✕", GamepadLabels.PLAYSTATION.label(GamepadButton.A))
         assertEquals("RB", GamepadLabels.XBOX.label(GamepadButton.R1))
+        // Nintendo: positions as Xbox, letters swapped (bottom B, right A).
+        assertEquals(GamepadLabels.NINTENDO, GamepadLabels.forVendor(0x057E))
+        assertEquals("B", GamepadLabels.NINTENDO.label(GamepadButton.A))
+        assertEquals("ZR", GamepadLabels.NINTENDO.label(GamepadButton.R2))
     }
 }

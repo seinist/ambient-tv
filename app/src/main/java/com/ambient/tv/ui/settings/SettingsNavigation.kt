@@ -133,6 +133,8 @@ internal enum class SettingsCategory(val area: SettingsArea, val titleRes: Int, 
     KEY_BINDINGS(SettingsArea.APP, R.string.key_bindings_title, R.string.key_bindings_hint),
     /** Game controllers: navigation, sticks and button layout (ui.gamepad). */
     CONTROLLER(SettingsArea.APP, R.string.gamepad_settings_title, R.string.gamepad_settings_hint),
+    /** Players and key layouts of controllers, keyboards and remotes in games (ui.gamepad.retro). */
+    GAME_CONTROLS(SettingsArea.APP, R.string.game_controls_title, R.string.game_controls_hint),
     /** Pointer page; Spotify developer client ID lives on the Spotify system page. */
     ADVANCED(SettingsArea.APP, R.string.settings_advanced_title, R.string.settings_page_advanced_hint),
     ABOUT(SettingsArea.APP, R.string.settings_about_title, R.string.settings_page_about_hint),
@@ -162,6 +164,7 @@ internal enum class SettingsCategory(val area: SettingsArea, val titleRes: Int, 
             "seek", "playback_behavior" -> SEEK
             "keys", "key_bindings", "keybindings", "remote", "tasten" -> KEY_BINDINGS
             "controller", "gamepad", "joystick" -> CONTROLLER
+            "game_controls", "games", "spiele", "retropad" -> GAME_CONTROLS
             "log", "logs", "logging", "debug", "diagnostics" -> DIAGNOSTICS
             // Empty ADVANCED hub page removed; deep-link to the Spotify page (account section holds the client ID).
             "advanced", "developer", "clientid", "client_id" -> SPOTIFY

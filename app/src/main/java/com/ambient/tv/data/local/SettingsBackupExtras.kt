@@ -35,6 +35,8 @@ data class PortableSettingsExtras(
     val keyBindings: Map<String, String>? = null,
     /** Controller options and button overrides (see ui.gamepad.GamepadConfig). */
     val gamepadSettings: Map<String, String>? = null,
+    /** Game input players and layouts (see ui.gamepad.retro.RetroInputConfig). */
+    val retroInputSettings: Map<String, String>? = null,
 )
 
 @Serializable

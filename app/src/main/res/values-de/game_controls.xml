@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="retro_button_up">Steuerkreuz hoch</string>
+    <string name="retro_button_down">Steuerkreuz runter</string>
+    <string name="retro_button_left">Steuerkreuz links</string>
+    <string name="retro_button_right">Steuerkreuz rechts</string>
+    <string name="retro_button_a">A (rechts)</string>
+    <string name="retro_button_b">B (unten)</string>
+    <string name="retro_button_x">X (oben)</string>
+    <string name="retro_button_y">Y (links)</string>
+    <string name="retro_button_l">L</string>
+    <string name="retro_button_r">R</string>
+    <string name="retro_button_l2">L2</string>
+    <string name="retro_button_r2">R2</string>
+    <string name="retro_button_l3">L3 (linken Stick drücken)</string>
+    <string name="retro_button_r3">R3 (rechten Stick drücken)</string>
+    <string name="retro_button_start">Start</string>
+    <string name="retro_button_select">Select</string>
+    <string name="retro_kind_gamepad">Controller</string>
+    <string name="retro_kind_keyboard">Tastatur</string>
+    <string name="retro_kind_remote">Fernbedienung</string>
+    <string name="game_controls_title">Steuerung in Spielen</string>
+    <string name="game_controls_hint">Mit Controller, Tastatur oder Fernbedienung spielen und Spieler zuordnen</string>
+    <string name="game_controls_explanation">In Spielen spielen Controller, Tastaturen und Fernbedienungen gleichermaßen. Jede Art hat ihre eigene Belegung des Spiele-Pads (A rechts, B unten, X oben, Y links). Mehrere Geräte können sich einen Spieler teilen.</string>
+    <string name="game_controls_players">Spieler</string>
+    <string name="game_controls_no_devices">Kein Controller, keine Tastatur und keine Fernbedienung gefunden.</string>
+    <string name="game_controls_port_auto">Automatisch</string>
+    <string name="game_controls_port_player">Spieler %1$d</string>
+    <string name="game_controls_port_off">Spielt nicht mit</string>
+    <string name="game_controls_start_select">Start + Select öffnet das Spielmenü</string>
+    <string name="game_controls_start_select_hint">Am Controller beide zusammen drücken: Das Spiel pausiert und zeigt sein Menü.</string>
+    <string name="game_controls_dpad_stick">Steuerkreuz bewegt auch den linken Stick</string>
+    <string name="game_controls_dpad_stick_hint">Für 3D-Spiele mit Fernbedienung oder Tastatur, die keinen Stick haben.</string>
+    <string name="game_controls_menu">Spielmenü öffnen</string>
+    <string name="game_controls_menu_hold">Spielmenü öffnen (halten)</string>
+    <string name="game_controls_listening">Taste auf diesem Gerät drücken …</string>
+    <string name="game_controls_reset">Belegung zurücksetzen</string>
+    <string name="game_controls_layout_hint">Zeile wählen, dann die Taste drücken. Sie wird aus den anderen Zeilen dieser Belegung entfernt. Eine Taste fürs Halten wirkt kurz gedrückt als ihre Spieltaste.</string>
+</resources>

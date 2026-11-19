@@ -15,7 +15,11 @@ class GamepadController(
     private val config: () -> GamepadConfig = { GamepadInput.config },
     private val onButton: (GamepadButton) -> Unit = { GamepadInput.lastButton.value = it },
     private val rawSink: () -> ((android.view.InputEvent) -> Boolean)? = { GamepadInput.rawSink },
+    private val capture: () -> ((KeyEvent) -> Boolean)? = { GamepadInput.capture },
+    private val axisLayout: (deviceId: Int) -> GamepadAxisLayout = { GamepadAxisLayout.of(InputDevice.getDevice(it)) },
 ) {
+    private val layouts = mutableMapOf<Int, GamepadAxisLayout>()
+
     private val buttons = GamepadButtonDispatcher(host, config)
     private val sticks = GamepadStickNavigator(host, config)
 
@@ -24,11 +28,15 @@ class GamepadController(
     private val axisTriggers = mutableSetOf<Pair<Int, GamepadButton>>()
     private val swallowedTriggerKeys = mutableSetOf<Pair<Int, Int>>()
 
-    /** True when the key was a controller button and has been handled. */
+    /**
+     * True when the key has been handled: recorded by Settings, taken by a game in front (any key:
+     * controllers, keyboards and remotes all play), or a translated controller button.
+     */
     fun handleKey(event: KeyEvent): Boolean {
+        capture()?.let { sink -> if (sink(event)) return true }
+        rawSink()?.let { sink -> if (sink(event)) return true }
         val code = event.keyCode
         if (!isGamepadButtonKeyCode(code)) return false
-        rawSink()?.let { sink -> if (sink(event)) return true }
         if (!config().enabled) return false
         val button = GamepadButton.fromKeyCode(code) ?: return false
         if (button == GamepadButton.L2 || button == GamepadButton.R2) {
@@ -55,18 +63,19 @@ class GamepadController(
         if (!config().enabled) return false
         val deviceId = event.deviceId
         val time = event.eventTime
+        val layout = layouts.getOrPut(deviceId) { axisLayout(deviceId) }
         // Once a controller sends trigger keys, its axes only finish a pull they started.
         if (deviceId !in triggerKeyDevices || (deviceId to GamepadButton.L2) in axisTriggers) trigger(deviceId, GamepadButton.L2,
-            maxOf(event.getAxisValue(MotionEvent.AXIS_LTRIGGER), event.getAxisValue(MotionEvent.AXIS_BRAKE)), time)
+            layout.leftTriggerValue(event), time)
         if (deviceId !in triggerKeyDevices || (deviceId to GamepadButton.R2) in axisTriggers) trigger(deviceId, GamepadButton.R2,
-            maxOf(event.getAxisValue(MotionEvent.AXIS_RTRIGGER), event.getAxisValue(MotionEvent.AXIS_GAS)), time)
+            layout.rightTriggerValue(event), time)
         sticks.update(deviceId, GamepadStickNavigator.Axes(
             hatX = event.getAxisValue(MotionEvent.AXIS_HAT_X),
             hatY = event.getAxisValue(MotionEvent.AXIS_HAT_Y),
             leftX = event.getAxisValue(MotionEvent.AXIS_X),
             leftY = event.getAxisValue(MotionEvent.AXIS_Y),
-            rightX = event.getAxisValue(MotionEvent.AXIS_Z),
-            rightY = event.getAxisValue(MotionEvent.AXIS_RZ),
+            rightX = layout.rightStickX(event),
+            rightY = layout.rightStickY(event),
         ), time)
         // Consumed, so Android does not turn the same movement into arrow keys a second time.
         return true
@@ -97,6 +106,7 @@ class GamepadController(
     fun deviceRemoved(deviceId: Int) {
         sticks.release(deviceId)
         buttons.releaseDevice(deviceId)
+        layouts -= deviceId
         triggerKeyDevices -= deviceId
         axisTriggers.removeAll { it.first == deviceId }
         swallowedTriggerKeys.removeAll { it.first == deviceId }

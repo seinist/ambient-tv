@@ -10,9 +10,9 @@
     <string name="gamepad_enabled">Controller verwenden</string>
     <string name="gamepad_enabled_hint">Aus: Android belegt selbst nur wenige Tasten (Bestätigen und Zurück).</string>
     <string name="gamepad_confirm_button">Bestätigen mit</string>
-    <string name="gamepad_confirm_button_hint">Tauscht Bestätigen und Zurück. Viele Controller im Nintendo-Stil bestätigen mit der rechten Taste.</string>
-    <string name="gamepad_confirm_bottom">Untere Taste (A / ✕)</string>
-    <string name="gamepad_confirm_right">Rechte Taste (B / ○)</string>
+    <string name="gamepad_confirm_button_hint">Tauscht Bestätigen und Zurück nach Position. Bei Nintendo-Controllern ist die rechte Taste mit A beschriftet; wählen, um wie auf der Switch zu bestätigen.</string>
+    <string name="gamepad_confirm_bottom">Untere Taste (Xbox A / ✕ / Nintendo B)</string>
+    <string name="gamepad_confirm_right">Rechte Taste (Xbox B / ○ / Nintendo A)</string>
     <string name="gamepad_left_stick">Linker Stick bewegt die Auswahl</string>
     <string name="gamepad_left_stick_hint">Wie das Steuerkreuz; gehalten läuft die Auswahl weiter und wird schneller.</string>
     <string name="gamepad_right_stick">Rechter Stick blättert</string>

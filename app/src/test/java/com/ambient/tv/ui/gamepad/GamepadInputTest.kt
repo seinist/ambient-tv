@@ -154,6 +154,23 @@ class GamepadInputTest {
         assertTrue(host.sent.isEmpty())
     }
 
+    @Test fun settingsCaptureAndGamesSeeEveryKeyUntranslated() {
+        val captured = mutableListOf<Int>()
+        GamepadInput.capture = { captured += it.keyCode; true }
+        try {
+            assertTrue(controller.handleKey(key(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_BUTTON_A)))
+            assertTrue(controller.handleKey(key(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_PROG_RED)))
+        } finally {
+            GamepadInput.capture = null
+        }
+        assertEquals(listOf(KeyEvent.KEYCODE_BUTTON_A, KeyEvent.KEYCODE_PROG_RED), captured)
+        // A game takes remote keys too, not only controller buttons.
+        sink = { (it as? KeyEvent)?.keyCode == KeyEvent.KEYCODE_DPAD_CENTER }
+        assertTrue(controller.handleKey(key(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_DPAD_CENTER)))
+        assertFalse(controller.handleKey(key(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_VOLUME_UP)))
+        assertTrue(host.sent.isEmpty())
+    }
+
     @Test fun releaseAllCancelsHeldKeys() {
         controller.handleKey(key(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_BUTTON_A))
         controller.releaseAll()

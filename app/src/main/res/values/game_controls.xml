@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="retro_button_up">D-pad up</string>
+    <string name="retro_button_down">D-pad down</string>
+    <string name="retro_button_left">D-pad left</string>
+    <string name="retro_button_right">D-pad right</string>
+    <string name="retro_button_a">A (right)</string>
+    <string name="retro_button_b">B (bottom)</string>
+    <string name="retro_button_x">X (top)</string>
+    <string name="retro_button_y">Y (left)</string>
+    <string name="retro_button_l">L</string>
+    <string name="retro_button_r">R</string>
+    <string name="retro_button_l2">L2</string>
+    <string name="retro_button_r2">R2</string>
+    <string name="retro_button_l3">L3 (left stick press)</string>
+    <string name="retro_button_r3">R3 (right stick press)</string>
+    <string name="retro_button_start">Start</string>
+    <string name="retro_button_select">Select</string>
+    <string name="retro_kind_gamepad">Controller</string>
+    <string name="retro_kind_keyboard">Keyboard</string>
+    <string name="retro_kind_remote">Remote</string>
+    <string name="game_controls_title">Game controls</string>
+    <string name="game_controls_hint">Play with a controller, keyboard or remote and choose the players</string>
+    <string name="game_controls_explanation">In games, controllers, keyboards and remotes all play. Each kind has its own layout on the game pad (A right, B bottom, X top, Y left). Several devices can share a player.</string>
+    <string name="game_controls_players">Players</string>
+    <string name="game_controls_no_devices">No controller, keyboard or remote found.</string>
+    <string name="game_controls_port_auto">Automatic</string>
+    <string name="game_controls_port_player">Player %1$d</string>
+    <string name="game_controls_port_off">Does not play</string>
+    <string name="game_controls_start_select">Start + Select opens the game menu</string>
+    <string name="game_controls_start_select_hint">On controllers, pressing both together pauses the game and shows its menu.</string>
+    <string name="game_controls_dpad_stick">D-pad also moves the left stick</string>
+    <string name="game_controls_dpad_stick_hint">For 3D games with a remote or keyboard, which have no stick.</string>
+    <string name="game_controls_menu">Open game menu</string>
+    <string name="game_controls_menu_hold">Open game menu (hold)</string>
+    <string name="game_controls_listening">Press a key on this device …</string>
+    <string name="game_controls_reset">Reset layout</string>
+    <string name="game_controls_layout_hint">Choose a row, then press the key. It is removed from the other rows of this layout. A key for holding works as its button when pressed briefly.</string>
+</resources>
