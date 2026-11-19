@@ -120,7 +120,10 @@ fun PersistentPlayerChrome(
     }
 }
 
-/** Player actions of user key bindings (Settings → Keys & remote), shared by every player. */
+/**
+ * Player actions of user key bindings (Settings → Keys & remote), shared by every player.
+ * A binding is its own opt-in: none of these may depend on which action-bar buttons are shown.
+ */
 @Composable
 private fun PlayerKeyActions(chrome: PlayerChromeState, detailsLabel: String) {
     fun openPanel(panel: com.ambient.tv.ui.common.UnifiedPlayerPanel): Boolean {
