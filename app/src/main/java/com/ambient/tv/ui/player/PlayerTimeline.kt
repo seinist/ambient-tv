@@ -68,6 +68,13 @@ private fun playerTimelineMotionMs(): Int =
  */
 internal data class SeekPlayheadVisual(val fraction: Float, val alpha: Float)
 
+/**
+ * The current-position mark is a quiet notch: exactly as tall as the track it sits in (never
+ * overshooting it), thin, and translucent. Shared by the TV and handheld OSD timelines.
+ */
+internal const val SEEK_PLAYHEAD_WIDTH_DP = 1.5f
+internal const val SEEK_PLAYHEAD_ALPHA = .6f
+
 @Composable
 internal fun rememberSeekPlayheadVisual(fraction: Float?): SeekPlayheadVisual {
     val lastPosition = remember { mutableFloatStateOf(fraction ?: 0f) }
