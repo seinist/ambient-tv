@@ -520,7 +520,7 @@ private fun PlayerControlBarContent(
                     // Second Down below the seek bar: the chapter row.
                     Key.DirectionDown -> {
                         if (navigation != null && navigation.timeline.chapters.isNotEmpty()) {
-                            navigation.interact(); navigation.chaptersOpen = true; true
+                            navigation.interact(); navigation.enterChapters(); true
                         } else false
                     }
                     Key.DirectionLeft -> wrapBarFocus(focusManager, FocusDirection.Left, FocusDirection.Right)

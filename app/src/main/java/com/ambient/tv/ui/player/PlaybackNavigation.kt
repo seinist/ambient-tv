@@ -71,6 +71,12 @@ class PlaybackNavigationState {
     fun returnToControls() { focusReturnVersion++; revealControls() }
     var revealControls: () -> Unit = {}
     var chaptersOpen by mutableStateOf(false)
+    /** Bumped when Down on the action bar should (re)enter an already open chapter row. */
+    var chapterFocusRequests by mutableIntStateOf(0)
+    /** Opens the chapter row, or moves focus back into it when it is already open. */
+    fun enterChapters() {
+        if (chaptersOpen) chapterFocusRequests++ else chaptersOpen = true
+    }
     /** Seeks to an absolute timeline position; installed by [PlaybackNavigationProvider]. */
     var onChapterSeek: (Long) -> Unit = {}
     var interactionVersion by mutableIntStateOf(0)
@@ -198,7 +204,7 @@ internal fun CurrentChapterLabel(positionMs: Long, modifier: Modifier = Modifier
                 navigation.interact()
                 // The chapter strip lives below the action bar and must be visible before focus enters it.
                 if (!handheld) osd?.expand()
-                navigation.chaptersOpen = true
+                navigation.enterChapters()
             } else Modifier)
             .padding(horizontal = 2.dp, vertical = 1.dp))
 }
@@ -208,7 +214,7 @@ fun ChapterButton() {
     val navigation = LocalPlaybackNavigation.current ?: return
     if (navigation.timeline.chapters.isEmpty()) return
     PlayerIconButton(Icons.AutoMirrored.Filled.ViewList, stringResource(R.string.player_chapters),
-        onClick = { navigation.interact(); navigation.chaptersOpen = true },
+        onClick = { navigation.interact(); navigation.enterChapters() },
         osd = OsdButton.CHAPTERS)
 }
 
@@ -243,6 +249,7 @@ internal fun ChapterStrip() {
         val selected = shownChapters.indexOfLast { it.startMs <= positionMs }.coerceAtLeast(0)
         val listState = rememberLazyListState(initialFirstVisibleItemIndex = (selected - 1).coerceAtLeast(0))
         val initialFocus = remember { FocusRequester() }
+        var focusedIndex by remember { mutableIntStateOf(-1) }
         fun fold() {
             navigation.chaptersOpen = false
             navigation.interact()
@@ -252,11 +259,18 @@ internal fun ChapterStrip() {
         }
         LazyRow(
             state = listState,
-            horizontalArrangement = Arrangement.spacedBy(14.dp),
+            // A few chapters sit centered instead of hugging the left edge.
+            horizontalArrangement = Arrangement.spacedBy(14.dp, Alignment.CenterHorizontally),
             contentPadding = PaddingValues(vertical = 12.dp, horizontal = 4.dp),
             modifier = Modifier.fillMaxWidth().onPreviewKeyEvent { event ->
                 if (!open || !acceptsInput) return@onPreviewKeyEvent false
                 when (event.key) {
+                    // The row ends at its first and last chapter: Left/Right never leave it for
+                    // the action bar above (from where Down could not come back).
+                    androidx.compose.ui.input.key.Key.DirectionLeft ->
+                        focusedIndex == 0 || focusedIndex < 0
+                    androidx.compose.ui.input.key.Key.DirectionRight ->
+                        focusedIndex >= shownChapters.lastIndex || focusedIndex < 0
                     // Both halves of Back are taken so the back dispatcher does not also close the OSD.
                     androidx.compose.ui.input.key.Key.Back, androidx.compose.ui.input.key.Key.Escape -> {
                         if (event.type == androidx.compose.ui.input.key.KeyEventType.KeyUp) fold(); true
@@ -288,7 +302,11 @@ internal fun ChapterStrip() {
                         .then(if (index == selected) Modifier.focusRequester(initialFocus) else Modifier)
                         .focusProperties { canFocus = open && acceptsInput }
                         .graphicsLayer { scaleX = scale; scaleY = scale }
-                        .onFocusChanged { focused = it.isFocused }
+                        .onFocusChanged {
+                            focused = it.isFocused
+                            if (it.isFocused) focusedIndex = index
+                            else if (focusedIndex == index) focusedIndex = -1
+                        }
                         .clip(shape).background(Color.Black.copy(alpha = if (focused) 0.72f else 0.5f))
                         .border(if (focused) 2.dp else 1.dp, when {
                             focused -> Color.White
@@ -319,7 +337,7 @@ internal fun ChapterStrip() {
         }
         // A quick reopen reuses AnimatedVisibility's outgoing content. Run again for
         // every opening, and wait for the lazy row's focus target to attach.
-        LaunchedEffect(open, acceptsInput) {
+        LaunchedEffect(open, acceptsInput, navigation.chapterFocusRequests) {
             if (!open || !acceptsInput) return@LaunchedEffect
             // A quick reopen can retain a scroll position far beyond the current chapter;
             // compose its card again before requesting focus on it.
