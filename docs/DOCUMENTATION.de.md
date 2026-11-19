@@ -509,7 +509,7 @@ Je Wiedergabe im Player: Untertitelspur und **Untertitel-Verzögerung** (Schritt
 | Sammlungen automatisch fortsetzen | An / Aus | Aus | Nächster Film in der Reihenfolge der Sammlung. |
 | „Noch dabei?“ fragen nach | Aus, 2, 3, 5 Wechsel | 3 | Sichtbar, wenn ein Autoplay an ist. |
 
-Im „Als Nächstes“-Dialog steht der Schalter für automatische Wiedergabe unten links neben Schließen. Jetzt abspielen / Weiterschauen bleibt rechts und erhält den Startfokus. Lange Beschriftungen und die optionale Aktion Abspann überspringen werden bei Bedarf in eine weitere Zeile umgebrochen; im Header stehen nur Titel und Countdown/Status.
+Im „Als Nächstes“-Dialog steht der Schalter für automatische Wiedergabe unten links neben Schließen. Jetzt abspielen / Weiterschauen bleibt rechts und erhält den Startfokus. Lange Beschriftungen und die optionale Aktion Abspann überspringen werden bei Bedarf in eine weitere Zeile umgebrochen; im Header stehen nur Titel und Countdown/Status. **Schließen** blendet den Dialog nur aus: Ist die automatische Wiedergabe an (auch erst im Dialog eingeschaltet), startet das nächste Element am Ende trotzdem; um das zu verhindern, die automatische Wiedergabe ausschalten. Hat der Dialog beim Start eines sehr kurzen Videos keinen Fokus, holt ihn die erste Richtungs- oder OK-Taste in den Dialog.
 
 ### 6.4 Spulen & Fortsetzen
 

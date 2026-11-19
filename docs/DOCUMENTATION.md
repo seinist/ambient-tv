@@ -511,7 +511,7 @@ Per playback: subtitle track and **Subtitle delay** (±100 / ±500 ms steps, rem
 | Automatically continue collections | On / Off | Off | Next movie in the collection order. |
 | Ask "Still watching?" after | Off, 2, 3, 5 changes | 3 | Shown with an autoplay option on. |
 
-In the Next Up overlay, the autoplay switch sits at the left of the bottom action bar next to Close. Play now / Continue stays at the right and receives the initial focus. Long labels and the optional Skip credits action wrap onto another line when needed; the header contains only the title and countdown/status.
+In the Next Up overlay, the autoplay switch sits at the left of the bottom action bar next to Close. Play now / Continue stays at the right and receives the initial focus. Long labels and the optional Skip credits action wrap onto another line when needed; the header contains only the title and countdown/status. **Close** only hides the overlay: with autoplay on (even if just switched on in the overlay), the next item still starts at the end; switch autoplay off to prevent that. If the overlay lacks focus when a very short video starts, the first direction or OK key moves into it.
 
 ### 6.4 Seek & resume
 

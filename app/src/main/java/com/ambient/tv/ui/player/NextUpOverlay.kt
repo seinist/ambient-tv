@@ -69,9 +69,10 @@ internal fun NextUpOverlay(
     onSkipCredits: (() -> Unit)? = null,
     onAutoplayChanged: ((Boolean) -> Unit)? = null,
     creditsCountdown: Boolean = false,
+    /** Primary action; the host uses it to pull a stray remote key back into the card. */
+    playFocus: FocusRequester = remember(candidate.source, candidate.mediaId) { FocusRequester() },
 ) {
     val handheld = com.ambient.tv.ui.mobile.LocalHandheldUi.current
-    val playFocus = remember(candidate.source, candidate.mediaId) { FocusRequester() }
     var actionFocused by remember(candidate.source, candidate.mediaId) { mutableStateOf(false) }
     val footerButtons = remember { DialogButtonFocusScope(containSingleButton = true) }
     TransientPlayerActionFocus(
@@ -79,6 +80,7 @@ internal fun NextUpOverlay(
         requester = playFocus,
         hasActionFocus = actionFocused,
         onDismiss = onDismiss,
+        persistent = true,
     )
     val shape = RoundedCornerShape(14.dp)
     Column(
