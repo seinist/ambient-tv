@@ -37,6 +37,8 @@ data class PortableSettingsExtras(
     val gamepadSettings: Map<String, String>? = null,
     /** Game input players and layouts (see ui.gamepad.retro.RetroInputConfig). */
     val retroInputSettings: Map<String, String>? = null,
+    /** Game picture filters and core options (see games.GameSettingsState). */
+    val gameSettings: Map<String, String>? = null,
 )
 
 @Serializable

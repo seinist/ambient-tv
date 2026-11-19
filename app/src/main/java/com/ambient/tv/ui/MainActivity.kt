@@ -833,6 +833,7 @@ open class MainActivity : ComponentActivity() {
         val (remoteKeyBindings, movedGamepadBindings) = com.ambient.tv.ui.gamepad.splitLegacyGamepadBindings(appPreferences.keyBindings)
         com.ambient.tv.ui.gamepad.GamepadInput.attach(appPreferences.gamepadSettings) { appPreferences.gamepadSettings = it }
         com.ambient.tv.ui.gamepad.retro.RetroInputSettings.attach(appPreferences.retroInputSettings) { appPreferences.retroInputSettings = it }
+        com.ambient.tv.games.GameSettings.attach(appPreferences.gameSettings) { appPreferences.gameSettings = it }
         if (movedGamepadBindings.isNotEmpty()) {
             com.ambient.tv.ui.gamepad.GamepadInput.importLegacy(movedGamepadBindings)
             appPreferences.keyBindings = remoteKeyBindings
@@ -1168,7 +1169,7 @@ internal fun radioSectionTransitionIsInstant(fromRoute: String?, toRoute: String
 }
 
 internal val SIDEBAR_ROUTES = setOf(Destinations.TRAILERS, Destinations.TRAILER_FEED, Destinations.FILES, Destinations.FILE_SOURCE, Destinations.FILE_FAVORITES, Destinations.FILE_RECENT, Destinations.FILE_CONTINUE, Destinations.DLNA, Destinations.DLNA_SERVER, Destinations.HOME, Destinations.WEATHER, Destinations.PLEX, Destinations.JELLYFIN, Destinations.EMBY, Destinations.SEARCH, Destinations.YOUTUBE, Destinations.YOUTUBE_FEED, Destinations.TELEGRAM, Destinations.TELEGRAM_SECTION, Destinations.SPOTIFY, Destinations.SPOTIFY_SECTION, Destinations.RADIO, Destinations.RADIO_SECTION, Destinations.LIVE_TV, Destinations.LIVE_TV_SECTION, Destinations.SETTINGS, Destinations.SECTION)
-internal val FULLSCREEN_ROUTES = setOf(Destinations.ITEM_TRAILERS, Destinations.TMDB_TRAILERS, Destinations.PHOTO_VIEWER, Destinations.SETUP_COMPLETE, Destinations.INITIAL_SETUP, Destinations.SETUP_SETTINGS, Destinations.WEATHER_PLAYER, Destinations.PLAYER, Destinations.TVH_PLAYER, Destinations.YOUTUBE_PLAYER, Destinations.TELEGRAM_PLAYER, Destinations.TELEGRAM_DETAIL, Destinations.YOUTUBE_DETAIL, Destinations.YOUTUBE_CHANNEL, Destinations.SPOTIFY_PLAYER, Destinations.RADIO_PLAYER, Destinations.RADIO_DETAIL, Destinations.SPOTIFY_DETAIL, Destinations.SERVER_SELECT, Destinations.DETAIL, Destinations.DETAIL_FILTERED_BROWSE)
+internal val FULLSCREEN_ROUTES = setOf(Destinations.ITEM_TRAILERS, Destinations.TMDB_TRAILERS, Destinations.PHOTO_VIEWER, Destinations.GAME_PLAYER, Destinations.SETUP_COMPLETE, Destinations.INITIAL_SETUP, Destinations.SETUP_SETTINGS, Destinations.WEATHER_PLAYER, Destinations.PLAYER, Destinations.TVH_PLAYER, Destinations.YOUTUBE_PLAYER, Destinations.TELEGRAM_PLAYER, Destinations.TELEGRAM_DETAIL, Destinations.YOUTUBE_DETAIL, Destinations.YOUTUBE_CHANNEL, Destinations.SPOTIFY_PLAYER, Destinations.RADIO_PLAYER, Destinations.RADIO_DETAIL, Destinations.SPOTIFY_DETAIL, Destinations.SERVER_SELECT, Destinations.DETAIL, Destinations.DETAIL_FILTERED_BROWSE)
 // Saved on the Settings back stack entry by a sidebar shortcut: the page to open, plus a serial
 // that changes with every request.
 private const val SETTINGS_PAGE_KEY = "settings_page"
@@ -1967,7 +1968,7 @@ private fun AmbientTvApp(
         if (!backgroundPlayback.active && !onPlayerRoute) backgroundPlayerReturn.clearStoppedPlayback()
     }
     androidx.compose.runtime.SideEffect { com.ambient.tv.ui.player.SleepWarningKeyGate.playerRoute = onPlayerRoute }
-    val playbackActive = currentRoute == Destinations.PHOTO_VIEWER || currentRoute == Destinations.WEATHER_PLAYER || currentRoute == Destinations.PLAYER || currentRoute == Destinations.TVH_PLAYER || currentRoute == Destinations.YOUTUBE_PLAYER || currentRoute == Destinations.TELEGRAM_PLAYER || currentRoute == Destinations.SPOTIFY_PLAYER || currentRoute == Destinations.RADIO_PLAYER || backgroundPlayback.active || spotifyPlaying
+    val playbackActive = currentRoute == Destinations.PHOTO_VIEWER || currentRoute == Destinations.WEATHER_PLAYER || currentRoute == Destinations.GAME_PLAYER || currentRoute == Destinations.PLAYER || currentRoute == Destinations.TVH_PLAYER || currentRoute == Destinations.YOUTUBE_PLAYER || currentRoute == Destinations.TELEGRAM_PLAYER || currentRoute == Destinations.SPOTIFY_PLAYER || currentRoute == Destinations.RADIO_PLAYER || backgroundPlayback.active || spotifyPlaying
 
     // Handheld video pages are fullscreen exactly while the window is landscape, so turning the
     // device switches into fullscreen and back. Television keeps its manifest orientation.
@@ -1981,7 +1982,7 @@ private fun AmbientTvApp(
     val weatherPresentation = com.ambient.tv.ui.weather.rememberWeatherPresentation(
         headerVisible = !introVisible && !standbyRequested && !screensaverOverlayPresent && !pipPresentation &&
             !onPlayerRoute && currentRoute !in setOf(Destinations.PHOTO_VIEWER, Destinations.ITEM_TRAILERS,
-                Destinations.TMDB_TRAILERS, Destinations.WEATHER_PLAYER, Destinations.SERVER_SELECT, Destinations.INITIAL_SETUP, Destinations.SETUP_COMPLETE),
+                Destinations.TMDB_TRAILERS, Destinations.WEATHER_PLAYER, Destinations.GAME_PLAYER, Destinations.SERVER_SELECT, Destinations.INITIAL_SETUP, Destinations.SETUP_COMPLETE),
         screensaverVisible = !introVisible && !standbyRequested && !pipPresentation &&
             ScreensaverPresentation.shouldShow(screensaverActive, screensaverPreview != null, playbackActive),
         contentVisible = !introVisible && !standbyRequested && !screensaverOverlayPresent && !pipPresentation,
@@ -1990,7 +1991,7 @@ private fun AmbientTvApp(
         handheld = handheld,
         appScreensaverEnabled = screensaverEnabled,
         screensaverOverlayPresent = screensaverOverlayPresent,
-        photoViewer = currentRoute == Destinations.PHOTO_VIEWER || currentRoute == Destinations.WEATHER_PLAYER,
+        photoViewer = currentRoute == Destinations.PHOTO_VIEWER || currentRoute == Destinations.WEATHER_PLAYER || currentRoute == Destinations.GAME_PLAYER,
         playerPageVisible = onPlayerRoute,
         pipVisible = pipPresentation,
         sessionActive = backgroundPlayback.active,
@@ -2338,7 +2339,7 @@ private fun AmbientTvApp(
             val showHomeBackground = currentRoute != Destinations.HOME && homeBackground.visible(
                 reducedEffects = com.ambient.tv.ui.performance.LocalPerformanceProfile.current.reducedEffects,
                 foregroundPlayback = onPlayerScreen || currentRoute in setOf(Destinations.SPOTIFY_PLAYER, Destinations.RADIO_PLAYER,
-                    Destinations.ITEM_TRAILERS, Destinations.TMDB_TRAILERS, Destinations.PHOTO_VIEWER) || screensaverOverlayPresent,
+                    Destinations.ITEM_TRAILERS, Destinations.TMDB_TRAILERS, Destinations.PHOTO_VIEWER, Destinations.GAME_PLAYER) || screensaverOverlayPresent,
                 backgroundVideo = showVisibleBackgroundVideo,
             )
             if (!pipPresentation && showHomeBackground) {
@@ -2905,6 +2906,14 @@ private fun AmbientTvApp(
                         }
                     }
                     composable(
+                        route = Destinations.GAME_PLAYER,
+                        arguments = listOf(navArgument("fileId") { type = NavType.StringType }),
+                    ) { entry ->
+                        com.ambient.tv.ui.games.GamePlayerScreen(
+                            onBack = { if (navController.currentBackStackEntry === entry) navigateBack() },
+                        )
+                    }
+                    composable(
                         route = Destinations.WEATHER_PLAYER,
                         arguments = listOf(
                             navArgument("kind") { type = NavType.StringType },
@@ -3190,6 +3199,7 @@ private fun AmbientTvApp(
                                     onBack = ::focusSidebar,
                                     contentActive = !sidebarHasFocus && windowInfo.isWindowFocused && !screensaverOverlayPresent,
                                     onOpenPhotos = { navController.navigate(Destinations.PHOTO_VIEWER) },
+                                    onOpenGame = { id -> navController.navigate(Destinations.gamePlayer(id)) },
                                 )
                                 }
                             }
@@ -3207,6 +3217,7 @@ private fun AmbientTvApp(
                                 onBack = ::focusSidebar,
                                 contentActive = !sidebarHasFocus && windowInfo.isWindowFocused && !screensaverOverlayPresent,
                                 onOpenPhotos = { navController.navigate(Destinations.PHOTO_VIEWER) },
+                                onOpenGame = { id -> navController.navigate(Destinations.gamePlayer(id)) },
                             )
                             }
                         }

@@ -79,7 +79,7 @@ import kotlinx.coroutines.delay
 private const val UP_ID = "up"
 
 @Composable
-fun FilesScreen(onPlay: (String, Boolean) -> Unit, onBack: () -> Unit, contentActive: Boolean, onOpenPhotos: () -> Unit = {}, viewModel: FilesViewModel = hiltViewModel()) {
+fun FilesScreen(onPlay: (String, Boolean) -> Unit, onBack: () -> Unit, contentActive: Boolean, onOpenPhotos: () -> Unit = {}, onOpenGame: (String) -> Unit = {}, viewModel: FilesViewModel = hiltViewModel()) {
     val handheld = LocalHandheldUi.current
     LaunchedEffect(viewModel) { viewModel.applyViewerReturn() }
     val state = viewModel.state.collectAsCurrentState()
@@ -281,10 +281,11 @@ fun FilesScreen(onPlay: (String, Boolean) -> Unit, onBack: () -> Unit, contentAc
                             icon = when {
                                 entry.directory -> Icons.Default.Folder
                                 entry.image -> Icons.Default.Image
+                                entry.game -> Icons.Default.SportsEsports
                                 entry.audio -> Icons.Default.AudioFile
                                 else -> Icons.Default.VideoFile
                             },
-                            onOpen = { viewModel.open(entry, onPlay, openPhotos = onOpenPhotos) },
+                            onOpen = { viewModel.open(entry, onPlay, openPhotos = onOpenPhotos, openGame = onOpenGame) },
                             focusModifier = Modifier.focusRequester(remember(entry.id, requesters) { requesters.getOrPut(entry.id) { FocusRequester() } })
                                 .browseFocusTarget(entry.id)
                                 .onFocusChanged { if (it.isFocused) viewModel.focus(entry.id) },

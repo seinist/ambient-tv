@@ -115,6 +115,8 @@ data class FileEntry(
     val audio: Boolean get() = mime.startsWith("audio/") || FilePaths.extension(name) in FilePaths.audioExtensions
     val playable: Boolean get() = !directory && (audio || mime.startsWith("video/") || FilePaths.extension(name) in FilePaths.videoExtensions)
     val image: Boolean get() = !directory && com.ambient.tv.data.photos.PhotoFormats.isImage(name, mime)
+    /** A game file (ROM, disc image or archive) a libretro core can play. */
+    val game: Boolean get() = !directory && com.ambient.tv.games.GameSystems.isGame(name)
 }
 
 @Serializable

@@ -34,7 +34,7 @@ import com.ambient.tv.ui.gamepad.retro.RetroInputTarget
 import com.ambient.tv.ui.gamepad.retro.RetroMenuTrigger
 import com.ambient.tv.ui.gamepad.retro.RetroPadButton
 import com.ambient.tv.ui.gamepad.retro.RetroPorts
-import com.ambient.tv.ui.gamepad.retro.retroInputDevice
+import com.ambient.tv.ui.gamepad.retro.playableInputDevices
 import com.ambient.tv.ui.keyboard.keyLabel
 import com.ambient.tv.ui.theme.LocalUiTokens
 import kotlinx.coroutines.delay
@@ -55,16 +55,7 @@ private val SYSTEM_KEYS = setOf(
     KeyEvent.KEYCODE_ASSIST, KeyEvent.KEYCODE_VOICE_ASSIST, KeyEvent.KEYCODE_APP_SWITCH, KeyEvent.KEYCODE_SETTINGS,
 )
 
-/** Real devices someone can play with: controllers, keyboards and remotes with arrow keys. */
-private fun playableDevices(): List<RetroInputDevice> = InputDevice.getDeviceIds().toList()
-    .mapNotNull { id -> InputDevice.getDevice(id)?.takeIf { !it.isVirtual }?.let { id to it } }
-    .map { (id, device) -> retroInputDevice(id) to device }
-    .filter { (info, device) ->
-        info.kind != RetroInputKind.REMOTE ||
-            (device.supportsSource(InputDevice.SOURCE_KEYBOARD) && device.hasKeys(KeyEvent.KEYCODE_DPAD_UP).firstOrNull() == true)
-    }
-    .map { it.first }
-    .distinctBy { it.descriptor }
+private fun playableDevices(): List<RetroInputDevice> = playableInputDevices()
 
 @Composable
 private fun GameControlsPlayers() {

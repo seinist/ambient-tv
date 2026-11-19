@@ -1561,6 +1561,11 @@ class AppPreferences @Inject constructor(
         get() = runCatching { json.decodeFromString<Map<String, String>>(prefs.getString("key_bindings", "{}")!!) }.getOrDefault(emptyMap())
         set(value) = prefs.edit { putString("key_bindings", json.encodeToString(value)) }
 
+    /** Game picture filters and core options (see games.GameSettingsState). */
+    var gameSettings: Map<String, String>
+        get() = runCatching { json.decodeFromString<Map<String, String>>(prefs.getString("game_settings", "{}")!!) }.getOrDefault(emptyMap())
+        set(value) = prefs.edit { putString("game_settings", json.encodeToString(value)) }
+
     /** Game input: players and key layouts of controllers, keyboards and remotes (ui.gamepad.retro). */
     var retroInputSettings: Map<String, String>
         get() = runCatching { json.decodeFromString<Map<String, String>>(prefs.getString("retro_input_settings", "{}")!!) }.getOrDefault(emptyMap())

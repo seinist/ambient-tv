@@ -178,7 +178,7 @@ class FilesViewModel @Inject constructor(
                 }
             }
             try {
-                val result = access.list(source, location.path, limit) { it.playable || it.image }
+                val result = access.list(source, location.path, limit) { it.playable || it.image || it.game }
                 currentCoroutineContext().ensureActive()
                 if (store.sources().none { it.id == source.id && it.sameLocation(source) }) return@launch
                 snapshots.write(owner, namespace, cacheKey, result)
@@ -280,8 +280,9 @@ class FilesViewModel @Inject constructor(
         _state.update { it.copy(focusId = id, revision = it.revision + 1) }
     }
 
-    fun open(entry: FileEntry, play: (String, Boolean) -> Unit, restart: Boolean = false, openPhotos: () -> Unit = {}) {
+    fun open(entry: FileEntry, play: (String, Boolean) -> Unit, restart: Boolean = false, openPhotos: () -> Unit = {}, openGame: (String) -> Unit = {}) {
         if (entry.image) { if (preparePhotos(entry)) openPhotos(); return }
+        if (entry.game) { saved["focus"] = entry.id; openGame(entry.id); return }
         if (!entry.directory) { repository.setQueue(_state.value.entries); saved["focus"] = entry.id; play(entry.id, restart); return }
         if (folders.isEmpty()) {
             val source = store.sources().firstOrNull { it.id == entry.sourceId } ?: return

@@ -47,6 +47,9 @@ class RetroPadInput(
     private val portButtons = AtomicIntegerArray(RetroPorts.COUNT)
     private val portAnalog = AtomicIntegerArray(RetroPorts.COUNT * 4)
 
+    /** Called on the main thread after any player's buttons or sticks changed. */
+    var onChanged: (() -> Unit)? = null
+
     /** RETRO_DEVICE_JOYPAD bitmask of [port] (bit = RETRO_DEVICE_ID_JOYPAD_*). Any thread. */
     fun buttons(port: Int): Int = if (port in 0 until RetroPorts.COUNT) portButtons.get(port) else 0
 
@@ -205,6 +208,7 @@ class RetroPadInput(
             if (axis < 2 && value == 0 && config().dpadAsStick) value = dpadAxis(buttons, axis)
             portAnalog.set(port * 4 + axis, value)
         }
+        onChanged?.invoke()
     }
 
     private fun dpadAxis(buttons: Int, axis: Int): Int {
@@ -226,6 +230,17 @@ class RetroPadInput(
         const val STICK_DEADZONE = 0.1f
     }
 }
+
+/** Real devices someone can play with: controllers, keyboards and remotes with arrow keys. */
+fun playableInputDevices(): List<RetroInputDevice> = InputDevice.getDeviceIds().toList()
+    .mapNotNull { id -> InputDevice.getDevice(id)?.takeIf { !it.isVirtual }?.let { id to it } }
+    .map { (id, device) -> retroInputDevice(id) to device }
+    .filter { (info, device) ->
+        info.kind != RetroInputKind.REMOTE ||
+            (device.supportsSource(InputDevice.SOURCE_KEYBOARD) && device.hasKeys(KeyEvent.KEYCODE_DPAD_UP).firstOrNull() == true)
+    }
+    .map { it.first }
+    .distinctBy { it.descriptor }
 
 /** Classifies a real input device; unknown or virtual sources (phone remote) count as remote. */
 fun retroInputDevice(deviceId: Int): RetroInputDevice {
