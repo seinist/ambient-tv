@@ -389,10 +389,13 @@ private class VerticalRowMoveState {
 }
 
 /**
- * When a row move from rest hands focus to the destination: the TV glide spring is about
- * three quarters of the way there, so the focus frame lands as the row arrives.
+ * Share of a row move from rest after which focus moves to the destination, so the focus frame
+ * lands as the row arrives. Bound to the list's real movement ([RowGlideProgress]).
  */
-internal const val ROW_FOCUS_HANDOFF_MS = 200L
+internal const val ROW_FOCUS_HANDOFF_FRACTION = .75f
+
+/** Only for a glide that reports no progress: hand over after this long instead. */
+internal const val ROW_FOCUS_HANDOFF_FALLBACK_MS = 250L
 
 @OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 fun Modifier.rowColumnFocusNavigation(
@@ -401,8 +404,9 @@ fun Modifier.rowColumnFocusNavigation(
     scrollToBottom: (suspend () -> Unit)? = null,
     scrollToRow: (suspend (Any) -> Unit)? = null,
     /**
-     * Move focus to the destination tile while its glide is still running (once it is most of
-     * the way there, see [ROW_FOCUS_HANDOFF_MS]) instead of after the spring tail (~1 s). Only
+     * Move focus to the destination tile while its glide is still running (once the list has
+     * moved most of the way, see [ROW_FOCUS_HANDOFF_FRACTION]) instead of after the spring tail
+     * (~1 s). Only
      * for lists whose focused-row centering yields to an in-flight D-pad move.
      */
     focusBeforeScroll: Boolean = false,
@@ -443,14 +447,18 @@ fun Modifier.rowColumnFocusNavigation(
                 if (earlyFocus) {
                     // Start the glide (it publishes the pending row synchronously), then hand focus
                     // over while the row arrives: not on the key press (focus jumped ahead of the
-                    // row), not after the whole spring tail (~1 s), but once most of the way is done.
-                    val glide = launch(start = kotlinx.coroutines.CoroutineStart.UNDISPATCHED) { scroll() }
+                    // row), not after the whole spring tail (~1 s), but once the list has really
+                    // moved most of the way. A slow device that drops frames hands over later.
+                    val progress = RowGlideProgress()
+                    val glide = launch(progress, start = kotlinx.coroutines.CoroutineStart.UNDISPATCHED) { scroll() }
                     var startNanos = -1L
                     while (true) {
                         val frameNanos = withFrameNanos { it }
                         if (startNanos < 0) startNanos = frameNanos
+                        val moved = progress.fraction
                         val arriving = following || !glide.isActive ||
-                            frameNanos - startNanos >= ROW_FOCUS_HANDOFF_MS * 1_000_000L
+                            (moved >= 0f && moved >= ROW_FOCUS_HANDOFF_FRACTION) ||
+                            (moved < 0f && frameNanos - startNanos >= ROW_FOCUS_HANDOFF_FALLBACK_MS * 1_000_000L)
                         if (!focus.isEntryPlaced(rowKey) && focus.canScrollToEntry(rowKey)) focus.scrollToEntry(rowKey)
                         if (arriving && focus.isEntryPlaced(rowKey) && focus.focusEntry(rowKey)) {
                             focusedEarly = true

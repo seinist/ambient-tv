@@ -77,6 +77,17 @@ internal object ExplicitRowScrollSpec : BringIntoViewSpec {
  * [scrollOffset] follows LazyListState.scrollToItem's sign convention.
  */
 @OptIn(ExperimentalFoundationApi::class)
+/**
+ * How far the row glide running in this coroutine has actually moved the list (0..1), read by
+ * [rowColumnFocusNavigation] to hand focus over as the row arrives. Measured on the frames the
+ * list really drew, so a slow device that drops frames hands over later, not on a timer.
+ */
+internal class RowGlideProgress : kotlin.coroutines.AbstractCoroutineContextElement(Key) {
+    companion object Key : kotlin.coroutines.CoroutineContext.Key<RowGlideProgress>
+    /** Negative until the glide reports. */
+    @Volatile var fraction = -1f
+}
+
 suspend fun LazyListState.animateTvScrollToItem(index: Int, scrollOffset: Int = 0) {
     animateTvScrollToItem(index) { scrollOffset }
 }
@@ -84,9 +95,11 @@ suspend fun LazyListState.animateTvScrollToItem(index: Int, scrollOffset: Int = 
 @OptIn(ExperimentalFoundationApi::class)
 private suspend fun LazyListState.animateTvScrollToItem(index: Int, scrollOffset: () -> Int) {
     if (index !in 0 until layoutInfo.totalItemsCount) return
+    val glide = kotlinx.coroutines.currentCoroutineContext()[RowGlideProgress]
     scroll {
         val layout = LazyLayoutScrollScope(this@animateTvScrollToItem, this)
         var previousProgress = 0f
+        glide?.fraction = 0f
         // Keep the spring's stopping threshold at pixel scale, not a percentage of the trip.
         val progressRange = layoutInfo.viewportSize.height.toFloat().coerceAtLeast(1f)
         animate(0f, progressRange, animationSpec = TvScrollAnimationSpec) { value, _ ->
@@ -97,8 +110,10 @@ private suspend fun LazyListState.animateTvScrollToItem(index: Int, scrollOffset
                 layout.scrollBy(remaining * fraction)
             }
             previousProgress = progress
+            glide?.fraction = progress
         }
     }
+    glide?.fraction = 1f
 }
 
 /** Remember one instance per vertical list. Cancellation on a new row preserves velocity;
@@ -115,6 +130,7 @@ class RowCenteringState internal constructor(private val listState: LazyListStat
     /** [bottomInset] >= 0 parks the row's bottom that far above the viewport's end instead. */
     suspend fun centerItem(index: Int, topInset: Int = 0, alignTop: Boolean = false, bottomInset: Int = -1) {
         if (index !in 0 until listState.layoutInfo.totalItemsCount) return
+        val glide = kotlinx.coroutines.currentCoroutineContext()[RowGlideProgress]
         listState.scroll {
             // Continuing only velocity still inserts a zero-progress first frame at every
             // retarget. Carry the frame clock too, unless the preceding move is stale.
@@ -139,6 +155,8 @@ class RowCenteringState internal constructor(private val listState: LazyListStat
                 return layout.calculateDistanceTo(index, -(center - itemSize / 2)).toFloat()
             }
             var remaining = remainingDistance()
+            val total = abs(remaining).coerceAtLeast(1f)
+            glide?.fraction = if (abs(remaining) > 1f) 0f else 1f
             while (abs(remaining) > 1f) {
                 val animation = AnimationState(
                     initialValue = 0f,
@@ -152,6 +170,7 @@ class RowCenteringState internal constructor(private val listState: LazyListStat
                     val delta = value - previous
                     val consumed = scrollBy(delta)
                     previous = value
+                    glide?.fraction = (1f - abs(destination - value) / total).coerceIn(0f, 1f)
                     this@RowCenteringState.velocity = this.velocity
                     this@RowCenteringState.lastFrameTimeNanos = this.lastFrameTimeNanos
                     // Do not retain momentum against the beginning/end of the list.
@@ -170,6 +189,7 @@ class RowCenteringState internal constructor(private val listState: LazyListStat
             velocity = 0f
             lastFrameTimeNanos = Long.MIN_VALUE
         }
+        glide?.fraction = 1f
     }
 }
 
