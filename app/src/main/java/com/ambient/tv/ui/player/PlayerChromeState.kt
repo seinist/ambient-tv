@@ -149,8 +149,10 @@ private fun PlayerKeyActions(chrome: PlayerChromeState, detailsLabel: String) {
     com.ambient.tv.ui.keyboard.RegisterKeyAction(com.ambient.tv.ui.keyboard.KeyAction.AUDIO_TRACKS) {
         openPanel(com.ambient.tv.ui.common.UnifiedPlayerPanel.AUDIO)
     }
+    // A key the user bound to Details is its own opt-in: it works whether or not the optional
+    // Details button is shown in the action bar (only the Info key follows that switch).
     com.ambient.tv.ui.keyboard.RegisterKeyAction(com.ambient.tv.ui.keyboard.KeyAction.DETAILS) {
-        if (chrome.detail.value == null || !chrome.detailEnabled.value) false
+        if (chrome.detail.value == null) false
         else { toggleDetailsByInfoKey(chrome.panels, detailsLabel); true }
     }
     com.ambient.tv.ui.keyboard.RegisterKeyAction(com.ambient.tv.ui.keyboard.KeyAction.SEEK_BACK) { seek(forward = false) }
