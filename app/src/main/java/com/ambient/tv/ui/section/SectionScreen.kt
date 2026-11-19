@@ -946,7 +946,10 @@ private fun RecommendationRowsPage(
             if (pending == index) {
                 pendingVisualRowIndex.intValue = -1
                 // Focus arrives while the D-pad glide is still running; it centers the row.
-                if (rowsState.isScrollInProgress) return@collectLatest
+                if (rowsState.isScrollInProgress) {
+                    if (index == restoreRowIndex) returningRow = false
+                    return@collectLatest
+                }
             }
             if (returningRow) {
                 if (index == restoreRowIndex) returningRow = false

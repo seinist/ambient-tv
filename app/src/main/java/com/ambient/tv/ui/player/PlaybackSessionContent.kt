@@ -218,6 +218,9 @@ fun PlaybackSessionContent(
 
     var wasNextUpVisible by remember(timelineKey) { mutableStateOf(false) }
     val nextUpFocus = remember(candidateKey) { androidx.compose.ui.focus.FocusRequester() }
+    // An open player panel or dialog (e.g. Details by Info) keeps the remote; the card waits.
+    val nextUpOwnsRemote = chrome == null ||
+        (chrome.panels.panel == com.ambient.tv.ui.common.UnifiedPlayerPanel.NONE && chrome.panels.dialogFocusOwner == null)
     var nextUpFocused by remember(candidateKey) { mutableStateOf(false) }
     LaunchedEffect(showNextUp) {
         if (wasNextUpVisible && !showNextUp && handledKey != candidateKey) navigation.returnToControls()
@@ -375,7 +378,7 @@ fun PlaybackSessionContent(
         Box(Modifier.fillMaxSize().onPreviewKeyEvent { event ->
             // A remote key while the visible Next Up card lacks focus (the starting player took
             // it) moves into the card instead of operating the hidden controls underneath.
-            if (showNextUp && !nextUpFocused && !handheld && event.type == KeyEventType.KeyDown &&
+            if (showNextUp && nextUpOwnsRemote && !nextUpFocused && !handheld && event.type == KeyEventType.KeyDown &&
                 event.key in NextUpRescueKeys &&
                 runCatching { nextUpFocus.requestFocus() }.getOrDefault(false)
             ) return@onPreviewKeyEvent true
@@ -408,6 +411,7 @@ fun PlaybackSessionContent(
             if (showNextUp) {
                 NextUpOverlay(
                     playFocus = nextUpFocus,
+                    claimFocus = nextUpOwnsRemote,
                     candidate = candidate,
                     secondsRemaining = secondsRemaining,
                     creditsCountdown = creditsRemainingMs != null,
