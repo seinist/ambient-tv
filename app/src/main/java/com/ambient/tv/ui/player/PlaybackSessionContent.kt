@@ -17,6 +17,7 @@ import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
@@ -168,7 +169,7 @@ fun PlaybackSessionContent(
     // timers and post-credit scenes (segments ending before EOF).
     val sponsorSettings = videoImagePreferences(androidx.compose.ui.platform.LocalContext.current)
     val terminalSponsorHandoff = canOfferNext && !metadata.successorsLoading && !navigation.skipOverlayBlocked &&
-        !navigation.chaptersOpen && candidateKey != dismissedKey && candidateKey != handledKey &&
+        !navigation.chaptersOpen && (candidateKey != dismissedKey || config.autoplay) && candidateKey != handledKey &&
         metadata.source == "youtube" && metadata.sponsorSkipEnabled && snapshot.status.playing &&
         sponsorSettings.youtubeSponsorBlockEnabled && terminalSponsorAutoAdvance(
             positionMs, durationMs,
@@ -178,8 +179,12 @@ fun PlaybackSessionContent(
             showOverlay = config.showOverlay,
             stillWatching = stillWatching,
         )
-    val nextUpDue = canOfferNext && !navigation.skipOverlayBlocked && !navigation.chaptersOpen && candidateKey != dismissedKey && candidateKey != handledKey &&
+    // Closing the card only hides it. With autoplay on (even when just switched on in the card)
+    // the next item still starts at the end; to stop that, switch autoplay off.
+    val nextUpEligible = canOfferNext && !navigation.skipOverlayBlocked && !navigation.chaptersOpen && candidateKey != handledKey &&
         (atEnd || timing.offer || terminalSponsorHandoff)
+    val nextUpDue = nextUpEligible && candidateKey != dismissedKey
+    val autoAdvanceDue = nextUpEligible && config.autoplay && !stillWatching
     // A hidden overlay still has to ask the still-watching question at the end.
     val showNextUp = nextUpDue && (config.showOverlay || (atEnd && stillWatching))
     // Once the outgoing title finishes, a still-watching prompt is a bounded choice, not a
@@ -212,6 +217,8 @@ fun PlaybackSessionContent(
     }
 
     var wasNextUpVisible by remember(timelineKey) { mutableStateOf(false) }
+    val nextUpFocus = remember(candidateKey) { androidx.compose.ui.focus.FocusRequester() }
+    var nextUpFocused by remember(candidateKey) { mutableStateOf(false) }
     LaunchedEffect(showNextUp) {
         if (wasNextUpVisible && !showNextUp && handledKey != candidateKey) navigation.returnToControls()
         wasNextUpVisible = showNextUp
@@ -306,9 +313,9 @@ fun PlaybackSessionContent(
     // The countdown runs on the known duration; autoplay used to wait for the engine's EOF only.
     // A stream that stalls in its last segment, or ends without reporting EOF, left Next Up at
     // "0" forever. Once the countdown has reached 0, hand over after a short grace for a real EOF.
-    val countdownExpired = !atEnd && !creditsDue && nextUpDue && config.autoplay && !stillWatching &&
+    val countdownExpired = !atEnd && !creditsDue && autoAdvanceDue &&
         creditsRemainingMs == null && timing.remainingMs <= 0L && snapshot.wantsToPlay
-    LaunchedEffect(acquired, atEnd, creditsDue, countdownExpired, terminalSponsorHandoff, candidateKey, showNextUp, nextUpDue, config.autoplay, stillWatching, queuePending, changingItem, metadata.successorsLoading, snapshot.generation) {
+    LaunchedEffect(acquired, atEnd, creditsDue, countdownExpired, terminalSponsorHandoff, candidateKey, showNextUp, nextUpDue, autoAdvanceDue, config.autoplay, stillWatching, queuePending, changingItem, metadata.successorsLoading, snapshot.generation) {
         if (terminalSponsorHandoff) {
             // This is the same guarded, once-per-candidate transition as ordinary EOF.
             // It runs only with an actual next item and only for an auto-skipped EOF range.
@@ -333,7 +340,7 @@ fun PlaybackSessionContent(
             com.ambient.tv.companion.CompanionQueuePlayback.pending || (handledKey != null && handledKey == candidateKey)) return@LaunchedEffect
         when {
             audioSuccessor != null && BackgroundPlaybackSession.sleepTimer.kind != SleepTimerKind.END_OF_ITEM -> playNext(automatic = true)
-            nextUpDue && config.autoplay && !stillWatching -> playNext(automatic = true)
+            autoAdvanceDue -> playNext(automatic = true)
             // This manual choice is kept only for NEXT_UP_CONFIRMATION_TIMEOUT_MS after EOF,
             // then the dedicated effect above closes the ended player if no key was pressed.
             showNextUp && config.autoplay && stillWatching -> Unit
@@ -349,6 +356,12 @@ fun PlaybackSessionContent(
         LocalPlaybackItemControls provides itemControls,
     ) {
         Box(Modifier.fillMaxSize().onPreviewKeyEvent { event ->
+            // A remote key while the visible Next Up card lacks focus (the starting player took
+            // it) moves into the card instead of operating the hidden controls underneath.
+            if (showNextUp && !nextUpFocused && !handheld && event.type == KeyEventType.KeyDown &&
+                event.key in NextUpRescueKeys &&
+                runCatching { nextUpFocus.requestFocus() }.getOrDefault(false)
+            ) return@onPreviewKeyEvent true
             // Next Up is a sibling of the renderer's controls. Handle media keys here so its
             // focused buttons cannot bypass Next/Previous, especially after native EOF.
             if (metadata.isLive || !ownsSnapshot ||
@@ -377,6 +390,7 @@ fun PlaybackSessionContent(
             ) { content() }
             if (showNextUp) {
                 NextUpOverlay(
+                    playFocus = nextUpFocus,
                     candidate = candidate,
                     secondsRemaining = secondsRemaining,
                     creditsCountdown = creditsRemainingMs != null,
@@ -402,7 +416,8 @@ fun PlaybackSessionContent(
                             navigation.returnToControls()
                         }
                     },
-                    modifier = Modifier.align(Alignment.BottomEnd).padding(if (handheld) 12.dp else 32.dp),
+                    modifier = Modifier.align(Alignment.BottomEnd).padding(if (handheld) 12.dp else 32.dp)
+                        .onFocusChanged { nextUpFocused = it.hasFocus },
                 )
             }
         }
@@ -414,6 +429,11 @@ fun PlaybackSessionContent(
         }
     }
 }
+
+private val NextUpRescueKeys = setOf(
+    Key.DirectionUp, Key.DirectionDown, Key.DirectionLeft, Key.DirectionRight,
+    Key.DirectionCenter, Key.Enter, Key.NumPadEnter,
+)
 
 /** How long Next Up waits at a countdown of 0 for the engine's own end before handing over. */
 internal const val NEXT_UP_EOF_GRACE_MS = 2_000L

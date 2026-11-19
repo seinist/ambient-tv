@@ -26,6 +26,8 @@ internal fun TransientPlayerActionFocus(
     onDismiss: () -> Unit,
     focusIdentity: Any? = null,
     hasActionFocus: Boolean = false,
+    /** Keep trying for as long as it is shown (a modal card the D-pad cannot leave anyway). */
+    persistent: Boolean = false,
 ) {
     val handheld = LocalHandheldUi.current
     val windowFocused = LocalWindowInfo.current.isWindowFocused
@@ -35,11 +37,15 @@ internal fun TransientPlayerActionFocus(
         if (!visible || handheld || !windowFocused || hasActionFocus) return@LaunchedEffect
         // A button composed in the same pass cannot reliably be focused before layout.
         delay(40)
-        repeat(12) {
+        var attempts = 0
+        // A player that is still starting (first frame, OSD, renderer focus) can refuse or take
+        // the focus for longer than a dozen frames; a modal card must still end up focused.
+        while (persistent || attempts < 12) {
             withFrameNanos { }
             if (currentActionFocused) return@LaunchedEffect
             if (runCatching { requester.requestFocus() }.getOrDefault(false)) return@LaunchedEffect
-            delay(50)
+            attempts++
+            delay(if (attempts < 12) 50 else 150)
         }
     }
     BackHandler(enabled = visible, onBack = onDismiss)
