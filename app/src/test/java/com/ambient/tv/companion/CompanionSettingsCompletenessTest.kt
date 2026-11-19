@@ -95,6 +95,7 @@ class CompanionSettingsCompletenessTest {
             projectmPresetShuffle = false, gaplessMusicEnabled = false, teletextSubtitleChoice = "150",
             lyricsVisible = false, lyricsOnlineEnabled = false, frameDropOverlayHistory = true,
             liveTvReminderAutoSwitch = true, autoUpdateCheck = false, projectmFavorites = setOf("chosen.milk"),
+            keyBindings = mapOf("refresh" to "183:0"),
         )
         val incoming = source().copy(tvheadendHost = "tvh.example", extras = SettingsBackupExtras(
             portable = portable, device = DeviceSettingsExtras(128, true), connections = ConnectionSettingsExtras(9984)))
@@ -119,6 +120,7 @@ class CompanionSettingsCompletenessTest {
             assertFalse(target.lyricsVisible)
             assertFalse(target.lyricsOnlineEnabled)
             assertTrue(target.frameDropOverlayHistory)
+            assertEquals(mapOf("refresh" to "183:0"), target.keyBindings)
             assertEquals(if (device) 128 else 256, target.imageCacheMb)
             assertEquals(device, target.cardImages1080)
             assertEquals(10002, target.tvheadendHtspPort)
