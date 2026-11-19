@@ -678,7 +678,11 @@ private fun SectionedYouTubeContent(
                     val index = rowKeys.indexOf(key)
                     if (index < 0) return@collectLatest
                     val alreadyCentered = centeringGate.consume(key)
-                    if (pending == key) pendingDpadRow.value = null
+                    if (pending == key) {
+                        pendingDpadRow.value = null
+                        // Focus arrives while the D-pad glide is still running; it centers the row.
+                        if (listState.isScrollInProgress) return@collectLatest
+                    }
                     if (initialRowFocus.value) {
                         initialRowFocus.value = false
                         // The initial/returned viewport was parked before the first focus.
@@ -713,6 +717,7 @@ private fun SectionedYouTubeContent(
                                 centeringGate.markCentered(rowKey)
                             }
                         },
+                        focusBeforeScroll = true,
                     ) { rowKeys },
                     state = listState,
                     contentPadding = PaddingValues(bottom = 36.dp),
@@ -1133,7 +1138,11 @@ private fun SectionedYouTubeCinematic(
             val index = rowKeys.indexOf(key)
             if (index < 0) return@collectLatest
             val alreadyCentered = centeringGate.consume(key)
-            if (pending == key) pendingDpadRow.value = null
+            if (pending == key) {
+                pendingDpadRow.value = null
+                // Focus arrives while the D-pad glide is still running; it centers the row.
+                if (listState.isScrollInProgress) return@collectLatest
+            }
             if (initialRowFocus.value) {
                 initialRowFocus.value = false
                 if (listState.layoutInfo.visibleItemsInfo.any { it.index == index }) return@collectLatest
@@ -1166,6 +1175,7 @@ private fun SectionedYouTubeCinematic(
                         centeringGate.markCentered(rowKey)
                     }
                 },
+                focusBeforeScroll = true,
             ) { rowKeys },
             state = listState,
             contentPadding = PaddingValues(bottom = 36.dp),
