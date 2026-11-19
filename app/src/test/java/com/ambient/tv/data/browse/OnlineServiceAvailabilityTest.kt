@@ -43,4 +43,16 @@ class OnlineServiceAvailabilityTest {
         assertFalse(onlineServiceRequestFailed(IllegalStateException("login required")))
         assertFalse(onlineServiceRequestFailed(IllegalStateException("empty feed")))
     }
+
+    @Test fun unvalidatedRouteIsNotAnInternetOutage() {
+        // Blocked connectivity probe (DNS filter, Private DNS, VPN, Shield): services keep working.
+        val unvalidated = internetReachability(hasNetwork = true, capabilitiesKnown = true,
+            validated = false, captivePortal = false)
+        assertEquals(InternetReachability.UNKNOWN, unvalidated)
+        assertTrue(OnlineServiceSnapshot(internet = unvalidated, hasNetwork = true)
+            .unavailableServices(ONLINE_SERVICE_KEYS).isEmpty())
+        assertEquals(InternetReachability.AVAILABLE, internetReachability(true, true, validated = true, captivePortal = false))
+        assertEquals(InternetReachability.UNAVAILABLE, internetReachability(true, true, validated = false, captivePortal = true))
+        assertEquals(InternetReachability.UNAVAILABLE, internetReachability(false, false, validated = false, captivePortal = false))
+    }
 }

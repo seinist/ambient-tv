@@ -37,6 +37,8 @@ class PlaybackSeekCoordinator(
     private var requestEngineMs: Long = -1L
     /** Keep chapter navigation on the requested boundary while its preceding keyframe plays. */
     private var chapterTargetMs: Long? = null
+    /** Since when a playing clock has stayed outside the target's landing window. */
+    private var driftSinceMs: Long? = null
 
     val pendingTarget: Long? get() = pendingTargetMs
 
@@ -72,6 +74,7 @@ class PlaybackSeekCoordinator(
         // keep reporting its old/start position for several seconds. Do not let an alignment from
         // the previous request hand the OSD back to that stale clock.
         alignedAtMs = null
+        driftSinceMs = null
         optimisticAckTargetMs = null
         optimisticAckCommittedMs = null
         optimisticAckStopped = false
@@ -103,6 +106,18 @@ class PlaybackSeekCoordinator(
             return engine
         }
         observeAlignment(pending, engine, now, movedNow)
+        // A decoder that keeps playing steadily away from the target never received the seek
+        // (lost across an item hand-over such as SmartTube's Next Up autoplay, or superseded by
+        // a source reload). Holding the target then froze the OSD clock for good, and every
+        // further seek stacked on that phantom time. Give the OSD back to the real clock.
+        if (lostSeek(pending, engine, now)) {
+            pendingTargetMs = null
+            lastCommittedTargetMs = null
+            alignedAtMs = null
+            driftSinceMs = null
+            chapterTargetMs = null
+            return engine
+        }
         // SmartTube's VOD renderers can actually start from the previous keyframe (mpv uses
         // absolute+keyframes and Media3 uses CLOSEST_SYNC). That is valid playback, not an OSD
         // instruction to move the seek thumb backward from the time the viewer just selected.
@@ -120,6 +135,18 @@ class PlaybackSeekCoordinator(
         lastCommittedTargetMs = null
         alignedAtMs = null
         return engine
+    }
+
+    private fun lostSeek(target: Long, engine: Long, now: Long): Boolean {
+        val playing = now - engineMovedAtMs < IDLE_MS
+        val lower = (target - ALIGN_BEFORE_MS).coerceAtLeast(0L)
+        val upper = target.coerceAtMost(Long.MAX_VALUE - ALIGN_AFTER_MS) + ALIGN_AFTER_MS
+        if (!playing || engine in lower..upper) {
+            driftSinceMs = null
+            return false
+        }
+        val since = driftSinceMs ?: now.also { driftSinceMs = it }
+        return now - since >= LOST_SEEK_MS && now - lastRequestAtMs >= LOST_SEEK_MS
     }
 
     private fun handsOver(pending: Long, engine: Long, now: Long): Boolean {
@@ -218,5 +245,7 @@ class PlaybackSeekCoordinator(
         const val CONTINUITY_MS = 400L
         /** A stopped clock dropping further than this after its ack fell back to a keyframe. */
         const val STOPPED_DROP_MS = 250L
+        /** A clock playing this long outside the landing window did not get the seek. */
+        const val LOST_SEEK_MS = 6_000L
     }
 }

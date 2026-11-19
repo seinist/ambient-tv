@@ -47,6 +47,25 @@ internal data class OnlineServiceSnapshot(
     }
 }
 
+/**
+ * Android's validation probe is not proof of an outage: DNS filters (Pi-hole, AdGuard), Private
+ * DNS, VPN routes and some devices (NVIDIA Shield) leave a working route permanently unvalidated.
+ * Only a missing route or a captive portal blocks every online service at once; anything else is
+ * left to the services' own request results.
+ */
+internal fun internetReachability(
+    hasNetwork: Boolean,
+    capabilitiesKnown: Boolean,
+    validated: Boolean,
+    captivePortal: Boolean,
+): InternetReachability = when {
+    !hasNetwork -> InternetReachability.UNAVAILABLE
+    !capabilitiesKnown -> InternetReachability.UNKNOWN
+    validated -> InternetReachability.AVAILABLE
+    captivePortal -> InternetReachability.UNAVAILABLE
+    else -> InternetReachability.UNKNOWN
+}
+
 /** Distinguish an unreachable API from auth, rate limits, empty feeds and cancelled requests. */
 internal fun onlineServiceRequestFailed(error: Throwable): Boolean {
     var cause: Throwable? = error
@@ -119,13 +138,12 @@ class OnlineServiceAvailability @Inject constructor(@ApplicationContext context:
                 delay(1_500)
                 val network = connectivity?.activeNetwork
                 val capabilities = network?.let { connectivity.getNetworkCapabilities(it) }
-                val reachability = when {
-                    network == null -> InternetReachability.UNAVAILABLE
-                    capabilities == null -> InternetReachability.UNKNOWN
-                    capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED) -> InternetReachability.AVAILABLE
-                    capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) -> InternetReachability.UNAVAILABLE
-                    else -> InternetReachability.UNAVAILABLE
-                }
+                val reachability = internetReachability(
+                    hasNetwork = network != null,
+                    capabilitiesKnown = capabilities != null,
+                    validated = capabilities?.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED) == true,
+                    captivePortal = capabilities?.hasCapability(NetworkCapabilities.NET_CAPABILITY_CAPTIVE_PORTAL) == true,
+                )
                 val id = network?.toString()
                 synchronized(this@OnlineServiceAvailability) {
                     val previous = mutable.value
