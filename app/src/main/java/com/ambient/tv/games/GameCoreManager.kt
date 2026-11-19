@@ -11,12 +11,22 @@ import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.io.IOException
+import java.io.InputStream
+import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.Json
 import java.io.RandomAccessFile
 import java.net.HttpURLConnection
 import java.net.URL
 import java.util.zip.ZipInputStream
 import javax.inject.Inject
 import javax.inject.Singleton
+
+/** Where an installed core came from ([GameCoreManager.SOURCE_BUILDBOT] or a file name) and when. */
+@Serializable
+data class GameCoreInfo(val origin: String, val installedAt: Long)
+
+@Serializable
+private data class GameCoreDeclaredOption(val key: String, val description: String)
 
 /** A core file that cannot run on this device (wrong layout for its memory pages, not a library). */
 class GameCoreIncompatibleException(message: String) : IOException(message)
@@ -40,14 +50,12 @@ class GameCoreManager @Inject constructor(@ApplicationContext private val contex
 
     fun remove(core: GameCore) {
         file(core).let { it.setWritable(true); it.delete() }
+        infoFile(core).delete()
     }
 
     /** Downloads and installs [core]; [onProgress] gets 0…1, or null while the size is unknown. */
     suspend fun download(core: GameCore, onProgress: (Float?) -> Unit): File = withContext(Dispatchers.IO) {
         val url = sourceUrl(core) ?: throw GameCoreIncompatibleException("No core build for ${Build.SUPPORTED_ABIS.joinToString()}")
-        directory.mkdirs()
-        val partial = File(directory, "${core.id}.download")
-        partial.delete()
         val connection = (URL(url).openConnection() as HttpURLConnection).apply {
             connectTimeout = 15_000
             readTimeout = 30_000
@@ -65,25 +73,44 @@ class GameCoreManager @Inject constructor(@ApplicationContext private val contex
                     }
                 }
             }
-            var found = false
-            ZipInputStream(counting.buffered()).use { zip ->
+            install(core, counting.buffered(), zipped = true, origin = SOURCE_BUILDBOT)
+        } finally {
+            connection.disconnect()
+        }
+    }
+
+    /**
+     * Installs [core] from [input]: the library itself, or a ZIP holding it ([zipped]). Checked like
+     * a download; [origin] is shown in settings (the buildbot or the file it came from).
+     */
+    suspend fun install(core: GameCore, input: InputStream, zipped: Boolean, origin: String): File = withContext(Dispatchers.IO) {
+        directory.mkdirs()
+        val partial = File(directory, "${core.id}.download")
+        partial.delete()
+        val job = currentCoroutineContext()[kotlinx.coroutines.Job]
+        try {
+            fun copy(from: InputStream) = partial.outputStream().use { out ->
+                val buffer = ByteArray(64 * 1024)
                 while (true) {
-                    val entry = zip.nextEntry ?: break
-                    if (entry.isDirectory || !entry.name.endsWith(".so")) continue
-                    partial.outputStream().use { out ->
-                        val buffer = ByteArray(64 * 1024)
-                        while (true) {
-                            currentCoroutineContext().ensureActive()
-                            val count = zip.read(buffer)
-                            if (count < 0) break
-                            out.write(buffer, 0, count)
-                        }
-                    }
-                    found = true
-                    break
+                    job?.ensureActive()
+                    val count = from.read(buffer)
+                    if (count < 0) break
+                    out.write(buffer, 0, count)
                 }
             }
-            if (!found) throw GameCoreIncompatibleException("No library in ${core.id} download")
+            if (zipped) {
+                var found = false
+                ZipInputStream(input).use { zip ->
+                    while (true) {
+                        val entry = zip.nextEntry ?: break
+                        if (entry.isDirectory || !entry.name.endsWith(".so")) continue
+                        copy(zip)
+                        found = true
+                        break
+                    }
+                }
+                if (!found) throw GameCoreIncompatibleException("No library in ${core.id} archive")
+            } else input.use(::copy)
             checkElf(partial, pageSize())
             val target = file(core)
             target.setWritable(true)
@@ -91,14 +118,41 @@ class GameCoreManager @Inject constructor(@ApplicationContext private val contex
             if (!partial.renameTo(target)) throw IOException("Cannot install ${core.id}")
             // Android 14 refuses writable files for loaded code; the core never changes in place.
             target.setReadOnly()
+            infoFile(core).writeText(json.encodeToString(GameCoreInfo.serializer(), GameCoreInfo(origin, System.currentTimeMillis())))
             target
         } finally {
-            connection.disconnect()
             partial.delete()
         }
     }
 
+    /** Where the installed core came from and when, or null (older installs, none). */
+    fun info(core: GameCore): GameCoreInfo? = installed(core)?.let {
+        runCatching { json.decodeFromString(GameCoreInfo.serializer(), infoFile(core).readText()) }.getOrNull()
+            ?: GameCoreInfo(SOURCE_BUILDBOT, it.lastModified())
+    }
+
+    /** The options [core] declared when it last ran (key → description), for settings outside a game. */
+    fun saveDeclaredOptions(core: GameCore, options: List<Pair<String, String?>>) {
+        if (options.isEmpty()) return
+        runCatching {
+            optionsDirectory.mkdirs()
+            val list = options.map { (key, description) -> GameCoreDeclaredOption(key, description.orEmpty()) }
+            File(optionsDirectory, "${core.id}.json").writeText(json.encodeToString(declaredSerializer, list))
+        }
+    }
+
+    fun declaredOptions(core: GameCore): List<Pair<String, String>> = runCatching {
+        json.decodeFromString(declaredSerializer, File(optionsDirectory, "${core.id}.json").readText()).map { it.key to it.description }
+    }.getOrDefault(emptyList())
+
+    private val optionsDirectory: File get() = File(context.noBackupFilesDir, "games/options")
+    private fun infoFile(core: GameCore) = File(directory, "${core.id}.json")
+
     companion object {
+        /** [GameCoreInfo.origin] of cores from the libretro buildbot. */
+        const val SOURCE_BUILDBOT = "buildbot"
+        private val json = Json { ignoreUnknownKeys = true }
+        private val declaredSerializer = kotlinx.serialization.builtins.ListSerializer(GameCoreDeclaredOption.serializer())
         const val BUILDBOT = "https://buildbot.libretro.com/nightly/android/latest"
         val BUILDBOT_ABIS = setOf("arm64-v8a", "armeabi-v7a", "x86_64", "x86")
 

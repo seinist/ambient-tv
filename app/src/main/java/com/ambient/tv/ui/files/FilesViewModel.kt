@@ -46,6 +46,8 @@ data class FilesUiState(
     val tags: Map<String, AudioTags> = emptyMap(),
     /** cover.jpg / folder.jpg of the open folder, served through the media bridge. */
     val folderCover: String? = null,
+    /** Game data (BIOS, cores, core files) of the open folder is being copied into the app. */
+    val importingGameData: Boolean = false,
 )
 
 data class ServerKeyChallenge(val sourceId: String, val fingerprint: String, val certificate: Boolean, val changed: Boolean)
@@ -62,6 +64,7 @@ class FilesViewModel @Inject constructor(
     private val snapshots: com.ambient.tv.data.browse.DisplaySnapshots,
     private val textFiles: com.ambient.tv.data.files.TextFileImporter,
     private val gameBios: com.ambient.tv.games.GameBiosManager,
+    private val gameData: com.ambient.tv.games.GameDataImporter,
 ) : ViewModel() {
     val feedback = OperationFeedbackReporter()
     private fun fileError(message: Int) = OperationFeedback("files:browse", "browse", message,
@@ -179,7 +182,7 @@ class FilesViewModel @Inject constructor(
                 }
             }
             try {
-                val result = access.list(source, location.path, limit) { it.playable || it.image || it.game || it.bios }
+                val result = access.list(source, location.path, limit) { it.playable || it.image || it.game || it.bios || it.core }
                 currentCoroutineContext().ensureActive()
                 if (store.sources().none { it.id == source.id && it.sameLocation(source) }) return@launch
                 snapshots.write(owner, namespace, cacheKey, result)
@@ -284,6 +287,7 @@ class FilesViewModel @Inject constructor(
     fun open(entry: FileEntry, play: (String, Boolean) -> Unit, restart: Boolean = false, openPhotos: () -> Unit = {}, openGame: (String) -> Unit = {}) {
         if (entry.image) { if (preparePhotos(entry)) openPhotos(); return }
         if (entry.bios) { saved["focus"] = entry.id; importBios(entry); return }
+        if (entry.core) { saved["focus"] = entry.id; importCore(entry); return }
         if (entry.game) { saved["focus"] = entry.id; openGame(entry.id); return }
         if (!entry.directory) { repository.setQueue(_state.value.entries); saved["focus"] = entry.id; play(entry.id, restart); return }
         if (folders.isEmpty()) {
@@ -299,6 +303,52 @@ class FilesViewModel @Inject constructor(
         }
         saved["focus"] = null; limit = 300; rememberFolders(); refresh()
     }
+    /** Installs a libretro core file (checked like a download) in app storage. */
+    private fun importCore(entry: FileEntry) {
+        viewModelScope.launch {
+            val result = runCatching { gameData.importCore(entry.id) }
+            gameNotice(
+                ok = result.isSuccess,
+                message = if (result.isSuccess) R.string.game_core_imported else R.string.game_bios_import_failed,
+                args = listOf(result.getOrNull()?.name ?: entry.name),
+            )
+        }
+    }
+
+    /**
+     * Copies the open folder with its subfolders into app storage: cores, BIOS files and the other
+     * files cores read from their system folder (a RetroArch "system" folder, for instance).
+     */
+    fun importGameData() {
+        val location = folders.lastOrNull() ?: return
+        if (_state.value.importingGameData) return
+        _state.update { it.copy(importingGameData = true) }
+        viewModelScope.launch {
+            val result = runCatching { gameData.importFolder(FileKeys.key(location.sourceId, location.path)) }
+            _state.update { it.copy(importingGameData = false) }
+            result.fold(
+                onSuccess = { done ->
+                    gameNotice(ok = true, message = R.string.game_data_imported, args = listOf(
+                        done.bios.toString(), done.verifiedBios.toString(),
+                        done.cores.joinToString(", ") { it.name }.ifEmpty { "–" }, done.extras.toString(),
+                    ))
+                },
+                onFailure = { gameNotice(ok = false, message = R.string.game_data_import_failed, args = listOf(location.name)) },
+            )
+        }
+    }
+
+    private fun gameNotice(ok: Boolean, message: Int, args: List<String>) {
+        com.ambient.tv.notifications.AppNotifications.post(com.ambient.tv.notifications.AppNotice(
+            key = "game-data-import",
+            message = message,
+            phase = if (ok) com.ambient.tv.notifications.NoticePhase.SUCCESS else com.ambient.tv.notifications.NoticePhase.ERROR,
+            kind = com.ambient.tv.notifications.NoticeKind.SETTINGS,
+            args = args,
+            interruptPlayback = false,
+        ))
+    }
+
     /** Copies a console firmware file into the games' system folder and reports whether it is the expected one. */
     private fun importBios(entry: FileEntry) {
         viewModelScope.launch {

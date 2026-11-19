@@ -119,6 +119,8 @@ data class FileEntry(
     val game: Boolean get() = !directory && com.ambient.tv.games.GameSystems.isGame(name)
     /** A console firmware file (BIOS) a core needs; opening it takes it over for games. */
     val bios: Boolean get() = !directory && com.ambient.tv.games.GameSystems.isBios(name)
+    /** A libretro core file; opening it installs the core. */
+    val core: Boolean get() = !directory && com.ambient.tv.games.GameSystems.isCore(name)
 }
 
 @Serializable

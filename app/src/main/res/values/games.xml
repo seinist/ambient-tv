@@ -75,12 +75,12 @@
     <string name="games_settings_hint">BIOS files, loaded cores and the game cache</string>
     <string name="games_settings_explanation">Games run with libretro cores on this device. Everything stays local: BIOS files, saves and save states.</string>
     <string name="games_bios">BIOS files</string>
-    <string name="games_bios_hint">Open a BIOS file with its usual name in the file browser to add it. Selecting a present file removes it.</string>
+    <string name="games_bios_hint">Open a BIOS file in the file browser, or choose “Take over game data” in a folder with BIOS or core files: everything is copied into app storage to stay, subfolders included. Selecting a present file removes it.</string>
     <string name="games_bios_optional">optional</string>
     <string name="games_bios_required">required</string>
     <string name="games_bios_required_for">required for %1$s</string>
     <string name="games_cores">Loaded cores</string>
-    <string name="games_cores_hint">Selecting a core removes it; the next game of its system loads the current version.</string>
+    <string name="games_cores_hint">Load or reload cores here from the libretro build server, or take one over from a file in the file browser (&lt;core&gt;_libretro_android.so, zipped too). They are checked and kept read-only in app storage.</string>
     <string name="games_cores_none">No core loaded yet.</string>
     <string name="games_core_summary">%1$s · %2$s</string>
     <string name="games_cache">Game cache</string>
@@ -109,4 +109,21 @@
     <string name="game_core_game_reset_hint">The game goes back to the values for all games.</string>
     <string name="game_settings_rewind">Rewind</string>
     <string name="game_settings_rewind_hint">Keeps the last 20 seconds ready; its key is set under game controls.</string>
+    <string name="games_core_missing">Not loaded</string>
+    <string name="games_core_from_buildbot">libretro build server · %1$s</string>
+    <string name="games_core_from_file">From %1$s · %2$s</string>
+    <string name="games_core_update">Reload</string>
+    <string name="games_core_download_failed">%1$s could not be loaded: %2$s</string>
+    <string name="games_core_options_unknown">The options show once a game has run with this core.</string>
+    <string name="games_core_options_hint">They apply to every game with this core; selecting steps to the next value. Games with their own values keep them.</string>
+    <string name="games_core_option_default">%1$s (default)</string>
+    <string name="games_system_files">Further system files</string>
+    <string name="games_system_files_hint">Files cores look for in their system folder besides the BIOS, for example from a RetroArch “system” folder. Take them over in the file browser with “Take over game data”.</string>
+    <string name="games_system_files_none">No further files.</string>
+    <string name="games_system_files_count">%1$d files</string>
+    <string name="games_system_file_remove">%1$s · selecting removes the file</string>
+    <string name="files_game_data_import">Take over game data (BIOS, cores, system files)</string>
+    <string name="game_core_imported">Core %1$s taken over</string>
+    <string name="game_data_imported">Taken over: %1$s BIOS (%2$s verified), cores: %3$s, %4$s further files</string>
+    <string name="game_data_import_failed">Game data from %1$s could not be taken over</string>
 </resources>

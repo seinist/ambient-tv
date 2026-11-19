@@ -75,12 +75,12 @@
     <string name="games_settings_hint">BIOS-Dateien, geladene Cores und Spiele-Cache</string>
     <string name="games_settings_explanation">Spiele laufen mit libretro-Cores auf diesem Gerät. Alles bleibt lokal: BIOS-Dateien, Spielspeicher und Spielstände.</string>
     <string name="games_bios">BIOS-Dateien</string>
-    <string name="games_bios_hint">Eine BIOS-Datei mit ihrem üblichen Namen im Dateibrowser öffnen, um sie hinzuzufügen. Eine vorhandene Datei auswählen entfernt sie.</string>
+    <string name="games_bios_hint">Eine BIOS-Datei im Dateibrowser öffnen oder in einem Ordner mit BIOS- oder Core-Dateien „Spieldaten übernehmen“ wählen: Alles wird fest in den App-Speicher kopiert, auch aus Unterordnern. Eine vorhandene Datei auswählen entfernt sie.</string>
     <string name="games_bios_optional">optional</string>
     <string name="games_bios_required">erforderlich</string>
     <string name="games_bios_required_for">erforderlich für %1$s</string>
     <string name="games_cores">Geladene Cores</string>
-    <string name="games_cores_hint">Einen Core auswählen entfernt ihn; das nächste Spiel seines Systems lädt die aktuelle Version.</string>
+    <string name="games_cores_hint">Cores lassen sich hier vom libretro-Buildserver laden oder neu laden, oder im Dateibrowser aus einer Datei übernehmen (&lt;core&gt;_libretro_android.so, auch gezippt). Sie werden geprüft und liegen schreibgeschützt im App-Speicher.</string>
     <string name="games_cores_none">Noch kein Core geladen.</string>
     <string name="games_core_summary">%1$s · %2$s</string>
     <string name="games_cache">Spiele-Cache</string>
@@ -109,4 +109,21 @@
     <string name="game_core_game_reset_hint">Das Spiel nutzt wieder die Werte für alle Spiele.</string>
     <string name="game_settings_rewind">Zurückspulen</string>
     <string name="game_settings_rewind_hint">Hält die letzten 20 Sekunden bereit; die Taste dafür liegt in der Spielsteuerung.</string>
+    <string name="games_core_missing">Nicht geladen</string>
+    <string name="games_core_from_buildbot">libretro-Buildserver · %1$s</string>
+    <string name="games_core_from_file">Aus %1$s · %2$s</string>
+    <string name="games_core_update">Neu laden</string>
+    <string name="games_core_download_failed">%1$s konnte nicht geladen werden: %2$s</string>
+    <string name="games_core_options_unknown">Die Optionen erscheinen, sobald ein Spiel mit diesem Core gelaufen ist.</string>
+    <string name="games_core_options_hint">Gelten für alle Spiele mit diesem Core; Auswählen schaltet zum nächsten Wert. Eigene Werte einzelner Spiele bleiben erhalten.</string>
+    <string name="games_core_option_default">%1$s (Standard)</string>
+    <string name="games_system_files">Weitere Systemdateien</string>
+    <string name="games_system_files_hint">Dateien, die Cores außer dem BIOS in ihrem Systemordner suchen, etwa aus einem RetroArch-Ordner „system“. Übernehmen im Dateibrowser mit „Spieldaten übernehmen“.</string>
+    <string name="games_system_files_none">Keine weiteren Dateien.</string>
+    <string name="games_system_files_count">%1$d Dateien</string>
+    <string name="games_system_file_remove">%1$s · Auswählen entfernt die Datei</string>
+    <string name="files_game_data_import">Spieldaten übernehmen (BIOS, Cores, Systemdateien)</string>
+    <string name="game_core_imported">Core %1$s übernommen</string>
+    <string name="game_data_imported">Übernommen: %1$s BIOS (%2$s geprüft), Cores: %3$s, %4$s weitere Dateien</string>
+    <string name="game_data_import_failed">Spieldaten aus %1$s konnten nicht übernommen werden</string>
 </resources>

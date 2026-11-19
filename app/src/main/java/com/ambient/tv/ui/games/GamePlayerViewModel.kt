@@ -153,6 +153,11 @@ class GamePlayerViewModel @Inject constructor(
     /** Removes a core (e.g. after it failed) so the next start loads it again. */
     fun removeCore(core: GameCore) = cores.remove(core)
 
+    /** Remembers what [core] declares, so settings can offer its options outside a game. */
+    fun saveDeclaredOptions(core: GameCore, options: List<Pair<String, String?>>) {
+        viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) { cores.saveDeclaredOptions(core, options) }
+    }
+
     fun saveSram(game: PreparedGame, bytes: ByteArray) = storage.write(storage.sramFile(game), bytes)
 
     fun saveState(session: GameSession, kind: GameStateKind, bytes: ByteArray, screenshot: Bitmap?): GameStateEntry {

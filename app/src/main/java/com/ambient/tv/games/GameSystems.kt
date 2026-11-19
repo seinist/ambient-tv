@@ -96,7 +96,7 @@ object GameSystems {
     fun forFile(name: String): GameSystem? = byExtension[extension(name)]
 
     /** Files the browser offers as games (archives included). */
-    fun isGame(name: String): Boolean = !isBios(name) && extension(name).let { it in byExtension || it in archiveExtensions }
+    fun isGame(name: String): Boolean = !isBios(name) && !isCore(name) && extension(name).let { it in byExtension || it in archiveExtensions }
 
     fun byId(id: String): GameSystem? = all.firstOrNull { it.id == id }
 
@@ -106,4 +106,22 @@ object GameSystems {
     }
 
     fun isBios(name: String): Boolean = bios(name).isNotEmpty()
+
+    /** Every core, once. */
+    val cores: List<GameCore> get() = all.map { it.core }.distinctBy { it.id }
+
+    /**
+     * The core a libretro core file belongs to: "<core>_libretro_android.so" as the buildbot names
+     * it, "<core>_libretro.so" as RetroArch keeps it, each also zipped.
+     */
+    fun coreForFile(name: String): GameCore? {
+        val lower = name.lowercase(Locale.ROOT).removeSuffix(".zip")
+        if (!lower.endsWith(".so")) return null
+        val stem = lower.removeSuffix(".so").removeSuffix("_android")
+        if (!stem.endsWith("_libretro")) return null
+        val id = stem.removeSuffix("_libretro")
+        return cores.firstOrNull { it.id == id }
+    }
+
+    fun isCore(name: String): Boolean = coreForFile(name) != null
 }

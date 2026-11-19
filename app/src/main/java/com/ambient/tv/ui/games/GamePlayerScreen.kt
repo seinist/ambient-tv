@@ -434,6 +434,8 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
             if (event == GLRetroView.GLRetroEvents.SurfaceCreated) coreReady = true
             if (event == GLRetroView.GLRetroEvents.FrameRendered && !loaded) {
                 loaded = true
+                runCatching { retroView.getVariables().mapNotNull { v -> v.key?.let { it to v.description } } }
+                    .onSuccess { model.saveDeclaredOptions(core, it) }
                 session.autoState?.let { bytes ->
                     val restored = withContext(Dispatchers.Default) { runCatching { retroView.unserializeState(bytes) }.getOrDefault(false) }
                     if (restored) message = context.getString(R.string.game_message_continued)

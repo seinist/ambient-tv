@@ -58,6 +58,30 @@ class GamesTest {
         assertNull(GameCoreOption.parse("x", null, null))
     }
 
+    @Test fun coreFilesAreRecognisedByName() {
+        assertEquals("snes9x", GameSystems.coreForFile("snes9x_libretro_android.so")?.id)
+        assertEquals("snes9x", GameSystems.coreForFile("snes9x_libretro_android.so.zip")?.id)
+        assertEquals("mgba", GameSystems.coreForFile("MGBA_LIBRETRO.SO")?.id)
+        assertEquals("mupen64plus_next_gles3", GameSystems.coreForFile("mupen64plus_next_gles3_libretro_android.so")?.id)
+        assertNull(GameSystems.coreForFile("unknown_libretro_android.so"))
+        assertNull(GameSystems.coreForFile("snes9x.so"))
+        assertNull(GameSystems.coreForFile("snes9x_libretro_android.zip"))
+        // A zipped core is not offered as a game archive.
+        assertFalse(GameSystems.isGame("snes9x_libretro_android.so.zip"))
+        assertTrue(GameSystems.isGame("Zelda.zip"))
+        assertEquals(GameSystems.cores.size, GameSystems.cores.map { it.id }.toSet().size)
+    }
+
+    @Test fun folderImportsLeaveMediaAndGamesWhereTheyAre() {
+        fun entry(name: String) = com.ambient.tv.data.files.FileEntry("s", "/$name", name, directory = false)
+        assertTrue(GameDataImporter.wanted(entry("font.ttf")))
+        assertTrue(GameDataImporter.wanted(entry("hires_texture.png")))
+        assertFalse(GameDataImporter.wanted(entry("Zelda.sfc")))
+        assertFalse(GameDataImporter.wanted(entry("movie.mkv")))
+        assertFalse(GameDataImporter.wanted(entry(".DS_Store")))
+        assertEquals("a_b_c.bin", GameDataImporter.safeName("a/b:c.bin"))
+    }
+
     @Test fun gameOptionsOverrideCoreOptions() {
         val n64 = GameSystems.byId("n64")!!.core
         var state = GameSettingsState()

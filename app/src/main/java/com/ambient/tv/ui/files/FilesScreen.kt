@@ -179,6 +179,11 @@ fun FilesScreen(onPlay: (String, Boolean) -> Unit, onBack: () -> Unit, contentAc
             TvChip(stringResource(R.string.action_reload), icon = Icons.Default.Refresh,
                 loading = state.loading || state.refreshing, iconOnly = true,
                 onClick = { keepHeaderFocus = true; viewModel.reload() })
+            // A folder with BIOS or core files: copy it (with subfolders) into the app for games.
+            if (state.folders.isNotEmpty() && state.entries.any { it.bios || it.core }) {
+                TvChip(stringResource(R.string.files_game_data_import), icon = Icons.Default.Memory, iconOnly = true,
+                    loading = state.importingGameData, onClick = viewModel::importGameData)
+            }
             // Folder slideshow (optionally with subfolders, see photo settings).
             if (hasImages) {
                 TvChip(stringResource(R.string.photos_slideshow), icon = Icons.Default.Slideshow, iconOnly = true) { if (viewModel.preparePhotos(null)) onOpenPhotos() }
@@ -283,6 +288,7 @@ fun FilesScreen(onPlay: (String, Boolean) -> Unit, onBack: () -> Unit, contentAc
                                 entry.image -> Icons.Default.Image
                                 entry.game -> Icons.Default.SportsEsports
                                 entry.bios -> Icons.Default.Memory
+                                entry.core -> Icons.Default.Extension
                                 entry.audio -> Icons.Default.AudioFile
                                 else -> Icons.Default.VideoFile
                             },
