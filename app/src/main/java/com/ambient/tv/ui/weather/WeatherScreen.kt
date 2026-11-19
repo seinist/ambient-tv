@@ -157,10 +157,10 @@ fun WeatherScreen(
                 TvChip(stringResource(R.string.back), icon = Icons.AutoMirrored.Filled.ArrowBack,
                     iconOnly = true, modifier = Modifier.leftKeyAction(back), onClick = back)
             }
-            if (tab == "overview") TvChip(stringResource(R.string.weather_refresh), icon = Icons.Filled.Refresh,
+            if (tab == "overview") TvChip(stringResource(R.string.action_reload), icon = Icons.Filled.Refresh,
                 iconOnly = true, enabled = settings.enabled && location != null,
                 loading = state.loading, onClick = viewModel::retryForecast)
-            TvChip(stringResource(R.string.weather_settings), icon = Icons.Filled.Settings,
+            TvChip(stringResource(R.string.nav_settings), icon = Icons.Filled.Settings,
                 iconOnly = true, onClick = onOpenSettings)
         }) {
             Text(stringResource(R.string.weather_title), style = MaterialTheme.typography.headlineMedium)

@@ -162,7 +162,7 @@
     <string name="action_now_playing">Now playing</string>
     <string name="action_folder">Folder</string>
     <string name="action_nas">NAS</string>
-    <string name="action_reload">Reload</string>
+    <string name="action_reload">Refresh</string>
     <string name="action_server_search">Search for server</string>
     <string name="action_without_sign_in">Without signing in</string>
     <string name="detail_resume_remaining">Resume · %1$s left</string>

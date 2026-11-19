@@ -162,7 +162,7 @@
     <string name="action_now_playing">Jetzt läuft</string>
     <string name="action_folder">Ordner</string>
     <string name="action_nas">NAS</string>
-    <string name="action_reload">Neu laden</string>
+    <string name="action_reload">Aktualisieren</string>
     <string name="action_server_search">Server suchen</string>
     <string name="action_without_sign_in">Ohne Anmeldung</string>
     <string name="detail_resume_remaining">Fortsetzen · %1$s übrig</string>
