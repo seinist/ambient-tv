@@ -23,6 +23,8 @@ internal class BackgroundPlayerReturnNavigation {
     private var inheritReentryForNextPlayer = false
     /** Set before an OSD exit callback pops its player destination; consumed on browse entry. */
     private var fullscreenExitEntryId: String? = null
+    /** Root Back opened the menu while a session plays on: Back in the menu returns to it. */
+    private var menuBackReturnsToPlayer = false
 
     fun enterPlayer(entryId: String, previousIsPlayer: Boolean) {
         if (reopenedPlayerEntryId != entryId) {
@@ -34,7 +36,17 @@ internal class BackgroundPlayerReturnNavigation {
         }
         inheritReentryForNextPlayer = false
         armedBySidebarBack = false
+        menuBackReturnsToPlayer = false
     }
+
+    /** Fullscreen → Back → page → Back opens the menu; the next Back belongs to the player chain. */
+    fun menuOpenedByBack(hasActivePlayback: Boolean) {
+        menuBackReturnsToPlayer = hasActivePlayback
+    }
+
+    /** One-shot: true when Back closed a menu that Back had opened during active playback. */
+    fun consumeMenuBackToPlayer(hasActivePlayback: Boolean): Boolean =
+        (menuBackReturnsToPlayer && hasActivePlayback).also { menuBackReturnsToPlayer = false }
 
     fun markMiniPlayerReentry(entryId: String?) {
         reopenedPlayerEntryId = entryId
@@ -63,6 +75,7 @@ internal class BackgroundPlayerReturnNavigation {
         fullscreenExitEntryId = null
         reopenedPlayerEntryId = null
         inheritReentryForNextPlayer = false
+        menuBackReturnsToPlayer = false
     }
 
     /** A Next/Previous shortcut may replace the current player entry before navigating again. */
@@ -98,5 +111,6 @@ internal class BackgroundPlayerReturnNavigation {
         reopenedPlayerEntryId = null
         inheritReentryForNextPlayer = false
         fullscreenExitEntryId = null
+        menuBackReturnsToPlayer = false
     }
 }
