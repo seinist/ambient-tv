@@ -122,7 +122,7 @@
     <string name="game_picture_hdr_pq">PQ / HDR10 input</string>
     <string name="game_picture_hdr_hlg">HLG input</string>
     <string name="game_picture_hdr_hint">Only for a core that truly outputs PQ or HLG. Restarts the game; requests FP16 when supported, otherwise RGBA8. No native HDR output or automatic detection.</string>
-    <string name="game_picture_hdr_filter_note">Picture filters are temporarily bypassed while HDR conversion is selected.</string>
+    <string name="game_picture_hdr_filter_note">Picture filters remain active after HDR-to-SDR conversion in the GLES renderer. Native RAW fullscreen is restricted to compatible picture settings.</string>
     <string name="game_core_scope">Changes apply to</string>
     <string name="game_core_scope_game">This game only</string>
     <string name="game_core_scope_core">All games with %1$s</string>
