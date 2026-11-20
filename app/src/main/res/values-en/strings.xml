@@ -2441,4 +2441,7 @@
     <string name="accent_state_preview_selected">Selected</string>
     <string name="accent_state_preview_both">Both</string>
     <string name="player_seek_target">Target: %1$s</string>
+    <string name="settings_wake_on_open_title">Wake when opening an offline system</string>
+    <string name="settings_wake_on_open_for">Wake %1$s on open</string>
+    <string name="settings_wake_on_open_hint">Only when entering this offline system. Works even when automatic WOL is off.</string>
 </resources>

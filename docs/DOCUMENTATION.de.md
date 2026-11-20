@@ -1036,3 +1036,5 @@ Die Versionierung steht in `version.properties`:
 - [DOCUMENTATION.md](DOCUMENTATION.md) – English (Standard)
 - [docs/README.md](README.md) – Index
 - [README.md](../README.md) · [README.de.md](../README.de.md) – Kurzübersicht für GitHub
+
+**Wake-on-LAN beim Öffnen:** In **Einstellungen → Netzwerk → Wake-on-LAN** lässt sich für Plex, Jellyfin, Emby und TVHeadend unabhängig vom automatischen WOL die Option **Beim Öffnen wecken** einschalten. Standardmäßig ist sie aus. Bei einem offline angezeigten System bleibt **Aufwecken** mit gültiger MAC auch ohne automatisches WOL verfügbar, sowohl in Home als auch in der Systemansicht. Die gemeinsame physische Maschine wird anhand von Host und MAC erkannt (auch wenn nur ein anderer Dienst auf demselben Server die MAC besitzt); danach werden die Dienste dieser Maschine erneut geprüft. Andere Server werden nicht geweckt. Dateien und DLNA behalten ihre eigenen Optionen zum Wecken beim Öffnen.
