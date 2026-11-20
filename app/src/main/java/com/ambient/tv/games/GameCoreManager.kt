@@ -72,12 +72,12 @@ class GameCoreManager @Inject constructor(
         val current = file(core)
         if (!old.isFile) return false
         if (runCatching { checkElf(old, pageSize()) }.isFailure) return false
-        current.delete()
+        if (current.exists() && !current.delete()) return false
         if (!old.renameTo(current)) return false
         current.setReadOnly()
         val oldInfo = rollbackInfoFile(core)
         if (oldInfo.isFile) {
-            oldInfo.copyTo(infoFile(core), overwrite = true)
+            runCatching { oldInfo.copyTo(infoFile(core), overwrite = true) }
             oldInfo.delete()
         } else infoFile(core).delete()
         return true
@@ -177,7 +177,13 @@ class GameCoreManager @Inject constructor(
                 previous.delete()
                 oldInfo.delete()
                 if (!target.renameTo(previous)) throw IOException("Cannot back up previous ${core.id}")
-                if (info.isFile) info.copyTo(oldInfo, overwrite = true)
+                try {
+                    if (info.isFile) info.copyTo(oldInfo, overwrite = true)
+                } catch (error: Exception) {
+                    previous.renameTo(target)
+                    target.setReadOnly()
+                    throw error
+                }
             }
             try {
                 if (!partial.renameTo(target)) throw IOException("Cannot install ${core.id}")
