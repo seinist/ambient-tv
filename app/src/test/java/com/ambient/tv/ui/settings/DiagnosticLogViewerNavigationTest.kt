@@ -9,6 +9,11 @@ import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performKeyInput
+import androidx.compose.ui.test.performSemanticsAction
+import androidx.compose.ui.test.pressKey
+import androidx.compose.ui.semantics.SemanticsActions
+import androidx.compose.ui.input.key.Key
 import com.ambient.tv.diagnostics.DiagnosticLevel
 import com.ambient.tv.diagnostics.DiagnosticViewerEntry
 import com.ambient.tv.diagnostics.DiagnosticViewerSnapshot
@@ -88,6 +93,27 @@ class DiagnosticLogViewerNavigationTest {
         rule.waitForIdle()
         rule.onNodeWithTag("diagnostics-entry:${warning.key}").assertExists()
         rule.onNodeWithTag("diagnostics-entry:${recent.key}").assertDoesNotExist()
+    }
+
+    @Test fun dpadMovesBetweenLogEntryAndSourceFiltersWithoutTrappingFocus() {
+        showViewer()
+        val entry = "diagnostics-entry:${recent.key}"
+        rule.onNodeWithTag(entry).performSemanticsAction(SemanticsActions.RequestFocus) { it() }
+        rule.onNodeWithTag(entry).assertIsFocused()
+        rule.onNodeWithTag(entry).performKeyInput { pressKey(Key.DirectionUp) }
+        rule.waitForIdle()
+
+        // A list row must be able to reach filters directly with Up, not wrap indefinitely
+        // among log entries or jump out to the dialog/underlying Settings page.
+        val filterTags = listOf("diagnostics-source-mpv", "diagnostics-source-plex", "diagnostics-source-smarttube")
+        val focused = filterTags.firstOrNull { tag ->
+            runCatching { rule.onNodeWithTag(tag).assertIsFocused() }.isSuccess
+        }
+        org.junit.Assert.assertNotNull("Up from first log entry must reach a source filter", focused)
+
+        rule.onNodeWithTag(checkNotNull(focused)).performKeyInput { pressKey(Key.DirectionDown) }
+        rule.waitForIdle()
+        rule.onNodeWithTag(entry).assertIsFocused()
     }
 
     @Test fun dismissingDetailRestoresFocusToTheExactEntry() {
