@@ -271,6 +271,7 @@ class GamesTest {
         assertFalse(edited.touchControls(snes))
         assertTrue(edited.touchControls(ds))
         assertEquals(GameTouchMode.DUAL, edited.touchMode(snes))
+        assertEquals(GameTouchMode.HYBRID, edited.withTouchMode(snes, GameTouchMode.HYBRID).touchMode(snes))
         assertEquals("0", edited.values["touch.snes"])
         assertEquals("1", edited.values["touch.nds"])
         assertEquals(GameTouchMode.DPAD, edited.withTouchMode(snes, GameTouchMode.DPAD).touchMode(snes))
