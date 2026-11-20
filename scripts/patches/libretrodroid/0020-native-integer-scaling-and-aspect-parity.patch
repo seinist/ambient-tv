@@ -13,13 +13,20 @@ diff --git a/src/main/cpp/vulkan/vulkanbackend.h b/src/main/cpp/vulkan/vulkanbac
 diff --git a/src/main/cpp/vulkan/vulkanbackend.cpp b/src/main/cpp/vulkan/vulkanbackend.cpp
 --- a/src/main/cpp/vulkan/vulkanbackend.cpp
 +++ b/src/main/cpp/vulkan/vulkanbackend.cpp
-@@ -1227,5 +1227,18 @@
+@@ -1235,13 +1235,26 @@
+             static_cast<double>(nativeSdrExtent.height) * coreAspect);
+         const double displayHeight = std::min(
+             static_cast<double>(nativeSdrExtent.height),
+             static_cast<double>(nativeSdrExtent.width) / coreAspect);
 -        const int32_t dstW = std::clamp(static_cast<int32_t>(std::lround(displayWidth)),
-+        int32_t dstW = std::clamp(static_cast<int32_t>(std::lround(displayWidth)),
-                                         1, static_cast<int32_t>(nativeSdrExtent.width));
+-                                        1, static_cast<int32_t>(nativeSdrExtent.width));
 -        const int32_t dstH = std::clamp(static_cast<int32_t>(std::lround(displayHeight)),
+-                                        1, static_cast<int32_t>(nativeSdrExtent.height));
+-        const int32_t left = (static_cast<int32_t>(nativeSdrExtent.width) - dstW) / 2;
++        int32_t dstW = std::clamp(static_cast<int32_t>(std::lround(displayWidth)),
++                                        1, static_cast<int32_t>(nativeSdrExtent.width));
 +        int32_t dstH = std::clamp(static_cast<int32_t>(std::lround(displayHeight)),
-                                         1, static_cast<int32_t>(nativeSdrExtent.height));
++                                        1, static_cast<int32_t>(nativeSdrExtent.height));
 +        if (nativeIntegerScaling && copyWidth > 0 && copyHeight > 0) {
 +            // Match VideoLayout: largest whole-number source-pixel scale.
 +            // If the screen is smaller than a source frame, retain normal fit.
@@ -33,11 +40,25 @@ diff --git a/src/main/cpp/vulkan/vulkanbackend.cpp b/src/main/cpp/vulkan/vulkanb
 +                    nativeSdrExtent.height, uint64_t(copyHeight) * whole));
 +            }
 +        }
-         const int32_t left = (static_cast<int32_t>(nativeSdrExtent.width) - dstW) / 2;
-@@ -1387,2 +1387,3 @@
-     nativeCoreSourceTransfer = 0u;
++        const int32_t left = (static_cast<int32_t>(nativeSdrExtent.width) - dstW) / 2;
+         const int32_t top = (static_cast<int32_t>(nativeSdrExtent.height) - dstH) / 2;
+         VkImageBlit nativeBlit = blit;
+         nativeBlit.dstOffsets[0] = { left, top, 0 };
+         nativeBlit.dstOffsets[1] = { left + dstW, top + dstH, 1 };
+@@ -1410,10 +1423,11 @@
+     if (nativeSdrWindow != nullptr) ANativeWindow_release(nativeSdrWindow);
+     nativeSdrWindow = nullptr;
+     nativeSdrDisabled = false;
+     nativeOutputTransfer = 0u;
+-    nativeCoreSourceTransfer = 0u;
+-    nativeSdrStatus.store(0u, std::memory_order_release);
++    nativeCoreSourceTransfer = 0u;
 +    nativeIntegerScaling = false;
-     nativeSdrStatus.store(0u, std::memory_order_release);
++    nativeSdrStatus.store(0u, std::memory_order_release);
+     if (device != VK_NULL_HANDLE) {
+         if (vk.deviceWaitIdle != nullptr) vk.deviceWaitIdle(device);
+         destroyFrameBuffer();
+         if (frameFence != VK_NULL_HANDLE) vk.destroyFence(device, frameFence, nullptr);
 diff --git a/src/main/cpp/libretrodroidjni.cpp b/src/main/cpp/libretrodroidjni.cpp
 --- a/src/main/cpp/libretrodroidjni.cpp
 +++ b/src/main/cpp/libretrodroidjni.cpp
