@@ -21,6 +21,24 @@ class GameHdrToneMapShaderTest {
         assertTrue(GameHdrToneMapShader.prefersFp16Bridge(GameHdrToneMap.HLG, true))
     }
 
+    @Test fun allSelectedPictureFiltersRemainInHdrToSdrShader() {
+        val modes = listOf(
+            GameShader.SHARP to 0,
+            GameShader.PIXEL to 1,
+            GameShader.SMOOTH to 2,
+            GameShader.CRT to 3,
+            GameShader.LCD to 4,
+        )
+        modes.forEach { (filter, code) ->
+            val shader = GameHdrToneMapShader.forGame(filter, GameHdrToneMap.PQ, true) as ShaderConfig.Custom
+            assertEquals(1, shader.passes.size)
+            assertTrue(shader.passes[0].fragment.contains("const int PICTURE_MODE = $code;"))
+            assertEquals(filter == GameShader.SMOOTH, shader.passes[0].linear)
+        }
+        assertTrue(GameHdrToneMapShader.fragment(GameHdrToneMap.PQ, GameShader.CRT).contains("float scan"))
+        assertTrue(GameHdrToneMapShader.fragment(GameHdrToneMap.HLG, GameShader.LCD).contains("vec3 stripe"))
+    }
+
     @Test fun pqAndHlgSelectDistinctGpuConversion() {
         val pq = GameHdrToneMapShader.forGame(GameShader.PIXEL, GameHdrToneMap.PQ, true) as ShaderConfig.Custom
         val hlg = GameHdrToneMapShader.forGame(GameShader.PIXEL, GameHdrToneMap.HLG, true) as ShaderConfig.Custom
