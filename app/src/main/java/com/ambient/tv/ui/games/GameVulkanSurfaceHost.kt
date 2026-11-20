@@ -36,6 +36,8 @@ internal class GameVulkanSurfaceHost(
     @Volatile private var generation = 0L
     @Volatile private var disposed = false
     @Volatile private var nativeSdrDiagnostic = false
+    // Never treat a manual PQ/HLG selection as core source evidence.
+    @Volatile private var confirmedCoreTransfer: GameVulkanTransferMode? = null
 
     private var canProbe = false
     @Volatile private var displayHdr = GameHdrDisplayCapabilities()
@@ -104,8 +106,26 @@ internal class GameVulkanSurfaceHost(
         tryProbe() // Re-query capabilities from the current Android display mode.
     }
 
+    /** Invalid/changed source evidence tears down an active experimental HDR surface. */
+    fun updateSourceContract(transfer: GameVulkanTransferMode?) {
+        if (disposed || confirmedCoreTransfer == transfer) return
+        confirmedCoreTransfer = transfer
+        if (nativeSdrDiagnostic && outputTransfer != GameVulkanTransferMode.SDR &&
+            confirmedCoreTransfer != outputTransfer) {
+            setNativeSdrDiagnostic(false)
+            onDiagnosticLost()
+        } else if (nativeSdrDiagnostic) {
+            tryProbe()
+        }
+    }
+
     fun setNativeSdrDiagnostic(enabled: Boolean) {
         if (nativeSdrDiagnostic == enabled || disposed) return
+        if (enabled && outputTransfer != GameVulkanTransferMode.SDR &&
+            confirmedCoreTransfer != outputTransfer) {
+            onDiagnosticLost()
+            return
+        }
         nativeSdrDiagnostic = enabled
         // Invalidate any queued GL probe/attachment from the previous mode.
         generation++
@@ -207,6 +227,11 @@ internal class GameVulkanSurfaceHost(
                     runCatching {
                         // Set transfer before creating a swapchain: the native
                         // backend itself also checks VkFormat and WSI colorspace.
+                        // Native hard gate, in addition to the Compose UI gate. The
+                        // backend must reject HDR without a matching core source.
+                        LibretroDroid.setNativeVulkanCoreSourceTransfer(
+                            confirmedCoreTransfer?.nativeCode ?: 0,
+                        )
                         LibretroDroid.setNativeVulkanOutputTransfer(outputTransfer.nativeCode)
                         LibretroDroid.setNativeSdrVulkanSurface(surface)
                     }
