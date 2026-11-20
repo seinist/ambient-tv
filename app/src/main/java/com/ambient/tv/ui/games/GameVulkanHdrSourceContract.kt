@@ -4,8 +4,8 @@ package com.ambient.tv.ui.games
  * Evidence of the source transfer, independent of the user's manual PQ/HLG request.
  *
  * A Vulkan VkFormat proves packing only. The opt-in Beetle PSX HW color-format
- * setting is a core-defined PQ/Rec.2020 output contract, but we accept that
- * declaration only when the effective renderer is Vulkan and the *observed*
+ * setting declares PQ/Rec.2020, but we accept it only when the core has
+ * negotiated the HDR10 pixel format, the renderer is Vulkan and the *observed*
  * core image is packed 10-bit UNORM. This does not verify a TV HDR signal or
  * supply authored mastering metadata, MaxCLL or MaxFALL.
  *
@@ -33,14 +33,19 @@ internal object GameVulkanHdrSourceEvidence {
         vulkan: Boolean,
         effectiveOptions: Map<String, String>,
         observedFormat: GameVulkanCoreSourceFormat,
+        handshake: GameCoreHdrPixelHandshake = GameCoreHdrPixelHandshake(),
     ): GameVulkanHdrSourceContract {
-        if (!vulkan || !observedFormat.tenBitPacked) return GameVulkanHdrSourceContract()
+        // The core must explicitly request HDR10 via libretro and receive an
+        // affirmative reply from the frontend. Format packing and a menu
+        // option are only corroborating evidence, never the whole contract.
+        if (!vulkan || !observedFormat.tenBitPacked || !handshake.hdr10Accepted)
+            return GameVulkanHdrSourceContract()
         if (coreId == "mednafen_psx_hw" &&
             effectiveOptions["beetle_psx_hw_renderer"] == "hardware_vk" &&
             effectiveOptions["beetle_psx_hw_color_format"] == "30bit_hdr"
         ) return GameVulkanHdrSourceContract(
             transfer = GameVulkanTransferMode.PQ_BT2020,
-            origin = "Beetle PSX HW: color_format=30bit_hdr + observed Vulkan 10-bit source",
+            origin = "Beetle PSX HW: negotiated HDR10 + 30bit_hdr option + observed Vulkan 10-bit source",
             primariesH273 = 9, // BT.2020, per core's explicit color-format contract
             transferH273 = 16, // SMPTE ST 2084, per core's explicit color-format contract
             // Authored source mastering values are not supplied by libretro: leave unknown.
