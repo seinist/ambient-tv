@@ -898,7 +898,13 @@ private fun YouTubeMedia3Playback(
                     val httpStatus = generateSequence(e as Throwable?) { it.cause }
                         .filterIsInstance<androidx.media3.datasource.HttpDataSource.InvalidResponseCodeException>()
                         .firstOrNull()?.responseCode
-                    if (!playback.isLive && httpStatus == 403 && httpRetryCount < 3) {
+                    if (!playback.isLive && httpStatus in setOf(403, 410) && onStreamHttpError(httpStatus)) {
+                        error = null
+                        return
+                    }
+                    if (!playback.isLive && httpStatus == 403 && httpRetryCount < 2) {
+                        // A fresh response may still hit a briefly refused CDN edge. Only
+                        // after full source renewal, allow bounded in-place retry.
                         val resume = player.currentPosition.coerceAtLeast(0L)
                         val resumePlaying = player.playWhenReady
                         val backoffMs = 250L shl httpRetryCount++
@@ -913,10 +919,6 @@ private fun YouTubeMedia3Playback(
                         return
                     }
                     if (httpStatus != null) {
-                        if (onStreamHttpError(httpStatus)) {
-                            error = null
-                            return
-                        }
                         // Do not send the same rejected URL to another renderer.
                         BackgroundPlaybackSession.stop()
                         com.ambient.tv.notifications.notifyStreamHttpError("youtube", playback.title, httpStatus)
@@ -1336,7 +1338,13 @@ private fun YouTubeVlcPlayback(playback: YouTubePlayback, audioUri: String?, str
         if (!BackgroundPlaybackSession.owns(controller)) return@LaunchedEffect
         if (playback.isLive && onLiveSourceError()) return@LaunchedEffect
         val httpStatus = youtubeRejectedStreamHttpStatus(message)
-        if (httpStatus != null && onStreamHttpError(httpStatus)) return@LaunchedEffect
+            ?: com.ambient.tv.youtube.YouTubeStreamRelay.takeTerminalHttpError(playback.videoId)
+        if (httpStatus != null) {
+            if (onStreamHttpError(httpStatus)) return@LaunchedEffect
+            BackgroundPlaybackSession.stop()
+            com.ambient.tv.notifications.notifyStreamHttpError("youtube", playback.title, httpStatus)
+            return@LaunchedEffect
+        }
         com.ambient.tv.diagnostics.DiagnosticLog.warn("playback", "YouTube VLC failed; trying Media3: $message")
         com.ambient.tv.notifications.AppNotifications.post(com.ambient.tv.notifications.AppNotice(
             "playback:backend-switch", R.string.notice_switched_to_media3, subject = "VLC",
@@ -1688,7 +1696,13 @@ private fun YouTubeMpvPlayback(playback: YouTubePlayback, streams: YouTubeStream
         if (!BackgroundPlaybackSession.owns(controller)) return@LaunchedEffect
         if (playback.isLive && onLiveSourceError()) return@LaunchedEffect
         val httpStatus = youtubeRejectedStreamHttpStatus(message)
-        if (httpStatus != null && onStreamHttpError(httpStatus)) return@LaunchedEffect
+            ?: com.ambient.tv.youtube.YouTubeStreamRelay.takeTerminalHttpError(playback.videoId)
+        if (httpStatus != null) {
+            if (onStreamHttpError(httpStatus)) return@LaunchedEffect
+            BackgroundPlaybackSession.stop()
+            com.ambient.tv.notifications.notifyStreamHttpError("youtube", playback.title, httpStatus)
+            return@LaunchedEffect
+        }
         com.ambient.tv.diagnostics.DiagnosticLog.warn("playback", "YouTube MPV failed; trying Media3: $message")
         com.ambient.tv.notifications.AppNotifications.post(com.ambient.tv.notifications.AppNotice(
             "playback:backend-switch", R.string.notice_switched_to_media3, subject = "MPV",
