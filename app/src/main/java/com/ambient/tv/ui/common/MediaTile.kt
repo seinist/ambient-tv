@@ -189,11 +189,11 @@ fun MediaTile(
     // The same focus lift is used by Home rows, library grids and other provider cards.
     // Sparsam keeps a subtle layer-only tween instead of dropping the animation entirely.
     val focusScale by rememberMediaFocusScale(focused, tokens.focusScale)
-    val focusElevation = when {
-        !performance.allowFocusedItemShadow -> 0.dp
-        focused -> 5.dp
-        else -> 0.dp // Do not rasterize a separate shadow for every entering/unfocused card.
-    }
+    val focusElevation by androidx.compose.animation.core.animateFloatAsState(
+        if (performance.allowFocusedItemShadow && focused) 5f else 0f,
+        androidx.compose.animation.core.tween(if (focused) 230 else 210),
+        label = "mediaTileShadow",
+    )
     val filterFocus = LocalFilterFocusState.current
     val browseFocus = LocalBrowseFocusReturnState.current
     // A suppressed restore is consumed. Re-entering content must not restart an old tile request.
@@ -237,14 +237,11 @@ fun MediaTile(
                     // artwork, labels, metadata and playback badges on every spring frame.
                     scaleX = focusScale
                     scaleY = focusScale
+                    // No second shadow layer or sudden cutoff while focus shrinks.
+                    shadowElevation = focusElevation.dp.toPx()
+                    shape = tileShape
+                    clip = false
                 }
-                .then(
-                    // Only the focused tile gets a shadow layer; unfocused tiles in a dense grid
-                    // carry no shadow modifier at all.
-                    if (performance.allowFocusedItemShadow && focused) {
-                        Modifier.shadow(focusElevation, RoundedCornerShape(tokens.cardRadius), clip = false)
-                    } else Modifier
-                )
                 .focusRequester(focusRequester)
                 .browseFocusTarget(visualItem.ratingKey)
                 .onFocusChanged { state ->
