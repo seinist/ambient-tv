@@ -21,8 +21,9 @@ internal object GameHdrToneMapShader {
         if (!vulkan || input == GameHdrToneMap.OFF) return filter.config()
         return ShaderConfig.Custom(listOf(ShaderConfig.Custom.ShaderPass(
             vertex = VERTEX,
-            fragment = fragment(input),
-            linear = false,
+            fragment = fragment(input, filter),
+            // Smooth deliberately samples linearly; the other presets preserve crisp pixel edges.
+            linear = filter == GameShader.SMOOTH,
         )))
     }
 
@@ -36,14 +37,22 @@ internal object GameHdrToneMapShader {
         }
     """
 
-    internal fun fragment(input: GameHdrToneMap): String {
+    internal fun fragment(input: GameHdrToneMap, filter: GameShader = GameShader.SHARP): String {
         require(input != GameHdrToneMap.OFF)
         val hlg = if (input == GameHdrToneMap.HLG) 1 else 0
+        val pictureMode = when (filter) {
+            GameShader.SHARP -> 0
+            GameShader.PIXEL -> 1
+            GameShader.SMOOTH -> 2
+            GameShader.CRT -> 3
+            GameShader.LCD -> 4
+        }
         return """
             precision highp float;
             uniform sampler2D texture;
             varying highp vec2 coords;
             const int INPUT_HLG = $hlg;
+            const int PICTURE_MODE = $pictureMode;
 
             // SMPTE ST 2084 EOTF: BT.2020 PQ -> absolute cd/m².
             float pqEotf(float code) {
@@ -97,7 +106,27 @@ internal object GameHdrToneMapShader {
                     -0.5876,  1.1329, -0.1006,
                     -0.0728, -0.0083,  1.1187
                 );
-                gl_FragColor = vec4(sRgbEncode(max(to709 * mapped2020, 0.0)), source.a);
+                vec3 sdr = sRgbEncode(max(to709 * mapped2020, 0.0));
+                // The picture filter must not disappear when HDR->SDR is on.
+                // All filtering happens *after* tone mapping, never in PQ code space.
+                // The low-overhead CRT and LCD patterns are output-space effects.
+                if (PICTURE_MODE == 3) {
+                    float scan = 0.78 + 0.22 * sin(3.14159265359 * fract(gl_FragCoord.y / 2.0));
+                    sdr *= scan;
+                    float edge = 0.94 + 0.06 * cos(6.28318530718 * fract(gl_FragCoord.x / 3.0));
+                    sdr *= edge;
+                } else if (PICTURE_MODE == 4) {
+                    float channel = mod(floor(gl_FragCoord.x), 3.0);
+                    vec3 stripe = vec3(
+                        channel < 1.0 ? 1.0 : 0.88,
+                        (channel >= 1.0 && channel < 2.0) ? 1.0 : 0.88,
+                        channel >= 2.0 ? 1.0 : 0.88
+                    );
+                    sdr *= stripe;
+                    sdr *= 0.94 + 0.06 * sin(3.14159265359 * fract(gl_FragCoord.y / 3.0));
+                }
+                // SHARP/PIXEL preserve nearest-neighbor; SMOOTH uses linear sampling.
+                gl_FragColor = vec4(clamp(sdr, 0.0, 1.0), source.a);
             }
         """.trimIndent()
     }
