@@ -39,6 +39,10 @@ internal fun smartTubeAuthRejected(error: Throwable): Boolean {
  * history or subscriptions list can be perfectly legitimate for a new account. Only
  * flag these other feeds when this account had visible content for that feed before.
  */
+/** 403 alone does not prove the account is expired, but it warrants a recovery hint. */
+internal fun smartTubePrivateFeedForbidden(error: Throwable, key: String, signedIn: Boolean): Boolean =
+    signedIn && smartTubeFeedNeedsAccount(key) && failureHttpCode(error) == 403
+
 internal fun smartTubeEmptyFeedNeedsAttention(
     key: String,
     signedIn: Boolean,
