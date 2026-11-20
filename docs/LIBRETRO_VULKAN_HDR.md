@@ -69,8 +69,31 @@ HDR presentation backend:
   without obscuring video/OSD. `GameVulkanSdrStatus` distinguishes requested
   surface, created swapchain, frames actually presented and GLES fallback.
   After activating, resume gameplay so frames can be submitted, then reopen
-  Info to inspect the status. The tiny surface must not be mistaken for
-  full-resolution native video playback or an HDR-enabled output.
+  Info to inspect the status.
+- **Experimental SDR fullscreen preview (session-only):** once the small-window
+  diagnostic reports **PRESENTING**, the Info panel permits a second manual
+  opt-in. After gameplay resumes the existing `GameVulkanSurfaceHost` expands
+  its already-created SurfaceView to the player bounds and requests a new
+  SDR swapchain at the actual layout resolution. The Surface uses
+  `setZOrderMediaOverlay(true)` *before attachment*, so it composites above
+  GLRetroView but below the Android window/Compose OSD; never use
+  `setZOrderOnTop(true)`, which would hide controls. The real GLRetroView
+  still owns input/focus, saves, captures and the GLES fallback.
+- Fullscreen is **not automatic** and not a regular saved renderer setting:
+  only a Vulkan core, manually selected **SDR input**, a working tiny-window
+  swapchain, and no netplay can arm it. `GameVulkanFullscreenPolicy` enforces
+  these prerequisites. The initial preview is armed while the Info panel is
+  paused, but is only enlarged after gameplay resumes. A native present
+  failure demotes back to GLES, and a 5-second post-resize watchdog prevents
+  a permanently blank screen if Vulkan never resumes presenting. Standby
+  returns to GLES. Disabling the diagnostic tears down the native window.
+- **Visible output limitations:** this is the raw core image, letterboxed by
+  native Vulkan blit. GLES shader chains, per-system aspect overrides,
+  rotation, custom crop and integer scaling are not yet reproduced by the
+  experimental native presenter. The GLES compositor still renders in
+  parallel to serve the fallback, previews and screen captures. Fullscreen
+  performance and SurfaceView/OSD ordering are not hardware-validated.
+  There is *no* native HDR output in this phase.
 - `GameVulkanOutputPolicy` provides a testable release gate for native PQ/HLG
   output. It requires a real active presentation surface, validated
   format/colorspace pair, accepted core source format, color pipeline and output
@@ -80,18 +103,19 @@ HDR presentation backend:
   the Vulkan HDR output is inactive. This does not change OSD focus,
   background playback, existing renderer selection or manually chosen HDR→SDR.
 
-**Next implementation slice (NOT yet implemented):** validate the new tiny
-native SDR frame presenter on real NVIDIA Shield, Philips TV and phones,
-including supported and unsupported GPU drivers, repeated Surface destruction,
-rotation, pause/resume, color fidelity, frame pacing and shader/OSD behavior.
-Once stable, promote the preview SurfaceView to a full-screen compositor
-layer with explicit activation and fallback controls, and avoid duplicate
-GLES draws when possible while preserving captures and Compose OSD. The core
+**Next implementation slice (NOT yet complete):** hardware-validate
+both the tiny and experimental fullscreen SDR presenter on real NVIDIA Shield,
+Philips TV and phones, including unsupported Vulkan drivers, repeated Surface
+recreation, power/background transitions, 4K GPU memory, aspect ratio,
+frame pacing, touch/DPAD and Compose OSD layering. Achieve visible parity for
+shader filters, custom crop/rotation and integer scaling before calling it a
+production playback renderer. Reduce duplicate GLES rendering only if
+screenshot/secondary display/fallback handling remains correct. The core
 still negotiates against an offscreen AImageReader; **no native Vulkan HDR**
-is yet advertised or activated. Implement true HDR core source formats,
-output color-space selection, mastering metadata and real display-signal
-verification before exposing an HDR toggle. `librashader` follows the
-stabilized output path.
+is advertised or activated. Implement verified native HDR input formats,
+HDR-capable swapchains, output colorspaces, mastering metadata and actual
+display-signal tests before exposing HDR passthrough. `librashader` follows
+the validated output path.
 
 ## Incompatible pieces that must be completed together for native HDR
 
