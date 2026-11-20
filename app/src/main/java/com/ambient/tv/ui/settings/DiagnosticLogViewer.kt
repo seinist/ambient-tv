@@ -177,6 +177,15 @@ internal fun DiagnosticLogViewer(
         widthFraction = if (handheld) null else 0.84f,
         maxWidth = 1120.dp,
         maxHeightFraction = 0.94f,
+        header = {
+            // Compact counter is always visible even when LazyColumn virtualizes its children.
+            if (openedEntry == null) Text(
+                stringResource(R.string.diagnostics_viewer_count, filtered.size, entries.size),
+                modifier = Modifier.testTag("diagnostics-count"),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        },
         footer = {
             if (openedEntry != null) {
                 val entry = checkNotNull(openedEntry)
@@ -276,13 +285,6 @@ internal fun DiagnosticLogViewer(
                         text = stringResource(R.string.diagnostics_viewer_export),
                         onClick = onExport,
                         fillWidth = true,
-                    )
-                }
-                item(key = "diagnostics-count") {
-                    Text(
-                        stringResource(R.string.diagnostics_viewer_count, filtered.size, entries.size),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
                 when {
