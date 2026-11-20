@@ -1711,6 +1711,7 @@ class HomeViewModel @Inject constructor(
                 if (supportedResult.isSuccess &&
                     definitions.any { smartTubeFeedNeedsAccount(it.contentKey) } &&
                     available.none { smartTubeFeedNeedsAccount(it.contentKey) } &&
+                    smartTubeEngine.hasSavedAccounts() &&
                     !suspendResult { smartTubeEngine.isSignedIn() }.getOrDefault(true)
                 ) smartTubeEngine.reportAccountAttention()
                 val supportedKeys = available.mapTo(hashSetOf()) { it.contentKey }
@@ -1764,7 +1765,7 @@ class HomeViewModel @Inject constructor(
                                     return@withPermit
                                 }
                                 onlineServices.succeeded("youtube")
-                                if (smartTubeFeedNeedsAccount(definition.contentKey) &&
+                                if (definition.contentKey == "home" &&
                                     rows.any { it.items.isNotEmpty() }) smartTubeEngine.clearAccountAttention()
                                 // The common SmartTube cache reconciles by ID, preserving
                                 // the positions of focused tiles while fresh results arrive.
