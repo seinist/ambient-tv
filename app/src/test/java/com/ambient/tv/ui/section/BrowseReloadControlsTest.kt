@@ -7,6 +7,9 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.test.SemanticsMatcher
+import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.test.ExperimentalTestApi
 import androidx.compose.ui.test.SemanticsNodeInteraction
@@ -109,7 +112,7 @@ class BrowseReloadControlsTest {
     }
 
     @Test fun providerReloadStaysBetweenHomeAndViewAndKeepsFocusWhileBusy() {
-        var refreshing by mutableStateOf(false)
+        var refreshing by mutableStateOf(true)
         var refreshes = 0
         rule.setContent {
             CompositionLocalProvider(
@@ -125,6 +128,11 @@ class BrowseReloadControlsTest {
             }
         }
         rule.waitForIdle()
+        // Reopening a view with its cached content must leave Reload's icon at rest.
+        rule.onAllNodes(SemanticsMatcher.keyIsDefined(SemanticsProperties.ProgressBarRangeInfo),
+            useUnmergedTree = true).assertCountEquals(0)
+        rule.runOnIdle { refreshing = false }
+        rule.waitForIdle()
         val reload = action(R.string.action_reload)
         val initialView = action(R.string.action_view).fetchSemanticsNode().boundsInRoot
         val reloadBounds = reload.fetchSemanticsNode().boundsInRoot
@@ -135,9 +143,13 @@ class BrowseReloadControlsTest {
         reload.assertIsFocused()
         reload.performKeyInput { pressKey(Key.DirectionCenter) }
         rule.runOnIdle { assertEquals(1, refreshes) }
+        rule.onAllNodes(SemanticsMatcher.keyIsDefined(SemanticsProperties.ProgressBarRangeInfo),
+            useUnmergedTree = true).assertCountEquals(1)
         rule.runOnIdle { refreshing = false }
         rule.waitForIdle()
         reload.assertIsFocused()
+        rule.onAllNodes(SemanticsMatcher.keyIsDefined(SemanticsProperties.ProgressBarRangeInfo),
+            useUnmergedTree = true).assertCountEquals(0)
         assertEquals(initialView.right, action(R.string.action_view).fetchSemanticsNode().boundsInRoot.right, 1f)
         reload.performKeyInput { pressKey(Key.DirectionRight) }
         action(R.string.action_view).assertIsFocused()

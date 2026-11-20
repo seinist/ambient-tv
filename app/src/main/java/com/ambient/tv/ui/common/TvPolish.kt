@@ -839,7 +839,8 @@ private fun headerKeyAction(icon: ImageVector?): com.ambient.tv.ui.keyboard.KeyA
  * Compact control for tabs, filters and page-header actions (see [PageHeader]).
  *
  * [loading] marks the chip's own action as running: it keeps its look and focus, ignores clicks
- * and shows a spinner in the icon slot.
+ * and shows a spinner in the icon slot. [loadingOnlyAfterClick] leaves the Reload icon still
+ * during automatic entry/cache loads, and shows progress only for a click initiated here.
  *
  * [iconOnly] is a handheld layout hint for page-header actions (sign in, search, view, and the
  * same kind of toolbar button on other screens). Phones drop the label and keep [text] as the
@@ -853,11 +854,23 @@ fun TvChip(
     enabled: Boolean = true,
     icon: ImageVector? = null,
     loading: Boolean = false,
+    /** For Reload, automatic entry/cache work must not animate the action icon. */
+    loadingOnlyAfterClick: Boolean = false,
     iconOnly: Boolean = false,
     leadingContent: (@Composable () -> Unit)? = null,
     textMaxLines: Int = Int.MAX_VALUE,
     onClick: () -> Unit,
 ) {
+    var clickStartedLoad by remember { mutableStateOf(false) }
+    val showLoading = loading && (!loadingOnlyAfterClick || clickStartedLoad)
+    LaunchedEffect(loadingOnlyAfterClick, loading, clickStartedLoad) {
+        if (!loadingOnlyAfterClick) clickStartedLoad = false
+        else if (clickStartedLoad && !loading) {
+            // A no-op action cannot arm an unrelated background refresh later on.
+            androidx.compose.runtime.withFrameNanos { }
+            if (!loading) clickStartedLoad = false
+        }
+    }
     val clickable = enabled && !loading
     // Selected can still point to the old category during an asynchronous refresh.
     // Retain the exact chip the user confirmed rather than restoring the first chip.
@@ -870,7 +883,10 @@ fun TvChip(
         }
     } else modifier
     val uiSounds = LocalUiSoundPlayer.current
-    val activate = rememberUiSoundAction(enabled = clickable, onClick = onClick)
+    val activate = rememberUiSoundAction(enabled = clickable) {
+        if (loadingOnlyAfterClick) clickStartedLoad = true
+        onClick()
+    }
     // A page header's Refresh/View/Search answers its key binding on every page alike.
     if (LocalPageHeaderActions.current) headerKeyAction(icon)?.let { action ->
         com.ambient.tv.ui.keyboard.RegisterKeyAction(action, enabled = enabled) {
@@ -906,7 +922,7 @@ fun TvChip(
                         disabledContentColor = foreground,
                     ),
                 ) {
-                    if (loading) {
+                    if (showLoading) {
                         ButtonProgress(foreground, Modifier.size(20.dp))
                     } else if (leadingContent != null) {
                         leadingContent()
@@ -941,7 +957,7 @@ fun TvChip(
                     selectedTrailingIconColor = foreground,
                 ),
                 label = { androidx.compose.material3.Text(text, maxLines = textMaxLines, overflow = TextOverflow.Ellipsis) },
-                leadingIcon = if (loading) {
+                leadingIcon = if (showLoading) {
                     { ButtonProgress(foreground, Modifier.size(18.dp)) }
                 } else leadingContent ?: icon?.let { image -> { androidx.compose.material3.Icon(image, null, Modifier.size(18.dp)) } },
             )
@@ -999,7 +1015,7 @@ fun TvChip(
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 ProvideControlContent(foreground) {
-                    if (loading) {
+                    if (showLoading) {
                         ButtonProgress(foreground, Modifier.size(20.dp * uiScale))
                         Spacer(Modifier.width(6.dp * uiScale))
                     } else if (leadingContent != null) {

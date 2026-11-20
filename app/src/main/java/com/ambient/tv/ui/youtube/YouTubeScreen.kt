@@ -441,7 +441,7 @@ private fun youtubeRowId(index: Int, row: YouTubeRow): String = row.id
         }
         TvChip(stringResource(R.string.action_search),modifier=searchActionModifier,icon=Icons.Filled.Search,iconOnly=true,onClick=onOpenSearch)
         TvChip(stringResource(R.string.action_reload), icon=Icons.Filled.Refresh, iconOnly=true,
-            loading=state.loading || state.refreshing, enabled=state.available && !state.authBusy, onClick=onReload)
+            loading=state.loading || state.refreshing, loadingOnlyAfterClick = true, enabled=state.available && !state.authBusy, onClick=onReload)
         ViewOptionsChip(if (filterModel == null && youtubeVideoFiltersAvailable(state.rows) && state.filter != YouTubeFilter.ALL) 1 else 0, onOpenViewOptions, viewOptionsModifier)
     }) {
         if (channel == null) com.ambient.tv.ui.common.SystemPageTitle(com.ambient.tv.ui.common.MediaSystem.YOUTUBE)
