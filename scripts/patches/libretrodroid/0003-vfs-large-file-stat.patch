@@ -1,0 +1,24 @@
+diff --git a/src/main/cpp/vfs/vfs.cpp b/src/main/cpp/vfs/vfs.cpp
+--- a/src/main/cpp/vfs/vfs.cpp
++++ b/src/main/cpp/vfs/vfs.cpp
+@@ -19,7 +19,8 @@
+ 
+ #include <unistd.h>
+ #include <optional>
+ #include <sys/stat.h>
++#include <limits>
+ 
+ #include "vfs/vfs_implementation.h"
+ #include "../log.h"
+@@ -100,6 +101,10 @@ int VFS::stat(const char *path, int32_t *size) {
+         struct ::stat fileStat {};
+         if (::fstat(virtualFile->getFD(), &fileStat) == 0) {
+             if (size != nullptr) {
+-                *size = static_cast<int32_t>(fileStat.st_size);
++                // libretro VFS v3 stat has a 32-bit size output even for huge game discs.
++                // Never overflow into a negative length; vfs_file_size remains 64-bit.
++                *size = fileStat.st_size > std::numeric_limits<int32_t>::max()
++                    ? std::numeric_limits<int32_t>::max()
++                    : static_cast<int32_t>(fileStat.st_size);
+             }
+             return RETRO_VFS_STAT_IS_VALID;

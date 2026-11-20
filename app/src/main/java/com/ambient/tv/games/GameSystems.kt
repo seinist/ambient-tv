@@ -2,6 +2,8 @@ package com.ambient.tv.games
 
 import java.io.File
 import java.io.RandomAccessFile
+import java.nio.ByteBuffer
+import java.nio.ByteOrder
 import java.util.Locale
 
 /**
@@ -28,6 +30,8 @@ data class GameCore(
     val achievements: Boolean = true,
     /** Empty means all Android ABIs are candidates; other values restrict downloads. */
     val supportedAbis: Set<String> = emptySet(),
+    /** Verified libretro core-info need_fullpath; candidate for seekable VFS ROM loading. */
+    val directFile: Boolean = false,
     /** Core options that make the core render with Vulkan, and with OpenGL ES (GPU cores). */
     val vulkanOptions: Map<String, String> = emptyMap(),
     val glOptions: Map<String, String> = emptyMap(),
@@ -176,26 +180,26 @@ object GameSystems {
                 supportedAbis = setOf("arm64-v8a", "x86_64"))),
             shortName = "3DS"),
         GameSystem("gamecube", "Nintendo GameCube", setOf("gcm", "dol", "tgc"),
-            GameCore("dolphin", "Dolphin", "GPL-2.0", hardware = true, netplay = false,
+            GameCore("dolphin", "Dolphin", "GPL-2.0", hardware = true, netplay = false, directFile = true,
                 supportedAbis = setOf("arm64-v8a", "x86_64")),
             shortName = "GameCube"),
         GameSystem("wii", "Nintendo Wii", setOf("wbfs", "ciso", "wad"),
-            GameCore("dolphin", "Dolphin", "GPL-2.0", hardware = true, netplay = false,
+            GameCore("dolphin", "Dolphin", "GPL-2.0", hardware = true, netplay = false, directFile = true,
                 supportedAbis = setOf("arm64-v8a", "x86_64")),
             shortName = "Wii"),
         GameSystem("wiiu", "Nintendo Wii U", setOf("wua", "wud", "wux", "rpx"),
-            GameCore("cemu", "Cemu (experimental)", "MPL-2.0", hardware = true,
+            GameCore("cemu", "Cemu (experimental)", "MPL-2.0", hardware = true, directFile = true,
                 requiresVulkan = true, saveStates = false, rewind = false, netplay = false, cheats = false,
                 achievements = false, supportedAbis = setOf("arm64-v8a", "x86_64"),
                 vulkanOptions = mapOf("cemu_gpu_api" to "Vulkan")),
             shortName = "Wii U"),
         GameSystem("psp", "PlayStation Portable", setOf("cso", "zso"),
-            GameCore("ppsspp", "PPSSPP", "GPL-2.0", hardware = true, rewind = false, netplay = false, cheats = false,
+            GameCore("ppsspp", "PPSSPP", "GPL-2.0", hardware = true, rewind = false, netplay = false, cheats = false, directFile = true,
                 vulkanOptions = mapOf("ppsspp_rendering_mode" to "Vulkan"),
                 glOptions = mapOf("ppsspp_rendering_mode" to "OpenGL")),
             shortName = "PSP"),
         GameSystem("dreamcast", "Sega Dreamcast", setOf("gdi", "cdi"),
-            GameCore("flycast", "Flycast", "GPL-2.0", hardware = true, netplay = false),
+            GameCore("flycast", "Flycast", "GPL-2.0", hardware = true, netplay = false, rewind = false, directFile = true),
             shortName = "Dreamcast"),
         // Disc images shared by multiple systems (.iso/.cue/.chd/.m3u) are selected
         // using their verified disc header or the parent folder, never a global guess.
@@ -214,7 +218,7 @@ object GameSystems {
             ),
             shortName = "Saturn"),
         GameSystem("ps2", "PlayStation 2", emptySet(),
-            GameCore("armsx2", "ARMSX2 (experimental)", "GPL-3.0", hardware = true, rewind = false, netplay = false, cheats = false,
+            GameCore("armsx2", "ARMSX2 (experimental)", "GPL-3.0", hardware = true, rewind = false, netplay = false, cheats = false, directFile = true,
                 supportedAbis = setOf("arm64-v8a")),
             shortName = "PS2"),
         GameSystem("c64", "Commodore 64", setOf(
@@ -262,23 +266,23 @@ object GameSystems {
      * extensions when no signature is available. No guessing from "game.iso".
      */
     fun forPreparedFile(file: File, originalPath: String = file.name): GameSystem? {
-        val ext = extension(file.name)
-        if (ext == "iso") {
-            val headerSystem = runCatching {
-                RandomAccessFile(file, "r").use { disk ->
-                    if (disk.length() < 0x20) null else {
-                        disk.seek(0x18)
-                        val wiiMagic = disk.readInt()
-                        val gameCubeMagic = disk.readInt()
-                        when {
-                            wiiMagic == 0x5D1C9EA3 -> byId("wii")
-                            gameCubeMagic == 0xC2339F3DL.toInt() -> byId("gamecube")
-                            else -> null
-                        }
-                    }
-                }
-            }.getOrNull()
-            if (headerSystem != null) return headerSystem
+        val header = if (extension(file.name) == "iso") runCatching {
+            RandomAccessFile(file, "r").use { disk ->
+                if (disk.length() < 0x20) null else ByteArray(0x20).also(disk::readFully)
+            }
+        }.getOrNull() else null
+        return forSourceFile(file.name, originalPath, header)
+    }
+
+    /** Resolves ambiguous file types without copying a large source, using at most 32 header bytes. */
+    fun forSourceFile(name: String, originalPath: String, header: ByteArray? = null): GameSystem? {
+        val ext = extension(name)
+        if (ext == "iso" && header != null && header.size >= 0x20) {
+            val ints = ByteBuffer.wrap(header).order(ByteOrder.BIG_ENDIAN)
+            when {
+                ints.getInt(0x18) == 0x5D1C9EA3 -> return byId("wii")
+                ints.getInt(0x1c) == 0xC2339F3DL.toInt() -> return byId("gamecube")
+            }
         }
         if (ext in ambiguousExtensions) {
             val folders = originalPath.replace('\\', '/').lowercase(Locale.ROOT)
@@ -300,7 +304,7 @@ object GameSystems {
             )
             folders.asReversed().firstNotNullOfOrNull { folderIds[it] }?.let { return byId(it) }
         }
-        return forFile(file.name)
+        return forFile(name)
     }
 
     private val byExtension: Map<String, GameSystem> =

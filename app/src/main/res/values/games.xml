@@ -202,4 +202,6 @@
     <string name="game_info_core_needs_bios">needs BIOS</string>
     <string name="files_archive">%1$s archive</string>
     <string name="game_vulkan_fallback">Vulkan not available – running with OpenGL ES</string>
+    <string name="game_direct_source">Direct ROM access (no cached copy)</string>
+    <string name="game_cache_fallback">Try with a local copy</string>
 </resources>

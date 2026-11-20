@@ -183,7 +183,8 @@ fun GamePlayerScreen(onBack: () -> Unit, model: GamePlayerViewModel = hiltViewMo
                 body = if (current.reason == GameFailure.BIOS_MISSING) {
                     stringResource(R.string.game_failed_bios_missing_body, current.detail.orEmpty())
                 } else current.detail,
-                actionLabel = stringResource(R.string.game_retry), onAction = model::retry,
+                actionLabel = stringResource(if (model.canUseCache) R.string.game_cache_fallback else R.string.game_retry),
+                onAction = if (model.canUseCache) model::retryWithCache else model::retry,
                 secondaryActionLabel = stringResource(R.string.back), onSecondaryAction = onBack,
                 modifier = center, centered = true,
             )
@@ -199,7 +200,7 @@ private fun GameFailure.titleRes(): Int = when (this) {
     GameFailure.CORE_DOWNLOAD -> R.string.game_failed_core_download
     GameFailure.CORE_INCOMPATIBLE -> R.string.game_failed_core_incompatible
     GameFailure.NO_ABI -> R.string.game_failed_no_abi
-    GameFailure.START -> R.string.game_failed_start
+    GameFailure.START, GameFailure.DIRECT_ACCESS -> R.string.game_failed_start
     GameFailure.BIOS_MISSING -> R.string.game_failed_bios_missing
 }
 
@@ -314,7 +315,7 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
     var cheatDraft by remember { mutableStateOf<Pair<String, String>?>(null) }
     /** Hardcore was asked for with an account: the game starts fresh, without the "continue" state. */
     val hardcoreRequested = remember {
-        core.achievements && settings.achievements && settings.hardcore && model.retroAchievements.account != null
+        !game.direct && core.achievements && settings.achievements && settings.hardcore && model.retroAchievements.account != null
     }
     val playRequester = remember { FocusRequester() }
     val statesRequester = remember { FocusRequester() }
@@ -323,7 +324,12 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
     val retroView = remember {
         GLRetroView(context, GLRetroViewData(context).apply {
             coreFilePath = session.coreFile.absolutePath
-            gameFilePath = game.file.absolutePath
+            if (game.direct) {
+                // The fork owns FDs after its VFS initializes, and seeks the original SAF/NAS ROM.
+                gameVirtualFiles = requireNotNull(game.directContent).virtualFiles
+            } else {
+                gameFilePath = game.file.absolutePath
+            }
             systemDirectory = session.systemDirectory.absolutePath
             savesDirectory = session.savesDirectory.absolutePath
             // The graphics interface decides the GPU cores' renderer options.
@@ -381,6 +387,7 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
         persist()
         destroyed = true
         runCatching { retroView.destroyNative() }
+        game.close()
     }
 
     fun stateTitle(entry: GameStateEntry): String = when (entry.kind) {
@@ -497,7 +504,7 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
                     GameSettings.state.controllerType(core, port)?.let { type -> runCatching { retroView.setControllerType(port, type) } }
                 }
                 applyCheats(cheats)
-                achievements.start(retroView, game, core.achievements && GameSettings.state.achievements, hardcoreRequested)
+                achievements.start(retroView, game, !game.direct && core.achievements && GameSettings.state.achievements, hardcoreRequested)
                 if (core.rewind && core.saveStates && GameSettings.state.rewind && !hardcoreRequested) withContext(Dispatchers.Default) {
                     runCatching {
                         if (retroView.getSerializeSize() <= 0) return@runCatching
@@ -666,6 +673,7 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
                     PlayerTechBadgeRow {
                         MetaBadge("libretro", emphasized = true)
                         MetaBadge(core.name)
+                        if (game.direct) MetaBadge(stringResource(R.string.game_direct_source))
                         if (core.hardware) MetaBadge(if (session.vulkan) "Vulkan" else "OpenGL ES")
                         MetaBadge(stringResource(shader.titleRes))
                         if (aspect != GameAspect.CORE) MetaBadge(aspect.key)
@@ -731,7 +739,7 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
                             }, selected = panel == GamePanel.CHEATS, enabled = loaded && core.cheats && !achievements.hardcore)
                             PlayerIconButton(Icons.Filled.Groups, stringResource(R.string.game_panel_netplay), {
                                 panel = GamePanel.NETPLAY
-                            }, selected = panel == GamePanel.NETPLAY, enabled = loaded && core.netplay)
+                            }, selected = panel == GamePanel.NETPLAY, enabled = loaded && core.netplay && !game.direct)
                             if (discCount > 1) PlayerIconButton(Icons.Filled.Album, stringResource(R.string.game_panel_disc), {
                                 panel = GamePanel.DISC
                             }, selected = panel == GamePanel.DISC, enabled = !netplay.active)
