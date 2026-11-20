@@ -113,6 +113,15 @@ class GamesTest {
             "2\n1 0 4 2352 track01.bin 0\n2 4500 0 2352 \"track 02.raw\" 0\n"))
     }
 
+    @Test fun touchscreenSystemsDoNotCaptureEveryTapAsMenuOpen() {
+        listOf("nds", "n3ds", "wii", "wiiu").forEach { id ->
+            assertTrue("Expected touch input for $id", GameSystems.byId(id)!!.pointerInput)
+        }
+        listOf("nes", "snes", "c64", "gamecube", "psp").forEach { id ->
+            assertFalse("Do not steal menu tap for $id", GameSystems.byId(id)!!.pointerInput)
+        }
+    }
+
     @Test fun coreFilesAreRecognisedByName() {
         assertEquals("snes9x", GameSystems.coreForFile("snes9x_libretro_android.so")?.id)
         assertEquals("snes9x", GameSystems.coreForFile("snes9x_libretro_android.so.zip")?.id)
