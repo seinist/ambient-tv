@@ -408,6 +408,7 @@ fun RadioScreen(
                         icon = Icons.Filled.Refresh,
                         iconOnly = true,
                         loading = state.loading || state.loadingMore,
+                        loadingOnlyAfterClick = true,
                         onClick = viewModel::refresh,
                     )
                     ViewOptionsChip(0, onClick = { showViewOptions = true },

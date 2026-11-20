@@ -592,7 +592,7 @@ internal fun TvheadendHeader(
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
     PageHeader(focusChain = focusChain, actions = {
         TvChip(stringResource(R.string.action_reload), icon = Icons.Filled.Refresh,
-            loading = state.loading || state.refreshing, enabled = !state.actionInProgress, iconOnly = true,
+            loading = state.loading || state.refreshing, loadingOnlyAfterClick = true, enabled = !state.actionInProgress, iconOnly = true,
             onClick = { browseControls?.filterFocusState?.keepControls(); onRefresh() })
         if (browseControls != null) com.ambient.tv.ui.common.ViewOptionsChip(
             activeCount = if (com.ambient.tv.ui.common.LocalFilterBarSetting.current.shown) 0 else activeFilterCount,

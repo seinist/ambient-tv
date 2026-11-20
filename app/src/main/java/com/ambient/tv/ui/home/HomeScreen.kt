@@ -553,7 +553,7 @@ private fun RowScope.OverviewActions(
     optionsModifier: Modifier,
 ) {
     com.ambient.tv.ui.common.TvChip(stringResource(R.string.nav_home), icon = Icons.Filled.Home, iconOnly = true, onClick = onOpenHome)
-    com.ambient.tv.ui.common.TvChip(stringResource(R.string.action_reload), icon = Icons.Filled.Refresh, iconOnly = true, loading = refreshing, onClick = onRefresh)
+    com.ambient.tv.ui.common.TvChip(stringResource(R.string.action_reload), icon = Icons.Filled.Refresh, iconOnly = true, loading = refreshing, loadingOnlyAfterClick = true, onClick = onRefresh)
     com.ambient.tv.ui.common.TvChip(stringResource(R.string.action_view), modifier = optionsModifier, icon = Icons.Filled.Tune, iconOnly = true, onClick = onOpenOptions)
 }
 

@@ -177,7 +177,7 @@ fun FilesScreen(onPlay: (String, Boolean) -> Unit, onBack: () -> Unit, contentAc
             TvChip(stringResource(R.string.action_folder), icon = Icons.Default.CreateNewFolder, iconOnly = true) { pickFolder() }
             TvChip(stringResource(R.string.action_nas), icon = Icons.Default.Storage, iconOnly = true) { viewModel.resetEditor(); editor = FileSource(name = "", kind = "smb") }
             TvChip(stringResource(R.string.action_reload), icon = Icons.Default.Refresh,
-                loading = state.loading || state.refreshing, iconOnly = true,
+                loading = state.loading || state.refreshing, loadingOnlyAfterClick = true, iconOnly = true,
                 onClick = { keepHeaderFocus = true; viewModel.reload() })
             // Folder slideshow (optionally with subfolders, see photo settings).
             if (hasImages) {

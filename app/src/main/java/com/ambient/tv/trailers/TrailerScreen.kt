@@ -329,6 +329,7 @@ internal fun TrailerCatalogContent(
                     icon = Icons.Filled.Refresh,
                     iconOnly = true,
                     loading = state.loadingInitial || loads[feed]?.replace == true,
+                    loadingOnlyAfterClick = true,
                     enabled = !state.loadingMore,
                     onClick = {
                         if (!loads.containsKey(feed)) {
