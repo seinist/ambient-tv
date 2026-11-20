@@ -212,13 +212,13 @@ object GameSystems {
             ),
             alternatives = listOf(
                 GameCore("yabasanshiro", "Yaba Sanshiro (legacy)", "GPL-2.0", hardware = true,
-                    supportsVulkan = false, rewind = false, netplay = false),
-                GameCore("yabause", "Yabause", "GPL-2.0", netplay = false),
+                    supportsVulkan = false, rewind = false, netplay = false, achievements = false),
+                GameCore("yabause", "Yabause", "GPL-2.0", netplay = false, achievements = false),
                 GameCore("ymir", "Ymir (experimental)", "GPL-3.0", netplay = false, achievements = false, needsBios = true),
             ),
             shortName = "Saturn"),
         GameSystem("ps2", "PlayStation 2", emptySet(),
-            GameCore("armsx2", "ARMSX2 (experimental)", "GPL-3.0", hardware = true, rewind = false, netplay = false, cheats = false, directFile = true,
+            GameCore("armsx2", "ARMSX2 (experimental)", "GPL-3.0", hardware = true, rewind = false, netplay = false, cheats = false, achievements = false, directFile = true,
                 supportedAbis = setOf("arm64-v8a")),
             shortName = "PS2"),
         GameSystem("c64", "Commodore 64", setOf(
