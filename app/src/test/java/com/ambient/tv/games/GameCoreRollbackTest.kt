@@ -24,7 +24,7 @@ class GameCoreRollbackTest {
         putShort(0x38, 1)
         putInt(0x40, 1)
         putLong(0x40 + 0x30, 16_384)
-        put(0x70, marker.toByte())
+        put(0x78, marker.toByte())
         array()
     }
 
