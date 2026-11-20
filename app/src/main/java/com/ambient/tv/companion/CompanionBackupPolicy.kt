@@ -77,6 +77,7 @@ internal object CompanionBackupPolicy {
             "autoPictureInPicture", "projectmShowPresetName", "projectmPresetShuffle", "gaplessMusicEnabled",
             "teletextSubtitleChoice", "lyricsVisible", "lyricsOnlineEnabled", "frameDropOverlayHistory",
             "liveTvReminderAutoSwitch", "autoUpdateCheck", "projectmFavorites", "keyBindings",
+            "viewTransitionStyleKey",
         ),
         "device" to setOf("imageCacheMb", "cardImages1080"),
         "connections" to setOf("tvheadendHtspPort"),

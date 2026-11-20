@@ -157,6 +157,7 @@ Beim Ändern von Filtern, Sortierung oder Ansicht bleibt der Fokus auf dem bearb
 | Wiedergabefarbe | Farbwähler | `#1A5FF2` | Alle | Sichtbar mit eigener Wiedergabefarbe. |
 | HDR-Oberfläche | Automatisch (sicher) · Immer HDR · Immer SDR | Automatisch (sicher) | Alle | Sichtbar ab Android 15 (API 35) mit HDR-Display und erweitertem Farbraum. Automatisch hebt die Oberfläche nur während HDR-Wiedergabe an. |
 | SDR-Video zu HDR | An / Aus | Aus | Alle | Siehe [3.5.1](#351-sdr-video-zu-hdr). Wirkt nur mit HDR-Oberfläche „Automatisch“. |
+| View-Übergänge | Aus · Weiches Überblenden · Überblenden + sanftes Gleiten · Cinematische Überblendung | Aus | Alle | Optional (180/210/270 ms); Aus behält das bisherige Verhalten bei. Nur die aktive View wird gezeichnet; Cinematic nutzt einen abgestuften Blend statt eines zweiten 4K-Rasters. Native Videoflächen, Vollbildseiten und Player-OSD sind ausgenommen; sichtbares Hintergrundvideo verwendet einen günstigeren Fade. Im sparsamen Oberflächenmodus deaktiviert. In Datei-Backups und Companion-Einstellungs-/Präferenzübertragung enthalten; ältere Backups überschreiben die Auswahl nicht. |
 | Oberflächenleistung | Auto · Ausgewogen · Maximale Leistung · Sparsam | Auto | Alle | Animationen, Schimmer, schwere Flächen. Siehe [§8](#8-leistungsmodi). |
 | Oberfläche prüfen | Aktion | — | Alle | Misst die Zeichenlast und schlägt einen Modus vor. |
 | Start-Animation | Aus · Lichtfeld · Morgenlicht | Lichtfeld | Alle | Einmal beim Kaltstart, in den Akzentfarben. Während ein Server aufwacht, atmet das Licht weiter. Jede Taste fährt fort. Sparsam zeigt die stehende Wortmarke. |
@@ -784,7 +785,7 @@ Oberfläche und Wiedergabe haben getrennte Modi (*Aussehen*). Solange eine Seite
 | Maximale Leistung | Voll. | Voll, und Bewegungsglättung (SVP) ist erlaubt. |
 | Sparsam | Immer reduziert. | Immer reduziert. |
 
-**Reduzierte Oberfläche:** kein Blur, keine weichen Schatten und kein Feder-Fokus; ruhiger Startseiten-Hero; kein Home-Hintergrund auf anderen Ansichten; hochauflösende Bilder aus; kleinere Bilddekodierung; Bildschirmschoner auf Sparsam; projectM gedrosselt; Menütöne am TV stumm.
+**Reduzierte Oberfläche:** View-Übergänge deaktiviert (gespeicherte Auswahl bleibt erhalten); kein Blur, keine weichen Schatten und kein Feder-Fokus; ruhiger Startseiten-Hero; kein Home-Hintergrund auf anderen Ansichten; hochauflösende Bilder aus; kleinere Bilddekodierung; Bildschirmschoner auf Sparsam; projectM gedrosselt; Menütöne am TV stumm.
 
 **Reduzierte Wiedergabe:** aufwendige Videopfade nutzen leichtere Ersatzwerte (GPU-Shader, CPU-Entrauschen/-Deblocking-Fallback, VLC-Software-Filter, Media3-Effektkette, 2×-Deinterlacing, Spektrum). Gespeicherte Bildeinstellungen bleiben erhalten und gelten wieder, sobald Sparsam verlassen wird. Audio-DSP bleibt verfügbar.
 

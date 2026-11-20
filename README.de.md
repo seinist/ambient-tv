@@ -104,6 +104,7 @@ Ambient TV entsteht in der Freizeit, aus Liebe zu einem guten Fernsehabend. Wenn
 - **Media3-GPU-Filter** – MPVs Kernel (EWA Lanczos, Robidoux, Splines, …), RAVU, NVIDIA NIS, FSR, CAS/Adaptive Sharpen, Debanding, Entrauschen, Filmkorn, auf 4K-Panels in 4K gerendert
 - Bildoptionen für **VLC**
 - **Acht Accent-Stile**, dezente Animationen bei maximaler Oberflächenleistung und separate TV-Oberflächenauflösung (System, 1080p oder Display-Auflösung)
+- **Optionale View-Übergänge**: Aus (Standard), Soft Fade, Fade + Micro-Slide oder cinematische Ein-Layer-Überblendung. Die Auswahl wird per Backup/TV-Sync mitgenommen; Sparsam schaltet Effekte ab.
 
 </td>
 <td valign="top">
@@ -140,7 +141,7 @@ Ambient TV entsteht in der Freizeit, aus Liebe zu einem guten Fernsehabend. Wenn
 - **Wetter** mit gespeicherten Orten, Stunden-/Tagesvorhersage sowie auswählbaren Radar- und Satellitenkarten; wahlweise in Menü, Kopfzeile und Bildschirmschoner
 - **Lichtstimmungen** über der Startseite, **Filterleiste** über Mediatheken, Programmführer, Trailern und YouTube
 - **Leistungsmodus** Auto / Ausgewogen / Sparsam, Bildschirmschoner, Startbildschirm-Kanäle
-- **Einstellungs-Backup** (Schema 80; API-Daten nur im passwortverschlüsselten Export mit Zugangsdaten) · DE/EN UI
+- **Einstellungs-Backup** (Schema 82; API-Daten nur im passwortverschlüsselten Export mit Zugangsdaten) · DE/EN UI
 
 </td>
 </tr>

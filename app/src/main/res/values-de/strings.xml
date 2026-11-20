@@ -464,6 +464,12 @@
     <string name="settings_performance_auto">Auto</string>
     <string name="settings_performance_balanced">Ausgewogen</string>
     <string name="settings_performance_low">Sparsam</string>
+    <string name="settings_view_transition_title">View-Übergänge</string>
+    <string name="settings_view_transition_hint">Übergang zwischen Ansichten. Player und OSD bleiben unverändert; im sparsamen Oberflächenmodus sind Animationen deaktiviert.</string>
+    <string name="settings_view_transition_off">Aus (bisheriges Verhalten)</string>
+    <string name="settings_view_transition_fade">Weiches Überblenden</string>
+    <string name="settings_view_transition_slide">Überblenden + sanftes Gleiten</string>
+    <string name="settings_view_transition_cinematic">Cinematische Überblendung</string>
     <string name="settings_ui_performance">Oberfläche</string>
     <string name="settings_ui_performance_hint">Weniger Effekte für schwächere Geräte.</string>
     <string name="settings_playback_performance">Wiedergabe</string>

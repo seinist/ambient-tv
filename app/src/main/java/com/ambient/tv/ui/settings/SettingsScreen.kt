@@ -550,6 +550,26 @@ fun SettingsScreen(
                                     )
                                 }
                             }
+                            item(key = "appearance:view-transitions") {
+                                SettingsGroup {
+                                    SettingsSelect(
+                                        label = stringResource(R.string.settings_view_transition_title),
+                                        description = stringResource(R.string.settings_view_transition_hint),
+                                        options = com.ambient.tv.ui.common.ViewTransitionStyle.entries.map { style ->
+                                            SettingsSelectOption(
+                                                text = stringResource(when (style) {
+                                                    com.ambient.tv.ui.common.ViewTransitionStyle.OFF -> R.string.settings_view_transition_off
+                                                    com.ambient.tv.ui.common.ViewTransitionStyle.SOFT_FADE -> R.string.settings_view_transition_fade
+                                                    com.ambient.tv.ui.common.ViewTransitionStyle.MICRO_SLIDE -> R.string.settings_view_transition_slide
+                                                    com.ambient.tv.ui.common.ViewTransitionStyle.CINEMATIC -> R.string.settings_view_transition_cinematic
+                                                }),
+                                                selected = uiState.viewTransitionStyleKey == style.key,
+                                                onClick = { viewModel.onViewTransitionStyleChanged(style.key) },
+                                            )
+                                        },
+                                    )
+                                }
+                            }
                             item(key = "appearance:image-cache") { ImageCacheSettings() }
                             item {
                                 SettingsSingleAction(

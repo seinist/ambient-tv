@@ -1129,6 +1129,13 @@ internal fun radioSectionTransitionIsInstant(fromRoute: String?, toRoute: String
 
 internal val SIDEBAR_ROUTES = setOf(Destinations.TRAILERS, Destinations.TRAILER_FEED, Destinations.FILES, Destinations.FILE_SOURCE, Destinations.FILE_FAVORITES, Destinations.FILE_RECENT, Destinations.FILE_CONTINUE, Destinations.DLNA, Destinations.DLNA_SERVER, Destinations.HOME, Destinations.WEATHER, Destinations.PLEX, Destinations.JELLYFIN, Destinations.EMBY, Destinations.SEARCH, Destinations.YOUTUBE, Destinations.YOUTUBE_FEED, Destinations.TELEGRAM, Destinations.TELEGRAM_SECTION, Destinations.SPOTIFY, Destinations.SPOTIFY_SECTION, Destinations.RADIO, Destinations.RADIO_SECTION, Destinations.LIVE_TV, Destinations.LIVE_TV_SECTION, Destinations.SETTINGS, Destinations.SECTION)
 internal val FULLSCREEN_ROUTES = setOf(Destinations.ITEM_TRAILERS, Destinations.TMDB_TRAILERS, Destinations.PHOTO_VIEWER, Destinations.SETUP_COMPLETE, Destinations.INITIAL_SETUP, Destinations.SETUP_SETTINGS, Destinations.WEATHER_PLAYER, Destinations.PLAYER, Destinations.TVH_PLAYER, Destinations.YOUTUBE_PLAYER, Destinations.TELEGRAM_PLAYER, Destinations.TELEGRAM_DETAIL, Destinations.YOUTUBE_DETAIL, Destinations.YOUTUBE_CHANNEL, Destinations.SPOTIFY_PLAYER, Destinations.RADIO_PLAYER, Destinations.RADIO_DETAIL, Destinations.SPOTIFY_DETAIL, Destinations.SERVER_SELECT, Destinations.DETAIL, Destinations.DETAIL_FILTERED_BROWSE)
+// Details are ordinary page navigation (even though they hide the sidebar).
+// Exclude only player/video, setup and system-only destinations from page motion.
+internal val NO_VIEW_TRANSITION_ROUTES = FULLSCREEN_ROUTES - setOf(
+    Destinations.DETAIL, Destinations.DETAIL_FILTERED_BROWSE,
+    Destinations.TELEGRAM_DETAIL, Destinations.YOUTUBE_DETAIL, Destinations.YOUTUBE_CHANNEL,
+    Destinations.RADIO_DETAIL, Destinations.SPOTIFY_DETAIL,
+)
 // Saved on the Settings back stack entry by a sidebar shortcut: the page to open, plus a serial
 // that changes with every request.
 private const val SETTINGS_PAGE_KEY = "settings_page"
@@ -1186,6 +1193,11 @@ private fun AmbientTvApp(
     val startupViewModel: ServerSelectViewModel = androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel()
     val startupState by startupViewModel.uiState.collectAsState()
     val navController = rememberNavController()
+    // Preference updates (including backup/Companion import) take effect without recreating
+    // the NavHost or replacing a running native playback Surface.
+    val viewTransitionStyleKey by remember(appPreferences) {
+        appPreferences.changes().map { appPreferences.viewTransitionStyleKey }.distinctUntilChanged()
+    }.collectAsState(initial = appPreferences.viewTransitionStyleKey)
     val companionVm: com.ambient.tv.companion.CompanionViewModel = androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel()
     LaunchedEffect(companionVm) {
         var revision = companionVm.manager.state.value.settingsRevision
@@ -2486,19 +2498,30 @@ private fun AmbientTvApp(
                     // override the destination's focusRestorer callback.
                     .focusGroup(),
             ) {
+                com.ambient.tv.ui.common.ViewTransitionHost(
+                    styleKey = viewTransitionStyleKey,
+                    route = currentRoute,
+                    entryId = currentBackStackEntry?.id,
+                    backStackDepth = navController.currentBackStack.value.size,
+                    fullscreen = currentRoute in NO_VIEW_TRANSITION_ROUTES,
+                    reducedEffects = com.ambient.tv.ui.performance.LocalPerformanceProfile.current.reducedEffects,
+                    backgroundVideoVisible = showVisibleBackgroundVideo,
+                    lowEndDevice = com.ambient.tv.ui.performance.LocalPerformanceProfile.current.lowEndDevice,
+                    skipTransition = { from, to -> handheld && radioSectionTransitionIsInstant(from, to) },
+                ) {
                 NavHost(
                     navController = navController,
                     startDestination = startDestination,
                     // TV destinations change atomically: outgoing pages must not retain focus
                     // or Back ownership while the parent page is already active.
                     enterTransition = {
-                        if (!handheld || radioSectionTransitionIsInstant(
+                        if (!handheld || viewTransitionStyleKey != "off" || radioSectionTransitionIsInstant(
                                 initialState.destination.route, targetState.destination.route,
                             )) EnterTransition.None
                         else fadeIn(tween(700))
                     },
                     exitTransition = {
-                        if (!handheld || radioSectionTransitionIsInstant(
+                        if (!handheld || viewTransitionStyleKey != "off" || radioSectionTransitionIsInstant(
                                 initialState.destination.route, targetState.destination.route,
                             )) ExitTransition.None
                         else fadeOut(tween(700))
@@ -2506,22 +2529,22 @@ private fun AmbientTvApp(
                     // Pop and predictive-back pops default to Navigation's own scale-out
                     // animation (page shrinks, parent shows behind); keep TV atomic here too.
                     popEnterTransition = {
-                        if (!handheld || radioSectionTransitionIsInstant(
+                        if (!handheld || viewTransitionStyleKey != "off" || radioSectionTransitionIsInstant(
                                 initialState.destination.route, targetState.destination.route,
                             )) EnterTransition.None else fadeIn(tween(700))
                     },
                     popExitTransition = {
-                        if (!handheld || radioSectionTransitionIsInstant(
+                        if (!handheld || viewTransitionStyleKey != "off" || radioSectionTransitionIsInstant(
                                 initialState.destination.route, targetState.destination.route,
                             )) ExitTransition.None else fadeOut(tween(700))
                     },
                     predictivePopEnterTransition = {
-                        if (!handheld || radioSectionTransitionIsInstant(
+                        if (!handheld || viewTransitionStyleKey != "off" || radioSectionTransitionIsInstant(
                                 initialState.destination.route, targetState.destination.route,
                             )) EnterTransition.None else fadeIn(tween(700))
                     },
                     predictivePopExitTransition = {
-                        if (!handheld || radioSectionTransitionIsInstant(
+                        if (!handheld || viewTransitionStyleKey != "off" || radioSectionTransitionIsInstant(
                                 initialState.destination.route, targetState.destination.route,
                             )) ExitTransition.None else fadeOut(tween(700))
                     },
@@ -3485,6 +3508,7 @@ private fun AmbientTvApp(
                         )
                     }
                 }
+                } // ViewTransitionHost; global overlays and video remain outside the effect.
 
                 // Entering a player over a browse/detail page: the player is transparent so the
                 // video plane below can show through, which for the frames Navigation still draws

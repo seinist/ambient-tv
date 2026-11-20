@@ -503,7 +503,8 @@ class SettingsViewModel @Inject constructor(
         customAccentHex = appPreferences.customAccentHex,
         customPlaybackAccentHex = appPreferences.customPlaybackAccentHex,
         dualAccentEnabled = appPreferences.dualAccentEnabled,
-        themeModeKey = packThemeAndAccentStyle(appPreferences.themeModeKey, appPreferences.accentStyleKey, appPreferences.accentMotionKey),
+        themeModeKey = packThemeAndAccentStyle(appPreferences.themeModeKey, appPreferences.accentStyleKey, appPreferences.accentMotionKey,
+            appPreferences.viewTransitionStyleKey),
         uiHdrModeKey = appPreferences.uiHdrModeKey,
         sdrToHdrEnabled = appPreferences.sdrToHdrEnabled,
         sdrToHdrPeakNits = appPreferences.sdrToHdrPeakNits,
@@ -2409,6 +2410,10 @@ class SettingsViewModel @Inject constructor(
         _uiState.update { it.withAccentMotionKey(value) }
     }
 
+    fun onViewTransitionStyleChanged(value: String) {
+        _uiState.update { it.withViewTransitionStyleKey(value) }
+    }
+
     fun onAccentColorChanged(value: String) {
         _uiState.update { it.copy(accentColorKey = value) }
     }
@@ -3052,6 +3057,7 @@ class SettingsViewModel @Inject constructor(
         appPreferences.accentColorKey = state.accentColorKey
         appPreferences.accentStyleKey = state.accentStyleKey
         appPreferences.accentMotionKey = state.accentMotionKey
+        appPreferences.viewTransitionStyleKey = state.viewTransitionStyleKey
         appPreferences.customAccentHex = state.customAccentHex
         appPreferences.customPlaybackAccentHex = state.customPlaybackAccentHex
         appPreferences.dualAccentEnabled = state.dualAccentEnabled
