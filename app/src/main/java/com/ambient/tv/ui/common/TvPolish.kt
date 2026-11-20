@@ -74,7 +74,6 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.draw.scale
-import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.zIndex
 import androidx.compose.ui.graphics.BlendMode
@@ -209,16 +208,20 @@ fun Modifier.mediaFocusMotion(
     val performance = LocalPerformanceProfile.current
     val tokens = LocalUiTokens.current
     val animatedScale = rememberMediaFocusScale(focused, focusedScale)
+    val shadow = animateFloatAsState(
+        if (focused && performance.allowFocusedItemShadow) 5f else 0f,
+        tween(if (focused) 230 else 210),
+        label = "mediaFocusShadow",
+    )
     return this
-        .then(
-            if (focused && performance.allowFocusedItemShadow) {
-                Modifier.shadow(5.dp, RoundedCornerShape(tokens.cardRadius), clip = false)
-            } else Modifier
-        )
         .zIndex(if (focused) 1f else 0f)
         .graphicsLayer {
             scaleX = animatedScale.value
             scaleY = animatedScale.value
+            // One existing layer for both motions; no abrupt shadow removal.
+            shadowElevation = shadow.value.dp.toPx()
+            shape = RoundedCornerShape(tokens.cardRadius)
+            clip = false
         }
 }
 

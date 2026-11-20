@@ -27,6 +27,7 @@ internal data class ControlPaletteInput(
     val accent: Color,
     val style: AccentStyle,
     val headroom: Float,
+    val materialAccent: Color = accent,
 )
 
 /**
@@ -88,10 +89,10 @@ internal class ControlPalette(
      * Theme.primary is contrast-adjusted against the dark base, so use its actual hue
      * for the visible stroke; keep the semantic alpha for selected/focused strength.
      */
-    fun focusBorderBrush(): Brush = accentFocusBorderBrush(input.accent.copy(alpha = 1f), style)
+    fun focusBorderBrush(): Brush = accentFocusBorderBrush(input.materialAccent.copy(alpha = 1f), style)
 
     /** The same material, thinner and static until focused. */
-    fun selectedBorderBrush(): Brush = accentFocusBorderBrush(input.accent.copy(alpha = 1f), style)
+    fun selectedBorderBrush(): Brush = accentFocusBorderBrush(input.materialAccent.copy(alpha = 1f), style)
 }
 
 @Immutable
@@ -125,11 +126,13 @@ internal fun controlPalette(
     accent: Color,
     style: AccentStyle,
     headroom: Float = 1f,
+    materialAccent: Color = accent,
 ): ControlPalette {
     val base = controlDesignColor(surface, headroom).copy(alpha = 1f)
     val raised = controlDesignColor(raisedSurface, headroom).copy(alpha = 1f)
     val foreground = controlDesignColor(content, headroom).copy(alpha = 1f)
     val accentColor = controlDesignColor(accent, headroom).copy(alpha = 1f)
+    val materialAccentColor = controlDesignColor(materialAccent, headroom).copy(alpha = 1f)
     // Reserve the brightest possible material stop plus its optional animated reflection,
     // in linear light (the more demanding HDR blend). Keeping that reservation even while
     // motion is off avoids a brightness jump when focus starts/stops the clock. The 5:1
@@ -154,7 +157,8 @@ internal fun controlPalette(
             selected -> .17f
             else -> 0f
         }
-        var fill = lerp(idle, accentColor, tint)
+        // Preserve the real accent hue in selected surfaces, not the white-lifted UI tint.
+        var fill = lerp(idle, materialAccentColor, tint)
         // Focus adds a neutral lift without replacing the persistent selection tint.
         if (focused) fill = lerp(fill, foreground, .045f)
         fill = limitControlLuminance(fill, maxFillLuminance)
@@ -171,7 +175,7 @@ internal fun controlPalette(
     ).convert(ColorSpaces.Srgb)
     val accentFocus = accessibleAccent(accentColor, brightestFill)
     return ControlPalette(
-        input = ControlPaletteInput(surface, raisedSurface, content, mutedContent, accent, style, headroom),
+        input = ControlPaletteInput(surface, raisedSurface, content, mutedContent, accent, style, headroom, materialAccent),
         containers = containers,
         disabledContainer = uiHdrHighlight(scaleControlLuminance(idle, .70f), headroom),
         content = content.copy(alpha = 1f),
@@ -180,7 +184,7 @@ internal fun controlPalette(
         accentFocusOutline = uiHdrHighlight(accentFocus, headroom),
         selectedOutline = uiHdrHighlight(accentFocus, headroom).copy(alpha = .85f),
         prominentOutline = uiHdrHighlight(edge, headroom).copy(alpha = .48f),
-        materialStops = accentMaterialStops(accentColor, style).map { (position, color) ->
+        materialStops = accentMaterialStops(materialAccentColor, style).map { (position, color) ->
             val lifted = uiHdrHighlight(color, headroom)
             // The sRGB-to-linear matrix can leave a tiny negative component for an
             // exact zero channel (e.g. cyan). Keep the bounded material nonnegative.

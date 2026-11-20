@@ -64,8 +64,8 @@ internal class AccentMotionPaints(private val accent: Color, val style: AccentSt
     // White-on-white has no visible motion. Very light accents use a slightly shaded light
     // and glint, which keeps every gesture readable (including HDR white).
     private val veryLight = accent.luminance() > .8f
-    private val light = if (veryLight) blend(Color.Black, .22f) else blend(Color.White, .55f)
-    private val glint = if (veryLight) blend(Color.Black, .22f) else blend(Color.White, .85f)
+    private val light = if (veryLight) blend(Color.Black, .18f) else blend(Color.White, .30f)
+    private val glint = if (veryLight) blend(Color.Black, .22f) else blend(Color.White, .48f)
     private val clearLight = light.copy(alpha = 0f)
     private val clearGlint = glint.copy(alpha = 0f)
     private val cool = accentHueShift(accent, -30f).let { lerp(it, light, .35f) }

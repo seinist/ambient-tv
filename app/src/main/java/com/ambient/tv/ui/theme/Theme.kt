@@ -7,6 +7,7 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
@@ -17,6 +18,31 @@ import com.ambient.tv.ui.common.TvBringIntoViewSpec
 
 
 val LocalAccentModeKey = staticCompositionLocalOf { "gold" }
+
+/** Hue-preserving material accent; Theme.primary remains contrast-safe for text. */
+val LocalAccentMaterialColor = staticCompositionLocalOf<Color?> { null }
+
+/**
+ * Only very dark custom accents need a small luminance lift for non-text focus borders.
+ * Stop at 3.8:1 (not the 4.5:1 text target) to avoid the near-white material rims.
+ */
+internal fun visibleMaterialAccent(raw: Color, readable: Color, surface: Color): Color {
+    val opaque = raw.copy(alpha = 1f)
+    if (contrastRatio(opaque, surface) >= 3.8f) return opaque
+    for (step in 1..32) {
+        val candidate = lerp(opaque, readable.copy(alpha = 1f), step / 32f)
+        if (contrastRatio(candidate, surface) >= 3.8f) return candidate
+    }
+    return readable.copy(alpha = 1f)
+}
+
+@Composable
+internal fun materialAccentFor(semanticColor: Color): Color {
+    val material = LocalAccentMaterialColor.current ?: return semanticColor
+    // Explicit neutral, custom and playback colors must remain untouched.
+    return if (semanticColor.copy(alpha = 1f) == MaterialTheme.colorScheme.primary.copy(alpha = 1f))
+        material.copy(alpha = semanticColor.alpha) else semanticColor
+}
 
 enum class AppThemeMode(val key: String) {
     DARK("dark"), OLED("oled"), DIM("dim");
@@ -67,6 +93,7 @@ fun AmbientTvTheme(
     // extended sRGB so text, surfaces and gradients sit above SDR white. Black stays black.
     val headroom = com.ambient.tv.ui.display.LocalUiHdrState.current?.headroom ?: 1f
     fun Color.lift() = com.ambient.tv.ui.display.uiHdrHighlight(this, headroom)
+    val materialAccent = visibleMaterialAccent(accent, usableAccent, raised).lift()
     val tvTypography = if (handheld) androidx.tv.material3.Typography(
         displaySmall = androidx.compose.ui.text.TextStyle(fontSize = 28.sp, lineHeight = 34.sp),
         headlineLarge = androidx.compose.ui.text.TextStyle(fontSize = 28.sp, lineHeight = 34.sp),
@@ -111,7 +138,7 @@ fun AmbientTvTheme(
     val accentStyle = AccentStyle.fromKey(accentStyleKey)
     val controls = remember(
         tvScheme.surface, tvScheme.surfaceVariant, tvScheme.onSurface, tvScheme.onSurfaceVariant,
-        tvScheme.primary, accentStyle, headroom,
+        tvScheme.primary, materialAccent, accentStyle, headroom,
     ) {
         controlPalette(
             surface = tvScheme.surface,
@@ -121,6 +148,7 @@ fun AmbientTvTheme(
             accent = tvScheme.primary,
             style = accentStyle,
             headroom = headroom,
+            materialAccent = materialAccent,
         )
     }
 
@@ -144,6 +172,7 @@ fun AmbientTvTheme(
         LocalUiTokens provides tokens,
         LocalAccentModeKey provides accentColorKey,
         LocalAccentStyle provides accentStyle,
+        LocalAccentMaterialColor provides materialAccent,
         LocalControlPalette provides controls,
         LocalAccentMotionMode provides AccentMotionMode.fromKey(accentMotionKey),
         LocalPlaybackAccent provides PlaybackAccent(

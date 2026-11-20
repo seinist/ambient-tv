@@ -127,6 +127,17 @@ class ControlColorsTest {
         }
     }
 
+    @Test fun materialKeepsRawAccentWhileSemanticOutlineStaysReadable() {
+        val raw = Color(0xFF003366)
+        val semantic = accessibleAccent(raw, AppSurface)
+        val palette = controlPalette(AppSurface, AppSurfaceRaised, AppOnSurface, AppOnSurfaceMuted,
+            semantic, AccentStyle.SATIN, materialAccent = raw)
+        assertNotEquals(raw, semantic)
+        assertEquals(raw, palette.input.materialAccent)
+        assertEquals(raw, palette.materialStops[1].second)
+        assertTrue(contrastRatio(palette.colors(focused = true).outline, AppSurface) >= 4.5f)
+    }
+
     @Test fun disabledControlsKeepOnlyASubduedOutlineWhenFocusIsRetained() {
         for (style in AccentStyle.entries) {
             val palette = palette(surfaces.first(), Gold, style)
