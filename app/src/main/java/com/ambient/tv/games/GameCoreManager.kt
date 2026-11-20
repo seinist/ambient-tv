@@ -49,7 +49,9 @@ class GameCoreManager @Inject constructor(
 
     fun installed(core: GameCore): File? = file(core).takeIf { it.isFile && it.length() > 0 }
 
-    fun sourceUrl(core: GameCore): String? = abi?.let { "$BUILDBOT/$it/${core.id}_libretro_android.so.zip" }
+    fun sourceUrl(core: GameCore): String? = abi
+        ?.takeIf { core.supportedAbis.isEmpty() || it in core.supportedAbis }
+        ?.let { "$BUILDBOT/$it/${core.id}_libretro_android.so.zip" }
 
     fun remove(core: GameCore) {
         file(core).let { it.setWritable(true); it.delete() }
@@ -62,6 +64,9 @@ class GameCoreManager @Inject constructor(
      */
     suspend fun download(core: GameCore, source: GameCoreSource = GameCoreSource.AUTO, onProgress: (Float?) -> Unit): File = withContext(Dispatchers.IO) {
         val abi = abi ?: throw GameCoreIncompatibleException("No core build for ${Build.SUPPORTED_ABIS.joinToString()}")
+        if (core.supportedAbis.isNotEmpty() && abi !in core.supportedAbis) {
+            throw GameCoreIncompatibleException("${core.name} is not available for $abi")
+        }
         if (source != GameCoreSource.BUILDBOT && channel.available) {
             val found = try {
                 channel.build(core, abi)
