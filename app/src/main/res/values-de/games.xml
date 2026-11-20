@@ -101,7 +101,7 @@
     <string name="game_picture_hdr_off">Aus (normales SDR)</string>
     <string name="game_picture_hdr_pq">PQ-/HDR10-Eingabe</string>
     <string name="game_picture_hdr_hlg">HLG-Eingabe</string>
-    <string name="game_picture_hdr_hint">Nur für Cores, die tatsächlich PQ oder HLG ausgeben. Manuelle Umwandlung nach Vulkan → GLES; kein natives HDR und keine automatische Erkennung.</string>
+    <string name="game_picture_hdr_hint">Nur für Cores, die tatsächlich PQ oder HLG ausgeben. Das Spiel startet neu; FP16 wird bei Unterstützung verwendet, sonst RGBA8. Kein natives HDR und keine automatische Erkennung.</string>
     <string name="game_picture_hdr_filter_note">Bildfilter sind während der HDR-Umwandlung vorübergehend ausgesetzt.</string>
     <string name="game_core_scope">Änderungen gelten für</string>
     <string name="game_core_scope_game">Nur dieses Spiel</string>
