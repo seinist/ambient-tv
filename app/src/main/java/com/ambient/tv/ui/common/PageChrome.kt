@@ -525,7 +525,7 @@ fun PageChipRow(
         repeat(3) {
             withFrameNanos { }
             if (!chipsFocused || selectedIndex != index || focusHold.active ||
-                focusHold.awaitingSelection) return@LaunchedEffect
+                focusHold.awaitingSelection || lastFocusedSelection == index) return@LaunchedEffect
             if (runCatching { chain.selectedChip.requestFocus() }.getOrDefault(false)) {
                 lastFocusedSelection = index
                 return@LaunchedEffect
@@ -555,7 +555,18 @@ fun PageChipRow(
                 .onFocusChanged { chipsFocused = it.hasFocus }
                 .onPreviewKeyEvent { event ->
                     if (!handheld && event.type == KeyEventType.KeyDown) {
-                        if (event.key in CHIP_CONFIRM_KEYS) focusHold.arm() else focusHold.disarm()
+                        if (event.key in CHIP_CONFIRM_KEYS) {
+                            focusHold.arm()
+                        } else {
+                            focusHold.disarm()
+                            if (event.key == Key.DirectionLeft || event.key == Key.DirectionRight) {
+                                // The user's D-pad navigation wins over a previously scheduled
+                                // selected-chip handoff (which may resume on the next frame).
+                                // This also lets a delayed provider response preserve the
+                                // last focused chip instead of jumping back to the old tab.
+                                lastFocusedSelection = selectedIndex
+                            }
+                        }
                     }
                     false
                 }
