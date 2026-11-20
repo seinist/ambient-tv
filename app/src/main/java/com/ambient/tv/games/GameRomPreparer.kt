@@ -171,7 +171,6 @@ class GameRomPreparer @Inject constructor(
             if (rest.startsWith("\"")) rest.substring(1).substringBefore('"') else rest.substringBeforeLast(' ')
         }.filter { it.isNotBlank() }.toList()
 
-        /** Disc files an M3U playlist names (comments and blank lines skipped). */
         /** Dreamcast GDI: track number, LBA, type, sector size, filename, offset. */
         internal fun gdiFiles(gdi: String): List<String> =
             gdi.lineSequence().drop(1).mapNotNull { line ->
@@ -179,6 +178,7 @@ class GameRomPreparer @Inject constructor(
                     .matchEntire(line.trim())?.groupValues?.get(1)?.trim('"')
             }.filter(String::isNotBlank).toList()
 
+        /** Disc files an M3U playlist names (comments and blank lines skipped). */
         internal fun m3uFiles(m3u: String): List<String> =
             m3u.lineSequence().map { it.trim() }.filter { it.isNotEmpty() && !it.startsWith("#") }.toList()
     }
