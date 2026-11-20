@@ -23,6 +23,18 @@ internal enum class GameVulkanTransferMode(val nativeCode: Int) {
 
 /** Prerequisites for even showing the experimental native output diagnostic. */
 internal object GameVulkanTransferGate {
+    /**
+     * Libretro cores can query a configured HDR presenter during retro_init, before
+     * the Vulkan device/surface can be probed. This is NOT an active HDR signal
+     * and does not advertise software HDR source pixel-format support.
+     * The v1 libretro metadata contract only defines PQ (not HLG) output mode.
+     */
+    fun configuredCoreOutputMode(
+        input: GameHdrToneMap,
+        display: GameHdrDisplayCapabilities,
+        vulkanCore: Boolean,
+    ): Int = if (vulkanCore && input == GameHdrToneMap.PQ && display.hdr10) 1 else 0
+
     fun supported(
         transfer: GameVulkanTransferMode,
         display: GameHdrDisplayCapabilities,
