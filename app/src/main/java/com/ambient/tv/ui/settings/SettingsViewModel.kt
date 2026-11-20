@@ -126,6 +126,18 @@ class SettingsViewModel @Inject constructor(
     private val youTubeTvLink: com.ambient.tv.youtube.YouTubeTvLink,
 ) : ViewModel() {
     val feedback = OperationFeedbackReporter()
+
+    /** Saved immediately, independently of the page's deferred connection/MAC edits. */
+    private val _wakeOnOpenSystems = MutableStateFlow(appPreferences.wakeOnOpenSystems)
+    val wakeOnOpenSystems = _wakeOnOpenSystems.asStateFlow()
+
+    fun setWakeOnOpenSystem(system: String, enabled: Boolean) {
+        if (system !in AppPreferences.WAKE_ON_OPEN_SYSTEMS) return
+        val next = if (enabled) _wakeOnOpenSystems.value + system else _wakeOnOpenSystems.value - system
+        appPreferences.wakeOnOpenSystems = next
+        _wakeOnOpenSystems.value = next
+    }
+
     /** Fresh persisted snapshot; the settings form can contain changes awaiting Save. */
     internal fun savedPlaybackOverview() = savedPlaybackOverview(appPreferences)
     internal fun feedbackScope(page: SettingsCategory?) = page?.let { "settings:${it.name}" } ?: "settings"
@@ -491,7 +503,8 @@ class SettingsViewModel @Inject constructor(
         customAccentHex = appPreferences.customAccentHex,
         customPlaybackAccentHex = appPreferences.customPlaybackAccentHex,
         dualAccentEnabled = appPreferences.dualAccentEnabled,
-        themeModeKey = packThemeAndAccentStyle(appPreferences.themeModeKey, appPreferences.accentStyleKey, appPreferences.accentMotionKey),
+        themeModeKey = packThemeAndAccentStyle(appPreferences.themeModeKey, appPreferences.accentStyleKey, appPreferences.accentMotionKey,
+            appPreferences.viewTransitionStyleKey),
         uiHdrModeKey = appPreferences.uiHdrModeKey,
         sdrToHdrEnabled = appPreferences.sdrToHdrEnabled,
         sdrToHdrPeakNits = appPreferences.sdrToHdrPeakNits,
@@ -2397,6 +2410,10 @@ class SettingsViewModel @Inject constructor(
         _uiState.update { it.withAccentMotionKey(value) }
     }
 
+    fun onViewTransitionStyleChanged(value: String) {
+        _uiState.update { it.withViewTransitionStyleKey(value) }
+    }
+
     fun onAccentColorChanged(value: String) {
         _uiState.update { it.copy(accentColorKey = value) }
     }
@@ -3040,6 +3057,7 @@ class SettingsViewModel @Inject constructor(
         appPreferences.accentColorKey = state.accentColorKey
         appPreferences.accentStyleKey = state.accentStyleKey
         appPreferences.accentMotionKey = state.accentMotionKey
+        appPreferences.viewTransitionStyleKey = state.viewTransitionStyleKey
         appPreferences.customAccentHex = state.customAccentHex
         appPreferences.customPlaybackAccentHex = state.customPlaybackAccentHex
         appPreferences.dualAccentEnabled = state.dualAccentEnabled

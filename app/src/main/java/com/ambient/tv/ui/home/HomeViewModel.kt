@@ -36,6 +36,9 @@ import com.ambient.tv.youtube.YouTubeRow
 import com.ambient.tv.youtube.HomeYouTubeLoadMode
 import com.ambient.tv.youtube.HomeYouTubePins
 import com.ambient.tv.youtube.IncompleteYouTubeFeedException
+import com.ambient.tv.youtube.smartTubeAuthRejected
+import com.ambient.tv.youtube.smartTubeEmptyFeedNeedsAttention
+import com.ambient.tv.youtube.smartTubeFeedNeedsAccount
 import com.ambient.tv.ui.youtube.YouTubeBrowsePlaybackContext
 import com.ambient.tv.server.ServerConnectionManager
 import com.ambient.tv.server.ServerConnectionState
@@ -47,6 +50,7 @@ import com.ambient.tv.ui.common.PlexRefreshBus
 import com.ambient.tv.tvheadend.data.TvheadendRepository
 import com.ambient.tv.tvheadend.domain.TvhChannel
 import com.ambient.tv.tvheadend.domain.TvhEpgEvent
+import com.ambient.tv.livetv.LiveTvArtworkRepository
 import com.ambient.tv.spotify.SpotifyRepository
 import com.ambient.tv.ui.common.MediaSystem
 import com.ambient.tv.connectivity.UnreachableServerGate
@@ -95,6 +99,8 @@ data class HomeHeroContent(
     /** Summary for content without a [mediaItem], such as a live programme. */
     val summary: String? = null,
     val live: HomeHeroLive? = null,
+    /** Keep TVHeadend logo auth separate when the backdrop is hosted externally by TMDB. */
+    val titleLogoHeaders: Map<String, String>? = null,
 )
 
 /** Airing window of a live programme, for the hero's LIVE marker and remaining time. */
@@ -186,6 +192,7 @@ class HomeViewModel @Inject constructor(
     private val tvheadendRepository: TvheadendRepository,
     private val tvheadendConnectionManager: com.ambient.tv.server.TvheadendConnectionManager,
     private val liveTvRegistry: com.ambient.tv.livetv.LiveTvRegistry,
+    private val liveTvArtwork: LiveTvArtworkRepository,
     private val plexRefreshBus: PlexRefreshBus,
     private val spotifyRepository: SpotifyRepository,
     private val radioRepository: RadioBrowserRepository,
@@ -254,7 +261,6 @@ class HomeViewModel @Inject constructor(
     private var radioRowsGeneration = 0
     private var youtubeRowsPending = false
     // Declared before the init blocks: they can already publish rows.
-    private val createdAtElapsedMs = android.os.SystemClock.elapsedRealtime()
     private var coldStartRevealSettled = false
     private var lastPublication: Pair<List<ContentRowData>, Boolean>? = null
     private var youtubeRowsGeneration = 0
@@ -321,6 +327,9 @@ class HomeViewModel @Inject constructor(
     /** Channel icon URLs point at the TVHeadend server and need the same Basic Auth credentials
      * as the API calls - Coil doesn't share those with [tvheadendRepository]'s own client. */
     val tvheadendImageHeaders: Map<String, String> get() = tvheadendRepository.authHeaders()
+    val liveTvTitleArt: StateFlow<Map<String, String>> get() = liveTvArtwork.titleArt
+    fun requestHomeLiveTvTitleArt(title: String, scope: kotlinx.coroutines.CoroutineScope) =
+        liveTvArtwork.requestTitleArt(listOf(title), scope)
     val autoRefreshIntervalSeconds: Int get() = appPreferences.plexAutoRefreshIntervalSeconds
     val refreshGeneration = plexRefreshBus.generation
 
@@ -408,6 +417,12 @@ class HomeViewModel @Inject constructor(
             HomeFocusSnapshot(prefix + snapshot.target.videoId, source.id))
     }
 
+    private fun HomeUiState.Loaded.withCurrentLiveHeroArt(): HomeUiState.Loaded {
+        val selected = focusedRowId?.let { tvRows[it] }?.items
+            ?.firstOrNull { homeLiveTvFocusKey(it) == focusedRatingKey } ?: return this
+        return copy(hero = selected.toHeroContent())
+    }
+
     internal fun preparePlaybackReturn(
         state: HomeUiState,
         focusStateKey: String,
@@ -420,7 +435,7 @@ class HomeViewModel @Inject constructor(
             if (expected.liveTvSource != null) {
                 if (!livePlaybackReturnVisible(expected)) return null
             } else if (expected.source?.let { homeRowHidden(it.id) } != false) return null
-            return prepareHomePlaybackReturn(current, expected)
+            return prepareHomePlaybackReturn(current, expected)?.withCurrentLiveHeroArt()
         }
         val pending = pendingPlaybackReturn(focusStateKey, pendingYouTubePlaybackReturn.value,
             pendingTelegramPlaybackReturn.value)?.takeIf { it.key == expected.key } ?: return null
@@ -467,12 +482,23 @@ class HomeViewModel @Inject constructor(
         }
     }
 
+    // TMDB results repaint only the current hero artwork, never the Home LazyRows. The
+    // programme's EPG image and logo are restored automatically when the artwork map resets.
     init {
-        // The ordered cold-start reveal never holds rows back longer than its cap.
         viewModelScope.launch {
-            delay(COLD_START_REVEAL_CAP_MS)
-            settleColdStartReveal()
+            liveTvArtwork.titleArt.collect { titleArt ->
+                val hero = _heroContent.value ?: return@collect
+                if (!hero.key.startsWith("livetv:")) return@collect
+                val selected = (_uiState.value as? HomeUiState.Loaded)?.tvRows?.values
+                    ?.asSequence()?.flatMap { it.items.asSequence() }
+                    ?.firstOrNull { it.homeHeroKey() == hero.key } ?: return@collect
+                val updated = selected.toHomeHeroContent(titleArt)
+                if (updated != hero) _heroContent.value = updated
+            }
         }
+    }
+
+    init {
         viewModelScope.launch {
             telegramRepository.catalogRevision.drop(1).collect {
                 if (hasEntered && !plexOnly && !jellyfinOnly && !embyOnly &&
@@ -619,7 +645,9 @@ class HomeViewModel @Inject constructor(
             activeFocusedRowId = null
         }
         _refreshing.value = false
-        libraryLoading = false
+        // Set before independent TV/radio jobs can publish: those responses must not bypass
+        // earlier Plex/Jellyfin/Emby rows while their own initial load has not finished.
+        libraryLoading = appPreferences.isConfigured || appPreferences.isJellyfinConfigured || appPreferences.isEmbyConfigured
         ++tvPreviewGeneration
         tvPreviewJob?.cancel()
         val nextTvScope = liveTvRegistry.configured().joinToString { it.source.id }
@@ -1678,6 +1706,14 @@ class HomeViewModel @Inject constructor(
                 val supported = supportedResult.getOrElse { definitions.mapTo(hashSetOf()) { it.contentKey } }
                 if (generation != youtubeRowsGeneration) return@launch
                 val available = definitions.filter { it.contentKey in supported }
+                // A configured personalized feed disappearing after the auth probe must not
+                // silently look like an empty Home. Don't report unsupported public tabs.
+                if (supportedResult.isSuccess &&
+                    definitions.any { smartTubeFeedNeedsAccount(it.contentKey) } &&
+                    available.none { smartTubeFeedNeedsAccount(it.contentKey) } &&
+                    smartTubeEngine.hasSavedAccounts() &&
+                    !suspendResult { smartTubeEngine.isSignedIn() }.getOrDefault(true)
+                ) smartTubeEngine.reportAccountAttention()
                 val supportedKeys = available.mapTo(hashSetOf()) { it.contentKey }
                 youtubeRows = youtubeRows.filter { it.id.removePrefix("youtube.") in supportedKeys }
                 youtubeSourceRows.keys.retainAll(supportedKeys)
@@ -1689,7 +1725,7 @@ class HomeViewModel @Inject constructor(
                         permits.withPermit {
                             val cacheKey = "feed:${definition.contentKey}"
                             var partialRows = emptyList<YouTubeRow>()
-                            val result = suspendResult {
+                            var result = suspendResult {
                                 loadCoordinator.request("youtube", "home-feed:${definition.contentKey}:$revision", BrowseLoadPriority.HOME) {
                                 smartTubeEngine.feed(definition.contentKey) { partial ->
                                     partialRows = partial
@@ -1705,10 +1741,32 @@ class HomeViewModel @Inject constructor(
                                 }
                                 }
                             }
+                            // An empty first Home response can be an upstream warmup artifact.
+                            // One bounded second attempt avoids diagnosing that as a bad login.
+                            if (generation == youtubeRowsGeneration &&
+                                definition.contentKey == "home" && result.getOrNull()?.isEmpty() == true) {
+                                kotlinx.coroutines.delay(600L)
+                                result = suspendResult {
+                                    loadCoordinator.request("youtube", "home-feed:home:$revision:retry", BrowseLoadPriority.HOME) {
+                                        smartTubeEngine.feed("home")
+                                    }
+                                }
+                            }
                             val failure = result.exceptionOrNull()
                             if (generation == youtubeRowsGeneration && result.isSuccess) {
-                                onlineServices.succeeded("youtube")
                                 val rows = result.getOrThrow()
+                                val hadCachedRows = youtubeContentCache.get(cacheKey).orEmpty()
+                                    .any { it.items.isNotEmpty() }
+                                if (rows.isEmpty() && smartTubeEmptyFeedNeedsAttention(
+                                        definition.contentKey, signedIn = true, hadRows = hadCachedRows)) {
+                                    // Keep cached tiles instead of treating a suspicious empty
+                                    // personalized feed as a genuine deletion of all its entries.
+                                    smartTubeEngine.reportAccountAttention()
+                                    return@withPermit
+                                }
+                                onlineServices.succeeded("youtube")
+                                if (definition.contentKey == "home" &&
+                                    rows.any { it.items.isNotEmpty() }) smartTubeEngine.clearAccountAttention()
                                 // The common SmartTube cache reconciles by ID, preserving
                                 // the positions of focused tiles while fresh results arrive.
                                 val visible = if (youtubeContentCache.revision() == revision)
@@ -1733,8 +1791,10 @@ class HomeViewModel @Inject constructor(
                                     homeYouTubeSourceRow(stored, HOME_ROW_LIMIT)?.let { updateHomeYouTubeRow(generation, definition, it) }
                                 }
                             }
-                            if (generation == youtubeRowsGeneration && failure != null)
-                                onlineServices.failed("youtube", failure)
+                            if (generation == youtubeRowsGeneration && failure != null) {
+                                if (smartTubeAuthRejected(failure)) smartTubeEngine.reportAccountAttention()
+                                else onlineServices.failed("youtube", failure)
+                            }
                         }
                     } }.awaitAll()
                 }
@@ -2205,8 +2265,9 @@ class HomeViewModel @Inject constructor(
 
     /** Library systems whose first load is still running; empty once cold start has settled. */
     private fun coldStartPendingSystems(): Set<String> {
-        if (coldStartRevealSettled || !libraryLoading ||
-            android.os.SystemClock.elapsedRealtime() - createdAtElapsedMs >= COLD_START_REVEAL_CAP_MS) return emptySet()
+        // A fixed six-second cap used to publish later Live TV rows before an earlier media
+        // server had answered. Only completion or confirmed offline state resolves the gap.
+        if (coldStartRevealSettled || !libraryLoading) return emptySet()
         val offline = unreachableServers.current().offline
         return buildSet {
             if (appPreferences.isConfigured) add(HomeRowDefinition.SYSTEM_PLEX)
@@ -2317,18 +2378,19 @@ class HomeViewModel @Inject constructor(
             (checkNotNull(returnedTvRow.target.rowId) to checkNotNull(returnedTvRow.liveTvSource))
         val homeDefinitions = if (plexOnly || jellyfinOnly || embyOnly) emptyList() else appPreferences.homeRows
         val tvRowSources = tvRows.keys.filter { ':' in it }.associateWith { key -> "${key.substringAfter(':')}.${if (key.startsWith("recent")) "recent_channels" else "live"}" }
+        // Offline providers retain one reconnect row in their original editor position. When
+        // absolutely nothing is available, keep the full offline page instead of a lone row.
+        val offlineReconnectSystems = if (rows.isEmpty() && shortcuts.isEmpty() && tvRows.isEmpty()) emptyList()
+            else unreachableServers.current().offline.filter { system ->
+                homeDefinitions.any { it.enabled && it.system == system }
+            }
         val orderedRowKeys = orderedHomeRowKeys(homeDefinitions, rows.map { it.id },
-            shortcuts, tvRows.containsKey("live-tv"), tvRows.containsKey("recent-tv"), tvRowSources)
-        // Cold start reveals rows top-down, so Live TV etc. cannot show first and jump down.
-        val contentRowKeys = revealHomeRowsInOrder(homeDefinitions, orderedRowKeys,
-            homeRowKeySources(rows.map { it.id }, shortcuts, tvRows.containsKey("live-tv"), tvRows.containsKey("recent-tv"), tvRowSources),
+            shortcuts, tvRows.containsKey("live-tv"), tvRows.containsKey("recent-tv"), tvRowSources, offlineReconnectSystems)
+        // Cold start reveals rows top-down, so Live TV cannot outrun a still-loading media server.
+        val rowKeys = revealHomeRowsInOrder(homeDefinitions, orderedRowKeys,
+            homeRowKeySources(rows.map { it.id }, shortcuts, tvRows.containsKey("live-tv"),
+                tvRows.containsKey("recent-tv"), tvRowSources, offlineReconnectSystems, homeDefinitions),
             coldStartPendingSystems())
-        // An offline server whose rows are on Home keeps one entry there that wakes it. With no
-        // other rows Home shows the full offline page instead.
-        val rowKeys = if (contentRowKeys.isEmpty() || plexOnly || jellyfinOnly || embyOnly) contentRowKeys
-        else contentRowKeys + unreachableServers.current().offline
-            .filter { system -> appPreferences.homeRows.any { it.enabled && it.system == system } }
-            .map { HOME_OFFLINE_ROW_PREFIX + it }
         val defaultItem = rows.firstNotNullOfOrNull { it.items.firstOrNull() }
         // Initial focus belongs to the first row on screen, which follows rowKeys (the editor
         // order), not the provider order of `rows`.
@@ -2619,7 +2681,7 @@ class HomeViewModel @Inject constructor(
 
     private fun MediaItem.toHeroContent() = toHomeHeroContent()
 
-    private fun HomeLiveTvItem.toHeroContent() = toHomeHeroContent()
+    private fun HomeLiveTvItem.toHeroContent() = toHomeHeroContent(liveTvArtwork.titleArt.value)
 
     private fun HomeRowDefinition.toHeroContent() = HomeHeroContent(
         key = "shortcut:$id",
@@ -2746,7 +2808,6 @@ internal fun homeRowTileStyle(
 /** Upper bound for keeping visible Home rows while a background refresh completes. */
 private const val REFRESH_HOLD_MS = 4_000L
 /** Upper bound for the ordered cold-start reveal; afterwards every loaded row shows. */
-private const val COLD_START_REVEAL_CAP_MS = 6_000L
 private const val PHOTO_ROW_ID = "photos.recent"
 
 /** Home row key of an offline server's wake entry: prefix + system key. */

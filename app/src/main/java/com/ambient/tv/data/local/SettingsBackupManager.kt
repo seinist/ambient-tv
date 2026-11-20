@@ -11,6 +11,7 @@ import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.jsonObject
 import com.ambient.tv.vpn.WireGuardProfile
 import com.ambient.tv.ui.theme.normalizedAccentKey
 
@@ -264,6 +265,8 @@ data class SettingsBackup(
     /** Since schema 72. */
     val introAnimationKey: String = IntroAnimation.DEFAULT,
     val wolRetryCount: Int = com.ambient.tv.wol.WOL_RETRY_COUNT_DEFAULT,
+    /** Since schema 82: optional WOL on opening a specific offline media system. */
+    val wakeOnOpenSystems: Set<String> = emptySet(),
     val homeRows: List<HomeRowDefinition>? = null,
     val systemHomeHiddenRows: Set<String> = AppPreferences.DEFAULT_SYSTEM_HOME_HIDDEN_ROWS,
     val libraryPreferences: Map<String, String> = emptyMap(),
@@ -594,6 +597,7 @@ class SettingsBackupManager @Inject constructor(
             preferDoubleRefreshRate = preferences.preferDoubleRefreshRate,
             introAnimationKey = preferences.introAnimationKey,
             wolRetryCount = preferences.wolRetryCount,
+            wakeOnOpenSystems = preferences.wakeOnOpenSystems,
             homeRows = preferences.homeRows,
             systemHomeHiddenRows = preferences.systemHomeHiddenRows,
             libraryPreferences = preferences.portableLibraryPreferences(),
@@ -631,6 +635,7 @@ class SettingsBackupManager @Inject constructor(
                     lyricsVisible = preferences.lyricsVisible,
                     lyricsOnlineEnabled = preferences.lyricsOnlineEnabled,
                     frameDropOverlayHistory = preferences.frameDropOverlayHistory,
+                    viewTransitionStyleKey = preferences.viewTransitionStyleKey,
                     liveTvReminderAutoSwitch = context?.let { com.ambient.tv.livetv.LiveTvReminderScheduler.autoSwitch(it) },
                     autoUpdateCheck = context?.let { com.ambient.tv.update.AppUpdater.automaticUpdatesEnabled(it) },
                     projectmFavorites = context?.let { com.ambient.tv.ui.common.projectm.ProjectMFavorites(it).all().toSortedSet() },
@@ -673,6 +678,10 @@ class SettingsBackupManager @Inject constructor(
      */
     fun importJson(raw: String): SettingsBackup {
         val backup = previewJson(raw)
+        // A backup made before this option existed (or a partial file without it) must not
+        // silently disable an existing on-open WOL choice on the receiving device.
+        val restoreWakeOnOpen = backup.schemaVersion >= 82 &&
+            "wakeOnOpenSystems" in json.parseToJsonElement(raw).jsonObject
         // An imported API ID/hash cannot be silently swapped into a running native session.
         // A new device with no credentials accepts it; a configured target must match.
         backup.monogramApiCredentials?.let { incoming ->
@@ -687,7 +696,7 @@ class SettingsBackupManager @Inject constructor(
         }
         val snapshot = runCatching { exportJson(includeCredentials = true) }.getOrNull()
         try {
-            applyBackup(backup)
+            applyBackup(backup, restoreWakeOnOpen)
         } catch (error: Throwable) {
             if (snapshot != null) {
                 runCatching { applyBackup(previewJson(snapshot)) }.exceptionOrNull()?.let(error::addSuppressed)
@@ -697,7 +706,10 @@ class SettingsBackupManager @Inject constructor(
         return backup
     }
 
-    private fun applyBackup(backup: SettingsBackup) {
+    private fun applyBackup(
+        backup: SettingsBackup,
+        restoreWakeOnOpen: Boolean = backup.schemaVersion >= 82,
+    ) {
         // A source kind from a newer app version is skipped instead of failing the whole import;
         // a malformed source of a known kind still rejects the backup.
         val fileSources = backup.fileSources.filter { it.kind in com.ambient.tv.data.files.FileKinds.ALL }
@@ -1049,6 +1061,7 @@ class SettingsBackupManager @Inject constructor(
         // Deliberate MPV scaler/deband choice since schema 68; older backups restore "not chosen".
         preferences.mpvImageExplicitChoice = backup.schemaVersion >= 68 && backup.mpvImageExplicitChoice
         preferences.wolRetryCount = backup.wolRetryCount
+        if (restoreWakeOnOpen) preferences.wakeOnOpenSystems = backup.wakeOnOpenSystems
         if (backup.homeRows != null) preferences.homeRows = backup.homeRows
         else preferences.resetHomeRowsToLegacy()
         preferences.systemHomeHiddenRows = backup.systemHomeHiddenRows
@@ -1119,6 +1132,7 @@ class SettingsBackupManager @Inject constructor(
             settings.lyricsVisible?.let { preferences.lyricsVisible = it }
             settings.lyricsOnlineEnabled?.let { preferences.lyricsOnlineEnabled = it }
             settings.frameDropOverlayHistory?.let { preferences.frameDropOverlayHistory = it }
+            settings.viewTransitionStyleKey?.let { preferences.viewTransitionStyleKey = it }
             settings.gameSettings?.let {
                 preferences.gameSettings = it
                 com.ambient.tv.games.GameSettings.reload(it)
@@ -1159,7 +1173,7 @@ class SettingsBackupManager @Inject constructor(
     }
 
     internal companion object {
-        const val CURRENT_SCHEMA_VERSION = 81
+        const val CURRENT_SCHEMA_VERSION = 82
         val PORTABLE_DISPLAY_MODES = setOf("system", AppPreferences.DISPLAY_MODE_AUTO_CONTENT, AppPreferences.DISPLAY_MODE_AUTO_DISPLAY)
     }
 }

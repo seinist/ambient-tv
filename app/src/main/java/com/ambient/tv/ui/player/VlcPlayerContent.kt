@@ -160,9 +160,6 @@ internal fun VlcPlayerContent(
         pollEnabled = !performance.pollOsdPositionOnlyWhenChromeVisible || chromeVisible,
     )
     fun seekBy(deltaMs: Long) = seek.seekBy(deltaMs, timelineDurationMs)
-    val seekAcceleration = remember(seek) { SeekKeyAcceleration() }
-    fun heldSeekStep(baseMs: Long, event: androidx.compose.ui.input.key.KeyEvent) =
-        seekAcceleration.step(baseMs, event.nativeKeyEvent.keyCode, event.nativeKeyEvent.eventTime, event.nativeKeyEvent.repeatCount, timelineDurationMs)
     var appliedVideoVisualGate by remember(controller) { mutableStateOf<Boolean?>(null) }
     LaunchedEffect(performance.gateExpensiveVideoVisuals, controller) {
         val gate = performance.gateExpensiveVideoVisuals
@@ -244,7 +241,7 @@ internal fun VlcPlayerContent(
             event.key, event.type == KeyEventType.KeyDown,
             OsdKeyState(OsdContent.VIDEO, controlsVisible && !osd.seekFeedback && !osd.closing,
                 panel != UnifiedPlayerPanel.NONE, osd.seekFeedback, closing = osd.closing, seekBarFocused = osd.seekBarFocused),
-            OsdSeekSteps(BackgroundPlaybackSession.seekJumpMs(state.seekJumpMs), held = { heldSeekStep(it, event) }),
+            progressiveOsdSeekSteps(BackgroundPlaybackSession.seekJumpMs(state.seekJumpMs), seek.positionMs, timelineDurationMs, osd),
             object : OsdKeyTarget {
                 override fun chapterSeekDelta(direction: Int): Long? {
                     // Performance mode can suspend the hidden OSD clock; sample only on input.

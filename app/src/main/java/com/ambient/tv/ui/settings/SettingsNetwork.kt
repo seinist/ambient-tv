@@ -181,6 +181,7 @@ private fun WakeGroupCard(group: WakeHostGroup, viewModel: SettingsViewModel) {
         onDispose { if (registry[group.key] === macFocus) registry.remove(group.key) }
     }
     val busy by viewModel.wakeGroupBusy.collectAsState()
+    val wakeOnOpen by viewModel.wakeOnOpenSystems.collectAsState()
     val resolved by viewModel.wakeMacResolved.collectAsState()
     val resolving = group.key in busy
     var pending by rememberPendingAction(resolving)
@@ -225,6 +226,16 @@ private fun WakeGroupCard(group: WakeHostGroup, viewModel: SettingsViewModel) {
                     if (member.kind == WakeMemberKind.TVHEADEND) stringResource(R.string.settings_tvh_auto_wake_hint) else null,
                     member.mac, member.autoWake,
                 ) { viewModel.setWakeMemberAutoWake(member, it) }
+            }
+            if (group.members.any { it.kind.isMediaServer }) {
+                Text(stringResource(R.string.settings_wake_on_open_title), style = MaterialTheme.typography.titleSmall)
+                group.members.forEachIndexed { index, member ->
+                    if (member.kind.isMediaServer) AutoWakeRow(
+                        stringResource(R.string.settings_wake_on_open_for, labels[index]),
+                        stringResource(R.string.settings_wake_on_open_hint),
+                        group.mac, member.kind.linkTarget in wakeOnOpen,
+                    ) { viewModel.setWakeOnOpenSystem(member.kind.linkTarget, it) }
+                }
             }
             SettingsActionRow {
                 if (group.members.any { it.kind.isMediaServer }) {

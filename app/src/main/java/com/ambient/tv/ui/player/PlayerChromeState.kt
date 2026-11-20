@@ -79,6 +79,20 @@ fun PersistentPlayerChrome(
         LocalPlayerChangingItem provides changingItem,
     ) {
         PlayerPanelAutoHide(chrome, changingItem)
+        ProgressiveSeekTicker(chrome.osd.progressiveSeek)
+        // A held remote key must not let the controls timeout before the user releases it.
+        LaunchedEffect(chrome, chrome.osd.progressiveSeek.active) {
+            while (chrome.osd.progressiveSeek.active) {
+                kotlinx.coroutines.delay(500L)
+                chrome.osd.interact()
+            }
+        }
+        LaunchedEffect(changingItem) {
+            if (changingItem) chrome.osd.progressiveSeek.cancel()
+        }
+        androidx.compose.runtime.DisposableEffect(chrome) {
+            onDispose { chrome.osd.progressiveSeek.cancel() }
+        }
         // Info opens the details dialog when its action-bar button is switched on.
         val detailsLabel = androidx.compose.ui.res.stringResource(com.ambient.tv.R.string.player_details)
         PlayerKeyActions(chrome, detailsLabel)
@@ -120,7 +134,10 @@ fun PersistentPlayerChrome(
     }
 }
 
-/** Player actions of user key bindings (Settings → Keys & remote), shared by every player. */
+/**
+ * Player actions of user key bindings (Settings → Keys & remote), shared by every player.
+ * A binding is its own opt-in: none of these may depend on which action-bar buttons are shown.
+ */
 @Composable
 private fun PlayerKeyActions(chrome: PlayerChromeState, detailsLabel: String) {
     fun openPanel(panel: com.ambient.tv.ui.common.UnifiedPlayerPanel): Boolean {
@@ -149,8 +166,10 @@ private fun PlayerKeyActions(chrome: PlayerChromeState, detailsLabel: String) {
     com.ambient.tv.ui.keyboard.RegisterKeyAction(com.ambient.tv.ui.keyboard.KeyAction.AUDIO_TRACKS) {
         openPanel(com.ambient.tv.ui.common.UnifiedPlayerPanel.AUDIO)
     }
+    // A key the user bound to Details is its own opt-in: it works whether or not the optional
+    // Details button is shown in the action bar (only the Info key follows that switch).
     com.ambient.tv.ui.keyboard.RegisterKeyAction(com.ambient.tv.ui.keyboard.KeyAction.DETAILS) {
-        if (chrome.detail.value == null || !chrome.detailEnabled.value) false
+        if (chrome.detail.value == null) false
         else { toggleDetailsByInfoKey(chrome.panels, detailsLabel); true }
     }
     com.ambient.tv.ui.keyboard.RegisterKeyAction(com.ambient.tv.ui.keyboard.KeyAction.SEEK_BACK) { seek(forward = false) }

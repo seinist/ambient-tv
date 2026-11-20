@@ -1307,6 +1307,7 @@ class VlcPlaybackController(
     }
 
     override fun wantsToPlay(): Boolean = !released && desiredPlayWhenReady && !ended && errorMessage == null
+    override fun requestedPlayIntent(): Boolean = !released && desiredPlayWhenReady && !ended
 
     /** Native playing flag for UI snapshots; false once released (the native player may be gone). */
     fun isPlayingNow(): Boolean = !released && runCatching { player.isPlaying }.getOrDefault(false)

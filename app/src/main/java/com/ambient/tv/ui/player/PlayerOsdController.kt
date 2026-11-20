@@ -11,6 +11,7 @@ import androidx.compose.runtime.setValue
 
 /** Kept for the fullscreen session, including source/renderer replacement. */
 internal class PlayerOsdController(initialZapOsd: Boolean = false) {
+    internal val progressiveSeek = ProgressiveSeekController()
     private var presentation by mutableStateOf(PlayerOsdPresentation())
     val shownByZap = mutableStateOf(initialZapOsd)
     val mode: PlayerOsdMode get() = presentation.mode

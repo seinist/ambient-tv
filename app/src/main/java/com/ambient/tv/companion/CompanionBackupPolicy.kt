@@ -29,7 +29,7 @@ internal object CompanionBackupPolicy {
         "photoIncludeSubfolders", "photoSortKey",
         "photoSlideshowIntervalSeconds", "photoTransitionKey", "photoKenBurns", "photoShuffle", "photoShowInfo",
         "liveTvReminderLeadMinutes", "liveDirectRecordEnabled", "playerOsdSeconds", "playerBackMinimizes", "networkBufferKey",
-        "radioEnabled", "radioFavorites", "weather",
+        "radioEnabled", "radioFavorites", "weather", "wakeOnOpenSystems",
     )
     /** Fields older backups do not carry: their defaults must not overwrite the receiver's values. */
     private val sinceSchema58 = setOf("liveTvReminderLeadMinutes", "liveTimeshiftMb")
@@ -77,6 +77,7 @@ internal object CompanionBackupPolicy {
             "autoPictureInPicture", "projectmShowPresetName", "projectmPresetShuffle", "gaplessMusicEnabled",
             "teletextSubtitleChoice", "lyricsVisible", "lyricsOnlineEnabled", "frameDropOverlayHistory",
             "liveTvReminderAutoSwitch", "autoUpdateCheck", "projectmFavorites", "keyBindings", "gamepadSettings", "retroInputSettings", "gameSettings",
+            "viewTransitionStyleKey",
         ),
         "device" to setOf("imageCacheMb", "cardImages1080"),
         "connections" to setOf("tvheadendHtspPort"),
@@ -218,12 +219,13 @@ internal object CompanionBackupPolicy {
         // Accent styles predate a dedicated schema bump. An older file's missing style must
         // remain missing through both sanitization passes instead of acquiring today's default.
         if (presentFields != null) {
-            (profileKeys + "accentStyleKey" + sinceSchema80).filterNot { it in presentFields }.forEach(fields::remove)
+            (profileKeys + "accentStyleKey" + sinceSchema80 + "wakeOnOpenSystems").filterNot { it in presentFields }.forEach(fields::remove)
         } else if (source.schemaVersion < 80) {
             // These fields already existed in file backups. An old decoded model alone cannot
             // tell an explicit file value from a default filled in for an older Companion sender.
             sinceSchema80.forEach(fields::remove)
         }
+        if (source.schemaVersion < 82) fields.remove("wakeOnOpenSystems")
         if ("titleVideoSettings" in fields) fields["titleVideoSettings"] = compact.encodeToJsonElement(source.titleVideoSettings)
         if ("scopedVideoSettings" in fields) fields["scopedVideoSettings"] = compact.encodeToJsonElement(source.scopedVideoSettings)
         val full = JsonObject(fields).toString()
@@ -250,6 +252,7 @@ internal object CompanionBackupPolicy {
                 .filter { it != "accentStyleKey" || presentFields == null || it in presentFields }
                 .filter { source.schemaVersion >= 72 || it != "introAnimationKey" }
                 .filter { it !in sinceSchema80 || (presentFields?.contains(it) ?: (source.schemaVersion >= 80)) }
+                .filter { source.schemaVersion >= 82 || it != "wakeOnOpenSystems" }
                 // A settings-only transfer has no account identities to map local profile keys.
                 .filter { mode != "preferences" || it !in profileKeys }
                 // A sender from before the clock page has no clock: the receiver keeps its own.

@@ -5,6 +5,14 @@ import okhttp3.OkHttpClient
 
 /** The process-wide [ChunkedStreamRelay] VLC and MPV fetch googlevideo through. */
 object YouTubeStreamRelay {
+    private val terminalHttpErrors = java.util.concurrent.ConcurrentHashMap<String, Int>()
+
+    /** Native players often report "failed to open" without retaining the relay's HTTP code. */
+    fun takeTerminalHttpError(videoId: String): Int? = terminalHttpErrors.remove(videoId)
+
+    /** A new player resolution starts with a clean failure marker, not every relay registration. */
+    fun clearTerminalHttpError(videoId: String) { terminalHttpErrors.remove(videoId) }
+
     private val relay by lazy {
         ChunkedStreamRelay(
             OkHttpClient.Builder()
@@ -32,6 +40,16 @@ object YouTubeStreamRelay {
     @Volatile var renewer: ((videoId: String, expiredUrl: String) -> String?)? = null
 
     /** Relay URL for a googlevideo [upstream]; with [videoId] an expired link is renewed in place. */
-    fun url(upstream: String, headers: Map<String, String>, videoId: String? = null): String =
-        relay.register(upstream, headers, videoId?.let { id -> { failedUrl -> renewer?.invoke(id, failedUrl) } })
+    fun url(upstream: String, headers: Map<String, String>, videoId: String? = null): String {
+        return relay.register(
+            upstream, headers,
+            refresh = videoId?.let { id -> { failedUrl -> renewer?.invoke(id, failedUrl) } },
+            onTerminalHttpStatus = { status ->
+                if (videoId != null && status in setOf(403, 410)) {
+                    // Failures belong to this video, never another title's renderer or resume.
+                    terminalHttpErrors[videoId] = status
+                }
+            },
+        )
+    }
 }

@@ -652,7 +652,7 @@ private fun SectionHeader(
         PageHeader(focusChain = focusChain, actions = {
             // Jumps straight to the owning system's overview, sparing the detour through the sidebar.
             TvChip(stringResource(R.string.nav_overview), icon = Icons.Filled.Home, iconOnly = true, onClick = onOpenOverview)
-            TvChip(stringResource(R.string.action_reload), icon = Icons.Filled.Refresh, iconOnly = true, loading = refreshing, onClick = onRefresh)
+            TvChip(stringResource(R.string.action_reload), icon = Icons.Filled.Refresh, iconOnly = true, loading = refreshing, loadingOnlyAfterClick = true, onClick = onRefresh)
             ViewOptionsChip(
                 if (com.ambient.tv.ui.common.LocalFilterBarSetting.current.shown || state.page != SectionPage.LIBRARY) 0 else state.libraryFilters.activeCount,
                 onOpenOptions, optionsModifier,

@@ -159,7 +159,7 @@ fun WeatherScreen(
             }
             if (tab == "overview") TvChip(stringResource(R.string.action_reload), icon = Icons.Filled.Refresh,
                 iconOnly = true, enabled = settings.enabled && location != null,
-                loading = state.loading, onClick = viewModel::retryForecast)
+                loading = state.loading, loadingOnlyAfterClick = true, onClick = viewModel::retryForecast)
             TvChip(stringResource(R.string.nav_settings), icon = Icons.Filled.Settings,
                 iconOnly = true, onClick = onOpenSettings)
         }) {

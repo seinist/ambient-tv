@@ -149,19 +149,20 @@ internal fun accentMaterialBrush(stops: List<Pair<Float, Color>>, style: AccentS
  */
 internal fun accentFocusBorderBrush(accent: Color, style: AccentStyle): Brush {
     if (style == AccentStyle.LIGHT) return SolidColor(accent)
-    val lip = accentLerp(accent, Color.White, .30f)
-    val highlight = accentLerp(accent, Color.White, .55f)
-    val shadow = accentLerp(accent, Color.Black, .24f)
+    // Retain the hue of the material rim rather than producing a white focus flash.
+    val lip = accentLerp(accent, Color.White, .16f)
+    val highlight = accentLerp(accent, Color.White, .30f)
+    val shadow = accentLerp(accent, Color.Black, .18f)
     val stops = when (style) {
         AccentStyle.SATIN -> listOf(0f to lip, .45f to accent, 1f to shadow)
         AccentStyle.GLASS -> listOf(0f to highlight, .16f to highlight, .24f to accent, 1f to shadow)
         AccentStyle.GLOW -> listOf(0f to lip)
         AccentStyle.PEARL -> listOf(
-            0f to accentLerp(accentHueShift(accent, -28f), Color.White, .25f),
+            0f to accentLerp(accentHueShift(accent, -28f), Color.White, .16f),
             .5f to accent, 1f to accentHueShift(accent, 28f),
         )
         AccentStyle.CERAMIC -> listOf(
-            0f to accentLerp(accent, Color.White, .12f), .5f to accent, 1f to accentLerp(accent, Color.Black, .12f),
+            0f to accentLerp(accent, Color.White, .08f), .5f to accent, 1f to accentLerp(accent, Color.Black, .12f),
         )
         AccentStyle.CHROME -> listOf(
             0f to lip, .30f to shadow, .46f to highlight, .50f to highlight, .62f to shadow, 1f to lip,

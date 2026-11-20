@@ -16,6 +16,7 @@ class UnreachableServerViewModel @Inject constructor(
     val nextAutomaticCheckAtElapsedMs = gate.nextAutomaticCheckAtElapsedMs
     fun retry() = gate.retry()
     fun retrySystem(system: String) = gate.retrySystem(system)
+    fun onOpenSystem(system: String) = gate.onOpenSystem(system)
 
     /** Startup wake without a machine card (connection observer); stops every in-flight server wake. */
     fun cancelStartupWake() = gate.cancelStartupWake()

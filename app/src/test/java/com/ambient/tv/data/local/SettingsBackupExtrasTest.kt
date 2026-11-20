@@ -26,6 +26,7 @@ class SettingsBackupExtrasTest {
         lyricsVisible = false
         lyricsOnlineEnabled = true
         frameDropOverlayHistory = true
+        viewTransitionStyleKey = "cinematic"
         imageCacheMb = 256
         cardImages1080 = true
         tvheadendHtspPort = 10982
@@ -47,6 +48,7 @@ class SettingsBackupExtrasTest {
         assertFalse(target.lyricsVisible)
         assertTrue(target.lyricsOnlineEnabled)
         assertTrue(target.frameDropOverlayHistory)
+        assertEquals("cinematic", target.viewTransitionStyleKey)
         assertEquals(256, target.imageCacheMb)
         assertTrue(target.cardImages1080)
         assertEquals(10982, target.tvheadendHtspPort)
@@ -106,7 +108,7 @@ class SettingsBackupExtrasTest {
         manager(target).importJson("""{
             "schemaVersion":80,"exportedAtEpochMs":0,
             "extras":{
-                "portable":{"settingsLevelKey":"unknown","teletextSubtitleChoice":"9999"},
+                "portable":{"settingsLevelKey":"unknown","teletextSubtitleChoice":"9999","viewTransitionStyleKey":"unknown"},
                 "device":{"imageCacheMb":9999},
                 "connections":{"tvheadendHtspPort":99999}
             }
@@ -114,6 +116,7 @@ class SettingsBackupExtrasTest {
         assertEquals("expert", target.settingsLevelKey)
         assertEquals(SettingsLevel.EXPERT, SettingsLevels.current(target))
         assertEquals("off", target.teletextSubtitleChoice)
+        assertEquals("off", target.viewTransitionStyleKey)
         assertEquals(0, target.imageCacheMb)
         assertEquals(65535, target.tvheadendHtspPort)
     }

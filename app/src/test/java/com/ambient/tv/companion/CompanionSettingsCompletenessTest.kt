@@ -65,6 +65,24 @@ class CompanionSettingsCompletenessTest {
         assertEquals(before.watchedThresholdPercent, accountsOnly.watchedThresholdPercent)
     }
 
+    @Test fun wakeOnOpenTransfersOnlyWhenExplicitlyProvidedByANewCompanionSender() {
+        val target = preferences().apply { wakeOnOpenSystems = setOf("plex") }
+        receive("""{"schemaVersion":81,"exportedAtEpochMs":0}""", target)
+        assertEquals(setOf("plex"), target.wakeOnOpenSystems)
+        receive("""{"schemaVersion":82,"exportedAtEpochMs":0}""", target)
+        assertEquals(setOf("plex"), target.wakeOnOpenSystems)
+
+        for (mode in listOf("preferences", "settings")) {
+            send(source().copy(wakeOnOpenSystems = setOf("emby")), target, mode)
+            assertEquals(setOf("emby"), target.wakeOnOpenSystems)
+        }
+        send(source().copy(wakeOnOpenSystems = emptySet()), target)
+        assertTrue(target.wakeOnOpenSystems.isEmpty())
+
+        send(source().copy(wakeOnOpenSystems = setOf("tvheadend")), target, "accounts")
+        assertTrue(target.wakeOnOpenSystems.isEmpty())
+    }
+
     @Test fun olderCompanionDefaultsAndNullPortableFieldsPreserveTheReceiver() {
         val row = HomeRowDefinition("saved", "youtube", "subscriptions")
         val target = preferences().apply {
@@ -96,6 +114,7 @@ class CompanionSettingsCompletenessTest {
             lyricsVisible = false, lyricsOnlineEnabled = false, frameDropOverlayHistory = true,
             liveTvReminderAutoSwitch = true, autoUpdateCheck = false, projectmFavorites = setOf("chosen.milk"),
             keyBindings = mapOf("refresh" to "183:0"), gamepadSettings = mapOf("confirm" to "b"), retroInputSettings = mapOf("dpad_stick" to "1"), gameSettings = mapOf("shader" to "crt"),
+            viewTransitionStyleKey = "slide",
         )
         val incoming = source().copy(tvheadendHost = "tvh.example", extras = SettingsBackupExtras(
             portable = portable, device = DeviceSettingsExtras(128, true), connections = ConnectionSettingsExtras(9984)))
@@ -120,6 +139,7 @@ class CompanionSettingsCompletenessTest {
             assertFalse(target.lyricsVisible)
             assertFalse(target.lyricsOnlineEnabled)
             assertTrue(target.frameDropOverlayHistory)
+            assertEquals("slide", target.viewTransitionStyleKey)
             assertEquals(mapOf("refresh" to "183:0"), target.keyBindings)
             assertEquals(mapOf("confirm" to "b"), target.gamepadSettings)
             assertEquals(mapOf("dpad_stick" to "1"), target.retroInputSettings)
@@ -129,9 +149,12 @@ class CompanionSettingsCompletenessTest {
             assertEquals(10002, target.tvheadendHtspPort)
         }
 
-        val accountsTarget = preferences().apply { gaplessMusicEnabled = true; imageCacheMb = 256 }
+        val accountsTarget = preferences().apply {
+            gaplessMusicEnabled = true; imageCacheMb = 256; viewTransitionStyleKey = "cinematic"
+        }
         send(incoming, accountsTarget, "accounts", device = true)
         assertTrue(accountsTarget.gaplessMusicEnabled)
+        assertEquals("cinematic", accountsTarget.viewTransitionStyleKey)
         assertEquals(256, accountsTarget.imageCacheMb)
         assertEquals(9984, accountsTarget.tvheadendHtspPort)
     }

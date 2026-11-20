@@ -19,7 +19,7 @@ import org.robolectric.annotation.Config
 class SeekBarInputTest {
     @get:Rule val rule = createAndroidComposeRule<ComponentActivity>()
 
-    @Test fun heldKeyThenRapidPressReleasePairsUseLiveTargetDespiteStaleOsdSnapshot() {
+    @Test fun directKeySeekCommitsOnceAndSeparateTapsUseLiveTargetDespiteStaleOsdSnapshot() {
         var now = 0L
         val seek = PlaybackSeekState(PlaybackSeekCoordinator(nowMs = { now }), 100_000L) {}
         val focus = FocusRequester()
@@ -42,23 +42,24 @@ class SeekBarInputTest {
         }
         rule.runOnIdle {
             var expected = 100_000L
-            // The emulator keyboard starts with native repeats, then sends fresh pairs.
+            // Native repeat events preview one target; the decoder is sought only on KeyUp.
             for (repeat in 0..4) {
                 event(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_DPAD_RIGHT, repeat)
-                expected += acceleratedSeekStepMs(10_000L, repeat, 6_000_000L)
             }
             event(KeyEvent.ACTION_UP, KeyEvent.KEYCODE_DPAD_RIGHT)
+            expected += 5_000L
             assertEquals(expected, seek.positionMs)
-            repeat(20) { index ->
+            // Separate quick taps are always precise 5-second jumps, without a stale OSD base.
+            repeat(20) {
                 event(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_DPAD_RIGHT)
                 event(KeyEvent.ACTION_UP, KeyEvent.KEYCODE_DPAD_RIGHT)
-                expected += acceleratedSeekStepMs(10_000L, index + 5, 6_000_000L)
+                expected += 5_000L
                 assertEquals(expected, seek.positionMs)
             }
-            repeat(5) { index ->
+            repeat(5) {
                 event(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_DPAD_LEFT)
                 event(KeyEvent.ACTION_UP, KeyEvent.KEYCODE_DPAD_LEFT)
-                expected -= acceleratedSeekStepMs(10_000L, index, 6_000_000L)
+                expected -= 5_000L
                 assertEquals(expected, seek.positionMs)
             }
         }

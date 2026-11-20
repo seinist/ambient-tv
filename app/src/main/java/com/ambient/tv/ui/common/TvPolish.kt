@@ -74,7 +74,6 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.draw.scale
-import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.zIndex
 import androidx.compose.ui.graphics.BlendMode
@@ -209,16 +208,20 @@ fun Modifier.mediaFocusMotion(
     val performance = LocalPerformanceProfile.current
     val tokens = LocalUiTokens.current
     val animatedScale = rememberMediaFocusScale(focused, focusedScale)
+    val shadow = animateFloatAsState(
+        if (focused && performance.allowFocusedItemShadow) 5f else 0f,
+        tween(if (focused) 230 else 210),
+        label = "mediaFocusShadow",
+    )
     return this
-        .then(
-            if (focused && performance.allowFocusedItemShadow) {
-                Modifier.shadow(5.dp, RoundedCornerShape(tokens.cardRadius), clip = false)
-            } else Modifier
-        )
         .zIndex(if (focused) 1f else 0f)
         .graphicsLayer {
             scaleX = animatedScale.value
             scaleY = animatedScale.value
+            // One existing layer for both motions; no abrupt shadow removal.
+            shadowElevation = shadow.value.dp.toPx()
+            shape = RoundedCornerShape(tokens.cardRadius)
+            clip = false
         }
 }
 
@@ -472,6 +475,8 @@ fun ArtworkImage(
      * weighs as much as dozens of cards and must not push them out of the card cache.
      */
     backdrop: Boolean = focusCrop,
+    /** Coil fades the real bitmap in only after load; opt in for changing Live TV backdrops. */
+    crossfadeOnLoad: Boolean = false,
 ) {
     val context = LocalContext.current
     val candidates = remember(model, fallbackModels) {
@@ -541,8 +546,8 @@ fun ArtworkImage(
     val cap1080 = !backdrop && density > CARD_IMAGE_1080_DENSITY &&
         remember(context) { com.ambient.tv.ui.player.videoImagePreferences(context).cardImages1080 }
     val cardSize = remember(cap1080, density) { if (cap1080) CardImage1080SizeResolver(density) else null }
-    val request = remember(currentModel, context, headers, constrainDecode, cardSize) {
-        ImageRequest.Builder(context).data(currentModel).crossfade(false)
+    val request = remember(currentModel, context, headers, constrainDecode, cardSize, crossfadeOnLoad) {
+        ImageRequest.Builder(context).data(currentModel).crossfade(crossfadeOnLoad)
             .placeholderMemoryCacheKey(cachedKey)
             .apply {
                 // Only reuse a full cache key inside the same composable/card. That guarantees
@@ -836,7 +841,8 @@ private fun headerKeyAction(icon: ImageVector?): com.ambient.tv.ui.keyboard.KeyA
  * Compact control for tabs, filters and page-header actions (see [PageHeader]).
  *
  * [loading] marks the chip's own action as running: it keeps its look and focus, ignores clicks
- * and shows a spinner in the icon slot.
+ * and shows a spinner in the icon slot. [loadingOnlyAfterClick] leaves the Reload icon still
+ * during automatic entry/cache loads, and shows progress only for a click initiated here.
  *
  * [iconOnly] is a handheld layout hint for page-header actions (sign in, search, view, and the
  * same kind of toolbar button on other screens). Phones drop the label and keep [text] as the
@@ -853,11 +859,36 @@ fun TvChip(
     iconOnly: Boolean = false,
     leadingContent: (@Composable () -> Unit)? = null,
     textMaxLines: Int = Int.MAX_VALUE,
+    /** For Reload, automatic entry/cache work must not animate the action icon. */
+    loadingOnlyAfterClick: Boolean = false,
     onClick: () -> Unit,
 ) {
+    var clickStartedLoad by remember { mutableStateOf(false) }
+    val showLoading = loading && (!loadingOnlyAfterClick || clickStartedLoad)
+    LaunchedEffect(loadingOnlyAfterClick, loading, clickStartedLoad) {
+        if (!loadingOnlyAfterClick) clickStartedLoad = false
+        else if (clickStartedLoad && !loading) {
+            // A no-op action cannot arm an unrelated background refresh later on.
+            androidx.compose.runtime.withFrameNanos { }
+            if (!loading) clickStartedLoad = false
+        }
+    }
     val clickable = enabled && !loading
+    // Selected can still point to the old category during an asynchronous refresh.
+    // Retain the exact chip the user confirmed rather than restoring the first chip.
+    val chipHold = if (com.ambient.tv.ui.mobile.LocalHandheldUi.current) null else LocalPageChipFocusHold.current
+    val chipFocusRequester = if (chipHold != null) remember { FocusRequester() } else null
+    val chipModifier = if (chipHold != null && chipFocusRequester != null) {
+        modifier.focusRequester(chipFocusRequester).onFocusChanged {
+            if (it.isFocused) chipHold.focused(chipFocusRequester)
+            else chipHold.blurred(chipFocusRequester)
+        }
+    } else modifier
     val uiSounds = LocalUiSoundPlayer.current
-    val activate = rememberUiSoundAction(enabled = clickable, onClick = onClick)
+    val activate = rememberUiSoundAction(enabled = clickable) {
+        if (loadingOnlyAfterClick) clickStartedLoad = true
+        onClick()
+    }
     // A page header's Refresh/View/Search answers its key binding on every page alike.
     if (LocalPageHeaderActions.current) headerKeyAction(icon)?.let { action ->
         com.ambient.tv.ui.keyboard.RegisterKeyAction(action, enabled = enabled) {
@@ -874,7 +905,7 @@ fun TvChip(
         val pressed by interactions.collectIsPressedAsState()
         val shape = RoundedCornerShape(LocalUiTokens.current.controlRadius)
         if (iconOnly && (icon != null || leadingContent != null)) {
-            val buttonModifier = modifier
+            val buttonModifier = chipModifier
                 .sizeIn(minWidth = 48.dp, minHeight = 48.dp)
                 .appControlSurface(focused, selected, enabled, shape, pressed = pressed,
                     selectionIndicator = if (iconOnly) SelectionIndicator.DOT else SelectionIndicator.NONE)
@@ -893,7 +924,7 @@ fun TvChip(
                         disabledContentColor = foreground,
                     ),
                 ) {
-                    if (loading) {
+                    if (showLoading) {
                         ButtonProgress(foreground, Modifier.size(20.dp))
                     } else if (leadingContent != null) {
                         leadingContent()
@@ -907,7 +938,7 @@ fun TvChip(
         ProvideControlContent(foreground) {
             androidx.compose.material3.FilterChip(
                 selected = selected, onClick = activate, enabled = enabled,
-                modifier = modifier.sizeIn(minHeight = 48.dp)
+                modifier = chipModifier.sizeIn(minHeight = 48.dp)
                     .appControlSurface(focused, selected, enabled, shape, pressed = pressed,
                     selectionIndicator = if (iconOnly) SelectionIndicator.DOT else SelectionIndicator.NONE),
                 shape = shape,
@@ -928,7 +959,7 @@ fun TvChip(
                     selectedTrailingIconColor = foreground,
                 ),
                 label = { androidx.compose.material3.Text(text, maxLines = textMaxLines, overflow = TextOverflow.Ellipsis) },
-                leadingIcon = if (loading) {
+                leadingIcon = if (showLoading) {
                     { ButtonProgress(foreground, Modifier.size(18.dp)) }
                 } else leadingContent ?: icon?.let { image -> { androidx.compose.material3.Icon(image, null, Modifier.size(18.dp)) } },
             )
@@ -955,7 +986,7 @@ fun TvChip(
         // Surface clips its content, so it must use the exact same shape as the visible frame.
         shape = ClickableSurfaceDefaults.shape(shape = chipShape),
         interactionSource = interactions,
-        modifier = modifier
+        modifier = chipModifier
             // 52dp total TV target, 48dp visible chrome: the previous 44dp pill
             // looked shrunken beside the header clock and regular action buttons.
             .sizeIn(minHeight = 52.dp * uiScale)
@@ -986,7 +1017,7 @@ fun TvChip(
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 ProvideControlContent(foreground) {
-                    if (loading) {
+                    if (showLoading) {
                         ButtonProgress(foreground, Modifier.size(20.dp * uiScale))
                         Spacer(Modifier.width(6.dp * uiScale))
                     } else if (leadingContent != null) {

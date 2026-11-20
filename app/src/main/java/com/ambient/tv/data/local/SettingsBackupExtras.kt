@@ -28,6 +28,8 @@ data class PortableSettingsExtras(
     val lyricsVisible: Boolean? = null,
     val lyricsOnlineEnabled: Boolean? = null,
     val frameDropOverlayHistory: Boolean? = null,
+    /** Opt-in UI navigation transition. Null from old/partial backups preserves the receiver. */
+    val viewTransitionStyleKey: String? = null,
     val liveTvReminderAutoSwitch: Boolean? = null,
     val autoUpdateCheck: Boolean? = null,
     val projectmFavorites: Set<String>? = null,

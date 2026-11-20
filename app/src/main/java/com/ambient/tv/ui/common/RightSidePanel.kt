@@ -118,6 +118,7 @@ internal class RightPanelDismissOnce {
 
 private class StandaloneRightPanelMotion {
     val progress = Animatable(0f)
+    val entranceGate = com.ambient.tv.ui.player.PanelEntranceGate()
     val dismiss = RightPanelDismissOnce()
     // The outer overlay owns the only BackHandler. The visible inner panel supplies the
     // correct Back action (and focus hand-back), which is not always the outside-tap action.
@@ -151,7 +152,7 @@ fun RightPanelOverlay(
 
     LaunchedEffect(motion, reducedEffects, motion.dismiss.closing) {
         if (motion.dismiss.closing) return@LaunchedEffect
-        com.ambient.tv.ui.player.awaitPanelEntranceFrames(motion.progress.value)
+        com.ambient.tv.ui.player.awaitPanelEntranceFrames(motion.progress.value, motion.entranceGate)
         motion.progress.animateTo(
             1f,
             tween(if (reducedEffects) com.ambient.tv.ui.player.PLAYER_PANEL_REDUCED_MS
@@ -184,7 +185,8 @@ fun RightPanelOverlay(
         LocalStandaloneRightPanelMotion provides motion,
         LocalRightPanelOverlayOwnsBack provides true,
     ) {
-        Box(modifier.fillWindowHeight().fillMaxSize()) {
+        Box(modifier.fillWindowHeight().fillMaxSize()
+            .onPlaced { motion.entranceGate.markPlaced() }) {
             // Alpha updates only the draw layer. Keep the dimmer visible throughout dismissal,
             // and release the underlying grid's focus only after the panel actually closes.
             Box(
@@ -515,7 +517,7 @@ private fun RightSidePanelChrome(
             // A fast Back, or a performance-profile update during dismissal, must never
             // restart the entrance animation and cancel the pending close callback.
             if (standaloneMotion.dismiss.closing) return@LaunchedEffect
-            com.ambient.tv.ui.player.awaitPanelEntranceFrames(standaloneMotion.progress.value)
+            com.ambient.tv.ui.player.awaitPanelEntranceFrames(standaloneMotion.progress.value, standaloneMotion.entranceGate)
             standaloneMotion.progress.animateTo(
                 1f,
                 tween(if (reducedEffects) com.ambient.tv.ui.player.PLAYER_PANEL_REDUCED_MS
@@ -684,6 +686,7 @@ private fun RightSidePanelChrome(
             .then(if (handheld) Modifier.padding(end = 8.dp) else Modifier)
             .fillMaxHeight()
             .width(panelWidth(width))
+            .onPlaced { if (standalone) standaloneMotion.entranceGate.markPlaced() }
             .then(if (com.ambient.tv.ui.mobile.LocalHandheldUi.current) Modifier.pointerInput(Unit) {
                 // Consume taps on empty panel space instead of reaching the page/player below.
                 detectTapGestures { }

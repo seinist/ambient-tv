@@ -220,13 +220,14 @@ import androidx.lifecycle.repeatOnLifecycle
     val sharedInitialFocus = com.ambient.tv.ui.common.LocalBrowseFocusReturnState.current != null
     val destinationActive = isActiveNavigationDestination()
     LaunchedEffect(state.loading, visibleRows, state.feed, initialFeedKey, initialContentFocusPending,
-        contentFocusTarget, filterFocusState.allowContentAutoFocus, showViewOptions, destinationActive) {
-        if (!destinationActive || sharedInitialFocus) return@LaunchedEffect
+        contentFocusTarget, filterFocusState.allowContentAutoFocus, showViewOptions, destinationActive,
+        startupFocus.claimed) {
+        if (!destinationActive || sharedInitialFocus || startupFocus.claimed) return@LaunchedEffect
         val requestedFeedIsReady = initialFeedKey == null || state.feed.key == initialFeedKey
         if (filterFocusState.allowContentAutoFocus && !showViewOptions && initialContentFocusPending && requestedFeedIsReady && !state.loading && visibleRows.any { it.items.isNotEmpty() }) {
             withFrameNanos { }
             repeat(12) {
-                if (!initialContentFocusPending || !filterFocusState.allowContentAutoFocus) return@LaunchedEffect
+                if (!initialContentFocusPending || startupFocus.claimed || !filterFocusState.allowContentAutoFocus) return@LaunchedEffect
                 if (runCatching { contentItemFocusRequester.requestFocus() }.getOrDefault(false)) {
                     initialContentFocusPending = false
                     return@LaunchedEffect
@@ -263,7 +264,11 @@ import androidx.lifecycle.repeatOnLifecycle
             focusChain = focusChain,
             state,
             viewModel,
-            onSelectFeed=selectFeed,
+            onSelectFeed={ feed ->
+                // A category-chip selection is navigation, not permission to grab content focus.
+                initialContentFocusPending = false
+                selectFeed(feed)
+            },
             showSearch=searchVisible,
             viewOptionsModifier=Modifier.focusRequester(viewOptionsFocusRequester),
             searchActionModifier=Modifier.focusRequester(searchActionFocusRequester),
@@ -333,6 +338,18 @@ import androidx.lifecycle.repeatOnLifecycle
                     Loading(state.viewMode, state.gridColumns, state.listRows,
                         sectioned = (state.query.isBlank() && state.feed == YouTubeFeed.HOME && state.channel == null) ||
                             populatedRows.hasSubsections())
+                state.accountAttention != null && visibleRows.none { it.items.isNotEmpty() } ->
+                    com.ambient.tv.ui.common.BrowseStatusPanel(
+                        title = stringResource(if (state.accountAttention == YouTubeAccountAttention.LOGIN_REQUIRED)
+                            R.string.youtube_auth_required_title else R.string.youtube_auth_check_title),
+                        body = stringResource(if (state.accountAttention == YouTubeAccountAttention.LOGIN_REQUIRED)
+                            R.string.youtube_auth_required_body else R.string.youtube_auth_check_body),
+                        kind = com.ambient.tv.ui.common.BrowseStatusKind.ERROR,
+                        actionLabel = stringResource(if (state.signedIn) R.string.youtube_auth_reconnect else R.string.action_sign_in),
+                        onAction = if (state.signedIn) viewModel::reconnectAccount else viewModel::requestSignIn,
+                        secondaryActionLabel = stringResource(R.string.action_reload),
+                        onSecondaryAction = viewModel::reload,
+                    )
                 state.error != null -> Message(state.error, error = true)
                 visibleRows.none { it.items.isNotEmpty() } -> if (filterModel.activeCount > 0) {
                     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
@@ -353,8 +370,8 @@ import androidx.lifecycle.repeatOnLifecycle
                 } else Message(com.ambient.tv.ui.common.systemString(com.ambient.tv.ui.common.MediaSystem.YOUTUBE, R.string.youtube_empty))
                 else -> SoftViewChange(state.viewMode, Modifier.fillMaxSize().then(playbackReturn.modifier)) {
                     // A retained destination can still hold the old saved Lazy state. A new
-                    // playback return gets new states with their correct initial indices.
-                    key(state.returnFocusRevision) {
+                    // playback return or feed change gets new states with their correct initial indices.
+                    key(state.feed, state.returnFocusRevision) {
                     CompositionLocalProvider(LocalYouTubeViewportContinuation provides viewportContinuation) {
                     Content(
                         rows = visibleRows,
@@ -436,13 +453,30 @@ private fun youtubeRowId(index: Int, row: YouTubeRow): String = row.id
         }
         TvChip(stringResource(R.string.action_search),modifier=searchActionModifier,icon=Icons.Filled.Search,iconOnly=true,onClick=onOpenSearch)
         TvChip(stringResource(R.string.action_reload), icon=Icons.Filled.Refresh, iconOnly=true,
-            loading=state.loading || state.refreshing, enabled=state.available && !state.authBusy, onClick=onReload)
+            loading=state.loading || state.refreshing, loadingOnlyAfterClick = true, enabled=state.available && !state.authBusy, onClick=onReload)
         ViewOptionsChip(if (filterModel == null && youtubeVideoFiltersAvailable(state.rows) && state.filter != YouTubeFilter.ALL) 1 else 0, onOpenViewOptions, viewOptionsModifier)
     }) {
         if (channel == null) com.ambient.tv.ui.common.SystemPageTitle(com.ambient.tv.ui.common.MediaSystem.YOUTUBE)
         else YouTubeChannelTitle(channel)
     }
     state.refreshError?.let { Text(it, color=MaterialTheme.colorScheme.error, maxLines=2, overflow=TextOverflow.Ellipsis) }
+    if (state.accountAttention != null && state.rows.any { it.items.isNotEmpty() }) {
+        DeviceActionRow(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp),
+            verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                stringResource(if (state.accountAttention == YouTubeAccountAttention.LOGIN_REQUIRED)
+                    R.string.youtube_auth_required_title else R.string.youtube_auth_check_title),
+                color = MaterialTheme.colorScheme.error,
+                style = MaterialTheme.typography.bodySmall,
+                modifier = Modifier.weight(1f),
+            )
+            TvActionButton(
+                text = stringResource(if (state.signedIn) R.string.youtube_auth_reconnect else R.string.action_sign_in),
+                onClick = if (state.signedIn) vm::reconnectAccount else vm::requestSignIn,
+            )
+            TvActionButton(stringResource(R.string.action_reload), onClick = vm::reload)
+        }
+    }
     if (channel == null) com.ambient.tv.ui.common.PageChipRow(
         focusChain,
         selectedIndex = state.visibleFeeds.indexOf(state.feed),

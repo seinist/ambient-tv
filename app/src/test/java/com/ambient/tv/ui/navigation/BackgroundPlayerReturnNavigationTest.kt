@@ -164,4 +164,23 @@ class BackgroundPlayerReturnNavigationTest {
         assertFalse(navigation.isMiniPlayerReentry("player"))
         assertFalse(navigation.canResumeAfterSidebarBack(true))
     }
+
+    @Test fun backInAMenuOpenedByBackReturnsToThePlayingSessionOnce() {
+        val navigation = BackgroundPlayerReturnNavigation()
+        navigation.enterPlayer("player", previousIsPlayer = false)
+        navigation.enterBrowse() // Back from fullscreen to the page
+        navigation.menuOpenedByBack(hasActivePlayback = true) // Back on the page opens the menu
+        assertTrue(navigation.consumeMenuBackToPlayer(hasActivePlayback = true))
+        assertFalse(navigation.consumeMenuBackToPlayer(hasActivePlayback = true))
+
+        // Without a running session, or after choosing another page, Back only closes the menu.
+        navigation.menuOpenedByBack(hasActivePlayback = false)
+        assertFalse(navigation.consumeMenuBackToPlayer(hasActivePlayback = true))
+        navigation.menuOpenedByBack(hasActivePlayback = true)
+        navigation.enterBrowse()
+        assertFalse(navigation.consumeMenuBackToPlayer(hasActivePlayback = true))
+        navigation.menuOpenedByBack(hasActivePlayback = true)
+        navigation.clearStoppedPlayback()
+        assertFalse(navigation.consumeMenuBackToPlayer(hasActivePlayback = true))
+    }
 }

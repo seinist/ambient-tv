@@ -6,6 +6,7 @@ import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.composed
 import androidx.compose.ui.draw.drawWithCache
@@ -56,23 +57,31 @@ fun Modifier.accentMaterialFill(
 ): Modifier = composed {
     val style = LocalAccentStyle.current
     val motion = LocalAccentMotionState.current
-    if (style == AccentStyle.LIGHT && motion == null) {
+    val retained = remember { AccentMotionFrameRetention() }
+    val materialAccent = materialAccentFor(accent)
+    val reduced = LocalPerformanceProfile.current.reducedEffects
+    val reveal by animateFloatAsState(
+        if (active) 1f else 0f,
+        tween(if (reduced) 120 else if (active) 230 else 210,
+            easing = LinearOutSlowInEasing),
+        label = "accent material fill",
+    )
+    if (style == AccentStyle.LIGHT && motion == null && retained.lastFrame.strength <= 0f) {
         this.background(color, shape)
     } else {
-        val reveal by animateFloatAsState(
-            if (active) 1f else 0f,
-            tween(145, easing = LinearOutSlowInEasing), label = "accent material fill",
-        )
         this.drawWithCache {
             val outline = shape.createOutline(size, layoutDirection, this)
-            val material = accentBrush(accent, style)
-            val motionPaints = if (motion != null) AccentMotionPaints(accent, style) else null
+            val material = accentBrush(materialAccent, style)
+            val motionPaints = if (motion != null || retained.lastFrame.strength > 0f)
+                AccentMotionPaints(materialAccent, style) else null
             onDrawBehind {
+                val frame = transitionedAccentMotionFrame(motion?.value, retained, reveal)
                 drawOutline(outline, color)
                 if (style != AccentStyle.LIGHT && reveal > 0f) {
                     drawOutline(outline, material, alpha = reveal * accentWashOpacity(style))
                 }
-                motionPaints?.drawOutline(this, outline, motion?.value, emphasis = CONTROL_ACCENT_MOTION_EMPHASIS * reveal)
+                motionPaints?.drawOutline(this, outline, frame,
+                    emphasis = CONTROL_ACCENT_MOTION_EMPHASIS * reveal)
             }
         }
     }
@@ -88,7 +97,15 @@ fun Modifier.accentMaterialBorder(
     val style = LocalAccentStyle.current
     val reduced = LocalPerformanceProfile.current.reducedEffects
     val motion = LocalAccentMotionState.current
-    if (style == AccentStyle.LIGHT && motion == null) {
+    val retained = remember { AccentMotionFrameRetention() }
+    val materialAccent = materialAccentFor(accent)
+    val reveal by animateFloatAsState(
+        if (active) 1f else 0f,
+        tween(if (reduced) 120 else if (active) 230 else 210,
+            easing = LinearOutSlowInEasing),
+        label = "accent material border",
+    )
+    if (style == AccentStyle.LIGHT && motion == null && retained.lastFrame.strength <= 0f) {
         this.border(width, color, shape)
     } else {
         this.drawWithCache {
@@ -98,23 +115,30 @@ fun Modifier.accentMaterialBorder(
                 Size((size.width - strokePx).coerceAtLeast(0f), (size.height - strokePx).coerceAtLeast(0f)),
                 layoutDirection, this,
             )
-            val material = accentBrush(accent, style)
-            val focusBorder = accentFocusBorderBrush(accent, style)
+            val material = accentBrush(materialAccent, style)
+            val focusBorder = accentFocusBorderBrush(materialAccent, style)
             val stroke = Stroke(strokePx)
-            val glowStroke = if (style == AccentStyle.GLOW && active && !reduced) Stroke(strokePx * 2.5f) else null
-            val motionPaints = if (motion != null) AccentMotionPaints(accent, style) else null
+            val glowStroke = if (style == AccentStyle.GLOW && !reduced) Stroke(strokePx * 2.5f) else null
+            val motionPaints = if (motion != null || retained.lastFrame.strength > 0f)
+                AccentMotionPaints(materialAccent, style) else null
             onDrawWithContent {
                 drawContent()
                 if (color.alpha > 0f && strokePx > 0f) {
-                    val frame = motion?.value
+                    val frame = transitionedAccentMotionFrame(motion?.value, retained, reveal)
                     translate(inset, inset) {
-                        if (glowStroke != null) {
-                            drawOutline(outline, material, alpha = color.alpha * (.12f + .11f * (frame?.strength ?: 0f)),
+                        if (glowStroke != null && reveal > 0f) {
+                            drawOutline(outline, material,
+                                alpha = color.alpha * (.12f + .11f * (frame?.strength ?: 0f)) * reveal,
                                 style = glowStroke)
                         }
-                        if (style == AccentStyle.LIGHT || !active) drawOutline(outline, color, style = stroke)
-                        else drawOutline(outline, focusBorder, alpha = color.alpha, style = stroke)
-                        motionPaints?.drawOutline(this, outline, frame, emphasis = color.alpha, drawStyle = stroke)
+                        if (style == AccentStyle.LIGHT) drawOutline(outline, color, style = stroke)
+                        else {
+                            if (reveal < 1f) drawOutline(outline, color, alpha = 1f - reveal, style = stroke)
+                            if (reveal > 0f) drawOutline(outline, focusBorder,
+                                alpha = color.alpha * reveal, style = stroke)
+                        }
+                        motionPaints?.drawOutline(this, outline, frame,
+                            emphasis = color.alpha * reveal, drawStyle = stroke)
                     }
                 }
             }

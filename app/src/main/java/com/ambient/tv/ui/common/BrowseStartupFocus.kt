@@ -82,9 +82,10 @@ internal fun BrowseStartupViewport(
     state: LazyListState,
     itemKeys: List<Any>,
     followFirst: Boolean,
+    firstIndex: Int = 0,
 ) {
-    if (followFirst) DisposableEffect(state, itemKeys) {
-        state.requestScrollToItem(0)
+    if (followFirst) DisposableEffect(state, itemKeys, firstIndex) {
+        state.requestScrollToItem(firstIndex)
         onDispose { }
     }
 }

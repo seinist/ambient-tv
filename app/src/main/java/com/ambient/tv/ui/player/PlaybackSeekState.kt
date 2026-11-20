@@ -111,38 +111,3 @@ fun rememberPlaybackSeekState(
     }
     return state
 }
-
-/**
- * Seek step for a held key: starts at [baseMs] and doubles every [SEEK_DOUBLING_REPEATS] key
- * repeats, so a long press accelerates smoothly instead of in fixed tiers. Capped at a fraction of
- * [durationMs] so a long press crosses a film in a few seconds without overshooting short clips.
- */
-internal fun acceleratedSeekStepMs(baseMs: Long, repeatCount: Int, durationMs: Long): Long {
-    val cap = if (durationMs in 1 until Long.MAX_VALUE) {
-        (durationMs / SEEK_MAX_STEP_DIVISOR).coerceAtLeast(baseMs)
-    } else SEEK_MAX_STEP_UNKNOWN_MS.coerceAtLeast(baseMs)
-    val factor = Math.pow(2.0, repeatCount.coerceAtLeast(0) / SEEK_DOUBLING_REPEATS)
-    return (baseMs * factor).toLong().coerceIn(baseMs, cap)
-}
-
-private const val SEEK_DOUBLING_REPEATS = 6.0
-private const val SEEK_MAX_STEP_DIVISOR = 30L
-private const val SEEK_MAX_STEP_UNKNOWN_MS = 300_000L
-
-/** Keeps emulator key-up/down pairs in one burst without accelerating ordinary spaced taps. */
-internal class SeekKeyAcceleration {
-    private var keyCode = -1
-    private var lastEventMs = Long.MIN_VALUE
-    private var repeats = 0
-
-    fun step(baseMs: Long, key: Int, eventMs: Long, nativeRepeat: Int, durationMs: Long): Long {
-        val gap = if (lastEventMs == Long.MIN_VALUE) Long.MAX_VALUE else eventMs - lastEventMs
-        // Native keyboards wait before their first repeat; synthetic pairs have no such signal.
-        val limit = if (repeats == 0 && nativeRepeat > 0) 650L else 180L
-        val continuing = key == keyCode && gap in 0L..limit
-        repeats = if (continuing) maxOf(repeats + 1, nativeRepeat) else 0
-        keyCode = key
-        lastEventMs = eventMs
-        return acceleratedSeekStepMs(baseMs, repeats, durationMs)
-    }
-}

@@ -626,6 +626,15 @@ class AppPreferences @Inject constructor(
         get() = prefs.getBoolean(KEY_AUTO_WAKE, true)
         set(value) = prefs.edit { putBoolean(KEY_AUTO_WAKE, value) }
 
+    /**
+     * Media services to wake only when their offline view is opened, never on Home startup.
+     * Independent of automatic WOL. Files and DLNA retain their own on-browse auto-wake.
+     */
+    var wakeOnOpenSystems: Set<String>
+        get() = prefs.getStringSet("wake_on_open_systems", emptySet()).orEmpty()
+            .filterTo(mutableSetOf()) { it in WAKE_ON_OPEN_SYSTEMS }
+        set(value) = prefs.edit { putStringSet("wake_on_open_systems", value.intersect(WAKE_ON_OPEN_SYSTEMS)) }
+
     /** Extra Wake-on-LAN cycles (new burst + full wait) after the first, for every system and file/DLNA source. */
     var wolRetryCount: Int
         get() = com.ambient.tv.wol.normalizedWolRetryCount(prefs.getInt(KEY_WOL_RETRY_COUNT, com.ambient.tv.wol.WOL_RETRY_COUNT_DEFAULT))
@@ -942,6 +951,13 @@ class AppPreferences @Inject constructor(
             val normalized = OverscanPolicy.normalize(value)
             prefs.edit { putInt(KEY_OVERSCAN_PERCENT, normalized) }
             overscanState.intValue = normalized
+        }
+
+    /** Navigation page motion is opt-in; missing and future keys retain the historic instant switch. */
+    var viewTransitionStyleKey: String
+        get() = com.ambient.tv.ui.common.ViewTransitionStyle.fromKey(prefs.getString(KEY_VIEW_TRANSITION_STYLE, null)).key
+        set(value) = prefs.edit {
+            putString(KEY_VIEW_TRANSITION_STYLE, com.ambient.tv.ui.common.ViewTransitionStyle.fromKey(value).key)
         }
 
     var accentStyleKey: String
@@ -2389,6 +2405,7 @@ class AppPreferences @Inject constructor(
     }
 
     companion object {
+        val WAKE_ON_OPEN_SYSTEMS = setOf("plex", "jellyfin", "emby", "tvheadend")
         const val DEFAULT_PORT = 32400
         const val KEY_PLEX_ENABLED = "plex_enabled"
         const val KEY_JELLYFIN_ENABLED = "jellyfin_enabled"
@@ -2555,6 +2572,7 @@ class AppPreferences @Inject constructor(
         const val KEY_ACCENT_COLOR = "accent_color"
         const val KEY_ACCENT_STYLE = "accent_style"
         const val KEY_ACCENT_MOTION = "accent_motion"
+        const val KEY_VIEW_TRANSITION_STYLE = "view_transition_style"
         const val KEY_CUSTOM_ACCENT_HEX = "custom_accent_hex"
         const val KEY_CUSTOM_PLAYBACK_ACCENT_HEX = "custom_playback_accent_hex"
         const val KEY_DUAL_ACCENT_ENABLED = "dual_accent_enabled"

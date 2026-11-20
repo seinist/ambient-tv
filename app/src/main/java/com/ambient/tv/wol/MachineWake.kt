@@ -126,7 +126,7 @@ class MachineWake @Inject constructor(
         notices = WakeNotices,
         group = machines::groupFor,
         send = { mac, broadcast, port, wireGuardHost, retry ->
-            wolManager.sendWakeBurst(mac, broadcast, port, wireGuardHost = wireGuardHost, retry = true)
+            wolManager.sendWakeBurst(mac, broadcast, port, wireGuardHost = wireGuardHost, retry = retry)
         },
         reachable = { host, port ->
             runInterruptible(Dispatchers.IO) {
@@ -141,7 +141,12 @@ class MachineWake @Inject constructor(
         machines.keyFor(system, host, mac)
 
     /** Fire-and-forget: progress and result appear on the machine's shared wake card. */
-    fun wake(request: ManualWakeRequest) {
+    fun wake(request: ManualWakeRequest) = enqueue(request, null)
+
+    /** Wake a machine, then reconnect the originally selected service and its offline siblings. */
+    fun wakeThen(request: ManualWakeRequest, onAwake: () -> Unit) = enqueue(request, onAwake)
+
+    private fun enqueue(request: ManualWakeRequest, onAwake: (() -> Unit)?) {
         val machine = machines.keyFor(request.system, request.host, request.mac)
         val job = synchronized(lock) {
             val previous = jobs[machine]
@@ -184,8 +189,11 @@ class MachineWake @Inject constructor(
                         }
                         currentCoroutineContext().ensureActive()
                         coordinated = true
-                        if (coordinator.wake(request) == ManualWakeCoordinator.Outcome.NO_MAC) {
-                            report(NoticePhase.ERROR, R.string.notice_wake_failed)
+                        when (coordinator.wake(request)) {
+                            ManualWakeCoordinator.Outcome.NO_MAC ->
+                                report(NoticePhase.ERROR, R.string.notice_wake_failed)
+                            ManualWakeCoordinator.Outcome.AWAKE -> onAwake?.invoke()
+                            else -> Unit
                         }
                     } catch (cancelled: kotlinx.coroutines.CancellationException) {
                         if (!coordinated) report(NoticePhase.INFO, R.string.notice_wake_cancelled, cancelled = true)

@@ -35,15 +35,15 @@ class InteractionStyleTest {
     }
 
     @Test fun focusOutlineSoftensBalancedAndMaximumProfiles() {
-        assertEquals(200, focusBorderFadeDurationMs(focused = true, reducedEffects = false))
-        assertEquals(170, focusBorderFadeDurationMs(focused = false, reducedEffects = false))
+        assertEquals(230, focusBorderFadeDurationMs(focused = true, reducedEffects = false))
+        assertEquals(210, focusBorderFadeDurationMs(focused = false, reducedEffects = false))
     }
 
     @Test fun controlFocusFadesAreSmoothAndExitQuickerForBothButtonTypes() {
-        assertEquals(200, controlFocusFadeDurationMs(focused = true, reducedEffects = false))
-        assertEquals(170, controlFocusFadeDurationMs(focused = false, reducedEffects = false))
-        assertEquals(190, controlFocusFadeDurationMs(focused = true, reducedEffects = false, osd = true))
-        assertEquals(160, controlFocusFadeDurationMs(focused = false, reducedEffects = false, osd = true))
+        assertEquals(230, controlFocusFadeDurationMs(focused = true, reducedEffects = false))
+        assertEquals(210, controlFocusFadeDurationMs(focused = false, reducedEffects = false))
+        assertEquals(210, controlFocusFadeDurationMs(focused = true, reducedEffects = false, osd = true))
+        assertEquals(190, controlFocusFadeDurationMs(focused = false, reducedEffects = false, osd = true))
     }
 
     @Test fun reducedEffectsKeepShortDrawOnlyFadesForAllButtonTypes() {
@@ -51,6 +51,16 @@ class InteractionStyleTest {
             assertEquals(140, controlFocusFadeDurationMs(focused = true, reducedEffects = true, osd = osd))
             assertEquals(110, controlFocusFadeDurationMs(focused = false, reducedEffects = true, osd = osd))
         }
+    }
+
+    @Test fun darkMaterialAccentsGetOnlyTheContrastLiftNeededForFocus() {
+        val deepBlue = Color(0xFF001133)
+        val readable = accessibleAccent(deepBlue, AppSurfaceRaised)
+        val material = visibleMaterialAccent(deepBlue, readable, AppSurfaceRaised)
+        assertTrue(contrastRatio(material, AppSurfaceRaised) >= 3.8f)
+        assertTrue(contrastRatio(material, AppSurfaceRaised) < contrastRatio(readable, AppSurfaceRaised))
+        assertEquals(Gold, visibleMaterialAccent(Gold, accessibleAccent(Gold, AppSurfaceRaised),
+            AppSurfaceRaised))
     }
 
     @Test fun foregroundSwitchesWithTheActionFill() {

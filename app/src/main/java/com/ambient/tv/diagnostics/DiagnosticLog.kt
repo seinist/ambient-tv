@@ -93,6 +93,10 @@ object DiagnosticLog {
         runCatching { writer.submit { files.clear() }.get(5, TimeUnit.SECONDS) }
     }
 
+    /** Consistent, redacted, read-only log snapshot for the in-app viewer. Call on an IO thread. */
+    internal fun viewerSnapshot(previousRevision: String?): DiagnosticViewerSnapshot? =
+        files?.snapshotForViewer(previousRevision)
+
     /** Bytes currently on disk. */
     fun sizeBytes(): Long = files?.files()?.sumOf { it.length() } ?: 0L
 

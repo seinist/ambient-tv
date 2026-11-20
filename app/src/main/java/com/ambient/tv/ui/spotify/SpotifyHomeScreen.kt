@@ -170,6 +170,7 @@ fun SpotifyHomeScreen(
             TvChip(stringResource(R.string.action_now_playing), modifier = Modifier.focusRequester(nowPlayingFocusRequester), icon = Icons.Default.PlayArrow, iconOnly = true, onClick = onNowPlaying)
             TvChip(stringResource(R.string.action_reload), icon = Icons.Filled.Refresh,
                 iconOnly = true, loading = state.loading || state.refreshing,
+                loadingOnlyAfterClick = true,
                 enabled = state.webAuthorized && !state.authBusy,
                 onClick = { initialContentFocusPending = false; viewModel.reload() })
         }) {

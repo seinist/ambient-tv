@@ -6,6 +6,7 @@ import com.ambient.tv.ui.common.requestHeaders
 import com.ambient.tv.ui.common.lineHeightDp
 import coil3.request.crossfade
 import com.ambient.tv.tvheadend.domain.TvhChannel
+import com.ambient.tv.livetv.liveTvArtKey
 import androidx.activity.compose.BackHandler
 import com.ambient.tv.ui.mobile.LocalHandheldUi
 import com.ambient.tv.ui.mobile.deviceDp
@@ -18,6 +19,8 @@ import com.ambient.tv.ui.common.glideToItem
 import com.ambient.tv.ui.common.ExplicitRowScrollSpec
 import com.ambient.tv.ui.common.TvBringIntoViewSpec
 import com.ambient.tv.ui.common.RowColumnFocus
+import com.ambient.tv.ui.common.CyclicRowFocusKey
+import com.ambient.tv.ui.common.logicalRowFocusKey
 import com.ambient.tv.ui.common.rowColumnFocusNavigation
 import com.ambient.tv.ui.common.rowColumnFocusWrapRight
 import com.ambient.tv.ui.common.rowColumnFocusTarget
@@ -152,6 +155,8 @@ import kotlinx.coroutines.flow.first
 import androidx.compose.ui.graphics.rememberGraphicsLayer
 import androidx.compose.ui.graphics.layer.drawLayer
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.collect
 
 @Composable
@@ -433,6 +438,8 @@ fun HomeScreen(
                         onShortcutFocused = viewModel::onShortcutFocused,
                         onOpenHomeContent = openHomeContent,
                         tvheadendImageHeaders = viewModel.tvheadendImageHeaders,
+                        liveTvTitleArt = viewModel.liveTvTitleArt,
+                        onLiveTvArtworkNeeded = viewModel::requestHomeLiveTvTitleArt,
                         entranceProgress = entranceProgressProvider,
                         externalBackdropScrolling = if (systemOverview) overviewRowsScrolling else null,
                         returnToken = returnKey,
@@ -551,7 +558,7 @@ private fun RowScope.OverviewActions(
     optionsModifier: Modifier,
 ) {
     com.ambient.tv.ui.common.TvChip(stringResource(R.string.nav_home), icon = Icons.Filled.Home, iconOnly = true, onClick = onOpenHome)
-    com.ambient.tv.ui.common.TvChip(stringResource(R.string.action_reload), icon = Icons.Filled.Refresh, iconOnly = true, loading = refreshing, onClick = onRefresh)
+    com.ambient.tv.ui.common.TvChip(stringResource(R.string.action_reload), icon = Icons.Filled.Refresh, iconOnly = true, loading = refreshing, loadingOnlyAfterClick = true, onClick = onRefresh)
     com.ambient.tv.ui.common.TvChip(stringResource(R.string.action_view), modifier = optionsModifier, icon = Icons.Filled.Tune, iconOnly = true, onClick = onOpenOptions)
 }
 
@@ -690,6 +697,9 @@ internal fun LibraryContent(
     onShortcutFocused: (HomeRowDefinition) -> Unit,
     onOpenHomeContent: (HomeRowDefinition) -> Unit,
     tvheadendImageHeaders: Map<String, String>,
+    /** Only visible TVHeadend cards collect their matching title. No Home-wide artwork refresh. */
+    liveTvTitleArt: StateFlow<Map<String, String>> = NoLiveTvTitleArt,
+    onLiveTvArtworkNeeded: (String, kotlinx.coroutines.CoroutineScope) -> Unit = { _, _ -> },
     entranceProgress: () -> Float,
     /** Set when the caller draws the focus backdrop behind its own header; rows report scrolling to it. */
     externalBackdropScrolling: MutableStateFlow<Boolean>? = null,
@@ -754,7 +764,9 @@ internal fun LibraryContent(
                         HomeLiveTvRow(
                             items = state.tvRows[rowKey]?.items.orEmpty(),
                             title = state.tvRows[rowKey]?.title.orEmpty(),
-                            imageHeaders = tvheadendImageHeaders, onWatch = { onWatchLiveChannel(rowKey, it) },
+                            imageHeaders = tvheadendImageHeaders,
+                            liveTvTitleArt = liveTvTitleArt, onArtworkNeeded = onLiveTvArtworkNeeded,
+                            onWatch = { onWatchLiveChannel(rowKey, it) },
                             requestInitialFocus = false,
                             onItemFocused = { onLiveTvFocused(rowKey, it) },
                             rowKey = rowKey,
@@ -855,6 +867,15 @@ internal fun LibraryContent(
                 ?: state.rows.indexOfFirst { row -> initialFocusKey != null && row.items.any { initialFocusKey in it.allRatingKeys } }
         }
         val restoreListIndex = state.rowKeys.indexOf(initialFocusRowId).coerceAtLeast(0)
+        // Physical neighbours on each end let the first row follow the last by one ordinary
+        // D-pad glide. Rebase to the identical middle-lap row once the transition has settled.
+        val cyclicRows = remember(state.rowKeys) { cyclicHomeRows(state.rowKeys) }
+        // Begin on the real first lap: its contentPadding parks the initial row below the hero.
+        // The second and third laps have ordinary row geometry for seamless edge movement.
+        val middleStart = 0
+        val cyclicIndices = remember(cyclicRows) { cyclicRows.withIndex().associate { it.value to it.index } }
+        val middleFirstKey = cyclicRows.getOrNull(middleStart)
+        val middleLastKey = cyclicRows.getOrNull(middleStart + state.rowKeys.lastIndex)
         val heroHeight = homeHeroHeight()
         // Same line the first row already occupies. Later rows, including a short live row at
         // the bottom, must be able to reach it or the hero mask cuts them in half.
@@ -874,9 +895,9 @@ internal fun LibraryContent(
             null
         }
         val rowListState = com.ambient.tv.ui.common.rememberBrowseRowColumnState(
-            initialFirstVisibleItemIndex = if (restoreArmed) restoreListIndex else 0,
+            initialFirstVisibleItemIndex = middleStart + if (restoreArmed) restoreListIndex else 0,
         )
-        com.ambient.tv.ui.common.BrowseStartupViewport(rowListState, state.rowKeys, followFirstItem)
+        com.ambient.tv.ui.common.BrowseStartupViewport(rowListState, state.rowKeys, followFirstItem, firstIndex = middleStart)
         com.ambient.tv.ui.common.RegisterBrowseFocusRows(rowListState, state.rowKeys.map { rowKey ->
             rowKey to when {
                 rowKey.startsWith(HOME_OFFLINE_ROW_PREFIX) -> listOf(rowKey.removePrefix(HOME_OFFLINE_ROW_PREFIX))
@@ -885,7 +906,7 @@ internal fun LibraryContent(
                 rowKey.startsWith("shortcut:") -> listOf(rowKey.removePrefix("shortcut:"))
                 else -> state.rows.firstOrNull { it.id == rowKey }?.items.orEmpty().map { it.ratingKey }
             }
-        })
+        }, firstIndex = middleStart)
         val initialRow = state.rows.getOrNull(restoreRowIndex)
         // Seed the first actual tile before the sidebar's first focus handoff, not after it.
         // Cached startup state may still contain yesterday's focused key in Loaded.
@@ -914,7 +935,8 @@ internal fun LibraryContent(
         }
         LaunchedEffect(refreshRecovery) {
             val index = state.rowKeys.indexOf(refreshRecovery?.rowId)
-            if (index >= 0 && rowListState.layoutInfo.visibleItemsInfo.none { it.index == index }) rowListState.scrollToItem(index)
+            if (index >= 0 && rowListState.layoutInfo.visibleItemsInfo.none { it.index == middleStart + index })
+                rowListState.scrollToItem(middleStart + index)
         }
         // Every row type is parked directly below the pinned hero, where the first row rests;
         // a plain bring-into-view would count the hero-covered top as visible and park the
@@ -927,21 +949,21 @@ internal fun LibraryContent(
         // still starts on card 0 after the row is scrolled away and back.
         val liveRowEntry = remember { LiveRowEntry() }
         val glideWrap = !com.ambient.tv.ui.performance.LocalPerformanceProfile.current.reducedEffects
-        val centeredRowKey = remember { MutableStateFlow<String?>(null) }
+        val centeredRowKey = remember { MutableStateFlow<CyclicRowFocusKey?>(null) }
         var returningRow by remember { mutableStateOf(returnToken != null) }
         // Keep active-row visual state out of the parent composition. Each row's tiny layer
         // modifier observes this state independently, so a vertical focus change cannot rebuild
         // the whole Home row column.
         val activeRowIndex = remember(state.playbackReturnRevision) {
-            mutableIntStateOf(if (restoreArmed) restoreListIndex else 0)
+            mutableIntStateOf(middleStart + if (restoreArmed) restoreListIndex else 0)
         }
         // Covers the few frames between scroll completion and the target tile taking focus.
         // Read only from draw/layer lambdas below.
-        val pendingVisualRow = remember { mutableStateOf<String?>(null) }
+        val pendingVisualRow = remember { mutableStateOf<CyclicRowFocusKey?>(null) }
         // The row that really holds focus. activeRowIndex only follows row-entry events, and a
         // row whose focus never left (cancelled Up/Down, return from live TV) sends none: the
         // index then pointed elsewhere and the focused row stayed invisible under the hero.
-        val focusedRowKey = remember { mutableStateOf<String?>(null) }
+        val focusedRowKey = remember { mutableStateOf<CyclicRowFocusKey?>(null) }
         LaunchedEffect(rowListState) {
             // A vertical move that never lands (target row not focusable in time) must not
             // keep its destination as the only visible row forever.
@@ -955,23 +977,24 @@ internal fun LibraryContent(
         }
         LaunchedEffect(restoreArmed, state.rowKeys) {
             if (restoreArmed && initialFocusRowId in state.rowKeys) {
-                rowListState.scrollToItem(restoreListIndex)
+                rowListState.scrollToItem(middleStart + restoreListIndex)
             }
         }
         LaunchedEffect(state.initialFocusTarget, state.rowKeys.firstOrNull()) {
-            if (state.initialFocusTarget != HomeInitialFocusTarget.NONE && rowListState.firstVisibleItemIndex != 0) {
-                rowListState.scrollToItem(0)
+            if (state.initialFocusTarget != HomeInitialFocusTarget.NONE &&
+                rowListState.firstVisibleItemIndex != middleStart) {
+                rowListState.scrollToItem(middleStart)
             }
         }
         LaunchedEffect(centeredRowKey, state.rowKeys, rowListState) {
             // Row-entry events do not invalidate the whole Home composition.
-            centeredRowKey.collectLatest { key ->
+            centeredRowKey.collectLatest { candidate ->
+                val key = candidate ?: return@collectLatest
                 // Ignore an old row grabbing focus during a rapid D-pad retarget; its
                 // centering request must not cancel the glide to the new destination.
                 val pending = pendingVisualRow.value
                 if (pending != null && pending != key) return@collectLatest
-                val index = state.rowKeys.indexOf(key)
-                if (index < 0) return@collectLatest
+                val index = cyclicIndices[key] ?: return@collectLatest
                 val alreadyCentered = rowCenteringGate.consume(key)
                 activeRowIndex.intValue = index
                 if (pending == key) {
@@ -979,13 +1002,13 @@ internal fun LibraryContent(
                     // Focus arrives while the D-pad glide is still running; it centers the row.
                     // A D-pad move ends a playback return like a settled one would below.
                     if (rowListState.isScrollInProgress) {
-                        if (key == initialFocusRowId || !playbackReturn.pending) returningRow = false
+                        if (key.logical == initialFocusRowId || !playbackReturn.pending) returningRow = false
                         return@collectLatest
                     }
                 }
                 // The return viewport is already placed at its initial row before drawing.
                 // Do not start a centering glide as that same row receives its first focus.
-                if (returningRow && key == initialFocusRowId) {
+                if (returningRow && key.logical == initialFocusRowId) {
                     returningRow = false
                     return@collectLatest
                 }
@@ -995,6 +1018,36 @@ internal fun LibraryContent(
                 returningRow = false
                 if (!alreadyCentered) {
                     rowCentering.centerItem(index, bottomInset = bottomInsetPx)
+                }
+            }
+        }
+        // Keep the physical list bounded even after many laps. Rebase only after a D-pad
+        // glide settles; the matching rows in later laps have identical measured geometry.
+        // Scroll and hand focus to the same logical tile without drawing a backwards journey.
+        val cyclicDestinationActive = com.ambient.tv.ui.common.isActiveNavigationDestination()
+        LaunchedEffect(rowListState, columnFocus, cyclicRows, cyclicDestinationActive) {
+            if (!cyclicDestinationActive) return@LaunchedEffect
+            snapshotFlow {
+                Triple(focusedRowKey.value, rowListState.isScrollInProgress, pendingVisualRow.value)
+            }.collect { (focused, scrolling, pending) ->
+                val source = focused ?: return@collect
+                if (scrolling || pending != null || source.lap < HOME_CYCLIC_REBASE_LAP + 2) return@collect
+                delay(64L)
+                if (focusedRowKey.value != source || rowListState.isScrollInProgress ||
+                    pendingVisualRow.value != null) return@collect
+                val first = rowListState.firstVisibleItemIndex
+                val targetFirst = cyclicHomeRebaseViewportIndex(first, state.rowKeys.size, source.lap)
+                    ?: return@collect
+                val targetRow = CyclicRowFocusKey(source.logical, HOME_CYCLIC_REBASE_LAP)
+                val physicalTarget = cyclicIndices[targetRow] ?: return@collect
+                rowCenteringGate.markCentered(targetRow)
+                rowListState.scrollToItem(targetFirst, rowListState.firstVisibleItemScrollOffset)
+                activeRowIndex.intValue = physicalTarget
+                // Focus target is created lazily after the snap. The original physical tile
+                // may have left composition, so keep the request bounded to a few frames.
+                repeat(12) {
+                    withFrameNanos { }
+                    if (columnFocus.focusEntry(targetRow)) return@collect
                 }
             }
         }
@@ -1013,25 +1066,51 @@ internal fun LibraryContent(
                         columnFocus,
                         scrollToTop = {
                             rowCenteringGate.beginMove()
-                            pendingVisualRow.value = state.rowKeys.firstOrNull()
-                            rowListState.glideToItem(glideWrap, 0)
+                            if (state.rowKeys.size < 2) {
+                                pendingVisualRow.value = middleFirstKey
+                                rowListState.glideToItem(glideWrap, middleStart)
+                            } else {
+                                // Only reached after the last physical lap. Instantly move
+                                // the identical viewport back to a safe lap, then animate the
+                                // next row normally. Never show a scroll back to the top.
+                                val currentFirst = rowListState.firstVisibleItemIndex
+                                val rebased = cyclicHomeRebaseViewportIndex(
+                                    currentFirst, state.rowKeys.size, cyclicRows.last().lap,
+                                )
+                                val offset = rowListState.firstVisibleItemScrollOffset
+                                if (rebased != null) rowListState.scrollToItem(rebased, offset)
+                                val target = CyclicRowFocusKey(
+                                    state.rowKeys.first(), HOME_CYCLIC_REBASE_LAP + 1,
+                                )
+                                pendingVisualRow.value = target
+                                val index = cyclicIndices[target] ?: return@rowColumnFocusNavigation
+                                rowCentering.centerItem(index, bottomInset = bottomInsetPx)
+                                rowCenteringGate.markCentered(target)
+                            }
                         },
                         scrollToBottom = {
                             rowCenteringGate.beginMove()
-                            pendingVisualRow.value = state.rowKeys.lastOrNull()
-                            rowListState.glideToItem(glideWrap, state.rowKeys.lastIndex)
+                            pendingVisualRow.value = middleLastKey
+                            rowListState.glideToItem(glideWrap, middleStart + state.rowKeys.lastIndex)
                         },
                         scrollToRow = { rowKey ->
                             rowCenteringGate.beginMove()
-                            pendingVisualRow.value = rowKey as? String
-                            val index = state.rowKeys.indexOfFirst { it == rowKey }
+                            pendingVisualRow.value = rowKey as? CyclicRowFocusKey
+                            val index = cyclicIndices[rowKey] ?: -1
                             if (index >= 0) {
                                 rowCentering.centerItem(index, bottomInset = bottomInsetPx)
                                 rowCenteringGate.markCentered(rowKey)
                             }
                         },
                         focusBeforeScroll = true,
-                    ) { state.rowKeys }
+                        upExitAt = { key ->
+                            (key as? CyclicRowFocusKey)?.logical == state.rowKeys.firstOrNull()
+                        },
+                        wrapDownTarget = {
+                            if (state.rowKeys.size < 2) middleFirstKey
+                            else CyclicRowFocusKey(state.rowKeys.first(), HOME_CYCLIC_REBASE_LAP + 1)
+                        },
+                    ) { cyclicRows }
                     .clipToBounds()
                     .acceleratedDpadNavigation()
                     .fadeRowsBehindHomeHero(maskRows, heroHeight) {
@@ -1041,7 +1120,7 @@ internal fun LibraryContent(
                         val progress = entrancePhase(entranceProgress(), 0.24f, 1f)
                         // Hidden for the one frame before the first row is measured (first open only;
                         // a list restored further down never composes row 0 and shows at once).
-                        alpha = if (firstRowHeight == null && rowListState.firstVisibleItemIndex == 0) 0f else progress
+                        alpha = if (firstRowHeight == null && rowListState.firstVisibleItemIndex == middleStart) 0f else progress
                         translationY = (1f - progress) * 28.dp.toPx()
                     }),
                 contentPadding = androidx.compose.foundation.layout.PaddingValues(
@@ -1050,31 +1129,31 @@ internal fun LibraryContent(
                 ),
                 verticalArrangement = Arrangement.spacedBy(4.dp),
             ) {
-                items(state.rowKeys, key = { it }, contentType = { rowKey ->
+                itemsIndexed(cyclicRows, key = { _, key -> "home-row:${key.lap}:${key.logical}" }, contentType = { _, key ->
                     when {
-                        rowKey in state.tvRows -> "live-tv-row"
-                        rowKey.startsWith("shortcut:") || rowKey.startsWith(HOME_OFFLINE_ROW_PREFIX) -> "shortcut-row"
+                        key.logical in state.tvRows -> "live-tv-row"
+                        key.logical.startsWith("shortcut:") || key.logical.startsWith(HOME_OFFLINE_ROW_PREFIX) -> "shortcut-row"
                         else -> "media-row"
                     }
-                }) { rowKey ->
-                    val rowIndex = state.rowKeys.indexOf(rowKey)
+                }) { rowIndex, physicalKey ->
+                    val rowKey = physicalKey.logical
                     Box(Modifier.onFocusChanged {
                         if (it.hasFocus) {
-                            focusedRowKey.value = rowKey
+                            focusedRowKey.value = physicalKey
                             // Also what stays visible once focus moves on to the sidebar.
                             if (pendingVisualRow.value == null && rowIndex >= 0) activeRowIndex.intValue = rowIndex
-                        } else if (focusedRowKey.value == rowKey) focusedRowKey.value = null
+                        } else if (focusedRowKey.value == physicalKey) focusedRowKey.value = null
                     }.onlyActiveHeroRow(
                         rowIndex,
                         activeIndex = {
                             // Change the only visible row at the start of a vertical glide,
                             // not after the destination tile finally acquires focus.
-                            pendingVisualRow.value?.let(state.rowKeys::indexOf)?.takeIf { it >= 0 }
-                                ?: focusedRowKey.value?.let(state.rowKeys::indexOf)?.takeIf { it >= 0 }
+                            pendingVisualRow.value?.let(cyclicIndices::get)
+                                ?: focusedRowKey.value?.let(cyclicIndices::get)
                                 ?: activeRowIndex.intValue
                         },
                     ).then(
-                        if (rowIndex == 0) Modifier.onSizeChanged {
+                        if (rowIndex == middleStart) Modifier.onSizeChanged {
                             val height = with(density) { it.height.toDp() }
                             firstRowHeight = height
                             HeroRowHeights[firstRowHeightKey] = height
@@ -1084,8 +1163,8 @@ internal fun LibraryContent(
                         rowKey.startsWith(HOME_OFFLINE_ROW_PREFIX) -> HomeOfflineRow(
                             system = rowKey.removePrefix(HOME_OFFLINE_ROW_PREFIX),
                             columnFocus = columnFocus,
-                            rowKey = rowKey,
-                            onFocused = { restoreArmed = false; centeredRowKey.value = rowKey },
+                            rowKey = physicalKey,
+                            onFocused = { restoreArmed = false; centeredRowKey.value = physicalKey },
                         )
                         rowKey in state.tvRows -> {
                             val recent = rowKey.startsWith("recent-tv")
@@ -1093,19 +1172,20 @@ internal fun LibraryContent(
                                 items = state.tvRows[rowKey]?.items.orEmpty(),
                                 title = state.tvRows[rowKey]?.title.orEmpty(),
                                 imageHeaders = tvheadendImageHeaders,
+                                liveTvTitleArt = liveTvTitleArt, onArtworkNeeded = onLiveTvArtworkNeeded,
                                 onWatch = { onWatchLiveChannel(rowKey, it) },
-                                requestInitialFocus = rowKey == state.rowKeys.firstOrNull() && state.initialFocusTarget ==
+                                requestInitialFocus = rowIndex == middleStart && state.initialFocusTarget ==
                                     if (recent) HomeInitialFocusTarget.RECENT_TV else HomeInitialFocusTarget.LIVE_TV,
                                 onRowFocused = {
                                     restoreArmed = false
-                                    centeredRowKey.value = rowKey
+                                    centeredRowKey.value = physicalKey
                                 },
                                 onItemFocused = { onLiveTvFocused(rowKey, it) },
                                 bringContextIntoView = false,
                                 columnFocus = columnFocus,
-                                rowKey = rowKey,
-                                restoreChannelKey = initialFocusKey.takeIf { rowKey == initialFocusRowId && returnToken != null },
-                                followFirstItem = followFirstItem,
+                                rowKey = physicalKey,
+                                restoreChannelKey = initialFocusKey.takeIf { rowIndex < state.rowKeys.size && rowKey == initialFocusRowId && returnToken != null },
+                                followFirstItem = followFirstItem && rowIndex < state.rowKeys.size,
                                 onOpenChannels = if (recent) {
                                     { onOpenHomeContent(homeTvShortcut(rowKey, "live")) }
                                 } else null,
@@ -1119,11 +1199,11 @@ internal fun LibraryContent(
                             state.shortcuts.firstOrNull { "shortcut:${it.id}" == rowKey }?.let { shortcut ->
                                 HomeShortcutRow(shortcut, onOpenHomeContent, { row ->
                                     restoreArmed = false
-                                    centeredRowKey.value = rowKey
+                                    centeredRowKey.value = physicalKey
                                     onShortcutFocused(row)
                                 },
-                                    requestInitialFocus = rowKey == state.rowKeys.firstOrNull() && state.initialFocusTarget == HomeInitialFocusTarget.SHORTCUT,
-                                    columnFocus = columnFocus, rowKey = rowKey)
+                                    requestInitialFocus = rowIndex == middleStart && state.initialFocusTarget == HomeInitialFocusTarget.SHORTCUT,
+                                    columnFocus = columnFocus, rowKey = physicalKey)
                             }
                         } else {
                             val index = state.rows.indexOfFirst { it.id == rowKey }
@@ -1154,9 +1234,11 @@ internal fun LibraryContent(
                                             (row.id == initialFocusRowId && initialFocusKey != null && initialFocusKey in item.allRatingKeys)) restoreArmed = false
                                         onItemFocused(row.id, item)
                                     },
-                                    onRowFocused = { centeredRowKey.value = rowKey },
+                                    onRowFocused = { centeredRowKey.value = physicalKey },
                                     columnFocus = columnFocus,
+                                    columnRowKey = physicalKey,
                                     restoreRatingKey = when {
+                                        rowIndex >= state.rowKeys.size -> null
                                         refreshRecovery?.rowId == row.id -> refreshRecovery.ratingKey
                                         state.initialFocusTarget == HomeInitialFocusTarget.CONTENT ->
                                         focusSnapshot.ratingKey.takeIf { row.id == focusSnapshot.rowId }
@@ -1164,7 +1246,7 @@ internal fun LibraryContent(
                                         missingFocusFallback?.first == row.id -> missingFocusFallback.second
                                         else -> null
                                     },
-                                    followFirstItem = followFirstItem,
+                                    followFirstItem = followFirstItem && rowIndex < state.rowKeys.size,
                                 )
                             }
                         }
@@ -1216,7 +1298,7 @@ internal fun homeFirstBrowseFocusKey(state: HomeUiState.Loaded): com.ambient.tv.
 
 /** An offline server's place on Home: its name and the one action that wakes and reconnects it. */
 @Composable
-private fun HomeOfflineRow(system: String, columnFocus: RowColumnFocus?, rowKey: String, onFocused: () -> Unit) {
+private fun HomeOfflineRow(system: String, columnFocus: RowColumnFocus?, rowKey: Any, onFocused: () -> Unit) {
     val vm: UnreachableServerViewModel = hiltViewModel()
     val gate by vm.state.collectAsState()
     val media = com.ambient.tv.ui.common.MediaSystem.fromKey(system)
@@ -1232,7 +1314,7 @@ private fun HomeOfflineRow(system: String, columnFocus: RowColumnFocus?, rowKey:
                 onClick = { vm.retrySystem(system) },
                 loading = gate.retrying,
                 modifier = Modifier.rowColumnFocusTarget(columnFocus, rowKey, system, soundsOnFocus = true)
-                    .browseFocusTarget(system, rowKey = rowKey)
+                    .browseFocusTarget(system, rowKey = logicalRowFocusKey(rowKey))
                     .onFocusChanged { if (it.isFocused) onFocused() },
             )
         }
@@ -1246,7 +1328,7 @@ private fun HomeShortcutRow(
     onFocused: (HomeRowDefinition) -> Unit,
     requestInitialFocus: Boolean = false,
     columnFocus: RowColumnFocus? = null,
-    rowKey: String = "",
+    rowKey: Any = "",
 ) {
     val firstFocus = remember { FocusRequester() }
     val sharedInitialFocus = com.ambient.tv.ui.common.LocalBrowseFocusReturnState.current != null
@@ -1271,12 +1353,15 @@ private fun HomeShortcutRow(
                 },
                 onClick = { onOpen(row) },
                 modifier = Modifier.rowColumnFocusTarget(columnFocus, rowKey, row.id, soundsOnFocus = true)
-                    .browseFocusTarget(row.id, rowKey = rowKey)
+                    .browseFocusTarget(row.id, rowKey = logicalRowFocusKey(rowKey))
                     .focusRequester(firstFocus).onFocusChanged { if (it.isFocused) onFocused(row) },
             )
         }
     }
 }
+
+/** The default is deliberately inert for preview/tests without a HomeViewModel. */
+private val NoLiveTvTitleArt: StateFlow<Map<String, String>> = MutableStateFlow(emptyMap())
 
 @Composable
 @OptIn(ExperimentalFoundationApi::class)
@@ -1284,6 +1369,8 @@ internal fun HomeLiveTvRow(
     items: List<HomeLiveTvItem>,
     title: String,
     imageHeaders: Map<String, String>,
+    liveTvTitleArt: StateFlow<Map<String, String>> = NoLiveTvTitleArt,
+    onArtworkNeeded: (String, kotlinx.coroutines.CoroutineScope) -> Unit = { _, _ -> },
     onWatch: (TvhChannel) -> Unit,
     requestInitialFocus: Boolean,
     onItemFocused: (HomeLiveTvItem) -> Unit,
@@ -1291,7 +1378,7 @@ internal fun HomeLiveTvRow(
     // False where the parent list centers the row itself; a second relocation would fight it.
     bringContextIntoView: Boolean = true,
     columnFocus: RowColumnFocus? = null,
-    rowKey: String = "",
+    rowKey: Any = "",
     /** First tile of a recently-watched row: opens the channel list. */
     onOpenChannels: (() -> Unit)? = null,
     /** First tile of the on-now row: opens the programme guide. Ignored when [onOpenChannels] is set. */
@@ -1429,7 +1516,7 @@ internal fun HomeLiveTvRow(
                             onClick = onOpenChannels,
                             modifier = Modifier
                                 .rowColumnFocusTarget(columnFocus, rowKey, ChannelsTileKey)
-                                .browseFocusTarget(ChannelsTileKey, rowKey = rowKey)
+                                .browseFocusTarget(ChannelsTileKey, rowKey = logicalRowFocusKey(rowKey))
                                 .then(anchorModifier),
                         )
                     }
@@ -1441,7 +1528,7 @@ internal fun HomeLiveTvRow(
                             onClick = onOpenGuide,
                             modifier = Modifier
                                 .rowColumnFocusTarget(columnFocus, rowKey, GuideTileKey)
-                                .browseFocusTarget(GuideTileKey, rowKey = rowKey)
+                                .browseFocusTarget(GuideTileKey, rowKey = logicalRowFocusKey(rowKey))
                                 .then(anchorModifier),
                         )
                     }
@@ -1450,12 +1537,14 @@ internal fun HomeLiveTvRow(
                     val lazyIndex = index + if (leadingKey != null) 1 else 0
                     LiveChannelTile(
                         item = item,
+                        liveTvTitleArt = liveTvTitleArt,
+                        onArtworkNeeded = onArtworkNeeded,
                         nowSeconds = { nowSeconds },
                         onClick = { onWatch(item.channel) },
                         onFocused = { onItemFocused(item) },
                         modifier = Modifier
                             .rowColumnFocusTarget(columnFocus, rowKey, "${item.channel.sourceId}:${item.channel.uuid}")
-                            .browseFocusTarget("${item.channel.sourceId}:${item.channel.uuid}", rowKey = rowKey)
+                            .browseFocusTarget("${item.channel.sourceId}:${item.channel.uuid}", rowKey = logicalRowFocusKey(rowKey))
                             .then(if (lazyIndex == 0) anchorModifier else Modifier),
                     )
                 }
@@ -1472,14 +1561,14 @@ private const val ChannelsTileKey = "live-tv-channels"
  * a restored landing on the last card is dropped so the row starts at card 0.
  */
 internal class LiveRowEntry {
-    private val chosen = HashSet<String>()
+    private val chosen = HashSet<Any>()
 
-    fun chosen(rowKey: String): Boolean = rowKey in chosen
+    fun chosen(rowKey: Any): Boolean = logicalRowFocusKey(rowKey) in chosen
 
-    fun choose(rowKey: String) { chosen.add(rowKey) }
+    fun choose(rowKey: Any) { chosen.add(logicalRowFocusKey(rowKey)) }
 
-    fun resetUnlessChosen(rowKey: String, focus: RowColumnFocus) {
-        if (rowKey !in chosen) focus.forget(rowKey)
+    fun resetUnlessChosen(rowKey: Any, focus: RowColumnFocus) {
+        if (!chosen(rowKey)) focus.forget(rowKey)
     }
 }
 
@@ -1527,6 +1616,8 @@ private fun liveTileWidth(): Dp = deviceDp(252.dp, 240.dp) * com.ambient.tv.ui.c
 @Composable
 private fun LiveChannelTile(
     item: HomeLiveTvItem,
+    liveTvTitleArt: StateFlow<Map<String, String>>,
+    onArtworkNeeded: (String, kotlinx.coroutines.CoroutineScope) -> Unit,
     nowSeconds: () -> Long,
     onClick: () -> Unit,
     onFocused: () -> Unit,
@@ -1539,6 +1630,24 @@ private fun LiveChannelTile(
     val logo = item.channel.iconUrl
     val scheme = MaterialTheme.colorScheme
     val event = item.event
+    val programmeArtwork = item.channel.sourceId.substringBefore(':') == HomeRowDefinition.SYSTEM_TVHEADEND
+    val titleKey = event?.title?.takeIf { programmeArtwork }?.let(::liveTvArtKey)
+    // Each composed LazyRow tile observes only its own programme: updates for another title
+    // must not recompose the Home row or disturb D-pad focus/scroll position.
+    val tmdbUrl = if (titleKey != null) {
+        remember(liveTvTitleArt, titleKey) {
+            liveTvTitleArt.map { artworks -> artworks[titleKey] }.distinctUntilChanged()
+        }.collectAsState(initial = liveTvTitleArt.value[titleKey]).value
+    } else null
+    if (titleKey != null) {
+        LaunchedEffect(titleKey, event?.eventId) {
+            event?.let { onArtworkNeeded(it.title, this) }
+        }
+    }
+    val artwork = if (programmeArtwork) item.bestArtwork(
+        tmdbUrl?.let { url -> titleKey?.let { mapOf(it to url) } }.orEmpty()
+    ) else null
+    val backdrop = artwork?.takeUnless { it.logo }
     androidx.tv.material3.Surface(
         onClick = onClick,
         colors = com.ambient.tv.ui.common.transparentSurfaceColors(),
@@ -1562,17 +1671,64 @@ private fun LiveChannelTile(
                 .background(liveTileBrush())
                 .animatedFocusBorder(focused, shape, scheme.primary.copy(alpha = 0.96f), unfocusedColor = scheme.primary.copy(alpha = 0.08f)),
         ) {
-            logo?.let {
+            if (backdrop != null) {
                 ArtworkImage(
-                    model = it,
-                    title = item.channel.name,
-                    contentScale = ContentScale.Fit,
-                    headers = item.imageHeaders,
-                    modifier = Modifier.align(Alignment.Center).fillMaxWidth(0.46f).fillMaxHeight(0.42f).padding(bottom = 10.dp),
+                    model = backdrop.url,
+                    title = event?.title ?: item.channel.name,
+                    contentScale = ContentScale.Crop,
+                    headers = backdrop.headers(item.imageHeaders),
+                    modifier = Modifier.matchParentSize(),
+                    placeholder = false,
+                    crossfadeOnLoad = true,
                     staggerUncached = true,
                     prioritizeUncached = focused,
                 )
-            } ?: Text(item.channel.name, style = MaterialTheme.typography.titleMedium, maxLines = 1, modifier = Modifier.align(Alignment.Center))
+                Box(Modifier.matchParentSize().background(Brush.verticalGradient(
+                    0f to Color.Black.copy(alpha = 0.18f),
+                    0.55f to Color.Black.copy(alpha = 0.10f),
+                    1f to Color.Black.copy(alpha = 0.72f),
+                )))
+            }
+            if (logo != null) {
+                if (backdrop != null) {
+                    // Overlay the channel identity without covering the programme artwork.
+                    Box(
+                        Modifier.align(Alignment.TopStart).padding(8.dp)
+                            .width(74.dp).height(40.dp)
+                            .clip(androidx.compose.foundation.shape.RoundedCornerShape(6.dp))
+                            .background(scheme.background.copy(alpha = 0.66f))
+                            .padding(horizontal = 5.dp, vertical = 3.dp),
+                    ) {
+                        ArtworkImage(
+                            model = logo, title = item.channel.name,
+                            contentScale = ContentScale.Fit, headers = item.imageHeaders,
+                            modifier = Modifier.fillMaxSize(),
+                            staggerUncached = true, prioritizeUncached = focused,
+                        )
+                    }
+                } else {
+                    ArtworkImage(
+                        model = logo, title = item.channel.name,
+                        contentScale = ContentScale.Fit, headers = item.imageHeaders,
+                        modifier = Modifier.align(Alignment.Center).fillMaxWidth(0.46f)
+                            .fillMaxHeight(0.42f).padding(bottom = 10.dp),
+                        staggerUncached = true, prioritizeUncached = focused,
+                    )
+                }
+            } else if (backdrop != null) {
+                Text(
+                    item.channel.name,
+                    style = MaterialTheme.typography.labelSmall,
+                    maxLines = 1,
+                    modifier = Modifier.align(Alignment.TopStart).padding(8.dp)
+                        .background(scheme.background.copy(alpha = 0.66f),
+                            androidx.compose.foundation.shape.RoundedCornerShape(6.dp))
+                        .padding(horizontal = 8.dp, vertical = 5.dp),
+                )
+            } else {
+                Text(item.channel.name, style = MaterialTheme.typography.titleMedium,
+                    maxLines = 1, modifier = Modifier.align(Alignment.Center))
+            }
             if (event != null) {
                 LiveBadge(Modifier.align(Alignment.TopEnd).padding(7.dp))
                 Text(
@@ -1584,7 +1740,7 @@ private fun LiveChannelTile(
                     modifier = Modifier
                         .align(Alignment.BottomStart)
                         .fillMaxWidth()
-                        .background(scheme.background.copy(alpha = 0.72f))
+                        .background(scheme.background.copy(alpha = if (backdrop != null) 0.60f else 0.72f))
                         .padding(start = 8.dp, end = 8.dp, top = 4.dp, bottom = 4.dp + com.ambient.tv.ui.common.PlaybackStatusBarHeight),
                 )
                 com.ambient.tv.ui.common.PlaybackStatusBar(
@@ -1595,7 +1751,8 @@ private fun LiveChannelTile(
             }
             val playbackSource = com.ambient.tv.companion.LocalPlaybackBrowseSources.current.live[item.channel.sourceId]
             if (playbackSource != null) {
-                Box(Modifier.align(Alignment.TopStart).padding(7.dp)) {
+                Box(Modifier.align(Alignment.TopStart).padding(start = 7.dp,
+                    top = if (backdrop != null && logo != null) 54.dp else 7.dp)) {
                     com.ambient.tv.companion.PlaybackBadge(com.ambient.tv.companion.playbackIndicator(
                         com.ambient.tv.companion.CompanionMedia("live:channel", item.channel.uuid, playbackSource)))
                 }
@@ -1740,7 +1897,7 @@ internal fun HomeHero(
         }
         HomeStaticImage(
             model = heroArtwork.titleLogoUrl,
-            headers = heroArtwork.imageHeaders,
+            headers = heroArtwork.titleLogoHeaders ?: heroArtwork.imageHeaders,
             contentScale = ContentScale.Fit,
             modifier = Modifier.align(Alignment.CenterEnd)
                 .padding(end = horizontalPadding, bottom = HomeHeroFadeTail)

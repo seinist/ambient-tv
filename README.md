@@ -104,6 +104,7 @@ Ambient TV is built in spare time, out of love for a good couch evening. If it m
 - **Media3 GPU filters** — MPV's kernels (EWA Lanczos, Robidoux, Splines, …), RAVU, NVIDIA NIS, FSR, CAS/Adaptive Sharpen, deband, denoise, film grain, rendered at 4K on 4K panels
 - Image options for **VLC**
 - **Eight accent styles**, optional subtle animations in Maximum UI performance mode and separate TV interface resolution (system, 1080p or display resolution)
+- **Optional view transitions**: Off (default), Soft fade, fade + micro-slide, or cinematic single-layer blend. File backups and Companion TV sync preserve the choice; low UI performance disables effects.
 
 </td>
 <td valign="top">
@@ -140,7 +141,7 @@ Ambient TV is built in spare time, out of love for a good couch evening. If it m
 - **Weather** with saved locations, hourly/daily forecasts and manually chosen radar/satellite maps; optional menu, header and screensaver display
 - **Light moods** above Home, **filter bar** above libraries, guide, trailers and YouTube
 - **Performance modes** Auto / Balanced / Low, screensaver, home-screen channels
-- **Settings backup** (schema 80; API credentials only with encrypted, password-protected export) · DE/EN UI
+- **Settings backup** (schema 82; API credentials only with encrypted, password-protected export) · DE/EN UI
 
 </td>
 </tr>

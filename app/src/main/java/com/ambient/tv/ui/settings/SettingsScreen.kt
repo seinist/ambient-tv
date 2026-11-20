@@ -171,6 +171,7 @@ fun SettingsScreen(
     var accentPickerRole by remember { mutableStateOf<AccentColorRole?>(null) }
 
     var playbackOverview by remember { mutableStateOf<PlaybackOverviewSnapshot?>(null) }
+    var showDiagnosticViewer by remember { mutableStateOf(false) }
     val openSettingsPage = LocalOpenSettingsPage.current
     var savedProfiles by remember { mutableStateOf<List<SavedProfileEntry>?>(null) }
     var liveProfiles by remember { mutableStateOf<PlaybackOverviewSnapshot?>(null) }
@@ -550,6 +551,26 @@ fun SettingsScreen(
                                         selected = uiState.uiPerformanceModeKey,
                                         description = stringResource(uiPerformanceHintRes(uiState.uiPerformanceModeKey)),
                                         onSelected = viewModel::onUiPerformanceModeChanged,
+                                    )
+                                }
+                            }
+                            item(key = "appearance:view-transitions") {
+                                SettingsGroup {
+                                    SettingsSelect(
+                                        label = stringResource(R.string.settings_view_transition_title),
+                                        description = stringResource(R.string.settings_view_transition_hint),
+                                        options = com.ambient.tv.ui.common.ViewTransitionStyle.entries.map { style ->
+                                            SettingsSelectOption(
+                                                text = stringResource(when (style) {
+                                                    com.ambient.tv.ui.common.ViewTransitionStyle.OFF -> R.string.settings_view_transition_off
+                                                    com.ambient.tv.ui.common.ViewTransitionStyle.SOFT_FADE -> R.string.settings_view_transition_fade
+                                                    com.ambient.tv.ui.common.ViewTransitionStyle.MICRO_SLIDE -> R.string.settings_view_transition_slide
+                                                    com.ambient.tv.ui.common.ViewTransitionStyle.CINEMATIC -> R.string.settings_view_transition_cinematic
+                                                }),
+                                                selected = uiState.viewTransitionStyleKey == style.key,
+                                                onClick = { viewModel.onViewTransitionStyleChanged(style.key) },
+                                            )
+                                        },
                                     )
                                 }
                             }
@@ -1570,6 +1591,10 @@ fun SettingsScreen(
                                     )
                                     SettingsActionRow() {
                                         TvActionButton(
+                                            text = stringResource(R.string.diagnostics_viewer_open),
+                                            onClick = { showDiagnosticViewer = true },
+                                        )
+                                        TvActionButton(
                                             text = stringResource(R.string.diagnostics_export),
                                             onClick = {
                                                 // Android TV often has no document picker: save to the app folder instead.
@@ -1656,6 +1681,16 @@ fun SettingsScreen(
         }
     }
 
+    if (showDiagnosticViewer) {
+        DiagnosticLogViewer(
+            loggingEnabled = viewModel.diagnosticLogEnabled(),
+            onExport = {
+                val launched = runCatching { diagnosticExportLauncher.launch(viewModel.diagnosticZipName()) }.isSuccess
+                if (!launched) viewModel.exportDiagnosticLog(null)
+            },
+            onDismiss = { showDiagnosticViewer = false },
+        )
+    }
     playbackOverview?.let { snapshot ->
         PlaybackOverviewDialog(snapshot, onDismiss = { playbackOverview = null })
     }

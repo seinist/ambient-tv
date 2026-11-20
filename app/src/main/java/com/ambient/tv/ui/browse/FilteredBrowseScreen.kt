@@ -210,6 +210,7 @@ fun FilteredBrowseScreen(
                             icon = Icons.Filled.Refresh,
                             iconOnly = true,
                             loading = refreshing || state is FilteredBrowseUiState.Loading,
+                            loadingOnlyAfterClick = true,
                             onClick = { filterFocusState.keepControls(); viewModel.refresh() },
                         )
                         if (loaded != null) ViewOptionsChip(
