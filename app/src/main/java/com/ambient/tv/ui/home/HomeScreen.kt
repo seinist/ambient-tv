@@ -1053,8 +1053,27 @@ internal fun LibraryContent(
                         columnFocus,
                         scrollToTop = {
                             rowCenteringGate.beginMove()
-                            pendingVisualRow.value = middleFirstKey
-                            rowListState.glideToItem(glideWrap, middleStart)
+                            if (state.rowKeys.size < 2) {
+                                pendingVisualRow.value = middleFirstKey
+                                rowListState.glideToItem(glideWrap, middleStart)
+                            } else {
+                                // Only reached after the last physical lap. Instantly move
+                                // the identical viewport back to a safe lap, then animate the
+                                // next row normally. Never show a scroll back to the top.
+                                val currentFirst = rowListState.firstVisibleItemIndex
+                                val rebased = cyclicHomeRebaseViewportIndex(
+                                    currentFirst, state.rowKeys.size, cyclicRows.last().lap,
+                                )
+                                val offset = rowListState.firstVisibleItemScrollOffset
+                                if (rebased != null) rowListState.scrollToItem(rebased, offset)
+                                val target = CyclicRowFocusKey(
+                                    state.rowKeys.first(), HOME_CYCLIC_REBASE_LAP + 1,
+                                )
+                                pendingVisualRow.value = target
+                                val index = cyclicIndices[target] ?: return@rowColumnFocusNavigation
+                                rowCentering.centerItem(index, bottomInset = bottomInsetPx)
+                                rowCenteringGate.markCentered(target)
+                            }
                         },
                         scrollToBottom = {
                             rowCenteringGate.beginMove()
@@ -1073,6 +1092,10 @@ internal fun LibraryContent(
                         focusBeforeScroll = true,
                         upExitAt = { key ->
                             (key as? CyclicRowFocusKey)?.logical == state.rowKeys.firstOrNull()
+                        },
+                        wrapDownTarget = {
+                            if (state.rowKeys.size < 2) middleFirstKey
+                            else CyclicRowFocusKey(state.rowKeys.first(), HOME_CYCLIC_REBASE_LAP + 1)
                         },
                     ) { cyclicRows }
                     .clipToBounds()
