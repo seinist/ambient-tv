@@ -857,6 +857,13 @@ internal fun LibraryContent(
                 ?: state.rows.indexOfFirst { row -> initialFocusKey != null && row.items.any { initialFocusKey in it.allRatingKeys } }
         }
         val restoreListIndex = state.rowKeys.indexOf(initialFocusRowId).coerceAtLeast(0)
+        // Physical neighbours on each end let the first row follow the last by one ordinary
+        // D-pad glide. Rebase to the identical middle-lap row once the transition has settled.
+        val cyclicRows = remember(state.rowKeys) { cyclicHomeRows(state.rowKeys) }
+        val middleStart = cyclicHomeMiddleStart(state.rowKeys.size)
+        val cyclicIndices = remember(cyclicRows) { cyclicRows.withIndex().associate { it.value to it.index } }
+        val middleFirstKey = cyclicRows.getOrNull(middleStart)
+        val middleLastKey = cyclicRows.getOrNull(middleStart + state.rowKeys.lastIndex)
         val heroHeight = homeHeroHeight()
         // Same line the first row already occupies. Later rows, including a short live row at
         // the bottom, must be able to reach it or the hero mask cuts them in half.
@@ -876,9 +883,9 @@ internal fun LibraryContent(
             null
         }
         val rowListState = com.ambient.tv.ui.common.rememberBrowseRowColumnState(
-            initialFirstVisibleItemIndex = if (restoreArmed) restoreListIndex else 0,
+            initialFirstVisibleItemIndex = middleStart + if (restoreArmed) restoreListIndex else 0,
         )
-        com.ambient.tv.ui.common.BrowseStartupViewport(rowListState, state.rowKeys, followFirstItem)
+        com.ambient.tv.ui.common.BrowseStartupViewport(rowListState, state.rowKeys, followFirstItem, firstIndex = middleStart)
         com.ambient.tv.ui.common.RegisterBrowseFocusRows(rowListState, state.rowKeys.map { rowKey ->
             rowKey to when {
                 rowKey.startsWith(HOME_OFFLINE_ROW_PREFIX) -> listOf(rowKey.removePrefix(HOME_OFFLINE_ROW_PREFIX))
@@ -887,7 +894,7 @@ internal fun LibraryContent(
                 rowKey.startsWith("shortcut:") -> listOf(rowKey.removePrefix("shortcut:"))
                 else -> state.rows.firstOrNull { it.id == rowKey }?.items.orEmpty().map { it.ratingKey }
             }
-        })
+        }, firstIndex = middleStart)
         val initialRow = state.rows.getOrNull(restoreRowIndex)
         // Seed the first actual tile before the sidebar's first focus handoff, not after it.
         // Cached startup state may still contain yesterday's focused key in Loaded.
@@ -929,21 +936,21 @@ internal fun LibraryContent(
         // still starts on card 0 after the row is scrolled away and back.
         val liveRowEntry = remember { LiveRowEntry() }
         val glideWrap = !com.ambient.tv.ui.performance.LocalPerformanceProfile.current.reducedEffects
-        val centeredRowKey = remember { MutableStateFlow<String?>(null) }
+        val centeredRowKey = remember { MutableStateFlow<CyclicRowFocusKey?>(null) }
         var returningRow by remember { mutableStateOf(returnToken != null) }
         // Keep active-row visual state out of the parent composition. Each row's tiny layer
         // modifier observes this state independently, so a vertical focus change cannot rebuild
         // the whole Home row column.
         val activeRowIndex = remember(state.playbackReturnRevision) {
-            mutableIntStateOf(if (restoreArmed) restoreListIndex else 0)
+            mutableIntStateOf(middleStart + if (restoreArmed) restoreListIndex else 0)
         }
         // Covers the few frames between scroll completion and the target tile taking focus.
         // Read only from draw/layer lambdas below.
-        val pendingVisualRow = remember { mutableStateOf<String?>(null) }
+        val pendingVisualRow = remember { mutableStateOf<CyclicRowFocusKey?>(null) }
         // The row that really holds focus. activeRowIndex only follows row-entry events, and a
         // row whose focus never left (cancelled Up/Down, return from live TV) sends none: the
         // index then pointed elsewhere and the focused row stayed invisible under the hero.
-        val focusedRowKey = remember { mutableStateOf<String?>(null) }
+        val focusedRowKey = remember { mutableStateOf<CyclicRowFocusKey?>(null) }
         LaunchedEffect(rowListState) {
             // A vertical move that never lands (target row not focusable in time) must not
             // keep its destination as the only visible row forever.
@@ -957,12 +964,13 @@ internal fun LibraryContent(
         }
         LaunchedEffect(restoreArmed, state.rowKeys) {
             if (restoreArmed && initialFocusRowId in state.rowKeys) {
-                rowListState.scrollToItem(restoreListIndex)
+                rowListState.scrollToItem(middleStart + restoreListIndex)
             }
         }
         LaunchedEffect(state.initialFocusTarget, state.rowKeys.firstOrNull()) {
-            if (state.initialFocusTarget != HomeInitialFocusTarget.NONE && rowListState.firstVisibleItemIndex != 0) {
-                rowListState.scrollToItem(0)
+            if (state.initialFocusTarget != HomeInitialFocusTarget.NONE &&
+                rowListState.firstVisibleItemIndex != middleStart) {
+                rowListState.scrollToItem(middleStart)
             }
         }
         LaunchedEffect(centeredRowKey, state.rowKeys, rowListState) {
@@ -972,8 +980,7 @@ internal fun LibraryContent(
                 // centering request must not cancel the glide to the new destination.
                 val pending = pendingVisualRow.value
                 if (pending != null && pending != key) return@collectLatest
-                val index = state.rowKeys.indexOf(key)
-                if (index < 0) return@collectLatest
+                val index = cyclicIndices[key] ?: return@collectLatest
                 val alreadyCentered = rowCenteringGate.consume(key)
                 activeRowIndex.intValue = index
                 if (pending == key) {
@@ -981,13 +988,13 @@ internal fun LibraryContent(
                     // Focus arrives while the D-pad glide is still running; it centers the row.
                     // A D-pad move ends a playback return like a settled one would below.
                     if (rowListState.isScrollInProgress) {
-                        if (key == initialFocusRowId || !playbackReturn.pending) returningRow = false
+                        if (key.logical == initialFocusRowId || !playbackReturn.pending) returningRow = false
                         return@collectLatest
                     }
                 }
                 // The return viewport is already placed at its initial row before drawing.
                 // Do not start a centering glide as that same row receives its first focus.
-                if (returningRow && key == initialFocusRowId) {
+                if (returningRow && key.logical == initialFocusRowId) {
                     returningRow = false
                     return@collectLatest
                 }
