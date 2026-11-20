@@ -331,10 +331,13 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
     var vulkanFrameStatus by remember { mutableStateOf(GameVulkanFrameStatus()) }
     /** Native VkImage pixel layout, NOT color transfer or HDR source provenance. */
     var vulkanCoreSourceFormat by remember { mutableStateOf(GameVulkanCoreSourceFormat()) }
+    /** Actual libretro SET_PIXEL_FORMAT acceptance, independent of user settings. */
+    var coreHdrHandshake by remember { mutableStateOf(GameCoreHdrPixelHandshake()) }
     val nativeSourceContract = GameVulkanHdrSourceEvidence.observe(
         core.id, session.vulkan,
         settings.effectiveCoreOptions(core, game.saveKey) + if (session.vulkan) core.vulkanOptions else core.glOptions,
         vulkanCoreSourceFormat,
+        coreHdrHandshake,
     )
     /** Native WSI format pairs on a separate real Android Surface, NOT active HDR. */
     var vulkanSurfaceFormats by remember { mutableStateOf(GameVulkanSurfaceFormats()) }
@@ -614,6 +617,10 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
                     LibretroDroid.getVulkanCoreSourceFormat()
                 }.getOrDefault(0))
                 if (vulkanCoreSourceFormat != source) vulkanCoreSourceFormat = source
+                val handshake = GameCoreHdrPixelHandshake(runCatching {
+                    LibretroDroid.getCoreHdrPixelFormatStatus()
+                }.getOrDefault(0))
+                if (coreHdrHandshake != handshake) coreHdrHandshake = handshake
                 if (nativeSdrDiagnostic) {
                     val direct = GameVulkanSdrStatus(runCatching {
                         LibretroDroid.getNativeSdrVulkanStatus()
@@ -1227,6 +1234,12 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
                                 if (session.vulkan) {
                                     GamePanelText(stringResource(R.string.game_info_vulkan_surface_pairs, vulkanSurfaceFormats.candidateTypesLabel()))
                                     GamePanelText(stringResource(R.string.game_info_vulkan_core_source_format, vulkanCoreSourceFormat.label))
+                                    GamePanelText(stringResource(when {
+                                        coreHdrHandshake.hdr10Accepted -> R.string.game_info_hdr_core_accepts_pq
+                                        coreHdrHandshake.hdr10Requested -> R.string.game_info_hdr_core_rejects_pq
+                                        coreHdrHandshake.scrgbRequested -> R.string.game_info_hdr_core_rejects_scrgb
+                                        else -> R.string.game_info_hdr_core_not_negotiated
+                                    }))
                                     if (nativeTransfer != GameVulkanTransferMode.SDR) {
                                         GamePanelText(stringResource(if (nativeSourceContract.supports(nativeTransfer))
                                             R.string.game_info_vulkan_hdr_core_declared
