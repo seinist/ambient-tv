@@ -19,6 +19,18 @@ import org.junit.Test
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class AccentMotionTest {
+    @Test fun movingMaterialFadesFromLastPaintedFrameOnFocusExit() {
+        val history = AccentMotionFrameRetention()
+        val moving = AccentMotionFrame(.45f, .8f)
+        assertEquals(moving, transitionedAccentMotionFrame(moving, history, 1f))
+        val fade = transitionedAccentMotionFrame(null, history, .5f)
+        assertEquals(.45f, fade!!.phase, 0f)
+        assertEquals(.4f, fade.strength, .0001f)
+        assertEquals(null, transitionedAccentMotionFrame(null, history, 0f))
+        assertEquals(AccentMotionFrame.Rest, history.lastFrame)
+        assertEquals(null, transitionedAccentMotionFrame(null, history, .5f))
+    }
+
     @Test fun unknownOrMissingPreferencesKeepDecorationOff() {
         assertEquals("off", AccentMotionMode.DEFAULT)
         assertEquals(AccentMotionMode.OFF, AccentMotionMode.fromKey(null))
