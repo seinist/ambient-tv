@@ -21,33 +21,30 @@ class GameHdrToneMapShaderTest {
         assertTrue(GameHdrToneMapShader.prefersFp16Bridge(GameHdrToneMap.HLG, true))
     }
 
-    @Test fun allSelectedPictureFiltersRemainInHdrToSdrShader() {
-        val modes = listOf(
-            GameShader.SHARP to 0,
-            GameShader.PIXEL to 1,
-            GameShader.SMOOTH to 2,
-            GameShader.CRT to 3,
-            GameShader.LCD to 4,
-        )
-        modes.forEach { (filter, code) ->
-            val shader = GameHdrToneMapShader.forGame(filter, GameHdrToneMap.PQ, true) as ShaderConfig.Custom
-            assertEquals(1, shader.passes.size)
-            assertTrue(shader.passes[0].fragment.contains("const int PICTURE_MODE = $code;"))
-            assertTrue(shader.passes[0].linear)
+    @Test fun allOriginalNativePictureFiltersStayInChainAfterHdrConversion() {
+        GameShader.entries.forEach { filter ->
+            val shader = GameHdrToneMapShader.forGame(filter, GameHdrToneMap.PQ, true) as ShaderConfig.PrependPass
+            assertEquals(filter.config(), shader.filter)
+            assertTrue(shader.pass.linear)
+            assertTrue(shader.pass.fragment.contains("pqEotf"))
+            assertTrue(shader.pass.fragment.contains("BT.2020 -> BT.709"))
+            assertFalse(shader.pass.fragment.contains("PICTURE_MODE"))
         }
-        assertTrue(GameHdrToneMapShader.fragment(GameHdrToneMap.PQ, GameShader.CRT).contains("float beam"))
-        assertTrue(GameHdrToneMapShader.fragment(GameHdrToneMap.HLG, GameShader.LCD).contains("float grid"))
+        assertEquals(ShaderConfig.CUT3(), (GameHdrToneMapShader.forGame(
+            GameShader.SMOOTH, GameHdrToneMap.HLG, true) as ShaderConfig.PrependPass).filter)
+        assertEquals(ShaderConfig.CRT, (GameHdrToneMapShader.forGame(
+            GameShader.CRT, GameHdrToneMap.PQ, true) as ShaderConfig.PrependPass).filter)
+        assertEquals(ShaderConfig.LCD, (GameHdrToneMapShader.forGame(
+            GameShader.LCD, GameHdrToneMap.PQ, true) as ShaderConfig.PrependPass).filter)
     }
 
-    @Test fun pqAndHlgSelectDistinctGpuConversion() {
-        val pq = GameHdrToneMapShader.forGame(GameShader.PIXEL, GameHdrToneMap.PQ, true) as ShaderConfig.Custom
-        val hlg = GameHdrToneMapShader.forGame(GameShader.PIXEL, GameHdrToneMap.HLG, true) as ShaderConfig.Custom
-        assertEquals(1, pq.passes.size)
-        assertEquals(1, hlg.passes.size)
-        assertTrue(pq.passes[0].fragment.contains("const int INPUT_HLG = 0"))
-        assertTrue(hlg.passes[0].fragment.contains("const int INPUT_HLG = 1"))
-        assertTrue(pq.passes[0].fragment.contains("pqEotf"))
-        assertTrue(pq.passes[0].fragment.contains("BT.2020 -> BT.709"))
-        assertTrue(hlg.passes[0].fragment.contains("hlgScene"))
+    @Test fun pqAndHlgPrepassesPreserveIndependentTransferMath() {
+        val pq = GameHdrToneMapShader.forGame(GameShader.PIXEL, GameHdrToneMap.PQ, true) as ShaderConfig.PrependPass
+        val hlg = GameHdrToneMapShader.forGame(GameShader.PIXEL, GameHdrToneMap.HLG, true) as ShaderConfig.PrependPass
+        assertTrue(pq.pass.fragment.contains("const int INPUT_HLG = 0"))
+        assertTrue(hlg.pass.fragment.contains("const int INPUT_HLG = 1"))
+        assertTrue(pq.pass.fragment.contains("pqEotf"))
+        assertTrue(pq.pass.fragment.contains("BT.2020 -> BT.709"))
+        assertTrue(hlg.pass.fragment.contains("hlgScene"))
     }
 }
