@@ -145,6 +145,17 @@ the validated output path.
   offering opt-in fullscreen. All user-facing labels and tests distinguish
   candidate/display capability, frame presentation, and true verified display
   signal. SDR remains the default; no output switch is automatic.
+- Patch `0013-early-libretro-hdr10-capability-negotiation.patch` passes a
+  **configured** PQ output capability through `GLRetroViewData` before
+  `LibretroDroid.create()/retro_init()`. Some HDR-aware cores query the
+  frontend at startup, before Vulkan frames and a real WSI swapchain can
+  exist; without early configured capability they never enter their HDR path.
+  Only a manually PQ-selected Vulkan session on an Android display advertising
+  HDR10 configures output mode 1; SDR, HLG, GLES and HDR-unsupported displays
+  always configure 0. This configuration **does not mean that the TV is
+  transmitting HDR**; the on-screen live WSI status is updated only after
+  `vkQueuePresentKHR` succeeds. Core software HDR10/scRGB input remains
+  unavailable and remains refused by `SET_PIXEL_FORMAT`.
 - Patch `0012-android-hdr-display-metadata-live-pq-status.patch` populates
   platform-reported peak/average/min display luminance and the currently
   advertised EOTF mask via a GL-thread JNI API, without inferring EDID or
