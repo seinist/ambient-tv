@@ -11,7 +11,8 @@ class GameVulkanFrameStatusTest {
         assertFalse(beforeStart.active)
         assertFalse(beforeStart.fp16)
         assertFalse(beforeStart.rgba8Fallback)
-        assertEquals("OpenGL ES", beforeStart.badge(requestedVulkan = true))
+        assertEquals("Vulkan → GLES · pending", beforeStart.badge(requestedVulkan = true))
+        assertEquals("OpenGL ES", beforeStart.badge(requestedVulkan = false))
     }
 
     @Test fun actualFramePrecisionOverridesRequestedPrecision() {
