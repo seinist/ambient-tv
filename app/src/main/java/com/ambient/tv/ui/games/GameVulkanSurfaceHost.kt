@@ -26,12 +26,14 @@ internal class GameVulkanSurfaceHost(
     context: Context,
     private val retro: GLRetroView,
     private val onFormats: (GameVulkanSurfaceFormats) -> Unit,
+    private val onNativeStatus: (GameVulkanSdrStatus) -> Unit,
 ) : FrameLayout(context) {
     private val main = Handler(Looper.getMainLooper())
     private var activeSurface: Surface? = null
     private var generation = 0L
     private var disposed = false
     private var canProbe = false
+    private var nativeSdrDiagnostic = false
 
     private val probeSurface = SurfaceView(context).apply {
         isFocusable = false
@@ -61,7 +63,9 @@ internal class GameVulkanSurfaceHost(
             override fun surfaceDestroyed(holder: SurfaceHolder) {
                 activeSurface = null
                 generation++
+                detachNativeSdrSurface()
                 onFormats(GameVulkanSurfaceFormats())
+                onNativeStatus(GameVulkanSdrStatus())
             }
         })
     }
@@ -69,6 +73,25 @@ internal class GameVulkanSurfaceHost(
     fun coreReady() {
         canProbe = true
         tryProbe()
+    }
+
+    /** Diagnostic WSI frames go to the tiny separate surface, never the visible game. */
+    fun setNativeSdrDiagnostic(enabled: Boolean) {
+        if (nativeSdrDiagnostic == enabled || disposed) return
+        nativeSdrDiagnostic = enabled
+        if (!enabled) {
+            detachNativeSdrSurface()
+            onNativeStatus(GameVulkanSdrStatus())
+        } else {
+            tryProbe()
+        }
+    }
+
+    private fun detachNativeSdrSurface() {
+        if (!canProbe) return
+        runCatching {
+            retro.queueEvent { LibretroDroid.setNativeSdrVulkanSurface(null) }
+        }
     }
 
     private fun tryProbe() {
@@ -82,9 +105,16 @@ internal class GameVulkanSurfaceHost(
                 val bits = runCatching {
                     if (surface.isValid) LibretroDroid.probeVulkanSurfaceFormats(surface) else 0
                 }.getOrDefault(0)
+                // Only a user-initiated diagnostic may create a Vulkan swapchain.
+                // For normal play, the existing GLES presenter is unchanged.
+                if (nativeSdrDiagnostic && surface.isValid) {
+                    runCatching { LibretroDroid.setNativeSdrVulkanSurface(surface) }
+                }
+                val nativeBits = runCatching { LibretroDroid.getNativeSdrVulkanStatus() }.getOrDefault(0)
                 main.post {
                     if (!disposed && token == generation && activeSurface === surface) {
                         onFormats(GameVulkanSurfaceFormats(bits))
+                        onNativeStatus(GameVulkanSdrStatus(nativeBits))
                     }
                 }
             }
@@ -94,6 +124,7 @@ internal class GameVulkanSurfaceHost(
     }
 
     fun dispose() {
+        if (nativeSdrDiagnostic) detachNativeSdrSurface()
         disposed = true
         activeSurface = null
         generation++
