@@ -1014,7 +1014,9 @@ internal fun LibraryContent(
         // Keep the physical list bounded even after many laps. Rebase only after a D-pad
         // glide settles; the matching rows in later laps have identical measured geometry.
         // Scroll and hand focus to the same logical tile without drawing a backwards journey.
-        LaunchedEffect(rowListState, columnFocus, cyclicRows) {
+        val cyclicDestinationActive = com.ambient.tv.ui.common.isActiveNavigationDestination()
+        LaunchedEffect(rowListState, columnFocus, cyclicRows, cyclicDestinationActive) {
+            if (!cyclicDestinationActive) return@LaunchedEffect
             snapshotFlow {
                 Triple(focusedRowKey.value, rowListState.isScrollInProgress, pendingVisualRow.value)
             }.collect { (focused, scrolling, pending) ->
