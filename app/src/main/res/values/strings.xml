@@ -467,6 +467,12 @@
     <string name="settings_performance_auto">Auto</string>
     <string name="settings_performance_balanced">Balanced</string>
     <string name="settings_performance_low">Low</string>
+    <string name="settings_view_transition_title">View transitions</string>
+    <string name="settings_view_transition_hint">Choose how pages blend. The player and OSD remain unchanged; Low interface performance turns transitions off.</string>
+    <string name="settings_view_transition_off">Off (current behavior)</string>
+    <string name="settings_view_transition_fade">Soft fade</string>
+    <string name="settings_view_transition_slide">Fade + micro-slide</string>
+    <string name="settings_view_transition_cinematic">Cinematic blend</string>
     <string name="settings_ui_performance">Interface</string>
     <string name="settings_ui_performance_hint">Fewer effects for slower devices.</string>
     <string name="settings_playback_performance">Playback</string>
