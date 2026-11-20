@@ -16,14 +16,22 @@ internal object GameVulkanFullscreenPolicy {
         diagnosticEnabled: Boolean,
         nativeStatus: GameVulkanSdrStatus,
         netplayActive: Boolean,
-    ): Boolean =
-        vulkanCore && input == GameHdrToneMap.OFF &&
-            diagnosticEnabled && !netplayActive &&
-            nativeStatus.phase == GameVulkanSdrStatus.Phase.PRESENTING
+        display: GameHdrDisplayCapabilities,
+        surface: GameVulkanSurfaceFormats,
+    ): Boolean {
+        val transfer = GameVulkanTransferMode.forInput(input)
+        return vulkanCore && diagnosticEnabled && !netplayActive &&
+            GameVulkanTransferGate.supported(transfer, display, surface) &&
+            GameVulkanTransferGate.frameConfirmed(transfer, nativeStatus)
+    }
 
     fun mustFallback(status: GameVulkanSdrStatus): Boolean =
         status.phase == GameVulkanSdrStatus.Phase.GLES_FALLBACK
 
-    fun shouldShowFullscreen(requested: Boolean, status: GameVulkanSdrStatus): Boolean =
-        requested && status.phase == GameVulkanSdrStatus.Phase.PRESENTING
+    fun shouldShowFullscreen(
+        requested: Boolean,
+        status: GameVulkanSdrStatus,
+        transfer: GameVulkanTransferMode = GameVulkanTransferMode.SDR,
+    ): Boolean =
+        requested && GameVulkanTransferGate.frameConfirmed(transfer, status)
 }
