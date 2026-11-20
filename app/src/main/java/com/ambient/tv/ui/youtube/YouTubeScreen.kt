@@ -358,8 +358,8 @@ import androidx.lifecycle.repeatOnLifecycle
                 } else Message(com.ambient.tv.ui.common.systemString(com.ambient.tv.ui.common.MediaSystem.YOUTUBE, R.string.youtube_empty))
                 else -> SoftViewChange(state.viewMode, Modifier.fillMaxSize().then(playbackReturn.modifier)) {
                     // A retained destination can still hold the old saved Lazy state. A new
-                    // playback return gets new states with their correct initial indices.
-                    key(state.returnFocusRevision) {
+                    // playback return or feed change gets new states with their correct initial indices.
+                    key(state.feed, state.returnFocusRevision) {
                     CompositionLocalProvider(LocalYouTubeViewportContinuation provides viewportContinuation) {
                     Content(
                         rows = visibleRows,

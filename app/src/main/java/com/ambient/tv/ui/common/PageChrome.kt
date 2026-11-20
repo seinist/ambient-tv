@@ -486,7 +486,6 @@ fun PageChipRow(
         // Capture the old row focus before scrolling: an offscreen new selection may detach
         // the old focused child, momentarily making chipsFocused false.
         val shouldFollowSelection = !handheld && chipsFocused && !focusHold.active && lastFocusedSelection != index
-        val confirmedAt = focusHold.armedAt
         if (handheld) {
             state.animateScrollToItem(index)
         } else {
@@ -499,7 +498,7 @@ fun PageChipRow(
                 repeat(4) {
                     withFrameNanos { }
                     // Down/Up/Left/Right after confirming a TV chip cancels this handoff.
-                    if (focusHold.active || (confirmedAt != 0L && !focusHold.active)) return@LaunchedEffect
+                    if (focusHold.active) return@LaunchedEffect
                     if (runCatching { chain.selectedChip.requestFocus() }.getOrDefault(false)) {
                         lastFocusedSelection = index
                         return@LaunchedEffect
