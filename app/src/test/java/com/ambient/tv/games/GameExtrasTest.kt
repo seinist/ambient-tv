@@ -29,7 +29,14 @@ class GameExtrasTest {
             }
         }
         assertNull(RaConsoles.forGame(GameSystems.byId("wiiu")!!, "wua"))
-        assertNull(RaConsoles.forGame(GameSystems.byId("c64")!!, "d64"))
+        assertEquals(30, RaConsoles.forGame(GameSystems.byId("c64")!!, "d64"))
+        assertEquals(18, RaConsoles.forGame(GameSystems.byId("nds")!!, "nds"))
+        assertEquals(78, RaConsoles.forGame(GameSystems.byId("nds")!!, "dsi"))
+        assertEquals(41, RaConsoles.forGame(GameSystems.byId("psp")!!, "cso"))
+        assertEquals(39, RaConsoles.forGame(GameSystems.byId("saturn")!!, "ccd"))
+        assertEquals(40, RaConsoles.forGame(GameSystems.byId("dreamcast")!!, "gdi"))
+        assertEquals(16, RaConsoles.forGame(GameSystems.byId("gamecube")!!, "gcm"))
+        assertEquals(19, RaConsoles.forGame(GameSystems.byId("wii")!!, "wbfs"))
     }
 
     @Test fun awardValidationAndWatchableAchievements() {
@@ -72,7 +79,8 @@ class GameExtrasTest {
             val system = GameSystems.byId(id)!!
             assert(GameCheatStore.databaseFolders(system, system.extensions.first()).isNotEmpty())
         }
-        assertEquals(emptyList<String>(), GameCheatStore.databaseFolders(GameSystems.byId("c64")!!, "d64"))
+        assertEquals(listOf("Commodore - 64"), GameCheatStore.databaseFolders(GameSystems.byId("c64")!!, "d64"))
+        assertEquals(listOf("Nintendo - Nintendo DS"), GameCheatStore.databaseFolders(GameSystems.byId("nds")!!, "nds"))
         assertEquals(emptyList<String>(), GameCheatStore.databaseFolders(GameSystems.byId("wiiu")!!, "wua"))
     }
 
