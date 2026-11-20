@@ -7,6 +7,7 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
@@ -18,8 +19,22 @@ import com.ambient.tv.ui.common.TvBringIntoViewSpec
 
 val LocalAccentModeKey = staticCompositionLocalOf { "gold" }
 
-/** Unmodified accent hue for material rendering; Theme.primary stays contrast-safe. */
+/** Hue-preserving material accent; Theme.primary remains contrast-safe for text. */
 val LocalAccentMaterialColor = staticCompositionLocalOf<Color?> { null }
+
+/**
+ * Only very dark custom accents need a small luminance lift for non-text focus borders.
+ * Stop at 3.8:1 (not the 4.5:1 text target) to avoid the near-white material rims.
+ */
+internal fun visibleMaterialAccent(raw: Color, readable: Color, surface: Color): Color {
+    val opaque = raw.copy(alpha = 1f)
+    if (contrastRatio(opaque, surface) >= 3.8f) return opaque
+    for (step in 1..32) {
+        val candidate = lerp(opaque, readable.copy(alpha = 1f), step / 32f)
+        if (contrastRatio(candidate, surface) >= 3.8f) return candidate
+    }
+    return readable.copy(alpha = 1f)
+}
 
 @Composable
 internal fun materialAccentFor(semanticColor: Color): Color {
@@ -78,7 +93,7 @@ fun AmbientTvTheme(
     // extended sRGB so text, surfaces and gradients sit above SDR white. Black stays black.
     val headroom = com.ambient.tv.ui.display.LocalUiHdrState.current?.headroom ?: 1f
     fun Color.lift() = com.ambient.tv.ui.display.uiHdrHighlight(this, headroom)
-    val materialAccent = accent.lift()
+    val materialAccent = visibleMaterialAccent(accent, usableAccent, raised).lift()
     val tvTypography = if (handheld) androidx.tv.material3.Typography(
         displaySmall = androidx.compose.ui.text.TextStyle(fontSize = 28.sp, lineHeight = 34.sp),
         headlineLarge = androidx.compose.ui.text.TextStyle(fontSize = 28.sp, lineHeight = 34.sp),
