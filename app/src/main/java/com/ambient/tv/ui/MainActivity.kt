@@ -1186,6 +1186,11 @@ private fun AmbientTvApp(
     val startupViewModel: ServerSelectViewModel = androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel()
     val startupState by startupViewModel.uiState.collectAsState()
     val navController = rememberNavController()
+    // Preference updates (including backup/Companion import) take effect without recreating
+    // the NavHost or replacing a running native playback Surface.
+    val viewTransitionStyleKey by remember(appPreferences) {
+        appPreferences.changes().map { appPreferences.viewTransitionStyleKey }.distinctUntilChanged()
+    }.collectAsState(initial = appPreferences.viewTransitionStyleKey)
     val companionVm: com.ambient.tv.companion.CompanionViewModel = androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel()
     LaunchedEffect(companionVm) {
         var revision = companionVm.manager.state.value.settingsRevision
@@ -2486,19 +2491,29 @@ private fun AmbientTvApp(
                     // override the destination's focusRestorer callback.
                     .focusGroup(),
             ) {
+                com.ambient.tv.ui.common.ViewTransitionHost(
+                    styleKey = viewTransitionStyleKey,
+                    route = currentRoute,
+                    entryId = currentBackStackEntry?.id,
+                    backStackDepth = navController.currentBackStack.value.size,
+                    fullscreen = currentRoute in FULLSCREEN_ROUTES,
+                    reducedEffects = com.ambient.tv.ui.performance.LocalPerformanceProfile.current.reducedEffects,
+                    backgroundVideoVisible = showVisibleBackgroundVideo,
+                    skipTransition = { from, to -> handheld && radioSectionTransitionIsInstant(from, to) },
+                ) {
                 NavHost(
                     navController = navController,
                     startDestination = startDestination,
                     // TV destinations change atomically: outgoing pages must not retain focus
                     // or Back ownership while the parent page is already active.
                     enterTransition = {
-                        if (!handheld || radioSectionTransitionIsInstant(
+                        if (!handheld || viewTransitionStyleKey != "off" || radioSectionTransitionIsInstant(
                                 initialState.destination.route, targetState.destination.route,
                             )) EnterTransition.None
                         else fadeIn(tween(700))
                     },
                     exitTransition = {
-                        if (!handheld || radioSectionTransitionIsInstant(
+                        if (!handheld || viewTransitionStyleKey != "off" || radioSectionTransitionIsInstant(
                                 initialState.destination.route, targetState.destination.route,
                             )) ExitTransition.None
                         else fadeOut(tween(700))
@@ -2506,22 +2521,22 @@ private fun AmbientTvApp(
                     // Pop and predictive-back pops default to Navigation's own scale-out
                     // animation (page shrinks, parent shows behind); keep TV atomic here too.
                     popEnterTransition = {
-                        if (!handheld || radioSectionTransitionIsInstant(
+                        if (!handheld || viewTransitionStyleKey != "off" || radioSectionTransitionIsInstant(
                                 initialState.destination.route, targetState.destination.route,
                             )) EnterTransition.None else fadeIn(tween(700))
                     },
                     popExitTransition = {
-                        if (!handheld || radioSectionTransitionIsInstant(
+                        if (!handheld || viewTransitionStyleKey != "off" || radioSectionTransitionIsInstant(
                                 initialState.destination.route, targetState.destination.route,
                             )) ExitTransition.None else fadeOut(tween(700))
                     },
                     predictivePopEnterTransition = {
-                        if (!handheld || radioSectionTransitionIsInstant(
+                        if (!handheld || viewTransitionStyleKey != "off" || radioSectionTransitionIsInstant(
                                 initialState.destination.route, targetState.destination.route,
                             )) EnterTransition.None else fadeIn(tween(700))
                     },
                     predictivePopExitTransition = {
-                        if (!handheld || radioSectionTransitionIsInstant(
+                        if (!handheld || viewTransitionStyleKey != "off" || radioSectionTransitionIsInstant(
                                 initialState.destination.route, targetState.destination.route,
                             )) ExitTransition.None else fadeOut(tween(700))
                     },
@@ -3485,6 +3500,7 @@ private fun AmbientTvApp(
                         )
                     }
                 }
+                } // ViewTransitionHost; global overlays and video remain outside the effect.
 
                 // Entering a player over a browse/detail page: the player is transparent so the
                 // video plane below can show through, which for the frames Navigation still draws
