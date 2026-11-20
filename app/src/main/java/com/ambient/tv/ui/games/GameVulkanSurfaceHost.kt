@@ -134,6 +134,9 @@ internal class GameVulkanSurfaceHost(
         probeSurface.layoutParams = LayoutParams(
             LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT)
         lastStatus = GameVulkanSdrStatus(1)
+        // Do not carry a "PRESENTING" badge from the old 16px swapchain into
+        // the newly resized fullscreen surface before its first native frame.
+        onNativeStatus(lastStatus)
         main.postDelayed({
             if (!disposed && fullscreenVisible && fullscreenAttempt == attempt &&
                 lastStatus.phase != GameVulkanSdrStatus.Phase.PRESENTING) {
