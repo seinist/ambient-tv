@@ -635,6 +635,7 @@ class SettingsBackupManager @Inject constructor(
                     lyricsVisible = preferences.lyricsVisible,
                     lyricsOnlineEnabled = preferences.lyricsOnlineEnabled,
                     frameDropOverlayHistory = preferences.frameDropOverlayHistory,
+                    viewTransitionStyleKey = preferences.viewTransitionStyleKey,
                     liveTvReminderAutoSwitch = context?.let { com.ambient.tv.livetv.LiveTvReminderScheduler.autoSwitch(it) },
                     autoUpdateCheck = context?.let { com.ambient.tv.update.AppUpdater.automaticUpdatesEnabled(it) },
                     projectmFavorites = context?.let { com.ambient.tv.ui.common.projectm.ProjectMFavorites(it).all().toSortedSet() },
@@ -1128,6 +1129,7 @@ class SettingsBackupManager @Inject constructor(
             settings.lyricsVisible?.let { preferences.lyricsVisible = it }
             settings.lyricsOnlineEnabled?.let { preferences.lyricsOnlineEnabled = it }
             settings.frameDropOverlayHistory?.let { preferences.frameDropOverlayHistory = it }
+            settings.viewTransitionStyleKey?.let { preferences.viewTransitionStyleKey = it }
             settings.keyBindings?.let {
                 preferences.keyBindings = it
                 com.ambient.tv.ui.keyboard.KeyBindings.reload(it)
