@@ -14,7 +14,8 @@ internal data class GameVulkanFrameStatus(val bits: Int = 0) {
     val rgba8Fallback: Boolean get() = active && !fp16 && bits and 8 != 0
 
     fun badge(requestedVulkan: Boolean): String = when {
-        !requestedVulkan || !active -> "OpenGL ES"
+        !requestedVulkan -> "OpenGL ES"
+        !active -> "Vulkan → GLES · ausstehend"
         fp16 -> "Vulkan → GLES · FP16"
         rgba8Fallback -> "Vulkan → GLES · RGBA8 fallback"
         else -> "Vulkan → GLES · RGBA8"
