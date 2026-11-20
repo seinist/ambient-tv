@@ -19,6 +19,19 @@ class GameVulkanTransferGateTest {
         assertTrue(GameVulkanTransferGate.supported(GameVulkanTransferMode.HLG_BT2020, allDisplay, allSurface))
     }
 
+    @Test fun earlyLibretroHdr10CapabilityIsNeverConfusedWithHdrActiveOutput() {
+        assertEquals(1, GameVulkanTransferGate.configuredCoreOutputMode(
+            GameHdrToneMap.PQ, allDisplay, vulkanCore = true))
+        assertEquals(0, GameVulkanTransferGate.configuredCoreOutputMode(
+            GameHdrToneMap.PQ, allDisplay.copy(hdr10 = false), vulkanCore = true))
+        assertEquals(0, GameVulkanTransferGate.configuredCoreOutputMode(
+            GameHdrToneMap.PQ, allDisplay, vulkanCore = false))
+        assertEquals(0, GameVulkanTransferGate.configuredCoreOutputMode(
+            GameHdrToneMap.HLG, allDisplay, vulkanCore = true))
+        assertEquals(0, GameVulkanTransferGate.configuredCoreOutputMode(
+            GameHdrToneMap.OFF, allDisplay, vulkanCore = true))
+    }
+
     @Test fun displayAndActualWindowFormatMustBothSupportTheSameEotf() {
         assertFalse(GameVulkanTransferGate.supported(GameVulkanTransferMode.PQ_BT2020,
             allDisplay.copy(hdr10 = false), allSurface))
