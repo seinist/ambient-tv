@@ -4,6 +4,7 @@ import com.ambient.tv.games.GameHdrToneMap
 import com.ambient.tv.games.GameShader
 import com.swordfish.libretrodroid.ShaderConfig
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -11,6 +12,13 @@ class GameHdrToneMapShaderTest {
     @Test fun sdrAndVulkanFallbackNeverAlterTheSelectedFilter() {
         assertEquals(ShaderConfig.CRT, GameHdrToneMapShader.forGame(GameShader.CRT, GameHdrToneMap.OFF, true))
         assertEquals(ShaderConfig.Sharp, GameHdrToneMapShader.forGame(GameShader.SHARP, GameHdrToneMap.PQ, false))
+    }
+
+    @Test fun fp16BridgeIsOptInAndRequiresVulkan() {
+        assertFalse(GameHdrToneMapShader.prefersFp16Bridge(GameHdrToneMap.OFF, true))
+        assertFalse(GameHdrToneMapShader.prefersFp16Bridge(GameHdrToneMap.PQ, false))
+        assertTrue(GameHdrToneMapShader.prefersFp16Bridge(GameHdrToneMap.PQ, true))
+        assertTrue(GameHdrToneMapShader.prefersFp16Bridge(GameHdrToneMap.HLG, true))
     }
 
     @Test fun pqAndHlgSelectDistinctGpuConversion() {
