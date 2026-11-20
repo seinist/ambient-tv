@@ -42,6 +42,7 @@
     <string name="game_info_native_hdr_test_hint">Manual PQ/HLG input only. Core must output encoded 10-bit Vulkan frames; an 8-bit or unsupported source falls back to HDR→SDR through GLES. This is not proof of an HDR display signal.</string>
     <string name="game_info_native_hdr_fullscreen">Native Vulkan HDR fullscreen (experimental)</string>
     <string name="game_info_native_hdr_fullscreen_hint">Only after the matching PQ/HLG test surface actually presents frames. Requires physical display and matching Vulkan WSI format. No verified mastering metadata, signal or filter parity yet; GLES fallback remains.</string>
+    <string name="game_info_hdr_wsi_unverified">Native HDR Vulkan WSI frames are presented; external HDR display signal, transfer accuracy and mastering metadata are not yet verified.</string>
     <string name="game_info_native_hdr_unavailable">Native PQ/HLG output unavailable: the display or actual Vulkan window does not advertise the selected HDR color space. GLES HDR→SDR remains available.</string>
     <string name="game_info_native_sdr_fullscreen">Native Vulkan SDR fullscreen (experimental)</string>
     <string name="game_info_native_sdr_fullscreen_hint">Only after the tiny diagnostic presents frames. Raw core picture, no GLES shader/rotation/integer-scaling parity yet. Resume to activate; OSD and controls remain above the Surface. Falls back to GLES on failure.</string>
