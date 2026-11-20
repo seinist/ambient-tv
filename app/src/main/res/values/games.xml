@@ -240,4 +240,22 @@
     <string name="game_info_hdr_core_rejects_pq">Core requested HDR10, but the frontend rejected the source format. Native HDR is unavailable.</string>
     <string name="game_info_hdr_core_rejects_scrgb">Core requested scRGB FP16; this source format is not yet supported.</string>
     <string name="game_info_hdr_core_not_negotiated">Core has not negotiated an HDR source format. Source transfer remains unknown.</string>
+    <string name="game_shader_cut2">CUT2 upscale</string>
+    <string name="game_shader_cut2_hint">Edge-aware scaling and sharpening (moderate GPU cost)</string>
+    <string name="game_shader_bicubic">Bicubic upscale</string>
+    <string name="game_shader_bicubic_hint">Smooth 16-tap resampling (higher GPU cost)</string>
+    <string name="game_shader_adaptive">Adaptive sharpen</string>
+    <string name="game_shader_adaptive_hint">5-tap local-contrast sharpening (lightweight)</string>
+    <string name="game_aspect_8_7">8:7 – original SNES pixels</string>
+    <string name="game_aspect_1_1">1:1 – square</string>
+    <string name="game_aspect_3_2">3:2</string>
+    <string name="game_aspect_16_10">16:10</string>
+    <string name="game_touch_mode_dpad">D-pad</string>
+    <string name="game_touch_mode_analog">Left analog</string>
+    <string name="game_touch_mode_dual">Dual analog</string>
+    <string name="game_touch_controls">On-screen controls</string>
+    <string name="game_touch_controls_hint">Virtual buttons on this phone; other controllers still work</string>
+    <string name="game_touch_layout">Touch layout</string>
+    <string name="game_running">Running</string>
+    <string name="game_picture_native_limit">Experimental native Vulkan fullscreen cannot apply every filter or forced aspect ratio. Use GLES rendering for those options.</string>
 </resources>
