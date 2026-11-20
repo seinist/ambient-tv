@@ -297,8 +297,7 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
     val touchMode = settings.touchMode(system)
     // Native RAW blit matches only the PIXEL preset; aspect and integer
     // scaling are passed to Vulkan, while real shader presets stay in GLES.
-    val nativePictureSupported = GameVulkanPictureCompatibility.rawFullscreenEligible(shader) &&
-        aspect == GameAspect.CORE
+    val nativePictureSupported = GameVulkanPictureCompatibility.rawFullscreenEligible(shader)
     val saveStates by model.saveStates.collectAsState()
 
     val chrome = remember { PlayerChromeState() }
