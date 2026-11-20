@@ -53,6 +53,66 @@ class ProgressiveSeekControllerTest {
         assertTrue(third < 7_200_000L)
     }
 
+    @Test fun longHoldKeepsAcceleratingAfterTheInitialLogarithmicRamp() {
+        val seek = controller()
+        seek.press(1, 0L, 1_800_000L)
+        now = 3_000L
+        seek.advance()
+        val atThreeSeconds = seek.previewTargetMs!!
+        now = 4_000L
+        seek.advance()
+        val atFourSeconds = seek.previewTargetMs!!
+        now = 5_000L
+        seek.advance()
+        val atFiveSeconds = seek.previewTargetMs!!
+
+        // An extended hold traverses more ground in every later second, without
+        // increasing the precise five-second tap. The former curve was < 800 s at 5 s.
+        assertTrue(atFourSeconds - atThreeSeconds > 0L)
+        assertTrue(atFiveSeconds - atFourSeconds > atFourSeconds - atThreeSeconds)
+        assertTrue(atFiveSeconds > 900_000L)
+        assertEquals(atFiveSeconds, seek.release(1))
+    }
+
+    @Test fun aShortHoldBelowTheAccelerationDelayStillMovesExactlyFiveSeconds() {
+        val seek = controller()
+        seek.press(-1, 100_000L, 1_800_000L)
+        now = 290L
+        assertEquals(95_000L, seek.release(-1))
+    }
+
+    @Test fun aMissedTickerFrameMustNotSlowDownAProlongedHold() {
+        val regular = controller()
+        val sparse = controller()
+        regular.press(1, 0L, 7_200_000L)
+        sparse.press(1, 0L, 7_200_000L)
+        for (elapsed in 50L..5_000L step 50L) {
+            now = elapsed
+            regular.advance()
+        }
+        now = 5_000L
+        sparse.advance()
+        // Interpolated 50-ms integration is independent of native key-repeat events or
+        // Compose failing to deliver intermediate animation ticks during a slow frame.
+        assertEquals(regular.previewTargetMs, sparse.previewTargetMs)
+        assertEquals(regular.release(1), sparse.release(1))
+    }
+
+    @Test fun longHoldAccelerationWorksInBothDirections() {
+        val forward = controller()
+        val back = controller()
+        val origin = 900_000L
+        val duration = 1_800_000L
+        forward.press(1, origin, duration)
+        back.press(-1, origin, duration)
+        now = 3_000L
+        val forwardTarget = forward.release(1)!!
+        val backwardTarget = back.release(-1)!!
+        assertTrue(forwardTarget > origin + 100_000L)
+        assertTrue(backwardTarget < origin - 100_000L)
+        assertEquals(2 * origin, forwardTarget + backwardTarget)
+    }
+
     @Test fun directionChangeStartsAgainFromTheNewAnchor() {
         val seek = controller()
         seek.press(1, 100_000L, 600_000L)

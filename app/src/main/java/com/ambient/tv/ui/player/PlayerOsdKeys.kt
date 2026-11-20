@@ -92,6 +92,24 @@ private val PASS_KEYS = setOf(
 )
 
 /**
+ * A direct Left/Right scrub starts on the fullscreen player while its OSD is hidden. Revealing
+ * seek feedback can move focus to the timeline before the remote sends KeyUp. Preview-key
+ * handlers in that new focus branch must forward *both* repeats and the release to the same
+ * fullscreen scrub owner; otherwise the timeline's separate scrub consumes KeyUp without ever
+ * committing the displayed target. Inactive scrubs remain owned by their focused control.
+ *
+ * Also forward the opposite direction while active so a direction change cannot start a second
+ * timeline scrub and strand the first one.
+ */
+internal inline fun forwardActiveDirectSeekKey(
+    key: Key,
+    progressive: ProgressiveSeekController,
+    dispatch: () -> Boolean,
+): Boolean = progressive.active &&
+    (key == Key.DirectionLeft || key == Key.DirectionRight) &&
+    dispatch()
+
+/**
  * One remote handling for every player OSD (Media3, VLC and MPV alike). Returns true when the
  * key was used. Back and volume are never handled here (see [PASS_KEYS]).
  *
@@ -124,7 +142,7 @@ internal fun handlePlayerOsdKey(
             }
             return true
         }
-        if (keyDown && !state.panelOpen && !state.osdVisible && !state.closing &&
+        if (keyDown && !state.panelOpen && (!state.osdVisible || progressive.active) && !state.closing &&
             state.content != OsdContent.LIVE &&
             (directDirection < 0 || state.canSeekForward) && steps.durationMs > 0L) {
             val wasPressed = progressive.isPressedIn(directDirection)
