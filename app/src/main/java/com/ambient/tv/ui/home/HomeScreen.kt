@@ -860,7 +860,9 @@ internal fun LibraryContent(
         // Physical neighbours on each end let the first row follow the last by one ordinary
         // D-pad glide. Rebase to the identical middle-lap row once the transition has settled.
         val cyclicRows = remember(state.rowKeys) { cyclicHomeRows(state.rowKeys) }
-        val middleStart = cyclicHomeMiddleStart(state.rowKeys.size)
+        // Begin on the real first lap: its contentPadding parks the initial row below the hero.
+        // The second and third laps have ordinary row geometry for seamless edge movement.
+        val middleStart = 0
         val cyclicIndices = remember(cyclicRows) { cyclicRows.withIndex().associate { it.value to it.index } }
         val middleFirstKey = cyclicRows.getOrNull(middleStart)
         val middleLastKey = cyclicRows.getOrNull(middleStart + state.rowKeys.lastIndex)
