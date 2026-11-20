@@ -1124,7 +1124,8 @@ internal fun TvPlayerSeekBar(
     val progressMotionPaints = remember(progressAccent, progressStyle) { AccentMotionPaints(progressAccent, progressStyle) }
     // ShaderBrush caches one size; the thumb must not invalidate the full track's shader.
     val progressThumbBrush = remember(progressAccent, progressStyle) { accentBrush(progressAccent, progressStyle) }
-    val osd = LocalPlayerChromeState.current?.osd
+    val chrome = LocalPlayerChromeState.current
+    val osd = chrome?.osd
     val expandControls = rememberExpandPlayerControls()
     val acceptsInput = seekable && osd?.show != false
     val playPauseFocus = LocalPlayerPlayPauseFocus.current
@@ -1297,6 +1298,12 @@ internal fun TvPlayerSeekBar(
                 }
                 val direction = when (event.key) { Key.DirectionLeft -> -1; Key.DirectionRight -> 1; else -> 0 }
                 if (direction == 0 || durationMs <= 0) return@onPreviewKeyEvent false
+                // The engine may own this same held key from before the OSD gained focus.
+                // If its outer preview handler was not in this focus path, deliver the key
+                // directly to the active engine scrub rather than swallowing its KeyUp here.
+                if (osd != null && forwardActiveDirectSeekKey(event.key, osd.progressiveSeek) {
+                        chrome?.panelKeys?.value?.invoke(event) == true
+                    }) return@onPreviewKeyEvent true
                 // The hidden/passive player may have consumed KeyDown before this bar gained
                 // focus. Its KeyUp must not claim feedback, commit a stale target or restart it.
                 if (event.type == KeyEventType.KeyUp && !progressiveSeek.isPressedIn(direction)) {
