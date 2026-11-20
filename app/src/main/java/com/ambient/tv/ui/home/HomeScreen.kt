@@ -1117,7 +1117,7 @@ internal fun LibraryContent(
                 ),
                 verticalArrangement = Arrangement.spacedBy(4.dp),
             ) {
-                itemsIndexed(cyclicRows, key = { _, key -> key }, contentType = { _, key ->
+                itemsIndexed(cyclicRows, key = { _, key -> "home-row:${key.lap}:${key.logical}" }, contentType = { _, key ->
                     when {
                         key.logical in state.tvRows -> "live-tv-row"
                         key.logical.startsWith("shortcut:") || key.logical.startsWith(HOME_OFFLINE_ROW_PREFIX) -> "shortcut-row"
