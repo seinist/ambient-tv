@@ -10,6 +10,9 @@ object YouTubeStreamRelay {
     /** Native players often report "failed to open" without retaining the relay's HTTP code. */
     fun takeTerminalHttpError(videoId: String): Int? = terminalHttpErrors.remove(videoId)
 
+    /** A new player resolution starts with a clean failure marker, not every relay registration. */
+    fun clearTerminalHttpError(videoId: String) { terminalHttpErrors.remove(videoId) }
+
     private val relay by lazy {
         ChunkedStreamRelay(
             OkHttpClient.Builder()
@@ -38,7 +41,6 @@ object YouTubeStreamRelay {
 
     /** Relay URL for a googlevideo [upstream]; with [videoId] an expired link is renewed in place. */
     fun url(upstream: String, headers: Map<String, String>, videoId: String? = null): String {
-        if (videoId != null) terminalHttpErrors.remove(videoId)
         return relay.register(
             upstream, headers,
             refresh = videoId?.let { id -> { failedUrl -> renewer?.invoke(id, failedUrl) } },
