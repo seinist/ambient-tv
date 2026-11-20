@@ -8,7 +8,7 @@ and **unimplemented features**. A core appearing in the catalog does **not** est
 | Area | Implemented | What still needs validation |
 |---|---|---|
 | Input | RetroPad 1–4, analog sticks, triggers, game menu, controller hotkeys | Controller detection and remaps per device |
-| Touch | Handheld DS, 3DS, Wii, Wii U pointer events reach the fork's existing single-pointer input; a small menu target remains | Core-specific screen layouts, pointer calibration and actual game compatibility |
+| Touch | On phones the virtual RetroPad offers D-pad, ABXY, Start/Select, L/R/L2/R2 and one or two analog sticks; per-system toggle/layout and input union with physical controllers. DS/3DS/Wii pointer touches still reach the core and default to no virtual controls. A persistent touch menu target opens the existing game OSD. | Test simultaneous multi-touch (including a physical pad), phone portrait/landscape, screen-reader accessibility, touch-to-core pointer calibration and real game compatibility |
 | Files | Direct seekable single-file disc access and Dreamcast GDI via SAF/USB/SMB/NFS/WebDAV/SFTP; explicit local-copy fallback | Cores that bypass libretro VFS, network reconnection and latency |
 | Save states | Runtime serialize-size check, 64 MiB cap, SRAM/state on exit, screenshots, manual and auto states | Some cores cannot serialize, or produce states bigger than the limit |
 | Rewind and speed | 20-second / 64 MiB rewind, 2× fast-forward and configurable hotkeys | ROM/core/CPU performance and audio |
@@ -16,7 +16,10 @@ and **unimplemented features**. A core appearing in the catalog does **not** est
 | Core updates | One preceding binary/metadata version kept; user rollback and failed-load recovery | Confirm updating/recovery on Android 14+, active-core reload edge cases |
 | Achievements | Extended console ID lookup for DS, PSP, GC/Wii, Saturn, Dreamcast, Commodore, etc. | Hashing, per-core achievement capability and server verification; direct-ROM achievements need incremental reader |
 | Cheat database | Extended known system-folder name candidates | Catalog and core cheat format differences |
+| Picture / OSD | Per-system aspect presets (core, 1:1, 8:7, 4:3, 3:2, 16:10, 16:9), integer scaling, existing GLES shaders plus CUT2, 16-tap bicubic and 5-tap adaptive sharpening; accurate paused/running indicator tied to the actual emulation state | Measure shader cost and GLES fallback on Shield/Philips/phone, test real SNES aspect/pause rendering and TV focus for the picture/controls panels |
 | Vulkan HDR → SDR (experimental) | Explicit PQ/HLG→SDR shader and optional Vulkan→GLES FP16 AHardwareBuffer transport; runtime format capability check, allocation and GLES-import fallback to RGBA8. Disabled for SDR; selecting HDR restarts the core | Core must really output encoded PQ/HLG; FP16 availability, high-quality highlights and correct colors require physical-device tests |
+
+The virtual controller settings are stored in the existing `gameSettings` preference map, which participates in backup and companion settings synchronization. All new picture shaders run on GLES; they are **not** native Vulkan shaders, librashader, FSR or an HDR signal. The game still pauses when its interactive OSD is deliberately opened; the label no longer claims a paused state when the core is actually running.
 
 ## Outstanding features (not represented as completed)
 
