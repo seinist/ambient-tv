@@ -71,7 +71,7 @@ diff --git a/src/main/cpp/renderers/es3/imagerendereres3.cpp b/src/main/cpp/rend
 --- a/src/main/cpp/renderers/es3/imagerendereres3.cpp
 +++ b/src/main/cpp/renderers/es3/imagerendereres3.cpp
 @@ -100,9 +100,19 @@
-        case RETRO_PIXEL_FORMAT_XRGB8888:
+         case RETRO_PIXEL_FORMAT_XRGB8888:
              this->glInternalFormat = GL_RGBA;
              this->glFormat = GL_RGBA;
              this->glType = GL_UNSIGNED_BYTE;
