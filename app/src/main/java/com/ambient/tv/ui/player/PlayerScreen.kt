@@ -1302,7 +1302,7 @@ internal fun TvPlayerSeekBar(
                 // If its outer preview handler was not in this focus path, deliver the key
                 // directly to the active engine scrub rather than swallowing its KeyUp here.
                 if (osd != null && forwardActiveDirectSeekKey(event.key, osd.progressiveSeek) {
-                        chrome?.panelKeys?.value?.invoke(event) == true
+                        chrome.panelKeys.value?.invoke(event) == true
                     }) return@onPreviewKeyEvent true
                 // The hidden/passive player may have consumed KeyDown before this bar gained
                 // focus. Its KeyUp must not claim feedback, commit a stale target or restart it.

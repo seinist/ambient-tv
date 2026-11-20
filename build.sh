@@ -105,7 +105,6 @@ disable_legacy_gradle_shadow_files() {
         "$ROOT_DIR/smarttube_wrappers/youtubeapi/build.gradle"
         "$ROOT_DIR/smarttube_wrappers/sharedutils/build.gradle"
         "$ROOT_DIR/smarttube_wrappers/mediaserviceinterfaces/build.gradle"
-        "$ROOT_DIR/smarttube_wrappers/commons-io/build.gradle"
         "$ROOT_DIR/smarttube_wrappers/j2v8/build.gradle"
     )
     for file in "${files[@]}"; do
@@ -121,7 +120,7 @@ write_canonical_settings_kts() {
     local out="$1"
     mkdir -p "$(dirname "$out")"
     cat > "$out" <<'GRADLE_SETTINGS_KTS'
-// AMBIENT_TV_SETTINGS_KTS_V67
+// AMBIENT_TV_SETTINGS_KTS_V68
 pluginManagement {
     repositories {
         google()
@@ -160,13 +159,10 @@ val msc = smartRoot.resolve("MediaServiceCore")
 val shared = smartRoot.resolve("SharedModules")
 val wrappers = file("smarttube_wrappers")
 if (msc.resolve("youtubeapi/src/main").isDirectory && shared.resolve("sharedutils/src/main").isDirectory) {
-    include(":sharedutils", ":commons-io-2.8.0", ":j2v8", ":mediaserviceinterfaces", ":youtubeapi")
+    include(":sharedutils", ":j2v8", ":mediaserviceinterfaces", ":youtubeapi")
 
     project(":sharedutils").projectDir = wrappers.resolve("sharedutils")
     project(":sharedutils").buildFileName = "build.gradle.kts"
-
-    project(":commons-io-2.8.0").projectDir = wrappers.resolve("commons-io")
-    project(":commons-io-2.8.0").buildFileName = "build.gradle.kts"
 
     project(":j2v8").projectDir = wrappers.resolve("j2v8")
     project(":j2v8").buildFileName = "build.gradle.kts"
@@ -184,7 +180,7 @@ ensure_settings_kts() {
     local target="$ROOT_DIR/settings.gradle.kts"
 
     if [[ ! -f "$target" ]] \
-        || ! grep -F 'AMBIENT_TV_SETTINGS_KTS_V67' "$target" >/dev/null 2>&1 \
+        || ! grep -F 'AMBIENT_TV_SETTINGS_KTS_V68' "$target" >/dev/null 2>&1 \
         || ! grep -F 'rootProject.buildFileName = "build.gradle.kts"' "$target" >/dev/null 2>&1 \
         || ! grep -F 'project(":youtubeapi").projectDir = wrappers.resolve("youtubeapi")' "$target" >/dev/null 2>&1 \
         || ! grep -F 'project(":youtubeapi").buildFileName = "build.gradle.kts"' "$target" >/dev/null 2>&1 \
@@ -195,7 +191,7 @@ ensure_settings_kts() {
 }
 
 verify_kotlin_dsl_entrypoints() {
-    grep -F 'AMBIENT_TV_SETTINGS_KTS_V67' "$ROOT_DIR/settings.gradle.kts" >/dev/null \
+    grep -F 'AMBIENT_TV_SETTINGS_KTS_V68' "$ROOT_DIR/settings.gradle.kts" >/dev/null \
         || fail "settings.gradle.kts is missing or stale."
     grep -F 'rootProject.buildFileName = "build.gradle.kts"' "$ROOT_DIR/settings.gradle.kts" >/dev/null \
         || fail "settings.gradle.kts does not pin the root Kotlin build file."
@@ -273,7 +269,7 @@ ensure_android_sdk() {
 write_canonical_root_build_kts() {
     local target="$1"
     cat > "$target" <<'EOF_ROOT_BUILD'
-// AMBIENT_TV_ROOT_BUILD_V036
+// AMBIENT_TV_ROOT_BUILD_V037
 buildscript {
     dependencies { classpath("org.jetbrains.kotlin:kotlin-gradle-plugin:2.4.21") }
 }
@@ -308,7 +304,6 @@ run {
         "youtubeapi" to "youtubeapi",
         "sharedutils" to "sharedutils",
         "mediaserviceinterfaces" to "mediaserviceinterfaces",
-        "commons-io-2.8.0" to "commons-io",
         "j2v8" to "j2v8",
     )
     val rootDirectory = rootProject.projectDir
@@ -361,12 +356,12 @@ ensure_root_build_kts() {
     local template="$ROOT_DIR/gradle/root.build.compat.gradle.kts"
     local target="$ROOT_DIR/build.gradle.kts"
 
-    if [[ ! -f "$template" ]]         || ! grep -F 'AMBIENT_TV_ROOT_BUILD_V036' "$template" >/dev/null 2>&1         || ! grep -F 'expected host wrapper' "$template" >/dev/null 2>&1; then
+    if [[ ! -f "$template" ]]         || ! grep -F 'AMBIENT_TV_ROOT_BUILD_V037' "$template" >/dev/null 2>&1         || ! grep -F 'expected host wrapper' "$template" >/dev/null 2>&1; then
         log "Repairing canonical root Gradle build preflight"
         write_canonical_root_build_kts "$template"
     fi
 
-    if [[ ! -f "$target" ]]         || ! grep -F 'AMBIENT_TV_ROOT_BUILD_V036' "$target" >/dev/null 2>&1         || grep -F 'expected direct SmartTube module' "$target" >/dev/null 2>&1         || ! grep -F 'expected host wrapper' "$target" >/dev/null 2>&1; then
+    if [[ ! -f "$target" ]]         || ! grep -F 'AMBIENT_TV_ROOT_BUILD_V037' "$target" >/dev/null 2>&1         || grep -F 'expected direct SmartTube module' "$target" >/dev/null 2>&1         || ! grep -F 'expected host wrapper' "$target" >/dev/null 2>&1; then
         log "Restoring canonical root Gradle build preflight"
         cp "$template" "$target"
     fi
@@ -535,7 +530,7 @@ youtube_engine_ready() {
     smarttube_live_patch_ready || return 1
 
     local wrapper
-    for wrapper in youtubeapi sharedutils mediaserviceinterfaces commons-io j2v8; do
+    for wrapper in youtubeapi sharedutils mediaserviceinterfaces j2v8; do
         local gradle_file="$ROOT_DIR/smarttube_wrappers/$wrapper/build.gradle.kts"
         [[ -f "$gradle_file" ]] || return 1
         grep -F 'JavaVersion.VERSION_17' "$gradle_file" >/dev/null || return 1
@@ -573,7 +568,6 @@ ensure_youtube_engine() {
     rm -rf "$ROOT_DIR/smarttube_wrappers/youtubeapi/build" \
            "$ROOT_DIR/smarttube_wrappers/sharedutils/build" \
            "$ROOT_DIR/smarttube_wrappers/mediaserviceinterfaces/build" \
-           "$ROOT_DIR/smarttube_wrappers/commons-io/build" \
            "$ROOT_DIR/smarttube_wrappers/j2v8/build"
     "$YOUTUBE_ENGINE_SCRIPT"
     youtube_engine_ready || fail "SmartTube live-patch integration did not validate after preparation."

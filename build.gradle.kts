@@ -1,4 +1,4 @@
-// AMBIENT_TV_ROOT_BUILD_V036
+// AMBIENT_TV_ROOT_BUILD_V037
 buildscript {
     dependencies { classpath("org.jetbrains.kotlin:kotlin-gradle-plugin:2.4.21") }
 }
@@ -33,7 +33,6 @@ run {
         "youtubeapi" to "youtubeapi",
         "sharedutils" to "sharedutils",
         "mediaserviceinterfaces" to "mediaserviceinterfaces",
-        "commons-io-2.8.0" to "commons-io",
         "j2v8" to "j2v8",
     )
     val rootDirectory = rootProject.projectDir

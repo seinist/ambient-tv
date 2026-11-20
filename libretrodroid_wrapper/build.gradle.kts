@@ -46,6 +46,17 @@ android {
         }
     }
 
+    buildTypes {
+        release {
+            externalNativeBuild {
+                cmake {
+                    // AGP uses RelWithDebInfo for release. Strip DWARF from every shared library at link time.
+                    arguments += "-DCMAKE_SHARED_LINKER_FLAGS_RELWITHDEBINFO=-Wl,--strip-debug"
+                }
+            }
+        }
+    }
+
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
