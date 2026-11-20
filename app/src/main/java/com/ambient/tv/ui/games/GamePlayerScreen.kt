@@ -299,6 +299,8 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
     var loaded by remember { mutableStateOf(false) }
     /** The native Vulkan image format, not merely the user's requested graphics mode. */
     var vulkanFrameStatus by remember { mutableStateOf(GameVulkanFrameStatus()) }
+    /** Native WSI format pairs on a separate real Android Surface, NOT active HDR. */
+    var vulkanSurfaceFormats by remember { mutableStateOf(GameVulkanSurfaceFormats()) }
     /** Core-reported serialized size must be nonzero and safe for this device's heap. */
     var stateAvailable by remember { mutableStateOf(false) }
     var message by remember { mutableStateOf<String?>(null) }
@@ -364,6 +366,19 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
             owner.registry.addObserver(view)
             owner.move(Lifecycle.State.CREATED)
         }
+    }
+
+    // Maintain the old GLES renderer unchanged. The extra 1×1 real Android
+    // surface exists only for Vulkan WSI probing and never displays game frames.
+    val vulkanSurfaceHost = remember(retroView, session.vulkan) {
+        if (session.vulkan) GameVulkanSurfaceHost(context, retroView) { vulkanSurfaceFormats = it }
+        else null
+    }
+    DisposableEffect(vulkanSurfaceHost) {
+        onDispose { vulkanSurfaceHost?.dispose() }
+    }
+    LaunchedEffect(coreReady, vulkanSurfaceHost) {
+        if (coreReady) vulkanSurfaceHost?.coreReady()
     }
 
     /** Cheats on (enabled ones) or all off: hardcore and netplay play without. */
@@ -681,7 +696,7 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
         )
         Box(Modifier.fillMaxSize().background(Color.Black)) {
             AndroidView(
-                factory = { retroView },
+                factory = { vulkanSurfaceHost ?: retroView },
                 modifier = Modifier.fillMaxSize()
                     // Direct touch must reach GLRetroView for DS/3DS/Wii emulated pointers.
                     // Other games keep the existing tap-to-open-menu handheld behavior.
@@ -1104,6 +1119,9 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
                             GamePanelText(stringResource(R.string.game_info_core, core.name, core.license))
                             if (core.hardware && core.supportsVulkan) {
                                 GamePanelText(stringResource(R.string.game_info_hdr_display_capabilities, displayHdr.supportedTypesLabel()))
+                                if (session.vulkan) {
+                                    GamePanelText(stringResource(R.string.game_info_vulkan_surface_pairs, vulkanSurfaceFormats.candidateTypesLabel()))
+                                }
                                 GamePanelText(stringResource(R.string.game_info_hdr_output_inactive))
                             }
                             if (system.alternatives.isNotEmpty()) {
