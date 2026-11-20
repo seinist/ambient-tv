@@ -78,7 +78,7 @@ class GameArchivesTest {
 
     @Test fun pinnedCoresAndBuildbotOnlyCoresAreSeparated() {
         val json = File("../cores/cores.json").takeIf { it.isFile } ?: File("cores/cores.json")
-        val pinnedIds = Regex(""""core"\\s*:\\s*"([^"]+)"""")
+        val pinnedIds = Regex(""""core"\s*:\s*"([^"]+)"""")
             .findAll(json.readText()).map { it.groupValues[1] }.toSet()
         val registeredIds = GameSystems.cores.map { it.id }.toSet()
         assertTrue("All own-build cores must be registered", registeredIds.containsAll(pinnedIds))
