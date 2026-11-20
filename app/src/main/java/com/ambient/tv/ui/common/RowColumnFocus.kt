@@ -420,6 +420,8 @@ fun Modifier.rowColumnFocusNavigation(
     focusBeforeScroll: Boolean = false,
     /** On virtual rows, the first logical row still gives Up to the page header. */
     upExitAt: ((Any?) -> Boolean)? = null,
+    /** A circular list can choose an interior virtual lap instead of wrapping to physical zero. */
+    wrapDownTarget: (() -> Any?)? = null,
     rowOrder: () -> List<Any>,
 ): Modifier = composed {
     if (LocalHandheldUi.current) return@composed Modifier
@@ -562,7 +564,7 @@ fun Modifier.rowColumnFocusNavigation(
             return@onPreviewKeyEvent true
         }
         if (scrollToTop == null || !down || !focus.isLastRow(order, pendingAnchor)) return@onPreviewKeyEvent false
-        val first = order.firstOrNull() ?: return@onPreviewKeyEvent false
+        val first = wrapDownTarget?.invoke() ?: order.firstOrNull() ?: return@onPreviewKeyEvent false
         launchMove(first) {
             scrollToTop()
         }
