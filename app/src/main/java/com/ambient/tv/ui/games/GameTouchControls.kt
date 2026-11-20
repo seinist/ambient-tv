@@ -64,9 +64,9 @@ internal fun GameTouchControls(
         val bottom = if (small) 12.dp else 24.dp
         val faceSize = if (mode == GameTouchMode.DUAL) key * 0.85f else key
 
-        if (mode == GameTouchMode.DPAD) {
+        if (mode == GameTouchMode.DPAD || mode == GameTouchMode.HYBRID) {
             GameTouchDpad(
-                size = large,
+                size = if (mode == GameTouchMode.HYBRID) large * 0.82f else large,
                 onDirection = { next ->
                     // Exactly the changed bits are emitted. Holding A on another finger remains untouched.
                     RetroPadButton.entries.filter { it in DPAD_BUTTONS }.forEach { button ->
@@ -75,10 +75,15 @@ internal fun GameTouchControls(
                 },
                 modifier = Modifier.align(Alignment.BottomStart).padding(start = margin, bottom = bottom),
             )
-        } else {
+        }
+        if (mode != GameTouchMode.DPAD) {
             GameTouchStick(
-                index = 0, diameter = large, onStick = onStick,
-                modifier = Modifier.align(Alignment.BottomStart).padding(start = margin, bottom = bottom),
+                index = 0,
+                diameter = if (mode == GameTouchMode.HYBRID) large * 0.72f else large,
+                onStick = onStick,
+                modifier = Modifier.align(if (mode == GameTouchMode.HYBRID) Alignment.TopStart else Alignment.BottomStart)
+                    .padding(start = margin, top = if (mode == GameTouchMode.HYBRID) 66.dp else 0.dp,
+                        bottom = if (mode == GameTouchMode.HYBRID) 0.dp else bottom),
             )
         }
 
