@@ -257,11 +257,21 @@ private const val REWIND_BUDGET_BYTES = 64L * 1024 * 1024
 private const val OTHER_CATEGORY = "\u0000other"
 
 /** The game's current frame, scaled for save state previews; null when there is none yet. */
-private suspend fun GLRetroView.preview(): Bitmap? = withContext(Dispatchers.Default) {
+private suspend fun GLRetroView.preview(
+    input: GameHdrToneMap,
+    verifiedHdrSource: Boolean,
+): Bitmap? = withContext(Dispatchers.Default) {
     val frame = runCatching { captureRawFrame() }.getOrNull() ?: return@withContext null
-    if (frame.width <= 480) return@withContext frame
-    val height = (frame.height * 480 / frame.width.toFloat()).roundToInt().coerceAtLeast(1)
-    Bitmap.createScaledBitmap(frame, 480, height, true).also { if (it !== frame) frame.recycle() }
+    val scaled = if (frame.width <= 480) frame else {
+        val height = (frame.height * 480 / frame.width.toFloat()).roundToInt().coerceAtLeast(1)
+        Bitmap.createScaledBitmap(frame, 480, height, true).also { if (it !== frame) frame.recycle() }
+    }
+    if (!verifiedHdrSource || input == GameHdrToneMap.OFF) return@withContext scaled
+    // CaptureRawFrame is before GLES shaders: do not write a raw PQ frame into
+    // a conventional SDR save-state preview when the HDR source is confirmed.
+    GameHdrPreviewToneMap.transformSmallBitmap(scaled, input).also {
+        if (it !== scaled) scaled.recycle()
+    }
 }
 
 @Composable
@@ -511,7 +521,12 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
             retroView.pauseEmulation()
             menuOpen = true
             message = null
-            scope.launch { snapshot = if (loaded) retroView.preview() else null }
+            scope.launch {
+                snapshot = if (loaded) retroView.preview(
+                    toneMap,
+                    nativeTransfer != GameVulkanTransferMode.SDR && nativeSourceContract.supports(nativeTransfer),
+                ) else null
+            }
         }
     }
     /** Loads [entry]; the moment before is kept as "Before loading" so the step can be undone. */
