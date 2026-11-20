@@ -210,7 +210,7 @@ private fun GameFailure.titleRes(): Int = when (this) {
 
 internal fun GameShader.config(): ShaderConfig = when (this) {
     GameShader.SHARP -> ShaderConfig.Sharp
-    GameShader.PIXEL -> ShaderConfig.Default
+    GameShader.PIXEL -> ShaderConfig.Pixel
     GameShader.SMOOTH -> ShaderConfig.CUT3()
     GameShader.CRT -> ShaderConfig.CRT
     GameShader.LCD -> ShaderConfig.LCD
@@ -257,11 +257,21 @@ private const val REWIND_BUDGET_BYTES = 64L * 1024 * 1024
 private const val OTHER_CATEGORY = "\u0000other"
 
 /** The game's current frame, scaled for save state previews; null when there is none yet. */
-private suspend fun GLRetroView.preview(): Bitmap? = withContext(Dispatchers.Default) {
+private suspend fun GLRetroView.preview(
+    input: GameHdrToneMap,
+    verifiedHdrSource: Boolean,
+): Bitmap? = withContext(Dispatchers.Default) {
     val frame = runCatching { captureRawFrame() }.getOrNull() ?: return@withContext null
-    if (frame.width <= 480) return@withContext frame
-    val height = (frame.height * 480 / frame.width.toFloat()).roundToInt().coerceAtLeast(1)
-    Bitmap.createScaledBitmap(frame, 480, height, true).also { if (it !== frame) frame.recycle() }
+    val scaled = if (frame.width <= 480) frame else {
+        val height = (frame.height * 480 / frame.width.toFloat()).roundToInt().coerceAtLeast(1)
+        Bitmap.createScaledBitmap(frame, 480, height, true).also { if (it !== frame) frame.recycle() }
+    }
+    if (!verifiedHdrSource || input == GameHdrToneMap.OFF) return@withContext scaled
+    // CaptureRawFrame is before GLES shaders: do not write a raw PQ frame into
+    // a conventional SDR save-state preview when the HDR source is confirmed.
+    GameHdrPreviewToneMap.transformSmallBitmap(scaled, input).also {
+        if (it !== scaled) scaled.recycle()
+    }
 }
 
 @Composable
@@ -276,14 +286,44 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
     val settings = GameSettings.state
     val shader = settings.shader(system)
     val toneMap = settings.hdrToneMap(core)
+    val nativeTransfer = GameVulkanTransferMode.forInput(toneMap)
     val aspect = settings.aspect(system)
     val integerScaling = settings.integerScaling(system)
+    // Native RAW blit matches only the PIXEL preset; aspect and integer
+    // scaling are passed to Vulkan, while real shader presets stay in GLES.
+    val nativePictureSupported = GameVulkanPictureCompatibility.rawFullscreenEligible(shader)
     val saveStates by model.saveStates.collectAsState()
 
     val chrome = remember { PlayerChromeState() }
     val osd = chrome.osd
     var menuOpen by remember { mutableStateOf(false) }
     var panel by remember { mutableStateOf<GamePanel?>(null) }
+    // A display or refresh-mode change can remove HDR while a Vulkan game is
+    // running. Never infer active HDR from these platform capabilities.
+    var displayHdr by remember(context) {
+        mutableStateOf(GameHdrDisplayProbe.capture(context))
+    }
+    DisposableEffect(context) {
+        val manager = context.getSystemService(android.hardware.display.DisplayManager::class.java)
+        val listener = object : android.hardware.display.DisplayManager.DisplayListener {
+            override fun onDisplayAdded(displayId: Int) {
+                displayHdr = GameHdrDisplayProbe.capture(context)
+            }
+            override fun onDisplayRemoved(displayId: Int) {
+                displayHdr = GameHdrDisplayProbe.capture(context)
+            }
+            override fun onDisplayChanged(displayId: Int) {
+                displayHdr = GameHdrDisplayProbe.capture(context)
+            }
+        }
+        manager?.registerDisplayListener(listener, Handler(Looper.getMainLooper()))
+        onDispose { manager?.unregisterDisplayListener(listener) }
+    }
+    // Also re-query when opening Info; some vendors do not deliver callbacks
+    // for every HDMI EOTF switch.
+    LaunchedEffect(panel) {
+        if (panel == GamePanel.INFO) displayHdr = GameHdrDisplayProbe.capture(context)
+    }
     var optionCategory by remember { mutableStateOf<String?>(null) }
     var optionKey by remember { mutableStateOf<String?>(null) }
     /** Core option changes go to this game only (true) or to every game of the core. */
@@ -297,6 +337,22 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
     var loaded by remember { mutableStateOf(false) }
     /** The native Vulkan image format, not merely the user's requested graphics mode. */
     var vulkanFrameStatus by remember { mutableStateOf(GameVulkanFrameStatus()) }
+    /** Native VkImage pixel layout, NOT color transfer or HDR source provenance. */
+    var vulkanCoreSourceFormat by remember { mutableStateOf(GameVulkanCoreSourceFormat()) }
+    /** Actual libretro SET_PIXEL_FORMAT acceptance, independent of user settings. */
+    var coreHdrHandshake by remember { mutableStateOf(GameCoreHdrPixelHandshake()) }
+    val nativeSourceContract = GameVulkanHdrSourceEvidence.observe(
+        core.id, session.vulkan,
+        settings.effectiveCoreOptions(core, game.saveKey) + if (session.vulkan) core.vulkanOptions else core.glOptions,
+        vulkanCoreSourceFormat,
+        coreHdrHandshake,
+    )
+    /** Native WSI format pairs on a separate real Android Surface, NOT active HDR. */
+    var vulkanSurfaceFormats by remember { mutableStateOf(GameVulkanSurfaceFormats()) }
+    var nativeSdrDiagnostic by remember { mutableStateOf(false) }
+    var nativeSdrStatus by remember { mutableStateOf(GameVulkanSdrStatus()) }
+    /** Explicitly armed per session; never restored from settings or a backup. */
+    var nativeSdrFullscreenRequested by remember { mutableStateOf(false) }
     /** Core-reported serialized size must be nonzero and safe for this device's heap. */
     var stateAvailable by remember { mutableStateOf(false) }
     var message by remember { mutableStateOf<String?>(null) }
@@ -349,6 +405,11 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
             rumbleEventsEnabled = true
             preferLowLatencyAudio = true
             preferVulkan = session.vulkan
+            // Before retro_init an HDR-aware Vulkan core may ask for configured PQ output;
+            // distinguish capability from the later verified real-surface HDR signal.
+            configuredHdrOutputMode = GameVulkanTransferGate.configuredCoreOutputMode(
+                toneMap, displayHdr, session.vulkan,
+            )
             preferHighPrecisionVulkanFrames = GameHdrToneMapShader.prefersFp16Bridge(toneMap, session.vulkan)
         }).apply {
             // Input reaches the core through RetroPadInput only.
@@ -362,6 +423,40 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
             owner.registry.addObserver(view)
             owner.move(Lifecycle.State.CREATED)
         }
+    }
+
+    // Maintain the old GLES renderer unchanged. The extra 1×1 real Android
+    // surface exists only for Vulkan WSI probing and never displays game frames.
+    val vulkanSurfaceHost = remember(retroView, session.vulkan, nativeTransfer) {
+        if (session.vulkan) GameVulkanSurfaceHost(
+            context, retroView,
+            outputTransfer = nativeTransfer,
+            onFormats = { vulkanSurfaceFormats = it },
+            onNativeStatus = { nativeSdrStatus = it },
+            onFullscreenLost = { nativeSdrFullscreenRequested = false },
+            onDiagnosticLost = { nativeSdrDiagnostic = false },
+        ) else null
+    }
+    DisposableEffect(vulkanSurfaceHost) {
+        onDispose { vulkanSurfaceHost?.dispose() }
+    }
+    LaunchedEffect(displayHdr, vulkanSurfaceHost) {
+        vulkanSurfaceHost?.updateDisplayHdr(displayHdr)
+    }
+    LaunchedEffect(integerScaling, vulkanSurfaceHost) {
+        vulkanSurfaceHost?.updateIntegerScaling(integerScaling)
+    }
+    LaunchedEffect(coreReady, vulkanSurfaceHost) {
+        if (coreReady) vulkanSurfaceHost?.coreReady()
+    }
+    LaunchedEffect(nativeSourceContract, vulkanSurfaceHost) {
+        vulkanSurfaceHost?.updateSourceContract(nativeSourceContract.transfer)
+    }
+    LaunchedEffect(nativeSdrDiagnostic, coreReady, vulkanSurfaceHost) {
+        if (coreReady) vulkanSurfaceHost?.setNativeSdrDiagnostic(nativeSdrDiagnostic)
+    }
+    LaunchedEffect(nativeSdrStatus, vulkanSurfaceHost) {
+        vulkanSurfaceHost?.observeNativeStatus(nativeSdrStatus)
     }
 
     /** Cheats on (enabled ones) or all off: hardcore and netplay play without. */
@@ -427,7 +522,12 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
             retroView.pauseEmulation()
             menuOpen = true
             message = null
-            scope.launch { snapshot = if (loaded) retroView.preview() else null }
+            scope.launch {
+                snapshot = if (loaded) retroView.preview(
+                    toneMap,
+                    nativeTransfer != GameVulkanTransferMode.SDR && nativeSourceContract.supports(nativeTransfer),
+                ) else null
+            }
         }
     }
     /** Loads [entry]; the moment before is kept as "Before loading" so the step can be undone. */
@@ -456,6 +556,21 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
         retroView.suppressAutoResume = !running
         if (running) retroView.resumeEmulation() else retroView.pauseEmulation()
     }
+    LaunchedEffect(nativePictureSupported, nativeSdrFullscreenRequested, vulkanSurfaceHost) {
+        if (!nativePictureSupported && nativeSdrFullscreenRequested) {
+            nativeSdrFullscreenRequested = false
+            vulkanSurfaceHost?.setFullscreenRequested(false)
+        }
+    }
+    LaunchedEffect(nativeSdrFullscreenRequested, running, vulkanSurfaceHost) {
+        if (!nativeSdrFullscreenRequested) {
+            vulkanSurfaceHost?.setFullscreenRequested(false)
+        } else if (running) {
+            // Arming from the paused Info panel does not cover the game with a
+            // blank Surface; promotion waits until normal playback resumes.
+            vulkanSurfaceHost?.setFullscreenRequested(true)
+        }
+    }
     LaunchedEffect(fastForward) { retroView.frameSpeed = if (fastForward) 2 else 1 }
     LaunchedEffect(rewinding, running) {
         retroView.isRewinding = core.rewind && rewinding && running && !achievements.hardcore && !netplay.active
@@ -473,6 +588,10 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
                 }
                 Lifecycle.Event.ON_PAUSE -> {
                     activityResumed = false
+                    // Never retain a full-screen test surface through TV standby,
+                    // orientation changes or app backgrounding.
+                    nativeSdrFullscreenRequested = false
+                    vulkanSurfaceHost?.setFullscreenRequested(false)
                     // Pause and save at once, not after the next composition: the app may stop right after.
                     retroView.suppressAutoResume = true
                     retroView.pauseEmulation()
@@ -501,13 +620,29 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
     LaunchedEffect(retroView) {
         var renderedFrames = 0
         retroView.getGLRetroEvents().collect { event ->
-            if (event == GLRetroView.GLRetroEvents.FrameRendered && session.vulkan && renderedFrames++ % 120 == 0) {
+            val statusInterval = if (nativeSdrFullscreenRequested) 30 else 120
+            if (event == GLRetroView.GLRetroEvents.FrameRendered &&
+                session.vulkan && renderedFrames++ % statusInterval == 0) {
                 // One atomic native status read per ~2 seconds at 60 FPS. A driver may switch to
                 // RGBA8 on resize, so a startup-only snapshot would become inaccurate.
                 val status = GameVulkanFrameStatus(runCatching {
                     LibretroDroid.getVulkanFrameStatus()
                 }.getOrDefault(0))
                 if (vulkanFrameStatus != status) vulkanFrameStatus = status
+                val source = GameVulkanCoreSourceFormat(runCatching {
+                    LibretroDroid.getVulkanCoreSourceFormat()
+                }.getOrDefault(0))
+                if (vulkanCoreSourceFormat != source) vulkanCoreSourceFormat = source
+                val handshake = GameCoreHdrPixelHandshake(runCatching {
+                    LibretroDroid.getCoreHdrPixelFormatStatus()
+                }.getOrDefault(0))
+                if (coreHdrHandshake != handshake) coreHdrHandshake = handshake
+                if (nativeSdrDiagnostic) {
+                    val direct = GameVulkanSdrStatus(runCatching {
+                        LibretroDroid.getNativeSdrVulkanStatus()
+                    }.getOrDefault(0))
+                    if (nativeSdrStatus != direct) nativeSdrStatus = direct
+                }
             }
             if (event == GLRetroView.GLRetroEvents.SurfaceCreated) coreReady = true
             if (event == GLRetroView.GLRetroEvents.FrameRendered && !loaded) {
@@ -679,7 +814,7 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
         )
         Box(Modifier.fillMaxSize().background(Color.Black)) {
             AndroidView(
-                factory = { retroView },
+                factory = { vulkanSurfaceHost ?: retroView },
                 modifier = Modifier.fillMaxSize()
                     // Direct touch must reach GLRetroView for DS/3DS/Wii emulated pointers.
                     // Other games keep the existing tap-to-open-menu handheld behavior.
@@ -727,7 +862,17 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
                         MetaBadge(core.name)
                         if (game.direct) MetaBadge(stringResource(R.string.game_direct_source))
                         if (core.hardware) MetaBadge(vulkanFrameStatus.badge(session.vulkan))
-                        if (session.vulkan && vulkanFrameStatus.active && toneMap != GameHdrToneMap.OFF) {
+                        if (nativeSdrFullscreenRequested &&
+                            GameVulkanTransferGate.frameConfirmed(nativeTransfer, nativeSdrStatus)) {
+                            MetaBadge(when (nativeTransfer) {
+                                GameVulkanTransferMode.SDR -> "Vulkan SDR · Test"
+                                GameVulkanTransferMode.PQ_BT2020 -> "Vulkan PQ WSI · Test"
+                                GameVulkanTransferMode.HLG_BT2020 -> "Vulkan HLG WSI · Test"
+                            })
+                        }
+                        if (session.vulkan && vulkanFrameStatus.active && toneMap != GameHdrToneMap.OFF &&
+                            !(nativeSdrFullscreenRequested &&
+                                GameVulkanTransferGate.frameConfirmed(nativeTransfer, nativeSdrStatus))) {
                             MetaBadge("HDR → SDR")
                         } else {
                             MetaBadge(stringResource(shader.titleRes))
@@ -1100,6 +1245,81 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
                         else -> {
                             GamePanelText(stringResource(R.string.game_info_system, system.name))
                             GamePanelText(stringResource(R.string.game_info_core, core.name, core.license))
+                            if (core.hardware && core.supportsVulkan) {
+                                GamePanelText(stringResource(R.string.game_info_hdr_display_capabilities, displayHdr.supportedTypesLabel()))
+                                if (session.vulkan) {
+                                    GamePanelText(stringResource(R.string.game_info_vulkan_surface_pairs, vulkanSurfaceFormats.candidateTypesLabel()))
+                                    GamePanelText(stringResource(R.string.game_info_vulkan_core_source_format, vulkanCoreSourceFormat.label))
+                                    GamePanelText(stringResource(when {
+                                        coreHdrHandshake.hdr10Accepted -> R.string.game_info_hdr_core_accepts_pq
+                                        coreHdrHandshake.hdr10Requested -> R.string.game_info_hdr_core_rejects_pq
+                                        coreHdrHandshake.scrgbRequested -> R.string.game_info_hdr_core_rejects_scrgb
+                                        else -> R.string.game_info_hdr_core_not_negotiated
+                                    }))
+                                    if (nativeTransfer != GameVulkanTransferMode.SDR) {
+                                        GamePanelText(stringResource(if (nativeSourceContract.supports(nativeTransfer))
+                                            R.string.game_info_vulkan_hdr_core_declared
+                                        else R.string.game_info_vulkan_hdr_source_unverified))
+                                        GamePanelText(stringResource(R.string.game_info_vulkan_hdr_mastering_unknown))
+                                    } else {
+                                        GamePanelText(stringResource(R.string.game_info_vulkan_source_transfer_unknown))
+                                    }
+                                    val transferSupported = nativeSourceContract.supports(nativeTransfer) &&
+                                        GameVulkanTransferGate.supported(
+                                            nativeTransfer, displayHdr, vulkanSurfaceFormats,
+                                        )
+                                    if (transferSupported) {
+                                        val nativePhase = when (nativeSdrStatus.phase) {
+                                            GameVulkanSdrStatus.Phase.OFF -> R.string.game_info_native_sdr_off
+                                            GameVulkanSdrStatus.Phase.REQUESTED -> R.string.game_info_native_sdr_requested
+                                            GameVulkanSdrStatus.Phase.SWAPCHAIN -> R.string.game_info_native_sdr_swapchain
+                                            GameVulkanSdrStatus.Phase.PRESENTING -> R.string.game_info_native_sdr_presenting
+                                            GameVulkanSdrStatus.Phase.GLES_FALLBACK -> R.string.game_info_native_sdr_fallback
+                                        }
+                                        GamePanelText(stringResource(nativePhase))
+                                        RightPanelChoice(
+                                            text = stringResource(if (nativeTransfer == GameVulkanTransferMode.SDR)
+                                                R.string.game_info_native_sdr_test else R.string.game_info_native_hdr_test),
+                                            subtitle = stringResource(if (nativeTransfer == GameVulkanTransferMode.SDR)
+                                                R.string.game_info_native_sdr_test_hint else R.string.game_info_native_hdr_test_hint),
+                                            selected = nativeSdrDiagnostic,
+                                            enabled = !netplay.active && !exiting,
+                                            onClick = {
+                                                nativeSdrDiagnostic = !nativeSdrDiagnostic
+                                                if (!nativeSdrDiagnostic) nativeSdrFullscreenRequested = false
+                                            },
+                                        )
+                                        val fullscreenAvailable = nativePictureSupported &&
+                                            GameVulkanFullscreenPolicy.canEnable(
+                                                session.vulkan, toneMap, nativeSdrDiagnostic,
+                                                nativeSdrStatus, netplay.active, displayHdr, vulkanSurfaceFormats,
+                                            )
+                                        if (!nativePictureSupported) {
+                                            GamePanelText(stringResource(R.string.game_info_native_picture_requires_gles))
+                                        }
+                                        RightPanelChoice(
+                                            text = stringResource(if (nativeTransfer == GameVulkanTransferMode.SDR)
+                                                R.string.game_info_native_sdr_fullscreen else R.string.game_info_native_hdr_fullscreen),
+                                            subtitle = stringResource(if (nativeTransfer == GameVulkanTransferMode.SDR)
+                                                R.string.game_info_native_sdr_fullscreen_hint else R.string.game_info_native_hdr_fullscreen_hint),
+                                            selected = nativeSdrFullscreenRequested,
+                                            enabled = !exiting && (nativeSdrFullscreenRequested || fullscreenAvailable),
+                                            onClick = {
+                                                nativeSdrFullscreenRequested = !nativeSdrFullscreenRequested
+                                            },
+                                        )
+                                    } else if (nativeTransfer != GameVulkanTransferMode.SDR) {
+                                        GamePanelText(stringResource(R.string.game_info_native_hdr_unavailable))
+                                    }
+                                }
+                                if (nativeSdrFullscreenRequested &&
+                                    nativeTransfer != GameVulkanTransferMode.SDR &&
+                                    GameVulkanTransferGate.frameConfirmed(nativeTransfer, nativeSdrStatus)) {
+                                    GamePanelText(stringResource(R.string.game_info_hdr_wsi_unverified))
+                                } else {
+                                    GamePanelText(stringResource(R.string.game_info_hdr_output_inactive))
+                                }
+                            }
                             if (system.alternatives.isNotEmpty()) {
                                 GamePanelText(stringResource(R.string.game_info_core_choice))
                                 val own = settings.ownGameCore(system, game.saveKey)

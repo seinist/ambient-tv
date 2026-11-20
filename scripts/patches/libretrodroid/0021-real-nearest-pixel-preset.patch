@@ -1,0 +1,46 @@
+diff --git a/src/main/java/com/swordfish/libretrodroid/ShaderConfig.kt b/src/main/java/com/swordfish/libretrodroid/ShaderConfig.kt
+--- a/src/main/java/com/swordfish/libretrodroid/ShaderConfig.kt
++++ b/src/main/java/com/swordfish/libretrodroid/ShaderConfig.kt
+@@ -19,8 +19,10 @@
+ 
+ sealed interface ShaderConfig {
+ 
+     object Default : ShaderConfig
++    /** Guaranteed nearest-neighbor sampling for Pixel picture mode. */
++    object Pixel : ShaderConfig
+     object CRT : ShaderConfig
+     object LCD : ShaderConfig
+     object Sharp : ShaderConfig
+ 
+diff --git a/src/main/java/com/swordfish/libretrodroid/GLRetroView.kt b/src/main/java/com/swordfish/libretrodroid/GLRetroView.kt
+--- a/src/main/java/com/swordfish/libretrodroid/GLRetroView.kt
++++ b/src/main/java/com/swordfish/libretrodroid/GLRetroView.kt
+@@ -901,8 +901,10 @@
+ 
+     private fun buildShader(config: ShaderConfig): GLRetroShader {
+         return when (config) {
+             is ShaderConfig.Default -> GLRetroShader(LibretroDroid.SHADER_DEFAULT)
++            is ShaderConfig.Pixel -> GLRetroShader(
++                LibretroDroid.SHADER_DEFAULT, mapOf("AMBIENT_NEAREST" to "1"))
+             is ShaderConfig.CRT -> GLRetroShader(LibretroDroid.SHADER_CRT)
+             is ShaderConfig.LCD -> GLRetroShader(LibretroDroid.SHADER_LCD)
+             is ShaderConfig.Sharp -> GLRetroShader(LibretroDroid.SHADER_SHARP)
+             is ShaderConfig.CUT -> GLRetroShader(
+diff --git a/src/main/cpp/shadermanager.cpp b/src/main/cpp/shadermanager.cpp
+--- a/src/main/cpp/shadermanager.cpp
++++ b/src/main/cpp/shadermanager.cpp
+@@ -1556,9 +1556,13 @@
+         return original;
+     }
+     switch (config.type) {
+     case Type::SHADER_DEFAULT: {
+-        return { { { defaultShaderVertex, defaultShaderFragment, true, 1.0 } }, true };
++        // Native Vulkan raw blit uses nearest. Match that exactly when Ambient
++        // TV selects Pixel; leave all other Default presets unchanged.
++        const auto it = config.params.find("AMBIENT_NEAREST");
++        const bool nearest = it != config.params.end() && it->second == "1";
++        return { { { defaultShaderVertex, defaultShaderFragment, !nearest, 1.0 } }, !nearest };
+     }
+ 
+     case Type::SHADER_CRT: {
+         return { { { defaultShaderVertex, crtShaderFragment, true, 1.0 } } , true };

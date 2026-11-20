@@ -1,0 +1,165 @@
+diff --git a/src/main/cpp/vulkan/vulkanbackend.cpp b/src/main/cpp/vulkan/vulkanbackend.cpp
+--- a/src/main/cpp/vulkan/vulkanbackend.cpp
++++ b/src/main/cpp/vulkan/vulkanbackend.cpp
+@@ -378,6 +378,13 @@
+ }
+ 
+ void VulkanBackend::setNativeSdrSurface(ANativeWindow* ownedWindow) {
++    // A surface callback queued after Vulkan shutdown must release its JNI-owned
++    // reference, not leave a dangling window in the singleton.
++    if (!isStarted() && ownedWindow != nullptr) {
++        ANativeWindow_release(ownedWindow);
++        nativeSdrStatus.store(0u, std::memory_order_release);
++        return;
++    }
+     // A repeated SurfaceChanged can have the same native pointer but different
+     // dimensions: always retire the old swapchain. The JNI caller owns the new
+     // reference until this function consumes it.
+@@ -388,6 +395,14 @@
+     nativeSdrStatus.store(nativeSdrWindow != nullptr ? 1u : 0u, std::memory_order_release);
+ }
+ 
++void VulkanBackend::setNativeOutputTransfer(uint32_t transfer) {
++    const uint32_t requested = transfer <= 2u ? transfer : 0u;
++    if (requested == nativeOutputTransfer) return;
++    destroyNativeSdrSwapchain();
++    nativeOutputTransfer = requested;
++    nativeSdrDisabled = false;
++}
++
+ void VulkanBackend::disableNativeSdrSwapchain(const char* reason) {
+     LOGW("Native Vulkan SDR presentation disabled: %s", reason);
+     nativeSdrDisabled = true;
+@@ -436,14 +451,23 @@
+         return false;
+     }
+ 
+-    // Only SDR/sRGB nonlinear and a Vulkan-compatible UNORM image. HDR10 and HLG
+-    // must never be selected until color-managed core source contracts exist.
+-    VkSurfaceFormatKHR choice { VK_FORMAT_UNDEFINED, VK_COLOR_SPACE_SRGB_NONLINEAR_KHR };
++    // Pass through already encoded HDR samples without a second transfer or
++    // gamut conversion. PQ/HLG selections must come from an explicit session
++    // request, backed by the Android display and this *real* Vulkan surface.
++    // The source VkImage format is separately checked before any blit.
++    const VkColorSpaceKHR targetSpace = nativeOutputTransfer == 1u
++        ? VK_COLOR_SPACE_HDR10_ST2084_EXT : nativeOutputTransfer == 2u
++        ? VK_COLOR_SPACE_HDR10_HLG_EXT : VK_COLOR_SPACE_SRGB_NONLINEAR_KHR;
++    VkSurfaceFormatKHR choice { VK_FORMAT_UNDEFINED, targetSpace };
+     for (uint32_t i = 0; i < formatCount; ++i) {
+         const auto& candidate = formats[i];
+-        if (candidate.colorSpace != VK_COLOR_SPACE_SRGB_NONLINEAR_KHR ||
+-            (candidate.format != VK_FORMAT_R8G8B8A8_UNORM &&
+-             candidate.format != VK_FORMAT_B8G8R8A8_UNORM)) continue;
++        if (candidate.colorSpace != targetSpace) continue;
++        const bool formatSupported = nativeOutputTransfer == 0u
++            ? (candidate.format == VK_FORMAT_R8G8B8A8_UNORM ||
++               candidate.format == VK_FORMAT_B8G8R8A8_UNORM)
++            : (candidate.format == VK_FORMAT_A2B10G10R10_UNORM_PACK32 ||
++               candidate.format == VK_FORMAT_A2R10G10B10_UNORM_PACK32);
++        if (!formatSupported) continue;
+         VkFormatProperties properties {};
+         vk.getPhysicalDeviceFormatProperties(gpu, candidate.format, &properties);
+         if ((properties.optimalTilingFeatures & VK_FORMAT_FEATURE_BLIT_DST_BIT) == 0) continue;
+@@ -527,9 +551,9 @@
+     }
+     nativeSdrExtent = extent;
+     nativeSdrFormat = choice.format;
+-    nativeSdrStatus.store(3u, std::memory_order_release); // requested + built
+-    LOGI("Experimental Vulkan SDR swapchain ready: %ux%u, %u images",
+-         extent.width, extent.height, count);
++    nativeSdrStatus.store(3u, std::memory_order_release); // requested + built, not yet presented
++    LOGI("Experimental Vulkan swapchain ready: %ux%u, %u images, transfer %u",
++         extent.width, extent.height, count, nativeOutputTransfer);
+     return true;
+ }
+ 
+@@ -1083,12 +1107,15 @@
+     if (nativeSdrWindow != nullptr && !nativeSdrDisabled && ensureNativeSdrSwapchain()) {
+         // Source format comes from retro_vulkan_image::create_info.format.
+         // Unknown, sRGB-encoded and HDR/FP16 sources cannot be blindly blitted.
+-        const bool supported = pendingImage.format == VK_FORMAT_R8G8B8A8_UNORM ||
+-                               pendingImage.format == VK_FORMAT_B8G8R8A8_UNORM;
++        const bool supported = nativeOutputTransfer == 0u
++            ? (pendingImage.format == VK_FORMAT_R8G8B8A8_UNORM ||
++               pendingImage.format == VK_FORMAT_B8G8R8A8_UNORM)
++            : (pendingImage.format == VK_FORMAT_A2B10G10R10_UNORM_PACK32 ||
++               pendingImage.format == VK_FORMAT_A2R10G10B10_UNORM_PACK32);
+         VkFormatProperties sourceProps {};
+         if (supported) vk.getPhysicalDeviceFormatProperties(gpu, pendingImage.format, &sourceProps);
+         if (!supported || (sourceProps.optimalTilingFeatures & VK_FORMAT_FEATURE_BLIT_SRC_BIT) == 0) {
+-            disableNativeSdrSwapchain("non-SDR or non-blittable core source");
++            disableNativeSdrSwapchain("core VkImage format is not compatible with the requested transfer");
+         } else {
+             const VkResult acquired = vk.acquireNextImage(
+                 device, nativeSdrSwapchain, 0, nativeSdrAcquire, VK_NULL_HANDLE, &sdrIndex);
+@@ -1276,7 +1303,9 @@
+             presentResult = vk.queuePresent(queue, &present);
+         }
+         if (presentResult == VK_SUCCESS || presentResult == VK_SUBOPTIMAL_KHR) {
+-            nativeSdrStatus.store(7u, std::memory_order_release);
++            nativeSdrStatus.store(7u |
++                (nativeOutputTransfer == 1u ? 16u : nativeOutputTransfer == 2u ? 32u : 0u),
++                std::memory_order_release);
+         } else {
+             disableNativeSdrSwapchain("frame presentation failed; GLES retained");
+         }
+@@ -1341,6 +1370,7 @@
+     if (nativeSdrWindow != nullptr) ANativeWindow_release(nativeSdrWindow);
+     nativeSdrWindow = nullptr;
+     nativeSdrDisabled = false;
++    nativeOutputTransfer = 0u;
+     nativeSdrStatus.store(0u, std::memory_order_release);
+     if (device != VK_NULL_HANDLE) {
+         if (vk.deviceWaitIdle != nullptr) vk.deviceWaitIdle(device);
+diff --git a/src/main/cpp/vulkan/vulkanbackend.h b/src/main/cpp/vulkan/vulkanbackend.h
+--- a/src/main/cpp/vulkan/vulkanbackend.h
++++ b/src/main/cpp/vulkan/vulkanbackend.h
+@@ -94,6 +94,9 @@
+     // Adopt one JNI ANativeWindow reference, or nullptr to detach. Only the GL
+     // thread may call this; never share a WSI swapchain across core contexts.
+     void setNativeSdrSurface(ANativeWindow* ownedWindow);
++    // 0=SDR, 1=explicitly PQ/BT.2020, 2=explicitly HLG/BT.2020.
++    // No implicit SDR->HDR enhancement or guessing based only on image bit depth.
++    void setNativeOutputTransfer(uint32_t transfer);
+     uint32_t getNativeSdrStatus() const { return nativeSdrStatus.load(std::memory_order_acquire); }
+ 
+     bool ensureFrameBuffer(unsigned width, unsigned height);
+@@ -256,7 +259,9 @@
+     VkSemaphore nativeSdrAcquire = VK_NULL_HANDLE;
+     std::vector<VkSemaphore> nativeSdrComplete;
+     bool nativeSdrDisabled = false;
+-    // bit 0 window requested, bit 1 SDR swapchain ready, bit 2 frames presented,
++    uint32_t nativeOutputTransfer = 0; // SDR by default, per-session only
++    // bit 0 window requested, bit 1 swapchain ready, bit 2 frames presented,
++    // bit 4 actual PQ/BT.2020, bit 5 actual HLG/BT.2020,
+     // bit 3 fallback due to unsupported device/surface/runtime failure.
+     std::atomic<uint32_t> nativeSdrStatus { 0 };
+ 
+diff --git a/src/main/cpp/libretrodroidjni.cpp b/src/main/cpp/libretrodroidjni.cpp
+--- a/src/main/cpp/libretrodroidjni.cpp
++++ b/src/main/cpp/libretrodroidjni.cpp
+@@ -827,6 +827,12 @@
+     VulkanBackend::getInstance().setNativeSdrSurface(window);
+ }
+ 
++JNIEXPORT void JNICALL Java_com_swordfish_libretrodroid_LibretroDroid_setNativeVulkanOutputTransfer(
++    JNIEnv* env, jclass obj, jint transfer
++) {
++    VulkanBackend::getInstance().setNativeOutputTransfer(static_cast<uint32_t>(transfer));
++}
++
+ JNIEXPORT jint JNICALL Java_com_swordfish_libretrodroid_LibretroDroid_getNativeSdrVulkanStatus(
+     JNIEnv* env, jclass obj
+ ) {
+diff --git a/src/main/java/com/swordfish/libretrodroid/LibretroDroid.java b/src/main/java/com/swordfish/libretrodroid/LibretroDroid.java
+--- a/src/main/java/com/swordfish/libretrodroid/LibretroDroid.java
++++ b/src/main/java/com/swordfish/libretrodroid/LibretroDroid.java
+@@ -141,6 +141,8 @@
+     public static native int probeVulkanSurfaceFormats(android.view.Surface surface);
+     /** Experimental SDR Vulkan WSI backend: GL thread only. Null detaches. Default off. */
+     public static native void setNativeSdrVulkanSurface(android.view.Surface surface);
++    /** Explicit native transfer: 0 SDR, 1 PQ/BT.2020, 2 HLG/BT.2020; GL thread only. */
++    public static native void setNativeVulkanOutputTransfer(int transfer);
+     /** Native status: bit 0 surface requested, 1 swapchain built, 2 presented, 3 fallback. */
+     public static native int getNativeSdrVulkanStatus();
+     public static native void setFrameSpeed(int speed);

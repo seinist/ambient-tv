@@ -1,0 +1,121 @@
+diff --git a/src/main/cpp/environment.cpp b/src/main/cpp/environment.cpp
+--- a/src/main/cpp/environment.cpp
++++ b/src/main/cpp/environment.cpp
+@@ -44,6 +44,10 @@
+     savesDirectory = requiredSavesDirectory;
+ }
+ 
++void Environment::setConfiguredHdrOutput(unsigned mode) {
++    configuredHdrOutput = mode == 1u ? 1u : 0u;
++}
++
+ void Environment::setHdrDisplayInfo(float peak, float average, float minimum, unsigned eotfs) {
+     // Caller uses the same GL/emulation thread as core environment callbacks.
+     // Reject nonsensical Android values; unknown capability stays zero.
+@@ -72,6 +76,7 @@
+     hdrDisplayAverageNits = 0.0f;
+     hdrDisplayMinNits = 0.0f;
+     hdrDisplayEotfs = 0u;
++    configuredHdrOutput = 0u;
+ 
+     pixelFormat = RETRO_PIXEL_FORMAT_RGB565;
+     useHWAcceleration = false;
+@@ -504,8 +509,13 @@
+             // Report native PQ only after the *real* swapchain actually
+             // presented 10-bit PQ frames, never based on a requested setting.
+             const uint32_t status = libretrodroid::VulkanBackend::getInstance().getNativeSdrStatus();
+-            if ((status & 23u) == 23u && (status & 8u) == 0u) {
+-                state.output_mode = 1u; // PQ / BT.2020
++            // The libretro v1 spec permits returning the configured output
++            // contract before video initialization; only later do the status
++            // bits prove an actual vkQueuePresentKHR. A core that can emit PQ
++            // may start its own HDR pipeline and GLES remains its safe fallback.
++            if (configuredHdrOutput == 1u ||
++                ((status & 23u) == 23u && (status & 8u) == 0u)) {
++                state.output_mode = 1u; // configured or actually presenting PQ / BT.2020
+                 state.color_primaries = 9u; // ITU-T H.273 BT.2020
+                 state.transfer_function = 16u; // ITU-T H.273 SMPTE ST.2084
+                 state.paper_white_nits = 203.0f; // frontend SDR reference white, not mastering max
+@@ -533,7 +543,8 @@
+             state.caps.supported_eotf_mask = hdrDisplayEotfs;
+             state.caps.capability_source = hdrDisplayEotfs != 0u ? 3u : 0u; // Android platform API
+             const uint32_t status = libretrodroid::VulkanBackend::getInstance().getNativeSdrStatus();
+-            if ((status & 23u) == 23u && (status & 8u) == 0u) {
++            if (configuredHdrOutput == 1u ||
++                ((status & 23u) == 23u && (status & 8u) == 0u)) {
+                 state.hdr.output_mode = 1u;
+                 state.hdr.color_primaries = 9u;
+                 state.hdr.transfer_function = 16u;
+diff --git a/src/main/cpp/environment.h b/src/main/cpp/environment.h
+--- a/src/main/cpp/environment.h
++++ b/src/main/cpp/environment.h
+@@ -75,6 +75,8 @@
+ 
+     /** Platform display capability only, not source mastering metadata. */
+     void setHdrDisplayInfo(float peakNits, float averageNits, float minNits, unsigned eotfMask);
++    /** Configured PQ output capability for early libretro negotiation, not proof of an HDR signal. */
++    void setConfiguredHdrOutput(unsigned mode);
+ 
+ private:
+     Environment() {}
+@@ -182,6 +184,7 @@
+     float hdrDisplayAverageNits = 0.0f;
+     float hdrDisplayMinNits = 0.0f;
+     unsigned hdrDisplayEotfs = 0; // 1 SDR, 2 PQ, 4 HLG; zero=unknown
++    unsigned configuredHdrOutput = 0; // 0 SDR/unknown, 1 configured PQ; reset at game exit
+ 
+     int pixelFormat = RETRO_PIXEL_FORMAT_RGB565;
+     bool useHWAcceleration = false;
+diff --git a/src/main/cpp/libretrodroidjni.cpp b/src/main/cpp/libretrodroidjni.cpp
+--- a/src/main/cpp/libretrodroidjni.cpp
++++ b/src/main/cpp/libretrodroidjni.cpp
+@@ -833,6 +833,12 @@
+     VulkanBackend::getInstance().setNativeOutputTransfer(static_cast<uint32_t>(transfer));
+ }
+ 
++JNIEXPORT void JNICALL Java_com_swordfish_libretrodroid_LibretroDroid_setConfiguredHdrOutput(
++    JNIEnv* env, jclass obj, jint mode
++) {
++    Environment::getInstance().setConfiguredHdrOutput(static_cast<unsigned>(mode));
++}
++
+ JNIEXPORT void JNICALL Java_com_swordfish_libretrodroid_LibretroDroid_setHdrDisplayInfo(
+     JNIEnv* env, jclass obj, jfloat peak, jfloat average, jfloat minimum, jint eotfMask
+ ) {
+diff --git a/src/main/java/com/swordfish/libretrodroid/LibretroDroid.java b/src/main/java/com/swordfish/libretrodroid/LibretroDroid.java
+--- a/src/main/java/com/swordfish/libretrodroid/LibretroDroid.java
++++ b/src/main/java/com/swordfish/libretrodroid/LibretroDroid.java
+@@ -145,6 +145,8 @@
+     public static native void setNativeVulkanOutputTransfer(int transfer);
+     /** Android panel capabilities (not authored content metadata); GL thread only. */
+     public static native void setHdrDisplayInfo(float peak, float average, float minimum, int eotfMask);
++    /** Configure PQ frontend output before retro_init (not an active HDR signal). */
++    public static native void setConfiguredHdrOutput(int mode);
+     /** Native status: bit 0 surface requested, 1 swapchain built, 2 presented, 3 fallback. */
+     public static native int getNativeSdrVulkanStatus();
+     public static native void setFrameSpeed(int speed);
+diff --git a/src/main/java/com/swordfish/libretrodroid/GLRetroViewData.kt b/src/main/java/com/swordfish/libretrodroid/GLRetroViewData.kt
+--- a/src/main/java/com/swordfish/libretrodroid/GLRetroViewData.kt
++++ b/src/main/java/com/swordfish/libretrodroid/GLRetroViewData.kt
+@@ -41,6 +41,8 @@
+     var enableMicrophone: Boolean = false
+     var immersiveMode: ImmersiveMode? = null
+     var preferVulkan: Boolean = false
++    /** Libretro v1 configured PQ output, never implies an active Android HDR signal. */
++    var configuredHdrOutputMode: Int = 0
+     /** Optional higher-precision Vulkan->GLES AHardwareBuffer transport, not HDR passthrough. */
+     var preferHighPrecisionVulkanFrames: Boolean = false
+     var vulkanDriver: VulkanDriver? = null
+diff --git a/src/main/java/com/swordfish/libretrodroid/GLRetroView.kt b/src/main/java/com/swordfish/libretrodroid/GLRetroView.kt
+--- a/src/main/java/com/swordfish/libretrodroid/GLRetroView.kt
++++ b/src/main/java/com/swordfish/libretrodroid/GLRetroView.kt
+@@ -324,6 +324,9 @@
+ 
+     override fun onCreate(owner: LifecycleOwner) = catchExceptions {
+         lifecycle = owner.lifecycle
++        // Must precede retro_init: HDR-aware hardware Vulkan cores query the
++        // frontend's configured presentation contract during their startup.
++        LibretroDroid.setConfiguredHdrOutput(data.configuredHdrOutputMode)
+         LibretroDroid.setVulkanConfig(
+             data.preferVulkan,
+             data.vulkanDriver?.directory,

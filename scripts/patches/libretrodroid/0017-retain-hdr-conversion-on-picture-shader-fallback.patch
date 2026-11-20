@@ -1,0 +1,23 @@
+diff --git a/src/main/cpp/video.cpp b/src/main/cpp/video.cpp
+--- a/src/main/cpp/video.cpp
++++ b/src/main/cpp/video.cpp
+@@ -179,9 +179,18 @@
+ 
+     std::vector<ShaderChainEntry> newChain;
+     if (!tryBuildShaderChain(shaders, newChain)) {
+         LOGE("Requested shader failed to compile, falling back to default shader");
+-        auto defaultShaders = ShaderManager::getShader(ShaderManager::Config { ShaderManager::Type::SHADER_DEFAULT });
++        // Never show PQ/HLG input as unconverted SDR if a native CRT/LCD/CUT3
++        // preset fails to compile. Keep the verified colour conversion prefix
++        // while falling back only from the optional picture preset to Default.
++        ShaderManager::Config safeDefault { ShaderManager::Type::SHADER_DEFAULT };
++        const auto hdrPrefix = requestedShaderConfig.params.find("AMBIENT_PREPEND");
++        if (hdrPrefix != requestedShaderConfig.params.end()) {
++            safeDefault.params["AMBIENT_PREPEND"] = hdrPrefix->second;
++            safeDefault.customPasses = requestedShaderConfig.customPasses;
++        }
++        auto defaultShaders = ShaderManager::getShader(safeDefault);
+         if (filterMode == 0) {
+             defaultShaders.linearTexture = false;
+         } else if (filterMode == 1) {
+             defaultShaders.linearTexture = true;

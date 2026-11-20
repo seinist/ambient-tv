@@ -19,11 +19,18 @@ internal object GameHdrToneMapShader {
 
     fun forGame(filter: GameShader, input: GameHdrToneMap, vulkan: Boolean): ShaderConfig {
         if (!vulkan || input == GameHdrToneMap.OFF) return filter.config()
-        return ShaderConfig.Custom(listOf(ShaderConfig.Custom.ShaderPass(
-            vertex = VERTEX,
-            fragment = fragment(input),
-            linear = false,
-        )))
+        // Convert PQ/HLG to SDR in a prefix, then execute the exact original
+        // native CRT/LCD/CUT3/Sharp/Pixel picture shader chain unchanged.
+        return ShaderConfig.PrependPass(
+            filter = filter.config(),
+            pass = ShaderConfig.Custom.ShaderPass(
+                vertex = VERTEX,
+                fragment = fragment(input),
+                // Pixel must not linearly resample the intermediate after
+                // decoding PQ/HLG; other presets retain their own sampling.
+                linear = filter != GameShader.PIXEL,
+            ),
+        )
     }
 
     private const val VERTEX = """
@@ -97,6 +104,8 @@ internal object GameHdrToneMapShader {
                     -0.5876,  1.1329, -0.1006,
                     -0.0728, -0.0083,  1.1187
                 );
+                // Original native picture filter(s) process these SDR values in
+                // their own passes, never in encoded PQ/HLG source space.
                 gl_FragColor = vec4(sRgbEncode(max(to709 * mapped2020, 0.0)), source.a);
             }
         """.trimIndent()
