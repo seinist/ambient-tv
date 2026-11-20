@@ -1010,6 +1010,34 @@ internal fun LibraryContent(
                 }
             }
         }
+        // Keep the physical list bounded even after many laps. Rebase only after a D-pad
+        // glide settles; the matching rows in later laps have identical measured geometry.
+        // Scroll and hand focus to the same logical tile without drawing a backwards journey.
+        LaunchedEffect(rowListState, columnFocus, cyclicRows) {
+            snapshotFlow {
+                Triple(focusedRowKey.value, rowListState.isScrollInProgress, pendingVisualRow.value)
+            }.collect { (focused, scrolling, pending) ->
+                val source = focused ?: return@collect
+                if (scrolling || pending != null || source.lap < HOME_CYCLIC_REBASE_LAP + 2) return@collect
+                delay(64L)
+                if (focusedRowKey.value != source || rowListState.isScrollInProgress ||
+                    pendingVisualRow.value != null) return@collect
+                val first = rowListState.firstVisibleItemIndex
+                val targetFirst = cyclicHomeRebaseViewportIndex(first, state.rowKeys.size, source.lap)
+                    ?: return@collect
+                val targetRow = CyclicRowFocusKey(source.logical, HOME_CYCLIC_REBASE_LAP)
+                val physicalTarget = cyclicIndices[targetRow] ?: return@collect
+                rowCenteringGate.markCentered(targetRow)
+                rowListState.scrollToItem(targetFirst, rowListState.firstVisibleItemScrollOffset)
+                activeRowIndex.intValue = physicalTarget
+                // Focus target is created lazily after the snap. The original physical tile
+                // may have left composition, so keep the request bounded to a few frames.
+                repeat(12) {
+                    withFrameNanos { }
+                    if (columnFocus.focusEntry(targetRow)) return@collect
+                }
+            }
+        }
         CompositionLocalProvider(
             LocalBringIntoViewSpec provides ExplicitRowScrollSpec,
             com.ambient.tv.ui.common.LocalHeroRowTiles provides true,
