@@ -142,7 +142,7 @@ internal fun handlePlayerOsdKey(
             }
             return true
         }
-        if (keyDown && !state.panelOpen && !state.osdVisible && !state.closing &&
+        if (keyDown && !state.panelOpen && (!state.osdVisible || progressive.active) && !state.closing &&
             state.content != OsdContent.LIVE &&
             (directDirection < 0 || state.canSeekForward) && steps.durationMs > 0L) {
             val wasPressed = progressive.isPressedIn(directDirection)
