@@ -284,6 +284,8 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
     val osd = chrome.osd
     var menuOpen by remember { mutableStateOf(false) }
     var panel by remember { mutableStateOf<GamePanel?>(null) }
+    // Recheck on every info-panel open; capability is not the active output mode.
+    val displayHdr = remember(context, panel) { GameHdrDisplayProbe.capture(context) }
     var optionCategory by remember { mutableStateOf<String?>(null) }
     var optionKey by remember { mutableStateOf<String?>(null) }
     /** Core option changes go to this game only (true) or to every game of the core. */
@@ -1100,6 +1102,10 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
                         else -> {
                             GamePanelText(stringResource(R.string.game_info_system, system.name))
                             GamePanelText(stringResource(R.string.game_info_core, core.name, core.license))
+                            if (core.hardware && core.supportsVulkan) {
+                                GamePanelText(stringResource(R.string.game_info_hdr_display_capabilities, displayHdr.supportedTypesLabel()))
+                                GamePanelText(stringResource(R.string.game_info_hdr_output_inactive))
+                            }
                             if (system.alternatives.isNotEmpty()) {
                                 GamePanelText(stringResource(R.string.game_info_core_choice))
                                 val own = settings.ownGameCore(system, game.saveKey)
