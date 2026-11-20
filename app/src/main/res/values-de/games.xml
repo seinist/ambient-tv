@@ -257,5 +257,5 @@
     <string name="game_touch_controls_hint">Virtuelle Tasten auf dem Handy, physische Controller bleiben aktiv</string>
     <string name="game_touch_layout">Touch-Layout</string>
     <string name="game_running">Läuft</string>
-    <string name="game_picture_native_limit">Das experimentelle native Vulkan-Vollbild unterstützt nicht alle Bildfilter oder erzwungene Seitenverhältnisse. Verwende dafür GLES.</string>
+    <string name="game_picture_native_limit">Das experimentelle native Vulkan-Vollbild unterstützt nicht alle Bildshader. Verwende dafür GLES.</string>
 </resources>
