@@ -206,4 +206,39 @@ class RetroPadInputTest {
         assertTrue(MotionEvent.AXIS_RZ in generic.rightTrigger)
         assertEquals(GamepadAxisLayout.STANDARD, GamepadAxisLayout.forRanges(hasZ = false, zMin = null, rzMin = null, hasRx = false))
     }
+
+    @Test fun touchAndHardwareButtonsCanBeHeldTogether() {
+        press(1, KeyEvent.KEYCODE_BUTTON_A) // Xbox A is RetroPad B.
+        input.touchButton(RetroPadButton.A, true)
+        assertEquals(RetroPadButton.A.mask or RetroPadButton.B.mask, input.buttons(0))
+        input.touchButton(RetroPadButton.A, false)
+        assertEquals(RetroPadButton.B.mask, input.buttons(0))
+        release(1, KeyEvent.KEYCODE_BUTTON_A)
+        assertEquals(0, input.buttons(0))
+    }
+
+    @Test fun virtualSticksSharePortWithPhysicalControllers() {
+        input.touchStick(0, 0.75f, -0.6f)
+        assertTrue(input.analog(0, 0, 0) > 20_000)
+        assertTrue(input.analog(0, 0, 1) < -15_000)
+        // The physical stick can be independently held; the larger deflection wins.
+        motion(1, mapOf(MotionEvent.AXIS_X to -0.9f))
+        assertTrue(input.analog(0, 0, 0) < -25_000)
+        input.touchStick(0, 0f, 0f)
+        assertTrue(input.analog(0, 0, 0) < -25_000)
+        input.releaseAll()
+        assertEquals(0, input.analog(0, 0, 0))
+        assertEquals(0, input.analog(0, 0, 1))
+    }
+
+    @Test fun pauseAndMenuReleaseVirtualButtonsToo() {
+        input.touchButton(RetroPadButton.START, true)
+        input.touchStick(1, 1f, 0f)
+        input.releaseAll()
+        assertEquals(0, input.buttons(0))
+        assertEquals(0, input.analog(0, 1, 0))
+        input.touchButton(RetroPadButton.A, true)
+        press(4, KeyEvent.KEYCODE_MENU)
+        assertEquals(0, input.buttons(0))
+    }
 }
