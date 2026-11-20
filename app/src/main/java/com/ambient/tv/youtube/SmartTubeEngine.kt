@@ -7,6 +7,8 @@ import android.os.Build
 import com.ambient.tv.data.local.AppPreferences
 import com.ambient.tv.data.local.LanguagePreferences
 import com.ambient.tv.data.local.SmartTubeAccountBackup
+import com.ambient.tv.notifications.NoticePhase
+import com.ambient.tv.notifications.notifyLogin
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -37,6 +39,19 @@ class SmartTubeEngine @Inject constructor(
     private val appPreferences: AppPreferences,
 ) {
     @Volatile private var signInDisposable: Any? = null
+    /** One diagnostic notice per incident, shared by Home and SmartTube views. */
+    private val accountAttentionReported = java.util.concurrent.atomic.AtomicBoolean(false)
+
+    fun reportAccountAttention() {
+        if (accountAttentionReported.compareAndSet(false, true)) {
+            notifyLogin("youtube", NoticePhase.ERROR,
+                message = com.ambient.tv.R.string.youtube_auth_attention_notice)
+        }
+    }
+
+    fun clearAccountAttention() {
+        accountAttentionReported.set(false)
+    }
     @Volatile private var initialized = false
     private val initLock = Any()
     private val playbackMetadata = YouTubePlaybackMetadataCache()
@@ -161,6 +176,7 @@ class SmartTubeEngine @Inject constructor(
     }
 
     suspend fun signOut() = io {
+        clearAccountAttention()
         playbackMetadata.clear()
         rowContinuations.clear()
         subscriptionOverrides.value = emptyMap()
@@ -1033,6 +1049,9 @@ class SmartTubeEngine @Inject constructor(
         if (!attempted) {
             Timber.w("SmartTube has none of the requested content methods: %s", methodNames.joinToString())
         }
+        // One older upstream variant may finish empty while the next one rejects an expired
+        // credential. Never transform that explicit authentication rejection into "no videos".
+        lastFailure?.takeIf(::smartTubeAuthRejected)?.let { throw it }
         if (!completedEmpty) throw IncompleteYouTubeFeedException(lastFailure)
         emptyList()
     }
