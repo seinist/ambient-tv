@@ -871,10 +871,10 @@ internal fun RegisterBrowseFocusList(state: LazyListState, keys: List<Any>, rowK
 
 /** Outer row indices also resolve items whose inner LazyRow is not composed yet. */
 @Composable
-internal fun RegisterBrowseFocusRows(state: LazyListState, rows: List<Pair<Any, List<Any>>>) {
+internal fun RegisterBrowseFocusRows(state: LazyListState, rows: List<Pair<Any, List<Any>>>, firstIndex: Int = 0) {
     if (LocalBrowseFocusReturnState.current == null) return
-    RegisterBrowseFocusCollection(state, remember(rows) { rows.flatMapIndexed { index, (row, items) ->
-        items.map { BrowseFocusSlot(BrowseFocusKey(row, it, true), index) }
+    RegisterBrowseFocusCollection(state, remember(rows, firstIndex) { rows.flatMapIndexed { index, (row, items) ->
+        items.map { BrowseFocusSlot(BrowseFocusKey(row, it, true), index + firstIndex) }
     } }, visible = { index -> state.layoutInfo.visibleItemsInfo.any { it.index == index } }) { state.scrollToItem(it) }
 }
 
