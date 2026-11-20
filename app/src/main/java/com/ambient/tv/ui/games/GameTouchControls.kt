@@ -7,6 +7,7 @@ import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.waitForUpOrCancellation
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -188,12 +189,12 @@ private fun GameTouchDpad(
 }
 
 @Composable
-private fun GameDpadArrow(symbol: String, alignment: Alignment, pressed: Boolean) {
+private fun BoxScope.GameDpadArrow(symbol: String, alignment: Alignment, pressed: Boolean) {
     Text(
         text = symbol,
         fontSize = 27.sp,
         color = if (pressed) Color.White else Color.White.copy(alpha = 0.68f),
-        modifier = Modifier.padding(14.dp).then(Modifier),
+        modifier = Modifier.align(alignment).padding(14.dp),
     )
 }
 
