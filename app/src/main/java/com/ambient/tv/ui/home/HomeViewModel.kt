@@ -36,6 +36,9 @@ import com.ambient.tv.youtube.YouTubeRow
 import com.ambient.tv.youtube.HomeYouTubeLoadMode
 import com.ambient.tv.youtube.HomeYouTubePins
 import com.ambient.tv.youtube.IncompleteYouTubeFeedException
+import com.ambient.tv.youtube.smartTubeAuthRejected
+import com.ambient.tv.youtube.smartTubeEmptyFeedNeedsAttention
+import com.ambient.tv.youtube.smartTubeFeedNeedsAccount
 import com.ambient.tv.ui.youtube.YouTubeBrowsePlaybackContext
 import com.ambient.tv.server.ServerConnectionManager
 import com.ambient.tv.server.ServerConnectionState
@@ -1703,6 +1706,13 @@ class HomeViewModel @Inject constructor(
                 val supported = supportedResult.getOrElse { definitions.mapTo(hashSetOf()) { it.contentKey } }
                 if (generation != youtubeRowsGeneration) return@launch
                 val available = definitions.filter { it.contentKey in supported }
+                // A configured personalized feed disappearing after the auth probe must not
+                // silently look like an empty Home. Don't report unsupported public tabs.
+                if (supportedResult.isSuccess &&
+                    definitions.any { smartTubeFeedNeedsAccount(it.contentKey) } &&
+                    available.none { smartTubeFeedNeedsAccount(it.contentKey) } &&
+                    !suspendResult { smartTubeEngine.isSignedIn() }.getOrDefault(true)
+                ) smartTubeEngine.reportAccountAttention()
                 val supportedKeys = available.mapTo(hashSetOf()) { it.contentKey }
                 youtubeRows = youtubeRows.filter { it.id.removePrefix("youtube.") in supportedKeys }
                 youtubeSourceRows.keys.retainAll(supportedKeys)
@@ -1714,7 +1724,7 @@ class HomeViewModel @Inject constructor(
                         permits.withPermit {
                             val cacheKey = "feed:${definition.contentKey}"
                             var partialRows = emptyList<YouTubeRow>()
-                            val result = suspendResult {
+                            var result = suspendResult {
                                 loadCoordinator.request("youtube", "home-feed:${definition.contentKey}:$revision", BrowseLoadPriority.HOME) {
                                 smartTubeEngine.feed(definition.contentKey) { partial ->
                                     partialRows = partial
@@ -1730,10 +1740,32 @@ class HomeViewModel @Inject constructor(
                                 }
                                 }
                             }
+                            // An empty first Home response can be an upstream warmup artifact.
+                            // One bounded second attempt avoids diagnosing that as a bad login.
+                            if (generation == youtubeRowsGeneration &&
+                                definition.contentKey == "home" && result.getOrNull()?.isEmpty() == true) {
+                                kotlinx.coroutines.delay(600L)
+                                result = suspendResult {
+                                    loadCoordinator.request("youtube", "home-feed:home:$revision:retry", BrowseLoadPriority.HOME) {
+                                        smartTubeEngine.feed("home")
+                                    }
+                                }
+                            }
                             val failure = result.exceptionOrNull()
                             if (generation == youtubeRowsGeneration && result.isSuccess) {
-                                onlineServices.succeeded("youtube")
                                 val rows = result.getOrThrow()
+                                val hadCachedRows = youtubeContentCache.get(cacheKey).orEmpty()
+                                    .any { it.items.isNotEmpty() }
+                                if (rows.isEmpty() && smartTubeEmptyFeedNeedsAttention(
+                                        definition.contentKey, signedIn = true, hadRows = hadCachedRows)) {
+                                    // Keep cached tiles instead of treating a suspicious empty
+                                    // personalized feed as a genuine deletion of all its entries.
+                                    smartTubeEngine.reportAccountAttention()
+                                    return@withPermit
+                                }
+                                onlineServices.succeeded("youtube")
+                                if (smartTubeFeedNeedsAccount(definition.contentKey) &&
+                                    rows.any { it.items.isNotEmpty() }) smartTubeEngine.clearAccountAttention()
                                 // The common SmartTube cache reconciles by ID, preserving
                                 // the positions of focused tiles while fresh results arrive.
                                 val visible = if (youtubeContentCache.revision() == revision)
@@ -1758,8 +1790,10 @@ class HomeViewModel @Inject constructor(
                                     homeYouTubeSourceRow(stored, HOME_ROW_LIMIT)?.let { updateHomeYouTubeRow(generation, definition, it) }
                                 }
                             }
-                            if (generation == youtubeRowsGeneration && failure != null)
-                                onlineServices.failed("youtube", failure)
+                            if (generation == youtubeRowsGeneration && failure != null) {
+                                if (smartTubeAuthRejected(failure)) smartTubeEngine.reportAccountAttention()
+                                else onlineServices.failed("youtube", failure)
+                            }
                         }
                     } }.awaitAll()
                 }
