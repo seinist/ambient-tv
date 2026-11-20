@@ -98,8 +98,8 @@ class ChunkedStreamRelay(
     @Synchronized
     fun register(
         url: String, headers: Map<String, String>,
-        refresh: ((String) -> String?)? = null,
         onTerminalHttpStatus: (Int) -> Unit = {},
+        refresh: ((String) -> String?)? = null,
     ): String {
         val server = listener?.takeUnless { it.isClosed } ?: start()
         val key = Key(url, headers)
