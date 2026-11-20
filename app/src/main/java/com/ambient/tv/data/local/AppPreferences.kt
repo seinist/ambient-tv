@@ -626,6 +626,15 @@ class AppPreferences @Inject constructor(
         get() = prefs.getBoolean(KEY_AUTO_WAKE, true)
         set(value) = prefs.edit { putBoolean(KEY_AUTO_WAKE, value) }
 
+    /**
+     * Media services to wake only when their offline view is opened, never on Home startup.
+     * Independent of automatic WOL. Files and DLNA retain their own on-browse auto-wake.
+     */
+    var wakeOnOpenSystems: Set<String>
+        get() = prefs.getStringSet("wake_on_open_systems", emptySet()).orEmpty()
+            .filterTo(mutableSetOf()) { it in WAKE_ON_OPEN_SYSTEMS }
+        set(value) = prefs.edit { putStringSet("wake_on_open_systems", value.intersect(WAKE_ON_OPEN_SYSTEMS)) }
+
     /** Extra Wake-on-LAN cycles (new burst + full wait) after the first, for every system and file/DLNA source. */
     var wolRetryCount: Int
         get() = com.ambient.tv.wol.normalizedWolRetryCount(prefs.getInt(KEY_WOL_RETRY_COUNT, com.ambient.tv.wol.WOL_RETRY_COUNT_DEFAULT))
@@ -2374,6 +2383,7 @@ class AppPreferences @Inject constructor(
     }
 
     companion object {
+        val WAKE_ON_OPEN_SYSTEMS = setOf("plex", "jellyfin", "emby", "tvheadend")
         const val DEFAULT_PORT = 32400
         const val KEY_PLEX_ENABLED = "plex_enabled"
         const val KEY_JELLYFIN_ENABLED = "jellyfin_enabled"

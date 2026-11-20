@@ -126,6 +126,18 @@ class SettingsViewModel @Inject constructor(
     private val youTubeTvLink: com.ambient.tv.youtube.YouTubeTvLink,
 ) : ViewModel() {
     val feedback = OperationFeedbackReporter()
+
+    /** Saved immediately, independently of the page's deferred connection/MAC edits. */
+    private val _wakeOnOpenSystems = MutableStateFlow(appPreferences.wakeOnOpenSystems)
+    val wakeOnOpenSystems = _wakeOnOpenSystems.asStateFlow()
+
+    fun setWakeOnOpenSystem(system: String, enabled: Boolean) {
+        if (system !in AppPreferences.WAKE_ON_OPEN_SYSTEMS) return
+        val next = if (enabled) _wakeOnOpenSystems.value + system else _wakeOnOpenSystems.value - system
+        appPreferences.wakeOnOpenSystems = next
+        _wakeOnOpenSystems.value = next
+    }
+
     /** Fresh persisted snapshot; the settings form can contain changes awaiting Save. */
     internal fun savedPlaybackOverview() = savedPlaybackOverview(appPreferences)
     internal fun feedbackScope(page: SettingsCategory?) = page?.let { "settings:${it.name}" } ?: "settings"
