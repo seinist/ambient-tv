@@ -285,8 +285,32 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
     val osd = chrome.osd
     var menuOpen by remember { mutableStateOf(false) }
     var panel by remember { mutableStateOf<GamePanel?>(null) }
-    // Recheck on every info-panel open; capability is not the active output mode.
-    val displayHdr = remember(context, panel) { GameHdrDisplayProbe.capture(context) }
+    // A display or refresh-mode change can remove HDR while a Vulkan game is
+    // running. Never infer active HDR from these platform capabilities.
+    var displayHdr by remember(context) {
+        mutableStateOf(GameHdrDisplayProbe.capture(context))
+    }
+    DisposableEffect(context) {
+        val manager = context.getSystemService(android.hardware.display.DisplayManager::class.java)
+        val listener = object : android.hardware.display.DisplayManager.DisplayListener {
+            override fun onDisplayAdded(displayId: Int) {
+                displayHdr = GameHdrDisplayProbe.capture(context)
+            }
+            override fun onDisplayRemoved(displayId: Int) {
+                displayHdr = GameHdrDisplayProbe.capture(context)
+            }
+            override fun onDisplayChanged(displayId: Int) {
+                displayHdr = GameHdrDisplayProbe.capture(context)
+            }
+        }
+        manager?.registerDisplayListener(listener, Handler(Looper.getMainLooper()))
+        onDispose { manager?.unregisterDisplayListener(listener) }
+    }
+    // Also re-query when opening Info; some vendors do not deliver callbacks
+    // for every HDMI EOTF switch.
+    LaunchedEffect(panel) {
+        if (panel == GamePanel.INFO) displayHdr = GameHdrDisplayProbe.capture(context)
+    }
     var optionCategory by remember { mutableStateOf<String?>(null) }
     var optionKey by remember { mutableStateOf<String?>(null) }
     /** Core option changes go to this game only (true) or to every game of the core. */
