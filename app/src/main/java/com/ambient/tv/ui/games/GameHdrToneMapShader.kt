@@ -26,7 +26,9 @@ internal object GameHdrToneMapShader {
             pass = ShaderConfig.Custom.ShaderPass(
                 vertex = VERTEX,
                 fragment = fragment(input),
-                linear = true,
+                // Pixel must not linearly resample the intermediate after
+                // decoding PQ/HLG; other presets retain their own sampling.
+                linear = filter != GameShader.PIXEL,
             ),
         )
     }
