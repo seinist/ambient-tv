@@ -1129,6 +1129,13 @@ internal fun radioSectionTransitionIsInstant(fromRoute: String?, toRoute: String
 
 internal val SIDEBAR_ROUTES = setOf(Destinations.TRAILERS, Destinations.TRAILER_FEED, Destinations.FILES, Destinations.FILE_SOURCE, Destinations.FILE_FAVORITES, Destinations.FILE_RECENT, Destinations.FILE_CONTINUE, Destinations.DLNA, Destinations.DLNA_SERVER, Destinations.HOME, Destinations.WEATHER, Destinations.PLEX, Destinations.JELLYFIN, Destinations.EMBY, Destinations.SEARCH, Destinations.YOUTUBE, Destinations.YOUTUBE_FEED, Destinations.TELEGRAM, Destinations.TELEGRAM_SECTION, Destinations.SPOTIFY, Destinations.SPOTIFY_SECTION, Destinations.RADIO, Destinations.RADIO_SECTION, Destinations.LIVE_TV, Destinations.LIVE_TV_SECTION, Destinations.SETTINGS, Destinations.SECTION)
 internal val FULLSCREEN_ROUTES = setOf(Destinations.ITEM_TRAILERS, Destinations.TMDB_TRAILERS, Destinations.PHOTO_VIEWER, Destinations.SETUP_COMPLETE, Destinations.INITIAL_SETUP, Destinations.SETUP_SETTINGS, Destinations.WEATHER_PLAYER, Destinations.PLAYER, Destinations.TVH_PLAYER, Destinations.YOUTUBE_PLAYER, Destinations.TELEGRAM_PLAYER, Destinations.TELEGRAM_DETAIL, Destinations.YOUTUBE_DETAIL, Destinations.YOUTUBE_CHANNEL, Destinations.SPOTIFY_PLAYER, Destinations.RADIO_PLAYER, Destinations.RADIO_DETAIL, Destinations.SPOTIFY_DETAIL, Destinations.SERVER_SELECT, Destinations.DETAIL, Destinations.DETAIL_FILTERED_BROWSE)
+// Details are ordinary page navigation (even though they hide the sidebar).
+// Exclude only player/video, setup and system-only destinations from page motion.
+internal val NO_VIEW_TRANSITION_ROUTES = FULLSCREEN_ROUTES - setOf(
+    Destinations.DETAIL, Destinations.DETAIL_FILTERED_BROWSE,
+    Destinations.TELEGRAM_DETAIL, Destinations.YOUTUBE_DETAIL, Destinations.YOUTUBE_CHANNEL,
+    Destinations.RADIO_DETAIL, Destinations.SPOTIFY_DETAIL,
+)
 // Saved on the Settings back stack entry by a sidebar shortcut: the page to open, plus a serial
 // that changes with every request.
 private const val SETTINGS_PAGE_KEY = "settings_page"
@@ -2496,7 +2503,7 @@ private fun AmbientTvApp(
                     route = currentRoute,
                     entryId = currentBackStackEntry?.id,
                     backStackDepth = navController.currentBackStack.value.size,
-                    fullscreen = currentRoute in FULLSCREEN_ROUTES,
+                    fullscreen = currentRoute in NO_VIEW_TRANSITION_ROUTES,
                     reducedEffects = com.ambient.tv.ui.performance.LocalPerformanceProfile.current.reducedEffects,
                     backgroundVideoVisible = showVisibleBackgroundVideo,
                     lowEndDevice = com.ambient.tv.ui.performance.LocalPerformanceProfile.current.lowEndDevice,
