@@ -65,6 +65,24 @@ class CompanionSettingsCompletenessTest {
         assertEquals(before.watchedThresholdPercent, accountsOnly.watchedThresholdPercent)
     }
 
+    @Test fun wakeOnOpenTransfersOnlyWhenExplicitlyProvidedByANewCompanionSender() {
+        val target = preferences().apply { wakeOnOpenSystems = setOf("plex") }
+        receive("""{"schemaVersion":81,"exportedAtEpochMs":0}""", target)
+        assertEquals(setOf("plex"), target.wakeOnOpenSystems)
+        receive("""{"schemaVersion":82,"exportedAtEpochMs":0}""", target)
+        assertEquals(setOf("plex"), target.wakeOnOpenSystems)
+
+        for (mode in listOf("preferences", "settings")) {
+            send(source().copy(wakeOnOpenSystems = setOf("emby")), target, mode)
+            assertEquals(setOf("emby"), target.wakeOnOpenSystems)
+        }
+        send(source().copy(wakeOnOpenSystems = emptySet()), target)
+        assertTrue(target.wakeOnOpenSystems.isEmpty())
+
+        send(source().copy(wakeOnOpenSystems = setOf("tvheadend")), target, "accounts")
+        assertTrue(target.wakeOnOpenSystems.isEmpty())
+    }
+
     @Test fun olderCompanionDefaultsAndNullPortableFieldsPreserveTheReceiver() {
         val row = HomeRowDefinition("saved", "youtube", "subscriptions")
         val target = preferences().apply {
