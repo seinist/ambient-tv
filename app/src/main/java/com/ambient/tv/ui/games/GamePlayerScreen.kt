@@ -289,11 +289,9 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
     val nativeTransfer = GameVulkanTransferMode.forInput(toneMap)
     val aspect = settings.aspect(system)
     val integerScaling = settings.integerScaling(system)
-    // A raw WSI blit cannot faithfully reproduce the GLES picture filters or
-    // user-selected geometry; do not obscure that output with an unfiltered layer.
-    val nativePictureSupported = GameVulkanPictureCompatibility.rawFullscreenEligible(
-        shader, aspect, integerScaling,
-    )
+    // Native RAW blit matches only the PIXEL preset; aspect and integer
+    // scaling are passed to Vulkan, while real shader presets stay in GLES.
+    val nativePictureSupported = GameVulkanPictureCompatibility.rawFullscreenEligible(shader)
     val saveStates by model.saveStates.collectAsState()
 
     val chrome = remember { PlayerChromeState() }
@@ -444,6 +442,9 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
     }
     LaunchedEffect(displayHdr, vulkanSurfaceHost) {
         vulkanSurfaceHost?.updateDisplayHdr(displayHdr)
+    }
+    LaunchedEffect(integerScaling, vulkanSurfaceHost) {
+        vulkanSurfaceHost?.updateIntegerScaling(integerScaling)
     }
     LaunchedEffect(coreReady, vulkanSurfaceHost) {
         if (coreReady) vulkanSurfaceHost?.coreReady()
