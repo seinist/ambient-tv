@@ -856,6 +856,16 @@ fun TvChip(
     onClick: () -> Unit,
 ) {
     val clickable = enabled && !loading
+    // Selected can still point to the old category during an asynchronous refresh.
+    // Retain the exact chip the user confirmed rather than restoring the first chip.
+    val chipHold = if (com.ambient.tv.ui.mobile.LocalHandheldUi.current) null else LocalPageChipFocusHold.current
+    val chipFocusRequester = if (chipHold != null) remember { FocusRequester() } else null
+    val chipModifier = if (chipHold != null && chipFocusRequester != null) {
+        modifier.focusRequester(chipFocusRequester).onFocusChanged {
+            if (it.isFocused) chipHold.focused(chipFocusRequester)
+            else chipHold.blurred(chipFocusRequester)
+        }
+    } else modifier
     val uiSounds = LocalUiSoundPlayer.current
     val activate = rememberUiSoundAction(enabled = clickable, onClick = onClick)
     // A page header's Refresh/View/Search answers its key binding on every page alike.
@@ -874,7 +884,7 @@ fun TvChip(
         val pressed by interactions.collectIsPressedAsState()
         val shape = RoundedCornerShape(LocalUiTokens.current.controlRadius)
         if (iconOnly && (icon != null || leadingContent != null)) {
-            val buttonModifier = modifier
+            val buttonModifier = chipModifier
                 .sizeIn(minWidth = 48.dp, minHeight = 48.dp)
                 .appControlSurface(focused, selected, enabled, shape, pressed = pressed,
                     selectionIndicator = if (iconOnly) SelectionIndicator.DOT else SelectionIndicator.NONE)
@@ -907,7 +917,7 @@ fun TvChip(
         ProvideControlContent(foreground) {
             androidx.compose.material3.FilterChip(
                 selected = selected, onClick = activate, enabled = enabled,
-                modifier = modifier.sizeIn(minHeight = 48.dp)
+                modifier = chipModifier.sizeIn(minHeight = 48.dp)
                     .appControlSurface(focused, selected, enabled, shape, pressed = pressed,
                     selectionIndicator = if (iconOnly) SelectionIndicator.DOT else SelectionIndicator.NONE),
                 shape = shape,
@@ -955,7 +965,7 @@ fun TvChip(
         // Surface clips its content, so it must use the exact same shape as the visible frame.
         shape = ClickableSurfaceDefaults.shape(shape = chipShape),
         interactionSource = interactions,
-        modifier = modifier
+        modifier = chipModifier
             // 52dp total TV target, 48dp visible chrome: the previous 44dp pill
             // looked shrunken beside the header clock and regular action buttons.
             .sizeIn(minHeight = 52.dp * uiScale)
