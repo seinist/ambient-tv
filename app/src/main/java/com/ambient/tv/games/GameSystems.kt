@@ -1,5 +1,7 @@
 package com.ambient.tv.games
 
+import java.io.File
+import java.io.RandomAccessFile
 import java.util.Locale
 
 /**
@@ -14,6 +16,17 @@ data class GameCore(
     val freeLicense: Boolean = true,
     /** Renders through the GPU itself (OpenGL ES or Vulkan) instead of handing over finished frames. */
     val hardware: Boolean = false,
+    /** Hardware rendering does not imply that the libretro core implements a Vulkan context. */
+    val supportsVulkan: Boolean = hardware,
+    /** Android has no usable OpenGL fallback for this core. */
+    val requiresVulkan: Boolean = false,
+    /** Some emulators (notably Cemu) do not serialize their entire machine state. */
+    val saveStates: Boolean = true,
+    val netplay: Boolean = true,
+    val cheats: Boolean = true,
+    val achievements: Boolean = true,
+    /** Empty means all Android ABIs are candidates; other values restrict downloads. */
+    val supportedAbis: Set<String> = emptySet(),
     /** Core options that make the core render with Vulkan, and with OpenGL ES (GPU cores). */
     val vulkanOptions: Map<String, String> = emptyMap(),
     val glOptions: Map<String, String> = emptyMap(),
@@ -143,10 +156,110 @@ object GameSystems {
                 ),
             ),
             shortName = "PlayStation"),
+
+        // Buildbot cores: deliberately outside cores/cores.json until pinned source builds
+        // have passed every supported ABI + 16 KB page-size validation.
+        GameSystem("nds", "Nintendo DS / DSi", setOf("nds", "dsi", "ids"),
+            GameCore("melondsds", "melonDS DS", "GPL-3.0"),
+            bios = listOf(
+                GameBios("bios7.bin", "df692a80a5b1bc90728bc3dfc76cd948", "Nintendo DS ARM7"),
+                GameBios("bios9.bin", "a392174eb3e572fed6447e956bde4b25", "Nintendo DS ARM9"),
+            ),
+            alternatives = listOf(GameCore("noods", "NooDS", "GPL-3.0", needsBios = true)),
+            shortName = "Nintendo DS"),
+        GameSystem("n3ds", "Nintendo 3DS", setOf("3ds", "3dsx", "cci", "cxi"),
+            GameCore("citra2018", "Citra 2018", "GPL-2.0", hardware = true, supportsVulkan = false,
+                supportedAbis = setOf("arm64-v8a", "x86_64")),
+            alternatives = listOf(GameCore("panda3ds", "Panda3DS", "GPL-3.0",
+                hardware = true, supportsVulkan = false, netplay = false, achievements = false,
+                supportedAbis = setOf("arm64-v8a", "x86_64"))),
+            shortName = "3DS"),
+        GameSystem("gamecube", "Nintendo GameCube", setOf("gcm", "dol", "tgc"),
+            GameCore("dolphin", "Dolphin", "GPL-2.0", hardware = true, netplay = false,
+                supportedAbis = setOf("arm64-v8a", "x86_64")),
+            shortName = "GameCube"),
+        GameSystem("wii", "Nintendo Wii", setOf("wbfs", "ciso", "wad"),
+            GameCore("dolphin", "Dolphin", "GPL-2.0", hardware = true, netplay = false,
+                supportedAbis = setOf("arm64-v8a", "x86_64")),
+            shortName = "Wii"),
+        GameSystem("wiiu", "Nintendo Wii U", setOf("wua", "wud", "wux", "rpx"),
+            GameCore("cemu", "Cemu (experimental)", "MPL-2.0", hardware = true,
+                requiresVulkan = true, saveStates = false, netplay = false, cheats = false,
+                achievements = false, supportedAbis = setOf("arm64-v8a", "x86_64"),
+                vulkanOptions = mapOf("cemu_gpu_api" to "Vulkan")),
+            shortName = "Wii U"),
+        GameSystem("psp", "PlayStation Portable", setOf("cso", "zso"),
+            GameCore("ppsspp", "PPSSPP", "GPL-2.0", hardware = true, netplay = false),
+            shortName = "PSP"),
+        GameSystem("dreamcast", "Sega Dreamcast", setOf("gdi", "cdi"),
+            GameCore("flycast", "Flycast", "GPL-2.0", hardware = true, netplay = false),
+            shortName = "Dreamcast"),
+        // Disc images shared by multiple systems (.iso/.cue/.chd/.m3u) are selected
+        // using their verified disc header or the parent folder, never a global guess.
+        GameSystem("saturn", "Sega Saturn", emptySet(),
+            GameCore("mednafen_saturn", "Beetle Saturn", "GPL-2.0", netplay = false),
+            shortName = "Saturn"),
+        GameSystem("ps2", "PlayStation 2", emptySet(),
+            GameCore("armsx2", "ARMSX2 (experimental)", "GPL-3.0", hardware = true, netplay = false,
+                supportedAbis = setOf("arm64-v8a")),
+            shortName = "PS2"),
+        GameSystem("a7800", "Atari 7800", setOf("a78"),
+            GameCore("prosystem", "ProSystem", "GPL-2.0"),
+            shortName = "Atari 7800"),
+        GameSystem("a5200", "Atari 5200", setOf("a52"),
+            GameCore("a5200", "a5200", "GPL-2.0"),
+            shortName = "Atari 5200"),
+        GameSystem("sega32x", "Sega 32X", setOf("32x"),
+            GameCore("picodrive", "PicoDrive", "MAME (non-commercial)", freeLicense = false),
+            shortName = "32X"),
     )
 
     /** Archives may hold a game (also a disc with its tracks); the system is decided by the files inside. */
     val archiveExtensions = GameArchives.extensions
+
+    /** Extensions that belong to several consoles, or need the disc header to identify them. */
+    val ambiguousExtensions = setOf("iso", "rvz", "chd", "cue", "m3u", "pbp")
+
+    /**
+     * Determine the actual system after the ROM was copied from local storage or NAS.
+     * GameCube/Wii ISO headers are authoritative; folders only disambiguate shared
+     * extensions when no signature is available. No guessing from "game.iso".
+     */
+    fun forPreparedFile(file: File, originalPath: String = file.name): GameSystem? {
+        val ext = extension(file.name)
+        if (ext == "iso") {
+            val headerSystem = runCatching {
+                RandomAccessFile(file, "r").use { disk ->
+                    if (disk.length() < 0x20) null else {
+                        disk.seek(0x18)
+                        val wiiMagic = disk.readInt()
+                        val gameCubeMagic = disk.readInt()
+                        when {
+                            wiiMagic == 0x5D1C9EA3 -> byId("wii")
+                            gameCubeMagic == 0xC2339F3DL.toInt() -> byId("gamecube")
+                            else -> null
+                        }
+                    }
+                }
+            }.getOrNull()
+            if (headerSystem != null) return headerSystem
+        }
+        if (ext in ambiguousExtensions) {
+            val folders = originalPath.replace('\\', '/').lowercase(Locale.ROOT)
+                .substringBeforeLast('/', "").split('/').filter(String::isNotBlank)
+            val folderIds = mapOf(
+                "gamecube" to "gamecube", "game cube" to "gamecube",
+                "wii" to "wii", "wiiu" to "wiiu", "wii u" to "wiiu",
+                "psp" to "psp", "playstation portable" to "psp",
+                "ps2" to "ps2", "playstation 2" to "ps2",
+                "saturn" to "saturn", "sega saturn" to "saturn",
+                "dreamcast" to "dreamcast", "sega dreamcast" to "dreamcast",
+                "psx" to "psx", "ps1" to "psx", "playstation" to "psx",
+            )
+            folders.asReversed().firstNotNullOfOrNull { folderIds[it] }?.let { return byId(it) }
+        }
+        return forFile(file.name)
+    }
 
     private val byExtension: Map<String, GameSystem> =
         all.flatMap { system -> system.extensions.map { it to system } }.toMap()
@@ -156,7 +269,7 @@ object GameSystems {
     fun forFile(name: String): GameSystem? = byExtension[extension(name)]
 
     /** Files the browser offers as games (archives included). */
-    fun isGame(name: String): Boolean = !isBios(name) && !isCore(name) && extension(name).let { it in byExtension || it in archiveExtensions }
+    fun isGame(name: String): Boolean = !isBios(name) && !isCore(name) && extension(name).let { it in byExtension || it in ambiguousExtensions || it in archiveExtensions }
 
     fun byId(id: String): GameSystem? = all.firstOrNull { it.id == id }
 
