@@ -252,7 +252,7 @@ internal object CompanionBackupPolicy {
                 .filter { it != "accentStyleKey" || presentFields == null || it in presentFields }
                 .filter { source.schemaVersion >= 72 || it != "introAnimationKey" }
                 .filter { it !in sinceSchema80 || (presentFields?.contains(it) ?: (source.schemaVersion >= 80)) }
-                .filter { source.schemaVersion >= 82 || it != "wakeOnOpenSystems" }
+                .filter { it != "wakeOnOpenSystems" || (presentFields?.contains(it) ?: (source.schemaVersion >= 82)) }
                 // A settings-only transfer has no account identities to map local profile keys.
                 .filter { mode != "preferences" || it !in profileKeys }
                 // A sender from before the clock page has no clock: the receiver keeps its own.
