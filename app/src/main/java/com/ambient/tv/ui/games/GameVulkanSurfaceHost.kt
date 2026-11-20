@@ -36,6 +36,7 @@ internal class GameVulkanSurfaceHost(
     @Volatile private var generation = 0L
     @Volatile private var disposed = false
     @Volatile private var nativeSdrDiagnostic = false
+    @Volatile private var nativeIntegerScaling = false
     // Never treat a manual PQ/HLG selection as core source evidence.
     @Volatile private var confirmedCoreTransfer: GameVulkanTransferMode? = null
 
@@ -107,6 +108,17 @@ internal class GameVulkanSurfaceHost(
     }
 
     /** Invalid/changed source evidence tears down an active experimental HDR surface. */
+    /** Follow the ordinary picture setting without recreating the Vulkan window. */
+    fun updateIntegerScaling(enabled: Boolean) {
+        if (disposed || nativeIntegerScaling == enabled) return
+        nativeIntegerScaling = enabled
+        if (canProbe) runCatching {
+            retro.queueEvent {
+                if (!disposed) LibretroDroid.setNativeVulkanIntegerScaling(nativeIntegerScaling)
+            }
+        }
+    }
+
     fun updateSourceContract(transfer: GameVulkanTransferMode?) {
         if (disposed || confirmedCoreTransfer == transfer) return
         confirmedCoreTransfer = transfer
@@ -232,6 +244,7 @@ internal class GameVulkanSurfaceHost(
                         LibretroDroid.setNativeVulkanCoreSourceTransfer(
                             confirmedCoreTransfer?.nativeCode ?: 0,
                         )
+                        LibretroDroid.setNativeVulkanIntegerScaling(nativeIntegerScaling)
                         LibretroDroid.setNativeVulkanOutputTransfer(outputTransfer.nativeCode)
                         LibretroDroid.setNativeSdrVulkanSurface(surface)
                     }
