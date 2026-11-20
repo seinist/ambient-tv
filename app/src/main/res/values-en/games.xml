@@ -51,6 +51,8 @@
     <string name="game_info_native_sdr_swapchain">Vulkan SDR diagnostic: swapchain created; no frame confirmed</string>
     <string name="game_info_native_sdr_presenting">Vulkan SDR diagnostic: Vulkan frames presented to test Surface</string>
     <string name="game_info_native_sdr_fallback">Vulkan SDR diagnostic: unsupported/failed; GLES retained</string>
+    <string name="game_info_vulkan_core_source_format">Core Vulkan source format: %1$s</string>
+    <string name="game_info_vulkan_source_transfer_unknown">Color transfer (PQ/HLG/SDR) cannot be verified from VkFormat alone.</string>
     <string name="game_info_vulkan_surface_pairs">Vulkan display-surface formats: %1$s (read-only probe)</string>
     <string name="game_info_hdr_output_inactive">Native Vulkan HDR output is not active. Games are currently presented through the SDR GLES compositor.</string>
     <string name="game_info_core_source">Cores come from the libretro build server and are stored on this device.</string>
