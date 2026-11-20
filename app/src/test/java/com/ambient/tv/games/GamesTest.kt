@@ -58,6 +58,61 @@ class GamesTest {
         assertNull(GameCoreOption.parse("x", null, null))
     }
 
+    @Test fun extendedSystemsAndPlatformSpecificCores() {
+        assertEquals("nds", GameSystems.forFile("Pokemon.nds")?.id)
+        assertEquals("n3ds", GameSystems.forFile("Luigi.3ds")?.id)
+        assertEquals("psp", GameSystems.forFile("LocoRoco.cso")?.id)
+        assertEquals("wii", GameSystems.forFile("Mario.wbfs")?.id)
+        assertEquals("wiiu", GameSystems.forFile("Zelda.wua")?.id)
+        assertEquals("dreamcast", GameSystems.forFile("Sonic.gdi")?.id)
+        assertEquals("saturn", GameSystems.forFile("Saturn.ccd")?.id)
+        assertEquals("c64", GameSystems.forFile("Game.d64")?.id)
+        assertEquals("a7800", GameSystems.forFile("Game.a78")?.id)
+        assertTrue(GameSystems.isGame("game.iso"))
+        assertTrue(GameSystems.isGame("game.rv z".replace(" ", "")))
+        assertEquals("c128", GameSystems.forPreparedFile(folder.newFile("test.d64"), "/NAS/C128/test.d64")?.id)
+        assertEquals("vic20", GameSystems.forPreparedFile(folder.newFile("test.prg"), "/NAS/VIC-20/test.prg")?.id)
+        assertEquals("saturn", GameSystems.forPreparedFile(folder.newFile("test.chd"), "/NAS/Saturn/test.chd")?.id)
+        assertEquals("psp", GameSystems.forPreparedFile(folder.newFile("test.iso"), "/NAS/PSP/test.iso")?.id)
+        assertNull(GameSystems.forPreparedFile(folder.newFile("unknown.iso"), "/NAS/unknown.iso"))
+        assertTrue(GameSystems.cores.map { it.id }.containsAll(
+            listOf("ppsspp", "vice_x64sc", "vice_x128", "vice_xvic", "yabasanshiro", "dolphin", "cemu", "melondsds")))
+    }
+
+    @Test fun originalDiscSignaturesWinOverFolderNames() {
+        fun iso(name: String, wii: Boolean): File {
+            val buf = ByteBuffer.allocate(0x40).order(ByteOrder.BIG_ENDIAN)
+            buf.putInt(if (wii) 0x18 else 0x1c, if (wii) 0x5D1C9EA3 else 0xC2339F3DL.toInt())
+            return folder.newFile(name).also { it.writeBytes(buf.array()) }
+        }
+        assertEquals("wii", GameSystems.forPreparedFile(iso("wii.iso", true), "/NAS/PSP/wii.iso")?.id)
+        assertEquals("gamecube", GameSystems.forPreparedFile(iso("gc.iso", false), "/NAS/Wii/gc.iso")?.id)
+        assertTrue(GameArchives.choose(listOf("game.iso", "notes.txt")) { it } == "game.iso")
+    }
+
+    @Test fun coreGraphicsAndFeatureFlagsAreHonored() {
+        val psp = GameSystems.byId("psp")!!.core
+        val cemu = GameSystems.byId("wiiu")!!.core
+        val yaba = GameSystems.byId("saturn")!!.core("yabasanshiro")!!
+        var state = GameSettingsState()
+        assertTrue(psp.supportsVulkan)
+        assertFalse(state.vulkan(psp))
+        state = state.withVulkan(psp, true)
+        assertTrue(state.vulkan(psp))
+        assertTrue(state.vulkan(cemu))
+        assertTrue(state.withVulkan(cemu, false).vulkan(cemu))
+        assertFalse(cemu.saveStates)
+        assertFalse(cemu.netplay)
+        assertTrue(yaba.hardware)
+        assertFalse(yaba.supportsVulkan)
+        assertFalse(state.withVulkan(yaba, true).vulkan(yaba))
+    }
+
+    @Test fun dreamcastGdiTrackFilesAreDetected() {
+        assertEquals(listOf("track01.bin", "track 02.raw"), GameRomPreparer.gdiFiles(
+            "2\n1 0 4 2352 track01.bin 0\n2 4500 0 2352 \"track 02.raw\" 0\n"))
+    }
+
     @Test fun coreFilesAreRecognisedByName() {
         assertEquals("snes9x", GameSystems.coreForFile("snes9x_libretro_android.so")?.id)
         assertEquals("snes9x", GameSystems.coreForFile("snes9x_libretro_android.so.zip")?.id)
