@@ -5,6 +5,7 @@ import androidx.activity.ComponentActivity
 import androidx.compose.ui.test.assertIsFocused
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onAllNodesWithTag
+import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performKeyInput
@@ -78,10 +79,12 @@ class DiagnosticLogViewerNavigationTest {
     @Test fun severityAndSourceFiltersKeepListUsable() {
         showViewer()
         rule.onNodeWithTag("diagnostics-entry:${warning.key}").assertExists()
-        rule.onNodeWithTag("diagnostics-entry:${information.key}").assertExists()
+        // LazyColumn intentionally detaches offscreen events. The count verifies the full log.
+        rule.onNodeWithText("3 of 3", substring = true).assertExists()
 
         rule.onNodeWithTag("diagnostics-severity-ERRORS").performClick()
         rule.waitForIdle()
+        rule.onNodeWithText("1 of 3", substring = true).assertExists()
         rule.onNodeWithTag("diagnostics-entry:${recent.key}").assertExists()
         rule.onNodeWithTag("diagnostics-entry:${warning.key}").assertDoesNotExist()
         rule.onNodeWithTag("diagnostics-entry:${information.key}").assertDoesNotExist()
@@ -89,6 +92,7 @@ class DiagnosticLogViewerNavigationTest {
         rule.onNodeWithTag("diagnostics-severity-ALL").performClick()
         rule.onNodeWithTag("diagnostics-source-mpv").performClick()
         rule.waitForIdle()
+        rule.onNodeWithText("1 of 3", substring = true).assertExists()
         rule.onNodeWithTag("diagnostics-entry:${warning.key}").assertExists()
         rule.onNodeWithTag("diagnostics-entry:${recent.key}").assertDoesNotExist()
     }
@@ -118,7 +122,10 @@ class DiagnosticLogViewerNavigationTest {
         showViewer()
         val entry = "diagnostics-entry:${recent.key}"
         rule.onNodeWithTag(entry).performClick()
-        rule.waitForIdle()
+        // Nested Android Dialog windows attach on a later UI frame in Robolectric.
+        rule.waitUntil(5_000) {
+            rule.onAllNodesWithTag("diagnostics-copy").fetchSemanticsNodes().isNotEmpty()
+        }
         rule.onNodeWithTag("diagnostics-copy").assertExists()
         rule.onNodeWithTag("diagnostics-detail-back").performClick()
         // The shared dialog uses a native 160 ms exit animation.
