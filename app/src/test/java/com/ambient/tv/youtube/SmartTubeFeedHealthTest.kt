@@ -17,6 +17,7 @@ class SmartTubeFeedHealthTest {
         assertFalse(smartTubeAuthRejected(IOException("HTTP 403: region restricted")))
         assertFalse(smartTubeAuthRejected(IOException("HTTP 429")))
         assertFalse(smartTubeAuthRejected(IOException("Connection timeout")))
+        assertFalse(smartTubeAuthRejected(SmartTubeSignInRequiredException()))
         assertFalse(smartTubeAuthRejected(IllegalStateException("No rows returned")))
     }
 
