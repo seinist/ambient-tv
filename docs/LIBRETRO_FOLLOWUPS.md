@@ -30,11 +30,14 @@ and **unimplemented features**. A core appearing in the catalog does **not** est
 3. **Frame advance and Run-Ahead:** Single-frame stepping needs an explicit paused-core call;
    Run-Ahead needs measured core state serialization and extra emulation steps and must be
    off on expensive GPU cores and netplay/hardcore.
-4. **Advanced graphics:** The fork's existing multi-pass GLSL compositor can run over
+4. **Advanced graphics:** See [the native Vulkan/HDR contract](LIBRETRO_VULKAN_HDR.md) for
+   the exact source-format negotiation, display swapchain and librashader release gates.
+   The fork's existing multi-pass GLSL compositor can run over
    Vulkan core frames. Opt-in PQ/HLG-to-SDR conversion uses an **FP16 AHardwareBuffer** for
    Vulkan→GLES transport when the driver supports FP16 blit, allocation and GLES texture
    import. The native patch `0004-fp16-vulkan-bridge.patch` detects unsupported formats and
-   falls back to RGBA8 automatically on allocation, Vulkan image or GLES import failures. SDR
+   falls back to RGBA8 automatically on allocation, Vulkan image or GLES import failures.
+   Patch `0005-vulkan-frame-status.patch` reports the actual bridge mode to the player. SDR
    is unchanged and does not allocate FP16. Changing HDR input restarts the game so the
    buffer precision is configured before the core renders.
    
