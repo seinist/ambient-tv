@@ -1147,8 +1147,8 @@ internal fun LibraryContent(
                                 bringContextIntoView = false,
                                 columnFocus = columnFocus,
                                 rowKey = physicalKey,
-                                restoreChannelKey = initialFocusKey.takeIf { physicalKey.lap == 1 && rowKey == initialFocusRowId && returnToken != null },
-                                followFirstItem = followFirstItem && physicalKey.lap == 1,
+                                restoreChannelKey = initialFocusKey.takeIf { physicalKey.lap == 0 && rowKey == initialFocusRowId && returnToken != null },
+                                followFirstItem = followFirstItem && physicalKey.lap == 0,
                                 onOpenChannels = if (recent) {
                                     { onOpenHomeContent(homeTvShortcut(rowKey, "live")) }
                                 } else null,
@@ -1201,7 +1201,7 @@ internal fun LibraryContent(
                                     columnFocus = columnFocus,
                                     columnRowKey = physicalKey,
                                     restoreRatingKey = when {
-                                        physicalKey.lap != 1 -> null
+                                        physicalKey.lap != 0 -> null
                                         refreshRecovery?.rowId == row.id -> refreshRecovery.ratingKey
                                         state.initialFocusTarget == HomeInitialFocusTarget.CONTENT ->
                                         focusSnapshot.ratingKey.takeIf { row.id == focusSnapshot.rowId }
@@ -1209,7 +1209,7 @@ internal fun LibraryContent(
                                         missingFocusFallback?.first == row.id -> missingFocusFallback.second
                                         else -> null
                                     },
-                                    followFirstItem = followFirstItem && physicalKey.lap == 1,
+                                    followFirstItem = followFirstItem && physicalKey.lap == 0,
                                 )
                             }
                         }
