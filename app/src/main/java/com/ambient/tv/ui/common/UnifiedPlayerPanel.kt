@@ -133,6 +133,8 @@ class PlayerPanelNavigation {
 
     private val path = mutableStateListOf<Level>()
     private val focusTargets = PlayerPanelFocusRegistry()
+    /** Survives an engine/model remount so an already-visible drawer does not re-enter. */
+    internal var drawerHasEntered: Boolean = false
     private var pendingOrigin: String? = null
     private var pendingRoot = false
 
@@ -154,6 +156,9 @@ class PlayerPanelNavigation {
             target == UnifiedPlayerPanel.NONE -> close()
             target == panel -> Unit
             else -> {
+                // Sublevels and renderer handoffs keep the existing drawer. A genuinely new
+                // root session enters from the edge even if its model arrives after opening.
+                if (panel == UnifiedPlayerPanel.NONE) drawerHasEntered = false
                 videoState.leave()
                 audioState.leave()
                 // Opening a panel invalidates any delayed hand-back to the player.

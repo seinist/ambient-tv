@@ -25,6 +25,7 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.runtime.saveable.SaveableStateHolder
@@ -47,6 +48,7 @@ import com.ambient.tv.ui.common.playerPanelInput
 import com.ambient.tv.ui.performance.LocalPerformanceProfile
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.flow.first
 
 internal const val PLAYER_PANEL_ENTER_MS = 250
 internal const val PLAYER_PANEL_EXIT_MS = 210
@@ -66,8 +68,10 @@ internal fun playerPanelContentMotion(fromDepth: Int, toDepth: Int): PlayerPanel
     else -> PlayerPanelContentMotion.REPLACE
 }
 
+// Even the lightweight UI needs spatial drawer motion; a fade alone looks like a popup.
+@Suppress("UNUSED_PARAMETER")
 internal fun playerPanelDrawerTranslationFraction(progress: Float, reducedEffects: Boolean): Float =
-    if (reducedEffects) 0f else 1f - progress.coerceIn(0f, 1f)
+    1f - progress.coerceIn(0f, 1f)
 
 internal fun playerPanelDrawerAlpha(progress: Float, reducedEffects: Boolean): Float {
     val value = progress.coerceIn(0f, 1f)
@@ -78,14 +82,24 @@ internal fun playerPanelDrawerAlpha(progress: Float, reducedEffects: Boolean): F
 private val StaticPlayerPanelProgress = mutableFloatStateOf(1f)
 
 /**
- * Frames a freshly opened drawer spends composing, measuring and first drawing its content.
- * An entrance timed from the first of them is mostly over before anything is shown (one slow
- * frame swallows a 250 ms slide), so a closed drawer starts moving only after them.
+ * The initial measure/placement of a heavy drawer is not tied to a fixed frame count.
+ * On slow TVs multiple frame ticks can elapse before the drawer is actually drawn.
+ * Keep it offscreen until its real first placement, then give it one complete draw frame
+ * before starting the GPU-only translation. All player and standalone right drawers use it.
  */
-internal const val PANEL_ENTRANCE_SETTLE_FRAMES = 2
+internal const val PANEL_ENTRANCE_SETTLE_FRAMES = 1
 
-internal suspend fun awaitPanelEntranceFrames(progress: Float) {
-    if (progress > 0f) return
+internal class PanelEntranceGate {
+    var placed by mutableStateOf(false)
+        private set
+
+    fun markPlaced() { placed = true }
+    fun reset() { placed = false }
+}
+
+internal suspend fun awaitPanelEntranceFrames(progress: Float, gate: PanelEntranceGate) {
+    if (progress > 0f) return // Interrupted exit/reopen: continue smoothly from its position.
+    snapshotFlow { gate.placed }.first { it }
     repeat(PANEL_ENTRANCE_SETTLE_FRAMES) { androidx.compose.runtime.withFrameNanos { } }
 }
 
@@ -133,17 +147,22 @@ fun PlayerPanelVisibility(
     var visualPanel by remember { mutableStateOf(panel) }
     var visualDepth by remember { mutableIntStateOf(currentDepth) }
     var stateGeneration by remember { mutableIntStateOf(0) }
-    val panelProgress = remember { Animatable(if (panel == UnifiedPlayerPanel.NONE) 0f else 1f) }
-    val scrimProgress = remember { Animatable(if (panel == UnifiedPlayerPanel.NONE) 0f else 1f) }
+    // An engine can publish its first panel model after the navigation is already open.
+    // Only an already-rendered drawer may skip the entrance on a renderer handoff.
+    val previouslyEntered = panel != UnifiedPlayerPanel.NONE && navigation?.drawerHasEntered == true
+    val panelProgress = remember { Animatable(if (previouslyEntered) 1f else 0f) }
+    val scrimProgress = remember { Animatable(if (previouslyEntered) 1f else 0f) }
+    val entranceGate = remember { PanelEntranceGate() }
     val panelProgressState = remember(panelProgress) { derivedStateOf { panelProgress.value } }
     val scrimProgressState = remember(scrimProgress) { derivedStateOf { scrimProgress.value } }
     val interactive = panel != UnifiedPlayerPanel.NONE
 
     LaunchedEffect(panel, currentDepth, reducedEffects) {
         if (panel != UnifiedPlayerPanel.NONE) {
+            if (visualPanel == UnifiedPlayerPanel.NONE) entranceGate.reset()
             visualPanel = panel
             visualDepth = currentDepth
-            awaitPanelEntranceFrames(panelProgress.value)
+            awaitPanelEntranceFrames(panelProgress.value, entranceGate)
             coroutineScope {
                 launch {
                     panelProgress.animateTo(
@@ -160,6 +179,7 @@ fun PlayerPanelVisibility(
                     )
                 }
             }
+            navigation?.drawerHasEntered = true
         } else if (visualPanel != UnifiedPlayerPanel.NONE) {
             coroutineScope {
                 launch {
@@ -213,7 +233,8 @@ fun PlayerPanelVisibility(
                 Modifier
                     .fillMaxSize()
                     .zIndex(PLAYER_SETTINGS_PANEL_Z_INDEX)
-                    .then(input),
+                    .then(input)
+                    .onGloballyPositioned { entranceGate.markPlaced() },
             ) {
                 content(visualPanel)
             }
