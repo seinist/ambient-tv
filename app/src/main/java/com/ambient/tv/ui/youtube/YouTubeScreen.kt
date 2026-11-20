@@ -220,13 +220,14 @@ import androidx.lifecycle.repeatOnLifecycle
     val sharedInitialFocus = com.ambient.tv.ui.common.LocalBrowseFocusReturnState.current != null
     val destinationActive = isActiveNavigationDestination()
     LaunchedEffect(state.loading, visibleRows, state.feed, initialFeedKey, initialContentFocusPending,
-        contentFocusTarget, filterFocusState.allowContentAutoFocus, showViewOptions, destinationActive) {
-        if (!destinationActive || sharedInitialFocus) return@LaunchedEffect
+        contentFocusTarget, filterFocusState.allowContentAutoFocus, showViewOptions, destinationActive,
+        startupFocus.claimed) {
+        if (!destinationActive || sharedInitialFocus || startupFocus.claimed) return@LaunchedEffect
         val requestedFeedIsReady = initialFeedKey == null || state.feed.key == initialFeedKey
         if (filterFocusState.allowContentAutoFocus && !showViewOptions && initialContentFocusPending && requestedFeedIsReady && !state.loading && visibleRows.any { it.items.isNotEmpty() }) {
             withFrameNanos { }
             repeat(12) {
-                if (!initialContentFocusPending || !filterFocusState.allowContentAutoFocus) return@LaunchedEffect
+                if (!initialContentFocusPending || startupFocus.claimed || !filterFocusState.allowContentAutoFocus) return@LaunchedEffect
                 if (runCatching { contentItemFocusRequester.requestFocus() }.getOrDefault(false)) {
                     initialContentFocusPending = false
                     return@LaunchedEffect
@@ -263,7 +264,11 @@ import androidx.lifecycle.repeatOnLifecycle
             focusChain = focusChain,
             state,
             viewModel,
-            onSelectFeed=selectFeed,
+            onSelectFeed={ feed ->
+                // A category-chip selection is navigation, not permission to grab content focus.
+                initialContentFocusPending = false
+                selectFeed(feed)
+            },
             showSearch=searchVisible,
             viewOptionsModifier=Modifier.focusRequester(viewOptionsFocusRequester),
             searchActionModifier=Modifier.focusRequester(searchActionFocusRequester),

@@ -20,6 +20,8 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -472,6 +474,8 @@ fun PageChipRow(
 ) {
     val state = rememberLazyListState()
     val handheld = LocalHandheldUi.current
+    val focusHold = remember(chain) { PageChipFocusHold() }
+    DisposableEffect(focusHold) { onDispose { focusHold.disarm() } }
     var chipsFocused by remember { mutableStateOf(false) }
     // focusRestorer remembers the last focused child even if another category becomes active.
     // Keep that D-pad history while the selection is unchanged, but follow a newly selected
@@ -481,8 +485,8 @@ fun PageChipRow(
         val index = selectedIndex?.takeIf { it >= 0 } ?: return@LaunchedEffect
         // Capture the old row focus before scrolling: an offscreen new selection may detach
         // the old focused child, momentarily making chipsFocused false.
-        val shouldFollowSelection = !handheld && chipsFocused && lastFocusedSelection != index
-        val confirmedAt = PageChipFocusHold.armedAt
+        val shouldFollowSelection = !handheld && chipsFocused && !focusHold.active && lastFocusedSelection != index
+        val confirmedAt = focusHold.armedAt
         if (handheld) {
             state.animateScrollToItem(index)
         } else {
@@ -495,7 +499,7 @@ fun PageChipRow(
                 repeat(4) {
                     withFrameNanos { }
                     // Down/Up/Left/Right after confirming a TV chip cancels this handoff.
-                    if (confirmedAt != 0L && !PageChipFocusHold.active) return@LaunchedEffect
+                    if (focusHold.active || (confirmedAt != 0L && !focusHold.active)) return@LaunchedEffect
                     if (runCatching { chain.selectedChip.requestFocus() }.getOrDefault(false)) {
                         lastFocusedSelection = index
                         return@LaunchedEffect
@@ -506,44 +510,49 @@ fun PageChipRow(
     }
     LaunchedEffect(chipsFocused, selectedIndex, handheld) {
         val index = selectedIndex?.takeIf { it >= 0 } ?: return@LaunchedEffect
-        if (handheld || !chipsFocused || lastFocusedSelection == index) return@LaunchedEffect
+        if (handheld || !chipsFocused || focusHold.active || lastFocusedSelection == index) return@LaunchedEffect
         repeat(3) {
             withFrameNanos { }
-            if (!chipsFocused || selectedIndex != index) return@LaunchedEffect
+            if (!chipsFocused || selectedIndex != index || focusHold.active) return@LaunchedEffect
             if (runCatching { chain.selectedChip.requestFocus() }.getOrDefault(false)) {
                 lastFocusedSelection = index
                 return@LaunchedEffect
             }
         }
     }
-    // TV: a chosen category keeps the focus on its chip; the page's own initial focus must not
-    // pull it into the grid. The hold ends with the next key press (Down enters the content).
-    val armedAt = PageChipFocusHold.armedAt
+    // The D-pad-confirmed chip owns focus while its category loads. Do not jump back
+    // to the previously selected/default chip when the contents below are replaced.
+    val armedAt = focusHold.armedAt
     LaunchedEffect(chain, handheld, armedAt) {
         if (handheld) return@LaunchedEffect
-        while (PageChipFocusHold.active) {
-            if (!chipsFocused && !runCatching { chain.selectedChip.requestFocus() }.getOrDefault(false)) {
-                runCatching { chain.chips.requestFocus() }
+        while (focusHold.active) {
+            if (!focusHold.confirmedChipHasFocus && (focusHold.hasConfirmedChip || !chipsFocused)) {
+                if (!focusHold.restoreConfirmedChip() &&
+                    !runCatching { chain.chips.requestFocus() }.getOrDefault(false)) {
+                    runCatching { chain.selectedChip.requestFocus() }
+                }
             }
             withFrameNanos { }
             kotlinx.coroutines.delay(50)
         }
     }
-    LazyRow(
-        state = state,
-        modifier = modifier
-            .onFocusChanged { chipsFocused = it.hasFocus }
-            .onPreviewKeyEvent { event ->
-                if (!handheld && event.type == KeyEventType.KeyDown) {
-                    if (event.key in CHIP_CONFIRM_KEYS) PageChipFocusHold.arm() else PageChipFocusHold.disarm()
+    CompositionLocalProvider(LocalPageChipFocusHold provides focusHold) {
+        LazyRow(
+            state = state,
+            modifier = modifier
+                .onFocusChanged { chipsFocused = it.hasFocus }
+                .onPreviewKeyEvent { event ->
+                    if (!handheld && event.type == KeyEventType.KeyDown) {
+                        if (event.key in CHIP_CONFIRM_KEYS) focusHold.arm() else focusHold.disarm()
+                    }
+                    false
                 }
-                false
-            }
-            .pageChips(chain, up),
-        contentPadding = contentPadding,
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-        content = content,
-    )
+                .pageChips(chain, up),
+            contentPadding = contentPadding,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            content = content,
+        )
+    }
 }
 
 @Composable
@@ -559,12 +568,35 @@ fun SettingsSectionHeader(
 private val CHIP_CONFIRM_KEYS = setOf(Key.DirectionCenter, Key.Enter, Key.NumPadEnter)
 
 /** Set when a category chip is confirmed with the remote; cleared by any other key or a timeout. */
-internal object PageChipFocusHold {
+/** One chip row's pending remote confirmation, never shared with other pages or systems. */
+internal class PageChipFocusHold {
     var armedAt by androidx.compose.runtime.mutableLongStateOf(0L)
         private set
+    private var focusedChip: FocusRequester? = null
+    private var confirmedChip: FocusRequester? = null
+
     val active: Boolean get() = armedAt != 0L &&
         android.os.SystemClock.uptimeMillis() - armedAt < HOLD_MS
-    fun arm() { armedAt = android.os.SystemClock.uptimeMillis() }
-    fun disarm() { armedAt = 0L }
-    private const val HOLD_MS = 15_000L
+    val hasConfirmedChip: Boolean get() = confirmedChip != null
+    val confirmedChipHasFocus: Boolean get() = confirmedChip != null && confirmedChip === focusedChip
+
+    fun focused(requester: FocusRequester) { focusedChip = requester }
+    fun blurred(requester: FocusRequester) {
+        if (focusedChip === requester) focusedChip = null
+    }
+    fun restoreConfirmedChip(): Boolean =
+        confirmedChip?.let { runCatching { it.requestFocus() }.getOrDefault(false) } ?: false
+
+    fun arm() {
+        confirmedChip = focusedChip
+        armedAt = android.os.SystemClock.uptimeMillis()
+    }
+    fun disarm() {
+        armedAt = 0L
+        confirmedChip = null
+    }
+    private companion object { const val HOLD_MS = 15_000L }
 }
+
+/** TvChip tracks its actual focus target only while it is a child of PageChipRow. */
+internal val LocalPageChipFocusHold = staticCompositionLocalOf<PageChipFocusHold?> { null }

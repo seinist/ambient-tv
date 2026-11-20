@@ -2086,16 +2086,17 @@ private fun AmbientTvApp(
         if (com.ambient.tv.ui.youtube.youtubeFeedSwitchesInPlace(currentRoute, liveYouTubeFeedKey, targetYouTubeFeed)) {
             guardedSettingsExit {
                 com.ambient.tv.ui.youtube.YouTubeFeedSelection.request(checkNotNull(targetYouTubeFeed))
-                com.ambient.tv.ui.common.NavReselect.fire()
             }
             return
         }
+        // Switching to a different category must NOT fire NavReselect: that signal resets
+        // all lazy viewports to item zero and discards browse focus recovery. It is only for
+        // selecting the destination/section that is already active.
         // Telegram and Radio sections: the same in-place switch on their live screens.
         val targetTelegramSection = com.ambient.tv.ui.common.telegramSectionKeyOfRoute(route)
         if (com.ambient.tv.ui.common.sectionSwitchesInPlace(currentRoute, com.ambient.tv.ui.common.TELEGRAM_SECTION_ROUTES, liveTelegramSectionKey, targetTelegramSection)) {
             guardedSettingsExit {
                 com.ambient.tv.ui.common.TelegramSectionSelection.request(checkNotNull(targetTelegramSection))
-                com.ambient.tv.ui.common.NavReselect.fire()
             }
             return
         }
@@ -2103,7 +2104,6 @@ private fun AmbientTvApp(
         if (com.ambient.tv.ui.common.sectionSwitchesInPlace(currentRoute, com.ambient.tv.ui.common.RADIO_SECTION_ROUTES, liveRadioSectionKey, targetRadioSection)) {
             guardedSettingsExit {
                 com.ambient.tv.ui.common.RadioSectionSelection.request(checkNotNull(targetRadioSection))
-                com.ambient.tv.ui.common.NavReselect.fire()
             }
             return
         }
