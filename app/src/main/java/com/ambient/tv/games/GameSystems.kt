@@ -186,7 +186,7 @@ object GameSystems {
             GameCore("cemu", "Cemu (experimental)", "MPL-2.0", hardware = true,
                 requiresVulkan = true, saveStates = false, netplay = false, cheats = false,
                 achievements = false, supportedAbis = setOf("arm64-v8a", "x86_64"),
-                vulkanOptions = mapOf("cemu_gpu_api" to "Vulkan")),
+                ),
             shortName = "Wii U"),
         GameSystem("psp", "PlayStation Portable", setOf("cso", "zso"),
             GameCore("ppsspp", "PPSSPP", "GPL-2.0", hardware = true, netplay = false),
@@ -196,13 +196,42 @@ object GameSystems {
             shortName = "Dreamcast"),
         // Disc images shared by multiple systems (.iso/.cue/.chd/.m3u) are selected
         // using their verified disc header or the parent folder, never a global guess.
-        GameSystem("saturn", "Sega Saturn", emptySet(),
+        GameSystem("saturn", "Sega Saturn", setOf("ccd", "mds"),
             GameCore("mednafen_saturn", "Beetle Saturn", "GPL-2.0", netplay = false),
+            bios = listOf(GameBios("saturn_bios.bin", "af5828fdff51384f99b3c4926be27762", "Sega Saturn")),
+            alternatives = listOf(
+                GameCore("yabasanshiro", "Yaba Sanshiro (legacy)", "GPL-2.0", hardware = true,
+                    supportsVulkan = false, netplay = false),
+                GameCore("yabause", "Yabause", "GPL-2.0", netplay = false),
+                GameCore("ymir", "Ymir", "GPL-3.0", netplay = false, achievements = false),
+            ),
             shortName = "Saturn"),
         GameSystem("ps2", "PlayStation 2", emptySet(),
             GameCore("armsx2", "ARMSX2 (experimental)", "GPL-3.0", hardware = true, netplay = false,
                 supportedAbis = setOf("arm64-v8a")),
             shortName = "PS2"),
+        GameSystem("c64", "Commodore 64", setOf(
+            "d64", "d6z", "d71", "d7z", "d81", "d82", "g64", "g6z", "g41", "g4z",
+            "x64", "x6z", "nib", "nbz", "t64", "tap", "prg", "crt", "p00", "d2m", "d4m"
+        ),
+            GameCore("vice_x64sc", "VICE x64sc", "GPL-2.0"),
+            alternatives = listOf(
+                GameCore("vice_x64", "VICE x64 (fast)", "GPL-2.0"),
+                GameCore("vice_xscpu64", "VICE SuperCPU64", "GPL-2.0"),
+            ),
+            shortName = "C64"),
+        GameSystem("c128", "Commodore 128", emptySet(),
+            GameCore("vice_x128", "VICE x128", "GPL-2.0"), shortName = "C128"),
+        GameSystem("vic20", "Commodore VIC-20", emptySet(),
+            GameCore("vice_xvic", "VICE xvic", "GPL-2.0"), shortName = "VIC-20"),
+        GameSystem("plus4", "Commodore Plus/4", emptySet(),
+            GameCore("vice_xplus4", "VICE xplus4", "GPL-2.0"), shortName = "Plus/4"),
+        GameSystem("pet", "Commodore PET", emptySet(),
+            GameCore("vice_xpet", "VICE xpet", "GPL-2.0"), shortName = "PET"),
+        GameSystem("cbm2", "Commodore CBM-II", emptySet(),
+            GameCore("vice_xcbm2", "VICE xcbm2", "GPL-2.0"),
+            alternatives = listOf(GameCore("vice_xcbm5x0", "VICE xcbm5x0", "GPL-2.0")),
+            shortName = "CBM-II"),
         GameSystem("a7800", "Atari 7800", setOf("a78"),
             GameCore("prosystem", "ProSystem", "GPL-2.0"),
             shortName = "Atari 7800"),
@@ -218,7 +247,7 @@ object GameSystems {
     val archiveExtensions = GameArchives.extensions
 
     /** Extensions that belong to several consoles, or need the disc header to identify them. */
-    val ambiguousExtensions = setOf("iso", "rvz", "chd", "cue", "m3u", "pbp")
+    val ambiguousExtensions = setOf("iso", "rvz", "chd", "cue", "m3u", "pbp", "ciso", "gdi", "prg", "tap", "crt", "t64", "d64", "d71", "d81")
 
     /**
      * Determine the actual system after the ROM was copied from local storage or NAS.
@@ -248,7 +277,13 @@ object GameSystems {
             val folders = originalPath.replace('\\', '/').lowercase(Locale.ROOT)
                 .substringBeforeLast('/', "").split('/').filter(String::isNotBlank)
             val folderIds = mapOf(
-                "gamecube" to "gamecube", "game cube" to "gamecube",
+                "c64" to "c64", "commodore 64" to "c64",
+                "c128" to "c128", "commodore 128" to "c128",
+                "vic20" to "vic20", "vic-20" to "vic20",
+                "plus4" to "plus4", "plus-4" to "plus4", "plus 4" to "plus4",
+                "pet" to "pet", "commodore pet" to "pet",
+                "cbm2" to "cbm2", "cbm-ii" to "cbm2",
+                "sega saturn" to "saturn", "saturn" to "saturn",                "gamecube" to "gamecube", "game cube" to "gamecube",
                 "wii" to "wii", "wiiu" to "wiiu", "wii u" to "wiiu",
                 "psp" to "psp", "playstation portable" to "psp",
                 "ps2" to "ps2", "playstation 2" to "ps2",
