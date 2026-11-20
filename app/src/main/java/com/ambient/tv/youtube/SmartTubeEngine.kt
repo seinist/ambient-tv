@@ -52,6 +52,10 @@ class SmartTubeEngine @Inject constructor(
     fun clearAccountAttention() {
         accountAttentionReported.set(false)
     }
+
+    /** An intentionally signed-out guest has no stale account to recover. */
+    fun hasSavedAccounts(): Boolean =
+        !globalPreferences()?.callString("getMediaServiceAccountData").isNullOrBlank()
     @Volatile private var initialized = false
     private val initLock = Any()
     private val playbackMetadata = YouTubePlaybackMetadataCache()
