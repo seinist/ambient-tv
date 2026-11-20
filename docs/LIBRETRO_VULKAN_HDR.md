@@ -175,6 +175,23 @@ the validated output path.
   hardware validation**. This path cannot be classified as fully native HDR
   passthrough until those remaining source and metadata contracts work.
 
+## Verified core source pixel-format diagnostic (PR #427)
+
+- Native patch `0014-report-actual-core-vulkan-source-format.patch` atomically
+  snapshots the actual `VkImageViewCreateInfo.format` received from the
+  libretro Vulkan `set_image` callback. `LibretroDroid.getVulkanCoreSourceFormat()`
+  exposes the value without a per-frame JNI call. Shutdown resets it to
+  unknown instead of leaving stale results between cores.
+- The game's Info panel now shows the actual core VkImage format (RGBA/BGRA
+  UNORM8, packed 10-bit variants, FP16 or numeric unknown) separately from
+  the WSI swapchain format and the Vulkan→GLES AHB bridge precision.
+  A known 10-bit format **never** proves that the source bytes have PQ,
+  HLG, BT.2020 mastering or any specific color encoding; the panel explicitly
+  explains this limitation.
+- Kotlin unit tests cover format decoding, unknown future formats and the
+  important distinction between pixel precision and color transfer.
+  Source provenance and hardware HDR-signal acceptance remain open release gates.
+
 ## Incompatible pieces that must be completed together for native HDR
 
 1. **Core HDR handshake.** The currently pinned Argosy/libretro-common header predates
