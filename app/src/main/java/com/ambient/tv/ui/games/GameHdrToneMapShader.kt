@@ -19,13 +19,16 @@ internal object GameHdrToneMapShader {
 
     fun forGame(filter: GameShader, input: GameHdrToneMap, vulkan: Boolean): ShaderConfig {
         if (!vulkan || input == GameHdrToneMap.OFF) return filter.config()
-        return ShaderConfig.Custom(listOf(ShaderConfig.Custom.ShaderPass(
-            vertex = VERTEX,
-            fragment = fragment(input, filter),
-            // The pinned LibretroDroid presets sample linearly and shape crispness
-            // in the fragment shader. SHARP remaps the UV to texel centers below.
-            linear = true,
-        )))
+        // Convert PQ/HLG to SDR in a prefix, then execute the exact original
+        // native CRT/LCD/CUT3/Sharp/Pixel picture shader chain unchanged.
+        return ShaderConfig.PrependPass(
+            filter = filter.config(),
+            pass = ShaderConfig.Custom.ShaderPass(
+                vertex = VERTEX,
+                fragment = fragment(input),
+                linear = true,
+            ),
+        )
     }
 
     private const val VERTEX = """
@@ -38,24 +41,14 @@ internal object GameHdrToneMapShader {
         }
     """
 
-    internal fun fragment(input: GameHdrToneMap, filter: GameShader = GameShader.SHARP): String {
+    internal fun fragment(input: GameHdrToneMap): String {
         require(input != GameHdrToneMap.OFF)
         val hlg = if (input == GameHdrToneMap.HLG) 1 else 0
-        val pictureMode = when (filter) {
-            GameShader.SHARP -> 0
-            GameShader.PIXEL -> 1
-            GameShader.SMOOTH -> 2
-            GameShader.CRT -> 3
-            GameShader.LCD -> 4
-        }
         return """
             precision highp float;
             uniform sampler2D texture;
-            uniform highp vec2 textureSize;
-            uniform mediump float screenDensity;
             varying highp vec2 coords;
             const int INPUT_HLG = $hlg;
-            const int PICTURE_MODE = $pictureMode;
 
             // SMPTE ST 2084 EOTF: BT.2020 PQ -> absolute cd/m².
             float pqEotf(float code) {
@@ -93,19 +86,7 @@ internal object GameHdrToneMapShader {
             }
 
             void main() {
-                vec2 sampleUv = coords;
-                if (PICTURE_MODE == 0) {
-                    // Subpixel-aware sharp sampling, on the source texel grid.
-                    vec2 sourceSize = max(textureSize, vec2(1.0));
-                    vec2 position = coords * sourceSize;
-                    vec2 t = vec2(1.0 / max(screenDensity, 1.0));
-                    vec2 fraction = fract(position);
-                    vec2 sharpened = 0.5 * (
-                        smoothstep(vec2(0.0), t, fraction) +
-                        smoothstep(vec2(1.0) - t, vec2(1.0), fraction));
-                    sampleUv = (floor(position) + sharpened) / sourceSize;
-                }
-                vec4 source = texture2D(texture, sampleUv);
+                vec4 source = texture2D(texture, coords);
                 vec3 nits2020 = encodedToNits(source.rgb);
                 float luminance = dot(nits2020, vec3(0.2627, 0.6780, 0.0593));
 
@@ -121,25 +102,9 @@ internal object GameHdrToneMapShader {
                     -0.5876,  1.1329, -0.1006,
                     -0.0728, -0.0083,  1.1187
                 );
-                vec3 sdr = sRgbEncode(max(to709 * mapped2020, 0.0));
-                // The picture filter must not disappear when HDR->SDR is on.
-                // All filtering happens *after* tone mapping, never in PQ code space.
-                // The low-overhead CRT and LCD patterns are output-space effects.
-                if (PICTURE_MODE == 3) {
-                    // Source-pixel scanlines: stable across 4:3 / integer scaling.
-                    vec2 pixelPhase = abs(fract(coords * textureSize) * 2.0 - 1.0);
-                    float beam = 1.0 - 0.28 * pixelPhase.y;
-                    float strength = smoothstep(2.0, 6.0, screenDensity);
-                    sdr *= mix(1.0, beam, strength);
-                } else if (PICTURE_MODE == 4) {
-                    vec2 pixelPhase = abs(fract(coords * textureSize) * 2.0 - 1.0);
-                    float grid = clamp(1.0 - 0.23 * (pixelPhase.x * pixelPhase.x +
-                        pixelPhase.y * pixelPhase.y), 0.6, 1.0);
-                    sdr *= mix(1.0, grid, smoothstep(2.0, 6.0, screenDensity));
-                }
-                // PIXEL keeps the standard sample; SMOOTH is a linear CUT3-lite
-                // approximation. The exact CUT3 history-based kernel remains GLES-only.
-                gl_FragColor = vec4(clamp(sdr, 0.0, 1.0), source.a);
+                // Original native picture filter(s) process these SDR values in
+                // their own passes, never in encoded PQ/HLG source space.
+                gl_FragColor = vec4(sRgbEncode(max(to709 * mapped2020, 0.0)), source.a);
             }
         """.trimIndent()
     }
