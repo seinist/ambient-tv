@@ -125,17 +125,4 @@ jobs:
           test -x "$readelf"
           mapfile -t libs < <(find libretrodroid_wrapper/build -type f -path "*/${{ matrix.abi }}/*.so" | sort -u)
           test "${#libs[@]}" -gt 0 || { echo "::error::No native output libraries found"; exit 1; }
-          for lib in "${libs[@]}"; do
-            echo "Checking $lib"
-            "$readelf" -l "$lib" | awk '
-              /LOAD[[:space:]]/ {
-                align=$NF
-                if (align !~ /^0x[0-9A-Fa-f]+$/) { print "Invalid LOAD alignment:", align > "/dev/stderr"; exit 1 }
-                if (align !~ /^0x0*([4-9A-Fa-f][0-9A-Fa-f]{3,}|[1-9A-Fa-f][0-9A-Fa-f]{4,})$/) {
-                  print "LOAD alignment below 16 KiB:", align > "/dev/stderr"; exit 1
-                }
-                seen=1
-              }
-              END { if (!seen) { print "No LOAD segments found" > "/dev/stderr"; exit 1 } }
-            '
-          done
+          python3 scripts/check_elf_page_alignment.py "$readelf" "${libs[@]}"
