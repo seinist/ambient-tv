@@ -156,6 +156,8 @@ interface PlaybackHandle {
     fun status(): PlaybackStatus
     /** Playback intent can differ from isPlaying while a newly created renderer is buffering. */
     fun wantsToPlay(): Boolean = status().playing
+    /** Explicit playback intent, even when a failed decoder makes [wantsToPlay] false. */
+    fun requestedPlayIntent(): Boolean = wantsToPlay()
     /** Current seek capability; a positive live clock alone never establishes a seek window. */
     fun canSeekNow(): Boolean = status().durationMs > 0L
     fun play()
@@ -186,6 +188,10 @@ interface PlaybackHandle {
  * looper, not merely synchronized: Media3 and native surfaces require that thread.
  * Screens borrow engines and own only their listeners/surfaces.
  */
+internal fun rendererHandoffPlayIntent(
+    samePlayback: Boolean, failed: Boolean, readyToPlay: Boolean, requestedToPlay: Boolean,
+): Boolean = if (samePlayback && failed) requestedToPlay else readyToPlay
+
 object BackgroundPlaybackSession {
     data class Snapshot(
         val metadata: PlaybackMetadata? = null,
@@ -395,7 +401,10 @@ object BackgroundPlaybackSession {
         val previousSubtitleDelay = if (samePlayback) (previous as? SubtitleDelayTarget)?.subtitleDelayMs else null
         val previousZeroReady = rendererZeroPositionReady(previous)
         if (previous != null) PlaybackOutputTransition.begin(context)
-        val previousPlayIntent = previous?.wantsToPlay() ?: previousStatus?.playing ?: true
+        val previousPlayIntent = previous?.let { outgoing ->
+            rendererHandoffPlayIntent(samePlayback, previousStatus?.error != null,
+                outgoing.wantsToPlay(), outgoing.requestedPlayIntent())
+        } ?: previousStatus?.playing ?: true
         // SurfaceView/PlayerView disposal happens on the next Compose apply pass. Native players
         // must release their video output before their engine is destroyed, otherwise the old
         // renderer can crash while its Surface is still owned by the persistent mini-player host.
@@ -620,8 +629,12 @@ object BackgroundPlaybackSession {
             mutableSnapshot.value = snapshot.value.copy(metadata = metadata)
         }
     }
-    fun cached(route: String): Any? = snapshot.value.takeUnless { it.replacingSource }
-        ?.metadata?.takeIf { it.route == route }?.resumeState
+    // An errored or released player is not a reusable stream. In particular, YouTube's signed
+    // URLs must be resolved again instead of reopening a failed session on the next visit.
+    fun cached(route: String): Any? = snapshot.value.takeIf {
+        handle != null && !it.replacingSource && it.status.error == null &&
+            handle?.status()?.error == null
+    }?.metadata?.takeIf { it.route == route }?.resumeState
     fun setSleepTimer(value: SleepTimerConfig) {
         checkThread()
         SleepSession.set(value)
