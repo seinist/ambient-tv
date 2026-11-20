@@ -1,7 +1,7 @@
 diff --git a/src/main/cpp/vulkan/vulkanbackend.cpp b/src/main/cpp/vulkan/vulkanbackend.cpp
 --- a/src/main/cpp/vulkan/vulkanbackend.cpp
 +++ b/src/main/cpp/vulkan/vulkanbackend.cpp
-@@ -740,122 +740,216 @@
+@@ -740,126 +740,221 @@
      frameInFlight = false;
  }
  
@@ -331,10 +331,6 @@ diff --git a/src/main/cpp/vulkan/vulkanbackend.cpp b/src/main/cpp/vulkan/vulkanb
 +    }
 +    return true;
 +}
- void VulkanBackend::callbackSetImage(void* handle, const retro_vulkan_image* image, uint32_t numSemaphores,
-                                      const VkSemaphore* semaphores, uint32_t srcQueueFamily) {
-     auto* self = static_cast<VulkanBackend*>(handle);
-@@ -862,7 +956,8 @@
  void VulkanBackend::callbackSetImage(void* handle, const retro_vulkan_image* image, uint32_t numSemaphores,
                                       const VkSemaphore* semaphores, uint32_t srcQueueFamily) {
      auto* self = static_cast<VulkanBackend*>(handle);
