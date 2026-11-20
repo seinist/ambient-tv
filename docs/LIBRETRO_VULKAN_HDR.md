@@ -117,6 +117,43 @@ HDR-capable swapchains, output colorspaces, mastering metadata and actual
 display-signal tests before exposing HDR passthrough. `librashader` follows
 the validated output path.
 
+## Additional experimental native HDR capabilities (PR #427)
+
+- Patch `0010-libretro-hdr-metadata-v1-safe-contract.patch` updates the pinned
+  libretro header with the v1 experimental GET_HDR_METADATA (101) and
+  GET_DISPLAY_METADATA (102) request layouts, including HDR10 and scRGB source
+  pixel-format identifiers. The environment **truthfully responds with
+  output_mode=0 and source_formats=0**, because CPU 10-bit/FP16 uploads are not
+  supported and a Vulkan FP16 intermediate cannot establish HDR presentation
+  capability on its own. Unknown geometry, mastering information and HDR EOTFs
+  are zero, not synthesized. Invalid versions or undersized buffers are rejected.
+  New core software input formats remain rejected by SET_PIXEL_FORMAT.
+- Patch `0011-optin-10bit-pq-hlg-vulkan-swapchain.patch` extends the *existing
+  experimental hardware-Vulkan presenter* to offer an explicitly requested
+  PQ/BT.2020 or HLG/BT.2020 output mode, **only when the real Vulkan surface
+  enumerates the matching 10-bit A2R10G10B10/A2B10G10R10 UNORM format and
+  colorspace**. Before native presentation, the actual core VkImage must use
+  a 10-bit UNORM format that supports Vulkan blit-source. The native image is
+  copied without re-encoding its numerical PQ/HLG sample values. A regular
+  8-bit SDR core image or unsupported 10-bit driver cannot silently become
+  an HDR signal; the presenter disables itself for the session and GLES
+  continues to tonemap the manually declared HDR input to SDR.
+- `GameVulkanTransferGate` distinguishes display HDR capability from actual
+  WSI candidate pairs and the returned present-success status (bit 4 PQ, bit 5
+  HLG). `GameVulkanFullscreenPolicy` requires the exact requested encoding to
+  have **successfully presented frames on the small test surface** before
+  offering opt-in fullscreen. All user-facing labels and tests distinguish
+  candidate/display capability, frame presentation, and true verified display
+  signal. SDR remains the default; no output switch is automatic.
+- **Important:** A 10-bit `VkFormat` does **not** identify the transfer function.
+  Current UI selection of PQ or HLG is explicitly manual, not a trusted core
+  declaration. The experimental libretro GET_HDR_METADATA contract is still
+  truthful SDR-only, and no content-authored HDR mastering metadata has been
+  supplied to `VK_EXT_hdr_metadata`. A successful PQ/HLG WSI present **is not
+  by itself proof of correct HDR10/HLG color, a calibrated output signal, or
+  hardware validation**. This path cannot be classified as fully native HDR
+  passthrough until those remaining source and metadata contracts work.
+
 ## Incompatible pieces that must be completed together for native HDR
 
 1. **Core HDR handshake.** The currently pinned Argosy/libretro-common header predates
@@ -155,8 +192,10 @@ the validated output path.
 
 ## Explicit release gates
 
-- Current default: SDR, no native HDR. PQ/HLG manual decoder is experimental and
-  appropriate only when the core genuinely outputs that transfer function.
+- Current default: SDR. Native 10-bit PQ/HLG WSI frame presentation is a
+  **manual experimental candidate only**, not verified or production HDR.
+  The GLES PQ/HLG-to-SDR decoder remains the fallback and is appropriate
+  only when the core genuinely emits the selected encoding.
 - A real Vulkan HDR output setting must remain unavailable until the complete
   source-format negotiation, real window swapchain, color-space selection and Android
   HDR signal are implemented and tested. Unknown capabilities mean SDR, not assumed HDR.
