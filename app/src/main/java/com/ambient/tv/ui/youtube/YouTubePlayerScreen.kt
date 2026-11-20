@@ -898,7 +898,7 @@ private fun YouTubeMedia3Playback(
                     val httpStatus = generateSequence(e as Throwable?) { it.cause }
                         .filterIsInstance<androidx.media3.datasource.HttpDataSource.InvalidResponseCodeException>()
                         .firstOrNull()?.responseCode
-                    if (!playback.isLive && httpStatus in setOf(403, 410) && onStreamHttpError(httpStatus)) {
+                    if (!playback.isLive && httpStatus != null && httpStatus in setOf(403, 410) && onStreamHttpError(httpStatus)) {
                         error = null
                         return
                     }
