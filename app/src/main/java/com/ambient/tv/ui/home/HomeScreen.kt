@@ -923,7 +923,8 @@ internal fun LibraryContent(
         }
         LaunchedEffect(refreshRecovery) {
             val index = state.rowKeys.indexOf(refreshRecovery?.rowId)
-            if (index >= 0 && rowListState.layoutInfo.visibleItemsInfo.none { it.index == index }) rowListState.scrollToItem(index)
+            if (index >= 0 && rowListState.layoutInfo.visibleItemsInfo.none { it.index == middleStart + index })
+                rowListState.scrollToItem(middleStart + index)
         }
         // Every row type is parked directly below the pinned hero, where the first row rests;
         // a plain bring-into-view would count the hero-covered top as visible and park the
@@ -1022,25 +1023,28 @@ internal fun LibraryContent(
                         columnFocus,
                         scrollToTop = {
                             rowCenteringGate.beginMove()
-                            pendingVisualRow.value = state.rowKeys.firstOrNull()
-                            rowListState.glideToItem(glideWrap, 0)
+                            pendingVisualRow.value = middleFirstKey
+                            rowListState.glideToItem(glideWrap, middleStart)
                         },
                         scrollToBottom = {
                             rowCenteringGate.beginMove()
-                            pendingVisualRow.value = state.rowKeys.lastOrNull()
-                            rowListState.glideToItem(glideWrap, state.rowKeys.lastIndex)
+                            pendingVisualRow.value = middleLastKey
+                            rowListState.glideToItem(glideWrap, middleStart + state.rowKeys.lastIndex)
                         },
                         scrollToRow = { rowKey ->
                             rowCenteringGate.beginMove()
-                            pendingVisualRow.value = rowKey as? String
-                            val index = state.rowKeys.indexOfFirst { it == rowKey }
+                            pendingVisualRow.value = rowKey as? CyclicRowFocusKey
+                            val index = cyclicIndices[rowKey] ?: -1
                             if (index >= 0) {
                                 rowCentering.centerItem(index, bottomInset = bottomInsetPx)
                                 rowCenteringGate.markCentered(rowKey)
                             }
                         },
                         focusBeforeScroll = true,
-                    ) { state.rowKeys }
+                        upExitAt = { key ->
+                            (key as? CyclicRowFocusKey)?.logical == state.rowKeys.firstOrNull()
+                        },
+                    ) { cyclicRows }
                     .clipToBounds()
                     .acceleratedDpadNavigation()
                     .fadeRowsBehindHomeHero(maskRows, heroHeight) {
@@ -1050,7 +1054,7 @@ internal fun LibraryContent(
                         val progress = entrancePhase(entranceProgress(), 0.24f, 1f)
                         // Hidden for the one frame before the first row is measured (first open only;
                         // a list restored further down never composes row 0 and shows at once).
-                        alpha = if (firstRowHeight == null && rowListState.firstVisibleItemIndex == 0) 0f else progress
+                        alpha = if (firstRowHeight == null && rowListState.firstVisibleItemIndex == middleStart) 0f else progress
                         translationY = (1f - progress) * 28.dp.toPx()
                     }),
                 contentPadding = androidx.compose.foundation.layout.PaddingValues(
@@ -1059,31 +1063,31 @@ internal fun LibraryContent(
                 ),
                 verticalArrangement = Arrangement.spacedBy(4.dp),
             ) {
-                items(state.rowKeys, key = { it }, contentType = { rowKey ->
+                itemsIndexed(cyclicRows, key = { _, key -> key }, contentType = { _, key ->
                     when {
-                        rowKey in state.tvRows -> "live-tv-row"
-                        rowKey.startsWith("shortcut:") || rowKey.startsWith(HOME_OFFLINE_ROW_PREFIX) -> "shortcut-row"
+                        key.logical in state.tvRows -> "live-tv-row"
+                        key.logical.startsWith("shortcut:") || key.logical.startsWith(HOME_OFFLINE_ROW_PREFIX) -> "shortcut-row"
                         else -> "media-row"
                     }
-                }) { rowKey ->
-                    val rowIndex = state.rowKeys.indexOf(rowKey)
+                }) { rowIndex, physicalKey ->
+                    val rowKey = physicalKey.logical
                     Box(Modifier.onFocusChanged {
                         if (it.hasFocus) {
-                            focusedRowKey.value = rowKey
+                            focusedRowKey.value = physicalKey
                             // Also what stays visible once focus moves on to the sidebar.
                             if (pendingVisualRow.value == null && rowIndex >= 0) activeRowIndex.intValue = rowIndex
-                        } else if (focusedRowKey.value == rowKey) focusedRowKey.value = null
+                        } else if (focusedRowKey.value == physicalKey) focusedRowKey.value = null
                     }.onlyActiveHeroRow(
                         rowIndex,
                         activeIndex = {
                             // Change the only visible row at the start of a vertical glide,
                             // not after the destination tile finally acquires focus.
-                            pendingVisualRow.value?.let(state.rowKeys::indexOf)?.takeIf { it >= 0 }
-                                ?: focusedRowKey.value?.let(state.rowKeys::indexOf)?.takeIf { it >= 0 }
+                            pendingVisualRow.value?.let(cyclicIndices::get)
+                                ?: focusedRowKey.value?.let(cyclicIndices::get)
                                 ?: activeRowIndex.intValue
                         },
                     ).then(
-                        if (rowIndex == 0) Modifier.onSizeChanged {
+                        if (rowIndex == middleStart) Modifier.onSizeChanged {
                             val height = with(density) { it.height.toDp() }
                             firstRowHeight = height
                             HeroRowHeights[firstRowHeightKey] = height
