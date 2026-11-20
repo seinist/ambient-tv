@@ -157,6 +157,7 @@ Changing filters, sort or layout keeps focus on the control being edited while r
 | Playback color | Color picker | `#1A5FF2` | All | Shown with a separate playback color. |
 | HDR interface | Automatic (safe) · Always HDR · Always SDR | Automatic (safe) | All | Shown on Android 15+ (API 35) with an HDR display and wide color gamut. Automatic lifts the UI only while HDR plays. |
 | SDR video to HDR | On / Off | Off | All | See [3.5.1](#351-sdr-video-to-hdr). Works only with HDR interface "Automatic". |
+| View transitions | Off · Soft fade · Fade + micro-slide · Cinematic blend | Off | All | Opt-in navigation animation (180/210/270 ms). Off retains the existing TV instant switch and phone navigation. Only the active destination is drawn: the cinematic mode blends a dark veil and very small scale rather than retaining a second expensive grid. Native video, fullscreen pages and player OSD are excluded; visible background video uses a cheaper veil, and reduced interface effects disable these transitions. Included in file backups and Companion preference/settings transfers; older backups do not overwrite it. |
 | Interface performance | Auto · Balanced · Maximum performance · Low | Auto | All | Animations, shimmer, heavy surfaces. See [§8](#8-performance-modes). |
 | Check interface | Action | — | All | Measures UI drawing load and suggests a mode. |
 | Start animation | Off · Light field · Daybreak | Light field | All | Plays once on a cold start, in the accent colors. While a server wakes, the light keeps breathing. Any key continues. Low mode shows the settled wordmark. |
@@ -786,7 +787,7 @@ Interface and playback have separate modes (*Look & feel*). Until a side is save
 | Maximum performance | Full. | Full, and motion smoothing (SVP) is allowed. |
 | Low | Always reduced. | Always reduced. |
 
-**Reduced interface:** no blur, soft shadows or spring focus; static Home hero; no Home background on other screens; high-resolution images off; smaller image decodes; screensaver at Economy; projectM throttled; TV menu sounds muted.
+**Reduced interface:** view transitions remain disabled (without changing the saved choice); no blur, soft shadows or spring focus; static Home hero; no Home background on other screens; high-resolution images off; smaller image decodes; screensaver at Economy; projectM throttled; TV menu sounds muted.
 
 **Reduced playback:** heavy video paths use lighter overrides (GPU shaders, CPU denoise/deblock fallback, VLC software filters, Media3 effect chain, 2× deinterlace, spectrum). Saved image settings are kept and come back when leaving Low. Audio DSP stays available.
 
