@@ -444,7 +444,7 @@ class YouTubeViewModel @Inject constructor(
         val unchangedRows = current.rows === update.rows || current.rows == update.rows
         val signed = update.signedIn ?: current.signedIn
         val gotContent = update.rows.any { it.items.isNotEmpty() }
-        if (gotContent) engine.clearAccountAttention()
+        if (gotContent && update.key == "feed:home") engine.clearAccountAttention()
         if (!unchangedRows || current.loading || current.error != null ||
             current.signedIn != signed || (gotContent && current.accountAttention != null)) {
             _uiState.value = current.copy(
@@ -983,7 +983,7 @@ class YouTubeViewModel @Inject constructor(
                     signed to refreshYouTubeRowExtents(rows, refreshRows) { rowId -> engine.continueRow(cacheKey, rowId) }
                 }.onSuccess { (signed, rows) ->
                     if (generation != contentGeneration || contentCache.revision() != cacheRevision) return@onSuccess
-                    onlineServices.succeeded("youtube")
+                    if (rows.any { it.items.isNotEmpty() }) onlineServices.succeeded("youtube")
                     YouTubeFreshThisRun.loaded(cacheKey)
                     // An empty private Home even after its bounded retry is not evidence that
                     // the user has no videos. Keep the prior tiles and offer a safe recovery.
@@ -1135,7 +1135,7 @@ class YouTubeViewModel @Inject constructor(
 }
 
 private fun Throwable.userMessage() = message?.takeIf { it.isNotBlank() }
-    ?.let(::sanitizeFailureDetail) ?: "SmartTube feed could not be loaded."
+    ?.let(::sanitizeFailureDetail) ?: "YouTube konnte nicht geladen werden."
 
 /** Categories loaded fresh since this app process started (a cold start empties it). */
 internal object YouTubeFreshThisRun {
