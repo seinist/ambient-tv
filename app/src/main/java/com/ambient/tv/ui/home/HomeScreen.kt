@@ -1097,8 +1097,8 @@ internal fun LibraryContent(
                         rowKey.startsWith(HOME_OFFLINE_ROW_PREFIX) -> HomeOfflineRow(
                             system = rowKey.removePrefix(HOME_OFFLINE_ROW_PREFIX),
                             columnFocus = columnFocus,
-                            rowKey = rowKey,
-                            onFocused = { restoreArmed = false; centeredRowKey.value = rowKey },
+                            rowKey = physicalKey,
+                            onFocused = { restoreArmed = false; centeredRowKey.value = physicalKey },
                         )
                         rowKey in state.tvRows -> {
                             val recent = rowKey.startsWith("recent-tv")
@@ -1107,18 +1107,18 @@ internal fun LibraryContent(
                                 title = state.tvRows[rowKey]?.title.orEmpty(),
                                 imageHeaders = tvheadendImageHeaders,
                                 onWatch = { onWatchLiveChannel(rowKey, it) },
-                                requestInitialFocus = rowKey == state.rowKeys.firstOrNull() && state.initialFocusTarget ==
+                                requestInitialFocus = rowIndex == middleStart && state.initialFocusTarget ==
                                     if (recent) HomeInitialFocusTarget.RECENT_TV else HomeInitialFocusTarget.LIVE_TV,
                                 onRowFocused = {
                                     restoreArmed = false
-                                    centeredRowKey.value = rowKey
+                                    centeredRowKey.value = physicalKey
                                 },
                                 onItemFocused = { onLiveTvFocused(rowKey, it) },
                                 bringContextIntoView = false,
                                 columnFocus = columnFocus,
-                                rowKey = rowKey,
-                                restoreChannelKey = initialFocusKey.takeIf { rowKey == initialFocusRowId && returnToken != null },
-                                followFirstItem = followFirstItem,
+                                rowKey = physicalKey,
+                                restoreChannelKey = initialFocusKey.takeIf { physicalKey.lap == 1 && rowKey == initialFocusRowId && returnToken != null },
+                                followFirstItem = followFirstItem && physicalKey.lap == 1,
                                 onOpenChannels = if (recent) {
                                     { onOpenHomeContent(homeTvShortcut(rowKey, "live")) }
                                 } else null,
@@ -1132,11 +1132,11 @@ internal fun LibraryContent(
                             state.shortcuts.firstOrNull { "shortcut:${it.id}" == rowKey }?.let { shortcut ->
                                 HomeShortcutRow(shortcut, onOpenHomeContent, { row ->
                                     restoreArmed = false
-                                    centeredRowKey.value = rowKey
+                                    centeredRowKey.value = physicalKey
                                     onShortcutFocused(row)
                                 },
-                                    requestInitialFocus = rowKey == state.rowKeys.firstOrNull() && state.initialFocusTarget == HomeInitialFocusTarget.SHORTCUT,
-                                    columnFocus = columnFocus, rowKey = rowKey)
+                                    requestInitialFocus = rowIndex == middleStart && state.initialFocusTarget == HomeInitialFocusTarget.SHORTCUT,
+                                    columnFocus = columnFocus, rowKey = physicalKey)
                             }
                         } else {
                             val index = state.rows.indexOfFirst { it.id == rowKey }
@@ -1167,9 +1167,11 @@ internal fun LibraryContent(
                                             (row.id == initialFocusRowId && initialFocusKey != null && initialFocusKey in item.allRatingKeys)) restoreArmed = false
                                         onItemFocused(row.id, item)
                                     },
-                                    onRowFocused = { centeredRowKey.value = rowKey },
+                                    onRowFocused = { centeredRowKey.value = physicalKey },
                                     columnFocus = columnFocus,
+                                    columnRowKey = physicalKey,
                                     restoreRatingKey = when {
+                                        physicalKey.lap != 1 -> null
                                         refreshRecovery?.rowId == row.id -> refreshRecovery.ratingKey
                                         state.initialFocusTarget == HomeInitialFocusTarget.CONTENT ->
                                         focusSnapshot.ratingKey.takeIf { row.id == focusSnapshot.rowId }
@@ -1177,7 +1179,7 @@ internal fun LibraryContent(
                                         missingFocusFallback?.first == row.id -> missingFocusFallback.second
                                         else -> null
                                     },
-                                    followFirstItem = followFirstItem,
+                                    followFirstItem = followFirstItem && physicalKey.lap == 1,
                                 )
                             }
                         }
