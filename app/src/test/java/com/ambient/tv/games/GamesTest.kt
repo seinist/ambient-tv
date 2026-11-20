@@ -69,7 +69,7 @@ class GamesTest {
         assertEquals("c64", GameSystems.forFile("Game.d64")?.id)
         assertEquals("a7800", GameSystems.forFile("Game.a78")?.id)
         assertTrue(GameSystems.isGame("game.iso"))
-        assertTrue(GameSystems.isGame("game.rv z".replace(" ", "")))
+        assertTrue(GameSystems.isGame("game.rvz"))
         assertEquals("c128", GameSystems.forPreparedFile(folder.newFile("test.d64"), "/NAS/C128/test.d64")?.id)
         assertEquals("vic20", GameSystems.forPreparedFile(folder.newFile("test.prg"), "/NAS/VIC-20/test.prg")?.id)
         assertEquals("saturn", GameSystems.forPreparedFile(folder.newFile("test.chd"), "/NAS/Saturn/test.chd")?.id)
