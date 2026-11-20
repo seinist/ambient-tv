@@ -1,0 +1,66 @@
+diff --git a/src/main/cpp/vulkan/vulkanbackend.h b/src/main/cpp/vulkan/vulkanbackend.h
+--- a/src/main/cpp/vulkan/vulkanbackend.h
++++ b/src/main/cpp/vulkan/vulkanbackend.h
+@@ -97,2 +97,4 @@
+     void setNativeCoreSourceTransfer(uint32_t sourceTransfer);
++    // Current game's integer-scaling setting; this only affects the opt-in WSI blit.
++    void setNativeIntegerScaling(bool enabled) { nativeIntegerScaling = enabled; }
+     uint32_t getNativeSdrStatus() const { return nativeSdrStatus.load(std::memory_order_acquire); }
+@@ -263,2 +263,3 @@
+     uint32_t nativeCoreSourceTransfer = 0; // no trusted PQ/HLG source by default
++    bool nativeIntegerScaling = false; // session-local geometry; default off
+     // bit 0 window requested, bit 1 swapchain ready, bit 2 frames presented,
+diff --git a/src/main/cpp/vulkan/vulkanbackend.cpp b/src/main/cpp/vulkan/vulkanbackend.cpp
+--- a/src/main/cpp/vulkan/vulkanbackend.cpp
++++ b/src/main/cpp/vulkan/vulkanbackend.cpp
+@@ -1227,5 +1227,18 @@
+-        const int32_t dstW = std::clamp(static_cast<int32_t>(std::lround(displayWidth)),
++        int32_t dstW = std::clamp(static_cast<int32_t>(std::lround(displayWidth)),
+                                         1, static_cast<int32_t>(nativeSdrExtent.width));
+-        const int32_t dstH = std::clamp(static_cast<int32_t>(std::lround(displayHeight)),
++        int32_t dstH = std::clamp(static_cast<int32_t>(std::lround(displayHeight)),
+                                         1, static_cast<int32_t>(nativeSdrExtent.height));
++        if (nativeIntegerScaling && copyWidth > 0 && copyHeight > 0) {
++            // Match VideoLayout: largest whole-number source-pixel scale.
++            // If the screen is smaller than a source frame, retain normal fit.
++            const uint32_t sx = nativeSdrExtent.width / copyWidth;
++            const uint32_t sy = nativeSdrExtent.height / copyHeight;
++            const uint32_t whole = std::min(sx, sy);
++            if (whole >= 1u) {
++                dstW = static_cast<int32_t>(std::min<uint64_t>(
++                    nativeSdrExtent.width, uint64_t(copyWidth) * whole));
++                dstH = static_cast<int32_t>(std::min<uint64_t>(
++                    nativeSdrExtent.height, uint64_t(copyHeight) * whole));
++            }
++        }
+         const int32_t left = (static_cast<int32_t>(nativeSdrExtent.width) - dstW) / 2;
+@@ -1387,2 +1387,3 @@
+     nativeCoreSourceTransfer = 0u;
++    nativeIntegerScaling = false;
+     nativeSdrStatus.store(0u, std::memory_order_release);
+diff --git a/src/main/cpp/libretrodroidjni.cpp b/src/main/cpp/libretrodroidjni.cpp
+--- a/src/main/cpp/libretrodroidjni.cpp
++++ b/src/main/cpp/libretrodroidjni.cpp
+@@ -840,7 +840,13 @@
+ JNIEXPORT void JNICALL Java_com_swordfish_libretrodroid_LibretroDroid_setNativeVulkanCoreSourceTransfer(
+     JNIEnv* env, jclass obj, jint sourceTransfer
+ ) {
+     VulkanBackend::getInstance().setNativeCoreSourceTransfer(static_cast<uint32_t>(sourceTransfer));
+ }
+ 
++JNIEXPORT void JNICALL Java_com_swordfish_libretrodroid_LibretroDroid_setNativeVulkanIntegerScaling(
++    JNIEnv* env, jclass obj, jboolean enabled
++) {
++    VulkanBackend::getInstance().setNativeIntegerScaling(enabled == JNI_TRUE);
++}
++
+ JNIEXPORT void JNICALL Java_com_swordfish_libretrodroid_LibretroDroid_setConfiguredHdrOutput(
+diff --git a/src/main/java/com/swordfish/libretrodroid/LibretroDroid.java b/src/main/java/com/swordfish/libretrodroid/LibretroDroid.java
+--- a/src/main/java/com/swordfish/libretrodroid/LibretroDroid.java
++++ b/src/main/java/com/swordfish/libretrodroid/LibretroDroid.java
+@@ -147,3 +147,5 @@
+     /** Only observed core source evidence can authorize HDR WSI; 0 unknown. */
+     public static native void setNativeVulkanCoreSourceTransfer(int transfer);
++    /** Configure session-local native WSI whole-number pixel scaling (GL thread). */
++    public static native void setNativeVulkanIntegerScaling(boolean enabled);
+     /** Android panel capabilities (not authored content metadata); GL thread only. */
