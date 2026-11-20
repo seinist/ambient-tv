@@ -38,6 +38,11 @@
     <string name="game_info_hdr_display_capabilities">HDR-Formate des Displays: %1$s (nur Gerätefähigkeit)</string>
     <string name="game_info_native_sdr_test">Vulkan-SDR-Swapchain testen (Diagnose)</string>
     <string name="game_info_native_sdr_test_hint">Experimentell: Ausgabe nur auf eine separate 16-Pixel-Surface. Das normale GLES-Spielbild bleibt sichtbar. Spiel fortsetzen und danach den Status unter Info prüfen.</string>
+    <string name="game_info_native_hdr_test">Native 10-Bit-HDR-Surface testen (experimentell)</string>
+    <string name="game_info_native_hdr_test_hint">Nur bei manuell gewähltem PQ-/HLG-Eingang. Der Core muss passend codierte 10-Bit-Vulkan-Bilder ausgeben. Bei 8 Bit oder fehlender Unterstützung erfolgt HDR→SDR über GLES. Kein Nachweis eines HDR-Fernsehsignals.</string>
+    <string name="game_info_native_hdr_fullscreen">Natives Vulkan-HDR-Vollbild (experimentell)</string>
+    <string name="game_info_native_hdr_fullscreen_hint">Nur nach tatsächlich präsentierten PQ-/HLG-Bildern auf der Test-Surface. Passende Display- und Vulkan-Farbräume erforderlich. Mastering-Metadaten, HDR-Signal und Filter-Parität noch nicht verifiziert; GLES bleibt Fallback.</string>
+    <string name="game_info_native_hdr_unavailable">Native PQ-/HLG-Ausgabe nicht verfügbar: Display oder Vulkan-Surface unterstützen den ausgewählten HDR-Farbraum nicht. HDR→SDR über GLES bleibt nutzbar.</string>
     <string name="game_info_native_sdr_fullscreen">Natives Vulkan-SDR-Vollbild (experimentell)</string>
     <string name="game_info_native_sdr_fullscreen_hint">Erst nach erfolgreicher Mini-Surface-Diagnose. Rohes Core-Bild: Shader, Drehung und ganzzahlige Skalierung können abweichen. Zum Aktivieren fortsetzen; OSD und Steuerung bleiben darüber. Bei Fehlern zurück zu GLES.</string>
     <string name="game_info_native_sdr_off">Vulkan-SDR-Diagnose: aus</string>
