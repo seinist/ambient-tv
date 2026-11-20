@@ -26,13 +26,15 @@ import javax.inject.Singleton
  * object closes it on cancellation. The optional proxy's onRelease closes the remote connection.
  */
 class GameDirectContent internal constructor(
-    val virtualFile: VirtualFile,
+    val virtualFiles: List<VirtualFile>,
     val bytes: Long,
 ) : Closeable {
+    constructor(virtualFile: VirtualFile, bytes: Long) : this(listOf(virtualFile), bytes)
+
     override fun close() {
-        // GLRetroView detaches its descriptor when the native VFS takes ownership.
-        // Closing a detached PFD is harmless; the native FD is closed by the fork's VFSFile.
-        runCatching { virtualFile.fileDescriptor.close() }
+        // GLRetroView detaches descriptors when its native VFS takes ownership.
+        // Closing detached PFDs is harmless; native VFSFile objects close the original FDs.
+        virtualFiles.forEach { runCatching { it.fileDescriptor.close() } }
     }
 }
 
