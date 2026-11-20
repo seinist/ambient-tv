@@ -1409,6 +1409,10 @@ internal fun TvPlayerSeekBar(
                         .graphicsLayer {
                             alpha = dataAlpha.value
                             compositingStrategy = androidx.compose.ui.graphics.CompositingStrategy.Offscreen
+                            // The same capsule bounds clip the accent fill, chapter overlays,
+                            // segment colors and cleared gaps; bookmark ticks stay outside.
+                            shape = RoundedCornerShape(50)
+                            clip = true
                         }
                         .background(Color.White.copy(alpha = 0.24f), RoundedCornerShape(50)),
                 ) {
@@ -1435,7 +1439,8 @@ internal fun TvPlayerSeekBar(
                                     androidx.compose.ui.geometry.Size(x(end) - x(current.startMs), size.height))
                             }
                             timeline.chapters.forEach { chapter ->
-                                if (chapter.startMs <= 0) return@forEach
+                                // A gap at either rounded end would cut into the capsule.
+                                if (chapter.startMs <= 0 || chapter.startMs >= durationMs) return@forEach
                                 val cx = x(chapter.startMs)
                                 drawLine(Color.Black, androidx.compose.ui.geometry.Offset(cx, 0f), androidx.compose.ui.geometry.Offset(cx, size.height),
                                     2.5.dp.toPx(), blendMode = androidx.compose.ui.graphics.BlendMode.Clear)
