@@ -387,6 +387,9 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
     DisposableEffect(vulkanSurfaceHost) {
         onDispose { vulkanSurfaceHost?.dispose() }
     }
+    LaunchedEffect(displayHdr, vulkanSurfaceHost) {
+        vulkanSurfaceHost?.updateDisplayHdr(displayHdr)
+    }
     LaunchedEffect(coreReady, vulkanSurfaceHost) {
         if (coreReady) vulkanSurfaceHost?.coreReady()
     }
