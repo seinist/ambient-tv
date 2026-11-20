@@ -53,6 +53,16 @@ class InteractionStyleTest {
         }
     }
 
+    @Test fun darkMaterialAccentsGetOnlyTheContrastLiftNeededForFocus() {
+        val deepBlue = Color(0xFF001133)
+        val readable = accessibleAccent(deepBlue, AppSurfaceRaised)
+        val material = visibleMaterialAccent(deepBlue, readable, AppSurfaceRaised)
+        assertTrue(contrastRatio(material, AppSurfaceRaised) >= 3.8f)
+        assertTrue(contrastRatio(material, AppSurfaceRaised) < contrastRatio(readable, AppSurfaceRaised))
+        assertEquals(Gold, visibleMaterialAccent(Gold, accessibleAccent(Gold, AppSurfaceRaised),
+            AppSurfaceRaised))
+    }
+
     @Test fun foregroundSwitchesWithTheActionFill() {
         assertEquals(Color.Black, contentOnAccent(Color.White))
         assertEquals(Color.White, contentOnAccent(Color.Black))
