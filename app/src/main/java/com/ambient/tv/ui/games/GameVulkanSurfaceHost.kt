@@ -88,6 +88,8 @@ internal class GameVulkanSurfaceHost(
     fun setNativeSdrDiagnostic(enabled: Boolean) {
         if (nativeSdrDiagnostic == enabled || disposed) return
         nativeSdrDiagnostic = enabled
+        // Invalidate any queued GL probe/attachment from the previous mode.
+        generation++
         if (!enabled) {
             setFullscreenRequested(false)
             detachNativeSdrSurface()
