@@ -156,6 +156,8 @@ interface PlaybackHandle {
     fun status(): PlaybackStatus
     /** Playback intent can differ from isPlaying while a newly created renderer is buffering. */
     fun wantsToPlay(): Boolean = status().playing
+    /** Explicit playback intent, even when a failed decoder makes [wantsToPlay] false. */
+    fun requestedPlayIntent(): Boolean = wantsToPlay()
     /** Current seek capability; a positive live clock alone never establishes a seek window. */
     fun canSeekNow(): Boolean = status().durationMs > 0L
     fun play()
@@ -180,6 +182,11 @@ interface PlaybackHandle {
     fun detachVideoOutput() = Unit
     fun release()
 }
+
+/** Keep a Play command across a decoder failure; do not infer user Pause from an error. */
+internal fun rendererHandoffPlayIntent(
+    samePlayback: Boolean, failed: Boolean, readyToPlay: Boolean, requestedToPlay: Boolean,
+): Boolean = if (samePlayback && failed) requestedToPlay else readyToPlay
 
 /**
  * One service-owned engine across all sources/renderers. All access is on the main
@@ -395,7 +402,10 @@ object BackgroundPlaybackSession {
         val previousSubtitleDelay = if (samePlayback) (previous as? SubtitleDelayTarget)?.subtitleDelayMs else null
         val previousZeroReady = rendererZeroPositionReady(previous)
         if (previous != null) PlaybackOutputTransition.begin(context)
-        val previousPlayIntent = previous?.wantsToPlay() ?: previousStatus?.playing ?: true
+        val previousPlayIntent = previous?.let { outgoing ->
+            rendererHandoffPlayIntent(samePlayback, previousStatus?.error != null,
+                outgoing.wantsToPlay(), outgoing.requestedPlayIntent())
+        } ?: previousStatus?.playing ?: true
         // SurfaceView/PlayerView disposal happens on the next Compose apply pass. Native players
         // must release their video output before their engine is destroyed, otherwise the old
         // renderer can crash while its Surface is still owned by the persistent mini-player host.
@@ -620,8 +630,15 @@ object BackgroundPlaybackSession {
             mutableSnapshot.value = snapshot.value.copy(metadata = metadata)
         }
     }
-    fun cached(route: String): Any? = snapshot.value.takeUnless { it.replacingSource }
-        ?.metadata?.takeIf { it.route == route }?.resumeState
+    // Do not reuse a failed YouTube stream's signed URLs on a revisit. Keep the established
+    // caching policy for local providers (Plex/TVHeadend/etc.) completely unchanged.
+    fun cached(route: String): Any? {
+        val current = snapshot.value.takeUnless { it.replacingSource } ?: return null
+        val metadata = current.metadata?.takeIf { it.route == route } ?: return null
+        if (metadata.source == "youtube" &&
+            (handle == null || current.status.error != null || handle?.status()?.error != null)) return null
+        return metadata.resumeState
+    }
     fun setSleepTimer(value: SleepTimerConfig) {
         checkThread()
         SleepSession.set(value)

@@ -11,6 +11,7 @@ import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.async
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.NonCancellable
@@ -73,6 +74,7 @@ class SmartTubeEngine @Inject constructor(
     }
     /** SmartTube's client selector is global: format loads that may switch it run one at a time. */
     private val formatClientMutex = kotlinx.coroutines.sync.Mutex()
+    private val playbackWarmupRequested = java.util.concurrent.atomic.AtomicBoolean(false)
     private val backgroundScope = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob() + Dispatchers.IO)
     private val metadataInflight = java.util.concurrent.ConcurrentHashMap<String, CompletableDeferred<Result<YouTubeMetadata>?>>()
     /** Subscription changes of this session; cached metadata still carries the state it was loaded with. */
@@ -89,6 +91,25 @@ class SmartTubeEngine @Inject constructor(
             kotlinx.coroutines.runBlocking {
                 kotlinx.coroutines.withTimeoutOrNull(RENEW_TIMEOUT_MS) { renewStreamUrl(videoId, expiredUrl) }
             }
+        }
+    }
+
+    /**
+     * Hide one-time MediaServiceCore initialization and saved format-client restoration behind
+     * the first SmartTube browse request, before the viewer presses Play. No video ID is probed,
+     * no signed URL is cached, and Home never waits for this optional task.
+     */
+    private fun requestPlaybackWarmup() {
+        if (!available || !playbackWarmupRequested.compareAndSet(false, true)) return
+        backgroundScope.launch {
+            runCatching {
+                formatClientMutex.withLock {
+                    val started = System.nanoTime()
+                    service("getMediaItemService")
+                    restoreFormatClientOnce()
+                    com.ambient.tv.ui.player.logPlaybackStartup("youtube", "format_warmup", started)
+                }
+            }.onFailure { Timber.d(it, "SmartTube playback warmup failed") }
         }
     }
 
@@ -333,6 +354,7 @@ class SmartTubeEngine @Inject constructor(
      * MediaServiceCore revisions, so probe known public variants across revisions. */
     suspend fun supportedFeedKeys(): Set<String> = io {
         if (!available) return@io emptySet()
+        requestPlaybackWarmup()
         val content = service("getContentService")
         // Subscriptions/History/Playlists are tied to a signed-in Google account and are
         // always empty for a signed-out user - hide them from the UI entirely instead of
@@ -654,7 +676,10 @@ class SmartTubeEngine @Inject constructor(
         }.onFailure { Timber.d(it, "SmartTube format client restore") }
     }
 
-    private suspend fun loadPlayableFormatInfo(media: Any, videoId: String): Any = formatClientMutex.withLock {
+    private suspend fun loadPlayableFormatInfo(media: Any, videoId: String): Any {
+        val queuedAt = System.nanoTime()
+        return formatClientMutex.withLock {
+        com.ambient.tv.ui.player.logPlaybackStartup("youtube", "format_slot", queuedAt)
         val caller = kotlin.coroutines.coroutineContext
         restoreFormatClientOnce()
         resolveYouTubeFormatInfo(
@@ -679,6 +704,7 @@ class SmartTubeEngine @Inject constructor(
                     "attempt=$attempt score=$score")
             },
         )
+        }
     }
 
     private fun formatInfoScore(info: Any): Int = youtubePlayableFormatScore(
@@ -934,6 +960,7 @@ class SmartTubeEngine @Inject constructor(
         vararg args: Any?,
         onRows: suspend (List<YouTubeRow>) -> Unit = {},
     ): List<YouTubeRow> = withContext(Dispatchers.IO) {
+        requestPlaybackWarmup()
         val rowScope = coroutineContext[RowContinuationScope]?.scope
         val content = service("getContentService")
         var attempted = false
@@ -1289,6 +1316,7 @@ class SmartTubeEngine @Inject constructor(
         if (initialized) return rawManager()
         synchronized(initLock) {
             if (initialized) return rawManager()
+            val started = System.nanoTime()
 
             applyMetadataLanguage()
             val manager = rawManager()
@@ -1302,6 +1330,7 @@ class SmartTubeEngine @Inject constructor(
             awaitStoredAccountRestore(signIn)
             signIn.call("checkAuth")
             initialized = true
+            com.ambient.tv.ui.player.logPlaybackStartup("youtube", "engine_init", started)
             return manager
         }
     }

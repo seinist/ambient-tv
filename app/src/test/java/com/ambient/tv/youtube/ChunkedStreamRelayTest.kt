@@ -258,8 +258,25 @@ class ChunkedStreamRelayTest {
     }
 
     @Test fun `without a renewal the player gets the 403`() {
-        val url = relay.register(source.replace("/videoplayback", "/expired"), emptyMap()) { null }
+        val terminal = Collections.synchronizedList(mutableListOf<Int>())
+        val url = relay.register(
+            source.replace("/videoplayback", "/expired"), emptyMap(),
+            onTerminalHttpStatus = { terminal += it },
+            refresh = { null },
+        )
         get(url).use { response -> assertEquals(403, response.code) }
+        assertEquals(listOf(403), terminal)
+    }
+
+    @Test fun `a transient 403 recovered by the relay is not reported as terminal`() {
+        val terminal = Collections.synchronizedList(mutableListOf<Int>())
+        val url = relay.register(
+            source.replace("/videoplayback", "/transient-forbidden"), emptyMap(),
+            onTerminalHttpStatus = { terminal += it },
+            refresh = { null },
+        )
+        get(url).use { response -> assertArrayEquals(payload, response.body!!.bytes()) }
+        assertTrue(terminal.isEmpty())
     }
 
     @Test fun `renewed url keeps format and audio track`() {
