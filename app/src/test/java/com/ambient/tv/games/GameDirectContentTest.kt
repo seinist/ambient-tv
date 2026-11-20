@@ -36,7 +36,7 @@ class GameDirectContentTest {
         assertEquals(result.size, windows.read(start, result, result.size))
         assertArrayEquals(expected(start, result.size), result)
         val calls = media.calls
-        assertEquals(100, windows.read(start, ByteArray(100), 100))
+        assertEquals(50, windows.read(start + 13_950, ByteArray(50), 50))
         assertEquals("recent read should hit the window cache", calls, media.calls)
         val tail = ByteArray(1024)
         assertEquals(123, windows.read(media.size - 123, tail, tail.size))
