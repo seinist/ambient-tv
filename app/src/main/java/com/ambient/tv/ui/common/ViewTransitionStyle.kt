@@ -116,6 +116,13 @@ internal fun ViewTransitionHost(
     var previous by remember { mutableStateOf(NavigationStamp(route, entryId, backStackDepth, fullscreen)) }
     var backward by remember { mutableStateOf(false) }
 
+    if ((style == ViewTransitionStyle.OFF || reducedEffects) && active.animate) {
+        // Disabling the option/performance effects mid-transition ends the
+        // tween immediately; the content itself never gets removed.
+        active = ViewTransitionVisual.None
+        progress.floatValue = 1f
+    }
+
     if (previous.entryId != entryId || previous.route != route) {
         val eligible = shouldAnimateViewTransition(
             previous.entryId, entryId, previous.fullscreen, fullscreen,
