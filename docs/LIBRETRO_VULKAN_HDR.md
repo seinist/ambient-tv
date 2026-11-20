@@ -200,6 +200,8 @@ the validated output path.
    resolution and refresh changes, shader toggle, 4K GPU memory, and input/OSD focus.
    Confirm actual signal format using device/TV diagnostics, not just an HDR UI badge.
 
+For every native SDR/HDR path, use the [device acceptance and evidence checklist](LIBRETRO_HDR_DEVICE_ACCEPTANCE.md). A green CI build is not a proof of device HDR, source colorimetry, mastering metadata or shader parity.
+
 ## Explicit release gates
 
 - Current default: SDR. Native 10-bit PQ/HLG WSI frame presentation is a
