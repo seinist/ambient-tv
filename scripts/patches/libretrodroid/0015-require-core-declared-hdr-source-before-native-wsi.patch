@@ -1,7 +1,7 @@
 diff --git a/src/main/cpp/vulkan/vulkanbackend.cpp b/src/main/cpp/vulkan/vulkanbackend.cpp
 --- a/src/main/cpp/vulkan/vulkanbackend.cpp
 +++ b/src/main/cpp/vulkan/vulkanbackend.cpp
-@@ -404,6 +404,17 @@ void VulkanBackend::setNativeOutputTransfer(uint32_t transfer) {
+@@ -404,4 +404,15 @@ void VulkanBackend::setNativeOutputTransfer(uint32_t transfer) {
      nativeSdrDisabled = false;
  }
  
@@ -17,7 +17,7 @@ diff --git a/src/main/cpp/vulkan/vulkanbackend.cpp b/src/main/cpp/vulkan/vulkanb
 +}
 +
  void VulkanBackend::disableNativeSdrSwapchain(const char* reason) {
-@@ -412,6 +423,11 @@ bool VulkanBackend::ensureNativeSdrSwapchain() {
+@@ -412,2 +423,7 @@ bool VulkanBackend::ensureNativeSdrSwapchain() {
      if (nativeSdrSwapchain != VK_NULL_HANDLE) return true;
 +    // Refuse native HDR without independent source evidence. In particular,
 +    // neither a 10-bit VkFormat nor manual PQ/HLG selection is sufficient.
@@ -25,7 +25,7 @@ diff --git a/src/main/cpp/vulkan/vulkanbackend.cpp b/src/main/cpp/vulkan/vulkanb
 +    if (nativeOutputTransfer != 0u && nativeCoreSourceTransfer != nativeOutputTransfer)
 +        return false;
      if (!isStarted() || nativeSdrWindow == nullptr || nativeSdrDisabled ||
-@@ -1371,6 +1387,7 @@ void VulkanBackend::shutdown() {
+@@ -1371,3 +1387,4 @@ void VulkanBackend::shutdown() {
      nativeSdrDisabled = false;
      nativeOutputTransfer = 0u;
 +    nativeCoreSourceTransfer = 0u;
@@ -33,13 +33,13 @@ diff --git a/src/main/cpp/vulkan/vulkanbackend.cpp b/src/main/cpp/vulkan/vulkanb
 diff --git a/src/main/cpp/vulkan/vulkanbackend.h b/src/main/cpp/vulkan/vulkanbackend.h
 --- a/src/main/cpp/vulkan/vulkanbackend.h
 +++ b/src/main/cpp/vulkan/vulkanbackend.h
-@@ -96,6 +96,8 @@ class VulkanBackend {
+@@ -96,3 +96,5 @@ class VulkanBackend {
      // No implicit SDR->HDR enhancement or guessing based only on image bit depth.
      void setNativeOutputTransfer(uint32_t transfer);
 +    // Independent source provenance, default unknown, reset between cores.
 +    void setNativeCoreSourceTransfer(uint32_t sourceTransfer);
      uint32_t getNativeSdrStatus() const { return nativeSdrStatus.load(std::memory_order_acquire); }
-@@ -260,6 +262,7 @@ class VulkanBackend {
+@@ -260,3 +262,4 @@ class VulkanBackend {
      bool nativeSdrDisabled = false;
      uint32_t nativeOutputTransfer = 0; // SDR by default, per-session only
 +    uint32_t nativeCoreSourceTransfer = 0; // no trusted PQ/HLG source by default
@@ -47,7 +47,7 @@ diff --git a/src/main/cpp/vulkan/vulkanbackend.h b/src/main/cpp/vulkan/vulkanbac
 diff --git a/src/main/cpp/libretrodroidjni.cpp b/src/main/cpp/libretrodroidjni.cpp
 --- a/src/main/cpp/libretrodroidjni.cpp
 +++ b/src/main/cpp/libretrodroidjni.cpp
-@@ -834,6 +834,12 @@ JNIEXPORT void JNICALL Java_com_swordfish_libretrodroid_LibretroDroid_setNativeVulkanOutputTransfer(
+@@ -834,4 +834,10 @@ JNIEXPORT void JNICALL Java_com_swordfish_libretrodroid_LibretroDroid_setNativeVulkanOutputTransfer(
      VulkanBackend::getInstance().setNativeOutputTransfer(static_cast<uint32_t>(transfer));
  }
  
@@ -61,7 +61,7 @@ diff --git a/src/main/cpp/libretrodroidjni.cpp b/src/main/cpp/libretrodroidjni.c
 diff --git a/src/main/java/com/swordfish/libretrodroid/LibretroDroid.java b/src/main/java/com/swordfish/libretrodroid/LibretroDroid.java
 --- a/src/main/java/com/swordfish/libretrodroid/LibretroDroid.java
 +++ b/src/main/java/com/swordfish/libretrodroid/LibretroDroid.java
-@@ -143,6 +143,8 @@ public class LibretroDroid {
+@@ -143,4 +143,6 @@ public class LibretroDroid {
      public static native void setNativeSdrVulkanSurface(android.view.Surface surface);
      /** Explicit native transfer: 0 SDR, 1 PQ/BT.2020, 2 HLG/BT.2020; GL thread only. */
      public static native void setNativeVulkanOutputTransfer(int transfer);
