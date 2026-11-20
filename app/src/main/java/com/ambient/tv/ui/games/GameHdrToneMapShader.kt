@@ -5,14 +5,18 @@ import com.ambient.tv.games.GameShader
 import com.swordfish.libretrodroid.ShaderConfig
 
 /**
- * The pinned fork exports Vulkan frames via 8-bit RGBA AHardwareBuffer into GLES.
+ * The Vulkan core can export into an optional FP16 AHardwareBuffer for GLES when supported.
  * This is a manually selected PQ/HLG encoded INPUT -> SDR compositor shader,
  * not native HDR presentation. Most libretro cores output SDR: default is off.
  *
- * Input highlight precision is limited by the current 8-bit Vulkan/GLES bridge.
+ * Unavailable FP16 formats or GLES import failures fall back to RGBA8 for the session.
  * Keep the normal picture filter stored and restore it when HDR conversion is off.
  */
 internal object GameHdrToneMapShader {
+    /** FP16 only for explicitly selected HDR input while the core uses Vulkan. */
+    fun prefersFp16Bridge(input: GameHdrToneMap, vulkan: Boolean): Boolean =
+        vulkan && input != GameHdrToneMap.OFF
+
     fun forGame(filter: GameShader, input: GameHdrToneMap, vulkan: Boolean): ShaderConfig {
         if (!vulkan || input == GameHdrToneMap.OFF) return filter.config()
         return ShaderConfig.Custom(listOf(ShaderConfig.Custom.ShaderPass(
