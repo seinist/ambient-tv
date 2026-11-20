@@ -111,7 +111,7 @@ internal object GameHdrToneMapShader {
                 // All filtering happens *after* tone mapping, never in PQ code space.
                 // The low-overhead CRT and LCD patterns are output-space effects.
                 if (PICTURE_MODE == 3) {
-                    float scan = 0.78 + 0.22 * sin(3.14159265359 * fract(gl_FragCoord.y / 2.0));
+                    float scan = mod(floor(gl_FragCoord.y), 2.0) < 1.0 ? 1.0 : 0.78;
                     sdr *= scan;
                     float edge = 0.94 + 0.06 * cos(6.28318530718 * fract(gl_FragCoord.x / 3.0));
                     sdr *= edge;
