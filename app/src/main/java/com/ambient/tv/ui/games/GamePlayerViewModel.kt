@@ -10,6 +10,7 @@ import com.ambient.tv.games.GameBiosStatus
 import com.ambient.tv.games.GameCore
 import com.ambient.tv.games.GameCoreIncompatibleException
 import com.ambient.tv.games.GameCoreManager
+import com.ambient.tv.games.GameDirectUnavailableException
 import com.ambient.tv.games.GameRomPreparer
 import com.ambient.tv.games.GameStateEntry
 import com.ambient.tv.games.GameStateKind
@@ -59,7 +60,7 @@ sealed interface GameUiState {
     data class Failed(val reason: GameFailure, val detail: String? = null) : GameUiState
 }
 
-enum class GameFailure { NOT_FOUND, UNKNOWN_SYSTEM, CORE_DOWNLOAD, CORE_INCOMPATIBLE, NO_ABI, BIOS_MISSING, START }
+enum class GameFailure { NOT_FOUND, UNKNOWN_SYSTEM, DIRECT_ACCESS, CORE_DOWNLOAD, CORE_INCOMPATIBLE, NO_ABI, BIOS_MISSING, START }
 
 @HiltViewModel
 class GamePlayerViewModel @Inject constructor(
@@ -80,6 +81,22 @@ class GamePlayerViewModel @Inject constructor(
     /** Save states of the running game: automatic, undo, then the user's newest first. */
     val saveStates: StateFlow<List<GameStateEntry>> = stateList.asStateFlow()
     private var job: Job? = null
+    private var prepared: PreparedGame? = null
+    private var forceCache = false
+    private var directFailed = false
+
+    /** A failed direct mount or unsupported core can be retried with a LOCAL COPY only by consent. */
+    val canUseCache: Boolean get() = directFailed && !forceCache
+    fun retryWithCache() {
+        forceCache = true
+        load()
+    }
+
+    override fun onCleared() {
+        job?.cancel()
+        prepared?.close()
+        super.onCleared()
+    }
 
     init { load() }
 
@@ -106,8 +123,15 @@ class GamePlayerViewModel @Inject constructor(
         job?.cancel()
         job = viewModelScope.launch {
             mutable.value = GameUiState.Preparing(null)
+            prepared?.close()
+            prepared = null
+            directFailed = false
             val game = try {
-                preparer.prepare(fileId) { progress -> mutable.value = GameUiState.Preparing(progress) }
+                preparer.prepare(fileId, { progress -> mutable.value = GameUiState.Preparing(progress) }, forceCache)
+            } catch (error: GameDirectUnavailableException) {
+                directFailed = true
+                mutable.value = GameUiState.Failed(GameFailure.DIRECT_ACCESS, error.message)
+                return@launch
             } catch (error: UnknownGameException) {
                 mutable.value = GameUiState.Failed(GameFailure.UNKNOWN_SYSTEM, error.name); return@launch
             } catch (error: kotlinx.coroutines.CancellationException) {
@@ -115,6 +139,8 @@ class GamePlayerViewModel @Inject constructor(
             } catch (error: Exception) {
                 mutable.value = GameUiState.Failed(GameFailure.NOT_FOUND, error.message); return@launch
             }
+            prepared = game
+            directFailed = game.direct
             if (cores.abi == null) { mutable.value = GameUiState.Failed(GameFailure.NO_ABI); return@launch }
             val chosen = com.ambient.tv.games.GameSettings.state.gameCore(game.system, game.saveKey)
             if (chosen.supportedAbis.isNotEmpty() && cores.abi !in chosen.supportedAbis) {
