@@ -1,6 +1,8 @@
 package com.ambient.tv.ui.home
 
 import com.ambient.tv.ui.common.ContentRowData
+import com.ambient.tv.livetv.LiveTvArt
+import com.ambient.tv.livetv.liveTvProgrammeArt
 
 internal enum class HomePlaybackProvider { TRAILERS, YOUTUBE, TELEGRAM, MEDIA }
 
@@ -106,19 +108,29 @@ internal fun prepareHomePlaybackReturn(
 /** Source IDs may themselves contain colons; keys are matched whole, never split. */
 internal fun homeLiveTvFocusKey(item: HomeLiveTvItem): String = "${item.channel.sourceId}:${item.channel.uuid}"
 
-internal fun HomeLiveTvItem.toHomeHeroContent(): HomeHeroContent {
+/** Reuse the programme guide's title match and fallback policy for Home cards and hero. */
+internal fun HomeLiveTvItem.bestArtwork(titleArt: Map<String, String> = emptyMap()): LiveTvArt? =
+    event?.let { liveTvProgrammeArt(it, listOf(channel), titleArt) }
+        ?: channel.iconUrl?.let { LiveTvArt(it, logo = true) }
+
+internal fun HomeLiveTvItem.homeHeroKey(): String =
+    "livetv:${channel.sourceId}:${channel.uuid}:${event?.eventId ?: "channel"}"
+
+internal fun HomeLiveTvItem.toHomeHeroContent(titleArt: Map<String, String> = emptyMap()): HomeHeroContent {
     val currentEvent = event
+    val art = bestArtwork(titleArt)
     fun clock(epoch: Long) = HOME_LIVE_CLOCK_FORMATTER.format(java.time.Instant.ofEpochSecond(epoch))
     return HomeHeroContent(
-        key = "livetv:${channel.sourceId}:${channel.uuid}:${currentEvent?.eventId ?: "channel"}",
+        key = homeHeroKey(),
         title = currentEvent?.title ?: channel.name,
-        artworkUrl = currentEvent?.imageUrl ?: channel.iconUrl,
+        artworkUrl = art?.url,
         thumbnailUrl = channel.iconUrl,
         titleLogoUrl = channel.iconUrl,
-        artworkIsLogo = currentEvent?.imageUrl == null,
+        titleLogoHeaders = imageHeaders,
+        artworkIsLogo = art?.logo == true,
         providerLabel = sourceName,
         metadata = if (currentEvent == null) listOf(sourceName).filter { it.isNotBlank() } else emptyList(),
-        imageHeaders = imageHeaders,
+        imageHeaders = art?.headers(imageHeaders).orEmpty(),
         subtitle = currentEvent?.let { it.subtitle?.takeIf(String::isNotBlank) ?: channel.name },
         summary = currentEvent?.let { programme ->
             listOfNotNull(programme.summary, programme.description)
