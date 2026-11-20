@@ -2314,18 +2314,19 @@ class HomeViewModel @Inject constructor(
             (checkNotNull(returnedTvRow.target.rowId) to checkNotNull(returnedTvRow.liveTvSource))
         val homeDefinitions = if (plexOnly || jellyfinOnly || embyOnly) emptyList() else appPreferences.homeRows
         val tvRowSources = tvRows.keys.filter { ':' in it }.associateWith { key -> "${key.substringAfter(':')}.${if (key.startsWith("recent")) "recent_channels" else "live"}" }
+        // Offline providers retain one reconnect row in their original editor position. When
+        // absolutely nothing is available, keep the full offline page instead of a lone row.
+        val offlineReconnectSystems = if (rows.isEmpty() && shortcuts.isEmpty() && tvRows.isEmpty()) emptyList()
+            else unreachableServers.current().offline.filter { system ->
+                homeDefinitions.any { it.enabled && it.system == system }
+            }
         val orderedRowKeys = orderedHomeRowKeys(homeDefinitions, rows.map { it.id },
-            shortcuts, tvRows.containsKey("live-tv"), tvRows.containsKey("recent-tv"), tvRowSources)
-        // Cold start reveals rows top-down, so Live TV etc. cannot show first and jump down.
-        val contentRowKeys = revealHomeRowsInOrder(homeDefinitions, orderedRowKeys,
-            homeRowKeySources(rows.map { it.id }, shortcuts, tvRows.containsKey("live-tv"), tvRows.containsKey("recent-tv"), tvRowSources),
+            shortcuts, tvRows.containsKey("live-tv"), tvRows.containsKey("recent-tv"), tvRowSources, offlineReconnectSystems)
+        // Cold start reveals rows top-down, so Live TV cannot outrun a still-loading media server.
+        val rowKeys = revealHomeRowsInOrder(homeDefinitions, orderedRowKeys,
+            homeRowKeySources(rows.map { it.id }, shortcuts, tvRows.containsKey("live-tv"),
+                tvRows.containsKey("recent-tv"), tvRowSources, offlineReconnectSystems, homeDefinitions),
             coldStartPendingSystems())
-        // An offline server whose rows are on Home keeps one entry there that wakes it. With no
-        // other rows Home shows the full offline page instead.
-        val rowKeys = if (contentRowKeys.isEmpty() || plexOnly || jellyfinOnly || embyOnly) contentRowKeys
-        else contentRowKeys + unreachableServers.current().offline
-            .filter { system -> appPreferences.homeRows.any { it.enabled && it.system == system } }
-            .map { HOME_OFFLINE_ROW_PREFIX + it }
         val defaultItem = rows.firstNotNullOfOrNull { it.items.firstOrNull() }
         // Initial focus belongs to the first row on screen, which follows rowKeys (the editor
         // order), not the provider order of `rows`.
