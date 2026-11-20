@@ -981,7 +981,7 @@
     <string name="youtube_auth_required_title">SmartTube sign-in required</string>
     <string name="youtube_auth_required_body">This feed needs a valid YouTube account. Please sign in again if your previous session stopped working.</string>
     <string name="youtube_auth_check_title">SmartTube feeds could not be loaded</string>
-    <string name="youtube_auth_check_body">This feed is unexpectedly empty. Try refreshing, or check your SmartTube sign-in if other feeds are also missing.</string>
+    <string name="youtube_auth_check_body">This feed is empty or access was refused. Refresh, or check your SmartTube sign-in if other feeds are also missing.</string>
     <string name="youtube_auth_reconnect">Sign in again</string>
     <string name="youtube_auth_attention_notice">SmartTube feeds are missing. Check your account sign-in.</string>
     <string name="youtube_no_filter_matches">No videos match these filters</string>
