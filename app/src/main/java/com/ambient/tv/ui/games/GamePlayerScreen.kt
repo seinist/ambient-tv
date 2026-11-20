@@ -797,7 +797,9 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
                                 GameVulkanTransferMode.HLG_BT2020 -> "Vulkan HLG WSI · Test"
                             })
                         }
-                        if (session.vulkan && vulkanFrameStatus.active && toneMap != GameHdrToneMap.OFF) {
+                        if (session.vulkan && vulkanFrameStatus.active && toneMap != GameHdrToneMap.OFF &&
+                            !(nativeSdrFullscreenRequested &&
+                                GameVulkanTransferGate.frameConfirmed(nativeTransfer, nativeSdrStatus))) {
                             MetaBadge("HDR → SDR")
                         } else {
                             MetaBadge(stringResource(shader.titleRes))
@@ -1217,7 +1219,13 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
                                         GamePanelText(stringResource(R.string.game_info_native_hdr_unavailable))
                                     }
                                 }
-                                GamePanelText(stringResource(R.string.game_info_hdr_output_inactive))
+                                if (nativeSdrFullscreenRequested &&
+                                    nativeTransfer != GameVulkanTransferMode.SDR &&
+                                    GameVulkanTransferGate.frameConfirmed(nativeTransfer, nativeSdrStatus)) {
+                                    GamePanelText(stringResource(R.string.game_info_hdr_wsi_unverified))
+                                } else {
+                                    GamePanelText(stringResource(R.string.game_info_hdr_output_inactive))
+                                }
                             }
                             if (system.alternatives.isNotEmpty()) {
                                 GamePanelText(stringResource(R.string.game_info_core_choice))
