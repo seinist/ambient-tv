@@ -276,6 +276,7 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
     val settings = GameSettings.state
     val shader = settings.shader(system)
     val toneMap = settings.hdrToneMap(core)
+    val nativeTransfer = GameVulkanTransferMode.forInput(toneMap)
     val aspect = settings.aspect(system)
     val integerScaling = settings.integerScaling(system)
     val saveStates by model.saveStates.collectAsState()
@@ -374,9 +375,10 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
 
     // Maintain the old GLES renderer unchanged. The extra 1×1 real Android
     // surface exists only for Vulkan WSI probing and never displays game frames.
-    val vulkanSurfaceHost = remember(retroView, session.vulkan) {
+    val vulkanSurfaceHost = remember(retroView, session.vulkan, nativeTransfer) {
         if (session.vulkan) GameVulkanSurfaceHost(
             context, retroView,
+            outputTransfer = nativeTransfer,
             onFormats = { vulkanSurfaceFormats = it },
             onNativeStatus = { nativeSdrStatus = it },
             onFullscreenLost = { nativeSdrFullscreenRequested = false },
@@ -780,8 +782,12 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
                         if (game.direct) MetaBadge(stringResource(R.string.game_direct_source))
                         if (core.hardware) MetaBadge(vulkanFrameStatus.badge(session.vulkan))
                         if (nativeSdrFullscreenRequested &&
-                            nativeSdrStatus.phase == GameVulkanSdrStatus.Phase.PRESENTING) {
-                            MetaBadge("Vulkan SDR · Test")
+                            GameVulkanTransferGate.frameConfirmed(nativeTransfer, nativeSdrStatus)) {
+                            MetaBadge(when (nativeTransfer) {
+                                GameVulkanTransferMode.SDR -> "Vulkan SDR · Test"
+                                GameVulkanTransferMode.PQ_BT2020 -> "Vulkan PQ WSI · Test"
+                                GameVulkanTransferMode.HLG_BT2020 -> "Vulkan HLG WSI · Test"
+                            })
                         }
                         if (session.vulkan && vulkanFrameStatus.active && toneMap != GameHdrToneMap.OFF) {
                             MetaBadge("HDR → SDR")
@@ -1160,7 +1166,10 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
                                 GamePanelText(stringResource(R.string.game_info_hdr_display_capabilities, displayHdr.supportedTypesLabel()))
                                 if (session.vulkan) {
                                     GamePanelText(stringResource(R.string.game_info_vulkan_surface_pairs, vulkanSurfaceFormats.candidateTypesLabel()))
-                                    if (toneMap == GameHdrToneMap.OFF) {
+                                    val transferSupported = GameVulkanTransferGate.supported(
+                                        nativeTransfer, displayHdr, vulkanSurfaceFormats,
+                                    )
+                                    if (transferSupported) {
                                         val nativePhase = when (nativeSdrStatus.phase) {
                                             GameVulkanSdrStatus.Phase.OFF -> R.string.game_info_native_sdr_off
                                             GameVulkanSdrStatus.Phase.REQUESTED -> R.string.game_info_native_sdr_requested
@@ -1170,8 +1179,10 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
                                         }
                                         GamePanelText(stringResource(nativePhase))
                                         RightPanelChoice(
-                                            text = stringResource(R.string.game_info_native_sdr_test),
-                                            subtitle = stringResource(R.string.game_info_native_sdr_test_hint),
+                                            text = stringResource(if (nativeTransfer == GameVulkanTransferMode.SDR)
+                                                R.string.game_info_native_sdr_test else R.string.game_info_native_hdr_test),
+                                            subtitle = stringResource(if (nativeTransfer == GameVulkanTransferMode.SDR)
+                                                R.string.game_info_native_sdr_test_hint else R.string.game_info_native_hdr_test_hint),
                                             selected = nativeSdrDiagnostic,
                                             enabled = !netplay.active && !exiting,
                                             onClick = {
@@ -1181,17 +1192,21 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
                                         )
                                         val fullscreenAvailable = GameVulkanFullscreenPolicy.canEnable(
                                             session.vulkan, toneMap, nativeSdrDiagnostic,
-                                            nativeSdrStatus, netplay.active,
+                                            nativeSdrStatus, netplay.active, displayHdr, vulkanSurfaceFormats,
                                         )
                                         RightPanelChoice(
-                                            text = stringResource(R.string.game_info_native_sdr_fullscreen),
-                                            subtitle = stringResource(R.string.game_info_native_sdr_fullscreen_hint),
+                                            text = stringResource(if (nativeTransfer == GameVulkanTransferMode.SDR)
+                                                R.string.game_info_native_sdr_fullscreen else R.string.game_info_native_hdr_fullscreen),
+                                            subtitle = stringResource(if (nativeTransfer == GameVulkanTransferMode.SDR)
+                                                R.string.game_info_native_sdr_fullscreen_hint else R.string.game_info_native_hdr_fullscreen_hint),
                                             selected = nativeSdrFullscreenRequested,
                                             enabled = !exiting && (nativeSdrFullscreenRequested || fullscreenAvailable),
                                             onClick = {
                                                 nativeSdrFullscreenRequested = !nativeSdrFullscreenRequested
                                             },
                                         )
+                                    } else if (nativeTransfer != GameVulkanTransferMode.SDR) {
+                                        GamePanelText(stringResource(R.string.game_info_native_hdr_unavailable))
                                     }
                                 }
                                 GamePanelText(stringResource(R.string.game_info_hdr_output_inactive))
