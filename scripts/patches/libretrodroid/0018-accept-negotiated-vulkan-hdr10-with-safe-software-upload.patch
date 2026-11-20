@@ -1,0 +1,185 @@
+diff --git a/src/main/cpp/environment.h b/src/main/cpp/environment.h
+--- a/src/main/cpp/environment.h
++++ b/src/main/cpp/environment.h
+@@ -26,4 +26,5 @@
+ #include <unordered_map>
+ #include <array>
++#include <atomic>
+ 
+ #include "../../libretro-common/include/libretro.h"
+@@ -75,4 +75,6 @@
+     /** Configured PQ output capability for early libretro negotiation, not proof of an HDR signal. */
+     void setConfiguredHdrOutput(unsigned mode);
++    /** Atomic handshake: bit 0 requested HDR10, bit 1 accepted HDR10, bit 2 requested scRGB. */
++    unsigned getHdrSourceStatus() const { return hdrSourceStatus.load(std::memory_order_acquire); }
+ 
+ private:
+@@ -185,3 +185,4 @@
+     unsigned configuredHdrOutput = 0; // 0 SDR/unknown, 1 configured PQ; reset at game exit
++    std::atomic<unsigned> hdrSourceStatus { 0u };
+ 
+     int pixelFormat = RETRO_PIXEL_FORMAT_RGB565;
+diff --git a/src/main/cpp/environment.cpp b/src/main/cpp/environment.cpp
+--- a/src/main/cpp/environment.cpp
++++ b/src/main/cpp/environment.cpp
+@@ -44,3 +44,4 @@
+ void Environment::setConfiguredHdrOutput(unsigned mode) {
+     configuredHdrOutput = mode == 1u ? 1u : 0u;
++    hdrSourceStatus.store(0u, std::memory_order_release);
+ }
+@@ -74,3 +74,4 @@
+     configuredHdrOutput = 0u;
++    hdrSourceStatus.store(0u, std::memory_order_release);
+ 
+     pixelFormat = RETRO_PIXEL_FORMAT_RGB565;
+@@ -320,3 +320,21 @@
+             if (data == nullptr) return false;
+             const auto requested = *static_cast<const retro_pixel_format*>(data);
++            // A core's successful SET_PIXEL_FORMAT is its real HDR source
++            // handshake. A GUI option or Vulkan format alone is not enough.
++            // Only the opted-in Vulkan path supports HDR10 packed source
++            // samples. Both ES3 upload and ES2 fallback handle this layout.
++            if (requested == RETRO_PIXEL_FORMAT_HDR10_2101010) {
++                const bool accepted = configuredHdrOutput == 1u && useVulkan &&
++                    libretrodroid::VulkanBackend::getInstance().isAvailable();
++                hdrSourceStatus.store(accepted ? 3u : 1u, std::memory_order_release);
++                if (!accepted) return false;
++                pixelFormat = requested;
++                return true;
++            }
++            if (requested == RETRO_PIXEL_FORMAT_SCRGB_RGBA16F) {
++                hdrSourceStatus.store(4u, std::memory_order_release);
++                return false; // No safe linear FP16 software input path.
++            }
++            // Any subsequent SDR request revokes an earlier HDR handshake.
++            hdrSourceStatus.store(0u, std::memory_order_release);
+             // The GLES software upload and screenshot path currently only understand
+@@ -510,4 +510,9 @@
+             retro_hdr_metadata state {};
+             state.version = 1;
+             state.size = sizeof(state);
++            // Only advertise the packed 10-bit input format that the software
++            // upload/capture and Vulkan hardware path truly support.
++            if (configuredHdrOutput == 1u && useVulkan &&
++                libretrodroid::VulkanBackend::getInstance().isAvailable())
++                state.source_formats = RETRO_HDR_SOURCE_FORMAT_HDR10_2101010;
+             // The software/GLES path cannot accept HDR10/scRGB pixel formats.
+diff --git a/src/main/cpp/renderers/es3/imagerendereres3.cpp b/src/main/cpp/renderers/es3/imagerendereres3.cpp
+--- a/src/main/cpp/renderers/es3/imagerendereres3.cpp
++++ b/src/main/cpp/renderers/es3/imagerendereres3.cpp
+@@ -100,9 +100,19 @@
+        case RETRO_PIXEL_FORMAT_XRGB8888:
+             this->glInternalFormat = GL_RGBA;
+             this->glFormat = GL_RGBA;
+             this->glType = GL_UNSIGNED_BYTE;
+             this->bytesPerPixel = 4;
+             this->swapRedAndBlueChannels = true;
+             break;
+ 
++        case RETRO_PIXEL_FORMAT_HDR10_2101010:
++            // Little-endian X:R10:G10:B10. GL's REV type starts with B;
++            // the texture swizzle recovers R/G/B without 8-bit truncation.
++            this->glInternalFormat = GL_RGB10_A2;
++            this->glFormat = GL_RGBA;
++            this->glType = GL_UNSIGNED_INT_2_10_10_10_REV;
++            this->bytesPerPixel = 4;
++            this->swapRedAndBlueChannels = true;
++            break;
++
+         default:
+diff --git a/src/main/cpp/renderers/es2/imagerendereres2.cpp b/src/main/cpp/renderers/es2/imagerendereres2.cpp
+--- a/src/main/cpp/renderers/es2/imagerendereres2.cpp
++++ b/src/main/cpp/renderers/es2/imagerendereres2.cpp
+@@ -20,4 +20,6 @@
+ #include "imagerendereres2.h"
+ #include "../../libretro-common/include/libretro.h"
++#include <vector>
++#include <cstring>
+ 
+ namespace libretrodroid {
+@@ -30,2 +30,22 @@
+     // If the given texture has the correct size we just upload it.
+-    if (bytesPerPixel * width == pitch) {
++    if (pixelFormat == RETRO_PIXEL_FORMAT_HDR10_2101010) {
++        // ES2 cannot upload RGB10_A2 portably. Preserve PQ channel code
++        // values as best-effort 8-bit RGBA for the HDR->SDR GLES shader.
++        // Convert one row at a time; never mutate a core-owned frame.
++        if (pitch < size_t(width) * 4u) return;
++        std::vector<uint8_t> rgbaRow(size_t(width) * 4u);
++        for (unsigned y = 0; y < height; ++y) {
++            const uint8_t* src = static_cast<const uint8_t*>(data) + size_t(y) * pitch;
++            for (unsigned x = 0; x < width; ++x) {
++                uint32_t px = 0;
++                std::memcpy(&px, src + size_t(x) * 4u, 4u);
++                auto* dst = rgbaRow.data() + size_t(x) * 4u;
++                dst[0] = static_cast<uint8_t>((((px >> 20) & 1023u) * 255u + 511u) / 1023u);
++                dst[1] = static_cast<uint8_t>((((px >> 10) & 1023u) * 255u + 511u) / 1023u);
++                dst[2] = static_cast<uint8_t>(((px & 1023u) * 255u + 511u) / 1023u);
++                dst[3] = 255u;
++            }
++            glTexSubImage2D(GL_TEXTURE_2D, 0, 0, y, width, 1,
++                            GL_RGBA, GL_UNSIGNED_BYTE, rgbaRow.data());
++        }
++    } else if (bytesPerPixel * width == pitch) {
+@@ -90,8 +90,15 @@
+         case RETRO_PIXEL_FORMAT_XRGB8888:
+             this->glInternalFormat = GL_RGBA;
+             this->glFormat = GL_RGBA;
+             this->glType = GL_UNSIGNED_BYTE;
+             this->bytesPerPixel = 4;
+             break;
+ 
++        case RETRO_PIXEL_FORMAT_HDR10_2101010:
++            this->glInternalFormat = GL_RGBA;
++            this->glFormat = GL_RGBA;
++            this->glType = GL_UNSIGNED_BYTE;
++            this->bytesPerPixel = 4;
++            break;
++
+         default:
+diff --git a/src/main/cpp/video.cpp b/src/main/cpp/video.cpp
+--- a/src/main/cpp/video.cpp
++++ b/src/main/cpp/video.cpp
+@@ -424,4 +424,12 @@
+                     if (framePixelFormat == RETRO_PIXEL_FORMAT_XRGB8888) {
+                         const uint8_t* p = srcRow + x * 4;
+                         b = p[0]; g = p[1]; r = p[2];
++                    } else if (framePixelFormat == RETRO_PIXEL_FORMAT_HDR10_2101010) {
++                        // Capture keeps channel order and pixel bounds valid;
++                        // this raw 8-bit preview is NOT an authored HDR grade.
++                        uint32_t packed = 0;
++                        std::memcpy(&packed, srcRow + x * 4, sizeof(packed));
++                        r = static_cast<uint8_t>((((packed >> 20) & 1023u) * 255u + 511u) / 1023u);
++                        g = static_cast<uint8_t>((((packed >> 10) & 1023u) * 255u + 511u) / 1023u);
++                        b = static_cast<uint8_t>(((packed & 1023u) * 255u + 511u) / 1023u);
+                     } else if (framePixelFormat == RETRO_PIXEL_FORMAT_0RGB1555) {
+@@ -484,2 +484,3 @@
+             int bytesPerPixel = framePixelFormat == RETRO_PIXEL_FORMAT_XRGB8888 ? 4 : 2;
++            if (framePixelFormat == RETRO_PIXEL_FORMAT_HDR10_2101010) bytesPerPixel = 4;
+             size_t frameBytes = height > 0
+diff --git a/src/main/cpp/libretrodroidjni.cpp b/src/main/cpp/libretrodroidjni.cpp
+--- a/src/main/cpp/libretrodroidjni.cpp
++++ b/src/main/cpp/libretrodroidjni.cpp
+@@ -844,7 +844,13 @@
+ JNIEXPORT void JNICALL Java_com_swordfish_libretrodroid_LibretroDroid_setConfiguredHdrOutput(
+     JNIEnv* env, jclass obj, jint mode
+ ) {
+     Environment::getInstance().setConfiguredHdrOutput(static_cast<unsigned>(mode));
+ }
+ 
++JNIEXPORT jint JNICALL Java_com_swordfish_libretrodroid_LibretroDroid_getCoreHdrPixelFormatStatus(
++    JNIEnv* env, jclass obj
++) {
++    return static_cast<jint>(Environment::getInstance().getHdrSourceStatus());
++}
++
+ JNIEXPORT void JNICALL Java_com_swordfish_libretrodroid_LibretroDroid_setHdrDisplayInfo(
+diff --git a/src/main/java/com/swordfish/libretrodroid/LibretroDroid.java b/src/main/java/com/swordfish/libretrodroid/LibretroDroid.java
+--- a/src/main/java/com/swordfish/libretrodroid/LibretroDroid.java
++++ b/src/main/java/com/swordfish/libretrodroid/LibretroDroid.java
+@@ -148,3 +148,5 @@
+     /** Configure PQ frontend output before retro_init (not an active HDR signal). */
+     public static native void setConfiguredHdrOutput(int mode);
++    /** True core SET_PIXEL_FORMAT handshake, atomic; bit 0 HDR10 requested, 1 accepted, 2 scRGB requested. */
++    public static native int getCoreHdrPixelFormatStatus();
+     /** Native status: bit 0 surface requested, 1 swapchain built, 2 presented, 3 fallback. */
