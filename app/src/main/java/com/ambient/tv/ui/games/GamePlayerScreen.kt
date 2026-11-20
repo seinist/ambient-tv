@@ -358,6 +358,11 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
             rumbleEventsEnabled = true
             preferLowLatencyAudio = true
             preferVulkan = session.vulkan
+            // Before retro_init an HDR-aware Vulkan core may ask for configured PQ output;
+            // distinguish capability from the later verified real-surface HDR signal.
+            configuredHdrOutputMode = GameVulkanTransferGate.configuredCoreOutputMode(
+                toneMap, displayHdr, session.vulkan,
+            )
             preferHighPrecisionVulkanFrames = GameHdrToneMapShader.prefersFp16Bridge(toneMap, session.vulkan)
         }).apply {
             // Input reaches the core through RetroPadInput only.
