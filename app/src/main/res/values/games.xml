@@ -236,4 +236,8 @@
     <string name="game_info_vulkan_hdr_source_unverified">No independently supported HDR source encoding for this core/format; experimental native HDR is blocked.</string>
     <string name="game_info_vulkan_hdr_mastering_unknown">Source mastering chromaticities, MaxCLL and MaxFALL: unknown (not estimated).</string>
     <string name="game_info_native_picture_requires_gles">Native fullscreen is raw output. This filter or geometry uses the complete GLES picture renderer instead.</string>
+    <string name="game_info_hdr_core_accepts_pq">Libretro HDR10 source format: accepted by the core and frontend (not proof of an HDR display signal).</string>
+    <string name="game_info_hdr_core_rejects_pq">Core requested HDR10, but the frontend rejected the source format. Native HDR is unavailable.</string>
+    <string name="game_info_hdr_core_rejects_scrgb">Core requested scRGB FP16; this source format is not yet supported.</string>
+    <string name="game_info_hdr_core_not_negotiated">Core has not negotiated an HDR source format. Source transfer remains unknown.</string>
 </resources>
