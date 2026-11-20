@@ -1777,7 +1777,7 @@
     <string name="youtube_sign_in_copy_code">Copy code</string>
     <string name="youtube_sign_in_code_copied">Code copied</string>
     <string name="youtube_sign_in_no_browser">No browser found. Open yt.be/activate manually.</string>
-    <string name="notice_switched_to_media3">Playback continued in Media3</string>
+    <string name="notice_switched_to_media3">Retrying playback with Media3</string>
     <string name="wg_detail_endpoint">Endpoint</string>
     <string name="wg_detail_address">Tunnel address</string>
     <string name="wg_detail_dns">DNS</string>
