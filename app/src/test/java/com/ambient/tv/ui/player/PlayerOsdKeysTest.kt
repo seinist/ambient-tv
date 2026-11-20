@@ -187,4 +187,29 @@ class PlayerOsdKeysTest {
         assertFalse(handled)
         assertEquals(listOf("osd"), calls)
     }
+    @Test fun directLeftRightOnlyCommitsOnceOnReleaseAndDoesNotChangeChapterJump() {
+        var now = 0L
+        val controller = ProgressiveSeekController { now }
+        val recorder = Recorder()
+        val progressive = OsdSeekSteps(
+            jumpMs = 60_000L,
+            progressive = controller,
+            currentPositionMs = 100_000L,
+            durationMs = 600_000L,
+            onProgressiveStart = { recorder.calls += "preview" },
+        )
+        assertTrue(handlePlayerOsdKey(Key.DirectionRight, true, state(), progressive, recorder))
+        assertTrue(handlePlayerOsdKey(Key.DirectionRight, true, state(bar = true), progressive, recorder))
+        assertEquals(listOf("preview"), recorder.calls)
+        now = 2_000L
+        controller.advance()
+        val target = controller.previewTargetMs!!
+        assertTrue(target > 105_000L)
+        assertTrue(handlePlayerOsdKey(Key.DirectionRight, false, state(bar = true), progressive, recorder))
+        assertEquals(listOf("preview", "seek:${target - 100_000L}:bar"), recorder.calls)
+        assertFalse(controller.active)
+        assertFalse(handlePlayerOsdKey(Key.DirectionRight, false, state(), progressive, recorder))
+        assertEquals(true to listOf("seek:60000:bar"), press(Key.DirectionUp, state(), Recorder()))
+    }
+
 }

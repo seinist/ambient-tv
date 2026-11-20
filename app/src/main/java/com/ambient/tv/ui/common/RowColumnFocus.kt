@@ -33,6 +33,12 @@ import com.ambient.tv.ui.sound.LocalUiSoundPlayer
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 
+/** A physical copy of a Home row in the virtual circular TV list. */
+internal data class CyclicRowFocusKey(val logical: String, val lap: Int)
+
+/** The same row remembers one horizontal card across each virtual lap. */
+internal fun logicalRowFocusKey(key: Any): Any = (key as? CyclicRowFocusKey)?.logical ?: key
+
 /**
  * Up/Down between stacked horizontal rows, Plex style: every row remembers the tile it was
  * left on and is re-entered there; a row never entered starts at its first tile. Geometry
@@ -82,10 +88,10 @@ class RowColumnFocus(initialMemory: Map<String, String> = emptyMap()) {
     internal val lastMoveNeedsSound: Boolean get() = lastMoveTarget?.soundsOnFocus != true
 
     /** Tile last focused in [rowKey], for a recreated row's initial scroll position. */
-    fun rememberedItem(rowKey: Any): Any? = memory[rowKey]
+    fun rememberedItem(rowKey: Any): Any? = memory[logicalRowFocusKey(rowKey)]
 
     /** Next entry of [rowKey] starts at its first tile. */
-    fun forget(rowKey: Any) { memory.remove(rowKey) }
+    fun forget(rowKey: Any) { memory.remove(logicalRowFocusKey(rowKey)) }
 
     internal fun nextRow(rowOrder: List<Any>, down: Boolean, fromRow: Any? = null): Any? {
         val anchor = fromRow ?: focusedRow ?: return null
@@ -98,6 +104,8 @@ class RowColumnFocus(initialMemory: Map<String, String> = emptyMap()) {
         return anchor != null && anchor == rowOrder.lastOrNull()
     }
 
+    internal fun currentRow(): Any? = activeRow ?: focusedRow
+
     internal fun isFirstRow(rowOrder: List<Any>, row: Any? = null): Boolean {
         val anchor = row ?: focusedRow
         return anchor != null && anchor == rowOrder.firstOrNull()
@@ -108,7 +116,7 @@ class RowColumnFocus(initialMemory: Map<String, String> = emptyMap()) {
         val handle = handles[rowKey]
         val keys = handle?.itemKeys?.invoke() ?: rows[rowKey]?.keys?.toList() ?: return null
         val index = (handle?.index ?: RowColumnItemIndex()).entryIndex(
-            keys, memory[rowKey], handle?.defaultItemKey?.invoke(),
+            keys, memory[logicalRowFocusKey(rowKey)], handle?.defaultItemKey?.invoke(),
             handle?.focusableItemKeys?.invoke() ?: keys,
         ) ?: return null
         return keys[index] to index
@@ -236,7 +244,7 @@ class RowColumnFocus(initialMemory: Map<String, String> = emptyMap()) {
         // The coordinates stay live and are only resolved on a key press; onGloballyPositioned
         // would dispatch for every placed tile on every frame of the vertical glide.
         focusRequester(target.requester)
-            .browseFocusTarget(itemKey, rowKey = rowKey)
+            .browseFocusTarget(itemKey, rowKey = logicalRowFocusKey(rowKey))
             .onPlaced { target.coordinates = it }
             .onFocusChanged {
                 if (it.hasFocus) {
@@ -246,7 +254,7 @@ class RowColumnFocus(initialMemory: Map<String, String> = emptyMap()) {
                     activeTarget = target
                     focusedRow = rowKey
                     focused = target
-                    memory[rowKey] = itemKey
+                    memory[logicalRowFocusKey(rowKey)] = itemKey
                 } else clearActiveTarget(target)
             }
     }
@@ -410,6 +418,10 @@ fun Modifier.rowColumnFocusNavigation(
      * for lists whose focused-row centering yields to an in-flight D-pad move.
      */
     focusBeforeScroll: Boolean = false,
+    /** On virtual rows, the first logical row still gives Up to the page header. */
+    upExitAt: ((Any?) -> Boolean)? = null,
+    /** A circular list can choose an interior virtual lap instead of wrapping to physical zero. */
+    wrapDownTarget: (() -> Any?)? = null,
     rowOrder: () -> List<Any>,
 ): Modifier = composed {
     if (LocalHandheldUi.current) return@composed Modifier
@@ -503,6 +515,17 @@ fun Modifier.rowColumnFocusNavigation(
         // Do not swallow a held/repeated direction; retarget from the row we were moving toward.
         if (hadActiveMove) move.job?.cancel()
 
+        // Virtual wrap copies put a previous-lap row directly above the first logical row.
+        // The header nevertheless remains the first Up destination whenever it is reachable.
+        if (!down && upExitAt?.invoke(pendingAnchor ?: focus.currentRow()) == true) {
+            val exited = if (actionFocus != null) runCatching { actionFocus.requestFocus() }.getOrDefault(false)
+                else scrollListActions?.requestUpFocus(view) == true
+            if (exited) {
+                uiSounds?.playFocus()
+                return@onPreviewKeyEvent true
+            }
+        }
+
         val next = focus.nextRow(order, down, pendingAnchor)
         if (next != null) {
             // A placed row can still sit behind Home's hero or an unfinished earlier move.
@@ -541,7 +564,7 @@ fun Modifier.rowColumnFocusNavigation(
             return@onPreviewKeyEvent true
         }
         if (scrollToTop == null || !down || !focus.isLastRow(order, pendingAnchor)) return@onPreviewKeyEvent false
-        val first = order.firstOrNull() ?: return@onPreviewKeyEvent false
+        val first = wrapDownTarget?.invoke() ?: order.firstOrNull() ?: return@onPreviewKeyEvent false
         launchMove(first) {
             scrollToTop()
         }

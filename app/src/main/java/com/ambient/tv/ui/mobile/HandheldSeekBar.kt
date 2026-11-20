@@ -36,7 +36,11 @@ import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.geometry.RoundRect
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.drawscope.clipPath
 import androidx.compose.ui.graphics.drawscope.inset
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
@@ -245,14 +249,29 @@ fun HandheldSeekBar(
                                 val end = chapter.endMs?.takeIf { it > chapter.startMs }?.coerceAtMost(next) ?: next
                                 val xStart = seekBarFraction(chapter.startMs, durationMs) * endX
                                 val xEnd = seekBarFraction(end, durationMs) * endX
-                                if (xEnd > xStart) drawRect(
-                                    Color.White.copy(alpha = .13f),
-                                    topLeft = Offset(xStart, centerY - trackWidth / 2f),
-                                    size = androidx.compose.ui.geometry.Size(xEnd - xStart, trackWidth),
-                                )
+                                if (xEnd > xStart) {
+                                    // Keep the chapter tint within the same semicircular track ends
+                                    // as the base fill, without clipping ticks or the playhead.
+                                    val trackOutline = Path().apply {
+                                        addRoundRect(RoundRect(
+                                            rect = Rect(0f, centerY - trackWidth / 2f,
+                                                endX, centerY + trackWidth / 2f),
+                                            cornerRadius = CornerRadius(trackWidth / 2f),
+                                        ))
+                                    }
+                                    clipPath(trackOutline) {
+                                        drawRect(
+                                            Color.White.copy(alpha = .13f),
+                                            topLeft = Offset(xStart, centerY - trackWidth / 2f),
+                                            size = androidx.compose.ui.geometry.Size(xEnd - xStart, trackWidth),
+                                        )
+                                    }
+                                }
                             }
                         }
                         navigation?.timeline?.chapters?.forEach { chapter ->
+                            // No gap on the rounded start/end cap.
+                            if (chapter.startMs <= 0L || chapter.startMs >= durationMs) return@forEach
                             val x = (chapter.startMs.toDouble() / durationMs).toFloat().coerceIn(0f, 1f) * endX
                             drawLine(Color.Black.copy(alpha = 0.76f), Offset(x, centerY - trackWidth / 2), Offset(x, centerY + trackWidth / 2), 2.dp.toPx())
                         }

@@ -264,6 +264,8 @@ data class SettingsBackup(
     /** Since schema 72. */
     val introAnimationKey: String = IntroAnimation.DEFAULT,
     val wolRetryCount: Int = com.ambient.tv.wol.WOL_RETRY_COUNT_DEFAULT,
+    /** Since schema 82: optional WOL on opening a specific offline media system. */
+    val wakeOnOpenSystems: Set<String> = emptySet(),
     val homeRows: List<HomeRowDefinition>? = null,
     val systemHomeHiddenRows: Set<String> = AppPreferences.DEFAULT_SYSTEM_HOME_HIDDEN_ROWS,
     val libraryPreferences: Map<String, String> = emptyMap(),
@@ -594,6 +596,7 @@ class SettingsBackupManager @Inject constructor(
             preferDoubleRefreshRate = preferences.preferDoubleRefreshRate,
             introAnimationKey = preferences.introAnimationKey,
             wolRetryCount = preferences.wolRetryCount,
+            wakeOnOpenSystems = preferences.wakeOnOpenSystems,
             homeRows = preferences.homeRows,
             systemHomeHiddenRows = preferences.systemHomeHiddenRows,
             libraryPreferences = preferences.portableLibraryPreferences(),
@@ -1046,6 +1049,7 @@ class SettingsBackupManager @Inject constructor(
         // Deliberate MPV scaler/deband choice since schema 68; older backups restore "not chosen".
         preferences.mpvImageExplicitChoice = backup.schemaVersion >= 68 && backup.mpvImageExplicitChoice
         preferences.wolRetryCount = backup.wolRetryCount
+        preferences.wakeOnOpenSystems = if (backup.schemaVersion >= 82) backup.wakeOnOpenSystems else emptySet()
         if (backup.homeRows != null) preferences.homeRows = backup.homeRows
         else preferences.resetHomeRowsToLegacy()
         preferences.systemHomeHiddenRows = backup.systemHomeHiddenRows
@@ -1137,7 +1141,7 @@ class SettingsBackupManager @Inject constructor(
     }
 
     internal companion object {
-        const val CURRENT_SCHEMA_VERSION = 81
+        const val CURRENT_SCHEMA_VERSION = 82
         val PORTABLE_DISPLAY_MODES = setOf("system", AppPreferences.DISPLAY_MODE_AUTO_CONTENT, AppPreferences.DISPLAY_MODE_AUTO_DISPLAY)
     }
 }

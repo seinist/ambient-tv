@@ -79,6 +79,20 @@ fun PersistentPlayerChrome(
         LocalPlayerChangingItem provides changingItem,
     ) {
         PlayerPanelAutoHide(chrome, changingItem)
+        ProgressiveSeekTicker(chrome.osd.progressiveSeek)
+        // A held remote key must not let the controls timeout before the user releases it.
+        LaunchedEffect(chrome, chrome.osd.progressiveSeek.active) {
+            while (chrome.osd.progressiveSeek.active) {
+                kotlinx.coroutines.delay(500L)
+                chrome.osd.interact()
+            }
+        }
+        LaunchedEffect(changingItem) {
+            if (changingItem) chrome.osd.progressiveSeek.cancel()
+        }
+        androidx.compose.runtime.DisposableEffect(chrome) {
+            onDispose { chrome.osd.progressiveSeek.cancel() }
+        }
         // Info opens the details dialog when its action-bar button is switched on.
         val detailsLabel = androidx.compose.ui.res.stringResource(com.ambient.tv.R.string.player_details)
         PlayerKeyActions(chrome, detailsLabel)

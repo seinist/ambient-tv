@@ -155,6 +155,7 @@ import com.ambient.tv.ui.player.handlePlayerOsdKey
 import com.ambient.tv.ui.player.OsdKeyState
 import com.ambient.tv.ui.player.OsdContent
 import com.ambient.tv.ui.player.OsdSeekSteps
+import com.ambient.tv.ui.player.progressiveOsdSeekSteps
 import com.ambient.tv.ui.player.OsdKeyTarget
 
 @Composable
@@ -1021,9 +1022,6 @@ private fun YouTubeMedia3Playback(
         // default live position at execution time, even when the window has just slid.
         seek((window.windowEndMs - (seekCoordinator.pendingTarget ?: position)).coerceAtLeast(0L))
     }
-    fun heldSeekStep(baseMs: Long, e: androidx.compose.ui.input.key.KeyEvent) =
-        com.ambient.tv.ui.player.acceleratedSeekStepMs(baseMs, e.nativeKeyEvent.repeatCount,
-            liveDvrWindow?.durationMs ?: duration.takeIf { it > 0L } ?: playback.durationMs)
     YouTubeSeekCommit(seekCommitVersion, seekCoordinator, ::commitSeek)
     LaunchedEffect(playback.resumeMs, playback.resumeResolved) {
         if (!playback.resumeResolved) return@LaunchedEffect
@@ -1068,7 +1066,9 @@ private fun YouTubeMedia3Playback(
         handlePlayerOsdKey(
             e.key, e.type == KeyEventType.KeyDown,
             OsdKeyState(OsdContent.VIDEO, controls && !osd.seekFeedback && !osd.closing, panelOpen, osd.seekFeedback, closing = osd.closing, seekBarFocused = osd.seekBarFocused),
-            OsdSeekSteps(BackgroundPlaybackSession.seekJumpMs(bigSeekSeconds * 1000L), held = { heldSeekStep(it, e) }),
+            progressiveOsdSeekSteps(BackgroundPlaybackSession.seekJumpMs(bigSeekSeconds * 1000L),
+                seekCoordinator.pendingTarget ?: position,
+                if (playback.isLive) liveDvrWindow?.windowEndMs ?: 0L else duration.takeIf { it > 0L } ?: playback.durationMs, osd),
             object : OsdKeyTarget {
                 override fun chapterSeekDelta(direction: Int): Long? {
                     val base = seekCoordinator.pendingTarget ?: position
@@ -1414,9 +1414,6 @@ private fun YouTubeVlcPlayback(playback: YouTubePlayback, audioUri: String?, str
         val window = liveDvrWindow ?: return
         seek((window.windowEndMs - (seekCoordinator.pendingTarget ?: displayedPosition)).coerceAtLeast(0L))
     }
-    fun heldSeekStep(baseMs: Long, e: androidx.compose.ui.input.key.KeyEvent) =
-        com.ambient.tv.ui.player.acceleratedSeekStepMs(baseMs, e.nativeKeyEvent.repeatCount,
-            liveDvrWindow?.durationMs ?: snapshot.durationMs.takeIf { it > 0L } ?: playback.durationMs)
     YouTubeSeekCommit(seekCommitVersion, seekCoordinator, ::commitSeek)
     LaunchedEffect(playback.resumeMs, playback.resumeResolved) {
         if (!playback.resumeResolved) return@LaunchedEffect
@@ -1450,7 +1447,9 @@ private fun YouTubeVlcPlayback(playback: YouTubePlayback, audioUri: String?, str
         handlePlayerOsdKey(
             e.key, e.type == KeyEventType.KeyDown,
             OsdKeyState(OsdContent.VIDEO, controls && !osd.seekFeedback && !osd.closing, panelOpen, osd.seekFeedback, closing = osd.closing, seekBarFocused = osd.seekBarFocused),
-            OsdSeekSteps(BackgroundPlaybackSession.seekJumpMs(bigSeekSeconds * 1000L), held = { heldSeekStep(it, e) }),
+            progressiveOsdSeekSteps(BackgroundPlaybackSession.seekJumpMs(bigSeekSeconds * 1000L),
+                seekCoordinator.pendingTarget ?: displayedPosition,
+                if (playback.isLive) liveDvrWindow?.windowEndMs ?: 0L else snapshot.durationMs.takeIf { it > 0L } ?: playback.durationMs, osd),
             object : OsdKeyTarget {
                 override fun chapterSeekDelta(direction: Int): Long? {
                     val base = seekCoordinator.pendingTarget ?: displayedPosition
@@ -1752,9 +1751,6 @@ private fun YouTubeMpvPlayback(playback: YouTubePlayback, streams: YouTubeStream
         val window = liveDvrWindow ?: return
         seek((window.windowEndMs - (seekCoordinator.pendingTarget ?: displayedPosition)).coerceAtLeast(0L))
     }
-    fun heldSeekStep(baseMs: Long, e: androidx.compose.ui.input.key.KeyEvent) =
-        com.ambient.tv.ui.player.acceleratedSeekStepMs(baseMs, e.nativeKeyEvent.repeatCount,
-            liveDvrWindow?.durationMs ?: snapshot.durationMs.takeIf { it > 0L } ?: playback.durationMs)
     YouTubeSeekCommit(seekCommitVersion, seekCoordinator, ::commitSeek)
     LaunchedEffect(playback.resumeMs, playback.resumeResolved) {
         if (!playback.resumeResolved) return@LaunchedEffect
@@ -1788,7 +1784,9 @@ private fun YouTubeMpvPlayback(playback: YouTubePlayback, streams: YouTubeStream
         handlePlayerOsdKey(
             e.key, e.type == KeyEventType.KeyDown,
             OsdKeyState(OsdContent.VIDEO, controls && !osd.seekFeedback && !osd.closing, panelOpen, osd.seekFeedback, closing = osd.closing, seekBarFocused = osd.seekBarFocused),
-            OsdSeekSteps(BackgroundPlaybackSession.seekJumpMs(bigSeekSeconds * 1000L), held = { heldSeekStep(it, e) }),
+            progressiveOsdSeekSteps(BackgroundPlaybackSession.seekJumpMs(bigSeekSeconds * 1000L),
+                seekCoordinator.pendingTarget ?: displayedPosition,
+                if (playback.isLive) liveDvrWindow?.windowEndMs ?: 0L else snapshot.durationMs.takeIf { it > 0L } ?: playback.durationMs, osd),
             object : OsdKeyTarget {
                 override fun chapterSeekDelta(direction: Int): Long? {
                     val base = seekCoordinator.pendingTarget ?: displayedPosition

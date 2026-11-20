@@ -63,7 +63,15 @@ internal fun offlineRetrySeconds(nextCheckAtElapsedMs: Long, nowElapsedMs: Long)
 fun OfflineSystemGuard(system: String, onOpenSettings: (String) -> Unit, content: @Composable () -> Unit) {
     val vm: UnreachableServerViewModel = hiltViewModel()
     val state by vm.state.collectAsState()
-    if (system in state.offline) {
+    val offline = system in state.offline
+    var openedWakeAttempted by remember(system) { mutableStateOf(false) }
+    LaunchedEffect(system, offline) {
+        if (offline && !openedWakeAttempted) {
+            openedWakeAttempted = true
+            vm.onOpenSystem(system)
+        }
+    }
+    if (offline) {
         val nextCheckAt by vm.nextAutomaticCheckAtElapsedMs.collectAsState()
         OfflineSystemPage(
             system, state, { vm.retrySystem(system) },

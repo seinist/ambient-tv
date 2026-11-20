@@ -9,6 +9,10 @@ import com.ambient.tv.server.JellyfinConnectionManager
 import com.ambient.tv.server.ServerConnectionManager
 import com.ambient.tv.server.ServerConnectionState
 import com.ambient.tv.ui.common.MediaSystem
+import com.ambient.tv.wol.MachineWake
+import com.ambient.tv.wol.ManualWakeRequest
+import com.ambient.tv.wol.WakeMachines
+import com.ambient.tv.wol.canonicalWolMacKey
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.coroutines.CoroutineScope
@@ -26,6 +30,10 @@ import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.delay
+
+/** Manual wake is independent of the startup/automatic WOL setting. */
+internal fun canOfferOfflineWake(health: HostHealth, mac: String?): Boolean =
+    health != HostHealth.ONLINE && canonicalWolMacKey(mac) != null
 
 data class UnreachableServerGateState(
     val unreachable: Set<String> = emptySet(),
@@ -62,6 +70,8 @@ class UnreachableServerGate @Inject constructor(
     private val emby: EmbyConnectionManager,
     private val resumeConnectivity: ResumeConnectivityMonitor,
     private val tvheadend: com.ambient.tv.server.TvheadendConnectionManager,
+    private val machines: WakeMachines,
+    private val machineWake: MachineWake,
 ) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private val revision = MutableStateFlow(0)
@@ -184,8 +194,44 @@ class UnreachableServerGate @Inject constructor(
 
     fun retry() = startRetry(selected = null)
 
-    /** The offline page reconnects its own server, plus siblings on the same machine for WOL. */
-    fun retrySystem(system: String) = startRetry(selected = setOf(system))
+    /**
+     * Manual WOL for an offline physical host is independent of startup auto-WOL.
+     * A running host only needs a service reconnect. Siblings on the same machine follow it.
+     */
+    fun retrySystem(system: String) {
+        val state = current()
+        val request = if (system in state.offline && system in state.wakeReady)
+            manualWakeRequest(system) else null
+        if (request == null) startRetry(selected = setOf(system))
+        else machineWake.wakeThen(request) { startRetry(selected = setOf(system)) }
+    }
+
+    /** Called only on navigation into this offline provider, never during Home composition. */
+    fun onOpenSystem(system: String) {
+        if (system in preferences.wakeOnOpenSystems && system in current().offline) retrySystem(system)
+    }
+
+    private data class WakeTarget(val host: String, val port: Int, val mac: String?, val viaVpn: Boolean)
+
+    /** A missing MAC on TVHeadend can reuse the valid MAC of Plex on the same host. */
+    private fun manualWakeRequest(system: String): ManualWakeRequest? {
+        val target = when (system) {
+            "plex" -> WakeTarget(preferences.host, preferences.port,
+                preferences.macAddress, preferences.wireGuardPlexEnabled)
+            "jellyfin" -> WakeTarget(preferences.jellyfinHost, preferences.jellyfinPort,
+                preferences.jellyfinMacAddress, preferences.wireGuardJellyfinEnabled)
+            "emby" -> WakeTarget(preferences.embyHost, preferences.embyPort,
+                preferences.embyMacAddress, preferences.wireGuardEmbyEnabled)
+            "tvheadend" -> WakeTarget(preferences.tvheadendHost, preferences.tvheadendPort,
+                preferences.tvheadendMacAddress, preferences.wireGuardTvheadendEnabled)
+            else -> return null
+        }
+        if (target.host.isBlank() || target.port !in 1..65535) return null
+        val groupMacs = machines.groupFor(system, target.host, target.mac).second
+        val mac = canonicalWolMacKey(target.mac) ?: groupMacs.firstOrNull() ?: return null
+        return ManualWakeRequest(system = system, subject = target.host, host = target.host,
+            mac = mac, probePort = target.port, wireGuardHost = target.host.takeIf { target.viaVpn })
+    }
 
     /** A single status action retries all affected services, without dropping later targets. */
     fun retrySystems(systems: Set<String>, includeMachineSiblings: Boolean = true) =
@@ -288,6 +334,9 @@ class UnreachableServerGate @Inject constructor(
         // Keep that hand-off pending so nothing is marked offline between both jobs.
         val pending = decision.pending || resumeHoldsUnreachablePrompt(resumeStatus)
         val offlineNow = nextOfflineSystems(offline, probes, settled = !pending).also { offline = it }
+        val manualWakeReady = offlineNow.filterTo(mutableSetOf()) { system ->
+            canOfferOfflineWake(hosts.health(system), manualWakeRequest(system)?.mac)
+        }
         return UnreachableServerGateState(
             unreachable = decision.unreachable,
             pending = pending,
@@ -298,8 +347,8 @@ class UnreachableServerGate @Inject constructor(
                 it == ServerConnectionState.SendingWakePacket || it is ServerConnectionState.Waking
             },
             offline = offlineNow,
-            wakeUnavailable = offlineNow.isNotEmpty() && offlineNow.none(::wakeConfigured),
-            wakeReady = offlineNow.filterTo(mutableSetOf(), ::wakeConfigured),
+            wakeUnavailable = offlineNow.isNotEmpty() && manualWakeReady.isEmpty(),
+            wakeReady = manualWakeReady,
             hostHealth = offlineNow.associateWith { hosts.health(it) },
             serverAddresses = offlineNow.mapNotNull { system -> serverAddress(system)?.let { system to it } }.toMap(),
         )

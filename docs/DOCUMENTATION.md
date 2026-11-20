@@ -1040,3 +1040,5 @@ Versioning lives in `version.properties`:
 - [DOCUMENTATION.de.md](DOCUMENTATION.de.md) – Deutsch
 - [docs/README.md](README.md) – index
 - [README.md](../README.md) · [README.de.md](../README.de.md) – GitHub overview
+
+**Wake-on-LAN on opening a system:** In **Settings → Network → Wake-on-LAN**, Plex, Jellyfin, Emby and TVHeadend can independently enable **Wake on open**, without enabling automatic WOL at startup. This option defaults to off. An offline system with a known MAC can always be woken manually from Home or its offline page, even if automatic WOL is disabled. Services sharing the same host/MAC are associated with the same physical machine; after waking, they are rechecked without waking other machines. Files and DLNA keep their own on-browse wake settings.

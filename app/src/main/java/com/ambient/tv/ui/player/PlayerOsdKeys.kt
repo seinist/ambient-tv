@@ -31,6 +31,28 @@ internal data class OsdSeekSteps(
     val backMs: Long = jumpMs,
     val forwardMs: Long = jumpMs,
     val held: (Long) -> Long = { it },
+    val progressive: ProgressiveSeekController? = null,
+    val currentPositionMs: Long = 0L,
+    val durationMs: Long = 0L,
+    val onProgressiveStart: () -> Unit = {},
+)
+
+/** Fixed Up/Down jumps and chapter switching are independent from the direct D-pad scrub. */
+internal fun progressiveOsdSeekSteps(
+    jumpMs: Long,
+    currentPositionMs: Long,
+    durationMs: Long,
+    osd: PlayerOsdController,
+    backMs: Long = jumpMs,
+    forwardMs: Long = jumpMs,
+): OsdSeekSteps = OsdSeekSteps(
+    jumpMs = jumpMs,
+    backMs = backMs,
+    forwardMs = forwardMs,
+    progressive = osd.progressiveSeek,
+    currentPositionMs = currentPositionMs,
+    durationMs = durationMs,
+    onProgressiveStart = osd::showSeekFeedback,
 )
 
 /** The player the keys act on. Each engine maps these to its own controller. */
@@ -86,6 +108,31 @@ internal fun handlePlayerOsdKey(
     steps: OsdSeekSteps,
     target: OsdKeyTarget,
 ): Boolean {
+    // KeyUp must reach a scrub even if the compact seek feedback became visible meanwhile.
+    // Key repeats only update the preview, never the decoder. One seek is sent on release.
+    val directDirection = when (key) {
+        Key.DirectionLeft -> -1
+        Key.DirectionRight -> 1
+        else -> 0
+    }
+    val progressive = steps.progressive
+    if (directDirection != 0 && progressive != null) {
+        if (!keyDown && progressive.isPressedIn(directDirection)) {
+            val destination = progressive.release(directDirection)
+            if (destination != null && destination != steps.currentPositionMs) {
+                target.seek(destination - steps.currentPositionMs, revealOsd = false)
+            }
+            return true
+        }
+        if (keyDown && !state.panelOpen && !state.osdVisible && !state.closing &&
+            state.content != OsdContent.LIVE &&
+            (directDirection < 0 || state.canSeekForward) && steps.durationMs > 0L) {
+            val wasPressed = progressive.isPressedIn(directDirection)
+            progressive.press(directDirection, steps.currentPositionMs, steps.durationMs)
+            if (!wasPressed) steps.onProgressiveStart()
+            return true
+        }
+    }
     if (!keyDown || key in PASS_KEYS) return false
     if (state.panelOpen && key !in MEDIA_KEYS) return false
     if (state.closing && key in setOf(Key.DirectionLeft, Key.DirectionRight, Key.DirectionUp, Key.DirectionDown)) {
