@@ -51,6 +51,8 @@
     <string name="game_info_native_sdr_swapchain">Vulkan-SDR-Diagnose: Swapchain erstellt; noch kein Bild bestätigt</string>
     <string name="game_info_native_sdr_presenting">Vulkan-SDR-Diagnose: Bilder auf Test-Surface präsentiert</string>
     <string name="game_info_native_sdr_fallback">Vulkan-SDR-Diagnose: nicht unterstützt/fehlgeschlagen; GLES bleibt aktiv</string>
+    <string name="game_info_vulkan_core_source_format">Vulkan-Quellformat des Cores: %1$s</string>
+    <string name="game_info_vulkan_source_transfer_unknown">Ob die Bilddaten PQ, HLG oder SDR enthalten, lässt sich nicht allein am VkFormat erkennen.</string>
     <string name="game_info_vulkan_surface_pairs">Vulkan-Formate der Display-Surface: %1$s (nur Prüfung)</string>
     <string name="game_info_hdr_output_inactive">Native Vulkan-HDR-Ausgabe ist nicht aktiv. Spiele werden derzeit über den SDR-GLES-Compositor ausgegeben.</string>
     <string name="game_info_core_source">Cores stammen vom libretro-Buildserver und liegen auf diesem Gerät.</string>
