@@ -330,3 +330,13 @@ content-authored mastering metadata only where a core provides it.
 Separate **physical** device acceptance (actual HDR EOTF, OSD/touch,
 4K memory/performance, surface lifecycle) must be recorded before production
 native HDR can be enabled or this PR considered feature-complete.
+
+### Pixel picture filter precision correction
+
+Patch `0021-real-nearest-pixel-preset.patch` adds a distinct built-in
+`ShaderConfig.Pixel` using nearest-neighbor input/output sampling in the
+pinned LibretroDroid frontend. The previous `Pixel → ShaderConfig.Default`
+mapping was actually bilinear. The HDR→SDR prepass now also keeps its
+intermediate sampler nearest for Pixel; existing native CRT/LCD/Sharp/CUT3
+presets and their defaults are unchanged. Only this raw Pixel mode is
+eligible for the experimental unfiltered WSI fullscreen renderer.
