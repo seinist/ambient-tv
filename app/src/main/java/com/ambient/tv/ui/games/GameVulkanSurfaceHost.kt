@@ -25,6 +25,7 @@ import com.swordfish.libretrodroid.LibretroDroid
 internal class GameVulkanSurfaceHost(
     context: Context,
     private val retro: GLRetroView,
+    private val outputTransfer: GameVulkanTransferMode,
     private val onFormats: (GameVulkanSurfaceFormats) -> Unit,
     private val onNativeStatus: (GameVulkanSdrStatus) -> Unit,
     private val onFullscreenLost: () -> Unit,
@@ -109,7 +110,7 @@ internal class GameVulkanSurfaceHost(
         }
         if (!nativeSdrDiagnostic || !canProbe) return
         fullscreenRequested = true
-        if (lastStatus.phase == GameVulkanSdrStatus.Phase.PRESENTING) promoteToFullscreen()
+        if (GameVulkanTransferGate.frameConfirmed(outputTransfer, lastStatus)) promoteToFullscreen()
     }
 
     fun observeNativeStatus(status: GameVulkanSdrStatus) {
@@ -119,13 +120,14 @@ internal class GameVulkanSurfaceHost(
             demoteToProbe()
             onFullscreenLost()
         } else if (fullscreenRequested && !fullscreenVisible &&
-            GameVulkanFullscreenPolicy.shouldShowFullscreen(true, status)) {
+            GameVulkanFullscreenPolicy.shouldShowFullscreen(true, status, outputTransfer)) {
             promoteToFullscreen()
         }
     }
 
     private fun promoteToFullscreen() {
-        if (fullscreenVisible || disposed || !nativeSdrDiagnostic) return
+        if (fullscreenVisible || disposed || !nativeSdrDiagnostic ||
+            !GameVulkanTransferGate.frameConfirmed(outputTransfer, lastStatus)) return
         fullscreenVisible = true
         val attempt = ++fullscreenAttempt
         // Trigger a real Surface resize and Vulkan swapchain recreation.
@@ -174,7 +176,12 @@ internal class GameVulkanSurfaceHost(
                     LibretroDroid.probeVulkanSurfaceFormats(surface)
                 }.getOrDefault(0)
                 if (nativeSdrDiagnostic && surface.isValid && token == generation) {
-                    runCatching { LibretroDroid.setNativeSdrVulkanSurface(surface) }
+                    runCatching {
+                        // Set transfer before creating a swapchain: the native
+                        // backend itself also checks VkFormat and WSI colorspace.
+                        LibretroDroid.setNativeVulkanOutputTransfer(outputTransfer.nativeCode)
+                        LibretroDroid.setNativeSdrVulkanSurface(surface)
+                    }
                 }
                 val status = GameVulkanSdrStatus(runCatching {
                     LibretroDroid.getNativeSdrVulkanStatus()
