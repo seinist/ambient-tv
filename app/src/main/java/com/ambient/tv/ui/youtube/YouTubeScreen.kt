@@ -338,6 +338,18 @@ import androidx.lifecycle.repeatOnLifecycle
                     Loading(state.viewMode, state.gridColumns, state.listRows,
                         sectioned = (state.query.isBlank() && state.feed == YouTubeFeed.HOME && state.channel == null) ||
                             populatedRows.hasSubsections())
+                state.accountAttention != null && visibleRows.none { it.items.isNotEmpty() } ->
+                    com.ambient.tv.ui.common.BrowseStatusPanel(
+                        title = stringResource(if (state.accountAttention == YouTubeAccountAttention.LOGIN_REQUIRED)
+                            R.string.youtube_auth_required_title else R.string.youtube_auth_check_title),
+                        body = stringResource(if (state.accountAttention == YouTubeAccountAttention.LOGIN_REQUIRED)
+                            R.string.youtube_auth_required_body else R.string.youtube_auth_check_body),
+                        kind = com.ambient.tv.ui.common.BrowseStatusKind.ERROR,
+                        actionLabel = stringResource(if (state.signedIn) R.string.youtube_auth_reconnect else R.string.action_sign_in),
+                        onAction = if (state.signedIn) viewModel::reconnectAccount else viewModel::requestSignIn,
+                        secondaryActionLabel = stringResource(R.string.action_reload),
+                        onSecondaryAction = viewModel::reload,
+                    )
                 state.error != null -> Message(state.error, error = true)
                 visibleRows.none { it.items.isNotEmpty() } -> if (filterModel.activeCount > 0) {
                     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
@@ -448,6 +460,23 @@ private fun youtubeRowId(index: Int, row: YouTubeRow): String = row.id
         else YouTubeChannelTitle(channel)
     }
     state.refreshError?.let { Text(it, color=MaterialTheme.colorScheme.error, maxLines=2, overflow=TextOverflow.Ellipsis) }
+    if (state.accountAttention != null && state.rows.any { it.items.isNotEmpty() }) {
+        DeviceActionRow(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp),
+            verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                stringResource(if (state.accountAttention == YouTubeAccountAttention.LOGIN_REQUIRED)
+                    R.string.youtube_auth_required_title else R.string.youtube_auth_check_title),
+                color = MaterialTheme.colorScheme.error,
+                style = MaterialTheme.typography.bodySmall,
+                modifier = Modifier.weight(1f),
+            )
+            TvActionButton(
+                text = stringResource(if (state.signedIn) R.string.youtube_auth_reconnect else R.string.action_sign_in),
+                onClick = if (state.signedIn) vm::reconnectAccount else vm::requestSignIn,
+            )
+            TvActionButton(stringResource(R.string.action_reload), onClick = vm::reload)
+        }
+    }
     if (channel == null) com.ambient.tv.ui.common.PageChipRow(
         focusChain,
         selectedIndex = state.visibleFeeds.indexOf(state.feed),
