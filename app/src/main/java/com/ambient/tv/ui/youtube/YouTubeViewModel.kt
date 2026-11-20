@@ -853,6 +853,7 @@ class YouTubeViewModel @Inject constructor(
         // Keep already received partial rows; a transient refresh error must not erase them.
         val loginRejected = smartTubeAuthRejected(error)
         val needsLogin = loginRejected || error is SmartTubeSignInRequiredException
+        if (needsLogin) rowPublisher.cancelPending()
         if (!needsLogin) onlineServices.failed("youtube", error)
         if (loginRejected) engine.reportAccountAttention()
         val empty = _uiState.value.rows.isEmpty()
@@ -991,6 +992,7 @@ class YouTubeViewModel @Inject constructor(
                             selectedFeed.key, signed, refreshRows.isNotEmpty(),
                         )) {
                         engine.reportAccountAttention()
+                        rowPublisher.cancelPending()
                         _uiState.value = _uiState.value.copy(
                             loading = false, error = null, refreshError = null,
                             accountAttention = YouTubeAccountAttention.CHECK_ACCOUNT,
