@@ -67,6 +67,8 @@ fun ContentRow(
     onRowFocused: () -> Unit = {},
     restoreRatingKey: String? = null,
     columnFocus: RowColumnFocus? = null,
+    /** Virtual Home laps use a physical focus row, while playback return keeps [row.id]. */
+    columnRowKey: Any = row.id,
     /** Works for touch/wheel scrolling as well as remote focus, without extra row controls. */
     onViewportNearEnd: ((Int) -> Unit)? = null,
     /** A fresh Home keeps cached and subsequently inserted cards at zero until user input. */
@@ -75,7 +77,7 @@ fun ContentRow(
     val handheld = com.ambient.tv.ui.mobile.LocalHandheldUi.current
     // A row recycled out of the list comes back scrolled to the tile it was left on.
     val restoreIndex = remember(row.items, restoreRatingKey) {
-        val key = restoreRatingKey ?: columnFocus?.rememberedItem(row.id)
+        val key = restoreRatingKey ?: columnFocus?.rememberedItem(columnRowKey)
         row.items.indexOfFirst { it.ratingKey == key }.coerceAtLeast(0)
     }
     val rowState = rememberBrowseRowState(
@@ -93,7 +95,7 @@ fun ContentRow(
                 }
         }
     }
-    RegisterRowColumnFocus(columnFocus, row.id, rowState, itemKeys)
+    RegisterRowColumnFocus(columnFocus, columnRowKey, rowState, itemKeys)
     // Focus changes are extremely frequent while moving vertically. Keep them out of the
     // ContentRow composition so the nested LazyRow and its visible MediaTiles are not recomposed
     // just to animate the section heading.
@@ -148,7 +150,7 @@ fun ContentRow(
                         MediaTile(
                             item = item,
                             onClick = { onItemClick(item) },
-                            modifier = Modifier.rowColumnFocusTarget(columnFocus, row.id, item.ratingKey, soundsOnFocus = true),
+                            modifier = Modifier.rowColumnFocusTarget(columnFocus, columnRowKey, item.ratingKey, soundsOnFocus = true),
                             onFocused = { focusMemory.lastFocusedKey = item.ratingKey; onItemFocused(item) },
                             requestInitialFocus = item.ratingKey == restoreRatingKey || item.ratingKey == recoveryKey,
                             style = row.style,
