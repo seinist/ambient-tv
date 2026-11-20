@@ -97,6 +97,12 @@
     <string name="game_picture_graphics_gles">OpenGL ES</string>
     <string name="game_picture_graphics_vulkan">Vulkan where device and core support it</string>
     <string name="game_picture_graphics_hint">For all %1$s games; the game restarts for it</string>
+    <string name="game_picture_hdr">Vulkan HDR → SDR (experimental)</string>
+    <string name="game_picture_hdr_off">Off (normal SDR)</string>
+    <string name="game_picture_hdr_pq">PQ / HDR10 input</string>
+    <string name="game_picture_hdr_hlg">HLG input</string>
+    <string name="game_picture_hdr_hint">Only for a core that really outputs PQ or HLG. Manual conversion after Vulkan → GLES; no native HDR or automatic detection.</string>
+    <string name="game_picture_hdr_filter_note">Picture filters are temporarily bypassed while HDR conversion is selected.</string>
     <string name="game_core_scope">Changes apply to</string>
     <string name="game_core_scope_game">This game only</string>
     <string name="game_core_scope_core">All games with %1$s</string>
