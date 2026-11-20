@@ -326,6 +326,11 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
     var vulkanFrameStatus by remember { mutableStateOf(GameVulkanFrameStatus()) }
     /** Native VkImage pixel layout, NOT color transfer or HDR source provenance. */
     var vulkanCoreSourceFormat by remember { mutableStateOf(GameVulkanCoreSourceFormat()) }
+    val nativeSourceContract = GameVulkanHdrSourceEvidence.observe(
+        core.id, session.vulkan,
+        settings.effectiveCoreOptions(core, game.saveKey) + if (session.vulkan) core.vulkanOptions else core.glOptions,
+        vulkanCoreSourceFormat,
+    )
     /** Native WSI format pairs on a separate real Android Surface, NOT active HDR. */
     var vulkanSurfaceFormats by remember { mutableStateOf(GameVulkanSurfaceFormats()) }
     var nativeSdrDiagnostic by remember { mutableStateOf(false) }
@@ -424,6 +429,9 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
     }
     LaunchedEffect(coreReady, vulkanSurfaceHost) {
         if (coreReady) vulkanSurfaceHost?.coreReady()
+    }
+    LaunchedEffect(nativeSourceContract, vulkanSurfaceHost) {
+        vulkanSurfaceHost?.updateSourceContract(nativeSourceContract.transfer)
     }
     LaunchedEffect(nativeSdrDiagnostic, coreReady, vulkanSurfaceHost) {
         if (coreReady) vulkanSurfaceHost?.setNativeSdrDiagnostic(nativeSdrDiagnostic)
@@ -1208,10 +1216,18 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
                                 if (session.vulkan) {
                                     GamePanelText(stringResource(R.string.game_info_vulkan_surface_pairs, vulkanSurfaceFormats.candidateTypesLabel()))
                                     GamePanelText(stringResource(R.string.game_info_vulkan_core_source_format, vulkanCoreSourceFormat.label))
-                                    GamePanelText(stringResource(R.string.game_info_vulkan_source_transfer_unknown))
-                                    val transferSupported = GameVulkanTransferGate.supported(
-                                        nativeTransfer, displayHdr, vulkanSurfaceFormats,
-                                    )
+                                    if (nativeTransfer != GameVulkanTransferMode.SDR) {
+                                        GamePanelText(stringResource(if (nativeSourceContract.supports(nativeTransfer))
+                                            R.string.game_info_vulkan_hdr_core_declared
+                                        else R.string.game_info_vulkan_hdr_source_unverified))
+                                        GamePanelText(stringResource(R.string.game_info_vulkan_hdr_mastering_unknown))
+                                    } else {
+                                        GamePanelText(stringResource(R.string.game_info_vulkan_source_transfer_unknown))
+                                    }
+                                    val transferSupported = nativeSourceContract.supports(nativeTransfer) &&
+                                        GameVulkanTransferGate.supported(
+                                            nativeTransfer, displayHdr, vulkanSurfaceFormats,
+                                        )
                                     if (transferSupported) {
                                         val nativePhase = when (nativeSdrStatus.phase) {
                                             GameVulkanSdrStatus.Phase.OFF -> R.string.game_info_native_sdr_off
