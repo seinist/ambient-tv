@@ -4,6 +4,8 @@ import com.ambient.tv.ui.games.NetplayInput
 import org.apache.commons.compress.archivers.sevenz.SevenZOutputFile
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
+import org.junit.Assert.assertFalse
 import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.TemporaryFolder
@@ -74,10 +76,17 @@ class GameArchivesTest {
         assertEquals(GameSystems.cores.size, GameSystems.cores.map { it.id }.toSet().size)
     }
 
-    @Test fun everyCoreIsInTheOwnBuild() {
+    @Test fun pinnedCoresAndBuildbotOnlyCoresAreSeparated() {
         val json = File("../cores/cores.json").takeIf { it.isFile } ?: File("cores/cores.json")
-        val text = json.readText()
-        GameSystems.cores.forEach { core -> assert("\"core\": \"${core.id}\"" in text) { "${core.id} missing in cores.json" } }
+        val pinnedIds = Regex(""""core"\\s*:\\s*"([^"]+)"""")
+            .findAll(json.readText()).map { it.groupValues[1] }.toSet()
+        val registeredIds = GameSystems.cores.map { it.id }.toSet()
+        assertTrue("All own-build cores must be registered", registeredIds.containsAll(pinnedIds))
+        assertTrue("The original pinned core catalog must remain available", pinnedIds.size >= 26)
+        // New systems are buildbot-first: requiring their own signed builds would be misleading.
+        assertFalse("PPSSPP is not yet pinned in cores.json", "ppsspp" in pinnedIds)
+        assertFalse("VICE is not yet pinned in cores.json", "vice_x64sc" in pinnedIds)
+        assertFalse("Cemu is not yet pinned in cores.json", "cemu" in pinnedIds)
     }
 
     @Test fun netplayInputSurvivesTheWire() {
