@@ -52,6 +52,9 @@ class RetroPadInput(
     private val controllerOrder = mutableListOf<String>()
     private val portButtons = AtomicIntegerArray(RetroPorts.COUNT)
     private val portAnalog = AtomicIntegerArray(RetroPorts.COUNT * 4)
+    /** Virtual handset controls share player 1 with physical inputs; union, never replace, their state. */
+    private var touchButtons = 0
+    private val touchAnalog = IntArray(4)
 
     /** Called on the main thread after any player's buttons or sticks changed. */
     var onChanged: (() -> Unit)? = null
@@ -62,6 +65,26 @@ class RetroPadInput(
     /** RETRO_DEVICE_ANALOG: [index] 0 left / 1 right stick, [axis] 0 x / 1 y, −32767…32767. Any thread. */
     fun analog(port: Int, index: Int, axis: Int): Int =
         if (port in 0 until RetroPorts.COUNT && index in 0..1 && axis in 0..1) portAnalog.get(port * 4 + index * 2 + axis) else 0
+
+    /** A held virtual button. Always pair down/up; menu, pause and dispose clear it as well. */
+    fun touchButton(button: RetroPadButton, pressed: Boolean) {
+        val newMask = if (pressed) touchButtons or button.mask else touchButtons and button.mask.inv()
+        if (newMask == touchButtons) return
+        touchButtons = newMask
+        recompute(0)
+    }
+
+    /** Virtual stick axes (−1…1). Coexists with a physical stick on the same port. */
+    fun touchStick(index: Int, x: Float, y: Float) {
+        if (index !in 0..1) return
+        val at = index * 2
+        val nextX = stick(x.coerceIn(-1f, 1f))
+        val nextY = stick(y.coerceIn(-1f, 1f))
+        if (touchAnalog[at] == nextX && touchAnalog[at + 1] == nextY) return
+        touchAnalog[at] = nextX
+        touchAnalog[at + 1] = nextY
+        recompute(0)
+    }
 
     fun onEvent(event: InputEvent): Boolean = when (event) {
         is KeyEvent -> onKey(event)
@@ -183,6 +206,8 @@ class RetroPadInput(
         if (rewinding() > 0) onRewind(false)
         devices.values.forEach { state -> state.holds.values.forEach { it() } }
         devices.clear()
+        touchButtons = 0
+        touchAnalog.fill(0)
         for (port in 0 until RetroPorts.COUNT) recompute(port)
     }
 
@@ -203,6 +228,8 @@ class RetroPadInput(
             state.pulseButtons = 0
             state.analog.fill(0)
         }
+        touchButtons = 0
+        touchAnalog.fill(0)
         recomputeAll()
         onMenu()
     }
@@ -227,11 +254,11 @@ class RetroPadInput(
 
     private fun recompute(port: Int) {
         val playing = devices.values.filter { port(it.info) == port }
-        val buttons = playing.fold(0) { mask, state -> mask or state.buttons() }
+        val buttons = playing.fold(if (port == 0) touchButtons else 0) { mask, state -> mask or state.buttons() }
         portButtons.set(port, buttons)
         for (axis in 0 until 4) {
             // The strongest lean wins when several devices share a player.
-            var value = playing.map { it.analog[axis] }.maxByOrNull { abs(it) } ?: 0
+            var value = (playing.map { it.analog[axis] } + if (port == 0) listOf(touchAnalog[axis]) else emptyList()).maxByOrNull { abs(it) } ?: 0
             if (axis < 2 && value == 0 && config().dpadAsStick) value = dpadAxis(buttons, axis)
             portAnalog.set(port * 4 + axis, value)
         }
