@@ -439,12 +439,6 @@ private fun PlayerContent(
         if (reveal) revealControls() else osd.showSeekFeedback()
     }
 
-    val seekAcceleration = remember(seek) { SeekKeyAcceleration() }
-    fun heldSeekStep(baseMs: Long, event: androidx.compose.ui.input.key.KeyEvent): Long {
-        val durationMs = state.durationMs?.takeIf { it > 0 } ?: (exoPlayer.duration.takeIf { it > 0 }?.plus(state.timelineOffsetMs) ?: Long.MAX_VALUE)
-        return seekAcceleration.step(baseMs, event.nativeKeyEvent.keyCode, event.nativeKeyEvent.eventTime, event.nativeKeyEvent.repeatCount, durationMs)
-    }
-
 
     Media3VideoTrackGuard(exoPlayer) {
         viewModel.requestVideoFallback(exoPlayer.currentPosition, videoDecoderErrorMessage)
@@ -676,7 +670,8 @@ private fun PlayerContent(
             event.key, event.type == KeyEventType.KeyDown,
             OsdKeyState(OsdContent.VIDEO, controlsVisible && !osd.seekFeedback && !osd.closing,
                 panel != UnifiedPlayerPanel.NONE, osd.seekFeedback, closing = osd.closing, seekBarFocused = osd.seekBarFocused),
-            OsdSeekSteps(BackgroundPlaybackSession.seekJumpMs(state.seekJumpMs), held = { heldSeekStep(it, event) }),
+            progressiveOsdSeekSteps(BackgroundPlaybackSession.seekJumpMs(state.seekJumpMs), seek.positionMs,
+                state.durationMs?.takeIf { it > 0 } ?: (exoPlayer.duration.takeIf { it > 0 }?.plus(state.timelineOffsetMs) ?: 0L), osd),
             object : OsdKeyTarget {
                 override fun chapterSeekDelta(direction: Int): Long? {
                     // Performance mode can suspend the hidden OSD clock; sample only on input.
@@ -1171,7 +1166,8 @@ internal fun TvPlayerSeekBar(
         BackgroundPlaybackSession.userSeek()
         latestSeekState?.seekTo(target) ?: latestOnSeekBy(target - currentPosition())
     }
-    val seekAcceleration = remember(seekState) { SeekKeyAcceleration() }
+    val progressiveSeek = remember(seekState) { ProgressiveSeekController() }
+    ProgressiveSeekTicker(progressiveSeek)
     var pendingTarget by remember { mutableStateOf<Long?>(null) }
     var pendingDirection by remember { mutableIntStateOf(0) }
     var pointerTarget by remember { mutableStateOf<Long?>(null) }
@@ -1191,6 +1187,7 @@ internal fun TvPlayerSeekBar(
     }
     LaunchedEffect(acceptsInput) {
         if (!acceptsInput) {
+            progressiveSeek.cancel()
             pendingTarget = null
             pendingDirection = 0
             pointerTarget = null
@@ -1199,8 +1196,9 @@ internal fun TvPlayerSeekBar(
         }
     }
     LaunchedEffect(previewVersion) { if (pendingTarget == null) { kotlinx.coroutines.delay(1_100); lastPreview = null } }
+    val progressiveTarget = progressiveSeek.previewTargetMs ?: osd?.progressiveSeek?.previewTargetMs
     val displayedPosition = seekBarVisualPosition(
-        positionMs, durationMs, pointerTarget, pendingTarget, awaitingVisualTarget,
+        positionMs, durationMs, pointerTarget, pendingTarget ?: progressiveTarget, awaitingVisualTarget,
     )
     // Seek feedback: the preview only accompanies a jump. It opens with the bar (a jump showed it),
     // reopens on every further jump and closes 1.1 s after the last one; the bar itself stays.
@@ -1219,7 +1217,7 @@ internal fun TvPlayerSeekBar(
     var focused by remember { mutableStateOf(false) }
     val progress = if (durationMs > 0) (displayedPosition.toFloat() / durationMs.toFloat()).coerceIn(0f, 1f) else 0f
     val remaining = (durationMs - displayedPosition).coerceAtLeast(0L)
-    val aiming = pointerTarget != null || pendingTarget != null || awaitingVisualTarget != null
+    val aiming = pointerTarget != null || pendingTarget != null || progressiveTarget != null || awaitingVisualTarget != null
     val showingSeekTarget = seekBarHasDistinctTarget(positionMs, displayedPosition, aiming)
     val highlighted = focused || aiming || passiveFeedback
     // Draw the current-position line only during scrubbing or brief direct-seek
@@ -1243,7 +1241,7 @@ internal fun TvPlayerSeekBar(
     val previewTarget = if (stowing) null else if (passiveFeedback) {
         positionMs.takeIf { feedbackPreview }
     } else if (focused || pointerTarget != null) {
-        pointerTarget ?: pendingTarget ?: awaitingVisualTarget ?: lastPreview
+        pointerTarget ?: pendingTarget ?: progressiveTarget ?: awaitingVisualTarget ?: lastPreview
     } else null
     val previewAvailable = previewTarget?.let { target ->
         navigation?.timeline?.let { it.previewFrameAt(target) != null || it.chapterAt(target) != null }
@@ -1261,7 +1259,7 @@ internal fun TvPlayerSeekBar(
                 controlFocus?.focused("seek-bar", timelineOwner, it.isFocused)
                 osd?.seekBarFocus(timelineOwner, it.isFocused)
                 if (it.isFocused && osd?.expanded == true) osd.collapse()
-                if (!it.isFocused) { pendingTarget = null; pendingDirection = 0; lastPreview = null }
+                if (!it.isFocused) { progressiveSeek.cancel(); pendingTarget = null; pendingDirection = 0; lastPreview = null }
             }
             .onPreviewKeyEvent { event ->
                 if (osd != null && (event.key == Key.DirectionDown || event.key == Key.DirectionUp)) {
@@ -1277,6 +1275,7 @@ internal fun TvPlayerSeekBar(
                         navigation?.interact(); onInteraction()
                         val confirm = confirmSeekBarOk(pendingTarget, lastPreview, currentPosition())
                         confirm.seekDeltaMs?.let { submitTarget(currentPosition() + it) }
+                        progressiveSeek.cancel()
                         pendingTarget = null
                         pendingDirection = 0
                         lastPreview = null
@@ -1290,7 +1289,7 @@ internal fun TvPlayerSeekBar(
                 if (direction == 0 || durationMs <= 0) return@onPreviewKeyEvent false
                 // The hidden/passive player may have consumed KeyDown before this bar gained
                 // focus. Its KeyUp must not claim feedback, commit a stale target or restart it.
-                if (event.type == KeyEventType.KeyUp && (pendingTarget == null || pendingDirection != direction)) {
+                if (event.type == KeyEventType.KeyUp && !progressiveSeek.isPressedIn(direction)) {
                     return@onPreviewKeyEvent true
                 }
                 navigation?.interact(); onInteraction()
@@ -1298,12 +1297,14 @@ internal fun TvPlayerSeekBar(
                     KeyEventType.KeyDown -> {
                         BackgroundPlaybackSession.userSeek()
                         pendingDirection = direction
-                        val base = pendingTarget ?: currentPosition()
-                        pendingTarget = (base + direction * seekAcceleration.step(10_000L, event.nativeKeyEvent.keyCode, event.nativeKeyEvent.eventTime, event.nativeKeyEvent.repeatCount, durationMs)).coerceIn(0, durationMs)
-                        lastPreview = pendingTarget
+                        progressiveSeek.press(direction, currentPosition(), durationMs)
+                        lastPreview = progressiveSeek.previewTargetMs
                     }
                     KeyEventType.KeyUp -> {
-                        pendingTarget?.let(::submitTarget)
+                        progressiveSeek.release(direction)?.let { target ->
+                            submitTarget(target)
+                            lastPreview = target
+                        }
                         pendingTarget = null
                         pendingDirection = 0
                     }
