@@ -79,7 +79,7 @@ class DiagnosticLogViewerNavigationTest {
     @Test fun severityAndSourceFiltersKeepListUsable() {
         showViewer()
         rule.onNodeWithTag("diagnostics-entry:${warning.key}").assertExists()
-        // LazyColumn intentionally detaches offscreen events. The count verifies the full log.
+        // LazyColumn detaches offscreen events; the persistent counter covers the full log.
         rule.onNodeWithText("3 of 3", substring = true).assertExists()
 
         rule.onNodeWithTag("diagnostics-severity-ERRORS").performClick()
@@ -122,13 +122,13 @@ class DiagnosticLogViewerNavigationTest {
         showViewer()
         val entry = "diagnostics-entry:${recent.key}"
         rule.onNodeWithTag(entry).performClick()
-        // Nested Android Dialog windows attach on a later UI frame in Robolectric.
+        // The details replace list content in the same dialog, avoiding a second window.
         rule.waitUntil(5_000) {
             rule.onAllNodesWithTag("diagnostics-copy").fetchSemanticsNodes().isNotEmpty()
         }
         rule.onNodeWithTag("diagnostics-copy").assertExists()
         rule.onNodeWithTag("diagnostics-detail-back").performClick()
-        // The shared dialog uses a native 160 ms exit animation.
+        // Back returns to the list without dismissing the owning dialog window.
         rule.waitUntil(5_000) {
             runCatching { rule.onNodeWithTag(entry).assertIsFocused() }.isSuccess
         }
