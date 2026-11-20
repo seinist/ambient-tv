@@ -715,8 +715,12 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
                         MetaBadge("libretro", emphasized = true)
                         MetaBadge(core.name)
                         if (game.direct) MetaBadge(stringResource(R.string.game_direct_source))
-                        if (core.hardware) MetaBadge(if (session.vulkan) "Vulkan" else "OpenGL ES")
-                        MetaBadge(stringResource(shader.titleRes))
+                        if (core.hardware) MetaBadge(if (session.vulkan) "Vulkan → GLES" else "OpenGL ES")
+                        if (session.vulkan && toneMap != GameHdrToneMap.OFF) {
+                            MetaBadge("HDR → SDR")
+                        } else {
+                            MetaBadge(stringResource(shader.titleRes))
+                        }
                         if (aspect != GameAspect.CORE) MetaBadge(aspect.key)
                         if (fastForward) MetaBadge("2×")
                         (achievements.state as? GameAchievementState.Active)?.let { active ->
