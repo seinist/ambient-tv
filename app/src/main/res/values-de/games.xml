@@ -36,6 +36,7 @@
     <string name="game_info_core">Core: %1$s (%2$s)</string>
     <string name="game_info_file">Datei: %1$s · %2$s</string>
     <string name="game_info_hdr_display_capabilities">HDR-Formate des Displays: %1$s (nur Gerätefähigkeit)</string>
+    <string name="game_info_vulkan_surface_pairs">Vulkan-Formate der Display-Surface: %1$s (nur Prüfung)</string>
     <string name="game_info_hdr_output_inactive">Native Vulkan-HDR-Ausgabe ist nicht aktiv. Spiele werden derzeit über den SDR-GLES-Compositor ausgegeben.</string>
     <string name="game_info_core_source">Cores stammen vom libretro-Buildserver und liegen auf diesem Gerät.</string>
     <string name="game_core_remove">Core entfernen</string>
