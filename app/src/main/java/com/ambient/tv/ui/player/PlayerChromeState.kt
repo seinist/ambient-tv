@@ -79,6 +79,10 @@ fun PersistentPlayerChrome(
         LocalPlayerChangingItem provides changingItem,
     ) {
         PlayerPanelAutoHide(chrome, changingItem)
+        ProgressiveSeekTicker(chrome.osd.progressiveSeek)
+        androidx.compose.runtime.DisposableEffect(chrome) {
+            onDispose { chrome.osd.progressiveSeek.cancel() }
+        }
         // Info opens the details dialog when its action-bar button is switched on.
         val detailsLabel = androidx.compose.ui.res.stringResource(com.ambient.tv.R.string.player_details)
         PlayerKeyActions(chrome, detailsLabel)
