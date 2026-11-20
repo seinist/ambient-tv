@@ -46,8 +46,9 @@ data class GameSession(
     val autoState: ByteArray?,
 ) {
     override fun equals(other: Any?) =
-        other is GameSession && other.game == game && other.coreFile == coreFile && other.vulkan == vulkan
-    override fun hashCode() = (game.hashCode() * 31 + coreFile.hashCode()) * 31 + vulkan.hashCode()
+        other is GameSession && other.game == game && other.coreFile == coreFile &&
+            other.coreStamp == coreStamp && other.vulkan == vulkan
+    override fun hashCode() = ((game.hashCode() * 31 + coreFile.hashCode()) * 31 + coreStamp.hashCode()) * 31 + vulkan.hashCode()
 }
 
 sealed interface GameUiState {
@@ -212,6 +213,8 @@ class GamePlayerViewModel @Inject constructor(
     }
 
     /** Removes a core (e.g. after it failed) so the next start loads it again. */
+    /** A corrupt update can be replaced by its previous installed core without downloading. */
+    fun rollbackCore(core: GameCore): Boolean = cores.rollback(core)
     fun removeCore(core: GameCore) = cores.remove(core)
 
     fun cheats(game: PreparedGame): List<com.ambient.tv.games.GameCheat> = cheatStore.load(game)
