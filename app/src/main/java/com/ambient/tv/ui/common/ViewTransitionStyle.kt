@@ -53,6 +53,7 @@ internal fun viewTransitionVisual(
     style: ViewTransitionStyle,
     reducedEffects: Boolean,
     backgroundVideoVisible: Boolean,
+    lowEndDevice: Boolean = false,
 ): ViewTransitionVisual {
     if (reducedEffects) return ViewTransitionVisual.None
     // A visible native decoder plane is never moved, scaled or momentarily exposed
@@ -60,11 +61,16 @@ internal fun viewTransitionVisual(
     if (backgroundVideoVisible && style != ViewTransitionStyle.OFF) {
         return ViewTransitionVisual(durationMs = 160, initialScrim = .20f)
     }
+    // Explicit Balanced/Maximum on weak TV hardware should not make page
+    // movement compete with image decode, EPG parsing or the player surface.
+    if (lowEndDevice && style in setOf(ViewTransitionStyle.MICRO_SLIDE, ViewTransitionStyle.CINEMATIC)) {
+        return ViewTransitionVisual(durationMs = 160, initialScrim = .20f)
+    }
     return when (style) {
         ViewTransitionStyle.OFF -> ViewTransitionVisual.None
         ViewTransitionStyle.SOFT_FADE -> ViewTransitionVisual(durationMs = 180, initialScrim = .28f)
         ViewTransitionStyle.MICRO_SLIDE -> ViewTransitionVisual(
-            durationMs = 210, initialAlpha = .88f, offsetDp = 8f,
+            durationMs = 210, initialScrim = .18f, offsetDp = 8f,
         )
         ViewTransitionStyle.CINEMATIC -> ViewTransitionVisual(
             durationMs = 270, initialScrim = .46f, initialScale = .993f,
@@ -78,8 +84,10 @@ internal fun shouldAnimateViewTransition(
     previousFullscreen: Boolean,
     targetFullscreen: Boolean,
     categorySwitchMustStayAtomic: Boolean,
+    rapidNavigation: Boolean = false,
 ): Boolean = previousEntryId != null && targetEntryId != null &&
-    !previousFullscreen && !targetFullscreen && !categorySwitchMustStayAtomic
+    !previousFullscreen && !targetFullscreen && !categorySwitchMustStayAtomic &&
+    !rapidNavigation
 
 private data class NavigationStamp(
     val route: String?,
@@ -94,6 +102,7 @@ private data class NavigationStamp(
  * same time as incoming pages. No layout animation, blur, bitmap copy or extra grid.
  *
  * Animated values are read by the draw/layer modifiers, not by composition.
+ * Rapid repeated navigation cuts the new tween rather than stacking effects.
  * A new route cancels the previous tween; initial composition stays unanimated.
  */
 @Composable
@@ -105,11 +114,12 @@ internal fun ViewTransitionHost(
     fullscreen: Boolean,
     reducedEffects: Boolean,
     backgroundVideoVisible: Boolean,
+    lowEndDevice: Boolean = false,
     skipTransition: (String?, String?) -> Boolean = { _, _ -> false },
     content: @Composable () -> Unit,
 ) {
     val style = ViewTransitionStyle.fromKey(styleKey)
-    val visual = viewTransitionVisual(style, reducedEffects, backgroundVideoVisible)
+    val visual = viewTransitionVisual(style, reducedEffects, backgroundVideoVisible, lowEndDevice)
     val density = LocalDensity.current.density
     val progress = remember { mutableFloatStateOf(1f) }
     var active by remember { mutableStateOf(ViewTransitionVisual.None) }
@@ -127,6 +137,7 @@ internal fun ViewTransitionHost(
         val eligible = shouldAnimateViewTransition(
             previous.entryId, entryId, previous.fullscreen, fullscreen,
             skipTransition(previous.route, route),
+            rapidNavigation = active.animate && progress.floatValue < .95f,
         )
         active = if (eligible) visual else ViewTransitionVisual.None
         backward = backStackDepth < previous.depth
@@ -134,7 +145,7 @@ internal fun ViewTransitionHost(
         previous = NavigationStamp(route, entryId, backStackDepth, fullscreen)
     }
 
-    LaunchedEffect(entryId, route, style, reducedEffects, backgroundVideoVisible, fullscreen) {
+    LaunchedEffect(entryId, route, style, reducedEffects, lowEndDevice, backgroundVideoVisible, fullscreen) {
         if (!active.animate || fullscreen || reducedEffects) {
             progress.floatValue = 1f
         } else {
