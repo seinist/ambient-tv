@@ -33,10 +33,10 @@ class GameHdrToneMapShaderTest {
             val shader = GameHdrToneMapShader.forGame(filter, GameHdrToneMap.PQ, true) as ShaderConfig.Custom
             assertEquals(1, shader.passes.size)
             assertTrue(shader.passes[0].fragment.contains("const int PICTURE_MODE = $code;"))
-            assertEquals(filter == GameShader.SMOOTH, shader.passes[0].linear)
+            assertTrue(shader.passes[0].linear)
         }
-        assertTrue(GameHdrToneMapShader.fragment(GameHdrToneMap.PQ, GameShader.CRT).contains("float scan"))
-        assertTrue(GameHdrToneMapShader.fragment(GameHdrToneMap.HLG, GameShader.LCD).contains("vec3 stripe"))
+        assertTrue(GameHdrToneMapShader.fragment(GameHdrToneMap.PQ, GameShader.CRT).contains("float beam"))
+        assertTrue(GameHdrToneMapShader.fragment(GameHdrToneMap.HLG, GameShader.LCD).contains("float grid"))
     }
 
     @Test fun pqAndHlgSelectDistinctGpuConversion() {
