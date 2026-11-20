@@ -37,7 +37,9 @@ class RightSidePanelMotionTest {
         assertEquals(120, PLAYER_PANEL_REDUCED_MS)
         assertEquals(1f, playerPanelDrawerTranslationFraction(0f, reducedEffects = false), 0f)
         assertEquals(0f, playerPanelDrawerTranslationFraction(1f, reducedEffects = false), 0f)
-        assertEquals(0f, playerPanelDrawerTranslationFraction(0f, reducedEffects = true), 0f)
+        assertEquals(1f, playerPanelDrawerTranslationFraction(0f, reducedEffects = true), 0f)
+        assertEquals(0.5f, playerPanelDrawerTranslationFraction(0.5f, reducedEffects = true), 0f)
+        assertEquals(0f, playerPanelDrawerTranslationFraction(1f, reducedEffects = true), 0f)
         assertEquals(1f, playerPanelDrawerAlpha(1f, reducedEffects = false), 0f)
         assertEquals(0f, playerPanelDrawerAlpha(0f, reducedEffects = true), 0f)
     }
