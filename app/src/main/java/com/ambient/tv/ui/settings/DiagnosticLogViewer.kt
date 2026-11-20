@@ -32,6 +32,7 @@ import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.AnnotatedString
@@ -43,6 +44,7 @@ import com.ambient.tv.R
 import com.ambient.tv.diagnostics.DiagnosticLevel
 import com.ambient.tv.diagnostics.DiagnosticLog
 import com.ambient.tv.diagnostics.DiagnosticViewerEntry
+import com.ambient.tv.diagnostics.DiagnosticViewerSnapshot
 import com.ambient.tv.ui.common.AppDialog
 import com.ambient.tv.ui.common.TvActionButton
 import com.ambient.tv.ui.common.TvChip
@@ -76,6 +78,7 @@ internal fun DiagnosticLogViewer(
     loggingEnabled: Boolean,
     onExport: () -> Unit,
     onDismiss: () -> Unit,
+    readSnapshot: (String?) -> DiagnosticViewerSnapshot? = DiagnosticLog::viewerSnapshot,
 ) {
     var entries by remember { mutableStateOf<List<DiagnosticViewerEntry>>(emptyList()) }
     var pendingEntries by remember { mutableStateOf<List<DiagnosticViewerEntry>?>(null) }
@@ -98,7 +101,7 @@ internal fun DiagnosticLogViewer(
         var lastRevision: String? = null
         var firstRead = true
         while (isActive) {
-            val snapshot = withContext(Dispatchers.IO) { DiagnosticLog.viewerSnapshot(lastRevision) }
+            val snapshot = withContext(Dispatchers.IO) { readSnapshot(lastRevision) }
             if (snapshot != null) {
                 lastRevision = snapshot.revision
                 if (firstRead || entries.isEmpty() ||
@@ -158,6 +161,7 @@ internal fun DiagnosticLogViewer(
         footer = {
             TvActionButton(
                 text = stringResource(R.string.diagnostics_viewer_refresh),
+                modifier = Modifier.testTag("diagnostics-refresh"),
                 onClick = {
                     pendingEntries?.let { entries = it }
                     pendingEntries = null
@@ -166,11 +170,11 @@ internal fun DiagnosticLogViewer(
                 },
             )
             if (!handheld) TvActionButton(text = stringResource(R.string.diagnostics_viewer_export), onClick = onExport)
-            TvActionButton(text = stringResource(R.string.back), onClick = onDismiss)
+            TvActionButton(text = stringResource(R.string.back), modifier = Modifier.testTag("diagnostics-close"), onClick = onDismiss)
         },
     ) {
         TvLazyColumn(
-            modifier = Modifier.fillMaxSize().overlayLazyScrollbar(scroll),
+            modifier = Modifier.fillMaxSize().testTag("diagnostics-list").overlayLazyScrollbar(scroll),
             state = scroll,
             verticalArrangement = Arrangement.spacedBy(8.dp),
             contentPadding = PaddingValues(bottom = 12.dp),
@@ -180,12 +184,12 @@ internal fun DiagnosticLogViewer(
                     value = query,
                     onValueChange = { query = it.take(120) },
                     label = stringResource(R.string.diagnostics_viewer_search),
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier.fillMaxWidth().testTag("diagnostics-search"),
                 )
             }
             item(key = "diagnostics-severity") {
                 LazyRow(
-                    modifier = Modifier.fillMaxWidth().focusGroup(),
+                    modifier = Modifier.fillMaxWidth().testTag("diagnostics-severity").focusGroup(),
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
                     items(LogViewerSeverity.entries, key = { it.name }) { option ->
@@ -201,7 +205,7 @@ internal fun DiagnosticLogViewer(
             }
             if (tags.isNotEmpty()) item(key = "diagnostics-sources") {
                 LazyRow(
-                    modifier = Modifier.fillMaxWidth().focusGroup(),
+                    modifier = Modifier.fillMaxWidth().testTag("diagnostics-sources").focusGroup(),
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
                     item(key = "all-tags") {
@@ -254,6 +258,7 @@ internal fun DiagnosticLogViewer(
                         fillWidth = true,
                         modifier = Modifier
                             .then(if (entry.key == returnToEntryKey) Modifier.focusRequester(returnToEntryFocus) else Modifier)
+                            .testTag("diagnostics-entry:${entry.key}")
                             .onFocusChanged { focus ->
                                 if (focus.isFocused) focusedEntryKey = entry.key
                                 else if (focusedEntryKey == entry.key) focusedEntryKey = null
@@ -284,13 +289,14 @@ internal fun DiagnosticLogViewer(
             footer = {
                 TvActionButton(
                     text = stringResource(R.string.diagnostics_viewer_copy),
+                    modifier = Modifier.testTag("diagnostics-copy"),
                     onClick = {
                         runCatching { clipboard.setText(AnnotatedString(entry.copyText())) }.onSuccess {
                             Toast.makeText(context, R.string.diagnostics_viewer_copied, Toast.LENGTH_SHORT).show()
                         }
                     },
                 )
-                TvActionButton(text = stringResource(R.string.back), onClick = { openedEntry = null })
+                TvActionButton(text = stringResource(R.string.back), modifier = Modifier.testTag("diagnostics-detail-back"), onClick = { openedEntry = null })
             },
         ) {
             // A long stack trace must be scrollable with DPAD as well as touch. At its boundaries
