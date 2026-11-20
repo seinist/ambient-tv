@@ -19,7 +19,17 @@ class GameExtrasTest {
         assertEquals(6, RaConsoles.forGame(GameSystems.byId("gb")!!, "gbc"))
         assertEquals(81, RaConsoles.forGame(GameSystems.byId("nes")!!, "fds"))
         assertEquals(12, RaConsoles.forGame(GameSystems.byId("psx")!!, "cue"))
-        GameSystems.all.forEach { system -> system.extensions.forEach { assert(RaConsoles.forGame(system, it) != null) } }
+        // Newly registered cores are not automatically supported by our RA console-id mapper.
+        val covered = listOf("nes", "snes", "gb", "gba", "megadrive", "pce", "ngp",
+            "wswan", "lynx", "a2600", "vb", "n64", "psx")
+        covered.forEach { id ->
+            val system = GameSystems.byId(id)!!
+            system.extensions.forEach { ext ->
+                org.junit.Assert.assertNotNull("Missing RA console id: $id .$ext", RaConsoles.forGame(system, ext))
+            }
+        }
+        assertNull(RaConsoles.forGame(GameSystems.byId("wiiu")!!, "wua"))
+        assertNull(RaConsoles.forGame(GameSystems.byId("c64")!!, "d64"))
     }
 
     @Test fun awardValidationAndWatchableAchievements() {
@@ -56,7 +66,14 @@ class GameExtrasTest {
         )
         assertEquals(emptyList<GameCheat>(), GameCheatStore.parseCht("nothing here"))
         assertEquals(listOf("Sega - Game Gear"), GameCheatStore.databaseFolders(GameSystems.byId("megadrive")!!, "gg"))
-        GameSystems.all.forEach { assert(GameCheatStore.databaseFolders(it, it.extensions.first()).isNotEmpty()) }
+        // Only systems with configured libretro-database names have automatic cheat lookup.
+        listOf("nes", "snes", "gb", "gba", "megadrive", "pce", "ngp", "wswan", "lynx",
+            "a2600", "vb", "n64", "psx").forEach { id ->
+            val system = GameSystems.byId(id)!!
+            assert(GameCheatStore.databaseFolders(system, system.extensions.first()).isNotEmpty())
+        }
+        assertEquals(emptyList<String>(), GameCheatStore.databaseFolders(GameSystems.byId("c64")!!, "d64"))
+        assertEquals(emptyList<String>(), GameCheatStore.databaseFolders(GameSystems.byId("wiiu")!!, "wua"))
     }
 
     @Test fun netplayIdentityDependsOnContentAndCore() {

@@ -90,7 +90,7 @@ object GameArchives {
      * cartridge; files of a system before unknown ones. Null when none plays.
      */
     fun <T> choose(items: List<T>, name: (T) -> String): T? = items
-        .filter { GameSystems.forFile(name(it)) != null }
+        .filter { GameSystems.forFile(name(it)) != null || GameSystems.extension(name(it)) in GameSystems.ambiguousExtensions }
         .minWithOrNull(compareBy({ rank(name(it)) }, { name(it).count { c -> c == '/' } }, { name(it).lowercase() }))
 
     private fun rank(name: String): Int = when (GameSystems.extension(name)) {

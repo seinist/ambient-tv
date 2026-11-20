@@ -60,6 +60,7 @@ class GameRomPreparer @Inject constructor(
             copy(source, path, entry.size, main, onProgress)
             when (GameSystems.extension(entry.name)) {
                 "cue" -> copyReferenced(source, path, cueFiles(main.readText()), folder)
+                "gdi" -> copyReferenced(source, path, gdiFiles(main.readText()), folder)
                 "m3u" -> {
                     val discs = m3uFiles(main.readText())
                     copyReferenced(source, path, discs, folder)
@@ -73,7 +74,7 @@ class GameRomPreparer @Inject constructor(
         folder.setLastModified(System.currentTimeMillis())
         trim(keep = folder)
         val playable = if (GameSystems.extension(main.name) in GameSystems.archiveExtensions) unpack(main, folder) else main
-        val system = GameSystems.forFile(playable.name) ?: throw UnknownGameException(entry.name)
+        val system = GameSystems.forPreparedFile(playable, entry.path) ?: throw UnknownGameException(entry.name)
         PreparedGame(
             fileId = fileId,
             title = entry.name.substringBeforeLast('.'),
@@ -169,6 +170,13 @@ class GameRomPreparer @Inject constructor(
             val rest = trimmed.substring(4).trim()
             if (rest.startsWith("\"")) rest.substring(1).substringBefore('"') else rest.substringBeforeLast(' ')
         }.filter { it.isNotBlank() }.toList()
+
+        /** Dreamcast GDI: track number, LBA, type, sector size, filename, offset. */
+        internal fun gdiFiles(gdi: String): List<String> =
+            gdi.lineSequence().drop(1).mapNotNull { line ->
+                Regex("""^\s*\d+\s+\d+\s+\d+\s+\d+\s+("[^"]+"|\S+)\s+\d+\s*$""")
+                    .matchEntire(line.trim())?.groupValues?.get(1)?.trim('"')
+            }.filter(String::isNotBlank).toList()
 
         /** Disc files an M3U playlist names (comments and blank lines skipped). */
         internal fun m3uFiles(m3u: String): List<String> =

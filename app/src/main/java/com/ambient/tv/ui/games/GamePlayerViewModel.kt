@@ -96,7 +96,7 @@ class GamePlayerViewModel @Inject constructor(
 
     /** The core failed while Vulkan was asked for: try once more with OpenGL ES. */
     fun retryWithoutVulkan(): Boolean {
-        if (vulkanFailed) return false
+        if (vulkanFailed || (state.value as? GameUiState.Ready)?.session?.core?.requiresVulkan == true) return false
         vulkanFailed = true
         load()
         return true
@@ -117,6 +117,10 @@ class GamePlayerViewModel @Inject constructor(
             }
             if (cores.abi == null) { mutable.value = GameUiState.Failed(GameFailure.NO_ABI); return@launch }
             val chosen = com.ambient.tv.games.GameSettings.state.gameCore(game.system, game.saveKey)
+            if (chosen.supportedAbis.isNotEmpty() && cores.abi !in chosen.supportedAbis) {
+                mutable.value = GameUiState.Failed(GameFailure.NO_ABI, chosen.name)
+                return@launch
+            }
             bios.missingRequired(game.system, GameSystems.extension(game.file.name), chosen)?.let { missing ->
                 mutable.value = GameUiState.Failed(GameFailure.BIOS_MISSING, missing.file); return@launch
             }
@@ -153,11 +157,11 @@ class GamePlayerViewModel @Inject constructor(
         val stamp = GameStateStore.coreStamp(core)
         val session = withContext(Dispatchers.IO) {
             runCatching { files.record(game.entry) }
-            val auto = states.entry(game, GameStateKind.AUTO)?.takeIf { it.coreStamp == stamp }
+            val auto = states.entry(game, GameStateKind.AUTO)?.takeIf { chosen.saveStates && it.coreStamp == stamp }
             GameSession(
                 game = game,
                 core = chosen,
-                vulkan = com.ambient.tv.games.GameSettings.state.vulkan(chosen) && !vulkanFailed,
+                vulkan = com.ambient.tv.games.GameSettings.state.vulkan(chosen) && (chosen.requiresVulkan || !vulkanFailed),
                 coreFile = core,
                 coreStamp = stamp,
                 systemDirectory = storage.systemDirectory,
