@@ -1,14 +1,9 @@
 diff --git a/src/main/cpp/vulkan/vulkanbackend.h b/src/main/cpp/vulkan/vulkanbackend.h
 --- a/src/main/cpp/vulkan/vulkanbackend.h
 +++ b/src/main/cpp/vulkan/vulkanbackend.h
-@@ -27,6 +27,7 @@
- 
- #include <vulkan/vulkan.h>
+@@ -29,1 +29,2 @@
  #include <android/hardware_buffer.h>
 +#include <android/native_window.h>
- #include <mutex>
- #include <string>
- #include <vector>
 @@ -76,6 +77,13 @@
      bool isStarted() const { return device != VK_NULL_HANDLE; }
      const retro_hw_render_interface_vulkan* getRenderInterface() const;
@@ -23,15 +18,11 @@ diff --git a/src/main/cpp/vulkan/vulkanbackend.h b/src/main/cpp/vulkan/vulkanbac
      bool ensureFrameBuffer(unsigned width, unsigned height);
      AHardwareBuffer* getFrameBuffer() const { return frameBuffer; }
      unsigned getFrameBufferWidth() const { return frameWidth; }
-@@ -97,6 +105,8 @@
-         PFN_vkEnumeratePhysicalDevices enumeratePhysicalDevices = nullptr;
-         PFN_vkGetPhysicalDeviceProperties getPhysicalDeviceProperties = nullptr;
+@@ -99,2 +107,4 @@
          PFN_vkGetPhysicalDeviceQueueFamilyProperties getPhysicalDeviceQueueFamilyProperties = nullptr;
 +        PFN_vkGetPhysicalDeviceSurfaceSupportKHR getPhysicalDeviceSurfaceSupport = nullptr;
 +        PFN_vkGetPhysicalDeviceSurfaceFormatsKHR getPhysicalDeviceSurfaceFormats = nullptr;
          PFN_vkEnumerateDeviceExtensionProperties enumerateDeviceExtensionProperties = nullptr;
-         PFN_vkGetPhysicalDeviceFeatures getPhysicalDeviceFeatures = nullptr;
-         PFN_vkCreateDevice createDevice = nullptr;
 diff --git a/src/main/cpp/vulkan/vulkanbackend.cpp b/src/main/cpp/vulkan/vulkanbackend.cpp
 --- a/src/main/cpp/vulkan/vulkanbackend.cpp
 +++ b/src/main/cpp/vulkan/vulkanbackend.cpp
@@ -125,8 +116,7 @@ diff --git a/src/main/cpp/vulkan/vulkanbackend.cpp b/src/main/cpp/vulkan/vulkanb
  bool VulkanBackend::loadInstanceFunctions() {
      auto load = [this](const char* name) { return vk.getInstanceProcAddr(instance, name); };
      vk.destroyInstance = reinterpret_cast<PFN_vkDestroyInstance>(load("vkDestroyInstance"));
-@@ -348,6 +424,10 @@
-         load("vkGetPhysicalDeviceProperties"));
+@@ -349,4 +425,8 @@
      vk.getPhysicalDeviceQueueFamilyProperties = reinterpret_cast<PFN_vkGetPhysicalDeviceQueueFamilyProperties>(
          load("vkGetPhysicalDeviceQueueFamilyProperties"));
 +    vk.getPhysicalDeviceSurfaceSupport = reinterpret_cast<PFN_vkGetPhysicalDeviceSurfaceSupportKHR>(
@@ -135,14 +125,10 @@ diff --git a/src/main/cpp/vulkan/vulkanbackend.cpp b/src/main/cpp/vulkan/vulkanb
 +        load("vkGetPhysicalDeviceSurfaceFormatsKHR"));
      vk.enumerateDeviceExtensionProperties = reinterpret_cast<PFN_vkEnumerateDeviceExtensionProperties>(
          load("vkEnumerateDeviceExtensionProperties"));
-     vk.getPhysicalDeviceFeatures = reinterpret_cast<PFN_vkGetPhysicalDeviceFeatures>(
 diff --git a/src/main/cpp/libretrodroidjni.cpp b/src/main/cpp/libretrodroidjni.cpp
 --- a/src/main/cpp/libretrodroidjni.cpp
 +++ b/src/main/cpp/libretrodroidjni.cpp
-@@ -793,6 +793,19 @@
-     });
- }
- 
+@@ -796,3 +796,16 @@
 +// Invoked exclusively on the GL/emulation thread while the independent
 +// target SurfaceView is valid. The caller keeps ownership of Surface.
 +JNIEXPORT jint JNICALL Java_com_swordfish_libretrodroid_LibretroDroid_probeVulkanSurfaceFormats(
@@ -162,10 +148,7 @@ diff --git a/src/main/cpp/libretrodroidjni.cpp b/src/main/cpp/libretrodroidjni.c
 diff --git a/src/main/java/com/swordfish/libretrodroid/LibretroDroid.java b/src/main/java/com/swordfish/libretrodroid/LibretroDroid.java
 --- a/src/main/java/com/swordfish/libretrodroid/LibretroDroid.java
 +++ b/src/main/java/com/swordfish/libretrodroid/LibretroDroid.java
-@@ -129,6 +129,12 @@
-         String hookDirectory,
-         String scratchDirectory
-     );
+@@ -132,3 +132,9 @@
 +    /**
 +     * Read-only native WSI format probe for a REAL, distinct display SurfaceView
 +     * surface. Call on the GL/emulation thread only. Does not create a swapchain
