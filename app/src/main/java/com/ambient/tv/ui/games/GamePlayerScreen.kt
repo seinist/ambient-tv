@@ -103,6 +103,7 @@ import com.ambient.tv.games.GameCoreOption
 import com.ambient.tv.games.GameOptionOrigin
 import com.ambient.tv.games.GameSettings
 import com.ambient.tv.games.GameShader
+import com.ambient.tv.games.GameHdrToneMap
 import com.ambient.tv.ui.common.MetaBadge
 import com.ambient.tv.ui.common.PlayerControlBar
 import com.ambient.tv.ui.common.PlayerExitButton
@@ -274,6 +275,7 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
     val core = session.core
     val settings = GameSettings.state
     val shader = settings.shader(system)
+    val toneMap = settings.hdrToneMap(core)
     val aspect = settings.aspect(system)
     val integerScaling = settings.integerScaling(system)
     val saveStates by model.saveStates.collectAsState()
@@ -341,7 +343,7 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
             variables = (settings.effectiveCoreOptions(core, game.saveKey) + if (session.vulkan) core.vulkanOptions else core.glOptions)
                 .map { (key, value) -> Variable(key, value) }.toTypedArray()
             saveRAMState = session.sram
-            this.shader = shader.config()
+            this.shader = GameHdrToneMapShader.forGame(shader, toneMap, session.vulkan)
             rumbleEventsEnabled = true
             preferLowLatencyAudio = true
             preferVulkan = session.vulkan
@@ -882,6 +884,9 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
                             }
                         }
                         open == GamePanel.PICTURE -> {
+                            if (session.vulkan && toneMap != GameHdrToneMap.OFF) {
+                                GamePanelText(stringResource(R.string.game_picture_hdr_filter_note))
+                            }
                             GamePanelText(stringResource(R.string.game_picture_filter))
                             GameShader.entries.forEach { choice ->
                                 RightPanelChoice(
@@ -889,7 +894,7 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
                                     subtitle = stringResource(choice.hintRes),
                                     selected = choice == shader,
                                     onClick = {
-                                        retroView.shader = choice.config()
+                                        retroView.shader = GameHdrToneMapShader.forGame(choice, toneMap, session.vulkan)
                                         GameSettings.update { it.withShader(system, choice) }
                                     },
                                 )
@@ -914,6 +919,21 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
                                     GameSettings.update { it.withIntegerScaling(system, !integerScaling) }
                                 },
                             )
+                            if (core.hardware && core.supportsVulkan) {
+                                GamePanelText(stringResource(R.string.game_picture_hdr))
+                                GameHdrToneMap.entries.forEach { choice ->
+                                    RightPanelChoice(
+                                        text = stringResource(choice.titleRes),
+                                        subtitle = if (choice == GameHdrToneMap.OFF) null
+                                            else stringResource(R.string.game_picture_hdr_hint),
+                                        selected = toneMap == choice,
+                                        onClick = {
+                                            retroView.shader = GameHdrToneMapShader.forGame(shader, choice, session.vulkan)
+                                            GameSettings.update { it.withHdrToneMap(core, choice) }
+                                        },
+                                    )
+                                }
+                            }
                             if (core.hardware && core.supportsVulkan && !core.requiresVulkan) {
                                 GamePanelText(stringResource(R.string.game_picture_graphics))
                                 listOf(false, true).forEach { vulkan ->
