@@ -470,6 +470,8 @@ fun ArtworkImage(
     staggerUncached: Boolean = false,
     /** Focused browse cards skip the background admission wave once scrolling is quiet. */
     prioritizeUncached: Boolean = false,
+    /** Coil fades the real bitmap in only after load; opt in for changing Live TV backdrops. */
+    crossfadeOnLoad: Boolean = false,
     /**
      * Full-screen art (detail backdrops) loads through the backdrop loader: one such bitmap
      * weighs as much as dozens of cards and must not push them out of the card cache.
@@ -544,8 +546,8 @@ fun ArtworkImage(
     val cap1080 = !backdrop && density > CARD_IMAGE_1080_DENSITY &&
         remember(context) { com.ambient.tv.ui.player.videoImagePreferences(context).cardImages1080 }
     val cardSize = remember(cap1080, density) { if (cap1080) CardImage1080SizeResolver(density) else null }
-    val request = remember(currentModel, context, headers, constrainDecode, cardSize) {
-        ImageRequest.Builder(context).data(currentModel).crossfade(false)
+    val request = remember(currentModel, context, headers, constrainDecode, cardSize, crossfadeOnLoad) {
+        ImageRequest.Builder(context).data(currentModel).crossfade(crossfadeOnLoad)
             .placeholderMemoryCacheKey(cachedKey)
             .apply {
                 // Only reuse a full cache key inside the same composable/card. That guarantees

@@ -47,6 +47,7 @@ import com.ambient.tv.ui.common.PlexRefreshBus
 import com.ambient.tv.tvheadend.data.TvheadendRepository
 import com.ambient.tv.tvheadend.domain.TvhChannel
 import com.ambient.tv.tvheadend.domain.TvhEpgEvent
+import com.ambient.tv.livetv.LiveTvArtworkRepository
 import com.ambient.tv.spotify.SpotifyRepository
 import com.ambient.tv.ui.common.MediaSystem
 import com.ambient.tv.connectivity.UnreachableServerGate
@@ -86,6 +87,8 @@ data class HomeHeroContent(
     val artworkIsLogo: Boolean = false,
     /** Transparent title/channel logo for the right-hand artwork slot. */
     val titleLogoUrl: String? = null,
+    /** Keep TVHeadend logo auth separate when the backdrop is hosted externally by TMDB. */
+    val titleLogoHeaders: Map<String, String>? = null,
     val providerLabel: String? = null,
     val metadata: List<String> = emptyList(),
     val imageHeaders: Map<String, String> = emptyMap(),
@@ -186,6 +189,7 @@ class HomeViewModel @Inject constructor(
     private val tvheadendRepository: TvheadendRepository,
     private val tvheadendConnectionManager: com.ambient.tv.server.TvheadendConnectionManager,
     private val liveTvRegistry: com.ambient.tv.livetv.LiveTvRegistry,
+    private val liveTvArtwork: LiveTvArtworkRepository,
     private val plexRefreshBus: PlexRefreshBus,
     private val spotifyRepository: SpotifyRepository,
     private val radioRepository: RadioBrowserRepository,
@@ -320,6 +324,9 @@ class HomeViewModel @Inject constructor(
     /** Channel icon URLs point at the TVHeadend server and need the same Basic Auth credentials
      * as the API calls - Coil doesn't share those with [tvheadendRepository]'s own client. */
     val tvheadendImageHeaders: Map<String, String> get() = tvheadendRepository.authHeaders()
+    val liveTvTitleArt: StateFlow<Map<String, String>> get() = liveTvArtwork.titleArt
+    fun requestHomeLiveTvTitleArt(title: String, scope: kotlinx.coroutines.CoroutineScope) =
+        liveTvArtwork.requestTitleArt(listOf(title), scope)
     val autoRefreshIntervalSeconds: Int get() = appPreferences.plexAutoRefreshIntervalSeconds
     val refreshGeneration = plexRefreshBus.generation
 
@@ -407,6 +414,12 @@ class HomeViewModel @Inject constructor(
             HomeFocusSnapshot(prefix + snapshot.target.videoId, source.id))
     }
 
+    private fun HomeUiState.Loaded.withCurrentLiveHeroArt(): HomeUiState.Loaded {
+        val selected = focusedRowId?.let { tvRows[it] }?.items
+            ?.firstOrNull { homeLiveTvFocusKey(it) == focusedRatingKey } ?: return this
+        return copy(hero = selected.toHeroContent())
+    }
+
     internal fun preparePlaybackReturn(
         state: HomeUiState,
         focusStateKey: String,
@@ -419,7 +432,7 @@ class HomeViewModel @Inject constructor(
             if (expected.liveTvSource != null) {
                 if (!livePlaybackReturnVisible(expected)) return null
             } else if (expected.source?.let { homeRowHidden(it.id) } != false) return null
-            return prepareHomePlaybackReturn(current, expected)
+            return prepareHomePlaybackReturn(current, expected)?.withCurrentLiveHeroArt()
         }
         val pending = pendingPlaybackReturn(focusStateKey, pendingYouTubePlaybackReturn.value,
             pendingTelegramPlaybackReturn.value)?.takeIf { it.key == expected.key } ?: return null
@@ -463,6 +476,22 @@ class HomeViewModel @Inject constructor(
             HomePlaybackProvider.MEDIA -> { commit(); true }
             HomePlaybackProvider.TELEGRAM -> telegramPlaybackContext.commitReturn(pending.scope, pending.contextRevision) { commit() }
             else -> youtubePlaybackContext.commitReturn(pending.scope, pending.contextRevision.toInt()) { commit() }
+        }
+    }
+
+    // TMDB results repaint only the current hero artwork, never the Home LazyRows. The
+    // programme's EPG image and logo are restored automatically when the artwork map resets.
+    init {
+        viewModelScope.launch {
+            liveTvArtwork.titleArt.collect { titleArt ->
+                val hero = _heroContent.value ?: return@collect
+                if (!hero.key.startsWith("livetv:")) return@collect
+                val selected = (_uiState.value as? HomeUiState.Loaded)?.tvRows?.values
+                    ?.asSequence()?.flatMap { it.items.asSequence() }
+                    ?.firstOrNull { it.homeHeroKey() == hero.key } ?: return@collect
+                val updated = selected.toHomeHeroContent(titleArt)
+                if (updated != hero) _heroContent.value = updated
+            }
         }
     }
 
@@ -2617,7 +2646,7 @@ class HomeViewModel @Inject constructor(
 
     private fun MediaItem.toHeroContent() = toHomeHeroContent()
 
-    private fun HomeLiveTvItem.toHeroContent() = toHomeHeroContent()
+    private fun HomeLiveTvItem.toHeroContent() = toHomeHeroContent(liveTvArtwork.titleArt.value)
 
     private fun HomeRowDefinition.toHeroContent() = HomeHeroContent(
         key = "shortcut:$id",

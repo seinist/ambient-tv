@@ -6,6 +6,7 @@ import com.ambient.tv.ui.common.requestHeaders
 import com.ambient.tv.ui.common.lineHeightDp
 import coil3.request.crossfade
 import com.ambient.tv.tvheadend.domain.TvhChannel
+import com.ambient.tv.livetv.liveTvArtKey
 import androidx.activity.compose.BackHandler
 import com.ambient.tv.ui.mobile.LocalHandheldUi
 import com.ambient.tv.ui.mobile.deviceDp
@@ -154,6 +155,8 @@ import kotlinx.coroutines.flow.first
 import androidx.compose.ui.graphics.rememberGraphicsLayer
 import androidx.compose.ui.graphics.layer.drawLayer
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.collect
 
 @Composable
@@ -435,6 +438,8 @@ fun HomeScreen(
                         onShortcutFocused = viewModel::onShortcutFocused,
                         onOpenHomeContent = openHomeContent,
                         tvheadendImageHeaders = viewModel.tvheadendImageHeaders,
+                        liveTvTitleArt = viewModel.liveTvTitleArt,
+                        onLiveTvArtworkNeeded = viewModel::requestHomeLiveTvTitleArt,
                         entranceProgress = entranceProgressProvider,
                         externalBackdropScrolling = if (systemOverview) overviewRowsScrolling else null,
                         returnToken = returnKey,
@@ -692,6 +697,9 @@ internal fun LibraryContent(
     onShortcutFocused: (HomeRowDefinition) -> Unit,
     onOpenHomeContent: (HomeRowDefinition) -> Unit,
     tvheadendImageHeaders: Map<String, String>,
+    /** Only visible TVHeadend cards collect their matching title. No Home-wide artwork refresh. */
+    liveTvTitleArt: StateFlow<Map<String, String>> = NoLiveTvTitleArt,
+    onLiveTvArtworkNeeded: (String, kotlinx.coroutines.CoroutineScope) -> Unit = { _, _ -> },
     entranceProgress: () -> Float,
     /** Set when the caller draws the focus backdrop behind its own header; rows report scrolling to it. */
     externalBackdropScrolling: MutableStateFlow<Boolean>? = null,
@@ -756,7 +764,9 @@ internal fun LibraryContent(
                         HomeLiveTvRow(
                             items = state.tvRows[rowKey]?.items.orEmpty(),
                             title = state.tvRows[rowKey]?.title.orEmpty(),
-                            imageHeaders = tvheadendImageHeaders, onWatch = { onWatchLiveChannel(rowKey, it) },
+                            imageHeaders = tvheadendImageHeaders,
+                            liveTvTitleArt = liveTvTitleArt, onArtworkNeeded = onLiveTvArtworkNeeded,
+                            onWatch = { onWatchLiveChannel(rowKey, it) },
                             requestInitialFocus = false,
                             onItemFocused = { onLiveTvFocused(rowKey, it) },
                             rowKey = rowKey,
@@ -1162,6 +1172,7 @@ internal fun LibraryContent(
                                 items = state.tvRows[rowKey]?.items.orEmpty(),
                                 title = state.tvRows[rowKey]?.title.orEmpty(),
                                 imageHeaders = tvheadendImageHeaders,
+                                liveTvTitleArt = liveTvTitleArt, onArtworkNeeded = onLiveTvArtworkNeeded,
                                 onWatch = { onWatchLiveChannel(rowKey, it) },
                                 requestInitialFocus = rowIndex == middleStart && state.initialFocusTarget ==
                                     if (recent) HomeInitialFocusTarget.RECENT_TV else HomeInitialFocusTarget.LIVE_TV,
@@ -1349,12 +1360,17 @@ private fun HomeShortcutRow(
     }
 }
 
+/** The default is deliberately inert for preview/tests without a HomeViewModel. */
+private val NoLiveTvTitleArt: StateFlow<Map<String, String>> = MutableStateFlow(emptyMap())
+
 @Composable
 @OptIn(ExperimentalFoundationApi::class)
 internal fun HomeLiveTvRow(
     items: List<HomeLiveTvItem>,
     title: String,
     imageHeaders: Map<String, String>,
+    liveTvTitleArt: StateFlow<Map<String, String>> = NoLiveTvTitleArt,
+    onArtworkNeeded: (String, kotlinx.coroutines.CoroutineScope) -> Unit = { _, _ -> },
     onWatch: (TvhChannel) -> Unit,
     requestInitialFocus: Boolean,
     onItemFocused: (HomeLiveTvItem) -> Unit,
@@ -1521,6 +1537,8 @@ internal fun HomeLiveTvRow(
                     val lazyIndex = index + if (leadingKey != null) 1 else 0
                     LiveChannelTile(
                         item = item,
+                        liveTvTitleArt = liveTvTitleArt,
+                        onArtworkNeeded = onArtworkNeeded,
                         nowSeconds = { nowSeconds },
                         onClick = { onWatch(item.channel) },
                         onFocused = { onItemFocused(item) },
@@ -1598,6 +1616,8 @@ private fun liveTileWidth(): Dp = deviceDp(252.dp, 240.dp) * com.ambient.tv.ui.c
 @Composable
 private fun LiveChannelTile(
     item: HomeLiveTvItem,
+    liveTvTitleArt: StateFlow<Map<String, String>>,
+    onArtworkNeeded: (String, kotlinx.coroutines.CoroutineScope) -> Unit,
     nowSeconds: () -> Long,
     onClick: () -> Unit,
     onFocused: () -> Unit,
@@ -1610,6 +1630,20 @@ private fun LiveChannelTile(
     val logo = item.channel.iconUrl
     val scheme = MaterialTheme.colorScheme
     val event = item.event
+    val programmeArtwork = item.channel.sourceId.substringBefore(':') == HomeRowDefinition.SYSTEM_TVHEADEND
+    val titleKey = event?.title?.takeIf { programmeArtwork }?.let(::liveTvArtKey)
+    // Each composed LazyRow tile observes only its own programme: updates for another title
+    // must not recompose the Home row or disturb D-pad focus/scroll position.
+    val tmdbUrl = remember(liveTvTitleArt, titleKey) {
+        liveTvTitleArt.map { artworks -> titleKey?.let(artworks::get) }.distinctUntilChanged()
+    }.collectAsState(initial = titleKey?.let(liveTvTitleArt.value::get)).value
+    LaunchedEffect(titleKey, event?.eventId) {
+        if (titleKey != null && event != null) onArtworkNeeded(event.title, this)
+    }
+    val artwork = if (programmeArtwork) item.bestArtwork(
+        tmdbUrl?.let { url -> titleKey?.let { mapOf(it to url) } }.orEmpty()
+    ) else null
+    val backdrop = artwork?.takeUnless { it.logo }
     androidx.tv.material3.Surface(
         onClick = onClick,
         colors = com.ambient.tv.ui.common.transparentSurfaceColors(),
@@ -1633,17 +1667,54 @@ private fun LiveChannelTile(
                 .background(liveTileBrush())
                 .animatedFocusBorder(focused, shape, scheme.primary.copy(alpha = 0.96f), unfocusedColor = scheme.primary.copy(alpha = 0.08f)),
         ) {
-            logo?.let {
+            if (backdrop != null) {
                 ArtworkImage(
-                    model = it,
-                    title = item.channel.name,
-                    contentScale = ContentScale.Fit,
-                    headers = item.imageHeaders,
-                    modifier = Modifier.align(Alignment.Center).fillMaxWidth(0.46f).fillMaxHeight(0.42f).padding(bottom = 10.dp),
+                    model = backdrop.url,
+                    title = event?.title ?: item.channel.name,
+                    contentScale = ContentScale.Crop,
+                    headers = backdrop.headers(item.imageHeaders),
+                    modifier = Modifier.matchParentSize(),
+                    placeholder = false,
+                    crossfadeOnLoad = true,
                     staggerUncached = true,
                     prioritizeUncached = focused,
                 )
-            } ?: Text(item.channel.name, style = MaterialTheme.typography.titleMedium, maxLines = 1, modifier = Modifier.align(Alignment.Center))
+                Box(Modifier.matchParentSize().background(Brush.verticalGradient(
+                    0f to Color.Black.copy(alpha = 0.18f),
+                    0.55f to Color.Black.copy(alpha = 0.10f),
+                    1f to Color.Black.copy(alpha = 0.72f),
+                )))
+            }
+            if (logo != null) {
+                if (backdrop != null) {
+                    // Overlay the channel identity without covering the programme artwork.
+                    Box(
+                        Modifier.align(Alignment.TopStart).padding(8.dp)
+                            .width(74.dp).height(40.dp)
+                            .clip(androidx.compose.foundation.shape.RoundedCornerShape(6.dp))
+                            .background(scheme.background.copy(alpha = 0.66f))
+                            .padding(horizontal = 5.dp, vertical = 3.dp),
+                    ) {
+                        ArtworkImage(
+                            model = logo, title = item.channel.name,
+                            contentScale = ContentScale.Fit, headers = item.imageHeaders,
+                            modifier = Modifier.fillMaxSize(),
+                            staggerUncached = true, prioritizeUncached = focused,
+                        )
+                    }
+                } else {
+                    ArtworkImage(
+                        model = logo, title = item.channel.name,
+                        contentScale = ContentScale.Fit, headers = item.imageHeaders,
+                        modifier = Modifier.align(Alignment.Center).fillMaxWidth(0.46f)
+                            .fillMaxHeight(0.42f).padding(bottom = 10.dp),
+                        staggerUncached = true, prioritizeUncached = focused,
+                    )
+                }
+            } else if (backdrop == null) {
+                Text(item.channel.name, style = MaterialTheme.typography.titleMedium,
+                    maxLines = 1, modifier = Modifier.align(Alignment.Center))
+            }
             if (event != null) {
                 LiveBadge(Modifier.align(Alignment.TopEnd).padding(7.dp))
                 Text(
@@ -1655,7 +1726,7 @@ private fun LiveChannelTile(
                     modifier = Modifier
                         .align(Alignment.BottomStart)
                         .fillMaxWidth()
-                        .background(scheme.background.copy(alpha = 0.72f))
+                        .background(scheme.background.copy(alpha = if (backdrop != null) 0.60f else 0.72f))
                         .padding(start = 8.dp, end = 8.dp, top = 4.dp, bottom = 4.dp + com.ambient.tv.ui.common.PlaybackStatusBarHeight),
                 )
                 com.ambient.tv.ui.common.PlaybackStatusBar(
@@ -1666,7 +1737,8 @@ private fun LiveChannelTile(
             }
             val playbackSource = com.ambient.tv.companion.LocalPlaybackBrowseSources.current.live[item.channel.sourceId]
             if (playbackSource != null) {
-                Box(Modifier.align(Alignment.TopStart).padding(7.dp)) {
+                Box(Modifier.align(Alignment.TopStart).padding(start = 7.dp,
+                    top = if (backdrop != null && logo != null) 54.dp else 7.dp)) {
                     com.ambient.tv.companion.PlaybackBadge(com.ambient.tv.companion.playbackIndicator(
                         com.ambient.tv.companion.CompanionMedia("live:channel", item.channel.uuid, playbackSource)))
                 }
@@ -1811,7 +1883,7 @@ internal fun HomeHero(
         }
         HomeStaticImage(
             model = heroArtwork.titleLogoUrl,
-            headers = heroArtwork.imageHeaders,
+            headers = heroArtwork.titleLogoHeaders ?: heroArtwork.imageHeaders,
             contentScale = ContentScale.Fit,
             modifier = Modifier.align(Alignment.CenterEnd)
                 .padding(end = horizontalPadding, bottom = HomeHeroFadeTail)
