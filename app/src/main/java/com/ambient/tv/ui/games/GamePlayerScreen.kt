@@ -290,6 +290,8 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
     /** The core has loaded the game (its surface exists); before that nothing may step it. */
     var coreReady by remember { mutableStateOf(false) }
     var loaded by remember { mutableStateOf(false) }
+    /** Core-reported serialized size must be nonzero and safe for this device's heap. */
+    var stateAvailable by remember { mutableStateOf(false) }
     var message by remember { mutableStateOf<String?>(null) }
     var optionsVersion by remember { mutableIntStateOf(0) }
     var fastForward by remember { mutableStateOf(false) }
@@ -375,7 +377,7 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
     fun persist() {
         if (!loaded || destroyed) return
         runCatching { model.saveSram(game, retroView.serializeSRAM()) }
-        if (core.saveStates) runCatching { model.saveState(session, GameStateKind.AUTO, retroView.serializeState(), snapshot) }
+        if (stateAvailable) runCatching { model.saveState(session, GameStateKind.AUTO, retroView.serializeState(), snapshot) }
     }
 
     /** Ends the core while its thread still runs; nothing reaches it afterwards. */
@@ -423,7 +425,7 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
     /** Loads [entry]; the moment before is kept as "Before loading" so the step can be undone. */
     val loadState: (GameStateEntry) -> Unit = { entry ->
         val bytes = model.readState(game, entry)
-        if (!core.saveStates || achievements.hardcore || netplay.active) {
+        if (!stateAvailable || achievements.hardcore || netplay.active) {
             message = context.getString(
                 if (achievements.hardcore) R.string.game_message_hardcore_blocked else R.string.game_message_netplay_blocked,
             )
@@ -493,6 +495,9 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
             if (event == GLRetroView.GLRetroEvents.SurfaceCreated) coreReady = true
             if (event == GLRetroView.GLRetroEvents.FrameRendered && !loaded) {
                 loaded = true
+                stateAvailable = core.saveStates && runCatching {
+                    retroView.getSerializeSize() in 1L..com.ambient.tv.games.GameStateStore.MAX_STATE_BYTES
+                }.getOrDefault(false)
                 runCatching { retroView.getVariables().mapNotNull { v -> v.key?.let { it to v.description } } }
                     .onSuccess { model.saveDeclaredOptions(core, it) }
                 // Hardcore starts the game fresh: a continued state would not count.
@@ -505,7 +510,7 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
                 }
                 applyCheats(cheats)
                 achievements.start(retroView, game, !game.direct && core.achievements && GameSettings.state.achievements, hardcoreRequested)
-                if (core.rewind && core.saveStates && GameSettings.state.rewind && !hardcoreRequested) withContext(Dispatchers.Default) {
+                if (core.rewind && stateAvailable && GameSettings.state.rewind && !hardcoreRequested) withContext(Dispatchers.Default) {
                     runCatching {
                         if (retroView.getSerializeSize() <= 0) return@runCatching
                         val fps = LibretroDroid.getContentFps().takeIf { it in 1.0..240.0 } ?: 60.0
@@ -537,7 +542,7 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
                 ({ handler.removeCallbacks(runnable) })
             },
             onMenu = { latestOpenMenu() },
-            onRewind = { held -> rewinding = held && core.rewind && core.saveStates },
+            onRewind = { held -> rewinding = held && core.rewind && stateAvailable },
             onFastForward = { if (!netplay.active) fastForward = !fastForward },
         ).also(inputRef::set)
     }
@@ -710,15 +715,15 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
                                 runCatching { model.saveState(session, GameStateKind.MANUAL, retroView.serializeState(), snapshot) }
                                     .onSuccess { message = context.getString(R.string.game_message_saved, stateTitle(it)) }
                                     .onFailure { message = context.getString(R.string.game_message_save_failed) }
-                            }, enabled = loaded && core.saveStates)
+                            }, enabled = loaded && stateAvailable)
                             PlayerIconButton(Icons.Filled.SettingsBackupRestore, stringResource(R.string.game_quick_load), {
                                 model.latestManualState(game)?.let(loadState)
-                            }, enabled = loaded && core.saveStates && !achievements.hardcore && !netplay.active && saveStates.any { it.kind == GameStateKind.MANUAL })
+                            }, enabled = loaded && stateAvailable && !achievements.hardcore && !netplay.active && saveStates.any { it.kind == GameStateKind.MANUAL })
                             PlayerIconButton(Icons.Filled.Bookmarks, stringResource(R.string.game_states), {
                                 osd.interact()
                                 statesOpen = !statesOpen
                             }, modifier = Modifier.focusRequester(statesRequester),
-                                selected = statesOpen, enabled = loaded && core.saveStates && saveStates.isNotEmpty())
+                                selected = statesOpen, enabled = loaded && stateAvailable && saveStates.isNotEmpty())
                             PlayerIconButton(Icons.Filled.RestartAlt, stringResource(R.string.game_reset), {
                                 runCatching { retroView.reset() }
                                 runCatching { retroView.clearRewindBuffer() }
@@ -739,7 +744,7 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
                             }, selected = panel == GamePanel.CHEATS, enabled = loaded && core.cheats && !achievements.hardcore)
                             PlayerIconButton(Icons.Filled.Groups, stringResource(R.string.game_panel_netplay), {
                                 panel = GamePanel.NETPLAY
-                            }, selected = panel == GamePanel.NETPLAY, enabled = loaded && core.netplay && !game.direct)
+                            }, selected = panel == GamePanel.NETPLAY, enabled = loaded && stateAvailable && core.netplay && !game.direct)
                             if (discCount > 1) PlayerIconButton(Icons.Filled.Album, stringResource(R.string.game_panel_disc), {
                                 panel = GamePanel.DISC
                             }, selected = panel == GamePanel.DISC, enabled = !netplay.active)
