@@ -18,6 +18,23 @@ class PlayerPanelNavigationTest {
         assertEquals(0, nav.depth)
     }
 
+    @Test fun newlyOpenedDrawerSlidesButNestedPanelsAndRendererHandoffsKeepItsPosition() {
+        val nav = PlayerPanelNavigation()
+        assertFalse(nav.drawerHasEntered)
+        nav.open(UnifiedPlayerPanel.SETTINGS)
+        assertFalse(nav.drawerHasEntered)
+        // The animation completes. A renderer/model remount of the same open panel
+        // should stay at the edge instead of replaying its whole entrance.
+        nav.drawerHasEntered = true
+        nav.open(UnifiedPlayerPanel.VIDEO)
+        assertTrue(nav.drawerHasEntered)
+        nav.back(UnifiedPlayerPanel.VIDEO)
+        assertTrue(nav.drawerHasEntered)
+        nav.close()
+        nav.open(UnifiedPlayerPanel.AUDIO)
+        assertFalse(nav.drawerHasEntered)
+    }
+
     @Test fun videoSelectionSurvivesEngineIndependentPanelAccessButBackClosesPopup() {
         val nav = PlayerPanelNavigation()
         nav.open(UnifiedPlayerPanel.SETTINGS)
