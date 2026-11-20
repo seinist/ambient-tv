@@ -303,6 +303,8 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
     var vulkanSurfaceFormats by remember { mutableStateOf(GameVulkanSurfaceFormats()) }
     var nativeSdrDiagnostic by remember { mutableStateOf(false) }
     var nativeSdrStatus by remember { mutableStateOf(GameVulkanSdrStatus()) }
+    /** Explicitly armed per session; never restored from settings or a backup. */
+    var nativeSdrFullscreenRequested by remember { mutableStateOf(false) }
     /** Core-reported serialized size must be nonzero and safe for this device's heap. */
     var stateAvailable by remember { mutableStateOf(false) }
     var message by remember { mutableStateOf<String?>(null) }
@@ -377,6 +379,7 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
             context, retroView,
             onFormats = { vulkanSurfaceFormats = it },
             onNativeStatus = { nativeSdrStatus = it },
+            onFullscreenLost = { nativeSdrFullscreenRequested = false },
         ) else null
     }
     DisposableEffect(vulkanSurfaceHost) {
@@ -387,6 +390,9 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
     }
     LaunchedEffect(nativeSdrDiagnostic, coreReady, vulkanSurfaceHost) {
         if (coreReady) vulkanSurfaceHost?.setNativeSdrDiagnostic(nativeSdrDiagnostic)
+    }
+    LaunchedEffect(nativeSdrStatus, vulkanSurfaceHost) {
+        vulkanSurfaceHost?.observeNativeStatus(nativeSdrStatus)
     }
 
     /** Cheats on (enabled ones) or all off: hardcore and netplay play without. */
@@ -481,6 +487,15 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
         retroView.suppressAutoResume = !running
         if (running) retroView.resumeEmulation() else retroView.pauseEmulation()
     }
+    LaunchedEffect(nativeSdrFullscreenRequested, running, vulkanSurfaceHost) {
+        if (!nativeSdrFullscreenRequested) {
+            vulkanSurfaceHost?.setFullscreenRequested(false)
+        } else if (running) {
+            // Arming from the paused Info panel does not cover the game with a
+            // blank Surface; promotion waits until normal playback resumes.
+            vulkanSurfaceHost?.setFullscreenRequested(true)
+        }
+    }
     LaunchedEffect(fastForward) { retroView.frameSpeed = if (fastForward) 2 else 1 }
     LaunchedEffect(rewinding, running) {
         retroView.isRewinding = core.rewind && rewinding && running && !achievements.hardcore && !netplay.active
@@ -498,6 +513,10 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
                 }
                 Lifecycle.Event.ON_PAUSE -> {
                     activityResumed = false
+                    // Never retain a full-screen test surface through TV standby,
+                    // orientation changes or app backgrounding.
+                    nativeSdrFullscreenRequested = false
+                    vulkanSurfaceHost?.setFullscreenRequested(false)
                     // Pause and save at once, not after the next composition: the app may stop right after.
                     retroView.suppressAutoResume = true
                     retroView.pauseEmulation()
@@ -526,7 +545,9 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
     LaunchedEffect(retroView) {
         var renderedFrames = 0
         retroView.getGLRetroEvents().collect { event ->
-            if (event == GLRetroView.GLRetroEvents.FrameRendered && session.vulkan && renderedFrames++ % 120 == 0) {
+            val statusInterval = if (nativeSdrFullscreenRequested) 30 else 120
+            if (event == GLRetroView.GLRetroEvents.FrameRendered &&
+                session.vulkan && renderedFrames++ % statusInterval == 0) {
                 // One atomic native status read per ~2 seconds at 60 FPS. A driver may switch to
                 // RGBA8 on resize, so a startup-only snapshot would become inaccurate.
                 val status = GameVulkanFrameStatus(runCatching {
@@ -758,6 +779,10 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
                         MetaBadge(core.name)
                         if (game.direct) MetaBadge(stringResource(R.string.game_direct_source))
                         if (core.hardware) MetaBadge(vulkanFrameStatus.badge(session.vulkan))
+                        if (nativeSdrFullscreenRequested &&
+                            nativeSdrStatus.phase == GameVulkanSdrStatus.Phase.PRESENTING) {
+                            MetaBadge("Vulkan SDR · Test")
+                        }
                         if (session.vulkan && vulkanFrameStatus.active && toneMap != GameHdrToneMap.OFF) {
                             MetaBadge("HDR → SDR")
                         } else {
@@ -1149,7 +1174,23 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
                                             subtitle = stringResource(R.string.game_info_native_sdr_test_hint),
                                             selected = nativeSdrDiagnostic,
                                             enabled = !netplay.active && !exiting,
-                                            onClick = { nativeSdrDiagnostic = !nativeSdrDiagnostic },
+                                            onClick = {
+                                                nativeSdrDiagnostic = !nativeSdrDiagnostic
+                                                if (!nativeSdrDiagnostic) nativeSdrFullscreenRequested = false
+                                            },
+                                        )
+                                        val fullscreenAvailable = GameVulkanFullscreenPolicy.canEnable(
+                                            session.vulkan, toneMap, nativeSdrDiagnostic,
+                                            nativeSdrStatus, netplay.active,
+                                        )
+                                        RightPanelChoice(
+                                            text = stringResource(R.string.game_info_native_sdr_fullscreen),
+                                            subtitle = stringResource(R.string.game_info_native_sdr_fullscreen_hint),
+                                            selected = nativeSdrFullscreenRequested,
+                                            enabled = !exiting && (nativeSdrFullscreenRequested || fullscreenAvailable),
+                                            onClick = {
+                                                nativeSdrFullscreenRequested = !nativeSdrFullscreenRequested
+                                            },
                                         )
                                     }
                                 }
