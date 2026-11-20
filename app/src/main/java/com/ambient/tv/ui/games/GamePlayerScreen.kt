@@ -210,7 +210,7 @@ private fun GameFailure.titleRes(): Int = when (this) {
 
 internal fun GameShader.config(): ShaderConfig = when (this) {
     GameShader.SHARP -> ShaderConfig.Sharp
-    GameShader.PIXEL -> ShaderConfig.Default
+    GameShader.PIXEL -> ShaderConfig.Pixel
     GameShader.SMOOTH -> ShaderConfig.CUT3()
     GameShader.CRT -> ShaderConfig.CRT
     GameShader.LCD -> ShaderConfig.LCD
