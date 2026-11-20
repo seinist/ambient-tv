@@ -204,4 +204,6 @@
     <string name="game_vulkan_fallback">Vulkan not available – running with OpenGL ES</string>
     <string name="game_direct_source">Direct ROM access (no cached copy)</string>
     <string name="game_cache_fallback">Try with a local copy</string>
+    <string name="games_core_rollback">Restore previous core</string>
+    <string name="games_core_rollback_failed">Could not restore the previous core for %1$s.</string>
 </resources>
