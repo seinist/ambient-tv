@@ -60,6 +60,8 @@ data class GameSystem(
     val alternatives: List<GameCore> = emptyList(),
     /** Short name for lists (file browser). */
     val shortName: String = name,
+    /** Touchscreen gesture reaches the core as a Libretro pointer, not a menu tap. */
+    val pointerInput: Boolean = false,
 ) {
     /** Every core for this system, the default first. */
     val cores: List<GameCore> get() = listOf(core) + alternatives
@@ -171,14 +173,14 @@ object GameSystems {
                 GameBios("bios9.bin", "a392174eb3e572fed6447e956bde4b25", "Nintendo DS ARM9"),
             ),
             alternatives = listOf(GameCore("noods", "NooDS", "GPL-3.0", needsBios = true)),
-            shortName = "Nintendo DS"),
+            shortName = "Nintendo DS", pointerInput = true),
         GameSystem("n3ds", "Nintendo 3DS", setOf("3ds", "3dsx", "cci", "cxi"),
             GameCore("citra2018", "Citra 2018", "GPL-2.0", hardware = true, supportsVulkan = false,
                 supportedAbis = setOf("arm64-v8a", "x86_64")),
             alternatives = listOf(GameCore("panda3ds", "Panda3DS", "GPL-3.0",
                 hardware = true, supportsVulkan = false, rewind = false, netplay = false, achievements = false,
                 supportedAbis = setOf("arm64-v8a", "x86_64"))),
-            shortName = "3DS"),
+            shortName = "3DS", pointerInput = true),
         GameSystem("gamecube", "Nintendo GameCube", setOf("gcm", "dol", "tgc"),
             GameCore("dolphin", "Dolphin", "GPL-2.0", hardware = true, netplay = false, directFile = true,
                 supportedAbis = setOf("arm64-v8a", "x86_64")),
@@ -186,13 +188,13 @@ object GameSystems {
         GameSystem("wii", "Nintendo Wii", setOf("wbfs", "ciso", "wad"),
             GameCore("dolphin", "Dolphin", "GPL-2.0", hardware = true, netplay = false, directFile = true,
                 supportedAbis = setOf("arm64-v8a", "x86_64")),
-            shortName = "Wii"),
+            shortName = "Wii", pointerInput = true),
         GameSystem("wiiu", "Nintendo Wii U", setOf("wua", "wud", "wux", "rpx"),
             GameCore("cemu", "Cemu (experimental)", "MPL-2.0", hardware = true, directFile = true,
                 requiresVulkan = true, saveStates = false, rewind = false, netplay = false, cheats = false,
                 achievements = false, supportedAbis = setOf("arm64-v8a", "x86_64"),
                 vulkanOptions = mapOf("cemu_gpu_api" to "Vulkan")),
-            shortName = "Wii U"),
+            shortName = "Wii U", pointerInput = true),
         GameSystem("psp", "PlayStation Portable", setOf("cso", "zso"),
             GameCore("ppsspp", "PPSSPP", "GPL-2.0", hardware = true, rewind = false, netplay = false, cheats = false, directFile = true,
                 vulkanOptions = mapOf("ppsspp_rendering_mode" to "Vulkan"),
