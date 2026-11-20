@@ -212,6 +212,9 @@ internal fun GameShader.config(): ShaderConfig = when (this) {
     GameShader.SHARP -> ShaderConfig.Sharp
     GameShader.PIXEL -> ShaderConfig.Pixel
     GameShader.SMOOTH -> ShaderConfig.CUT3()
+    GameShader.CUT2 -> ShaderConfig.CUT2()
+    GameShader.BICUBIC -> GamePictureShaders.bicubic()
+    GameShader.ADAPTIVE -> GamePictureShaders.adaptiveSharpen()
     GameShader.CRT -> ShaderConfig.CRT
     GameShader.LCD -> ShaderConfig.LCD
 }
