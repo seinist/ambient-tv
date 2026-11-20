@@ -1,7 +1,11 @@
 package com.ambient.tv.ui.settings
 
 import android.widget.Toast
+import androidx.compose.foundation.focusable
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.lazy.LazyRow
@@ -17,6 +21,11 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
@@ -216,11 +225,13 @@ internal fun DiagnosticLogViewer(
     openedEntry?.let { entry ->
         val clipboard = LocalClipboardManager.current
         val context = LocalContext.current
+        val detailScroll = rememberScrollState()
         AppDialog(
             onDismiss = { openedEntry = null },
             title = "${entry.levelLetter} · ${entry.tag}",
             hint = "${entry.timestamp} · ${entry.thread}",
             fillHeight = true,
+            scrollable = false,
             maxHeightFraction = 0.94f,
             widthFraction = if (handheld) null else 0.8f,
             maxWidth = 1050.dp,
@@ -236,11 +247,30 @@ internal fun DiagnosticLogViewer(
                 TvActionButton(text = stringResource(R.string.back), onClick = { openedEntry = null })
             },
         ) {
-            Text(
-                text = entry.message,
-                modifier = Modifier.fillMaxWidth(),
-                style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
-            )
+            // A long stack trace must be scrollable with DPAD as well as touch. At its boundaries
+            // the direction key is free to move focus to the dialog's regular controls.
+            Column(
+                Modifier.fillMaxSize()
+                    .onPreviewKeyEvent { event ->
+                        if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
+                        val destination = when (event.key) {
+                            Key.DirectionDown -> (detailScroll.value + 180).coerceAtMost(detailScroll.maxValue)
+                            Key.DirectionUp -> (detailScroll.value - 180).coerceAtLeast(0)
+                            else -> return@onPreviewKeyEvent false
+                        }
+                        if (destination == detailScroll.value) return@onPreviewKeyEvent false
+                        scope.launch { detailScroll.animateScrollTo(destination) }
+                        true
+                    }
+                    .focusable()
+                    .verticalScroll(detailScroll),
+            ) {
+                Text(
+                    text = entry.message,
+                    modifier = Modifier.fillMaxWidth(),
+                    style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
+                )
+            }
         }
     }
 }
