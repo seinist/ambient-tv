@@ -861,49 +861,24 @@ def patch_skip_playable_subtitle_refetch(path: Path, check: bool) -> bool:
     newline = b"\r\n" if b"\r\n" in raw else b"\n"
     text = raw.decode("utf-8").replace("\r\n", "\n").replace("\r", "\n")
     marker = "AMBIENT_TV_SKIP_PLAYABLE_SUBTITLE_REFETCH"
-    legacy = """        // TV and others has a limited number of auto generated subtitles
-        if (needMoreSubtitles(result)) {
-            Log.d(TAG, "Enable full list of auto generated subtitles...");
 
-            if (mCachedTranslationLanguages == null || mCachedTranslationLanguages.size() < 100) {
-                mUseAuth = false;
-                VideoInfo webInfo = null;
-                try {
-                    webInfo = getVideoInfo(AppClient.WEB, videoId, clickTrackingParams);
-                } catch (Exception e) {
-                    e.printStackTrace();
-                }
-                if (webInfo != null) {
-                    mCachedTranslationLanguages = webInfo.getTranslationLanguages();
-                }
-            }
-"""
-    replacement = """        // TV and others has a limited number of auto generated subtitles
-        if (needMoreSubtitles(result)) {
-            Log.d(TAG, "Enable full list of auto generated subtitles...");
-
-            // AMBIENT_TV_SKIP_PLAYABLE_SUBTITLE_REFETCH: WEB player only expands
-            // translation languages. Do not block playable formats on that call.
-            if (!hasPlayableFormats(result) && (mCachedTranslationLanguages == null || mCachedTranslationLanguages.size() < 100)) {
-                mUseAuth = false;
-                VideoInfo webInfo = null;
-                try {
-                    webInfo = getVideoInfo(AppClient.WEB, videoId, clickTrackingParams);
-                } catch (Exception e) {
-                    e.printStackTrace();
-                }
-                if (webInfo != null) {
-                    mCachedTranslationLanguages = webInfo.getTranslationLanguages();
-                }
-            }
-"""
-    # Upstream now uses WEB_DUMMY for translation languages. Preserve the
-    # selected client while accepting both known versions of this block.
-    variants = [
-        (legacy, replacement),
-        (legacy.replace("AppClient.WEB,", "AppClient.WEB_DUMMY,"),
-         replacement.replace("AppClient.WEB,", "AppClient.WEB_DUMMY,")),
-    ]
+    if check:
+        if marker not in text or "hasPlayableFormats(result)" not in text or "private static boolean hasPlayableFormats" not in text:
+            die(f"SmartTube playable-format subtitle refetch skip is not applied: {path}")
+        return False
+    if marker in text:
+        if "private static boolean hasPlayableFormats" not in text or "needMoreSubtitles(result)" not in text:
+            die(f"SmartTube subtitle refetch skip is only partially applied: {path}")
+        return False
+    old_if = "            if (mCachedTranslationLanguages == null || mCachedTranslationLanguages.size() < 100) {"
+    new_if = ("            // AMBIENT_TV_SKIP_PLAYABLE_SUBTITLE_REFETCH: WEB player only expands\n"
+              "            // translation languages. Do not block playable formats on that call.\n"
+              "            if (!hasPlayableFormats(result) && (mCachedTranslationLanguages == null || mCachedTranslationLanguages.size() < 100)) {")
+    if text.count(old_if) != 1:
+        die(f"cannot locate VideoInfoService subtitle refetch in updated SmartTube source: {path}")
+    text = text.replace(old_if, new_if, 1)
+    if "AMBIENT_TV_SKIP_PLAYABLE_SUBTITLE_REFETCH" not in text:
+        die(f"cannot locate VideoInfoService subtitle refetch in updated SmartTube source: {path}")
     helper_anchor = "    private static boolean needMoreSubtitles(VideoInfo videoInfo) {\n"
     helper = """    private static boolean hasPlayableFormats(VideoInfo videoInfo) {
         if (videoInfo == null || videoInfo.isUnplayable()) {
@@ -924,23 +899,8 @@ def patch_skip_playable_subtitle_refetch(path: Path, check: bool) -> bool:
 
     private static boolean needMoreSubtitles(VideoInfo videoInfo) {
 """
-    if check:
-        if marker not in text or "hasPlayableFormats(result)" not in text or "private static boolean hasPlayableFormats" not in text:
-            die(f"SmartTube playable-format subtitle refetch skip is not applied: {path}")
-        if any(old in text for old, _ in variants):
-            die(f"second WEB player round trip still blocks playable formats: {path}")
-        return False
-    if marker in text:
-        if "private static boolean hasPlayableFormats" not in text or any(old in text for old, _ in variants):
-            die(f"SmartTube subtitle refetch skip is only partially applied: {path}")
-        return False
-    matches = [(old, new) for old, new in variants if old in text]
-    if len(matches) != 1:
-        die(f"cannot locate VideoInfoService subtitle refetch in updated SmartTube source: {path}")
     if helper_anchor not in text:
         die(f"cannot locate needMoreSubtitles in updated SmartTube source: {path}")
-    legacy, replacement = matches[0]
-    text = text.replace(legacy, replacement, 1)
     text = text.replace(helper_anchor, helper, 1)
     path.write_bytes(text.replace("\n", newline.decode("ascii")).encode("utf-8"))
     return True
