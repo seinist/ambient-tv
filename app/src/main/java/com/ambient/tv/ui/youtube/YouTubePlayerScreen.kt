@@ -262,6 +262,17 @@ fun YouTubePlayerScreen(
             // reapply an old absolute clock to a sliding YouTube live window.
             val effectiveResumePosition = if (playback.isLive) 0L else resumePosition
             var liveStreamRefreshes by remember(playback.videoId) { mutableIntStateOf(0) }
+            // A refused googlevideo URL needs a *new* SmartTube format response, not another
+            // decoder attempting the identical signed URL. Exactly one full refresh per item.
+            var deniedStreamRefreshes by remember(playback.videoId) { mutableIntStateOf(0) }
+            val refreshDeniedStream: (Int) -> Boolean = { status ->
+                if (playback.isLive || status !in setOf(403, 410) || deniedStreamRefreshes >= 1) false
+                else {
+                    deniedStreamRefreshes++
+                    viewModel.retry()
+                    true
+                }
+            }
             val refreshLiveSource: () -> Boolean = {
                 if (!playback.isLive || liveStreamRefreshes >= 2) false
                 else {
@@ -446,7 +457,7 @@ fun YouTubePlayerScreen(
                             externalPlayback.copy(uri = vlcSource.uri, mimeType = null, headers = if (vlcSource.relayed) emptyMap() else playback.headers),
                             vlcSource.audioUri, streamPanel,
                             effectiveResumePosition, rendererKey, prefs.bigSeekJumpSeconds, prefs, onBack, onCompleted, ::switchRenderer, formatChanged,
-                            refreshLiveSource, state.liveRefreshGeneration,
+                            refreshLiveSource, state.liveRefreshGeneration, onStreamHttpError = refreshDeniedStream,
                         )
                     } else {
                         val fallback = if (MpvBackendAvailability.isAvailable) "mpv" else "media3"
@@ -467,7 +478,7 @@ fun YouTubePlayerScreen(
                         YouTubeMpvPlayback(
                             externalPlayback.copy(uri = mpvSource.uri, mimeType = null, headers = if (mpvSource.relayed) emptyMap() else playback.headers),
                             streamPanel, effectiveResumePosition, rendererKey, prefs.bigSeekJumpSeconds, prefs, onBack, onCompleted, ::switchRenderer, formatChanged,
-                            refreshLiveSource, state.liveRefreshGeneration,
+                            refreshLiveSource, state.liveRefreshGeneration, onStreamHttpError = refreshDeniedStream,
                         )
                     } else {
                         LaunchedEffect(playback.videoId) { switchRenderer("media3", resumePosition, false) }
@@ -508,6 +519,7 @@ fun YouTubePlayerScreen(
                     },
                     refreshGeneration = state.liveRefreshGeneration,
                     onLiveSourceError = refreshLiveSource,
+                    onStreamHttpError = refreshDeniedStream,
                 )
                 }
             }
@@ -545,6 +557,17 @@ fun YouTubePlayerScreen(
         }
     }
     }
+    }
+}
+
+/** Only explicit upstream HTTP denial triggers a full source refresh. Native decoder errors
+ * without a HTTP code can still fall back to Media3 without an unnecessary network re-request. */
+internal fun youtubeRejectedStreamHttpStatus(message: String?): Int? {
+    val value = message ?: return null
+    return when {
+        Regex("(?<![0-9])403(?![0-9])").containsMatchIn(value) -> 403
+        Regex("(?<![0-9])410(?![0-9])").containsMatchIn(value) -> 410
+        else -> null
     }
 }
 
@@ -702,6 +725,7 @@ private fun YouTubeMedia3Playback(
     onStreamTuning: ((com.ambient.tv.ui.player.Media3StreamTuning, Long) -> Unit)? = null,
     refreshGeneration: Int = 0,
     onLiveSourceError: () -> Boolean = { false },
+    onStreamHttpError: (Int) -> Boolean = { false },
 ) {
     val context = LocalContext.current
     val sponsorPrefs = remember(context) { com.ambient.tv.ui.player.videoImagePreferences(context) }
@@ -863,7 +887,10 @@ private fun YouTubeMedia3Playback(
                     com.ambient.tv.diagnostics.DiagnosticLog.error("playback",
                         "YouTube Media3 ${e.errorCodeName} ${com.ambient.tv.diagnostics.diagnosticUrl(playback.uri)}", e)
                     error = listOfNotNull(e.errorCodeName, e.cause?.message ?: e.message).joinToString(": ")
-                    val httpStatus = (e.cause as? androidx.media3.datasource.HttpDataSource.InvalidResponseCodeException)?.responseCode
+                    // ExoPlaybackException often wraps HttpDataSource errors more than one level deep.
+                    val httpStatus = generateSequence(e as Throwable?) { it.cause }
+                        .filterIsInstance<androidx.media3.datasource.HttpDataSource.InvalidResponseCodeException>()
+                        .firstOrNull()?.responseCode
                     if (!playback.isLive && httpStatus == 403 && httpRetryCount < 3) {
                         val resume = player.currentPosition.coerceAtLeast(0L)
                         val resumePlaying = player.playWhenReady
@@ -879,7 +906,11 @@ private fun YouTubeMedia3Playback(
                         return
                     }
                     if (httpStatus != null) {
-                        // VLC/MPV would request the same refused URL (VLC's DASH manager has crashed on it).
+                        if (onStreamHttpError(httpStatus)) {
+                            error = null
+                            return
+                        }
+                        // Do not send the same rejected URL to another renderer.
                         BackgroundPlaybackSession.stop()
                         com.ambient.tv.notifications.notifyStreamHttpError("youtube", playback.title, httpStatus)
                         return
@@ -1052,7 +1083,7 @@ private fun YouTubeMedia3Playback(
     // Gate on !panelOpen so panel BackHandler is not order-fragile.
     BackHandler(enabled = !panelOpen) {
         if (controls && !handheldUi) controls = false
-        else if (com.ambient.tv.ui.player.backLeavesPlaybackRunning(false, handheldUi, backMinimizes())) onBack()
+        else if (player.playerError == null && com.ambient.tv.ui.player.backLeavesPlaybackRunning(false, handheldUi, backMinimizes())) onBack()
         else BackgroundPlaybackSession.stop()
     }
 
@@ -1267,7 +1298,7 @@ private fun YouTubeMedia3Playback(
 }
 
 @Composable
-private fun YouTubeVlcPlayback(playback: YouTubePlayback, audioUri: String?, streams: YouTubeStreamPanel?, startPositionMs: Long, rendererKey: String, bigSeekSeconds: Int, preferences: AppPreferences, onBack: () -> Unit, onCompleted: () -> Unit, onRenderer: (String, Long, Boolean) -> Unit, onVideoFormatChanged: (Float, Int?, Int?) -> Unit, onLiveSourceError: () -> Boolean = { false }, refreshGeneration: Int = 0) {
+private fun YouTubeVlcPlayback(playback: YouTubePlayback, audioUri: String?, streams: YouTubeStreamPanel?, startPositionMs: Long, rendererKey: String, bigSeekSeconds: Int, preferences: AppPreferences, onBack: () -> Unit, onCompleted: () -> Unit, onRenderer: (String, Long, Boolean) -> Unit, onVideoFormatChanged: (Float, Int?, Int?) -> Unit, onLiveSourceError: () -> Boolean = { false }, refreshGeneration: Int = 0, onStreamHttpError: (Int) -> Boolean = { false }) {
     val context = LocalContext.current
     val controller = rememberVlcPlaybackController(
         context,
@@ -1295,7 +1326,9 @@ private fun YouTubeVlcPlayback(playback: YouTubePlayback, audioUri: String?, str
         val message = controller.errorMessage ?: return@LaunchedEffect
         if (!BackgroundPlaybackSession.owns(controller)) return@LaunchedEffect
         if (playback.isLive && onLiveSourceError()) return@LaunchedEffect
-        com.ambient.tv.diagnostics.DiagnosticLog.warn("playback", "YouTube VLC failed, continuing in Media3: $message")
+        val httpStatus = youtubeRejectedStreamHttpStatus(message)
+        if (httpStatus != null && onStreamHttpError(httpStatus)) return@LaunchedEffect
+        com.ambient.tv.diagnostics.DiagnosticLog.warn("playback", "YouTube VLC failed; trying Media3: $message")
         com.ambient.tv.notifications.AppNotifications.post(com.ambient.tv.notifications.AppNotice(
             "playback:backend-switch", R.string.notice_switched_to_media3, subject = "VLC",
             kind = com.ambient.tv.notifications.NoticeKind.PLAYBACK, interruptPlayback = false,
@@ -1434,7 +1467,7 @@ private fun YouTubeVlcPlayback(playback: YouTubePlayback, audioUri: String?, str
     // Gate on !panelOpen so panel BackHandler is not order-fragile.
     BackHandler(enabled = !panelOpen) {
         if (controls && !handheldUi) controls = false
-        else if (com.ambient.tv.ui.player.backLeavesPlaybackRunning(false, handheldUi, backMinimizes())) onBack()
+        else if (controller.errorMessage == null && com.ambient.tv.ui.player.backLeavesPlaybackRunning(false, handheldUi, backMinimizes())) onBack()
         else BackgroundPlaybackSession.stop()
     }
     // One remote handling for the engine and, while the focus is in the OSD or panel above it, the host.
@@ -1616,7 +1649,7 @@ private fun YouTubeVlcPlayback(playback: YouTubePlayback, audioUri: String?, str
 }
 
 @Composable
-private fun YouTubeMpvPlayback(playback: YouTubePlayback, streams: YouTubeStreamPanel?, startPositionMs: Long, rendererKey: String, bigSeekSeconds: Int, preferences: AppPreferences, onBack: () -> Unit, onCompleted: () -> Unit, onRenderer: (String, Long, Boolean) -> Unit, onVideoFormatChanged: (Float, Int?, Int?) -> Unit, onLiveSourceError: () -> Boolean = { false }, refreshGeneration: Int = 0) {
+private fun YouTubeMpvPlayback(playback: YouTubePlayback, streams: YouTubeStreamPanel?, startPositionMs: Long, rendererKey: String, bigSeekSeconds: Int, preferences: AppPreferences, onBack: () -> Unit, onCompleted: () -> Unit, onRenderer: (String, Long, Boolean) -> Unit, onVideoFormatChanged: (Float, Int?, Int?) -> Unit, onLiveSourceError: () -> Boolean = { false }, refreshGeneration: Int = 0, onStreamHttpError: (Int) -> Boolean = { false }) {
     val context = LocalContext.current
     val controller = rememberMpvPlaybackController(
         context, playback.uri, startPositionMs, playback.headers,
@@ -1643,7 +1676,9 @@ private fun YouTubeMpvPlayback(playback: YouTubePlayback, streams: YouTubeStream
         val message = controller.errorMessage ?: return@LaunchedEffect
         if (!BackgroundPlaybackSession.owns(controller)) return@LaunchedEffect
         if (playback.isLive && onLiveSourceError()) return@LaunchedEffect
-        com.ambient.tv.diagnostics.DiagnosticLog.warn("playback", "YouTube MPV failed, continuing in Media3: $message")
+        val httpStatus = youtubeRejectedStreamHttpStatus(message)
+        if (httpStatus != null && onStreamHttpError(httpStatus)) return@LaunchedEffect
+        com.ambient.tv.diagnostics.DiagnosticLog.warn("playback", "YouTube MPV failed; trying Media3: $message")
         com.ambient.tv.notifications.AppNotifications.post(com.ambient.tv.notifications.AppNotice(
             "playback:backend-switch", R.string.notice_switched_to_media3, subject = "MPV",
             kind = com.ambient.tv.notifications.NoticeKind.PLAYBACK, interruptPlayback = false,
@@ -1771,7 +1806,7 @@ private fun YouTubeMpvPlayback(playback: YouTubePlayback, streams: YouTubeStream
     // Gate on !panelOpen so panel BackHandler is not order-fragile.
     BackHandler(enabled = !panelOpen) {
         if (controls && !handheldUi) controls = false
-        else if (com.ambient.tv.ui.player.backLeavesPlaybackRunning(false, handheldUi, backMinimizes())) onBack()
+        else if (controller.errorMessage == null && com.ambient.tv.ui.player.backLeavesPlaybackRunning(false, handheldUi, backMinimizes())) onBack()
         else BackgroundPlaybackSession.stop()
     }
     // One remote handling for the engine and, while the focus is in the OSD or panel above it, the host.
