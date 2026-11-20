@@ -36,6 +36,13 @@
     <string name="game_info_core">Core: %1$s (%2$s)</string>
     <string name="game_info_file">File: %1$s · %2$s</string>
     <string name="game_info_hdr_display_capabilities">Display HDR formats: %1$s (capability only)</string>
+    <string name="game_info_native_sdr_test">Test Vulkan SDR swapchain (diagnostic)</string>
+    <string name="game_info_native_sdr_test_hint">Experimental: blit only to a separate 16px Surface. Normal GLES game picture remains visible. Resume the game to test, then reopen Info to check.</string>
+    <string name="game_info_native_sdr_off">Vulkan SDR diagnostic: off</string>
+    <string name="game_info_native_sdr_requested">Vulkan SDR diagnostic: surface requested; play a frame</string>
+    <string name="game_info_native_sdr_swapchain">Vulkan SDR diagnostic: swapchain created; no frame confirmed</string>
+    <string name="game_info_native_sdr_presenting">Vulkan SDR diagnostic: Vulkan frames presented to test Surface</string>
+    <string name="game_info_native_sdr_fallback">Vulkan SDR diagnostic: unsupported/failed; GLES retained</string>
     <string name="game_info_vulkan_surface_pairs">Vulkan display-surface formats: %1$s (read-only probe)</string>
     <string name="game_info_hdr_output_inactive">Native Vulkan HDR output is not active. Games are currently presented through the SDR GLES compositor.</string>
     <string name="game_info_core_source">Cores come from the libretro build server and are stored on this device.</string>
