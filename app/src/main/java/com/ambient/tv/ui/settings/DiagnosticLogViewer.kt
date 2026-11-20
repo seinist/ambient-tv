@@ -2,9 +2,11 @@ package com.ambient.tv.ui.settings
 
 import android.widget.Toast
 import androidx.compose.foundation.focusable
+import androidx.compose.foundation.focusGroup
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -12,6 +14,7 @@ import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -21,12 +24,15 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.AnnotatedString
@@ -38,11 +44,13 @@ import com.ambient.tv.R
 import com.ambient.tv.diagnostics.DiagnosticLevel
 import com.ambient.tv.diagnostics.DiagnosticLog
 import com.ambient.tv.diagnostics.DiagnosticViewerEntry
+import com.ambient.tv.diagnostics.DiagnosticViewerSnapshot
 import com.ambient.tv.ui.common.AppDialog
 import com.ambient.tv.ui.common.TvActionButton
 import com.ambient.tv.ui.common.TvChip
 import com.ambient.tv.ui.common.TvTextField
 import com.ambient.tv.ui.common.TvLazyColumn
+import com.ambient.tv.ui.common.overlayLazyScrollbar
 import com.ambient.tv.ui.mobile.LocalHandheldUi
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -70,6 +78,7 @@ internal fun DiagnosticLogViewer(
     loggingEnabled: Boolean,
     onExport: () -> Unit,
     onDismiss: () -> Unit,
+    readSnapshot: (String?) -> DiagnosticViewerSnapshot? = DiagnosticLog::viewerSnapshot,
 ) {
     var entries by remember { mutableStateOf<List<DiagnosticViewerEntry>>(emptyList()) }
     var pendingEntries by remember { mutableStateOf<List<DiagnosticViewerEntry>?>(null) }
@@ -78,6 +87,12 @@ internal fun DiagnosticLogViewer(
     var severity by remember { mutableStateOf(LogViewerSeverity.ALL) }
     var sourceTag by remember { mutableStateOf<String?>(null) }
     var openedEntry by remember { mutableStateOf<DiagnosticViewerEntry?>(null) }
+    var returnToEntryKey by remember { mutableStateOf<String?>(null) }
+    val returnToEntryFocus = remember { FocusRequester() }
+    val detailFocus = remember { FocusRequester() }
+    val detailScroll = rememberScrollState()
+    val clipboard = LocalClipboardManager.current
+    val context = LocalContext.current
     var focusedEntryKey by remember { mutableStateOf<String?>(null) }
     var refreshGeneration by remember { mutableIntStateOf(0) }
     val scroll = rememberLazyListState()
@@ -90,7 +105,7 @@ internal fun DiagnosticLogViewer(
         var lastRevision: String? = null
         var firstRead = true
         while (isActive) {
-            val snapshot = withContext(Dispatchers.IO) { DiagnosticLog.viewerSnapshot(lastRevision) }
+            val snapshot = withContext(Dispatchers.IO) { readSnapshot(lastRevision) }
             if (snapshot != null) {
                 lastRevision = snapshot.revision
                 if (firstRead || entries.isEmpty() ||
@@ -123,134 +138,191 @@ internal fun DiagnosticLogViewer(
         }
     }
 
-    LaunchedEffect(query, severity, sourceTag) {
-        scroll.scrollToItem(0)
+
+    // Filters are regular list stages rather than permanent headers. On a landscape phone the
+    // keyboard and dialog footer would otherwise leave no room for log entries. The same
+    // TV-aware lazy list handles vertical navigation, wrapping and its optional scrollbar.
+    LaunchedEffect(tags) {
+        if (sourceTag != null && sourceTag !in tags) sourceTag = null
+    }
+    // Content swaps within one AppDialog: no second Android window and no focus handoff race.
+    LaunchedEffect(openedEntry, returnToEntryKey) {
+        val requester = if (openedEntry != null) detailFocus
+            else if (returnToEntryKey != null) returnToEntryFocus
+            else null
+        if (requester != null) {
+            repeat(10) {
+                withFrameNanos { }
+                if (runCatching { requester.requestFocus() }.getOrDefault(false)) {
+                    // Keep the stable FocusRequester attached to the restored row: removing it
+                    // immediately can itself trigger a new focus handoff during recomposition.
+                    return@LaunchedEffect
+                }
+            }
+        }
+    }
+    LaunchedEffect(openedEntry?.key) {
+        detailScroll.scrollTo(0)
     }
 
+
     AppDialog(
-        onDismiss = onDismiss,
-        title = stringResource(R.string.diagnostics_viewer_title),
-        hint = stringResource(if (loggingEnabled) R.string.diagnostics_viewer_hint else R.string.diagnostics_viewer_disabled),
+        onDismiss = { if (openedEntry != null) openedEntry = null else onDismiss() },
+        title = openedEntry?.let { "${it.levelLetter} · ${it.tag}" }
+            ?: stringResource(R.string.diagnostics_viewer_title),
+        hint = openedEntry?.let { "${it.timestamp} · ${it.thread}" }
+            ?: stringResource(if (loggingEnabled) R.string.diagnostics_viewer_hint else R.string.diagnostics_viewer_disabled),
         fillHeight = true,
         scrollable = false,
         widthFraction = if (handheld) null else 0.84f,
         maxWidth = 1120.dp,
         maxHeightFraction = 0.94f,
         header = {
-            TvTextField(
-                value = query,
-                onValueChange = { query = it.take(120) },
-                label = stringResource(R.string.diagnostics_viewer_search),
-                modifier = Modifier.fillMaxWidth(),
-            )
-            LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                items(LogViewerSeverity.entries, key = { it.name }) { option ->
-                    val title = stringResource(when (option) {
-                        LogViewerSeverity.ALL -> R.string.diagnostics_viewer_all
-                        LogViewerSeverity.ERRORS -> R.string.diagnostics_viewer_errors
-                        LogViewerSeverity.WARNINGS -> R.string.diagnostics_viewer_warnings
-                        LogViewerSeverity.INFORMATION -> R.string.diagnostics_viewer_info
-                    })
-                    TvChip(text = title, selected = severity == option, onClick = { severity = option })
-                }
-            }
-            if (tags.isNotEmpty()) {
-                LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    item(key = "all-tags") {
-                        TvChip(
-                            text = stringResource(R.string.diagnostics_viewer_all_sources),
-                            selected = sourceTag == null,
-                            onClick = { sourceTag = null },
-                        )
-                    }
-                    items(tags, key = { it }) { tag ->
-                        TvChip(text = tag, selected = sourceTag == tag, onClick = { sourceTag = tag })
-                    }
-                }
-            }
-            if (pendingEntries != null) {
-                Text(
-                    stringResource(R.string.diagnostics_viewer_updates_pending),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.primary,
-                )
-            }
-            Text(
+            // Compact counter is always visible even when LazyColumn virtualizes its children.
+            if (openedEntry == null) Text(
                 stringResource(R.string.diagnostics_viewer_count, filtered.size, entries.size),
+                modifier = Modifier.testTag("diagnostics-count"),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         },
         footer = {
-            TvActionButton(
-                text = stringResource(R.string.diagnostics_viewer_refresh),
-                onClick = {
-                    pendingEntries?.let { entries = it }
-                    pendingEntries = null
-                    refreshGeneration++
-                    scope.launch { scroll.scrollToItem(0) }
-                },
-            )
-            TvActionButton(text = stringResource(R.string.diagnostics_viewer_export), onClick = onExport)
-            TvActionButton(text = stringResource(R.string.back), onClick = onDismiss)
-        },
-    ) {
-        when {
-            !loaded -> Text(stringResource(R.string.diagnostics_viewer_loading))
-            filtered.isEmpty() -> Text(
-                stringResource(if (entries.isEmpty()) R.string.diagnostics_viewer_empty else R.string.diagnostics_viewer_no_matches),
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            else -> TvLazyColumn(
-                modifier = Modifier.fillMaxSize(),
-                state = scroll,
-                verticalArrangement = Arrangement.spacedBy(6.dp),
-            ) {
-                items(filtered, key = { it.key }) { entry ->
-                    TvActionButton(
-                        text = "${entry.timestamp.substringAfter(' ')}  ${entry.levelLetter}  ${entry.tag} · ${entry.headline.take(110)}",
-                        fillWidth = true,
-                        modifier = Modifier.onFocusChanged { focus ->
-                            if (focus.isFocused) focusedEntryKey = entry.key
-                            else if (focusedEntryKey == entry.key) focusedEntryKey = null
-                        },
-                        onClick = { openedEntry = entry },
-                    )
-                }
-            }
-        }
-    }
-
-    openedEntry?.let { entry ->
-        val clipboard = LocalClipboardManager.current
-        val context = LocalContext.current
-        val detailScroll = rememberScrollState()
-        AppDialog(
-            onDismiss = { openedEntry = null },
-            title = "${entry.levelLetter} · ${entry.tag}",
-            hint = "${entry.timestamp} · ${entry.thread}",
-            fillHeight = true,
-            scrollable = false,
-            maxHeightFraction = 0.94f,
-            widthFraction = if (handheld) null else 0.8f,
-            maxWidth = 1050.dp,
-            footer = {
+            if (openedEntry != null) {
+                val entry = checkNotNull(openedEntry)
                 TvActionButton(
                     text = stringResource(R.string.diagnostics_viewer_copy),
+                    modifier = Modifier.testTag("diagnostics-copy"),
                     onClick = {
                         runCatching { clipboard.setText(AnnotatedString(entry.copyText())) }.onSuccess {
                             Toast.makeText(context, R.string.diagnostics_viewer_copied, Toast.LENGTH_SHORT).show()
                         }
                     },
                 )
-                TvActionButton(text = stringResource(R.string.back), onClick = { openedEntry = null })
-            },
-        ) {
+                TvActionButton(text = stringResource(R.string.back), modifier = Modifier.testTag("diagnostics-detail-back"), onClick = { openedEntry = null })
+            } else {
+                TvActionButton(
+                    text = stringResource(R.string.diagnostics_viewer_refresh),
+                    modifier = Modifier.testTag("diagnostics-refresh"),
+                    onClick = {
+                        pendingEntries?.let { entries = it }
+                        pendingEntries = null
+                        refreshGeneration++
+                        scope.launch { scroll.scrollToItem(0) }
+                    },
+                )
+                if (!handheld) TvActionButton(text = stringResource(R.string.diagnostics_viewer_export), onClick = onExport)
+                TvActionButton(text = stringResource(R.string.back), modifier = Modifier.testTag("diagnostics-close"), onClick = onDismiss)
+            }
+        },
+    ) {
+        if (openedEntry == null) {
+            TvLazyColumn(
+                modifier = Modifier.fillMaxSize().testTag("diagnostics-list").overlayLazyScrollbar(scroll),
+                state = scroll,
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+                contentPadding = PaddingValues(bottom = 12.dp),
+            ) {
+                item(key = "diagnostics-search") {
+                    TvTextField(
+                        value = query,
+                        onValueChange = { query = it.take(120) },
+                        label = stringResource(R.string.diagnostics_viewer_search),
+                        modifier = Modifier.fillMaxWidth().testTag("diagnostics-search"),
+                    )
+                }
+                item(key = "diagnostics-severity") {
+                    LazyRow(
+                        modifier = Modifier.fillMaxWidth().testTag("diagnostics-severity").focusGroup(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        items(LogViewerSeverity.entries, key = { it.name }) { option ->
+                            val title = stringResource(when (option) {
+                                LogViewerSeverity.ALL -> R.string.diagnostics_viewer_all
+                                LogViewerSeverity.ERRORS -> R.string.diagnostics_viewer_errors
+                                LogViewerSeverity.WARNINGS -> R.string.diagnostics_viewer_warnings
+                                LogViewerSeverity.INFORMATION -> R.string.diagnostics_viewer_info
+                            })
+                            TvChip(
+                                text = title,
+                                modifier = Modifier.testTag("diagnostics-severity-${option.name}"),
+                                selected = severity == option,
+                                onClick = { severity = option },
+                            )
+                        }
+                    }
+                }
+                if (tags.isNotEmpty()) item(key = "diagnostics-sources") {
+                    LazyRow(
+                        modifier = Modifier.fillMaxWidth().testTag("diagnostics-sources").focusGroup(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        item(key = "all-tags") {
+                            TvChip(
+                                text = stringResource(R.string.diagnostics_viewer_all_sources),
+                                selected = sourceTag == null,
+                                onClick = { sourceTag = null },
+                            )
+                        }
+                        items(tags, key = { it }) { tag ->
+                            TvChip(
+                                text = tag,
+                                modifier = Modifier.testTag("diagnostics-source-$tag"),
+                                selected = sourceTag == tag,
+                                onClick = { sourceTag = tag },
+                            )
+                        }
+                    }
+                }
+                if (pendingEntries != null) item(key = "diagnostics-pending") {
+                    Text(
+                        stringResource(R.string.diagnostics_viewer_updates_pending),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.primary,
+                    )
+                }
+                if (handheld) item(key = "diagnostics-export") {
+                    TvActionButton(
+                        text = stringResource(R.string.diagnostics_viewer_export),
+                        onClick = onExport,
+                        fillWidth = true,
+                    )
+                }
+                when {
+                    !loaded -> item(key = "diagnostics-loading") {
+                        Text(stringResource(R.string.diagnostics_viewer_loading))
+                    }
+                    filtered.isEmpty() -> item(key = "diagnostics-empty") {
+                        Text(
+                            stringResource(if (entries.isEmpty()) R.string.diagnostics_viewer_empty else R.string.diagnostics_viewer_no_matches),
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    else -> items(filtered, key = { it.key }) { entry ->
+                        TvActionButton(
+                            text = "${entry.timestamp.substringAfter(' ')}  ${entry.levelLetter}  ${entry.tag} · ${entry.headline.take(110)}",
+                            fillWidth = true,
+                            modifier = Modifier
+                                .then(if (entry.key == returnToEntryKey) Modifier.focusRequester(returnToEntryFocus) else Modifier)
+                                .testTag("diagnostics-entry:${entry.key}")
+                                .onFocusChanged { focus ->
+                                    if (focus.isFocused) focusedEntryKey = entry.key
+                                    else if (focusedEntryKey == entry.key) focusedEntryKey = null
+                                },
+                            onClick = {
+                                returnToEntryKey = entry.key
+                                openedEntry = entry
+                            },
+                        )
+                    }
+                }
+            }
+        } else {
+            val entry = checkNotNull(openedEntry)
             // A long stack trace must be scrollable with DPAD as well as touch. At its boundaries
             // the direction key is free to move focus to the dialog's regular controls.
             Column(
-                Modifier.fillMaxSize()
+                Modifier.fillMaxSize().focusRequester(detailFocus)
                     .onPreviewKeyEvent { event ->
                         if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
                         val destination = when (event.key) {
