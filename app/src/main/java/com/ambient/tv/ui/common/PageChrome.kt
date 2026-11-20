@@ -475,17 +475,28 @@ fun PageChipRow(
     val state = rememberLazyListState()
     val handheld = LocalHandheldUi.current
     val focusHold = remember(chain) { PageChipFocusHold() }
-    DisposableEffect(focusHold) { onDispose { focusHold.disarm() } }
+    DisposableEffect(focusHold) { onDispose { focusHold.clear() } }
     var chipsFocused by remember { mutableStateOf(false) }
     // focusRestorer remembers the last focused child even if another category becomes active.
     // Keep that D-pad history while the selection is unchanged, but follow a newly selected
     // chip whenever focus is in (or later re-enters) the category row.
     var lastFocusedSelection by remember { mutableStateOf<Int?>(null) }
+    var previousSelection by remember { mutableStateOf<Int?>(null) }
     LaunchedEffect(selectedIndex, handheld) {
         val index = selectedIndex?.takeIf { it >= 0 } ?: return@LaunchedEffect
+        // A delayed provider response belongs to the chip that was explicitly clicked.
+        // A later D-pad move must win instead of being pulled back by that response.
+        val confirmedChange = previousSelection != null && previousSelection != index &&
+            focusHold.awaitingSelection
+        previousSelection = index
+        if (confirmedChange) {
+            lastFocusedSelection = index
+            focusHold.acknowledgeSelection()
+        }
         // Capture the old row focus before scrolling: an offscreen new selection may detach
         // the old focused child, momentarily making chipsFocused false.
-        val shouldFollowSelection = !handheld && chipsFocused && !focusHold.active && lastFocusedSelection != index
+        val shouldFollowSelection = !handheld && chipsFocused && !focusHold.active &&
+            !confirmedChange && lastFocusedSelection != index
         if (handheld) {
             state.animateScrollToItem(index)
         } else {
@@ -509,10 +520,12 @@ fun PageChipRow(
     }
     LaunchedEffect(chipsFocused, selectedIndex, handheld) {
         val index = selectedIndex?.takeIf { it >= 0 } ?: return@LaunchedEffect
-        if (handheld || !chipsFocused || focusHold.active || lastFocusedSelection == index) return@LaunchedEffect
+        if (handheld || !chipsFocused || focusHold.active || focusHold.awaitingSelection ||
+            lastFocusedSelection == index) return@LaunchedEffect
         repeat(3) {
             withFrameNanos { }
-            if (!chipsFocused || selectedIndex != index || focusHold.active) return@LaunchedEffect
+            if (!chipsFocused || selectedIndex != index || focusHold.active ||
+                focusHold.awaitingSelection) return@LaunchedEffect
             if (runCatching { chain.selectedChip.requestFocus() }.getOrDefault(false)) {
                 lastFocusedSelection = index
                 return@LaunchedEffect
@@ -573,9 +586,12 @@ internal class PageChipFocusHold {
         private set
     private var focusedChip: FocusRequester? = null
     private var confirmedChip: FocusRequester? = null
+    private var pendingSelectionAt: Long = 0L
 
     val active: Boolean get() = armedAt != 0L &&
         android.os.SystemClock.uptimeMillis() - armedAt < HOLD_MS
+    val awaitingSelection: Boolean get() = pendingSelectionAt != 0L &&
+        android.os.SystemClock.uptimeMillis() - pendingSelectionAt < HOLD_MS
     val hasConfirmedChip: Boolean get() = confirmedChip != null
     val confirmedChipHasFocus: Boolean get() = confirmedChip != null && confirmedChip === focusedChip
 
@@ -589,10 +605,19 @@ internal class PageChipFocusHold {
     fun arm() {
         confirmedChip = focusedChip
         armedAt = android.os.SystemClock.uptimeMillis()
+        pendingSelectionAt = armedAt
     }
+    // A directional key stops active refocusing, but delayed selection confirmation may
+    // arrive afterward; do not mistake it for an external category change.
     fun disarm() {
         armedAt = 0L
         confirmedChip = null
+    }
+    fun acknowledgeSelection() { pendingSelectionAt = 0L }
+    fun clear() {
+        disarm()
+        pendingSelectionAt = 0L
+        focusedChip = null
     }
     private companion object { const val HOLD_MS = 15_000L }
 }

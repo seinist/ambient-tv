@@ -214,6 +214,43 @@ class PageFocusTraversalTest {
         rule.onNodeWithTag("clicked-category-0").assertExists()
     }
 
+
+    @Test fun delayedCategorySelectionMustNotUndoASecondDpadMove() {
+        val selected = mutableIntStateOf(0)
+        val requested = mutableIntStateOf(-1)
+        val first = FocusRequester()
+        rule.setContent {
+            AmbientTvTheme {
+                val chain = rememberPageFocusChain()
+                PageChipRow(chain, selectedIndex = selected.intValue) {
+                    items((0..2).toList(), key = { it }) { index ->
+                        TvChip(
+                            text = "Category $index",
+                            selected = index == selected.intValue,
+                            modifier = Modifier.testTag("fast-category-$index")
+                                .then(if (index == 0) Modifier.focusRequester(first) else Modifier)
+                                .then(if (index == selected.intValue)
+                                    Modifier.focusRequester(chain.selectedChip) else Modifier),
+                            onClick = { requested.intValue = index },
+                        )
+                    }
+                }
+            }
+        }
+        rule.waitForIdle()
+        rule.runOnIdle { first.requestFocus() }
+        press(AndroidKeyEvent.KEYCODE_DPAD_RIGHT)
+        rule.onNodeWithTag("fast-category-1").assertIsFocused()
+        press(AndroidKeyEvent.KEYCODE_DPAD_CENTER)
+        rule.runOnIdle { check(requested.intValue == 1) }
+        press(AndroidKeyEvent.KEYCODE_DPAD_RIGHT)
+        rule.onNodeWithTag("fast-category-2").assertIsFocused()
+
+        rule.runOnIdle { selected.intValue = 1 }
+        rule.waitForIdle()
+        rule.onNodeWithTag("fast-category-2").assertIsFocused()
+    }
+
     @Test fun externalCategoryChangeDoesNotStealContentFocusAndRestoresSelectedChipOnReturn() {
         val page = categoryChipPage()
         rule.runOnIdle { page.firstChip.requestFocus() }
