@@ -183,15 +183,16 @@ interface PlaybackHandle {
     fun release()
 }
 
+/** Keep a Play command across a decoder failure; do not infer user Pause from an error. */
+internal fun rendererHandoffPlayIntent(
+    samePlayback: Boolean, failed: Boolean, readyToPlay: Boolean, requestedToPlay: Boolean,
+): Boolean = if (samePlayback && failed) requestedToPlay else readyToPlay
+
 /**
  * One service-owned engine across all sources/renderers. All access is on the main
  * looper, not merely synchronized: Media3 and native surfaces require that thread.
  * Screens borrow engines and own only their listeners/surfaces.
  */
-internal fun rendererHandoffPlayIntent(
-    samePlayback: Boolean, failed: Boolean, readyToPlay: Boolean, requestedToPlay: Boolean,
-): Boolean = if (samePlayback && failed) requestedToPlay else readyToPlay
-
 object BackgroundPlaybackSession {
     data class Snapshot(
         val metadata: PlaybackMetadata? = null,
