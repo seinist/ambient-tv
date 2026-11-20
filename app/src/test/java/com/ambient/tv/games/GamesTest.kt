@@ -257,4 +257,33 @@ class GamesTest {
         } catch (expected: GameCoreIncompatibleException) {
         }
     }
+
+    @Test fun perSystemPhoneControlsAreConfigurableAndStored() {
+        val snes = GameSystems.byId("snes")!!
+        val ds = GameSystems.byId("nds")!!
+        val defaults = GameSettingsState()
+        assertTrue(defaults.touchControls(snes))
+        assertFalse(defaults.touchControls(ds))
+        assertEquals(GameTouchMode.DPAD, defaults.touchMode(snes))
+        val edited = defaults.withTouchControls(snes, false)
+            .withTouchControls(ds, true)
+            .withTouchMode(snes, GameTouchMode.DUAL)
+        assertFalse(edited.touchControls(snes))
+        assertTrue(edited.touchControls(ds))
+        assertEquals(GameTouchMode.DUAL, edited.touchMode(snes))
+        assertEquals("0", edited.values["touch.snes"])
+        assertEquals("1", edited.values["touch.nds"])
+        assertEquals(GameTouchMode.DPAD, edited.withTouchMode(snes, GameTouchMode.DPAD).touchMode(snes))
+    }
+
+    @Test fun extendedAspectRatiosPreserveTheOriginalKeys() {
+        assertEquals(GameAspect.CORE, GameAspect.fromKey("core"))
+        assertEquals(GameAspect.EIGHT_SEVEN, GameAspect.fromKey("8:7"))
+        assertEquals(GameAspect.SQUARE, GameAspect.fromKey("1:1"))
+        assertEquals(GameAspect.THREE_TWO, GameAspect.fromKey("3:2"))
+        assertEquals(GameAspect.SIXTEEN_TEN, GameAspect.fromKey("16:10"))
+        assertEquals(GameAspect.WIDE, GameAspect.fromKey("16:9"))
+        val snes = GameSystems.byId("snes")!!
+        assertEquals(GameAspect.EIGHT_SEVEN, GameSettingsState().withAspect(snes, GameAspect.EIGHT_SEVEN).aspect(snes))
+    }
 }
