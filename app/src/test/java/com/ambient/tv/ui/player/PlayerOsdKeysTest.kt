@@ -212,4 +212,56 @@ class PlayerOsdKeysTest {
         assertEquals(true to listOf("seek:60000:bar"), press(Key.DirectionUp, state(), Recorder()))
     }
 
+    @Test fun directSeekReleaseSurvivesFocusMovingFromEngineToVisibleTimeline() {
+        var now = 0L
+        val progressive = ProgressiveSeekController { now }
+        val recorder = Recorder()
+        val sharedSteps = OsdSeekSteps(
+            jumpMs = 60_000L, progressive = progressive,
+            currentPositionMs = 100_000L, durationMs = 600_000L,
+            onProgressiveStart = { recorder.calls += "preview" },
+        )
+
+        // The first press came from the engine with the OSD hidden.
+        assertTrue(handlePlayerOsdKey(Key.DirectionRight, true, state(), sharedSteps, recorder))
+        // Focus may move into the newly visible seekbar while the remote remains held.
+        // The outer player preview gate must continue routing this burst to the engine owner.
+        now = 2_000L
+        assertTrue(forwardActiveDirectSeekKey(Key.DirectionRight, progressive) {
+            handlePlayerOsdKey(
+                Key.DirectionRight, true, state(bar = true).copy(seekBarFocused = true),
+                sharedSteps, recorder,
+            )
+        })
+        progressive.advance()
+        val destination = progressive.previewTargetMs!!
+        assertTrue(destination > 105_000L)
+        assertTrue(forwardActiveDirectSeekKey(Key.DirectionRight, progressive) {
+            handlePlayerOsdKey(
+                Key.DirectionRight, false, state(visible = true).copy(seekBarFocused = true),
+                sharedSteps, recorder,
+            )
+        })
+        assertEquals(listOf("preview", "seek:${destination - 100_000L}:bar"), recorder.calls)
+        assertFalse(progressive.active)
+        // A duplicate release cannot send a second native seek.
+        assertFalse(forwardActiveDirectSeekKey(Key.DirectionRight, progressive) {
+            handlePlayerOsdKey(Key.DirectionRight, false, state(), sharedSteps, recorder)
+        })
+        assertEquals(2, recorder.calls.size)
+    }
+
+    @Test fun onlyAnActivePlayerScrubClaimsTimelineKeys() {
+        val progressive = ProgressiveSeekController { 0L }
+        var forwarded = 0
+        assertFalse(forwardActiveDirectSeekKey(Key.DirectionRight, progressive) { forwarded++; true })
+        assertEquals(0, forwarded)
+        progressive.press(-1, 120_000L, 600_000L)
+        // Direction changes are forwarded too, not started on another scrub controller.
+        assertTrue(forwardActiveDirectSeekKey(Key.DirectionRight, progressive) { forwarded++; true })
+        assertTrue(forwardActiveDirectSeekKey(Key.DirectionLeft, progressive) { forwarded++; true })
+        assertFalse(forwardActiveDirectSeekKey(Key.DirectionUp, progressive) { forwarded++; true })
+        assertEquals(2, forwarded)
+    }
+
 }
