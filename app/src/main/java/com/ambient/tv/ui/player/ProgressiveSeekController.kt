@@ -56,7 +56,9 @@ internal class ProgressiveSeekController(private val clockMs: () -> Long = Syste
         val to = (next - startMs - HOLD_DELAY_MS).coerceAtLeast(0L)
         if (to > from) {
             val midpoint = (from + (to - from) / 2).toDouble()
-            val velocity = (BASE_SPEED_MS_PER_SECOND + LOG_SPEED_MS_PER_SECOND * ln1p(midpoint / LOG_TIME_SCALE_MS))
+            // Longer films get a higher top speed without affecting the first precise tap.
+            val logAmplitude = maxOf(LOG_SPEED_MS_PER_SECOND, durationMs / 13.0)
+            val velocity = (BASE_SPEED_MS_PER_SECOND + logAmplitude * ln1p(midpoint / LOG_TIME_SCALE_MS))
                 .coerceAtMost((durationMs / MAX_DURATION_SPEED_DIVISOR).coerceIn(MIN_SPEED_MS_PER_SECOND, MAX_SPEED_MS_PER_SECOND).toDouble())
             travelledMs += velocity * (to - from) / 1_000.0
             val distance = TAP_STEP_MS + travelledMs.roundToLong()
@@ -87,8 +89,8 @@ internal class ProgressiveSeekController(private val clockMs: () -> Long = Syste
         const val LOG_SPEED_MS_PER_SECOND = 77_000.0
         const val LOG_TIME_SCALE_MS = 900.0
         const val MIN_SPEED_MS_PER_SECOND = 20_000L
-        const val MAX_SPEED_MS_PER_SECOND = 180_000L
-        const val MAX_DURATION_SPEED_DIVISOR = 40L
+        const val MAX_SPEED_MS_PER_SECOND = 1_200_000L
+        const val MAX_DURATION_SPEED_DIVISOR = 8L
     }
 }
 

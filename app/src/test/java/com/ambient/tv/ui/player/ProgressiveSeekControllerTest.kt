@@ -84,4 +84,16 @@ class ProgressiveSeekControllerTest {
         assertNull(seek.previewTargetMs)
         assertNull(seek.release(1))
     }
+    @Test fun longMoviesCanTraverseLargeDistancesWithoutLosingPrecisionOnTap() {
+        val seek = controller()
+        val film = 7_200_000L
+        seek.press(1, 0L, film)
+        assertEquals(5_000L, seek.previewTargetMs)
+        now = 10_000L
+        seek.advance()
+        assertTrue(seek.previewTargetMs!! > film / 2)
+        assertTrue(seek.previewTargetMs!! <= film)
+        assertEquals(seek.previewTargetMs, seek.release(1))
+    }
+
 }
