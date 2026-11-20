@@ -630,12 +630,15 @@ object BackgroundPlaybackSession {
             mutableSnapshot.value = snapshot.value.copy(metadata = metadata)
         }
     }
-    // An errored or released player is not a reusable stream. In particular, YouTube's signed
-    // URLs must be resolved again instead of reopening a failed session on the next visit.
-    fun cached(route: String): Any? = snapshot.value.takeIf {
-        handle != null && !it.replacingSource && it.status.error == null &&
-            handle?.status()?.error == null
-    }?.metadata?.takeIf { it.route == route }?.resumeState
+    // Do not reuse a failed YouTube stream's signed URLs on a revisit. Keep the established
+    // caching policy for local providers (Plex/TVHeadend/etc.) completely unchanged.
+    fun cached(route: String): Any? {
+        val current = snapshot.value.takeUnless { it.replacingSource } ?: return null
+        val metadata = current.metadata?.takeIf { it.route == route } ?: return null
+        if (metadata.source == "youtube" &&
+            (handle == null || current.status.error != null || handle?.status()?.error != null)) return null
+        return metadata.resumeState
+    }
     fun setSleepTimer(value: SleepTimerConfig) {
         checkThread()
         SleepSession.set(value)
