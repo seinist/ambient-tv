@@ -45,6 +45,7 @@ import com.ambient.tv.diagnostics.DiagnosticLevel
 import com.ambient.tv.diagnostics.DiagnosticLog
 import com.ambient.tv.diagnostics.DiagnosticViewerEntry
 import com.ambient.tv.diagnostics.DiagnosticViewerSnapshot
+import com.ambient.tv.ui.common.APP_DIALOG_EXIT_MS
 import com.ambient.tv.ui.common.AppDialog
 import com.ambient.tv.ui.common.TvActionButton
 import com.ambient.tv.ui.common.TvChip
@@ -143,8 +144,16 @@ internal fun DiagnosticLogViewer(
     }
     LaunchedEffect(openedEntry, returnToEntryKey) {
         if (openedEntry == null && returnToEntryKey != null) {
-            withFrameNanos { }
-            runCatching { returnToEntryFocus.requestFocus() }
+            // The child AppDialog keeps its native window during the exit fade. Requesting
+            // focus after one frame may briefly succeed and then be stolen by window teardown.
+            delay(APP_DIALOG_EXIT_MS.toLong())
+            repeat(10) {
+                withFrameNanos { }
+                if (runCatching { returnToEntryFocus.requestFocus() }.getOrDefault(false)) {
+                    returnToEntryKey = null
+                    return@LaunchedEffect
+                }
+            }
             returnToEntryKey = null
         }
     }
