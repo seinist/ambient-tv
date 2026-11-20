@@ -16,6 +16,7 @@ and **unimplemented features**. A core appearing in the catalog does **not** est
 | Core updates | One preceding binary/metadata version kept; user rollback and failed-load recovery | Confirm updating/recovery on Android 14+, active-core reload edge cases |
 | Achievements | Extended console ID lookup for DS, PSP, GC/Wii, Saturn, Dreamcast, Commodore, etc. | Hashing, per-core achievement capability and server verification; direct-ROM achievements need incremental reader |
 | Cheat database | Extended known system-folder name candidates | Catalog and core cheat format differences |
+| Vulkan HDR → SDR (experimental) | Manual PQ/HLG decoding, luminance mapping and BT.2020→BT.709 conversion after Vulkan image transport in the GLES compositor; stored per core and default OFF | Core must actually emit encoded HDR, and 8-bit transfer limits highlight fidelity; real devices required |
 
 ## Outstanding features (not represented as completed)
 
@@ -30,9 +31,15 @@ and **unimplemented features**. A core appearing in the catalog does **not** est
    Run-Ahead needs measured core state serialization and extra emulation steps and must be
    off on expensive GPU cores and netplay/hardcore.
 4. **Advanced graphics:** Multi-pass GLSL shader chains are available in the fork but are not
-   exposed as curated/validated options by Ambient TV; full Vulkan presentation plus
-   `librashader` slang shaders is a separate native renderer project. Vulkan hardware cores
-   are not equivalent to Vulkan presentation.
+   exposed as curated/validated options by Ambient TV. Manual HDR (PQ or HLG) to SDR conversion
+   is experimental and opt-in on the GLES compositor for Vulkan hardware cores. **This is not
+   native Vulkan HDR presentation**: the current Vulkan-to-GLES bridge uses an 8-bit RGBA
+   AHardwareBuffer and lacks libretro HDR source-format/metadata negotiation. HDR cannot be
+   detected automatically; highlights may already be clipped before conversion. It is **OFF
+   by default** and must never be applied to normal SDR. Full HDR source negotiation, FP16/10-bit
+   transport, PQ/HLG output colorspaces, HDR swapchain metadata and `librashader` shaders
+   require native renderer work and validation on TV and handheld hardware. Vulkan hardware
+   cores are not equivalent to Vulkan presentation.
 5. **Audio and timing:** Choose audio latency/resampling and video refresh matching per core,
    without interfering with Media3/VLC/MPV playback.
 6. **Patch and special data types:** IPS/BPS/UPS import or overlay, libretro subsystem content,
