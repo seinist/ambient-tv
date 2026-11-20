@@ -18,6 +18,8 @@ import com.ambient.tv.ui.common.glideToItem
 import com.ambient.tv.ui.common.ExplicitRowScrollSpec
 import com.ambient.tv.ui.common.TvBringIntoViewSpec
 import com.ambient.tv.ui.common.RowColumnFocus
+import com.ambient.tv.ui.common.CyclicRowFocusKey
+import com.ambient.tv.ui.common.logicalRowFocusKey
 import com.ambient.tv.ui.common.rowColumnFocusNavigation
 import com.ambient.tv.ui.common.rowColumnFocusWrapRight
 import com.ambient.tv.ui.common.rowColumnFocusTarget
@@ -1216,7 +1218,7 @@ internal fun homeFirstBrowseFocusKey(state: HomeUiState.Loaded): com.ambient.tv.
 
 /** An offline server's place on Home: its name and the one action that wakes and reconnects it. */
 @Composable
-private fun HomeOfflineRow(system: String, columnFocus: RowColumnFocus?, rowKey: String, onFocused: () -> Unit) {
+private fun HomeOfflineRow(system: String, columnFocus: RowColumnFocus?, rowKey: Any, onFocused: () -> Unit) {
     val vm: UnreachableServerViewModel = hiltViewModel()
     val gate by vm.state.collectAsState()
     val media = com.ambient.tv.ui.common.MediaSystem.fromKey(system)
@@ -1232,7 +1234,7 @@ private fun HomeOfflineRow(system: String, columnFocus: RowColumnFocus?, rowKey:
                 onClick = { vm.retrySystem(system) },
                 loading = gate.retrying,
                 modifier = Modifier.rowColumnFocusTarget(columnFocus, rowKey, system, soundsOnFocus = true)
-                    .browseFocusTarget(system, rowKey = rowKey)
+                    .browseFocusTarget(system, rowKey = logicalRowFocusKey(rowKey))
                     .onFocusChanged { if (it.isFocused) onFocused() },
             )
         }
@@ -1246,7 +1248,7 @@ private fun HomeShortcutRow(
     onFocused: (HomeRowDefinition) -> Unit,
     requestInitialFocus: Boolean = false,
     columnFocus: RowColumnFocus? = null,
-    rowKey: String = "",
+    rowKey: Any = "",
 ) {
     val firstFocus = remember { FocusRequester() }
     val sharedInitialFocus = com.ambient.tv.ui.common.LocalBrowseFocusReturnState.current != null
@@ -1271,7 +1273,7 @@ private fun HomeShortcutRow(
                 },
                 onClick = { onOpen(row) },
                 modifier = Modifier.rowColumnFocusTarget(columnFocus, rowKey, row.id, soundsOnFocus = true)
-                    .browseFocusTarget(row.id, rowKey = rowKey)
+                    .browseFocusTarget(row.id, rowKey = logicalRowFocusKey(rowKey))
                     .focusRequester(firstFocus).onFocusChanged { if (it.isFocused) onFocused(row) },
             )
         }
@@ -1291,7 +1293,7 @@ internal fun HomeLiveTvRow(
     // False where the parent list centers the row itself; a second relocation would fight it.
     bringContextIntoView: Boolean = true,
     columnFocus: RowColumnFocus? = null,
-    rowKey: String = "",
+    rowKey: Any = "",
     /** First tile of a recently-watched row: opens the channel list. */
     onOpenChannels: (() -> Unit)? = null,
     /** First tile of the on-now row: opens the programme guide. Ignored when [onOpenChannels] is set. */
@@ -1429,7 +1431,7 @@ internal fun HomeLiveTvRow(
                             onClick = onOpenChannels,
                             modifier = Modifier
                                 .rowColumnFocusTarget(columnFocus, rowKey, ChannelsTileKey)
-                                .browseFocusTarget(ChannelsTileKey, rowKey = rowKey)
+                                .browseFocusTarget(ChannelsTileKey, rowKey = logicalRowFocusKey(rowKey))
                                 .then(anchorModifier),
                         )
                     }
@@ -1441,7 +1443,7 @@ internal fun HomeLiveTvRow(
                             onClick = onOpenGuide,
                             modifier = Modifier
                                 .rowColumnFocusTarget(columnFocus, rowKey, GuideTileKey)
-                                .browseFocusTarget(GuideTileKey, rowKey = rowKey)
+                                .browseFocusTarget(GuideTileKey, rowKey = logicalRowFocusKey(rowKey))
                                 .then(anchorModifier),
                         )
                     }
@@ -1455,7 +1457,7 @@ internal fun HomeLiveTvRow(
                         onFocused = { onItemFocused(item) },
                         modifier = Modifier
                             .rowColumnFocusTarget(columnFocus, rowKey, "${item.channel.sourceId}:${item.channel.uuid}")
-                            .browseFocusTarget("${item.channel.sourceId}:${item.channel.uuid}", rowKey = rowKey)
+                            .browseFocusTarget("${item.channel.sourceId}:${item.channel.uuid}", rowKey = logicalRowFocusKey(rowKey))
                             .then(if (lazyIndex == 0) anchorModifier else Modifier),
                     )
                 }
@@ -1472,14 +1474,14 @@ private const val ChannelsTileKey = "live-tv-channels"
  * a restored landing on the last card is dropped so the row starts at card 0.
  */
 internal class LiveRowEntry {
-    private val chosen = HashSet<String>()
+    private val chosen = HashSet<Any>()
 
-    fun chosen(rowKey: String): Boolean = rowKey in chosen
+    fun chosen(rowKey: Any): Boolean = logicalRowFocusKey(rowKey) in chosen
 
-    fun choose(rowKey: String) { chosen.add(rowKey) }
+    fun choose(rowKey: Any) { chosen.add(logicalRowFocusKey(rowKey)) }
 
-    fun resetUnlessChosen(rowKey: String, focus: RowColumnFocus) {
-        if (rowKey !in chosen) focus.forget(rowKey)
+    fun resetUnlessChosen(rowKey: Any, focus: RowColumnFocus) {
+        if (!chosen(rowKey)) focus.forget(rowKey)
     }
 }
 
