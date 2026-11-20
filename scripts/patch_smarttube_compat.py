@@ -864,7 +864,7 @@ def patch_skip_playable_subtitle_refetch(path: Path, check: bool) -> bool:
     # Do not silently change the semantics of an unrecognized upstream client.
     # WEB and WEB_DUMMY are the only known client variants for this subtitle-only fetch.
     clients = re.findall(
-        r"getVideoInfo\(AppClient\.([A-Z0-9_]+),\s*videoId,\s*clickTrackingParams\)",
+        r"getVideoInfoReal?\(AppClient\.([A-Z0-9_]+),\s*videoId,\s*clickTrackingParams\)",
         text,
     )
     if len(clients) != 1 or clients[0] not in ("WEB", "WEB_DUMMY"):
