@@ -5,6 +5,7 @@ import android.os.StatFs
 import com.ambient.tv.data.files.FileAccess
 import com.ambient.tv.data.files.FileEntry
 import com.ambient.tv.data.files.FileKeys
+import com.ambient.tv.data.files.FilePaths
 import com.ambient.tv.data.files.FileSource
 import com.ambient.tv.data.files.FileStore
 import dagger.hilt.android.qualifiers.ApplicationContext
@@ -68,14 +69,37 @@ class GameRomPreparer @Inject constructor(
         val sourceSystem = GameSystems.forSourceFile(entry.name, entry.path, isoHeader)
         val chosenCore = sourceSystem?.let { GameSettings.state.gameCore(it, key) }
         val ext = GameSystems.extension(entry.name)
-        // Only known need_fullpath cores and single-file disc images qualify: a core that wants
-        // the full ROM buffer (or a CUE/GDI with track files) still uses the existing local path.
+        // Only cores declaring need_fullpath qualify. Uncompressed single-file discs and GDI
+        // descriptors (including each track through named VFS descriptors) need no cached copy.
         if (!forceCache && sourceSystem != null && chosenCore?.directFile == true &&
-            ext in DIRECT_EXTENSIONS && entry.size > 0L) {
+            (ext in DIRECT_EXTENSIONS || ext == "gdi") && entry.size > 0L) {
             val virtualPath = "/ambient-games/$key/${safeName(entry.name)}"
+            val parts = mutableListOf<GameDirectContent>()
             val mounted = try {
-                directAccess.open(source, path, virtualPath)
+                val names = if (ext == "gdi") {
+                    val tracks = gdiFiles(access.readText(source, path, 256 * 1024))
+                    if (tracks.isEmpty() || tracks.size > MAX_DIRECT_GDI_TRACKS ||
+                        tracks.size != tracks.distinct().size) {
+                        throw IOException("Unsupported or oversized multi-track GDI descriptor")
+                    }
+                    listOf(entry.name) + tracks
+                } else listOf(entry.name)
+                val parent = path.substringBeforeLast('/', "")
+                names.forEach { name ->
+                    // Preserve exactly the names the core will request; no path traversal or
+                    // silent filename rewrites inside a game's descriptor.
+                    if (name != safeName(name) || name == "." || name == ".." ||
+                        '/' in name || '\\' in name) {
+                        throw IOException("GDI track path is not a simple filename: $name")
+                    }
+                    val child = if (name == entry.name) path else FilePaths.child(parent, name)
+                    parts += directAccess.open(source, child, "/ambient-games/$key/$name")
+                }
+                if (parts.size == 1) parts.single() else GameDirectContent(
+                    parts.flatMap { it.virtualFiles }, parts.sumOf { it.bytes },
+                )
             } catch (error: Exception) {
+                parts.forEach(GameDirectContent::close)
                 throw GameDirectUnavailableException("Direct ROM access unavailable; choose a local cache fallback", error)
             }
             return@withContext PreparedGame(
@@ -200,6 +224,8 @@ class GameRomPreparer @Inject constructor(
     companion object {
         const val CACHE_LIMIT_BYTES = 4L * 1024 * 1024 * 1024
         const val CACHE_RESERVE_BYTES = 128L * 1024 * 1024
+        /** A GDI disc typically has 2-3 tracks. Avoid dozens of FDs and proxy threads. */
+        const val MAX_DIRECT_GDI_TRACKS = 8
         /** Archives and multi-track CUE/GDI/M3U still require local materialization. */
         val DIRECT_EXTENSIONS = setOf("iso", "rvz", "wbfs", "ciso", "chd", "pbp",
             "cso", "zso", "wua", "wud", "wux", "cdi", "gcm", "tgc")
