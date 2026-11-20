@@ -1,0 +1,40 @@
+diff --git a/src/main/cpp/environment.cpp b/src/main/cpp/environment.cpp
+--- a/src/main/cpp/environment.cpp
++++ b/src/main/cpp/environment.cpp
+@@ -307,12 +307,31 @@
+             *((bool*) data) = true;
+             return true;
+ 
+-        case RETRO_ENVIRONMENT_SET_PIXEL_FORMAT: {
+-            LOGD("Called SET_PIXEL_FORMAT");
+-            pixelFormat = *static_cast<enum retro_pixel_format *>(data);
+-            return true;
+-        }
++        case RETRO_ENVIRONMENT_SET_PIXEL_FORMAT: {
++            LOGD("Called SET_PIXEL_FORMAT");
++            if (data == nullptr) return false;
++            const auto requested = *static_cast<const retro_pixel_format*>(data);
++            // The GLES software upload and screenshot path currently only understand
++            // these three SDR formats. New libretro cores may ask for XRGB2101010
++            // (3), HDR10/PQ (4) or scRGB FP16 (5): do not silently treat 32/64-bit
++            // input as 16-bit SDR pixels, which can corrupt the frame and its cache.
++            if (requested != RETRO_PIXEL_FORMAT_0RGB1555 &&
++                requested != RETRO_PIXEL_FORMAT_XRGB8888 &&
++                requested != RETRO_PIXEL_FORMAT_RGB565) {
++                LOGW("Refusing unsupported libretro source pixel format %d", static_cast<int>(requested));
++                return false; // The core must keep its own supported SDR fallback.
++            }
++            pixelFormat = requested;
++            return true;
++        }
++        // New experimental HDR metadata requests from newer cores: the pinned
++        // libretro-common header does not define them yet. Refuse until actual
++        // source-format support AND a color-managed display presenter exist.
++        // FP16 Vulkan->GLES AHB transport alone is NOT an HDR output contract.
++        case (101 | RETRO_ENVIRONMENT_EXPERIMENTAL): // GET_HDR_METADATA
++        case (102 | RETRO_ENVIRONMENT_EXPERIMENTAL): // GET_DISPLAY_METADATA
++            return false;
+ 
+         case RETRO_ENVIRONMENT_SET_INPUT_DESCRIPTORS:
+             LOGD("Called SET_INPUT_DESCRIPTORS");
+             return false;
