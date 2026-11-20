@@ -38,6 +38,8 @@
     <string name="game_info_hdr_display_capabilities">Display HDR formats: %1$s (capability only)</string>
     <string name="game_info_native_sdr_test">Test Vulkan SDR swapchain (diagnostic)</string>
     <string name="game_info_native_sdr_test_hint">Experimental: blit only to a separate 16px Surface. Normal GLES game picture remains visible. Resume the game to test, then reopen Info to check.</string>
+    <string name="game_info_native_sdr_fullscreen">Native Vulkan SDR fullscreen (experimental)</string>
+    <string name="game_info_native_sdr_fullscreen_hint">Only after the tiny diagnostic presents frames. Raw core picture, no GLES shader/rotation/integer-scaling parity yet. Resume to activate; OSD and controls remain above the Surface. Falls back to GLES on failure.</string>
     <string name="game_info_native_sdr_off">Vulkan SDR diagnostic: off</string>
     <string name="game_info_native_sdr_requested">Vulkan SDR diagnostic: surface requested; play a frame</string>
     <string name="game_info_native_sdr_swapchain">Vulkan SDR diagnostic: swapchain created; no frame confirmed</string>
