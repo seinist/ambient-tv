@@ -735,6 +735,9 @@ private fun YouTubeMedia3Playback(
     val panelNavigation = rememberPlayerPanelNavigation(playback.videoId)
     val panelOpen = panelNavigation.panel != UnifiedPlayerPanel.NONE
     var playing by remember { mutableStateOf(true) }
+    // Back cannot minimize an unsuccessful first launch into an invisible ghost player.
+    // Explicitly paused videos that previously played still retain their session.
+    var playbackStarted by remember(playback.videoId) { mutableStateOf(false) }
     var playbackState by remember { mutableIntStateOf(Player.STATE_BUFFERING) }
     var playWhenReady by remember { mutableStateOf(true) }
     var position by remember { mutableLongStateOf(startPositionMs) }
@@ -842,6 +845,7 @@ private fun YouTubeMedia3Playback(
         var httpRetryCount = 0
         var behindLiveWindowResets = 0
         playing = player.isPlaying
+        if (playing) playbackStarted = true
         playbackState = player.playbackState
         playWhenReady = player.playWhenReady
         tracks = player.currentTracks
@@ -854,7 +858,10 @@ private fun YouTubeMedia3Playback(
                             "youtube media3 applied ${old.positionMs}->${new.positionMs} reason=$reason")
                     }
                 }
-                override fun onIsPlayingChanged(value: Boolean) { playing = value }
+                override fun onIsPlayingChanged(value: Boolean) {
+                    playing = value
+                    if (value) playbackStarted = true
+                }
                 override fun onPlayWhenReadyChanged(ready: Boolean, reason: Int) { playWhenReady = ready }
                 override fun onPlayerError(e: PlaybackException) {
                     // The outgoing listener survives until Compose disposes the screen. A
@@ -1083,7 +1090,7 @@ private fun YouTubeMedia3Playback(
     // Gate on !panelOpen so panel BackHandler is not order-fragile.
     BackHandler(enabled = !panelOpen) {
         if (controls && !handheldUi) controls = false
-        else if (player.playerError == null && com.ambient.tv.ui.player.backLeavesPlaybackRunning(false, handheldUi, backMinimizes())) onBack()
+        else if (playbackStarted && player.playerError == null && com.ambient.tv.ui.player.backLeavesPlaybackRunning(false, handheldUi, backMinimizes())) onBack()
         else BackgroundPlaybackSession.stop()
     }
 
@@ -1319,6 +1326,8 @@ private fun YouTubeVlcPlayback(playback: YouTubePlayback, audioUri: String?, str
     val panelNavigation = rememberPlayerPanelNavigation(playback.videoId)
     val panelOpen = panelNavigation.panel != UnifiedPlayerPanel.NONE
     val snapshot = rememberVlcPlaybackSnapshot(controller, controller.audioSession.performanceHint || controller.audioSession.showFpsOverlay)
+    var playbackStarted by remember(controller) { mutableStateOf(false) }
+    LaunchedEffect(snapshot.isPlaying) { if (snapshot.isPlaying) playbackStarted = true }
     val liveDvrWindow = youtubeLiveDvrWindow(playback.isLive, controller.canSeekNow(), snapshot.durationMs)
     // A failure the VLC controller could not recover from itself: continue in Media3 at the
     // same position instead of leaving a black picture (YouTube always plays there).
@@ -1467,7 +1476,7 @@ private fun YouTubeVlcPlayback(playback: YouTubePlayback, audioUri: String?, str
     // Gate on !panelOpen so panel BackHandler is not order-fragile.
     BackHandler(enabled = !panelOpen) {
         if (controls && !handheldUi) controls = false
-        else if (controller.errorMessage == null && com.ambient.tv.ui.player.backLeavesPlaybackRunning(false, handheldUi, backMinimizes())) onBack()
+        else if (playbackStarted && controller.errorMessage == null && com.ambient.tv.ui.player.backLeavesPlaybackRunning(false, handheldUi, backMinimizes())) onBack()
         else BackgroundPlaybackSession.stop()
     }
     // One remote handling for the engine and, while the focus is in the OSD or panel above it, the host.
@@ -1666,6 +1675,8 @@ private fun YouTubeMpvPlayback(playback: YouTubePlayback, streams: YouTubeStream
     val panelNavigation = rememberPlayerPanelNavigation(playback.videoId)
     val panelOpen = panelNavigation.panel != UnifiedPlayerPanel.NONE
     val snapshot = rememberMpvPlaybackSnapshot(controller, controller.audioSession.performanceHint || controller.audioSession.showFpsOverlay)
+    var playbackStarted by remember(controller) { mutableStateOf(false) }
+    LaunchedEffect(snapshot.isPlaying) { if (snapshot.isPlaying) playbackStarted = true }
     // mpv reports no duration for many live HLS playlists although it can seek inside them.
     // The played clock is then the known right edge: everything behind it stays reachable.
     val liveDvrWindow = youtubeLiveDvrWindow(playback.isLive, controller.canSeekNow(),
@@ -1806,7 +1817,7 @@ private fun YouTubeMpvPlayback(playback: YouTubePlayback, streams: YouTubeStream
     // Gate on !panelOpen so panel BackHandler is not order-fragile.
     BackHandler(enabled = !panelOpen) {
         if (controls && !handheldUi) controls = false
-        else if (controller.errorMessage == null && com.ambient.tv.ui.player.backLeavesPlaybackRunning(false, handheldUi, backMinimizes())) onBack()
+        else if (playbackStarted && controller.errorMessage == null && com.ambient.tv.ui.player.backLeavesPlaybackRunning(false, handheldUi, backMinimizes())) onBack()
         else BackgroundPlaybackSession.stop()
     }
     // One remote handling for the engine and, while the focus is in the OSD or panel above it, the host.
