@@ -1634,11 +1634,15 @@ private fun LiveChannelTile(
     val titleKey = event?.title?.takeIf { programmeArtwork }?.let(::liveTvArtKey)
     // Each composed LazyRow tile observes only its own programme: updates for another title
     // must not recompose the Home row or disturb D-pad focus/scroll position.
-    val tmdbUrl = remember(liveTvTitleArt, titleKey) {
-        liveTvTitleArt.map { artworks -> titleKey?.let(artworks::get) }.distinctUntilChanged()
-    }.collectAsState(initial = titleKey?.let(liveTvTitleArt.value::get)).value
-    LaunchedEffect(titleKey, event?.eventId) {
-        if (titleKey != null && event != null) onArtworkNeeded(event.title, this)
+    val tmdbUrl = if (titleKey != null) {
+        remember(liveTvTitleArt, titleKey) {
+            liveTvTitleArt.map { artworks -> artworks[titleKey] }.distinctUntilChanged()
+        }.collectAsState(initial = liveTvTitleArt.value[titleKey]).value
+    } else null
+    if (titleKey != null) {
+        LaunchedEffect(titleKey, event?.eventId) {
+            event?.let { onArtworkNeeded(it.title, this) }
+        }
     }
     val artwork = if (programmeArtwork) item.bestArtwork(
         tmdbUrl?.let { url -> titleKey?.let { mapOf(it to url) } }.orEmpty()
