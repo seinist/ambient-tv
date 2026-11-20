@@ -72,6 +72,15 @@ internal fun viewTransitionVisual(
     }
 }
 
+internal fun shouldAnimateViewTransition(
+    previousEntryId: Any?,
+    targetEntryId: Any?,
+    previousFullscreen: Boolean,
+    targetFullscreen: Boolean,
+    categorySwitchMustStayAtomic: Boolean,
+): Boolean = previousEntryId != null && targetEntryId != null &&
+    !previousFullscreen && !targetFullscreen && !categorySwitchMustStayAtomic
+
 private data class NavigationStamp(
     val route: String?,
     val entryId: Any?,
@@ -108,9 +117,10 @@ internal fun ViewTransitionHost(
     var backward by remember { mutableStateOf(false) }
 
     if (previous.entryId != entryId || previous.route != route) {
-        val eligible = previous.entryId != null && entryId != null &&
-            !previous.fullscreen && !fullscreen &&
-            !skipTransition(previous.route, route)
+        val eligible = shouldAnimateViewTransition(
+            previous.entryId, entryId, previous.fullscreen, fullscreen,
+            skipTransition(previous.route, route),
+        )
         active = if (eligible) visual else ViewTransitionVisual.None
         backward = backStackDepth < previous.depth
         progress.floatValue = if (active.animate) 0f else 1f
@@ -129,11 +139,8 @@ internal fun ViewTransitionHost(
         }
     }
 
-    if (!active.animate) {
-        content()
-        return
-    }
-
+    // Keep the same Box and NavHost composition slots even in OFF and reduced
+    // modes; changing the wrapper tree would re-create the navigation host.
     val layer = if (active.offsetDp != 0f || active.initialScale != 1f || active.initialAlpha != 1f) {
         Modifier.graphicsLayer {
             val remaining = 1f - progress.floatValue
