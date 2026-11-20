@@ -97,7 +97,10 @@ class DiagnosticLogViewerNavigationTest {
         rule.waitForIdle()
         rule.onNodeWithTag("diagnostics-copy").assertExists()
         rule.onNodeWithTag("diagnostics-detail-back").performClick()
-        rule.waitForIdle()
+        // The shared dialog uses a native 160 ms exit animation.
+        rule.waitUntil(5_000) {
+            runCatching { rule.onNodeWithTag(entry).assertIsFocused() }.isSuccess
+        }
         rule.onNodeWithTag(entry).assertIsFocused()
         rule.onNodeWithTag("diagnostics-close").assertExists()
     }
