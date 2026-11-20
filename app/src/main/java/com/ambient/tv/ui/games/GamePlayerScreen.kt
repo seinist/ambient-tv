@@ -279,6 +279,11 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
     val nativeTransfer = GameVulkanTransferMode.forInput(toneMap)
     val aspect = settings.aspect(system)
     val integerScaling = settings.integerScaling(system)
+    // A raw WSI blit cannot faithfully reproduce the GLES picture filters or
+    // user-selected geometry; do not obscure that output with an unfiltered layer.
+    val nativePictureSupported = GameVulkanPictureCompatibility.rawFullscreenEligible(
+        shader, aspect, integerScaling,
+    )
     val saveStates by model.saveStates.collectAsState()
 
     val chrome = remember { PlayerChromeState() }
@@ -531,6 +536,12 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
     LaunchedEffect(running) {
         retroView.suppressAutoResume = !running
         if (running) retroView.resumeEmulation() else retroView.pauseEmulation()
+    }
+    LaunchedEffect(nativePictureSupported, nativeSdrFullscreenRequested, vulkanSurfaceHost) {
+        if (!nativePictureSupported && nativeSdrFullscreenRequested) {
+            nativeSdrFullscreenRequested = false
+            vulkanSurfaceHost?.setFullscreenRequested(false)
+        }
     }
     LaunchedEffect(nativeSdrFullscreenRequested, running, vulkanSurfaceHost) {
         if (!nativeSdrFullscreenRequested) {
@@ -1249,10 +1260,14 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
                                                 if (!nativeSdrDiagnostic) nativeSdrFullscreenRequested = false
                                             },
                                         )
-                                        val fullscreenAvailable = GameVulkanFullscreenPolicy.canEnable(
-                                            session.vulkan, toneMap, nativeSdrDiagnostic,
-                                            nativeSdrStatus, netplay.active, displayHdr, vulkanSurfaceFormats,
-                                        )
+                                        val fullscreenAvailable = nativePictureSupported &&
+                                            GameVulkanFullscreenPolicy.canEnable(
+                                                session.vulkan, toneMap, nativeSdrDiagnostic,
+                                                nativeSdrStatus, netplay.active, displayHdr, vulkanSurfaceFormats,
+                                            )
+                                        if (!nativePictureSupported) {
+                                            GamePanelText(stringResource(R.string.game_info_native_picture_requires_gles))
+                                        }
                                         RightPanelChoice(
                                             text = stringResource(if (nativeTransfer == GameVulkanTransferMode.SDR)
                                                 R.string.game_info_native_sdr_fullscreen else R.string.game_info_native_hdr_fullscreen),
