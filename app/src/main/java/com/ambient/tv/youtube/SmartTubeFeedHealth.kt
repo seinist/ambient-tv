@@ -2,6 +2,9 @@ package com.ambient.tv.youtube
 
 import com.ambient.tv.notifications.failureHttpCode
 
+/** A locally missing session, distinct from a rejected HTTP/OAuth credential. */
+internal class SmartTubeSignInRequiredException : IllegalStateException("SmartTube sign-in required")
+
 /** These tabs depend on a working Google account. Public topic tabs and search do not. */
 internal fun smartTubeFeedNeedsAccount(key: String): Boolean = key in setOf(
     "home", "subscriptions", "channels", "history", "playlists",
