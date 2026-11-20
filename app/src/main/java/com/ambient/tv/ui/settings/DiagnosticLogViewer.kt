@@ -199,7 +199,12 @@ internal fun DiagnosticLogViewer(
                             LogViewerSeverity.WARNINGS -> R.string.diagnostics_viewer_warnings
                             LogViewerSeverity.INFORMATION -> R.string.diagnostics_viewer_info
                         })
-                        TvChip(text = title, selected = severity == option, onClick = { severity = option })
+                        TvChip(
+                            text = title,
+                            modifier = Modifier.testTag("diagnostics-severity-${option.name}"),
+                            selected = severity == option,
+                            onClick = { severity = option },
+                        )
                     }
                 }
             }
@@ -216,7 +221,12 @@ internal fun DiagnosticLogViewer(
                         )
                     }
                     items(tags, key = { it }) { tag ->
-                        TvChip(text = tag, selected = sourceTag == tag, onClick = { sourceTag = tag })
+                        TvChip(
+                            text = tag,
+                            modifier = Modifier.testTag("diagnostics-source-$tag"),
+                            selected = sourceTag == tag,
+                            onClick = { sourceTag = tag },
+                        )
                     }
                 }
             }
