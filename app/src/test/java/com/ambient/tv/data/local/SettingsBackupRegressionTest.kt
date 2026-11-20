@@ -86,6 +86,29 @@ class SettingsBackupRegressionTest {
         assertFalse(target.playerOsdModeIconVisible)
     }
 
+    @Test fun wakeOnOpenRoundTripsAndMissingOlderOrCurrentFieldsKeepReceiverChoice() {
+        val (source, _, exporter) = store()
+        source.wakeOnOpenSystems = setOf("plex", "tvheadend")
+        val raw = exporter.exportJson()
+        assertTrue(Json.parseToJsonElement(raw).jsonObject.containsKey("wakeOnOpenSystems"))
+        val (target, _, importer) = store()
+        importer.importJson(raw)
+        assertEquals(setOf("plex", "tvheadend"), target.wakeOnOpenSystems)
+
+        // This option did not exist in schema 81, so its default must not clear local choices.
+        importer.importJson("""{"schemaVersion":81,"exportedAtEpochMs":0}""")
+        assertEquals(setOf("plex", "tvheadend"), target.wakeOnOpenSystems)
+        // Even a sparse file that declares schema 82 must not manufacture an off choice.
+        importer.importJson("""{"schemaVersion":82,"exportedAtEpochMs":0}""")
+        assertEquals(setOf("plex", "tvheadend"), target.wakeOnOpenSystems)
+
+        // An explicit empty selection, unlike an omitted field, intentionally clears it.
+        importer.importJson("""{"schemaVersion":82,"exportedAtEpochMs":0,"wakeOnOpenSystems":[]}""")
+        assertTrue(target.wakeOnOpenSystems.isEmpty())
+        importer.importJson("""{"schemaVersion":82,"exportedAtEpochMs":0,"wakeOnOpenSystems":["emby"]}""")
+        assertEquals(setOf("emby"), target.wakeOnOpenSystems)
+    }
+
     @Test fun rewindDefaultsStayOffAndOlderBackupsKeepTheDevicesCurrentChoice() {
         val (preferences, _, importer) = store()
         assertEquals(0, preferences.pauseRewindSeconds)

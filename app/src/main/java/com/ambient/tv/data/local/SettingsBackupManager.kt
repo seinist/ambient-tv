@@ -11,6 +11,7 @@ import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.jsonObject
 import com.ambient.tv.vpn.WireGuardProfile
 import com.ambient.tv.ui.theme.normalizedAccentKey
 
@@ -673,6 +674,10 @@ class SettingsBackupManager @Inject constructor(
      */
     fun importJson(raw: String): SettingsBackup {
         val backup = previewJson(raw)
+        // A backup made before this option existed (or a partial file without it) must not
+        // silently disable an existing on-open WOL choice on the receiving device.
+        val restoreWakeOnOpen = backup.schemaVersion >= 82 &&
+            "wakeOnOpenSystems" in json.parseToJsonElement(raw).jsonObject
         // An imported API ID/hash cannot be silently swapped into a running native session.
         // A new device with no credentials accepts it; a configured target must match.
         backup.monogramApiCredentials?.let { incoming ->
@@ -687,7 +692,7 @@ class SettingsBackupManager @Inject constructor(
         }
         val snapshot = runCatching { exportJson(includeCredentials = true) }.getOrNull()
         try {
-            applyBackup(backup)
+            applyBackup(backup, restoreWakeOnOpen)
         } catch (error: Throwable) {
             if (snapshot != null) {
                 runCatching { applyBackup(previewJson(snapshot)) }.exceptionOrNull()?.let(error::addSuppressed)
@@ -697,7 +702,10 @@ class SettingsBackupManager @Inject constructor(
         return backup
     }
 
-    private fun applyBackup(backup: SettingsBackup) {
+    private fun applyBackup(
+        backup: SettingsBackup,
+        restoreWakeOnOpen: Boolean = backup.schemaVersion >= 82,
+    ) {
         // A source kind from a newer app version is skipped instead of failing the whole import;
         // a malformed source of a known kind still rejects the backup.
         val fileSources = backup.fileSources.filter { it.kind in com.ambient.tv.data.files.FileKinds.ALL }
@@ -1049,7 +1057,7 @@ class SettingsBackupManager @Inject constructor(
         // Deliberate MPV scaler/deband choice since schema 68; older backups restore "not chosen".
         preferences.mpvImageExplicitChoice = backup.schemaVersion >= 68 && backup.mpvImageExplicitChoice
         preferences.wolRetryCount = backup.wolRetryCount
-        preferences.wakeOnOpenSystems = if (backup.schemaVersion >= 82) backup.wakeOnOpenSystems else emptySet()
+        if (restoreWakeOnOpen) preferences.wakeOnOpenSystems = backup.wakeOnOpenSystems
         if (backup.homeRows != null) preferences.homeRows = backup.homeRows
         else preferences.resetHomeRowsToLegacy()
         preferences.systemHomeHiddenRows = backup.systemHomeHiddenRows
