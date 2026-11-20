@@ -54,8 +54,12 @@ class GameStateStore @Inject constructor(private val storage: GameStorage) {
 
     fun entry(game: PreparedGame, kind: GameStateKind): GameStateEntry? = list(game).firstOrNull { it.kind == kind }
 
-    fun read(game: PreparedGame, entry: GameStateEntry): ByteArray? =
-        storage.read(File(storage.statesDirectory(game), "${entry.id}.state"))
+    fun read(game: PreparedGame, entry: GameStateEntry): ByteArray? {
+        val state = File(storage.statesDirectory(game), "${entry.id}.state")
+        // Old states are untrusted local files. Never allocate an arbitrarily large ByteArray.
+        if (!state.isFile || state.length() !in 1..MAX_STATE_BYTES) return null
+        return storage.read(state)
+    }
 
     fun screenshot(game: PreparedGame, entry: GameStateEntry): File? =
         File(storage.statesDirectory(game), "${entry.id}.jpg").takeIf { it.isFile }
@@ -70,6 +74,9 @@ class GameStateStore @Inject constructor(private val storage: GameStorage) {
         now: Long = System.currentTimeMillis(),
         coreId: String = game.system.core.id,
     ): GameStateEntry {
+        require(bytes.isNotEmpty() && bytes.size.toLong() <= MAX_STATE_BYTES) {
+            "Save state exceeds the memory safety limit"
+        }
         val directory = storage.statesDirectory(game)
         val existing = list(game)
         val entry = when (kind) {
@@ -98,6 +105,8 @@ class GameStateStore @Inject constructor(private val storage: GameStorage) {
 
     companion object {
         const val MAX_MANUAL = 50
+        /** Includes native serialization plus the JVM buffer; keep memory use safe on Android TV. */
+        const val MAX_STATE_BYTES = 64L * 1024 * 1024
 
         /** Identifies a core build by size and date of its file. */
         fun coreStamp(core: File): String = "${core.length()}:${core.lastModified()}"

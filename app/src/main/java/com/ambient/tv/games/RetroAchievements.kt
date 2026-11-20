@@ -38,6 +38,19 @@ object RaConsoles {
         "vb" -> 28
         "n64" -> 2
         "psx" -> 12
+        "nds" -> if (extension == "dsi") 78 else 18
+        "n3ds" -> 62
+        "gamecube" -> 16
+        "wii" -> 19
+        "psp" -> 41
+        "dreamcast" -> 40
+        "saturn" -> 39
+        "ps2" -> 21
+        "c64" -> 30
+        "vic20" -> 34
+        "a5200" -> 50
+        "a7800" -> 51
+        "sega32x" -> 10
         else -> null
     }
 }

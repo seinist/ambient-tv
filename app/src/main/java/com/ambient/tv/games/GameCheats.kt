@@ -76,6 +76,18 @@ class GameCheatStore @Inject constructor(private val storage: GameStorage) {
             "vb" -> listOf("Nintendo - Virtual Boy")
             "n64" -> listOf("Nintendo - Nintendo 64")
             "psx" -> listOf("Sony - PlayStation")
+            "nds" -> listOf("Nintendo - Nintendo DS")
+            "n3ds" -> listOf("Nintendo - Nintendo 3DS")
+            "gamecube" -> listOf("Nintendo - GameCube")
+            "wii" -> listOf("Nintendo - Wii")
+            "psp" -> listOf("Sony - PlayStation Portable")
+            "dreamcast" -> listOf("Sega - Dreamcast")
+            "saturn" -> listOf("Sega - Saturn")
+            "c64" -> listOf("Commodore - 64")
+            "vic20" -> listOf("Commodore - VIC-20")
+            "a5200" -> listOf("Atari - 5200")
+            "a7800" -> listOf("Atari - 7800")
+            "sega32x" -> listOf("Sega - 32X")
             else -> emptyList()
         }
 

@@ -39,6 +39,21 @@ class GamesTest {
         assertEquals(GameShader.CRT, state.withShader(gba, null).shader(gba))
     }
 
+    @Test fun hdrToneMappingRequiresVulkanAndDefaultsOff() {
+        val vulkanCore = GameSystems.byId("psx")!!.core("mednafen_psx_hw")!!
+        val softwareCore = GameSystems.byId("snes")!!.core
+        val nonVulkanCore = GameSystems.byId("saturn")!!.core("yabasanshiro")!!
+        val original = GameSettingsState()
+        assertEquals(GameHdrToneMap.OFF, original.hdrToneMap(vulkanCore))
+        val selected = original.withHdrToneMap(vulkanCore, GameHdrToneMap.PQ)
+            .withHdrToneMap(softwareCore, GameHdrToneMap.HLG)
+            .withHdrToneMap(nonVulkanCore, GameHdrToneMap.HLG)
+        assertEquals(GameHdrToneMap.PQ, selected.hdrToneMap(vulkanCore))
+        assertEquals(GameHdrToneMap.OFF, selected.hdrToneMap(softwareCore))
+        assertEquals(GameHdrToneMap.OFF, selected.hdrToneMap(nonVulkanCore))
+        assertEquals(GameHdrToneMap.OFF, selected.withHdrToneMap(vulkanCore, GameHdrToneMap.OFF).hdrToneMap(vulkanCore))
+    }
+
     @Test fun coreOptionsArePerCore() {
         val nes = GameSystems.byId("nes")!!.core
         val gb = GameSystems.byId("gb")!!.core
@@ -111,6 +126,15 @@ class GamesTest {
     @Test fun dreamcastGdiTrackFilesAreDetected() {
         assertEquals(listOf("track01.bin", "track 02.raw"), GameRomPreparer.gdiFiles(
             "2\n1 0 4 2352 track01.bin 0\n2 4500 0 2352 \"track 02.raw\" 0\n"))
+    }
+
+    @Test fun touchscreenSystemsDoNotCaptureEveryTapAsMenuOpen() {
+        listOf("nds", "n3ds", "wii", "wiiu").forEach { id ->
+            assertTrue("Expected touch input for $id", GameSystems.byId(id)!!.pointerInput)
+        }
+        listOf("nes", "snes", "c64", "gamecube", "psp").forEach { id ->
+            assertFalse("Do not steal menu tap for $id", GameSystems.byId(id)!!.pointerInput)
+        }
     }
 
     @Test fun coreFilesAreRecognisedByName() {

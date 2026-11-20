@@ -55,7 +55,32 @@ class GameCoreManager @Inject constructor(
 
     fun remove(core: GameCore) {
         file(core).let { it.setWritable(true); it.delete() }
+        rollbackFile(core).delete()
         infoFile(core).delete()
+        rollbackInfoFile(core).delete()
+    }
+
+    /** The previous working binary is kept until a replacement has been tested. */
+    fun canRollback(core: GameCore): Boolean = rollbackFile(core).isFile
+
+    /**
+     * Recover the previous installed core after a failed library load. One prior build is retained,
+     * without relying on the libretro buildbot preserving its overwritten nightly archives.
+     */
+    fun rollback(core: GameCore): Boolean {
+        val old = rollbackFile(core)
+        val current = file(core)
+        if (!old.isFile) return false
+        if (runCatching { checkElf(old, pageSize()) }.isFailure) return false
+        if (current.exists() && !current.delete()) return false
+        if (!old.renameTo(current)) return false
+        current.setReadOnly()
+        val oldInfo = rollbackInfoFile(core)
+        if (oldInfo.isFile) {
+            runCatching { oldInfo.copyTo(infoFile(core), overwrite = true) }
+            oldInfo.delete()
+        } else infoFile(core).delete()
+        return true
     }
 
     /**
@@ -143,12 +168,37 @@ class GameCoreManager @Inject constructor(
             } else input.use(::copy)
             checkElf(partial, pageSize())
             val target = file(core)
-            target.setWritable(true)
-            target.delete()
-            if (!partial.renameTo(target)) throw IOException("Cannot install ${core.id}")
-            // Android 14 refuses writable files for loaded code; the core never changes in place.
-            target.setReadOnly()
-            infoFile(core).writeText(json.encodeToString(GameCoreInfo.serializer(), GameCoreInfo(origin, System.currentTimeMillis())))
+            val previous = rollbackFile(core)
+            val oldInfo = rollbackInfoFile(core)
+            val info = infoFile(core)
+            val installed = target.isFile
+            // Save one known previous version for rollback BEFORE replacing the core atomically.
+            if (installed) {
+                previous.delete()
+                oldInfo.delete()
+                if (!target.renameTo(previous)) throw IOException("Cannot back up previous ${core.id}")
+                try {
+                    if (info.isFile) info.copyTo(oldInfo, overwrite = true)
+                } catch (error: Exception) {
+                    previous.renameTo(target)
+                    target.setReadOnly()
+                    throw error
+                }
+            }
+            try {
+                if (!partial.renameTo(target)) throw IOException("Cannot install ${core.id}")
+                // Android 14 refuses writable files for loaded code; never reopen the core writable.
+                target.setReadOnly()
+                info.writeText(json.encodeToString(GameCoreInfo.serializer(), GameCoreInfo(origin, System.currentTimeMillis())))
+            } catch (error: Exception) {
+                target.delete()
+                if (installed) {
+                    previous.renameTo(target)
+                    target.setReadOnly()
+                    if (oldInfo.isFile) oldInfo.copyTo(info, overwrite = true)
+                }
+                throw error
+            }
             target
         } finally {
             partial.delete()
@@ -203,6 +253,8 @@ class GameCoreManager @Inject constructor(
 
     private val optionsDirectory: File get() = File(context.noBackupFilesDir, "games/options")
     private fun infoFile(core: GameCore) = File(directory, "${core.id}.json")
+    private fun rollbackFile(core: GameCore) = File(directory, "${core.id}_libretro_android.previous.so")
+    private fun rollbackInfoFile(core: GameCore) = File(directory, "${core.id}.previous.json")
 
     companion object {
         /** [GameCoreInfo.origin] of cores from the libretro buildbot. */

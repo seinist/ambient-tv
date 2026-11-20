@@ -53,9 +53,12 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.Menu
+import androidx.compose.material3.Icon
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.RestartAlt
 import androidx.compose.material.icons.filled.Save
@@ -100,6 +103,7 @@ import com.ambient.tv.games.GameCoreOption
 import com.ambient.tv.games.GameOptionOrigin
 import com.ambient.tv.games.GameSettings
 import com.ambient.tv.games.GameShader
+import com.ambient.tv.games.GameHdrToneMap
 import com.ambient.tv.ui.common.MetaBadge
 import com.ambient.tv.ui.common.PlayerControlBar
 import com.ambient.tv.ui.common.PlayerExitButton
@@ -271,6 +275,7 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
     val core = session.core
     val settings = GameSettings.state
     val shader = settings.shader(system)
+    val toneMap = settings.hdrToneMap(core)
     val aspect = settings.aspect(system)
     val integerScaling = settings.integerScaling(system)
     val saveStates by model.saveStates.collectAsState()
@@ -290,6 +295,8 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
     /** The core has loaded the game (its surface exists); before that nothing may step it. */
     var coreReady by remember { mutableStateOf(false) }
     var loaded by remember { mutableStateOf(false) }
+    /** Core-reported serialized size must be nonzero and safe for this device's heap. */
+    var stateAvailable by remember { mutableStateOf(false) }
     var message by remember { mutableStateOf<String?>(null) }
     var optionsVersion by remember { mutableIntStateOf(0) }
     var fastForward by remember { mutableStateOf(false) }
@@ -336,7 +343,7 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
             variables = (settings.effectiveCoreOptions(core, game.saveKey) + if (session.vulkan) core.vulkanOptions else core.glOptions)
                 .map { (key, value) -> Variable(key, value) }.toTypedArray()
             saveRAMState = session.sram
-            this.shader = shader.config()
+            this.shader = GameHdrToneMapShader.forGame(shader, toneMap, session.vulkan)
             rumbleEventsEnabled = true
             preferLowLatencyAudio = true
             preferVulkan = session.vulkan
@@ -375,7 +382,7 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
     fun persist() {
         if (!loaded || destroyed) return
         runCatching { model.saveSram(game, retroView.serializeSRAM()) }
-        if (core.saveStates) runCatching { model.saveState(session, GameStateKind.AUTO, retroView.serializeState(), snapshot) }
+        if (stateAvailable) runCatching { model.saveState(session, GameStateKind.AUTO, retroView.serializeState(), snapshot) }
     }
 
     /** Ends the core while its thread still runs; nothing reaches it afterwards. */
@@ -423,7 +430,7 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
     /** Loads [entry]; the moment before is kept as "Before loading" so the step can be undone. */
     val loadState: (GameStateEntry) -> Unit = { entry ->
         val bytes = model.readState(game, entry)
-        if (!core.saveStates || achievements.hardcore || netplay.active) {
+        if (!stateAvailable || achievements.hardcore || netplay.active) {
             message = context.getString(
                 if (achievements.hardcore) R.string.game_message_hardcore_blocked else R.string.game_message_netplay_blocked,
             )
@@ -493,6 +500,9 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
             if (event == GLRetroView.GLRetroEvents.SurfaceCreated) coreReady = true
             if (event == GLRetroView.GLRetroEvents.FrameRendered && !loaded) {
                 loaded = true
+                stateAvailable = core.saveStates && runCatching {
+                    retroView.getSerializeSize() in 1L..com.ambient.tv.games.GameStateStore.MAX_STATE_BYTES
+                }.getOrDefault(false)
                 runCatching { retroView.getVariables().mapNotNull { v -> v.key?.let { it to v.description } } }
                     .onSuccess { model.saveDeclaredOptions(core, it) }
                 // Hardcore starts the game fresh: a continued state would not count.
@@ -505,7 +515,7 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
                 }
                 applyCheats(cheats)
                 achievements.start(retroView, game, !game.direct && core.achievements && GameSettings.state.achievements, hardcoreRequested)
-                if (core.rewind && core.saveStates && GameSettings.state.rewind && !hardcoreRequested) withContext(Dispatchers.Default) {
+                if (core.rewind && stateAvailable && GameSettings.state.rewind && !hardcoreRequested) withContext(Dispatchers.Default) {
                     runCatching {
                         if (retroView.getSerializeSize() <= 0) return@runCatching
                         val fps = LibretroDroid.getContentFps().takeIf { it in 1.0..240.0 } ?: 60.0
@@ -520,8 +530,16 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
         retroView.getGLRetroErrors().collect { code ->
             // Vulkan not available after all: once more with OpenGL ES.
             if (session.vulkan && !loaded && model.retryWithoutVulkan()) return@collect
-            // A core that does not load is removed, so trying again loads it fresh.
-            if (code == GLRetroView.ERROR_LOAD_LIBRARY) model.removeCore(core)
+            // A broken core update is restored from the previous installed version, with
+            // its own state stamp. Only if no rollback exists is the bad library removed.
+            if (code == GLRetroView.ERROR_LOAD_LIBRARY) {
+                if (model.rollbackCore(core)) {
+                    destroy()
+                    model.restart()
+                    return@collect
+                }
+                model.removeCore(core)
+            }
             model.failed(context.getString(R.string.game_error_code, code))
         }
     }
@@ -537,7 +555,7 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
                 ({ handler.removeCallbacks(runnable) })
             },
             onMenu = { latestOpenMenu() },
-            onRewind = { held -> rewinding = held && core.rewind && core.saveStates },
+            onRewind = { held -> rewinding = held && core.rewind && stateAvailable },
             onFastForward = { if (!netplay.active) fastForward = !fastForward },
         ).also(inputRef::set)
     }
@@ -651,8 +669,30 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
             AndroidView(
                 factory = { retroView },
                 modifier = Modifier.fillMaxSize()
-                    .then(if (handheld) Modifier.clickable { if (!menuOpen) openMenu() } else Modifier),
+                    // Direct touch must reach GLRetroView for DS/3DS/Wii emulated pointers.
+                    // Other games keep the existing tap-to-open-menu handheld behavior.
+                    .then(if (handheld && !system.pointerInput)
+                        Modifier.clickable { if (!menuOpen) openMenu() } else Modifier),
             )
+            // Keep a reachable menu on touch-driven systems. Android Back still opens it.
+            if (handheld && system.pointerInput && !menuOpen) {
+                Box(
+                    modifier = Modifier.align(Alignment.TopStart)
+                        .padding(start = 12.dp, top = 12.dp)
+                        .size(44.dp)
+                        .clip(RoundedCornerShape(22.dp))
+                        .background(Color.Black.copy(alpha = 0.58f))
+                        .clickable { openMenu() },
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(
+                        Icons.Filled.Menu,
+                        contentDescription = stringResource(R.string.game_controls_menu),
+                        tint = Color.White,
+                        modifier = Modifier.size(22.dp),
+                    )
+                }
+            }
             GameAchievementBanner(achievements.banner, Modifier.align(Alignment.TopCenter).padding(top = 32.dp))
             if (netplay.waiting && !menuOpen) GameOverlayNote(
                 stringResource(R.string.game_netplay_waiting),
@@ -710,15 +750,15 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
                                 runCatching { model.saveState(session, GameStateKind.MANUAL, retroView.serializeState(), snapshot) }
                                     .onSuccess { message = context.getString(R.string.game_message_saved, stateTitle(it)) }
                                     .onFailure { message = context.getString(R.string.game_message_save_failed) }
-                            }, enabled = loaded && core.saveStates)
+                            }, enabled = loaded && stateAvailable)
                             PlayerIconButton(Icons.Filled.SettingsBackupRestore, stringResource(R.string.game_quick_load), {
                                 model.latestManualState(game)?.let(loadState)
-                            }, enabled = loaded && core.saveStates && !achievements.hardcore && !netplay.active && saveStates.any { it.kind == GameStateKind.MANUAL })
+                            }, enabled = loaded && stateAvailable && !achievements.hardcore && !netplay.active && saveStates.any { it.kind == GameStateKind.MANUAL })
                             PlayerIconButton(Icons.Filled.Bookmarks, stringResource(R.string.game_states), {
                                 osd.interact()
                                 statesOpen = !statesOpen
                             }, modifier = Modifier.focusRequester(statesRequester),
-                                selected = statesOpen, enabled = loaded && core.saveStates && saveStates.isNotEmpty())
+                                selected = statesOpen, enabled = loaded && stateAvailable && saveStates.isNotEmpty())
                             PlayerIconButton(Icons.Filled.RestartAlt, stringResource(R.string.game_reset), {
                                 runCatching { retroView.reset() }
                                 runCatching { retroView.clearRewindBuffer() }
@@ -739,7 +779,7 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
                             }, selected = panel == GamePanel.CHEATS, enabled = loaded && core.cheats && !achievements.hardcore)
                             PlayerIconButton(Icons.Filled.Groups, stringResource(R.string.game_panel_netplay), {
                                 panel = GamePanel.NETPLAY
-                            }, selected = panel == GamePanel.NETPLAY, enabled = loaded && core.netplay && !game.direct)
+                            }, selected = panel == GamePanel.NETPLAY, enabled = loaded && stateAvailable && core.netplay && !game.direct)
                             if (discCount > 1) PlayerIconButton(Icons.Filled.Album, stringResource(R.string.game_panel_disc), {
                                 panel = GamePanel.DISC
                             }, selected = panel == GamePanel.DISC, enabled = !netplay.active)
@@ -844,6 +884,9 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
                             }
                         }
                         open == GamePanel.PICTURE -> {
+                            if (session.vulkan && toneMap != GameHdrToneMap.OFF) {
+                                GamePanelText(stringResource(R.string.game_picture_hdr_filter_note))
+                            }
                             GamePanelText(stringResource(R.string.game_picture_filter))
                             GameShader.entries.forEach { choice ->
                                 RightPanelChoice(
@@ -851,7 +894,7 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
                                     subtitle = stringResource(choice.hintRes),
                                     selected = choice == shader,
                                     onClick = {
-                                        retroView.shader = choice.config()
+                                        retroView.shader = GameHdrToneMapShader.forGame(choice, toneMap, session.vulkan)
                                         GameSettings.update { it.withShader(system, choice) }
                                     },
                                 )
@@ -876,6 +919,21 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
                                     GameSettings.update { it.withIntegerScaling(system, !integerScaling) }
                                 },
                             )
+                            if (session.vulkan && core.hardware && core.supportsVulkan) {
+                                GamePanelText(stringResource(R.string.game_picture_hdr))
+                                GameHdrToneMap.entries.forEach { choice ->
+                                    RightPanelChoice(
+                                        text = stringResource(choice.titleRes),
+                                        subtitle = if (choice == GameHdrToneMap.OFF) null
+                                            else stringResource(R.string.game_picture_hdr_hint),
+                                        selected = toneMap == choice,
+                                        onClick = {
+                                            retroView.shader = GameHdrToneMapShader.forGame(shader, choice, session.vulkan)
+                                            GameSettings.update { it.withHdrToneMap(core, choice) }
+                                        },
+                                    )
+                                }
+                            }
                             if (core.hardware && core.supportsVulkan && !core.requiresVulkan) {
                                 GamePanelText(stringResource(R.string.game_picture_graphics))
                                 listOf(false, true).forEach { vulkan ->
