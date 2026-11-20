@@ -35,15 +35,15 @@ class InteractionStyleTest {
     }
 
     @Test fun focusOutlineSoftensBalancedAndMaximumProfiles() {
-        assertEquals(200, focusBorderFadeDurationMs(focused = true, reducedEffects = false))
-        assertEquals(170, focusBorderFadeDurationMs(focused = false, reducedEffects = false))
+        assertEquals(230, focusBorderFadeDurationMs(focused = true, reducedEffects = false))
+        assertEquals(210, focusBorderFadeDurationMs(focused = false, reducedEffects = false))
     }
 
     @Test fun controlFocusFadesAreSmoothAndExitQuickerForBothButtonTypes() {
-        assertEquals(200, controlFocusFadeDurationMs(focused = true, reducedEffects = false))
-        assertEquals(170, controlFocusFadeDurationMs(focused = false, reducedEffects = false))
-        assertEquals(190, controlFocusFadeDurationMs(focused = true, reducedEffects = false, osd = true))
-        assertEquals(160, controlFocusFadeDurationMs(focused = false, reducedEffects = false, osd = true))
+        assertEquals(230, controlFocusFadeDurationMs(focused = true, reducedEffects = false))
+        assertEquals(210, controlFocusFadeDurationMs(focused = false, reducedEffects = false))
+        assertEquals(210, controlFocusFadeDurationMs(focused = true, reducedEffects = false, osd = true))
+        assertEquals(190, controlFocusFadeDurationMs(focused = false, reducedEffects = false, osd = true))
     }
 
     @Test fun reducedEffectsKeepShortDrawOnlyFadesForAllButtonTypes() {
