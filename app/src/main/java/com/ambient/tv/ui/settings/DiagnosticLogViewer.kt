@@ -2,10 +2,8 @@ package com.ambient.tv.ui.settings
 
 import android.widget.Toast
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -35,6 +33,7 @@ import com.ambient.tv.ui.common.AppDialog
 import com.ambient.tv.ui.common.TvActionButton
 import com.ambient.tv.ui.common.TvChip
 import com.ambient.tv.ui.common.TvTextField
+import com.ambient.tv.ui.common.TvLazyColumn
 import com.ambient.tv.ui.mobile.LocalHandheldUi
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -194,7 +193,7 @@ internal fun DiagnosticLogViewer(
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
-            else -> LazyColumn(
+            else -> TvLazyColumn(
                 modifier = Modifier.fillMaxSize(),
                 state = scroll,
                 verticalArrangement = Arrangement.spacedBy(6.dp),
