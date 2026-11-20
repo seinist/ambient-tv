@@ -1711,7 +1711,17 @@ private fun LiveChannelTile(
                         staggerUncached = true, prioritizeUncached = focused,
                     )
                 }
-            } else if (backdrop == null) {
+            } else if (backdrop != null) {
+                Text(
+                    item.channel.name,
+                    style = MaterialTheme.typography.labelSmall,
+                    maxLines = 1,
+                    modifier = Modifier.align(Alignment.TopStart).padding(8.dp)
+                        .background(scheme.background.copy(alpha = 0.66f),
+                            androidx.compose.foundation.shape.RoundedCornerShape(6.dp))
+                        .padding(horizontal = 8.dp, vertical = 5.dp),
+                )
+            } else {
                 Text(item.channel.name, style = MaterialTheme.typography.titleMedium,
                     maxLines = 1, modifier = Modifier.align(Alignment.Center))
             }

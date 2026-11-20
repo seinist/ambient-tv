@@ -470,13 +470,13 @@ fun ArtworkImage(
     staggerUncached: Boolean = false,
     /** Focused browse cards skip the background admission wave once scrolling is quiet. */
     prioritizeUncached: Boolean = false,
-    /** Coil fades the real bitmap in only after load; opt in for changing Live TV backdrops. */
-    crossfadeOnLoad: Boolean = false,
     /**
      * Full-screen art (detail backdrops) loads through the backdrop loader: one such bitmap
      * weighs as much as dozens of cards and must not push them out of the card cache.
      */
     backdrop: Boolean = focusCrop,
+    /** Coil fades the real bitmap in only after load; opt in for changing Live TV backdrops. */
+    crossfadeOnLoad: Boolean = false,
 ) {
     val context = LocalContext.current
     val candidates = remember(model, fallbackModels) {

@@ -87,8 +87,6 @@ data class HomeHeroContent(
     val artworkIsLogo: Boolean = false,
     /** Transparent title/channel logo for the right-hand artwork slot. */
     val titleLogoUrl: String? = null,
-    /** Keep TVHeadend logo auth separate when the backdrop is hosted externally by TMDB. */
-    val titleLogoHeaders: Map<String, String>? = null,
     val providerLabel: String? = null,
     val metadata: List<String> = emptyList(),
     val imageHeaders: Map<String, String> = emptyMap(),
@@ -98,6 +96,8 @@ data class HomeHeroContent(
     /** Summary for content without a [mediaItem], such as a live programme. */
     val summary: String? = null,
     val live: HomeHeroLive? = null,
+    /** Keep TVHeadend logo auth separate when the backdrop is hosted externally by TMDB. */
+    val titleLogoHeaders: Map<String, String>? = null,
 )
 
 /** Airing window of a live programme, for the hero's LIVE marker and remaining time. */
