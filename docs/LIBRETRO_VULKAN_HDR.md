@@ -264,14 +264,17 @@ References:
   from the requested output. The guard starts at unknown, resets on shutdown
   and retires an existing swapchain when the contract changes. The Kotlin
   diagnostic gate and the native gate are independent checks.
-- All five existing picture selections are now honored in the GLES
-  PQ/HLG→SDR shader rather than being silently discarded. Sharp and Pixel
-  retain crisp sampling; Smooth uses linear sampling; CRT and LCD apply
-  low-cost output-space mask/scanline approximations **after** color
-  conversion. These approximations are **not pixel-identical** to the
-  LibretroDroid built-in CUT3/CRT/LCD shaders. The SDR/GLES built-ins remain
-  unchanged. Shader source/selection is covered by JVM tests; actual GPU
-  image accuracy still needs hardware evaluation.
+- **Original GLES picture filters after HDR tonemapping:** native patch
+  `0016-preserve-native-gles-picture-filter-after-hdr-conversion.patch`
+  adds a single HDR-to-SDR prepass to the unmodified LibretroDroid built-in
+  preset chain, including the real CRT, LCD, Sharp and **three-pass CUT3**
+  implementations. `ShaderConfig.PrependPass` passes the chosen built-in
+  filter and the color-conversion pass separately through JNI; the shader
+  manager refuses malformed/non-built-in prefix chains. The user-selected
+  filter stays active instead of being silently bypassed or approximated.
+  This is GLES presentation over the Vulkan→AHB bridge, **not native
+  Vulkan shader execution**. Pixel-accurate output and performance still
+  require physical GPU testing.
 - The native Vulkan WSI full-screen diagnostic remains a **raw blit**.
   `GameVulkanPictureCompatibility` only permits the experimental fullscreen
   preview for Sharp/core-aspect/no integer scaling. Selecting a different
