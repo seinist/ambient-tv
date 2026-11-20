@@ -955,6 +955,7 @@ Developers adding a preference must extend the backup mapping or document its lo
 Under **App & data › Diagnostics** (error log for release builds):
 
 - **Write error log** (off by default): app warnings and errors, failed server calls (HTTP ≥ 400 and transport errors with method, host, path, duration — no query string), Media3/VLC/MPV playback errors, error notices and crashes. Rotating files in app storage, at most about 3 MB.
+- **View log:** In-app log viewer on TV and phones, using the existing rotating diagnostic files. Shows up to the latest 2,000 entries with text search, severity filters, source tags, timestamp/thread details, and copy. While open it checks for file changes at most every 2.5 seconds; file IO/parsing run off the UI thread. Browsing an older entry freezes the list until the user refreshes. Past entries remain readable when logging is disabled; logs are device-local and excluded from backups and TV sync.
 - **Download log (ZIP):** `device.txt` (app/Android version, device), `app.log` and `logcat.txt` (the app's own system log lines, including player output). Without a document picker (common on Android TV) the ZIP is saved to `Android/data/<app>/files/Download/`.
 - Tokens, passwords, API keys, Authorization headers, cookies and `user:password@` in URLs are removed before writing; server addresses and paths stay for troubleshooting. **Clear log** deletes all files.
 
