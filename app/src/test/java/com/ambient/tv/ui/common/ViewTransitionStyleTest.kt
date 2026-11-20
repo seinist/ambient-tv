@@ -22,6 +22,9 @@ class ViewTransitionStyleTest {
         assertTrue(cinematic.durationMs in 120..300)
         assertEquals(0f, fade.offsetDp, 0f)
         assertTrue(slide.offsetDp in 2f..12f)
+        // Fade is supplied by the veil, not by per-child alpha modulation.
+        assertEquals(1f, slide.initialAlpha, 0f)
+        assertTrue(slide.initialScrim in .1f..0.3f)
         assertEquals(1f, fade.initialScale, 0f)
         assertTrue(cinematic.initialScale in .98f..1f)
         assertTrue(cinematic.initialScrim > fade.initialScrim)
@@ -38,11 +41,25 @@ class ViewTransitionStyleTest {
         }
     }
 
+    @Test fun lowEndHardwareAvoidsWholeScreenScaleAndTranslationEvenWhenManuallyEnabled() {
+        for (style in listOf(ViewTransitionStyle.MICRO_SLIDE, ViewTransitionStyle.CINEMATIC)) {
+            val slowTv = viewTransitionVisual(style, reducedEffects = false,
+                backgroundVideoVisible = false, lowEndDevice = true)
+            assertTrue(slowTv.animate)
+            assertEquals(0f, slowTv.offsetDp, 0f)
+            assertEquals(1f, slowTv.initialScale, 0f)
+            assertEquals(1f, slowTv.initialAlpha, 0f)
+            assertTrue(slowTv.durationMs <= 160)
+        }
+    }
+
     @Test fun startupFullscreenPlayersAndRadioAtomicSwitchesNeverAnimate() {
         assertFalse(shouldAnimateViewTransition(null, "b", false, false, false))
         assertFalse(shouldAnimateViewTransition("a", "b", true, false, false))
         assertFalse(shouldAnimateViewTransition("a", "b", false, true, false))
         assertFalse(shouldAnimateViewTransition("a", "b", false, false, true))
         assertTrue(shouldAnimateViewTransition("a", "b", false, false, false))
+        assertFalse(shouldAnimateViewTransition("a", "b", false, false, false,
+            rapidNavigation = true))
     }
 }
