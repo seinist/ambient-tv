@@ -10,7 +10,7 @@ diff --git a/src/main/cpp/vfs/vfs.cpp b/src/main/cpp/vfs/vfs.cpp
  
  #include "vfs/vfs_implementation.h"
  #include "../log.h"
-@@ -100,7 +101,9 @@ int VFS::stat(const char *path, int32_t *size) {
+@@ -100,7 +101,10 @@ int VFS::stat(const char *path, int32_t *size) {
          struct ::stat fileStat {};
          if (::fstat(virtualFile->getFD(), &fileStat) == 0) {
              if (size != nullptr) {
