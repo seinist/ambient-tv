@@ -22,7 +22,14 @@ internal object GameHdrDisplayProbe {
                 windowManager?.defaultDisplay
             }
             val hdr = display?.hdrCapabilities ?: return GameHdrDisplayCapabilities()
-            val types = hdr.supportedHdrTypes.toSet()
+            // Since Android 14, the *current display mode* can advertise a narrower
+            // set than the panel as a whole (e.g. 4K/120 Hz with HDR disabled).
+            @Suppress("DEPRECATION")
+            val types = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+                display.mode.supportedHdrTypes.toSet()
+            } else {
+                hdr.supportedHdrTypes.toSet()
+            }
 
             GameHdrDisplayCapabilities(
                 hdr10 = Display.HdrCapabilities.HDR_TYPE_HDR10 in types,
