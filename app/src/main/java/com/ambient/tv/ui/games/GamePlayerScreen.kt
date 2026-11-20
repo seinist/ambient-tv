@@ -441,7 +441,7 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
     }
     LaunchedEffect(fastForward) { retroView.frameSpeed = if (fastForward) 2 else 1 }
     LaunchedEffect(rewinding, running) {
-        retroView.isRewinding = rewinding && running && !achievements.hardcore && !netplay.active
+        retroView.isRewinding = core.rewind && rewinding && running && !achievements.hardcore && !netplay.active
     }
 
     DisposableEffect(activityLifecycle) {
@@ -498,7 +498,7 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
                 }
                 applyCheats(cheats)
                 achievements.start(retroView, game, core.achievements && GameSettings.state.achievements, hardcoreRequested)
-                if (core.saveStates && GameSettings.state.rewind && !hardcoreRequested) withContext(Dispatchers.Default) {
+                if (core.rewind && core.saveStates && GameSettings.state.rewind && !hardcoreRequested) withContext(Dispatchers.Default) {
                     runCatching {
                         if (retroView.getSerializeSize() <= 0) return@runCatching
                         val fps = LibretroDroid.getContentFps().takeIf { it in 1.0..240.0 } ?: 60.0
@@ -530,7 +530,7 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
                 ({ handler.removeCallbacks(runnable) })
             },
             onMenu = { latestOpenMenu() },
-            onRewind = { held -> rewinding = held && core.saveStates },
+            onRewind = { held -> rewinding = held && core.rewind && core.saveStates },
             onFastForward = { if (!netplay.active) fastForward = !fastForward },
         ).also(inputRef::set)
     }
