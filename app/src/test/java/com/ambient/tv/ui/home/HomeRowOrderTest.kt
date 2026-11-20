@@ -16,6 +16,18 @@ class HomeRowOrderTest {
             orderedHomeRowKeys(definitions, listOf("plex.continue", "plex.recentlyAdded", "plex.recentlyReleased"), listOf(shortcut), true, true))
     }
 
+    @Test fun aSharedOfflineHostDoesNotMoveLiveTvBeforePlexAndJellyfin() {
+        val definitions = listOf(row("plex", "continue"), row("jellyfin", "recent"),
+            row("tvheadend", "live"))
+        val ids = listOf("jellyfin.recentlyAdded")
+        val keys = orderedHomeRowKeys(definitions, ids, emptyList(), hasLive = true,
+            hasRecent = false, offlineSystems = listOf("plex"))
+        assertEquals(listOf("offline:plex", "jellyfin.recentlyAdded", "live-tv"), keys)
+        assertEquals(keys, revealHomeRowsInOrder(definitions, keys,
+            homeRowKeySources(ids, emptyList(), true, false, offlineSystems = listOf("plex"),
+                definitions = definitions), pendingSystems = emptySet()))
+    }
+
     @Test fun emptyRecentRowDoesNotReserveAFocusDestination() {
         assertEquals(listOf("plex.continue"), orderedHomeRowKeys(listOf(row("tvheadend", "recent_channels")), listOf("plex.continue"), emptyList(), false, false))
     }

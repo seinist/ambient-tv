@@ -22,9 +22,10 @@ internal fun homeRowSource(rowId: String): String {
 internal fun orderedHomeRowKeys(
     definitions: List<HomeRowDefinition>, contentIds: List<String>, shortcuts: List<HomeRowDefinition>,
     hasLive: Boolean, hasRecent: Boolean, tvRowSources: Map<String, String> = emptyMap(),
+    offlineSystems: List<String> = emptyList(),
 ): List<String> {
     val order = definitions.filter { it.enabled }.distinctBy { it.system to it.contentKey }.withIndex().associate { "${it.value.system}.${it.value.contentKey}" to it.index }
-    val groups = homeRowKeySources(contentIds, shortcuts, hasLive, hasRecent, tvRowSources)
+    val groups = homeRowKeySources(contentIds, shortcuts, hasLive, hasRecent, tvRowSources, offlineSystems, definitions)
     return groups.keys.sortedBy { order[groups[it]] ?: Int.MAX_VALUE }
 }
 
@@ -55,10 +56,17 @@ internal fun revealHomeRowsInOrder(
 internal fun homeRowKeySources(
     contentIds: List<String>, shortcuts: List<HomeRowDefinition>,
     hasLive: Boolean, hasRecent: Boolean, tvRowSources: Map<String, String> = emptyMap(),
+    offlineSystems: List<String> = emptyList(), definitions: List<HomeRowDefinition> = emptyList(),
 ): Map<String, String> = buildMap {
     if (hasLive) put("live-tv", "tvheadend.live")
     if (hasRecent) put("recent-tv", "tvheadend.recent_channels")
     putAll(tvRowSources)
     shortcuts.forEach { put("shortcut:${it.id}", "${it.system}.${it.contentKey}") }
     contentIds.forEach { id -> put(id, homeRowSource(id)) }
+    // Reconnect rows participate in editor order instead of being appended after Live TV.
+    offlineSystems.forEach { system ->
+        definitions.firstOrNull { it.enabled && it.system == system }?.let { first ->
+            put(HOME_OFFLINE_ROW_PREFIX + system, "$system.${first.contentKey}")
+        }
+    }
 }
