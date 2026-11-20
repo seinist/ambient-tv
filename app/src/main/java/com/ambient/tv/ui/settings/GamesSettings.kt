@@ -288,6 +288,16 @@ private fun GamesCores() {
                                 }
                             },
                         )
+                        if (info != null && remember(version) { cores.canRollback(core) }) TvActionButton(
+                            text = stringResource(R.string.games_core_rollback),
+                            enabled = !downloading,
+                            onClick = {
+                                if (!cores.rollback(core)) {
+                                    failed = context.getString(R.string.games_core_rollback_failed, core.name)
+                                }
+                                version++
+                            },
+                        )
                         if (info != null) TvActionButton(
                             text = stringResource(R.string.game_core_remove),
                             enabled = !downloading,
