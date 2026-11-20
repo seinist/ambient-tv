@@ -42,7 +42,6 @@ object RaConsoles {
         "n3ds" -> 62
         "gamecube" -> 16
         "wii" -> 19
-        "wiiu" -> 20
         "psp" -> 41
         "dreamcast" -> 40
         "saturn" -> 39
