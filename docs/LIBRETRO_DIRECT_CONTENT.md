@@ -11,8 +11,8 @@ also make a game appear to hang during the initial download.
 
 ## Implementation
 
-* **Direct single-disc path** for a selected core whose libretro core-info
-  declares \`needs_fullpath=true\`, and for an original seekable unarchived file.
+* **Direct disc path** for a selected core whose libretro core-info
+  declares \`needs_fullpath=true\`, and for an original seekable unarchived file (including Dreamcast GDI with up to eight tracks).
   Initial candidates: Dolphin, PPSSPP, Cemu, ARMSX2, Flycast.
 * **Local/USB SAF:** reuse the provider's read-only
   \`ContentResolver.openFileDescriptor("r")\`, checking it supports \`lseek\`.
@@ -25,6 +25,8 @@ also make a game appear to hang during the initial download.
   \`GLRetroViewData.gameVirtualFiles\` / \`VirtualFile\` and implements a
   libretro VFS mapping file descriptors to paths. The native core must use this
   interface to benefit from direct reads; some cores use native path I/O instead.
+* **GDI multi-track:** original descriptor plus each referenced track are opened as read-only
+  virtual descriptors. The core sees their real filenames in the same virtual folder.
 * **File type detection:** Wii/GameCube ISO magic is read from only 32 bytes
   of the source. Shared extensions fall back to their known parent-folder name.
 * **Fallback:** when direct access fails, the Game Player error page can
@@ -41,8 +43,9 @@ also make a game appear to hang during the initial download.
   calling \`fopen\` on its synthetic VFS path can reject the mount; use the
   explicit cache fallback if space permits. Validate each core on a real Android
   TV before treating it as fully supported.
-* M3U/CUE/GDI images with sidecar files still use the original local cache;
-  streaming **all** tracks via multiple named virtual descriptors is separate.
+* Multi-file Dreamcast GDI is mounted using named virtual descriptors for each track;
+  a disc with more than eight tracks or unsafe track names still uses the original local
+  cache. Other M3U/CUE multi-disc and multi-track games still use the local cache.
 * RetroAchievements hashing and LAN netplay identity currently read a local
   file. They are not attempted for a direct-only session until incremental
   hashing without downloading the full ROM has been implemented.
