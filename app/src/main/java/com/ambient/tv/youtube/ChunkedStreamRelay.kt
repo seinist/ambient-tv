@@ -59,7 +59,11 @@ class ChunkedStreamRelay(
      * A registered stream. [url] starts as the registered URL and is replaced when [refresh]
      * supplies a new one for an expired link; the player keeps its relay URL throughout.
      */
-    private class Entry(val key: Key, val refresh: ((String) -> String?)?) {
+    private class Entry(
+        val key: Key,
+        val refresh: ((String) -> String?)?,
+        val onTerminalHttpStatus: (Int) -> Unit,
+    ) {
         @Volatile var url: String = key.url
         val headers: Map<String, String> get() = key.headers
         private var refreshedAtNs: Long? = null
@@ -92,13 +96,17 @@ class ChunkedStreamRelay(
      * upstream rejects the current one as expired (403/410).
      */
     @Synchronized
-    fun register(url: String, headers: Map<String, String>, refresh: ((String) -> String?)? = null): String {
+    fun register(
+        url: String, headers: Map<String, String>,
+        refresh: ((String) -> String?)? = null,
+        onTerminalHttpStatus: (Int) -> Unit = {},
+    ): String {
         val server = listener?.takeUnless { it.isClosed } ?: start()
         val key = Key(url, headers)
         val token = tokens[key] ?: (UUID.randomUUID().toString().replace("-", "") +
             UUID.randomUUID().toString().replace("-", "")).also { token ->
             tokens[key] = token
-            entries[token] = Entry(key, refresh)
+            entries[token] = Entry(key, refresh, onTerminalHttpStatus)
             while (entries.size > maxEntries) {
                 val eldest = entries.keys.first()
                 entries.remove(eldest)?.let { tokens.remove(it.key) }
@@ -242,6 +250,7 @@ class ChunkedStreamRelay(
                 if (response.code != 206) {
                     onUpstreamStatus(response.code)
                     if (recoverable(response) && retry()) return Step.CONTINUE
+                    entry.onTerminalHttpStatus(response.code)
                     status(output, response.code, response.message.ifBlank { "Upstream Error" })
                     return Step.STOP
                 }
@@ -271,6 +280,7 @@ class ChunkedStreamRelay(
                     onUpstreamStatus(response.code)
                     // A 5xx is retried; an expired link (403/410) is renewed, then resumed.
                     if (recoverable(response) && retry()) return Step.CONTINUE
+                    entry.onTerminalHttpStatus(response.code)
                     flush()
                     return Step.STOP
                 }
