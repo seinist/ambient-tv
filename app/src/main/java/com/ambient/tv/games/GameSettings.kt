@@ -20,6 +20,22 @@ enum class GameShader(val key: String, @StringRes val titleRes: Int, @StringRes 
     }
 }
 
+/**
+ * Manual input transfer conversion for the GLES compositor of a Vulkan libretro core.
+ * This is HDR-to-SDR only. Most cores output SDR; never enable automatically or call it
+ * native HDR output. Vulkan-to-GLES AHardwareBuffer transport is currently 8-bit RGBA.
+ */
+enum class GameHdrToneMap(val key: String, @StringRes val titleRes: Int) {
+    OFF("off", R.string.game_picture_hdr_off),
+    PQ("pq", R.string.game_picture_hdr_pq),
+    HLG("hlg", R.string.game_picture_hdr_hlg),
+    ;
+
+    companion object {
+        fun fromKey(key: String?): GameHdrToneMap? = entries.firstOrNull { it.key == key }
+    }
+}
+
 /** Picture shape. [ratio] null keeps the shape the core reports. */
 enum class GameAspect(val key: String, val ratio: Float?, @StringRes val titleRes: Int) {
     CORE("core", null, R.string.game_aspect_core),
@@ -74,6 +90,16 @@ data class GameSettingsState(val values: Map<String, String> = emptyMap()) {
     fun withVulkan(core: GameCore, on: Boolean): GameSettingsState =
         if (!core.supportsVulkan || core.requiresVulkan) this
         else set("vulkan.${core.id}", "1".takeIf { on })
+
+    /** Manual PQ/HLG input decoding is meaningful only for a Vulkan hardware core. */
+    fun hdrToneMap(core: GameCore): GameHdrToneMap =
+        if (core.hardware && core.supportsVulkan)
+            GameHdrToneMap.fromKey(values["hdr.${core.id}"]) ?: GameHdrToneMap.OFF
+        else GameHdrToneMap.OFF
+
+    fun withHdrToneMap(core: GameCore, mode: GameHdrToneMap): GameSettingsState =
+        if (!core.hardware || !core.supportsVulkan) this
+        else set("hdr.${core.id}", mode.key.takeIf { mode != GameHdrToneMap.OFF })
 
     /** RetroAchievements while playing (needs an account); on unless switched off. */
     val achievements: Boolean get() = values["achievements"] != "0"
