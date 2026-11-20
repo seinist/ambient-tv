@@ -29,6 +29,7 @@ internal class GameVulkanSurfaceHost(
     private val onFormats: (GameVulkanSurfaceFormats) -> Unit,
     private val onNativeStatus: (GameVulkanSdrStatus) -> Unit,
     private val onFullscreenLost: () -> Unit,
+    private val onDiagnosticLost: () -> Unit,
 ) : FrameLayout(context) {
     private val main = Handler(Looper.getMainLooper())
     @Volatile private var activeSurface: Surface? = null
@@ -98,6 +99,7 @@ internal class GameVulkanSurfaceHost(
         if (!hdrStillSupported && nativeSdrDiagnostic) {
             setNativeSdrDiagnostic(false)
             onFullscreenLost()
+            onDiagnosticLost()
         }
         tryProbe() // Re-query capabilities from the current Android display mode.
     }
