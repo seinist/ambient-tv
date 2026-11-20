@@ -854,11 +854,11 @@ fun TvChip(
     enabled: Boolean = true,
     icon: ImageVector? = null,
     loading: Boolean = false,
-    /** For Reload, automatic entry/cache work must not animate the action icon. */
-    loadingOnlyAfterClick: Boolean = false,
     iconOnly: Boolean = false,
     leadingContent: (@Composable () -> Unit)? = null,
     textMaxLines: Int = Int.MAX_VALUE,
+    /** For Reload, automatic entry/cache work must not animate the action icon. */
+    loadingOnlyAfterClick: Boolean = false,
     onClick: () -> Unit,
 ) {
     var clickStartedLoad by remember { mutableStateOf(false) }
