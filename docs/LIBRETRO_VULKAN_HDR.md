@@ -294,3 +294,39 @@ Release status: Draft. Software unit/native builds must be green at the
 latest PR HEAD. Even then, **real Shield, Philips and Android phone tests**
 for EOTF, OSD, lifecycle, frame pacing, memory and GPU color validation are
 required before production HDR is enabled.
+
+## Software continuation: source handshake and native geometry (#427)
+
+- Native patch 0018 now implements the core's real
+  `SET_PIXEL_FORMAT(RETRO_PIXEL_FORMAT_HDR10_2101010)` decision for an explicitly
+  configured PQ Vulkan session. The result is kept in an atomic native
+  bitfield, exposed through `getCoreHdrPixelFormatStatus()`, and required
+  in addition to the core's HDR mode and observed 10-bit Vulkan source. A
+  rejected format (or later SDR fallback) never authorizes HDR WSI.
+  scRGB source is still refused.
+- Packed XRGB2101010 software frames have a specific GLES3 RGB10_A2/REV
+  upload path and an ES2 per-row, precision-reduced RGBA8 fallback, with
+  correct 4-byte raw capture bounds. ES2 fallback is *not* 10-bit precision.
+- Save-state previews with independently negotiated PQ source receive a
+  bounded CPU PQ/BT.2020-to-SDR conversion after resizing; unverified/SDR
+  sources are left as they were. This is for a small thumbnail, not a
+  verified content-mastering or color-grade transform.
+- Native patch 0019 uses the actual core/overridden display aspect for
+  letterboxing and refuses rotation it cannot represent with a raw Vulkan
+  blit. Patch 0020 passes the user's integer-scaling choice on the
+  emulator/GL thread and applies a whole-number output-pixel scale, falling
+  back to normal fit when the surface is smaller than the source.
+- Raw Vulkan WSI fullscreen matches only the **Pixel** picture preset.
+  The earlier Sharp eligibility was too permissive: Sharp is a shader, not
+  a nearest-neighbor blit. CRT, LCD, Sharp and CUT3/Smooth continue to run
+  in the GLES compositor, even if the user opts into native WSI diagnostics.
+  This is deliberate rather than silently discarding those filters.
+
+Unfinished **software** work still includes a real native Vulkan picture
+shader pipeline / librashader (and shader/filter/crop/rotation parity on it),
+a general source-color/metadata provenance interface for cores beyond
+the explicitly negotiated HDR10 case, validated scRGB software input and
+content-authored mastering metadata only where a core provides it.
+Separate **physical** device acceptance (actual HDR EOTF, OSD/touch,
+4K memory/performance, surface lifecycle) must be recorded before production
+native HDR can be enabled or this PR considered feature-complete.
