@@ -235,7 +235,7 @@
     <string name="game_info_vulkan_hdr_core_declared">Core-HDR-Quelle: PQ/BT.2020 durch Core-Option deklariert und als gepackte 10-Bit-Vulkan-Pixel bestätigt. Das HDR-Ausgangssignal ist nicht am Gerät verifiziert.</string>
     <string name="game_info_vulkan_hdr_source_unverified">Für diesen Core bzw. dieses Bildformat ist keine unabhängige HDR-Quellkodierung bekannt; natives experimentelles HDR bleibt gesperrt.</string>
     <string name="game_info_vulkan_hdr_mastering_unknown">Quell-Mastering-Farbwerte, MaxCLL und MaxFALL: unbekannt (keine Schätzwerte).</string>
-    <string name="game_info_native_picture_requires_gles">Der native Vollbildmodus ist eine RAW-Vorschau. Dieser Filter oder die Geometrie verwendet weiterhin den vollständigen GLES-Bildrenderer.</string>
+    <string name="game_info_native_picture_requires_gles">Natives RAW-Vulkan-Vollbild unterstützt Core-/gewähltes Seitenverhältnis und ganzzahlige Skalierung, aber nur den Pixel-Filter. Andere Bildshader bleiben bei GLES.</string>
     <string name="game_info_hdr_core_accepts_pq">Libretro-HDR10-Quellformat: vom Core angefordert und vom Frontend akzeptiert (kein Nachweis eines HDR-Ausgangssignals).</string>
     <string name="game_info_hdr_core_rejects_pq">Der Core hat HDR10 angefordert, das Frontend hat das Quellformat jedoch abgelehnt. Natives HDR ist nicht verfügbar.</string>
     <string name="game_info_hdr_core_rejects_scrgb">Der Core hat scRGB FP16 angefordert; dieses Quellformat wird noch nicht unterstützt.</string>
