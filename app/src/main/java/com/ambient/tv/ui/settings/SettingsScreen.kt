@@ -171,6 +171,7 @@ fun SettingsScreen(
     var accentPickerRole by remember { mutableStateOf<AccentColorRole?>(null) }
 
     var playbackOverview by remember { mutableStateOf<PlaybackOverviewSnapshot?>(null) }
+    var showDiagnosticViewer by remember { mutableStateOf(false) }
     val openSettingsPage = LocalOpenSettingsPage.current
     var savedProfiles by remember { mutableStateOf<List<SavedProfileEntry>?>(null) }
     var liveProfiles by remember { mutableStateOf<PlaybackOverviewSnapshot?>(null) }
@@ -1587,6 +1588,10 @@ fun SettingsScreen(
                                     )
                                     SettingsActionRow() {
                                         TvActionButton(
+                                            text = stringResource(R.string.diagnostics_viewer_open),
+                                            onClick = { showDiagnosticViewer = true },
+                                        )
+                                        TvActionButton(
                                             text = stringResource(R.string.diagnostics_export),
                                             onClick = {
                                                 // Android TV often has no document picker: save to the app folder instead.
@@ -1673,6 +1678,16 @@ fun SettingsScreen(
         }
     }
 
+    if (showDiagnosticViewer) {
+        DiagnosticLogViewer(
+            loggingEnabled = viewModel.diagnosticLogEnabled(),
+            onExport = {
+                val launched = runCatching { diagnosticExportLauncher.launch(viewModel.diagnosticZipName()) }.isSuccess
+                if (!launched) viewModel.exportDiagnosticLog(null)
+            },
+            onDismiss = { showDiagnosticViewer = false },
+        )
+    }
     playbackOverview?.let { snapshot ->
         PlaybackOverviewDialog(snapshot, onDismiss = { playbackOverview = null })
     }
