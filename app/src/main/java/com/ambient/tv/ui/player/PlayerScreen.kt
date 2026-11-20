@@ -1242,14 +1242,17 @@ internal fun TvPlayerSeekBar(
         animationSpec = tween(if (reducedSeekEffects) 95 else 150), label = "TV seek thumb fade",
     )
     val thumbScale by animateFloatAsState(
-        seekBarThumbScale(pointerTarget != null || pendingTarget != null),
+        seekBarThumbScale(pointerTarget != null || pendingTarget != null || progressiveTarget != null),
         animationSpec = tween(if (reducedSeekEffects) 95 else 150), label = "TV seek thumb scale",
     )
-    val previewTarget = if (stowing) null else if (passiveFeedback) {
-        positionMs.takeIf { feedbackPreview }
-    } else if (focused || pointerTarget != null) {
-        pointerTarget ?: pendingTarget ?: progressiveTarget ?: awaitingVisualTarget ?: lastPreview
-    } else null
+    val previewTarget = when {
+        stowing -> null
+        // A held Left/Right press moves the preview even in the compact/passive OSD.
+        progressiveTarget != null -> progressiveTarget
+        passiveFeedback -> positionMs.takeIf { feedbackPreview }
+        focused || pointerTarget != null -> pointerTarget ?: pendingTarget ?: awaitingVisualTarget ?: lastPreview
+        else -> null
+    }
     val previewAvailable = previewTarget?.let { target ->
         navigation?.timeline?.let { it.previewFrameAt(target) != null || it.chapterAt(target) != null }
     } == true
