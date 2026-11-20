@@ -37,7 +37,7 @@ internal class GameVulkanSurfaceHost(
     @Volatile private var nativeSdrDiagnostic = false
 
     private var canProbe = false
-    private var displayHdr = GameHdrDisplayCapabilities()
+    @Volatile private var displayHdr = GameHdrDisplayCapabilities()
     private var fullscreenRequested = false
     private var fullscreenVisible = false
     private var fullscreenAttempt = 0L
