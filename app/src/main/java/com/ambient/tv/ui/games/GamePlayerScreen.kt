@@ -295,6 +295,8 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
     /** The core has loaded the game (its surface exists); before that nothing may step it. */
     var coreReady by remember { mutableStateOf(false) }
     var loaded by remember { mutableStateOf(false) }
+    /** The native Vulkan image format, not merely the user's requested graphics mode. */
+    var vulkanFrameStatus by remember { mutableStateOf(GameVulkanFrameStatus()) }
     /** Core-reported serialized size must be nonzero and safe for this device's heap. */
     var stateAvailable by remember { mutableStateOf(false) }
     var message by remember { mutableStateOf<String?>(null) }
@@ -497,7 +499,16 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
 
     // First frame: the game is loaded; continue where the player left off, then keep rewind ready.
     LaunchedEffect(retroView) {
+        var renderedFrames = 0
         retroView.getGLRetroEvents().collect { event ->
+            if (event == GLRetroView.GLRetroEvents.FrameRendered && session.vulkan && renderedFrames++ % 120 == 0) {
+                // One atomic native status read per ~2 seconds at 60 FPS. A driver may switch to
+                // RGBA8 on resize, so a startup-only snapshot would become inaccurate.
+                val status = GameVulkanFrameStatus(runCatching {
+                    LibretroDroid.getVulkanFrameStatus()
+                }.getOrDefault(0))
+                if (vulkanFrameStatus != status) vulkanFrameStatus = status
+            }
             if (event == GLRetroView.GLRetroEvents.SurfaceCreated) coreReady = true
             if (event == GLRetroView.GLRetroEvents.FrameRendered && !loaded) {
                 loaded = true
@@ -715,8 +726,8 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
                         MetaBadge("libretro", emphasized = true)
                         MetaBadge(core.name)
                         if (game.direct) MetaBadge(stringResource(R.string.game_direct_source))
-                        if (core.hardware) MetaBadge(if (session.vulkan) "Vulkan → GLES" else "OpenGL ES")
-                        if (session.vulkan && toneMap != GameHdrToneMap.OFF) {
+                        if (core.hardware) MetaBadge(vulkanFrameStatus.badge(session.vulkan))
+                        if (session.vulkan && vulkanFrameStatus.active && toneMap != GameHdrToneMap.OFF) {
                             MetaBadge("HDR → SDR")
                         } else {
                             MetaBadge(stringResource(shader.titleRes))
