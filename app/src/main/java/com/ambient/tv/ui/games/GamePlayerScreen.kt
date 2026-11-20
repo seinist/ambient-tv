@@ -347,6 +347,7 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
             rumbleEventsEnabled = true
             preferLowLatencyAudio = true
             preferVulkan = session.vulkan
+            preferHighPrecisionVulkanFrames = GameHdrToneMapShader.prefersFp16Bridge(toneMap, session.vulkan)
         }).apply {
             // Input reaches the core through RetroPadInput only.
             isFocusable = false
@@ -927,9 +928,16 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
                                         subtitle = if (choice == GameHdrToneMap.OFF) null
                                             else stringResource(R.string.game_picture_hdr_hint),
                                         selected = toneMap == choice,
+                                        enabled = !netplay.active && !exiting,
                                         onClick = {
-                                            retroView.shader = GameHdrToneMapShader.forGame(shader, choice, session.vulkan)
-                                            GameSettings.update { it.withHdrToneMap(core, choice) }
+                                            if (choice != toneMap && !exiting && !netplay.active) {
+                                                GameSettings.update { it.withHdrToneMap(core, choice) }
+                                                // EGL/AHB precision is negotiated at core start, not on a
+                                                // live shader toggle; restart to choose FP16 or release it.
+                                                exiting = true
+                                                destroy()
+                                                model.restart()
+                                            }
                                         },
                                     )
                                 }
