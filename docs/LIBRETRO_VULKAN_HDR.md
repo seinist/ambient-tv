@@ -51,9 +51,26 @@ HDR presentation backend:
   the GLSurfaceView GL thread. Surface creation/change invalidates prior
   results; destruction clears the status and prevents late results from
   being shown. The Info panel displays WSI surface formats independently
-  from Android display-HDR support. The small probe surface is not yet a
-  full-screen presentation surface or swapchain; the game video still uses
-  Vulkan→GLES and does not emit native HDR.
+  from Android display-HDR support.
+- Native patches `0008-native-sdr-swapchain-lifecycle.patch` and
+  `0009-vulkan-sdr-frame-present.patch` introduce an **optional SDR-only**
+  Vulkan swapchain on the small, real Android Surface. The JNI caller passes
+  an owned `ANativeWindow` reference on the emulator/GL thread. The backend
+  checks present-queue compatibility, transfer-destination usage, an
+  SDR/sRGB VkFormat/color-space pair, Vulkan swapchain support and image
+  acquisition; it chooses FIFO and supports detach, resize and shutdown.
+  When requested, the synchronized libretro Vulkan image is blitted into the
+  SDR swapchain alongside the existing AHardwareBuffer→GLES path. An unknown,
+  HDR-encoded, non-UNORM or unblittable core source is rejected from native
+  SDR output, without taking away the normal GLES presenter. Errors permanently
+  disable this diagnostic for the surface session until reattached.
+- The game Info panel has an **opt-in diagnostic only** (default OFF) that
+  outputs into a separate 16px SurfaceView. This tests actual queue presentation
+  without obscuring video/OSD. `GameVulkanSdrStatus` distinguishes requested
+  surface, created swapchain, frames actually presented and GLES fallback.
+  After activating, resume gameplay so frames can be submitted, then reopen
+  Info to inspect the status. The tiny surface must not be mistaken for
+  full-resolution native video playback or an HDR-enabled output.
 - `GameVulkanOutputPolicy` provides a testable release gate for native PQ/HLG
   output. It requires a real active presentation surface, validated
   format/colorspace pair, accepted core source format, color pipeline and output
@@ -63,14 +80,18 @@ HDR presentation backend:
   the Vulkan HDR output is inactive. This does not change OSD focus,
   background playback, existing renderer selection or manually chosen HDR→SDR.
 
-**Next implementation slice (NOT in this initial slice):** promote the lifecycle-owned
-probe `SurfaceView` to a full-size presentation surface after implementing
-a real Vulkan swapchain presenter with surface format/color-space selection,
-present modes, queue synchronization, resize/surface loss and release. The existing offscreen AImageReader is still
-used by the core and must not be mistaken for the real display. Preserve GLES
-fallback/OSD above the new surface. Only after native PQ/HLG core input and
-metadata are negotiated should the presenter send an HDR signal; verify it on
-real hardware. `librashader` integration follows a stable Vulkan presenter.
+**Next implementation slice (NOT yet implemented):** validate the new tiny
+native SDR frame presenter on real NVIDIA Shield, Philips TV and phones,
+including supported and unsupported GPU drivers, repeated Surface destruction,
+rotation, pause/resume, color fidelity, frame pacing and shader/OSD behavior.
+Once stable, promote the preview SurfaceView to a full-screen compositor
+layer with explicit activation and fallback controls, and avoid duplicate
+GLES draws when possible while preserving captures and Compose OSD. The core
+still negotiates against an offscreen AImageReader; **no native Vulkan HDR**
+is yet advertised or activated. Implement true HDR core source formats,
+output color-space selection, mastering metadata and real display-signal
+verification before exposing an HDR toggle. `librashader` follows the
+stabilized output path.
 
 ## Incompatible pieces that must be completed together for native HDR
 
