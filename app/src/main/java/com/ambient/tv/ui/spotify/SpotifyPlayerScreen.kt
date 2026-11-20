@@ -164,8 +164,6 @@ private fun SpotifyPlayerContent(onBack: () -> Unit, viewModel: SpotifyPlayerVie
         playbackStarted = state.playing,
         panelNavigation = panelNavigation,
     )
-    fun heldSeekStep(baseMs: Long, event: androidx.compose.ui.input.key.KeyEvent) =
-        com.ambient.tv.ui.player.acceleratedSeekStepMs(baseMs, event.nativeKeyEvent.repeatCount, state.durationMs)
     fun seekBy(deltaMs: Long) {
         osd.interact()
         viewModel.seek(deltaMs)
@@ -181,7 +179,8 @@ private fun SpotifyPlayerContent(onBack: () -> Unit, viewModel: SpotifyPlayerVie
         handlePlayerOsdKey(
             event.key, event.type == KeyEventType.KeyDown,
             OsdKeyState(OsdContent.MUSIC, controlsVisible && !osd.seekFeedback && !osd.closing, panel != UnifiedPlayerPanel.NONE, osd.seekFeedback, closing = osd.closing, seekBarFocused = osd.seekBarFocused),
-            OsdSeekSteps(viewModel.seekJumpMs, backMs = 10_000, forwardMs = 30_000, held = { heldSeekStep(it, event) }),
+            com.ambient.tv.ui.player.progressiveOsdSeekSteps(viewModel.seekJumpMs, state.positionMs, timelineDurationMs, osd,
+                backMs = 10_000L, forwardMs = 30_000L),
             object : OsdKeyTarget {
                 override fun isPlaying() = state.playing
                 override fun togglePlayback() { viewModel.toggle() }

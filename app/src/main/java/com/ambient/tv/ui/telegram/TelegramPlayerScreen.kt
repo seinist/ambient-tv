@@ -731,7 +731,8 @@ private fun TelegramPlaybackContent(
                             canSeekForward = !photo && length > 0, closing = osd.closing,
                             seekBarFocused = osd.seekBarFocused,
                         ),
-                        com.ambient.tv.ui.player.OsdSeekSteps(BackgroundPlaybackSession.seekJumpMs(10_000L)),
+                        com.ambient.tv.ui.player.progressiveOsdSeekSteps(
+                            BackgroundPlaybackSession.seekJumpMs(10_000L), now, if (photo) 0L else length, osd),
                         object : com.ambient.tv.ui.player.OsdKeyTarget {
                             override fun isPlaying() = snapshot.playing
                             override fun togglePlayback() { BackgroundPlaybackSession.userToggle() }

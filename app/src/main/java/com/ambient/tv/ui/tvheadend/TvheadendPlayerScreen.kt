@@ -155,6 +155,7 @@ import com.ambient.tv.ui.player.handlePlayerOsdKey
 import com.ambient.tv.ui.player.OsdKeyState
 import com.ambient.tv.ui.player.OsdContent
 import com.ambient.tv.ui.player.OsdSeekSteps
+import com.ambient.tv.ui.player.progressiveOsdSeekSteps
 import com.ambient.tv.ui.player.OsdKeyTarget
 
 private data class TvhTrackOption(
@@ -527,8 +528,6 @@ private fun TvheadendPlaybackSurface(
             seek.seekBy(deltaMs, player.duration)
         }
     }
-    fun heldSeekStep(baseMs: Long, event: androidx.compose.ui.input.key.KeyEvent) =
-        com.ambient.tv.ui.player.acceleratedSeekStepMs(baseMs, event.nativeKeyEvent.repeatCount, player.duration.takeIf { it > 0 } ?: 0L)
     val playFocusRequester = com.ambient.tv.ui.player.rememberPlayerPlayFocus()
     var isPlaying by remember(player) { mutableStateOf(player.isPlaying) }
     var playbackState by remember(player) { mutableIntStateOf(player.playbackState) }
@@ -747,7 +746,7 @@ private fun TvheadendPlaybackSurface(
                 canSeekForward = player.duration > 0,
                 closing = osd.closing,
             ),
-            OsdSeekSteps(BackgroundPlaybackSession.seekJumpMs(seekJumpMs), held = { heldSeekStep(it, event) }),
+            progressiveOsdSeekSteps(BackgroundPlaybackSession.seekJumpMs(seekJumpMs), seek.positionMs, player.duration.takeIf { it > 0L } ?: 0L, osd),
             object : OsdKeyTarget {
                 override fun chapterSeekDelta(direction: Int) = chapterNavigation?.chapterStep(seek.positionMs, direction, seek.chapterPositionMs)
                 override fun isPlaying() = player.isPlaying

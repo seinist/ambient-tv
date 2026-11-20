@@ -115,6 +115,7 @@ import com.ambient.tv.ui.player.handlePlayerOsdKey
 import com.ambient.tv.ui.player.OsdKeyState
 import com.ambient.tv.ui.player.OsdContent
 import com.ambient.tv.ui.player.OsdSeekSteps
+import com.ambient.tv.ui.player.progressiveOsdSeekSteps
 import com.ambient.tv.ui.player.OsdKeyTarget
 
 @Composable
@@ -219,8 +220,6 @@ internal fun MpvTvheadendPlaybackSurface(
             seek.seekBy(deltaMs, snapshot.durationMs)
         }
     }
-    fun heldSeekStep(baseMs: Long, event: androidx.compose.ui.input.key.KeyEvent) =
-        com.ambient.tv.ui.player.acceleratedSeekStepMs(baseMs, event.nativeKeyEvent.repeatCount, snapshot.durationMs)
     var resizeKey by remember(playbackKey) { mutableStateOf("fit") }
     var aspectKey by remember(playbackKey) { mutableStateOf("auto") }
     var zoomFactor by remember(playbackKey) { mutableStateOf(1f) }
@@ -302,7 +301,7 @@ internal fun MpvTvheadendPlaybackSurface(
                 canSeekForward = true,
                 closing = osd.closing,
             ),
-            OsdSeekSteps(BackgroundPlaybackSession.seekJumpMs(seekJumpMs), held = { heldSeekStep(it, event) }),
+            progressiveOsdSeekSteps(BackgroundPlaybackSession.seekJumpMs(seekJumpMs), seek.positionMs, snapshot.durationMs, osd),
             object : OsdKeyTarget {
                 override fun chapterSeekDelta(direction: Int) = chapterNavigation?.chapterStep(seek.positionMs, direction, seek.chapterPositionMs)
                 override fun isPlaying() = snapshot.isPlaying
