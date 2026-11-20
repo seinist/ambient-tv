@@ -133,6 +133,9 @@ class YouTubePlayerViewModel @Inject constructor(@dagger.hilt.android.qualifiers
         val videoId = videoId
         val requestToken = transitionToken
         loadJob?.cancel()
+        // Recomposition (late SponsorBlock/metadata) can re-register the same video/audio URLs;
+        // only a genuinely new resolution clears a terminal HTTP status from that stream.
+        com.ambient.tv.youtube.YouTubeStreamRelay.clearTerminalHttpError(videoId)
         loadJob = viewModelScope.launch {
             var fresh = refresh
             var ready: YouTubePlayback? = null
