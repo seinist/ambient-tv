@@ -18,6 +18,10 @@
 #   ./build.sh monogram       # build ONLY Monogram's native MTProto AAR, opt-in
 #   ./build.sh monogram-check / monogram-update  # check/update only the Monogram pin
 #   ./build.sh monogram-size [arm64|armv7|x86|x86_64|all]  # compare complete release APK sizes
+#   ./build.sh cores [id[,id...]]  # build pinned Libretro cores on GitHub Actions
+#   ./build.sh cores-key [--manual]  # configure signing or prepare the key for a browser upload
+#   ./build.sh cores-release      # build and publish all signed Libretro cores
+#   ./build.sh cores-status       # show recent Core workflow runs
 #   ./build.sh nnedi3-shaders # pre-bundle additional NNEDI3 win8x4/win8x6 assets
 #   ./build.sh clean-mpv      # rebuild native MPV libraries from scratch
 #   ./build.sh gen-keystore   # create keystore/release.jks
@@ -105,7 +109,6 @@ disable_legacy_gradle_shadow_files() {
         "$ROOT_DIR/smarttube_wrappers/youtubeapi/build.gradle"
         "$ROOT_DIR/smarttube_wrappers/sharedutils/build.gradle"
         "$ROOT_DIR/smarttube_wrappers/mediaserviceinterfaces/build.gradle"
-        "$ROOT_DIR/smarttube_wrappers/commons-io/build.gradle"
         "$ROOT_DIR/smarttube_wrappers/j2v8/build.gradle"
     )
     for file in "${files[@]}"; do
@@ -121,7 +124,7 @@ write_canonical_settings_kts() {
     local out="$1"
     mkdir -p "$(dirname "$out")"
     cat > "$out" <<'GRADLE_SETTINGS_KTS'
-// AMBIENT_TV_SETTINGS_KTS_V67
+// AMBIENT_TV_SETTINGS_KTS_V68
 pluginManagement {
     repositories {
         google()
@@ -160,13 +163,10 @@ val msc = smartRoot.resolve("MediaServiceCore")
 val shared = smartRoot.resolve("SharedModules")
 val wrappers = file("smarttube_wrappers")
 if (msc.resolve("youtubeapi/src/main").isDirectory && shared.resolve("sharedutils/src/main").isDirectory) {
-    include(":sharedutils", ":commons-io-2.8.0", ":j2v8", ":mediaserviceinterfaces", ":youtubeapi")
+    include(":sharedutils", ":j2v8", ":mediaserviceinterfaces", ":youtubeapi")
 
     project(":sharedutils").projectDir = wrappers.resolve("sharedutils")
     project(":sharedutils").buildFileName = "build.gradle.kts"
-
-    project(":commons-io-2.8.0").projectDir = wrappers.resolve("commons-io")
-    project(":commons-io-2.8.0").buildFileName = "build.gradle.kts"
 
     project(":j2v8").projectDir = wrappers.resolve("j2v8")
     project(":j2v8").buildFileName = "build.gradle.kts"
@@ -184,7 +184,7 @@ ensure_settings_kts() {
     local target="$ROOT_DIR/settings.gradle.kts"
 
     if [[ ! -f "$target" ]] \
-        || ! grep -F 'AMBIENT_TV_SETTINGS_KTS_V67' "$target" >/dev/null 2>&1 \
+        || ! grep -F 'AMBIENT_TV_SETTINGS_KTS_V68' "$target" >/dev/null 2>&1 \
         || ! grep -F 'rootProject.buildFileName = "build.gradle.kts"' "$target" >/dev/null 2>&1 \
         || ! grep -F 'project(":youtubeapi").projectDir = wrappers.resolve("youtubeapi")' "$target" >/dev/null 2>&1 \
         || ! grep -F 'project(":youtubeapi").buildFileName = "build.gradle.kts"' "$target" >/dev/null 2>&1 \
@@ -195,7 +195,7 @@ ensure_settings_kts() {
 }
 
 verify_kotlin_dsl_entrypoints() {
-    grep -F 'AMBIENT_TV_SETTINGS_KTS_V67' "$ROOT_DIR/settings.gradle.kts" >/dev/null \
+    grep -F 'AMBIENT_TV_SETTINGS_KTS_V68' "$ROOT_DIR/settings.gradle.kts" >/dev/null \
         || fail "settings.gradle.kts is missing or stale."
     grep -F 'rootProject.buildFileName = "build.gradle.kts"' "$ROOT_DIR/settings.gradle.kts" >/dev/null \
         || fail "settings.gradle.kts does not pin the root Kotlin build file."
@@ -273,7 +273,7 @@ ensure_android_sdk() {
 write_canonical_root_build_kts() {
     local target="$1"
     cat > "$target" <<'EOF_ROOT_BUILD'
-// AMBIENT_TV_ROOT_BUILD_V036
+// AMBIENT_TV_ROOT_BUILD_V037
 buildscript {
     dependencies { classpath("org.jetbrains.kotlin:kotlin-gradle-plugin:2.4.21") }
 }
@@ -308,7 +308,6 @@ run {
         "youtubeapi" to "youtubeapi",
         "sharedutils" to "sharedutils",
         "mediaserviceinterfaces" to "mediaserviceinterfaces",
-        "commons-io-2.8.0" to "commons-io",
         "j2v8" to "j2v8",
     )
     val rootDirectory = rootProject.projectDir
@@ -361,12 +360,12 @@ ensure_root_build_kts() {
     local template="$ROOT_DIR/gradle/root.build.compat.gradle.kts"
     local target="$ROOT_DIR/build.gradle.kts"
 
-    if [[ ! -f "$template" ]]         || ! grep -F 'AMBIENT_TV_ROOT_BUILD_V036' "$template" >/dev/null 2>&1         || ! grep -F 'expected host wrapper' "$template" >/dev/null 2>&1; then
+    if [[ ! -f "$template" ]]         || ! grep -F 'AMBIENT_TV_ROOT_BUILD_V037' "$template" >/dev/null 2>&1         || ! grep -F 'expected host wrapper' "$template" >/dev/null 2>&1; then
         log "Repairing canonical root Gradle build preflight"
         write_canonical_root_build_kts "$template"
     fi
 
-    if [[ ! -f "$target" ]]         || ! grep -F 'AMBIENT_TV_ROOT_BUILD_V036' "$target" >/dev/null 2>&1         || grep -F 'expected direct SmartTube module' "$target" >/dev/null 2>&1         || ! grep -F 'expected host wrapper' "$target" >/dev/null 2>&1; then
+    if [[ ! -f "$target" ]]         || ! grep -F 'AMBIENT_TV_ROOT_BUILD_V037' "$target" >/dev/null 2>&1         || grep -F 'expected direct SmartTube module' "$target" >/dev/null 2>&1         || ! grep -F 'expected host wrapper' "$target" >/dev/null 2>&1; then
         log "Restoring canonical root Gradle build preflight"
         cp "$template" "$target"
     fi
@@ -535,7 +534,7 @@ youtube_engine_ready() {
     smarttube_live_patch_ready || return 1
 
     local wrapper
-    for wrapper in youtubeapi sharedutils mediaserviceinterfaces commons-io j2v8; do
+    for wrapper in youtubeapi sharedutils mediaserviceinterfaces j2v8; do
         local gradle_file="$ROOT_DIR/smarttube_wrappers/$wrapper/build.gradle.kts"
         [[ -f "$gradle_file" ]] || return 1
         grep -F 'JavaVersion.VERSION_17' "$gradle_file" >/dev/null || return 1
@@ -573,7 +572,6 @@ ensure_youtube_engine() {
     rm -rf "$ROOT_DIR/smarttube_wrappers/youtubeapi/build" \
            "$ROOT_DIR/smarttube_wrappers/sharedutils/build" \
            "$ROOT_DIR/smarttube_wrappers/mediaserviceinterfaces/build" \
-           "$ROOT_DIR/smarttube_wrappers/commons-io/build" \
            "$ROOT_DIR/smarttube_wrappers/j2v8/build"
     "$YOUTUBE_ENGINE_SCRIPT"
     youtube_engine_ready || fail "SmartTube live-patch integration did not validate after preparation."
@@ -1248,10 +1246,85 @@ clean_android() {
     rm -rf "$DIST_DIR"
 }
 
+run_cores_command() {
+    local repo="seinist/ambient-tv"
+    local secret_query='.[] | select(.name == "CORES_SIGNING_KEY") | .name'
+    local signing_secret
+    local -a workflow=(workflow run cores.yml --repo "$repo" --ref main)
+    local has_gh=0
+    if command -v gh >/dev/null 2>&1; then has_gh=1; fi
+    if [[ "$1" != "cores-key" && "$has_gh" == 0 ]]; then
+        fail "For terminal access install GitHub CLI (gh), or use https://github.com/$repo/actions/workflows/cores.yml in your browser."
+    fi
+
+    case "$1" in
+        cores)
+            [[ $# -le 2 ]] || fail "Usage: $0 cores [id[,id...]]"
+            local -a inputs=(-f publish=false)
+            if [[ -n "${2:-}" ]]; then inputs+=(-f "cores=$2"); fi
+            gh "${workflow[@]}" "${inputs[@]}"
+            ;;
+        cores-key)
+            [[ $# -eq 1 || ( $# -eq 2 && "${2:-}" == --manual ) ]] || fail "Usage: $0 cores-key [--manual]"
+            if [[ "$has_gh" == 1 && "${2:-}" != --manual && "${FORCE:-0}" != 1 ]]; then
+                signing_secret="$(gh secret list --repo "$repo" --json name --jq "$secret_query")"
+                [[ -z "$signing_secret" ]] || fail "CORES_SIGNING_KEY already exists. Use its matching public key."
+            fi
+            bash "$ROOT_DIR/scripts/cores_signing_key.sh" "$repo" "${@:2}"
+            ;;
+        cores-release)
+            [[ $# -eq 1 ]] || fail "Usage: $0 cores-release"
+            gh api --silent "repos/$repo/contents/cores/signing-public.pem?ref=main" ||
+                fail "The public signing key must be on GitHub main. Run $0 cores-key for initial setup, then commit and push cores/signing-public.pem."
+            # Workflow dispatch can be allowed even when listing repository secrets is forbidden.
+            if signing_secret="$(gh secret list --repo "$repo" --json name --jq "$secret_query" 2>/dev/null)"; then
+                [[ -n "$signing_secret" ]] || fail "CORES_SIGNING_KEY is missing on GitHub. Set up core signing before publishing."
+            fi
+            gh "${workflow[@]}" -f publish=true
+            ;;
+        cores-status)
+            [[ $# -eq 1 ]] || fail "Usage: $0 cores-status"
+            gh run list --repo "$repo" --workflow cores.yml --branch main
+            ;;
+    esac
+}
+
+print_usage() {
+    cat <<EOT
+Usage: $0 <command> [args]
+
+Android: debug, release, arm64, armv7, x86, x86_64, all, clean, gen-keystore
+Deploy: arm64-adb, armv7-adb, x86-adb, x86_64-adb [adb-ip[:port]]
+Native: youtube-engine, spotify, clean-spotify, mpv, clean-mpv, svp,
+        nnedi3-shaders, projectm, clean-projectm, monogram
+Libraries: libs-check [svp|monogram], libs-update [svp|monogram],
+           monogram-check, monogram-update, monogram-size [abi|all]
+
+Libretro cores on GitHub Actions (main):
+  cores [id[,id...]]   Build artifacts only. Omit IDs to build all cores (gh).
+  cores-key [--manual] Generate signing keys. Upload the secret in the browser if gh is unavailable.
+                       Commit and push cores/signing-public.pem and rebuild the app to embed it.
+  cores-release       Build and publish the full signed core catalog (gh).
+  cores-status        Show recent Core workflow runs (gh).
+  Browser workflow    https://github.com/seinist/ambient-tv/actions/workflows/cores.yml
+EOT
+}
+
 # Allow packaging helpers to be exercised in isolation without starting a build.
 if [[ "${BASH_SOURCE[0]}" != "$0" ]]; then
     return 0
 fi
+
+case "$MODE" in
+    -h|--help|help)
+        print_usage
+        exit 0
+        ;;
+    cores|cores-key|cores-release|cores-status)
+        run_cores_command "$@"
+        exit 0
+        ;;
+esac
 
 if [[ "$MODE" == "libs-check" || "$MODE" == "lib-check" || "$MODE" == "deps-check" || "$MODE" == "libraries-check" ]]; then
     command -v python3 >/dev/null 2>&1 || fail "python3 is required"
@@ -1369,9 +1442,7 @@ case "$MODE" in
         gen_keystore "$@"
         ;;
     *)
-        cat >&2 <<EOT
-Usage: $0 [debug|release|arm64|armv7|x86|x86_64|arm64-adb|armv7-adb|x86-adb|x86_64-adb|all|youtube-engine|spotify|clean-spotify|mpv|clean-mpv|svp|nnedi3-shaders|projectm|clean-projectm|libs-check|libs-update|monogram|monogram-size|monogram-check|monogram-update|clean|gen-keystore] [adb-ip[:port] or svp|monogram for library updates]
-EOT
+        print_usage >&2
         exit 2
         ;;
 esac

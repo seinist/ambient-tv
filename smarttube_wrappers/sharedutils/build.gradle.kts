@@ -49,7 +49,7 @@ kotlin {
 
 dependencies {
     implementation(fileTree(mapOf("dir" to upstream.resolve("libs"), "include" to listOf("*.jar"))))
-    implementation(project(":commons-io-2.8.0"))
+    implementation(libs.commons.io)
 
     implementation("androidx.appcompat:appcompat:1.2.0")
     implementation("androidx.preference:preference:1.1.0")

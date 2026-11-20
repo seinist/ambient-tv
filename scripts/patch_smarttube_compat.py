@@ -22,7 +22,6 @@ def manifest_files(msc: Path, shared: Path) -> list[Path]:
         msc / "youtubeapi/src/main/AndroidManifest.xml",
         msc / "mediaserviceinterfaces/src/main/AndroidManifest.xml",
         shared / "sharedutils/src/main/AndroidManifest.xml",
-        shared / "commons-io-2.8.0/src/main/AndroidManifest.xml",
         shared / "j2v8/src/main/AndroidManifest.xml",
     ]
 

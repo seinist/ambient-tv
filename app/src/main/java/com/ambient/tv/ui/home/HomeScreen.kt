@@ -1640,8 +1640,8 @@ private fun LiveChannelTile(
         }.collectAsState(initial = liveTvTitleArt.value[titleKey]).value
     } else null
     if (titleKey != null) {
-        LaunchedEffect(titleKey, event?.eventId) {
-            event?.let { onArtworkNeeded(it.title, this) }
+        LaunchedEffect(titleKey, event.eventId) {
+            onArtworkNeeded(event.title, this)
         }
     }
     val artwork = if (programmeArtwork) item.bestArtwork(

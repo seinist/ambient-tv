@@ -1,5 +1,6 @@
 package com.ambient.tv.ui.settings
 
+import android.content.ClipData
 import android.widget.Toast
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.focusGroup
@@ -31,11 +32,11 @@ import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
-import androidx.compose.ui.platform.LocalClipboardManager
-import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.platform.ClipEntry
+import androidx.compose.ui.platform.LocalClipboard
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import androidx.tv.material3.MaterialTheme
@@ -52,6 +53,7 @@ import com.ambient.tv.ui.common.TvTextField
 import com.ambient.tv.ui.common.TvLazyColumn
 import com.ambient.tv.ui.common.overlayLazyScrollbar
 import com.ambient.tv.ui.mobile.LocalHandheldUi
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
@@ -91,7 +93,7 @@ internal fun DiagnosticLogViewer(
     val returnToEntryFocus = remember { FocusRequester() }
     val detailFocus = remember { FocusRequester() }
     val detailScroll = rememberScrollState()
-    val clipboard = LocalClipboardManager.current
+    val clipboard = LocalClipboard.current
     val context = LocalContext.current
     var focusedEntryKey by remember { mutableStateOf<String?>(null) }
     var refreshGeneration by remember { mutableIntStateOf(0) }
@@ -193,8 +195,13 @@ internal fun DiagnosticLogViewer(
                     text = stringResource(R.string.diagnostics_viewer_copy),
                     modifier = Modifier.testTag("diagnostics-copy"),
                     onClick = {
-                        runCatching { clipboard.setText(AnnotatedString(entry.copyText())) }.onSuccess {
-                            Toast.makeText(context, R.string.diagnostics_viewer_copied, Toast.LENGTH_SHORT).show()
+                        scope.launch {
+                            runCatching {
+                                clipboard.setClipEntry(ClipEntry(ClipData.newPlainText(null, entry.copyText())))
+                            }.onFailure { if (it is CancellationException) throw it }
+                                .onSuccess {
+                                    Toast.makeText(context, R.string.diagnostics_viewer_copied, Toast.LENGTH_SHORT).show()
+                                }
                         }
                     },
                 )

@@ -89,7 +89,7 @@ log "Applying Ambient TV compatibility patch to live SmartTube sources"
 python3 "$PATCHER" --root "$DEST"
 python3 "$PATCHER" --check --root "$DEST"
 
-for wrapper in youtubeapi sharedutils mediaserviceinterfaces commons-io j2v8; do
+for wrapper in youtubeapi sharedutils mediaserviceinterfaces j2v8; do
     [[ -f "$ROOT/smarttube_wrappers/$wrapper/build.gradle.kts" ]] || fail "Missing host SmartTube wrapper: $wrapper"
 done
 

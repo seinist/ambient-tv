@@ -46,7 +46,7 @@ kotlin {
 dependencies {
     implementation(libs.okhttp.core)
     implementation(fileTree(mapOf("dir" to upstream.resolve("libs"), "include" to listOf("*.jar"))))
-    implementation(project(":commons-io-2.8.0"))
+    implementation(libs.commons.io)
     implementation(project(":sharedutils"))
     implementation(project(":mediaserviceinterfaces"))
     implementation(project(":j2v8"))

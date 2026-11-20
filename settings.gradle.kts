@@ -1,4 +1,4 @@
-// AMBIENT_TV_SETTINGS_KTS_V67
+// AMBIENT_TV_SETTINGS_KTS_V68
 pluginManagement {
     repositories {
         google()
@@ -38,13 +38,10 @@ val msc = smartRoot.resolve("MediaServiceCore")
 val shared = smartRoot.resolve("SharedModules")
 val wrappers = file("smarttube_wrappers")
 if (msc.resolve("youtubeapi/src/main").isDirectory && shared.resolve("sharedutils/src/main").isDirectory) {
-    include(":sharedutils", ":commons-io-2.8.0", ":j2v8", ":mediaserviceinterfaces", ":youtubeapi")
+    include(":sharedutils", ":j2v8", ":mediaserviceinterfaces", ":youtubeapi")
 
     project(":sharedutils").projectDir = wrappers.resolve("sharedutils")
     project(":sharedutils").buildFileName = "build.gradle.kts"
-
-    project(":commons-io-2.8.0").projectDir = wrappers.resolve("commons-io")
-    project(":commons-io-2.8.0").buildFileName = "build.gradle.kts"
 
     project(":j2v8").projectDir = wrappers.resolve("j2v8")
     project(":j2v8").buildFileName = "build.gradle.kts"

@@ -111,7 +111,7 @@ for token in ['searchMediaGroups(state.results)', 'searchMediaGroups(state.jelly
     if token not in search_screen:
         errors.append(f'Search list section grouping missing: {token}')
 
-for wrapper in ['youtubeapi', 'sharedutils', 'mediaserviceinterfaces', 'commons-io', 'j2v8']:
+for wrapper in ['youtubeapi', 'sharedutils', 'mediaserviceinterfaces', 'j2v8']:
     if not (ROOT / 'smarttube_wrappers' / wrapper / 'build.gradle.kts').is_file():
         errors.append(f'missing SmartTube wrapper: {wrapper}')
 with (ROOT / 'gradle/libs.versions.toml').open('rb') as file:
