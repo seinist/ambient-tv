@@ -301,6 +301,8 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
     var vulkanFrameStatus by remember { mutableStateOf(GameVulkanFrameStatus()) }
     /** Native WSI format pairs on a separate real Android Surface, NOT active HDR. */
     var vulkanSurfaceFormats by remember { mutableStateOf(GameVulkanSurfaceFormats()) }
+    var nativeSdrDiagnostic by remember { mutableStateOf(false) }
+    var nativeSdrStatus by remember { mutableStateOf(GameVulkanSdrStatus()) }
     /** Core-reported serialized size must be nonzero and safe for this device's heap. */
     var stateAvailable by remember { mutableStateOf(false) }
     var message by remember { mutableStateOf<String?>(null) }
@@ -371,14 +373,20 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
     // Maintain the old GLES renderer unchanged. The extra 1×1 real Android
     // surface exists only for Vulkan WSI probing and never displays game frames.
     val vulkanSurfaceHost = remember(retroView, session.vulkan) {
-        if (session.vulkan) GameVulkanSurfaceHost(context, retroView) { vulkanSurfaceFormats = it }
-        else null
+        if (session.vulkan) GameVulkanSurfaceHost(
+            context, retroView,
+            onFormats = { vulkanSurfaceFormats = it },
+            onNativeStatus = { nativeSdrStatus = it },
+        ) else null
     }
     DisposableEffect(vulkanSurfaceHost) {
         onDispose { vulkanSurfaceHost?.dispose() }
     }
     LaunchedEffect(coreReady, vulkanSurfaceHost) {
         if (coreReady) vulkanSurfaceHost?.coreReady()
+    }
+    LaunchedEffect(nativeSdrDiagnostic, coreReady, vulkanSurfaceHost) {
+        if (coreReady) vulkanSurfaceHost?.setNativeSdrDiagnostic(nativeSdrDiagnostic)
     }
 
     /** Cheats on (enabled ones) or all off: hardcore and netplay play without. */
@@ -525,6 +533,12 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
                     LibretroDroid.getVulkanFrameStatus()
                 }.getOrDefault(0))
                 if (vulkanFrameStatus != status) vulkanFrameStatus = status
+                if (nativeSdrDiagnostic) {
+                    val direct = GameVulkanSdrStatus(runCatching {
+                        LibretroDroid.getNativeSdrVulkanStatus()
+                    }.getOrDefault(0))
+                    if (nativeSdrStatus != direct) nativeSdrStatus = direct
+                }
             }
             if (event == GLRetroView.GLRetroEvents.SurfaceCreated) coreReady = true
             if (event == GLRetroView.GLRetroEvents.FrameRendered && !loaded) {
@@ -1121,6 +1135,23 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
                                 GamePanelText(stringResource(R.string.game_info_hdr_display_capabilities, displayHdr.supportedTypesLabel()))
                                 if (session.vulkan) {
                                     GamePanelText(stringResource(R.string.game_info_vulkan_surface_pairs, vulkanSurfaceFormats.candidateTypesLabel()))
+                                    if (toneMap == GameHdrToneMap.OFF) {
+                                        val nativePhase = when (nativeSdrStatus.phase) {
+                                            GameVulkanSdrStatus.Phase.OFF -> R.string.game_info_native_sdr_off
+                                            GameVulkanSdrStatus.Phase.REQUESTED -> R.string.game_info_native_sdr_requested
+                                            GameVulkanSdrStatus.Phase.SWAPCHAIN -> R.string.game_info_native_sdr_swapchain
+                                            GameVulkanSdrStatus.Phase.PRESENTING -> R.string.game_info_native_sdr_presenting
+                                            GameVulkanSdrStatus.Phase.GLES_FALLBACK -> R.string.game_info_native_sdr_fallback
+                                        }
+                                        GamePanelText(stringResource(nativePhase))
+                                        RightPanelChoice(
+                                            text = stringResource(R.string.game_info_native_sdr_test),
+                                            subtitle = stringResource(R.string.game_info_native_sdr_test_hint),
+                                            selected = nativeSdrDiagnostic,
+                                            enabled = !netplay.active && !exiting,
+                                            onClick = { nativeSdrDiagnostic = !nativeSdrDiagnostic },
+                                        )
+                                    }
                                 }
                                 GamePanelText(stringResource(R.string.game_info_hdr_output_inactive))
                             }
