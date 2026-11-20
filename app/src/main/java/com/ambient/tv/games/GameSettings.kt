@@ -59,6 +59,7 @@ enum class GameAspect(val key: String, val ratio: Float?, @StringRes val titleRe
 enum class GameTouchMode(val key: String, @StringRes val titleRes: Int) {
     DPAD("pad", R.string.game_touch_mode_dpad),
     ANALOG("analog", R.string.game_touch_mode_analog),
+    HYBRID("hybrid", R.string.game_touch_mode_hybrid),
     DUAL("dual", R.string.game_touch_mode_dual),
     ;
     companion object {
