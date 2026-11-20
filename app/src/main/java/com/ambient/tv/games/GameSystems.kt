@@ -290,7 +290,7 @@ object GameSystems {
                 "plus4" to "plus4", "plus-4" to "plus4", "plus 4" to "plus4",
                 "pet" to "pet", "commodore pet" to "pet",
                 "cbm2" to "cbm2", "cbm-ii" to "cbm2",
-                "sega saturn" to "saturn", "saturn" to "saturn",                "gamecube" to "gamecube", "game cube" to "gamecube",
+                "gamecube" to "gamecube", "game cube" to "gamecube",
                 "wii" to "wii", "wiiu" to "wiiu", "wii u" to "wiiu",
                 "psp" to "psp", "playstation portable" to "psp",
                 "ps2" to "ps2", "playstation 2" to "ps2",
