@@ -1,6 +1,7 @@
 package com.ambient.tv.games
 
 import android.content.Context
+import android.os.StatFs
 import com.ambient.tv.data.files.FileAccess
 import com.ambient.tv.data.files.FileEntry
 import com.ambient.tv.data.files.FileKeys
@@ -28,9 +29,16 @@ data class PreparedGame(
     val sourceName: String,
     /** The original file, for the browser's recently played list. */
     val entry: FileEntry,
-)
+    /** Direct seekable source; null when the core needs a staged local file. */
+    val directContent: GameDirectContent? = null,
+) {
+    val direct: Boolean get() = directContent != null
+    fun close() { directContent?.close() }
+}
 
 class UnknownGameException(val name: String) : IOException("No system for $name")
+class GameDirectUnavailableException(message: String, cause: Throwable? = null) : IOException(message, cause)
+
 
 /**
  * Copies a game from any file source (device storage, USB, NAS) into the app cache, because cores
@@ -41,15 +49,43 @@ class GameRomPreparer @Inject constructor(
     @ApplicationContext private val context: Context,
     private val store: FileStore,
     private val access: FileAccess,
+    private val directAccess: GameDirectAccess,
 ) {
     private val cache: File get() = File(context.cacheDir, "games/roms")
 
-    suspend fun prepare(fileId: String, onProgress: (Float?) -> Unit): PreparedGame = withContext(Dispatchers.IO) {
+    suspend fun prepare(fileId: String, onProgress: (Float?) -> Unit, forceCache: Boolean = false): PreparedGame = withContext(Dispatchers.IO) {
         val (sourceId, path) = FileKeys.parse(fileId)
         val source = store.sources().firstOrNull { it.id == sourceId } ?: throw FileNotFoundException(path)
         access.prepare(source)
         val entry = access.stat(source, path)
         val key = sha1(fileId)
+        // Find the system from the original source; even a multi-GB Wii ISO needs only its header.
+        val isoHeader = if (GameSystems.extension(entry.name) == "iso") runCatching {
+            access.open(source, path).use { media ->
+                ByteArray(0x20).takeIf { media.read(0L, it, it.size) == it.size }
+            }
+        }.getOrNull() else null
+        val sourceSystem = GameSystems.forSourceFile(entry.name, entry.path, isoHeader)
+        val chosenCore = sourceSystem?.let { GameSettings.state.gameCore(it, key) }
+        val ext = GameSystems.extension(entry.name)
+        // Only known need_fullpath cores and single-file disc images qualify: a core that wants
+        // the full ROM buffer (or a CUE/GDI with track files) still uses the existing local path.
+        if (!forceCache && sourceSystem != null && chosenCore?.directFile == true &&
+            ext in DIRECT_EXTENSIONS && entry.size > 0L) {
+            val virtualPath = "/ambient-games/$key/${safeName(entry.name)}"
+            val mounted = try {
+                directAccess.open(source, path, virtualPath)
+            } catch (error: Exception) {
+                throw GameDirectUnavailableException("Direct ROM access unavailable; choose a local cache fallback", error)
+            }
+            return@withContext PreparedGame(
+                fileId = fileId,
+                title = entry.name.substringBeforeLast('.'),
+                file = File(virtualPath), system = sourceSystem, saveKey = key,
+                sourceName = source.name, entry = entry, directContent = mounted,
+            )
+        }
+
         val folder = File(cache, key)
         val marker = File(folder, ".complete")
         val stamp = "${entry.size}:${entry.modified}"
@@ -57,6 +93,14 @@ class GameRomPreparer @Inject constructor(
         if (!(marker.isFile && marker.readText() == stamp && main.isFile)) {
             folder.deleteRecursively()
             folder.mkdirs()
+            // A manual fallback is never allowed to exhaust the device or silently evict saves.
+            if (entry.size > CACHE_LIMIT_BYTES) {
+                throw IOException("ROM exceeds the 4 GiB cache limit; direct access is required")
+            }
+            val free = StatFs(context.cacheDir.absolutePath).availableBytes
+            if (entry.size > free - CACHE_RESERVE_BYTES) {
+                throw IOException("Insufficient free space for a local game copy")
+            }
             copy(source, path, entry.size, main, onProgress)
             when (GameSystems.extension(entry.name)) {
                 "cue" -> copyReferenced(source, path, cueFiles(main.readText()), folder)
@@ -155,6 +199,10 @@ class GameRomPreparer @Inject constructor(
 
     companion object {
         const val CACHE_LIMIT_BYTES = 4L * 1024 * 1024 * 1024
+        const val CACHE_RESERVE_BYTES = 128L * 1024 * 1024
+        /** Archives and multi-track CUE/GDI/M3U still require local materialization. */
+        val DIRECT_EXTENSIONS = setOf("iso", "rvz", "wbfs", "ciso", "chd", "pbp",
+            "cso", "zso", "wua", "wud", "wux", "cdi", "gcm", "tgc")
 
         fun sha1(value: String): String =
             MessageDigest.getInstance("SHA-1").digest(value.toByteArray()).joinToString("") { "%02x".format(it) }
