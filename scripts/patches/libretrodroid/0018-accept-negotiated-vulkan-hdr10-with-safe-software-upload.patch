@@ -32,7 +32,7 @@ diff --git a/src/main/cpp/environment.cpp b/src/main/cpp/environment.cpp
 +    hdrSourceStatus.store(0u, std::memory_order_release);
  
      pixelFormat = RETRO_PIXEL_FORMAT_RGB565;
-@@ -320,3 +320,21 @@
+@@ -320,3 +320,24 @@
              if (data == nullptr) return false;
              const auto requested = *static_cast<const retro_pixel_format*>(data);
 +            // A core's successful SET_PIXEL_FORMAT is its real HDR source
@@ -51,8 +51,11 @@ diff --git a/src/main/cpp/environment.cpp b/src/main/cpp/environment.cpp
 +                hdrSourceStatus.store(4u, std::memory_order_release);
 +                return false; // No safe linear FP16 software input path.
 +            }
-+            // Any subsequent SDR request revokes an earlier HDR handshake.
-+            hdrSourceStatus.store(0u, std::memory_order_release);
++            // An SDR fallback revokes HDR acceptance but preserves the fact
++            // that the core requested HDR; useful for diagnostics after a
++            // rejected SET_PIXEL_FORMAT. A new session resets all flags.
++            const unsigned previous = hdrSourceStatus.load(std::memory_order_acquire);
++            hdrSourceStatus.store(previous & 5u, std::memory_order_release);
              // The GLES software upload and screenshot path currently only understand
 @@ -510,4 +510,9 @@
              retro_hdr_metadata state {};
