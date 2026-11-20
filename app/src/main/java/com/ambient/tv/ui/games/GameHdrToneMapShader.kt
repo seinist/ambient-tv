@@ -22,8 +22,9 @@ internal object GameHdrToneMapShader {
         return ShaderConfig.Custom(listOf(ShaderConfig.Custom.ShaderPass(
             vertex = VERTEX,
             fragment = fragment(input, filter),
-            // Smooth deliberately samples linearly; the other presets preserve crisp pixel edges.
-            linear = filter == GameShader.SMOOTH,
+            // The pinned LibretroDroid presets sample linearly and shape crispness
+            // in the fragment shader. SHARP remaps the UV to texel centers below.
+            linear = true,
         )))
     }
 
@@ -50,6 +51,8 @@ internal object GameHdrToneMapShader {
         return """
             precision highp float;
             uniform sampler2D texture;
+            uniform highp vec2 textureSize;
+            uniform mediump float screenDensity;
             varying highp vec2 coords;
             const int INPUT_HLG = $hlg;
             const int PICTURE_MODE = $pictureMode;
@@ -90,7 +93,19 @@ internal object GameHdrToneMapShader {
             }
 
             void main() {
-                vec4 source = texture2D(texture, coords);
+                vec2 sampleUv = coords;
+                if (PICTURE_MODE == 0) {
+                    // Subpixel-aware sharp sampling, on the source texel grid.
+                    vec2 sourceSize = max(textureSize, vec2(1.0));
+                    vec2 position = coords * sourceSize;
+                    vec2 t = vec2(1.0 / max(screenDensity, 1.0));
+                    vec2 fraction = fract(position);
+                    vec2 sharpened = 0.5 * (
+                        smoothstep(vec2(0.0), t, fraction) +
+                        smoothstep(vec2(1.0) - t, vec2(1.0), fraction));
+                    sampleUv = (floor(position) + sharpened) / sourceSize;
+                }
+                vec4 source = texture2D(texture, sampleUv);
                 vec3 nits2020 = encodedToNits(source.rgb);
                 float luminance = dot(nits2020, vec3(0.2627, 0.6780, 0.0593));
 
@@ -111,21 +126,19 @@ internal object GameHdrToneMapShader {
                 // All filtering happens *after* tone mapping, never in PQ code space.
                 // The low-overhead CRT and LCD patterns are output-space effects.
                 if (PICTURE_MODE == 3) {
-                    float scan = mod(floor(gl_FragCoord.y), 2.0) < 1.0 ? 1.0 : 0.78;
-                    sdr *= scan;
-                    float edge = 0.94 + 0.06 * cos(6.28318530718 * fract(gl_FragCoord.x / 3.0));
-                    sdr *= edge;
+                    // Source-pixel scanlines: stable across 4:3 / integer scaling.
+                    vec2 pixelPhase = abs(fract(coords * textureSize) * 2.0 - 1.0);
+                    float beam = 1.0 - 0.28 * pixelPhase.y;
+                    float strength = smoothstep(2.0, 6.0, screenDensity);
+                    sdr *= mix(1.0, beam, strength);
                 } else if (PICTURE_MODE == 4) {
-                    float channel = mod(floor(gl_FragCoord.x), 3.0);
-                    vec3 stripe = vec3(
-                        channel < 1.0 ? 1.0 : 0.88,
-                        (channel >= 1.0 && channel < 2.0) ? 1.0 : 0.88,
-                        channel >= 2.0 ? 1.0 : 0.88
-                    );
-                    sdr *= stripe;
-                    sdr *= 0.94 + 0.06 * sin(3.14159265359 * fract(gl_FragCoord.y / 3.0));
+                    vec2 pixelPhase = abs(fract(coords * textureSize) * 2.0 - 1.0);
+                    float grid = clamp(1.0 - 0.23 * (pixelPhase.x * pixelPhase.x +
+                        pixelPhase.y * pixelPhase.y), 0.6, 1.0);
+                    sdr *= mix(1.0, grid, smoothstep(2.0, 6.0, screenDensity));
                 }
-                // SHARP/PIXEL preserve nearest-neighbor; SMOOTH uses linear sampling.
+                // PIXEL keeps the standard sample; SMOOTH is a linear CUT3-lite
+                // approximation. The exact CUT3 history-based kernel remains GLES-only.
                 gl_FragColor = vec4(clamp(sdr, 0.0, 1.0), source.a);
             }
         """.trimIndent()
