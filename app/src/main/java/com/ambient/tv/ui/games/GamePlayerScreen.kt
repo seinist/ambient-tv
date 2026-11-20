@@ -525,8 +525,16 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
         retroView.getGLRetroErrors().collect { code ->
             // Vulkan not available after all: once more with OpenGL ES.
             if (session.vulkan && !loaded && model.retryWithoutVulkan()) return@collect
-            // A core that does not load is removed, so trying again loads it fresh.
-            if (code == GLRetroView.ERROR_LOAD_LIBRARY) model.removeCore(core)
+            // A broken core update is restored from the previous installed version, with
+            // its own state stamp. Only if no rollback exists is the bad library removed.
+            if (code == GLRetroView.ERROR_LOAD_LIBRARY) {
+                if (model.rollbackCore(core)) {
+                    destroy()
+                    model.restart()
+                    return@collect
+                }
+                model.removeCore(core)
+            }
             model.failed(context.getString(R.string.game_error_code, code))
         }
     }
