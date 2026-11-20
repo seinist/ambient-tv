@@ -919,7 +919,7 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
                                     GameSettings.update { it.withIntegerScaling(system, !integerScaling) }
                                 },
                             )
-                            if (core.hardware && core.supportsVulkan) {
+                            if (session.vulkan && core.hardware && core.supportsVulkan) {
                                 GamePanelText(stringResource(R.string.game_picture_hdr))
                                 GameHdrToneMap.entries.forEach { choice ->
                                     RightPanelChoice(
