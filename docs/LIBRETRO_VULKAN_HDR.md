@@ -21,6 +21,39 @@ a libretro hardware Vulkan core followed by an AHardwareBuffer → GLES composit
   Zero means no Vulkan buffer has been observed. No frame-by-frame JVM polling.
 - Tests for the native status decoding, SDR defaults, manual shader selection and fallback.
 
+## Native HDR bring-up – independent PR after #406
+
+This follow-up introduces the **first, fail-safe HDR negotiation stage**, not a live
+HDR presentation backend:
+
+- `0006-hdr-source-format-guard.patch` only accepts the software formats the current
+  GLES upload and screenshot paths truly understand: 0RGB1555, XRGB8888 and RGB565.
+  Newer 10-bit SDR, 10-bit PQ and scRGB FP16 core inputs are **rejected**, so a core
+  can select a supported SDR format instead of the frontend treating bytes as the
+  wrong pixel layout. The experimental GET_HDR_METADATA / GET_DISPLAY_METADATA
+  requests are explicitly refused until the new source and output contract exists.
+- `GameHdrDisplayProbe` reads HDR10/HLG/HDR10+/Dolby Vision support from the
+  **display attached to the Android UI context**. Unknown/disconnected displays
+  remain SDR/unknown. This is **display capability**, not a Vulkan WSI format
+  enumeration and not proof of an active HDR output signal.
+- `GameVulkanOutputPolicy` provides a testable release gate for native PQ/HLG
+  output. It requires a real active presentation surface, validated
+  format/colorspace pair, accepted core source format, color pipeline and output
+  metadata **all at once**. The current GLES bridge never supplies those
+  prerequisites; it therefore stays SDR. scRGB is not accidentally treated as PQ.
+- The game's Info panel names the display HDR formats but explicitly states that
+  the Vulkan HDR output is inactive. This does not change OSD focus,
+  background playback, existing renderer selection or manually chosen HDR→SDR.
+
+**Next implementation slice (NOT in this PR):** replace the offscreen
+`AImageReader` presentation negotiation surface with a lifecycle-owned
+`SurfaceView`/`ANativeWindow` for the real display. Build a second Vulkan
+WSI presenter, enumerate actual surface formats/color spaces and present modes,
+confirm queue/device swapchain support, handle surface loss and frame fences,
+and preserve GLES fallback/OSD above it. Only then accept/produce native HDR
+pixels with core metadata and verify the display HDR signal on real hardware.
+`librashader` integration follows after a stable Vulkan presenter.
+
 ## Incompatible pieces that must be completed together for native HDR
 
 1. **Core HDR handshake.** The currently pinned Argosy/libretro-common header predates
