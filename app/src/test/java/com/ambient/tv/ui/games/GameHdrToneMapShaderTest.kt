@@ -14,6 +14,14 @@ class GameHdrToneMapShaderTest {
         assertEquals(ShaderConfig.Sharp, GameHdrToneMapShader.forGame(GameShader.SHARP, GameHdrToneMap.PQ, false))
     }
 
+    @Test fun pixelPictureChoiceUsesRealNearestPreset() {
+        assertEquals(ShaderConfig.Pixel, GameShader.PIXEL.config())
+        val hdrPixel = GameHdrToneMapShader.forGame(
+            GameShader.PIXEL, GameHdrToneMap.PQ, true) as ShaderConfig.PrependPass
+        assertEquals(ShaderConfig.Pixel, hdrPixel.filter)
+        assertFalse(hdrPixel.pass.linear)
+    }
+
     @Test fun fp16BridgeIsOptInAndRequiresVulkan() {
         assertFalse(GameHdrToneMapShader.prefersFp16Bridge(GameHdrToneMap.OFF, true))
         assertFalse(GameHdrToneMapShader.prefersFp16Bridge(GameHdrToneMap.PQ, false))
@@ -25,7 +33,7 @@ class GameHdrToneMapShaderTest {
         GameShader.entries.forEach { filter ->
             val shader = GameHdrToneMapShader.forGame(filter, GameHdrToneMap.PQ, true) as ShaderConfig.PrependPass
             assertEquals(filter.config(), shader.filter)
-            assertTrue(shader.pass.linear)
+            assertEquals(filter != GameShader.PIXEL, shader.pass.linear)
             assertTrue(shader.pass.fragment.contains("pqEotf"))
             assertTrue(shader.pass.fragment.contains("BT.2020 -> BT.709"))
             assertFalse(shader.pass.fragment.contains("PICTURE_MODE"))
