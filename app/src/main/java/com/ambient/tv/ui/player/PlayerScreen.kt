@@ -1168,6 +1168,13 @@ internal fun TvPlayerSeekBar(
     }
     val progressiveSeek = remember(seekState) { ProgressiveSeekController() }
     ProgressiveSeekTicker(progressiveSeek)
+    // Preserve the OSD timeout while a remote is continuously held without native repeats.
+    LaunchedEffect(progressiveSeek.active) {
+        while (progressiveSeek.active) {
+            kotlinx.coroutines.delay(500L)
+            latestOnInteraction()
+        }
+    }
     var pendingTarget by remember { mutableStateOf<Long?>(null) }
     var pendingDirection by remember { mutableIntStateOf(0) }
     var pointerTarget by remember { mutableStateOf<Long?>(null) }
@@ -1273,7 +1280,7 @@ internal fun TvPlayerSeekBar(
                 if (confirmKey) {
                     if (event.type == KeyEventType.KeyDown && event.nativeKeyEvent.repeatCount == 0) {
                         navigation?.interact(); onInteraction()
-                        val confirm = confirmSeekBarOk(pendingTarget, lastPreview, currentPosition())
+                        val confirm = confirmSeekBarOk(progressiveSeek.previewTargetMs ?: pendingTarget, lastPreview, currentPosition())
                         confirm.seekDeltaMs?.let { submitTarget(currentPosition() + it) }
                         progressiveSeek.cancel()
                         pendingTarget = null

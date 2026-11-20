@@ -80,6 +80,16 @@ fun PersistentPlayerChrome(
     ) {
         PlayerPanelAutoHide(chrome, changingItem)
         ProgressiveSeekTicker(chrome.osd.progressiveSeek)
+        // A held remote key must not let the controls timeout before the user releases it.
+        LaunchedEffect(chrome, chrome.osd.progressiveSeek.active) {
+            while (chrome.osd.progressiveSeek.active) {
+                kotlinx.coroutines.delay(500L)
+                chrome.osd.interact()
+            }
+        }
+        LaunchedEffect(changingItem) {
+            if (changingItem) chrome.osd.progressiveSeek.cancel()
+        }
         androidx.compose.runtime.DisposableEffect(chrome) {
             onDispose { chrome.osd.progressiveSeek.cancel() }
         }
