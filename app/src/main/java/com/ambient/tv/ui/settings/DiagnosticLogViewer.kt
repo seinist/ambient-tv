@@ -154,11 +154,11 @@ internal fun DiagnosticLogViewer(
             repeat(10) {
                 withFrameNanos { }
                 if (runCatching { requester.requestFocus() }.getOrDefault(false)) {
-                    if (openedEntry == null) returnToEntryKey = null
+                    // Keep the stable FocusRequester attached to the restored row: removing it
+                    // immediately can itself trigger a new focus handoff during recomposition.
                     return@LaunchedEffect
                 }
             }
-            if (openedEntry == null) returnToEntryKey = null
         }
     }
     LaunchedEffect(openedEntry?.key) {
