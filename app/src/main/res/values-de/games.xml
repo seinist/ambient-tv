@@ -232,4 +232,8 @@
     <string name="game_cache_fallback">Mit lokaler Kopie versuchen</string>
     <string name="games_core_rollback">Vorherigen Core wiederherstellen</string>
     <string name="games_core_rollback_failed">Vorheriger Core für %1$s konnte nicht wiederhergestellt werden.</string>
+    <string name="game_info_vulkan_hdr_core_declared">Core-HDR-Quelle: PQ/BT.2020 durch Core-Option deklariert und als gepackte 10-Bit-Vulkan-Pixel bestätigt. Das HDR-Ausgangssignal ist nicht am Gerät verifiziert.</string>
+    <string name="game_info_vulkan_hdr_source_unverified">Für diesen Core bzw. dieses Bildformat ist keine unabhängige HDR-Quellkodierung bekannt; natives experimentelles HDR bleibt gesperrt.</string>
+    <string name="game_info_vulkan_hdr_mastering_unknown">Quell-Mastering-Farbwerte, MaxCLL und MaxFALL: unbekannt (keine Schätzwerte).</string>
+    <string name="game_info_native_picture_requires_gles">Der native Vollbildmodus ist eine RAW-Vorschau. Dieser Filter oder die Geometrie verwendet weiterhin den vollständigen GLES-Bildrenderer.</string>
 </resources>
