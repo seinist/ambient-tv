@@ -989,7 +989,7 @@
     <string name="youtube_auth_required_title">SmartTube-Anmeldung erforderlich</string>
     <string name="youtube_auth_required_body">Dieser Feed benötigt eine gültige YouTube-Anmeldung. Melde dich erneut an, falls deine bisherige Sitzung nicht mehr funktioniert.</string>
     <string name="youtube_auth_check_title">SmartTube-Feeds konnten nicht geladen werden</string>
-    <string name="youtube_auth_check_body">Dieser Feed ist unerwartet leer. Versuche eine Aktualisierung oder prüfe die SmartTube-Anmeldung, wenn auch andere Feeds fehlen.</string>
+    <string name="youtube_auth_check_body">Dieser Feed ist leer oder der Zugriff wurde abgelehnt. Aktualisiere ihn oder prüfe deine SmartTube-Anmeldung, wenn auch andere Feeds fehlen.</string>
     <string name="youtube_auth_reconnect">Erneut anmelden</string>
     <string name="youtube_auth_attention_notice">SmartTube-Feeds fehlen. Bitte die Kontoanmeldung prüfen.</string>
     <string name="youtube_no_filter_matches">Keine Videos für diese Filter</string>
