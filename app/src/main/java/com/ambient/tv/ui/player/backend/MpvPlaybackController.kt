@@ -367,6 +367,7 @@ class MpvPlaybackController(
     fun reduceAfterOverload() { command("overload") { reduceAfterOverload() } }
     override fun status() = state.status.copy(playing = !released && state.status.playing, ended = ended, error = errorMessage)
     override fun wantsToPlay() = !released && playIntent && !ended && errorMessage == null
+    override fun requestedPlayIntent() = !released && playIntent && !ended
     override fun canSeekNow(): Boolean = !released && state.seekable
     fun positionMs() = state.status.positionMs
     fun durationMs() = state.status.durationMs
