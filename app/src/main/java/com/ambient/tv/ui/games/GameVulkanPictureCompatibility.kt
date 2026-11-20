@@ -1,19 +1,16 @@
 package com.ambient.tv.ui.games
 
-import com.ambient.tv.games.GameAspect
 import com.ambient.tv.games.GameShader
 
 /**
- * The Vulkan WSI preview currently uses a raw nearest-neighbor image blit.
- * Only settings it can genuinely reproduce may be shown over the GLES player.
- * This is a presentation safety gate, not a claim of complete native Vulkan
- * shader, crop, rotation or pixel-aspect parity on physical hardware.
+ * The experimental Vulkan WSI presenter performs an unfiltered nearest-neighbor
+ * image blit. Only PIXEL really matches that output. Built-in Sharp, CUT3,
+ * CRT and LCD all need shader passes that the raw blit does not run.
+ *
+ * The native presenter now matches the app's chosen core/forced aspect and
+ * integer scaling. Unsupported rotation still fails closed to GLES natively.
+ * Real-device visual parity and OSD layering remain acceptance tests.
  */
 internal object GameVulkanPictureCompatibility {
-    fun rawFullscreenEligible(
-        shader: GameShader,
-        aspect: GameAspect,
-        integerScaling: Boolean,
-    ): Boolean = shader == GameShader.SHARP &&
-        aspect == GameAspect.CORE && !integerScaling
+    fun rawFullscreenEligible(shader: GameShader): Boolean = shader == GameShader.PIXEL
 }
