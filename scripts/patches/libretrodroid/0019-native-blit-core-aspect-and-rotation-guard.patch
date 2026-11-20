@@ -18,7 +18,7 @@ diff --git a/src/main/cpp/vulkan/vulkanbackend.cpp b/src/main/cpp/vulkan/vulkanb
 +        disableNativeSdrSwapchain("core screen rotation requires GLES renderer");
 +    }
      if (nativeSdrWindow != nullptr && !nativeSdrDisabled && ensureNativeSdrSwapchain()) {
-@@ -980,6 +980,21 @@
+@@ -980,6 +980,20 @@
 -        const double scale = std::min(
 -            static_cast<double>(nativeSdrExtent.width) / std::max(1u, copyWidth),
 -            static_cast<double>(nativeSdrExtent.height) / std::max(1u, copyHeight));
