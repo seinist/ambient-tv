@@ -39,6 +39,21 @@ class GamesTest {
         assertEquals(GameShader.CRT, state.withShader(gba, null).shader(gba))
     }
 
+    @Test fun hdrToneMappingRequiresVulkanAndDefaultsOff() {
+        val vulkanCore = GameSystems.byId("psx")!!.core("mednafen_psx_hw")!!
+        val softwareCore = GameSystems.byId("snes")!!.core
+        val nonVulkanCore = GameSystems.byId("saturn")!!.core("yabasanshiro")!!
+        val original = GameSettingsState()
+        assertEquals(GameHdrToneMap.OFF, original.hdrToneMap(vulkanCore))
+        val selected = original.withHdrToneMap(vulkanCore, GameHdrToneMap.PQ)
+            .withHdrToneMap(softwareCore, GameHdrToneMap.HLG)
+            .withHdrToneMap(nonVulkanCore, GameHdrToneMap.HLG)
+        assertEquals(GameHdrToneMap.PQ, selected.hdrToneMap(vulkanCore))
+        assertEquals(GameHdrToneMap.OFF, selected.hdrToneMap(softwareCore))
+        assertEquals(GameHdrToneMap.OFF, selected.hdrToneMap(nonVulkanCore))
+        assertEquals(GameHdrToneMap.OFF, selected.withHdrToneMap(vulkanCore, GameHdrToneMap.OFF).hdrToneMap(vulkanCore))
+    }
+
     @Test fun coreOptionsArePerCore() {
         val nes = GameSystems.byId("nes")!!.core
         val gb = GameSystems.byId("gb")!!.core
