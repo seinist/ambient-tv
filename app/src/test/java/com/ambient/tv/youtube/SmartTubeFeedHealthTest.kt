@@ -21,6 +21,13 @@ class SmartTubeFeedHealthTest {
         assertFalse(smartTubeAuthRejected(IllegalStateException("No rows returned")))
     }
 
+    @Test fun forbiddenPrivateFeedSuggestsCheckingTheAccountWithoutDeclaringItExpired() {
+        assertTrue(smartTubePrivateFeedForbidden(IOException("HTTP 403"), "home", signedIn = true))
+        assertFalse(smartTubePrivateFeedForbidden(IOException("HTTP 403"), "music", signedIn = true))
+        assertFalse(smartTubePrivateFeedForbidden(IOException("HTTP 403"), "home", signedIn = false))
+        assertFalse(smartTubePrivateFeedForbidden(IOException("HTTP 429"), "home", signedIn = true))
+    }
+
     @Test fun emptyPersonalizedFeedRequiresEvidenceExceptForHome() {
         assertTrue(smartTubeEmptyFeedNeedsAttention("home", signedIn = true, hadRows = false))
         assertTrue(smartTubeEmptyFeedNeedsAttention("subscriptions", signedIn = false, hadRows = false))
