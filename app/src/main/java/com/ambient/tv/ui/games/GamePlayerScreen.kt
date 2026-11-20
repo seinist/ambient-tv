@@ -53,9 +53,12 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.Menu
+import androidx.compose.material3.Icon
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.RestartAlt
 import androidx.compose.material.icons.filled.Save
@@ -664,8 +667,30 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
             AndroidView(
                 factory = { retroView },
                 modifier = Modifier.fillMaxSize()
-                    .then(if (handheld) Modifier.clickable { if (!menuOpen) openMenu() } else Modifier),
+                    // Direct touch must reach GLRetroView for DS/3DS/Wii emulated pointers.
+                    // Other games keep the existing tap-to-open-menu handheld behavior.
+                    .then(if (handheld && !system.pointerInput)
+                        Modifier.clickable { if (!menuOpen) openMenu() } else Modifier),
             )
+            // Keep a reachable menu on touch-driven systems. Android Back still opens it.
+            if (handheld && system.pointerInput && !menuOpen) {
+                Box(
+                    modifier = Modifier.align(Alignment.TopStart)
+                        .padding(start = 12.dp, top = 12.dp)
+                        .size(44.dp)
+                        .clip(RoundedCornerShape(22.dp))
+                        .background(Color.Black.copy(alpha = 0.58f))
+                        .clickable { openMenu() },
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(
+                        Icons.Filled.Menu,
+                        contentDescription = stringResource(R.string.game_controls_menu),
+                        tint = Color.White,
+                        modifier = Modifier.size(22.dp),
+                    )
+                }
+            }
             GameAchievementBanner(achievements.banner, Modifier.align(Alignment.TopCenter).padding(top = 32.dp))
             if (netplay.waiting && !menuOpen) GameOverlayNote(
                 stringResource(R.string.game_netplay_waiting),
