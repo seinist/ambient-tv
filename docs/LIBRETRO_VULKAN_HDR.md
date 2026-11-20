@@ -122,11 +122,11 @@ the validated output path.
 - Patch `0010-libretro-hdr-metadata-v1-safe-contract.patch` updates the pinned
   libretro header with the v1 experimental GET_HDR_METADATA (101) and
   GET_DISPLAY_METADATA (102) request layouts, including HDR10 and scRGB source
-  pixel-format identifiers. The environment **truthfully responds with
-  output_mode=0 and source_formats=0**, because CPU 10-bit/FP16 uploads are not
-  supported and a Vulkan FP16 intermediate cannot establish HDR presentation
-  capability on its own. Unknown geometry, mastering information and HDR EOTFs
-  are zero, not synthesized. Invalid versions or undersized buffers are rejected.
+  pixel-format identifiers. The environment **never advertises unsupported
+  software source formats** (`source_formats=0`), because CPU 10-bit/FP16
+  uploads do not exist and a Vulkan FP16 intermediate cannot establish HDR
+  presentation on its own. Before active Vulkan output the frontend reports
+  `output_mode=0`; invalid versions or undersized buffers are rejected.
   New core software input formats remain rejected by SET_PIXEL_FORMAT.
 - Patch `0011-optin-10bit-pq-hlg-vulkan-swapchain.patch` extends the *existing
   experimental hardware-Vulkan presenter* to offer an explicitly requested
@@ -145,6 +145,16 @@ the validated output path.
   offering opt-in fullscreen. All user-facing labels and tests distinguish
   candidate/display capability, frame presentation, and true verified display
   signal. SDR remains the default; no output switch is automatic.
+- Patch `0012-android-hdr-display-metadata-live-pq-status.patch` populates
+  platform-reported peak/average/min display luminance and the currently
+  advertised EOTF mask via a GL-thread JNI API, without inferring EDID or
+  authored content mastering metadata. GET_HDR_METADATA v1 reports **PQ
+  output_mode=1 only after a real 10-bit PQ frame was presented successfully**,
+  with BT.2020 primaries and PQ transfer. Before that it stays zero. The v1
+  output enum has no HLG mode, so an HLG presentation is *not* misreported
+  as PQ. `max_cll`/`max_fall` and mastering primaries stay unknown without
+  authored source metadata. The tests cover EOTF/WSI mismatch and observed
+  SDR/PQ/HLG status distinctions.
 - **Important:** A 10-bit `VkFormat` does **not** identify the transfer function.
   Current UI selection of PQ or HLG is explicitly manual, not a trusted core
   declaration. The experimental libretro GET_HDR_METADATA contract is still
