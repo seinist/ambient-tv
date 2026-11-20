@@ -288,6 +288,30 @@ open class MainActivity : ComponentActivity() {
     private val consumedMouseButtons = mutableSetOf<Int>()
     private var suppressMouseBackKeyUntilMs = 0L
     private val keyBindingDispatcher = com.ambient.tv.ui.keyboard.KeyBindingDispatcher()
+    /** Controller buttons, triggers, sticks and the hat as the app's keys and actions (ui.gamepad). */
+    private val gamepadController = com.ambient.tv.ui.gamepad.GamepadController(object : com.ambient.tv.ui.gamepad.GamepadHost {
+        private val handler = android.os.Handler(android.os.Looper.getMainLooper())
+        override fun emitKey(event: KeyEvent) { this@MainActivity.dispatchKeyEvent(event) }
+        override fun perform(action: com.ambient.tv.ui.keyboard.KeyAction) = performBoundKeyAction(action)
+        override fun volume(command: com.ambient.tv.ui.gamepad.GamepadVolumeCommand) = adjustKeyboardVolume(when (command) {
+            com.ambient.tv.ui.gamepad.GamepadVolumeCommand.UP -> android.media.AudioManager.ADJUST_RAISE
+            com.ambient.tv.ui.gamepad.GamepadVolumeCommand.DOWN -> android.media.AudioManager.ADJUST_LOWER
+            com.ambient.tv.ui.gamepad.GamepadVolumeCommand.MUTE -> android.media.AudioManager.ADJUST_TOGGLE_MUTE
+        })
+        override val playerForeground: Boolean get() = com.ambient.tv.ui.keyboard.KeyBindings.playerForeground
+        override val recordingKey: Boolean get() = com.ambient.tv.ui.keyboard.KeyBindings.capture != null
+        override fun now(): Long = SystemClock.uptimeMillis()
+        override fun schedule(delayMs: Long, task: () -> Unit): () -> Unit {
+            val runnable = Runnable(task)
+            handler.postDelayed(runnable, delayMs)
+            return { handler.removeCallbacks(runnable) }
+        }
+    })
+    private val gamepadDeviceListener = object : android.hardware.input.InputManager.InputDeviceListener {
+        override fun onInputDeviceAdded(deviceId: Int) = Unit
+        override fun onInputDeviceChanged(deviceId: Int) = Unit
+        override fun onInputDeviceRemoved(deviceId: Int) = gamepadController.deviceRemoved(deviceId)
+    }
     private var replayingBoundKey = false
     private var middleMouseDownTimeMs = 0L
     private var middleMouseDownX = 0f
@@ -346,6 +370,7 @@ open class MainActivity : ComponentActivity() {
 
     override fun onDestroy() {
         stopDismissedPipIfFinishing()
+        getSystemService(android.hardware.input.InputManager::class.java)?.unregisterInputDeviceListener(gamepadDeviceListener)
         if (ownsBrowseUiSession) browseUiSessionPolicy.destroy(browseUiOwner, isChangingConfigurations)
         uiResolutionHost?.close()
         uiResolutionHost = null
@@ -391,6 +416,7 @@ open class MainActivity : ComponentActivity() {
         resetMiddleMousePan()
         consumedMouseButtons.clear()
         consumedKodiKeyboardKeys.clear()
+        gamepadController.releaseAll()
         super.onPause()
     }
     private val openPlaybackRequest = mutableLongStateOf(0)
@@ -449,6 +475,7 @@ open class MainActivity : ComponentActivity() {
 
     override fun onWindowFocusChanged(hasFocus: Boolean) {
         if (!hasFocus) {
+            gamepadController.releaseAll()
             uiRenderBackKeyGate.reset()
             com.ambient.tv.companion.CompanionRemoteInput.hide()
         }
@@ -479,6 +506,8 @@ open class MainActivity : ComponentActivity() {
         if (consumeScreensaverInput(screensaverInput.key(keyIdentity, phase, event.repeatCount,
                 screensaverActive.value, screensaverOverlayPresent.value))) return true
         if (event.action == KeyEvent.ACTION_DOWN) registerUserInteraction()
+        // Controller buttons become the app's keys and actions (or go to a game in front).
+        if (gamepadController.handleKey(event)) return true
         // Sleep pre-warning: OK extends by 30 min instead of reaching the focused control.
         if (com.ambient.tv.ui.player.SleepWarningKeyGate.takesOk(BackgroundPlaybackSession.sleepWarningDeadline != null) && event.keyCode in setOf(
                 KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER, KeyEvent.KEYCODE_NUMPAD_ENTER)) {
@@ -616,6 +645,8 @@ open class MainActivity : ComponentActivity() {
     }
 
     private fun dispatchUiGenericMotionEvent(event: MotionEvent, dispatchToContent: () -> Boolean): Boolean {
+        // Sticks, hat and triggers: before anything else, so a resting stick counts as no input.
+        if (gamepadController.handleMotion(event)) return true
         com.ambient.tv.data.browse.BrowseWorkBudget.interact()
         // Hover/remote pointer noise is not a new press and must not cancel a preview.
         if (event.actionMasked == MotionEvent.ACTION_BUTTON_PRESS || event.actionMasked == MotionEvent.ACTION_BUTTON_RELEASE) {
@@ -798,7 +829,17 @@ open class MainActivity : ComponentActivity() {
         super.onCreate(restoredState)
         // After super.onCreate: Hilt injects the preferences there.
         com.ambient.tv.ui.common.PlayerOsdTimeout.seconds = appPreferences.playerOsdSeconds
-        com.ambient.tv.ui.keyboard.KeyBindings.attach(appPreferences.keyBindings) { appPreferences.keyBindings = it }
+        // Controller buttons once stored as remote keys move to the controller page.
+        val (remoteKeyBindings, movedGamepadBindings) = com.ambient.tv.ui.gamepad.splitLegacyGamepadBindings(appPreferences.keyBindings)
+        com.ambient.tv.ui.gamepad.GamepadInput.attach(appPreferences.gamepadSettings) { appPreferences.gamepadSettings = it }
+        com.ambient.tv.ui.gamepad.retro.RetroInputSettings.attach(appPreferences.retroInputSettings) { appPreferences.retroInputSettings = it }
+        com.ambient.tv.games.GameSettings.attach(appPreferences.gameSettings) { appPreferences.gameSettings = it }
+        if (movedGamepadBindings.isNotEmpty()) {
+            com.ambient.tv.ui.gamepad.GamepadInput.importLegacy(movedGamepadBindings)
+            appPreferences.keyBindings = remoteKeyBindings
+        }
+        com.ambient.tv.ui.keyboard.KeyBindings.attach(remoteKeyBindings) { appPreferences.keyBindings = it }
+        getSystemService(android.hardware.input.InputManager::class.java)?.registerInputDeviceListener(gamepadDeviceListener, null)
         com.ambient.tv.ui.keyboard.KeyBindings.seekStepMs = { appPreferences.bigSeekJumpSeconds.coerceAtLeast(1) * 1_000L }
         registerKeyActionFallbacks()
         browseReconnects.start()
@@ -1128,7 +1169,14 @@ internal fun radioSectionTransitionIsInstant(fromRoute: String?, toRoute: String
 }
 
 internal val SIDEBAR_ROUTES = setOf(Destinations.TRAILERS, Destinations.TRAILER_FEED, Destinations.FILES, Destinations.FILE_SOURCE, Destinations.FILE_FAVORITES, Destinations.FILE_RECENT, Destinations.FILE_CONTINUE, Destinations.DLNA, Destinations.DLNA_SERVER, Destinations.HOME, Destinations.WEATHER, Destinations.PLEX, Destinations.JELLYFIN, Destinations.EMBY, Destinations.SEARCH, Destinations.YOUTUBE, Destinations.YOUTUBE_FEED, Destinations.TELEGRAM, Destinations.TELEGRAM_SECTION, Destinations.SPOTIFY, Destinations.SPOTIFY_SECTION, Destinations.RADIO, Destinations.RADIO_SECTION, Destinations.LIVE_TV, Destinations.LIVE_TV_SECTION, Destinations.SETTINGS, Destinations.SECTION)
-internal val FULLSCREEN_ROUTES = setOf(Destinations.ITEM_TRAILERS, Destinations.TMDB_TRAILERS, Destinations.PHOTO_VIEWER, Destinations.SETUP_COMPLETE, Destinations.INITIAL_SETUP, Destinations.SETUP_SETTINGS, Destinations.WEATHER_PLAYER, Destinations.PLAYER, Destinations.TVH_PLAYER, Destinations.YOUTUBE_PLAYER, Destinations.TELEGRAM_PLAYER, Destinations.TELEGRAM_DETAIL, Destinations.YOUTUBE_DETAIL, Destinations.YOUTUBE_CHANNEL, Destinations.SPOTIFY_PLAYER, Destinations.RADIO_PLAYER, Destinations.RADIO_DETAIL, Destinations.SPOTIFY_DETAIL, Destinations.SERVER_SELECT, Destinations.DETAIL, Destinations.DETAIL_FILTERED_BROWSE)
+internal val FULLSCREEN_ROUTES = setOf(Destinations.ITEM_TRAILERS, Destinations.TMDB_TRAILERS, Destinations.PHOTO_VIEWER, Destinations.GAME_PLAYER, Destinations.SETUP_COMPLETE, Destinations.INITIAL_SETUP, Destinations.SETUP_SETTINGS, Destinations.WEATHER_PLAYER, Destinations.PLAYER, Destinations.TVH_PLAYER, Destinations.YOUTUBE_PLAYER, Destinations.TELEGRAM_PLAYER, Destinations.TELEGRAM_DETAIL, Destinations.YOUTUBE_DETAIL, Destinations.YOUTUBE_CHANNEL, Destinations.SPOTIFY_PLAYER, Destinations.RADIO_PLAYER, Destinations.RADIO_DETAIL, Destinations.SPOTIFY_DETAIL, Destinations.SERVER_SELECT, Destinations.DETAIL, Destinations.DETAIL_FILTERED_BROWSE)
+// Details are ordinary page navigation (even though they hide the sidebar).
+// Exclude only player/video, setup and system-only destinations from page motion.
+internal val NO_VIEW_TRANSITION_ROUTES = FULLSCREEN_ROUTES - setOf(
+    Destinations.DETAIL, Destinations.DETAIL_FILTERED_BROWSE,
+    Destinations.TELEGRAM_DETAIL, Destinations.YOUTUBE_DETAIL, Destinations.YOUTUBE_CHANNEL,
+    Destinations.RADIO_DETAIL, Destinations.SPOTIFY_DETAIL,
+)
 // Saved on the Settings back stack entry by a sidebar shortcut: the page to open, plus a serial
 // that changes with every request.
 private const val SETTINGS_PAGE_KEY = "settings_page"
@@ -1186,6 +1234,11 @@ private fun AmbientTvApp(
     val startupViewModel: ServerSelectViewModel = androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel()
     val startupState by startupViewModel.uiState.collectAsState()
     val navController = rememberNavController()
+    // Preference updates (including backup/Companion import) take effect without recreating
+    // the NavHost or replacing a running native playback Surface.
+    val viewTransitionStyleKey by remember(appPreferences) {
+        appPreferences.changes().map { appPreferences.viewTransitionStyleKey }.distinctUntilChanged()
+    }.collectAsState(initial = appPreferences.viewTransitionStyleKey)
     val companionVm: com.ambient.tv.companion.CompanionViewModel = androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel()
     LaunchedEffect(companionVm) {
         var revision = companionVm.manager.state.value.settingsRevision
@@ -1927,7 +1980,7 @@ private fun AmbientTvApp(
         if (!backgroundPlayback.active && !onPlayerRoute) backgroundPlayerReturn.clearStoppedPlayback()
     }
     androidx.compose.runtime.SideEffect { com.ambient.tv.ui.player.SleepWarningKeyGate.playerRoute = onPlayerRoute }
-    val playbackActive = currentRoute == Destinations.PHOTO_VIEWER || currentRoute == Destinations.WEATHER_PLAYER || currentRoute == Destinations.PLAYER || currentRoute == Destinations.TVH_PLAYER || currentRoute == Destinations.YOUTUBE_PLAYER || currentRoute == Destinations.TELEGRAM_PLAYER || currentRoute == Destinations.SPOTIFY_PLAYER || currentRoute == Destinations.RADIO_PLAYER || backgroundPlayback.active || spotifyPlaying
+    val playbackActive = currentRoute == Destinations.PHOTO_VIEWER || currentRoute == Destinations.WEATHER_PLAYER || currentRoute == Destinations.GAME_PLAYER || currentRoute == Destinations.PLAYER || currentRoute == Destinations.TVH_PLAYER || currentRoute == Destinations.YOUTUBE_PLAYER || currentRoute == Destinations.TELEGRAM_PLAYER || currentRoute == Destinations.SPOTIFY_PLAYER || currentRoute == Destinations.RADIO_PLAYER || backgroundPlayback.active || spotifyPlaying
 
     // Handheld video pages are fullscreen exactly while the window is landscape, so turning the
     // device switches into fullscreen and back. Television keeps its manifest orientation.
@@ -1941,7 +1994,7 @@ private fun AmbientTvApp(
     val weatherPresentation = com.ambient.tv.ui.weather.rememberWeatherPresentation(
         headerVisible = !introVisible && !standbyRequested && !screensaverOverlayPresent && !pipPresentation &&
             !onPlayerRoute && currentRoute !in setOf(Destinations.PHOTO_VIEWER, Destinations.ITEM_TRAILERS,
-                Destinations.TMDB_TRAILERS, Destinations.WEATHER_PLAYER, Destinations.SERVER_SELECT, Destinations.INITIAL_SETUP, Destinations.SETUP_COMPLETE),
+                Destinations.TMDB_TRAILERS, Destinations.WEATHER_PLAYER, Destinations.GAME_PLAYER, Destinations.SERVER_SELECT, Destinations.INITIAL_SETUP, Destinations.SETUP_COMPLETE),
         screensaverVisible = !introVisible && !standbyRequested && !pipPresentation &&
             ScreensaverPresentation.shouldShow(screensaverActive, screensaverPreview != null, playbackActive),
         contentVisible = !introVisible && !standbyRequested && !screensaverOverlayPresent && !pipPresentation,
@@ -1950,7 +2003,7 @@ private fun AmbientTvApp(
         handheld = handheld,
         appScreensaverEnabled = screensaverEnabled,
         screensaverOverlayPresent = screensaverOverlayPresent,
-        photoViewer = currentRoute == Destinations.PHOTO_VIEWER || currentRoute == Destinations.WEATHER_PLAYER,
+        photoViewer = currentRoute == Destinations.PHOTO_VIEWER || currentRoute == Destinations.WEATHER_PLAYER || currentRoute == Destinations.GAME_PLAYER,
         playerPageVisible = onPlayerRoute,
         pipVisible = pipPresentation,
         sessionActive = backgroundPlayback.active,
@@ -2300,7 +2353,7 @@ private fun AmbientTvApp(
             val showHomeBackground = currentRoute != Destinations.HOME && homeBackground.visible(
                 reducedEffects = com.ambient.tv.ui.performance.LocalPerformanceProfile.current.reducedEffects,
                 foregroundPlayback = onPlayerScreen || currentRoute in setOf(Destinations.SPOTIFY_PLAYER, Destinations.RADIO_PLAYER,
-                    Destinations.ITEM_TRAILERS, Destinations.TMDB_TRAILERS, Destinations.PHOTO_VIEWER) || screensaverOverlayPresent,
+                    Destinations.ITEM_TRAILERS, Destinations.TMDB_TRAILERS, Destinations.PHOTO_VIEWER, Destinations.GAME_PLAYER) || screensaverOverlayPresent,
                 backgroundVideo = showVisibleBackgroundVideo,
             )
             if (!pipPresentation && showHomeBackground) {
@@ -2486,19 +2539,30 @@ private fun AmbientTvApp(
                     // override the destination's focusRestorer callback.
                     .focusGroup(),
             ) {
+                com.ambient.tv.ui.common.ViewTransitionHost(
+                    styleKey = viewTransitionStyleKey,
+                    route = currentRoute,
+                    entryId = currentBackStackEntry?.id,
+                    backStackDepth = navController.currentBackStack.value.size,
+                    fullscreen = currentRoute in NO_VIEW_TRANSITION_ROUTES,
+                    reducedEffects = com.ambient.tv.ui.performance.LocalPerformanceProfile.current.reducedEffects,
+                    backgroundVideoVisible = showVisibleBackgroundVideo,
+                    lowEndDevice = com.ambient.tv.ui.performance.LocalPerformanceProfile.current.lowEndDevice,
+                    skipTransition = { from, to -> handheld && radioSectionTransitionIsInstant(from, to) },
+                ) {
                 NavHost(
                     navController = navController,
                     startDestination = startDestination,
                     // TV destinations change atomically: outgoing pages must not retain focus
                     // or Back ownership while the parent page is already active.
                     enterTransition = {
-                        if (!handheld || radioSectionTransitionIsInstant(
+                        if (!handheld || viewTransitionStyleKey != "off" || radioSectionTransitionIsInstant(
                                 initialState.destination.route, targetState.destination.route,
                             )) EnterTransition.None
                         else fadeIn(tween(700))
                     },
                     exitTransition = {
-                        if (!handheld || radioSectionTransitionIsInstant(
+                        if (!handheld || viewTransitionStyleKey != "off" || radioSectionTransitionIsInstant(
                                 initialState.destination.route, targetState.destination.route,
                             )) ExitTransition.None
                         else fadeOut(tween(700))
@@ -2506,22 +2570,22 @@ private fun AmbientTvApp(
                     // Pop and predictive-back pops default to Navigation's own scale-out
                     // animation (page shrinks, parent shows behind); keep TV atomic here too.
                     popEnterTransition = {
-                        if (!handheld || radioSectionTransitionIsInstant(
+                        if (!handheld || viewTransitionStyleKey != "off" || radioSectionTransitionIsInstant(
                                 initialState.destination.route, targetState.destination.route,
                             )) EnterTransition.None else fadeIn(tween(700))
                     },
                     popExitTransition = {
-                        if (!handheld || radioSectionTransitionIsInstant(
+                        if (!handheld || viewTransitionStyleKey != "off" || radioSectionTransitionIsInstant(
                                 initialState.destination.route, targetState.destination.route,
                             )) ExitTransition.None else fadeOut(tween(700))
                     },
                     predictivePopEnterTransition = {
-                        if (!handheld || radioSectionTransitionIsInstant(
+                        if (!handheld || viewTransitionStyleKey != "off" || radioSectionTransitionIsInstant(
                                 initialState.destination.route, targetState.destination.route,
                             )) EnterTransition.None else fadeIn(tween(700))
                     },
                     predictivePopExitTransition = {
-                        if (!handheld || radioSectionTransitionIsInstant(
+                        if (!handheld || viewTransitionStyleKey != "off" || radioSectionTransitionIsInstant(
                                 initialState.destination.route, targetState.destination.route,
                             )) ExitTransition.None else fadeOut(tween(700))
                     },
@@ -2870,6 +2934,14 @@ private fun AmbientTvApp(
                         }
                     }
                     composable(
+                        route = Destinations.GAME_PLAYER,
+                        arguments = listOf(navArgument("fileId") { type = NavType.StringType }),
+                    ) { entry ->
+                        com.ambient.tv.ui.games.GamePlayerScreen(
+                            onBack = { if (navController.currentBackStackEntry === entry) navigateBack() },
+                        )
+                    }
+                    composable(
                         route = Destinations.WEATHER_PLAYER,
                         arguments = listOf(
                             navArgument("kind") { type = NavType.StringType },
@@ -3155,6 +3227,7 @@ private fun AmbientTvApp(
                                     onBack = ::focusSidebar,
                                     contentActive = !sidebarHasFocus && windowInfo.isWindowFocused && !screensaverOverlayPresent,
                                     onOpenPhotos = { navController.navigate(Destinations.PHOTO_VIEWER) },
+                                    onOpenGame = { id -> navController.navigate(Destinations.gamePlayer(id)) },
                                 )
                                 }
                             }
@@ -3172,6 +3245,7 @@ private fun AmbientTvApp(
                                 onBack = ::focusSidebar,
                                 contentActive = !sidebarHasFocus && windowInfo.isWindowFocused && !screensaverOverlayPresent,
                                 onOpenPhotos = { navController.navigate(Destinations.PHOTO_VIEWER) },
+                                onOpenGame = { id -> navController.navigate(Destinations.gamePlayer(id)) },
                             )
                             }
                         }
@@ -3485,6 +3559,7 @@ private fun AmbientTvApp(
                         )
                     }
                 }
+                } // ViewTransitionHost; global overlays and video remain outside the effect.
 
                 // Entering a player over a browse/detail page: the player is transparent so the
                 // video plane below can show through, which for the frames Navigation still draws

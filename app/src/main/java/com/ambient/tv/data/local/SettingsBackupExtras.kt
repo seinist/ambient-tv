@@ -28,11 +28,19 @@ data class PortableSettingsExtras(
     val lyricsVisible: Boolean? = null,
     val lyricsOnlineEnabled: Boolean? = null,
     val frameDropOverlayHistory: Boolean? = null,
+    /** Opt-in UI navigation transition. Null from old/partial backups preserves the receiver. */
+    val viewTransitionStyleKey: String? = null,
     val liveTvReminderAutoSwitch: Boolean? = null,
     val autoUpdateCheck: Boolean? = null,
     val projectmFavorites: Set<String>? = null,
     /** Remote/keyboard key bindings (action key -> "keyCode:long"). */
     val keyBindings: Map<String, String>? = null,
+    /** Controller options and button overrides (see ui.gamepad.GamepadConfig). */
+    val gamepadSettings: Map<String, String>? = null,
+    /** Game input players and layouts (see ui.gamepad.retro.RetroInputConfig). */
+    val retroInputSettings: Map<String, String>? = null,
+    /** Game picture filters and core options (see games.GameSettingsState). */
+    val gameSettings: Map<String, String>? = null,
 )
 
 @Serializable

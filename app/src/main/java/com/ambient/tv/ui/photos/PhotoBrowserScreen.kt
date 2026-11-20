@@ -240,6 +240,7 @@ fun PhotoBrowserScreen(
                     }
                     TvChip(stringResource(R.string.action_reload), icon = Icons.Filled.Refresh,
                         iconOnly = true, loading = state.loading || state.refreshing,
+                        loadingOnlyAfterClick = true,
                         onClick = { filterFocusState.keepControls(); viewModel.reload() })
                     // Timeline is fixed to chronological month groups; it has no sort/layout options.
                     if (!state.timeline) ViewOptionsChip(0, {

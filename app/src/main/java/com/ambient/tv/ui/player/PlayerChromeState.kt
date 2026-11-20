@@ -102,6 +102,13 @@ fun PersistentPlayerChrome(
         Box(Modifier.fillMaxSize()
             .onFocusChanged { chrome.hasFocus = it.hasFocus }
             .onPreviewKeyEvent {
+                // Keep the active direct scrub on one owner even if showing seek feedback
+                // changes focus from the engine to the timeline between KeyDown and KeyUp.
+                // Run in the outer preview phase, before a newly focused child can swallow
+                // the release; an interactive timeline with no active scrub keeps its keys.
+                if (!changingItem && forwardActiveDirectSeekKey(it.key, chrome.osd.progressiveSeek) {
+                        chrome.panelKeys.value?.invoke(it) == true
+                    }) return@onPreviewKeyEvent true
                 // Shared by every renderer, including when the OSD or side panel owns focus.
                 val session = chrome.panelModel.value?.audioSession
                 if (it.key == Key.Info) {

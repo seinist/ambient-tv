@@ -121,7 +121,7 @@ write_canonical_settings_kts() {
     local out="$1"
     mkdir -p "$(dirname "$out")"
     cat > "$out" <<'GRADLE_SETTINGS_KTS'
-// AMBIENT_TV_SETTINGS_KTS_V66
+// AMBIENT_TV_SETTINGS_KTS_V67
 pluginManagement {
     repositories {
         google()
@@ -147,6 +147,13 @@ rootProject.name = "ambient-tv"
 rootProject.buildFileName = "build.gradle.kts"
 include(":app")
 project(":app").buildFileName = "build.gradle.kts"
+
+// Games: LibretroDroid (scripts/fetch_libretrodroid.sh). Required by :app.
+if (file("third_party/libretrodroid/src/main/cpp/CMakeLists.txt").isFile) {
+    include(":libretrodroid")
+    project(":libretrodroid").projectDir = file("libretrodroid_wrapper")
+    project(":libretrodroid").buildFileName = "build.gradle.kts"
+}
 
 val smartRoot = file("third_party/smarttube")
 val msc = smartRoot.resolve("MediaServiceCore")
@@ -177,17 +184,18 @@ ensure_settings_kts() {
     local target="$ROOT_DIR/settings.gradle.kts"
 
     if [[ ! -f "$target" ]] \
-        || ! grep -F 'AMBIENT_TV_SETTINGS_KTS_V66' "$target" >/dev/null 2>&1 \
+        || ! grep -F 'AMBIENT_TV_SETTINGS_KTS_V67' "$target" >/dev/null 2>&1 \
         || ! grep -F 'rootProject.buildFileName = "build.gradle.kts"' "$target" >/dev/null 2>&1 \
         || ! grep -F 'project(":youtubeapi").projectDir = wrappers.resolve("youtubeapi")' "$target" >/dev/null 2>&1 \
-        || ! grep -F 'project(":youtubeapi").buildFileName = "build.gradle.kts"' "$target" >/dev/null 2>&1; then
+        || ! grep -F 'project(":youtubeapi").buildFileName = "build.gradle.kts"' "$target" >/dev/null 2>&1 \
+        || ! grep -F 'project(":libretrodroid").projectDir = file("libretrodroid_wrapper")' "$target" >/dev/null 2>&1; then
         log "Repairing canonical Kotlin Gradle settings entrypoint"
         write_canonical_settings_kts "$target"
     fi
 }
 
 verify_kotlin_dsl_entrypoints() {
-    grep -F 'AMBIENT_TV_SETTINGS_KTS_V66' "$ROOT_DIR/settings.gradle.kts" >/dev/null \
+    grep -F 'AMBIENT_TV_SETTINGS_KTS_V67' "$ROOT_DIR/settings.gradle.kts" >/dev/null \
         || fail "settings.gradle.kts is missing or stale."
     grep -F 'rootProject.buildFileName = "build.gradle.kts"' "$ROOT_DIR/settings.gradle.kts" >/dev/null \
         || fail "settings.gradle.kts does not pin the root Kotlin build file."
@@ -543,6 +551,11 @@ ensure_monogram_native() {
     local selected="${1:-${MONOGRAM_ABIS:-arm64-v8a armeabi-v7a x86 x86_64}}"
     log "Building only the pinned Monogram MTProto runtime for $selected"
     MONOGRAM_ABIS="$selected" bash "$MONOGRAM_BUILD_SCRIPT"
+}
+
+# Games: the pinned, patched LibretroDroid module (third_party/libretrodroid).
+ensure_libretrodroid() {
+    "$ROOT_DIR/scripts/fetch_libretrodroid.sh" || fail "LibretroDroid could not be prepared."
 }
 
 ensure_youtube_engine() {
@@ -971,6 +984,7 @@ build_debug() {
     ensure_monogram_native "${SUPPORTED_ABIS[*]}"
     prepare_nnedi3_quality_ladder
     ensure_spotify
+    ensure_libretrodroid
     ensure_youtube_engine
     ensure_mpv
     ensure_vlc_vulkan
@@ -1057,6 +1071,7 @@ build_release_variant() {
 
     ensure_monogram_native "$abi_mode"
     ensure_spotify
+    ensure_libretrodroid
     ensure_youtube_engine
     ensure_mpv
     ensure_vlc_vulkan
@@ -1177,6 +1192,7 @@ build_release() {
     rm -f "$DIST_DIR/update.json"
     prepare_nnedi3_quality_ladder
     ensure_spotify
+    ensure_libretrodroid
     ensure_youtube_engine
     ensure_mpv
     ensure_vlc_vulkan
@@ -1288,6 +1304,7 @@ require_project
 
 case "$MODE" in
     youtube-engine|smarttube)
+        ensure_libretrodroid
         ensure_youtube_engine
         ;;
     projectm)

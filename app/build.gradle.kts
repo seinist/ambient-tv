@@ -235,6 +235,12 @@ android {
         buildConfigField("boolean", "SPOTIFY_ENABLED", spotifyEnabled.toString())
         buildConfigField("String", "MONOGRAM_REF", quotedBuildConfigString(externalVersion("MONOGRAM_REF")))
         buildConfigField("String", "MONOGRAM_VERSION", quotedBuildConfigString(externalVersion("MONOGRAM_VERSION")))
+        // Own core channel (.github/workflows/cores.yml): public key of its signed manifest, empty
+        // until scripts/cores_signing_key.sh has created cores/signing-public.pem.
+        val coresPublicKey = rootProject.file("cores/signing-public.pem").takeIf { it.isFile }
+            ?.readLines()?.filterNot { it.startsWith("-----") }?.joinToString("")?.trim().orEmpty()
+        buildConfigField("String", "CORES_PUBLIC_KEY", quotedBuildConfigString(coresPublicKey))
+        buildConfigField("String", "CORES_REPO", quotedBuildConfigString("seinist/ambient-tv"))
         resValue("string", "brand_app_name", quotedBuildConfigString(appDisplayName))
         buildConfigField("String", "SPOTIFY_REDIRECT_URI", quotedBuildConfigString(spotifyRedirectUriForBuild))
         buildConfigField("String", "SPOTIFY_QR_REDIRECT_URI", quotedBuildConfigString(spotifyQrRedirectUriForBuild))
@@ -491,6 +497,16 @@ dependencies {
         implementation("net.java.dev.jna:jna:5.19.1@aar")
         implementation("org.rustls:rustls-platform-verifier:${externalVersion("MONOGRAM_RUSTLS_PLATFORM_VERIFIER_VERSION")}")
     }
+    // Packed games: ZIP/7z (with LZMA via xz) and RAR4.
+    implementation(libs.commons.compress)
+    implementation(libs.xz)
+    implementation(libs.junrar)
+    // libretro frontend for games (Argosy's LibretroDroid fork, GPL-3.0 like the APK), fetched and
+    // patched by scripts/fetch_libretrodroid.sh. Cores are loaded on demand, never bundled.
+    implementation(
+        rootProject.findProject(":libretrodroid")
+            ?: error("LibretroDroid is missing: run scripts/fetch_libretrodroid.sh (./build.sh does it).")
+    )
     implementation(libs.smbj)
     implementation(libs.jcifs.ng)
     // QR decoding for the phone's pairing scanner (pure Java, no transitive dependencies).

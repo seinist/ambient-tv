@@ -1,0 +1,185 @@
+name: Cores
+
+# Builds the pinned libretro cores of cores/cores.json from source with the app's NDK (16 KB
+# pages checked) and, when publishing, puts them into a signed "cores-…" release. The app's
+# "Ambient TV build" core channel reads that release: manifest.json signed with the key whose
+# public half is in cores/signing-public.pem (secret CORES_SIGNING_KEY, PEM, EC P-256).
+
+on:
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: Publish a signed cores release
+        type: boolean
+        default: true
+      cores:
+        description: Core ids to build, comma separated (empty = all)
+        default: ""
+  push:
+    paths:
+      - cores/cores.json
+      - .github/workflows/cores.yml
+      - scripts/check_elf_pages.py
+
+concurrency:
+  group: cores-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+
+env:
+  NDK_VERSION: "30.0.16248370"
+
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.plan.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@v5
+      - id: plan
+        env:
+          ONLY: ${{ inputs.cores }}
+        run: |
+          matrix=$(jq -c --arg only "$ONLY" '
+            ($only | split(",") | map(select(length > 0))) as $wanted
+            | { include: [ .abis[] as $abi | .cores[]
+                | select(($wanted | length) == 0 or (.core as $c | $wanted | index($c)))
+                | . + { abi: $abi } ] }' cores/cores.json)
+          echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
+          echo "$matrix" | jq -r '.include[] | "\(.core) \(.abi)"'
+
+  build:
+    needs: plan
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      max-parallel: 20
+      matrix: ${{ fromJson(needs.plan.outputs.matrix) }}
+    name: ${{ matrix.core }} (${{ matrix.abi }})
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install NDK
+        run: |
+          sdkmanager="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          [ -x "$sdkmanager" ] || sdkmanager="$(command -v sdkmanager)"
+          yes | "$sdkmanager" --licenses > /dev/null 2>&1 || true
+          "$sdkmanager" "ndk;${NDK_VERSION}" > /dev/null || "$sdkmanager" --channel=3 "ndk;${NDK_VERSION}" > /dev/null
+          echo "NDK=$ANDROID_HOME/ndk/${NDK_VERSION}" >> "$GITHUB_ENV"
+
+      - name: Fetch ${{ matrix.core }} at its pinned commit
+        run: |
+          git init -q src
+          git -C src remote add origin "${{ matrix.repo }}"
+          git -C src fetch -q --depth 1 origin "${{ matrix.commit }}"
+          git -C src checkout -q FETCH_HEAD
+          # Direct submodules are needed; some cores carry broken nested ones (mupen64plus-nx), which
+          # libretro's own CI does not fetch either.
+          # Only submodules .gitmodules declares (mupen64plus-nx carries a gitlink without one).
+          paths=$(git -C src config -f .gitmodules --get-regexp '\.path$' 2>/dev/null | awk '{ print $2 }' || true)
+          if [ -n "$paths" ]; then
+            # shellcheck disable=SC2086
+            git -C src submodule update -q --init --depth 1 -- $paths || git -C src submodule update -q --init -- $paths
+            # shellcheck disable=SC2086
+            git -C src submodule update -q --init --recursive --depth 1 -- $paths || echo "::warning::nested submodules incomplete"
+          fi
+          test "$(git -C src rev-parse HEAD)" = "${{ matrix.commit }}"
+
+      - name: Build
+        env:
+          ABI: ${{ matrix.abi }}
+          CORE: ${{ matrix.core }}
+          JNI: ${{ matrix.jni }}
+          ARGS: ${{ matrix.args }}
+          EXTRA_ENV: ${{ matrix.env }}
+          CPPFLAGS_EXTRA: ${{ matrix.cppflags }}
+        run: |
+          set -euo pipefail
+          mkdir -p out
+          if [ "${{ matrix.build }}" = "cmake" ]; then
+            cmake -S src -B build \
+              -DCMAKE_TOOLCHAIN_FILE="$NDK/build/cmake/android.toolchain.cmake" \
+              -DANDROID_ABI="$ABI" -DANDROID_PLATFORM=android-29 \
+              -DANDROID_SUPPORT_FLEXIBLE_PAGE_SIZES=ON \
+              -DCMAKE_SHARED_LINKER_FLAGS="-Wl,-z,max-page-size=16384" \
+              -DCMAKE_BUILD_TYPE=Release $ARGS
+            cmake --build build -j"$(nproc)"
+            lib=$(find build -name '*libretro*.so' | head -n 1)
+          else
+            # Flags newer compilers need (cores.json "cppflags"), added to the core's own Application.mk.
+            if [ -n "$CPPFLAGS_EXTRA" ]; then
+              printf '\nAPP_CPPFLAGS += %s\n' "$CPPFLAGS_EXTRA" >> "src/$JNI/jni/Application.mk"
+            fi
+            # The same ndk-build call as libretro's buildbot (ci-templates android-jni), plus 16 KB pages.
+            env $EXTRA_ENV "$NDK/ndk-build" --no-print-directory -j"$(nproc)" -C "src/$JNI/jni" \
+              APP_ABI="$ABI" APP_SUPPORT_FLEXIBLE_PAGE_SIZES=true \
+              "APP_LDFLAGS=-Wl,-z,max-page-size=16384"
+            lib=$(find "src/$JNI/libs/$ABI" -name '*.so' | head -n 1)
+          fi
+          test -n "$lib"
+          cp "$lib" "out/${CORE}_libretro_android.so"
+          "$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-strip" --strip-unneeded "out/${CORE}_libretro_android.so"
+
+      - name: Check 16 KB pages
+        if: matrix.abi == 'arm64-v8a' || matrix.abi == 'x86_64'
+        run: python3 scripts/check_elf_pages.py out/*.so
+
+      - uses: actions/upload-artifact@v5
+        with:
+          name: core-${{ matrix.core }}-${{ matrix.abi }}
+          path: out/*.so
+          retention-days: 14
+
+  publish:
+    needs: build
+    if: >-
+      always() && needs.build.result != 'cancelled' &&
+      ((github.event_name == 'workflow_dispatch' && inputs.publish) ||
+       (github.event_name == 'push' && github.ref == 'refs/heads/main'))
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/download-artifact@v5
+        with:
+          pattern: core-*
+          path: artifacts
+
+      - name: Package, sign and release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SIGNING_KEY: ${{ secrets.CORES_SIGNING_KEY }}
+        run: |
+          set -euo pipefail
+          [ -n "$SIGNING_KEY" ] || { echo "::error::CORES_SIGNING_KEY is not set (scripts/cores_signing_key.sh)"; exit 1; }
+          [ -f cores/signing-public.pem ] || { echo "::error::cores/signing-public.pem is missing (scripts/cores_signing_key.sh)"; exit 1; }
+          tag="cores-$(date -u +%Y%m%d)-${GITHUB_RUN_NUMBER}"
+          mkdir -p release
+          entries='[]'
+          for dir in artifacts/core-*; do
+            name=${dir#artifacts/core-}
+            abi=$(jq -r '.abis[]' cores/cores.json | while read -r a; do case "$name" in *-"$a") echo "$a";; esac; done | awk '{ print length, $0 }' | sort -rn | head -n1 | cut -d' ' -f2)
+            core=${name%-"$abi"}
+            so="$dir/${core}_libretro_android.so"
+            [ -f "$so" ] || continue
+            asset="${abi}--${core}_libretro_android.so.zip"
+            (cd "$dir" && zip -q -X "../../release/$asset" "${core}_libretro_android.so")
+            entries=$(jq -c --arg core "$core" --arg abi "$abi" --arg asset "$asset" \
+              --arg sha "$(sha256sum "release/$asset" | cut -d' ' -f1)" --argjson size "$(stat -c %s "release/$asset")" \
+              --slurpfile pins cores/cores.json \
+              '. + [{ core: $core, abi: $abi, asset: $asset, sha256: $sha, size: $size,
+                      commit: ($pins[0].cores[] | select(.core == $core) | .commit),
+                      repo: ($pins[0].cores[] | select(.core == $core) | .repo) }]' <<< "$entries")
+          done
+          jq -n --arg tag "$tag" --arg created "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --argjson cores "$entries" \
+            '{ version: 1, tag: $tag, created: $created, cores: $cores }' > release/manifest.json
+          printf '%s\n' "$SIGNING_KEY" > key.pem
+          openssl dgst -sha256 -sign key.pem -out release/manifest.json.sig release/manifest.json
+          rm -f key.pem
+          openssl dgst -sha256 -verify cores/signing-public.pem -signature release/manifest.json.sig release/manifest.json
+          jq -r '.cores[] | "\(.core) \(.abi)"' release/manifest.json
+          gh release create "$tag" release/* --title "Cores $(date -u +%Y-%m-%d)" --latest=false \
+            --notes "libretro cores built from cores/cores.json at ${GITHUB_SHA::7} (16 KB pages). Signed manifest for the app's core channel."

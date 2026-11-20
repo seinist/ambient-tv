@@ -11,6 +11,8 @@ object Destinations {
     const val FILES = "files_browse"
     const val FILE_SOURCE = "files_source/{sourceId}"
     const val PHOTO_VIEWER = "photo_viewer"
+    const val GAME_PLAYER = "game_player/{fileId}"
+    fun gamePlayer(fileId: String) = "game_player/${Uri.encode(fileId)}"
     const val FILE_FAVORITES = "files_favorites"
     const val FILE_RECENT = "files_recent"
     const val FILE_CONTINUE = "files_continue"

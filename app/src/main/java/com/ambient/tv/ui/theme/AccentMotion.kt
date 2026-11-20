@@ -52,6 +52,29 @@ internal data class AccentMotionFrame(val phase: Float, val strength: Float) {
     companion object { val Rest = AccentMotionFrame(0f, 0f) }
 }
 
+/**
+ * Retain the last rendered reflection while the focus border fades out.
+ * Pure draw state: no independent frame clock or composition work while unfocused.
+ */
+internal class AccentMotionFrameRetention {
+    var lastFrame = AccentMotionFrame.Rest
+}
+
+internal fun transitionedAccentMotionFrame(
+    current: AccentMotionFrame?,
+    retained: AccentMotionFrameRetention,
+    focusOpacity: Float,
+): AccentMotionFrame? {
+    if (current != null) retained.lastFrame = current
+    if (!focusOpacity.isFinite() || focusOpacity <= 0f) {
+        if (current == null) retained.lastFrame = AccentMotionFrame.Rest
+        return null
+    }
+    val frame = current ?: retained.lastFrame
+    if (!frame.phase.isFinite() || !frame.strength.isFinite() || frame.strength <= 0f) return null
+    return frame.copy(strength = frame.strength * focusOpacity.coerceIn(0f, 1f))
+}
+
 internal fun accentMotionAllowed(mode: AccentMotionMode, profile: PerformanceProfile): Boolean =
     mode != AccentMotionMode.OFF && profile.allowAccentMaterialMotion
 

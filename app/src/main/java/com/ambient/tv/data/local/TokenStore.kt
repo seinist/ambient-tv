@@ -38,6 +38,14 @@ class TokenStore @Inject constructor(
             if (value.isNullOrBlank()) remove(KEY_WG_PSK) else putString(KEY_WG_PSK, value)
         }
 
+    /** RetroAchievements account (games); the password is never stored, only the session token. */
+    var retroAchievementsUser: String?
+        get() = prefs.getString("ra_user", null)
+        set(value) = prefs.edit { if (value.isNullOrBlank()) remove("ra_user") else putString("ra_user", value) }
+    var retroAchievementsToken: String?
+        get() = prefs.getString("ra_token", null)
+        set(value) = prefs.edit { if (value.isNullOrBlank()) remove("ra_token") else putString("ra_token", value) }
+
     fun smbPasswordForSource(id: String): String? = prefs.getString("smb_password_$id", null)
     fun setSmbPassword(id: String, password: String?) {
         prefs.edit().apply { if (password == null) remove("smb_password_$id") else putString("smb_password_$id", password) }.apply()

@@ -294,7 +294,7 @@ fun DlnaBrowserScreen(onPlay: (String) -> Unit, onManage: () -> Unit, onBack: ()
                 TvChip(stringResource(R.string.files_back), modifier = Modifier.leftKeyAction { if (!viewModel.up()) onBack() }, icon = Icons.AutoMirrored.Filled.ArrowBack, iconOnly = true, onClick = { if (!viewModel.up()) onBack() })
                 TvChip(stringResource(R.string.dlna_servers), icon = Icons.Default.Storage, iconOnly = true, onClick = onManage)
                 TvChip(stringResource(R.string.action_reload), icon = Icons.Default.Refresh,
-                    loading = state.loading || state.refreshing, iconOnly = true,
+                    loading = state.loading || state.refreshing, loadingOnlyAfterClick = true, iconOnly = true,
                     onClick = { keepHeaderFocus = true; viewModel.refresh() })
                 com.ambient.tv.ui.common.ViewOptionsChip(0, { keepHeaderFocus = true; showOptions = true }, Modifier.focusRequester(optionsFocus))
             }) {

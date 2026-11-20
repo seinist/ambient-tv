@@ -393,6 +393,7 @@ fun TelegramScreen(
                         text = stringResource(R.string.action_reload),
                         selected = false, icon = Icons.Filled.Refresh, iconOnly = true,
                         loading = state.loading || state.loadingMore,
+                        loadingOnlyAfterClick = true,
                         onClick = { viewModel.open(sectionKey, refresh = true) },
                     )
                     ViewOptionsChip(activeSortCount, onClick = { showViewOptions = true },

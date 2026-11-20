@@ -953,6 +953,13 @@ class AppPreferences @Inject constructor(
             overscanState.intValue = normalized
         }
 
+    /** Navigation page motion is opt-in; missing and future keys retain the historic instant switch. */
+    var viewTransitionStyleKey: String
+        get() = com.ambient.tv.ui.common.ViewTransitionStyle.fromKey(prefs.getString(KEY_VIEW_TRANSITION_STYLE, null)).key
+        set(value) = prefs.edit {
+            putString(KEY_VIEW_TRANSITION_STYLE, com.ambient.tv.ui.common.ViewTransitionStyle.fromKey(value).key)
+        }
+
     var accentStyleKey: String
         get() = com.ambient.tv.ui.theme.AccentStyle.fromKey(prefs.getString(KEY_ACCENT_STYLE, null)).key
         set(value) = prefs.edit { putString(KEY_ACCENT_STYLE, com.ambient.tv.ui.theme.AccentStyle.fromKey(value).key) }
@@ -1569,6 +1576,21 @@ class AppPreferences @Inject constructor(
     var keyBindings: Map<String, String>
         get() = runCatching { json.decodeFromString<Map<String, String>>(prefs.getString("key_bindings", "{}")!!) }.getOrDefault(emptyMap())
         set(value) = prefs.edit { putString("key_bindings", json.encodeToString(value)) }
+
+    /** Game picture filters and core options (see games.GameSettingsState). */
+    var gameSettings: Map<String, String>
+        get() = runCatching { json.decodeFromString<Map<String, String>>(prefs.getString("game_settings", "{}")!!) }.getOrDefault(emptyMap())
+        set(value) = prefs.edit { putString("game_settings", json.encodeToString(value)) }
+
+    /** Game input: players and key layouts of controllers, keyboards and remotes (ui.gamepad.retro). */
+    var retroInputSettings: Map<String, String>
+        get() = runCatching { json.decodeFromString<Map<String, String>>(prefs.getString("retro_input_settings", "{}")!!) }.getOrDefault(emptyMap())
+        set(value) = prefs.edit { putString("retro_input_settings", json.encodeToString(value)) }
+
+    /** Controller options and button overrides (see ui.gamepad.GamepadConfig.encode). */
+    var gamepadSettings: Map<String, String>
+        get() = runCatching { json.decodeFromString<Map<String, String>>(prefs.getString("gamepad_settings", "{}")!!) }.getOrDefault(emptyMap())
+        set(value) = prefs.edit { putString("gamepad_settings", json.encodeToString(value)) }
 
     var bigSeekJumpSeconds: Int
         get() = prefs.getInt(KEY_BIG_SEEK_JUMP_SECONDS, 60).coerceIn(10, 300)
@@ -2550,6 +2572,7 @@ class AppPreferences @Inject constructor(
         const val KEY_ACCENT_COLOR = "accent_color"
         const val KEY_ACCENT_STYLE = "accent_style"
         const val KEY_ACCENT_MOTION = "accent_motion"
+        const val KEY_VIEW_TRANSITION_STYLE = "view_transition_style"
         const val KEY_CUSTOM_ACCENT_HEX = "custom_accent_hex"
         const val KEY_CUSTOM_PLAYBACK_ACCENT_HEX = "custom_playback_accent_hex"
         const val KEY_DUAL_ACCENT_ENABLED = "dual_accent_enabled"

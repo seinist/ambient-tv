@@ -1161,8 +1161,18 @@ private fun SidebarItem(
     )
     val content by androidx.compose.animation.animateColorAsState(
         if (isFocused) scheme.background else scheme.onSurface,
-        animationSpec = androidx.compose.animation.core.tween(focusFadeMs),
+        animationSpec = androidx.compose.animation.core.tween(focusFadeMs,
+            easing = androidx.compose.animation.core.FastOutSlowInEasing),
         label = "sidebarItemContent",
+    )
+    // Selected icons crossfade as focus moves instead of jumping between accent and neutral.
+    val iconTint by androidx.compose.animation.animateColorAsState(
+        if (selected && !isFocused)
+            com.ambient.tv.ui.theme.accessibleAccent(scheme.primary, scheme.surface)
+        else if (isFocused) scheme.background else scheme.onSurface,
+        animationSpec = androidx.compose.animation.core.tween(focusFadeMs,
+            easing = androidx.compose.animation.core.FastOutSlowInEasing),
+        label = "sidebarItemIcon",
     )
     // Small, bounce-free lift on focus; graphicsLayer only, so no relayout.
     val lift by androidx.compose.animation.core.animateFloatAsState(
@@ -1206,7 +1216,6 @@ private fun SidebarItem(
         horizontalArrangement = Arrangement.spacedBy(iconGap * uiScale),
     ) {
         // Active (not focused) rows carry the accent on their icon, like selected rows elsewhere.
-        val iconTint = if (selected && !isFocused) com.ambient.tv.ui.theme.accessibleAccent(scheme.primary, scheme.surface) else content
         if (logo != null) SystemLogo(logo, size = 20.dp * uiScale, tint = iconTint)
         else Icon(icon, contentDescription = if (showLabel) null else label, modifier = Modifier.size(20.dp * uiScale), tint = iconTint)
         if (showLabel) {

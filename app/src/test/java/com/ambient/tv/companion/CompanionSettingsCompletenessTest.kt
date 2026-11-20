@@ -113,7 +113,8 @@ class CompanionSettingsCompletenessTest {
             projectmPresetShuffle = false, gaplessMusicEnabled = false, teletextSubtitleChoice = "150",
             lyricsVisible = false, lyricsOnlineEnabled = false, frameDropOverlayHistory = true,
             liveTvReminderAutoSwitch = true, autoUpdateCheck = false, projectmFavorites = setOf("chosen.milk"),
-            keyBindings = mapOf("refresh" to "183:0"),
+            keyBindings = mapOf("refresh" to "183:0"), gamepadSettings = mapOf("confirm" to "b"), retroInputSettings = mapOf("dpad_stick" to "1"), gameSettings = mapOf("shader" to "crt"),
+            viewTransitionStyleKey = "slide",
         )
         val incoming = source().copy(tvheadendHost = "tvh.example", extras = SettingsBackupExtras(
             portable = portable, device = DeviceSettingsExtras(128, true), connections = ConnectionSettingsExtras(9984)))
@@ -138,15 +139,22 @@ class CompanionSettingsCompletenessTest {
             assertFalse(target.lyricsVisible)
             assertFalse(target.lyricsOnlineEnabled)
             assertTrue(target.frameDropOverlayHistory)
+            assertEquals("slide", target.viewTransitionStyleKey)
             assertEquals(mapOf("refresh" to "183:0"), target.keyBindings)
+            assertEquals(mapOf("confirm" to "b"), target.gamepadSettings)
+            assertEquals(mapOf("dpad_stick" to "1"), target.retroInputSettings)
+            assertEquals(mapOf("shader" to "crt"), target.gameSettings)
             assertEquals(if (device) 128 else 256, target.imageCacheMb)
             assertEquals(device, target.cardImages1080)
             assertEquals(10002, target.tvheadendHtspPort)
         }
 
-        val accountsTarget = preferences().apply { gaplessMusicEnabled = true; imageCacheMb = 256 }
+        val accountsTarget = preferences().apply {
+            gaplessMusicEnabled = true; imageCacheMb = 256; viewTransitionStyleKey = "cinematic"
+        }
         send(incoming, accountsTarget, "accounts", device = true)
         assertTrue(accountsTarget.gaplessMusicEnabled)
+        assertEquals("cinematic", accountsTarget.viewTransitionStyleKey)
         assertEquals(256, accountsTarget.imageCacheMb)
         assertEquals(9984, accountsTarget.tvheadendHtspPort)
     }

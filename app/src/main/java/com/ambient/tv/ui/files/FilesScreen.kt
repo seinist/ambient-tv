@@ -79,7 +79,7 @@ import kotlinx.coroutines.delay
 private const val UP_ID = "up"
 
 @Composable
-fun FilesScreen(onPlay: (String, Boolean) -> Unit, onBack: () -> Unit, contentActive: Boolean, onOpenPhotos: () -> Unit = {}, viewModel: FilesViewModel = hiltViewModel()) {
+fun FilesScreen(onPlay: (String, Boolean) -> Unit, onBack: () -> Unit, contentActive: Boolean, onOpenPhotos: () -> Unit = {}, onOpenGame: (String) -> Unit = {}, viewModel: FilesViewModel = hiltViewModel()) {
     val handheld = LocalHandheldUi.current
     LaunchedEffect(viewModel) { viewModel.applyViewerReturn() }
     val state = viewModel.state.collectAsCurrentState()
@@ -177,8 +177,13 @@ fun FilesScreen(onPlay: (String, Boolean) -> Unit, onBack: () -> Unit, contentAc
             TvChip(stringResource(R.string.action_folder), icon = Icons.Default.CreateNewFolder, iconOnly = true) { pickFolder() }
             TvChip(stringResource(R.string.action_nas), icon = Icons.Default.Storage, iconOnly = true) { viewModel.resetEditor(); editor = FileSource(name = "", kind = "smb") }
             TvChip(stringResource(R.string.action_reload), icon = Icons.Default.Refresh,
-                loading = state.loading || state.refreshing, iconOnly = true,
+                loading = state.loading || state.refreshing, loadingOnlyAfterClick = true, iconOnly = true,
                 onClick = { keepHeaderFocus = true; viewModel.reload() })
+            // A folder with BIOS or core files: copy it (with subfolders) into the app for games.
+            if (state.folders.isNotEmpty() && state.entries.any { it.bios || it.core }) {
+                TvChip(stringResource(R.string.files_game_data_import), icon = Icons.Default.Memory, iconOnly = true,
+                    loading = state.importingGameData, onClick = viewModel::importGameData)
+            }
             // Folder slideshow (optionally with subfolders, see photo settings).
             if (hasImages) {
                 TvChip(stringResource(R.string.photos_slideshow), icon = Icons.Default.Slideshow, iconOnly = true) { if (viewModel.preparePhotos(null)) onOpenPhotos() }
@@ -274,6 +279,7 @@ fun FilesScreen(onPlay: (String, Boolean) -> Unit, onBack: () -> Unit, contentAc
                         FilesBrowserRow(
                             title = tags?.title?.let { title -> tags.track?.let { "%02d · %s".format(it, title) } ?: title } ?: entry.name,
                             detail = resume.ifEmpty {
+                                if (entry.game) gameSystemLabel(entry, viewModel) else
                                 // The album already stands in the header; the artist only where it differs per track.
                                 listOfNotNull(tags?.artist, tags?.album?.takeIf { it != album }).joinToString(" · ")
                             },
@@ -281,10 +287,13 @@ fun FilesScreen(onPlay: (String, Boolean) -> Unit, onBack: () -> Unit, contentAc
                             icon = when {
                                 entry.directory -> Icons.Default.Folder
                                 entry.image -> Icons.Default.Image
+                                entry.game -> Icons.Default.SportsEsports
+                                entry.bios -> Icons.Default.Memory
+                                entry.core -> Icons.Default.Extension
                                 entry.audio -> Icons.Default.AudioFile
                                 else -> Icons.Default.VideoFile
                             },
-                            onOpen = { viewModel.open(entry, onPlay, openPhotos = onOpenPhotos) },
+                            onOpen = { viewModel.open(entry, onPlay, openPhotos = onOpenPhotos, openGame = onOpenGame) },
                             focusModifier = Modifier.focusRequester(remember(entry.id, requesters) { requesters.getOrPut(entry.id) { FocusRequester() } })
                                 .browseFocusTarget(entry.id)
                                 .onFocusChanged { if (it.isFocused) viewModel.focus(entry.id) },
@@ -410,6 +419,18 @@ private fun FilesCrumb(name: String, current: Boolean, onClick: () -> Unit) {
 }
 
 /** Icon-only action at the end of a row; [active] tints it with the accent (e.g. a set favorite). */
+/** The system a game file is for: by extension, or for archives by a quick look inside (ZIP, 7z). */
+@Composable
+private fun gameSystemLabel(entry: com.ambient.tv.data.files.FileEntry, viewModel: FilesViewModel): String {
+    val extension = com.ambient.tv.games.GameSystems.extension(entry.name)
+    if (extension !in com.ambient.tv.games.GameSystems.archiveExtensions) {
+        return com.ambient.tv.games.GameSystems.forFile(entry.name)?.shortName.orEmpty()
+    }
+    LaunchedEffect(entry.id) { viewModel.inspectArchive(entry) }
+    val archive = stringResource(R.string.files_archive, extension.uppercase())
+    return viewModel.archiveSystems[entry.id]?.takeIf { it.isNotEmpty() }?.let { "$it · $archive" } ?: archive
+}
+
 @Composable
 private fun FilesRowAction(icon: androidx.compose.ui.graphics.vector.ImageVector, label: String, active: Boolean = false, onClick: () -> Unit) {
     val accent = accessibleAccent(MaterialTheme.colorScheme.primary, MaterialTheme.colorScheme.surface)

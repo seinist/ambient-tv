@@ -1,0 +1,259 @@
+package com.ambient.tv.games
+
+import android.content.Context
+import android.os.StatFs
+import com.ambient.tv.data.files.FileAccess
+import com.ambient.tv.data.files.FileEntry
+import com.ambient.tv.data.files.FileKeys
+import com.ambient.tv.data.files.FilePaths
+import com.ambient.tv.data.files.FileSource
+import com.ambient.tv.data.files.FileStore
+import dagger.hilt.android.qualifiers.ApplicationContext
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.withContext
+import java.io.File
+import java.io.FileNotFoundException
+import java.io.IOException
+import java.security.MessageDigest
+import javax.inject.Inject
+import javax.inject.Singleton
+
+/** A game ready for a core: a local file, the system that plays it and a stable key for its saves. */
+data class PreparedGame(
+    val fileId: String,
+    val title: String,
+    val file: File,
+    val system: GameSystem,
+    val saveKey: String,
+    val sourceName: String,
+    /** The original file, for the browser's recently played list. */
+    val entry: FileEntry,
+    /** Direct seekable source; null when the core needs a staged local file. */
+    val directContent: GameDirectContent? = null,
+) {
+    val direct: Boolean get() = directContent != null
+    fun close() { directContent?.close() }
+}
+
+class UnknownGameException(val name: String) : IOException("No system for $name")
+class GameDirectUnavailableException(message: String, cause: Throwable? = null) : IOException(message, cause)
+
+
+/**
+ * Copies a game from any file source (device storage, USB, NAS) into the app cache, because cores
+ * read plain files. Archives are unpacked; CUE sheets and M3U playlists bring the files they name.
+ */
+@Singleton
+class GameRomPreparer @Inject constructor(
+    @ApplicationContext private val context: Context,
+    private val store: FileStore,
+    private val access: FileAccess,
+    private val directAccess: GameDirectAccess,
+) {
+    private val cache: File get() = File(context.cacheDir, "games/roms")
+
+    suspend fun prepare(fileId: String, onProgress: (Float?) -> Unit, forceCache: Boolean = false): PreparedGame = withContext(Dispatchers.IO) {
+        val (sourceId, path) = FileKeys.parse(fileId)
+        val source = store.sources().firstOrNull { it.id == sourceId } ?: throw FileNotFoundException(path)
+        access.prepare(source)
+        val entry = access.stat(source, path)
+        val key = sha1(fileId)
+        // Find the system from the original source; even a multi-GB Wii ISO needs only its header.
+        val isoHeader = if (GameSystems.extension(entry.name) == "iso") runCatching {
+            access.open(source, path).use { media ->
+                ByteArray(0x20).takeIf { media.read(0L, it, it.size) == it.size }
+            }
+        }.getOrNull() else null
+        val sourceSystem = GameSystems.forSourceFile(entry.name, entry.path, isoHeader)
+        val chosenCore = sourceSystem?.let { GameSettings.state.gameCore(it, key) }
+        val ext = GameSystems.extension(entry.name)
+        // Only cores declaring need_fullpath qualify. Uncompressed single-file discs and GDI
+        // descriptors (including each track through named VFS descriptors) need no cached copy.
+        if (!forceCache && sourceSystem != null && chosenCore?.directFile == true &&
+            (ext in DIRECT_EXTENSIONS || ext == "gdi") && entry.size > 0L) {
+            val virtualPath = "/ambient-games/$key/${safeName(entry.name)}"
+            val parts = mutableListOf<GameDirectContent>()
+            val mounted = try {
+                val names = if (ext == "gdi") {
+                    val tracks = gdiFiles(access.readText(source, path, 256 * 1024))
+                    if (tracks.isEmpty() || tracks.size > MAX_DIRECT_GDI_TRACKS ||
+                        tracks.size != tracks.distinct().size) {
+                        throw IOException("Unsupported or oversized multi-track GDI descriptor")
+                    }
+                    listOf(entry.name) + tracks
+                } else listOf(entry.name)
+                val parent = path.substringBeforeLast('/', "")
+                names.forEach { name ->
+                    // Preserve exactly the names the core will request; no path traversal or
+                    // silent filename rewrites inside a game's descriptor.
+                    if (name != safeName(name) || name == "." || name == ".." ||
+                        '/' in name || '\\' in name) {
+                        throw IOException("GDI track path is not a simple filename: $name")
+                    }
+                    val child = if (name == entry.name) path else FilePaths.child(parent, name)
+                    parts += directAccess.open(source, child, "/ambient-games/$key/$name")
+                }
+                if (parts.size == 1) parts.single() else GameDirectContent(
+                    parts.flatMap { it.virtualFiles }, parts.sumOf { it.bytes },
+                )
+            } catch (error: Exception) {
+                parts.forEach(GameDirectContent::close)
+                throw GameDirectUnavailableException("Direct ROM access unavailable; choose a local cache fallback", error)
+            }
+            return@withContext PreparedGame(
+                fileId = fileId,
+                title = entry.name.substringBeforeLast('.'),
+                file = File(virtualPath), system = sourceSystem, saveKey = key,
+                sourceName = source.name, entry = entry, directContent = mounted,
+            )
+        }
+
+        val folder = File(cache, key)
+        val marker = File(folder, ".complete")
+        val stamp = "${entry.size}:${entry.modified}"
+        val main = File(folder, safeName(entry.name))
+        if (!(marker.isFile && marker.readText() == stamp && main.isFile)) {
+            folder.deleteRecursively()
+            folder.mkdirs()
+            // A manual fallback is never allowed to exhaust the device or silently evict saves.
+            if (entry.size > CACHE_LIMIT_BYTES) {
+                throw IOException("ROM exceeds the 4 GiB cache limit; direct access is required")
+            }
+            val free = StatFs(context.cacheDir.absolutePath).availableBytes
+            if (entry.size > free - CACHE_RESERVE_BYTES) {
+                throw IOException("Insufficient free space for a local game copy")
+            }
+            copy(source, path, entry.size, main, onProgress)
+            when (GameSystems.extension(entry.name)) {
+                "cue" -> copyReferenced(source, path, cueFiles(main.readText()), folder)
+                "gdi" -> copyReferenced(source, path, gdiFiles(main.readText()), folder)
+                "m3u" -> {
+                    val discs = m3uFiles(main.readText())
+                    copyReferenced(source, path, discs, folder)
+                    discs.filter { GameSystems.extension(it) == "cue" }.forEach { disc ->
+                        File(folder, safeName(disc)).takeIf(File::isFile)?.let { copyReferenced(source, path, cueFiles(it.readText()), folder) }
+                    }
+                }
+            }
+            marker.writeText(stamp)
+        }
+        folder.setLastModified(System.currentTimeMillis())
+        trim(keep = folder)
+        val playable = if (GameSystems.extension(main.name) in GameSystems.archiveExtensions) unpack(main, folder) else main
+        val system = GameSystems.forPreparedFile(playable, entry.path) ?: throw UnknownGameException(entry.name)
+        PreparedGame(
+            fileId = fileId,
+            title = entry.name.substringBeforeLast('.'),
+            file = playable,
+            system = system,
+            saveKey = key,
+            sourceName = source.name,
+            entry = entry,
+        )
+    }
+
+    private suspend fun copy(source: FileSource, path: String, size: Long, target: File, onProgress: (Float?) -> Unit) {
+        access.open(source, path).use { media ->
+            val total = media.size.takeIf { it > 0 } ?: size
+            target.outputStream().buffered(256 * 1024).use { out ->
+                val buffer = ByteArray(1024 * 1024)
+                var position = 0L
+                while (true) {
+                    currentCoroutineContext().ensureActive()
+                    val count = media.read(position, buffer, buffer.size)
+                    if (count <= 0) break
+                    out.write(buffer, 0, count)
+                    position += count
+                    onProgress(if (total > 0) (position.toFloat() / total).coerceIn(0f, 1f) else null)
+                }
+            }
+        }
+    }
+
+    /** Copies files a CUE/M3U names from the same folder; missing ones are left to the core to report. */
+    private suspend fun copyReferenced(source: FileSource, path: String, names: List<String>, folder: File) {
+        val parent = path.substringBeforeLast('/', "")
+        names.distinct().forEach { name ->
+            if (name.contains('/') || name.contains('\\') || name == "." || name == "..") return@forEach
+            val target = File(folder, safeName(name))
+            if (target.isFile) return@forEach
+            val childPath = if (parent.isEmpty()) name else "$parent/$name"
+            runCatching {
+                val child: FileEntry = access.stat(source, childPath)
+                copy(source, childPath, child.size, target) {}
+            }
+        }
+    }
+
+    /**
+     * Unpacks [archive] completely into "content" next to it (once per archive version; a disc needs
+     * its tracks too) and returns the file to start: playlist, cue sheet, disc image or cartridge.
+     */
+    private fun unpack(archive: File, folder: File): File {
+        val content = File(folder, "content")
+        val done = File(folder, ".unpacked")
+        val files = if (done.isFile && content.isDirectory) {
+            content.listFiles()?.toList().orEmpty()
+        } else {
+            content.deleteRecursively()
+            GameArchives.extract(archive, content).also { done.writeText(archive.length().toString()) }
+        }
+        return GameArchives.choose(files) { it.name } ?: throw UnknownGameException(archive.name)
+    }
+
+    /** Bytes the copied games take up. */
+    fun cacheBytes(): Long = cache.walkBottomUp().filter { it.isFile }.sumOf { it.length() }
+
+    /** Removes all copied games; saves and states stay. */
+    fun clearCache() { cache.deleteRecursively() }
+
+        /** Keeps the cache below [CACHE_LIMIT_BYTES], oldest games first. */
+    private fun trim(keep: File) {
+        val folders = cache.listFiles()?.filter { it.isDirectory } ?: return
+        var total = folders.sumOf { folder -> folder.walkBottomUp().filter { it.isFile }.sumOf { it.length() } }
+        folders.filter { it != keep }.sortedBy { it.lastModified() }.forEach { folder ->
+            if (total <= CACHE_LIMIT_BYTES) return
+            val size = folder.walkBottomUp().filter { it.isFile }.sumOf { it.length() }
+            folder.deleteRecursively()
+            total -= size
+        }
+    }
+
+    companion object {
+        const val CACHE_LIMIT_BYTES = 4L * 1024 * 1024 * 1024
+        const val CACHE_RESERVE_BYTES = 128L * 1024 * 1024
+        /** A GDI disc typically has 2-3 tracks. Avoid dozens of FDs and proxy threads. */
+        const val MAX_DIRECT_GDI_TRACKS = 8
+        /** Archives and multi-track CUE/GDI/M3U still require local materialization. */
+        val DIRECT_EXTENSIONS = setOf("iso", "rvz", "wbfs", "ciso", "chd", "pbp",
+            "cso", "zso", "wua", "wud", "wux", "cdi", "gcm", "tgc")
+
+        fun sha1(value: String): String =
+            MessageDigest.getInstance("SHA-1").digest(value.toByteArray()).joinToString("") { "%02x".format(it) }
+
+        internal fun safeName(name: String): String =
+            name.substringAfterLast('/').substringAfterLast('\\').replace(Regex("[\\u0000-\\u001f:*?\"<>|]"), "_")
+                .ifBlank { "game" }
+
+        /** File names a CUE sheet refers to (`FILE "name.bin" BINARY`). */
+        internal fun cueFiles(cue: String): List<String> = cue.lineSequence().mapNotNull { line ->
+            val trimmed = line.trim()
+            if (!trimmed.startsWith("FILE", ignoreCase = true)) return@mapNotNull null
+            val rest = trimmed.substring(4).trim()
+            if (rest.startsWith("\"")) rest.substring(1).substringBefore('"') else rest.substringBeforeLast(' ')
+        }.filter { it.isNotBlank() }.toList()
+
+        /** Dreamcast GDI: track number, LBA, type, sector size, filename, offset. */
+        internal fun gdiFiles(gdi: String): List<String> =
+            gdi.lineSequence().drop(1).mapNotNull { line ->
+                Regex("""^\s*\d+\s+\d+\s+\d+\s+\d+\s+("[^"]+"|\S+)\s+\d+\s*$""")
+                    .matchEntire(line.trim())?.groupValues?.get(1)?.trim('"')
+            }.filter(String::isNotBlank).toList()
+
+        /** Disc files an M3U playlist names (comments and blank lines skipped). */
+        internal fun m3uFiles(m3u: String): List<String> =
+            m3u.lineSequence().map { it.trim() }.filter { it.isNotEmpty() && !it.startsWith("#") }.toList()
+    }
+}

@@ -1,0 +1,253 @@
+diff --git a/src/main/cpp/vulkan/vulkanbackend.h b/src/main/cpp/vulkan/vulkanbackend.h
+--- a/src/main/cpp/vulkan/vulkanbackend.h
++++ b/src/main/cpp/vulkan/vulkanbackend.h
+@@ -69,6 +69,10 @@
+     };
+ 
+     void configure(bool preferVulkan, const DriverConfig& driver);
++    // This is only the precision of Vulkan -> GLES transport, NOT HDR display output.
++    void setPreferFp16Frame(bool enable);
++    void disableFp16Frame();
++    bool isFp16Frame() const { return fp16Frame; }
+     bool isPreferred() const { return preferVulkan; }
+     bool isAvailable();
+     void setNegotiationInterface(const retro_hw_render_context_negotiation_interface_vulkan* negotiation);
+@@ -96,6 +100,7 @@
+         PFN_vkDestroyInstance destroyInstance = nullptr;
+         PFN_vkEnumeratePhysicalDevices enumeratePhysicalDevices = nullptr;
+         PFN_vkGetPhysicalDeviceProperties getPhysicalDeviceProperties = nullptr;
++        PFN_vkGetPhysicalDeviceFormatProperties getPhysicalDeviceFormatProperties = nullptr;
+         PFN_vkGetPhysicalDeviceQueueFamilyProperties getPhysicalDeviceQueueFamilyProperties = nullptr;
+         PFN_vkEnumerateDeviceExtensionProperties enumerateDeviceExtensionProperties = nullptr;
+         PFN_vkGetPhysicalDeviceFeatures getPhysicalDeviceFeatures = nullptr;
+@@ -150,6 +155,7 @@
+     bool createDeviceThroughCore();
+     bool createDeviceWithoutNegotiation();
+     bool createFrameResources();
++    bool createFrameBuffer(unsigned width, unsigned height, bool fp16);
+     void clearFrameImage();
+     void destroyFrameBuffer();
+     std::vector<const char*> requiredDeviceExtensions() const;
+@@ -195,6 +201,10 @@
+     VkFence frameFence = VK_NULL_HANDLE;
+     bool frameInFlight = false;
+ 
++    // Higher precision is opt-in for manually selected PQ/HLG content, never for SDR.
++    bool preferFp16Frame = false;
++    bool forceRgba8Frame = false;
++    bool fp16Frame = false;
+     AHardwareBuffer* frameBuffer = nullptr;
+     VkImage frameImage = VK_NULL_HANDLE;
+     VkDeviceMemory frameMemory = VK_NULL_HANDLE;
+diff --git a/src/main/cpp/vulkan/vulkanbackend.cpp b/src/main/cpp/vulkan/vulkanbackend.cpp
+--- a/src/main/cpp/vulkan/vulkanbackend.cpp
++++ b/src/main/cpp/vulkan/vulkanbackend.cpp
+@@ -82,6 +82,20 @@
+     }
+ }
+ 
++void VulkanBackend::setPreferFp16Frame(bool enabled) {
++    // Called before a new core is created, on the same thread as the Vulkan frontend.
++    if (preferFp16Frame == enabled && !forceRgba8Frame) return;
++    preferFp16Frame = enabled;
++    forceRgba8Frame = false;
++    if (frameBuffer != nullptr) destroyFrameBuffer();
++}
++
++void VulkanBackend::disableFp16Frame() {
++    if (!fp16Frame) return;
++    forceRgba8Frame = true;
++    destroyFrameBuffer();
++}
++
+ void* VulkanBackend::openCustomDriver() const {
+ #ifdef LIBRETRODROID_ADRENOTOOLS
+     auto withSlash = [](const std::string& path) { return path.back() == '/' ? path : path + "/"; };
+@@ -346,6 +360,8 @@
+     vk.enumeratePhysicalDevices = reinterpret_cast<PFN_vkEnumeratePhysicalDevices>(load("vkEnumeratePhysicalDevices"));
+     vk.getPhysicalDeviceProperties = reinterpret_cast<PFN_vkGetPhysicalDeviceProperties>(
+         load("vkGetPhysicalDeviceProperties"));
++    vk.getPhysicalDeviceFormatProperties = reinterpret_cast<PFN_vkGetPhysicalDeviceFormatProperties>(
++        load("vkGetPhysicalDeviceFormatProperties"));
+     vk.getPhysicalDeviceQueueFamilyProperties = reinterpret_cast<PFN_vkGetPhysicalDeviceQueueFamilyProperties>(
+         load("vkGetPhysicalDeviceQueueFamilyProperties"));
+     vk.enumerateDeviceExtensionProperties = reinterpret_cast<PFN_vkEnumerateDeviceExtensionProperties>(
+@@ -609,22 +625,46 @@
+     }
+     frameWidth = 0;
+     frameHeight = 0;
++    fp16Frame = false;
+ }
+ 
+ bool VulkanBackend::ensureFrameBuffer(unsigned width, unsigned height) {
+     if (!isStarted() || width == 0 || height == 0) return false;
+     if (frameBuffer != nullptr && width == frameWidth && height == frameHeight) return true;
+-
+     destroyFrameBuffer();
+ 
++    // Never require FP16 on unsupported GPUs or on low-memory SDR-only sessions.
++    if (preferFp16Frame && !forceRgba8Frame) {
++        if (createFrameBuffer(width, height, true)) return true;
++        LOGW("FP16 Vulkan/GLES bridge unavailable; using RGBA8");
++    }
++    return createFrameBuffer(width, height, false);
++}
++
++bool VulkanBackend::createFrameBuffer(unsigned width, unsigned height, bool fp16) {
++    // Called only with no live frame buffer; failures clean up before the caller tries RGBA8.
++
+     AHardwareBuffer_Desc desc {};
+     desc.width = width;
+     desc.height = height;
+     desc.layers = 1;
+-    desc.format = AHARDWAREBUFFER_FORMAT_R8G8B8A8_UNORM;
++    const VkFormat format = fp16 ? VK_FORMAT_R16G16B16A16_SFLOAT : VK_FORMAT_R8G8B8A8_UNORM;
++    if (fp16) {
++        if (vk.getPhysicalDeviceFormatProperties == nullptr) return false;
++        VkFormatProperties properties {};
++        vk.getPhysicalDeviceFormatProperties(gpu, format, &properties);
++        if ((properties.optimalTilingFeatures &
++             (VK_FORMAT_FEATURE_BLIT_DST_BIT | VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT)) !=
++            (VK_FORMAT_FEATURE_BLIT_DST_BIT | VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT)) {
++            LOGW("Vulkan GPU does not support FP16 framebuffer blit + sampling");
++            return false;
++        }
++    }
++    desc.format = fp16 ? AHARDWAREBUFFER_FORMAT_R16G16B16A16_FLOAT
++                       : AHARDWAREBUFFER_FORMAT_R8G8B8A8_UNORM;
+     desc.usage = AHARDWAREBUFFER_USAGE_GPU_SAMPLED_IMAGE | AHARDWAREBUFFER_USAGE_GPU_COLOR_OUTPUT;
+     if (AHardwareBuffer_allocate(&desc, &frameBuffer) != 0) {
+-        LOGE("AHardwareBuffer allocation failed for %ux%u", width, height);
++        LOGW("AHardwareBuffer allocation failed for %ux%u (fp16=%d)", width, height, fp16);
+         frameBuffer = nullptr;
+         return false;
+     }
+@@ -642,7 +682,7 @@
+     VkImageCreateInfo imageInfo { VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO };
+     imageInfo.pNext = &externalInfo;
+     imageInfo.imageType = VK_IMAGE_TYPE_2D;
+-    imageInfo.format = VK_FORMAT_R8G8B8A8_UNORM;
++    imageInfo.format = format;
+     imageInfo.extent = { width, height, 1 };
+     imageInfo.mipLevels = 1;
+     imageInfo.arrayLayers = 1;
+@@ -666,6 +706,11 @@
+     VkMemoryAllocateInfo allocInfo { VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO };
+     allocInfo.pNext = &dedicatedInfo;
+     allocInfo.allocationSize = properties.allocationSize;
++    if (properties.memoryTypeBits == 0) {
++        LOGW("AHardwareBuffer has no compatible Vulkan memory type (fp16=%d)", fp16);
++        destroyFrameBuffer();
++        return false;
++    }
+     allocInfo.memoryTypeIndex = static_cast<uint32_t>(__builtin_ctz(properties.memoryTypeBits));
+     if (vk.allocateMemory(device, &allocInfo, nullptr, &frameMemory) != VK_SUCCESS ||
+         vk.bindImageMemory(device, frameImage, frameMemory, 0) != VK_SUCCESS) {
+@@ -676,8 +721,9 @@
+ 
+     frameWidth = width;
+     frameHeight = height;
++    fp16Frame = fp16;
+     clearFrameImage();
+-    LOGI("Vulkan shared frame buffer ready: %ux%u", width, height);
++    LOGI("Vulkan shared frame buffer ready: %ux%u (%s)", width, height, fp16 ? "FP16" : "RGBA8");
+     return true;
+ }
+ 
+diff --git a/src/main/cpp/libretrodroid.cpp b/src/main/cpp/libretrodroid.cpp
+--- a/src/main/cpp/libretrodroid.cpp
++++ b/src/main/cpp/libretrodroid.cpp
+@@ -426,7 +426,18 @@
+ void LibretroDroid::attachVulkanFrame(unsigned int width, unsigned int height) {
+     auto& backend = VulkanBackend::getInstance();
+     if (!video || !backend.ensureFrameBuffer(width, height)) return;
+-    video->attachExternalFrame(backend.getFrameBuffer(), backend.getFrameBufferWidth(), backend.getFrameBufferHeight());
++    if (video->attachExternalFrame(backend.getFrameBuffer(), backend.getFrameBufferWidth(),
++                                   backend.getFrameBufferHeight())) return;
++    if (backend.isFp16Frame()) {
++        // Driver accepted the FP16 AHardwareBuffer in Vulkan but GLES could not import it.
++        // Try RGBA8 for the entire remaining session, including later resizes.
++        LOGW("FP16 Vulkan image import failed; retrying safely with RGBA8");
++        backend.disableFp16Frame();
++        if (backend.ensureFrameBuffer(width, height)) {
++            video->attachExternalFrame(backend.getFrameBuffer(), backend.getFrameBufferWidth(),
++                                       backend.getFrameBufferHeight());
++        }
++    }
+ }
+ 
+ void LibretroDroid::onMotionEvent(
+diff --git a/src/main/cpp/video.cpp b/src/main/cpp/video.cpp
+--- a/src/main/cpp/video.cpp
++++ b/src/main/cpp/video.cpp
+@@ -759,7 +759,17 @@
+ 
+     glGenTextures(1, &hwRenderTexture);
+     glBindTexture(GL_TEXTURE_2D, hwRenderTexture);
++    // AHB allocation/import can succeed while a GLES driver rejects GL_RGBA16F as a
++    // texture; report that error so the Vulkan bridge can retry with safe RGBA8.
++    while (glGetError() != GL_NO_ERROR) {}
+     targetTexture(GL_TEXTURE_2D, static_cast<GLeglImageOES>(externalFrameImage));
++    const GLenum importError = glGetError();
++    if (importError != GL_NO_ERROR) {
++        LOGW("EGLImage to GLES texture import failed: 0x%x", importError);
++        glBindTexture(GL_TEXTURE_2D, 0);
++        releaseExternalFrame();
++        return false;
++    }
+     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+diff --git a/src/main/cpp/libretrodroidjni.cpp b/src/main/cpp/libretrodroidjni.cpp
+--- a/src/main/cpp/libretrodroidjni.cpp
++++ b/src/main/cpp/libretrodroidjni.cpp
+@@ -793,6 +793,14 @@
+     });
+ }
+ 
++JNIEXPORT void JNICALL Java_com_swordfish_libretrodroid_LibretroDroid_setVulkanFramePrecision(
++    JNIEnv* env,
++    jclass obj,
++    jboolean fp16
++) {
++    VulkanBackend::getInstance().setPreferFp16Frame(fp16);
++}
++
+ JNIEXPORT void JNICALL Java_com_swordfish_libretrodroid_LibretroDroid_setRumbleEnabled(
+     JNIEnv* env,
+     jclass obj,
+diff --git a/src/main/java/com/swordfish/libretrodroid/LibretroDroid.java b/src/main/java/com/swordfish/libretrodroid/LibretroDroid.java
+--- a/src/main/java/com/swordfish/libretrodroid/LibretroDroid.java
++++ b/src/main/java/com/swordfish/libretrodroid/LibretroDroid.java
+@@ -129,6 +129,8 @@
+         String hookDirectory,
+         String scratchDirectory
+     );
++    /** Requests FP16 transport for Vulkan cores; if unsupported, native falls back to RGBA8. */
++    public static native void setVulkanFramePrecision(boolean fp16);
+     public static native void setFrameSpeed(int speed);
+     public static native void setAudioEnabled(boolean enabled);
+     public static native void setPitchPreservationEnabled(boolean enabled);
+diff --git a/src/main/java/com/swordfish/libretrodroid/GLRetroViewData.kt b/src/main/java/com/swordfish/libretrodroid/GLRetroViewData.kt
+--- a/src/main/java/com/swordfish/libretrodroid/GLRetroViewData.kt
++++ b/src/main/java/com/swordfish/libretrodroid/GLRetroViewData.kt
+@@ -41,5 +41,7 @@
+     var enableMicrophone: Boolean = false
+     var immersiveMode: ImmersiveMode? = null
+     var preferVulkan: Boolean = false
++    /** Optional higher-precision Vulkan->GLES AHardwareBuffer transport, not HDR passthrough. */
++    var preferHighPrecisionVulkanFrames: Boolean = false
+     var vulkanDriver: VulkanDriver? = null
+ }
+diff --git a/src/main/java/com/swordfish/libretrodroid/GLRetroView.kt b/src/main/java/com/swordfish/libretrodroid/GLRetroView.kt
+--- a/src/main/java/com/swordfish/libretrodroid/GLRetroView.kt
++++ b/src/main/java/com/swordfish/libretrodroid/GLRetroView.kt
+@@ -331,6 +331,8 @@
+             context.applicationInfo.nativeLibraryDir,
+             context.cacheDir.absolutePath
+         )
++        // This preference is reset for every new core; SDR never pays the FP16 memory cost.
++        LibretroDroid.setVulkanFramePrecision(data.preferVulkan && data.preferHighPrecisionVulkanFrames)
+         updateCoreSensorAccess()
+         LibretroDroid.setCoreAccelerometerScale(data.coreAccelerometerScale)
+         LibretroDroid.create(
