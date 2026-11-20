@@ -37,6 +37,7 @@ internal class GameVulkanSurfaceHost(
     @Volatile private var nativeSdrDiagnostic = false
 
     private var canProbe = false
+    private var displayHdr = GameHdrDisplayCapabilities()
     private var fullscreenRequested = false
     private var fullscreenVisible = false
     private var fullscreenAttempt = 0L
@@ -84,6 +85,21 @@ internal class GameVulkanSurfaceHost(
     fun coreReady() {
         canProbe = true
         tryProbe()
+    }
+
+    fun updateDisplayHdr(info: GameHdrDisplayCapabilities) {
+        if (disposed || displayHdr == info) return
+        displayHdr = info
+        val hdrStillSupported = when (outputTransfer) {
+            GameVulkanTransferMode.SDR -> true
+            GameVulkanTransferMode.PQ_BT2020 -> info.hdr10
+            GameVulkanTransferMode.HLG_BT2020 -> info.hlg
+        }
+        if (!hdrStillSupported && nativeSdrDiagnostic) {
+            setNativeSdrDiagnostic(false)
+            onFullscreenLost()
+        }
+        tryProbe() // Re-query capabilities from the current Android display mode.
     }
 
     fun setNativeSdrDiagnostic(enabled: Boolean) {
@@ -173,6 +189,16 @@ internal class GameVulkanSurfaceHost(
                 if (disposed || token != generation || activeSurface !== surface || !surface.isValid)
                     return@queueEvent
                 val bits = runCatching {
+                    val caps = displayHdr
+                    val eotfs = if (caps.hdr10 || caps.hlg || caps.hdr10Plus || caps.dolbyVision) {
+                        1 or (if (caps.hdr10) 2 else 0) or (if (caps.hlg) 4 else 0)
+                    } else 0
+                    LibretroDroid.setHdrDisplayInfo(
+                        caps.peakNits ?: 0f,
+                        caps.averageNits ?: 0f,
+                        caps.minimumNits ?: 0f,
+                        eotfs,
+                    )
                     LibretroDroid.probeVulkanSurfaceFormats(surface)
                 }.getOrDefault(0)
                 if (nativeSdrDiagnostic && surface.isValid && token == generation) {
