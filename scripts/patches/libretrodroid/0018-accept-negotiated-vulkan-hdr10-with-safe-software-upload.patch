@@ -100,7 +100,7 @@ diff --git a/src/main/cpp/renderers/es2/imagerendereres2.cpp b/src/main/cpp/rend
 +#include <cstring>
  
  namespace libretrodroid {
-@@ -30,2 +30,22 @@
+@@ -48,2 +50,22 @@
      // If the given texture has the correct size we just upload it.
 -    if (bytesPerPixel * width == pitch) {
 +    if (pixelFormat == RETRO_PIXEL_FORMAT_HDR10_2101010) {
@@ -124,7 +124,7 @@ diff --git a/src/main/cpp/renderers/es2/imagerendereres2.cpp b/src/main/cpp/rend
 +                            GL_RGBA, GL_UNSIGNED_BYTE, rgbaRow.data());
 +        }
 +    } else if (bytesPerPixel * width == pitch) {
-@@ -90,8 +90,15 @@
+@@ -87,8 +109,15 @@
          case RETRO_PIXEL_FORMAT_XRGB8888:
              this->glInternalFormat = GL_RGBA;
              this->glFormat = GL_RGBA;
