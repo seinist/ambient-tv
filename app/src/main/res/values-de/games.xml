@@ -252,6 +252,7 @@
     <string name="game_aspect_16_10">16:10</string>
     <string name="game_touch_mode_dpad">Steuerkreuz</string>
     <string name="game_touch_mode_analog">Linker Analogstick</string>
+    <string name="game_touch_mode_hybrid">Steuerkreuz + Analogstick</string>
     <string name="game_touch_mode_dual">Zwei Analogsticks</string>
     <string name="game_touch_controls">Touch-Steuerung</string>
     <string name="game_touch_controls_hint">Virtuelle Tasten auf dem Handy, physische Controller bleiben aktiv</string>
