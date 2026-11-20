@@ -129,7 +129,7 @@ internal fun ViewTransitionHost(
         }
     }
 
-    if (!active.animate || progress.floatValue >= 1f && visual == ViewTransitionVisual.None) {
+    if (!active.animate) {
         content()
         return
     }
@@ -138,7 +138,7 @@ internal fun ViewTransitionHost(
         Modifier.graphicsLayer {
             val remaining = 1f - progress.floatValue
             alpha = 1f - (1f - active.initialAlpha) * remaining
-            translationY = active.offsetDp * density * remaining * if (backward) -1f else 1f
+            translationY = active.offsetDp * density * remaining * (if (backward) -1f else 1f)
             scaleX = 1f - (1f - active.initialScale) * remaining
             scaleY = scaleX
             compositingStrategy = CompositingStrategy.ModulateAlpha
