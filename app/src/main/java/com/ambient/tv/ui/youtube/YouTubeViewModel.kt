@@ -16,6 +16,11 @@ import com.ambient.tv.youtube.YouTubeRow
 import com.ambient.tv.youtube.YouTubeContentCache
 import com.ambient.tv.youtube.YouTubeRowPaging
 import com.ambient.tv.youtube.IncompleteYouTubeFeedException
+import com.ambient.tv.youtube.SmartTubeSignInRequiredException
+import com.ambient.tv.youtube.smartTubeAuthRejected
+import com.ambient.tv.youtube.smartTubeFeedNeedsAccount
+import com.ambient.tv.youtube.smartTubeEmptyFeedNeedsAttention
+import com.ambient.tv.notifications.sanitizeFailureDetail
 import com.ambient.tv.youtube.YouTubeVisitPin
 import com.ambient.tv.youtube.youtubeRowsAfterContinuation
 import com.ambient.tv.youtube.youtubeRowsAfterRefresh
@@ -52,6 +57,9 @@ enum class YouTubeFeed(val key: String) {
 /** YouTube has no poster artwork, so deliberately excludes Plex's poster/grid modes. */
 enum class YouTubeViewMode { LANDSCAPE, LIST, INFO_LIST, WALL, CINEMATIC }
 
+/** The UI never equates an empty response or HTTP 403 with a revoked session. */
+enum class YouTubeAccountAttention { LOGIN_REQUIRED, CHECK_ACCOUNT }
+
 data class YouTubeUiState(
     val available: Boolean = true,
     val loading: Boolean = true,
@@ -59,6 +67,8 @@ data class YouTubeUiState(
     val refreshing: Boolean = false,
     /** A manual reload failed while the existing rows remain usable. */
     val refreshError: String? = null,
+    /** A session rejection, or a repeatedly empty personalized feed worth checking. */
+    val accountAttention: YouTubeAccountAttention? = null,
     val authBusy: Boolean = false,
     val signedIn: Boolean = false,
     val accountProfile: com.ambient.tv.youtube.YouTubeAccountProfile? = null,
@@ -433,12 +443,16 @@ class YouTubeViewModel @Inject constructor(
         // prevents identical cached items from disappearing/reappearing after every refresh.
         val unchangedRows = current.rows === update.rows || current.rows == update.rows
         val signed = update.signedIn ?: current.signedIn
-        if (!unchangedRows || current.loading || current.error != null || current.signedIn != signed) {
+        val gotContent = update.rows.any { it.items.isNotEmpty() }
+        if (gotContent) engine.clearAccountAttention()
+        if (!unchangedRows || current.loading || current.error != null ||
+            current.signedIn != signed || (gotContent && current.accountAttention != null)) {
             _uiState.value = current.copy(
                 rows = if (unchangedRows) current.rows else update.rows,
                 signedIn = signed,
                 loading = false,
                 error = null,
+                accountAttention = if (gotContent) null else current.accountAttention,
             )
         }
         if (update.final) armPaging(update.key, update.revision)
@@ -609,7 +623,7 @@ class YouTubeViewModel @Inject constructor(
             if (selected != _uiState.value.feed || _uiState.value.visibleFeeds != feeds) {
                 _uiState.value = _uiState.value.copy(feed = selected, visibleFeeds = feeds)
             }
-            _uiState.value = _uiState.value.copy(authBusy = true, error = null)
+            _uiState.value = _uiState.value.copy(authBusy = true, error = null, accountAttention = null)
             suspendResult { engine.requestSignInCode() }.onSuccess { code ->
                 val signed = suspendResult { engine.isSignedIn() }.getOrDefault(false)
                 if (signed) {
@@ -622,6 +636,45 @@ class YouTubeViewModel @Inject constructor(
                 notifyLogin("youtube", NoticePhase.ERROR)
                 _uiState.value = _uiState.value.copy(authBusy = false, error = e.userMessage())
             }
+        }
+    }
+
+    /**
+     * Explicit recovery from a rejected/expired SmartTube account. Removing the old upstream
+     * account first is necessary: its isSigned() flag can still be true for a rejected token,
+     * which would otherwise make the new OAuth code look instantly completed.
+     */
+    fun reconnectAccount() {
+        if (!engine.available || _uiState.value.authBusy) return
+        signInWatchJob?.cancel()
+        signInWatchJob = null
+        ++contentGeneration
+        contentJob?.cancel()
+        rowPublisher.cancelPending()
+        resetPaging(null)
+        viewModelScope.launch {
+            _uiState.value = _uiState.value.copy(
+                authBusy = true, signInCode = null, error = null, refreshError = null,
+            )
+            suspendResult { engine.signOut() }
+                .onSuccess {
+                    contentCache.clear()
+                    visitPin.release()
+                    _uiState.value = _uiState.value.copy(
+                        authBusy = false, signedIn = false, accountProfile = null,
+                        rows = emptyList(), loading = false, refreshing = false,
+                        accountAttention = null,
+                    )
+                    com.ambient.tv.data.local.LoginStateSignal.changed()
+                    requestSignIn()
+                }
+                .onFailure { error ->
+                    notifyLogin("youtube", NoticePhase.ERROR)
+                    _uiState.value = _uiState.value.copy(
+                        authBusy = false, loading = false, refreshing = false,
+                        error = error.userMessage(), accountAttention = YouTubeAccountAttention.CHECK_ACCOUNT,
+                    )
+                }
         }
     }
 
@@ -645,7 +698,9 @@ class YouTubeViewModel @Inject constructor(
                         accountProfile = null,
                         rows = emptyList(),
                         query = "",
+                        accountAttention = null,
                     )
+                    com.ambient.tv.data.local.LoginStateSignal.changed()
                     load(YouTubeFeed.HOME)
                 }
                 .onFailure { error ->
@@ -673,7 +728,9 @@ class YouTubeViewModel @Inject constructor(
     private fun completeSignIn() {
         notifyLogin("youtube", NoticePhase.SUCCESS)
         contentCache.clear()
+        engine.clearAccountAttention()
         visitPin.release()
+        com.ambient.tv.data.local.LoginStateSignal.changed()
         val home = YouTubeFeed.HOME
         _uiState.value = _uiState.value.copy(
             authBusy = false,
@@ -689,6 +746,7 @@ class YouTubeViewModel @Inject constructor(
             loading = true,
             signInCode = null,
             error = null,
+            accountAttention = null,
             completedSignInId = _uiState.value.completedSignInId + 1,
         )
         load(home)
@@ -711,7 +769,9 @@ class YouTubeViewModel @Inject constructor(
         // first partial refresh cannot discard still-pending rows from the current screen.
         if (cached == null && rows.isNotEmpty()) contentCache.merge(key, rows)
         displayedContentKey = key
-        _uiState.value = _uiState.value.copy(loading = rows.isEmpty(), error = null, rows = rows)
+        _uiState.value = _uiState.value.copy(
+            loading = rows.isEmpty(), error = null, rows = rows, accountAttention = null,
+        )
     }
 
     private suspend fun showRows(
@@ -764,7 +824,7 @@ class YouTubeViewModel @Inject constructor(
      * this account's newest state: keep them as display state (nothing deleted) for the next opening.
      */
     private fun keepPartialFeed(error: Throwable, cacheKey: String, partial: List<YouTubeRow>, revision: Long, generation: Long): Boolean {
-        if (error !is IncompleteYouTubeFeedException || partial.isEmpty()) return false
+        if (smartTubeAuthRejected(error) || error !is IncompleteYouTubeFeedException || partial.isEmpty()) return false
         if (generation != contentGeneration || contentCache.revision() != revision) return true
         Timber.tag("youtube-rows").i(error, "%s stopped early; keeping %d partial rows as display state", cacheKey, partial.size)
         val keep = pinned(cacheKey)
@@ -782,18 +842,26 @@ class YouTubeViewModel @Inject constructor(
         visibleViewportEnds.clear()
         val generation = ++contentGeneration
         contentJob?.cancel()
-        _uiState.value = _uiState.value.copy(refreshing = true, refreshError = null)
+        _uiState.value = _uiState.value.copy(
+            refreshing = true, refreshError = null, accountAttention = null,
+        )
         return generation
     }
 
     private fun contentLoadFailed(error: Throwable, manual: Boolean, generation: Long) {
         if (generation != contentGeneration) return
         // Keep already received partial rows; a transient refresh error must not erase them.
-        onlineServices.failed("youtube", error)
+        val loginRejected = smartTubeAuthRejected(error)
+        val needsLogin = loginRejected || error is SmartTubeSignInRequiredException
+        if (!needsLogin) onlineServices.failed("youtube", error)
+        if (loginRejected) engine.reportAccountAttention()
         val empty = _uiState.value.rows.isEmpty()
-        _uiState.value = _uiState.value.copy(loading = false,
-            error = error.userMessage().takeIf { empty },
-            refreshError = error.userMessage().takeIf { manual && !empty })
+        _uiState.value = _uiState.value.copy(
+            loading = false,
+            error = error.userMessage().takeIf { empty && !needsLogin },
+            refreshError = error.userMessage().takeIf { manual && !empty && !needsLogin },
+            accountAttention = if (needsLogin) YouTubeAccountAttention.LOGIN_REQUIRED else null,
+        )
     }
 
     private fun load(feed: YouTubeFeed, preserveExtent: Boolean = false, manual: Boolean = false) {
@@ -877,6 +945,9 @@ class YouTubeViewModel @Inject constructor(
                     val profile = if (signed) suspendResult { engine.accountProfile() }.getOrNull() else null
                     if (generation != contentGeneration) return@launch
                     _uiState.value = _uiState.value.copy(signedIn = signed, accountProfile = profile)
+                    if (!signed && smartTubeFeedNeedsAccount(selectedFeed.key)) {
+                        throw SmartTubeSignInRequiredException()
+                    }
                     val streamingFeed = selectedFeed == YouTubeFeed.SUBSCRIPTIONS || selectedFeed == YouTubeFeed.CHANNELS
                     var rows = if (refreshRows.isNotEmpty() && preferIncomingOrder && streamingFeed) {
                         withYouTubeRefreshBatches(onBatch = { batch ->
@@ -914,8 +985,20 @@ class YouTubeViewModel @Inject constructor(
                     if (generation != contentGeneration || contentCache.revision() != cacheRevision) return@onSuccess
                     onlineServices.succeeded("youtube")
                     YouTubeFreshThisRun.loaded(cacheKey)
-                    applyRefreshed(cacheKey, contentCache.replace(cacheKey, rows, cacheRevision,
-                        preferIncomingOrder = preferIncomingOrder), cacheRevision, signed)
+                    // An empty private Home even after its bounded retry is not evidence that
+                    // the user has no videos. Keep the prior tiles and offer a safe recovery.
+                    if (rows.isEmpty() && smartTubeEmptyFeedNeedsAttention(
+                            selectedFeed.key, signed, refreshRows.isNotEmpty(),
+                        )) {
+                        engine.reportAccountAttention()
+                        _uiState.value = _uiState.value.copy(
+                            loading = false, error = null, refreshError = null,
+                            accountAttention = YouTubeAccountAttention.CHECK_ACCOUNT,
+                        )
+                    } else {
+                        applyRefreshed(cacheKey, contentCache.replace(cacheKey, rows, cacheRevision,
+                            preferIncomingOrder = preferIncomingOrder), cacheRevision, signed)
+                    }
                 }.onFailure { e ->
                     if (coldStale != null && partialRows.isEmpty() && generation == contentGeneration &&
                         contentCache.get(cacheKey) == null) {
@@ -1051,7 +1134,8 @@ class YouTubeViewModel @Inject constructor(
     }
 }
 
-private fun Throwable.userMessage() = message?.takeIf { it.isNotBlank() } ?: "YouTube konnte nicht geladen werden."
+private fun Throwable.userMessage() = message?.takeIf { it.isNotBlank() }
+    ?.let(::sanitizeFailureDetail) ?: "SmartTube feed could not be loaded."
 
 /** Categories loaded fresh since this app process started (a cold start empties it). */
 internal object YouTubeFreshThisRun {
