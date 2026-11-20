@@ -978,7 +978,8 @@ internal fun LibraryContent(
         }
         LaunchedEffect(centeredRowKey, state.rowKeys, rowListState) {
             // Row-entry events do not invalidate the whole Home composition.
-            centeredRowKey.collectLatest { key ->
+            centeredRowKey.collectLatest { candidate ->
+                val key = candidate ?: return@collectLatest
                 // Ignore an old row grabbing focus during a rapid D-pad retarget; its
                 // centering request must not cancel the glide to the new destination.
                 val pending = pendingVisualRow.value
