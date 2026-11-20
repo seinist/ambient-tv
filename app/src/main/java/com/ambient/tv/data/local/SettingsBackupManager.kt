@@ -640,6 +640,9 @@ class SettingsBackupManager @Inject constructor(
                     autoUpdateCheck = context?.let { com.ambient.tv.update.AppUpdater.automaticUpdatesEnabled(it) },
                     projectmFavorites = context?.let { com.ambient.tv.ui.common.projectm.ProjectMFavorites(it).all().toSortedSet() },
                     keyBindings = preferences.keyBindings,
+                    gamepadSettings = preferences.gamepadSettings,
+                    retroInputSettings = preferences.retroInputSettings,
+                    gameSettings = preferences.gameSettings,
                 ),
                 device = DeviceSettingsExtras(
                     imageCacheMb = preferences.imageCacheMb,
@@ -1130,9 +1133,28 @@ class SettingsBackupManager @Inject constructor(
             settings.lyricsOnlineEnabled?.let { preferences.lyricsOnlineEnabled = it }
             settings.frameDropOverlayHistory?.let { preferences.frameDropOverlayHistory = it }
             settings.viewTransitionStyleKey?.let { preferences.viewTransitionStyleKey = it }
-            settings.keyBindings?.let {
-                preferences.keyBindings = it
-                com.ambient.tv.ui.keyboard.KeyBindings.reload(it)
+            settings.gameSettings?.let {
+                preferences.gameSettings = it
+                com.ambient.tv.games.GameSettings.reload(it)
+            }
+            settings.retroInputSettings?.let {
+                preferences.retroInputSettings = it
+                com.ambient.tv.ui.gamepad.retro.RetroInputSettings.reload(it)
+            }
+            settings.gamepadSettings?.let {
+                preferences.gamepadSettings = it
+                com.ambient.tv.ui.gamepad.GamepadInput.reload(it)
+            }
+            settings.keyBindings?.let { stored ->
+                // Older backups may hold controller buttons as remote keys: they move to the controller page.
+                val (remote, moved) = com.ambient.tv.ui.gamepad.splitLegacyGamepadBindings(stored)
+                preferences.keyBindings = remote
+                com.ambient.tv.ui.keyboard.KeyBindings.reload(remote)
+                if (moved.isNotEmpty()) {
+                    val merged = com.ambient.tv.ui.gamepad.GamepadConfig.decode(preferences.gamepadSettings).withLegacy(moved).encode()
+                    preferences.gamepadSettings = merged
+                    com.ambient.tv.ui.gamepad.GamepadInput.reload(merged)
+                }
             }
             context?.let { appContext ->
                 settings.liveTvReminderAutoSwitch?.let { com.ambient.tv.livetv.LiveTvReminderScheduler.setAutoSwitch(appContext, it) }

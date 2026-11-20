@@ -1,0 +1,129 @@
+package com.ambient.tv.ui.gamepad
+
+import android.view.KeyEvent
+import com.ambient.tv.ui.keyboard.KeyAction
+import com.ambient.tv.ui.keyboard.KeyBindingScope
+import com.ambient.tv.ui.keyboard.isBindableKey
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
+import org.junit.Test
+import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
+import org.robolectric.annotation.Config
+
+@RunWith(RobolectricTestRunner::class)
+@Config(sdk = [35], application = android.app.Application::class)
+class GamepadSettingsTest {
+    private fun key(command: GamepadKeyCommand) = GamepadCommand.Key(command)
+
+    @Test fun defaultsFollowConsoleConventions() {
+        val config = GamepadConfig()
+        assertEquals(key(GamepadKeyCommand.CONFIRM), config.resolve(GamepadButton.A, long = false, player = false))
+        assertEquals(key(GamepadKeyCommand.BACK), config.resolve(GamepadButton.B, long = false, player = false))
+        assertEquals(key(GamepadKeyCommand.CONTEXT_MENU), config.resolve(GamepadButton.X, long = false, player = false))
+        assertEquals(GamepadCommand.Action(KeyAction.SEARCH), config.resolve(GamepadButton.Y, long = false, player = false))
+        assertEquals(GamepadCommand.Action(KeyAction.SETTINGS), config.resolve(GamepadButton.START, long = true, player = false))
+        assertEquals(GamepadCommand.None, config.resolve(GamepadButton.A, long = true, player = false))
+    }
+
+    @Test fun playerOverridesSomeButtonsAndInheritsConfirmAndBack() {
+        val config = GamepadConfig()
+        assertEquals(key(GamepadKeyCommand.CONFIRM), config.resolve(GamepadButton.A, long = false, player = true))
+        assertEquals(key(GamepadKeyCommand.BACK), config.resolve(GamepadButton.B, long = false, player = true))
+        assertEquals(key(GamepadKeyCommand.PLAY_PAUSE), config.resolve(GamepadButton.X, long = false, player = true))
+        assertEquals(key(GamepadKeyCommand.FAST_FORWARD), config.resolve(GamepadButton.R2, long = false, player = true))
+        assertEquals(GamepadCommand.Action(KeyAction.AUDIO_TRACKS), config.resolve(GamepadButton.Y, long = true, player = true))
+        // Page navigation is not available in the player: no inherited Settings/Home.
+        assertEquals(GamepadCommand.None, config.resolve(GamepadButton.START, long = true, player = true))
+        assertEquals(GamepadCommand.None, config.resolve(GamepadButton.MODE, long = false, player = true))
+        assertEquals(GamepadCommand.Inherit, config.configured(GamepadContext.PLAYER, GamepadSlot(GamepadButton.A, false)))
+    }
+
+    @Test fun confirmOnBSwapsOnlyTheDefaultsOfAAndB() {
+        val config = GamepadConfig(confirmOnB = true)
+        assertEquals(key(GamepadKeyCommand.BACK), config.resolve(GamepadButton.A, long = false, player = false))
+        assertEquals(key(GamepadKeyCommand.CONFIRM), config.resolve(GamepadButton.B, long = false, player = true))
+        assertEquals(key(GamepadKeyCommand.CONTEXT_MENU), config.resolve(GamepadButton.X, long = false, player = false))
+    }
+
+    @Test fun choosingTheDefaultRemovesTheOverride() {
+        val slot = GamepadSlot(GamepadButton.X, long = false)
+        val changed = GamepadConfig().withCommand(GamepadContext.MENUS, slot, GamepadCommand.Action(KeyAction.REFRESH))
+        assertEquals(GamepadCommand.Action(KeyAction.REFRESH), changed.resolve(GamepadButton.X, long = false, player = false))
+        val back = changed.withCommand(GamepadContext.MENUS, slot, key(GamepadKeyCommand.CONTEXT_MENU))
+        assertTrue(back.overrides.isEmpty())
+    }
+
+    @Test fun playerAsInMenusFollowsTheMenuButton() {
+        val config = GamepadConfig()
+            .withCommand(GamepadContext.MENUS, GamepadSlot(GamepadButton.X, false), GamepadCommand.Volume(GamepadVolumeCommand.MUTE))
+            .withCommand(GamepadContext.PLAYER, GamepadSlot(GamepadButton.X, false), GamepadCommand.Inherit)
+        assertEquals(GamepadCommand.Volume(GamepadVolumeCommand.MUTE), config.resolve(GamepadButton.X, long = false, player = true))
+    }
+
+    @Test fun encodeDecodeRoundTripsAndIgnoresUnknownValues() {
+        val config = GamepadConfig(
+            enabled = false, confirmOnB = true, leftStickNavigates = false, rightStickScrolls = false,
+            deadzone = GamepadDeadzone.LARGE, repeat = GamepadRepeatSpeed.FAST,
+        )
+            .withCommand(GamepadContext.MENUS, GamepadSlot(GamepadButton.L2, false), key(GamepadKeyCommand.CHANNEL_DOWN))
+            .withCommand(GamepadContext.PLAYER, GamepadSlot(GamepadButton.Y, true), GamepadCommand.Inherit)
+            .withCommand(GamepadContext.PLAYER, GamepadSlot(GamepadButton.THUMB_L, false), GamepadCommand.None)
+        val encoded = config.encode()
+        assertEquals(config, GamepadConfig.decode(encoded))
+        val noisy = encoded + mapOf("menus.a" to "inherit", "menus.b" to "action:gone", "player.zz" to "key:back", "deadzone" to "huge")
+        val decoded = GamepadConfig.decode(noisy)
+        assertEquals(GamepadDeadzone.MEDIUM, decoded.deadzone)
+        assertEquals(key(GamepadKeyCommand.BACK), decoded.resolve(GamepadButton.A, long = false, player = false))
+        assertEquals(GamepadConfig(), GamepadConfig.decode(emptyMap()))
+    }
+
+    @Test fun controllerButtonsAreNotRemoteKeys() {
+        assertTrue(isGamepadButtonKeyCode(KeyEvent.KEYCODE_BUTTON_A))
+        assertTrue(isGamepadButtonKeyCode(KeyEvent.KEYCODE_BUTTON_16))
+        assertFalse(isGamepadButtonKeyCode(KeyEvent.KEYCODE_PROG_RED))
+        assertFalse(isBindableKey(KeyEvent.KEYCODE_BUTTON_Y))
+        assertTrue(isBindableKey(KeyEvent.KEYCODE_PROG_RED))
+    }
+
+    @Test fun legacyRemoteBindingsOnControllerButtonsMoveToTheControllerPage() {
+        val (remote, moved) = splitLegacyGamepadBindings(mapOf(
+            "subtitles" to "${KeyEvent.KEYCODE_BUTTON_Y}:1",
+            "search" to "${KeyEvent.KEYCODE_BUTTON_X}:0",
+            "refresh" to "${KeyEvent.KEYCODE_PROG_RED}:0",
+            "weather" to "${KeyEvent.KEYCODE_BUTTON_1}:0",
+        ))
+        assertEquals(mapOf("refresh" to "${KeyEvent.KEYCODE_PROG_RED}:0"), remote)
+        assertEquals(mapOf(GamepadSlot(GamepadButton.Y, true) to GamepadCommand.Action(KeyAction.SUBTITLES)), moved[GamepadContext.PLAYER])
+        assertEquals(mapOf(GamepadSlot(GamepadButton.X, false) to GamepadCommand.Action(KeyAction.SEARCH)), moved[GamepadContext.MENUS])
+
+        // A newer choice on the controller page wins over the old remote binding.
+        val existing = GamepadConfig().withCommand(GamepadContext.MENUS, GamepadSlot(GamepadButton.X, false), GamepadCommand.None)
+        val merged = existing.withLegacy(moved)
+        assertEquals(GamepadCommand.None, merged.resolve(GamepadButton.X, long = false, player = false))
+        assertEquals(GamepadCommand.Action(KeyAction.SUBTITLES), merged.resolve(GamepadButton.Y, long = true, player = true))
+    }
+
+    @Test fun menuChoicesOfferNoPlayerActionsAndNoInherit() {
+        val menus = gamepadCommandChoices(GamepadContext.MENUS)
+        assertFalse(GamepadCommand.Inherit in menus)
+        assertFalse(menus.any { it is GamepadCommand.Action && it.action.scope == KeyBindingScope.PLAYER })
+        val player = gamepadCommandChoices(GamepadContext.PLAYER)
+        assertEquals(GamepadCommand.Inherit, player.first())
+        assertTrue(GamepadCommand.Action(KeyAction.SUBTITLES) in player)
+        // Every choice survives storage.
+        (menus + player).forEach { assertEquals(it, GamepadCommand.decode(it.storageKey)) }
+    }
+
+    @Test fun labelsFollowTheControllerFamily() {
+        assertEquals(GamepadLabels.PLAYSTATION, GamepadLabels.forVendor(0x054C))
+        assertEquals(GamepadLabels.XBOX, GamepadLabels.forVendor(0x045E))
+        assertEquals("✕", GamepadLabels.PLAYSTATION.label(GamepadButton.A))
+        assertEquals("RB", GamepadLabels.XBOX.label(GamepadButton.R1))
+        // Nintendo: positions as Xbox, letters swapped (bottom B, right A).
+        assertEquals(GamepadLabels.NINTENDO, GamepadLabels.forVendor(0x057E))
+        assertEquals("B", GamepadLabels.NINTENDO.label(GamepadButton.A))
+        assertEquals("ZR", GamepadLabels.NINTENDO.label(GamepadButton.R2))
+    }
+}

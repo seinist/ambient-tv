@@ -86,7 +86,9 @@ private const val MAX_BINDABLE_KEY_CODE = 1_000
 
 fun isBindableKey(keyCode: Int): Boolean =
     // No framework call here: backups decode bindings outside Android too (constants inline).
-    keyCode > KeyEvent.KEYCODE_UNKNOWN && keyCode < MAX_BINDABLE_KEY_CODE && keyCode !in RESERVED_KEYS
+    // Controller buttons have their own page (ui.gamepad), so a remote binding never takes one.
+    keyCode > KeyEvent.KEYCODE_UNKNOWN && keyCode < MAX_BINDABLE_KEY_CODE && keyCode !in RESERVED_KEYS &&
+        !com.ambient.tv.ui.gamepad.isGamepadButtonKeyCode(keyCode)
 
 /** The user's bindings: at most one key per action, and one action per key, press and scope. */
 object KeyBindings {

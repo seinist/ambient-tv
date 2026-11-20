@@ -1,0 +1,126 @@
+diff --git a/src/main/cpp/vulkan/vulkanbackend.h b/src/main/cpp/vulkan/vulkanbackend.h
+--- a/src/main/cpp/vulkan/vulkanbackend.h
++++ b/src/main/cpp/vulkan/vulkanbackend.h
+@@ -26,8 +26,9 @@
+ #endif
+ 
+ #include <vulkan/vulkan.h>
+-#include <android/hardware_buffer.h>
+-#include <mutex>
++#include <android/hardware_buffer.h>
++#include <atomic>
++#include <mutex>
+ #include <string>
+ #include <vector>
+ 
+@@ -72,7 +73,9 @@
+     // This is only the precision of Vulkan -> GLES transport, NOT HDR display output.
+     void setPreferFp16Frame(bool enable);
+     void disableFp16Frame();
+-    bool isFp16Frame() const { return fp16Frame; }
++    bool isFp16Frame() const { return fp16Frame; }
++    // Actual frame transport, read atomically from the UI: Vulkan, FP16, requested, fallback.
++    uint32_t getFrameStatus() const { return frameStatus.load(std::memory_order_acquire); }
+     bool isPreferred() const { return preferVulkan; }
+     bool isAvailable();
+     void setNegotiationInterface(const retro_hw_render_context_negotiation_interface_vulkan* negotiation);
+@@ -204,8 +207,9 @@
+     // Higher precision is opt-in for manually selected PQ/HLG content, never for SDR.
+     bool preferFp16Frame = false;
+     bool forceRgba8Frame = false;
+-    bool fp16Frame = false;
+-    AHardwareBuffer* frameBuffer = nullptr;
++    bool fp16Frame = false;
++    std::atomic<uint32_t> frameStatus { 0 };
++    AHardwareBuffer* frameBuffer = nullptr;
+     VkImage frameImage = VK_NULL_HANDLE;
+     VkDeviceMemory frameMemory = VK_NULL_HANDLE;
+     unsigned frameWidth = 0;
+diff --git a/src/main/cpp/vulkan/vulkanbackend.cpp b/src/main/cpp/vulkan/vulkanbackend.cpp
+--- a/src/main/cpp/vulkan/vulkanbackend.cpp
++++ b/src/main/cpp/vulkan/vulkanbackend.cpp
+@@ -623,23 +623,35 @@
+         AHardwareBuffer_release(frameBuffer);
+         frameBuffer = nullptr;
+     }
+-    frameWidth = 0;
+-    frameHeight = 0;
+-    fp16Frame = false;
+-}
+-
+-bool VulkanBackend::ensureFrameBuffer(unsigned width, unsigned height) {
+-    if (!isStarted() || width == 0 || height == 0) return false;
+-    if (frameBuffer != nullptr && width == frameWidth && height == frameHeight) return true;
+-    destroyFrameBuffer();
+-
+-    // Never require FP16 on unsupported GPUs or on low-memory SDR-only sessions.
+-    if (preferFp16Frame && !forceRgba8Frame) {
+-        if (createFrameBuffer(width, height, true)) return true;
+-        LOGW("FP16 Vulkan/GLES bridge unavailable; using RGBA8");
+-    }
+-    return createFrameBuffer(width, height, false);
+-}
++    frameWidth = 0;
++    frameHeight = 0;
++    fp16Frame = false;
++    frameStatus.store(0, std::memory_order_release);
++}
++
++bool VulkanBackend::ensureFrameBuffer(unsigned width, unsigned height) {
++    if (!isStarted() || width == 0 || height == 0) return false;
++    if (frameBuffer != nullptr && width == frameWidth && height == frameHeight) return true;
++    destroyFrameBuffer();
++
++    const auto publishStatus = [this]() {
++        frameStatus.store(1u | (fp16Frame ? 2u : 0u) |
++            (preferFp16Frame ? 4u : 0u) | (forceRgba8Frame ? 8u : 0u),
++            std::memory_order_release);
++    };
++    // Avoid repeatedly attempting unsupported FP16 on subsequent frame resizes.
++    if (preferFp16Frame && !forceRgba8Frame) {
++        if (createFrameBuffer(width, height, true)) {
++            publishStatus();
++            return true;
++        }
++        forceRgba8Frame = true;
++        LOGW("FP16 Vulkan/GLES bridge unavailable; using RGBA8");
++    }
++    if (!createFrameBuffer(width, height, false)) return false;
++    publishStatus();
++    return true;
++}
+ 
+ bool VulkanBackend::createFrameBuffer(unsigned width, unsigned height, bool fp16) {
+     // Called only with no live frame buffer; failures clean up before the caller tries RGBA8.
+diff --git a/src/main/cpp/libretrodroidjni.cpp b/src/main/cpp/libretrodroidjni.cpp
+--- a/src/main/cpp/libretrodroidjni.cpp
++++ b/src/main/cpp/libretrodroidjni.cpp
+@@ -793,7 +793,13 @@
+     });
+ }
+ 
+-JNIEXPORT void JNICALL Java_com_swordfish_libretrodroid_LibretroDroid_setVulkanFramePrecision(
++JNIEXPORT jint JNICALL Java_com_swordfish_libretrodroid_LibretroDroid_getVulkanFrameStatus(
++    JNIEnv*, jclass
++) {
++    return static_cast<jint>(VulkanBackend::getInstance().getFrameStatus());
++}
++
++JNIEXPORT void JNICALL Java_com_swordfish_libretrodroid_LibretroDroid_setVulkanFramePrecision(
+     JNIEnv* env,
+     jclass obj,
+     jboolean fp16
+diff --git a/src/main/java/com/swordfish/libretrodroid/LibretroDroid.java b/src/main/java/com/swordfish/libretrodroid/LibretroDroid.java
+--- a/src/main/java/com/swordfish/libretrodroid/LibretroDroid.java
++++ b/src/main/java/com/swordfish/libretrodroid/LibretroDroid.java
+@@ -130,7 +130,9 @@
+         String scratchDirectory
+     );
+     /** Requests FP16 transport for Vulkan cores; if unsupported, native falls back to RGBA8. */
+-    public static native void setVulkanFramePrecision(boolean fp16);
++    public static native void setVulkanFramePrecision(boolean fp16);
++    /** Actual Vulkan-to-GLES transport (0 until frame allocation). */
++    public static native int getVulkanFrameStatus();
+     public static native void setFrameSpeed(int speed);
+     public static native void setAudioEnabled(boolean enabled);
+     public static native void setPitchPreservationEnabled(boolean enabled);
