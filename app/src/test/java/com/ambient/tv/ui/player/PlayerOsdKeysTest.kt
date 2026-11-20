@@ -251,6 +251,30 @@ class PlayerOsdKeysTest {
         assertEquals(2, recorder.calls.size)
     }
 
+    @Test fun changingDirectionAfterOsdFocusTransferKeepsOneScrubOwner() {
+        var now = 0L
+        val progressive = ProgressiveSeekController { now }
+        val recorder = Recorder()
+        val steps = OsdSeekSteps(
+            jumpMs = 60_000L, progressive = progressive,
+            currentPositionMs = 100_000L, durationMs = 600_000L,
+        )
+        assertTrue(handlePlayerOsdKey(Key.DirectionRight, true, state(), steps, recorder))
+        now = 700L
+        assertTrue(forwardActiveDirectSeekKey(Key.DirectionLeft, progressive) {
+            handlePlayerOsdKey(Key.DirectionLeft, true, state(visible = true), steps, recorder)
+        })
+        assertTrue(progressive.isPressedIn(-1))
+        assertFalse(forwardActiveDirectSeekKey(Key.DirectionRight, progressive) {
+            handlePlayerOsdKey(Key.DirectionRight, false, state(visible = true), steps, recorder)
+        })
+        assertTrue(forwardActiveDirectSeekKey(Key.DirectionLeft, progressive) {
+            handlePlayerOsdKey(Key.DirectionLeft, false, state(visible = true), steps, recorder)
+        })
+        assertEquals(listOf("seek:-5000:bar"), recorder.calls)
+        assertFalse(progressive.active)
+    }
+
     @Test fun onlyAnActivePlayerScrubClaimsTimelineKeys() {
         val progressive = ProgressiveSeekController { 0L }
         var forwarded = 0
