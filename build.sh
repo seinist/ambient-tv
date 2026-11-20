@@ -18,6 +18,10 @@
 #   ./build.sh monogram       # build ONLY Monogram's native MTProto AAR, opt-in
 #   ./build.sh monogram-check / monogram-update  # check/update only the Monogram pin
 #   ./build.sh monogram-size [arm64|armv7|x86|x86_64|all]  # compare complete release APK sizes
+#   ./build.sh cores [id[,id...]]  # build pinned Libretro cores on GitHub Actions
+#   ./build.sh cores-key [--manual]  # configure signing or prepare the key for a browser upload
+#   ./build.sh cores-release      # build and publish all signed Libretro cores
+#   ./build.sh cores-status       # show recent Core workflow runs
 #   ./build.sh nnedi3-shaders # pre-bundle additional NNEDI3 win8x4/win8x6 assets
 #   ./build.sh clean-mpv      # rebuild native MPV libraries from scratch
 #   ./build.sh gen-keystore   # create keystore/release.jks
@@ -1242,10 +1246,85 @@ clean_android() {
     rm -rf "$DIST_DIR"
 }
 
+run_cores_command() {
+    local repo="seinist/ambient-tv"
+    local secret_query='.[] | select(.name == "CORES_SIGNING_KEY") | .name'
+    local signing_secret
+    local -a workflow=(workflow run cores.yml --repo "$repo" --ref main)
+    local has_gh=0
+    if command -v gh >/dev/null 2>&1; then has_gh=1; fi
+    if [[ "$1" != "cores-key" && "$has_gh" == 0 ]]; then
+        fail "For terminal access install GitHub CLI (gh), or use https://github.com/$repo/actions/workflows/cores.yml in your browser."
+    fi
+
+    case "$1" in
+        cores)
+            [[ $# -le 2 ]] || fail "Usage: $0 cores [id[,id...]]"
+            local -a inputs=(-f publish=false)
+            if [[ -n "${2:-}" ]]; then inputs+=(-f "cores=$2"); fi
+            gh "${workflow[@]}" "${inputs[@]}"
+            ;;
+        cores-key)
+            [[ $# -eq 1 || ( $# -eq 2 && "${2:-}" == --manual ) ]] || fail "Usage: $0 cores-key [--manual]"
+            if [[ "$has_gh" == 1 && "${2:-}" != --manual && "${FORCE:-0}" != 1 ]]; then
+                signing_secret="$(gh secret list --repo "$repo" --json name --jq "$secret_query")"
+                [[ -z "$signing_secret" ]] || fail "CORES_SIGNING_KEY already exists. Use its matching public key."
+            fi
+            bash "$ROOT_DIR/scripts/cores_signing_key.sh" "$repo" "${@:2}"
+            ;;
+        cores-release)
+            [[ $# -eq 1 ]] || fail "Usage: $0 cores-release"
+            gh api --silent "repos/$repo/contents/cores/signing-public.pem?ref=main" ||
+                fail "The public signing key must be on GitHub main. Run $0 cores-key for initial setup, then commit and push cores/signing-public.pem."
+            # Workflow dispatch can be allowed even when listing repository secrets is forbidden.
+            if signing_secret="$(gh secret list --repo "$repo" --json name --jq "$secret_query" 2>/dev/null)"; then
+                [[ -n "$signing_secret" ]] || fail "CORES_SIGNING_KEY is missing on GitHub. Set up core signing before publishing."
+            fi
+            gh "${workflow[@]}" -f publish=true
+            ;;
+        cores-status)
+            [[ $# -eq 1 ]] || fail "Usage: $0 cores-status"
+            gh run list --repo "$repo" --workflow cores.yml --branch main
+            ;;
+    esac
+}
+
+print_usage() {
+    cat <<EOT
+Usage: $0 <command> [args]
+
+Android: debug, release, arm64, armv7, x86, x86_64, all, clean, gen-keystore
+Deploy: arm64-adb, armv7-adb, x86-adb, x86_64-adb [adb-ip[:port]]
+Native: youtube-engine, spotify, clean-spotify, mpv, clean-mpv, svp,
+        nnedi3-shaders, projectm, clean-projectm, monogram
+Libraries: libs-check [svp|monogram], libs-update [svp|monogram],
+           monogram-check, monogram-update, monogram-size [abi|all]
+
+Libretro cores on GitHub Actions (main):
+  cores [id[,id...]]   Build artifacts only. Omit IDs to build all cores (gh).
+  cores-key [--manual] Generate signing keys. Upload the secret in the browser if gh is unavailable.
+                       Commit and push cores/signing-public.pem and rebuild the app to embed it.
+  cores-release       Build and publish the full signed core catalog (gh).
+  cores-status        Show recent Core workflow runs (gh).
+  Browser workflow    https://github.com/seinist/ambient-tv/actions/workflows/cores.yml
+EOT
+}
+
 # Allow packaging helpers to be exercised in isolation without starting a build.
 if [[ "${BASH_SOURCE[0]}" != "$0" ]]; then
     return 0
 fi
+
+case "$MODE" in
+    -h|--help|help)
+        print_usage
+        exit 0
+        ;;
+    cores|cores-key|cores-release|cores-status)
+        run_cores_command "$@"
+        exit 0
+        ;;
+esac
 
 if [[ "$MODE" == "libs-check" || "$MODE" == "lib-check" || "$MODE" == "deps-check" || "$MODE" == "libraries-check" ]]; then
     command -v python3 >/dev/null 2>&1 || fail "python3 is required"
@@ -1363,9 +1442,7 @@ case "$MODE" in
         gen_keystore "$@"
         ;;
     *)
-        cat >&2 <<EOT
-Usage: $0 [debug|release|arm64|armv7|x86|x86_64|arm64-adb|armv7-adb|x86-adb|x86_64-adb|all|youtube-engine|spotify|clean-spotify|mpv|clean-mpv|svp|nnedi3-shaders|projectm|clean-projectm|libs-check|libs-update|monogram|monogram-size|monogram-check|monogram-update|clean|gen-keystore] [adb-ip[:port] or svp|monogram for library updates]
-EOT
+        print_usage >&2
         exit 2
         ;;
 esac

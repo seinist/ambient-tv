@@ -20,6 +20,7 @@ app/build/
 /smarttube_wrappers/j2v8/build
 /smarttube_wrappers/commons-io/build
 /smarttube_wrappers/mediaserviceinterfaces/build
+/libretrodroid_wrapper/build/
 
 # Native dependency build worktree
 .native/
