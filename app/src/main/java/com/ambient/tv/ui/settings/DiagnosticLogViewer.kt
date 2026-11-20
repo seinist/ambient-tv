@@ -165,7 +165,7 @@ internal fun DiagnosticLogViewer(
                     scope.launch { scroll.scrollToItem(0) }
                 },
             )
-            TvActionButton(text = stringResource(R.string.diagnostics_viewer_export), onClick = onExport)
+            if (!handheld) TvActionButton(text = stringResource(R.string.diagnostics_viewer_export), onClick = onExport)
             TvActionButton(text = stringResource(R.string.back), onClick = onDismiss)
         },
     ) {
@@ -221,6 +221,13 @@ internal fun DiagnosticLogViewer(
                     stringResource(R.string.diagnostics_viewer_updates_pending),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.primary,
+                )
+            }
+            if (handheld) item(key = "diagnostics-export") {
+                TvActionButton(
+                    text = stringResource(R.string.diagnostics_viewer_export),
+                    onClick = onExport,
+                    fillWidth = true,
                 )
             }
             item(key = "diagnostics-count") {
