@@ -68,9 +68,12 @@ data class GameSettingsState(val values: Map<String, String> = emptyMap()) {
     fun withRewind(on: Boolean): GameSettingsState = set("rewind", "0".takeIf { !on })
 
     /** GPU cores: ask for Vulkan instead of OpenGL ES (used when the device and core can). */
-    fun vulkan(core: GameCore): Boolean = core.hardware && values["vulkan.${core.id}"] == "1"
+    fun vulkan(core: GameCore): Boolean =
+        core.hardware && core.supportsVulkan && (core.requiresVulkan || values["vulkan.${core.id}"] == "1")
 
-    fun withVulkan(core: GameCore, on: Boolean): GameSettingsState = set("vulkan.${core.id}", "1".takeIf { on })
+    fun withVulkan(core: GameCore, on: Boolean): GameSettingsState =
+        if (!core.supportsVulkan || core.requiresVulkan) this
+        else set("vulkan.${core.id}", "1".takeIf { on })
 
     /** RetroAchievements while playing (needs an account); on unless switched off. */
     val achievements: Boolean get() = values["achievements"] != "0"
