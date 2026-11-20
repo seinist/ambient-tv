@@ -61,6 +61,9 @@ class MpvPlaybackController(
     private var pendingDeinterlace by mutableStateOf<Pair<Long, Pair<String, String>>?>(null)
     private var pendingSubtitleDelay by mutableStateOf<Pair<Long, Int>?>(null)
     private var playIntent by mutableStateOf(true)
+    // The latest sampled native state can become false on an open/HTTP error. Keep the
+    // host's explicit request separate so a same-title Media3 fallback doesn't start paused.
+    private var hostRequestedPlay = true
     private var failure by mutableStateOf<String?>(null)
     var backendUnresponsive by mutableStateOf(false)
         private set
@@ -367,14 +370,14 @@ class MpvPlaybackController(
     fun reduceAfterOverload() { command("overload") { reduceAfterOverload() } }
     override fun status() = state.status.copy(playing = !released && state.status.playing, ended = ended, error = errorMessage)
     override fun wantsToPlay() = !released && playIntent && !ended && errorMessage == null
-    override fun requestedPlayIntent() = !released && playIntent && !ended
+    override fun requestedPlayIntent() = !released && hostRequestedPlay && !ended
     override fun canSeekNow(): Boolean = !released && state.seekable
     fun positionMs() = state.status.positionMs
     fun durationMs() = state.status.durationMs
     fun isPlaying() = !released && state.status.playing
     fun isPaused() = !isPlaying()
-    override fun play() { playIntent = true; command("play-state") { play() } }
-    override fun pause() { playIntent = false; command("play-state") { pause() } }
+    override fun play() { hostRequestedPlay = true; playIntent = true; command("play-state") { play() } }
+    override fun pause() { hostRequestedPlay = false; playIntent = false; command("play-state") { pause() } }
     override fun setOutputMuted(muted: Boolean) { command("output-mute") { setOutputMuted(muted) } }
     override fun reopenGeneration() = state.reopenGeneration
     override fun reopenAudioOutput() { command("ao-reload") { reopenAudioOutput() } }
@@ -387,6 +390,7 @@ class MpvPlaybackController(
     }
     fun seekBy(deltaMs: Long) = seekTo(mpvSeekByTarget(pendingSeekTargetMs, positionMs(), deltaMs))
     override fun restoreAfterRendererSwitch(positionMs: Long, playWhenReady: Boolean, isLive: Boolean) {
+        hostRequestedPlay = playWhenReady
         playIntent = playWhenReady
         command("restore-playback") { restoreAfterRendererSwitch(positionMs, playWhenReady, isLive) }
     }
@@ -491,6 +495,7 @@ class MpvPlaybackController(
         surfaceGate.requestDetach()
         released = true
         playIntent = false
+        hostRequestedPlay = false
         backendUnresponsive = false
         surfaceIdentity = null
         main.removeCallbacks(tick)
