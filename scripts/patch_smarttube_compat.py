@@ -861,6 +861,14 @@ def patch_skip_playable_subtitle_refetch(path: Path, check: bool) -> bool:
     newline = b"\r\n" if b"\r\n" in raw else b"\n"
     text = raw.decode("utf-8").replace("\r\n", "\n").replace("\r", "\n")
     marker = "AMBIENT_TV_SKIP_PLAYABLE_SUBTITLE_REFETCH"
+    # Do not silently change the semantics of an unrecognized upstream client.
+    # WEB and WEB_DUMMY are the only known client variants for this subtitle-only fetch.
+    clients = re.findall(
+        r"getVideoInfo\\(AppClient\\.([A-Z0-9_]+),\\s*videoId,\\s*clickTrackingParams\\)",
+        text,
+    )
+    if len(clients) != 1 or clients[0] not in ("WEB", "WEB_DUMMY"):
+        die(f"unexpected SmartTube subtitle refetch client in {path}: {clients}")
 
     if check:
         if marker not in text or "hasPlayableFormats(result)" not in text or "private static boolean hasPlayableFormats" not in text:
