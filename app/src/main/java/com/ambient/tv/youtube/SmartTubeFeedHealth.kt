@@ -18,6 +18,8 @@ internal fun smartTubeFeedNeedsAccount(key: String): Boolean = key in setOf(
  * MediaServiceCore can wrap the original response in a feed/reflective exception.
  */
 internal fun smartTubeAuthRejected(error: Throwable): Boolean {
+    // Missing account is a local state, not proof that a remote credential was rejected.
+    if (error is SmartTubeSignInRequiredException) return false
     if (failureHttpCode(error) == 401) return true
     val markers = listOf(
         "invalid_grant", "invalid_token", "token_expired", "login_required",
