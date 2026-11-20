@@ -985,6 +985,7 @@ class SmartTubeEngine @Inject constructor(
         val content = service("getContentService")
         var attempted = false
         var lastFailure: Throwable? = null
+        var authFailure: Throwable? = null
         var completedEmpty = false
         for (method in methodNames) {
             val invocation = content.invokeDetailed(method, *args)
@@ -992,6 +993,7 @@ class SmartTubeEngine @Inject constructor(
             attempted = true
             if (invocation.error != null) {
                 lastFailure = invocation.error
+                if (smartTubeAuthRejected(invocation.error)) authFailure = invocation.error
                 Timber.w(invocation.error, "SmartTube content method %s failed", method)
                 continue
             }
@@ -1044,6 +1046,7 @@ class SmartTubeEngine @Inject constructor(
             } catch (error: Exception) {
                 if (accumulated.isNotEmpty()) throw IncompleteYouTubeFeedException(error)
                 lastFailure = error
+                if (smartTubeAuthRejected(error)) authFailure = error
                 continue
             }
             completedEmpty = true
@@ -1055,7 +1058,7 @@ class SmartTubeEngine @Inject constructor(
         }
         // One older upstream variant may finish empty while the next one rejects an expired
         // credential. Never transform that explicit authentication rejection into "no videos".
-        lastFailure?.takeIf(::smartTubeAuthRejected)?.let { throw it }
+        authFailure?.let { throw it }
         if (!completedEmpty) throw IncompleteYouTubeFeedException(lastFailure)
         emptyList()
     }
