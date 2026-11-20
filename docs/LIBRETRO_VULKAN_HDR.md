@@ -247,3 +247,47 @@ References:
 - [Libretro header (new HDR metadata interface)](https://github.com/libretro/RetroArch/blob/master/libretro-common/include/libretro.h)
 - [Android wide-color Vulkan surfaces](https://developer.android.com/training/wide-color-gamut)
 - [librashader runtimes](https://github.com/SnowflakePowered/librashader)
+
+## PR #427 code-only source and picture safeguards (follow-up)
+
+- `GameVulkanHdrSourceEvidence` separates the **actual Vulkan pixel format**
+  from the **core-declared transfer** and from Android panel/WSI capabilities.
+  The first explicit source contract is Beetle PSX HW, Vulkan renderer,
+  `beetle_psx_hw_color_format=30bit_hdr`, observed packed 10-bit VkImage:
+  its published core option describes PQ/BT.2020. That is stronger than the
+  manual user transfer setting, but is **not independently verified content
+  mastering metadata or a physical HDR signal**. No HLG source is whitelisted.
+  Absent/unknown/older cores remain in GLES. Switching to 8-bit or software
+  mode invalidates the observed contract.
+- Native patch `0015-require-core-declared-hdr-source-before-native-wsi.patch`
+  rejects PQ/HLG WSI whenever the live frontend source declaration differs
+  from the requested output. The guard starts at unknown, resets on shutdown
+  and retires an existing swapchain when the contract changes. The Kotlin
+  diagnostic gate and the native gate are independent checks.
+- All five existing picture selections are now honored in the GLES
+  PQ/HLG→SDR shader rather than being silently discarded. Sharp and Pixel
+  retain crisp sampling; Smooth uses linear sampling; CRT and LCD apply
+  low-cost output-space mask/scanline approximations **after** color
+  conversion. These approximations are **not pixel-identical** to the
+  LibretroDroid built-in CUT3/CRT/LCD shaders. The SDR/GLES built-ins remain
+  unchanged. Shader source/selection is covered by JVM tests; actual GPU
+  image accuracy still needs hardware evaluation.
+- The native Vulkan WSI full-screen diagnostic remains a **raw blit**.
+  `GameVulkanPictureCompatibility` only permits the experimental fullscreen
+  preview for Sharp/core-aspect/no integer scaling. Selecting a different
+  shader, overridden aspect or integer scaling demotes to GLES, so the user's
+  picture choice is not silently ignored behind an opaque Vulkan surface.
+  This is deliberately **not** full native Vulkan shader/rotation/crop parity.
+- The versioned Libretro GET_HDR_METADATA/GET_DISPLAY_METADATA contract
+  describes frontend presentation and display capabilities, **not** arbitrary
+  content-authored mastering values. Mastering primaries, MaxCLL and MaxFALL
+  remain unknown. Do not populate `VK_EXT_hdr_metadata` with guessed source
+  values. A more general reliable core-side source reporting protocol and
+  `librashader` Vulkan runtime, preset resource limits, frame history,
+  rotation and filter parity are still open implementation work; they are
+  not mere physical-test items.
+
+Release status: Draft. Software unit/native builds must be green at the
+latest PR HEAD. Even then, **real Shield, Philips and Android phone tests**
+for EOTF, OSD, lifecycle, frame pacing, memory and GPU color validation are
+required before production HDR is enabled.
