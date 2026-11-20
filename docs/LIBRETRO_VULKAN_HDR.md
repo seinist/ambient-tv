@@ -33,9 +33,20 @@ HDR presentation backend:
   wrong pixel layout. The experimental GET_HDR_METADATA / GET_DISPLAY_METADATA
   requests are explicitly refused until the new source and output contract exists.
 - `GameHdrDisplayProbe` reads HDR10/HLG/HDR10+/Dolby Vision support from the
-  **display attached to the Android UI context**. Unknown/disconnected displays
-  remain SDR/unknown. This is **display capability**, not a Vulkan WSI format
-  enumeration and not proof of an active HDR output signal.
+  **display attached to the Android UI context** (on API 34+ the actual active
+  display mode). Unknown/disconnected displays remain SDR/unknown. This is
+  **display capability**, not proof of an active HDR output signal.
+- `0007-real-vulkan-surface-formats-probe.patch` exports
+  `LibretroDroid.probeVulkanSurfaceFormats(Surface)`: a **read-only** Vulkan
+  WSI query for a caller-owned, separate and currently valid Android display
+  Surface (not the existing AImageReader/GLES surface). It checks that the
+  running core's GPU and graphics queue can present, then enumerates the exact
+  `VkFormat`/`VkColorSpaceKHR` pairs: SDR, HDR10/PQ, HLG and scRGB FP16.
+  The optional `VK_EXT_swapchain_colorspace` instance extension is enabled
+  only when supported. Returned bit flags are decoded by
+  `GameVulkanSurfaceFormats` and unit-tested. **No real SurfaceView is wired
+  yet**; callers must probe on the GL/emulation thread, not the UI thread.
+  This probe does not create a swapchain, submit a frame, or enable HDR output.
 - `GameVulkanOutputPolicy` provides a testable release gate for native PQ/HLG
   output. It requires a real active presentation surface, validated
   format/colorspace pair, accepted core source format, color pipeline and output
@@ -45,14 +56,15 @@ HDR presentation backend:
   the Vulkan HDR output is inactive. This does not change OSD focus,
   background playback, existing renderer selection or manually chosen HDR→SDR.
 
-**Next implementation slice (NOT in this PR):** replace the offscreen
-`AImageReader` presentation negotiation surface with a lifecycle-owned
-`SurfaceView`/`ANativeWindow` for the real display. Build a second Vulkan
-WSI presenter, enumerate actual surface formats/color spaces and present modes,
-confirm queue/device swapchain support, handle surface loss and frame fences,
-and preserve GLES fallback/OSD above it. Only then accept/produce native HDR
-pixels with core metadata and verify the display HDR signal on real hardware.
-`librashader` integration follows after a stable Vulkan presenter.
+**Next implementation slice (NOT in this PR):** attach a dedicated lifecycle-owned
+`SurfaceView`/`ANativeWindow` for the real display, call the new WSI
+probe on the GL thread, and only then build a real Vulkan swapchain presenter
+with surface format/color-space selection, present modes, queue synchronization,
+resize/surface loss and release. The existing offscreen AImageReader is still
+used by the core and must not be mistaken for the real display. Preserve GLES
+fallback/OSD above the new surface. Only after native PQ/HLG core input and
+metadata are negotiated should the presenter send an HDR signal; verify it on
+real hardware. `librashader` integration follows a stable Vulkan presenter.
 
 ## Incompatible pieces that must be completed together for native HDR
 
