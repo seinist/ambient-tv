@@ -2499,6 +2499,7 @@ private fun AmbientTvApp(
                     fullscreen = currentRoute in FULLSCREEN_ROUTES,
                     reducedEffects = com.ambient.tv.ui.performance.LocalPerformanceProfile.current.reducedEffects,
                     backgroundVideoVisible = showVisibleBackgroundVideo,
+                    lowEndDevice = com.ambient.tv.ui.performance.LocalPerformanceProfile.current.lowEndDevice,
                     skipTransition = { from, to -> handheld && radioSectionTransitionIsInstant(from, to) },
                 ) {
                 NavHost(
