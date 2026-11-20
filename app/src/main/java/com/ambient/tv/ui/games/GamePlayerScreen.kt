@@ -387,6 +387,7 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
             onFormats = { vulkanSurfaceFormats = it },
             onNativeStatus = { nativeSdrStatus = it },
             onFullscreenLost = { nativeSdrFullscreenRequested = false },
+            onDiagnosticLost = { nativeSdrDiagnostic = false },
         ) else null
     }
     DisposableEffect(vulkanSurfaceHost) {
