@@ -20,6 +20,7 @@ import com.ambient.tv.youtube.SmartTubeSignInRequiredException
 import com.ambient.tv.youtube.smartTubeAuthRejected
 import com.ambient.tv.youtube.smartTubeFeedNeedsAccount
 import com.ambient.tv.youtube.smartTubeEmptyFeedNeedsAttention
+import com.ambient.tv.youtube.smartTubePrivateFeedForbidden
 import com.ambient.tv.notifications.sanitizeFailureDetail
 import com.ambient.tv.youtube.YouTubeVisitPin
 import com.ambient.tv.youtube.youtubeRowsAfterContinuation
@@ -853,15 +854,22 @@ class YouTubeViewModel @Inject constructor(
         // Keep already received partial rows; a transient refresh error must not erase them.
         val loginRejected = smartTubeAuthRejected(error)
         val needsLogin = loginRejected || error is SmartTubeSignInRequiredException
-        if (needsLogin) rowPublisher.cancelPending()
-        if (!needsLogin) onlineServices.failed("youtube", error)
-        if (loginRejected) engine.reportAccountAttention()
+        val needsCheck = !needsLogin && channelId == null && _uiState.value.query.isBlank() &&
+            smartTubePrivateFeedForbidden(error, _uiState.value.feed.key, _uiState.value.signedIn)
+        if (needsLogin || needsCheck) rowPublisher.cancelPending()
+        if (!needsLogin && !needsCheck) onlineServices.failed("youtube", error)
+        if (loginRejected || needsCheck) engine.reportAccountAttention()
         val empty = _uiState.value.rows.isEmpty()
+        val showGenericError = !needsLogin && !needsCheck
         _uiState.value = _uiState.value.copy(
             loading = false,
-            error = error.userMessage().takeIf { empty && !needsLogin },
-            refreshError = error.userMessage().takeIf { manual && !empty && !needsLogin },
-            accountAttention = if (needsLogin) YouTubeAccountAttention.LOGIN_REQUIRED else null,
+            error = error.userMessage().takeIf { empty && showGenericError },
+            refreshError = error.userMessage().takeIf { manual && !empty && showGenericError },
+            accountAttention = when {
+                needsLogin -> YouTubeAccountAttention.LOGIN_REQUIRED
+                needsCheck -> YouTubeAccountAttention.CHECK_ACCOUNT
+                else -> null
+            },
         )
     }
 
