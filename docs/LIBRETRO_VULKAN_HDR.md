@@ -44,9 +44,16 @@ HDR presentation backend:
   `VkFormat`/`VkColorSpaceKHR` pairs: SDR, HDR10/PQ, HLG and scRGB FP16.
   The optional `VK_EXT_swapchain_colorspace` instance extension is enabled
   only when supported. Returned bit flags are decoded by
-  `GameVulkanSurfaceFormats` and unit-tested. **No real SurfaceView is wired
-  yet**; callers must probe on the GL/emulation thread, not the UI thread.
-  This probe does not create a swapchain, submit a frame, or enable HDR output.
+  `GameVulkanSurfaceFormats` and unit-tested.
+- `GameVulkanSurfaceHost` now owns a small **real Android SurfaceView** in the
+  game's AndroidView, behind the unchanged visible GLRetroView. It cannot
+  steal focus or touch, probes only after the core is ready and calls JNI via
+  the GLSurfaceView GL thread. Surface creation/change invalidates prior
+  results; destruction clears the status and prevents late results from
+  being shown. The Info panel displays WSI surface formats independently
+  from Android display-HDR support. The small probe surface is not yet a
+  full-screen presentation surface or swapchain; the game video still uses
+  Vulkan→GLES and does not emit native HDR.
 - `GameVulkanOutputPolicy` provides a testable release gate for native PQ/HLG
   output. It requires a real active presentation surface, validated
   format/colorspace pair, accepted core source format, color pipeline and output
@@ -56,11 +63,10 @@ HDR presentation backend:
   the Vulkan HDR output is inactive. This does not change OSD focus,
   background playback, existing renderer selection or manually chosen HDR→SDR.
 
-**Next implementation slice (NOT in this PR):** attach a dedicated lifecycle-owned
-`SurfaceView`/`ANativeWindow` for the real display, call the new WSI
-probe on the GL thread, and only then build a real Vulkan swapchain presenter
-with surface format/color-space selection, present modes, queue synchronization,
-resize/surface loss and release. The existing offscreen AImageReader is still
+**Next implementation slice (NOT in this initial slice):** promote the lifecycle-owned
+probe `SurfaceView` to a full-size presentation surface after implementing
+a real Vulkan swapchain presenter with surface format/color-space selection,
+present modes, queue synchronization, resize/surface loss and release. The existing offscreen AImageReader is still
 used by the core and must not be mistaken for the real display. Preserve GLES
 fallback/OSD above the new surface. Only after native PQ/HLG core input and
 metadata are negotiated should the presenter send an HDR signal; verify it on
