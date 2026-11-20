@@ -1,0 +1,70 @@
+diff --git a/src/main/cpp/vulkan/vulkanbackend.cpp b/src/main/cpp/vulkan/vulkanbackend.cpp
+--- a/src/main/cpp/vulkan/vulkanbackend.cpp
++++ b/src/main/cpp/vulkan/vulkanbackend.cpp
+@@ -404,6 +404,17 @@ void VulkanBackend::setNativeOutputTransfer(uint32_t transfer) {
+     nativeSdrDisabled = false;
+ }
+ 
++void VulkanBackend::setNativeCoreSourceTransfer(uint32_t sourceTransfer) {
++    // This is a *separate* core option + observed VkImage contract, not the
++    // manual user setting or panel capabilities. A changed source must retire
++    // any prior HDR swapchain before another frame can be presented.
++    const uint32_t accepted = sourceTransfer <= 2u ? sourceTransfer : 0u;
++    if (accepted == nativeCoreSourceTransfer) return;
++    destroyNativeSdrSwapchain();
++    nativeCoreSourceTransfer = accepted;
++    nativeSdrDisabled = false;
++}
++
+ void VulkanBackend::disableNativeSdrSwapchain(const char* reason) {
+@@ -412,6 +423,11 @@ bool VulkanBackend::ensureNativeSdrSwapchain() {
+     if (nativeSdrSwapchain != VK_NULL_HANDLE) return true;
++    // Refuse native HDR without independent source evidence. In particular,
++    // neither a 10-bit VkFormat nor manual PQ/HLG selection is sufficient.
++    // SDR diagnosis remains available with no HDR-aware core.
++    if (nativeOutputTransfer != 0u && nativeCoreSourceTransfer != nativeOutputTransfer)
++        return false;
+     if (!isStarted() || nativeSdrWindow == nullptr || nativeSdrDisabled ||
+@@ -1371,6 +1387,7 @@ void VulkanBackend::shutdown() {
+     nativeSdrDisabled = false;
+     nativeOutputTransfer = 0u;
++    nativeCoreSourceTransfer = 0u;
+     nativeSdrStatus.store(0u, std::memory_order_release);
+diff --git a/src/main/cpp/vulkan/vulkanbackend.h b/src/main/cpp/vulkan/vulkanbackend.h
+--- a/src/main/cpp/vulkan/vulkanbackend.h
++++ b/src/main/cpp/vulkan/vulkanbackend.h
+@@ -96,6 +96,8 @@ class VulkanBackend {
+     // No implicit SDR->HDR enhancement or guessing based only on image bit depth.
+     void setNativeOutputTransfer(uint32_t transfer);
++    // Independent source provenance, default unknown, reset between cores.
++    void setNativeCoreSourceTransfer(uint32_t sourceTransfer);
+     uint32_t getNativeSdrStatus() const { return nativeSdrStatus.load(std::memory_order_acquire); }
+@@ -260,6 +262,7 @@ class VulkanBackend {
+     bool nativeSdrDisabled = false;
+     uint32_t nativeOutputTransfer = 0; // SDR by default, per-session only
++    uint32_t nativeCoreSourceTransfer = 0; // no trusted PQ/HLG source by default
+     // bit 0 window requested, bit 1 swapchain ready, bit 2 frames presented,
+diff --git a/src/main/cpp/libretrodroidjni.cpp b/src/main/cpp/libretrodroidjni.cpp
+--- a/src/main/cpp/libretrodroidjni.cpp
++++ b/src/main/cpp/libretrodroidjni.cpp
+@@ -834,6 +834,12 @@ JNIEXPORT void JNICALL Java_com_swordfish_libretrodroid_LibretroDroid_setNativeVulkanOutputTransfer(
+     VulkanBackend::getInstance().setNativeOutputTransfer(static_cast<uint32_t>(transfer));
+ }
+ 
++JNIEXPORT void JNICALL Java_com_swordfish_libretrodroid_LibretroDroid_setNativeVulkanCoreSourceTransfer(
++    JNIEnv* env, jclass obj, jint sourceTransfer
++) {
++    VulkanBackend::getInstance().setNativeCoreSourceTransfer(static_cast<uint32_t>(sourceTransfer));
++}
++
+ JNIEXPORT void JNICALL Java_com_swordfish_libretrodroid_LibretroDroid_setConfiguredHdrOutput(
+diff --git a/src/main/java/com/swordfish/libretrodroid/LibretroDroid.java b/src/main/java/com/swordfish/libretrodroid/LibretroDroid.java
+--- a/src/main/java/com/swordfish/libretrodroid/LibretroDroid.java
++++ b/src/main/java/com/swordfish/libretrodroid/LibretroDroid.java
+@@ -143,6 +143,8 @@ public class LibretroDroid {
+     public static native void setNativeSdrVulkanSurface(android.view.Surface surface);
+     /** Explicit native transfer: 0 SDR, 1 PQ/BT.2020, 2 HLG/BT.2020; GL thread only. */
+     public static native void setNativeVulkanOutputTransfer(int transfer);
++    /** Only observed core source evidence can authorize HDR WSI; 0 unknown. */
++    public static native void setNativeVulkanCoreSourceTransfer(int transfer);
+     /** Android panel capabilities (not authored content metadata); GL thread only. */
