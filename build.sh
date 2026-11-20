@@ -1246,6 +1246,34 @@ clean_android() {
     rm -rf "$DIST_DIR"
 }
 
+list_public_core_runs() {
+    local repo="$1"
+    command -v python3 >/dev/null 2>&1 || fail "Install Python 3 or open https://github.com/$repo/actions/workflows/cores.yml."
+    python3 - "$repo" <<'PY_CORE_RUNS'
+import json
+import sys
+from urllib.request import Request, urlopen
+
+repo = sys.argv[1]
+workflow = "actions/workflows/cores.yml"
+url = f"https://api.github.com/repos/{repo}/{workflow}/runs?branch=main&per_page=20"
+request = Request(url, headers={"Accept": "application/vnd.github+json", "User-Agent": "ambient-tv-build"})
+try:
+    with urlopen(request, timeout=15) as response:
+        runs = json.load(response)["workflow_runs"]
+except (OSError, ValueError, KeyError) as error:
+    raise SystemExit(f"Could not retrieve Cores workflow runs ({error}). See https://github.com/{repo}/{workflow}.") from None
+
+if not runs:
+    print("No Cores workflow runs found on main.")
+else:
+    print(f"{'CREATED (UTC)':20}  {'RESULT':16}  {'EVENT':18}  {'COMMIT':8}  RUN")
+    for run in runs:
+        result = run["conclusion"] or run["status"]
+        print(f"{run['created_at']:20}  {result:16}  {run['event']:18}  {run['head_sha'][:8]:8}  {run['html_url']}")
+PY_CORE_RUNS
+}
+
 run_cores_command() {
     local repo="seinist/ambient-tv"
     local secret_query='.[] | select(.name == "CORES_SIGNING_KEY") | .name'
@@ -1253,7 +1281,7 @@ run_cores_command() {
     local -a workflow=(workflow run cores.yml --repo "$repo" --ref main)
     local has_gh=0
     if command -v gh >/dev/null 2>&1; then has_gh=1; fi
-    if [[ "$1" != "cores-key" && "$has_gh" == 0 ]]; then
+    if [[ "$has_gh" == 0 && ( "$1" == cores || "$1" == cores-release ) ]]; then
         fail "For terminal access install GitHub CLI (gh), or use https://github.com/$repo/actions/workflows/cores.yml in your browser."
     fi
 
@@ -1284,7 +1312,11 @@ run_cores_command() {
             ;;
         cores-status)
             [[ $# -eq 1 ]] || fail "Usage: $0 cores-status"
-            gh run list --repo "$repo" --workflow cores.yml --branch main
+            if [[ "$has_gh" == 1 ]]; then
+                gh run list --repo "$repo" --workflow cores.yml --branch main
+            else
+                list_public_core_runs "$repo"
+            fi
             ;;
     esac
 }
@@ -1305,7 +1337,7 @@ Libretro cores on GitHub Actions (main):
   cores-key [--manual] Generate signing keys. Upload the secret in the browser if gh is unavailable.
                        Commit and push cores/signing-public.pem and rebuild the app to embed it.
   cores-release       Build and publish the full signed core catalog (gh).
-  cores-status        Show recent Core workflow runs (gh).
+  cores-status        Show recent Core workflow runs using gh or the public API (Python 3).
   Browser workflow    https://github.com/seinist/ambient-tv/actions/workflows/cores.yml
 EOT
 }
