@@ -69,6 +69,8 @@ class RetroPadInput(
     private val remoteProfileSettings = arrayOfNulls<RetroInputConfig>(RetroPorts.COUNT)
     private val remoteProfiles = arrayOfNulls<RetroInputProfile>(RetroPorts.COUNT)
     private val remoteRawButtons = IntArray(RetroPorts.COUNT)
+    /** Buttons held while an OSD opens must be physically released before playing again. */
+    private val remoteSuppressed = IntArray(RetroPorts.COUNT)
     private val remoteRewindHeld = BooleanArray(RetroPorts.COUNT)
     private val remoteMenuCombo = BooleanArray(RetroPorts.COUNT)
     private val remotePulseButtons = IntArray(RetroPorts.COUNT)
@@ -121,8 +123,10 @@ class RetroPadInput(
     }
 
     /** A disconnect/pause is a hard release, not a short tap: never generate a mapped pulse. */
-    fun clearRemotePort(port: Int) {
+    fun clearRemotePort(port: Int, suppressHeld: Boolean = false) {
         if (port !in 0 until RetroPorts.COUNT || !remoteReserved[port]) return
+        if (suppressHeld) remoteSuppressed[port] = remoteSuppressed[port] or remoteRawButtons[port]
+        else remoteSuppressed[port] = 0
         remoteHoldTimers.keys.filter { it.first == port }.toList().forEach {
             remoteHoldTimers.remove(it)?.invoke()
         }
@@ -154,7 +158,10 @@ class RetroPadInput(
     fun remoteState(port: Int, buttons: Int, leftX: Float, leftY: Float, rightX: Float, rightY: Float) {
         if (port !in 0 until RetroPorts.COUNT || !remoteReserved[port]) return
         val at = port * 4
-        val sourceButtons = buttons and 0xffff
+        val incomingButtons = buttons and 0xffff
+        // A held phone menu button is not another press on every 60Hz heartbeat.
+        remoteSuppressed[port] = remoteSuppressed[port] and incomingButtons
+        val sourceButtons = incomingButtons and remoteSuppressed[port].inv()
         val profile = companionProfile(port)
         val previousRaw = remoteRawButtons[port]
         if (profile != null && previousRaw != sourceButtons) {
@@ -385,7 +392,7 @@ class RetroPadInput(
         devices.clear()
         touchButtons = 0
         touchAnalog.fill(0)
-        for (port in 0 until RetroPorts.COUNT) if (remoteReserved[port]) clearRemotePort(port)
+        for (port in 0 until RetroPorts.COUNT) if (remoteReserved[port]) clearRemotePort(port, suppressHeld = true)
         remoteButtons.fill(0)
         remoteAnalog.fill(0)
         for (port in 0 until RetroPorts.COUNT) recompute(port)
@@ -412,6 +419,9 @@ class RetroPadInput(
         }
         touchButtons = 0
         touchAnalog.fill(0)
+        for (port in 0 until RetroPorts.COUNT) {
+            if (remoteReserved[port]) clearRemotePort(port, suppressHeld = true)
+        }
         remoteButtons.fill(0)
         remoteAnalog.fill(0)
         recomputeAll()
