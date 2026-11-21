@@ -121,7 +121,10 @@ internal object CompanionBackupPolicy {
             if (mode in setOf("settings", "accounts") && source.text("tvheadendHost").isNotBlank()) add("connections")
         }
         return JsonObject(extras.filterKeys { it in groups }.mapValues { (group, value) ->
-            if (value is JsonObject) JsonObject(value.filterKeys { it in classifiedExtraFields.getValue(group) }) else JsonNull
+            if (value is JsonObject) JsonObject(value.filterKeys {
+                it in classifiedExtraFields.getValue(group) &&
+                    !(mode == "preferences" && group == "portable" && it == "gameLibraryOverrides")
+            }) else JsonNull
         })
     }
 
