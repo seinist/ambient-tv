@@ -181,8 +181,11 @@ class GameLibraryRepository @Inject constructor(
                 )
             }
         }
-        // One source may be referenced by several overlapping folder assignments.
-        return result.distinctBy { it.fileId }
+        // Overlapping assignments are legal. Prefer the deepest matching folder
+        // (e.g. NAS/Games/SNES) to a generic NAS/Games auto-detect root.
+        return result.sortedWith(compareByDescending<LibraryGame> {
+            allowed[it.folderId]?.path?.length ?: 0
+        }.thenBy { it.fileId }).distinctBy { it.fileId }
     }
 
     private fun displayFileName(filename: String): String =
