@@ -1,5 +1,9 @@
 package com.ambient.tv.ui.games
 
+import android.content.Context
+import android.content.Intent
+import android.net.Uri
+import dagger.hilt.android.qualifiers.ApplicationContext
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.ambient.tv.data.files.FileAccess
@@ -44,6 +48,7 @@ class GameLibraryViewModel @Inject constructor(
     private val library: GameLibraryRepository,
     private val files: FileStore,
     private val access: FileAccess,
+    @ApplicationContext private val context: Context,
 ) : ViewModel() {
     private val mutable = MutableStateFlow(GameLibraryUiState())
     val state: StateFlow<GameLibraryUiState> = mutable.asStateFlow()
@@ -97,6 +102,17 @@ class GameLibraryViewModel @Inject constructor(
             finally { mutable.update { it.copy(busy = false) }; reload() }
         }
     }
+    /** Persist the exact SAF tree grant and register it with Files, just like video folders. */
+    fun addLocalSource(uri: Uri) {
+        try {
+            context.contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            val name = uri.lastPathSegment?.substringAfterLast(':')?.takeIf { it.isNotBlank() } ?: "Retro ROMs"
+            val source = FileSource(name = name.take(160), kind = "local", treeUri = uri.toString())
+            files.saveSource(source, null)
+            selectSource(source)
+        } catch (error: Exception) { mutable.update { it.copy(error = error.message) } }
+    }
+
     fun selectSource(source: FileSource) {
         val root = access.root(source)
         mutable.update { it.copy(selectedSource = source,
