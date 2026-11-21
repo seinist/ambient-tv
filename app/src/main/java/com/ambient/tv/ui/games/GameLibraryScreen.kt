@@ -206,7 +206,6 @@ fun GameLibraryScreen(
                                     onFocus = { focusedId = game.fileId },
                                     onRequester = { itemRequests[game.fileId] = it },
                                     onDisposed = { itemRequests.remove(game.fileId) },
-                                    onDisposed = { itemRequests.remove(game.fileId) },
                                     modifier = if (games.firstOrNull()?.fileId == game.fileId)
                                         Modifier.focusRequester(firstFocus) else Modifier,
                                 )
@@ -227,6 +226,7 @@ fun GameLibraryScreen(
                                     onFavorite = { model.favorite(game) },
                                     onFocus = { focusedId = game.fileId },
                                     onRequester = { itemRequests[game.fileId] = it },
+                                    onDisposed = { itemRequests.remove(game.fileId) },
                                     modifier = if (games.firstOrNull()?.fileId == game.fileId)
                                         Modifier.focusRequester(firstFocus) else Modifier,
                                 )
