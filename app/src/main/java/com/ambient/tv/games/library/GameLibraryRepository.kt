@@ -18,6 +18,9 @@ import com.ambient.tv.games.GameSystems
 import com.ambient.tv.games.GameArchives
 import dagger.hilt.android.qualifiers.ApplicationContext
 import java.io.IOException
+import java.io.InputStream
+import java.util.Locale
+import java.util.zip.CRC32
 import java.util.UUID
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -170,6 +173,76 @@ class GameLibraryRepository @Inject constructor(
         changed()
     }
 
+    /**
+     * An optional user-supplied DAT provides verified full names by ROM CRC32.
+     * Import is transactional and limited; it never fetches a game database online.
+     */
+    suspend fun importDat(systemId: String, input: InputStream): Int = scanLock.withLock {
+        require(GameSystems.byId(systemId) != null)
+        withContext(Dispatchers.IO) {
+            val writable = db.writableDatabase
+            writable.beginTransaction()
+            try {
+                writable.delete("game_dat_entries", "system_id=?", arrayOf(systemId))
+                val imported = input.use { stream ->
+                    GameRomDatReader.parse(stream) { record ->
+                        val values = android.content.ContentValues().apply {
+                            put("system_id", systemId)
+                            put("crc32", record.crc32)
+                            put("title", record.title)
+                        }
+                        writable.insertWithOnConflict("game_dat_entries", null, values,
+                            SQLiteDatabase.CONFLICT_REPLACE)
+                    }
+                }
+                require(imported > 0) { "DAT contains no ROM CRC32 entries" }
+                writable.execSQL("UPDATE game_entries SET verified_title=NULL WHERE system_id=?",
+                    arrayOf<Any>(systemId))
+                writable.setTransactionSuccessful()
+                changed()
+                imported
+            } finally {
+                writable.endTransaction()
+            }
+        }
+    }
+
+    private fun catalogSystems(): Set<String> {
+        val ids = linkedSetOf<String>()
+        db.readableDatabase.rawQuery("SELECT DISTINCT system_id FROM game_dat_entries", null).use {
+            while (it.moveToNext()) ids += it.getString(0)
+        }
+        return ids
+    }
+
+    private fun datTitle(source: FileSource, entry: FileEntry, systemId: String): String? {
+        // Never hash a huge NAS ISO or an archive merely to populate library artwork.
+        if (entry.size <= 0 || entry.size > 128L * 1024 * 1024 ||
+            GameSystems.extension(entry.name) in
+                (GameSystems.archiveExtensions + setOf("cue", "m3u", "gdi", "chd",
+                    "iso", "cso", "zso", "wbfs", "rvz", "ciso", "pbp"))) return null
+        val checksum = runCatching {
+            access.open(source, entry.path).use { media ->
+                val crc = CRC32()
+                val chunk = ByteArray(128 * 1024)
+                var offset = 0L
+                while (offset < entry.size) {
+                    if (Thread.currentThread().isInterrupted) throw InterruptedException()
+                    val length = minOf(chunk.size.toLong(), entry.size - offset).toInt()
+                    val read = media.read(offset, chunk, length)
+                    if (read <= 0) throw IOException("ROM read truncated")
+                    crc.update(chunk, 0, read)
+                    offset += read
+                }
+                java.lang.Long.toHexString(crc.value).uppercase(Locale.ROOT).padStart(8, '0')
+            }
+        }.getOrNull() ?: return null
+        return db.readableDatabase.rawQuery(
+            "SELECT title FROM game_dat_entries WHERE system_id=? AND crc32=? LIMIT 1",
+            arrayOf(systemId, checksum),
+        ).use { rows -> if (rows.moveToFirst()) rows.getString(0) else null }
+    }
+
     fun sortKey(): String = prefs.getString("game_library_sort", "name").orEmpty()
     fun sortDescending(): Boolean = prefs.getBoolean("game_library_descending", false)
     fun setSortKey(key: String) {
@@ -277,6 +350,7 @@ class GameLibraryRepository @Inject constructor(
             val source = files.sources().firstOrNull { it.id == folder.sourceId }
                 ?: throw IOException("Source was removed")
             val previous = existing(folder.id)
+            val datSystems = catalogSystems()
             val selected = ArrayList<IndexedGame>()
             val pending = ArrayDeque<Pair<String, Int>>()
             val visited = hashSetOf<String>()
@@ -309,9 +383,16 @@ class GameLibraryRepository @Inject constructor(
                     val internalTitle = if (previousGame != null && previousGame.size == entry.size &&
                         previousGame.modified == entry.modified && entry.modified != 0L) previousGame.internalTitle
                     else extractTitle(entry, source, system.id)
+                    val sameFile = previousGame?.let {
+                        it.size == entry.size && it.modified == entry.modified && entry.modified != 0L
+                    } ?: false
+                    val verified = if (sameFile && previousGame?.verifiedTitle != null)
+                        previousGame.verifiedTitle
+                    else if (system.id in datSystems) datTitle(source, entry, system.id)
+                    else null
                     selected += IndexedGame(entry, system.id, internalTitle,
                         previousGame?.favorite ?: false, previousGame?.lastPlayed ?: 0L,
-                        previousGame?.customTitle, previousGame?.verifiedTitle)
+                        previousGame?.customTitle, verified)
                     require(selected.size <= 200000) { "Game library item limit reached" }
                 }
             }
