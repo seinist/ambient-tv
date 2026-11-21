@@ -337,6 +337,45 @@ class RetroPadInputTest {
         assertEquals(0, input.buttons(0))
     }
 
+    @Test fun heldPhoneMenuKeyDoesNotReopenOnEveryHeartbeat() {
+        val descriptor = companionControllerDescriptor("phone-menu-repeat")
+        config = config.assignDevice(RetroInputKind.COMPANION, descriptor,
+            RetroInputTarget.Menu(RetroMenuTrigger.PRESS), companionControllerKey(RetroPadButton.Y))
+        input.reserveRemotePort(1, true, descriptor)
+        input.remoteState(1, RetroPadButton.Y.mask, 0f, 0f, 0f, 0f)
+        assertEquals(1, menus)
+        repeat(5) { input.remoteState(1, RetroPadButton.Y.mask, 0f, 0f, 0f, 0f) }
+        assertEquals(1, menus)
+        input.remoteState(1, 0, 0f, 0f, 0f, 0f)
+        input.remoteState(1, RetroPadButton.Y.mask, 0f, 0f, 0f, 0f)
+        assertEquals(2, menus)
+    }
+
+    @Test fun pausedPhoneCannotReplayAStillHeldButton() {
+        val descriptor = companionControllerDescriptor("phone-pause-hold")
+        input.reserveRemotePort(0, true, descriptor)
+        input.remoteState(0, RetroPadButton.B.mask, 0f, 0f, 0f, 0f)
+        assertEquals(RetroPadButton.B.mask, input.buttons(0))
+        input.releaseAll()
+        assertEquals(0, input.buttons(0))
+        input.remoteState(0, RetroPadButton.B.mask, 0f, 0f, 0f, 0f)
+        assertEquals(0, input.buttons(0))
+        input.remoteState(0, 0, 0f, 0f, 0f, 0f)
+        input.remoteState(0, RetroPadButton.B.mask, 0f, 0f, 0f, 0f)
+        assertEquals(RetroPadButton.B.mask, input.buttons(0))
+    }
+
+    @Test fun phoneSpecialLayoutSettingsSurviveTheExistingBackupRoundTrip() {
+        val key = companionTouchProfileKey("tv-fingerprint", "nds")
+        val value = CompanionTouchProfile(mode = "hybrid", input = "touch", region = "lower", motion = true)
+        val config = RetroInputConfig().withCompanionTouchProfile(key, value)
+        assertEquals(value, RetroInputConfig.decode(config.encode()).companionTouchProfiles[key])
+        assertEquals(config, RetroInputConfig.decode(config.encode()))
+        val malformed = config.encode().toMutableMap()
+        malformed["companionui.bad"] = "gun,unknown,nonsense,3"
+        assertEquals(config, RetroInputConfig.decode(malformed))
+    }
+
     @Test fun pauseAndMenuReleaseVirtualButtonsToo() {
         input.touchButton(RetroPadButton.START, true)
         input.touchStick(1, 1f, 0f)
