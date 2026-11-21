@@ -1,5 +1,7 @@
 package com.ambient.tv.companion
 
+import android.os.Handler
+import android.os.Looper
 import com.ambient.tv.ui.gamepad.retro.RetroPadInput
 import com.ambient.tv.ui.gamepad.retro.RetroPorts
 import kotlinx.serialization.Serializable
@@ -46,6 +48,28 @@ object CompanionGamepadSession {
 
     private var active: Active? = null
     private val ports = LinkedHashMap<String, Int>()
+    private val handler = Handler(Looper.getMainLooper())
+    private val deadman = LinkedHashMap<String, Runnable>()
+
+    private fun cancelDeadman(session: String) {
+        deadman.remove(session)?.let(handler::removeCallbacks)
+    }
+
+    /** Network loss must never leave a held button or a nonzero stick on the TV. */
+    private fun resetDeadman(session: String, packet: CompanionGamepadState) {
+        cancelDeadman(session)
+        if (packet.buttons == 0 && packet.leftX == 0f && packet.leftY == 0f &&
+            packet.rightX == 0f && packet.rightY == 0f) return
+        val game = active ?: return
+        val slot = ports[session] ?: return
+        val task = Runnable {
+            deadman.remove(session)
+            if (active === game && ports[session] == slot)
+                game.input.remoteState(slot, 0, 0f, 0f, 0f, 0f)
+        }
+        deadman[session] = task
+        handler.postDelayed(task, 1_500L)
+    }
 
     fun attach(input: RetroPadInput, systemId: String, coreId: String, title: String,
                pointerInput: Boolean, onMenu: () -> Unit) {
@@ -62,7 +86,10 @@ object CompanionGamepadSession {
         val game = active?.takeIf { it.input === input } ?: return
         if (game.ready == ready) return
         game.ready = ready
-        if (!ready) ports.values.forEach { game.input.remoteState(it, 0, 0f, 0f, 0f, 0f) }
+        if (!ready) {
+            deadman.keys.toList().forEach(::cancelDeadman)
+            ports.values.forEach { game.input.remoteState(it, 0, 0f, 0f, 0f, 0f) }
+        }
     }
 
     fun info(): CompanionGamepadInfo? = active?.let { it.info.copy(ready = it.ready) }
@@ -88,6 +115,7 @@ object CompanionGamepadSession {
             return false
         }
         game.input.remoteState(port, packet.buttons, packet.leftX, packet.leftY, packet.rightX, packet.rightY)
+        resetDeadman(session, packet)
         return true
     }
 
@@ -99,6 +127,7 @@ object CompanionGamepadSession {
     }
 
     fun release(session: String) {
+        cancelDeadman(session)
         val port = ports.remove(session) ?: return
         active?.input?.reserveRemotePort(port, false)
     }
@@ -108,6 +137,7 @@ object CompanionGamepadSession {
     }
 
     private fun detachCurrent() {
+        deadman.keys.toList().forEach(::cancelDeadman)
         val game = active ?: return
         ports.values.forEach { game.input.reserveRemotePort(it, false) }
         ports.clear()
