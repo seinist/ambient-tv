@@ -787,12 +787,7 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
                     // to an ordinary JOYPAD without advertising a selectable pointer device).
                     val types = runCatching { retroView.getControllers().getOrNull(port).orEmpty() }
                         .getOrDefault(emptyArray())
-                    val requested = when (kind) {
-                        "mouse" -> 2 // RETRO_DEVICE_MOUSE
-                        "gun" -> 4 // RETRO_DEVICE_LIGHTGUN
-                        "touch" -> 6 // RETRO_DEVICE_POINTER
-                        else -> 1 // restore JOYPAD or the configured device type
-                    }
+                    val requested = com.ambient.tv.companion.companionCoreDeviceType(kind)
                     val selection = if (kind == null) {
                         GameSettings.state.controllerType(core, port)
                             ?.let { wanted -> types.firstOrNull { it.id == wanted } }
