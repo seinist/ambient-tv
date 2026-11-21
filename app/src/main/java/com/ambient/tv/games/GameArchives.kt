@@ -253,6 +253,122 @@ object GameArchives {
     }
 
     /**
+     * Optimized first launch for a ZIP/7z/GZ that contains exactly one playable independent
+     * ROM. Stream only the *selected decompressed entry* from the NAS into the bounded
+     * local core cache: never download and store the complete compressed archive first.
+     *
+     * Multi-game and multi-track archives still use the legacy safe materialization path,
+     * because the core may need the other referenced files or an interactive game picker.
+     * A null return means "not eligible", not a partial or successful extraction.
+     */
+    fun stageSingle(
+        archiveName: String,
+        media: SeekableMedia,
+        content: File,
+        maxOutputBytes: Long,
+        onProgress: (Float?) -> Unit,
+    ): File? {
+        require(maxOutputBytes in 1..MAX_BYTES)
+        fun write(name: String, expectedSize: Long, input: InputStream, expectedCrc: Long? = null): File {
+            val relative = GameRomPreparer.safeRelativePath(name)
+                ?: throw GameArchiveException("Unsafe ROM filename in compressed archive")
+            if (expectedSize > maxOutputBytes) throw GameArchiveException("Unpacked ROM exceeds cache budget")
+            val target = File(content, relative)
+            if (target.parentFile?.mkdirs() == false && target.parentFile?.isDirectory != true)
+                throw GameArchiveException("Cannot prepare ROM cache directory")
+            val partial = File(target.parentFile, target.name + ".partial")
+            partial.delete()
+            var total = 0L
+            val digest = java.util.zip.CRC32()
+            try {
+                input.use { source ->
+                    partial.outputStream().buffered(256 * 1024).use { output ->
+                        val buffer = ByteArray(128 * 1024)
+                        while (true) {
+                            if (Thread.currentThread().isInterrupted) throw java.io.InterruptedIOException()
+                            val n = source.read(buffer)
+                            if (n < 0) break
+                            if (n == 0) continue
+                            if (total + n > maxOutputBytes) throw GameArchiveException("Unpacked ROM exceeds cache budget")
+                            output.write(buffer, 0, n)
+                            digest.update(buffer, 0, n)
+                            total += n
+                            onProgress(if (expectedSize > 0) (total.toFloat() / expectedSize)
+                                .coerceIn(0f, 1f) else null)
+                        }
+                    }
+                }
+                if (total == 0L || (expectedSize >= 0L && total != expectedSize))
+                    throw GameArchiveException("Truncated or empty ROM in archive")
+                if (expectedCrc != null && expectedCrc != digest.value)
+                    throw GameArchiveException("ZIP ROM checksum mismatch")
+                if (!partial.renameTo(target)) throw GameArchiveException("Cannot complete extracted ROM")
+                return target
+            } finally {
+                partial.delete()
+            }
+        }
+        fun eligible(name: String): Boolean = GameSystems.forFile(name) != null &&
+            GameSystems.extension(name) !in setOf("cue", "gdi", "m3u", "iso")
+        return when (GameSystems.extension(archiveName)) {
+            "zip" -> ZipFile.builder().setSeekableByteChannel(MediaChannel(media)).get().use { zip ->
+                val files = zip.entries.asSequence().filterNot { it.isDirectory }
+                    .take(MAX_PROBE_ENTRIES + 1).toList()
+                if (files.size > MAX_PROBE_ENTRIES) return@use null
+                val roms = files.filter { eligible(it.name) }
+                if (roms.size != 1 || !zip.canReadEntryData(roms.single())) return@use null
+                val rom = roms.single()
+                write(rom.name, rom.size, zip.getInputStream(rom),
+                    rom.crc.takeIf { it in 0..0xffffffffL })
+            }
+            "7z" -> SevenZFile.builder().setSeekableByteChannel(MediaChannel(media)).get().use { seven ->
+                val files = seven.entries.take(MAX_PROBE_ENTRIES + 1)
+                if (files.size > MAX_PROBE_ENTRIES) return@use null
+                val roms = files.filter { !it.isDirectory && eligible(it.name) }
+                if (roms.size != 1) return@use null
+                val rom = roms.single()
+                val first = seven.nextEntry ?: return@use null
+                if (first.name != rom.name || first.isDirectory || !first.hasStream())
+                    return@use null // avoid scanning huge solid predecessors
+                val source = object : InputStream() {
+                    override fun read(): Int {
+                        val byte = ByteArray(1)
+                        return if (read(byte, 0, 1) < 0) -1 else byte[0].toInt() and 255
+                    }
+                    override fun read(bytes: ByteArray, off: Int, len: Int): Int =
+                        seven.read(bytes, off, len)
+                }
+                write(rom.name, rom.size, source)
+            }
+            "gz" -> {
+                val name = archiveName.substringBeforeLast('.')
+                if (!eligible(name)) null
+                else write(name, -1L, GZIPInputStream(object : InputStream() {
+                    private var offset = 0L
+                    override fun read(): Int {
+                        val byte = ByteArray(1)
+                        return if (read(byte, 0, 1) < 0) -1 else byte[0].toInt() and 255
+                    }
+                    override fun read(bytes: ByteArray, off: Int, len: Int): Int {
+                        if (off < 0 || len < 0 || off > bytes.size - len) throw IndexOutOfBoundsException()
+                        if (len == 0) return 0
+                        val n = minOf(len.toLong(), media.size - offset).toInt()
+                        if (n <= 0) return -1
+                        val tmp = ByteArray(n)
+                        val read = media.read(offset, tmp, n)
+                        if (read > 0) {
+                            tmp.copyInto(bytes, off, 0, read)
+                            offset += read
+                        }
+                        return read
+                    }
+                }.buffered(128 * 1024)), null)
+            }
+            else -> null
+        }
+    }
+
+    /**
      * The file to start among [names]: a playlist before a cue sheet before a disc image before a
      * cartridge; files of a system before unknown ones. Null when none plays.
      */
