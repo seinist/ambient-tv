@@ -110,7 +110,7 @@ class FilesViewModel @Inject constructor(
     /** Sidebar NAS shortcuts land on that share's root instead of the source list. */
     private fun restorePinnedSourceIfNeeded(): Boolean {
         val pinned = pinnedSourceId ?: return false
-        val source = store.sources().firstOrNull { it.id == pinned } ?: return false
+        val source = store.fileBrowserSources().firstOrNull { it.id == pinned } ?: return false
         if (folders.isNotEmpty() && folders.all { it.sourceId == pinned }) return false
         val root = runCatching { access.root(source) }.getOrElse { return false }
         folders = listOf(FolderLocation(source.id, root, source.name, "source:${source.id}"))
@@ -118,7 +118,11 @@ class FilesViewModel @Inject constructor(
         rememberFolders()
         return true
     }
-    private fun updateStored() { _state.update { it.copy(sources = store.sources(), favorites = store.favorites().map { e -> e.id }.toSet(), history = store.history().associateBy { h -> h.entry.id }) } }
+    private fun updateStored() { _state.update { it.copy(
+        sources = store.fileBrowserSources(),
+        favorites = store.favorites().filter(store::visibleInFiles).map { it.id }.toSet(),
+        history = store.history().filter { h -> store.visibleInFiles(h.entry) }.associateBy { it.entry.id },
+    ) } }
     private fun rememberFolders() { saved["folders"] = json.encodeToString(folders) }
     private fun showLanding(resetLoading: Boolean = true) {
         val entries = when (tab) {
@@ -127,7 +131,7 @@ class FilesViewModel @Inject constructor(
             "continue" -> store.history().filter { !it.completed && it.positionMs > 0 && !it.entry.audio }.map { it.entry }
             else -> emptyList()
         }
-        _state.update { it.copy(entries = entries, folders = emptyList(), loading = if (resetLoading) false else it.loading,
+        _state.update { it.copy(entries = entries.filter(store::visibleInFiles), folders = emptyList(), loading = if (resetLoading) false else it.loading,
             error = if (resetLoading) null else it.error, more = false) }
     }
     fun scroll(key: String): Pair<Int, Int> = (saved.get<Int>("scroll-index:$key") ?: 0) to (saved.get<Int>("scroll-offset:$key") ?: 0)
@@ -163,7 +167,8 @@ class FilesViewModel @Inject constructor(
             showLanding(); _state.update { it.copy(focusId = saved["focus"], revision = it.revision + 1) }; return
         }
         val location = folders.last()
-        val source = store.sources().firstOrNull { it.id == location.sourceId }
+        val source = store.fileBrowserSources().firstOrNull { it.id == location.sourceId }
+            ?.takeIf { store.visibleInFiles(it.id, location.path) }
         if (source == null) {
             folders = emptyList(); rememberFolders()
             if (restorePinnedSourceIfNeeded()) { refresh(); return }
@@ -178,20 +183,22 @@ class FilesViewModel @Inject constructor(
             val cacheKey = "folder:${location.path}:$limit"
             if (!silent || _state.value.entries.isEmpty()) snapshots.read<com.ambient.tv.data.files.FileListing>(namespace, cacheKey)?.let { cached ->
                 if (store.sources().any { it.id == source.id && it.sameLocation(source) }) {
-                    _state.update { it.copy(entries = cached.entries, loading = false, more = cached.more) }
+                    _state.update { it.copy(entries = cached.entries.filter(store::visibleInFiles),
+                        loading = false, more = cached.more) }
                 }
             }
             try {
                 val result = access.list(source, location.path, limit) { it.playable || it.image || it.game || it.bios || it.core }
                 currentCoroutineContext().ensureActive()
                 if (store.sources().none { it.id == source.id && it.sameLocation(source) }) return@launch
-                snapshots.write(owner, namespace, cacheKey, result)
+                val visible = result.copy(entries = result.entries.filter(store::visibleInFiles))
+                snapshots.write(owner, namespace, cacheKey, visible)
                 val old = _state.value.entries
                 val focused = saved.get<String>("focus")
-                val next = com.ambient.tv.data.browse.survivingFocus(old.map { it.id }, result.entries.map { it.id }, focused)
+                val next = com.ambient.tv.data.browse.survivingFocus(old.map { it.id }, visible.entries.map { it.id }, focused)
                 saved["focus"] = next
-                _state.update { it.copy(entries = result.entries, more = result.more, loading = false, focusId = saved["focus"], revision = it.revision + 1) }
-                loadMusicFolder(source, result.entries)
+                _state.update { it.copy(entries = visible.entries, more = visible.more, loading = false, focusId = saved["focus"], revision = it.revision + 1) }
+                loadMusicFolder(source, visible.entries)
             } catch (error: Exception) {
                 if (error is CancellationException) throw error
                 currentCoroutineContext().ensureActive()
@@ -250,6 +257,7 @@ class FilesViewModel @Inject constructor(
     }
 
     fun openSource(source: FileSource) {
+        if (store.fileBrowserSources().none { it.id == source.id }) return
         val root = runCatching { access.root(source) }.getOrElse {
             _state.update { it.copy(error = fileError(R.string.files_invalid_source)) }; return
         }
@@ -285,6 +293,7 @@ class FilesViewModel @Inject constructor(
     }
 
     fun open(entry: FileEntry, play: (String, Boolean) -> Unit, restart: Boolean = false, openPhotos: () -> Unit = {}, openGame: (String) -> Unit = {}) {
+        if (!store.visibleInFiles(entry)) return
         if (entry.image) { if (preparePhotos(entry)) openPhotos(); return }
         if (entry.bios) { saved["focus"] = entry.id; importBios(entry); return }
         if (entry.core) { saved["focus"] = entry.id; importCore(entry); return }
