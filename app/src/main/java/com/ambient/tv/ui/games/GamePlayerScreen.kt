@@ -287,6 +287,12 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
     val game = session.game
     val system = game.system
     val core = session.core
+    LaunchedEffect(system.id, core.id, game.saveKey) {
+        com.ambient.tv.ui.gamepad.retro.RetroInputSettings.lastPlayed.value =
+            com.ambient.tv.ui.gamepad.retro.RetroInputProfileContext(
+                system.id, core.id, game.saveKey,
+            )
+    }
     val settings = GameSettings.state
     val shader = settings.shader(system)
     val toneMap = settings.hdrToneMap(core)
@@ -702,6 +708,9 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
     val input = remember {
         val handler = Handler(Looper.getMainLooper())
         RetroPadInput(
+            profileContext = com.ambient.tv.ui.gamepad.retro.RetroInputProfileContext(
+                systemId = system.id, coreId = core.id, gameId = game.saveKey,
+            ),
             schedule = { delay, task ->
                 val runnable = Runnable(task)
                 handler.postDelayed(runnable, delay)

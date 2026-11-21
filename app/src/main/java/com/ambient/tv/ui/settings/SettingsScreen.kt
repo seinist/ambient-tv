@@ -375,8 +375,8 @@ fun SettingsScreen(
                     when (selectedCategory) {
                         SettingsCategory.NAV_SOUNDS -> Unit // Full-page editor above.
                         SettingsCategory.WEATHER -> Unit // Full-page weather settings above.
-                        SettingsCategory.KEY_BINDINGS -> keyBindingItems()
-                        SettingsCategory.CONTROLLER -> controllerSettingsItems()
+                        SettingsCategory.KEY_BINDINGS -> inputControlsItems(com.ambient.tv.ui.keyboard.KeyBindingScope.GLOBAL)
+                        SettingsCategory.CONTROLLER -> inputControlsItems(com.ambient.tv.ui.keyboard.KeyBindingScope.PLAYER)
                         SettingsCategory.GAME_CONTROLS -> gameControlsItems()
                         SettingsCategory.GAMES -> gamesSettingsItems()
                         SettingsCategory.COMPANION -> companionSettingsItems()

@@ -408,9 +408,9 @@ internal fun SettingsHub(
             if (category == SettingsCategory.RECEIVER) append(" upnp dlna receiver empfänger handy cast zuspielen")
             if (category == SettingsCategory.SPOTIFY) append(" advanced developer client id entwickler")
             if (category == SettingsCategory.GAMES) append(" spiele games libretro emulator bios firmware core cores retro konsole console cache speicher")
-            if (category == SettingsCategory.GAME_CONTROLS) append(" spiele games spielen emulator retro retropad libretro spieler player controller tastatur keyboard fernbedienung remote belegung mapping spielmenü game menu")
-            if (category == SettingsCategory.CONTROLLER) append(" controller gamepad joystick spielecontroller game pad xbox playstation dualsense dualshock nintendo stick steuerkreuz tasten belegung button mapping trigger schultertaste")
-            if (category == SettingsCategory.KEY_BINDINGS) append(" taste tasten fernbedienung tastatur belegung shortcut kurzbefehl farbtaste rot grün gelb blau kanal key keys remote keyboard binding mapping color red green yellow blue channel")
+            if (category == SettingsCategory.GAME_CONTROLS) append(" gaming spiele emulator retro libretro core konsolen system spiel controller tastatur keyboard fernbedienung remote input mapping")
+            if (category == SettingsCategory.CONTROLLER) append(" player playback video audio osd gamepad controller remote tastatur keyboard belegung media buttons")
+            if (category == SettingsCategory.KEY_BINDINGS) append(" ui allgemein menü navigation controller remote tastatur keyboard key binding dpad settings suche")
         }
         // Search reaches every page; the area index only those of the chosen settings level.
         if (search) settingsSearchMatches(query, haystack)
