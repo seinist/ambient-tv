@@ -15,6 +15,18 @@ class CompanionInputCoalesceTest {
     }
 
     @Test
+    fun `latest complete gamepad snapshot wins but release and menu stay ordered`() {
+        val first = CompanionFrame(type = "gamepad_input",
+            gamepadState = CompanionGamepadState(buttons = 1, leftX = -0.6f))
+        val last = CompanionFrame(type = "gamepad_input",
+            gamepadState = CompanionGamepadState(buttons = 0, leftX = 0f, rightY = 1f))
+        assertEquals(last, coalesceCompanionInput(first, last))
+        assertNull(coalesceCompanionInput(last, CompanionFrame(type = "gamepad_release")))
+        assertNull(coalesceCompanionInput(last, CompanionFrame(type = "gamepad_menu")))
+        assertNull(coalesceCompanionInput(CompanionFrame(type = "gamepad_claim"), last))
+    }
+
+    @Test
     fun `other frames and out of range sums are kept separate`() {
         assertNull(coalesceCompanionInput(move(0.9f, 0f), move(0.2f, 0f)))
         assertNull(coalesceCompanionInput(move(0.1f, 0f), CompanionFrame(type = "input", input = CompanionInput("click"))))
