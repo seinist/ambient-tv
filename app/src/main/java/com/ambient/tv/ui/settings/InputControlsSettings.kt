@@ -110,7 +110,15 @@ private fun InputControlsPage(scope: KeyBindingScope) {
     }
 }
 
-private fun visualKeyCode(kind: String, key: String): Int? {
+internal fun visualKeyCode(kind: String, key: String): Int? {
+    if (kind == "controller") return GamepadButton.fromKey(key)?.keyCode ?: when (key) {
+        "up" -> KeyEvent.KEYCODE_DPAD_UP
+        "down" -> KeyEvent.KEYCODE_DPAD_DOWN
+        "left" -> KeyEvent.KEYCODE_DPAD_LEFT
+        "right" -> KeyEvent.KEYCODE_DPAD_RIGHT
+        else -> null
+    }
+
     if (kind == "keyboard") return when (key) {
         "Esc" -> KeyEvent.KEYCODE_ESCAPE
         "Enter" -> KeyEvent.KEYCODE_ENTER
