@@ -702,6 +702,9 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
     val input = remember {
         val handler = Handler(Looper.getMainLooper())
         RetroPadInput(
+            profileContext = com.ambient.tv.ui.gamepad.retro.RetroInputProfileContext(
+                systemId = system.id, coreId = core.id, gameId = game.saveKey,
+            ),
             schedule = { delay, task ->
                 val runnable = Runnable(task)
                 handler.postDelayed(runnable, delay)
