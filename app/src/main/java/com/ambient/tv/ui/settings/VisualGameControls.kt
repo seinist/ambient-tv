@@ -22,12 +22,17 @@ import com.ambient.tv.ui.gamepad.GamepadLabels
 import com.ambient.tv.ui.gamepad.retro.*
 import com.ambient.tv.ui.keyboard.keyLabel
 import com.ambient.tv.ui.theme.LocalUiTokens
+import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
+import com.ambient.tv.companion.CompanionViewModel
+import com.ambient.tv.companion.COMPANION_HANDHELD
 import kotlinx.coroutines.delay
 
 /** Device changes are reflected without recreating the Settings view. */
 @Composable
 internal fun rememberPlayableDevices(): List<RetroInputDevice> {
     val context = LocalContext.current
+    val companion: CompanionViewModel = hiltViewModel()
+    val companionState by companion.manager.state.collectAsState()
     var devices by remember { mutableStateOf(playableInputDevices()) }
     DisposableEffect(context) {
         val manager = context.getSystemService(InputManager::class.java)
@@ -39,7 +44,16 @@ internal fun rememberPlayableDevices(): List<RetroInputDevice> {
         manager?.registerInputDeviceListener(listener, null)
         onDispose { manager?.unregisterInputDeviceListener(listener) }
     }
-    return devices
+    // Show trusted paired handsets even when offline, so button/port profiles can be prepared
+    // before starting a game. The pinned identity stays stable across reconnections/renames.
+    val phones = companionState.paired.filter { it.role == COMPANION_HANDHELD }
+        .distinctBy { it.fingerprint }
+        .map { peer -> RetroInputDevice(
+            id = -1, kind = RetroInputKind.COMPANION,
+            descriptor = companionControllerDescriptor(peer.fingerprint),
+            name = peer.name.ifBlank { context.getString(R.string.retro_kind_companion) },
+        ) }
+    return devices + phones
 }
 
 private val systemOwnedKeys = setOf(
@@ -99,7 +113,7 @@ internal fun VisualGameControls() {
         }
     }
 
-    if (listening) {
+    if (listening && kind != RetroInputKind.COMPANION) {
         DisposableEffect(kind, ctx, level, device?.descriptor, deviceScope, target) {
             var downCode = KeyEvent.KEYCODE_UNKNOWN
             val listener: (KeyEvent) -> Boolean = capture@{ event ->
@@ -241,14 +255,19 @@ internal fun VisualGameControls() {
             is RetroInputTarget.Menu -> stringResource(t.trigger.titleRes)
         }
         val keys = profile.keys(target).joinToString(" · ") { code ->
-            GamepadButton.fromKeyCode(code)?.let(labels::label) ?: keyLabel(host, code)
+            if (kind == RetroInputKind.COMPANION)
+                companionControllerButton(code)?.let { host.getString(it.titleRes) } ?: keyLabel(host, code)
+            else GamepadButton.fromKeyCode(code)?.let(labels::label) ?: keyLabel(host, code)
         }.ifBlank { stringResource(R.string.key_binding_none) }
         SettingsNavigationRow(
             title = name,
             summary = if (listening) stringResource(R.string.game_controls_listening) else keys,
-            onClick = { listening = !listening },
+            // The virtual phone sends no Android KeyEvent to capture: choose the desired target
+            // above and tap the source key in the interactive device illustration instead.
+            onClick = { if (kind != RetroInputKind.COMPANION) listening = !listening },
         )
-        SettingsHint(stringResource(R.string.input_mapping_capture_hint))
+        SettingsHint(stringResource(if (kind == RetroInputKind.COMPANION)
+            R.string.game_controls_companion_mapping_hint else R.string.input_mapping_capture_hint))
         val hasOverride = when {
             deviceScope -> config.deviceProfiles.containsKey(
                 "${kind.key}." + java.util.Base64.getUrlEncoder().withoutPadding()
