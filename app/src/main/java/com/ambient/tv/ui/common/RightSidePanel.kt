@@ -817,9 +817,23 @@ private fun RightSidePanelChrome(
                     Modifier.weight(1f)
                         .focusRequester(footerStartFocus)
                         .onPreviewKeyEvent { event ->
-                            if (event.key != Key.DirectionRight) return@onPreviewKeyEvent false
-                            if (event.type == KeyEventType.KeyDown) runCatching { footerFocus.requestFocus() }
-                            true
+                            when (event.key) {
+                                Key.DirectionRight -> {
+                                    if (event.type == KeyEventType.KeyDown) runCatching { footerFocus.requestFocus() }
+                                    true
+                                }
+                                Key.DirectionLeft -> {
+                                    if (event.type == KeyEventType.KeyDown) {
+                                        // A second Left returns to the last scrolled setting.
+                                        val returned = footerReturnFocus?.let {
+                                            runCatching { it.requestFocus() }.getOrDefault(false)
+                                        } == true
+                                        if (!returned && !bodyFocus.restoreFocusedChild()) bodyFocus.requestFocus()
+                                    }
+                                    true
+                                }
+                                else -> false
+                            }
                         },
                 ) { footerStart() }
             }
