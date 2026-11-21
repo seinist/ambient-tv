@@ -87,6 +87,7 @@ internal fun sidebarConcreteRoute(
 
 internal fun isParameterizedSidebarRoute(route: String): Boolean =
     route.startsWith("section/") ||
+        route.startsWith("game_library/") ||
         route.startsWith("youtube_feed/") ||
         route.startsWith("trailers/feed/") ||
         route.startsWith("spotify_section/") ||
