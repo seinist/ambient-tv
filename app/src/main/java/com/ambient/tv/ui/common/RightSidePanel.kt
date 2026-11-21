@@ -6,7 +6,6 @@ import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.tween
 import androidx.tv.material3.LocalTextStyle
-import com.ambient.tv.ui.mobile.DeviceActionRow
 import com.ambient.tv.ui.mobile.deviceDp
 
 import androidx.compose.foundation.background
@@ -803,7 +802,9 @@ private fun RightSidePanelChrome(
             }
         }
         OverlayHairline()
-        DeviceActionRow(
+        // Keep both controls side by side even on a narrow handset. The wrapping
+        // selected value absorbs width pressure; FlowRow could otherwise move Back down.
+        Row(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(top = tokens.itemGap),
