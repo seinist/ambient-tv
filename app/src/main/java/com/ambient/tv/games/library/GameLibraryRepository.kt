@@ -274,6 +274,7 @@ class GameLibraryRepository @Inject constructor(
         val normalized = value.trim().takeIf { it.isNotBlank() }
         db.writableDatabase.execSQL("UPDATE game_entries SET manual_title=? WHERE file_id=?",
             arrayOf<Any?>(normalized, fileId))
+        savePortableChoice(fileId)
         changed()
     }
 
@@ -282,6 +283,7 @@ class GameLibraryRepository @Inject constructor(
         val current = files.sources().map { it.id }.toSet()
         val allowed = folders().filter { it.sourceId in current }.associateBy { it.id }
         val style = titleStyle()
+        val overrides = preferences.gameLibraryOverrides.associateBy { it.sourceId to it.path }
         val result = mutableListOf<LibraryGame>()
         db.readableDatabase.rawQuery(
             "SELECT folder_id,file_id,source_id,path,filename,system_id,internal_title,file_size,modified,favorite,last_played,manual_title,verified_title FROM game_entries",
@@ -290,7 +292,9 @@ class GameLibraryRepository @Inject constructor(
             while (cursor.moveToNext()) {
                 if (cursor.getString(0) !in allowed) continue
                 val filename = cursor.getString(4)
-                val custom = cursor.getString(11)?.takeIf { it.isNotBlank() }
+                val portable = overrides[cursor.getString(2) to cursor.getString(3)]
+                val custom = portable?.title?.takeIf { it.isNotBlank() }
+                    ?: cursor.getString(11)?.takeIf { it.isNotBlank() }
                 val verified = cursor.getString(12)?.takeIf { it.isNotBlank() }
                 val internal = cursor.getString(6)?.takeIf { it.isNotBlank() }
                 val title = custom ?: when (style) {
@@ -305,7 +309,8 @@ class GameLibraryRepository @Inject constructor(
                     title = title ?: displayFileName(filename),
                     internalTitle = cursor.getString(6),
                     size = cursor.getLong(7), modified = cursor.getLong(8),
-                    favorite = cursor.getInt(9) == 1, lastPlayed = cursor.getLong(10),
+                    favorite = portable?.favorite ?: (cursor.getInt(9) == 1),
+                    lastPlayed = maxOf(cursor.getLong(10), portable?.lastPlayed ?: 0L),
                     customTitle = custom, verifiedTitle = verified,
                 )
             }
@@ -324,13 +329,33 @@ class GameLibraryRepository @Inject constructor(
     fun setFavorite(fileId: String, value: Boolean) {
         db.writableDatabase.execSQL("UPDATE game_entries SET favorite=? WHERE file_id=?",
             arrayOf<Any>(if (value) 1 else 0, fileId))
+        savePortableChoice(fileId)
         changed()
     }
 
     fun recordPlayed(fileId: String) {
         db.writableDatabase.execSQL("UPDATE game_entries SET last_played=? WHERE file_id=?",
             arrayOf<Any>(System.currentTimeMillis(), fileId))
+        savePortableChoice(fileId)
         changed()
+    }
+
+    private fun savePortableChoice(fileId: String) {
+        db.readableDatabase.rawQuery(
+            "SELECT source_id,path,manual_title,favorite,last_played FROM game_entries WHERE file_id=? LIMIT 1",
+            arrayOf(fileId)
+        ).use { rows ->
+            if (!rows.moveToFirst()) return
+            val value = GamePortableState(
+                sourceId = rows.getString(0), path = rows.getString(1),
+                title = rows.getString(2)?.takeIf(String::isNotBlank),
+                favorite = rows.getInt(3) == 1, lastPlayed = rows.getLong(4),
+            )
+            val existing = preferences.gameLibraryOverrides
+            preferences.gameLibraryOverrides = (existing.filterNot {
+                it.sourceId == value.sourceId && it.path == value.path
+            } + value).takeLast(5000)
+        }
     }
 
     /** A launch probe is user-initiated and passive. No magic packets are sent. */
