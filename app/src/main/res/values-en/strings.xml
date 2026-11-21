@@ -2505,7 +2505,6 @@
     <string name="input_mapping_visual_variant">Controller illustration</string>
     <string name="input_mapping_visual_variant_hint">Visual reference only; the actual device type is configured by the core.</string>
     <string name="input_mapping_retropad_target">Libretro virtual button</string>
-    <string name="input_mapping_device">Input device</string>
     <string name="input_mapping_all_controllers">All controllers (default mapping)</string>
     <string name="input_mapping_scope_device">This connected device</string>
 </resources>
