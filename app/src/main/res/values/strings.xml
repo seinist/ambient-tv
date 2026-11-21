@@ -2440,4 +2440,26 @@
     <string name="input_mapping_retropad_target">Libretro virtual button</string>
     <string name="input_mapping_all_controllers">All controllers (default mapping)</string>
     <string name="input_mapping_scope_device">This connected device</string>
+
+    <string name="game_library_title">Games</string>
+    <string name="game_library_manage">Game library</string>
+    <string name="game_library_count">%1$d games</string>
+    <string name="game_library_all">All games</string>
+    <string name="game_library_empty">Add a local, USB, SMB or NFS ROM folder to build your games library. Your files stay in place.</string>
+    <string name="game_library_add_folder">Add ROM folder</string>
+    <string name="game_library_no_results">No games in this category. Check the assigned folders or refresh the library.</string>
+    <string name="game_library_select_system">Assign this folder to a console</string>
+    <string name="game_library_auto">Detect console automatically</string>
+    <string name="game_library_add_local">Add local or USB folder</string>
+    <string name="game_library_existing_sources">Existing file sources</string>
+    <string name="game_library_assigned">Assigned game folders</string>
+    <string name="game_library_add_network_hint">For new SMB/NFS shares, first add the NAS in Files. Games uses its existing connection, credentials, WireGuard and Wake-on-LAN settings.</string>
+    <string name="game_library_use_folder">Use this folder</string>
+    <string name="game_library_wake">Wake server</string>
+    <string name="game_library_titles">Displayed game titles</string>
+    <string name="game_library_title_auto">Automatic (ROM title if available)</string>
+    <string name="game_library_title_internal">Internal ROM title</string>
+    <string name="game_library_title_filename">File name</string>
+    <string name="game_library_remove">Remove</string>
+    <string name="game_library_back">Back</string>
 </resources>
