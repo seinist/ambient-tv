@@ -40,6 +40,10 @@ data class GameLibraryUiState(
     val sortKey: String = "name",
     val sortDescending: Boolean = false,
     val busy: Boolean = false,
+    val scanning: Boolean = false,
+    val scanProcessed: Int = 0,
+    val scanDiscovered: Int = 0,
+    val scanFolderName: String = "",
     val ready: Boolean = false,
     val error: String? = null,
     val message: String? = null,
@@ -222,25 +226,46 @@ class GameLibraryViewModel @Inject constructor(
             finally { mutable.update { it.copy(savingNetworkSource = false) } }
         }
     }
+    fun cancelScan() = scan?.cancel()
+
     fun scanAll() {
         if (scan?.isActive == true) return
         scan = viewModelScope.launch {
-            mutable.update { it.copy(busy = true, error = null) }
+            mutable.update { it.copy(busy = true, scanning = true,
+                scanProcessed = 0, scanDiscovered = 0, error = null) }
             try {
-                for (folder in library.folders()) library.scan(folder.id)
+                var done = 0
+                var discovered = 0
+                for (folder in library.folders()) {
+                    val baseDone = done
+                    val baseDiscovered = discovered
+                    library.scan(folder.id) { processed, known ->
+                        mutable.update { it.copy(scanProcessed = baseDone + processed,
+                            scanDiscovered = baseDiscovered + known,
+                            scanFolderName = folder.path.ifBlank { folder.sourceId }) }
+                    }
+                    done = mutable.value.scanProcessed
+                    discovered = mutable.value.scanDiscovered
+                    // Display each completed folder immediately, without waiting for a second NAS.
+                    reload()
+                }
             } catch (error: CancellationException) { throw error }
             catch (error: Exception) { mutable.update { it.copy(error = error.message ?: "Scan failed") } }
-            finally { mutable.update { it.copy(busy = false) }; reload() }
+            finally { mutable.update { it.copy(busy = false, scanning = false) }; reload() }
         }
     }
     fun scanFolder(folder: GameLibraryFolder) {
         if (scan?.isActive == true) return
         scan = viewModelScope.launch {
-            mutable.update { it.copy(busy = true, error = null) }
-            try { library.scan(folder.id) }
-            catch (error: CancellationException) { throw error }
+            mutable.update { it.copy(busy = true, scanning = true, scanProcessed = 0,
+                scanDiscovered = 0, scanFolderName = folder.path, error = null) }
+            try {
+                library.scan(folder.id) { processed, known ->
+                    mutable.update { it.copy(scanProcessed = processed, scanDiscovered = known) }
+                }
+            } catch (error: CancellationException) { throw error }
             catch (error: Exception) { mutable.update { it.copy(error = error.message ?: "Scan failed") } }
-            finally { mutable.update { it.copy(busy = false) }; reload() }
+            finally { mutable.update { it.copy(busy = false, scanning = false) }; reload() }
         }
     }
     /** Persist the exact SAF tree grant and register it with Files, just like video folders. */

@@ -58,6 +58,53 @@ internal class Nfs4Access {
 
     private data class Attr(val type: Int, val size: Long, val modified: Long, val error: Int = 0)
 
+    /** One NFSv4 COMPOUND connection per scan worker; zero extra TCP sessions per ROM. */
+    inner class ScanSession(source: FileSource) : Closeable {
+        private val config = source.validated().also { require(it.nfsVersion == 4) }
+        private val connection = Connection(config)
+        @Volatile private var closed = false
+        fun open(path: String): SeekableMedia {
+            if (closed) throw IOException("Scan session closed")
+            val (handle, attr) = connection.resolve(path)
+            require(attr.type == NF4REG) { "Not a regular file" }
+            return object : SeekableMedia {
+                override val size: Long = attr.size
+                override val parallelReads = false
+                override fun read(position: Long, buffer: ByteArray, count: Int): Int {
+                    if (closed) throw IOException("Scan session closed")
+                    if (position < 0 || count < 0 || count > buffer.size) throw IndexOutOfBoundsException()
+                    if (count == 0) return 0
+                    if (position >= size) return -1
+                    var total = 0
+                    val length = minOf(count.toLong(), size - position).toInt()
+                    while (total < length) {
+                        if (Thread.currentThread().isInterrupted) throw java.io.InterruptedIOException()
+                        val requested = minOf(length - total, NFS_MAX_READ)
+                        val result = connection.compound(2) {
+                            int(OP_PUTFH); opaque(handle)
+                            int(OP_READ); int(0); raw(ByteArray(12))
+                            long(position + total); int(requested)
+                        }
+                        result.op(OP_PUTFH); result.op(OP_READ)
+                        result.reply.int() // EOF flag
+                        val data = result.reply.opaque(requested)
+                        if (data.isEmpty()) break
+                        data.copyInto(buffer, total)
+                        total += data.size
+                    }
+                    return if (total == 0) -1 else total
+                }
+                override fun close() = Unit // worker owns the connection
+            }
+        }
+        override fun close() {
+            if (!closed) {
+                closed = true
+                connection.close()
+            }
+        }
+    }
+
     fun list(source: FileSource, relative: String, limit: Int, accept: (FileEntry) -> Boolean): FileListing = Connection(source.validated()).use { connection ->
         val (handle, attr) = connection.resolve(relative)
         if (attr.type != NF4DIR) throw IOException("Not a directory")

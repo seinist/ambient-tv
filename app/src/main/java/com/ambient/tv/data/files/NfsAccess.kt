@@ -10,6 +10,8 @@ import java.util.concurrent.atomic.AtomicInteger
  * Sources set to NFSv4 go to [Nfs4Access]. */
 class NfsAccess(private val rpcBindPort: Int = 111) {
     private val v4 = Nfs4Access()
+    /** NFSv4 worker lease, isolated from NFSv3's MOUNT/RPC session. */
+    internal fun v4ScanSession(source: FileSource): Nfs4Access.ScanSession = v4.ScanSession(source)
     private inner class Session(val source: FileSource) : Closeable {
         private val mountPort: Int = if (source.nfsMountPort > 0) source.nfsMountPort else NfsRpc(source, rpcBindPort).use { rpc ->
             rpc.call(100000, 2, 3, NfsXdr().apply { int(100005); int(3); int(6); int(0) }).int().also { require(it in 1..65535) }
@@ -37,6 +39,61 @@ class NfsAccess(private val rpcBindPort: Int = 111) {
         }
         override fun close() { rpc.close() }
     }
+    /**
+     * Dedicated NFSv3 worker session: MOUNT and TCP handshake once, then many LOOKUP/READ
+     * calls over the same authenticated RPC connection. Each worker owns exactly one session.
+     * NFSv4 uses its existing implementation rather than silently falling back to v3.
+     */
+    inner class ScanSession(source: FileSource) : Closeable {
+        private val config = source.validated().also { require(it.nfsVersion == 3) }
+        private val session = Session(config)
+        @Volatile private var closed = false
+
+        fun open(relative: String): SeekableMedia {
+            if (closed) throw IOException("Scan session closed")
+            val handle = session.lookup(relative)
+            val attr = session.attributes(handle)
+            require(attr.type == 1) { "Not a regular file" }
+            return object : SeekableMedia {
+                override val size: Long = attr.size
+                override val parallelReads: Boolean = false
+                override fun read(position: Long, buffer: ByteArray, count: Int): Int {
+                    if (closed) throw IOException("Scan session closed")
+                    if (count == 0) return 0
+                    if (position < 0 || count < 0 || count > buffer.size) throw IndexOutOfBoundsException()
+                    if (position >= size) return -1
+                    // Short server reads are legal. Fill the small requested window
+                    // so SNES headers and compressed stream adapters see complete data.
+                    var readTotal = 0
+                    val target = minOf(count.toLong(), size - position).toInt()
+                    while (readTotal < target) {
+                        if (Thread.currentThread().isInterrupted) throw java.io.InterruptedIOException()
+                        val requested = minOf(target - readTotal, NFS_MAX_READ)
+                        val reply = session.rpc.call(100003, 3, 6,
+                            NfsXdr().apply {
+                                opaque(handle); long(position + readTotal); int(requested)
+                            })
+                        reply.ok(); reply.postAttributes()
+                        val read = reply.int(); reply.int(); val data = reply.opaque(requested)
+                        if (read != data.size || read < 0) throw IOException("Invalid NFS READ size")
+                        if (read == 0) break
+                        data.copyInto(buffer, readTotal)
+                        readTotal += read
+                    }
+                    return if (readTotal == 0) -1 else readTotal
+                }
+                override fun close() = Unit // only the worker closes its shared RPC lease.
+            }
+        }
+
+        override fun close() {
+            if (!closed) {
+                closed = true
+                session.close()
+            }
+        }
+    }
+
     fun list(source: FileSource, relative: String, limit: Int, accept: (FileEntry) -> Boolean = FileEntry::playable): FileListing =
         if (source.nfsVersion == 4) v4.list(source, relative, limit, accept) else Session(source.validated()).use { session ->
         val handle = session.lookup(relative); val entries = mutableListOf<FileEntry>()

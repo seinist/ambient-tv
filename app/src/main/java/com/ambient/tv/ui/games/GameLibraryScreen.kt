@@ -158,6 +158,9 @@ fun GameLibraryScreen(
                 TvChip(text = stringResource(R.string.action_reload), icon = Icons.Filled.Refresh,
                     iconOnly = true, loading = state.busy, loadingOnlyAfterClick = true,
                     onClick = model::scanAll)
+                if (state.scanning) TvChip(
+                    text = stringResource(R.string.game_library_scan_cancel),
+                    icon = Icons.Filled.Close, iconOnly = true, onClick = model::cancelScan)
                 ViewOptionsChip(0, onClick = { showOptions = true })
                 TvChip(text = stringResource(R.string.game_library_edit_title),
                     icon = Icons.Filled.Edit, iconOnly = true, enabled = focusedId != null,
@@ -185,6 +188,16 @@ fun GameLibraryScreen(
                 color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
         if (!managing) {
+            if (state.scanning) {
+                Text(
+                    if (state.scanDiscovered > 0)
+                        stringResource(R.string.game_library_scan_progress,
+                            state.scanProcessed, state.scanDiscovered)
+                    else stringResource(R.string.game_library_scanning),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
             if (showSearch) TvTextField(searchText, { searchText = it },
                 stringResource(R.string.action_search), Modifier.fillMaxWidth())
             LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {

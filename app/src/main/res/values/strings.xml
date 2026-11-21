@@ -2479,4 +2479,7 @@
     <string name="game_library_import_dat">Import game-name catalog (XML DAT)</string>
     <string name="game_library_home_recent">Recently played games</string>
     <string name="game_library_home_favorites">Favorite games</string>
+    <string name="game_library_scanning">Scanning ROM library…</string>
+    <string name="game_library_scan_progress">Checked %1$d of %2$d discovered files</string>
+    <string name="game_library_scan_cancel">Cancel scan</string>
 </resources>
