@@ -73,6 +73,7 @@ class GameDataImporter @Inject constructor(
             val entries = access.list(source, path, MAX_FILES) { true }.entries
             for (entry in entries) {
                 currentCoroutineContext().ensureActive()
+                var copiedBytes = 0L
                 val name = entry.name
                 val childRelative = if (relative.isEmpty()) safeName(name) else "$relative/${safeName(name)}"
                 when {
@@ -80,7 +81,10 @@ class GameDataImporter @Inject constructor(
                     files >= MAX_FILES || entry.size < 0 || entry.size > MAX_BYTES - bytes -> skipped++
                     GameSystems.coreForFile(name) != null -> {
                         val core = GameSystems.coreForFile(name)!!
-                        if (runCatching { installCore(source, entry.path, name, core) }.isSuccess) installed += core else skipped++
+                        if (runCatching { installCore(source, entry.path, name, core) }.isSuccess) {
+                            installed += core
+                            copiedBytes = entry.size
+                        } else skipped++
                     }
                     GameSystems.isBios(name) -> {
                         val matches = GameSystems.bios(name)
@@ -90,7 +94,7 @@ class GameDataImporter @Inject constructor(
                         if (matches.none { it.second.md5.equals(digest, ignoreCase = true) }) {
                             skipped++
                         } else {
-                            copy(source, entry.path, target, MAX_BIOS_BYTES)
+                            copiedBytes = copy(source, entry.path, target, MAX_BIOS_BYTES)
                             biosCount++
                             verified++
                         }
@@ -99,13 +103,14 @@ class GameDataImporter @Inject constructor(
                     else -> {
                         val target = File(storage.systemDirectory, childRelative)
                         if (!target.isFile || target.length() != entry.size)
-                            copy(source, entry.path, target, MAX_BYTES - bytes)
+                            copiedBytes = copy(source, entry.path, target, MAX_BYTES - bytes)
                         extras++
                     }
                 }
                 if (!entry.directory) {
                     files++
-                    bytes += entry.size
+                    // Count what was actually written, not skipped files or untrusted size hints.
+                    bytes += copiedBytes
                     onProgress(files)
                 }
             }
@@ -144,14 +149,14 @@ class GameDataImporter @Inject constructor(
         cores.install(core, mediaStream(source, path), zipped = name.lowercase().endsWith(".zip"), origin = name)
     }
 
-    private suspend fun copy(source: FileSource, path: String, target: File, maxBytes: Long = MAX_BYTES) {
+    private suspend fun copy(source: FileSource, path: String, target: File, maxBytes: Long = MAX_BYTES): Long {
         target.parentFile?.mkdirs()
         val atomic = AtomicFile(target)
         val stream = atomic.startWrite()
+        var bytes = 0L
         try {
             mediaStream(source, path).use { input ->
                 val buffer = ByteArray(256 * 1024)
-                var bytes = 0L
                 while (true) {
                     currentCoroutineContext().ensureActive()
                     val n = input.read(buffer)
@@ -162,6 +167,7 @@ class GameDataImporter @Inject constructor(
                 }
             }
             atomic.finishWrite(stream)
+            return bytes
         } catch (error: Exception) {
             atomic.failWrite(stream)
             throw error
