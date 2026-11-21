@@ -792,6 +792,17 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
             rewinding = false
             applyCheats(cheats)
             resume()
+        } else if (loaded && !destroyed) {
+            // A netplay session temporarily disables rewind and cheats. Restore both on
+            // disconnect, rejected connection, timeout or cancel, without restarting a game.
+            applyCheats(cheats)
+            runCatching {
+                retroView.rewindEnabled =
+                    core.rewind && stateAvailable && settings.rewind && !achievements.hardcore
+            }
+            // Host negotiation pauses the core before exchanging its state. A failed
+            // handshake must not leave an otherwise running single-player game frozen.
+            if (running) runCatching { retroView.resumeEmulation() }
         }
     }
     DisposableEffect(input, retroView) {
@@ -1422,7 +1433,12 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
                                 }
                             },
                         )
-                        open == GamePanel.NETPLAY -> GameNetplayPanel(netplay, retroView, game, session.coreStamp)
+                        open == GamePanel.NETPLAY -> GameNetplayPanel(
+                            netplay, retroView, game, session.coreStamp, session.vulkan,
+                            settings.effectiveCoreOptions(core, game.saveKey) +
+                                (if (session.vulkan) core.vulkanOptions else core.glOptions),
+                            session.systemDirectory,
+                        )
                         else -> {
                             GamePanelText(stringResource(R.string.game_info_system, system.name))
                             GamePanelText(stringResource(R.string.game_info_core, core.name, core.license))
