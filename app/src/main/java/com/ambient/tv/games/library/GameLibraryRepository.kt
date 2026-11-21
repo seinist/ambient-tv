@@ -78,9 +78,16 @@ data class LibraryGame(
     /** DAT generation last checked, including a negative match. */
     val datVersion: Long = -1L,
     val archiveCrc: String? = null,
+    /** Compatibility with Settings/Game library audit: DAT check completed for this revision. */
+    val datChecked: Boolean = false,
 )
 
-private class GameIndexDb(context: Context) : SQLiteOpenHelper(context, "game_library.db", null, 3) {
+/** Preserve the previous fast-negative-match contract for existing library users/tests. */
+internal fun reuseDatLookup(previous: LibraryGame?, systemId: String, size: Long, modified: Long): Boolean =
+    previous != null && previous.datChecked && previous.systemId == systemId &&
+        modified != 0L && previous.size == size && previous.modified == modified
+
+private class GameIndexDb(context: Context) : SQLiteOpenHelper(context, "game_library.db", null, 4) {
     override fun onCreate(db: SQLiteDatabase) {
         db.execSQL("""CREATE TABLE game_entries (
             folder_id TEXT NOT NULL, file_id TEXT NOT NULL, source_id TEXT NOT NULL,
@@ -88,6 +95,7 @@ private class GameIndexDb(context: Context) : SQLiteOpenHelper(context, "game_li
             internal_title TEXT, file_size INTEGER NOT NULL, modified INTEGER NOT NULL,
             favorite INTEGER NOT NULL DEFAULT 0, last_played INTEGER NOT NULL DEFAULT 0,
             seen INTEGER NOT NULL DEFAULT 0, manual_title TEXT, verified_title TEXT,
+            dat_checked INTEGER NOT NULL DEFAULT 0,
             probe_version INTEGER NOT NULL DEFAULT 0, dat_version INTEGER NOT NULL DEFAULT -1,
             archive_crc TEXT,
             PRIMARY KEY(folder_id, file_id))""")
@@ -108,6 +116,10 @@ private class GameIndexDb(context: Context) : SQLiteOpenHelper(context, "game_li
                 PRIMARY KEY(system_id, crc32))""")
         }
         if (oldVersion < 3) {
+            // Version 3 from main already installed this column on existing devices.
+            db.execSQL("ALTER TABLE game_entries ADD COLUMN dat_checked INTEGER NOT NULL DEFAULT 0")
+        }
+        if (oldVersion < 4) {
             db.execSQL("ALTER TABLE game_entries ADD COLUMN probe_version INTEGER NOT NULL DEFAULT 0")
             db.execSQL("ALTER TABLE game_entries ADD COLUMN dat_version INTEGER NOT NULL DEFAULT -1")
             db.execSQL("ALTER TABLE game_entries ADD COLUMN archive_crc TEXT")
@@ -138,6 +150,12 @@ class GameLibraryRepository @Inject constructor(
         it.sourceId.isNotBlank() && (it.systemId == "auto" || GameSystems.byId(it.systemId) != null)
     }.distinctBy { it.id }.take(200)
 
+    /** Games must stay hidden until an assigned folder exists on a configured source. */
+    fun hasConfiguredFolders(): Boolean {
+        val sourceIds = files.sources().mapTo(hashSetOf()) { it.id }
+        return folders().any { it.sourceId in sourceIds }
+    }
+
     fun addFolder(source: FileSource, path: String, systemId: String, recursive: Boolean = true): GameLibraryFolder {
         require(files.sources().any { it == source }) { "Source changed" }
         require(systemId == "auto" || GameSystems.byId(systemId) != null) { "Unknown game system" }
@@ -160,6 +178,7 @@ class GameLibraryRepository @Inject constructor(
         preferences.gameLibraryFolders = existing.map {
             if (it.id == id) it.copy(alsoShowInFiles = visible) else it
         }
+        if (visible) preferences.filesEnabled = true
         changed()
     }
 
@@ -235,8 +254,11 @@ class GameLibraryRepository @Inject constructor(
                     "INSERT OR REPLACE INTO game_dat_versions(system_id,revision) VALUES(?,?)",
                     arrayOf<Any>(systemId, previous + 1)
                 )
-                // Keep old verified titles until the next scan. That scan uses the new
-                // generation and will replace positive *and* negative DAT matches.
+                // The imported DAT supersedes old verified names, including prior negatives.
+                writable.execSQL(
+                    "UPDATE game_entries SET verified_title=NULL,dat_checked=0 WHERE system_id=?",
+                    arrayOf<Any>(systemId)
+                )
                 writable.setTransactionSuccessful()
                 changed()
                 imported
@@ -306,14 +328,14 @@ class GameLibraryRepository @Inject constructor(
     }
 
     /** Disk cache is loaded even if the NAS is sleeping; opening the library never wakes it. */
-    fun games(): List<LibraryGame> {
+    fun games(deduplicate: Boolean = true): List<LibraryGame> {
         val current = files.sources().map { it.id }.toSet()
         val allowed = folders().filter { it.sourceId in current }.associateBy { it.id }
         val style = titleStyle()
         val overrides = preferences.gameLibraryOverrides.associateBy { it.sourceId to it.path }
         val result = mutableListOf<LibraryGame>()
         db.readableDatabase.rawQuery(
-            "SELECT folder_id,file_id,source_id,path,filename,system_id,internal_title,file_size,modified,favorite,last_played,manual_title,verified_title,probe_version,dat_version,archive_crc FROM game_entries",
+            "SELECT folder_id,file_id,source_id,path,filename,system_id,internal_title,file_size,modified,favorite,last_played,manual_title,verified_title,probe_version,dat_version,archive_crc,dat_checked FROM game_entries",
             null,
         ).use { cursor ->
             while (cursor.moveToNext()) {
@@ -340,13 +362,13 @@ class GameLibraryRepository @Inject constructor(
                     lastPlayed = maxOf(cursor.getLong(10), portable?.lastPlayed ?: 0L),
                     customTitle = custom, verifiedTitle = verified,
                     probeVersion = cursor.getInt(13), datVersion = cursor.getLong(14),
-                    archiveCrc = cursor.getString(15),
+                    archiveCrc = cursor.getString(15), datChecked = cursor.getInt(16) == 1,
                 )
             }
         }
         // Overlapping assignments are legal. Prefer the deepest matching folder
         // (e.g. NAS/Games/SNES) to a generic NAS/Games auto-detect root.
-        return result.sortedWith(compareByDescending<LibraryGame> {
+        return if (!deduplicate) result else result.sortedWith(compareByDescending<LibraryGame> {
             allowed[it.folderId]?.path?.length ?: 0
         }.thenBy { it.fileId }).distinctBy { it.fileId }
     }
@@ -580,6 +602,7 @@ class GameLibraryRepository @Inject constructor(
                         put("manual_title", game.customTitle); put("verified_title", game.verifiedTitle)
                         put("probe_version", game.probeVersion); put("dat_version", game.datVersion)
                         put("archive_crc", game.archiveCrc)
+                        put("dat_checked", if (game.datVersion > 0L) 1 else 0)
                     }
                     writable.insertWithOnConflict("game_entries", null, values,
                         SQLiteDatabase.CONFLICT_REPLACE)
@@ -602,7 +625,7 @@ class GameLibraryRepository @Inject constructor(
         val probeVersion: Int, val datVersion: Long, val archiveCrc: String?)
 
     private fun existing(folderId: String): Map<String, LibraryGame> =
-        games().filter { it.folderId == folderId }.associateBy { it.fileId }
+        games(deduplicate = false).filter { it.folderId == folderId }.associateBy { it.fileId }
 
     private fun classify(entry: FileEntry, session: GameScanFileSession, skipArchives: Boolean = false): com.ambient.tv.games.GameSystem? {
         val head = if (GameSystems.extension(entry.name) == "iso") {

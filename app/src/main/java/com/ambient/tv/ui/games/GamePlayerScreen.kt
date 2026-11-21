@@ -703,6 +703,7 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
             if (event == GLRetroView.GLRetroEvents.SurfaceCreated) coreReady = true
             if (event == GLRetroView.GLRetroEvents.FrameRendered && !loaded) {
                 loaded = true
+                model.firstFrameRendered(session)
                 stateAvailable = core.saveStates && runCatching {
                     retroView.getSerializeSize() in 1L..com.ambient.tv.games.GameStateStore.MAX_STATE_BYTES
                 }.getOrDefault(false)

@@ -67,7 +67,14 @@ private fun GameCoreSource.titleRes(): Int = when (this) {
  * Settings → Playback → Games: rewind, cores (load, update, remove, options for all games), firmware
  * (BIOS) per system, further system files and the game copy cache. Everything lives in app storage.
  */
-internal fun LazyListScope.gamesSettingsItems() {
+internal fun LazyListScope.gamesSettingsItems(onOpenLibrary: () -> Unit) {
+    item(key = "games-library") {
+        SettingsNavigationRow(
+            title = stringResource(R.string.game_library_settings_entry),
+            summary = stringResource(R.string.game_library_settings_entry_hint),
+            onClick = onOpenLibrary,
+        )
+    }
     item(key = "games-play") { GamesPlay() }
     item(key = "games-ra") { GamesRetroAchievements() }
     item(key = "games-system-cores") { GamesSystemCores() }

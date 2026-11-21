@@ -57,6 +57,28 @@ internal data class CarAudioPage(
     val nextOffset: Int? = null,
 )
 
+/** Raw listing offsets must be advanced BEFORE filtering Games-only paths. */
+internal data class VisibleCarFilesPage(
+    val items: List<FileEntry>,
+    val hasMore: Boolean,
+    val nextOffset: Int,
+)
+
+internal fun sliceVisibleCarFiles(
+    raw: List<FileEntry>, offset: Int, pageSize: Int, hasMoreRaw: Boolean,
+    maxRaw: Int, visible: (FileEntry) -> Boolean,
+): VisibleCarFilesPage {
+    val candidates = raw.withIndex().asSequence().drop(offset)
+        .filter { visible(it.value) }.take(pageSize + 1).toList()
+    val page = candidates.take(pageSize)
+    val next = page.lastOrNull()?.index?.plus(1) ?: offset
+    return VisibleCarFilesPage(
+        page.map { it.value },
+        next > offset && next < maxRaw && (candidates.size > pageSize || hasMoreRaw),
+        next,
+    )
+}
+
 /** Source-specific Android Auto audio adapter.
  * Never creates its own player, duplicates credentials, or returns video browse items.
  */
@@ -267,13 +289,22 @@ internal class CarAuxiliaryAudio @Inject constructor(
                     // FileAccess already takes care of SMB credentials, WireGuard, WOL and sorting.
                     // Its listing has a limit rather than an offset, so request a bounded prefix.
                     if (offset >= 2000) return CarAudioPage(emptyList())
-                    val wanted = (offset + limit + 1).coerceAtMost(2000)
-                    val listing = access.list(source, path, wanted, FileEntry::audio)
-                    val visible = listing.entries.filter(fileStore::visibleInFiles)
-                    CarAudioPage(visible.drop(offset).take(limit).map { entry ->
+                    var wanted = (offset + limit + 1).coerceAtMost(2000)
+                    var listing = access.list(source, path, wanted, FileEntry::audio)
+                    var page = sliceVisibleCarFiles(listing.entries, offset, limit, listing.more,
+                        2000, fileStore::visibleInFiles)
+                    // Scan a larger bounded prefix only when hidden ROM folders consumed the
+                    // visible page. This keeps every cursor in the RAW sorted directory space.
+                    while (listing.more && wanted < 2000 && page.items.size < limit) {
+                        wanted = (wanted * 2).coerceAtMost(2000)
+                        listing = access.list(source, path, wanted, FileEntry::audio)
+                        page = sliceVisibleCarFiles(listing.entries, offset, limit, listing.more,
+                            2000, fileStore::visibleInFiles)
+                    }
+                    CarAudioPage(page.items.map { entry ->
                         if (entry.directory) folder(CarAudioIds.fileFolder(entry.id), entry.name)
                         else fileEntry(entry)
-                    }, listing.more || visible.size > offset + limit)
+                    }, page.hasMore, nextOffset = page.nextOffset)
                 }
                 else -> null
             }

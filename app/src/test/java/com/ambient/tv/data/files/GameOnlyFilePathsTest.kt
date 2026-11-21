@@ -35,6 +35,46 @@ class GameOnlyFilePathsTest {
         assertFalse(isGamesOnlyFilePath("nas", "Games/SNES/Metroid.sfc", listOf(show)))
     }
 
+    @Test fun explicitFilesSubfolderIsReachableInsideGamesOnlyShare() {
+        val folders = listOf(
+            GameLibraryFolder(id = "games-root", sourceId = "nas", path = "Games",
+                alsoShowInFiles = false),
+            GameLibraryFolder(id = "shared-snes", sourceId = "nas", path = "Games/SNES",
+                systemId = "snes", alsoShowInFiles = true),
+        )
+        assertTrue(filePathVisibleInBrowser("nas", "", false, folders))
+        assertTrue(filePathVisibleInBrowser("nas", "Games", false, folders))
+        assertTrue(filePathVisibleInBrowser("nas", "Games/SNES", false, folders))
+        assertTrue(filePathVisibleInBrowser("nas", "Games/SNES/Mario.sfc", false, folders))
+        assertFalse(filePathVisibleInBrowser("nas", "Games/PSX", false, folders))
+        assertFalse(filePathVisibleInBrowser("nas", "Movies/movie.mkv", false, folders))
+    }
+
+    @Test fun mostSpecificAssignmentOverridesHiddenParentButNotHiddenChild() {
+        val folders = listOf(
+            GameLibraryFolder(id = "hidden", sourceId = "nas", path = "Games", alsoShowInFiles = false),
+            GameLibraryFolder(id = "visible", sourceId = "nas", path = "Games/SNES",
+                systemId = "snes", alsoShowInFiles = true),
+            GameLibraryFolder(id = "private", sourceId = "nas", path = "Games/SNES/Private",
+                systemId = "snes", alsoShowInFiles = false),
+        )
+        assertTrue(filePathVisibleInBrowser("nas", "Games", true, folders))
+        assertTrue(filePathVisibleInBrowser("nas", "Games/SNES/Metroid.sfc", true, folders))
+        assertFalse(filePathVisibleInBrowser("nas", "Games/SNES/Private/secrets.sfc", true, folders))
+        assertFalse(filePathVisibleInBrowser("nas", "Games/PSX", true, folders))
+        assertFalse(isGamesOnlyFilePath("nas", "Games/SNES/Metroid.sfc", folders))
+    }
+
+    @Test fun sameFolderAssignedToTwoCoresUsesExplicitFilesOptIn() {
+        val folders = listOf(
+            GameLibraryFolder(id = "first", sourceId = "nas", path = "Games",
+                systemId = "snes", alsoShowInFiles = false),
+            GameLibraryFolder(id = "second", sourceId = "nas", path = "Games",
+                systemId = "nes", alsoShowInFiles = true),
+        )
+        assertTrue(filePathVisibleInBrowser("nas", "Games/Game.sfc", false, folders))
+    }
+
     @Test fun localDocumentIdsCanHideAnAssignedDirectoryEntry() {
         val target = "primary:Media/Games/SNES"
         val local = GameLibraryFolder(id = "local", sourceId = "local-saf",

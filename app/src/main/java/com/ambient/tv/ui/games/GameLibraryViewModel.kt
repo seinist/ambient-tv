@@ -117,7 +117,6 @@ class GameLibraryViewModel @Inject constructor(
         }
     }
     fun favorite(game: LibraryGame) = library.setFavorite(game.fileId, !game.favorite)
-    fun played(game: LibraryGame) = library.recordPlayed(game.fileId)
 
     /** Only when selecting a game: probe a manually-wakeable NAS before opening Libretro. */
     fun requestPlay(game: LibraryGame, start: () -> Unit) {
@@ -127,7 +126,6 @@ class GameLibraryViewModel @Inject constructor(
                 if (library.needsWakeForLaunch(game.sourceId)) {
                     mutable.update { it.copy(pendingWakeGame = game) }
                 } else {
-                    played(game)
                     start()
                 }
             } catch (cancelled: CancellationException) { throw cancelled }
@@ -142,7 +140,6 @@ class GameLibraryViewModel @Inject constructor(
             try {
                 if (library.wakeSource(game.sourceId)) {
                     mutable.update { it.copy(pendingWakeGame = null) }
-                    played(game)
                     start(game)
                 }
             } catch (cancelled: CancellationException) { throw cancelled }

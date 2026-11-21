@@ -70,11 +70,12 @@ import java.util.Locale
 fun GameLibraryScreen(
     initialSection: String,
     onPlay: (LibraryGame) -> Unit,
+    startManaging: Boolean = false,
     onBack: () -> Unit,
     model: GameLibraryViewModel = hiltViewModel(),
 ) {
     val state by model.state.collectAsState()
-    var managing by rememberSaveable { mutableStateOf(false) }
+    var managing by rememberSaveable(startManaging) { mutableStateOf(startManaging) }
     var choosingSystem by rememberSaveable { mutableStateOf(false) }
     var networkEditor by remember { mutableStateOf<FileSource?>(null) }
     var renaming by remember { mutableStateOf<LibraryGame?>(null) }
@@ -100,7 +101,7 @@ fun GameLibraryScreen(
             choosingDatSystem -> choosingDatSystem = false
             choosingSystem -> choosingSystem = false
             state.selectedSource != null -> if (!model.folderUp()) model.closePicker()
-            managing -> managing = false
+            managing -> if (startManaging) onBack() else managing = false
             else -> onBack()
         }
     }

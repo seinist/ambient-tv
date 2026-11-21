@@ -112,7 +112,7 @@ class SidebarViewModel @Inject constructor(
             trailersConfigured = appPreferences.trailersEnabled && !tokens.tmdbApiKey.isNullOrBlank(),
             systemOrder = appPreferences.sidebarSystemOrder,
             filesEnabled = appPreferences.filesEnabled,
-            gamesAvailable = fileStore.sources().isNotEmpty() || gameLibrary.folders().isNotEmpty(),
+            gamesAvailable = gameLibrary.hasConfiguredFolders(),
             gameSystemIds = librarySystemIds(),
             networkFileSources = networkFileSourcesFromStore(),
             dlnaServers = dlnaStore.servers(),
@@ -208,7 +208,7 @@ class SidebarViewModel @Inject constructor(
             if (appPreferences.radioEnabled) add("radio")
             if (com.ambient.tv.BuildConfig.MONOGRAM_NATIVE && appPreferences.telegramEnabled) add("telegram")
             if (appPreferences.filesEnabled) add("files")
-            if (fileStore.sources().isNotEmpty() || gameLibrary.folders().isNotEmpty()) add("games")
+            if (gameLibrary.hasConfiguredFolders()) add("games")
             if (dlnaStore.servers().isNotEmpty()) add("dlna")
         }
 
@@ -234,7 +234,7 @@ class SidebarViewModel @Inject constructor(
         viewModelScope.launch {
             gameLibrary.revisions.collect {
                 _uiState.update { state -> state.copy(
-                    gamesAvailable = fileStore.sources().isNotEmpty() || gameLibrary.folders().isNotEmpty(),
+                    gamesAvailable = gameLibrary.hasConfiguredFolders(),
                     gameSystemIds = librarySystemIds(),
                 ) }
             }
@@ -243,7 +243,7 @@ class SidebarViewModel @Inject constructor(
             fileStore.revision.collect {
                 _uiState.update { state -> state.copy(
                     networkFileSources = networkFileSourcesFromStore(),
-                    gamesAvailable = fileStore.sources().isNotEmpty() || gameLibrary.folders().isNotEmpty(),
+                    gamesAvailable = gameLibrary.hasConfiguredFolders(),
                     gameSystemIds = librarySystemIds(),
                 ) }
             }
@@ -297,7 +297,9 @@ class SidebarViewModel @Inject constructor(
     )
 
     private fun librarySystemIds(): List<String> =
-        (gameLibrary.folders().map { it.systemId }.filter { it != "auto" } +
+        (gameLibrary.folders().filter { folder ->
+            fileStore.sources().any { it.id == folder.sourceId }
+        }.map { it.systemId }.filter { it != "auto" } +
             gameLibrary.systemIds()).distinct().filter { com.ambient.tv.games.GameSystems.byId(it) != null }
 
     private fun networkFileSourcesFromStore(): List<FileSource> =
@@ -430,7 +432,7 @@ class SidebarViewModel @Inject constructor(
         _uiState.update {
             it.copy(
                 filesEnabled = appPreferences.filesEnabled,
-                gamesAvailable = fileStore.sources().isNotEmpty() || gameLibrary.folders().isNotEmpty(),
+                gamesAvailable = gameLibrary.hasConfiguredFolders(),
                 gameSystemIds = librarySystemIds(),
                 networkFileSources = networkFileSourcesFromStore(),
                 dlnaServers = dlnaStore.servers(),

@@ -2441,6 +2441,8 @@
     <string name="input_mapping_scope_device">Dieses angeschlossene Gerät</string>
 
     <string name="game_library_title">Spiele</string>
+    <string name="game_library_settings_entry">Spieleordner und Quellen verwalten</string>
+    <string name="game_library_settings_entry_hint">ROM-Ordner zuweisen oder entfernen. Das Games-Menü erscheint erst nach der Einrichtung.</string>
     <string name="game_library_manage">Spielebibliothek</string>
     <string name="game_library_count">%1$d Spiele</string>
     <string name="game_library_all">Alle Spiele</string>

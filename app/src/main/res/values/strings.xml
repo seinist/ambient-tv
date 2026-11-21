@@ -2442,6 +2442,8 @@
     <string name="input_mapping_scope_device">This connected device</string>
 
     <string name="game_library_title">Games</string>
+    <string name="game_library_settings_entry">Manage game folders and sources</string>
+    <string name="game_library_settings_entry_hint">Assign or remove ROM folders. The Games menu appears only after setup.</string>
     <string name="game_library_manage">Game library</string>
     <string name="game_library_count">%1$d games</string>
     <string name="game_library_all">All games</string>
