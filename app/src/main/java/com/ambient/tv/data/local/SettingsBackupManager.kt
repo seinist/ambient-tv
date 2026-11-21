@@ -26,6 +26,8 @@ data class SettingsBackup(
     val activeServerId: String? = null,
     val filesEnabled: Boolean = false,
     val fileSources: List<com.ambient.tv.data.files.FileSource> = emptyList(),
+    /** Null: backup predates the Games library; do not reset the receiver. */
+    val gameLibraryFolders: List<com.ambient.tv.games.library.GameLibraryFolder>? = null,
     val dlnaServers: List<com.ambient.tv.data.dlna.DlnaServer> = emptyList(),
     val smbPasswords: Map<String, String> = emptyMap(),
     /** SFTP private keys by source id; only in exports that include credentials. */
@@ -364,6 +366,7 @@ class SettingsBackupManager @Inject constructor(
             activeServerId = preferences.activeServerId,
             filesEnabled = preferences.filesEnabled,
             fileSources = fileSources,
+            gameLibraryFolders = preferences.gameLibraryFolders,
             dlnaServers = dlnaStore?.servers().orEmpty(),
             smbPasswords = smbPasswords,
             sshKeys = sshKeys,
@@ -663,6 +666,15 @@ class SettingsBackupManager @Inject constructor(
         validateAccountBackup(backup)
         backup.smartTubeAccounts?.let { smartTube?.validateAccounts(it) }
         backup.fileSources.filter { it.kind in com.ambient.tv.data.files.FileKinds.ALL }.forEach { it.validated() }
+        backup.gameLibraryFolders?.let { folders ->
+            require(folders.size <= 200 && folders.distinctBy { it.id }.size == folders.size)
+            folders.forEach { folder ->
+                require(folder.id.matches(Regex("[A-Za-z0-9-]{1,80}")))
+                require(folder.sourceId.matches(Regex("[A-Za-z0-9-]{1,80}")))
+                require(folder.path.length <= 4096 && folder.path.none { it.code < 32 })
+                require(folder.systemId == "auto" || com.ambient.tv.games.GameSystems.byId(folder.systemId) != null)
+            }
+        }
         backup.dlnaServers.forEach { it.validated() }
         backup.iptvSources?.let { sources ->
             require(sources.size <= com.ambient.tv.data.iptv.IptvStore.MAX_SOURCES && sources.distinctBy { it.id }.size == sources.size)
@@ -731,6 +743,12 @@ class SettingsBackupManager @Inject constructor(
             previous.keys.filterNot { it in keptIds }.forEach { tokenStore.setSmbPassword(it, null) }
             previous.keys.filterNot { it in keptKeyIds }.forEach { tokenStore.setSshKey(it, null) }
             preferences.fileSources = fileSources
+            // Restore folder links only to known sources; old backups do not clear them.
+            backup.gameLibraryFolders?.let { folders ->
+                preferences.gameLibraryFolders = folders.filter { folder ->
+                    fileSources.any { it.id == folder.sourceId }
+                }
+            }
             preferences.filesEnabled = backup.filesEnabled
             fileSources.filter { it.usesPassword }.forEach { source ->
                 backup.smbPasswords[source.id]?.let { tokenStore.setSmbPassword(source.id, it) }
@@ -1173,7 +1191,7 @@ class SettingsBackupManager @Inject constructor(
     }
 
     internal companion object {
-        const val CURRENT_SCHEMA_VERSION = 82
+        const val CURRENT_SCHEMA_VERSION = 83
         val PORTABLE_DISPLAY_MODES = setOf("system", AppPreferences.DISPLAY_MODE_AUTO_CONTENT, AppPreferences.DISPLAY_MODE_AUTO_DISPLAY)
     }
 }
