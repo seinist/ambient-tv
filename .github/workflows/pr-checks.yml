@@ -172,3 +172,35 @@ jobs:
           bash scripts/build_librashader_android.sh
           test -s "app/src/main/jniLibs/$LIBRASHADER_ABIS/liblibrashader_capi.so"
           file "app/src/main/jniLibs/$LIBRASHADER_ABIS/liblibrashader_capi.so"
+          so="app/src/main/jniLibs/$LIBRASHADER_ABIS/liblibrashader_capi.so"
+          raw=$(stat -c%s "$so")
+          compressed=$(gzip -9 -c "$so" | wc -c)
+          test "$raw" -le 12582912 || { echo "::error::Vulkan Slang exceeds 12 MiB per ABI"; exit 1; }
+          echo "Vulkan Slang $LIBRASHADER_ABIS: $raw raw ELF bytes, $compressed gzip bytes (APK ZIP may differ)" >> "$GITHUB_STEP_SUMMARY"
+
+  # Validate the actual pinned parser and C ABI, not just GLSL stage syntax.
+  slang-preset-api:
+    if: >-
+      github.event_name == 'pull_request' &&
+      (contains(github.event.pull_request.title, 'Games') ||
+       contains(github.event.pull_request.title, 'Libretro'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v5
+      - name: Compile pinned host-side Slang C ABI and parse every bundled preset
+        run: |
+          set -euo pipefail
+          pin="$(sed -n 's/^LIBRASHADER_COMMIT=//p' gradle/external-versions.properties)"
+          test "${#pin}" -eq 40
+          mkdir -p third_party/.librashader-host-src
+          git -C third_party/.librashader-host-src init -q
+          git -C third_party/.librashader-host-src remote add origin https://github.com/SnowflakePowered/librashader
+          git -C third_party/.librashader-host-src fetch -q --depth 1 origin "$pin"
+          git -C third_party/.librashader-host-src checkout -q FETCH_HEAD
+          test "$(git -C third_party/.librashader-host-src rev-parse HEAD)" = "$pin"
+          export CARGO_TARGET_DIR="$PWD/third_party/.librashader-host-target"
+          cargo build --manifest-path third_party/.librashader-host-src/Cargo.toml \
+            -p librashader-capi --release --locked --no-default-features --features runtime-vulkan
+          python3 scripts/test_librashader_preset_api.py \
+            third_party/.librashader-host-target/release/liblibrashader_capi.so
