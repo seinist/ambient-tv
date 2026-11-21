@@ -187,6 +187,7 @@ open class MainActivity : ComponentActivity() {
     @Inject lateinit var tokenStore: TokenStore
     @Inject lateinit var mediaRepository: MediaRepository
     @Inject lateinit var radioBrowserRepository: com.ambient.tv.data.radio.RadioBrowserRepository
+    @Inject lateinit var gameLibraryRepository: com.ambient.tv.games.library.GameLibraryRepository
     @Inject lateinit var telegramRepository: com.ambient.tv.data.telegram.TelegramRepository
     @Inject lateinit var radioPlaybackLauncher: com.ambient.tv.ui.radio.RadioPlaybackLauncher
     @Inject lateinit var radioPlaybackQueue: com.ambient.tv.ui.radio.RadioPlaybackQueue
@@ -1415,6 +1416,44 @@ private fun AmbientTvApp(
                             navController.navigate(Destinations.RADIO_PLAYER) { launchSingleTop = true }
                         }
                     }
+            }
+            return
+        }
+
+        // Game Home rows are local catalog entries. Playback uses the very same Libretro
+        // route as Games/Files. A manually-wakeable sleeping NAS first opens Games,
+        // where the normal shared WOL prompt is available on selection.
+        if (ratingKey.startsWith(com.ambient.tv.ui.home.GAME_HOME_ITEM_PREFIX)) {
+            if (mediaSelectionBusy) return
+            val payload = ratingKey.removePrefix(com.ambient.tv.ui.home.GAME_HOME_ITEM_PREFIX)
+            val fileId = android.net.Uri.decode(payload.substringBeforeLast('|', ""))
+            val system = payload.substringAfterLast('|', "")
+            if (fileId.isBlank() || com.ambient.tv.games.GameSystems.byId(system) == null) return
+            mediaSelectionBusy = true
+            val originEntry = navController.currentBackStackEntry?.id
+            mediaSelectionScope.launch {
+                try {
+                    val game = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                        gameLibraryRepository.games().firstOrNull { it.fileId == fileId }
+                    }
+                    if (navController.currentBackStackEntry?.id != originEntry) return@launch
+                    if (game == null) {
+                        navigateTopLevel(Destinations.GAME_LIBRARY)
+                        return@launch
+                    }
+                    val needsWake = runCatching {
+                        gameLibraryRepository.needsWakeForLaunch(game.sourceId)
+                    }.getOrDefault(true)
+                    if (navController.currentBackStackEntry?.id != originEntry) return@launch
+                    if (needsWake) {
+                        navigateToSection(Destinations.gameLibrarySection(game.systemId))
+                    } else {
+                        gameLibraryRepository.recordPlayed(game.fileId)
+                        playOnSelectedTarget(Destinations.gamePlayer(game.fileId, game.systemId))
+                    }
+                } finally {
+                    mediaSelectionBusy = false
+                }
             }
             return
         }
