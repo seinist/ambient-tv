@@ -127,8 +127,31 @@ data class RetroInputOverlay(
     val buttons: Map<RetroPadButton, List<Int>> = emptyMap(),
     val menu: Map<RetroMenuTrigger, List<Int>> = emptyMap(),
 ) {
-    fun resolve(parent: RetroInputProfile): RetroInputProfile =
-        RetroInputProfile(parent.buttons + buttons, parent.menu + menu).full()
+    fun resolve(parent: RetroInputProfile): RetroInputProfile {
+        val resultButtons = parent.buttons.toMutableMap()
+        val resultMenu = parent.menu.toMutableMap()
+        // Newer layer always wins if the inherited profile later reuses the same physical key.
+        // Explicitly empty lists remain valid overrides (unassigned).
+        buttons.forEach { (button, codes) ->
+            resultButtons.keys.forEach { target ->
+                if (target != button) resultButtons[target] = resultButtons[target].orEmpty() - codes.toSet()
+            }
+            resultMenu.keys.forEach { target ->
+                resultMenu[target] = resultMenu[target].orEmpty() - codes.toSet()
+            }
+            resultButtons[button] = codes
+        }
+        menu.forEach { (trigger, codes) ->
+            resultButtons.keys.forEach { target ->
+                resultButtons[target] = resultButtons[target].orEmpty() - codes.toSet()
+            }
+            resultMenu.keys.forEach { target ->
+                if (target != trigger) resultMenu[target] = resultMenu[target].orEmpty() - codes.toSet()
+            }
+            resultMenu[trigger] = codes
+        }
+        return RetroInputProfile(resultButtons, resultMenu).full()
+    }
 
     fun isEmpty(): Boolean = buttons.isEmpty() && menu.isEmpty()
 
