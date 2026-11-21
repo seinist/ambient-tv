@@ -65,6 +65,9 @@ class RetroPadInput(
     private val remoteAnalog = IntArray(RetroPorts.COUNT * 4)
     /** Each paired handset keeps its own persistent device descriptor and inherited profile. */
     private val remoteDescriptors = arrayOfNulls<String>(RetroPorts.COUNT)
+    /** Profiles are immutable until the settings reference changes: no rebuild on every 60Hz frame. */
+    private val remoteProfileSettings = arrayOfNulls<RetroInputConfig>(RetroPorts.COUNT)
+    private val remoteProfiles = arrayOfNulls<RetroInputProfile>(RetroPorts.COUNT)
     private val remoteRawButtons = IntArray(RetroPorts.COUNT)
     private val remoteRewindHeld = BooleanArray(RetroPorts.COUNT)
     private val remoteMenuCombo = BooleanArray(RetroPorts.COUNT)
@@ -111,6 +114,8 @@ class RetroPadInput(
         if (!reserved) remoteState(port, 0, 0f, 0f, 0f, 0f)
         remoteReserved[port] = reserved
         remoteDescriptors[port] = if (reserved) descriptor else null
+        remoteProfileSettings[port] = null
+        remoteProfiles[port] = null
         if (!reserved) {
             remoteRawButtons[port] = 0
             remotePulseButtons[port] = 0
@@ -126,16 +131,24 @@ class RetroPadInput(
         recomputeAll()
     }
 
+    private fun companionProfile(port: Int): RetroInputProfile? {
+        val descriptor = remoteDescriptors[port] ?: return null
+        val settings = config()
+        if (remoteProfiles[port] == null || remoteProfileSettings[port] !== settings) {
+            remoteProfiles[port] = profileContext?.let { context ->
+                settings.profile(RetroInputKind.COMPANION, context, deviceDescriptor = descriptor)
+            } ?: settings.deviceProfile(RetroInputKind.COMPANION, descriptor)
+            remoteProfileSettings[port] = settings
+        }
+        return remoteProfiles[port]
+    }
+
     /** Complete phone state, rather than synthetic clicks: holds, diagonals and analog axes survive. */
     fun remoteState(port: Int, buttons: Int, leftX: Float, leftY: Float, rightX: Float, rightY: Float) {
         if (port !in 0 until RetroPorts.COUNT || !remoteReserved[port]) return
         val at = port * 4
         val sourceButtons = buttons and 0xffff
-        val descriptor = remoteDescriptors[port]
-        val profile = descriptor?.let {
-            profileContext?.let { context -> config().profile(RetroInputKind.COMPANION, context, deviceDescriptor = it) }
-                ?: config().deviceProfile(RetroInputKind.COMPANION, it)
-        }
+        val profile = companionProfile(port)
         val previousRaw = remoteRawButtons[port]
         if (profile != null && previousRaw != sourceButtons) {
             for (source in RetroPadButton.entries) {
