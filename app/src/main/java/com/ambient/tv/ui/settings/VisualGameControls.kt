@@ -59,6 +59,7 @@ internal fun VisualGameControls() {
     var systemId by rememberSaveable { mutableStateOf(GameSystems.all.first().id) }
     var coreId by rememberSaveable { mutableStateOf(GameSystems.all.first().core.id) }
     var scopeKey by rememberSaveable { mutableStateOf("default") }
+    var consoleVariant by rememberSaveable { mutableStateOf("") }
     var targetKey by rememberSaveable { mutableStateOf("b") }
     var physicalKey by rememberSaveable { mutableStateOf<String?>(null) }
     var menuTarget by remember { mutableStateOf<RetroMenuTrigger?>(null) }
@@ -77,7 +78,9 @@ internal fun VisualGameControls() {
     val device = devices.firstOrNull { it.kind == kind }
     val labels = GamepadLabels.forVendor(device?.let { InputDevice.getDevice(it.id)?.vendorId })
     val physicalArt = attachedArtwork(kindKey, labels)
-    val consoleArt = consoleArtwork(system.id)
+    val variants = consoleArtworkVariants(system.id)
+    val effectiveVariant = variants.firstOrNull { it.first == consoleVariant }?.first ?: variants.firstOrNull()?.first.orEmpty()
+    val consoleArt = consoleArtwork(system.id, effectiveVariant)
 
     fun assign(code: Int) {
         if (code in systemOwnedKeys || code <= KeyEvent.KEYCODE_UNKNOWN) return
@@ -123,7 +126,7 @@ internal fun VisualGameControls() {
                 SettingsSelectOption(option.name, option.id == system.id,
                     onClick = {
                         listening = false; systemId = option.id; coreId = option.core.id
-                        scopeKey = "default"; menuTarget = null
+                        scopeKey = "default"; menuTarget = null; consoleVariant = ""
                     })
             },
         )
@@ -132,6 +135,14 @@ internal fun VisualGameControls() {
             options = system.cores.map { option ->
                 SettingsSelectOption(option.name, option.id == core.id,
                     onClick = { listening = false; coreId = option.id; scopeKey = "default" })
+            },
+        )
+        if (variants.size > 1) SettingsSelect(
+            label = stringResource(R.string.input_mapping_visual_variant),
+            description = stringResource(R.string.input_mapping_visual_variant_hint),
+            options = variants.map { (id, title) ->
+                SettingsSelectOption(title, id == effectiveVariant,
+                    onClick = { listening = false; consoleVariant = id })
             },
         )
         val choices: List<Pair<RetroInputLayerScope?, Int>> = listOf(
@@ -181,6 +192,16 @@ internal fun VisualGameControls() {
             }
         }
         SettingsHint(stringResource(R.string.input_mapping_keep_core_default))
+        SettingsSelect(
+            label = stringResource(R.string.input_mapping_retropad_target),
+            options = RetroPadButton.entries.map { button ->
+                SettingsSelectOption(
+                    stringResource(button.titleRes),
+                    selected = menuTarget == null && button.key == targetKey,
+                    onClick = { menuTarget = null; targetKey = button.key; listening = false },
+                )
+            },
+        )
         SettingsSelect(
             label = stringResource(R.string.game_controls_menu),
             options = (listOf<RetroMenuTrigger?>(null) + RetroMenuTrigger.entries).map { option ->
