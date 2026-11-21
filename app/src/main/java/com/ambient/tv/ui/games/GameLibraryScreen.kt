@@ -380,7 +380,8 @@ private fun GameFolderManager(
                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     TvActionButton(entry.name + " · " + entry.kind.uppercase() +
-                        (if (entry.showInFiles) " · Dateien + Spiele" else " · Nur Spiele"),
+                        (if (entry.showInFiles) " · " + stringResource(R.string.game_library_source_files_games)
+                        else " · " + stringResource(R.string.game_library_source_games_only)),
                         onClick = { onSelectSource(entry) }, icon = Icons.Filled.Folder,
                         modifier = Modifier.weight(1f))
                     if (!entry.showInFiles && state.folders.none { it.sourceId == entry.id }) {
