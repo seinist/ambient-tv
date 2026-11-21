@@ -9,7 +9,7 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 
 @RunWith(RobolectricTestRunner::class)
-@Config(sdk = [28])
+@Config(sdk = [35])
 class GameRomDatReaderTest {
     @Test fun noIntroAndRedumpXmlExtractOnlyValidatedNamesAndCrcs() {
         val data = """
