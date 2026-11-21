@@ -116,8 +116,7 @@ fun GameLibraryScreen(
         if (uri != null) model.addLocalSource(uri)
     }
     val goPlay: (LibraryGame) -> Unit = { game ->
-        model.played(game)
-        onPlay(game)
+        model.requestPlay(game) { onPlay(game) }
     }
     Column(
         Modifier.fillMaxSize().padding(horizontal = 26.dp, vertical = 14.dp),
@@ -168,6 +167,19 @@ fun GameLibraryScreen(
             state.error?.let { error ->
                 Text(error, color = MaterialTheme.colorScheme.error,
                     style = MaterialTheme.typography.bodySmall)
+            }
+            state.pendingWakeGame?.let { pending ->
+                Row(verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text(stringResource(R.string.game_library_offline_wake,
+                        sourcesById[pending.sourceId]?.name ?: pending.sourceId),
+                        style = MaterialTheme.typography.bodySmall,
+                        modifier = Modifier.weight(1f))
+                    TvActionButton(stringResource(R.string.game_library_wake),
+                        onClick = { model.wakeAndPlay(onPlay) }, icon = Icons.Filled.PowerSettingsNew)
+                    TvActionButton(stringResource(R.string.game_library_back),
+                        onClick = model::dismissWakeOffer)
+                }
             }
             if (state.folders.isEmpty()) {
                 Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
