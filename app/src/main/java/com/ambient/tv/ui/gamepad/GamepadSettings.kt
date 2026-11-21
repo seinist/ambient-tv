@@ -60,24 +60,42 @@ data class GamepadConfig(
     val repeat: GamepadRepeatSpeed = GamepadRepeatSpeed.NORMAL,
     /** Only what the user changed; everything else comes from [gamepadDefault]. */
     val overrides: Map<GamepadContext, Map<GamepadSlot, GamepadCommand>> = emptyMap(),
+    /** Optional physical-controller overrides, inherited from the global mapping. */
+    val deviceOverrides: Map<String, Map<GamepadContext, Map<GamepadSlot, GamepadCommand>>> = emptyMap(),
 ) {
     /** The setting shown for [slot] in [context]: the player layer may show [GamepadCommand.Inherit]. */
-    fun configured(context: GamepadContext, slot: GamepadSlot): GamepadCommand =
-        overrides[context]?.get(slot) ?: gamepadDefault(context, slot, confirmOnB)
+    fun configured(context: GamepadContext, slot: GamepadSlot, deviceDescriptor: String? = null): GamepadCommand =
+        deviceDescriptor?.let { deviceOverrides[it]?.get(context)?.get(slot) }
+            ?: overrides[context]?.get(slot) ?: gamepadDefault(context, slot, confirmOnB)
 
     /** What a press does right now; never [GamepadCommand.Inherit]. */
-    fun resolve(button: GamepadButton, long: Boolean, player: Boolean): GamepadCommand {
+    fun resolve(button: GamepadButton, long: Boolean, player: Boolean,
+                deviceDescriptor: String? = null): GamepadCommand {
         val slot = GamepadSlot(button, long)
         if (player) {
-            val own = configured(GamepadContext.PLAYER, slot)
+            val own = configured(GamepadContext.PLAYER, slot, deviceDescriptor)
             if (own != GamepadCommand.Inherit) return own
         }
-        return configured(GamepadContext.MENUS, slot).takeUnless { it == GamepadCommand.Inherit } ?: GamepadCommand.None
+        return configured(GamepadContext.MENUS, slot, deviceDescriptor)
+            .takeUnless { it == GamepadCommand.Inherit } ?: GamepadCommand.None
     }
 
     /** True when holding [button] does something different from a short press. */
     fun hasLongPress(button: GamepadButton, player: Boolean): Boolean =
         resolve(button, long = true, player = player) != GamepadCommand.None
+
+    /** A controller-specific choice affects no other connected controller. */
+    fun withDeviceCommand(descriptor: String, context: GamepadContext, slot: GamepadSlot,
+                          command: GamepadCommand): GamepadConfig {
+        if (descriptor.isBlank()) return this
+        val current = deviceOverrides[descriptor].orEmpty()
+        val layer = current[context].orEmpty()
+        val updated = if (command == configured(context, slot)) layer - slot else layer + (slot to command)
+        val contexts = if (updated.isEmpty()) current - context else current + (context to updated)
+        val devices = if (contexts.isEmpty()) deviceOverrides - descriptor
+            else deviceOverrides + (descriptor to contexts)
+        return copy(deviceOverrides = devices)
+    }
 
     fun withCommand(context: GamepadContext, slot: GamepadSlot, command: GamepadCommand): GamepadConfig {
         val layer = overrides[context].orEmpty()
@@ -104,6 +122,13 @@ data class GamepadConfig(
         put("repeat", repeat.key)
         overrides.forEach { (context, layer) ->
             layer.forEach { (slot, command) -> put(slot.storageKey(context), command.storageKey) }
+        }
+        deviceOverrides.forEach { (descriptor, contexts) ->
+            val id = java.util.Base64.getUrlEncoder().withoutPadding()
+                .encodeToString(descriptor.toByteArray(Charsets.UTF_8))
+            contexts.forEach { (context, layer) ->
+                layer.forEach { (slot, command) -> put("device.$id.${slot.storageKey(context)}", command.storageKey) }
+            }
         }
     }
 
@@ -132,7 +157,21 @@ data class GamepadConfig(
                     }
                 }
             }.filterValues { it.isNotEmpty() }
-            return base.copy(overrides = overrides)
+            val devices = mutableMapOf<String, MutableMap<GamepadContext, MutableMap<GamepadSlot, GamepadCommand>>>()
+            stored.filterKeys { it.startsWith("device.") }.forEach { (key, value) ->
+                val parts = key.removePrefix("device.").split('.')
+                if (parts.size !in 3..4 || (parts.size == 4 && parts[3] != "long")) return@forEach
+                val descriptor = runCatching {
+                    String(java.util.Base64.getUrlDecoder().decode(parts[0]), Charsets.UTF_8)
+                }.getOrNull()?.takeIf { it.isNotBlank() && it.length <= 1024 } ?: return@forEach
+                val context = GamepadContext.entries.firstOrNull { it.key == parts[1] } ?: return@forEach
+                val button = GamepadButton.fromKey(parts[2]) ?: return@forEach
+                val command = GamepadCommand.decode(value) ?: return@forEach
+                if (context == GamepadContext.MENUS && command == GamepadCommand.Inherit) return@forEach
+                devices.getOrPut(descriptor) { mutableMapOf() }
+                    .getOrPut(context) { mutableMapOf() }[GamepadSlot(button, parts.size == 4)] = command
+            }
+            return base.copy(overrides = overrides, deviceOverrides = devices.mapValues { (_, v) -> v.toMap() })
         }
     }
 }
@@ -253,10 +292,14 @@ object GamepadInput {
         persist(value.encode())
     }
 
-    fun setCommand(context: GamepadContext, slot: GamepadSlot, command: GamepadCommand) =
-        update { it.withCommand(context, slot, command) }
+    fun setCommand(context: GamepadContext, slot: GamepadSlot, command: GamepadCommand,
+                   descriptor: String? = null) =
+        update {
+            if (descriptor == null) it.withCommand(context, slot, command)
+            else it.withDeviceCommand(descriptor, context, slot, command)
+        }
 
-    fun resetMappings() = update { it.copy(overrides = emptyMap()) }
+    fun resetMappings() = update { it.copy(overrides = emptyMap(), deviceOverrides = emptyMap()) }
 
     fun importLegacy(moved: Map<GamepadContext, Map<GamepadSlot, GamepadCommand>>) {
         if (moved.isNotEmpty()) update { it.withLegacy(moved) }

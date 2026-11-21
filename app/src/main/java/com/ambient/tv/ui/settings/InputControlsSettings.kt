@@ -42,9 +42,11 @@ private fun InputControlsPage(scope: KeyBindingScope) {
     var kind by rememberSaveable(scope) { mutableStateOf("controller") }
     var selectedKey by rememberSaveable(kind, scope) { mutableStateOf("a") }
     var long by rememberSaveable(kind, scope) { mutableStateOf(false) }
+    var controllerDescriptor by rememberSaveable(scope) { mutableStateOf("") }
     val controllerContext = if (scope == KeyBindingScope.GLOBAL) GamepadContext.MENUS else GamepadContext.PLAYER
     val controllers = rememberConnectedControllers()
-    val labels = GamepadLabels.forVendor(controllers.firstOrNull()?.vendorId)
+    val selectedController = controllers.firstOrNull { it.descriptor == controllerDescriptor }
+    val labels = GamepadLabels.forVendor((selectedController ?: controllers.firstOrNull())?.vendorId)
     val artwork = attachedArtwork(kind, labels)
     val tokens = LocalUiTokens.current
 
@@ -63,9 +65,20 @@ private fun InputControlsPage(scope: KeyBindingScope) {
                 )
             }
         }
+        if (kind == "controller" && controllers.isNotEmpty()) {
+            SettingsSelect(
+                label = stringResource(R.string.input_mapping_device),
+                options = (listOf("" to stringResource(R.string.input_mapping_all_controllers)) +
+                    controllers.map { it.descriptor to it.name }).map { (id, title) ->
+                    SettingsSelectOption(text = title,
+                        selected = if (id.isEmpty()) selectedController == null else selectedController?.descriptor == id,
+                        onClick = { controllerDescriptor = id })
+                },
+            )
+        }
         SettingsSubheader(
             stringResource(R.string.input_mapping_attached_preview, when (kind) {
-                "controller" -> controllers.firstOrNull()?.name ?: artwork.title
+                "controller" -> (selectedController ?: controllers.firstOrNull())?.name ?: artwork.title
                 else -> artwork.title
             })
         )
@@ -94,13 +107,13 @@ private fun InputControlsPage(scope: KeyBindingScope) {
             } else {
                 SettingsHint(stringResource(R.string.input_mapping_key_selected, labels.label(selected)))
                 // Only the selected button is shown; no 4 long unfolded lists.
-                ControllerMapping(controllerContext, long, selected)
+                ControllerMapping(controllerContext, long, selected, selectedController?.descriptor)
             }
             if (scope == KeyBindingScope.GLOBAL) {
                 ControllerStatus()
                 ControllerGeneral()
             }
-            ControllerReset(controllerContext)
+            ControllerReset(controllerContext, selectedController?.descriptor)
         } else {
             RemoteKeyboardMapping(scope, kind, selectedKey, long)
             // The original press-to-learn rows are still available for unfamiliar buttons.
