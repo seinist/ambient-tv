@@ -63,6 +63,18 @@ class CompanionLiveInputQueueTest {
         q.close()
     }
 
+    @Test fun claimRunsBeforeFirstPadPacketEvenWhenMediaStatusIsQueued() {
+        val q = CompanionLiveInputQueue()
+        val normal = Channel<CompanionFrame>(2)
+        normal.trySend(CompanionFrame(type = "status"))
+        assertTrue(q.offerGamepad(CompanionFrame(type = "gamepad_claim"), critical = true))
+        assertTrue(q.offerGamepad(pad(1), critical = true))
+        assertEquals("gamepad_claim", q.poll(normal)!!.type)
+        assertEquals(1, q.poll(normal)!!.gamepadState!!.buttons)
+        assertEquals("status", q.poll(normal)!!.type)
+        q.close()
+    }
+
     @Test fun criticalMouseClickPreservesPendingRelativeMovement() {
         val q = CompanionLiveInputQueue()
         val normal = Channel<CompanionFrame>(4)
