@@ -38,6 +38,27 @@ jobs:
       matrix: ${{ steps.plan.outputs.matrix }}
     steps:
       - uses: actions/checkout@v5
+      # Check the secret BEFORE spending 104 core-build jobs on a release that cannot
+      # be signed. Never generate a new key or publish unsigned native libraries.
+      - name: Check core-release signing key
+        if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.publish)
+        env:
+          SIGNING_KEY: ${{ secrets.CORES_SIGNING_KEY }}
+        run: |
+          set -euo pipefail
+          [ -n "$SIGNING_KEY" ] || {
+            echo "::error::CORES_SIGNING_KEY is missing. Add the existing private PEM matching cores/signing-public.pem to Actions secrets."
+            exit 1
+          }
+          key="$RUNNER_TEMP/ambient-cores-key.pem"
+          pub="$RUNNER_TEMP/ambient-cores-public.pem"
+          trap 'rm -f "$key" "$pub"' EXIT
+          printf '%s\\n' "$SIGNING_KEY" > "$key"
+          openssl pkey -in "$key" -pubout -out "$pub"
+          cmp -s "$pub" cores/signing-public.pem || {
+            echo "::error::CORES_SIGNING_KEY does not match the committed public key"
+            exit 1
+          }
       - id: plan
         env:
           ONLY: ${{ inputs.cores }}
