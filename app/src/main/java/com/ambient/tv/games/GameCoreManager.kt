@@ -141,6 +141,9 @@ class GameCoreManager @Inject constructor(
                 "No signed ${core.id} build for $abi. Confirm the unsigned buildbot source explicitly."
             )
         }
+        if (source == GameCoreSource.AMBIENT) {
+            throw GameCoreIncompatibleException("Signed Ambient TV core channel unavailable")
+        }
         if (source == GameCoreSource.AUTO) {
             throw GameCoreBuildbotConsentRequired(
                 "No signed core channel configured. Confirm the unsigned buildbot source explicitly."
