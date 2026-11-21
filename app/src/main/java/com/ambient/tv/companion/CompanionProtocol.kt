@@ -368,7 +368,9 @@ internal fun coalesceCompanionInput(first: CompanionFrame, next: CompanionFrame)
             if (dx !in -1f..1f || dy !in -1f..1f) return null
             pb.copy(dx = dx, dy = dy)
         } else pb
-        return next.copy(gamepadState = b.copy(pointer = pointer))
+        return next.copy(gamepadState = b.copy(pointer = pointer),
+            // Report backlog age from the oldest merged event, not the newest sample.
+            gamepadQueuedAtMs = first.gamepadQueuedAtMs.takeIf { it > 0L } ?: next.gamepadQueuedAtMs)
     }
     val a = first.input ?: return null
     val b = next.input ?: return null
