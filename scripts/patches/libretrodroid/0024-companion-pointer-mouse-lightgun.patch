@@ -1,0 +1,236 @@
+Ambient TV: native companion touchscreen, relative mouse and lightgun (GPL-3.0).
+
+diff --git a/src/main/cpp/input.h b/src/main/cpp/input.h
+--- a/src/main/cpp/input.h
++++ b/src/main/cpp/input.h
+@@ -29,7 +29,8 @@
+ 
+ private:
+     mutable std::mutex inputMutex;
+-    struct GamePadState {
++    struct PointerContact { float x = 0.5f; float y = 0.5f; bool pressed = false; };
++    struct GamePadState {
+         std::unordered_set<int> pressedKeys;
+         std::unordered_set<int> pendingReleases;
+ 
+@@ -44,7 +45,15 @@
+         float joypadRightYAxis = 0;
+         float pointerScreenXAxis = 0.5f;
+         float pointerScreenYAxis = 0.5f;
+-        bool pointerPressed = false;
++        bool pointerPressed = false;
++        std::array<PointerContact, 3> extraPointers {};
++        int mouseDX = 0;
++        int mouseDY = 0;
++        unsigned mouseButtons = 0;
++        float gunX = 0.5f;
++        float gunY = 0.5f;
++        unsigned gunButtons = 0;
++        bool gunOffscreen = false;
+     };
+ 
+ public:
+@@ -59,7 +68,9 @@
+     static constexpr int RETRO_DEVICE_ID_JOYPAD_DOWN_LEFT = 52;
+     static constexpr int RETRO_DEVICE_ID_JOYPAD_DOWN_RIGHT = 53;
+ 
+-    int16_t getInputState(unsigned port, unsigned device, unsigned index, unsigned id);
++    int16_t getInputState(unsigned port, unsigned device, unsigned index, unsigned id);
++    void onCompanionPointer(unsigned port, unsigned kind, unsigned index,
++                            float x, float y, unsigned flags);
+     void flushPendingReleases();
+ 
+     void onKeyEvent(unsigned int port, int action, int keyCode);
+diff --git a/src/main/cpp/input.cpp b/src/main/cpp/input.cpp
+--- a/src/main/cpp/input.cpp
++++ b/src/main/cpp/input.cpp
+@@ -18,7 +18,8 @@
+ #include "input.h"
+ #include "log.h"
+ 
+-#include <cmath>
++#include <cmath>
++#include <algorithm>
+ 
+ #include <android/input.h>
+ #include <android/keycodes.h>
+@@ -70,26 +71,52 @@
+             }
+         }
+ 
+-        case RETRO_DEVICE_POINTER: {
+-            // TODO: handle multitouch
+-            if (index > 0) {
+-                return 0;
+-            }
+-
+-            switch (id) {
+-                case RETRO_DEVICE_ID_POINTER_PRESSED:
+-                    return (int16_t) (pads[port].pointerPressed ? 1 : 0);
+-
+-                case RETRO_DEVICE_ID_POINTER_X:
+-                    return (int16_t) (2.0 * (pads[port].pointerScreenXAxis - 0.5f) * MAX_RANGE_MOTION);
+-
+-                case RETRO_DEVICE_ID_POINTER_Y:
+-                    return (int16_t) (2.0 * (pads[port].pointerScreenYAxis - 0.5f) * MAX_RANGE_MOTION);
+-
+-                default:
+-                    return 0;
+-            }
+-        }
++        case RETRO_DEVICE_POINTER: {
++            if (index >= 4) return 0;
++            const auto& pad = pads[port];
++            if (id == RETRO_DEVICE_ID_POINTER_COUNT) {
++                unsigned count = pad.pointerPressed ? 1 : 0;
++                for (const auto& contact : pad.extraPointers) if (contact.pressed) ++count;
++                return static_cast<int16_t>(count);
++            }
++            const bool pressed = index == 0 ? pad.pointerPressed : pad.extraPointers[index - 1].pressed;
++            const float x = index == 0 ? pad.pointerScreenXAxis : pad.extraPointers[index - 1].x;
++            const float y = index == 0 ? pad.pointerScreenYAxis : pad.extraPointers[index - 1].y;
++            switch (id) {
++                case RETRO_DEVICE_ID_POINTER_PRESSED: return pressed ? 1 : 0;
++                case RETRO_DEVICE_ID_POINTER_X:
++                    return static_cast<int16_t>((2.f * x - 1.f) * MAX_RANGE_MOTION);
++                case RETRO_DEVICE_ID_POINTER_Y:
++                    return static_cast<int16_t>((2.f * y - 1.f) * MAX_RANGE_MOTION);
++                default: return 0;
++            }
++        }
++        case RETRO_DEVICE_MOUSE: {
++            auto& pad = pads[port];
++            switch (id) {
++                case RETRO_DEVICE_ID_MOUSE_X: { const int16_t v = static_cast<int16_t>(pad.mouseDX); pad.mouseDX = 0; return v; }
++                case RETRO_DEVICE_ID_MOUSE_Y: { const int16_t v = static_cast<int16_t>(pad.mouseDY); pad.mouseDY = 0; return v; }
++                case RETRO_DEVICE_ID_MOUSE_LEFT: return (pad.mouseButtons & 1u) != 0;
++                case RETRO_DEVICE_ID_MOUSE_RIGHT: return (pad.mouseButtons & 2u) != 0;
++                case RETRO_DEVICE_ID_MOUSE_MIDDLE: return (pad.mouseButtons & 4u) != 0;
++                default: return 0;
++            }
++        }
++        case RETRO_DEVICE_LIGHTGUN: {
++            const auto& pad = pads[port];
++            switch (id) {
++                case RETRO_DEVICE_ID_LIGHTGUN_SCREEN_X:
++                    return pad.gunOffscreen ? -0x8000 : static_cast<int16_t>((2.f * pad.gunX - 1.f) * MAX_RANGE_MOTION);
++                case RETRO_DEVICE_ID_LIGHTGUN_SCREEN_Y:
++                    return pad.gunOffscreen ? -0x8000 : static_cast<int16_t>((2.f * pad.gunY - 1.f) * MAX_RANGE_MOTION);
++                case RETRO_DEVICE_ID_LIGHTGUN_IS_OFFSCREEN: return pad.gunOffscreen ? 1 : 0;
++                case RETRO_DEVICE_ID_LIGHTGUN_TRIGGER: return (pad.gunButtons & 1u) != 0;
++                case RETRO_DEVICE_ID_LIGHTGUN_RELOAD: return (pad.gunButtons & 2u) != 0;
++                case RETRO_DEVICE_ID_LIGHTGUN_AUX_A: return (pad.gunButtons & 4u) != 0;
++                case RETRO_DEVICE_ID_LIGHTGUN_AUX_B: return (pad.gunButtons & 8u) != 0;
++                default: return 0;
++            }
++        }
+ 
+         default:
+             return 0;
+@@ -306,7 +333,39 @@
+     }
+ }
+ 
+-template<typename... T>
++void Input::onCompanionPointer(unsigned port, unsigned kind, unsigned index,
++                               float x, float y, unsigned flags) {
++    if (port >= 4 || kind > 2 || index >= 4 || !std::isfinite(x) || !std::isfinite(y)) return;
++    std::lock_guard<std::mutex> lock(inputMutex);
++    auto& pad = netplayActive ? captured[port] : pads[port];
++    if (kind == 0) {
++        if (index == 0) {
++            pad.pointerPressed = (flags & 1u) != 0;
++            if (pad.pointerPressed) {
++                pad.pointerScreenXAxis = std::clamp(x, 0.f, 1.f);
++                pad.pointerScreenYAxis = std::clamp(y, 0.f, 1.f);
++            }
++        } else {
++            auto& contact = pad.extraPointers[index - 1];
++            contact.pressed = (flags & 1u) != 0;
++            if (contact.pressed) {
++                contact.x = std::clamp(x, 0.f, 1.f);
++                contact.y = std::clamp(y, 0.f, 1.f);
++            }
++        }
++    } else if (kind == 1) {
++        // Relative movement: virtual trackpad deltas are in -1..1 of its width/height.
++        pad.mouseDX = std::clamp(pad.mouseDX + static_cast<int>(std::lround(x * 640.f)), -32767, 32767);
++        pad.mouseDY = std::clamp(pad.mouseDY + static_cast<int>(std::lround(y * 480.f)), -32767, 32767);
++        pad.mouseButtons = flags & 7u;
++    } else {
++        pad.gunOffscreen = x < 0.f || y < 0.f;
++        if (!pad.gunOffscreen) { pad.gunX = std::clamp(x, 0.f, 1.f); pad.gunY = std::clamp(y, 0.f, 1.f); }
++        pad.gunButtons = flags & 15u;
++    }
++}
++
++template<typename... T>
+ bool Input::anyPressed(unsigned int port, unsigned int id, T &... args) const {
+     return anyPressed(port, id) || anyPressed(port, args...);
+ }
+diff --git a/src/main/cpp/libretrodroid.h b/src/main/cpp/libretrodroid.h
+--- a/src/main/cpp/libretrodroid.h
++++ b/src/main/cpp/libretrodroid.h
+@@ -127,7 +127,9 @@
+     uint32_t getInputPortBitmask(unsigned int port);
+     void setNetplayActive(bool active);
+ 
+-    void refreshAspectRatio();
++    void onCompanionPointer(unsigned port, unsigned kind, unsigned index,
++                            float x, float y, unsigned flags);
++    void refreshAspectRatio();
+     float getAspectRatio();
+     void setAspectRatioOverride(float ratio);
+ 
+diff --git a/src/main/cpp/libretrodroid.cpp b/src/main/cpp/libretrodroid.cpp
+--- a/src/main/cpp/libretrodroid.cpp
++++ b/src/main/cpp/libretrodroid.cpp
+@@ -441,7 +441,12 @@
+     }
+ }
+ 
+-void LibretroDroid::onTouchEvent(float xAxis, float yAxis) {
++void LibretroDroid::onCompanionPointer(unsigned port, unsigned kind, unsigned index,
++                                      float x, float y, unsigned flags) {
++    if (input) input->onCompanionPointer(port, kind, index, x, y, flags);
++}
++
++void LibretroDroid::onTouchEvent(float xAxis, float yAxis) {
+     LOGD("Received touch event: %.2f, %.2f", xAxis, yAxis);
+     if (input && video) {
+         auto [x, y] = video->getLayout().getRelativePosition(xAxis, yAxis);
+diff --git a/src/main/cpp/libretrodroidjni.cpp b/src/main/cpp/libretrodroidjni.cpp
+--- a/src/main/cpp/libretrodroidjni.cpp
++++ b/src/main/cpp/libretrodroidjni.cpp
+@@ -460,7 +460,15 @@
+     LibretroDroid::getInstance().onMotionEvent(port, source, xAxis, yAxis);
+ }
+ 
+-JNIEXPORT void JNICALL Java_com_swordfish_libretrodroid_LibretroDroid_onTouchEvent(
++JNIEXPORT void JNICALL Java_com_swordfish_libretrodroid_LibretroDroid_onCompanionPointer(
++    JNIEnv*, jclass, jint port, jint kind, jint index, jfloat x, jfloat y, jint flags
++) {
++    LibretroDroid::getInstance().onCompanionPointer(
++        static_cast<unsigned>(port), static_cast<unsigned>(kind),
++        static_cast<unsigned>(index), x, y, static_cast<unsigned>(flags));
++}
++
++JNIEXPORT void JNICALL Java_com_swordfish_libretrodroid_LibretroDroid_onTouchEvent(
+     JNIEnv* env,
+     jclass obj,
+     jfloat xAxis,
+diff --git a/src/main/java/com/swordfish/libretrodroid/LibretroDroid.java b/src/main/java/com/swordfish/libretrodroid/LibretroDroid.java
+--- a/src/main/java/com/swordfish/libretrodroid/LibretroDroid.java
++++ b/src/main/java/com/swordfish/libretrodroid/LibretroDroid.java
+@@ -196,7 +196,10 @@
+     public static native void changeDiskWithPath(int index, String path);
+ 
+     public static native void onMotionEvent(int port, int motionSource, float xAxis, float yAxis);
+-    public static native void onTouchEvent(float xAxis, float yAxis);
++    public static native void onTouchEvent(float xAxis, float yAxis);
++    // 0 = absolute touchscreen (up to four contacts), 1 = relative mouse, 2 = lightgun.
++    public static native void onCompanionPointer(int port, int kind, int index,
++                                                 float x, float y, int flags);
+ 
+     public static native void onKeyEvent(int port, int action, int keyCode);
+ 
