@@ -100,8 +100,8 @@ class RetroPadInput(
     /** Reserve a phone's port so automatically assigned physical controllers skip it. */
     fun reserveRemotePort(port: Int, reserved: Boolean) {
         if (port !in 0 until RetroPorts.COUNT) return
-        remoteReserved[port] = reserved
         if (!reserved) remoteState(port, 0, 0f, 0f, 0f, 0f)
+        remoteReserved[port] = reserved
     }
 
     /** Complete phone state, rather than synthetic clicks: holds, diagonals and analog axes survive. */
@@ -317,7 +317,7 @@ class RetroPadInput(
 
     private fun recompute(port: Int) {
         val playing = devices.values.filter { port(it.info) == port }
-        val buttons = playing.fold(remoteButtons[port] or if (port == 0) touchButtons else 0) { mask, state -> mask or state.buttons() }
+        val buttons = playing.fold(remoteButtons[port] or (if (port == 0) touchButtons else 0)) { mask, state -> mask or state.buttons() }
         portButtons.set(port, buttons)
         for (axis in 0 until 4) {
             // The strongest lean wins when several devices share a player.
