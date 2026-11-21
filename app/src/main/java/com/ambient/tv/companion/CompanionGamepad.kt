@@ -291,7 +291,14 @@ object CompanionGamepadSession {
         }
         val gate = buttonGates.getOrPut(session) { CompanionButtonEdgeGate() }
         lastState[session] = packet
-        val visibleButtons = gate.update(packet.buttons, android.os.SystemClock.uptimeMillis())
+        val visibleButtons = runCatching {
+            gate.update(packet.buttons, android.os.SystemClock.uptimeMillis())
+        }.getOrElse {
+            // If a core fails to consume even a bounded run of tap edges, hard release the
+            // entire virtual controller instead of leaving a button latched indefinitely.
+            releaseInputs(game, port)
+            return false
+        }
         game.input.remoteState(port, visibleButtons, packet.leftX, packet.leftY, packet.rightX, packet.rightY)
         scheduleButtonRelease(session, game, port)
         // Relative mouse movement is an event, not an absolute position: identical consecutive
