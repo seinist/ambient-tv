@@ -59,6 +59,10 @@ class RetroPadInput(
     /** Virtual handset controls share player 1 with physical inputs; union, never replace, their state. */
     private var touchButtons = 0
     private val touchAnalog = IntArray(4)
+    /** Authenticated companion phones have independent, explicitly assigned player ports. */
+    private val remoteReserved = BooleanArray(RetroPorts.COUNT)
+    private val remoteButtons = IntArray(RetroPorts.COUNT)
+    private val remoteAnalog = IntArray(RetroPorts.COUNT * 4)
 
     /** Called on the main thread after any player's buttons or sticks changed. */
     var onChanged: (() -> Unit)? = null
@@ -90,6 +94,28 @@ class RetroPadInput(
         recompute(0)
     }
 
+    /** Player ports in use by local physical devices; remote claims avoid these where possible. */
+    fun localUsedPorts(): Set<Int> = devices.values.mapNotNull { port(it.info) }.toSet()
+
+    /** Reserve a phone's port so automatically assigned physical controllers skip it. */
+    fun reserveRemotePort(port: Int, reserved: Boolean) {
+        if (port !in 0 until RetroPorts.COUNT) return
+        remoteReserved[port] = reserved
+        if (!reserved) remoteState(port, 0, 0f, 0f, 0f, 0f)
+    }
+
+    /** Complete phone state, rather than synthetic clicks: holds, diagonals and analog axes survive. */
+    fun remoteState(port: Int, buttons: Int, leftX: Float, leftY: Float, rightX: Float, rightY: Float) {
+        if (port !in 0 until RetroPorts.COUNT || !remoteReserved[port]) return
+        remoteButtons[port] = buttons and 0xffff
+        val at = port * 4
+        remoteAnalog[at] = stick(leftX)
+        remoteAnalog[at + 1] = stick(leftY)
+        remoteAnalog[at + 2] = stick(rightX)
+        remoteAnalog[at + 3] = stick(rightY)
+        recompute(port)
+    }
+
     fun onEvent(event: InputEvent): Boolean = when (event) {
         is KeyEvent -> onKey(event)
         is MotionEvent -> onMotion(event)
@@ -100,7 +126,8 @@ class RetroPadInput(
     fun port(info: RetroInputDevice): Int? {
         config().ports[info.descriptor]?.let { return it.takeIf { port -> port >= 0 } }
         if (info.kind != RetroInputKind.GAMEPAD) return 0
-        val reserved = config().ports.values.filter { it in 0 until RetroPorts.COUNT }.toSet()
+        val reserved = config().ports.values.filter { it in 0 until RetroPorts.COUNT }.toSet() +
+            (0 until RetroPorts.COUNT).filter { remoteReserved[it] }
         val existing = automaticPorts[info.descriptor]
         if (existing != null && existing !in reserved) return existing
         val occupied = automaticPorts.filterKeys { it != info.descriptor }.values.toSet() + reserved
@@ -237,6 +264,8 @@ class RetroPadInput(
         devices.clear()
         touchButtons = 0
         touchAnalog.fill(0)
+        remoteButtons.fill(0)
+        remoteAnalog.fill(0)
         for (port in 0 until RetroPorts.COUNT) recompute(port)
     }
 
@@ -261,6 +290,8 @@ class RetroPadInput(
         }
         touchButtons = 0
         touchAnalog.fill(0)
+        remoteButtons.fill(0)
+        remoteAnalog.fill(0)
         recomputeAll()
         onMenu()
     }
@@ -286,11 +317,12 @@ class RetroPadInput(
 
     private fun recompute(port: Int) {
         val playing = devices.values.filter { port(it.info) == port }
-        val buttons = playing.fold(if (port == 0) touchButtons else 0) { mask, state -> mask or state.buttons() }
+        val buttons = playing.fold(remoteButtons[port] or if (port == 0) touchButtons else 0) { mask, state -> mask or state.buttons() }
         portButtons.set(port, buttons)
         for (axis in 0 until 4) {
             // The strongest lean wins when several devices share a player.
-            var value = (playing.map { it.analog[axis] } + if (port == 0) listOf(touchAnalog[axis]) else emptyList()).maxByOrNull { abs(it) } ?: 0
+            var value = (playing.map { it.analog[axis] } + listOf(remoteAnalog[port * 4 + axis]) +
+                if (port == 0) listOf(touchAnalog[axis]) else emptyList()).maxByOrNull { abs(it) } ?: 0
             if (axis < 2 && value == 0 && config().dpadAsStick) value = dpadAxis(buttons, axis)
             portAnalog.set(port * 4 + axis, value)
         }
