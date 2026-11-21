@@ -2452,7 +2452,7 @@
     <string name="game_library_add_local">Lokalen oder USB-Ordner hinzufügen</string>
     <string name="game_library_existing_sources">Vorhandene Dateiquellen</string>
     <string name="game_library_assigned">Zugewiesene Spieleordner</string>
-    <string name="game_library_add_network_hint">Neue SMB-/NFS-Freigaben zuerst unter Dateien einrichten. Spiele nutzt dieselbe Verbindung, Zugangsdaten, WireGuard und Wake-on-LAN-Einstellungen.</string>
+    <string name="game_library_add_network_hint">Nur für Spiele eingerichtete Quellen bleiben in Dateien verborgen. Bei einem gemeinsamen NAS eine bestehende Quelle verwenden und nur den ROM-Unterordner zuweisen.</string>
     <string name="game_library_use_folder">Diesen Ordner verwenden</string>
     <string name="game_library_wake">Server wecken</string>
     <string name="game_library_titles">Angezeigte Spieletitel</string>
@@ -2462,4 +2462,8 @@
     <string name="game_library_remove">Entfernen</string>
     <string name="game_library_back">Zurück</string>
     <string name="game_library_offline_wake">%1$s ist offline. Server zum Spielen wecken?</string>
+    <string name="game_library_add_network">SMB-/NFS-/Netzwerkquelle hinzufügen</string>
+    <string name="game_library_show_in_files">Auch in Dateien anzeigen</string>
+    <string name="game_library_source_files_games">Dateien + Spiele</string>
+    <string name="game_library_source_games_only">Nur Spiele</string>
 </resources>
