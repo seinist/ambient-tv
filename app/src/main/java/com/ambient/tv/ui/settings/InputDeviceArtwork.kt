@@ -254,7 +254,7 @@ internal fun InputDeviceArtwork(
         val maxH = maxHeight
         val tiny = maxW < 400.dp
         Canvas(Modifier.matchParentSize()) {
-            drawArtworkBody(artwork.shape, colors.surface, colors.surfaceVariant, colors.outline)
+            drawArtworkBody(artwork.shape, colors.surface, colors.surfaceVariant, colors.onSurfaceVariant.copy(alpha = .26f))
         }
         artwork.keys.forEach { entry ->
             val wide = entry.wide
