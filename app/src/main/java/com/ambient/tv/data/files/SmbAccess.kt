@@ -70,6 +70,58 @@ class SmbAccess : SmbProtocol {
             runCatching { session?.close() }; runCatching { connection?.close() }; runCatching { client.close() }; throw error
         } finally { auth.password.fill('\u0000') }
     }
+    /**
+     * One authenticated SMB2/3 lease per scan worker. Unlike the normal Files player path,
+     * a worker opens hundreds of ROM headers without a new TCP/login/share connection.
+     * Never shares a session with other workers, and releases it on cancellation/failure.
+     */
+    inner class ScanSession(source: FileSource, password: String) : Closeable {
+        private val lease = connect(source, password)
+        private val config = source
+        @Volatile private var closed = false
+        fun list(relative: String, limit: Int, accept: (FileEntry) -> Boolean): FileListing {
+            check(!closed)
+            return lease.share.openDirectory(path(config, relative), setOf(AccessMask.FILE_LIST_DIRECTORY),
+                setOf(FileAttributes.FILE_ATTRIBUTE_DIRECTORY), SMB2ShareAccess.ALL,
+                SMB2CreateDisposition.FILE_OPEN, setOf(SMB2CreateOptions.FILE_DIRECTORY_FILE)).use { dir ->
+                val entries = mutableListOf<FileEntry>()
+                val iterator = dir.iterator(FileIdBothDirectoryInformation::class.java)
+                while (iterator.hasNext()) {
+                    if (Thread.currentThread().isInterrupted) throw java.io.InterruptedIOException()
+                    val info = iterator.next(); val name = info.fileName
+                    if (name == "." || name == "..") continue
+                    val folder = info.fileAttributes and FileAttributes.FILE_ATTRIBUTE_DIRECTORY.value != 0L
+                    val entry = FileEntry(config.id, FilePaths.child(relative, name), name, folder,
+                        info.endOfFile, info.lastWriteTime.toEpochMillis(), FilePaths.mime(name))
+                    if (!folder && !accept(entry)) continue
+                    if (entries.size >= limit) return@use FileListing(entries, true)
+                    entries += entry
+                }
+                FileListing(entries, false)
+            }
+        }
+        fun open(relative: String): SeekableMedia {
+            check(!closed)
+            val file = lease.share.openFile(path(config, relative),
+                setOf(AccessMask.FILE_READ_DATA, AccessMask.FILE_READ_ATTRIBUTES),
+                setOf(FileAttributes.FILE_ATTRIBUTE_NORMAL), SMB2ShareAccess.ALL,
+                SMB2CreateDisposition.FILE_OPEN, setOf(SMB2CreateOptions.FILE_NON_DIRECTORY_FILE))
+            return object : SeekableMedia {
+                override val size = file.fileInformation.standardInformation.endOfFile
+                override fun read(position: Long, buffer: ByteArray, count: Int) =
+                    file.read(buffer, position, 0, count)
+                override val parallelReads = false
+                override fun close() = file.close() // The worker still owns its share lease.
+            }
+        }
+        override fun close() {
+            if (!closed) {
+                closed = true
+                lease.close()
+            }
+        }
+    }
+
     private fun path(source: FileSource, relative: String): String = listOf(FilePaths.relative(source.rootPath), FilePaths.relative(relative))
         .filter(String::isNotEmpty).joinToString("/").replace('/', '\\')
 
