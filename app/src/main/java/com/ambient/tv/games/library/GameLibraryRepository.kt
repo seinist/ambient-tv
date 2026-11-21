@@ -54,20 +54,34 @@ data class LibraryGame(
     val modified: Long,
     val favorite: Boolean,
     val lastPlayed: Long,
+    val customTitle: String? = null,
+    val verifiedTitle: String? = null,
 )
 
-private class GameIndexDb(context: Context) : SQLiteOpenHelper(context, "game_library.db", null, 1) {
+private class GameIndexDb(context: Context) : SQLiteOpenHelper(context, "game_library.db", null, 2) {
     override fun onCreate(db: SQLiteDatabase) {
         db.execSQL("""CREATE TABLE game_entries (
             folder_id TEXT NOT NULL, file_id TEXT NOT NULL, source_id TEXT NOT NULL,
             path TEXT NOT NULL, filename TEXT NOT NULL, system_id TEXT NOT NULL,
             internal_title TEXT, file_size INTEGER NOT NULL, modified INTEGER NOT NULL,
             favorite INTEGER NOT NULL DEFAULT 0, last_played INTEGER NOT NULL DEFAULT 0,
-            seen INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(folder_id, file_id))""")
+            seen INTEGER NOT NULL DEFAULT 0, manual_title TEXT, verified_title TEXT,
+            PRIMARY KEY(folder_id, file_id))""")
         db.execSQL("CREATE INDEX game_entries_system ON game_entries(system_id)")
         db.execSQL("CREATE INDEX game_entries_source ON game_entries(source_id)")
+        db.execSQL("""CREATE TABLE game_dat_entries (
+            system_id TEXT NOT NULL, crc32 TEXT NOT NULL, title TEXT NOT NULL,
+            PRIMARY KEY(system_id, crc32))""")
     }
-    override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) = Unit
+    override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
+        if (oldVersion < 2) {
+            db.execSQL("ALTER TABLE game_entries ADD COLUMN manual_title TEXT")
+            db.execSQL("ALTER TABLE game_entries ADD COLUMN verified_title TEXT")
+            db.execSQL("""CREATE TABLE IF NOT EXISTS game_dat_entries (
+                system_id TEXT NOT NULL, crc32 TEXT NOT NULL, title TEXT NOT NULL,
+                PRIMARY KEY(system_id, crc32))""")
+        }
+    }
 }
 
 @Singleton
@@ -151,8 +165,29 @@ class GameLibraryRepository @Inject constructor(
 
     fun viewStyle(): String = prefs.getString("game_library_view_style", "grid").orEmpty()
     fun setViewStyle(style: String) {
-        require(style in setOf("grid", "list"))
+        require(style in setOf("grid", "list", "rows"))
         prefs.edit().putString("game_library_view_style", style).apply()
+        changed()
+    }
+
+    fun sortKey(): String = prefs.getString("game_library_sort", "name").orEmpty()
+    fun sortDescending(): Boolean = prefs.getBoolean("game_library_descending", false)
+    fun setSortKey(key: String) {
+        require(key in setOf("name", "recent", "system"))
+        prefs.edit().putString("game_library_sort", key).apply()
+        changed()
+    }
+    fun setSortDescending(value: Boolean) {
+        prefs.edit().putBoolean("game_library_descending", value).apply()
+        changed()
+    }
+
+    /** A manual edit always wins over ROM headers and imported DAT titles. */
+    fun setCustomTitle(fileId: String, value: String) {
+        require(value.length <= 160 && value.none { it.isISOControl() })
+        val normalized = value.trim().takeIf { it.isNotBlank() }
+        db.writableDatabase.execSQL("UPDATE game_entries SET manual_title=? WHERE file_id=?",
+            arrayOf<Any?>(normalized, fileId))
         changed()
     }
 
@@ -163,13 +198,20 @@ class GameLibraryRepository @Inject constructor(
         val style = titleStyle()
         val result = mutableListOf<LibraryGame>()
         db.readableDatabase.rawQuery(
-            "SELECT folder_id,file_id,source_id,path,filename,system_id,internal_title,file_size,modified,favorite,last_played FROM game_entries",
+            "SELECT folder_id,file_id,source_id,path,filename,system_id,internal_title,file_size,modified,favorite,last_played,manual_title,verified_title FROM game_entries",
             null,
         ).use { cursor ->
             while (cursor.moveToNext()) {
                 if (cursor.getString(0) !in allowed) continue
                 val filename = cursor.getString(4)
-                val title = if (style != "filename") cursor.getString(6)?.takeIf { it.isNotBlank() } else null
+                val custom = cursor.getString(11)?.takeIf { it.isNotBlank() }
+                val verified = cursor.getString(12)?.takeIf { it.isNotBlank() }
+                val internal = cursor.getString(6)?.takeIf { it.isNotBlank() }
+                val title = custom ?: when (style) {
+                    "filename" -> null
+                    "internal" -> internal
+                    else -> verified ?: internal
+                }
                 result += LibraryGame(
                     fileId = cursor.getString(1), folderId = cursor.getString(0),
                     sourceId = cursor.getString(2), path = cursor.getString(3),
@@ -178,6 +220,7 @@ class GameLibraryRepository @Inject constructor(
                     internalTitle = cursor.getString(6),
                     size = cursor.getLong(7), modified = cursor.getLong(8),
                     favorite = cursor.getInt(9) == 1, lastPlayed = cursor.getLong(10),
+                    customTitle = custom, verifiedTitle = verified,
                 )
             }
         }
@@ -267,7 +310,8 @@ class GameLibraryRepository @Inject constructor(
                         previousGame.modified == entry.modified && entry.modified != 0L) previousGame.internalTitle
                     else extractTitle(entry, source, system.id)
                     selected += IndexedGame(entry, system.id, internalTitle,
-                        previousGame?.favorite ?: false, previousGame?.lastPlayed ?: 0L)
+                        previousGame?.favorite ?: false, previousGame?.lastPlayed ?: 0L,
+                        previousGame?.customTitle, previousGame?.verifiedTitle)
                     require(selected.size <= 200000) { "Game library item limit reached" }
                 }
             }
@@ -283,6 +327,7 @@ class GameLibraryRepository @Inject constructor(
                         put("internal_title", game.internalTitle); put("file_size", e.size)
                         put("modified", e.modified); put("favorite", if (game.favorite) 1 else 0)
                         put("last_played", game.lastPlayed); put("seen", generation)
+                        put("manual_title", game.customTitle); put("verified_title", game.verifiedTitle)
                     }
                     writable.insertWithOnConflict("game_entries", null, values, SQLiteDatabase.CONFLICT_REPLACE)
                 }
@@ -298,7 +343,8 @@ class GameLibraryRepository @Inject constructor(
     }
 
     private data class IndexedGame(val entry: FileEntry, val systemId: String,
-        val internalTitle: String?, val favorite: Boolean, val lastPlayed: Long)
+        val internalTitle: String?, val favorite: Boolean, val lastPlayed: Long,
+        val customTitle: String?, val verifiedTitle: String?)
 
     private fun existing(folderId: String): Map<String, LibraryGame> =
         games().filter { it.folderId == folderId }.associateBy { it.fileId }
