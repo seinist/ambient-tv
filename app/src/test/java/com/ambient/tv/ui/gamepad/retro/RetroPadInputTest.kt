@@ -256,6 +256,38 @@ class RetroPadInputTest {
         assertEquals(0, input.buttons(0))
     }
 
+    @Test fun companionPhoneControllerMapsItsButtonsUsingTheExistingDeviceProfile() {
+        val descriptor = companionControllerDescriptor("phone-one")
+        config = config.assignDevice(RetroInputKind.COMPANION, descriptor,
+            RetroInputTarget.Button(RetroPadButton.A), companionControllerKey(RetroPadButton.B))
+        input.reserveRemotePort(2, true, descriptor)
+        input.remoteState(2, RetroPadButton.B.mask, 0f, 0f, 0f, 0f)
+        assertEquals(RetroPadButton.A.mask, input.buttons(2))
+        assertEquals(0, input.buttons(0))
+        // A changed setting applies to the next state, even when a button stays pressed.
+        config = config.resetDevice(RetroInputKind.COMPANION, descriptor)
+        input.remoteState(2, RetroPadButton.B.mask, 0f, 0f, 0f, 0f)
+        assertEquals(RetroPadButton.B.mask, input.buttons(2))
+        input.reserveRemotePort(2, false)
+        assertEquals(0, input.buttons(2))
+    }
+
+    @Test fun companionProfileHasAnIdentityLayoutAndSurvivesSettingsEncoding() {
+        val descriptor = companionControllerDescriptor("phone-two")
+        val default = defaultRetroProfile(RetroInputKind.COMPANION)
+        assertEquals(RetroPadButton.UP.mask or RetroPadButton.B.mask,
+            companionMappedButtons(RetroPadButton.UP.mask or RetroPadButton.B.mask, default))
+        val saved = RetroInputConfig()
+            .withPort(descriptor, 1)
+            .assignDevice(RetroInputKind.COMPANION, descriptor,
+                RetroInputTarget.Button(RetroPadButton.X), companionControllerKey(RetroPadButton.B))
+        val restored = RetroInputConfig.decode(saved.encode())
+        assertEquals(saved, restored)
+        assertEquals(1, restored.ports[descriptor])
+        assertEquals(RetroPadButton.X.mask,
+            companionMappedButtons(RetroPadButton.B.mask, restored.deviceProfile(RetroInputKind.COMPANION, descriptor)))
+    }
+
     @Test fun pauseAndMenuReleaseVirtualButtonsToo() {
         input.touchButton(RetroPadButton.START, true)
         input.touchStick(1, 1f, 0f)
