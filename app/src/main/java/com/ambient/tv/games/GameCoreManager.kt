@@ -15,6 +15,8 @@ import java.io.InputStream
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import java.io.RandomAccessFile
+import java.nio.file.Files
+import java.nio.file.StandardCopyOption
 import java.net.HttpURLConnection
 import java.net.URL
 import java.util.zip.ZipInputStream
@@ -82,9 +84,14 @@ class GameCoreManager @Inject constructor(
             // core and the previous core untouched.
             stagedInfo.delete()
             if (oldInfo.isFile) oldInfo.copyTo(stagedInfo)
-            // POSIX rename is an atomic replacement on the same app-private filesystem.
-            // Never delete the current executable before its replacement is ready.
-            Os.rename(old.absolutePath, current.absolutePath)
+            // The source and target live on the same app-private filesystem.
+            // ATOMIC_MOVE with REPLACE_EXISTING maps to a single filesystem rename.
+            // Never unlink the installed executable before the replacement succeeds.
+            // Java NIO also provides real rename semantics in JVM/Robolectric tests.
+            Files.move(
+                old.toPath(), current.toPath(),
+                StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING,
+            )
         } catch (_: Exception) {
             stagedInfo.delete()
             return false
