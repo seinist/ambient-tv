@@ -101,7 +101,8 @@ object GameRomTitles {
             val valueIndex = dataOffset.toLong() + (psf.getInt(row + 12).toLong() and 0xffffffffL)
             if (keyIndex !in 20 until sfo.size || len !in 1..128 ||
                 valueIndex < 0 || valueIndex + len > sfo.size) continue
-            val nul = sfo.indexOf(0.toByte(), keyIndex)
+            val nul = (keyIndex until minOf(dataOffset, sfo.size))
+                .firstOrNull { sfo[it] == 0.toByte() } ?: continue
             if (nul < 0 || nul >= dataOffset || nul - keyIndex > 80) continue
             val key = String(sfo, keyIndex, nul - keyIndex, StandardCharsets.US_ASCII)
             if (key == "TITLE") return text(sfo.copyOfRange(valueIndex.toInt(), (valueIndex + len).toInt()), StandardCharsets.UTF_8)
