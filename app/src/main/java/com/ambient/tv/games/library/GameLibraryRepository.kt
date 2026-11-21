@@ -180,6 +180,9 @@ class GameLibraryRepository @Inject constructor(
     suspend fun importDat(systemId: String, input: InputStream): Int = scanLock.withLock {
         require(GameSystems.byId(systemId) != null)
         withContext(Dispatchers.IO) {
+            val visible = GameDiscGrouping.visiblePaths(
+                selected.mapTo(hashSetOf()) { it.entry.path }, discReferences)
+            selected.removeAll { it.entry.path !in visible }
             val writable = db.writableDatabase
             writable.beginTransaction()
             try {
@@ -352,6 +355,8 @@ class GameLibraryRepository @Inject constructor(
             val previous = existing(folder.id)
             val datSystems = catalogSystems()
             val selected = ArrayList<IndexedGame>()
+            // Descriptor grouping is local to this explicit scan; it never copies disc tracks.
+            val discReferences = mutableMapOf<String, Set<String>>()
             val pending = ArrayDeque<Pair<String, Int>>()
             val visited = hashSetOf<String>()
             pending.add(folder.path to 0)
@@ -368,6 +373,14 @@ class GameLibraryRepository @Inject constructor(
                         continue
                     }
                     if (!entry.game) continue
+                    val ext = GameSystems.extension(entry.name)
+                    if (ext in setOf("cue", "gdi", "m3u")) {
+                        val refs = runCatching {
+                            val description = access.readText(source, entry.path, 256 * 1024)
+                            GameDiscGrouping.referenced(entry.path, description)
+                        }.getOrDefault(emptySet())
+                        if (refs.isNotEmpty()) discReferences[entry.path] = refs
+                    }
                     val previousGame = previous[entry.id]
                     val assigned = GameSystems.byId(folder.systemId)
                     val ext = GameSystems.extension(entry.name)
