@@ -94,6 +94,9 @@ fun isBindableKey(keyCode: Int): Boolean =
 object KeyBindings {
     private val mutable = mutableStateOf<Map<KeyAction, KeyBinding>>(emptyMap())
     val bindings: Map<KeyAction, KeyBinding> get() = mutable.value
+    private val deviceMutable = mutableStateOf<Map<String, Map<KeyAction, KeyBinding>>>(emptyMap())
+    val deviceBindings: Map<String, Map<KeyAction, KeyBinding>> get() = deviceMutable.value
+    fun bindingsFor(kind: String): Map<KeyAction, KeyBinding> = deviceBindings[kind].orEmpty()
     private var persist: (Map<String, String>) -> Unit = {}
 
     /**
@@ -111,11 +114,34 @@ object KeyBindings {
     fun attach(stored: Map<String, String>, save: (Map<String, String>) -> Unit) {
         persist = save
         mutable.value = decode(stored)
+        deviceMutable.value = decodeDevice(stored)
     }
 
-    fun reload(stored: Map<String, String>) { mutable.value = decode(stored) }
+    fun reload(stored: Map<String, String>) {
+        mutable.value = decode(stored)
+        deviceMutable.value = decodeDevice(stored)
+    }
 
-    fun encoded(): Map<String, String> = encode(bindings)
+    fun encoded(): Map<String, String> = encodeAll()
+
+    /** Specific remote/keyboard mappings do not erase legacy global mappings. */
+    fun bindFor(kind: String, action: KeyAction, binding: KeyBinding): KeyAction? {
+        require(kind == "remote" || kind == "keyboard")
+        val old = bindingsFor(kind)
+        val replaced = old.entries.firstOrNull { (other, existing) ->
+            other != action && other.scope == action.scope && existing == binding
+        }?.key
+        val updated = old - listOfNotNull(replaced) + (action to binding)
+        deviceMutable.value = deviceBindings + (kind to updated)
+        persist(encodeAll())
+        return replaced
+    }
+
+    fun clearFor(kind: String, action: KeyAction) {
+        val current = bindingsFor(kind) - action
+        deviceMutable.value = if (current.isEmpty()) deviceBindings - kind else deviceBindings + (kind to current)
+        persist(encodeAll())
+    }
 
     /** Binds [action] and frees the same key/press within its scope; returns the action replaced. */
     fun bind(action: KeyAction, binding: KeyBinding): KeyAction? {
@@ -132,17 +158,40 @@ object KeyBindings {
 
     private fun update(value: Map<KeyAction, KeyBinding>) {
         mutable.value = value
-        persist(encode(value))
+        persist(encodeAll())
     }
 
-    /** The action [keyCode] triggers with this press length, player scope first when in front. */
-    fun actionFor(keyCode: Int, long: Boolean, player: Boolean = playerForeground): KeyAction? =
-        resolveKeyAction(bindings, keyCode, long, player)
+    private fun encodeAll(): Map<String, String> = buildMap {
+        putAll(encode(bindings))
+        deviceBindings.forEach { (kind, actions) ->
+            actions.forEach { (action, binding) -> put("device.$kind.${action.key}", binding.encode()) }
+        }
+    }
+
+    /** Device-specific assignments have priority; other actions retain legacy fallbacks. */
+    fun actionFor(
+        keyCode: Int, long: Boolean, player: Boolean = playerForeground,
+        deviceId: Int = -1,
+    ): KeyAction? {
+        val kind = com.ambient.tv.ui.gamepad.retro.retroInputDevice(deviceId).kind.key
+        val own = bindingsFor(kind)
+        return resolveKeyAction(own, keyCode, long, player)
+            ?: resolveKeyAction(bindings.filterKeys { it !in own.keys }, keyCode, long, player)
+    }
 
     internal fun decode(stored: Map<String, String>): Map<KeyAction, KeyBinding> =
         stored.mapNotNull { (action, binding) ->
             val resolved = KeyAction.fromKey(action) ?: return@mapNotNull null
             KeyBinding.decode(binding)?.let { resolved to it }
+        }.toMap()
+
+    private fun decodeDevice(stored: Map<String, String>): Map<String, Map<KeyAction, KeyBinding>> =
+        listOf("remote", "keyboard").mapNotNull { kind ->
+            val actions = stored.filterKeys { it.startsWith("device.$kind.") }.mapNotNull { (key, value) ->
+                val action = KeyAction.fromKey(key.removePrefix("device.$kind.")) ?: return@mapNotNull null
+                KeyBinding.decode(value)?.let { action to it }
+            }.toMap()
+            kind.takeIf { actions.isNotEmpty() }?.let { it to actions }
         }.toMap()
 
     internal fun encode(value: Map<KeyAction, KeyBinding>): Map<String, String> =
@@ -206,11 +255,11 @@ class KeyBindingDispatcher {
     /** Null when the event is not a bound key: the caller dispatches it as usual. */
     fun handle(event: KeyEvent, perform: (KeyAction) -> Unit, replay: (KeyEvent) -> Unit): Boolean? {
         KeyBindings.capture?.let { sink -> return if (sink(event)) true else null }
-        if (KeyBindings.bindings.isEmpty()) return null
+        if (KeyBindings.bindings.isEmpty() && KeyBindings.deviceBindings.isEmpty()) return null
         val code = event.keyCode
         if (!isBindableKey(code)) return null
-        val short = KeyBindings.actionFor(code, long = false)
-        val long = KeyBindings.actionFor(code, long = true)
+        val short = KeyBindings.actionFor(code, long = false, deviceId = event.deviceId)
+        val long = KeyBindings.actionFor(code, long = true, deviceId = event.deviceId)
         if (short == null && long == null) {
             if (event.action == KeyEvent.ACTION_UP && consumedShort.remove(code)) return true
             return null
