@@ -42,6 +42,7 @@ data class GameLibraryUiState(
     val browsedPaths: List<Pair<String, String>> = emptyList(),
     val directoryEntries: List<FileEntry> = emptyList(),
     val browsing: Boolean = false,
+    val pendingWakeGame: LibraryGame? = null,
 )
 
 @HiltViewModel
@@ -81,6 +82,38 @@ class GameLibraryViewModel @Inject constructor(
     fun titleStyle(value: String) = library.setTitleStyle(value)
     fun favorite(game: LibraryGame) = library.setFavorite(game.fileId, !game.favorite)
     fun played(game: LibraryGame) = library.recordPlayed(game.fileId)
+
+    /** Only when selecting a game: probe a manually-wakeable NAS before opening Libretro. */
+    fun requestPlay(game: LibraryGame, start: () -> Unit) {
+        viewModelScope.launch {
+            mutable.update { it.copy(error = null, pendingWakeGame = null) }
+            try {
+                if (library.needsWakeForLaunch(game.sourceId)) {
+                    mutable.update { it.copy(pendingWakeGame = game) }
+                } else {
+                    played(game)
+                    start()
+                }
+            } catch (cancelled: CancellationException) { throw cancelled }
+            catch (error: Exception) { mutable.update { it.copy(error = error.message) } }
+        }
+    }
+    fun dismissWakeOffer() = mutable.update { it.copy(pendingWakeGame = null) }
+    fun wakeAndPlay(start: (LibraryGame) -> Unit) {
+        val game = mutable.value.pendingWakeGame ?: return
+        viewModelScope.launch {
+            mutable.update { it.copy(busy = true, error = null) }
+            try {
+                if (library.wakeSource(game.sourceId)) {
+                    mutable.update { it.copy(pendingWakeGame = null) }
+                    played(game)
+                    start(game)
+                }
+            } catch (cancelled: CancellationException) { throw cancelled }
+            catch (error: Exception) { mutable.update { it.copy(error = error.message) } }
+            finally { mutable.update { it.copy(busy = false) } }
+        }
+    }
 
     fun remove(folder: GameLibraryFolder) = library.removeFolder(folder.id)
     fun scanAll() {
