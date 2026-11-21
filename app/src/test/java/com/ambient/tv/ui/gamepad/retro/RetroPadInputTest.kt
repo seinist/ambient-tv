@@ -314,7 +314,7 @@ class RetroPadInputTest {
         input.remoteState(0, RetroPadButton.B.mask, 0f, 0f, 0f, 0f)
         assertEquals(0, input.buttons(0))
         input.clearRemotePort(0)
-        advance(KEY_BINDING_LONG_PRESS_MS + 100)
+        advance(2_000L)
         assertEquals(0, menus)
         assertEquals(0, input.buttons(0))
     }
