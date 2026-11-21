@@ -13,7 +13,7 @@ import org.robolectric.RuntimeEnvironment
 import org.robolectric.annotation.Config
 
 @RunWith(RobolectricTestRunner::class)
-@Config(sdk = [35])
+@Config(sdk = [35], application = android.app.Application::class)
 class GameHomeRowsTest {
     private fun game(id: String, system: String, fav: Boolean, played: Long): LibraryGame =
         LibraryGame(
