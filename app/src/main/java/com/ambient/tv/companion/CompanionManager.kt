@@ -88,6 +88,8 @@ data class CompanionState(
     val remotePanel: Boolean = false,
     /** Separate full-screen phone page, not a dialog. */
     val gamepadPanel: Boolean = false,
+    /** Phone-side measured p95 queued-to-ACK RTT in milliseconds (NOT emulator/frame latency). */
+    val inputLatencyP95Ms: Long? = null,
     val settingsPanel: Boolean = false,
     val controller: String = "",
     val backupOffer: CompanionBackupOffer? = null,
@@ -965,7 +967,8 @@ class CompanionManager @Inject constructor(@ApplicationContext private val conte
     fun remoteInput(input: CompanionInput) {
         if (mutable.value.remote?.inputGranted != true) return
         input.validate()
-        val frame = CompanionFrame(type = "input", input = input)
+        val frame = CompanionFrame(type = "input", input = input,
+            gamepadQueuedAtMs = SystemClock.elapsedRealtime())
         // Move/scroll are accumulated, while key/click edges are FIFO and cannot be dropped.
         liveInputs.offerRemote(frame)
     }
@@ -1796,6 +1799,8 @@ class CompanionManager @Inject constructor(@ApplicationContext private val conte
                 var returnTransfer: CompanionTransfer? = null
                 var returnDeadline = 0L
                 var carried: CompanionFrame? = null
+                val latencyWindow = CompanionInputLatencyWindow()
+                var lastLatencyReportAt = 0L
                 if (initialMedia != null) queue.send(CompanionFrame(type = "start", media = initialMedia))
                 // The TLS stream remains encrypted, ordered, and sequence-checked, but realtime
                 // inputs may have up to four outstanding acknowledgements. A slow Wi-Fi roundtrip
@@ -1812,6 +1817,18 @@ class CompanionManager @Inject constructor(@ApplicationContext private val conte
                 val inflight = java.util.ArrayDeque<CompanionFrame>()
                 suspend fun processReply(command: CompanionFrame, state: CompanionFrame) {
                     require(state.type == "state" && state.nonce == nonce && state.sequence == command.sequence)
+                    if (command.gamepadQueuedAtMs > 0L && command.type in setOf("gamepad_input", "input")) {
+                        val now = SystemClock.elapsedRealtime()
+                        latencyWindow.record(now - command.gamepadQueuedAtMs)
+                        if (now - lastLatencyReportAt >= 1_000L) {
+                            lastLatencyReportAt = now
+                            val p95 = latencyWindow.p95Ms()
+                            mutable.update { old ->
+                                if (old.inputLatencyP95Ms == p95) old
+                                else old.copy(inputLatencyP95Ms = p95)
+                            }
+                        }
+                    }
                     returnAck = 0L; returnError = ""
                     state.syncReturn?.let { returned ->
                         require(returned.sequence == returnSequence + 1)
@@ -1980,7 +1997,8 @@ class CompanionManager @Inject constructor(@ApplicationContext private val conte
                         backupAck?.complete(false)
                         playbackStartAck?.second?.completeExceptionally(IllegalStateException("Disconnected"))
                         mutable.update { it.copy(lastSeen = if (connected) it.lastSeen + (peer.fingerprint to SystemClock.elapsedRealtime()) else it.lastSeen, online = false, busy = false, connectionStage = null, remote = null, prompt = null, sendingTo = null, enqueueSelection = false,
-                            backupBusy = it.backupOffer != null && it.backupBusy, backupStatus = if (it.backupStatus in setOf("pending", "sending")) "failed" else it.backupStatus) }
+                            backupBusy = it.backupOffer != null && it.backupBusy, backupStatus = if (it.backupStatus in setOf("pending", "sending")) "failed" else it.backupStatus,
+                            inputLatencyP95Ms = null) }
                     }
                 }
                 queue.close()
