@@ -18,6 +18,14 @@ data class CompanionGamepadInfo(
     val ready: Boolean = false,
 )
 
+/** Libretro base device IDs. Core-specific extensions retain their high-byte subtype. */
+internal fun companionCoreDeviceType(kind: String?): Int = when (kind) {
+    "mouse" -> 2 // RETRO_DEVICE_MOUSE
+    "gun" -> 4 // RETRO_DEVICE_LIGHTGUN
+    "touch" -> 6 // RETRO_DEVICE_POINTER
+    else -> 1 // RETRO_DEVICE_JOYPAD
+}
+
 /** Up to four real contacts with stable indices, in normalized core-frame coordinates. */
 @Serializable
 data class CompanionPointerContact(
