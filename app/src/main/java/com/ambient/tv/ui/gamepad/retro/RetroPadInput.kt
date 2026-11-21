@@ -176,18 +176,21 @@ class RetroPadInput(
     fun onMotion(event: MotionEvent): Boolean {
         if (!event.isFromSource(InputDevice.SOURCE_JOYSTICK) || event.actionMasked != MotionEvent.ACTION_MOVE) return false
         val state = state(event.deviceId) ?: return false
+        val profile = profileContext?.let { config().profile(state.info.kind, it) }
+            ?: config().profile(state.info.kind)
+        fun mapped(code: Int): Int = profile.button(code)?.mask ?: 0
         var buttons = 0
         val hatX = event.getAxisValue(MotionEvent.AXIS_HAT_X)
         val hatY = event.getAxisValue(MotionEvent.AXIS_HAT_Y)
-        if (hatX <= -0.5f) buttons = buttons or RetroPadButton.LEFT.mask
-        if (hatX >= 0.5f) buttons = buttons or RetroPadButton.RIGHT.mask
-        if (hatY <= -0.5f) buttons = buttons or RetroPadButton.UP.mask
-        if (hatY >= 0.5f) buttons = buttons or RetroPadButton.DOWN.mask
+        if (hatX <= -0.5f) buttons = buttons or mapped(KeyEvent.KEYCODE_DPAD_LEFT)
+        if (hatX >= 0.5f) buttons = buttons or mapped(KeyEvent.KEYCODE_DPAD_RIGHT)
+        if (hatY <= -0.5f) buttons = buttons or mapped(KeyEvent.KEYCODE_DPAD_UP)
+        if (hatY >= 0.5f) buttons = buttons or mapped(KeyEvent.KEYCODE_DPAD_DOWN)
         if (state.layout.leftTriggerValue(event) >= 0.5f) {
-            buttons = buttons or RetroPadButton.L2.mask
+            buttons = buttons or mapped(KeyEvent.KEYCODE_BUTTON_L2)
         }
         if (state.layout.rightTriggerValue(event) >= 0.5f) {
-            buttons = buttons or RetroPadButton.R2.mask
+            buttons = buttons or mapped(KeyEvent.KEYCODE_BUTTON_R2)
         }
         state.axisButtons = buttons
         state.analog[0] = stick(event.getAxisValue(MotionEvent.AXIS_X))
