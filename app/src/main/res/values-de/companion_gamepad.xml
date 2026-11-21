@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="remote_tab_gamepad">Gamepad</string>
+    <string name="companion_gamepad_title">Gamecontroller</string>
+    <string name="companion_gamepad_back">Zurück zur TV-Fernbedienung</string>
+    <string name="companion_gamepad_player">Spieler %1$d · Verbunden</string>
+    <string name="companion_gamepad_menu">Spielmenü</string>
+    <string name="companion_gamepad_no_game">Starte ein Libretro-Spiel auf dem TV. Beide Geräte benötigen eine Version mit Gamepad-Unterstützung.</string>
+    <string name="companion_gamepad_not_claimed">Kein Spielerplatz frei oder der TV hat diesen Controller noch nicht freigegeben.</string>
+    <string name="companion_gamepad_paused">Das Spiel ist pausiert. Über das Spielmenü kannst du es fortsetzen.</string>
+    <string name="companion_gamepad_claim">Controller verbinden</string>
+    <string name="companion_gamepad_input_pad">Gamepad</string>
+    <string name="companion_gamepad_input_touch">Touch / Stift</string>
+    <string name="companion_gamepad_input_mouse">Maus</string>
+    <string name="companion_gamepad_input_gun">Lightgun</string>
+    <string name="companion_gamepad_region_full">Ganzes Bild</string>
+    <string name="companion_gamepad_region_lower">Unterer Bildschirm</string>
+    <string name="companion_gamepad_region_upper">Oberer Bildschirm</string>
+    <string name="companion_gamepad_region_left">Linker Bildschirm</string>
+    <string name="companion_gamepad_region_right">Rechter Bildschirm</string>
+    <string name="companion_gamepad_motion_on">Bewegung an</string>
+    <string name="companion_gamepad_motion_off">Bewegung aus</string>
+    <string name="companion_gamepad_reload">Nachladen</string>
+    <string name="companion_gamepad_touch_hint">Tippen und ziehen für den Core-Pointer</string>
+    <string name="companion_gamepad_mouse_hint">Ziehen zum Bewegen · Tippen zum Klicken</string>
+    <string name="companion_gamepad_gun_hint">Zielen und tippen zum Schießen</string>
+    <string name="companion_gamepad_rtt_p95">RTT P95 %1$d ms</string>
+</resources>

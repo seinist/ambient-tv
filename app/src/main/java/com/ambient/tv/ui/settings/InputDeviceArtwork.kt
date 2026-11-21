@@ -79,6 +79,13 @@ private fun snesKeys() = direction() + listOf(
 )
 
 internal fun attachedArtwork(kind: String, labels: GamepadLabels = GamepadLabels.XBOX): InputArtwork = when (kind) {
+    "companion" -> InputArtwork("Handy-Controller", InputArtworkShape.SCREEN_PAD,
+        snesKeys() + listOf(
+            key("l2", "L2", .17f, .13f, RetroPadButton.L2),
+            key("r2", "R2", .83f, .13f, RetroPadButton.R2),
+            key("l3", "L3", .38f, .83f, RetroPadButton.L3),
+            key("r3", "R3", .62f, .83f, RetroPadButton.R3),
+        ))
     "remote" -> InputArtwork("Fernbedienung", InputArtworkShape.REMOTE, listOf(
         key("power", "⏻", .50f, .13f),
         key("back", "↩", .445f, .25f), key("menu", "☰", .555f, .25f),

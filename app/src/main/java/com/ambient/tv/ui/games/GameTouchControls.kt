@@ -55,6 +55,8 @@ internal fun GameTouchControls(
     onButton: (RetroPadButton, Boolean) -> Unit,
     onStick: (Int, Float, Float) -> Unit,
     modifier: Modifier = Modifier,
+    /** Optional atomic DPAD event for network controllers; local controls use the usual callbacks. */
+    onDpadDirections: ((Set<RetroPadButton>) -> Unit)? = null,
 ) {
     BoxWithConstraints(modifier.safeDrawingPadding()) {
         val small = maxWidth < 600.dp
@@ -69,7 +71,8 @@ internal fun GameTouchControls(
                 size = if (mode == GameTouchMode.HYBRID) large * 0.82f else large,
                 onDirection = { next ->
                     // Exactly the changed bits are emitted. Holding A on another finger remains untouched.
-                    RetroPadButton.entries.filter { it in DPAD_BUTTONS }.forEach { button ->
+                    if (onDpadDirections != null) onDpadDirections(next)
+                    else RetroPadButton.entries.filter { it in DPAD_BUTTONS }.forEach { button ->
                         onButton(button, button in next)
                     }
                 },

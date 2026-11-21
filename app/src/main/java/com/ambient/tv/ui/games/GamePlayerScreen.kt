@@ -749,7 +749,7 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
 
     // Controllers, keyboards and remotes play through RetroPadInput while the game runs.
     val latestOpenMenu by rememberUpdatedState(openMenu)
-    val input = remember {
+    val input = remember(system.id, core.id, game.saveKey) {
         val handler = Handler(Looper.getMainLooper())
         RetroPadInput(
             profileContext = com.ambient.tv.ui.gamepad.retro.RetroInputProfileContext(
@@ -764,6 +764,67 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
             onRewind = { held -> rewinding = held && core.rewind && stateAvailable },
             onFastForward = { if (!netplay.active) fastForward = !fastForward },
         ).also(inputRef::set)
+    }
+    // Only changed pointer contacts go through JNI; the other device types do not receive
+    // redundant six-call resets on each 60Hz phone position update.
+    val companionPointerRelay = remember(input) {
+        com.ambient.tv.companion.CompanionNativePointerRelay { port, kind, index, x, y, flags ->
+            LibretroDroid.onCompanionPointer(port, kind, index, x, y, flags)
+        }
+    }
+    val companionInputKinds = remember(input) { mutableMapOf<Int, String>() }
+    val companionNetplayActive by rememberUpdatedState(netplay.active)
+    // The Companion gamepad uses the same RetroPadInput as real controllers, without injecting
+    // synthetic Android keys into the activity. This is a TV-only, full game-session registration.
+    val latestCompanionMenu by rememberUpdatedState<() -> Unit>({
+        if (coreReady && !destroyed && !exiting) {
+            if (menuOpen) resume() else openMenu()
+        }
+    })
+    DisposableEffect(input, handheld, system.id, core.id, game.saveKey) {
+        if (!handheld) com.ambient.tv.companion.CompanionGamepadSession.attach(
+            input, system.id, core.id, game.file.nameWithoutExtension, system.pointerInput,
+            onMenu = { latestCompanionMenu() },
+            onPointer = { port, pointer ->
+                val kind = pointer?.kind
+                val previous = companionInputKinds[port]
+                if (kind != previous && !companionNetplayActive && coreReady && !destroyed &&
+                    (kind == null || port !in input.localUsedPorts())) {
+                    // Some cores advertise distinct Libretro controller device types for
+                    // mouse/lightgun/pointer. Choose one ONLY when the core declares it; else
+                    // preserve its original device type (many cores accept POINTER in addition
+                    // to an ordinary JOYPAD without advertising a selectable pointer device).
+                    val types = runCatching { retroView.getControllers().getOrNull(port).orEmpty() }
+                        .getOrDefault(emptyArray())
+                    val requested = com.ambient.tv.companion.companionCoreDeviceType(kind)
+                    val selection = if (kind == null) {
+                        GameSettings.state.controllerType(core, port)
+                            ?.let { wanted -> types.firstOrNull { it.id == wanted } }
+                            ?: types.firstOrNull { it.id >= 0 && (it.id and 255) == requested }
+                    } else types.firstOrNull { it.id >= 0 && (it.id and 255) == requested }
+                    selection?.let { chosen ->
+                        runCatching { retroView.setControllerType(port, chosen.id) }
+                    }
+                    if (kind == null) companionInputKinds.remove(port)
+                    else companionInputKinds[port] = kind
+                }
+                companionPointerRelay.update(port, pointer)
+            },
+            onMotion = { port, motion ->
+                LibretroDroid.setCompanionSensorReadings(port, motion?.mask ?: 0,
+                    motion?.gx ?: 0f, motion?.gy ?: 0f, motion?.gz ?: 0f,
+                    motion?.ax ?: 0f, motion?.ay ?: 0f, motion?.az ?: 0f)
+            },
+        )
+        onDispose {
+            if (!handheld) {
+                com.ambient.tv.companion.CompanionGamepadSession.detach(input)
+                companionPointerRelay.clear()
+            }
+        }
+    }
+    LaunchedEffect(input, handheld, running) {
+        if (!handheld) com.ambient.tv.companion.CompanionGamepadSession.setReady(input, running)
     }
     // Vibration goes to the controllers of the player the core addresses.
     val runningNow by rememberUpdatedState(running)

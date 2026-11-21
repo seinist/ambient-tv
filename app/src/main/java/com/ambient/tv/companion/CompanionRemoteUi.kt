@@ -76,8 +76,8 @@ internal fun CompanionRemoteScreen(manager: CompanionManager, modifier: Modifier
         }
     }
     val key: (String) -> Unit = { send(CompanionInput("key", key = it)) }
-    val labels = listOf(R.string.remote_tab_dpad, R.string.remote_tab_mouse, R.string.remote_tab_keyboard)
-    val icons = listOf(Icons.Default.ControlCamera, Icons.Default.Mouse, Icons.Default.Keyboard)
+    val labels = listOf(R.string.remote_tab_dpad, R.string.remote_tab_mouse, R.string.remote_tab_keyboard, R.string.remote_tab_gamepad)
+    val icons = listOf(Icons.Default.ControlCamera, Icons.Default.Mouse, Icons.Default.Keyboard, Icons.Default.SportsEsports)
     BackHandler(onBack = manager::hideRemote)
     Surface(
         // Swallows touches so the page underneath (kept alive, not recomposed away) never reacts.
@@ -105,7 +105,8 @@ internal fun CompanionRemoteScreen(manager: CompanionManager, modifier: Modifier
             PrimaryTabRow(selectedTabIndex = tab, containerColor = MaterialTheme.colorScheme.background) {
                 labels.forEachIndexed { index, label ->
                     Tab(selected = tab == index, onClick = {
-                        focus.clearFocus(); keyboard?.hide(); tab = index
+                        focus.clearFocus(); keyboard?.hide()
+                        if (index == 3) manager.showGamepad() else tab = index
                     }, text = { Text(stringResource(label), maxLines = 1) },
                         icon = { Icon(icons[index], null, Modifier.size(22.dp)) })
                 }
@@ -286,7 +287,7 @@ private fun RemoteMousePad(enabled: Boolean, sensitivity: Float, onSensitivity: 
                         pending += delta
                         if (travel.getDistance() > viewConfiguration.touchSlop) moved = true
                         val now = event.changes.first().uptimeMillis
-                        if (moved && pending != Offset.Zero && now - lastSent >= 40) {
+                        if (moved && pending != Offset.Zero && now - lastSent >= 20) {
                             currentSend(CompanionInput(action, x = (pending.x / size.width.coerceAtLeast(1) * currentSensitivity).coerceIn(-1f, 1f),
                                 y = (pending.y / size.height.coerceAtLeast(1) * currentSensitivity).coerceIn(-1f, 1f)))
                             pending = Offset.Zero
@@ -294,6 +295,13 @@ private fun RemoteMousePad(enabled: Boolean, sensitivity: Float, onSensitivity: 
                         }
                         event.changes.forEach { it.consume() }
                     } while (event.changes.any { it.pressed })
+                    // Complete the final fractional movement before a gesture ends. Previously
+                    // the last <40ms of a swipe could vanish and the cursor stopped short.
+                    if (moved && pending != Offset.Zero) {
+                        currentSend(CompanionInput(action,
+                            x = (pending.x / size.width.coerceAtLeast(1) * currentSensitivity).coerceIn(-1f, 1f),
+                            y = (pending.y / size.height.coerceAtLeast(1) * currentSensitivity).coerceIn(-1f, 1f)))
+                    }
                     if (!moved && !multiTouch) currentSend(CompanionInput("click"))
                 }
             }, contentAlignment = Alignment.Center) {

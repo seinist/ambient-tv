@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="remote_tab_gamepad">Gamepad</string>
+    <string name="companion_gamepad_title">Game controller</string>
+    <string name="companion_gamepad_back">Back to TV remote</string>
+    <string name="companion_gamepad_player">Player %1$d · Connected</string>
+    <string name="companion_gamepad_menu">Game menu</string>
+    <string name="companion_gamepad_no_game">Start a Libretro game on the TV. Both devices must have a version with gamepad support.</string>
+    <string name="companion_gamepad_not_claimed">No free player slot, or the TV has not granted this controller yet.</string>
+    <string name="companion_gamepad_paused">The TV game is paused. Use Game menu to resume it.</string>
+    <string name="companion_gamepad_claim">Connect controller</string>
+    <string name="companion_gamepad_input_pad">Gamepad</string>
+    <string name="companion_gamepad_input_touch">Touch / stylus</string>
+    <string name="companion_gamepad_input_mouse">Mouse</string>
+    <string name="companion_gamepad_input_gun">Lightgun</string>
+    <string name="companion_gamepad_region_full">Full frame</string>
+    <string name="companion_gamepad_region_lower">Lower screen</string>
+    <string name="companion_gamepad_region_upper">Upper screen</string>
+    <string name="companion_gamepad_region_left">Left screen</string>
+    <string name="companion_gamepad_region_right">Right screen</string>
+    <string name="companion_gamepad_motion_on">Motion on</string>
+    <string name="companion_gamepad_motion_off">Motion off</string>
+    <string name="companion_gamepad_reload">Reload</string>
+    <string name="companion_gamepad_touch_hint">Touch or drag to control the core pointer</string>
+    <string name="companion_gamepad_mouse_hint">Drag to move · Tap to click</string>
+    <string name="companion_gamepad_gun_hint">Aim and touch to fire</string>
+    <string name="companion_gamepad_rtt_p95">RTT p95 %1$d ms</string>
+</resources>
