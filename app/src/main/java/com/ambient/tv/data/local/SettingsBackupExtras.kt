@@ -41,6 +41,8 @@ data class PortableSettingsExtras(
     val retroInputSettings: Map<String, String>? = null,
     /** Game picture filters and core options (see games.GameSettingsState). */
     val gameSettings: Map<String, String>? = null,
+    /** Console browse mode, density, sorting and ROM-title priority (no ROMs or catalog cache). */
+    val gameLibraryOptions: Map<String, String>? = null,
 )
 
 @Serializable
