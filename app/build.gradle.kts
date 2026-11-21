@@ -805,9 +805,14 @@ registerAbiDeployTask("deployArmv7ReleaseAdb", "armeabi-v7a", "armeabi-v7a", "Bu
 registerAbiDeployTask("deployX86ReleaseAdb", "x86", "x86", "Builds the x86 APK and non-fatally deploys it to ADB_DEVICE.")
 registerAbiDeployTask("deployX86_64ReleaseAdb", "x86_64", "x86_64", "Builds the x86_64 APK and non-fatally deploys it to ADB_DEVICE.")
 
+// Native Vulkan Slang output is required for build.sh artifacts, but optional for unit-only
+// Gradle builds. Never silently publish a release advertised as Vulkan Slang without its ABI.
+val librashaderEnabled = providers.gradleProperty("LIBRASHADER_NATIVE")
+    .orElse(providers.environmentVariable("LIBRASHADER_NATIVE")).orElse("0").get() == "1"
+
 val verifyAppNativeMediaInputs = tasks.register("verifyAppNativeMediaInputs") {
     group = "verification"
-    description = "Fail fast when app-owned Spotify/projectM/SVP native libraries have not been prepared."
+    description = "Verify all packaged native runtimes, including the optional Vulkan-only Slang ABI."
     val rootDir = rootProject.projectDir
     val required = selectedAbis.flatMap { abi ->
         listOfNotNull(
@@ -815,6 +820,7 @@ val verifyAppNativeMediaInputs = tasks.register("verifyAppNativeMediaInputs") {
             rootProject.file("app/src/main/jniLibs/$abi/libprojectM-4.so"),
             rootProject.file("app/src/main/jniLibs/$abi/libambientprojectm.so"),
             rootProject.file("app/src/main/jniLibs/$abi/libambientsvp.so"),
+            rootProject.file("app/src/main/jniLibs/$abi/liblibrashader_capi.so").takeIf { librashaderEnabled },
         )
     }
     doLast {
