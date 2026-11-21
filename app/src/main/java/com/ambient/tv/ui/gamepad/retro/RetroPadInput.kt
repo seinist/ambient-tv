@@ -109,12 +109,22 @@ class RetroPadInput(
     /** Complete phone state, rather than synthetic clicks: holds, diagonals and analog axes survive. */
     fun remoteState(port: Int, buttons: Int, leftX: Float, leftY: Float, rightX: Float, rightY: Float) {
         if (port !in 0 until RetroPorts.COUNT || !remoteReserved[port]) return
-        remoteButtons[port] = buttons and 0xffff
         val at = port * 4
-        remoteAnalog[at] = stick(leftX)
-        remoteAnalog[at + 1] = stick(leftY)
-        remoteAnalog[at + 2] = stick(rightX)
-        remoteAnalog[at + 3] = stick(rightY)
+        val nextButtons = buttons and 0xffff
+        val nextX = stick(leftX)
+        val nextY = stick(leftY)
+        val nextRX = stick(rightX)
+        val nextRY = stick(rightY)
+        // Heartbeat frames are often identical: don't force four-port recompute and native
+        // onChanged dispatch every 500 ms when the actual controller state has not moved.
+        if (remoteButtons[port] == nextButtons && remoteAnalog[at] == nextX &&
+            remoteAnalog[at + 1] == nextY && remoteAnalog[at + 2] == nextRX &&
+            remoteAnalog[at + 3] == nextRY) return
+        remoteButtons[port] = nextButtons
+        remoteAnalog[at] = nextX
+        remoteAnalog[at + 1] = nextY
+        remoteAnalog[at + 2] = nextRX
+        remoteAnalog[at + 3] = nextRY
         recompute(port)
     }
 
