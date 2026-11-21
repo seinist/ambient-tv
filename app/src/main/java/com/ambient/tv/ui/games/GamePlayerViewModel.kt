@@ -11,6 +11,7 @@ import com.ambient.tv.games.GameCore
 import com.ambient.tv.games.GameCoreIncompatibleException
 import com.ambient.tv.games.GameCoreBuildbotConsentRequired
 import com.ambient.tv.games.GameCoreSource
+import com.ambient.tv.games.GameSettings
 import com.ambient.tv.games.GameCoreManager
 import com.ambient.tv.games.GameDirectUnavailableException
 import com.ambient.tv.games.GameRomPreparer
