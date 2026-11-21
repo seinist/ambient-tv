@@ -756,6 +756,23 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
             onFastForward = { if (!netplay.active) fastForward = !fastForward },
         ).also(inputRef::set)
     }
+    // The Companion gamepad uses the same RetroPadInput as real controllers, without injecting
+    // synthetic Android keys into the activity. This is a TV-only, full game-session registration.
+    val latestCompanionMenu by rememberUpdatedState<() -> Unit>({
+        if (menuOpen) resume() else openMenu()
+    })
+    DisposableEffect(input, handheld, system.id, core.id, game.saveKey) {
+        if (!handheld) com.ambient.tv.companion.CompanionGamepadSession.attach(
+            input, system.id, core.id, game.file.nameWithoutExtension, system.pointerInput,
+            onMenu = { latestCompanionMenu() },
+        )
+        onDispose {
+            if (!handheld) com.ambient.tv.companion.CompanionGamepadSession.detach(input)
+        }
+    }
+    LaunchedEffect(input, handheld, running) {
+        if (!handheld) com.ambient.tv.companion.CompanionGamepadSession.setReady(input, running)
+    }
     // Vibration goes to the controllers of the player the core addresses.
     val runningNow by rememberUpdatedState(running)
     LaunchedEffect(Unit) {
