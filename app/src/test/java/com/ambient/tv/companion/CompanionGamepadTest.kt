@@ -97,6 +97,71 @@ class CompanionGamepadTest {
         assertEquals(frame, restored)
     }
 
+    @Test fun specialPointerAndSensorStateStayIsolatedPerPlayerAndReleaseOnPause() {
+        val input = pad()
+        val pointers = mutableListOf<Pair<Int, CompanionPointerState?>>()
+        val motions = mutableListOf<Pair<Int, CompanionMotionState?>>()
+        try {
+            CompanionGamepadSession.attach(input, "nds", "melonds", "Dual screen", true,
+                onPointer = { port, pointer -> pointers += port to pointer },
+                onMotion = { port, motion -> motions += port to motion },
+                onMenu = {})
+            CompanionGamepadSession.setReady(input, true)
+            assertEquals(0, CompanionGamepadSession.claim("first"))
+            assertEquals(1, CompanionGamepadSession.claim("second"))
+            val stylus = CompanionPointerState(
+                contacts = listOf(CompanionPointerContact(0, 0.4f, 0.9f),
+                    CompanionPointerContact(1, 0.6f, 0.8f)))
+            val gyro = CompanionMotionState(mask = 3, ax = 0.2f, az = 1f, gx = 0.6f)
+            assertTrue(CompanionGamepadSession.input("first", CompanionGamepadState(
+                pointer = stylus, motion = gyro)))
+            assertTrue(CompanionGamepadSession.input("second", CompanionGamepadState(
+                pointer = CompanionPointerState(kind = "gun",
+                    contacts = listOf(CompanionPointerContact(0, 0.2f, 0.1f)), buttons = 1))))
+            assertEquals(stylus, pointers.last { it.first == 0 }.second)
+            assertEquals("gun", pointers.last { it.first == 1 }.second?.kind)
+            assertEquals(gyro, motions.last { it.first == 0 }.second)
+            CompanionGamepadSession.setReady(input, false)
+            assertNull(pointers.last { it.first == 0 }.second)
+            assertNull(pointers.last { it.first == 1 }.second)
+            assertNull(motions.last { it.first == 0 }.second)
+        } finally {
+            CompanionGamepadSession.detach(input)
+        }
+    }
+
+    @Test fun validateSpecialInputBoundsAndLegacyProtocolCompatibility() {
+        val valid = CompanionGamepadState(
+            pointer = CompanionPointerState(contacts = listOf(
+                CompanionPointerContact(0, 0f, 1f), CompanionPointerContact(1, 1f, 0f))),
+            motion = CompanionMotionState(mask = 3, az = 1f, gy = 0.3f))
+        valid.validate()
+        val frame = CompanionFrame(type = "gamepad_input", gamepadState = valid)
+        assertEquals(frame, companionJson.decodeFromString<CompanionFrame>(
+            companionJson.encodeToString(CompanionFrame.serializer(), frame)))
+        assertTrue(runCatching { valid.copy(pointer = CompanionPointerState(kind = "invalid")).validate() }.isFailure)
+        assertTrue(runCatching { valid.copy(pointer = CompanionPointerState(
+            contacts = listOf(CompanionPointerContact(0, 2f, 0f)))).validate() }.isFailure)
+        assertTrue(runCatching { valid.copy(pointer = CompanionPointerState(
+            contacts = listOf(CompanionPointerContact(0, 0f, 0f),
+                CompanionPointerContact(0, 1f, 1f)))).validate() }.isFailure)
+        assertTrue(runCatching { valid.copy(motion = CompanionMotionState(mask = 4)).validate() }.isFailure)
+        assertTrue(runCatching { valid.copy(motion = CompanionMotionState(gz = Float.NaN)).validate() }.isFailure)
+    }
+
+    @Test fun pointerCalibrationHandlesDualScreensAndOutsideBounds() {
+        assertEquals(0.5f to 0.75f, companionPointerCoordinates(0.5f, 0.5f, "lower"))
+        assertEquals(0.25f to 0.25f, companionPointerCoordinates(0.5f, 0.5f, "upper").let {
+            // Upper screen retains horizontal full width while Y uses the top half.
+            (it.first / 2f) to it.second
+        })
+        assertEquals(0.75f to 0.5f, companionPointerCoordinates(0.5f, 0.5f, "right"))
+        assertEquals(0f to 1f, companionPointerCoordinates(-4f, 8f, "full"))
+        assertEquals("lower", companionDefaultPointerRegion("nds"))
+        assertEquals("lower", companionDefaultPointerRegion("wiiu"))
+        assertEquals("full", companionDefaultPointerRegion("wii"))
+    }
+
     @Test fun gamepadIsAHandheldPageInsteadOfACompanionDialog() {
         assertTrue(CompanionState(gamepadPanel = true).handheldPageOpen())
         assertFalse(CompanionState().handheldPageOpen())
