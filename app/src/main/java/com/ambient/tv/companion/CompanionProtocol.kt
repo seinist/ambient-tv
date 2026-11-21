@@ -43,6 +43,12 @@ data class CompanionFrame(
     val title: String = "",
     val error: String = "",
     val input: CompanionInput? = null,
+    /** Complete virtual RetroPad input, sent only by a paired handheld. */
+    val gamepadState: CompanionGamepadState? = null,
+    /** Current TV game; absent on older receivers or outside the games player. */
+    val gamepadInfo: CompanionGamepadInfo? = null,
+    /** Assigned Libretro port, -1 when no claim exists for this TLS session. */
+    val gamepadPort: Int = -1,
     val controller: String = "",
     val inputGranted: Boolean = false,
     val transferId: String = "",
@@ -338,6 +344,10 @@ internal fun sharedMedia(text: String): CompanionMedia? {
  * cannot be merged: another frame type, or a sum outside the protocol's -1..1 range.
  */
 internal fun coalesceCompanionInput(first: CompanionFrame, next: CompanionFrame): CompanionFrame? {
+    // Gamepad packets are complete snapshots: the newest supersedes older analog positions.
+    // Release and menu commands are distinct types and cannot be swallowed here.
+    if (first.type == "gamepad_input" && next.type == "gamepad_input" &&
+        first.gamepadState != null && next.gamepadState != null) return next
     val a = first.input ?: return null
     val b = next.input ?: return null
     if (first.type != "input" || next.type != "input" || a.action != b.action || a.action !in setOf("move", "scroll")) return null
