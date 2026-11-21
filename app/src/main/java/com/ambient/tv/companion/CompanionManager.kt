@@ -678,7 +678,6 @@ class CompanionManager @Inject constructor(@ApplicationContext private val conte
         if (mutable.value.remotePanel) hideRemote()
         mutable.update { it.copy(gamepadPanel = true, remotePanel = false, panel = false,
             nowPlayingPanel = false, settingsPanel = false) }
-        if (mutable.value.remote?.gamepadInfo != null) claimGamepad()
     }
     fun claimGamepad(): Boolean = if (mutable.value.gamepadPanel && mutable.value.online &&
         mutable.value.remote?.gamepadInfo != null) send(CompanionFrame(type = "gamepad_claim")) else false
@@ -1807,7 +1806,9 @@ class CompanionManager @Inject constructor(@ApplicationContext private val conte
                         ensureActive(); check(commands === queue)
                         require(state.type == "state" && state.nonce == nonce && state.sequence == sequence)
                         // Transfer frames report their own classified failure from sendSettings.
-                        if (state.error.isNotEmpty() && !command.type.startsWith("backup_") && (command.type != "status" || mutable.value.remote?.error != state.error)) notice(
+                        if (state.error.isNotEmpty() && !command.type.startsWith("backup_") &&
+                            !command.type.startsWith("gamepad_") &&
+                            (command.type != "status" || mutable.value.remote?.error != state.error)) notice(
                             when { command.type.startsWith("input") -> R.string.companion_control_failed
                                 command.type.startsWith("backup_") -> R.string.companion_backup_failed
                                 else -> R.string.companion_play_failed }, error = true)
