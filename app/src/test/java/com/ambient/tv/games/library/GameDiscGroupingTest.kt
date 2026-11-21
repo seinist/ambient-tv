@@ -16,7 +16,7 @@ class GameDiscGroupingTest {
         val refs = GameDiscGrouping.referenced("Games/movie.m3u", "../Movies/movie.iso\n/absolute.iso\nSafe.chd")
         assertFalse("Movies/movie.iso" in refs)
         assertFalse("/absolute.iso" in refs)
-        assertTrue("Games/Safe.chd" in refs)
+        assertTrue("Unsafe playlist must hide nothing", refs.isEmpty())
     }
     @Test fun incompletePlaylistNeverHidesItsStillPlayableDiscs() {
         val paths = setOf("PSX/game.m3u", "PSX/disc1.cue", "PSX/other.chd")

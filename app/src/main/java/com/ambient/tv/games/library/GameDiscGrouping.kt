@@ -22,7 +22,11 @@ internal object GameDiscGrouping {
         }
         if (relatives.size !in 1..128) return emptySet()
         val parent = descriptor.substringBeforeLast('/', "")
-        return relatives.mapNotNull { GameRomPreparer.safeRelativePath(it) }
+        val safe = relatives.map { GameRomPreparer.safeRelativePath(it) }
+        // Reject the entire descriptor on any unsafe entry. Dropping only that
+        // entry could incorrectly hide a playable disc under a broken playlist.
+        if (safe.any { it == null }) return emptySet()
+        return safe.filterNotNull()
             .map { if (parent.isBlank()) it else "$parent/$it" }
             .toSet()
     }
