@@ -1,0 +1,294 @@
+diff --git a/src/main/cpp/vulkan/vulkanbackend.cpp b/src/main/cpp/vulkan/vulkanbackend.cpp
+--- a/src/main/cpp/vulkan/vulkanbackend.cpp
++++ b/src/main/cpp/vulkan/vulkanbackend.cpp
+@@ -355,6 +355,8 @@
+         vk.deviceWaitIdle != nullptr) {
+         vk.deviceWaitIdle(device);
+     }
++    // The GPU is idle before retiring any pass/history images owned by librashader.
++    nativeSlang.releaseGpu();
+     if (device != VK_NULL_HANDLE && vk.destroySemaphore != nullptr) {
+         if (nativeSdrAcquire != VK_NULL_HANDLE) vk.destroySemaphore(device, nativeSdrAcquire, nullptr);
+         for (VkSemaphore semaphore : nativeSdrComplete) {
+@@ -416,6 +418,18 @@
+     nativeSdrDisabled = false;
+ }
+ 
++void VulkanBackend::setNativeShaderPresetPath(const std::string& path) {
++    if (nativeSlangPath == path) return;
++    // This API is GL-thread only. Wait the device before destroying shader history
++    // resources; never change filters while the Vulkan queue is using them.
++    if (device != VK_NULL_HANDLE && vk.deviceWaitIdle != nullptr) vk.deviceWaitIdle(device);
++    destroyNativeSdrSwapchain();
++    nativeSlangPath = path;
++    nativeSlang.setPresetPath(path);
++    nativeSlangFrame = 0;
++    nativeSdrDisabled = false;
++}
++
+ void VulkanBackend::disableNativeSdrSwapchain(const char* reason) {
+     LOGW("Native Vulkan SDR presentation disabled: %s", reason);
+     nativeSdrDisabled = true;
+@@ -461,6 +475,12 @@
+         disableNativeSdrSwapchain("presentation queue, image transfer usage or surface formats unavailable");
+         return false;
+     }
++    if (nativeSlang.requested() &&
++        (nativeOutputTransfer != 0u ||
++         (caps.supportedUsageFlags & VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT) == 0)) {
++        disableNativeSdrSwapchain("SDR color-attachment swapchain required for Vulkan Slang");
++        return false;
++    }
+     std::vector<VkSurfaceFormatKHR> formats(formatCount);
+     const VkResult formatsResult = vk.getPhysicalDeviceSurfaceFormats(
+         gpu, nativeSdrSurface, &formatCount, formats.data());
+@@ -533,7 +553,8 @@
+     info.imageColorSpace = choice.colorSpace;
+     info.imageExtent = extent;
+     info.imageArrayLayers = 1;
++    info.imageUsage = VK_IMAGE_USAGE_TRANSFER_DST_BIT |
++        (nativeSlang.requested() ? VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT : 0u);
+-    info.imageUsage = VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+     info.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE;
+     info.preTransform = caps.currentTransform;
+     info.compositeAlpha = alpha;
+@@ -1128,6 +1149,10 @@
+         std::fabs(Environment::getInstance().getScreenRotation()) > 0.0001f) {
+         disableNativeSdrSwapchain("core screen rotation requires GLES renderer");
+     }
++    if (nativeSdrWindow != nullptr && !nativeSdrDisabled && nativeSlang.requested() &&
++        nativeOutputTransfer != 0u) {
++        disableNativeSdrSwapchain("HDR Vulkan filtering is not color-managed; keep GLES");
++    }
+     if (nativeSdrWindow != nullptr && !nativeSdrDisabled && ensureNativeSdrSwapchain()) {
+         // Source format comes from retro_vulkan_image::create_info.format.
+         // Unknown, sRGB-encoded and HDR/FP16 sources cannot be blindly blitted.
+@@ -1138,8 +1163,18 @@
+                pendingImage.format == VK_FORMAT_A2R10G10B10_UNORM_PACK32);
+         VkFormatProperties sourceProps {};
+         if (supported) vk.getPhysicalDeviceFormatProperties(gpu, pendingImage.format, &sourceProps);
++        // retro_vulkan_image.create_info is a VkImageViewCreateInfo: it does NOT
++        // expose VkImage usage flags or allocation extent. The existing GLES
++        // AHardwareBuffer bridge already owns a known-SAMPLED image with tracked
++        // extent and format; filter that exact copy without guessing core usage.
++        const bool sampled = nativeSlang.requested() && frameImage != VK_NULL_HANDLE &&
++            !fp16Frame && width == frameWidth && height == frameHeight;
++        if (!supported || (sourceProps.optimalTilingFeatures & VK_FORMAT_FEATURE_BLIT_SRC_BIT) == 0 ||
++            (nativeSlang.requested() && !sampled)) {
++            disableNativeSdrSwapchain("intermediate sampled image unavailable; GLES retained");
++        } else if (nativeSlang.requested() &&
++                   !nativeSlang.ensure(instance, gpu, device, queue, vk.getInstanceProcAddr)) {
++            disableNativeSdrSwapchain("librashader unavailable or preset failed; GLES retained");
+-        if (!supported || (sourceProps.optimalTilingFeatures & VK_FORMAT_FEATURE_BLIT_SRC_BIT) == 0) {
+-            disableNativeSdrSwapchain("core VkImage format is not compatible with the requested transfer");
+         } else {
+             const VkResult acquired = vk.acquireNextImage(
+                 device, nativeSdrSwapchain, 0, nativeSdrAcquire, VK_NULL_HANDLE, &sdrIndex);
+@@ -1201,6 +1236,8 @@
+     vk.cmdBlitImage(commandBuffer, pendingImage.image, sourceLayout, frameImage,
+                     VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &blit, VK_FILTER_NEAREST);
+ 
++    bool shaderRecorded = false;
++    bool shaderFailed = false;
+     if (useDirect) {
+         // Both present paths consume the same core image in a single submission.
+         // GLES remains available for shaders, captures and immediate fallback.
+@@ -1256,18 +1293,58 @@
+         VkImageBlit nativeBlit = blit;
+         nativeBlit.dstOffsets[0] = { left, top, 0 };
+         nativeBlit.dstOffsets[1] = { left + dstW, top + dstH, 1 };
++        if (nativeSlang.requested()) {
++            // Keep the AHB/GLES image copy above intact for captures and automatic fallback.
++            // Transition the synchronized core image from BLIT read to texture sampling.
++            VkImageMemoryBarrier sampledBarrier { VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER };
++            sampledBarrier.srcAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
++            sampledBarrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
++            sampledBarrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
++            sampledBarrier.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
++            sampledBarrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
++            sampledBarrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
++            sampledBarrier.image = frameImage;
++            sampledBarrier.subresourceRange = targetRange;
++            VkImageMemoryBarrier colorBarrier { VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER };
++            colorBarrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
++            colorBarrier.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
++            colorBarrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
++            colorBarrier.newLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
++            colorBarrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
++            colorBarrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
++            colorBarrier.image = target;
++            colorBarrier.subresourceRange = targetRange;
++            vk.cmdPipelineBarrier(commandBuffer, VK_PIPELINE_STAGE_TRANSFER_BIT,
++                                  VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT |
++                                      VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
++                                  0, 0, nullptr, 0, nullptr, 1, &sampledBarrier);
++            vk.cmdPipelineBarrier(commandBuffer, VK_PIPELINE_STAGE_TRANSFER_BIT,
++                                  VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
++                                  0, 0, nullptr, 0, nullptr, 1, &colorBarrier);
++            shaderRecorded = nativeSlang.record(commandBuffer, nativeSlangFrame++,
++                frameImage, VK_FORMAT_R8G8B8A8_UNORM, frameWidth, frameHeight,
++                target, nativeSdrFormat, nativeSdrExtent.width, nativeSdrExtent.height,
++                static_cast<float>(left), static_cast<float>(top),
++                static_cast<uint32_t>(dstW), static_cast<uint32_t>(dstH), coreAspect);
++            shaderFailed = !shaderRecorded;
++        } else {
++            vk.cmdBlitImage(commandBuffer, pendingImage.image, sourceLayout, target,
++                            VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &nativeBlit, VK_FILTER_NEAREST);
++        }
+-        vk.cmdBlitImage(commandBuffer, pendingImage.image, sourceLayout, target,
+-                        VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &nativeBlit, VK_FILTER_NEAREST);
+         VkImageMemoryBarrier toPresent { VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER };
++        toPresent.srcAccessMask = shaderRecorded ? VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT :
++            VK_ACCESS_TRANSFER_WRITE_BIT;
+-        toPresent.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+         toPresent.dstAccessMask = 0;
++        toPresent.oldLayout = nativeSlang.requested() ? VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL :
++            VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+-        toPresent.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+         toPresent.newLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+         toPresent.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+         toPresent.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+         toPresent.image = target;
+         toPresent.subresourceRange = targetRange;
++        vk.cmdPipelineBarrier(commandBuffer,
++                              nativeSlang.requested() ? VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT :
++                                  VK_PIPELINE_STAGE_TRANSFER_BIT,
+-        vk.cmdPipelineBarrier(commandBuffer, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                               VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, 0, 0, nullptr, 0, nullptr, 1, &toPresent);
+     }
+ 
+@@ -1283,9 +1360,11 @@
+     release[0].subresourceRange = sourceRange;
+ 
+     release[1].sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
++    release[1].srcAccessMask = nativeSlang.requested() && useDirect ?
++        VK_ACCESS_SHADER_READ_BIT : VK_ACCESS_TRANSFER_WRITE_BIT;
+-    release[1].srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+     release[1].dstAccessMask = 0;
++    release[1].oldLayout = nativeSlang.requested() && useDirect ?
++        VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL : VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+-    release[1].oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+     release[1].newLayout = VK_IMAGE_LAYOUT_GENERAL;
+     release[1].srcQueueFamilyIndex = queueFamily;
+     release[1].dstQueueFamilyIndex = VK_QUEUE_FAMILY_FOREIGN_EXT;
+@@ -1293,7 +1372,8 @@
+     release[1].subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 };
+ 
+     vk.cmdPipelineBarrier(commandBuffer,
++                          VK_PIPELINE_STAGE_TRANSFER_BIT | VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
++                          VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,
+-                          VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,
+                           0, 0, nullptr, 0, nullptr, 2, release);
+     vk.endCommandBuffer(commandBuffer);
+ 
+@@ -1338,7 +1418,12 @@
+     }
+     frameInFlight = true;
+     waitForFrame();
++    if (shaderFailed) {
++        // Never display an incompletely recorded Slang frame; the GLES output is
++        // still rendering in parallel. The fence has completed, so retire safely.
++        disableNativeSdrSwapchain("Vulkan Slang frame failed; keep GLES");
++    }
++    if (useDirect && !shaderFailed) {
+-    if (useDirect) {
+         const VkSemaphore finished = nativeSdrComplete[sdrIndex];
+         VkPresentInfoKHR present { VK_STRUCTURE_TYPE_PRESENT_INFO_KHR };
+         present.waitSemaphoreCount = 1;
+@@ -1353,7 +1438,8 @@
+         }
+         if (presentResult == VK_SUCCESS || presentResult == VK_SUBOPTIMAL_KHR) {
+             nativeSdrStatus.store(7u |
++                (nativeOutputTransfer == 1u ? 16u : nativeOutputTransfer == 2u ? 32u : 0u) |
++                (shaderRecorded ? 64u : 0u),
+-                (nativeOutputTransfer == 1u ? 16u : nativeOutputTransfer == 2u ? 32u : 0u),
+                 std::memory_order_release);
+         } else {
+             disableNativeSdrSwapchain("frame presentation failed; GLES retained");
+@@ -1424,6 +1510,9 @@
+     nativeOutputTransfer = 0u;
+     nativeCoreSourceTransfer = 0u;
+     nativeIntegerScaling = false;
++    nativeSlang.setPresetPath("");
++    nativeSlangPath.clear();
++    nativeSlangFrame = 0;
+     nativeSdrStatus.store(0u, std::memory_order_release);
+     if (device != VK_NULL_HANDLE) {
+         if (vk.deviceWaitIdle != nullptr) vk.deviceWaitIdle(device);
+diff --git a/src/main/cpp/vulkan/vulkanbackend.h b/src/main/cpp/vulkan/vulkanbackend.h
+--- a/src/main/cpp/vulkan/vulkanbackend.h
++++ b/src/main/cpp/vulkan/vulkanbackend.h
+@@ -35,6 +35,7 @@
+ 
+ #include "../libretro/libretro-common/include/libretro.h"
+ #include "../libretro/libretro-common/include/libretro_vulkan.h"
++#include "vulkanslangpipeline.h"
+ 
+ struct AImageReader;
+ 
+@@ -104,6 +105,7 @@
+     void setNativeCoreSourceTransfer(uint32_t sourceTransfer);
+     // Current game's integer-scaling setting; this only affects the opt-in WSI blit.
+     void setNativeIntegerScaling(bool enabled) { nativeIntegerScaling = enabled; }
++    void setNativeShaderPresetPath(const std::string& path);
+     uint32_t getNativeSdrStatus() const { return nativeSdrStatus.load(std::memory_order_acquire); }
+ 
+     bool ensureFrameBuffer(unsigned width, unsigned height);
+@@ -270,6 +275,9 @@
+     uint32_t nativeOutputTransfer = 0; // SDR by default, per-session only
+     uint32_t nativeCoreSourceTransfer = 0; // no trusted PQ/HLG source by default
+     bool nativeIntegerScaling = false; // session-local geometry; default off
++    VulkanSlangPipeline nativeSlang;
++    std::string nativeSlangPath;
++    uint64_t nativeSlangFrame = 0;
+     // bit 0 window requested, bit 1 swapchain ready, bit 2 frames presented,
+     // bit 4 actual PQ/BT.2020, bit 5 actual HLG/BT.2020,
+     // bit 3 fallback due to unsupported device/surface/runtime failure.
+diff --git a/src/main/cpp/CMakeLists.txt b/src/main/cpp/CMakeLists.txt
+--- a/src/main/cpp/CMakeLists.txt
++++ b/src/main/cpp/CMakeLists.txt
+@@ -97,6 +97,8 @@
+         video.cpp
+         vulkan/vulkanbackend.h
+         vulkan/vulkanbackend.cpp
++        vulkan/vulkanslangpipeline.h
++        vulkan/vulkanslangpipeline.cpp
+         immersivemode.h
+         immersivemode.cpp
+         backgroundframe.h
+@@ -187,4 +189,5 @@
+                       GLESv3
+                       nativewindow
+                       mediandk
++                      dl
+ )
+diff --git a/src/main/cpp/libretrodroidjni.cpp b/src/main/cpp/libretrodroidjni.cpp
+--- a/src/main/cpp/libretrodroidjni.cpp
++++ b/src/main/cpp/libretrodroidjni.cpp
+@@ -865,4 +865,18 @@
+     VulkanBackend::getInstance().setNativeIntegerScaling(enabled == JNI_TRUE);
+ }
+ 
++JNIEXPORT void JNICALL Java_com_swordfish_libretrodroid_LibretroDroid_setNativeVulkanShaderPreset(
++    JNIEnv* env, jclass, jstring value
++) {
++    if (value == nullptr) {
++        VulkanBackend::getInstance().setNativeShaderPresetPath("");
++        return;
++    }
++    const char* chars = env->GetStringUTFChars(value, nullptr);
++    if (chars == nullptr) return;
++    const std::string path(chars);
++    env->ReleaseStringUTFChars(value, chars);
++    VulkanBackend::getInstance().setNativeShaderPresetPath(path);
++}
++
+ JNIEXPORT void JNICALL Java_com_swordfish_libretrodroid_LibretroDroid_setConfiguredHdrOutput(
+diff --git a/src/main/java/com/swordfish/libretrodroid/LibretroDroid.java b/src/main/java/com/swordfish/libretrodroid/LibretroDroid.java
+--- a/src/main/java/com/swordfish/libretrodroid/LibretroDroid.java
++++ b/src/main/java/com/swordfish/libretrodroid/LibretroDroid.java
+@@ -149,2 +149,4 @@
+     public static native void setNativeVulkanIntegerScaling(boolean enabled);
++    /** A verified app-private Slang preset path; empty string returns to raw nearest output. */
++    public static native void setNativeVulkanShaderPreset(String path);
+     /** Android panel capabilities (not authored content metadata); GL thread only. */

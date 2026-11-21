@@ -12,6 +12,11 @@ internal data class GameVulkanSdrStatus(val bits: Int = 0) {
         else -> Phase.REQUESTED
     }
 
+    /** Bit 6 is set only after vkQueuePresentKHR succeeds on an actually filtered frame.
+     * An armed preset or constructed swapchain is not proof that a Slang pass rendered. */
+    val shaderPresenting: Boolean get() = phase == Phase.PRESENTING &&
+        bits and 64 != 0 && presentingTransfer == GameVulkanTransferMode.SDR
+
     /** Actual transfer only after successful vkQueuePresentKHR; never guess from VkFormat. */
     val presentingTransfer: GameVulkanTransferMode? get() = if (phase != Phase.PRESENTING) null else
         when (bits and (16 or 32)) {

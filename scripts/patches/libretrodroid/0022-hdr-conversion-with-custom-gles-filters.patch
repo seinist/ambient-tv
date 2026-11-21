@@ -1,0 +1,62 @@
+diff --git a/src/main/java/com/swordfish/libretrodroid/GLRetroView.kt b/src/main/java/com/swordfish/libretrodroid/GLRetroView.kt
+--- a/src/main/java/com/swordfish/libretrodroid/GLRetroView.kt
++++ b/src/main/java/com/swordfish/libretrodroid/GLRetroView.kt
+@@ -945,7 +945,9 @@
+             is ShaderConfig.PrependPass -> {
+                 val selected = buildShader(config.filter)
+-                require(selected.type != LibretroDroid.SHADER_CUSTOM && selected.passes.isEmpty()) {
+-                    "The HDR conversion pass may only decorate built-in picture filters"
++                // Custom GLES filters follow the mandatory HDR-to-SDR prepass too.
++                // Bound the number of passes before handing sources to native code.
++                require(selected.passes.size <= 4 && "AMBIENT_PREPEND" !in selected.params) {
++                    "The HDR conversion pass needs a bounded, non-nested picture chain"
+                 }
+                 selected.copy(
+                     params = selected.params + ("AMBIENT_PREPEND" to "1"),
+@@ -957,6 +958,6 @@
+                         fragment = config.pass.fragment,
+                         linear = config.pass.linear,
+                         scale = config.pass.scale,
+-                    )),
++                    )) + selected.passes,
+                 )
+             }
+diff --git a/src/main/cpp/shadermanager.cpp b/src/main/cpp/shadermanager.cpp
+--- a/src/main/cpp/shadermanager.cpp
++++ b/src/main/cpp/shadermanager.cpp
+@@ -1540,12 +1540,16 @@
+     // passes, sampling, or CUT3 edge/temporal logic.
+     const auto prepass = config.params.find("AMBIENT_PREPEND");
+     if (prepass != config.params.end()) {
+-        if (prepass->second != "1" || config.type == Type::SHADER_CUSTOM ||
+-            config.customPasses.size() != 1)
++        const bool custom = config.type == Type::SHADER_CUSTOM;
++        if (prepass->second != "1" || config.customPasses.empty() ||
++            config.customPasses.size() > (custom ? 5u : 1u))
+             return { {}, false };
+         Config unwrapped = config;
+         unwrapped.params.erase("AMBIENT_PREPEND");
+-        unwrapped.customPasses.clear();
++        if (custom)
++            unwrapped.customPasses.erase(unwrapped.customPasses.begin());
++        else
++            unwrapped.customPasses.clear();
+         Chain original = getShader(unwrapped);
+         // Native pipeline reserves at most one prefix and four built-in passes.
+         if (original.passes.empty() || original.passes.size() > 4)
+diff --git a/src/main/cpp/video.cpp b/src/main/cpp/video.cpp
+--- a/src/main/cpp/video.cpp
++++ b/src/main/cpp/video.cpp
+@@ -185,6 +185,11 @@
+         const auto hdrPrefix = requestedShaderConfig.params.find("AMBIENT_PREPEND");
+         if (hdrPrefix != requestedShaderConfig.params.end()) {
+             safeDefault.params["AMBIENT_PREPEND"] = hdrPrefix->second;
+-            safeDefault.customPasses = requestedShaderConfig.customPasses;
++            // A failed custom picture shader must not also poison the safe
++            // fallback. Keep ONLY the mandatory color-conversion prepass;
++            // dropping it would mislabel PQ/HLG pixels as SDR.
++            safeDefault.customPasses.clear();
++            if (!requestedShaderConfig.customPasses.empty())
++                safeDefault.customPasses.push_back(requestedShaderConfig.customPasses.front());
+         }
+         auto defaultShaders = ShaderManager::getShader(safeDefault);

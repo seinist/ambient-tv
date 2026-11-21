@@ -233,6 +233,11 @@ android {
         buildConfigField("String", "APP_DISPLAY_NAME", quotedBuildConfigString(appDisplayName))
         buildConfigField("boolean", "MONOGRAM_NATIVE", monogramEnabled.toString())
         buildConfigField("boolean", "SPOTIFY_ENABLED", spotifyEnabled.toString())
+        buildConfigField("boolean", "LIBRASHADER_NATIVE", (
+            providers.gradleProperty("LIBRASHADER_NATIVE")
+                .orElse(providers.environmentVariable("LIBRASHADER_NATIVE"))
+                .orElse("0").get() == "1"
+        ).toString())
         buildConfigField("String", "MONOGRAM_REF", quotedBuildConfigString(externalVersion("MONOGRAM_REF")))
         buildConfigField("String", "MONOGRAM_VERSION", quotedBuildConfigString(externalVersion("MONOGRAM_VERSION")))
         // Own core channel (.github/workflows/cores.yml): public key of its signed manifest, empty
@@ -365,6 +370,12 @@ android {
             excludes += setOf("**/mips/libjnidispatch.so", "**/mips64/libjnidispatch.so", "**/armeabi/libjnidispatch.so")
             // An earlier build may have left the Spotify core in jniLibs: never ship it when disabled.
             if (!spotifyEnabled) excludes += "**/libspotify_receiver_core.so"
+            // An earlier full Vulkan build may leave a 6+ MB native library in
+            // jniLibs. A later GLES-only build must never accidentally ship it.
+            val includeNativeSlang = providers.gradleProperty("LIBRASHADER_NATIVE")
+                .orElse(providers.environmentVariable("LIBRASHADER_NATIVE"))
+                .orElse("0").get() == "1"
+            if (!includeNativeSlang) excludes += "**/liblibrashader_capi.so"
 
             // AGP's llvm-strip rejects these prebuilt ELFs and would keep their debug info.
             // The release strip below still runs llvm-strip --strip-unneeded on every .so.
@@ -805,9 +816,14 @@ registerAbiDeployTask("deployArmv7ReleaseAdb", "armeabi-v7a", "armeabi-v7a", "Bu
 registerAbiDeployTask("deployX86ReleaseAdb", "x86", "x86", "Builds the x86 APK and non-fatally deploys it to ADB_DEVICE.")
 registerAbiDeployTask("deployX86_64ReleaseAdb", "x86_64", "x86_64", "Builds the x86_64 APK and non-fatally deploys it to ADB_DEVICE.")
 
+// Native Vulkan Slang output is required for build.sh artifacts, but optional for unit-only
+// Gradle builds. Never silently publish a release advertised as Vulkan Slang without its ABI.
+val librashaderEnabled = providers.gradleProperty("LIBRASHADER_NATIVE")
+    .orElse(providers.environmentVariable("LIBRASHADER_NATIVE")).orElse("0").get() == "1"
+
 val verifyAppNativeMediaInputs = tasks.register("verifyAppNativeMediaInputs") {
     group = "verification"
-    description = "Fail fast when app-owned Spotify/projectM/SVP native libraries have not been prepared."
+    description = "Verify all packaged native runtimes, including the optional Vulkan-only Slang ABI."
     val rootDir = rootProject.projectDir
     val required = selectedAbis.flatMap { abi ->
         listOfNotNull(
@@ -815,6 +831,7 @@ val verifyAppNativeMediaInputs = tasks.register("verifyAppNativeMediaInputs") {
             rootProject.file("app/src/main/jniLibs/$abi/libprojectM-4.so"),
             rootProject.file("app/src/main/jniLibs/$abi/libambientprojectm.so"),
             rootProject.file("app/src/main/jniLibs/$abi/libambientsvp.so"),
+            rootProject.file("app/src/main/jniLibs/$abi/liblibrashader_capi.so").takeIf { librashaderEnabled },
         )
     }
     doLast {

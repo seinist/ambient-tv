@@ -74,6 +74,7 @@ class GamePlayerViewModel @Inject constructor(
     private val files: FileStore,
     val retroAchievements: com.ambient.tv.games.RetroAchievementsClient,
     private val cheatStore: com.ambient.tv.games.GameCheatStore,
+    val shaderPacks: com.ambient.tv.games.GameShaderPackStore,
 ) : ViewModel() {
     private val fileId: String = checkNotNull(saved.get<String>("fileId")) { "fileId" }
     private val mutable = MutableStateFlow<GameUiState>(GameUiState.Preparing(null))

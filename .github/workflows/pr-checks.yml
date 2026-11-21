@@ -59,6 +59,13 @@ jobs:
           bash -n build.sh
           python3 -m unittest discover -s scripts/tests -p 'test_*.py'
 
+      - name: Validate game GLSL ES 100 shader sources
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq glslang-tools
+          python3 scripts/check_game_glsl.py
+          python3 scripts/check_game_slang.py
+
       - name: Fetch LibretroDroid
         # The games frontend (pinned Argosy fork plus scripts/patches/libretrodroid).
         run: ./scripts/fetch_libretrodroid.sh
@@ -132,3 +139,68 @@ jobs:
           mapfile -t libs < <(find libretrodroid_wrapper/build -type f -path "*/${{ matrix.abi }}/*.so" | sort -u)
           test "${#libs[@]}" -gt 0 || { echo "::error::No native output libraries found"; exit 1; }
           python3 scripts/check_elf_page_alignment.py "$readelf" "${libs[@]}"
+
+  # The Rust Vulkan runtime is a separate library: the LibretroDroid NDK build can
+  # pass while a missing/incompatible librashader.so would fail on device.
+  # Build exactly the pinned Vulkan-only features, for every supported ABI.
+  native-slang-runtime:
+    if: >-
+      github.event_name == 'pull_request' &&
+      (github.head_ref == 'feat/libretro-shader-library-small-apk' ||
+       github.head_ref == 'feat/libretro-vulkan-slang-pipeline')
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        abi: [arm64-v8a, armeabi-v7a, x86, x86_64]
+    steps:
+      - uses: actions/checkout@v5
+      - name: Install pinned Android NDK
+        run: |
+          sdkmanager="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          [ -x "$sdkmanager" ] || sdkmanager="$(command -v sdkmanager)"
+          yes | "$sdkmanager" --licenses > /dev/null 2>&1 || true
+          "$sdkmanager" "ndk;30.0.16248370"
+      - name: Build Vulkan-only librashader C runtime
+        env:
+          LIBRASHADER_ABIS: ${{ matrix.abi }}
+        run: |
+          set -euo pipefail
+          rustup --version
+          cargo --version
+          bash scripts/build_librashader_android.sh
+          test -s "app/src/main/jniLibs/$LIBRASHADER_ABIS/liblibrashader_capi.so"
+          file "app/src/main/jniLibs/$LIBRASHADER_ABIS/liblibrashader_capi.so"
+          so="app/src/main/jniLibs/$LIBRASHADER_ABIS/liblibrashader_capi.so"
+          raw=$(stat -c%s "$so")
+          compressed=$(gzip -9 -c "$so" | wc -c)
+          test "$raw" -le 12582912 || { echo "::error::Vulkan Slang exceeds 12 MiB per ABI"; exit 1; }
+          echo "Vulkan Slang $LIBRASHADER_ABIS: $raw raw ELF bytes, $compressed gzip bytes (APK ZIP may differ)" >> "$GITHUB_STEP_SUMMARY"
+
+  # Validate the actual pinned parser and C ABI, not just GLSL stage syntax.
+  slang-preset-api:
+    if: >-
+      github.event_name == 'pull_request' &&
+      (contains(github.event.pull_request.title, 'Games') ||
+       contains(github.event.pull_request.title, 'Libretro'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v5
+      - name: Compile pinned host-side Slang C ABI and parse every bundled preset
+        run: |
+          set -euo pipefail
+          pin="$(sed -n 's/^LIBRASHADER_COMMIT=//p' gradle/external-versions.properties)"
+          test "${#pin}" -eq 40
+          mkdir -p third_party/.librashader-host-src
+          git -C third_party/.librashader-host-src init -q
+          git -C third_party/.librashader-host-src remote add origin https://github.com/SnowflakePowered/librashader
+          git -C third_party/.librashader-host-src fetch -q --depth 1 origin "$pin"
+          git -C third_party/.librashader-host-src checkout -q FETCH_HEAD
+          test "$(git -C third_party/.librashader-host-src rev-parse HEAD)" = "$pin"
+          export CARGO_TARGET_DIR="$PWD/third_party/.librashader-host-target"
+          cargo build --manifest-path third_party/.librashader-host-src/Cargo.toml \
+            -p librashader-capi --release --locked --no-default-features --features runtime-vulkan
+          python3 scripts/test_librashader_preset_api.py \
+            third_party/.librashader-host-target/release/liblibrashader_capi.so

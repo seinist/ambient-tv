@@ -37,6 +37,7 @@ internal class GameVulkanSurfaceHost(
     @Volatile private var disposed = false
     @Volatile private var nativeSdrDiagnostic = false
     @Volatile private var nativeIntegerScaling = false
+    @Volatile private var nativeShaderPreset = ""
     // Never treat a manual PQ/HLG selection as core source evidence.
     @Volatile private var confirmedCoreTransfer: GameVulkanTransferMode? = null
 
@@ -105,6 +106,27 @@ internal class GameVulkanSurfaceHost(
             onDiagnosticLost()
         }
         tryProbe() // Re-query capabilities from the current Android display mode.
+    }
+
+    /** A known bundled Slang preset, or empty for the fast raw-Pixel output. */
+    fun updateShaderPreset(path: String?) {
+        val selected = path.orEmpty()
+        if (disposed || nativeShaderPreset == selected) return
+        nativeShaderPreset = selected
+        // Disarm the old frame before changing a live WSI filter; a resized
+        // swapchain never inherits a "PRESENTING" badge from its previous filter.
+        if (fullscreenVisible) {
+            fullscreenRequested = false
+            demoteToProbe()
+            onFullscreenLost()
+        }
+        lastStatus = GameVulkanSdrStatus(1)
+        onNativeStatus(lastStatus)
+        if (canProbe) {
+            // The GL thread is the sole owner of Vulkan devices, swapchains and
+            // librashader history. tryProbe serializes setPreset before setSurface.
+            tryProbe()
+        }
     }
 
     /** Invalid/changed source evidence tears down an active experimental HDR surface. */
@@ -246,6 +268,9 @@ internal class GameVulkanSurfaceHost(
                         )
                         LibretroDroid.setNativeVulkanIntegerScaling(nativeIntegerScaling)
                         LibretroDroid.setNativeVulkanOutputTransfer(outputTransfer.nativeCode)
+                        // Set the shader before WSI attachment so swapchain image usage
+                        // includes a color attachment. Empty path keeps native raw Pixel.
+                        LibretroDroid.setNativeVulkanShaderPreset(nativeShaderPreset)
                         LibretroDroid.setNativeSdrVulkanSurface(surface)
                     }
                 }

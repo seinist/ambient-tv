@@ -1,0 +1,12 @@
+diff --git a/src/main/cpp/vulkan/vulkanbackend.cpp b/src/main/cpp/vulkan/vulkanbackend.cpp
+--- a/src/main/cpp/vulkan/vulkanbackend.cpp
++++ b/src/main/cpp/vulkan/vulkanbackend.cpp
+@@ -1323,6 +1323,7 @@
+             shaderRecorded = nativeSlang.record(commandBuffer, nativeSlangFrame++,
+                 frameImage, VK_FORMAT_R8G8B8A8_UNORM, frameWidth, frameHeight,
+                 target, nativeSdrFormat, nativeSdrExtent.width, nativeSdrExtent.height,
+                 static_cast<float>(left), static_cast<float>(top),
+-                static_cast<uint32_t>(dstW), static_cast<uint32_t>(dstH), coreAspect);
++                static_cast<uint32_t>(dstW), static_cast<uint32_t>(dstH),
++                coreAspect, Environment::getInstance().getGameTimingFps());
+             shaderFailed = !shaderRecorded;

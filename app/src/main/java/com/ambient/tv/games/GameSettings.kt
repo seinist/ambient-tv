@@ -7,15 +7,39 @@ import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 
 /** Picture filters LibretroDroid offers. Stored by [key]. */
-enum class GameShader(val key: String, @StringRes val titleRes: Int, @StringRes val hintRes: Int) {
-    SHARP("sharp", R.string.game_shader_sharp, R.string.game_shader_sharp_hint),
-    PIXEL("pixel", R.string.game_shader_pixel, R.string.game_shader_pixel_hint),
-    SMOOTH("smooth", R.string.game_shader_smooth, R.string.game_shader_smooth_hint),
-    CUT2("cut2", R.string.game_shader_cut2, R.string.game_shader_cut2_hint),
-    BICUBIC("bicubic", R.string.game_shader_bicubic, R.string.game_shader_bicubic_hint),
-    ADAPTIVE("adaptive", R.string.game_shader_adaptive, R.string.game_shader_adaptive_hint),
-    CRT("crt", R.string.game_shader_crt, R.string.game_shader_crt_hint),
-    LCD("lcd", R.string.game_shader_lcd, R.string.game_shader_lcd_hint),
+enum class GameShaderGroup(@StringRes val titleRes: Int) {
+    SCALING(R.string.game_shader_group_scaling),
+    CRT(R.string.game_shader_group_crt),
+    HANDHELD(R.string.game_shader_group_handheld),
+    SIGNAL(R.string.game_shader_group_signal),
+    EFFECTS(R.string.game_shader_group_effects),
+}
+
+/** Stable stored IDs: do not rename existing keys. Extra shaders are original compact GLSL. */
+enum class GameShader(val key: String, @StringRes val titleRes: Int, @StringRes val hintRes: Int, val group: GameShaderGroup) {
+    SHARP("sharp", R.string.game_shader_sharp, R.string.game_shader_sharp_hint, GameShaderGroup.SCALING),
+    PIXEL("pixel", R.string.game_shader_pixel, R.string.game_shader_pixel_hint, GameShaderGroup.SCALING),
+    SMOOTH("smooth", R.string.game_shader_smooth, R.string.game_shader_smooth_hint, GameShaderGroup.SCALING),
+    CUT2("cut2", R.string.game_shader_cut2, R.string.game_shader_cut2_hint, GameShaderGroup.SCALING),
+    BICUBIC("bicubic", R.string.game_shader_bicubic, R.string.game_shader_bicubic_hint, GameShaderGroup.SCALING),
+    ADAPTIVE("adaptive", R.string.game_shader_adaptive, R.string.game_shader_adaptive_hint, GameShaderGroup.SCALING),
+    SHARP_BILINEAR("sharp-bilinear", R.string.game_shader_sharp_bilinear, R.string.game_shader_sharp_bilinear_hint, GameShaderGroup.SCALING),
+    PIXEL_AA("pixel-aa", R.string.game_shader_pixel_aa, R.string.game_shader_pixel_aa_hint, GameShaderGroup.SCALING),
+    CRT("crt", R.string.game_shader_crt, R.string.game_shader_crt_hint, GameShaderGroup.CRT),
+    CRT_LIGHT("crt-light", R.string.game_shader_crt_light, R.string.game_shader_crt_light_hint, GameShaderGroup.CRT),
+    CRT_GEOMETRY("crt-geometry", R.string.game_shader_crt_geometry, R.string.game_shader_crt_geometry_hint, GameShaderGroup.CRT),
+    CRT_APERTURE("crt-aperture", R.string.game_shader_crt_aperture, R.string.game_shader_crt_aperture_hint, GameShaderGroup.CRT),
+    CRT_GLOW("crt-glow", R.string.game_shader_crt_glow, R.string.game_shader_crt_glow_hint, GameShaderGroup.CRT),
+    LCD("lcd", R.string.game_shader_lcd, R.string.game_shader_lcd_hint, GameShaderGroup.HANDHELD),
+    GAMEBOY_DMG("gb-dmg", R.string.game_shader_gb_dmg, R.string.game_shader_gb_dmg_hint, GameShaderGroup.HANDHELD),
+    GBC_GRID("gbc-grid", R.string.game_shader_gbc_grid, R.string.game_shader_gbc_grid_hint, GameShaderGroup.HANDHELD),
+    GBA_COLOR("gba-color", R.string.game_shader_gba_color, R.string.game_shader_gba_color_hint, GameShaderGroup.HANDHELD),
+    DS_LCD("ds-lcd", R.string.game_shader_ds_lcd, R.string.game_shader_ds_lcd_hint, GameShaderGroup.HANDHELD),
+    NTSC_COMPOSITE("ntsc", R.string.game_shader_ntsc, R.string.game_shader_ntsc_hint, GameShaderGroup.SIGNAL),
+    VHS_SOFT("vhs", R.string.game_shader_vhs, R.string.game_shader_vhs_hint, GameShaderGroup.SIGNAL),
+    FILM_GRAIN("film-grain", R.string.game_shader_film_grain, R.string.game_shader_film_grain_hint, GameShaderGroup.EFFECTS),
+    DEBAND("deband", R.string.game_shader_deband, R.string.game_shader_deband_hint, GameShaderGroup.EFFECTS),
+    COLOR_BOOST("color-boost", R.string.game_shader_color_boost, R.string.game_shader_color_boost_hint, GameShaderGroup.EFFECTS),
     ;
 
     companion object {
@@ -77,15 +101,47 @@ enum class GameOptionOrigin { DEFAULT, CORE, GAME }
  * ("game.<game>.<core>.<key>"). Values the core does not know any more are ignored when it starts.
  */
 data class GameSettingsState(val values: Map<String, String> = emptyMap()) {
-    fun shader(system: GameSystem): GameShader =
-        GameShader.fromKey(values["shader.${system.id}"]) ?: GameShader.fromKey(values["shader"]) ?: GameShader.SHARP
+    fun shader(system: GameSystem, gameKey: String? = null): GameShader =
+        gameKey?.let { ownGameShader(it) }
+            ?: GameShader.fromKey(values["shader.${system.id}"])
+            ?: GameShader.fromKey(values["shader"]) ?: GameShader.SHARP
 
-    /** The filter set for exactly this system, or null when it follows all games. */
+    /** An optional game override takes precedence over the system and global defaults. */
     fun ownShader(system: GameSystem): GameShader? = GameShader.fromKey(values["shader.${system.id}"])
+
+    fun ownGameShader(gameKey: String): GameShader? = GameShader.fromKey(values["shader.game.$gameKey"])
+
+    fun withGameShader(gameKey: String, shader: GameShader?): GameSettingsState =
+        set("shader.game.$gameKey", shader?.key)
+
+    /** Signed pack selections reuse built-in shader precedence, never a separate dangling override. */
+    fun packShader(system: GameSystem, gameKey: String? = null): String? {
+        val value = gameKey?.let { values["shader.game." + it] }
+            ?: values["shader." + system.id] ?: values["shader"]
+        return value?.takeIf { it.startsWith("pack:") }?.removePrefix("pack:")
+    }
+
+    fun withPackShader(system: GameSystem, gameKey: String?, selection: String?): GameSettingsState {
+        val key = if (gameKey != null) "shader.game." + gameKey else "shader." + system.id
+        return set(key, selection?.let { "pack:" + it })
+    }
 
     fun withShader(system: GameSystem?, shader: GameShader?): GameSettingsState {
         val key = if (system == null) "shader" else "shader.${system.id}"
         return copy(values = if (shader == null) values - key else values + (key to shader.key))
+    }
+
+    /** Finite, small parameter presets; invalid backup values cannot affect GLSL generation. */
+    fun shaderStrength(system: GameSystem, gameKey: String? = null): Float {
+        val raw = gameKey?.let { values["shader.intensity.game.$it"] }
+            ?: values["shader.intensity.${system.id}"] ?: "1.0"
+        return raw.toFloatOrNull()?.takeIf { it.isFinite() }?.coerceIn(0.5f, 1.5f) ?: 1f
+    }
+
+    fun withShaderStrength(system: GameSystem, gameKey: String?, strength: Float): GameSettingsState {
+        val key = if (gameKey == null) "shader.intensity.${system.id}" else "shader.intensity.game.$gameKey"
+        val bounded = strength.takeIf { it.isFinite() }?.coerceIn(0.5f, 1.5f) ?: 1f
+        return set(key, bounded.toString().takeUnless { bounded == 1f })
     }
 
     fun aspect(system: GameSystem): GameAspect = GameAspect.fromKey(values["aspect.${system.id}"]) ?: GameAspect.CORE

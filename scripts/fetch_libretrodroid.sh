@@ -29,7 +29,7 @@ remove_dir() {
     rm -rf "$dir"
 }
 
-patch_hash="$( (cd "$PATCHES" && cat ./*.patch 2>/dev/null) | git hash-object --stdin)"
+patch_hash="$( (cd "$PATCHES" && cat ./*.patch 2>/dev/null; cat "$ROOT/scripts/native_libretro_vulkan/librashader.h" "$ROOT/scripts/native_libretro_vulkan/vulkanslangpipeline.h" "$ROOT/scripts/native_libretro_vulkan/vulkanslangpipeline.cpp") | git hash-object --stdin)"
 marker="$COMMIT $patch_hash recursive"
 if [[ -f "$DEST/.ambient-libretrodroid" && "$(cat "$DEST/.ambient-libretrodroid")" == "$marker" ]]; then
     log "LibretroDroid $COMMIT already prepared"
@@ -62,6 +62,13 @@ for patch in "$PATCHES"/*.patch; do
     (cd "$DEST" && GIT_CEILING_DIRECTORIES="$(dirname "$DEST")" git apply --whitespace=nowarn "$patch") \
         || fail "Patch $(basename "$patch") does not apply"
 done
+# The Vulkan Slang helper is authored in this repository, separate from the pinned
+# upstream frontend sources. Copy AFTER applying the pinned patches so CMake sees the
+# exact audited header and C++ implementation with matching ABI and GPL licensing.
+cp "$ROOT/scripts/native_libretro_vulkan/librashader.h" "$DEST/src/main/cpp/vulkan/librashader.h"
+cp "$ROOT/scripts/native_libretro_vulkan/vulkanslangpipeline.h" "$DEST/src/main/cpp/vulkan/vulkanslangpipeline.h"
+cp "$ROOT/scripts/native_libretro_vulkan/vulkanslangpipeline.cpp" "$DEST/src/main/cpp/vulkan/vulkanslangpipeline.cpp"
+
 grep -q "RETRO_ENVIRONMENT_SET_CORE_OPTIONS_V2:" "$DEST/src/main/cpp/environment.cpp" \
     || fail "Core options patch missing after apply"
 echo "$marker" > "$DEST/.ambient-libretrodroid"

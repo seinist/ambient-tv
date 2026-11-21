@@ -192,6 +192,26 @@ the validated output path.
   important distinction between pixel precision and color transfer.
   Source provenance and hardware HDR-signal acceptance remain open release gates.
 
+## Vulkan Slang SDR pipeline – implementation in PR #434
+
+The native WSI presenter can now record nine allowlisted, original Slang presets
+through pinned Vulkan-only librashader (including a two-pass CRT Glow)
+into a swapchain with COLOR_ATTACHMENT
+usage. The renderer samples the existing RGBA8, sampleable Vulkan/AHardwareBuffer
+intermediate and restores its GLES handoff barriers. The opaque core callback
+does not expose underlying VkImageCreateInfo usage/extent, so it is not used
+as an unvalidated shader sample.
+
+The filter path is opt-in SDR-only; Pixel still uses the old nearest blit, and
+other filters or custom intensity use GLES. An actually presented filtered frame
+sets native status bit 6. Driver/preset failure demotes to GLES without dropping
+the existing HDR-to-SDR picture filter.
+
+The C runtime is built for all four ABIs, verified for 16-KiB ELF alignment;
+shader stages are validated with glslang in CI. A green compile is not proof of
+correct GPU synchronization, HDR source metadata, calibrated output or 4K
+frame pacing on Shield/Philips/phone. Native HDR through Slang remains disabled.
+
 ## Incompatible pieces that must be completed together for native HDR
 
 1. **Core HDR handshake.** The currently pinned Argosy/libretro-common header predates
