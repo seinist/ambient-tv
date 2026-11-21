@@ -267,7 +267,7 @@ class GameNetplay(
                 when (input.readByte().toInt()) {
                     PACKET_INPUT -> {
                         val f = input.readInt()
-                        if (!acceptableFrame(f, frame) || (f !in remote && remote.size >= MAX_FRAME_AHEAD)) {
+                        if (!acceptableFrame(f, frame) || (!remote.containsKey(f) && remote.size >= MAX_FRAME_AHEAD)) {
                             throw IOException("Invalid or excessive netplay frame $f")
                         }
                         remote[f] = NetplayInput.read(input)
