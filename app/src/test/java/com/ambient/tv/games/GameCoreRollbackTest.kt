@@ -28,7 +28,7 @@ class GameCoreRollbackTest {
                 else -> 183
             }
             put(byteArrayOf(0x7f, 'E'.code.toByte(), 'L'.code.toByte(), 'F'.code.toByte(),
-                if (is64) 2 else 1, 1, 1))
+                (if (is64) 2 else 1).toByte(), 1, 1))
             putShort(0x10, 3) // ET_DYN
             putShort(0x12, machine.toShort())
             if (is64) {
