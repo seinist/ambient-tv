@@ -218,6 +218,13 @@ internal fun GameNetplayPanel(netplay: GameNetplay, view: GLRetroView, game: Pre
     }
     DisposableEffect(netplay) { onDispose { netplay.stopDiscovery() } }
     when (val state = netplay.state) {
+        is NetplayState.Approval -> {
+            GamePanelText(stringResource(R.string.game_netplay_approval, state.peer))
+            RightPanelChoice(stringResource(R.string.game_netplay_accept), selected = false,
+                onClick = netplay::approvePeer)
+            RightPanelChoice(stringResource(R.string.game_netplay_reject), selected = false,
+                onClick = netplay::rejectPeer)
+        }
         is NetplayState.Hosting -> {
             GamePanelText(stringResource(R.string.game_netplay_hosting, state.name))
             RightPanelChoice(stringResource(R.string.game_netplay_cancel), selected = false, onClick = netplay::stop)
@@ -258,4 +265,5 @@ private fun NetplayFailure.messageRes(): Int = when (this) {
     NetplayFailure.OTHER_CORE -> R.string.game_netplay_failed_core
     NetplayFailure.CLOSED -> R.string.game_netplay_closed
     NetplayFailure.STATE -> R.string.game_netplay_failed_state
+    NetplayFailure.REJECTED -> R.string.game_netplay_failed_rejected
 }
