@@ -1608,7 +1608,7 @@ class CompanionManager @Inject constructor(@ApplicationContext private val conte
                             error = companionReplyError(error, playback.phase, request.type))
                     } finally { if (mutatesPlayback) playbackMutation.unlock() }
                 }
-                output.writeFrame(reply)
+                output.writeFrame(reply, compact = request.type in setOf("gamepad_input", "input"))
             }
         } catch (failure: CancellationException) {
             throw failure
@@ -1923,7 +1923,7 @@ class CompanionManager @Inject constructor(@ApplicationContext private val conte
                             syncError = if (fast) "" else returnError,
                             syncResultId = result?.first.orEmpty(), syncResult = result?.second.orEmpty(),
                             syncPort = if (foreground && !route.vpn) server?.localPort ?: 0 else 0)
-                        output.writeFrame(request)
+                        output.writeFrame(request, compact = fast)
                         inflight.addLast(request)
                         if (!fast) receiveOne()
                     }
