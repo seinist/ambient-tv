@@ -44,6 +44,16 @@ data class GameLibraryFolder(
     val alsoShowInFiles: Boolean = false,
 )
 
+/** Portable per-ROM user choices. The ROM bytes and local SQLite index are never synced. */
+@Serializable
+data class GamePortableState(
+    val sourceId: String,
+    val path: String,
+    val title: String? = null,
+    val favorite: Boolean = false,
+    val lastPlayed: Long = 0L,
+)
+
 data class LibraryGame(
     val fileId: String,
     val folderId: String,
