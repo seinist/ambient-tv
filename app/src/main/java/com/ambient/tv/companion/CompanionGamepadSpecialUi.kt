@@ -49,6 +49,18 @@ internal fun companionPointerCoordinates(x: Float, y: Float, region: String): Pa
 internal fun companionDefaultPointerRegion(systemId: String?): String =
     if (systemId in setOf("nds", "n3ds", "wiiu")) "lower" else "full"
 
+/** Android pointer identities remain stable for the lifetime of each pressed finger. */
+internal class CompanionTouchContactSlots<Id>(private val capacity: Int = 4) {
+    private val assigned = mutableMapOf<Id, Int>()
+    fun slot(id: Id): Int? {
+        assigned[id]?.let { return it }
+        val unused = (0 until capacity).firstOrNull { it !in assigned.values } ?: return null
+        assigned[id] = unused
+        return unused
+    }
+    fun release(id: Id) { assigned.remove(id) }
+}
+
 /**
  * A dedicated touchpad surface within the FULL-PAGE phone controller. No modal surface,
  * no emulated video stream. All contacts are packed to consecutive Libretro indices 0..3.
@@ -86,7 +98,8 @@ internal fun CompanionGamePointerPad(
                     // Stable per-finger ports: removing finger 0 cannot silently turn finger 1
                     // into the primary stylus while it is still touching the phone.
                     val pressed = LinkedHashMap<PointerId, Pair<Int, Offset>>()
-                    pressed[down.id] = 0 to down.position
+                    val slots = CompanionTouchContactSlots<PointerId>()
+                    pressed[down.id] = requireNotNull(slots.slot(down.id)) to down.position
                     var last = down.position
                     val started = SystemClock.uptimeMillis()
                     var movement = 0f
@@ -132,11 +145,12 @@ internal fun CompanionGamePointerPad(
                                     last = change.position
                                 }
                                 if (change.pressed) {
-                                    val slot = pressed[change.id]?.first ?: (0..3).firstOrNull { candidate ->
-                                        pressed.values.none { it.first == candidate }
-                                    }
+                                    val slot = slots.slot(change.id)
                                     if (slot != null) pressed[change.id] = slot to change.position
-                                } else pressed.remove(change.id)
+                                } else {
+                                    pressed.remove(change.id)
+                                    slots.release(change.id)
+                                }
                                 change.consume()
                             }
                             if (kind == "mouse") {
