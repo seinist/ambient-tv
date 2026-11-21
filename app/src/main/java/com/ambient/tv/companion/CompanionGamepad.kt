@@ -48,7 +48,7 @@ object CompanionGamepadSession {
 
     private var active: Active? = null
     private val ports = LinkedHashMap<String, Int>()
-    private val handler = Handler(Looper.getMainLooper())
+    private val handler by lazy { Handler(Looper.getMainLooper()) }
     private val deadman = LinkedHashMap<String, Runnable>()
 
     private fun cancelDeadman(session: String) {
@@ -73,7 +73,8 @@ object CompanionGamepadSession {
 
     fun attach(input: RetroPadInput, systemId: String, coreId: String, title: String,
                pointerInput: Boolean, onMenu: () -> Unit) {
-        if (active?.input === input) return
+        if (active?.input === input && active?.info?.systemId == systemId &&
+            active?.info?.coreId == coreId && active?.info?.title == title.take(120)) return
         detachCurrent()
         active = Active(input, CompanionGamepadInfo(
             sessionId = UUID.randomUUID().toString(),
