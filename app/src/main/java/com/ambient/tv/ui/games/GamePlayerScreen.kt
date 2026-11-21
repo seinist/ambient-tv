@@ -311,8 +311,12 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
     val touchMode = settings.touchMode(system)
     // A trusted small Slang preset may opt into the experimental native WSI.
     // Existing GLES filters remain available for all other choices and for HDR.
-    val nativeSlangPath = remember(context, shader, selectedPack, nativeTransfer, session.vulkan) {
-        if (session.vulkan && nativeTransfer == GameVulkanTransferMode.SDR)
+    val nativeSlangPath = remember(context, shader, shaderIntensity, selectedPack, nativeTransfer, session.vulkan) {
+        // Bundled native presets currently use their author's default parameter values.
+        // A user-adjusted intensity must keep using GLES until native per-parameter
+        // parity is implemented; never silently display the wrong chosen appearance.
+        if (session.vulkan && nativeTransfer == GameVulkanTransferMode.SDR &&
+            kotlin.math.abs(shaderIntensity - 1f) < 0.0001f)
             GameVulkanSlangPresets.prepare(context, shader, selectedPack)
         else null
     }
