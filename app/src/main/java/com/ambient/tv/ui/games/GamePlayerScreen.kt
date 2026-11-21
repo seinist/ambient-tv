@@ -103,6 +103,7 @@ import com.ambient.tv.games.GameCoreOption
 import com.ambient.tv.games.GameOptionOrigin
 import com.ambient.tv.games.GameSettings
 import com.ambient.tv.games.GameShader
+import com.ambient.tv.games.GameShaderGroup
 import com.ambient.tv.games.GameHdrToneMap
 import com.ambient.tv.games.GameTouchMode
 import com.ambient.tv.ui.common.MetaBadge
@@ -209,7 +210,7 @@ private fun GameFailure.titleRes(): Int = when (this) {
     GameFailure.BIOS_MISSING -> R.string.game_failed_bios_missing
 }
 
-internal fun GameShader.config(): ShaderConfig = when (this) {
+internal fun GameShader.config(intensity: Float = 1f): ShaderConfig = when (this) {
     GameShader.SHARP -> ShaderConfig.Sharp
     GameShader.PIXEL -> ShaderConfig.Pixel
     GameShader.SMOOTH -> ShaderConfig.CUT3()
@@ -218,6 +219,7 @@ internal fun GameShader.config(): ShaderConfig = when (this) {
     GameShader.ADAPTIVE -> GamePictureShaders.adaptiveSharpen()
     GameShader.CRT -> ShaderConfig.CRT
     GameShader.LCD -> ShaderConfig.LCD
+    else -> GameRetroShaders.config(this, intensity)
 }
 
 /** The Android key LibretroDroid reads as each RetroPad button (it maps by letter, not position). */
@@ -294,7 +296,9 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
             )
     }
     val settings = GameSettings.state
-    val shader = settings.shader(system)
+    val shader = settings.shader(system, game.saveKey)
+    val shaderIntensity = settings.shaderStrength(system, game.saveKey)
+    val gameShaderScope = settings.ownGameShader(game.saveKey) != null
     val toneMap = settings.hdrToneMap(core)
     val nativeTransfer = GameVulkanTransferMode.forInput(toneMap)
     val aspect = settings.aspect(system)
@@ -413,7 +417,7 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
             variables = (settings.effectiveCoreOptions(core, game.saveKey) + if (session.vulkan) core.vulkanOptions else core.glOptions)
                 .map { (key, value) -> Variable(key, value) }.toTypedArray()
             saveRAMState = session.sram
-            this.shader = GameHdrToneMapShader.forGame(shader, toneMap, session.vulkan)
+            this.shader = GameHdrToneMapShader.forGame(shader, toneMap, session.vulkan, shaderIntensity)
             rumbleEventsEnabled = true
             preferLowLatencyAudio = true
             preferVulkan = session.vulkan
@@ -1076,17 +1080,55 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
                                 GamePanelText(stringResource(R.string.game_picture_hdr_filter_note))
                             }
                             GamePanelText(stringResource(R.string.game_picture_filter))
-                            GameShader.entries.forEach { choice ->
-                                RightPanelChoice(
-                                    text = stringResource(choice.titleRes),
-                                    subtitle = stringResource(choice.hintRes),
-                                    selected = choice == shader,
-                                    onClick = {
-                                        retroView.shader = GameHdrToneMapShader.forGame(choice, toneMap, session.vulkan)
-                                        GameSettings.update { it.withShader(system, choice) }
-                                    },
-                                )
+                            RightPanelChoice(
+                                text = stringResource(R.string.game_shader_scope_game),
+                                subtitle = stringResource(R.string.game_shader_scope_system),
+                                selected = gameShaderScope,
+                                onClick = {
+                                    if (gameShaderScope) {
+                                        val systemShader = settings.shader(system)
+                                        val systemStrength = settings.shaderStrength(system)
+                                        GameSettings.update {
+                                            it.withGameShader(game.saveKey, null)
+                                                .withShaderStrength(system, game.saveKey, 1f)
+                                        }
+                                        retroView.shader = GameHdrToneMapShader.forGame(systemShader, toneMap, session.vulkan, systemStrength)
+                                    } else {
+                                        GameSettings.update { it.withGameShader(game.saveKey, shader) }
+                                    }
+                                },
+                            )
+                            GameShaderGroup.entries.forEach { group ->
+                                GamePanelText(stringResource(group.titleRes))
+                                GameShader.entries.filter { it.group == group }.forEach { choice ->
+                                    RightPanelChoice(
+                                        text = stringResource(choice.titleRes),
+                                        subtitle = stringResource(choice.hintRes),
+                                        selected = choice == shader,
+                                        onClick = {
+                                            retroView.shader = GameHdrToneMapShader.forGame(choice, toneMap, session.vulkan, shaderIntensity)
+                                            GameSettings.update {
+                                                if (gameShaderScope) it.withGameShader(game.saveKey, choice)
+                                                else it.withShader(system, choice)
+                                            }
+                                        },
+                                    )
+                                }
                             }
+                            if (GameRetroShaders.isCustom(shader)) RightPanelChoice(
+                                text = stringResource(R.string.game_shader_strength),
+                                subtitle = stringResource(R.string.game_shader_strength_value, (shaderIntensity * 100).toInt()),
+                                selected = false,
+                                onClick = {
+                                    val levels = listOf(0.5f, 0.75f, 1f, 1.25f, 1.5f)
+                                    val index = levels.indexOfFirst { kotlin.math.abs(it - shaderIntensity) < 0.01f }
+                                    val next = levels[(index + 1).coerceAtLeast(0) % levels.size]
+                                    retroView.shader = GameHdrToneMapShader.forGame(shader, toneMap, session.vulkan, next)
+                                    GameSettings.update {
+                                        it.withShaderStrength(system, game.saveKey.takeIf { gameShaderScope }, next)
+                                    }
+                                },
+                            )
                             GamePanelText(stringResource(R.string.game_picture_shape))
                             GameAspect.entries.forEach { choice ->
                                 RightPanelChoice(
