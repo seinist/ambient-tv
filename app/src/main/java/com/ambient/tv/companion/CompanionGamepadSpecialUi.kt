@@ -80,8 +80,10 @@ internal fun CompanionGamePointerPad(
                     pendingRelease.getAndSet(null)?.cancel()
                     val width = size.width.toFloat().coerceAtLeast(1f)
                     val height = size.height.toFloat().coerceAtLeast(1f)
-                    val pressed = LinkedHashMap<PointerId, Offset>()
-                    pressed[down.id] = down.position
+                    // Stable per-finger ports: removing finger 0 cannot silently turn finger 1
+                    // into the primary stylus while it is still touching the phone.
+                    val pressed = LinkedHashMap<PointerId, Pair<Int, Offset>>()
+                    pressed[down.id] = 0 to down.position
                     var last = down.position
                     val started = SystemClock.uptimeMillis()
                     var movement = 0f
@@ -94,13 +96,13 @@ internal fun CompanionGamePointerPad(
                     fun deliver(x: Float = 0f, y: Float = 0f) {
                         when (kind) {
                             "touch" -> {
-                                val contacts = pressed.values.take(4).mapIndexed { index, point ->
-                                    mapped(point).copy(index = index)
+                                val contacts = pressed.values.sortedBy { it.first }.map { (slot, point) ->
+                                    mapped(point).copy(index = slot)
                                 }
                                 currentSend(CompanionPointerState(kind = "touch", contacts = contacts))
                             }
                             "gun" -> {
-                                val contact = pressed.values.firstOrNull()?.let(::mapped)
+                                val contact = pressed.values.minByOrNull { it.first }?.second?.let(::mapped)
                                 if (contact != null) currentSend(CompanionPointerState(
                                     kind = "gun", contacts = listOf(contact), buttons = 1,
                                 )) else currentSend(CompanionPointerState(kind = "gun"))
@@ -127,8 +129,10 @@ internal fun CompanionGamePointerPad(
                                     last = change.position
                                 }
                                 if (change.pressed) {
-                                    if (change.id in pressed || pressed.size < 4)
-                                        pressed[change.id] = change.position
+                                    val slot = pressed[change.id]?.first ?: (0..3).firstOrNull { candidate ->
+                                        pressed.values.none { it.first == candidate }
+                                    }
+                                    if (slot != null) pressed[change.id] = slot to change.position
                                 } else pressed.remove(change.id)
                                 change.consume()
                             }
