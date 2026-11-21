@@ -365,8 +365,17 @@ class GameLibraryRepository @Inject constructor(
                 val (path, depth) = pending.removeFirst()
                 if (!visited.add(path)) continue
                 require(visited.size <= 50000 && depth <= 40) { "Game folder scan limit reached" }
-                val listing = access.list(source, path, 20000) { it.game }
-                if (listing.more) throw IOException("Folder has more than 20000 entries; index was not changed")
+                // The Files API exposes a bounded prefix rather than an offset cursor.
+                // Normally one call (20k) suffices; only crowded directories retry with
+                // a larger bound. Never commit an incomplete listing as a complete index.
+                var limit = 20_000
+                var listing = access.list(source, path, limit) { it.game }
+                while (listing.more && limit < 200_000) {
+                    kotlinx.coroutines.currentCoroutineContext().ensureActive()
+                    limit = (limit * 2).coerceAtMost(200_000)
+                    listing = access.list(source, path, limit) { it.game }
+                }
+                if (listing.more) throw IOException("Directory exceeds 200000 entries; the existing catalog was not changed")
                 for (entry in listing.entries) {
                     if (entry.directory) {
                         if (folder.recursive) pending.add(entry.path to depth + 1)
@@ -385,7 +394,12 @@ class GameLibraryRepository @Inject constructor(
                     val assigned = GameSystems.byId(folder.systemId)
                     val ext = GameSystems.extension(entry.name)
                     // Verified disc magic and archive contents beat a misleading folder label.
-                    val detected = classify(entry, source)
+                    val unchanged = previousGame != null && previousGame.size == entry.size &&
+                        previousGame.modified == entry.modified && entry.modified != 0L
+                    // A repeat scan of an unchanged 50 GB game should not re-open it
+                    // merely to determine a console that was already indexed.
+                    val detected = if (unchanged) GameSystems.byId(previousGame!!.systemId)
+                        else classify(entry, source)
                     val signatureConflict = ext == "iso" && detected?.id in setOf("wii", "gamecube") &&
                         detected?.id != folder.systemId
                     val system = assigned?.takeIf { !signatureConflict &&
