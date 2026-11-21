@@ -65,8 +65,8 @@ internal fun CompanionGamepadScreen(manager: CompanionManager, modifier: Modifie
     }
     // Press/release events below are immediate. Analog movement is limited to ~30 Hz and idle
     // snapshots are refreshed to prevent a lost socket frame from leaving a button held.
-    LaunchedEffect(claimed, info?.sessionId) {
-        if (claimed) {
+    LaunchedEffect(playing, info?.sessionId) {
+        if (playing) {
             var last: CompanionGamepadState? = null
             var ticks = 0
             while (true) {
