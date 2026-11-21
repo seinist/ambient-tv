@@ -1,10 +1,12 @@
 <?xml version="1.0" encoding="utf-8"?>
-<vector xmlns:android="http://schemas.android.com/apk/res/android"
-    android:width="64dp" android:height="64dp" android:viewportWidth="64" android:viewportHeight="64">
-    <!-- Original Ambient TV vector silhouette, colored by the active UI accent. -->
-    <path android:fillColor="#00000000" android:strokeColor="#FFFFFFFF" android:strokeWidth="2.35" android:strokeLineCap="round" android:strokeLineJoin="round" android:pathData="M8,27 C12,17 21,20 26,22 L38,22 C43,20 52,17 56,27 L59,43 C59,49 55,52 50,48 L40,41 H24 L14,48 C9,52 5,49 5,43 Z"/>
-    <path android:fillColor="#00000000" android:strokeColor="#FFFFFFFF" android:strokeWidth="1.8" android:strokeLineCap="round" android:strokeLineJoin="round" android:pathData="M16.4,25.2 H21.6 V30.4 H26.8 V35.6 H21.6 V40.8 H16.4 V35.6 H11.2 V30.4 H16.4 Z"/>
-    <path android:fillColor="#FFFFFFFF" android:pathData="M40.8,33 a2.2,2.2 0,1 0,4.4,0 a2.2,2.2 0,1 0,-4.4,0"/><path android:fillColor="#FFFFFFFF" android:pathData="M46.8,29 a2.2,2.2 0,1 0,4.4,0 a2.2,2.2 0,1 0,-4.4,0"/><path android:fillColor="#FFFFFFFF" android:pathData="M46.8,37 a2.2,2.2 0,1 0,4.4,0 a2.2,2.2 0,1 0,-4.4,0"/><path android:fillColor="#FFFFFFFF" android:pathData="M51.8,33 a2.2,2.2 0,1 0,4.4,0 a2.2,2.2 0,1 0,-4.4,0"/>
-    <path android:fillColor="#00000000" android:strokeColor="#FFFFFFFF" android:strokeWidth="2.35" android:strokeLineCap="round" android:strokeLineJoin="round" android:pathData="M24.4,40 a2.6,2.6 0,1 0,5.2,0 a2.6,2.6 0,1 0,-5.2,0"/>
-    <path android:fillColor="#00000000" android:strokeColor="#FFFFFFFF" android:strokeWidth="2.35" android:strokeLineCap="round" android:strokeLineJoin="round" android:pathData="M34.4,40 a2.6,2.6 0,1 0,5.2,0 a2.6,2.6 0,1 0,-5.2,0"/>
+<vector xmlns:android="http://schemas.android.com/apk/res/android" android:width="64dp" android:height="64dp" android:viewportWidth="64" android:viewportHeight="64">
+  <!-- Original top-view hardware silhouette; theme-tinted by the Ambient TV icon component. -->
+  <path android:pathData="M16,7 H48 Q54,7 54,13 V50 Q54,56 48,56 H16 Q10,56 10,50 V13 Q10,7 16,7 Z" android:fillColor="#00000000" android:strokeColor="#FFFFFFFF" android:strokeWidth="2.6" android:strokeLineCap="round" android:strokeLineJoin="round" />
+  <path android:pathData="M16,28 a16,16 0,1 0,32,0 a16,16 0,1 0,-32,0" android:fillColor="#00000000" android:strokeColor="#FFFFFFFF" android:strokeWidth="2.6" android:strokeLineCap="round" android:strokeLineJoin="round" />
+  <path android:pathData="M21,28 a11,11 0,1 0,22,0 a11,11 0,1 0,-22,0" android:fillColor="#00000000" android:strokeColor="#FFFFFFFF" android:strokeWidth="2.6" android:strokeLineCap="round" android:strokeLineJoin="round" />
+  <path android:pathData="M29.4,28 a2.6,2.6 0,1 0,5.2,0 a2.6,2.6 0,1 0,-5.2,0" android:fillColor="#00000000" android:strokeColor="#FFFFFFFF" android:strokeWidth="2.6" android:strokeLineCap="round" android:strokeLineJoin="round" />
+  <path android:pathData="M14.8,46 a3.2,3.2 0,1 0,6.4,0 a3.2,3.2 0,1 0,-6.4,0" android:fillColor="#00000000" android:strokeColor="#FFFFFFFF" android:strokeWidth="2.6" android:strokeLineCap="round" android:strokeLineJoin="round" />
+  <path android:pathData="M42.8,46 a3.2,3.2 0,1 0,6.4,0 a3.2,3.2 0,1 0,-6.4,0" android:fillColor="#00000000" android:strokeColor="#FFFFFFFF" android:strokeWidth="2.6" android:strokeLineCap="round" android:strokeLineJoin="round" />
+  <path android:pathData="M13,53 L51,53" android:fillColor="#00000000" android:strokeColor="#FFFFFFFF" android:strokeWidth="1.4" android:strokeLineCap="round" android:strokeLineJoin="round" />
+  <path android:pathData="M25,50 H39 Q40,50 40,51 V53 Q40,54 39,54 H25 Q24,54 24,53 V51 Q24,50 25,50 Z" android:fillColor="#00000000" android:strokeColor="#FFFFFFFF" android:strokeWidth="2.6" android:strokeLineCap="round" android:strokeLineJoin="round" />
 </vector>

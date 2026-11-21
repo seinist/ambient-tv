@@ -1,12 +1,12 @@
 <?xml version="1.0" encoding="utf-8"?>
-<vector xmlns:android="http://schemas.android.com/apk/res/android"
-    android:width="64dp" android:height="64dp" android:viewportWidth="64" android:viewportHeight="64">
-    <!-- Original Ambient TV vector silhouette, colored by the active UI accent. -->
-    <path android:fillColor="#00000000" android:strokeColor="#FFFFFFFF" android:strokeWidth="2.35" android:strokeLineCap="round" android:strokeLineJoin="round" android:pathData="M8,27 C12,17 21,20 26,22 L38,22 C43,20 52,17 56,27 L59,43 C59,49 55,52 50,48 L40,41 H24 L14,48 C9,52 5,49 5,43 Z"/>
-    <path android:fillColor="#00000000" android:strokeColor="#FFFFFFFF" android:strokeWidth="1.8" android:strokeLineCap="round" android:strokeLineJoin="round" android:pathData="M8,23 H23"/>
-    <path android:fillColor="#00000000" android:strokeColor="#FFFFFFFF" android:strokeWidth="1.8" android:strokeLineCap="round" android:strokeLineJoin="round" android:pathData="M41,23 H56"/>
-    <path android:fillColor="#00000000" android:strokeColor="#FFFFFFFF" android:strokeWidth="1.8" android:strokeLineCap="round" android:strokeLineJoin="round" android:pathData="M16.3,24.9 H21.7 V30.3 H27.1 V35.7 H21.7 V41.1 H16.3 V35.7 H10.899999999999999 V30.3 H16.3 Z"/>
-    <path android:fillColor="#FFFFFFFF" android:pathData="M40.9,33 a2.1,2.1 0,1 0,4.2,0 a2.1,2.1 0,1 0,-4.2,0"/><path android:fillColor="#FFFFFFFF" android:pathData="M46.9,28 a2.1,2.1 0,1 0,4.2,0 a2.1,2.1 0,1 0,-4.2,0"/><path android:fillColor="#FFFFFFFF" android:pathData="M46.9,38 a2.1,2.1 0,1 0,4.2,0 a2.1,2.1 0,1 0,-4.2,0"/><path android:fillColor="#FFFFFFFF" android:pathData="M52.9,33 a2.1,2.1 0,1 0,4.2,0 a2.1,2.1 0,1 0,-4.2,0"/>
-    <path android:fillColor="#00000000" android:strokeColor="#FFFFFFFF" android:strokeWidth="2.35" android:strokeLineCap="round" android:strokeLineJoin="round" android:pathData="M22,43 a4,4 0,1 0,8,0 a4,4 0,1 0,-8,0"/>
-    <path android:fillColor="#00000000" android:strokeColor="#FFFFFFFF" android:strokeWidth="2.35" android:strokeLineCap="round" android:strokeLineJoin="round" android:pathData="M33,43 a4,4 0,1 0,8,0 a4,4 0,1 0,-8,0"/>
+<vector xmlns:android="http://schemas.android.com/apk/res/android" android:width="64dp" android:height="64dp" android:viewportWidth="64" android:viewportHeight="64">
+  <!-- Original top-view hardware silhouette; theme-tinted by the Ambient TV icon component. -->
+  <path android:pathData="M10,17 L50,14 Q56,14 58,19 L58,43 Q58,48 52,49 L12,52 Q6,52 6,46 L7,24 Q7,19 10,17 Z" android:fillColor="#00000000" android:strokeColor="#FFFFFFFF" android:strokeWidth="2.6" android:strokeLineCap="round" android:strokeLineJoin="round" />
+  <path android:pathData="M13,21 L52,18 L49,40 L9,43 Z" android:fillColor="#00000000" android:strokeColor="#FFFFFFFF" android:strokeWidth="2.6" android:strokeLineCap="round" android:strokeLineJoin="round" />
+  <path android:pathData="M15,26 L47,24" android:fillColor="#00000000" android:strokeColor="#FFFFFFFF" android:strokeWidth="2" android:strokeLineCap="round" android:strokeLineJoin="round" />
+  <path android:pathData="M14,32 L46,30" android:fillColor="#00000000" android:strokeColor="#FFFFFFFF" android:strokeWidth="2" android:strokeLineCap="round" android:strokeLineJoin="round" />
+  <path android:pathData="M13,38 L45,36" android:fillColor="#00000000" android:strokeColor="#FFFFFFFF" android:strokeWidth="2" android:strokeLineCap="round" android:strokeLineJoin="round" />
+  <path android:pathData="M13,45 H22 Q23,45 23,46 V48 Q23,49 22,49 H13 Q12,49 12,48 V46 Q12,45 13,45 Z" android:fillColor="#00000000" android:strokeColor="#FFFFFFFF" android:strokeWidth="2.6" android:strokeLineCap="round" android:strokeLineJoin="round" />
+  <path android:pathData="M32,44 H46 Q47,44 47,45 V47 Q47,48 46,48 H32 Q31,48 31,47 V45 Q31,44 32,44 Z" android:fillColor="#00000000" android:strokeColor="#FFFFFFFF" android:strokeWidth="2.6" android:strokeLineCap="round" android:strokeLineJoin="round" />
+  <path android:pathData="M51.3,44 a1.7,1.7 0,1 0,3.4,0 a1.7,1.7 0,1 0,-3.4,0" android:fillColor="#FFFFFFFF" android:fillAlpha="0.86" />
 </vector>
