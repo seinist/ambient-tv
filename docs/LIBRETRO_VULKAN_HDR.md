@@ -194,8 +194,9 @@ the validated output path.
 
 ## Vulkan Slang SDR pipeline – implementation in PR #434
 
-The native WSI presenter can now record eight allowlisted, original Slang presets
-through pinned Vulkan-only librashader into a swapchain with COLOR_ATTACHMENT
+The native WSI presenter can now record nine allowlisted, original Slang presets
+through pinned Vulkan-only librashader (including a two-pass CRT Glow)
+into a swapchain with COLOR_ATTACHMENT
 usage. The renderer samples the existing RGBA8, sampleable Vulkan/AHardwareBuffer
 intermediate and restores its GLES handoff barriers. The opaque core callback
 does not expose underlying VkImageCreateInfo usage/extent, so it is not used

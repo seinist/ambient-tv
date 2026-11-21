@@ -33,7 +33,7 @@ unchanged (Sharp); no shaders are downloaded automatically.
 - Vulkan core + GLES compositor: retained optional FP16 bridge and a required PQ/HLG
   to SDR prepass *before* the picture effect. LibretroDroid patch 0022 composes these.
   If a picture shader fails to compile, fallback must retain the color conversion.
-- The experimental native Vulkan **SDR** WSI now supports eight pinned, original
+- The experimental native Vulkan **SDR** WSI now supports nine pinned, original
   small Slang presets through the Vulkan-only librashader C runtime. Raw Pixel is
   unchanged; all other shaders, signed external GLSL packs and adjusted strength
   remain on GLES. This is not a native HDR signal.
@@ -42,8 +42,8 @@ unchanged (Sharp); no shaders are downloaded automatically.
 
 ## Native Vulkan Slang: experimental SDR path (PR #434)
 
-Eight tiny original .slang/.slangp presets are bundled: crt-light, crt-geometry,
-crt-aperture, gb-dmg, gbc-grid, ntsc, color-boost and sharp-bilinear.
+Nine tiny original .slang/.slangp presets are bundled: crt-light, crt-geometry,
+crt-aperture, crt-glow, gb-dmg, gbc-grid, ntsc, color-boost and sharp-bilinear.
 They are **not** copied RetroArch presets. The Slang validator compiles both
 stages to SPIR-V in CI.
 
@@ -76,8 +76,8 @@ test correctly negotiated HDR10 input, tone mapping and safe GLES fallbacks.
 
 Original RetroArch GLSL/Slang packs can require multi-pass chains, texture LUTs,
 parameters and frame history. The pinned Vulkan-only librashader runtime has
-those engine capabilities, but the app currently allowlists only eight original
-built-in single-pass Slang presets. Signed external pack files remain a separate
+those engine capabilities, but the app currently allowlists only nine original
+built-in presets, including a two-pass CRT Glow Slang presets. Signed external pack files remain a separate
 GLES100 format, not arbitrary Slang. Original RetroArch preset import, parameters,
 and native HDR parity are separate follow-ups.
 
