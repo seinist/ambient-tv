@@ -206,6 +206,14 @@ class AppPreferences @Inject constructor(
         return decode(raw).also { decodedLists[key] = raw to it }
     }
 
+    /** Game collections refer to existing FileSource IDs: never duplicate NAS logins/WOL. */
+    var gameLibraryFolders: List<com.ambient.tv.games.library.GameLibraryFolder>
+        get() = runCatching {
+            json.decodeFromString<List<com.ambient.tv.games.library.GameLibraryFolder>>(
+                prefs.getString("game_library_folders", "[]") ?: "[]")
+        }.getOrDefault(emptyList()).take(200)
+        set(value) = prefs.edit { putString("game_library_folders", json.encodeToString(value.take(200))) }
+
     var fileSources: List<com.ambient.tv.data.files.FileSource>
         get() = runCatching { decodeCached("file_sources", prefs.getString("file_sources", "[]")!!) { json.decodeFromString<List<com.ambient.tv.data.files.FileSource>>(it) } }
             .getOrDefault(emptyList()).mapNotNull { runCatching { it.validated() }.getOrNull() }.distinctBy { it.id }.take(50)
