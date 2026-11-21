@@ -73,6 +73,7 @@ internal fun sidebarConcreteRoute(
     telegramSectionKey: String? = null,
 ): String? = when (currentRoute) {
     Destinations.SECTION -> sectionKey?.let(Destinations::section)
+    Destinations.GAME_LIBRARY_SECTION -> sectionKey?.let(Destinations::gameLibrarySection)
     Destinations.YOUTUBE_FEED -> youtubeFeedKey?.let(Destinations::youtubeFeed)
     Destinations.TRAILER_FEED -> trailerFeedKey?.let(Destinations::trailerFeed)
     Destinations.SPOTIFY_SECTION -> spotifySectionKey?.let(Destinations::spotifySection)
