@@ -229,10 +229,14 @@ class AppPreferences @Inject constructor(
             val history = runCatching {
                 json.decodeFromString<List<com.ambient.tv.data.files.FileHistory>>(prefs.getString("file_history", "[]")!!)
             }.getOrDefault(emptyList()).filter { it.entry.sourceId in reusable }.take(500)
+            // ROM directory assignments must not follow an ID to a different NAS/share/root.
+            // Full backup imports restore their validated folder links after the source list.
+            val retainedGames = gameLibraryFolders.filter { it.sourceId in reusable }
             prefs.edit {
                 putString("file_sources", json.encodeToString(next))
                 putString("file_favorites", json.encodeToString(favorites))
                 putString("file_history", json.encodeToString(history))
+                putString("game_library_folders", json.encodeToString(retainedGames))
             }
         }
 
