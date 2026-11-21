@@ -919,6 +919,10 @@ Validation commands: `:app:testDebugUnitTest --tests 'com.ambient.tv.companion.*
 
 ### Remote control and settings transfer
 
+**Gamepad on phone:** From the paired TV's Remote page, open **Gamepad**. It is a standalone full-screen handset page (no dialog or bottom navigation), with a D-pad, face/shoulder buttons and optional twin analog sticks. When Libretro runs on the TV, its game/system determines the starting touch layout; the Layout button cycles the alternatives. Touch presses and sticks go over the authenticated Companion connection straight to the TV's Libretro RetroPad, not through the TV's menu key dispatcher. Up to four phones can claim distinct player ports, avoiding local physical controllers' occupied ports. Game menu opens or resumes the TV game's OSD. Pausing or losing the connection releases held controls; a deadman timer also clears stale presses. Pointer/stylus/gyro/lightgun input required by some cores is not part of this RetroPad mode.
+
+
+
 The connected-device panel offers a D-pad, touchpad, text input and account/settings transfer. Remote input is restricted to this app's windows, with one controller at a time and a local TV stop action. Senders cannot operate pairing or import consent dialogs.
 
 Choose accounts only or accounts plus settings, using the current configuration or an existing backup file. Credentials require explicit opt-in. The TV must approve locally: add accounts without overwriting, or explicitly allow replacement. Device-specific display/audio/player settings require separate opt-in. Local files, VPN, pairing identities and history are excluded. Stop playback and save pending settings before applying. An encrypted local recovery backup can restore the previous configuration. Notifications cover transfer, acceptance, rejection and errors. Transfers are limited to 512 KiB, with a two-minute approval window; this is not continuous sync. Update both apps.
