@@ -355,6 +355,8 @@ data class RetroInputConfig(
 
 /** App-wide game input settings; MainActivity attaches storage. Main thread only. */
 object RetroInputSettings {
+    /** Last active game is session-only; paths and game identity never become synced settings. */
+    val lastPlayed = mutableStateOf<RetroInputProfileContext?>(null)
     private val mutable = mutableStateOf(RetroInputConfig())
     val config: RetroInputConfig get() = mutable.value
     private var persist: (Map<String, String>) -> Unit = {}
