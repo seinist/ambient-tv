@@ -69,7 +69,7 @@ internal val SettingsCategory.level: com.ambient.tv.ui.common.SettingsLevel get(
     isMediaSource() -> com.ambient.tv.ui.common.SettingsLevel.SIMPLE
     this in setOf(SettingsCategory.LANGUAGE, SettingsCategory.APPEARANCE, SettingsCategory.HOME,
         SettingsCategory.SUBTITLES, SettingsCategory.NOTIFICATIONS, SettingsCategory.ABOUT, SettingsCategory.WEATHER,
-        SettingsCategory.CONTROLLER) ->
+        SettingsCategory.CONTROLLER, SettingsCategory.KEY_BINDINGS, SettingsCategory.GAME_CONTROLS) ->
         com.ambient.tv.ui.common.SettingsLevel.SIMPLE
     this in setOf(SettingsCategory.IMAGE, SettingsCategory.VISUALIZER, SettingsCategory.WIREGUARD,
         SettingsCategory.DIAGNOSTICS, SettingsCategory.ADVANCED) ->
@@ -132,11 +132,11 @@ internal enum class SettingsCategory(val area: SettingsArea, val titleRes: Int, 
     BACKUP(SettingsArea.APP, R.string.settings_backup_title, R.string.settings_page_backup_hint),
     DIAGNOSTICS(SettingsArea.APP, R.string.settings_diagnostics_title, R.string.settings_page_diagnostics_hint),
     /** Remote/keyboard keys the user put actions on (ui.keyboard.KeyBindings). */
-    KEY_BINDINGS(SettingsArea.APP, R.string.key_bindings_title, R.string.key_bindings_hint),
+    KEY_BINDINGS(SettingsArea.APP, R.string.input_mapping_ui_title, R.string.input_mapping_ui_hint),
     /** Game controllers: navigation, sticks and button layout (ui.gamepad). */
-    CONTROLLER(SettingsArea.APP, R.string.gamepad_settings_title, R.string.gamepad_settings_hint),
+    CONTROLLER(SettingsArea.APP, R.string.input_mapping_player_title, R.string.input_mapping_player_hint),
     /** Players and key layouts of controllers, keyboards and remotes in games (ui.gamepad.retro). */
-    GAME_CONTROLS(SettingsArea.APP, R.string.game_controls_title, R.string.game_controls_hint),
+    GAME_CONTROLS(SettingsArea.APP, R.string.input_mapping_games_title, R.string.input_mapping_games_hint),
     /** Pointer page; Spotify developer client ID lives on the Spotify system page. */
     ADVANCED(SettingsArea.APP, R.string.settings_advanced_title, R.string.settings_page_advanced_hint),
     ABOUT(SettingsArea.APP, R.string.settings_about_title, R.string.settings_page_about_hint),
