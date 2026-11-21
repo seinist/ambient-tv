@@ -65,6 +65,7 @@ import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.toggleableState
 import androidx.compose.ui.state.ToggleableState
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
@@ -141,10 +142,12 @@ fun PlayerDropUpSelector(
     closeOnSelection: Boolean? = null,
     /** Leading icon, so a selector sits in a panel list beside [PlayerPanelEntry] rows. */
     icon: ImageVector? = null,
+    /** Value-only, wrapping trigger for fixed-width footers (no ellipsis or moving label). */
+    compactFooter: Boolean = false,
     onSelected: (String) -> Unit,
 ) {
     PlayerDropUpSelectorImpl(label, value, options, emptyList(), selectedKey, modifier, dropUp, onSelected,
-        disabledKeys, selectedKeys, optionSwatches, closeOnSelection, icon)
+        disabledKeys, selectedKeys, optionSwatches, closeOnSelection, icon, compactFooter)
 }
 
 /** Same selector with non-interactive section headings for long technical option lists. */
@@ -188,6 +191,7 @@ private fun PlayerDropUpSelectorImpl(
     optionSwatches: Map<String, List<Color>> = emptyMap(),
     closeOnSelection: Boolean? = null,
     icon: ImageVector? = null,
+    compactFooter: Boolean = false,
 ) {
     val uiSounds = com.ambient.tv.ui.sound.LocalUiSoundPlayer.current
     val panelNavigation = LocalPlayerPanelNavigation.current
@@ -279,6 +283,7 @@ private fun PlayerDropUpSelectorImpl(
             modifier = Modifier
                 .fillMaxWidth()
                 .heightIn(min = 48.dp)
+                .then(if (compactFooter) Modifier.semantics { contentDescription = "$label: $value" } else Modifier)
                 .focusRequester(triggerFocus)
                 .onFocusChanged {
                     focused = it.hasFocus
@@ -309,11 +314,12 @@ private fun PlayerDropUpSelectorImpl(
                 }
                 .activateOnTvKey(enabled, openAction)
                 .clickable(enabled = enabled, role = Role.Button, onClick = openAction)
-                .padding(horizontal = 14.dp, vertical = 11.dp),
+                .padding(horizontal = if (compactFooter) 8.dp else 14.dp,
+                    vertical = if (compactFooter) 8.dp else 11.dp),
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(12.dp),
+            horizontalArrangement = Arrangement.spacedBy(if (compactFooter) 4.dp else 12.dp),
         ) {
-            icon?.let {
+            if (!compactFooter) icon?.let {
                 Icon(
                     it,
                     contentDescription = null,
@@ -321,7 +327,18 @@ private fun PlayerDropUpSelectorImpl(
                     modifier = Modifier.size(20.dp),
                 )
             }
-            if (inlineValue) {
+            if (compactFooter) {
+                // The footer is deliberately narrow. Let the selected level wrap if a TV
+                // uses large fonts or has a small render viewport; never cut off the value.
+                Text(
+                    value,
+                    modifier = Modifier.weight(1f),
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = if (enabled) 1f else 0.55f),
+                    style = LocalTextStyle.current.copy(fontSize = 14.sp, fontWeight = FontWeight.Medium),
+                    softWrap = true,
+                    overflow = TextOverflow.Visible,
+                )
+            } else if (inlineValue) {
                 MarqueeTitle(
                     label,
                     focused,
@@ -359,10 +376,14 @@ private fun PlayerDropUpSelectorImpl(
                 Icons.Filled.ArrowDropDown,
                 contentDescription = null,
                 tint = MaterialTheme.colorScheme.onSurface.copy(alpha = if (enabled) 0.8f else 0.38f),
+                modifier = if (compactFooter) Modifier.size(18.dp) else Modifier,
             )
         }
         if (matchTrigger && expanded && triggerWidth > 0.dp && menuMaxHeight != Dp.Unspecified) {
-            SelectorListPopup(triggerWidth, menuMaxHeight, dismissAction, options, sections,
+            // Popup may be wider than its trigger, not the panel. This keeps all three
+            // choices legible even when the pinned footer has very little width.
+            SelectorListPopup(if (compactFooter) maxOf(triggerWidth, 184.dp) else triggerWidth,
+                menuMaxHeight, dismissAction, options, sections,
                 startIndex, selectedKeys, disabledKeys, optionFocus, optionSwatches,
                 shouldCloseOnSelection, ::close, select)
         }
