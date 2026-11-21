@@ -2434,4 +2434,7 @@
     <string name="input_mapping_keep_core_default">Die Konsolentasten zeigen die Libretro-Standardbelegung des Cores. Core-Optionen bleiben unverändert.</string>
     <string name="input_mapping_key_selected">Ausgewählt: %1$s</string>
     <string name="input_mapping_capture_hint">Taste am angeschlossenen Gerät drücken, um die ausgewählte Konsolentaste zu belegen.</string>
+    <string name="input_mapping_visual_variant">Controller-Darstellung</string>
+    <string name="input_mapping_visual_variant_hint">Nur die Darstellung. Den tatsächlichen Controllertyp legt der Core fest.</string>
+    <string name="input_mapping_retropad_target">Virtuelle Libretro-Taste</string>
 </resources>
