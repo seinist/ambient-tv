@@ -61,7 +61,7 @@ internal object CompanionBackupPolicy {
         "tvheadendMpvDeinterlaceFilterKey", "youtubeMaxVideoHeight", "youtubeVideoPreset", "youtubeNetworkEngine", "youtubeBufferKey", "liveTimeshiftMb", "liveTimeshiftEnabled",
     )
     private val accounts = setOf("schemaVersion", "exportedAtEpochMs", "servers", "jellyfinServers", "embyServers",
-        "fileSources", "dlnaServers", "smbPasswords", "sshKeys", "plexEnabled", "jellyfinEnabled", "embyEnabled", "filesEnabled",
+        "fileSources", "gameLibraryFolders", "dlnaServers", "smbPasswords", "sshKeys", "plexEnabled", "jellyfinEnabled", "embyEnabled", "filesEnabled",
         "tvheadendEnabled", "tvheadendHost", "tvheadendPort", "tvheadendUseHttps", "tvheadendUsername", "tvheadendPassword",
         "tvheadendStreamProfile", "tvheadendMacAddress", "tvheadendAutoWakeEnabled", "tmdbApiKey",
         "activeServerId", "activeJellyfinServerId", "activeEmbyServerId", "youtubeEnabled", "spotifyEnabled",
@@ -201,6 +201,11 @@ internal object CompanionBackupPolicy {
         s["fileSources"] = JsonArray(s.getValue("fileSources").jsonArray.filter { it.jsonObject.text("kind") != "local" }.map {
             JsonObject(it.jsonObject - "wireGuard")
         })
+        // SAF document IDs/permissions are device-specific. Only include game folders
+        // whose NAS source actually travels with this Companion payload.
+        val portableSourceIds = s.getValue("fileSources").jsonArray.map { it.jsonObject.text("id") }.toSet()
+        s["gameLibraryFolders"] = JsonArray((s["gameLibraryFolders"] as? JsonArray).orEmpty().map { it.jsonObject }
+            .filter { it.text("sourceId") in portableSourceIds })
         return fit(source, s, presentFields)
     }
 
@@ -321,6 +326,32 @@ internal object CompanionBackupPolicy {
             }
             result[field] = JsonArray(values)
         }
+        // Remap game folder foreign keys after fileSources have been matched on the TV.
+        // Preserve existing local folders and never transfer SAF grants or device paths.
+        val gameFolders = (current["gameLibraryFolders"] as? JsonArray).orEmpty().map { it.jsonObject }.toMutableList()
+        val validSources = result.list("fileSources").map { it.text("id") }.toSet()
+        val sourceIds = mappedIds["fileSources"].orEmpty()
+        for (folder in (incoming["gameLibraryFolders"] as? JsonArray).orEmpty().map { it.jsonObject }) {
+            val mappedSource = sourceIds[folder.text("sourceId")] ?: continue
+            if (mappedSource !in validSources) continue
+            val path = folder.text("path")
+            val system = folder.text("systemId")
+            if (path.length > 4096 || folder.text("id").isBlank() || system.isBlank()) continue
+            val existingIndex = gameFolders.indexOfFirst {
+                it.text("sourceId") == mappedSource && it.text("path") == path && it.text("systemId") == system
+            }
+            if (existingIndex < 0 && gameFolders.size >= 200) continue
+            val newFolder = JsonObject(folder + ("sourceId" to JsonPrimitive(mappedSource)))
+            if (existingIndex >= 0) {
+                if (overwrite) gameFolders[existingIndex] = JsonObject(newFolder + ("id" to JsonPrimitive(gameFolders[existingIndex].text("id"))))
+            } else {
+                val usedIds = gameFolders.map { it.text("id") }.toSet()
+                val id = if (folder.text("id") !in usedIds) folder.text("id")
+                    else "remote-" + fingerprint((mappedSource + path + system).toByteArray()).take(24)
+                gameFolders += JsonObject(newFolder + ("id" to JsonPrimitive(id)))
+            }
+        }
+        result["gameLibraryFolders"] = JsonArray(gameFolders)
         if (mode == "settings" && deviceSettings && source.schemaVersion >= 69) {
             val profiles = remapCompanionVideoProfiles(source, mappedIds, target)
             if (profilePresent(source, "titleVideoSettings", presentFields))
