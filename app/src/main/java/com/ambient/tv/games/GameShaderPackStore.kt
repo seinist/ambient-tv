@@ -167,6 +167,10 @@ class GameShaderPackStore @Inject constructor(@ApplicationContext private val co
         directory.mkdirs()
         val id = verified.manifest.id
         val target = File(directory, id)
+        // Installed packs must have a hard disk/count budget, independent of archive limits.
+        if (!target.exists() && directory.listFiles().orEmpty().count {
+                it.isDirectory && GameShaderPackArchive.validId(it.name)
+            } >= 8) throw IOException("Installed shader pack limit reached")
         val staging = File(directory, ".incoming-" + UUID.randomUUID().toString())
         if (!staging.mkdir()) throw IOException("Cannot prepare shader pack")
         try {
@@ -176,7 +180,7 @@ class GameShaderPackStore @Inject constructor(@ApplicationContext private val co
                 File(staging, path.substringAfterLast('/')).writeBytes(bytes)
             }
             // A local/backup-corrupted pack cannot become the active shader.
-            validateInstalled(staging) ?: throw IOException("Shader pack validation failed")
+            validateInstalled(staging, id) ?: throw IOException("Shader pack validation failed")
             val backup = File(directory, ".previous-" + UUID.randomUUID().toString())
             val hadOld = target.exists()
             if (hadOld && !target.renameTo(backup)) throw IOException("Cannot retain previous shader pack")
@@ -225,14 +229,14 @@ class GameShaderPackStore @Inject constructor(@ApplicationContext private val co
         )))
     }
 
-    private fun validateInstalled(folder: File): GameShaderPackManifest? = runCatching {
+    private fun validateInstalled(folder: File, expectedId: String = folder.name): GameShaderPackManifest? = runCatching {
         if (!folder.isDirectory) return@runCatching null
         val raw = File(folder, "manifest.json").readBytes()
         val sig = File(folder, "manifest.sig").readBytes()
         if (raw.size !in 1..32768 || sig.size !in 1..512 ||
             !GameCoreChannel.verify(raw, sig, key)) return@runCatching null
         val manifest = json.decodeFromString<GameShaderPackManifest>(raw.decodeToString())
-        if (manifest.version != 1 || manifest.id != folder.name ||
+        if (manifest.version != 1 || manifest.id != expectedId ||
             manifest.presets.isEmpty() || manifest.presets.size > 32) return@runCatching null
         if (manifest.presets.any {
             !GameShaderPackArchive.validId(it.id) || it.sha256.length != 64 ||
