@@ -194,13 +194,13 @@ class GameLibraryRepository @Inject constructor(
 
     fun setFavorite(fileId: String, value: Boolean) {
         db.writableDatabase.execSQL("UPDATE game_entries SET favorite=? WHERE file_id=?",
-            arrayOf(if (value) 1 else 0, fileId))
+            arrayOf<Any>(if (value) 1 else 0, fileId))
         changed()
     }
 
     fun recordPlayed(fileId: String) {
         db.writableDatabase.execSQL("UPDATE game_entries SET last_played=? WHERE file_id=?",
-            arrayOf(System.currentTimeMillis(), fileId))
+            arrayOf<Any>(System.currentTimeMillis(), fileId))
         changed()
     }
 
