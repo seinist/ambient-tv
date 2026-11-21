@@ -58,7 +58,7 @@ private fun playableDevices(): List<RetroInputDevice> = playableInputDevices()
 @Composable
 private fun GameControlsPlayers() {
     val config = RetroInputSettings.config
-    val devices = remember { playableDevices() }
+    val devices = rememberPlayableDevices()
     Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(LocalUiTokens.current.compactGap)) {
         SettingsHint(stringResource(R.string.game_controls_explanation))
         SettingsSubheader(stringResource(R.string.game_controls_players))
