@@ -1,6 +1,8 @@
 package com.ambient.tv.ui.games
 
 import androidx.core.content.ContextCompat
+import android.graphics.Bitmap
+import android.graphics.Canvas
 import com.ambient.tv.games.GameSystems
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
@@ -30,6 +32,38 @@ class GameSystemIconsTest {
             assertNotNull("Cannot inflate vector for " + system.id, art)
             assertTrue("Missing icon width for " + system.id, art!!.intrinsicWidth > 0)
             assertTrue("Missing icon height for " + system.id, art.intrinsicHeight > 0)
+        }
+    }
+
+    @Test fun allSystemVectorsRemainLegibleAt24And32DpWithoutClipping() {
+        val context = RuntimeEnvironment.getApplication()
+        for (system in GameSystems.all) {
+            for (size in listOf(24, 32, 64)) {
+                val icon = ContextCompat.getDrawable(context, GameSystemIcons.drawable(system.id))!!
+                    .mutate()
+                // Tint makes all foreground material equally visible, including dimmed surfaces.
+                icon.setTint(android.graphics.Color.WHITE)
+                val bitmap = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
+                icon.setBounds(0, 0, size, size)
+                icon.draw(Canvas(bitmap))
+                var pixels = 0
+                var minX = size
+                var maxX = -1
+                var minY = size
+                var maxY = -1
+                for (y in 0 until size) for (x in 0 until size) {
+                    if (android.graphics.Color.alpha(bitmap.getPixel(x, y)) > 40) {
+                        pixels++
+                        minX = minOf(minX, x)
+                        maxX = maxOf(maxX, x)
+                        minY = minOf(minY, y)
+                        maxY = maxOf(maxY, y)
+                    }
+                }
+                assertTrue("Empty or indistinct icon for ${system.id} at ${size}dp", pixels >= size)
+                assertTrue("Icon clipped horizontally for ${system.id}", minX > 0 && maxX < size - 1)
+                assertTrue("Icon clipped vertically for ${system.id}", minY > 0 && maxY < size - 1)
+            }
         }
     }
 }
