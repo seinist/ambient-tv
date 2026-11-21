@@ -111,24 +111,31 @@ class RetroPadInput(
     /** Reserve a phone's port so automatically assigned physical controllers skip it. */
     fun reserveRemotePort(port: Int, reserved: Boolean, descriptor: String? = null) {
         if (port !in 0 until RetroPorts.COUNT) return
-        if (!reserved) remoteState(port, 0, 0f, 0f, 0f, 0f)
+        if (!reserved) clearRemotePort(port)
         remoteReserved[port] = reserved
         remoteDescriptors[port] = if (reserved) descriptor else null
         remoteProfileSettings[port] = null
         remoteProfiles[port] = null
-        if (!reserved) {
-            remoteRawButtons[port] = 0
-            remotePulseButtons[port] = 0
-            remoteMenuCombo[port] = false
-            remoteHoldTimers.keys.filter { it.first == port }.toList().forEach {
-                remoteHoldTimers.remove(it)?.invoke()
-            }
-            remoteHoldOpened.removeAll { it.first == port }
-            remoteRewindHeld[port] = false
-            if (rewinding() == 0 && remoteRewindHeld.none { it }) onRewind(false)
-        }
         // A physical auto-assignment may have moved when this port was reserved/freed.
         recomputeAll()
+    }
+
+    /** A disconnect/pause is a hard release, not a short tap: never generate a mapped pulse. */
+    fun clearRemotePort(port: Int) {
+        if (port !in 0 until RetroPorts.COUNT || !remoteReserved[port]) return
+        remoteHoldTimers.keys.filter { it.first == port }.toList().forEach {
+            remoteHoldTimers.remove(it)?.invoke()
+        }
+        remoteHoldOpened.removeAll { it.first == port }
+        remoteRawButtons[port] = 0
+        remotePulseButtons[port] = 0
+        remoteMenuCombo[port] = false
+        val wasRewinding = remoteRewindHeld[port]
+        remoteRewindHeld[port] = false
+        remoteButtons[port] = 0
+        for (axis in 0 until 4) remoteAnalog[port * 4 + axis] = 0
+        if (wasRewinding && rewinding() == 0 && remoteRewindHeld.none { it }) onRewind(false)
+        recompute(port)
     }
 
     private fun companionProfile(port: Int): RetroInputProfile? {
@@ -378,6 +385,7 @@ class RetroPadInput(
         devices.clear()
         touchButtons = 0
         touchAnalog.fill(0)
+        for (port in 0 until RetroPorts.COUNT) if (remoteReserved[port]) clearRemotePort(port)
         remoteButtons.fill(0)
         remoteAnalog.fill(0)
         for (port in 0 until RetroPorts.COUNT) recompute(port)
