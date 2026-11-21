@@ -99,7 +99,7 @@ class GameArchiveOptimizationsTest {
         val archiveFile = Files.createTempFile("ambient-rom", ".7z").toFile()
         val folder = Files.createTempDirectory("ambient-game-seven").toFile()
         try {
-            SevenZOutputFile.builder().setFile(archiveFile).get().use { output ->
+            SevenZOutputFile(archiveFile).use { output ->
                 val entry = SevenZArchiveEntry().apply {
                     name = "hidden.gba"
                     size = rom.size.toLong()
