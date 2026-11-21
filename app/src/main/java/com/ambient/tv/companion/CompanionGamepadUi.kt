@@ -57,7 +57,10 @@ internal fun CompanionGamepadScreen(manager: CompanionManager, modifier: Modifie
         onDispose { view.keepScreenOn = wasKeptOn }
     }
 
-    BackHandler { manager.showRemote() }
+    val back: () -> Unit = {
+        if (state.online) manager.showRemote() else manager.hideGamepad()
+    }
+    BackHandler(onBack = back)
 
     // The TV may start a game after opening this page. Claim each new core session once.
     LaunchedEffect(state.gamepadPanel, state.online, info?.sessionId) {
@@ -98,7 +101,7 @@ internal fun CompanionGamepadScreen(manager: CompanionManager, modifier: Modifie
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(6.dp),
             ) {
-                IconButton(manager::showRemote) {
+                IconButton(onClick = back) {
                     Icon(Icons.AutoMirrored.Filled.ArrowBack, stringResource(R.string.companion_gamepad_back))
                 }
                 Icon(Icons.Default.SportsEsports, null, tint = MaterialTheme.colorScheme.primary,
