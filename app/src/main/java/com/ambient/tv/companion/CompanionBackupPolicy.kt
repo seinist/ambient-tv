@@ -312,6 +312,13 @@ internal object CompanionBackupPolicy {
                     put("id", JsonPrimitive(id))
                     // Routing belongs to the receiving device, including credential/hardware imports.
                     if (field == "fileSources") put("wireGuard", oldProfile?.get("wireGuard") ?: JsonPrimitive(false))
+                    if (field == "fileSources") {
+                        // Merging a Games-only share must never hide a receiver's existing
+                        // video/Files share. Existing visible sources remain visible.
+                        val existingVisible = oldProfile?.get("showInFiles")?.jsonPrimitive?.booleanOrNull ?: (oldProfile != null)
+                        val incomingVisible = profile["showInFiles"]?.jsonPrimitive?.booleanOrNull ?: true
+                        put("showInFiles", JsonPrimitive(existingVisible || incomingVisible))
+                    }
                 })
                 val merged = if (nested) JsonObject(entry.toMutableMap().apply {
                     put("profile", newProfile)
