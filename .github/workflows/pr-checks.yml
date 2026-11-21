@@ -94,7 +94,7 @@ jobs:
   # verify 16-KiB ELF LOAD-segment alignment. A green ARM64-only build
   # cannot prove that the native frontend works on the other release ABIs.
   native-vulkan-abis:
-    if: github.event_name == 'pull_request' && (github.head_ref == 'feat/libretro-vulkan-hdr-output' || github.head_ref == 'feat/libretro-shader-library-small-apk')
+    if: github.event_name == 'pull_request' && (github.head_ref == 'feat/libretro-vulkan-hdr-output' || github.head_ref == 'feat/libretro-shader-library-small-apk' || github.head_ref == 'feat/libretro-signed-optional-shader-packs')
     runs-on: ubuntu-latest
     timeout-minutes: 45
     strategy:
