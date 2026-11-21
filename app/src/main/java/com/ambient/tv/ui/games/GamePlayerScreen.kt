@@ -180,6 +180,15 @@ fun GamePlayerScreen(onBack: () -> Unit, model: GamePlayerViewModel = hiltViewMo
                     modifier = center, centered = true,
                 )
             }
+            is GameUiState.ConfirmBuildbot -> StatePanel(
+                title = stringResource(R.string.game_buildbot_confirm_title),
+                body = stringResource(R.string.game_buildbot_confirm_body, current.core.name),
+                actionLabel = stringResource(R.string.game_buildbot_confirm_action),
+                onAction = model::confirmBuildbotCore,
+                secondaryActionLabel = stringResource(R.string.back),
+                onSecondaryAction = onBack,
+                modifier = center, centered = true,
+            )
             is GameUiState.DownloadingCore -> StatePanel(
                 title = stringResource(R.string.game_core_loading, current.core.name),
                 body = current.progress?.let { stringResource(R.string.game_progress, (it * 100).roundToInt()) },
