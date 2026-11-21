@@ -28,6 +28,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.background
 import androidx.compose.foundation.focusGroup
 import androidx.compose.foundation.focusable
@@ -160,6 +161,10 @@ import kotlinx.coroutines.launch
 
 /** A running service may outlive the browse UI; only its configuration recreation restores focus. */
 private val browseUiSessionPolicy = BrowseUiSessionPolicy()
+
+/** Loading a browse destination is not a request to open the menu. */
+internal fun shouldAutoFocusSidebarAfterContentFailure(hasFocusedBrowseContent: Boolean, waitsForContent: Boolean): Boolean =
+    hasFocusedBrowseContent || !waitsForContent
 
 @AndroidEntryPoint
 open class MainActivity : ComponentActivity() {
@@ -1736,6 +1741,9 @@ private fun AmbientTvApp(
     // Sidebar selections target this group directly. Spatial focus search is unreliable while
     // Navigation Compose is replacing one destination tree with another.
     val contentFocusRequester = remember { FocusRequester() }
+    // Shield can draw the shell before Home's first focusable tile. Keep the remote connected
+    // to the shell without animating the sidebar while the destination is still loading.
+    val startupFocusRequester = remember { FocusRequester() }
     val sidebarContentPending = waitsForSidebarContent && !sidebarContentReady
     var initialContentEntryPending by remember(sidebarDestinationKey) { mutableStateOf(waitsForSidebarContent) }
     val focusManager = LocalFocusManager.current
@@ -1774,6 +1782,15 @@ private fun AmbientTvApp(
     val windowInfo = androidx.compose.ui.platform.LocalWindowInfo.current
     var contentHasFocus by remember { mutableStateOf(false) }
     var contentContainerFocused by remember { mutableStateOf(false) }
+    var startupAnchorHasFocus by remember { mutableStateOf(false) }
+    var hasFocusedBrowseContent by remember(freshUiSessionRequest) { mutableStateOf(false) }
+    LaunchedEffect(contentHasFocus, contentContainerFocused, startupAnchorHasFocus, sidebarContentPending) {
+        // Ignore the invisible loading anchor when deciding whether the first real page focus
+        // has landed. Focus notifications may reach the parent before the anchor itself.
+        if (contentHasFocus && !contentContainerFocused && !startupAnchorHasFocus && !sidebarContentPending) {
+            hasFocusedBrowseContent = true
+        }
+    }
     var previousRoute by remember { mutableStateOf<String?>(currentRoute) }
     // Advances each time Settings is closed (no Settings entry left on the back stack). A Settings
     // entry composed in a later session forgets its page, area and focus and opens at the start,
@@ -1790,24 +1807,46 @@ private fun AmbientTvApp(
     val returnFocusPending = restoreFocusAfterNavigation || returnsFromFullscreenPlayer(previousRoute, currentRoute)
     fun shellFocusAllowed(): Boolean = windowInfo.isWindowFocused && !screensaverOverlayPresent &&
         !com.ambient.tv.ui.intro.IntroPresentation.active && !connectionStatusUi.isDetailsOpen
+    fun parkStartupFocus(): Boolean {
+        if (handheld || !waitsForSidebarContent || hasFocusedBrowseContent || !shellFocusAllowed()) return false
+        // The content group's regular onEnter guard rejects focus while content is pending.
+        // Permit this one invisible anchor, but never count it as a loaded browse item.
+        contentFocusPermit.value = true
+        return try {
+            runCatching { startupFocusRequester.requestFocus() }.getOrDefault(false)
+        } finally {
+            contentFocusPermit.value = false
+        }
+    }
     fun requestContentFocus(): Boolean {
         if (!shellFocusAllowed()) return false
         if (wakeFocus.hasFocus) return true
-        if (sidebarContentPending) return wakeFocus.requestFocus()
+        if (sidebarContentPending) {
+            if (wakeFocus.requestFocus()) return true
+            parkStartupFocus()
+            return false
+        }
         contentFocusPermit.value = true
         return try {
             val entry = com.ambient.tv.ui.navigation.SidebarContentEntry.requestFocus()
             // A restoring or empty page can hand off to the global wake action as well.
-            if (entry == null) return wakeFocus.requestFocus()
+            if (entry == null) {
+                if (wakeFocus.requestFocus()) return true
+                parkStartupFocus()
+                return false
+            }
             if (entry == true) {
-                return (contentHasFocus && !contentContainerFocused) || wakeFocus.requestFocus()
+                return (contentHasFocus && !contentContainerFocused && !startupAnchorHasFocus) || wakeFocus.requestFocus()
             }
             val accepted = runCatching { contentFocusRequester.requestFocus() }.getOrDefault(false)
             if (accepted && contentContainerFocused) {
                 runCatching { focusManager.moveFocus(FocusDirection.Enter) }
             }
-            // The container itself is not a visible, usable focus destination.
-            (contentHasFocus && !contentContainerFocused) || wakeFocus.requestFocus()
+            // Neither the container nor the loading anchor is a usable content destination.
+            val focusedContent = contentHasFocus && !contentContainerFocused && !startupAnchorHasFocus
+            val focusedWake = !focusedContent && wakeFocus.requestFocus()
+            if (!focusedContent && !focusedWake) parkStartupFocus()
+            focusedContent || focusedWake
         } finally {
             contentFocusPermit.value = false
         }
@@ -1818,10 +1857,7 @@ private fun AmbientTvApp(
         kotlinx.coroutines.delay(16)
         if (!shellFocusAllowed() || wakeFocus.hasFocus) return@LaunchedEffect
         if (sidebarContentPending) {
-            if (!wakeFocus.requestFocus()) {
-                sidebarEntryRequested.value = true
-                runCatching { sidebarFocusRequester.requestFocus() }
-            }
+            if (!wakeFocus.requestFocus()) parkStartupFocus()
         } else requestContentFocus()
     }
     LaunchedEffect(currentRoute, sidebarDestinationKey, sidebarContentReady, appHasFocus,
@@ -1831,14 +1867,11 @@ private fun AmbientTvApp(
         if (handheld || currentRoute in FULLSCREEN_ROUTES || !shellFocusAllowed() || wakeFocus.hasFocus) return@LaunchedEffect
         if (sidebarContentPending) {
             // WOL cancellation is a usable target even before the destination has content.
-            if (!appHasFocus && !wakeFocus.requestFocus()) {
-                sidebarEntryRequested.value = true
-                runCatching { sidebarFocusRequester.requestFocus() }
-            }
+            if (!appHasFocus && !wakeFocus.requestFocus()) parkStartupFocus()
             return@LaunchedEffect
         }
         if (sidebarHasFocus) return@LaunchedEffect
-        if (appHasFocus && !contentContainerFocused) return@LaunchedEffect
+        if (appHasFocus && !contentContainerFocused && !startupAnchorHasFocus) return@LaunchedEffect
         // Only repair actual focus loss. Dialogs have their own window; an existing content
         // selection is never re-requested just because metadata or readiness changed.
         kotlinx.coroutines.delay(180)
@@ -1848,14 +1881,19 @@ private fun AmbientTvApp(
             // tile after Back from Detail). Requesting the container would steal that focus and
             // Enter would land on the first tile instead.
             if (!shellFocusAllowed() || wakeFocus.hasFocus || sidebarHasFocus ||
-                (contentHasFocus && !contentContainerFocused)) return@LaunchedEffect
+                (contentHasFocus && !contentContainerFocused && !startupAnchorHasFocus)) return@LaunchedEffect
             if (requestContentFocus()) return@LaunchedEffect
             attempts++
             kotlinx.coroutines.delay(32)
         }
         if (!shellFocusAllowed() || wakeFocus.hasFocus) return@LaunchedEffect
-        sidebarEntryRequested.value = true
-        runCatching { sidebarFocusRequester.requestFocus() }
+        if (shouldAutoFocusSidebarAfterContentFailure(hasFocusedBrowseContent, waitsForSidebarContent)) {
+            sidebarEntryRequested.value = true
+            runCatching { sidebarFocusRequester.requestFocus() }
+        } else {
+            // An empty/error/loading Home must not briefly slide out the entire menu.
+            parkStartupFocus()
+        }
     }
     LaunchedEffect(sidebarContentPending, wakeFocus.hasFocus, windowInfo.isWindowFocused,
         screensaverOverlayPresent, com.ambient.tv.ui.intro.IntroPresentation.active,
@@ -2539,6 +2577,17 @@ private fun AmbientTvApp(
                     // override the destination's focusRestorer callback.
                     .focusGroup(),
             ) {
+                // An invisible, TV-focusable holding point: a cold start with slow/offline data
+                // stays collapsed but still accepts remote input. It disappears once a real
+                // browse child has obtained focus. Explicit Back/Left still opens the sidebar.
+                if (!handheld && waitsForSidebarContent && !hasFocusedBrowseContent) {
+                    Box(
+                        Modifier.size(1.dp)
+                            .focusRequester(startupFocusRequester)
+                            .onFocusChanged { startupAnchorHasFocus = it.isFocused }
+                            .focusable(),
+                    )
+                }
                 com.ambient.tv.ui.common.ViewTransitionHost(
                     styleKey = viewTransitionStyleKey,
                     route = currentRoute,
@@ -3707,7 +3756,8 @@ private fun AmbientTvApp(
                     // a usable target without taking focus from another window or an overlay.
                     if (!handheld && currentRoute !in FULLSCREEN_ROUTES && shellFocusAllowed() &&
                         !wakeFocus.hasFocus && !sidebarHasFocus && !(contentHasFocus && !contentContainerFocused) &&
-                        !requestContentFocus()) {
+                        !requestContentFocus() &&
+                        shouldAutoFocusSidebarAfterContentFailure(hasFocusedBrowseContent, waitsForSidebarContent)) {
                         sidebarEntryRequested.value = true
                         runCatching { sidebarFocusRequester.requestFocus() }
                     }
