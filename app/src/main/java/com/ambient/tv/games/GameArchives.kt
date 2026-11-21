@@ -1,6 +1,7 @@
 package com.ambient.tv.games
 
 import com.ambient.tv.data.files.SeekableMedia
+import com.ambient.tv.games.library.GameRomTitles
 import com.github.junrar.Archive
 import com.github.junrar.exception.UnsupportedRarV5Exception
 import org.apache.commons.compress.archivers.sevenz.SevenZFile
@@ -10,6 +11,7 @@ import java.io.IOException
 import java.io.FilterOutputStream
 import java.io.OutputStream
 import java.io.InputStream
+import java.util.Locale
 import java.nio.ByteBuffer
 import java.nio.channels.NonWritableChannelException
 import java.nio.channels.SeekableByteChannel
@@ -25,6 +27,133 @@ class GameArchiveException(message: String) : IOException(message)
  */
 object GameArchives {
     val extensions = setOf("zip", "7z", "rar", "gz")
+
+    /** Metadata discovery needs no archive copy. CRC comes from ZIP central-directory entries. */
+    data class Metadata(val innerName: String?, val system: GameSystem?,
+                        val internalTitle: String? = null, val crc32: String? = null)
+
+    /** Bound both decompressed header reads and the number of archive entries inspected. */
+    internal const val MAX_PROBE_HEADER = 72 * 1024
+    internal const val MAX_PROBE_ENTRIES = 5_000
+
+    private fun prefixLength(system: GameSystem?, name: String): Int = when {
+        system == null -> 0
+        system.id == "snes" -> MAX_PROBE_HEADER
+        system.id == "psp" && GameSystems.extension(name) == "pbp" -> MAX_PROBE_HEADER
+        system.id in setOf("gb", "gba", "nds", "megadrive", "n64", "gamecube", "wii") -> 512
+        else -> 0
+    }
+
+    /** Reads only a small *uncompressed* prefix, even for multi-gigabyte ROM entries. */
+    private fun readPrefix(input: InputStream, size: Int): ByteArray {
+        if (size <= 0) return byteArrayOf()
+        val buffer = ByteArray(size.coerceAtMost(MAX_PROBE_HEADER))
+        var total = 0
+        while (total < buffer.size) {
+            if (Thread.currentThread().isInterrupted) throw java.io.InterruptedIOException()
+            val got = input.read(buffer, total, buffer.size - total)
+            if (got < 0) break
+            if (got == 0) continue
+            total += got
+        }
+        return buffer.copyOf(total)
+    }
+
+    private fun titleFromPrefix(system: GameSystem?, name: String, bytes: ByteArray): String? =
+        system?.let { selected ->
+            GameRomTitles.extract(selected.id, name) { offset, count ->
+                if (offset < 0L || count < 0 || offset + count > bytes.size) null
+                else bytes.copyOfRange(offset.toInt(), offset.toInt() + count)
+            }
+        }
+
+    /**
+     * Probe a packed game without staging the archive locally. ZIP exposes CRC32 from its
+     * central directory; ZIP/7z only decompress at most a bounded ROM-header prefix.
+     * 7z solid folders may still require extra decoder work, so only probe the first
+     * selected entry. RAR4/RAR5 remain filename/folder hints, not arbitrary remote extraction.
+     */
+    fun probe(fileName: String, media: SeekableMedia): Metadata? = when (GameSystems.extension(fileName)) {
+        "zip" -> ZipFile.builder().setSeekableByteChannel(MediaChannel(media)).get().use { zip ->
+            val candidates = zip.entries.asSequence().filter { !it.isDirectory }
+                .take(MAX_PROBE_ENTRIES + 1).toList()
+            if (candidates.size > MAX_PROBE_ENTRIES) return@use null
+            val entry = choose(candidates) { it.name } ?: return@use null
+            val system = GameSystems.forFile(entry.name)
+            val length = prefixLength(system, entry.name)
+            val title = if (length > 0 && entry.size >= 0 &&
+                zip.canReadEntryData(entry)) runCatching {
+                zip.getInputStream(entry).use { readPrefix(it, length) }
+                    .let { titleFromPrefix(system, entry.name, it) }
+            }.getOrNull() else null
+            val crc = entry.crc.takeIf { it in 0..0xffffffffL }
+                ?.toString(16)?.uppercase(Locale.ROOT)?.padStart(8, '0')
+            Metadata(entry.name, system, title, crc)
+        }
+        "7z" -> SevenZFile.builder().setSeekableByteChannel(MediaChannel(media)).get().use { seven ->
+            val candidates = seven.entries.take(MAX_PROBE_ENTRIES + 1)
+            if (candidates.size > MAX_PROBE_ENTRIES) return@use null
+            val entry = choose(candidates.filterNot { it.isDirectory }) { it.name } ?: return@use null
+            val system = GameSystems.forFile(entry.name)
+            // Advancing to later entries of a solid 7z could decompress gigabytes.
+            val first = seven.nextEntry
+            val title = if (first?.name == entry.name && !first.isDirectory &&
+                first.hasStream() && prefixLength(system, entry.name) > 0) {
+                val buffer = ByteArray(prefixLength(system, entry.name))
+                var count = 0
+                runCatching {
+                    while (count < buffer.size) {
+                        if (Thread.currentThread().isInterrupted) throw java.io.InterruptedIOException()
+                        val n = seven.read(buffer, count, buffer.size - count)
+                        if (n <= 0) break
+                        count += n
+                    }
+                    titleFromPrefix(system, entry.name, buffer.copyOf(count))
+                }.getOrNull()
+            } else null
+            Metadata(entry.name, system, title)
+        }
+        "gz" -> {
+            val name = fileName.substringBeforeLast('.')
+            val system = GameSystems.forFile(name)
+            val length = prefixLength(system, name)
+            val title = if (length > 0) runCatching {
+                GZIPInputStream(BoundedMediaInput(media, 2 * 1024 * 1024)).use {
+                    titleFromPrefix(system, name, readPrefix(it, length))
+                }
+            }.getOrNull() else null
+            Metadata(name, system, title)
+        }
+        "rar" -> {
+            // A RAR archive's original filename may already include a known ROM extension.
+            val name = fileName.substringBeforeLast('.')
+            Metadata(name, GameSystems.forFile(name))
+        }
+        else -> null
+    }
+
+    /** Sequential GZIP input, with a strict cap on compressed bytes read over the network. */
+    private class BoundedMediaInput(private val media: SeekableMedia, private val cap: Int) : InputStream() {
+        private var position = 0L
+        override fun read(): Int {
+            val one = ByteArray(1)
+            return if (read(one, 0, 1) < 0) -1 else one[0].toInt() and 255
+        }
+        override fun read(bytes: ByteArray, offset: Int, length: Int): Int {
+            if (offset < 0 || length < 0 || offset > bytes.size - length) throw IndexOutOfBoundsException()
+            if (length == 0) return 0
+            if (position >= media.size) return -1
+            if (position >= cap) throw GameArchiveException("GZIP metadata probe exceeded compressed limit")
+            val allowed = minOf(length.toLong(), (cap - position).toLong(), media.size - position).toInt()
+            val scratch = ByteArray(allowed)
+            val got = media.read(position, scratch, allowed)
+            if (got > 0) {
+                scratch.copyInto(bytes, offset, 0, got)
+                position += got
+            }
+            return got
+        }
+    }
 
     /** Unpacked size a game archive may have. */
     const val MAX_BYTES = 8L * 1024 * 1024 * 1024
@@ -136,22 +265,23 @@ object GameArchives {
         else -> 3
     }
 
-    /** Names inside a ZIP or 7z, read through [media] (only the directory at its end); null for others. */
+    /** Lightweight listing of archive entry names; bounded to avoid giant untrusted indices. */
     fun names(fileName: String, media: SeekableMedia): List<String>? = when (GameSystems.extension(fileName)) {
         "zip" -> ZipFile.builder().setSeekableByteChannel(MediaChannel(media)).get().use { zip ->
-            zip.entries.asSequence().filter { !it.isDirectory }.map { it.name }.toList()
+            zip.entries.asSequence().filter { !it.isDirectory }
+                .take(MAX_PROBE_ENTRIES + 1).map { it.name }.toList()
+                .takeIf { it.size <= MAX_PROBE_ENTRIES }
         }
         "7z" -> SevenZFile.builder().setSeekableByteChannel(MediaChannel(media)).get().use { seven ->
-            seven.entries.filter { !it.isDirectory }.map { it.name }
+            seven.entries.filter { !it.isDirectory }.take(MAX_PROBE_ENTRIES + 1)
+                .map { it.name }.takeIf { it.size <= MAX_PROBE_ENTRIES }
         }
-        "gz" -> listOf(fileName.removeSuffix(".gz").removeSuffix(".GZ"))
+        "gz", "rar" -> listOf(fileName.substringBeforeLast('.'))
         else -> null
     }
 
-    /** The system an archive holds, by its contents; null when unknown or unreadable. */
-    fun system(fileName: String, media: SeekableMedia): GameSystem? = runCatching {
-        names(fileName, media)?.let { inside -> choose(inside) { it }?.let(GameSystems::forFile) }
-    }.getOrNull()
+    fun system(fileName: String, media: SeekableMedia): GameSystem? =
+        runCatching { probe(fileName, media)?.system }.getOrNull()
 
     /** A read-only channel over any source's file (device, USB, NAS). */
     private class MediaChannel(private val media: SeekableMedia) : SeekableByteChannel {
