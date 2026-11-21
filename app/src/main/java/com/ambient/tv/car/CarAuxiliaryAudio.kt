@@ -295,13 +295,11 @@ internal class CarAuxiliaryAudio @Inject constructor(
                         2000, fileStore::visibleInFiles)
                     // Scan a larger bounded prefix only when hidden ROM folders consumed the
                     // visible page. This keeps every cursor in the RAW sorted directory space.
-                    while (listing.more && wanted < 2000 && page.items.size <= limit) {
+                    while (listing.more && wanted < 2000 && page.items.size < limit) {
                         wanted = (wanted * 2).coerceAtMost(2000)
                         listing = access.list(source, path, wanted, FileEntry::audio)
                         page = sliceVisibleCarFiles(listing.entries, offset, limit, listing.more,
                             2000, fileStore::visibleInFiles)
-                        if (page.items.size == limit && page.nextOffset < wanted &&
-                            listing.entries.drop(page.nextOffset).any(fileStore::visibleInFiles)) break
                     }
                     CarAudioPage(page.items.map { entry ->
                         if (entry.directory) folder(CarAudioIds.fileFolder(entry.id), entry.name)
