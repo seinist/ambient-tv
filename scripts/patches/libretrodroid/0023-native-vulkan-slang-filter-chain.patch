@@ -273,6 +273,12 @@ diff --git a/src/main/cpp/CMakeLists.txt b/src/main/cpp/CMakeLists.txt
          immersivemode.h
          immersivemode.cpp
          backgroundframe.h
+@@ -187,4 +189,5 @@
+                       GLESv3
+                       nativewindow
+                       mediandk
++                      dl
+ )
 diff --git a/src/main/cpp/libretrodroidjni.cpp b/src/main/cpp/libretrodroidjni.cpp
 --- a/src/main/cpp/libretrodroidjni.cpp
 +++ b/src/main/cpp/libretrodroidjni.cpp
