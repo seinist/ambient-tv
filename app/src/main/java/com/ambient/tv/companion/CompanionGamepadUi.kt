@@ -34,6 +34,9 @@ import com.ambient.tv.ui.gamepad.retro.companionTouchProfileKey
 import com.ambient.tv.ui.games.GameTouchControls
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 
 /** Initial layout follows the console but never changes the TV's authoritative core mapping. */
 internal fun companionDefaultTouchMode(systemId: String?): GameTouchMode = when (systemId) {
@@ -75,6 +78,22 @@ internal fun CompanionGamepadScreen(manager: CompanionManager, modifier: Modifie
     val port = state.remote?.gamepadPort ?: -1
     val claimed = state.online && info != null && port in 0..3
     val playing = claimed && info?.ready == true
+    val lifecycleOwner = LocalLifecycleOwner.current
+    var resumed by remember(lifecycleOwner) {
+        mutableStateOf(lifecycleOwner.lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED))
+    }
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            when (event) {
+                Lifecycle.Event.ON_RESUME -> resumed = true
+                Lifecycle.Event.ON_PAUSE, Lifecycle.Event.ON_STOP -> resumed = false
+                else -> Unit
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+    val transmitting = playing && resumed
     val touchProfileKey = companionTouchProfileKey(state.target?.fingerprint, info?.systemId)
     val storedTouchProfile = RetroInputSettings.config.companionTouchProfiles[touchProfileKey]
     var modeKey by rememberSaveable(state.target?.fingerprint, info?.systemId) {
@@ -97,7 +116,7 @@ internal fun CompanionGamepadScreen(manager: CompanionManager, modifier: Modifie
     }
     val mode = GameTouchMode.fromKey(modeKey)
     val padFrame = remember(info?.sessionId) { CompanionInputFrame() }
-    val motion = rememberCompanionMotionSource(playing && motionEnabled)
+    val motion = rememberCompanionMotionSource(transmitting && motionEnabled)
     val haptics = LocalHapticFeedback.current
     val scope = rememberCoroutineScope()
     val view = LocalView.current
@@ -117,8 +136,8 @@ internal fun CompanionGamepadScreen(manager: CompanionManager, modifier: Modifie
 
     // Press edges are sent immediately below. Axis, pointer and gyro snapshots are sampled
     // at ~60Hz; an idle heartbeat at 500ms keeps TV deadman state and buttons alive.
-    LaunchedEffect(playing, info?.sessionId, motionEnabled) {
-        if (playing) {
+    LaunchedEffect(transmitting, info?.sessionId, motionEnabled) {
+        if (transmitting) {
             var last: CompanionGamepadState? = null
             var ticks = 0
             while (true) {
@@ -146,13 +165,18 @@ internal fun CompanionGamepadScreen(manager: CompanionManager, modifier: Modifie
             }
         }
     }
-    LaunchedEffect(playing) {
-        if (!playing) padFrame.value = CompanionGamepadState()
+    LaunchedEffect(transmitting) {
+        if (!transmitting) {
+            // App background, screen lock or TV OSD: never send held-button heartbeats.
+            // The TV's own deadman remains a fallback if this neutral frame is lost.
+            padFrame.value = CompanionGamepadState()
+            manager.gamepadInput(CompanionGamepadState())
+        }
     }
     LaunchedEffect(inputKind) {
         if (padFrame.value.pointer != null) {
             padFrame.value = padFrame.value.copy(pointer = null)
-            if (playing) manager.gamepadInput(padFrame.value)
+            if (transmitting) manager.gamepadInput(padFrame.value)
         }
     }
     DisposableEffect(claimed, info?.sessionId) {
@@ -269,7 +293,7 @@ internal fun CompanionGamepadScreen(manager: CompanionManager, modifier: Modifie
             }
 
             Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
-                if (playing) {
+                if (transmitting) {
                     if (inputKind == "pad") {
                         GameTouchControls(
                             mode = mode,
