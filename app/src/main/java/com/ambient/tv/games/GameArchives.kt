@@ -90,7 +90,8 @@ object GameArchives {
                 ?.toString(16)?.uppercase(Locale.ROOT)?.padStart(8, '0')
             Metadata(entry.name, system, title, crc)
         }
-        "7z" -> SevenZFile.builder().setSeekableByteChannel(MediaChannel(media)).get().use { seven ->
+        "7z" -> SevenZFile.builder().setSeekableByteChannel(MediaChannel(media))
+            .setMaxMemoryLimitKb(48 * 1024).get().use { seven ->
             val candidates = seven.entries.take(MAX_PROBE_ENTRIES + 1)
             if (candidates.size > MAX_PROBE_ENTRIES) return@use null
             val entry = choose(candidates.filterNot { it.isDirectory }) { it.name } ?: return@use null
@@ -216,7 +217,8 @@ object GameArchives {
                     zip.getInputStream(entry).use { input -> out.outputStream().use { copyChecked(input, it) } }
                 }
             }
-            "7z" -> SevenZFile.builder().setFile(archive).get().use { seven ->
+            "7z" -> SevenZFile.builder().setFile(archive)
+                .setMaxMemoryLimitKb(128 * 1024).get().use { seven ->
                 while (true) {
                     val entry = seven.nextEntry ?: break
                     if (entry.isDirectory || !entry.hasStream()) continue
@@ -331,7 +333,8 @@ object GameArchives {
                 write(rom.name, rom.size, zip.getInputStream(rom),
                     rom.crc.takeIf { it in 0..0xffffffffL })
             }
-            "7z" -> SevenZFile.builder().setSeekableByteChannel(MediaChannel(media)).get().use { seven ->
+            "7z" -> SevenZFile.builder().setSeekableByteChannel(MediaChannel(media))
+            .setMaxMemoryLimitKb(48 * 1024).get().use { seven ->
                 val files = seven.entries.take(MAX_PROBE_ENTRIES + 1)
                 if (files.size > MAX_PROBE_ENTRIES) return@use null
                 val roms = files.filter { !it.isDirectory && eligible(it.name) }
@@ -400,7 +403,8 @@ object GameArchives {
                 .take(MAX_PROBE_ENTRIES + 1).map { it.name }.toList()
                 .takeIf { it.size <= MAX_PROBE_ENTRIES }
         }
-        "7z" -> SevenZFile.builder().setSeekableByteChannel(MediaChannel(media)).get().use { seven ->
+        "7z" -> SevenZFile.builder().setSeekableByteChannel(MediaChannel(media))
+            .setMaxMemoryLimitKb(48 * 1024).get().use { seven ->
             seven.entries.filter { !it.isDirectory }.take(MAX_PROBE_ENTRIES + 1)
                 .map { it.name }.takeIf { it.size <= MAX_PROBE_ENTRIES }
         }
