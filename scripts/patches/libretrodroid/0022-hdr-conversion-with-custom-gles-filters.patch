@@ -1,7 +1,7 @@
 diff --git a/src/main/java/com/swordfish/libretrodroid/GLRetroView.kt b/src/main/java/com/swordfish/libretrodroid/GLRetroView.kt
 --- a/src/main/java/com/swordfish/libretrodroid/GLRetroView.kt
 +++ b/src/main/java/com/swordfish/libretrodroid/GLRetroView.kt
-@@ -945,9 +945,10 @@
+@@ -945,7 +945,9 @@
              is ShaderConfig.PrependPass -> {
                  val selected = buildShader(config.filter)
 -                require(selected.type != LibretroDroid.SHADER_CUSTOM && selected.passes.isEmpty()) {
@@ -13,7 +13,7 @@ diff --git a/src/main/java/com/swordfish/libretrodroid/GLRetroView.kt b/src/main
                  }
                  selected.copy(
                      params = selected.params + ("AMBIENT_PREPEND" to "1"),
-@@ -957,7 +958,7 @@
+@@ -957,6 +958,6 @@
                          fragment = config.pass.fragment,
                          linear = config.pass.linear,
                          scale = config.pass.scale,
@@ -24,7 +24,7 @@ diff --git a/src/main/java/com/swordfish/libretrodroid/GLRetroView.kt b/src/main
 diff --git a/src/main/cpp/shadermanager.cpp b/src/main/cpp/shadermanager.cpp
 --- a/src/main/cpp/shadermanager.cpp
 +++ b/src/main/cpp/shadermanager.cpp
-@@ -1540,13 +1540,17 @@
+@@ -1540,12 +1540,16 @@
      // passes, sampling, or CUT3 edge/temporal logic.
      const auto prepass = config.params.find("AMBIENT_PREPEND");
      if (prepass != config.params.end()) {
@@ -47,7 +47,7 @@ diff --git a/src/main/cpp/shadermanager.cpp b/src/main/cpp/shadermanager.cpp
 diff --git a/src/main/cpp/video.cpp b/src/main/cpp/video.cpp
 --- a/src/main/cpp/video.cpp
 +++ b/src/main/cpp/video.cpp
-@@ -185,7 +185,12 @@
+@@ -185,6 +185,11 @@
          const auto hdrPrefix = requestedShaderConfig.params.find("AMBIENT_PREPEND");
          if (hdrPrefix != requestedShaderConfig.params.end()) {
              safeDefault.params["AMBIENT_PREPEND"] = hdrPrefix->second;
