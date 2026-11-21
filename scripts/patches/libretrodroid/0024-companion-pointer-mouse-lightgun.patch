@@ -54,7 +54,7 @@ diff --git a/src/main/cpp/input.cpp b/src/main/cpp/input.cpp
  
  #include <android/input.h>
  #include <android/keycodes.h>
-@@ -70,26 +71,52 @@
+@@ -70,26 +71,55 @@
              }
          }
  
@@ -82,8 +82,11 @@ diff --git a/src/main/cpp/input.cpp b/src/main/cpp/input.cpp
 +            if (index >= 4) return 0;
 +            const auto& pad = pads[port];
 +            if (id == RETRO_DEVICE_ID_POINTER_COUNT) {
++                // Contacts keep stable indices while held. Expose the highest addressable
++                // pressed index (+1), so cores scanning [0, COUNT) see sparse active slots.
 +                unsigned count = pad.pointerPressed ? 1 : 0;
-+                for (const auto& contact : pad.extraPointers) if (contact.pressed) ++count;
++                for (unsigned i = 0; i < pad.extraPointers.size(); ++i)
++                    if (pad.extraPointers[i].pressed) count = i + 2;
 +                return static_cast<int16_t>(count);
 +            }
 +            const bool pressed = index == 0 ? pad.pointerPressed : pad.extraPointers[index - 1].pressed;
@@ -127,7 +130,7 @@ diff --git a/src/main/cpp/input.cpp b/src/main/cpp/input.cpp
  
          default:
              return 0;
-@@ -306,7 +333,39 @@
+@@ -306,7 +336,39 @@
      }
  }
  
