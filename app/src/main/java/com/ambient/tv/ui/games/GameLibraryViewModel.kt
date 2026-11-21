@@ -34,6 +34,8 @@ data class GameLibraryUiState(
     val section: String = "all",
     val query: String = "",
     val view: String = "grid",
+    val gridColumns: Int = 8,
+    val listRows: Int = 7,
     val titleStyle: String = "auto",
     val busy: Boolean = false,
     val ready: Boolean = false,
@@ -70,7 +72,8 @@ class GameLibraryViewModel @Inject constructor(
         val games = withContext(Dispatchers.IO) { library.games() }
         mutable.update { it.copy(
             games = games, folders = library.folders(), sources = files.sources(),
-            view = library.viewStyle(), titleStyle = library.titleStyle(), ready = true,
+            view = library.viewStyle(), gridColumns = library.gridColumns(),
+            listRows = library.listRows(), titleStyle = library.titleStyle(), ready = true,
         ) }
     }
 
@@ -79,6 +82,8 @@ class GameLibraryViewModel @Inject constructor(
     }
     fun query(value: String) = mutable.update { it.copy(query = value) }
     fun view(value: String) = library.setViewStyle(value)
+    fun gridColumns(value: Int) = library.setGridColumns(value)
+    fun listRows(value: Int) = library.setListRows(value)
     fun titleStyle(value: String) = library.setTitleStyle(value)
     fun favorite(game: LibraryGame) = library.setFavorite(game.fileId, !game.favorite)
     fun played(game: LibraryGame) = library.recordPlayed(game.fileId)
