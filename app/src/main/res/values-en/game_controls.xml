@@ -39,4 +39,5 @@
     <string name="game_controls_layout_hint">Choose a row, then press the key. It is removed from the other rows of this layout. A key for holding works as its button when pressed briefly.</string>
     <string name="game_controls_rewind">Rewind (hold)</string>
     <string name="game_controls_fast_forward">Fast forward on/off</string>
+    <string name="game_controls_companion_mapping_hint">For phone controllers, select the desired RetroPad button or menu action, then tap a key on the phone illustration. Profiles are inherited from global to system, core and game.</string>
 </resources>
