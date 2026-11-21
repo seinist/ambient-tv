@@ -230,6 +230,17 @@ class AppPreferences @Inject constructor(
             }
         }
 
+    /** Portable user changes; scanner metadata and ROM payloads remain on each device. */
+    var gameLibraryOverrides: List<com.ambient.tv.games.library.GamePortableState>
+        get() = runCatching {
+            json.decodeFromString<List<com.ambient.tv.games.library.GamePortableState>>(
+                prefs.getString("game_library_overrides", "[]") ?: "[]")
+        }.getOrDefault(emptyList()).distinctBy { it.sourceId to it.path }.takeLast(5000)
+        set(value) = prefs.edit {
+            putString("game_library_overrides", json.encodeToString(
+                value.distinctBy { it.sourceId to it.path }.takeLast(5000)))
+        }
+
     /** Game collections refer to existing FileSource IDs: never duplicate NAS logins/WOL. */
     var gameLibraryFolders: List<com.ambient.tv.games.library.GameLibraryFolder>
         get() = runCatching {
@@ -256,11 +267,13 @@ class AppPreferences @Inject constructor(
             // ROM directory assignments must not follow an ID to a different NAS/share/root.
             // Full backup imports restore their validated folder links after the source list.
             val retainedGames = gameLibraryFolders.filter { it.sourceId in reusable }
+            val retainedGameOverrides = gameLibraryOverrides.filter { it.sourceId in reusable }
             prefs.edit {
                 putString("file_sources", json.encodeToString(next))
                 putString("file_favorites", json.encodeToString(favorites))
                 putString("file_history", json.encodeToString(history))
                 putString("game_library_folders", json.encodeToString(retainedGames))
+                putString("game_library_overrides", json.encodeToString(retainedGameOverrides))
             }
         }
 
