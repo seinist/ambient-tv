@@ -114,7 +114,8 @@ class GameRomPreparer @Inject constructor(
         val marker = File(folder, ".complete")
         val stamp = "${entry.size}:${entry.modified}"
         val main = File(folder, safeName(entry.name))
-        if (!(marker.isFile && marker.readText() == stamp && main.isFile)) {
+        if (!(marker.isFile && marker.readText() == stamp && main.isFile &&
+                cachedCompanionsComplete(main))) {
             folder.deleteRecursively()
             folder.mkdirs()
             // A manual fallback is never allowed to exhaust the device or silently evict saves.
@@ -134,7 +135,15 @@ class GameRomPreparer @Inject constructor(
                     val discs = m3uFiles(main.readText())
                     copyReferenced(source, path, discs, folder)
                     discs.filter { GameSystems.extension(it) == "cue" }.forEach { disc ->
-                        File(folder, safeName(disc)).takeIf(File::isFile)?.let { copyReferenced(source, path, cueFiles(it.readText()), folder) }
+                        val relative = safeRelativePath(disc)
+                            ?: throw IOException("Unsafe disc playlist entry: $disc")
+                        val localCue = File(folder, relative)
+                        if (!localCue.isFile) throw IOException("Missing playlist entry: $disc")
+                        val descriptorPath = FilePaths.child(path.substringBeforeLast('/', ""), relative)
+                        copyReferenced(
+                            source, descriptorPath, cueFiles(localCue.readText()), folder,
+                            relative.substringBeforeLast('/', ""),
+                        )
                     }
                 }
             }
@@ -184,21 +193,59 @@ class GameRomPreparer @Inject constructor(
         }
     }
 
-    /** Copies files a CUE/M3U names from the same folder; missing ones are left to the core to report. */
-    private suspend fun copyReferenced(source: FileSource, path: String, names: List<String>, folder: File) {
+    /**
+     * Copy every named disc sidecar and keep relative subdirectories. Missing, unsafe or
+     * colliding files are errors, not silent partially playable CUE/GDI/M3U games.
+     */
+    private suspend fun copyReferenced(
+        source: FileSource, path: String, names: List<String>, folder: File,
+        relativeBase: String = "",
+    ) {
         val parent = path.substringBeforeLast('/', "")
-        names.distinct().forEach { name ->
-            if (name.contains('/') || name.contains('\\') || name == "." || name == "..") return@forEach
-            val target = File(folder, safeName(name))
-            if (target.isFile) return@forEach
-            val childPath = if (parent.isEmpty()) name else "$parent/$name"
+        val seen = HashSet<String>()
+        names.forEach { name ->
+            val relative = safeRelativePath(name)
+                ?: throw IOException("Unsafe disc companion path: $name")
+            val targetRelative = if (relativeBase.isEmpty()) relative else "$relativeBase/$relative"
+            if (!seen.add(targetRelative.lowercase(java.util.Locale.ROOT))) {
+                throw IOException("Duplicate disc companion: $name")
+            }
+            val target = File(folder, targetRelative)
+            val childPath = FilePaths.child(parent, relative)
             val child: FileEntry = access.stat(source, childPath)
+            if (target.isFile && target.length() == child.size && child.size > 0) return@forEach
+            target.parentFile?.mkdirs()
             val used = folder.walkTopDown().filter { it.isFile }.sumOf { it.length() }
             val free = StatFs(context.cacheDir.absolutePath).availableBytes - CACHE_RESERVE_BYTES
             val budget = minOf(CACHE_LIMIT_BYTES - used, free)
             if (budget <= 0 || child.size > budget) throw IOException("Insufficient cache for disc track $name")
             copy(source, childPath, child.size, target, {}, budget)
         }
+    }
+
+    /** Verify all referenced local files before trusting the completed cache marker. */
+    private fun cachedCompanionsComplete(main: File): Boolean {
+        val seen = HashSet<String>()
+        fun check(descriptor: File): Boolean {
+            if (!descriptor.isFile || !seen.add(descriptor.canonicalPath) || seen.size > 128) return false
+            val names = when (GameSystems.extension(descriptor.name)) {
+                "cue" -> cueFiles(descriptor.readText())
+                "gdi" -> gdiFiles(descriptor.readText())
+                "m3u" -> m3uFiles(descriptor.readText())
+                else -> return descriptor.length() > 0
+            }
+            if (names.isEmpty()) return false
+            return names.all { name ->
+                val relative = safeRelativePath(name) ?: return@all false
+                val child = File(descriptor.parentFile, relative)
+                if (!child.isFile || child.length() <= 0) return@all false
+                when (GameSystems.extension(child.name)) {
+                    "cue", "gdi", "m3u" -> check(child)
+                    else -> true
+                }
+            }
+        }
+        return runCatching { check(main) }.getOrDefault(false)
     }
 
     /**
@@ -208,16 +255,28 @@ class GameRomPreparer @Inject constructor(
     private fun unpack(archive: File, folder: File): File {
         val content = File(folder, "content")
         val done = File(folder, ".unpacked")
-        val files = if (done.isFile && content.isDirectory) {
-            content.listFiles()?.toList().orEmpty()
+        val recorded = runCatching { done.readLines() }.getOrNull()
+        val files = if (content.isDirectory && recorded != null && recorded.firstOrNull() == archive.length().toString() &&
+            recorded.size > 1 && recorded.drop(1).all { line ->
+                val parts = line.split('\t', limit = 2)
+                parts.size == 2 && safeRelativePath(parts[0]) == parts[0] &&
+                    File(content, parts[0]).let { it.isFile && it.length().toString() == parts[1] }
+            }
+        ) {
+            recorded.drop(1).map { line -> File(content, line.substringBefore('\t')) }
         } else {
             content.deleteRecursively()
+            done.delete()
             val used = folder.walkTopDown().filter { it.isFile }.sumOf { it.length() }
             val free = StatFs(context.cacheDir.absolutePath).availableBytes - CACHE_RESERVE_BYTES
             val budget = minOf(GameArchives.MAX_BYTES, CACHE_LIMIT_BYTES - used, free)
             if (budget <= 0) throw IOException("Insufficient cache space for extracted game")
-            GameArchives.extract(archive, content, budget).also {
-                done.writeText(archive.length().toString())
+            GameArchives.extract(archive, content, budget).also { extracted ->
+                done.writeText(
+                    (listOf(archive.length().toString()) +
+                        extracted.map { file -> "${file.relativeTo(content).invariantSeparatorsPath}\t${file.length()}" }
+                    ).joinToString("\n")
+                )
             }
         }
         return GameArchives.choose(files) { it.name } ?: throw UnknownGameException(archive.name)
@@ -252,6 +311,16 @@ class GameRomPreparer @Inject constructor(
 
         fun sha1(value: String): String =
             MessageDigest.getInstance("SHA-1").digest(value.toByteArray()).joinToString("") { "%02x".format(it) }
+
+        /** Reject traversal and absolute paths, but preserve safe nested disc tracks. */
+        internal fun safeRelativePath(name: String): String? {
+            val normalized = name.replace('\\', '/')
+            if (normalized.isBlank() || normalized.startsWith('/') || ':' in normalized) return null
+            val parts = normalized.split('/')
+            if (parts.any { it.isBlank() || it == "." || it == ".." ||
+                    it.startsWith(".") || safeName(it) != it }) return null
+            return parts.joinToString("/")
+        }
 
         internal fun safeName(name: String): String =
             name.substringAfterLast('/').substringAfterLast('\\').replace(Regex("[\\u0000-\\u001f:*?\"<>|]"), "_")
