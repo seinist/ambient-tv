@@ -156,6 +156,8 @@ internal fun isPrivateV4(host: String): Boolean {
  * and unknown command types are still rejected as "unsupported" by the receiver.
  */
 internal val companionJson = Json { ignoreUnknownKeys = true; encodeDefaults = true }
+/** Compact, protocol-v1-compatible wire encoding for frequent real-time commands only. */
+internal val companionRealtimeJson = Json { ignoreUnknownKeys = true; encodeDefaults = false }
 
 /**
  * Short pairing code for typing on the phone. The alphabet leaves out every character that is
@@ -206,8 +208,9 @@ internal fun DataInputStream.readFrame(): CompanionFrame {
     readFully(bytes)
     return companionJson.decodeFromString<CompanionFrame>(bytes.toString(Charsets.UTF_8)).also { require(it.version == 1) }
 }
-internal fun DataOutputStream.writeFrame(frame: CompanionFrame) {
-    val bytes = companionJson.encodeToString(frame).toByteArray(Charsets.UTF_8)
+internal fun DataOutputStream.writeFrame(frame: CompanionFrame, compact: Boolean = false) {
+    val bytes = (if (compact) companionRealtimeJson else companionJson)
+        .encodeToString(frame).toByteArray(Charsets.UTF_8)
     require(bytes.size in 1..16_384)
     writeInt(bytes.size); write(bytes); flush()
 }
