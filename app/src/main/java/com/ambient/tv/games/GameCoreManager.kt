@@ -71,7 +71,7 @@ class GameCoreManager @Inject constructor(
         val old = rollbackFile(core)
         val current = file(core)
         if (!old.isFile) return false
-        if (runCatching { checkElf(old, pageSize()) }.isFailure) return false
+        if (runCatching { checkElf(old, pageSize(), abi) }.isFailure) return false
         if (current.exists() && !current.delete()) return false
         if (!old.renameTo(current)) return false
         current.setReadOnly()
@@ -163,7 +163,19 @@ class GameCoreManager @Inject constructor(
                 var found = false
                 // Reject a ZIP containing an unrelated .so instead of installing it under
                 // a trusted core ID. The streaming copy has a separate decompressed cap.
-                ZipInputStream(input).use { zip ->
+                // Also cap compressed input. A ZIP may contain enormous ignored entries
+                // ahead of the matching .so, even if the extracted binary is small.
+                val boundedInput = object : java.io.FilterInputStream(input) {
+                    private var bytes = 0L
+                    private fun limit(count: Long) {
+                        bytes += count
+                        if (bytes > MAX_CORE_ZIP) throw IOException("Core ZIP exceeds 128 MiB")
+                    }
+                    override fun read(): Int = super.read().also { if (it >= 0) limit(1) }
+                    override fun read(b: ByteArray, off: Int, len: Int): Int =
+                        super.read(b, off, len).also { if (it > 0) limit(it.toLong()) }
+                }
+                ZipInputStream(boundedInput).use { zip ->
                     val expected = setOf("${core.id}_libretro_android.so", "${core.id}_libretro.so")
                     while (true) {
                         val entry = zip.nextEntry ?: break
@@ -179,7 +191,7 @@ class GameCoreManager @Inject constructor(
                 }
                 if (!found) throw GameCoreIncompatibleException("No matching ${core.id} library in archive")
             } else input.use(::copy)
-            checkElf(partial, pageSize())
+            checkElf(partial, pageSize(), abi)
             val target = file(core)
             val previous = rollbackFile(core)
             val oldInfo = rollbackInfoFile(core)
@@ -287,7 +299,7 @@ class GameCoreManager @Inject constructor(
          * Checks that [file] is an ELF shared object whose loadable segments fit [pageSize]: a core
          * built for 4 KB pages fails to load on a 16 KB device.
          */
-        fun checkElf(file: File, pageSize: Long) {
+        fun checkElf(file: File, pageSize: Long, expectedAbi: String? = null) {
             RandomAccessFile(file, "r").use { elf ->
                 val ident = ByteArray(16)
                 elf.readFully(ident)
@@ -306,6 +318,18 @@ class GameCoreManager @Inject constructor(
                     return ordered.fold(0L) { acc, b -> (acc shl 8) or b.toLong() }
                 }
                 fun u64(at: Long): Long = if (little) u32(at) or (u32(at + 4) shl 32) else (u32(at) shl 32) or u32(at + 4)
+                if (u16(0x10) != 3) throw GameCoreIncompatibleException("ELF is not a shared library")
+                val machine = u16(0x12)
+                val expected = when (expectedAbi) {
+                    "arm64-v8a" -> 183 to true
+                    "armeabi-v7a" -> 40 to false
+                    "x86_64" -> 62 to true
+                    "x86" -> 3 to false
+                    else -> null
+                }
+                if (expected != null && (machine != expected.first || is64 != expected.second)) {
+                    throw GameCoreIncompatibleException("Core ELF architecture does not match $expectedAbi")
+                }
                 val phOffset = if (is64) u64(0x20) else u32(0x1C)
                 val phEntrySize = u16(if (is64) 0x36L else 0x2AL)
                 val phCount = u16(if (is64) 0x38L else 0x2CL)
