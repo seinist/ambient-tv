@@ -2453,7 +2453,7 @@
     <string name="game_library_add_local">Add local or USB folder</string>
     <string name="game_library_existing_sources">Existing file sources</string>
     <string name="game_library_assigned">Assigned game folders</string>
-    <string name="game_library_add_network_hint">For new SMB/NFS shares, first add the NAS in Files. Games uses its existing connection, credentials, WireGuard and Wake-on-LAN settings.</string>
+    <string name="game_library_add_network_hint">Games-only shares remain hidden from Files; if your NAS already hosts videos, reuse its existing source and assign only the ROM subfolder.</string>
     <string name="game_library_use_folder">Use this folder</string>
     <string name="game_library_wake">Wake server</string>
     <string name="game_library_titles">Displayed game titles</string>
@@ -2463,4 +2463,8 @@
     <string name="game_library_remove">Remove</string>
     <string name="game_library_back">Back</string>
     <string name="game_library_offline_wake">%1$s is offline. Wake the server to play this game?</string>
+    <string name="game_library_add_network">Add SMB / NFS / network source</string>
+    <string name="game_library_show_in_files">Also show in Files</string>
+    <string name="game_library_source_files_games">Files + Games</string>
+    <string name="game_library_source_games_only">Games only</string>
 </resources>
