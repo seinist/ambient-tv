@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.padding
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -134,6 +135,57 @@ class SidebarFocusUiTest {
     }
 
     private fun focused(tag: String) = rule.onNodeWithTag(tag, useUnmergedTree = true).assertIsFocused()
+
+    @Test fun coldStartHoldsRemoteFocusWithoutOpeningSidebarUntilTheFirstTileIsReady() {
+        var homeReady by mutableStateOf(false)
+        var menuEntryRequested by mutableStateOf(false)
+        val startupFocus = FocusRequester()
+        val firstTileFocus = FocusRequester()
+        val menuFocus = FocusRequester()
+        rule.setContent {
+            Row(Modifier.fillMaxSize()) {
+                SidebarContent(
+                    sidebarState = state,
+                    viewModel = actions,
+                    currentRoute = Destinations.HOME,
+                    currentSectionKey = null,
+                    onNavigate = {},
+                    contentReady = homeReady,
+                    requestContentFocus = {
+                        if (homeReady) runCatching { firstTileFocus.requestFocus() }.getOrDefault(false)
+                        else runCatching { startupFocus.requestFocus() }.getOrDefault(false)
+                    },
+                    isEntryRequested = { menuEntryRequested },
+                    onEntryRequestConsumed = { menuEntryRequested = false },
+                    modifier = Modifier.focusRequester(menuFocus),
+                )
+                Box(Modifier.fillMaxSize().padding(start = 40.dp)) {
+                    Box(Modifier.size(1.dp).focusRequester(startupFocus).focusable().testTag("startup-focus"))
+                    if (homeReady) {
+                        Box(Modifier.size(200.dp).focusRequester(firstTileFocus).focusable().testTag("home-first-tile"))
+                    }
+                }
+            }
+            LaunchedEffect(Unit) { startupFocus.requestFocus() }
+            LaunchedEffect(homeReady) { if (homeReady) firstTileFocus.requestFocus() }
+        }
+        rule.waitForIdle()
+        rule.onNodeWithTag("startup-focus").assertIsFocused()
+        rule.onAllNodesWithTag("sidebar:home", useUnmergedTree = true).assertCountEquals(0)
+        rule.mainClock.advanceTimeBy(600)
+        rule.waitForIdle()
+        rule.onAllNodesWithTag("sidebar:home", useUnmergedTree = true).assertCountEquals(0)
+
+        rule.runOnIdle { homeReady = true }
+        rule.waitForIdle()
+        rule.onNodeWithTag("home-first-tile").assertIsFocused()
+        rule.onAllNodesWithTag("sidebar:home", useUnmergedTree = true).assertCountEquals(0)
+
+        // Explicit menu input still expands the rail.
+        rule.runOnIdle { menuEntryRequested = true; menuFocus.requestFocus() }
+        rule.waitForIdle()
+        focused("sidebar:home")
+    }
 
     @Test fun fullscreenBackDoesNotBrieflyOpenTheMenuBeforeContentRestoresFocus() {
         setUp(Destinations.HOME)
