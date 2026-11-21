@@ -399,6 +399,26 @@ class CompanionManager @Inject constructor(@ApplicationContext private val conte
     private val sockets = ConcurrentHashMap<Socket, String>()
     private val admission = CompanionAdmission()
     private var commands = Channel<CompanionFrame>(16)
+    /** Critical press/release edges wait for a queue slot instead of being silently dropped. */
+    private val pendingGamepadEdges = java.util.concurrent.atomic.AtomicInteger(0)
+    private var lastQueuedGamepadState: CompanionGamepadState? = null
+
+    private fun enqueueGamepad(frame: CompanionFrame, critical: Boolean): Boolean {
+        val queue = commands
+        // During congestion, continuous positions are replaceable by the next 30Hz snapshot.
+        // Never overtake an already-suspended critical press/release sender.
+        if (!critical && pendingGamepadEdges.get() > 0) return false
+        if (pendingGamepadEdges.get() == 0 && queue.trySend(frame).isSuccess) return true
+        if (!critical || pendingGamepadEdges.incrementAndGet() > 24) {
+            if (critical) pendingGamepadEdges.decrementAndGet()
+            return false
+        }
+        scope.launch(start = CoroutineStart.UNDISPATCHED) {
+            try { queue.send(frame) } catch (_: Exception) { /* Session disconnected. */ }
+            finally { pendingGamepadEdges.decrementAndGet() }
+        }
+        return true
+    }
     @Volatile private var foreground = false
     @Volatile private var television = com.ambient.tv.ui.mobile.isTelevision(context)
     private val deviceRole get() = if (television) COMPANION_TV else COMPANION_HANDHELD
@@ -677,29 +697,34 @@ class CompanionManager @Inject constructor(@ApplicationContext private val conte
     fun showGamepad() {
         if (television || !mutable.value.online) return
         if (mutable.value.remotePanel) hideRemote()
+        lastQueuedGamepadState = null
         mutable.update { it.copy(gamepadPanel = true, remotePanel = false, panel = false,
             nowPlayingPanel = false, settingsPanel = false) }
     }
     fun claimGamepad(): Boolean = if (mutable.value.gamepadPanel && mutable.value.online &&
         mutable.value.remote?.gamepadInfo != null) send(CompanionFrame(type = "gamepad_claim")) else false
 
-    /** Best-effort snapshots are coalesced on the connection; unlike clicks they are idempotent. */
+    /** Only axes/drag positions can be skipped; edges must eventually reach the TV in order. */
     fun gamepadInput(state: CompanionGamepadState): Boolean {
         if (!mutable.value.gamepadPanel || !mutable.value.online ||
             (mutable.value.remote?.gamepadPort ?: -1) !in 0 until com.ambient.tv.ui.gamepad.retro.RetroPorts.COUNT) return false
         state.validate()
-        return commands.trySend(CompanionFrame(type = "gamepad_input", gamepadState = state)).isSuccess
+        val critical = companionGamepadCriticalEdge(lastQueuedGamepadState, state)
+        val accepted = enqueueGamepad(CompanionFrame(type = "gamepad_input", gamepadState = state), critical)
+        if (accepted) lastQueuedGamepadState = state
+        return accepted
     }
     fun gamepadMenu(): Boolean = if (mutable.value.gamepadPanel && mutable.value.online &&
         (mutable.value.remote?.gamepadPort ?: -1) in 0 until com.ambient.tv.ui.gamepad.retro.RetroPorts.COUNT)
-        send(CompanionFrame(type = "gamepad_menu")) else false
+        enqueueGamepad(CompanionFrame(type = "gamepad_menu"), critical = true) else false
 
     fun hideGamepad() {
         if (!mutable.value.gamepadPanel) return
         if (mutable.value.online) {
             gamepadInput(CompanionGamepadState())
-            send(CompanionFrame(type = "gamepad_release"))
+            enqueueGamepad(CompanionFrame(type = "gamepad_release"), critical = true)
         }
+        lastQueuedGamepadState = null
         mutable.update { it.copy(gamepadPanel = false) }
     }
     fun showNowPlaying() {
