@@ -13,6 +13,9 @@ import com.ambient.tv.data.files.FileSource
 import com.ambient.tv.data.files.FileStore
 import com.ambient.tv.data.files.WakeOnLan
 import com.ambient.tv.data.local.RegularPrefs
+import com.ambient.tv.data.local.AppPreferences
+import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.ensureActive
 import com.ambient.tv.games.GameSystems
 import dagger.hilt.android.qualifiers.ApplicationContext
 import java.io.IOException
@@ -74,6 +77,7 @@ class GameLibraryRepository @Inject constructor(
     @ApplicationContext context: Context,
     @RegularPrefs private val prefs: SharedPreferences,
     private val files: FileStore,
+    private val preferences: AppPreferences,
     private val access: FileAccess,
     private val wake: WakeOnLan,
 ) {
@@ -84,9 +88,7 @@ class GameLibraryRepository @Inject constructor(
     private val scanLock = kotlinx.coroutines.sync.Mutex()
     private fun changed() = changeSignal.update { it + 1 }
 
-    fun folders(): List<GameLibraryFolder> = runCatching {
-        json.decodeFromString<List<GameLibraryFolder>>(prefs.getString(FOLDERS_KEY, "[]") ?: "[]")
-    }.getOrDefault(emptyList()).filter {
+    fun folders(): List<GameLibraryFolder> = preferences.gameLibraryFolders.filter {
         it.sourceId.isNotBlank() && (it.systemId == "auto" || GameSystems.byId(it.systemId) != null)
     }.distinctBy { it.id }.take(200)
 
@@ -101,13 +103,13 @@ class GameLibraryRepository @Inject constructor(
             it.systemId == systemId }) { "This folder is already assigned" }
         val folder = GameLibraryFolder(sourceId = source.id, path = checkedPath,
             systemId = systemId, recursive = recursive)
-        prefs.edit().putString(FOLDERS_KEY, json.encodeToString(present + folder)).apply()
+        preferences.gameLibraryFolders = present + folder
         changed()
         return folder
     }
 
     fun removeFolder(id: String) {
-        prefs.edit().putString(FOLDERS_KEY, json.encodeToString(folders().filterNot { it.id == id })).apply()
+        preferences.gameLibraryFolders = folders().filterNot { it.id == id }
         db.writableDatabase.delete("game_entries", "folder_id=?", arrayOf(id))
         changed()
     }
@@ -280,5 +282,4 @@ class GameLibraryRepository @Inject constructor(
         }.getOrNull()
     }
 
-    companion object { private const val FOLDERS_KEY = "game_library_folders" }
 }
