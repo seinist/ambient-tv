@@ -31,6 +31,21 @@ class CompanionButtonEdgeGateTest {
         assertEquals(0, gate.settle(145L))
     }
 
+    @Test fun twoRapidTapsRemainTwoVisiblePressesSeparatedByAReleaseFrame() {
+        val gate = CompanionButtonEdgeGate(minPressMs = 35L, minGapMs = 17L)
+        assertEquals(1, gate.update(1, 100L))
+        assertEquals(1, gate.update(0, 110L))
+        assertEquals(1, gate.update(1, 114L))
+        assertEquals(1, gate.update(0, 118L))
+        assertEquals(0, gate.settle(135L)) // first UP becomes visible
+        assertEquals(17L, gate.nextReleaseDelay(135L))
+        assertEquals(0, gate.settle(151L))
+        assertEquals(1, gate.settle(152L)) // second DOWN, after its distinct UP gap
+        assertEquals(1, gate.settle(186L))
+        assertEquals(0, gate.settle(187L)) // second UP after a full core-visible pulse
+        assertNull(gate.nextReleaseDelay(187L))
+    }
+
     @Test fun stopClearsAllHeldStatesImmediatelyEvenBeforePulseDeadline() {
         val gate = CompanionButtonEdgeGate()
         gate.update(1, 100L)
