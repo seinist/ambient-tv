@@ -83,6 +83,7 @@ class GameLibraryViewModel @Inject constructor(
         mutable.update { it.copy(section = value) }
     }
     fun query(value: String) = mutable.update { it.copy(query = value) }
+    fun wireGuardConfigured(): Boolean = preferences.wireGuardProfile() != null
     fun view(value: String) = library.setViewStyle(value)
     fun gridColumns(value: Int) = library.setGridColumns(value)
     fun listRows(value: Int) = library.setListRows(value)
