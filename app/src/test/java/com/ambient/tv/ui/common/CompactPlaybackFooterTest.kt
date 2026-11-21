@@ -14,6 +14,8 @@ import androidx.compose.ui.test.click
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.test.assertCountEquals
+import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTouchInput
@@ -115,6 +117,9 @@ class CompactPlaybackFooterTest {
         // otherwise Robolectric can route that tap to the stale popup scrim.
         rule.mainClock.advanceTimeBy(400L)
         rule.waitForIdle()
+        // Only the closed selector should remain; the Popup's other choices
+        // must no longer intercept the following pointer gesture.
+        rule.onAllNodesWithText("Experte", useUnmergedTree = true).assertCountEquals(0)
         // Exercise the button's real pointer/TV surface rather than only the Robolectric
         // semantics click on the nested text node.
         rule.onNodeWithText(rule.activity.getString(R.string.back)).performTouchInput { click() }
