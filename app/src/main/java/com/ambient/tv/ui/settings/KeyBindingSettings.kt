@@ -37,7 +37,7 @@ internal fun LazyListScope.keyBindingItems() {
 }
 
 @Composable
-private fun KeyBindingSettings() {
+internal fun KeyBindingSettings(scopeFilter: KeyBindingScope? = null) {
     val context = LocalContext.current
     var listening by remember { mutableStateOf<KeyAction?>(null) }
     var message by remember { mutableStateOf<String?>(null) }
@@ -106,7 +106,7 @@ private fun KeyBindingSettings() {
     Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(LocalUiTokens.current.compactGap)) {
         SettingsHint(stringResource(R.string.key_bindings_explanation))
         message?.let { SettingsHint(it) }
-        KeyBindingScope.entries.forEach { scope ->
+        KeyBindingScope.entries.filter { scopeFilter == null || it == scopeFilter }.forEach { scope ->
             SettingsSubheader(stringResource(
                 if (scope == KeyBindingScope.GLOBAL) R.string.key_bindings_scope_global else R.string.key_bindings_scope_player,
             ))
