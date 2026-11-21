@@ -399,26 +399,9 @@ class CompanionManager @Inject constructor(@ApplicationContext private val conte
     private val sockets = ConcurrentHashMap<Socket, String>()
     private val admission = CompanionAdmission()
     private var commands = Channel<CompanionFrame>(16)
-    /** Critical press/release edges wait for a queue slot instead of being silently dropped. */
-    private val pendingGamepadEdges = java.util.concurrent.atomic.AtomicInteger(0)
+    /** The real-time mailbox belongs to one TLS connection, never shared across reconnects. */
+    private var liveInputs = CompanionLiveInputQueue()
     private var lastQueuedGamepadState: CompanionGamepadState? = null
-
-    private fun enqueueGamepad(frame: CompanionFrame, critical: Boolean): Boolean {
-        val queue = commands
-        // During congestion, continuous positions are replaceable by the next 30Hz snapshot.
-        // Never overtake an already-suspended critical press/release sender.
-        if (!critical && pendingGamepadEdges.get() > 0) return false
-        if (pendingGamepadEdges.get() == 0 && queue.trySend(frame).isSuccess) return true
-        if (!critical || pendingGamepadEdges.incrementAndGet() > 24) {
-            if (critical) pendingGamepadEdges.decrementAndGet()
-            return false
-        }
-        scope.launch(start = CoroutineStart.UNDISPATCHED) {
-            try { queue.send(frame) } catch (_: Exception) { /* Session disconnected. */ }
-            finally { pendingGamepadEdges.decrementAndGet() }
-        }
-        return true
-    }
     @Volatile private var foreground = false
     @Volatile private var television = com.ambient.tv.ui.mobile.isTelevision(context)
     private val deviceRole get() = if (television) COMPANION_TV else COMPANION_HANDHELD
@@ -710,19 +693,20 @@ class CompanionManager @Inject constructor(@ApplicationContext private val conte
             (mutable.value.remote?.gamepadPort ?: -1) !in 0 until com.ambient.tv.ui.gamepad.retro.RetroPorts.COUNT) return false
         state.validate()
         val critical = companionGamepadCriticalEdge(lastQueuedGamepadState, state)
-        val accepted = enqueueGamepad(CompanionFrame(type = "gamepad_input", gamepadState = state), critical)
+        val accepted = liveInputs.offerGamepad(CompanionFrame(type = "gamepad_input",
+            gamepadState = state, gamepadQueuedAtMs = SystemClock.elapsedRealtime()), critical)
         if (accepted) lastQueuedGamepadState = state
         return accepted
     }
     fun gamepadMenu(): Boolean = if (mutable.value.gamepadPanel && mutable.value.online &&
         (mutable.value.remote?.gamepadPort ?: -1) in 0 until com.ambient.tv.ui.gamepad.retro.RetroPorts.COUNT)
-        enqueueGamepad(CompanionFrame(type = "gamepad_menu"), critical = true) else false
+        liveInputs.offerGamepad(CompanionFrame(type = "gamepad_menu"), critical = true) else false
 
     fun hideGamepad() {
         if (!mutable.value.gamepadPanel) return
         if (mutable.value.online) {
             gamepadInput(CompanionGamepadState())
-            enqueueGamepad(CompanionFrame(type = "gamepad_release"), critical = true)
+            liveInputs.offerGamepad(CompanionFrame(type = "gamepad_release"), critical = true)
         }
         lastQueuedGamepadState = null
         mutable.update { it.copy(gamepadPanel = false) }
@@ -968,7 +952,8 @@ class CompanionManager @Inject constructor(@ApplicationContext private val conte
         if (mutable.value.remote?.inputGranted != true) return
         input.validate()
         val frame = CompanionFrame(type = "input", input = input)
-        if (input.action in setOf("move", "scroll")) commands.trySend(frame) else send(frame)
+        // Move/scroll are accumulated, while key/click edges are FIFO and cannot be dropped.
+        liveInputs.offerRemote(frame)
     }
     fun releaseRemoteControl(session: String? = null) {
         synchronized(inputLease) {
@@ -1689,6 +1674,7 @@ class CompanionManager @Inject constructor(@ApplicationContext private val conte
         disconnect(clearTarget = true)
         remoteAfterConnect = peer.fingerprint.takeIf { openRemote }
         val queue = Channel<CompanionFrame>(16); commands = queue
+        val live = CompanionLiveInputQueue().also { liveInputs = it }
         mutable.update { it.copy(target = peer, busy = true, connectionError = "", connectionStage = R.string.companion_connecting, settingsPanel = keepSettingsPanel, sendingTo = if (initialMedia != null) peer.name else null) }
         clientJob = scope.launch {
             var connected = false
@@ -1783,11 +1769,12 @@ class CompanionManager @Inject constructor(@ApplicationContext private val conte
                 while (isActive && (canSendToTv || remoteServiceRequested)) {
                     require(if (route.vpn) connectionTransport?.alive(route) == true else sessionLan()?.address == link?.address)
                     var command = carried?.also { carried = null }
-                        ?: withTimeoutOrNull(if (returnTransfer != null || returnAck != 0L) 50L else 1_000L) { queue.receive() } ?: CompanionFrame(type = "status")
+                        ?: live.receive(queue, if (returnTransfer != null || returnAck != 0L) 50L else 1_000L)
+                        ?: CompanionFrame(type = "status")
                     // Each frame waits for the TV's answer, so touchpad moves queued meanwhile are
                     // summed into one frame instead of trailing behind the finger.
                     while (true) {
-                        val next = queue.tryReceive().getOrNull() ?: break
+                        val next = live.poll(queue) ?: break
                         val merged = coalesceCompanionInput(command, next)
                         if (merged == null) { carried = next; break }
                         command = merged
@@ -1900,6 +1887,7 @@ class CompanionManager @Inject constructor(@ApplicationContext private val conte
                     }
                 }
                 queue.close()
+                live.close()
             }
         }
     }
@@ -1915,6 +1903,8 @@ class CompanionManager @Inject constructor(@ApplicationContext private val conte
         clientJob?.cancel(); clientJob = null
         // Invalidate the old connection before its finally block can reset a newer send.
         commands.close(); commands = Channel(16)
+        liveInputs.close(); liveInputs = CompanionLiveInputQueue()
+        lastQueuedGamepadState = null
         runCatching { clientSocket?.close() }; clientSocket = null
         confirmation?.complete(false)
         if (mutable.value.online) notice(R.string.companion_disconnected, mutable.value.target?.name.orEmpty())
