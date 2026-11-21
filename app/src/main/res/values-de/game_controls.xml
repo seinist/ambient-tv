@@ -19,6 +19,7 @@
     <string name="retro_kind_gamepad">Controller</string>
     <string name="retro_kind_keyboard">Tastatur</string>
     <string name="retro_kind_remote">Fernbedienung</string>
+    <string name="retro_kind_companion">Handy-Controller</string>
     <string name="game_controls_title">Steuerung in Spielen</string>
     <string name="game_controls_hint">Mit Controller, Tastatur oder Fernbedienung spielen und Spieler zuordnen</string>
     <string name="game_controls_explanation">In Spielen spielen Controller, Tastaturen und Fernbedienungen gleichermaßen. Jede Art hat ihre eigene Belegung des Spiele-Pads (A rechts, B unten, X oben, Y links). Mehrere Geräte können sich einen Spieler teilen.</string>
