@@ -698,7 +698,8 @@ class CompanionManager @Inject constructor(@ApplicationContext private val conte
             nowPlayingPanel = false, settingsPanel = false) }
     }
     fun claimGamepad(): Boolean = if (mutable.value.gamepadPanel && mutable.value.online &&
-        mutable.value.remote?.gamepadInfo != null) send(CompanionFrame(type = "gamepad_claim")) else false
+        mutable.value.remote?.gamepadInfo != null)
+        liveInputs.offerGamepad(CompanionFrame(type = "gamepad_claim"), critical = true) else false
 
     /** Only axes/drag positions can be skipped; edges must eventually reach the TV in order. */
     fun gamepadInput(state: CompanionGamepadState): Boolean {
