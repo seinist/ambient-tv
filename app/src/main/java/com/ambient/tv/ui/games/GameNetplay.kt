@@ -23,7 +23,7 @@ import java.io.DataInputStream
 import java.io.DataOutputStream
 import java.io.File
 import java.io.IOException
-import java.io.RandomAccessFile
+import java.io.FileInputStream
 import java.net.InetSocketAddress
 import java.net.ServerSocket
 import java.net.Socket
@@ -403,7 +403,7 @@ class GameNetplay(
         const val SERVICE_TYPE = "_ambienttv-np._tcp."
         const val DELAY_FRAMES = 3
         private const val MAGIC = 0x41544e50 // "ATNP"
-        private const val VERSION = 3
+        private const val VERSION = 4
         private const val PACKET_INPUT = 1
         private const val PACKET_BYE = 2
         private const val MAX_STATE = 64 * 1024 * 1024
@@ -421,29 +421,56 @@ class GameNetplay(
         private const val WAIT_NOTICE_NS = 500_000_000L
 
         /**
-         * What both devices must share: the game file (size plus its first 16 MiB and last 1 MiB, so
-         * disc images hash quickly) and the core build.
+         * Hash the WHOLE ROM rather than the first/last ranges. Two disc images with
+         * different middle sectors must never be mistaken for identical games.
+         * Called on Dispatchers.IO by the Netplay panel; never on the render thread.
          */
-        fun identity(file: File, coreStamp: String, title: String): NetplayIdentity {
-            val digest = MessageDigest.getInstance("SHA-1")
-            RandomAccessFile(file, "r").use { raf ->
-                val size = raf.length()
-                digest.update(size.toString().toByteArray())
-                val buffer = ByteArray(64 * 1024)
-                fun range(start: Long, length: Long) {
-                    raf.seek(start)
-                    var left = length
-                    while (left > 0) {
-                        val count = raf.read(buffer, 0, minOf(buffer.size.toLong(), left).toInt())
-                        if (count <= 0) break
-                        digest.update(buffer, 0, count)
-                        left -= count
-                    }
+        fun identity(file: File, coreStamp: String, title: String): NetplayIdentity =
+            NetplayIdentity(sha256(file), coreStamp, title)
+
+        /** Full streaming SHA-256; a fixed-size buffer also handles multi-gigabyte games. */
+        internal fun sha256(file: File): String {
+            val digest = MessageDigest.getInstance("SHA-256")
+            FileInputStream(file).buffered(256 * 1024).use { stream ->
+                val buffer = ByteArray(256 * 1024)
+                while (true) {
+                    val count = stream.read(buffer)
+                    if (count < 0) break
+                    digest.update(buffer, 0, count)
                 }
-                range(0, minOf(size, 16L shl 20))
-                if (size > 17L shl 20) range(size - (1L shl 20), 1L shl 20)
             }
-            return NetplayIdentity(digest.digest().joinToString("") { "%02x".format(it) }, coreStamp, title)
+            return digest.digest().joinToString("") { "%02x".format(it.toInt() and 0xff) }
+        }
+
+        /**
+         * Two players need the same core binary AND rendering/core options/known BIOS.
+         * The guest receives the host state, but differing emulation settings would
+         * still desynchronize subsequent frames.
+         */
+        fun configurationStamp(
+            coreStamp: String,
+            vulkan: Boolean,
+            options: Map<String, String>,
+            firmware: List<File>,
+        ): String {
+            val digest = MessageDigest.getInstance("SHA-256")
+            fun add(value: String) {
+                val bytes = value.toByteArray(Charsets.UTF_8)
+                digest.update(byteArrayOf(
+                    (bytes.size ushr 24).toByte(), (bytes.size ushr 16).toByte(),
+                    (bytes.size ushr 8).toByte(), bytes.size.toByte(),
+                ))
+                digest.update(bytes)
+            }
+            add("ambient-netplay-v4")
+            add(coreStamp)
+            add(if (vulkan) "vulkan" else "gles")
+            options.toSortedMap().forEach { (key, value) -> add(key); add(value) }
+            firmware.sortedBy { it.name }.forEach { file ->
+                add(file.name)
+                add(if (file.isFile) sha256(file) else "missing")
+            }
+            return "sha256:" + digest.digest().joinToString("") { "%02x".format(it.toInt() and 0xff) }
         }
     }
 }
