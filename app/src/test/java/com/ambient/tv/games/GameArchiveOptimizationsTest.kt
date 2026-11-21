@@ -17,6 +17,8 @@ import java.util.zip.CRC32
 import java.util.zip.GZIPOutputStream
 import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
+import org.apache.commons.compress.archivers.sevenz.SevenZArchiveEntry
+import org.apache.commons.compress.archivers.sevenz.SevenZOutputFile
 
 /** Pure JVM tests: no emulator, NAS, CoreManager or Android application initialization. */
 class GameArchiveOptimizationsTest {
@@ -90,6 +92,34 @@ class GameArchiveOptimizationsTest {
                 1024L * 1024) { })
             assertTrue(folder.walkTopDown().none(File::isFile))
         } finally { folder.deleteRecursively() }
+    }
+
+    @Test fun sevenZipFirstEntryHeaderAndSingleRomStaging() {
+        val rom = gba("KIRBYMIRROR", 140_000)
+        val archiveFile = Files.createTempFile("ambient-rom", ".7z").toFile()
+        val folder = Files.createTempDirectory("ambient-game-seven").toFile()
+        try {
+            SevenZOutputFile.builder().setFile(archiveFile).get().use { output ->
+                val entry = SevenZArchiveEntry().apply {
+                    name = "hidden.gba"
+                    size = rom.size.toLong()
+                }
+                output.putArchiveEntry(entry)
+                output.write(rom)
+                output.closeArchiveEntry()
+            }
+            val media = Bytes(archiveFile.readBytes())
+            val meta = GameArchives.probe("collection.7z", media)
+            assertEquals("gba", meta?.system?.id)
+            assertEquals("KIRBYMIRROR", meta?.internalTitle)
+            val staged = GameArchives.stageSingle("collection.7z",
+                Bytes(archiveFile.readBytes()), folder, 1024L * 1024) { }
+            assertNotNull(staged)
+            assertArrayEquals(rom, staged!!.readBytes())
+        } finally {
+            archiveFile.delete()
+            folder.deleteRecursively()
+        }
     }
 
     @Test fun gzipTitleAndDirectStreamRequireNoArchiveCopy() {
