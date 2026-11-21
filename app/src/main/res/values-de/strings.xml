@@ -2476,4 +2476,7 @@
     <string name="game_library_import_dat">Spielenamen-Katalog importieren (XML-DAT)</string>
     <string name="game_library_home_recent">Zuletzt gespielte Spiele</string>
     <string name="game_library_home_favorites">Lieblingsspiele</string>
+    <string name="game_library_scanning">ROM-Bibliothek wird geprüft…</string>
+    <string name="game_library_scan_progress">%1$d von %2$d gefundenen Dateien geprüft</string>
+    <string name="game_library_scan_cancel">Scan abbrechen</string>
 </resources>
