@@ -72,7 +72,7 @@ diff --git a/src/main/cpp/vulkan/vulkanbackend.cpp b/src/main/cpp/vulkan/vulkanb
 +        // AHardwareBuffer bridge already owns a known-SAMPLED image with tracked
 +        // extent and format; filter that exact copy without guessing core usage.
 +        const bool sampled = nativeSlang.requested() && frameImage != VK_NULL_HANDLE &&
-+            !fp16Frame && copyWidth == frameWidth && copyHeight == frameHeight;
++            !fp16Frame && width == frameWidth && height == frameHeight;
 +        if (!supported || (sourceProps.optimalTilingFeatures & VK_FORMAT_FEATURE_BLIT_SRC_BIT) == 0 ||
 +            (nativeSlang.requested() && !sampled)) {
 +            disableNativeSdrSwapchain("intermediate sampled image unavailable; GLES retained");
