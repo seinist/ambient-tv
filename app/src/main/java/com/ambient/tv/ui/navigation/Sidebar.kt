@@ -264,6 +264,12 @@ internal fun SidebarContent(
     val embyShown = embyEnabled
     val networkFileSources = sidebarState.networkFileSources
     val dlnaServers = sidebarState.dlnaServers
+    // Reuse the exact same tinted console vectors as the Games grid and category chips.
+    // A visible menu can have at most 31 system entries: loading is bounded and cached.
+    val gameSystemIcons = mutableMapOf<String, ImageVector>()
+    for (id in sidebarState.gameSystemIds) {
+        gameSystemIcons[id] = com.ambient.tv.ui.games.gameSystemVector(id)
+    }
     val systems = buildList {
         if (dlnaServers.isNotEmpty()) add(MenuSystem("dlna", menuSystemName(MediaSystem.DLNA), Icons.Filled.VideoLibrary, system = MediaSystem.DLNA, entries =
             dlnaMenuDestinations(sidebarState)))
@@ -281,7 +287,8 @@ internal fun SidebarContent(
             ) + sidebarState.gameSystemIds.mapNotNull { id ->
                 com.ambient.tv.games.GameSystems.byId(id)?.let { system ->
                     MenuDestination("games:$id", system.shortName,
-                        Icons.Filled.SportsEsports, Destinations.gameLibrarySection(id))
+                        gameSystemIcons[id] ?: Icons.Filled.SportsEsports,
+                        Destinations.gameLibrarySection(id))
                 }
             }),
         ))
