@@ -492,12 +492,18 @@ class GameLibraryRepository @Inject constructor(
                                 val unchanged = last != null && last.size == entry.size &&
                                     last.modified == entry.modified && entry.modified != 0L
                                 val cachedProbe = unchanged && last!!.probeVersion == PROBE_VERSION
-                                val archive = if (ext in GameSystems.archiveExtensions && !cachedProbe)
-                                    runCatching {
+                                val archive = if (ext in GameSystems.archiveExtensions && !cachedProbe) {
+                                    if (ext == "rar") {
+                                        // RAR title inference is filename-only. Don't open 1,000
+                                        // remote archives for metadata we cannot read in-place.
+                                        val nested = entry.name.substringBeforeLast('.')
+                                        GameArchives.Metadata(nested, GameSystems.forFile(nested))
+                                    } else runCatching {
                                         session.open(entry.path).use {
                                             GameArchives.probe(entry.name, it)
                                         }
-                                    }.getOrNull() else null
+                                    }.getOrNull()
+                                } else null
                                 val detected = if (cachedProbe) GameSystems.byId(last!!.systemId)
                                     else archive?.system ?: classify(entry, session, skipArchives = true)
                                 val mismatch = ext == "iso" &&
