@@ -27,12 +27,12 @@ def main():
         for name in sorted(EXPECTED):
             src = "#version 100\n"+programs["HEADER"]+"\nconst float INTENSITY = 1.0;\n"+programs[name]
             validate(compiler, out / (name.lower()+".frag"), "frag", src)
-    optional = ROOT / "shader_packs/shaders"
-    optionalFiles = sorted(optional.glob("*.frag"))
-    for sourceFile in optionalFiles:
-        code = sourceFile.read_text("utf-8")
-        assert 0 < sourceFile.stat().st_size <= 16 * 1024, "Optional shader exceeds budget"
-        validate(compiler, out / sourceFile.name, "frag", "#version 100\n" + code)
+        optional = ROOT / "shader_packs/shaders"
+        optionalFiles = sorted(optional.glob("*.frag"))
+        for sourceFile in optionalFiles:
+            code = sourceFile.read_text("utf-8")
+            assert 0 < sourceFile.stat().st_size <= 16 * 1024, "Optional shader exceeds budget"
+            validate(compiler, out / sourceFile.name, "frag", "#version 100\n" + code)
     print(f"OK: {len(EXPECTED)} built-ins + {len(optionalFiles)} optional GLES 100 shaders; {len(raw)} Kotlin source bytes")
 
 def validate(compiler, path, stage, source):
