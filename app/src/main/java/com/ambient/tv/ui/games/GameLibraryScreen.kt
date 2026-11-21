@@ -78,18 +78,19 @@ fun GameLibraryScreen(
     val listState = rememberLazyListState()
     val gridState = rememberLazyGridState()
     val itemRequests = remember { mutableMapOf<String, FocusRequester>() }
-    var focusedId by remember { mutableStateOf<String?>(null) }
+    var focusedId by rememberSaveable { mutableStateOf<String?>(null) }
     var searchText by rememberSaveable { mutableStateOf("") }
 
     LaunchedEffect(initialSection) { model.section(initialSection) }
     ReportSidebarContentReady(state.ready)
 
-    BackHandler(managing || choosingSystem || state.selectedSource != null || showOptions) {
+    BackHandler {
         when {
             showOptions -> showOptions = false
             choosingSystem -> choosingSystem = false
             state.selectedSource != null -> if (!model.folderUp()) model.closePicker()
             managing -> managing = false
+            else -> onBack()
         }
     }
     val sourcesById = remember(state.sources) { state.sources.associateBy { it.id } }
@@ -204,6 +205,7 @@ fun GameLibraryScreen(
                                     onPlay = { goPlay(game) }, onFavorite = { model.favorite(game) },
                                     onFocus = { focusedId = game.fileId },
                                     onRequester = { itemRequests[game.fileId] = it },
+                                    onDisposed = { itemRequests.remove(game.fileId) },
                                     modifier = if (games.firstOrNull()?.fileId == game.fileId)
                                         Modifier.focusRequester(firstFocus) else Modifier,
                                 )
@@ -395,10 +397,11 @@ private fun GameTile(
     onFavorite: () -> Unit,
     onFocus: () -> Unit,
     onRequester: (FocusRequester) -> Unit,
+    onDisposed: () -> Unit,
 ) {
     var focused by remember(game.fileId) { mutableStateOf(false) }
     val requester = remember(game.fileId) { FocusRequester() }
-    SideEffect { onRequester(requester) }
+    DisposableEffect(requester) { onRequester(requester); onDispose(onDisposed) }
     val shape = RoundedCornerShape(10.dp)
     Box(Modifier.fillMaxWidth()) {
     Surface(onClick = onPlay,
@@ -448,9 +451,10 @@ private fun GameListEntry(
     onFavorite: () -> Unit,
     onFocus: () -> Unit,
     onRequester: (FocusRequester) -> Unit,
+    onDisposed: () -> Unit,
 ) {
     val requester = remember(game.fileId) { FocusRequester() }
-    SideEffect { onRequester(requester) }
+    DisposableEffect(requester) { onRequester(requester); onDispose(onDisposed) }
     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         TvActionButton(game.title + " · " +
