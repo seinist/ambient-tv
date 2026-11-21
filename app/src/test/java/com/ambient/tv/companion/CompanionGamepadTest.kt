@@ -174,6 +174,21 @@ class CompanionGamepadTest {
         assertTrue(runCatching { valid.copy(motion = CompanionMotionState(gz = Float.NaN)).validate() }.isFailure)
     }
 
+    @Test fun fingerSlotsAreStableAcrossReleaseAndReusedWithoutRenumbering() {
+        val slots = CompanionTouchContactSlots<String>()
+        assertEquals(0, slots.slot("first"))
+        assertEquals(1, slots.slot("second"))
+        assertEquals(1, slots.slot("second"))
+        slots.release("first")
+        assertEquals(1, slots.slot("second"))
+        assertEquals(0, slots.slot("third"))
+        assertEquals(2, slots.slot("fourth"))
+        assertEquals(3, slots.slot("fifth"))
+        assertNull(slots.slot("sixth"))
+        slots.release("second")
+        assertEquals(1, slots.slot("sixth"))
+    }
+
     @Test fun pointerCalibrationHandlesDualScreensAndOutsideBounds() {
         assertEquals(0.5f to 0.75f, companionPointerCoordinates(0.5f, 0.5f, "lower"))
         assertEquals(0.5f to 0.25f, companionPointerCoordinates(0.5f, 0.5f, "upper"))
