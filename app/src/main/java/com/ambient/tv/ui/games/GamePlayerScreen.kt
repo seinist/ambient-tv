@@ -97,6 +97,7 @@ import androidx.lifecycle.LifecycleRegistry
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
+import com.ambient.tv.BuildConfig
 import com.ambient.tv.R
 import com.ambient.tv.games.GameAspect
 import com.ambient.tv.games.GameCheat
@@ -315,7 +316,8 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
         // Bundled native presets currently use their author's default parameter values.
         // A user-adjusted intensity must keep using GLES until native per-parameter
         // parity is implemented; never silently display the wrong chosen appearance.
-        if (session.vulkan && nativeTransfer == GameVulkanTransferMode.SDR &&
+        if (BuildConfig.LIBRASHADER_NATIVE && session.vulkan &&
+            nativeTransfer == GameVulkanTransferMode.SDR &&
             kotlin.math.abs(shaderIntensity - 1f) < 0.0001f)
             GameVulkanSlangPresets.prepare(context, shader, selectedPack)
         else null

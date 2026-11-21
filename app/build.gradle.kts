@@ -233,6 +233,11 @@ android {
         buildConfigField("String", "APP_DISPLAY_NAME", quotedBuildConfigString(appDisplayName))
         buildConfigField("boolean", "MONOGRAM_NATIVE", monogramEnabled.toString())
         buildConfigField("boolean", "SPOTIFY_ENABLED", spotifyEnabled.toString())
+        buildConfigField("boolean", "LIBRASHADER_NATIVE", (
+            providers.gradleProperty("LIBRASHADER_NATIVE")
+                .orElse(providers.environmentVariable("LIBRASHADER_NATIVE"))
+                .orElse("0").get() == "1"
+        ).toString())
         buildConfigField("String", "MONOGRAM_REF", quotedBuildConfigString(externalVersion("MONOGRAM_REF")))
         buildConfigField("String", "MONOGRAM_VERSION", quotedBuildConfigString(externalVersion("MONOGRAM_VERSION")))
         // Own core channel (.github/workflows/cores.yml): public key of its signed manifest, empty
