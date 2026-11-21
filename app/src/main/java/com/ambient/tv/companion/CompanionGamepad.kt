@@ -180,7 +180,11 @@ object CompanionGamepadSession {
             return false
         }
         game.input.remoteState(port, packet.buttons, packet.leftX, packet.leftY, packet.rightX, packet.rightY)
-        if (packet.pointer != previousPointer[port]) {
+        // Relative mouse movement is an event, not an absolute position: identical consecutive
+        // deltas are still distinct movement and must not disappear in deduplication.
+        if (packet.pointer != previousPointer[port] || packet.pointer?.let {
+            it.kind == "mouse" && (it.dx != 0f || it.dy != 0f)
+        } == true) {
             game.onPointer(port, packet.pointer)
             if (packet.pointer == null) previousPointer.remove(port)
             else previousPointer[port] = packet.pointer
