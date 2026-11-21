@@ -2474,4 +2474,6 @@
     <string name="game_library_sort_system">Retro-System</string>
     <string name="game_library_sort_recent">Zuletzt gespielt</string>
     <string name="game_library_import_dat">Spielenamen-Katalog importieren (XML-DAT)</string>
+    <string name="game_library_home_recent">Zuletzt gespielte Spiele</string>
+    <string name="game_library_home_favorites">Lieblingsspiele</string>
 </resources>
