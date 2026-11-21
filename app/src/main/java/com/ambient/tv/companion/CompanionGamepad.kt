@@ -118,6 +118,8 @@ object CompanionGamepadSession {
     private var active: Active? = null
     private val ports = LinkedHashMap<String, Int>()
     private val deviceFingerprints = LinkedHashMap<String, String>()
+    private val forceAutoReassignment = mutableSetOf<String>()
+    private val lastPortSetting = mutableMapOf<String, Int>()
     private val handler by lazy { Handler(Looper.getMainLooper()) }
     private val deadman = LinkedHashMap<String, Runnable>()
     private val deadlines = LinkedHashMap<String, Long>()
@@ -247,8 +249,9 @@ object CompanionGamepadSession {
             return -1
         }
         ports[session]?.let { existing ->
-            if (configured == RetroPorts.AUTO || configured == existing) return existing
-            release(session) // A changed fixed-player setting takes effect on the next claim.
+            if (configured in 0 until RetroPorts.COUNT && configured == existing) return existing
+            if (configured == RetroPorts.AUTO && session !in forceAutoReassignment) return existing
+            release(session) // Changed fixed/automatic assignment takes effect on this claim.
         }
         val occupiedPhones = ports.values.toSet()
         val port = if (configured in 0 until RetroPorts.COUNT) {
@@ -262,6 +265,8 @@ object CompanionGamepadSession {
         game.input.reserveRemotePort(port, true, descriptor)
         ports[session] = port
         deviceFingerprints[session] = fingerprint
+        forceAutoReassignment.remove(session)
+        lastPortSetting[session] = configured
         return port
     }
 
@@ -273,8 +278,9 @@ object CompanionGamepadSession {
         deviceFingerprints[session]?.let { fingerprint ->
             val target = com.ambient.tv.ui.gamepad.retro.RetroInputSettings.config.ports[
                 com.ambient.tv.ui.gamepad.retro.companionControllerDescriptor(fingerprint)]
-            if (target == RetroPorts.OFF || target != null && target in 0 until RetroPorts.COUNT &&
-                ports[session] != target) {
+            val configured = target ?: RetroPorts.AUTO
+            if (configured != lastPortSetting[session]) {
+                if (configured == RetroPorts.AUTO) forceAutoReassignment.add(session)
                 if (claim(session, fingerprint) < 0) return false
             }
         }
@@ -316,8 +322,13 @@ object CompanionGamepadSession {
     fun release(session: String) {
         cancelDeadman(session)
         deviceFingerprints.remove(session)
-        val port = ports.remove(session) ?: return
+        forceAutoReassignment.remove(session)
+        lastPortSetting.remove(session)
+        // Clear while this TLS session still owns its slot. clearButtons() resolves ownership
+        // from ports; removing the mapping first leaked pulse gates and delayed callbacks.
+        val port = ports[session] ?: return
         active?.let { releaseInputs(it, port); it.input.reserveRemotePort(port, false) }
+        ports.remove(session)
     }
 
     fun detach(input: RetroPadInput) {
@@ -330,6 +341,8 @@ object CompanionGamepadSession {
         ports.values.forEach { releaseInputs(game, it); game.input.reserveRemotePort(it, false) }
         ports.clear()
         deviceFingerprints.clear()
+        forceAutoReassignment.clear()
+        lastPortSetting.clear()
         active = null
     }
 }
