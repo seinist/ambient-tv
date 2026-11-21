@@ -174,7 +174,7 @@ internal fun ControllerMapping(context: GamepadContext, long: Boolean, selectedB
         subtitle = subtitle,
         collapsible = context == GamepadContext.PLAYER || long,
     ) {
-        (selectedButton?.let(::listOf) ?: GamepadButton.entries).forEach { button ->
+        (selectedButton?.let { listOf(it) } ?: GamepadButton.entries).forEach { button ->
             val slot = GamepadSlot(button, long)
             val current = config.configured(context, slot)
             val name = labels.label(button)
