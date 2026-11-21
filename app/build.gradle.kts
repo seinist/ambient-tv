@@ -202,6 +202,16 @@ android {
     testOptions {
         unitTests {
             isIncludeAndroidResources = true
+            // Robolectric fetches android-all test SDK jars at runtime, independently of
+            // Gradle dependency resolution. GitHub runners may be rate-limited by repo1.
+            // Keep developer machines on Robolectric defaults; CI opts into a mirror.
+            all {
+                providers.environmentVariable("ROBOLECTRIC_MAVEN_MIRROR").orNull
+                    ?.takeIf(String::isNotBlank)?.let { mirror ->
+                        it.systemProperty("robolectric.dependency.repo.url", mirror)
+                        it.systemProperty("robolectric.dependency.repo.id", "gcs-maven-central")
+                    }
+            }
         }
     }
     compileSdk = 37

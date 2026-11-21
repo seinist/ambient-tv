@@ -9,6 +9,9 @@ import com.ambient.tv.games.GameBiosManager
 import com.ambient.tv.games.GameBiosStatus
 import com.ambient.tv.games.GameCore
 import com.ambient.tv.games.GameCoreIncompatibleException
+import com.ambient.tv.games.GameCoreBuildbotConsentRequired
+import com.ambient.tv.games.GameCoreSource
+import com.ambient.tv.games.GameSettings
 import com.ambient.tv.games.GameCoreManager
 import com.ambient.tv.games.GameDirectUnavailableException
 import com.ambient.tv.games.GameRomPreparer
@@ -56,6 +59,7 @@ sealed interface GameUiState {
     data class Preparing(val progress: Float?) : GameUiState
     /** The system's core is not installed yet: the user decides whether to load it. */
     data class NeedsCore(val game: PreparedGame, val core: GameCore, val sourceUrl: String?) : GameUiState
+    data class ConfirmBuildbot(val game: PreparedGame, val core: GameCore, val reason: String) : GameUiState
     data class DownloadingCore(val game: PreparedGame, val core: GameCore, val progress: Float?) : GameUiState
     data class Ready(val session: GameSession) : GameUiState
     data class Failed(val reason: GameFailure, val detail: String? = null) : GameUiState
@@ -159,17 +163,26 @@ class GamePlayerViewModel @Inject constructor(
     }
 
     /** The user agreed to load the core for this system. */
-    fun downloadCore() {
-        val needed = state.value as? GameUiState.NeedsCore ?: return
-        val game = needed.game
-        val chosen = needed.core
+    fun downloadCore() = downloadCoreFrom(GameSettings.state.coreSource)
+    /** User-facing confirmation after AUTO would otherwise switch to unsigned native code. */
+    fun confirmBuildbotCore() = downloadCoreFrom(GameCoreSource.BUILDBOT)
+
+    private fun downloadCoreFrom(source: GameCoreSource) {
+        val (game, chosen) = when (val needed = state.value) {
+            is GameUiState.NeedsCore -> needed.game to needed.core
+            is GameUiState.ConfirmBuildbot -> needed.game to needed.core
+            else -> return
+        }
         job?.cancel()
         job = viewModelScope.launch {
             mutable.value = GameUiState.DownloadingCore(game, chosen, null)
             val file = try {
-                cores.download(chosen, com.ambient.tv.games.GameSettings.state.coreSource) { progress ->
+                cores.download(chosen, source) { progress ->
                     mutable.value = GameUiState.DownloadingCore(game, chosen, progress)
                 }
+            } catch (error: GameCoreBuildbotConsentRequired) {
+                mutable.value = GameUiState.ConfirmBuildbot(game, chosen, error.message.orEmpty())
+                return@launch
             } catch (error: GameCoreIncompatibleException) {
                 mutable.value = GameUiState.Failed(GameFailure.CORE_INCOMPATIBLE, error.message); return@launch
             } catch (error: kotlinx.coroutines.CancellationException) {

@@ -115,18 +115,48 @@ class GameArchivesTest {
         }.exceptionOrNull() is GameArchiveException)
     }
 
-    @Test fun flattenedArchiveNamesCannotClobberEachOther() {
-        val zip = folder.newFile("duplicate.zip")
+    @Test fun nestedArchiveDiscTracksKeepTheirPathsAndRejectTraversal() {
+        val zip = folder.newFile("nested.zip")
         ZipOutputStream(zip.outputStream()).use { out ->
-            for (name in listOf("A/game.sfc", "B/game.sfc")) {
+            for (name in listOf("A/game.sfc", "B/game.sfc", "Game/disc.cue", "Game/tracks/track.bin")) {
                 out.putNextEntry(ZipEntry(name))
                 out.write(byteArrayOf(1, 2, 3))
                 out.closeEntry()
             }
         }
+        val extracted = GameArchives.extract(zip, File(folder.root, "nested-output"))
+        assertEquals(4, extracted.size)
+        assertTrue(File(folder.root, "nested-output/A/game.sfc").isFile)
+        assertTrue(File(folder.root, "nested-output/B/game.sfc").isFile)
+        assertTrue(File(folder.root, "nested-output/Game/tracks/track.bin").isFile)
+
+        val unsafe = folder.newFile("traversal.zip")
+        ZipOutputStream(unsafe.outputStream()).use { out ->
+            out.putNextEntry(ZipEntry("../escape.sfc"))
+            out.write(byteArrayOf(1))
+            out.closeEntry()
+        }
         assertTrue(runCatching {
-            GameArchives.extract(zip, File(folder.root, "duplicate-output"))
+            GameArchives.extract(unsafe, File(folder.root, "unsafe-output"))
         }.exceptionOrNull() is GameArchiveException)
+        assertFalse(File(folder.root, "escape.sfc").exists())
+    }
+
+    @Test fun cachedDiscSidecarsAreValidatedIncludingNestedCueTracks() {
+        val root = folder.newFolder("cached-disc")
+        val playlist = File(root, "game.m3u").apply { writeText("disc/disc.cue") }
+        val cue = File(root, "disc/disc.cue").also { it.parentFile!!.mkdirs() }
+        cue.writeText("""FILE "tracks/data.bin" BINARY""")
+        assertFalse(GameRomPreparer.cachedCompanionsComplete(playlist))
+        File(root, "disc/tracks/data.bin").also {
+            it.parentFile!!.mkdirs()
+            it.writeBytes(byteArrayOf(42))
+        }
+        assertTrue(GameRomPreparer.cachedCompanionsComplete(playlist))
+        assertEquals("disc/tracks/data.bin", GameRomPreparer.safeRelativePath("disc\\tracks/data.bin"))
+        assertEquals(null, GameRomPreparer.safeRelativePath("../escape.bin"))
+        assertEquals(null, GameRomPreparer.safeRelativePath("/absolute/game.cue"))
+        assertEquals(null, GameRomPreparer.safeRelativePath("C:/disc.bin"))
     }
 
     @Test fun netplayRejectsOutOfWindowAndNegativeFrameNumbers() {
