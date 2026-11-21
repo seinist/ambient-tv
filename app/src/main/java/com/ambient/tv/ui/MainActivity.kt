@@ -1177,7 +1177,7 @@ internal fun radioSectionTransitionIsInstant(fromRoute: String?, toRoute: String
     return isRadioBrowse(fromRoute) && isRadioBrowse(toRoute)
 }
 
-internal val SIDEBAR_ROUTES = setOf(Destinations.TRAILERS, Destinations.TRAILER_FEED, Destinations.FILES, Destinations.FILE_SOURCE, Destinations.FILE_FAVORITES, Destinations.FILE_RECENT, Destinations.FILE_CONTINUE, Destinations.DLNA, Destinations.DLNA_SERVER, Destinations.HOME, Destinations.WEATHER, Destinations.PLEX, Destinations.JELLYFIN, Destinations.EMBY, Destinations.SEARCH, Destinations.YOUTUBE, Destinations.YOUTUBE_FEED, Destinations.TELEGRAM, Destinations.TELEGRAM_SECTION, Destinations.SPOTIFY, Destinations.SPOTIFY_SECTION, Destinations.RADIO, Destinations.RADIO_SECTION, Destinations.LIVE_TV, Destinations.LIVE_TV_SECTION, Destinations.SETTINGS, Destinations.SECTION)
+internal val SIDEBAR_ROUTES = setOf(Destinations.TRAILERS, Destinations.TRAILER_FEED, Destinations.GAME_LIBRARY, Destinations.GAME_LIBRARY_SECTION, Destinations.FILES, Destinations.FILE_SOURCE, Destinations.FILE_FAVORITES, Destinations.FILE_RECENT, Destinations.FILE_CONTINUE, Destinations.DLNA, Destinations.DLNA_SERVER, Destinations.HOME, Destinations.WEATHER, Destinations.PLEX, Destinations.JELLYFIN, Destinations.EMBY, Destinations.SEARCH, Destinations.YOUTUBE, Destinations.YOUTUBE_FEED, Destinations.TELEGRAM, Destinations.TELEGRAM_SECTION, Destinations.SPOTIFY, Destinations.SPOTIFY_SECTION, Destinations.RADIO, Destinations.RADIO_SECTION, Destinations.LIVE_TV, Destinations.LIVE_TV_SECTION, Destinations.SETTINGS, Destinations.SECTION)
 internal val FULLSCREEN_ROUTES = setOf(Destinations.ITEM_TRAILERS, Destinations.TMDB_TRAILERS, Destinations.PHOTO_VIEWER, Destinations.GAME_PLAYER, Destinations.SETUP_COMPLETE, Destinations.INITIAL_SETUP, Destinations.SETUP_SETTINGS, Destinations.WEATHER_PLAYER, Destinations.PLAYER, Destinations.TVH_PLAYER, Destinations.YOUTUBE_PLAYER, Destinations.TELEGRAM_PLAYER, Destinations.TELEGRAM_DETAIL, Destinations.YOUTUBE_DETAIL, Destinations.YOUTUBE_CHANNEL, Destinations.SPOTIFY_PLAYER, Destinations.RADIO_PLAYER, Destinations.RADIO_DETAIL, Destinations.SPOTIFY_DETAIL, Destinations.SERVER_SELECT, Destinations.DETAIL, Destinations.DETAIL_FILTERED_BROWSE)
 // Details are ordinary page navigation (even though they hide the sidebar).
 // Exclude only player/video, setup and system-only destinations from page motion.
@@ -1643,7 +1643,7 @@ private fun AmbientTvApp(
     val currentTvheadendTab = if (currentRoute == Destinations.LIVE_TV_SECTION) currentBackStackEntry?.arguments?.getString("tab") else null
     val currentFileSourceId = if (currentRoute == Destinations.FILE_SOURCE) currentBackStackEntry?.arguments?.getString("sourceId") else null
     val currentDlnaServerId = if (currentRoute == Destinations.DLNA_SERVER) currentBackStackEntry?.arguments?.getString("serverId") else null
-    val waitsForSidebarContent = currentRoute in setOf(Destinations.FILES, Destinations.FILE_SOURCE, Destinations.FILE_FAVORITES, Destinations.FILE_RECENT, Destinations.FILE_CONTINUE) || currentRoute == Destinations.HOME ||
+    val waitsForSidebarContent = currentRoute in setOf(Destinations.GAME_LIBRARY, Destinations.GAME_LIBRARY_SECTION, Destinations.FILES, Destinations.FILE_SOURCE, Destinations.FILE_FAVORITES, Destinations.FILE_RECENT, Destinations.FILE_CONTINUE) || currentRoute == Destinations.HOME ||
         currentRoute == Destinations.DLNA || currentRoute == Destinations.DLNA_SERVER ||
         currentRoute == Destinations.PLEX ||
         currentRoute == Destinations.JELLYFIN ||
@@ -2097,6 +2097,7 @@ private fun AmbientTvApp(
                 Destinations.TRAILER_FEED -> currentTrailerFeedKey?.let(Destinations::trailerFeed) ?: Destinations.TRAILERS
                 Destinations.SPOTIFY_SECTION -> currentSpotifySectionKey?.let(Destinations::spotifySection) ?: Destinations.SPOTIFY
                 Destinations.RADIO_SECTION -> currentRadioSectionKey?.let(Destinations::radioSection) ?: Destinations.RADIO
+                Destinations.GAME_LIBRARY_SECTION -> currentSectionKey?.let(Destinations::gameLibrarySection) ?: Destinations.GAME_LIBRARY
                 Destinations.TELEGRAM_SECTION -> currentTelegramSectionKey?.let(Destinations::telegramSection) ?: Destinations.TELEGRAM
                 Destinations.LIVE_TV_SECTION -> currentTvheadendTab?.let { Destinations.liveTvSection(it, currentLiveTvSourceId) } ?: Destinations.LIVE_TV
                 Destinations.FILE_SOURCE -> currentFileSourceId?.let(Destinations::fileSource) ?: Destinations.FILES
@@ -2988,7 +2989,10 @@ private fun AmbientTvApp(
                     }
                     composable(
                         route = Destinations.GAME_PLAYER,
-                        arguments = listOf(navArgument("fileId") { type = NavType.StringType }),
+                        arguments = listOf(
+                            navArgument("fileId") { type = NavType.StringType },
+                            navArgument("system") { type = NavType.StringType; defaultValue = "" },
+                        ),
                     ) { entry ->
                         com.ambient.tv.ui.games.GamePlayerScreen(
                             onBack = { if (navController.currentBackStackEntry === entry) navigateBack() },
@@ -3267,6 +3271,25 @@ private fun AmbientTvApp(
                                     onPlayRecording = { recordingUuid -> playOnSelectedTarget(Destinations.tvhPlayer("recording", recordingUuid, sourceId)) },
                                 )
                             }
+                        }
+                    }
+                    composable(Destinations.GAME_LIBRARY) {
+                        RestorableSidebarContent {
+                            com.ambient.tv.ui.games.GameLibraryScreen(
+                                initialSection = "all",
+                                onBack = ::focusSidebar,
+                                onPlay = { game -> navController.navigate(Destinations.gamePlayer(game.fileId, game.systemId)) },
+                            )
+                        }
+                    }
+                    composable(Destinations.GAME_LIBRARY_SECTION,
+                        arguments = listOf(navArgument("sectionKey") { type = NavType.StringType })) { entry ->
+                        RestorableSidebarContent {
+                            com.ambient.tv.ui.games.GameLibraryScreen(
+                                initialSection = entry.arguments?.getString("sectionKey").orEmpty(),
+                                onBack = ::focusSidebar,
+                                onPlay = { game -> navController.navigate(Destinations.gamePlayer(game.fileId, game.systemId)) },
+                            )
                         }
                     }
                     listOf(Destinations.FILES to "browse", Destinations.FILE_FAVORITES to "favorites",
