@@ -1,8 +1,6 @@
 package com.ambient.tv.ui.games
 
 import androidx.core.content.ContextCompat
-import android.graphics.Bitmap
-import android.graphics.Canvas
 import com.ambient.tv.games.GameSystems
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
@@ -12,8 +10,12 @@ import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.RuntimeEnvironment
 import org.robolectric.annotation.Config
+import org.xmlpull.v1.XmlPullParser
 
-/** Every registered console must inflate its own original, theme-tintable vector. */
+/**
+ * The JVM test can validate Android vector XML resources but Robolectric does not
+ * actually rasterize them in a Canvas: raster checks belong in androidTest.
+ */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [35], application = android.app.Application::class)
 class GameSystemIconsTest {
@@ -35,35 +37,30 @@ class GameSystemIconsTest {
         }
     }
 
-    @Test fun allSystemVectorsRemainLegibleAt24And32DpWithoutClipping() {
+    @Test fun allVectorsHaveRealDistinctGeometryNotBlankPlaceholders() {
         val context = RuntimeEnvironment.getApplication()
+        val namespace = "http://schemas.android.com/apk/res/android"
         for (system in GameSystems.all) {
-            for (size in listOf(24, 32, 64)) {
-                val icon = ContextCompat.getDrawable(context, GameSystemIcons.drawable(system.id))!!
-                    .mutate()
-                // Tint makes all foreground material equally visible, including dimmed surfaces.
-                icon.setTint(android.graphics.Color.WHITE)
-                val bitmap = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
-                icon.setBounds(0, 0, size, size)
-                icon.draw(Canvas(bitmap))
-                var pixels = 0
-                var minX = size
-                var maxX = -1
-                var minY = size
-                var maxY = -1
-                for (y in 0 until size) for (x in 0 until size) {
-                    if (android.graphics.Color.alpha(bitmap.getPixel(x, y)) > 40) {
-                        pixels++
-                        minX = minOf(minX, x)
-                        maxX = maxOf(maxX, x)
-                        minY = minOf(minY, y)
-                        maxY = maxOf(maxY, y)
+            val id = GameSystemIcons.drawable(system.id)
+            val paths = mutableListOf<String>()
+            var viewport = 0f
+            context.resources.getXml(id).use { parser ->
+                while (parser.eventType != XmlPullParser.END_DOCUMENT) {
+                    if (parser.eventType == XmlPullParser.START_TAG) {
+                        when (parser.name) {
+                            "vector" -> viewport =
+                                parser.getAttributeValue(namespace, "viewportWidth")?.toFloatOrNull() ?: 0f
+                            "path" -> parser.getAttributeValue(namespace, "pathData")?.let(paths::add)
+                        }
                     }
+                    parser.next()
                 }
-                assertTrue("Empty or indistinct icon for ${system.id} at ${size}dp", pixels >= size)
-                assertTrue("Icon clipped horizontally for ${system.id}", minX > 0 && maxX < size - 1)
-                assertTrue("Icon clipped vertically for ${system.id}", minY > 0 && maxY < size - 1)
             }
+            assertEquals("Unexpected vector scale for ${system.id}", 64f, viewport)
+            assertTrue("Too little geometry for ${system.id}", paths.size >= 4)
+            assertTrue("Repeated or blank paths for ${system.id}",
+                paths.all { it.isNotBlank() && it.startsWith("M") } &&
+                    paths.distinct().size >= 4)
         }
     }
 }
