@@ -53,7 +53,7 @@ jobs:
           key="$RUNNER_TEMP/ambient-cores-key.pem"
           pub="$RUNNER_TEMP/ambient-cores-public.pem"
           trap 'rm -f "$key" "$pub"' EXIT
-          printf '%s\\n' "$SIGNING_KEY" > "$key"
+          printf '%s\n' "$SIGNING_KEY" > "$key"
           openssl pkey -in "$key" -pubout -out "$pub"
           cmp -s "$pub" cores/signing-public.pem || {
             echo "::error::CORES_SIGNING_KEY does not match the committed public key"
