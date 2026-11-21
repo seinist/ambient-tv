@@ -258,6 +258,7 @@ class CompanionManager @Inject constructor(@ApplicationContext private val conte
         if (!mutable.value.online || mutable.value.target == null) { playLocally(); return }
         if (playbackRequest.value?.starting == true) return
         if (mutable.value.remotePanel) hideRemote()
+        if (mutable.value.gamepadPanel) hideGamepad()
         mutable.update { it.copy(panel = false, nowPlayingPanel = false, settingsPanel = false) }
         playbackRequest.value = CompanionPlaybackRequest(media, title, playLocally)
     }
@@ -633,7 +634,7 @@ class CompanionManager @Inject constructor(@ApplicationContext private val conte
             if (!headlessShareActive && (television || !remoteServiceRequested || !mutable.value.online)) disconnect(clearTarget = false)
             else if (!headlessShareActive) {
                 if (mutable.value.remote?.inputGranted == true) send(CompanionFrame(type = "input_release"))
-                mutable.update { it.copy(panel = false, remotePanel = false, nowPlayingPanel = false, settingsPanel = false) }
+                mutable.update { it.copy(panel = false, remotePanel = false, gamepadPanel = false, nowPlayingPanel = false, settingsPanel = false) }
             }
         }
     }
@@ -924,6 +925,7 @@ class CompanionManager @Inject constructor(@ApplicationContext private val conte
     fun showSettingsTransferTo(peer: CompanionPeer?) {
         if (television) { showPanel(); return }
         if (mutable.value.remotePanel) hideRemote()
+        if (mutable.value.gamepadPanel) hideGamepad()
         mutable.update { it.copy(settingsPanel = true, transferTarget = peer?.fingerprint, panel = false, nowPlayingPanel = false, pairingFlow = false, pairingResult = "") }
     }
     fun hideSettingsTransfer() { mutable.update { it.copy(settingsPanel = false, transferTarget = null) } }
