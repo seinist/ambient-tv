@@ -52,6 +52,11 @@ for abi in ${LIBRASHADER_ABIS:-arm64-v8a armeabi-v7a x86 x86_64}; do
         continue
     fi
     rustup target add "$target"
+    # spirv-cross-sys and shaderc-sys compile C++ in build.rs. cc-rs does not
+    # inherit the Rust linker; 32-bit Android NDK triples differ.
+    export CC="$BIN/$clang"
+    export CXX="$BIN/$clang++"
+    export AR="$BIN/llvm-ar"
     case "$target" in
       aarch64-linux-android) export CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER="$BIN/$clang" ;;
       armv7-linux-androideabi) export CARGO_TARGET_ARMV7_LINUX_ANDROIDEABI_LINKER="$BIN/$clang" ;;

@@ -276,7 +276,7 @@ diff --git a/src/main/cpp/CMakeLists.txt b/src/main/cpp/CMakeLists.txt
 diff --git a/src/main/cpp/libretrodroidjni.cpp b/src/main/cpp/libretrodroidjni.cpp
 --- a/src/main/cpp/libretrodroidjni.cpp
 +++ b/src/main/cpp/libretrodroidjni.cpp
-@@ -850,3 +850,17 @@
+@@ -865,4 +865,18 @@
      VulkanBackend::getInstance().setNativeIntegerScaling(enabled == JNI_TRUE);
  }
  
@@ -294,6 +294,7 @@ diff --git a/src/main/cpp/libretrodroidjni.cpp b/src/main/cpp/libretrodroidjni.c
 +    VulkanBackend::getInstance().setNativeShaderPresetPath(path);
 +}
 +
+ JNIEXPORT void JNICALL Java_com_swordfish_libretrodroid_LibretroDroid_setConfiguredHdrOutput(
 diff --git a/src/main/java/com/swordfish/libretrodroid/LibretroDroid.java b/src/main/java/com/swordfish/libretrodroid/LibretroDroid.java
 --- a/src/main/java/com/swordfish/libretrodroid/LibretroDroid.java
 +++ b/src/main/java/com/swordfish/libretrodroid/LibretroDroid.java
