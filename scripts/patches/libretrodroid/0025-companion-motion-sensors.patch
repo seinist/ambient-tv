@@ -48,7 +48,7 @@ diff --git a/src/main/cpp/sensors/coresensors.cpp b/src/main/cpp/sensors/coresen
      switch (action) {
          case RETRO_SENSOR_ACCELEROMETER_ENABLE:
          case RETRO_SENSOR_ACCELEROMETER_DISABLE:
-@@ -63,37 +73,45 @@
+@@ -63,37 +73,48 @@
      return true;
  }
  
@@ -99,7 +99,10 @@ diff --git a/src/main/cpp/sensors/coresensors.cpp b/src/main/cpp/sensors/coresen
 +bool CoreSensors::setSensorState(unsigned port, retro_sensor_action action) {
 +    const int sensor = sensorForAction(action);
 +    if (port >= 4 || sensor == 0) return false;
-+    const int permitted = (port == 0 ? access.load() : 0) | companionAccess[port].load();
++    // The virtual sensor interface can be claimed before a phone connects; return zero
++    // until a paired handset supplies readings, then activate without restarting the core.
++    const int permitted = (port == 0 ? access.load() : 0) | companionAccess[port].load()
++        | ACCELEROMETER | GYROSCOPE;
 +    if (isEnableAction(action)) {
 +        if ((permitted & sensor) == 0) return false;
 +        if (port == 0) requested |= sensor;
