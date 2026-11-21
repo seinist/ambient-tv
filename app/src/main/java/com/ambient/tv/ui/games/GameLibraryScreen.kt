@@ -167,6 +167,12 @@ fun GameLibraryScreen(
                         else -> GameSystems.byId(key)?.shortName ?: key
                     }
                     TvChip(text = label, selected = state.section == key,
+                        icon = when (key) {
+                            "all" -> Icons.Filled.Apps
+                            "favorites" -> Icons.Filled.Favorite
+                            "recent" -> Icons.Filled.History
+                            else -> gameSystemVector(key)
+                        },
                         onClick = { model.section(key); focusedId = null })
                 }
             }
@@ -359,7 +365,8 @@ private fun GameFolderManager(
             item { TvActionButton(stringResource(R.string.game_library_auto),
                 onClick = { onAdd("auto") }, fillWidth = true) }
             items(GameSystems.all, key = { it.id }) { system ->
-                TvActionButton(system.name, onClick = { onAdd(system.id) }, fillWidth = true)
+                TvActionButton(system.name, onClick = { onAdd(system.id) },
+                    icon = gameSystemVector(system.id), fillWidth = true)
             }
         }
         return
@@ -524,12 +531,7 @@ private fun GameListEntry(
 
 @Composable
 private fun GameSystemArt(id: String, modifier: Modifier = Modifier) {
-    val icon = when (id) {
-        "gb", "gba", "ngp", "wswan", "lynx", "vb", "nds", "n3ds", "psp" -> R.drawable.game_library_handheld
-        "psx", "ps2", "gamecube", "wii", "wiiu", "dreamcast", "saturn" -> R.drawable.game_library_disc
-        "c64", "c128", "vic20", "plus4", "pet", "cbm2" -> R.drawable.game_library_computer
-        else -> R.drawable.game_library_console
-    }
+    val icon = GameSystemIcons.drawable(id)
     androidx.compose.material3.Icon(painterResource(icon), contentDescription = null, modifier = modifier,
         tint = MaterialTheme.colorScheme.onSurfaceVariant)
 }
