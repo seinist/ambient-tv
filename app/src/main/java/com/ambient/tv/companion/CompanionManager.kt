@@ -696,8 +696,10 @@ class CompanionManager @Inject constructor(@ApplicationContext private val conte
 
     fun hideGamepad() {
         if (!mutable.value.gamepadPanel) return
-        gamepadInput(CompanionGamepadState())
-        send(CompanionFrame(type = "gamepad_release"))
+        if (mutable.value.online) {
+            gamepadInput(CompanionGamepadState())
+            send(CompanionFrame(type = "gamepad_release"))
+        }
         mutable.update { it.copy(gamepadPanel = false) }
     }
     fun showNowPlaying() {
