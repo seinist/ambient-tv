@@ -298,4 +298,13 @@
     <string name="game_shader_deband_hint">Fine dither to mask color banding (light)</string>
     <string name="game_shader_color_boost">Color boost</string>
     <string name="game_shader_color_boost_hint">Gentle saturation increase (light)</string>
+    <string name="games_shader_packs_title">Shader packs</string>
+    <string name="games_shader_packs_hint">Optional signed presets; not included in the APK</string>
+    <string name="games_shader_packs_download">Download latest signed shader pack</string>
+    <string name="games_shader_packs_remove">Remove</string>
+    <string name="games_shader_packs_confirm">Tap again to remove</string>
+    <string name="games_shader_packs_empty">No shader packs installed</string>
+    <string name="games_shader_packs_unavailable">The signing key is not configured for this build.</string>
+    <string name="games_shader_packs_installed">Installed: %1$s</string>
+    <string name="games_shader_packs_failed">Shader pack installation failed: %1$s</string>
 </resources>

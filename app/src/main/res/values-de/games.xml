@@ -298,4 +298,13 @@
     <string name="game_shader_deband_hint">Feines Dithering gegen Farbverläufe mit Stufen (geringe Last)</string>
     <string name="game_shader_color_boost">Farben verstärken</string>
     <string name="game_shader_color_boost_hint">Dezent erhöhte Farbsättigung (geringe Last)</string>
+    <string name="games_shader_packs_title">Shader-Pakete</string>
+    <string name="games_shader_packs_hint">Optionale signierte Presets, nicht in der APK enthalten</string>
+    <string name="games_shader_packs_download">Neuestes signiertes Shader-Paket laden</string>
+    <string name="games_shader_packs_remove">Entfernen</string>
+    <string name="games_shader_packs_confirm">Erneut drücken zum Entfernen</string>
+    <string name="games_shader_packs_empty">Keine Shader-Pakete installiert</string>
+    <string name="games_shader_packs_unavailable">Für diesen Build ist kein Signaturschlüssel hinterlegt.</string>
+    <string name="games_shader_packs_installed">Installiert: %1$s</string>
+    <string name="games_shader_packs_failed">Shader-Paket konnte nicht installiert werden: %1$s</string>
 </resources>
