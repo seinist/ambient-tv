@@ -21,6 +21,7 @@ data class RetroInputDevice(val id: Int, val kind: RetroInputKind, val descripto
  */
 class RetroPadInput(
     private val config: () -> RetroInputConfig = { RetroInputSettings.config },
+    private val profileContext: RetroInputProfileContext? = null,
     private val device: (deviceId: Int) -> RetroInputDevice = ::retroInputDevice,
     private val schedule: (delayMs: Long, task: () -> Unit) -> (() -> Unit),
     private val axisLayout: (deviceId: Int) -> com.ambient.tv.ui.gamepad.GamepadAxisLayout =
