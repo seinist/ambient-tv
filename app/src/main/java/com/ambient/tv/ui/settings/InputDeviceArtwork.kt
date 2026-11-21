@@ -138,11 +138,15 @@ internal val supportedConsoleArtworkIds: Set<String> = setOf(
  * The emulator core, not this illustration, owns the actual Libretro controller mode/options.
  */
 internal fun consoleArtworkVariants(systemId: String): List<Pair<String, String>> = when (systemId) {
-    "megadrive", "sega32x" -> listOf(
+    "megadrive" -> listOf(
         "md6" to "Mega Drive · 6 Tasten",
         "md3" to "Mega Drive · 3 Tasten",
         "sms" to "Master System · 2 Tasten",
         "gg" to "Game Gear",
+    )
+    "sega32x" -> listOf(
+        "md6" to "Mega Drive · 6 Tasten",
+        "md3" to "Mega Drive · 3 Tasten",
     )
     "pce" -> listOf("pce2" to "PC Engine · 2 Tasten", "pce6" to "PC Engine · 6 Tasten")
     "wii" -> listOf("remote" to "Wii Remote", "nunchuk" to "Wii Remote + Nunchuk")
@@ -323,12 +327,12 @@ internal fun consoleArtwork(systemId: String, variant: String = ""): InputArtwor
                 key("left", "◀", .45f, .35f, RetroPadButton.LEFT),
                 key("right", "▶", .55f, .35f, RetroPadButton.RIGHT),
                 key("down", "▼", .50f, .45f, RetroPadButton.DOWN),
-                key("a", "A", .50f, .35f, RetroPadButton.A),
-                key("b", "B", .50f, .57f, RetroPadButton.B),
-                key("start", "+", .50f, .67f, RetroPadButton.START),
-                key("select", "−", .50f, .78f, RetroPadButton.SELECT),
-                key("l", if (variant == "nunchuk") "C" else "1", .50f, .87f, RetroPadButton.L),
-                key("r", if (variant == "nunchuk") "Z" else "2", .50f, .94f, RetroPadButton.R),
+                key("a", "A", .50f, .53f, RetroPadButton.A),
+                key("b", "B", .50f, .63f, RetroPadButton.B),
+                key("start", "+", .50f, .73f, RetroPadButton.START),
+                key("select", "−", .50f, .81f, RetroPadButton.SELECT),
+                key("l", if (variant == "nunchuk") "C" else "1", .45f, .91f, RetroPadButton.L),
+                key("r", if (variant == "nunchuk") "Z" else "2", .55f, .91f, RetroPadButton.R),
             ))
         "wiiu" -> InputArtwork(title, InputArtworkShape.SCREEN_PAD,
             direction() + fourFace() + shoulderPair() + startSelect())
