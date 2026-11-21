@@ -190,9 +190,6 @@ class GameLibraryRepository @Inject constructor(
     suspend fun importDat(systemId: String, input: InputStream): Int = scanLock.withLock {
         require(GameSystems.byId(systemId) != null)
         withContext(Dispatchers.IO) {
-            val visible = GameDiscGrouping.visiblePaths(
-                selected.mapTo(hashSetOf()) { it.entry.path }, discReferences)
-            selected.removeAll { it.entry.path !in visible }
             val writable = db.writableDatabase
             writable.beginTransaction()
             try {
@@ -427,7 +424,6 @@ class GameLibraryRepository @Inject constructor(
                     }
                     val previousGame = previous[entry.id]
                     val assigned = GameSystems.byId(folder.systemId)
-                    val ext = GameSystems.extension(entry.name)
                     // Verified disc magic and archive contents beat a misleading folder label.
                     val unchanged = previousGame != null && previousGame.size == entry.size &&
                         previousGame.modified == entry.modified && entry.modified != 0L
@@ -458,6 +454,9 @@ class GameLibraryRepository @Inject constructor(
                     require(selected.size <= 200000) { "Game library item limit reached" }
                 }
             }
+            val visible = GameDiscGrouping.visiblePaths(
+                selected.mapTo(hashSetOf()) { it.entry.path }, discReferences)
+            selected.removeAll { it.entry.path !in visible }
             val writable = db.writableDatabase
             writable.beginTransaction()
             try {
