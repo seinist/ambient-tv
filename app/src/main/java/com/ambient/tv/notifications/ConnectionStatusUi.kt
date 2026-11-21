@@ -10,13 +10,13 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.HourglassEmpty
@@ -247,7 +247,9 @@ internal fun CompactConnectionStatus(
     }
     val colors = MaterialTheme.colorScheme
     val shape = RoundedCornerShape(14.dp)
-    Column(
+    val detailsLabel = stringResource(R.string.start_status_details)
+    val cancelLabel = stringResource(R.string.home_cancel_wake)
+    Row(
         modifier
             .testTag("connection-status-card")
             .onFocusChanged {
@@ -262,37 +264,40 @@ internal fun CompactConnectionStatus(
             .background(colors.surface.copy(alpha = .98f), shape)
             .border(1.dp, colors.onSurface.copy(alpha = .16f), shape)
             .padding(12.dp),
-        verticalArrangement = Arrangement.spacedBy(10.dp),
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+        verticalAlignment = Alignment.CenterVertically,
     ) {
-        ConnectionStatusSummary(status, reduced, Modifier.fillMaxWidth())
-        Row(Modifier.fillMaxWidth().heightIn(min = 48.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            TvActionButton(
-                text = stringResource(R.string.start_status_details),
-                onClick = onDetails,
-                icon = Icons.Filled.Info,
-                modifier = Modifier.weight(1f)
-                    .testTag("connection-status-details")
-                    .then(if (!handheld) Modifier.focusRequester(wakeFocus.requester) else Modifier)
-                    .onFocusChanged { detailsFocused = it.isFocused },
-            )
-            if (cancel != null) {
-                key(cancel.key) {
-                    DisposableEffect(cancel.key) {
-                        onDispose {
-                            if (!handheld && cancelFocusedNow) view.post {
-                                // Whole-card removal already posted the single external
-                                // hand-back. Only rescue Details when this card still exists.
-                                if (attachment.attached && !wakeFocus.requestEntryFocus()) release()
-                            }
+        // Preserve the existing notification chrome and two-line status summary; only
+        // place the actions beside it instead of expanding the card with a button row.
+        ConnectionStatusSummary(status, reduced, Modifier.weight(1f))
+        TvActionButton(
+            text = "",
+            onClick = onDetails,
+            icon = Icons.Filled.Info,
+            modifier = Modifier.testTag("connection-status-details")
+                .semantics { contentDescription = detailsLabel }
+                .then(if (!handheld) Modifier.focusRequester(wakeFocus.requester) else Modifier)
+                .onFocusChanged { detailsFocused = it.isFocused },
+        )
+        if (cancel != null) {
+            key(cancel.key) {
+                DisposableEffect(cancel.key) {
+                    onDispose {
+                        if (!handheld && cancelFocusedNow) view.post {
+                            // Whole-card removal already posted the external hand-back.
+                            // When just Cancel disappears, return to the stable Details action.
+                            if (attachment.attached && !wakeFocus.requestEntryFocus()) release()
                         }
                     }
-                    TvActionButton(
-                        text = stringResource(R.string.home_cancel_wake),
-                        onClick = { onCancel(cancel) },
-                        modifier = Modifier.weight(1f).testTag("connection-status-cancel")
-                            .onFocusChanged { cancelFocused = it.isFocused },
-                    )
                 }
+                TvActionButton(
+                    text = "",
+                    onClick = { onCancel(cancel) },
+                    icon = Icons.Filled.Close,
+                    modifier = Modifier.testTag("connection-status-cancel")
+                        .semantics { contentDescription = cancelLabel }
+                        .onFocusChanged { cancelFocused = it.isFocused },
+                )
             }
         }
     }
