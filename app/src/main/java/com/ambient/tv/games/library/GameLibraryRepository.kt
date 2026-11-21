@@ -2,12 +2,10 @@ package com.ambient.tv.games.library
 
 import android.content.Context
 import android.content.SharedPreferences
-import android.database.Cursor
 import android.database.sqlite.SQLiteDatabase
 import android.database.sqlite.SQLiteOpenHelper
 import com.ambient.tv.data.files.FileAccess
 import com.ambient.tv.data.files.FileEntry
-import com.ambient.tv.data.files.FileKeys
 import com.ambient.tv.data.files.FilePaths
 import com.ambient.tv.data.files.FileSource
 import com.ambient.tv.data.files.FileStore
@@ -23,15 +21,12 @@ import java.io.IOException
 import java.util.UUID
 import javax.inject.Inject
 import javax.inject.Singleton
-import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
-import kotlinx.serialization.encodeToString
-import kotlinx.serialization.json.Json
 
 /** A reference to an existing Files source, not a new NAS connection or a separate WOL profile. */
 @Serializable
@@ -83,7 +78,6 @@ class GameLibraryRepository @Inject constructor(
     private val wake: WakeOnLan,
 ) {
     private val db = GameIndexDb(context)
-    private val json = Json { ignoreUnknownKeys = true }
     private val changeSignal = MutableStateFlow(0L)
     val revisions = changeSignal.asStateFlow()
     private val scanLock = kotlinx.coroutines.sync.Mutex()
@@ -112,6 +106,27 @@ class GameLibraryRepository @Inject constructor(
     fun removeFolder(id: String) {
         preferences.gameLibraryFolders = folders().filterNot { it.id == id }
         db.writableDatabase.delete("game_entries", "folder_id=?", arrayOf(id))
+        changed()
+    }
+
+    /** Minimal catalog lookup for the sidebar; don't load every game on the UI thread. */
+    fun systemIds(): List<String> {
+        val allowed = folders().map { it.id }.toSet()
+        val systems = linkedSetOf<String>()
+        db.readableDatabase.rawQuery("SELECT DISTINCT folder_id,system_id FROM game_entries", null).use { rows ->
+            while (rows.moveToNext()) if (rows.getString(0) in allowed) systems += rows.getString(1)
+        }
+        return systems.toList()
+    }
+
+    fun gridColumns(): Int = prefs.getInt("game_library_grid_columns", 8).coerceIn(4, 12)
+    fun listRows(): Int = prefs.getInt("game_library_list_rows", 7).coerceIn(4, 10)
+    fun setGridColumns(value: Int) {
+        prefs.edit().putInt("game_library_grid_columns", value.coerceIn(4, 12)).apply()
+        changed()
+    }
+    fun setListRows(value: Int) {
+        prefs.edit().putInt("game_library_list_rows", value.coerceIn(4, 10)).apply()
         changed()
     }
 
@@ -221,13 +236,16 @@ class GameLibraryRepository @Inject constructor(
                     }
                     if (!entry.game) continue
                     val previousGame = previous[entry.id]
-                    val autoSystem = classify(entry, source)
-                    val system = if (folder.systemId == "auto") autoSystem
-                        else GameSystems.byId(folder.systemId)?.takeIf {
-                            val ext = GameSystems.extension(entry.name)
-                            ext in it.extensions || ext in GameSystems.archiveExtensions ||
-                                ext in GameSystems.ambiguousExtensions
-                        } ?: autoSystem
+                    val assigned = GameSystems.byId(folder.systemId)
+                    val ext = GameSystems.extension(entry.name)
+                    // Verified disc magic and archive contents beat a misleading folder label.
+                    val detected = classify(entry, source)
+                    val signatureConflict = ext == "iso" && detected?.id in setOf("wii", "gamecube") &&
+                        detected.id != folder.systemId
+                    val system = assigned?.takeIf { !signatureConflict &&
+                        (ext in it.extensions || ext in GameSystems.ambiguousExtensions ||
+                            (ext in GameSystems.archiveExtensions && detected?.id == it.id))
+                    } ?: detected
                     if (system == null) continue
                     val internalTitle = if (previousGame != null && previousGame.size == entry.size &&
                         previousGame.modified == entry.modified && entry.modified != 0L) previousGame.internalTitle
@@ -240,7 +258,7 @@ class GameLibraryRepository @Inject constructor(
             val writable = db.writableDatabase
             writable.beginTransaction()
             try {
-                val generation = System.currentTimeMillis()
+                val generation = System.nanoTime()
                 for (game in selected) {
                     val e = game.entry
                     val values = android.content.ContentValues().apply {
@@ -290,14 +308,15 @@ class GameLibraryRepository @Inject constructor(
     private fun extractTitle(entry: FileEntry, source: FileSource, system: String): String? {
         if (entry.size <= 0 || system !in setOf("gb", "gba", "nds", "snes", "megadrive",
                 "n64", "gamecube", "wii", "psp")) return null
+        val ext = GameSystems.extension(entry.name)
+        if (ext in GameSystems.archiveExtensions || ext in setOf("cue", "m3u", "gdi", "chd",
+                "cso", "zso", "wbfs", "rvz", "ciso")) return null
         return runCatching {
             access.open(source, entry.path).use { media ->
                 GameRomTitles.extract(system, entry.name) { offset, count ->
                     if (offset < 0L || count <= 0 || count > 64 * 1024 ||
                         offset + count > media.size) null
-                    else ByteArray(count).also {
-                        if (media.read(offset, it, count) != count) return@extract null
-                    }
+                    else ByteArray(count).takeIf { media.read(offset, it, count) == count }
                 }
             }
         }.getOrNull()
