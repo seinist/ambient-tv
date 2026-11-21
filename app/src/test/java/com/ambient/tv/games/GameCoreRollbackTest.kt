@@ -17,24 +17,44 @@ import java.nio.ByteOrder
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [33], application = Application::class)
 class GameCoreRollbackTest {
-    private fun elf(marker: Int): ByteArray = ByteBuffer.allocate(0x80).order(ByteOrder.LITTLE_ENDIAN).run {
-        put(byteArrayOf(0x7f, 'E'.code.toByte(), 'L'.code.toByte(), 'F'.code.toByte(), 2, 1, 1))
-        putLong(0x20, 0x40)
-        putShort(0x36, 0x38)
-        putShort(0x38, 1)
-        putInt(0x40, 1)
-        putLong(0x40 + 0x30, 16_384)
-        put(0x78, marker.toByte())
-        array()
-    }
+    private fun elf(marker: Int, abi: String? = "arm64-v8a"): ByteArray =
+        ByteBuffer.allocate(0x90).order(ByteOrder.LITTLE_ENDIAN).run {
+            val is64 = abi in setOf("arm64-v8a", "x86_64")
+            val machine = when (abi) {
+                "arm64-v8a" -> 183
+                "armeabi-v7a" -> 40
+                "x86_64" -> 62
+                "x86" -> 3
+                else -> 183
+            }
+            put(byteArrayOf(0x7f, 'E'.code.toByte(), 'L'.code.toByte(), 'F'.code.toByte(),
+                (if (is64) 2 else 1).toByte(), 1, 1))
+            putShort(0x10, 3) // ET_DYN
+            putShort(0x12, machine.toShort())
+            if (is64) {
+                putLong(0x20, 0x40)
+                putShort(0x36, 0x38)
+                putShort(0x38, 1)
+                putInt(0x40, 1)
+                putLong(0x40 + 0x30, 16_384)
+            } else {
+                putInt(0x1c, 0x34)
+                putShort(0x2a, 0x20)
+                putShort(0x2c, 1)
+                putInt(0x34, 1)
+                putInt(0x34 + 0x1c, 16_384)
+            }
+            put(0x78, marker.toByte())
+            array()
+        }
 
     @Test fun aCoreUpgradeKeepsOnePreviousBuildForRollback() = runBlocking {
         val context = ApplicationProvider.getApplicationContext<Context>()
         val manager = GameCoreManager(context, GameCoreChannel())
         val core = GameCore("rollback_test", "Rollback fixture", "MIT")
         manager.remove(core)
-        val old = elf(4)
-        val replacement = elf(5)
+        val old = elf(4, manager.abi)
+        val replacement = elf(5, manager.abi)
         try {
             manager.install(core, old.inputStream(), zipped = false, origin = "test-one")
             assertFalse(manager.canRollback(core))
@@ -49,4 +69,30 @@ class GameCoreRollbackTest {
             manager.remove(core)
         }
     }
+    @Test fun mismatchedAbiOrWrongZipCoreCannotBeInstalled() = runBlocking {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val manager = GameCoreManager(context, GameCoreChannel())
+        val core = GameCore("core_import_test", "test", "MIT")
+        try {
+            val binary = java.io.File.createTempFile("wrong-abi-", ".so")
+            try {
+                binary.writeBytes(elf(7, "arm64-v8a"))
+                assertTrue(runCatching {
+                    GameCoreManager.checkElf(binary, 16_384, "x86")
+                }.exceptionOrNull() is GameCoreIncompatibleException)
+            } finally { binary.delete() }
+
+            val archive = java.io.ByteArrayOutputStream()
+            java.util.zip.ZipOutputStream(archive).use { zip ->
+                zip.putNextEntry(java.util.zip.ZipEntry("unrelated_libretro_android.so"))
+                zip.write(elf(8, manager.abi))
+                zip.closeEntry()
+            }
+            assertTrue(runCatching {
+                manager.install(core, archive.toByteArray().inputStream(), zipped = true, origin = "bad-zip")
+            }.exceptionOrNull() is GameCoreIncompatibleException)
+            assertFalse(manager.installed(core)?.isFile == true)
+        } finally { manager.remove(core) }
+    }
+
 }

@@ -192,6 +192,10 @@
     <string name="game_netplay_host_hint">Others see this device as “%1$s”</string>
     <string name="game_netplay_searching">Looking for hosts of this game …</string>
     <string name="game_netplay_join">Join as player 2</string>
+    <string name="game_netplay_approval">Allow “%1$s” to join? The game state will be shared only after approval.</string>
+    <string name="game_netplay_accept">Allow this player</string>
+    <string name="game_netplay_reject">Reject</string>
+    <string name="game_netplay_failed_rejected">The host did not approve this connection.</string>
     <string name="game_netplay_hosting">Waiting for another player – visible as “%1$s”.</string>
     <string name="game_netplay_cancel">Cancel</string>
     <string name="game_netplay_joining">Connecting …</string>

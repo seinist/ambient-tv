@@ -25,6 +25,28 @@ The virtual controller settings are stored in the existing `gameSettings` prefer
 See [game shaders and footprint policy](LIBRETRO_GAME_SHADERS.md) for the compact GLES
 catalog, HDR prefix, device-acceptance checklist and deferred optional-pack support.
 
+
+## Deep audit hardening (2026-11-21, PR #433)
+
+The Games hardening branch introduces stable controller port assignments across hotplug,
+a non-removable long-Back emergency menu path, forced rumble release, SHA-256 core
+identities (including legacy state migration), strict state compatibility before
+native unserialization and Android AtomicFile saves. Netplay now requires a host
+approval before transferring state, uses a bounded frame window and send queue and
+times out stalled connections. Archive unpacking counts actual emitted bytes, rejects
+flattened name collisions and respects the 4-GiB aggregate ROM cache budget.
+Core ZIP/binary limits and firmware checksum verification are mandatory. The
+signed core-release workflow must observe a fully successful build matrix with
+all artifacts present.
+
+These are source-level fixes, not evidence of successful gameplay on hardware.
+Netplay runs on a local network without end-to-end cryptographic peer identity;
+do not expose the discovery service directly to the internet. The emergency
+Back press is deliberately longer than the ordinary Back action. A core appearing
+in the catalog does not imply the platform's hardware is supported. The native
+Vulkan/HDR, specialized devices (Wii motion/IR, DS second screen, Wii U GamePad,
+keyboard/mouse/lightgun), device EOTF and renderer parity gates below remain required.
+
 ## Outstanding features (not represented as completed)
 
 1. **Full Libretro input abstractions:** Physical keyboard as `RETRO_DEVICE_KEYBOARD`,

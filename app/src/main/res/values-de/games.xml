@@ -192,6 +192,10 @@
     <string name="game_netplay_host_hint">Andere sehen dieses Gerät als „%1$s“</string>
     <string name="game_netplay_searching">Suche nach Gastgebern mit diesem Spiel …</string>
     <string name="game_netplay_join">Beitreten als Spieler 2</string>
+    <string name="game_netplay_approval">Darf „%1$s“ beitreten? Der Spielstand wird erst nach der Bestätigung übertragen.</string>
+    <string name="game_netplay_accept">Spieler zulassen</string>
+    <string name="game_netplay_reject">Ablehnen</string>
+    <string name="game_netplay_failed_rejected">Der Gastgeber hat die Verbindung nicht bestätigt.</string>
     <string name="game_netplay_hosting">Warte auf einen Mitspieler – sichtbar als „%1$s“.</string>
     <string name="game_netplay_cancel">Abbrechen</string>
     <string name="game_netplay_joining">Verbinde …</string>

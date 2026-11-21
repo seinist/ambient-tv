@@ -126,4 +126,20 @@ class GamepadSettingsTest {
         assertEquals("B", GamepadLabels.NINTENDO.label(GamepadButton.A))
         assertEquals("ZR", GamepadLabels.NINTENDO.label(GamepadButton.R2))
     }
+    @Test fun physicalControllerOverridesDoNotAffectOtherPadsAndSurviveBackup() {
+        val slot = GamepadSlot(GamepadButton.A, false)
+        val device = "DualSense Vendor 054c / two"
+        val changed = GamepadConfig()
+            .withDeviceCommand(device, GamepadContext.MENUS, slot, key(GamepadKeyCommand.BACK))
+        assertEquals(key(GamepadKeyCommand.BACK),
+            changed.resolve(GamepadButton.A, false, false, device))
+        assertEquals(key(GamepadKeyCommand.CONFIRM),
+            changed.resolve(GamepadButton.A, false, false, "other-device"))
+        assertEquals(changed, GamepadConfig.decode(changed.encode()))
+        val reset = changed.withDeviceCommand(device, GamepadContext.MENUS, slot,
+            key(GamepadKeyCommand.CONFIRM))
+        assertTrue(reset.deviceOverrides.isEmpty())
+        assertEquals(GamepadConfig(), GamepadConfig.decode(mapOf("device.@@@.menus.a" to "none")))
+    }
+
 }

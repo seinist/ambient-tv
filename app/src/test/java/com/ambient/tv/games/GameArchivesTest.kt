@@ -97,4 +97,45 @@ class GameArchivesTest {
         assertEquals(-1f, NetplayInput.axis(-0x8000))
         assertEquals(0f, NetplayInput.axis(0))
     }
+    @Test fun decompressionLimitCountsActualBytesNotOnlyDeclaredArchiveSizes() {
+        val zip = folder.newFile("limited.zip")
+        ZipOutputStream(zip.outputStream()).use { out ->
+            out.putNextEntry(ZipEntry("game.sfc"))
+            out.write(ByteArray(4096))
+            out.closeEntry()
+        }
+        assertTrue(runCatching {
+            GameArchives.extract(zip, File(folder.root, "limited-zip"), maxOutputBytes = 1024)
+        }.exceptionOrNull() is GameArchiveException)
+
+        val gzip = folder.newFile("limited.sfc.gz")
+        GZIPOutputStream(gzip.outputStream()).use { it.write(ByteArray(4096)) }
+        assertTrue(runCatching {
+            GameArchives.extract(gzip, File(folder.root, "limited-gzip"), maxOutputBytes = 1024)
+        }.exceptionOrNull() is GameArchiveException)
+    }
+
+    @Test fun flattenedArchiveNamesCannotClobberEachOther() {
+        val zip = folder.newFile("duplicate.zip")
+        ZipOutputStream(zip.outputStream()).use { out ->
+            for (name in listOf("A/game.sfc", "B/game.sfc")) {
+                out.putNextEntry(ZipEntry(name))
+                out.write(byteArrayOf(1, 2, 3))
+                out.closeEntry()
+            }
+        }
+        assertTrue(runCatching {
+            GameArchives.extract(zip, File(folder.root, "duplicate-output"))
+        }.exceptionOrNull() is GameArchiveException)
+    }
+
+    @Test fun netplayRejectsOutOfWindowAndNegativeFrameNumbers() {
+        assertTrue(com.ambient.tv.ui.games.GameNetplay.acceptableFrame(3, 0))
+        assertTrue(com.ambient.tv.ui.games.GameNetplay.acceptableFrame(64, 0))
+        assertFalse(com.ambient.tv.ui.games.GameNetplay.acceptableFrame(65, 0))
+        assertFalse(com.ambient.tv.ui.games.GameNetplay.acceptableFrame(-1, 0))
+        assertFalse(com.ambient.tv.ui.games.GameNetplay.acceptableFrame(99, 100))
+        assertTrue(com.ambient.tv.ui.games.GameNetplay.acceptableFrame(105, 100))
+    }
+
 }

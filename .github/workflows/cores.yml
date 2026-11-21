@@ -47,6 +47,10 @@ jobs:
             | { include: [ .abis[] as $abi | .cores[]
                 | select(($wanted | length) == 0 or (.core as $c | $wanted | index($c)))
                 | . + { abi: $abi } ] }' cores/cores.json)
+          echo "$matrix" | jq -e '.include | length > 0' >/dev/null || {
+            echo "::error::No matching cores in the requested build matrix"
+            exit 1
+          }
           echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
           echo "$matrix" | jq -r '.include[] | "\(.core) \(.abi)"'
 
@@ -124,7 +128,6 @@ jobs:
           "$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-strip" --strip-unneeded "out/${CORE}_libretro_android.so"
 
       - name: Check 16 KB pages
-        if: matrix.abi == 'arm64-v8a' || matrix.abi == 'x86_64'
         run: python3 scripts/check_elf_pages.py out/*.so
 
       - uses: actions/upload-artifact@v5
@@ -134,9 +137,9 @@ jobs:
           retention-days: 14
 
   publish:
-    needs: build
+    needs: [plan, build]
     if: >-
-      always() && needs.build.result != 'cancelled' &&
+      needs.build.result == 'success' &&
       ((github.event_name == 'workflow_dispatch' && inputs.publish) ||
        (github.event_name == 'push' && github.ref == 'refs/heads/main'))
     runs-on: ubuntu-latest
@@ -152,10 +155,22 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           SIGNING_KEY: ${{ secrets.CORES_SIGNING_KEY }}
+          EXPECTED_MATRIX: ${{ needs.plan.outputs.matrix }}
         run: |
           set -euo pipefail
           [ -n "$SIGNING_KEY" ] || { echo "::error::CORES_SIGNING_KEY is not set (scripts/cores_signing_key.sh)"; exit 1; }
           [ -f cores/signing-public.pem ] || { echo "::error::cores/signing-public.pem is missing (scripts/cores_signing_key.sh)"; exit 1; }
+          # Never publish a signed partial release: require every selected core/ABI artifact.
+          mapfile -t expected < <(jq -r '.include[] | "core-\(.core)-\(.abi)/\(.core)_libretro_android.so"' <<< "$EXPECTED_MATRIX")
+          [ "${#expected[@]}" -gt 0 ] || { echo "::error::Empty core build matrix"; exit 1; }
+          for path in "${expected[@]}"; do
+            test -s "artifacts/$path" || { echo "::error::Missing built core artifact: $path"; exit 1; }
+          done
+          actual=$(find artifacts -type f -name '*_libretro_android.so' | wc -l)
+          [ "$actual" -eq "${#expected[@]}" ] || {
+            echo "::error::Expected ${#expected[@]} core builds, got $actual"
+            exit 1
+          }
           tag="cores-$(date -u +%Y%m%d)-${GITHUB_RUN_NUMBER}"
           mkdir -p release
           entries='[]'

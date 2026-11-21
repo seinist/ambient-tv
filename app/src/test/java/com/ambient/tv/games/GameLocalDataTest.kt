@@ -73,4 +73,22 @@ class GameLocalDataTest {
         assertEquals(GameStateStore.MAX_MANUAL, manual.size)
         assertEquals(GameStateStore.MAX_MANUAL + 3, manual.first().number)
     }
+    @Test fun coreFingerprintIgnoresMtimeAndRejectsOtherCores() {
+        val file = File.createTempFile("retro-core-", ".so")
+        try {
+            file.writeBytes(byteArrayOf(1, 2, 3, 4))
+            val sha = GameStateStore.coreStamp(file)
+            val old = GameStateStore.legacyCoreStamp(file)
+            assertTrue(sha.startsWith("sha256:"))
+            file.setLastModified(file.lastModified() - 30_000L)
+            assertEquals(sha, GameStateStore.coreStamp(file))
+            assertFalse(old == GameStateStore.legacyCoreStamp(file))
+            val entry = GameStateEntry("auto", GameStateKind.AUTO, 1L, "snes9x", sha)
+            assertTrue(GameStateStore.compatible(entry, "snes9x", sha, "unused"))
+            assertFalse(GameStateStore.compatible(entry.copy(coreId = "bsnes"), "snes9x", sha, old))
+            assertFalse(GameStateStore.compatible(entry.copy(coreStamp = "other"), "snes9x", sha, old))
+            assertTrue(GameStateStore.compatible(entry.copy(coreStamp = old), "snes9x", sha, old))
+        } finally { file.delete() }
+    }
+
 }

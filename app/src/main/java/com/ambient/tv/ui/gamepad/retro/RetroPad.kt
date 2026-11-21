@@ -262,13 +262,23 @@ data class RetroInputConfig(
     val profiles: Map<RetroInputKind, RetroInputProfile> = emptyMap(),
     /** Sparse system/core/game overrides, keyed by stable scope identity and input kind. */
     val scopedProfiles: Map<String, RetroInputOverlay> = emptyMap(),
+    /** Optional per physical device defaults, before system/core/game overrides. */
+    val deviceProfiles: Map<String, RetroInputOverlay> = emptyMap(),
     /** Input device descriptor → player index (0-based) or [RetroPorts.OFF]; missing = automatic. */
     val ports: Map<String, Int> = emptyMap(),
 ) {
     fun profile(kind: RetroInputKind): RetroInputProfile = profiles[kind] ?: defaultRetroProfile(kind)
 
-    fun profile(kind: RetroInputKind, context: RetroInputProfileContext, through: RetroInputLayerScope? = null): RetroInputProfile {
-        var current = profile(kind)
+    private fun deviceId(kind: RetroInputKind, descriptor: String): String =
+        "${kind.key}." + java.util.Base64.getUrlEncoder().withoutPadding()
+            .encodeToString(descriptor.toByteArray(Charsets.UTF_8))
+
+    fun deviceProfile(kind: RetroInputKind, descriptor: String): RetroInputProfile =
+        deviceProfiles[deviceId(kind, descriptor)]?.resolve(profile(kind)) ?: profile(kind)
+
+    fun profile(kind: RetroInputKind, context: RetroInputProfileContext,
+                through: RetroInputLayerScope? = null, deviceDescriptor: String? = null): RetroInputProfile {
+        var current = deviceDescriptor?.let { deviceProfile(kind, it) } ?: profile(kind)
         for (scope in RetroInputLayerScope.entries) {
             if (through != null && scope.ordinal > through.ordinal) break
             context.layerId(scope, kind)?.let { key ->
@@ -277,6 +287,20 @@ data class RetroInputConfig(
         }
         return current
     }
+
+    /** Physical controller layout, inherited by games unless a system/core/game takes precedence. */
+    fun assignDevice(kind: RetroInputKind, descriptor: String,
+                     target: RetroInputTarget, keyCode: Int): RetroInputConfig {
+        if (descriptor.isBlank()) return this
+        val key = deviceId(kind, descriptor)
+        val overlay = RetroInputOverlay.difference(profile(kind),
+            deviceProfile(kind, descriptor).assign(target, keyCode))
+        return copy(deviceProfiles = if (overlay.isEmpty()) deviceProfiles - key
+            else deviceProfiles + (key to overlay))
+    }
+
+    fun resetDevice(kind: RetroInputKind, descriptor: String): RetroInputConfig =
+        copy(deviceProfiles = deviceProfiles - deviceId(kind, descriptor))
 
     /** Change a single mapping in one scope without freezing unrelated inherited mappings. */
     fun assign(
@@ -304,6 +328,14 @@ data class RetroInputConfig(
     fun encode(): Map<String, String> = buildMap {
         put("start_select_menu", if (startSelectMenu) "1" else "0")
         put("dpad_stick", if (dpadAsStick) "1" else "0")
+        deviceProfiles.forEach { (identity, overlay) ->
+            overlay.buttons.forEach { (button, codes) ->
+                put("paddev.$identity.button.${button.key}", codes.joinToString(","))
+            }
+            overlay.menu.forEach { (trigger, codes) ->
+                put("paddev.$identity.menu.${trigger.key}", codes.joinToString(","))
+            }
+        }
         scopedProfiles.forEach { (identity, overlay) ->
             overlay.buttons.forEach { (button, codes) ->
                 put("preset.$identity.button.${button.key}", codes.joinToString(","))
@@ -365,8 +397,30 @@ data class RetroInputConfig(
                     }
                 }
             }
+            val deviceLayers = mutableMapOf<String, RetroInputOverlay>()
+            stored.filterKeys { it.startsWith("paddev.") }.forEach { (key, value) ->
+                val parts = key.removePrefix("paddev.").split('.')
+                if (parts.size != 4 || RetroInputKind.fromKey(parts[0]) == null) return@forEach
+                val valid = runCatching {
+                    val decoded = java.util.Base64.getUrlDecoder().decode(parts[1])
+                    decoded.isNotEmpty() && decoded.size <= 1024
+                }.getOrDefault(false)
+                if (!valid) return@forEach
+                val identity = "${parts[0]}.${parts[1]}"
+                val old = deviceLayers[identity] ?: RetroInputOverlay()
+                val decoded = codes(value) ?: return@forEach
+                when (parts[2]) {
+                    "button" -> RetroPadButton.fromKey(parts[3])?.let {
+                        deviceLayers[identity] = old.copy(buttons = old.buttons + (it to decoded))
+                    }
+                    "menu" -> RetroMenuTrigger.entries.firstOrNull { it.key == parts[3] }?.let {
+                        deviceLayers[identity] = old.copy(menu = old.menu + (it to decoded))
+                    }
+                }
+            }
             return RetroInputConfig(
                 scopedProfiles = layers,
+                deviceProfiles = deviceLayers,
                 startSelectMenu = stored["start_select_menu"] != "0",
                 dpadAsStick = stored["dpad_stick"] == "1",
                 profiles = profiles,
