@@ -98,11 +98,17 @@ class FilesViewModel @Inject constructor(
                 val sourceId = folders.lastOrNull()?.sourceId
                 val previous = _state.value.sources.firstOrNull { it.id == sourceId }
                 updateStored()
+                // Games-only assignments may change while Files is open. Remove hidden
+                // entries immediately, including stale entries from an existing snapshot.
+                _state.update { old -> old.copy(entries = old.entries.filter(store::visibleInFiles)) }
                 val current = _state.value.sources.firstOrNull { it.id == sourceId }
                 if (sourceId != null && (current == null || previous?.sameLocation(current) == false)) {
                     folders = emptyList(); saved["focus"] = null; rememberFolders(); refresh()
                 } else if (folders.isEmpty()) {
                     if (pinnedSourceId != null) refresh() else showLanding(resetLoading = false)
+                } else if (sourceId != null) {
+                    // Re-enabling an assignment in Files must make it appear again.
+                    refresh(silent = true)
                 }
             }
         }
