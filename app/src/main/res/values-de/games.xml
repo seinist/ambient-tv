@@ -314,4 +314,7 @@
     <string name="games_shader_packs_missing">Das ausgewählte Shader-Paket fehlt oder ist ungültig. Bis zur Installation wird der integrierte Bildfilter verwendet.</string>
     <string name="games_vulkan_shader_presenting">Vulkan-Slang-Shader: Ein gefiltertes SDR-Bild wurde auf der echten Ausgabefläche dargestellt (experimentell).</string>
     <string name="games_vulkan_shader_pending">Vulkan-Slang-Shader ausgewählt, aber noch kein gefiltertes SDR-Bild bestätigt. GLES bleibt verfügbar.</string>
+    <string name="game_buildbot_confirm_title">Ungeprüfte Core-Quelle bestätigen</string>
+    <string name="game_buildbot_confirm_body">Für %1$s ist kein verwendbarer signierter Ambient-TV-Core verfügbar. Der Libretro-Buildbot liefert ausführbaren nativen Code ohne das signierte Ambient-TV-Manifest. Nur fortfahren, wenn du dieser Quelle vertraust.</string>
+    <string name="game_buildbot_confirm_action">Vom Libretro-Buildbot installieren</string>
 </resources>
