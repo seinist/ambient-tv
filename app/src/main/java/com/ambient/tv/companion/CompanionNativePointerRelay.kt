@@ -15,6 +15,18 @@ internal class CompanionNativePointerRelay(
     fun update(port: Int, next: CompanionPointerState?) {
         if (port !in 0..3) return
         val old = previous[port]
+        val oldMouse = old?.takeIf { it.kind == "mouse" }
+        val newMouse = next?.takeIf { it.kind == "mouse" }
+        val oldGun = old?.takeIf { it.kind == "gun" }
+        val newGun = next?.takeIf { it.kind == "gun" }
+
+        // Release the old native device BEFORE starting another mode, even when the new
+        // mode has an active touch on the same Android gesture frame.
+        if (oldMouse != null && newMouse == null && oldMouse.buttons != 0)
+            send(port, 1, 0, 0f, 0f, 0)
+        if (oldGun != null && newGun == null)
+            send(port, 2, 0, 0.5f, 0.5f, 0)
+
         val oldTouch = old?.takeIf { it.kind == "touch" }
         val newTouch = next?.takeIf { it.kind == "touch" }
         if (oldTouch != null || newTouch != null) {
@@ -27,23 +39,16 @@ internal class CompanionNativePointerRelay(
                 }
             }
         }
-        val oldMouse = old?.takeIf { it.kind == "mouse" }
-        val newMouse = next?.takeIf { it.kind == "mouse" }
-        if (newMouse != null) {
-            if (newMouse.dx != 0f || newMouse.dy != 0f || oldMouse?.buttons != newMouse.buttons)
-                send(port, 1, 0, newMouse.dx, newMouse.dy, newMouse.buttons)
-        } else if (oldMouse != null && oldMouse.buttons != 0) {
-            send(port, 1, 0, 0f, 0f, 0)
-        }
-        val oldGun = old?.takeIf { it.kind == "gun" }
-        val newGun = next?.takeIf { it.kind == "gun" }
-        if (oldGun != newGun) {
-            val point = newGun?.contacts?.firstOrNull()
-            val offscreen = newGun?.offscreen == true
+        if (newMouse != null && (newMouse.dx != 0f || newMouse.dy != 0f ||
+            oldMouse?.buttons != newMouse.buttons))
+            send(port, 1, 0, newMouse.dx, newMouse.dy, newMouse.buttons)
+
+        if (newGun != null && oldGun != newGun) {
+            val point = newGun.contacts.firstOrNull()
+            val offscreen = newGun.offscreen
             send(port, 2, 0,
                 if (offscreen) -1f else point?.x ?: 0.5f,
-                if (offscreen) -1f else point?.y ?: 0.5f,
-                newGun?.buttons ?: 0)
+                if (offscreen) -1f else point?.y ?: 0.5f, newGun.buttons)
         }
         previous[port] = next?.let { value ->
             if (value.kind == "mouse") value.copy(dx = 0f, dy = 0f) else value
