@@ -27,6 +27,8 @@ import com.ambient.tv.R
 import java.util.concurrent.atomic.AtomicReference
 import kotlin.math.hypot
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.Job
 
 /** The core receives a single normalized frame, not the dimensions of this remote handset. */
 internal fun companionPointerCoordinates(x: Float, y: Float, region: String): Pair<Float, Float> {
@@ -59,8 +61,13 @@ internal fun CompanionGamePointerPad(
 ) {
     val currentSend by rememberUpdatedState(onPointer)
     val tint = MaterialTheme.colorScheme.primary
+    val scope = rememberCoroutineScope()
+    val pendingRelease = remember { AtomicReference<Job?>(null) }
     DisposableEffect(kind, region, enabled) {
-        onDispose { currentSend(null) }
+        onDispose {
+            pendingRelease.getAndSet(null)?.cancel()
+            currentSend(null)
+        }
     }
     Box(
         modifier
@@ -70,6 +77,7 @@ internal fun CompanionGamePointerPad(
                 if (!enabled) return@pointerInput
                 awaitEachGesture {
                     val down = awaitFirstDown(requireUnconsumed = false)
+                    pendingRelease.getAndSet(null)?.cancel()
                     val width = size.width.toFloat().coerceAtLeast(1f)
                     val height = size.height.toFloat().coerceAtLeast(1f)
                     val pressed = LinkedHashMap<PointerId, Offset>()
@@ -77,6 +85,7 @@ internal fun CompanionGamePointerPad(
                     var last = down.position
                     val started = SystemClock.uptimeMillis()
                     var movement = 0f
+                    var releaseScheduled = false
 
                     fun mapped(point: Offset): CompanionPointerContact {
                         val (x, y) = companionPointerCoordinates(point.x / width, point.y / height, region)
@@ -130,20 +139,30 @@ internal fun CompanionGamePointerPad(
                                 // input_state may otherwise see DOWN and UP between two frames.
                                 if (pressed.isEmpty()) {
                                     val elapsed = SystemClock.uptimeMillis() - started
-                                    if (elapsed < 48L) delay(48L - elapsed)
-                                }
-                                deliver()
+                                    if (elapsed < 48L) {
+                                        // AwaitPointerEventScope is a restricted suspension scope:
+                                        // schedule the minimum hold on Compose's normal scope.
+                                        releaseScheduled = true
+                                        pendingRelease.getAndSet(scope.launch {
+                                            delay(48L - elapsed)
+                                            currentSend(null)
+                                        })?.cancel()
+                                    } else deliver()
+                                } else deliver()
                             }
                         }
                         if (kind == "mouse" && movement < width * 0.025f &&
                             SystemClock.uptimeMillis() - started < 300L) {
                             // Short taps are separate frames; coalescing must preserve the edge.
                             currentSend(CompanionPointerState(kind = "mouse", buttons = 1))
-                            delay(48L)
-                            currentSend(CompanionPointerState(kind = "mouse", buttons = 0))
+                            releaseScheduled = true
+                            pendingRelease.getAndSet(scope.launch {
+                                delay(48L)
+                                currentSend(CompanionPointerState(kind = "mouse", buttons = 0))
+                            })?.cancel()
                         }
                     } finally {
-                        currentSend(null)
+                        if (!releaseScheduled) currentSend(null)
                     }
                 }
             },
