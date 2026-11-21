@@ -124,6 +124,8 @@ private fun InputControlsPage(scope: KeyBindingScope) {
 }
 
 internal fun visualKeyCode(kind: String, key: String): Int? {
+    if (kind == "companion") return com.ambient.tv.ui.gamepad.retro.RetroPadButton.fromKey(key)
+        ?.let { com.ambient.tv.ui.gamepad.retro.companionControllerKey(it) }
     if (kind == "controller") return GamepadButton.fromKey(key)?.keyCode ?: when (key) {
         "up" -> KeyEvent.KEYCODE_DPAD_UP
         "down" -> KeyEvent.KEYCODE_DPAD_DOWN
