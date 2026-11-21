@@ -126,6 +126,7 @@ fun SettingsScreen(
     onVisibleBackgroundVideoPlaybackPreview: (Boolean, Int) -> Unit = { _, _ -> },
     onUiLanguageSaved: () -> Unit = {},
     onOpenFiles: () -> Unit = {},
+    onOpenGames: () -> Unit = {},
     onOpenDlna: () -> Unit = {},
     onTestScreensaver: (SettingsUiState) -> Unit = {},
     onExitApp: () -> Unit = {},
@@ -378,7 +379,7 @@ fun SettingsScreen(
                         SettingsCategory.KEY_BINDINGS -> inputControlsItems(com.ambient.tv.ui.keyboard.KeyBindingScope.GLOBAL)
                         SettingsCategory.CONTROLLER -> inputControlsItems(com.ambient.tv.ui.keyboard.KeyBindingScope.PLAYER)
                         SettingsCategory.GAME_CONTROLS -> gameControlsItems()
-                        SettingsCategory.GAMES -> gamesSettingsItems()
+                        SettingsCategory.GAMES -> gamesSettingsItems(onOpenGames)
                         SettingsCategory.COMPANION -> companionSettingsItems()
                         SettingsCategory.TRANSFER -> {
                             item { CompanionTransferSection() }
