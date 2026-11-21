@@ -16,6 +16,7 @@ import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.text.TextLayoutResult
 import com.ambient.tv.R
@@ -90,7 +91,8 @@ class CompactPlaybackFooterTest {
 
     @Test fun pinnedDropdownChangesLevelWithoutDisablingTheBackButton() {
         mount()
-        rule.onNodeWithContentDescription("Einstellungsumfang: Erweitert", useUnmergedTree = true).performClick()
+        rule.onNodeWithContentDescription("Einstellungsumfang: Erweitert", useUnmergedTree = true).assertExists()
+        rule.onNodeWithTag("scope-in-footer", useUnmergedTree = true).performTouchInput { click() }
         rule.onNodeWithText("Einfach").performClick()
         rule.runOnIdle { assertEquals("simple", chosen) }
         rule.onNodeWithContentDescription("Einstellungsumfang: Einfach", useUnmergedTree = true).assertExists()
