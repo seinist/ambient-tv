@@ -646,6 +646,7 @@ class SettingsBackupManager @Inject constructor(
                     gamepadSettings = preferences.gamepadSettings,
                     retroInputSettings = preferences.retroInputSettings,
                     gameSettings = preferences.gameSettings,
+                    gameLibraryOptions = preferences.gameLibraryOptions,
                 ),
                 device = DeviceSettingsExtras(
                     imageCacheMb = preferences.imageCacheMb,
@@ -1157,6 +1158,7 @@ class SettingsBackupManager @Inject constructor(
             settings.lyricsOnlineEnabled?.let { preferences.lyricsOnlineEnabled = it }
             settings.frameDropOverlayHistory?.let { preferences.frameDropOverlayHistory = it }
             settings.viewTransitionStyleKey?.let { preferences.viewTransitionStyleKey = it }
+            settings.gameLibraryOptions?.let { preferences.gameLibraryOptions = it }
             settings.gameSettings?.let {
                 preferences.gameSettings = it
                 com.ambient.tv.games.GameSettings.reload(it)
