@@ -104,6 +104,7 @@ import com.ambient.tv.games.GameOptionOrigin
 import com.ambient.tv.games.GameSettings
 import com.ambient.tv.games.GameShader
 import com.ambient.tv.games.GameHdrToneMap
+import com.ambient.tv.games.GameTouchMode
 import com.ambient.tv.ui.common.MetaBadge
 import com.ambient.tv.ui.common.PlayerControlBar
 import com.ambient.tv.ui.common.PlayerExitButton
@@ -212,6 +213,9 @@ internal fun GameShader.config(): ShaderConfig = when (this) {
     GameShader.SHARP -> ShaderConfig.Sharp
     GameShader.PIXEL -> ShaderConfig.Pixel
     GameShader.SMOOTH -> ShaderConfig.CUT3()
+    GameShader.CUT2 -> ShaderConfig.CUT2()
+    GameShader.BICUBIC -> GamePictureShaders.bicubic()
+    GameShader.ADAPTIVE -> GamePictureShaders.adaptiveSharpen()
     GameShader.CRT -> ShaderConfig.CRT
     GameShader.LCD -> ShaderConfig.LCD
 }
@@ -289,6 +293,8 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
     val nativeTransfer = GameVulkanTransferMode.forInput(toneMap)
     val aspect = settings.aspect(system)
     val integerScaling = settings.integerScaling(system)
+    val touchControls = settings.touchControls(system)
+    val touchMode = settings.touchMode(system)
     // Native RAW blit matches only the PIXEL preset; aspect and integer
     // scaling are passed to Vulkan, while real shader presets stay in GLES.
     val nativePictureSupported = GameVulkanPictureCompatibility.rawFullscreenEligible(shader)
@@ -821,8 +827,8 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
                     .then(if (handheld && !system.pointerInput)
                         Modifier.clickable { if (!menuOpen) openMenu() } else Modifier),
             )
-            // Keep a reachable menu on touch-driven systems. Android Back still opens it.
-            if (handheld && system.pointerInput && !menuOpen) {
+            // All phones need a fixed menu target; touching a DS screen must not open the OSD.
+            if (handheld && !menuOpen) {
                 Box(
                     modifier = Modifier.align(Alignment.TopStart)
                         .padding(start = 12.dp, top = 12.dp)
@@ -840,6 +846,15 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
                     )
                 }
             }
+            // Non-interactive areas remain transparent so DS/Wii pointer events still reach GLRetroView.
+            if (handheld && running && touchControls && !menuOpen) {
+                GameTouchControls(
+                    mode = touchMode,
+                    onButton = { button, pressed -> input.touchButton(button, pressed) },
+                    onStick = { index, x, y -> input.touchStick(index, x, y) },
+                    modifier = Modifier.fillMaxSize(),
+                )
+            }
             GameAchievementBanner(achievements.banner, Modifier.align(Alignment.TopCenter).padding(top = 32.dp))
             if (netplay.waiting && !menuOpen) GameOverlayNote(
                 stringResource(R.string.game_netplay_waiting),
@@ -854,8 +869,8 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
                         title = game.title,
                         artworkUrl = null,
                         contextLine = system.name,
-                        subtitle = message ?: stringResource(R.string.game_paused),
-                        showPaused = true,
+                        subtitle = message ?: stringResource(if (running) R.string.game_running else R.string.game_paused),
+                        showPaused = !running,
                     )
                     PlayerTechBadgeRow {
                         MetaBadge("libretro", emphasized = true)
@@ -1045,6 +1060,9 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
                             }
                         }
                         open == GamePanel.PICTURE -> {
+                            if (session.vulkan && (nativeSdrDiagnostic || nativeSdrFullscreenRequested) && !nativePictureSupported) {
+                                GamePanelText(stringResource(R.string.game_picture_native_limit))
+                            }
                             if (session.vulkan && toneMap != GameHdrToneMap.OFF) {
                                 GamePanelText(stringResource(R.string.game_picture_hdr_filter_note))
                             }
@@ -1199,6 +1217,21 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
                             )
                         }
                         open == GamePanel.CONTROLS -> {
+                            GamePanelText(stringResource(R.string.game_touch_layout))
+                            RightPanelChoice(
+                                text = stringResource(R.string.game_touch_controls),
+                                subtitle = stringResource(R.string.game_touch_controls_hint),
+                                selected = touchControls,
+                                onClick = { GameSettings.update { it.withTouchControls(system, !touchControls) } },
+                            )
+                            GameTouchMode.entries.forEach { choice ->
+                                RightPanelChoice(
+                                    text = stringResource(choice.titleRes),
+                                    selected = choice == touchMode,
+                                    enabled = touchControls,
+                                    onClick = { GameSettings.update { it.withTouchMode(system, choice) } },
+                                )
+                            }
                             GameControlsPanel()
                             GameDeviceTypesPanel(
                                 controllers = remember(open) { runCatching { retroView.getControllers() }.getOrDefault(emptyArray()) },

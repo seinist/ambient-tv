@@ -11,6 +11,9 @@ enum class GameShader(val key: String, @StringRes val titleRes: Int, @StringRes 
     SHARP("sharp", R.string.game_shader_sharp, R.string.game_shader_sharp_hint),
     PIXEL("pixel", R.string.game_shader_pixel, R.string.game_shader_pixel_hint),
     SMOOTH("smooth", R.string.game_shader_smooth, R.string.game_shader_smooth_hint),
+    CUT2("cut2", R.string.game_shader_cut2, R.string.game_shader_cut2_hint),
+    BICUBIC("bicubic", R.string.game_shader_bicubic, R.string.game_shader_bicubic_hint),
+    ADAPTIVE("adaptive", R.string.game_shader_adaptive, R.string.game_shader_adaptive_hint),
     CRT("crt", R.string.game_shader_crt, R.string.game_shader_crt_hint),
     LCD("lcd", R.string.game_shader_lcd, R.string.game_shader_lcd_hint),
     ;
@@ -40,11 +43,27 @@ enum class GameHdrToneMap(val key: String, @StringRes val titleRes: Int) {
 enum class GameAspect(val key: String, val ratio: Float?, @StringRes val titleRes: Int) {
     CORE("core", null, R.string.game_aspect_core),
     FOUR_THREE("4:3", 4f / 3f, R.string.game_aspect_4_3),
+    EIGHT_SEVEN("8:7", 8f / 7f, R.string.game_aspect_8_7),
+    SQUARE("1:1", 1f, R.string.game_aspect_1_1),
+    THREE_TWO("3:2", 3f / 2f, R.string.game_aspect_3_2),
+    SIXTEEN_TEN("16:10", 16f / 10f, R.string.game_aspect_16_10),
     WIDE("16:9", 16f / 9f, R.string.game_aspect_16_9),
     ;
 
     companion object {
         fun fromKey(key: String?) = entries.firstOrNull { it.key == key }
+    }
+}
+
+/** Virtual handset controls can be hidden for pointer-heavy games. */
+enum class GameTouchMode(val key: String, @StringRes val titleRes: Int) {
+    DPAD("pad", R.string.game_touch_mode_dpad),
+    ANALOG("analog", R.string.game_touch_mode_analog),
+    HYBRID("hybrid", R.string.game_touch_mode_hybrid),
+    DUAL("dual", R.string.game_touch_mode_dual),
+    ;
+    companion object {
+        fun fromKey(key: String?): GameTouchMode = entries.firstOrNull { it.key == key } ?: DPAD
     }
 }
 
@@ -77,6 +96,18 @@ data class GameSettingsState(val values: Map<String, String> = emptyMap()) {
     fun integerScaling(system: GameSystem): Boolean = values["integer.${system.id}"] == "1"
 
     fun withIntegerScaling(system: GameSystem, on: Boolean): GameSettingsState = set("integer.${system.id}", "1".takeIf { on })
+
+    /** DS/3DS pointer games default to an unobstructed screen; others show buttons on phones. */
+    fun touchControls(system: GameSystem): Boolean =
+        values["touch.${system.id}"]?.let { it == "1" } ?: !system.pointerInput
+
+    fun withTouchControls(system: GameSystem, on: Boolean): GameSettingsState =
+        set("touch.${system.id}", (if (on) "1" else "0").takeIf { on != !system.pointerInput })
+
+    fun touchMode(system: GameSystem): GameTouchMode = GameTouchMode.fromKey(values["touchmode.${system.id}"])
+
+    fun withTouchMode(system: GameSystem, mode: GameTouchMode): GameSettingsState =
+        set("touchmode.${system.id}", mode.key.takeIf { mode != GameTouchMode.DPAD })
 
     /** Rewind keeps the last seconds of play in memory; on unless switched off. */
     val rewind: Boolean get() = values["rewind"] != "0"

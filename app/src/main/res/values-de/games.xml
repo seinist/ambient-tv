@@ -240,4 +240,23 @@
     <string name="game_info_hdr_core_rejects_pq">Der Core hat HDR10 angefordert, das Frontend hat das Quellformat jedoch abgelehnt. Natives HDR ist nicht verfügbar.</string>
     <string name="game_info_hdr_core_rejects_scrgb">Der Core hat scRGB FP16 angefordert; dieses Quellformat wird noch nicht unterstützt.</string>
     <string name="game_info_hdr_core_not_negotiated">Der Core hat kein HDR-Quellformat ausgehandelt. Die Quellkodierung bleibt unbekannt.</string>
+    <string name="game_shader_cut2">CUT2-Upscaling</string>
+    <string name="game_shader_cut2_hint">Kantenbewusstes Skalieren und Schärfen (mittlere GPU-Last)</string>
+    <string name="game_shader_bicubic">Bikubisches Upscaling</string>
+    <string name="game_shader_bicubic_hint">Sanftes 16-Tap-Skalieren (höhere GPU-Last)</string>
+    <string name="game_shader_adaptive">Adaptiv schärfen</string>
+    <string name="game_shader_adaptive_hint">Kontrastabhängige Schärfung mit 5 Samples (geringe GPU-Last)</string>
+    <string name="game_aspect_8_7">8:7 – originale SNES-Pixel</string>
+    <string name="game_aspect_1_1">1:1 – quadratisch</string>
+    <string name="game_aspect_3_2">3:2</string>
+    <string name="game_aspect_16_10">16:10</string>
+    <string name="game_touch_mode_dpad">Steuerkreuz</string>
+    <string name="game_touch_mode_analog">Linker Analogstick</string>
+    <string name="game_touch_mode_hybrid">Steuerkreuz + Analogstick</string>
+    <string name="game_touch_mode_dual">Zwei Analogsticks</string>
+    <string name="game_touch_controls">Touch-Steuerung</string>
+    <string name="game_touch_controls_hint">Virtuelle Tasten auf dem Handy, physische Controller bleiben aktiv</string>
+    <string name="game_touch_layout">Touch-Layout</string>
+    <string name="game_running">Läuft</string>
+    <string name="game_picture_native_limit">Das experimentelle native Vulkan-Vollbild unterstützt nicht alle Bildshader. Verwende dafür GLES.</string>
 </resources>
