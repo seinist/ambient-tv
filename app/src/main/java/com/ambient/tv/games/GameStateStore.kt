@@ -4,6 +4,7 @@ import android.graphics.Bitmap
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import java.io.File
+import java.security.MessageDigest
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -44,6 +45,7 @@ class GameStateStore @Inject constructor(private val storage: GameStorage) {
         return directory.listFiles { file -> file.name.endsWith(".json") }.orEmpty()
             .mapNotNull { meta ->
                 runCatching { json.decodeFromString<GameStateEntry>(meta.readText()) }.getOrNull()
+                    ?.takeIf { it.id.matches(Regex("(auto|undo|m[0-9]+)")) && meta.name == "${it.id}.json" }
                     ?.takeIf { File(directory, "${it.id}.state").isFile }
             }
             .sortedWith(compareBy<GameStateEntry> { it.kind.ordinal }.thenByDescending { it.createdAt })
@@ -91,7 +93,7 @@ class GameStateStore @Inject constructor(private val storage: GameStorage) {
         if (screenshot != null) runCatching {
             image.outputStream().use { screenshot.compress(Bitmap.CompressFormat.JPEG, 85, it) }
         } else image.delete()
-        File(directory, "${entry.id}.json").writeText(json.encodeToString(GameStateEntry.serializer(), entry))
+        storage.write(File(directory, "${entry.id}.json"), json.encodeToString(GameStateEntry.serializer(), entry).toByteArray())
         // Oldest manual states go once there are too many.
         existing.filter { it.kind == GameStateKind.MANUAL }.sortedByDescending { it.createdAt }
             .drop(MAX_MANUAL - 1).takeIf { kind == GameStateKind.MANUAL }?.forEach { delete(game, it) }
@@ -109,6 +111,24 @@ class GameStateStore @Inject constructor(private val storage: GameStorage) {
         const val MAX_STATE_BYTES = 64L * 1024 * 1024
 
         /** Identifies a core build by size and date of its file. */
-        fun coreStamp(core: File): String = "${core.length()}:${core.lastModified()}"
+        fun legacyCoreStamp(core: File): String = "${core.length()}:${core.lastModified()}"
+
+        /** Stable across devices and installations of the same binary, unlike file mtime. */
+        fun coreStamp(core: File): String {
+            val digest = MessageDigest.getInstance("SHA-256")
+            core.inputStream().buffered(256 * 1024).use { input ->
+                val buffer = ByteArray(256 * 1024)
+                while (true) {
+                    val count = input.read(buffer)
+                    if (count < 0) break
+                    digest.update(buffer, 0, count)
+                }
+            }
+            return "sha256:" + digest.digest().joinToString("") { "%02x".format(it) }
+        }
+
+        /** Old timestamp-based saves migrate only when they match the installed core. */
+        fun compatible(entry: GameStateEntry, coreId: String, stamp: String, legacyStamp: String): Boolean =
+            entry.coreId == coreId && (entry.coreStamp == stamp || entry.coreStamp == legacyStamp)
     }
 }

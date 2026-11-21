@@ -41,6 +41,7 @@ import androidx.compose.ui.semantics.Role
 import com.ambient.tv.games.GameBiosState
 import com.ambient.tv.games.GameStateEntry
 import com.ambient.tv.games.GameStateKind
+import com.ambient.tv.games.GameStateStore
 import com.ambient.tv.ui.common.activateOnTvKey
 import kotlinx.coroutines.launch
 import java.io.File
@@ -544,11 +545,16 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
     }
     /** Loads [entry]; the moment before is kept as "Before loading" so the step can be undone. */
     val loadState: (GameStateEntry) -> Unit = { entry ->
-        val bytes = model.readState(game, entry)
+        val compatible = GameStateStore.compatible(
+            entry, core.id, session.coreStamp, GameStateStore.legacyCoreStamp(session.coreFile),
+        )
+        val bytes = if (compatible) model.readState(game, entry) else null
         if (!stateAvailable || achievements.hardcore || netplay.active) {
             message = context.getString(
                 if (achievements.hardcore) R.string.game_message_hardcore_blocked else R.string.game_message_netplay_blocked,
             )
+        } else if (!compatible) {
+            message = context.getString(R.string.game_message_load_other_core)
         } else if (bytes == null) {
             message = context.getString(R.string.game_message_load_failed)
         } else {
