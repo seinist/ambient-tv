@@ -24,4 +24,5 @@
     <string name="companion_gamepad_touch_hint">Touch or drag to control the core pointer</string>
     <string name="companion_gamepad_mouse_hint">Drag to move · Tap to click</string>
     <string name="companion_gamepad_gun_hint">Aim and touch to fire</string>
+    <string name="companion_gamepad_rtt_p95">RTT p95 %1$d ms</string>
 </resources>
