@@ -105,7 +105,9 @@ class CompactPlaybackFooterTest {
         rule.onNodeWithText("Einfach").performClick()
         rule.runOnIdle { assertEquals("simple", chosen) }
         rule.onNodeWithContentDescription("Einstellungsumfang: Einfach", useUnmergedTree = true).assertExists()
-        rule.onNodeWithText(rule.activity.getString(R.string.back)).performClick()
+        // Exercise the button's real pointer/TV surface rather than only the Robolectric
+        // semantics click on the nested text node.
+        rule.onNodeWithText(rule.activity.getString(R.string.back)).performTouchInput { click() }
         // PlayerPanelVisibility handles the exit animation outside the right panel.
         // The Back action must be delivered synchronously to that shared panel host.
         rule.runOnIdle { assertEquals(1, backCount) }
