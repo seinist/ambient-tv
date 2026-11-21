@@ -8,9 +8,9 @@ REPO="$(prop LIBRASHADER_REPO)"
 PIN="$(prop LIBRASHADER_COMMIT)"
 [[ "$REPO" == "https://github.com/SnowflakePowered/librashader" && "$PIN" =~ ^[0-9a-f]{40}$ ]] ||
     { echo "Invalid librashader source pin" >&2; exit 1; }
-NDK="$ANDROID_NDK_HOME"
-[[ -n "$NDK" ]] || NDK="$ANDROID_NDK_ROOT"
-[[ -n "$NDK" ]] || NDK="$ANDROID_HOME/ndk/30.0.16248370"
+NDK="${ANDROID_NDK_HOME:-}"
+[[ -n "$NDK" ]] || NDK="${ANDROID_NDK_ROOT:-}"
+[[ -n "$NDK" ]] || NDK="${ANDROID_HOME:-}/ndk/30.0.16248370"
 BIN="$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin"
 [[ -x "$BIN/llvm-strip" ]] || { echo "NDK 30 required" >&2; exit 1; }
 command -v cargo >/dev/null && command -v rustup >/dev/null ||
@@ -36,7 +36,7 @@ export CARGO_PROFILE_RELEASE_PANIC=abort
 export CARGO_PROFILE_RELEASE_OPT_LEVEL=z
 export RUSTFLAGS="-C link-arg=-Wl,-z,max-page-size=16384"
 export PATH="$BIN:$PATH"
-for abi in $LIBRASHADER_ABIS; do
+for abi in ${LIBRASHADER_ABIS:-arm64-v8a armeabi-v7a x86 x86_64}; do
     case "$abi" in
       arm64-v8a) target=aarch64-linux-android; clang=aarch64-linux-android29-clang ;;
       armeabi-v7a) target=armv7-linux-androideabi; clang=armv7a-linux-androideabi29-clang ;;
