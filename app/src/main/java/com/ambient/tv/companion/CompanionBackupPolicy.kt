@@ -206,6 +206,18 @@ internal object CompanionBackupPolicy {
         val portableSourceIds = s.getValue("fileSources").jsonArray.map { it.jsonObject.text("id") }.toSet()
         s["gameLibraryFolders"] = JsonArray((s["gameLibraryFolders"] as? JsonArray).orEmpty().map { it.jsonObject }
             .filter { it.text("sourceId") in portableSourceIds })
+        // Source-linked preferences must not accidentally carry the original phone's
+        // SAF document IDs or missing-source favorites to the receiving TV.
+        (s["extras"] as? JsonObject)?.let { extras ->
+            (extras["portable"] as? JsonObject)?.let { portable ->
+                val games = (portable["gameLibraryOverrides"] as? JsonArray).orEmpty()
+                    .map { it.jsonObject }
+                    .filter { it.text("sourceId") in portableSourceIds }
+                    .takeLast(1000)
+                s["extras"] = JsonObject(extras + ("portable" to
+                    JsonObject(portable + ("gameLibraryOverrides" to JsonArray(games)))))
+            }
+        }
         return fit(source, s, presentFields)
     }
 
@@ -359,6 +371,37 @@ internal object CompanionBackupPolicy {
             }
         }
         result["gameLibraryFolders"] = JsonArray(gameFolders)
+        // Move source-linked metadata through the same sender -> receiver FileSource map.
+        // A TV's local game metadata survives an unrelated sender and local SAF paths never sync.
+        if (mode == "settings") {
+            val receiverExtras = current["extras"] as? JsonObject
+            val receiverPortable = receiverExtras?.get("portable") as? JsonObject
+            val incomingExtras = incoming["extras"] as? JsonObject
+            val incomingPortable = incomingExtras?.get("portable") as? JsonObject
+            val existing = (receiverPortable?.get("gameLibraryOverrides") as? JsonArray).orEmpty()
+                .map { it.jsonObject }.toMutableList()
+            val imported = (incomingPortable?.get("gameLibraryOverrides") as? JsonArray).orEmpty()
+            for (item in imported.map { it.jsonObject }) {
+                val sourceId = sourceIds[item.text("sourceId")] ?: continue
+                if (sourceId !in validSources) continue
+                val path = item.text("path")
+                if (path.length > 4096 || path.isBlank()) continue
+                val mapped = JsonObject(item + ("sourceId" to JsonPrimitive(sourceId)))
+                val currentIndex = existing.indexOfFirst {
+                    it.text("sourceId") == sourceId && it.text("path") == path
+                }
+                if (currentIndex >= 0) {
+                    if (overwrite) existing[currentIndex] = mapped
+                } else if (existing.size < 5000) {
+                    existing += mapped
+                }
+            }
+            val resultExtras = (result["extras"] as? JsonObject).orEmpty()
+            val resultPortable = (resultExtras["portable"] as? JsonObject).orEmpty()
+            result["extras"] = JsonObject(resultExtras + ("portable" to JsonObject(
+                resultPortable + ("gameLibraryOverrides" to JsonArray(existing.takeLast(5000)))
+            )))
+        }
         if (mode == "settings" && deviceSettings && source.schemaVersion >= 69) {
             val profiles = remapCompanionVideoProfiles(source, mappedIds, target)
             if (profilePresent(source, "titleVideoSettings", presentFields))
