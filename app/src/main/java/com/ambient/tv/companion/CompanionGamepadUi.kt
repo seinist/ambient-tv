@@ -28,6 +28,9 @@ import androidx.compose.ui.unit.dp
 import com.ambient.tv.R
 import com.ambient.tv.games.GameTouchMode
 import com.ambient.tv.ui.gamepad.retro.RetroPadButton
+import com.ambient.tv.ui.gamepad.retro.RetroInputSettings
+import com.ambient.tv.ui.gamepad.retro.CompanionTouchProfile
+import com.ambient.tv.ui.gamepad.retro.companionTouchProfileKey
 import com.ambient.tv.ui.games.GameTouchControls
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -72,16 +75,26 @@ internal fun CompanionGamepadScreen(manager: CompanionManager, modifier: Modifie
     val port = state.remote?.gamepadPort ?: -1
     val claimed = state.online && info != null && port in 0..3
     val playing = claimed && info?.ready == true
+    val touchProfileKey = companionTouchProfileKey(state.target?.fingerprint, info?.systemId)
+    val storedTouchProfile = RetroInputSettings.config.companionTouchProfiles[touchProfileKey]
     var modeKey by rememberSaveable(state.target?.fingerprint, info?.systemId) {
-        mutableStateOf(companionDefaultTouchMode(info?.systemId).key)
+        mutableStateOf(storedTouchProfile?.mode ?: companionDefaultTouchMode(info?.systemId).key)
     }
     var inputKind by rememberSaveable(state.target?.fingerprint, info?.systemId) {
-        mutableStateOf(if (info?.pointerInput == true) "touch" else "pad")
+        mutableStateOf(storedTouchProfile?.input ?: if (info?.pointerInput == true) "touch" else "pad")
     }
     var pointerRegion by rememberSaveable(state.target?.fingerprint, info?.systemId) {
-        mutableStateOf(companionDefaultPointerRegion(info?.systemId))
+        mutableStateOf(storedTouchProfile?.region ?: companionDefaultPointerRegion(info?.systemId))
     }
-    var motionEnabled by rememberSaveable(state.target?.fingerprint, info?.systemId) { mutableStateOf(false) }
+    var motionEnabled by rememberSaveable(state.target?.fingerprint, info?.systemId) {
+        mutableStateOf(storedTouchProfile?.motion ?: false)
+    }
+    LaunchedEffect(touchProfileKey, modeKey, inputKind, pointerRegion, motionEnabled) {
+        if (touchProfileKey.isNotEmpty()) {
+            val profile = CompanionTouchProfile(modeKey, inputKind, pointerRegion, motionEnabled)
+            RetroInputSettings.update { it.withCompanionTouchProfile(touchProfileKey, profile) }
+        }
+    }
     val mode = GameTouchMode.fromKey(modeKey)
     val padFrame = remember(info?.sessionId) { CompanionInputFrame() }
     val motion = rememberCompanionMotionSource(playing && motionEnabled)
