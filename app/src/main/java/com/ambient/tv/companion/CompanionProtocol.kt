@@ -45,6 +45,8 @@ data class CompanionFrame(
     val input: CompanionInput? = null,
     /** Complete virtual RetroPad input, sent only by a paired handheld. */
     val gamepadState: CompanionGamepadState? = null,
+    /** Sender-local timestamp for queue-to-ACK diagnostics. Never used for TV trust decisions. */
+    val gamepadQueuedAtMs: Long = 0L,
     /** Current TV game; absent on older receivers or outside the games player. */
     val gamepadInfo: CompanionGamepadInfo? = null,
     /** Assigned Libretro port, -1 when no claim exists for this TLS session. */
