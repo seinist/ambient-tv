@@ -312,4 +312,6 @@
     <string name="games_shader_packs_installed">Installiert: %1$s</string>
     <string name="games_shader_packs_failed">Shader-Paket konnte nicht installiert werden: %1$s</string>
     <string name="games_shader_packs_missing">Das ausgewählte Shader-Paket fehlt oder ist ungültig. Bis zur Installation wird der integrierte Bildfilter verwendet.</string>
+    <string name="games_vulkan_shader_presenting">Vulkan-Slang-Shader: Ein gefiltertes SDR-Bild wurde auf der echten Ausgabefläche dargestellt (experimentell).</string>
+    <string name="games_vulkan_shader_pending">Vulkan-Slang-Shader ausgewählt, aber noch kein gefiltertes SDR-Bild bestätigt. GLES bleibt verfügbar.</string>
 </resources>
