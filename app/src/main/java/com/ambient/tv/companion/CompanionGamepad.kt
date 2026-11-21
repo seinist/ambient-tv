@@ -119,6 +119,7 @@ object CompanionGamepadSession {
     private val ports = LinkedHashMap<String, Int>()
     private val handler by lazy { Handler(Looper.getMainLooper()) }
     private val deadman = LinkedHashMap<String, Runnable>()
+    private val deadlines = LinkedHashMap<String, Long>()
     private val previousPointer = mutableMapOf<Int, CompanionPointerState>()
     private val previousMotion = mutableMapOf<Int, CompanionMotionState>()
 
@@ -131,22 +132,38 @@ object CompanionGamepadSession {
     }
 
     private fun cancelDeadman(session: String) {
+        deadlines.remove(session)
         deadman.remove(session)?.let(handler::removeCallbacks)
     }
 
-    /** Network loss must never leave a held button or a nonzero stick on the TV. */
+    /** A watchdog callback is scheduled once per active controller, not 30 times per second.
+     * Incoming packets merely extend its deadline. This keeps the main thread free for frames.
+     */
     private fun resetDeadman(session: String, packet: CompanionGamepadState) {
-        cancelDeadman(session)
         if (packet.buttons == 0 && packet.leftX == 0f && packet.leftY == 0f &&
             packet.rightX == 0f && packet.rightY == 0f &&
             packet.pointer?.let { it.contacts.any { point -> point.pressed } || it.buttons != 0 } != true &&
-            packet.motion == null) return
+            packet.motion == null) {
+            cancelDeadman(session)
+            return
+        }
         val game = active ?: return
         val slot = ports[session] ?: return
-        val task = Runnable {
-            deadman.remove(session)
-            if (active === game && ports[session] == slot)
-                releaseInputs(game, slot)
+        deadlines[session] = android.os.SystemClock.uptimeMillis() + 1_500L
+        if (deadman.containsKey(session)) return
+        lateinit var task: Runnable
+        task = Runnable {
+            if (active !== game || ports[session] != slot) {
+                cancelDeadman(session)
+            } else {
+                val remaining = (deadlines[session] ?: 0L) - android.os.SystemClock.uptimeMillis()
+                if (remaining > 0L) handler.postDelayed(task, remaining)
+                else {
+                    deadlines.remove(session)
+                    deadman.remove(session)
+                    releaseInputs(game, slot)
+                }
+            }
         }
         deadman[session] = task
         handler.postDelayed(task, 1_500L)
