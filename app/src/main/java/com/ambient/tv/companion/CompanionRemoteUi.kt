@@ -287,7 +287,7 @@ private fun RemoteMousePad(enabled: Boolean, sensitivity: Float, onSensitivity: 
                         pending += delta
                         if (travel.getDistance() > viewConfiguration.touchSlop) moved = true
                         val now = event.changes.first().uptimeMillis
-                        if (moved && pending != Offset.Zero && now - lastSent >= 40) {
+                        if (moved && pending != Offset.Zero && now - lastSent >= 20) {
                             currentSend(CompanionInput(action, x = (pending.x / size.width.coerceAtLeast(1) * currentSensitivity).coerceIn(-1f, 1f),
                                 y = (pending.y / size.height.coerceAtLeast(1) * currentSensitivity).coerceIn(-1f, 1f)))
                             pending = Offset.Zero
@@ -295,6 +295,13 @@ private fun RemoteMousePad(enabled: Boolean, sensitivity: Float, onSensitivity: 
                         }
                         event.changes.forEach { it.consume() }
                     } while (event.changes.any { it.pressed })
+                    // Complete the final fractional movement before a gesture ends. Previously
+                    // the last <40ms of a swipe could vanish and the cursor stopped short.
+                    if (moved && pending != Offset.Zero) {
+                        currentSend(CompanionInput(action,
+                            x = (pending.x / size.width.coerceAtLeast(1) * currentSensitivity).coerceIn(-1f, 1f),
+                            y = (pending.y / size.height.coerceAtLeast(1) * currentSensitivity).coerceIn(-1f, 1f)))
+                    }
                     if (!moved && !multiTouch) currentSend(CompanionInput("click"))
                 }
             }, contentAlignment = Alignment.Center) {
