@@ -122,7 +122,8 @@ class GameLibraryRepository @Inject constructor(
 
     /** Minimal catalog lookup for the sidebar; don't load every game on the UI thread. */
     fun systemIds(): List<String> {
-        val allowed = folders().map { it.id }.toSet()
+        val current = files.sources().map { it.id }.toSet()
+        val allowed = folders().filter { it.sourceId in current }.map { it.id }.toSet()
         val systems = linkedSetOf<String>()
         db.readableDatabase.rawQuery("SELECT DISTINCT folder_id,system_id FROM game_entries", null).use { rows ->
             while (rows.moveToNext()) if (rows.getString(0) in allowed) systems += rows.getString(1)
@@ -157,7 +158,8 @@ class GameLibraryRepository @Inject constructor(
 
     /** Disk cache is loaded even if the NAS is sleeping; opening the library never wakes it. */
     fun games(): List<LibraryGame> {
-        val allowed = folders().associateBy { it.id }
+        val current = files.sources().map { it.id }.toSet()
+        val allowed = folders().filter { it.sourceId in current }.associateBy { it.id }
         val style = titleStyle()
         val result = mutableListOf<LibraryGame>()
         db.readableDatabase.rawQuery(
