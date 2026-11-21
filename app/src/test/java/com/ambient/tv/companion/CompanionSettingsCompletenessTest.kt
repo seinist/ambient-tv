@@ -126,7 +126,7 @@ class CompanionSettingsCompletenessTest {
         for (device in listOf(false, true)) {
             val target = preferences().apply { imageCacheMb = 256; tvheadendHtspPort = 10002 }
             val restored = send(incoming, target, device = device)
-            assertEquals(portable, restored.extras?.portable)
+            assertEquals(portable.copy(gameLibraryOptions = target.gameLibraryOptions), restored.extras?.portable)
             assertEquals(setOf("jellyfin"), target.allContinueSystems)
             assertFalse(target.filterBarShown)
             assertTrue(target.launcherIntegrationEnabled)
