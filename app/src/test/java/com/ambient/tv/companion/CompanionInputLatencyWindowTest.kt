@@ -7,8 +7,8 @@ class CompanionInputLatencyWindowTest {
     @Test fun p95HighlightsIntermittentJitterWithoutHoldingUnboundedSamples() {
         val window = CompanionInputLatencyWindow(capacity = 20)
         assertNull(window.p95Ms())
-        repeat(19) { window.record(12L) }
-        window.record(110L)
+        repeat(18) { window.record(12L) }
+        repeat(2) { window.record(110L) }
         assertEquals(110L, window.p95Ms())
         repeat(20) { window.record(22L) }
         assertEquals(22L, window.p95Ms())
