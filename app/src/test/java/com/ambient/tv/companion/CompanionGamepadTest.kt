@@ -232,6 +232,14 @@ class CompanionGamepadTest {
         assertFalse(CompanionState().handheldPageOpen())
     }
 
+    @Test fun advertisedCoreDeviceSelectionUsesLibretroBaseIds() {
+        assertEquals(1, companionCoreDeviceType(null))
+        assertEquals(1, companionCoreDeviceType("pad"))
+        assertEquals(2, companionCoreDeviceType("mouse"))
+        assertEquals(4, companionCoreDeviceType("gun"))
+        assertEquals(6, companionCoreDeviceType("touch"))
+    }
+
     @Test fun layoutDefaultsRespectConsoleFamilies() {
         assertEquals(GameTouchMode.DPAD, companionDefaultTouchMode("snes"))
         assertEquals(GameTouchMode.HYBRID, companionDefaultTouchMode("n64"))
