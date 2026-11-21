@@ -110,8 +110,9 @@ class RetroPadInput(
 
     fun onKey(event: KeyEvent): Boolean {
         val state = state(event.deviceId) ?: return false
-        val profile = profileContext?.let { config().profile(state.info.kind, it) }
-            ?: config().profile(state.info.kind)
+        val profile = profileContext?.let {
+            config().profile(state.info.kind, it, deviceDescriptor = state.info.descriptor)
+        } ?: config().deviceProfile(state.info.kind, state.info.descriptor)
         val code = event.keyCode
         val emergencyBack = state.info.kind == RetroInputKind.REMOTE &&
             code == KeyEvent.KEYCODE_BACK && !profile.opensMenu(code) && !profile.holdOpensMenu(code)
@@ -196,8 +197,9 @@ class RetroPadInput(
     fun onMotion(event: MotionEvent): Boolean {
         if (!event.isFromSource(InputDevice.SOURCE_JOYSTICK) || event.actionMasked != MotionEvent.ACTION_MOVE) return false
         val state = state(event.deviceId) ?: return false
-        val profile = profileContext?.let { config().profile(state.info.kind, it) }
-            ?: config().profile(state.info.kind)
+        val profile = profileContext?.let {
+            config().profile(state.info.kind, it, deviceDescriptor = state.info.descriptor)
+        } ?: config().deviceProfile(state.info.kind, state.info.descriptor)
         fun mapped(code: Int): Int = profile.button(code)?.mask ?: 0
         var buttons = 0
         val hatX = event.getAxisValue(MotionEvent.AXIS_HAT_X)

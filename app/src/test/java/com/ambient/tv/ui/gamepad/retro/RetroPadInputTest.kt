@@ -333,4 +333,23 @@ class RetroPadInputTest {
         assertEquals(0, input.buttons(0))
     }
 
+    @Test fun physicalGamepadProfileIsInheritedThenOverriddenBySystemCoreAndGame() {
+        val ctx = RetroInputProfileContext("snes", "snes9x", "supermario")
+        val key = KeyEvent.KEYCODE_BUTTON_Y
+        var c = RetroInputConfig()
+            .assignDevice(RetroInputKind.GAMEPAD, "dual-sense", RetroInputTarget.Button(RetroPadButton.A), key)
+        assertEquals(RetroPadButton.A,
+            c.profile(RetroInputKind.GAMEPAD, ctx, deviceDescriptor = "dual-sense").button(key))
+        assertEquals(RetroPadButton.X,
+            c.profile(RetroInputKind.GAMEPAD, ctx, deviceDescriptor = "xbox").button(key))
+        c = c.assign(RetroInputKind.GAMEPAD, ctx, RetroInputLayerScope.SYSTEM,
+            RetroInputTarget.Button(RetroPadButton.B), key)
+        assertEquals(RetroPadButton.B,
+            c.profile(RetroInputKind.GAMEPAD, ctx, deviceDescriptor = "dual-sense").button(key))
+        assertEquals(c, RetroInputConfig.decode(c.encode()))
+        assertEquals(c.profile(RetroInputKind.GAMEPAD, ctx, deviceDescriptor = "dual-sense"),
+            RetroInputConfig.decode(c.encode()).profile(RetroInputKind.GAMEPAD, ctx, deviceDescriptor = "dual-sense"))
+        assertTrue(c.resetDevice(RetroInputKind.GAMEPAD, "dual-sense").deviceProfiles.isEmpty())
+    }
+
 }
