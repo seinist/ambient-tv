@@ -124,7 +124,17 @@ object GameArchives {
                     titleFromPrefix(system, name, readPrefix(it, length))
                 }
             }.getOrNull() else null
-            Metadata(name, system, title)
+            // RFC 1952 footer stores the CRC32 of the *uncompressed* ROM,
+            // so a DAT match does not require reading or decompressing the whole file.
+            val footer = ByteArray(8)
+            val crc = if (media.size >= 8 && media.read(media.size - 8, footer, 8) == 8)
+                java.lang.Long.toHexString(
+                    (footer[0].toLong() and 255) or
+                        ((footer[1].toLong() and 255) shl 8) or
+                        ((footer[2].toLong() and 255) shl 16) or
+                        ((footer[3].toLong() and 255) shl 24)
+                ).uppercase(Locale.ROOT).padStart(8, '0') else null
+            Metadata(name, system, title, crc)
         }
         "rar" -> {
             // A RAR archive's original filename may already include a known ROM extension.
