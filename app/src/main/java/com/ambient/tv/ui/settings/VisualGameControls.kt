@@ -26,7 +26,7 @@ import kotlinx.coroutines.delay
 
 /** Device changes are reflected without recreating the Settings view. */
 @Composable
-private fun rememberPlayableDevices(): List<RetroInputDevice> {
+internal fun rememberPlayableDevices(): List<RetroInputDevice> {
     val context = LocalContext.current
     var devices by remember { mutableStateOf(playableInputDevices()) }
     DisposableEffect(context) {
