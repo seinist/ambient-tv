@@ -157,7 +157,7 @@ object CompanionGamepadSession {
 
     private fun releaseInputs(game: Active, port: Int) {
         clearButtons(port)
-        game.input.remoteState(port, 0, 0f, 0f, 0f, 0f)
+        game.input.clearRemotePort(port)
         game.onPointer(port, null)
         game.onMotion(port, null)
         previousPointer.remove(port)
