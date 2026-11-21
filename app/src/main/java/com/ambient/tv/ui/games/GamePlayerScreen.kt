@@ -740,7 +740,7 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
 
     // Controllers, keyboards and remotes play through RetroPadInput while the game runs.
     val latestOpenMenu by rememberUpdatedState(openMenu)
-    val input = remember {
+    val input = remember(system.id, core.id, game.saveKey) {
         val handler = Handler(Looper.getMainLooper())
         RetroPadInput(
             profileContext = com.ambient.tv.ui.gamepad.retro.RetroInputProfileContext(
@@ -756,6 +756,13 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
             onFastForward = { if (!netplay.active) fastForward = !fastForward },
         ).also(inputRef::set)
     }
+    // Only changed pointer contacts go through JNI; the other device types do not receive
+    // redundant six-call resets on each 60Hz phone position update.
+    val companionPointerRelay = remember(input) {
+        com.ambient.tv.companion.CompanionNativePointerRelay { port, kind, index, x, y, flags ->
+            LibretroDroid.onCompanionPointer(port, kind, index, x, y, flags)
+        }
+    }
     // The Companion gamepad uses the same RetroPadInput as real controllers, without injecting
     // synthetic Android keys into the activity. This is a TV-only, full game-session registration.
     val latestCompanionMenu by rememberUpdatedState<() -> Unit>({
@@ -767,26 +774,7 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
         if (!handheld) com.ambient.tv.companion.CompanionGamepadSession.attach(
             input, system.id, core.id, game.file.nameWithoutExtension, system.pointerInput,
             onMenu = { latestCompanionMenu() },
-            onPointer = { port, pointer ->
-                // Libretro's separate pointer/mouse/lightgun devices must bypass the TV's
-                // normal focus/navigation dispatch and receive normalized core coordinates.
-                for (index in 0..3) {
-                    val contact = pointer?.takeIf { it.kind == "touch" }
-                        ?.contacts?.firstOrNull { it.index == index && it.pressed }
-                    LibretroDroid.onCompanionPointer(port, 0, index,
-                        contact?.x ?: 0.5f, contact?.y ?: 0.5f, if (contact != null) 1 else 0)
-                }
-                LibretroDroid.onCompanionPointer(port, 1, 0,
-                    pointer?.takeIf { it.kind == "mouse" }?.dx ?: 0f,
-                    pointer?.takeIf { it.kind == "mouse" }?.dy ?: 0f,
-                    pointer?.takeIf { it.kind == "mouse" }?.buttons ?: 0)
-                val gun = pointer?.takeIf { it.kind == "gun" }
-                val contact = gun?.contacts?.firstOrNull()
-                LibretroDroid.onCompanionPointer(port, 2, 0,
-                    if (gun?.offscreen == true) -1f else contact?.x ?: 0.5f,
-                    if (gun?.offscreen == true) -1f else contact?.y ?: 0.5f,
-                    gun?.buttons ?: 0)
-            },
+            onPointer = { port, pointer -> companionPointerRelay.update(port, pointer) },
             onMotion = { port, motion ->
                 LibretroDroid.setCompanionSensorReadings(port, motion?.mask ?: 0,
                     motion?.gx ?: 0f, motion?.gy ?: 0f, motion?.gz ?: 0f,
@@ -794,7 +782,10 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
             },
         )
         onDispose {
-            if (!handheld) com.ambient.tv.companion.CompanionGamepadSession.detach(input)
+            if (!handheld) {
+                com.ambient.tv.companion.CompanionGamepadSession.detach(input)
+                companionPointerRelay.clear()
+            }
         }
     }
     LaunchedEffect(input, handheld, running) {
