@@ -285,4 +285,26 @@ class RetroPadInputTest {
     }
 
 
+    @Test fun sharedDolphinCoreIsSeparatedByConsoleAndOverridesWin() {
+        val wii = RetroInputProfileContext("wii", "dolphin", "wii-game")
+        val cube = RetroInputProfileContext("gamecube", "dolphin", "cube-game")
+        val target = RetroInputTarget.Button(RetroPadButton.B)
+        var state = RetroInputConfig().assign(
+            RetroInputKind.GAMEPAD, wii, RetroInputLayerScope.CORE,
+            target, KeyEvent.KEYCODE_BUTTON_Y,
+        )
+        assertEquals(RetroPadButton.B, state.profile(RetroInputKind.GAMEPAD, wii)
+            .button(KeyEvent.KEYCODE_BUTTON_Y))
+        assertEquals(RetroPadButton.X, state.profile(RetroInputKind.GAMEPAD, cube)
+            .button(KeyEvent.KEYCODE_BUTTON_Y))
+        // A parent-level update cannot steal the key deliberately chosen in the child.
+        state = state.assign(RetroInputKind.GAMEPAD, wii, RetroInputLayerScope.SYSTEM,
+            RetroInputTarget.Button(RetroPadButton.A), KeyEvent.KEYCODE_BUTTON_Y)
+        assertEquals(RetroPadButton.B, state.profile(RetroInputKind.GAMEPAD, wii)
+            .button(KeyEvent.KEYCODE_BUTTON_Y))
+        assertEquals(RetroPadButton.A, state.profile(RetroInputKind.GAMEPAD, wii,
+            RetroInputLayerScope.SYSTEM).button(KeyEvent.KEYCODE_BUTTON_Y))
+        assertEquals(state, RetroInputConfig.decode(state.encode()))
+    }
+
 }
