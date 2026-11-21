@@ -38,7 +38,13 @@ jobs:
           python3 scripts/build_game_shader_pack.py \
             --input shader_packs --output dist/shader-pack.zip --key "$key"
           test "$(stat -c%s dist/shader-pack.zip)" -le 524288
-          # New tags only. Never silently replace a public signed artifact.
-          gh release create "$RELEASE_TAG" dist/shader-pack.zip \
+          # Verify the exact bytes to be published against the public key embedded in builds.
+          test -f cores/signing-public.pem || { echo "::error::Trusted public key missing"; exit 1; }
+          unzip -p dist/shader-pack.zip manifest.json > "$RUNNER_TEMP/shader-manifest.json"
+          unzip -p dist/shader-pack.zip manifest.sig > "$RUNNER_TEMP/shader-manifest.sig"
+          openssl dgst -sha256 -verify cores/signing-public.pem \
+            -signature "$RUNNER_TEMP/shader-manifest.sig" "$RUNNER_TEMP/shader-manifest.json"
+          # New tags only. Keep Android app builds as the normal latest release.
+          gh release create "$RELEASE_TAG" dist/shader-pack.zip --latest=false \
             --title "Optional game shaders $RELEASE_TAG" \
             --notes "Signed optional GLSL ES 100 presets. No native code. CC0."
