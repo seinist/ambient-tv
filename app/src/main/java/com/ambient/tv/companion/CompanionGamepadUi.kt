@@ -113,7 +113,12 @@ internal fun CompanionGamepadScreen(manager: CompanionManager, modifier: Modifie
     }
     val setPointer: (CompanionPointerState?) -> Unit = { pointer ->
         val next = pad.copy(pointer = pointer)
-        if (next != pad) {
+        if (pointer?.kind == "mouse" && (pointer.dx != 0f || pointer.dy != 0f)) {
+            // A relative delta is consumed once. Keep a neutral snapshot in the Compose
+            // state so the 500ms heartbeat can never replay the last mouse movement.
+            manager.gamepadInput(next)
+            pad = next.copy(pointer = pointer.copy(dx = 0f, dy = 0f))
+        } else if (next != pad) {
             pad = next
             manager.gamepadInput(next)
         }
