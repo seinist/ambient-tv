@@ -49,6 +49,8 @@ class RetroPadInput(
     }
 
     private val devices = mutableMapOf<Int, DeviceState>()
+    /** Keep the device identity through a menu/pause release so hotplug still frees its slot. */
+    private val observedDevices = mutableMapOf<Int, RetroInputDevice>()
     /** Controllers in the order they were first used: automatic players 1, 2, 3, 4. */
     /** Keep assigned player ports stable when another controller is unplugged. */
     private val automaticPorts = mutableMapOf<String, Int>()
@@ -239,10 +241,11 @@ class RetroPadInput(
     }
 
     fun deviceRemoved(deviceId: Int) {
-        val state = devices.remove(deviceId) ?: return
-        if (state.info.kind == RetroInputKind.GAMEPAD) automaticPorts.remove(state.info.descriptor)
-        state.holds.values.forEach { it() }
-        if (state.rewindKeys.isNotEmpty() && rewinding() == 0) onRewind(false)
+        val state = devices.remove(deviceId)
+        val info = observedDevices.remove(deviceId) ?: state?.info
+        if (info?.kind == RetroInputKind.GAMEPAD) automaticPorts.remove(info.descriptor)
+        state?.holds?.values?.forEach { it() }
+        if (state?.rewindKeys?.isNotEmpty() == true && rewinding() == 0) onRewind(false)
         recomputeAll()
     }
 
@@ -268,6 +271,7 @@ class RetroPadInput(
         }
         val info = device(deviceId)
         if (port(info) == null) return null
+        observedDevices[deviceId] = info
         return DeviceState(info, axisLayout(deviceId)).also { devices[deviceId] = it }
     }
 

@@ -352,4 +352,14 @@ class RetroPadInputTest {
         assertTrue(c.resetDevice(RetroInputKind.GAMEPAD, "dual-sense").deviceProfiles.isEmpty())
     }
 
+    @Test fun disconnectAfterOpeningOsdStillReleasesAutomaticPort() {
+        press(1, KeyEvent.KEYCODE_BUTTON_A)
+        press(2, KeyEvent.KEYCODE_BUTTON_B)
+        input.releaseAll() // the game menu cleared active button states
+        input.deviceRemoved(1) // Android now forgets the disconnected device
+        val fresh = RetroInputDevice(5, RetroInputKind.GAMEPAD, "dev-5", "Replacement")
+        assertEquals(0, input.port(fresh))
+        assertEquals(1, input.port(RetroInputDevice(2, RetroInputKind.GAMEPAD, "dev-2", "Remaining")))
+    }
+
 }
