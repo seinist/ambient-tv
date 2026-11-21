@@ -139,7 +139,7 @@ class GameRomPreparer @Inject constructor(
                             ?: throw IOException("Unsafe disc playlist entry: $disc")
                         val localCue = File(folder, relative)
                         if (!localCue.isFile) throw IOException("Missing playlist entry: $disc")
-                        val descriptorPath = FilePaths.child(path.substringBeforeLast('/', ""), relative)
+                        val descriptorPath = FilePaths.relative(listOf(path.substringBeforeLast('/', ""), relative).filter(String::isNotEmpty).joinToString("/"))
                         copyReferenced(
                             source, descriptorPath, cueFiles(localCue.readText()), folder,
                             relative.substringBeforeLast('/', ""),
@@ -211,7 +211,7 @@ class GameRomPreparer @Inject constructor(
                 throw IOException("Duplicate disc companion: $name")
             }
             val target = File(folder, targetRelative)
-            val childPath = FilePaths.child(parent, relative)
+            val childPath = FilePaths.relative(listOf(parent, relative).filter(String::isNotEmpty).joinToString("/"))
             val child: FileEntry = access.stat(source, childPath)
             if (target.isFile && target.length() == child.size && child.size > 0) return@forEach
             target.parentFile?.mkdirs()
