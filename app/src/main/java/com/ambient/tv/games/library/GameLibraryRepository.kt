@@ -116,6 +116,12 @@ class GameLibraryRepository @Inject constructor(
         it.sourceId.isNotBlank() && (it.systemId == "auto" || GameSystems.byId(it.systemId) != null)
     }.distinctBy { it.id }.take(200)
 
+    /** Do not display the Games menu until an existing source has an assigned ROM folder. */
+    fun hasConfiguredFolders(): Boolean {
+        val sourceIds = files.sources().mapTo(hashSetOf()) { it.id }
+        return folders().any { it.sourceId in sourceIds }
+    }
+
     fun addFolder(source: FileSource, path: String, systemId: String, recursive: Boolean = true): GameLibraryFolder {
         require(files.sources().any { it == source }) { "Source changed" }
         require(systemId == "auto" || GameSystems.byId(systemId) != null) { "Unknown game system" }

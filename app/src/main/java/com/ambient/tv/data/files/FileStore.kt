@@ -30,14 +30,14 @@ class FileStore @Inject constructor(
 
     /** Only sources that actually belong in the normal Files browser and sidebar. */
     fun fileBrowserSources(): List<FileSource> = sources().filter { source ->
-        source.showInFiles && !hiddenFolder(source.id, sourceRoot(source))
+        filePathVisibleInBrowser(source.id, sourceRoot(source), source.showInFiles, preferences.gameLibraryFolders)
     }
 
     fun visibleInFiles(entry: FileEntry): Boolean = visibleInFiles(entry.sourceId, entry.path)
 
     fun visibleInFiles(sourceId: String, path: String): Boolean {
         val source = sources().firstOrNull { it.id == sourceId } ?: return false
-        return source.showInFiles && !hiddenFolder(sourceId, path)
+        return filePathVisibleInBrowser(sourceId, path, source.showInFiles, preferences.gameLibraryFolders)
     }
 
     private fun sourceRoot(source: FileSource): String = if (source.kind == "local") {
@@ -46,8 +46,6 @@ class FileStore @Inject constructor(
         }.getOrDefault("")
     } else ""
 
-    private fun hiddenFolder(sourceId: String, path: String): Boolean =
-        isGamesOnlyFilePath(sourceId, path, preferences.gameLibraryFolders)
     /** Credentials and source identity must be read atomically with edits and imports. */
     internal fun <T> withCurrentSource(source: FileSource, action: () -> T): T = synchronized(preferences.fileSourceLock) {
         if (sources().none { it == source }) throw java.io.IOException("Source configuration changed")
