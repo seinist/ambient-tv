@@ -288,6 +288,37 @@ class RetroPadInputTest {
             companionMappedButtons(RetroPadButton.B.mask, restored.deviceProfile(RetroInputKind.COMPANION, descriptor)))
     }
 
+    @Test fun configuredPhoneMenuAndRewindBindingsActuallyReachTheGamePlayer() {
+        val descriptor = companionControllerDescriptor("phone-hotkeys")
+        config = config.assignDevice(RetroInputKind.COMPANION, descriptor,
+            RetroInputTarget.Menu(RetroMenuTrigger.REWIND), companionControllerKey(RetroPadButton.L))
+        config = config.assignDevice(RetroInputKind.COMPANION, descriptor,
+            RetroInputTarget.Menu(RetroMenuTrigger.PRESS), companionControllerKey(RetroPadButton.Y))
+        input.reserveRemotePort(1, true, descriptor)
+        input.remoteState(1, RetroPadButton.L.mask, 0f, 0f, 0f, 0f)
+        assertEquals(listOf(true), rewinds)
+        assertEquals(0, input.buttons(1))
+        input.remoteState(1, 0, 0f, 0f, 0f, 0f)
+        assertEquals(listOf(true, false), rewinds)
+        input.remoteState(1, RetroPadButton.Y.mask, 0f, 0f, 0f, 0f)
+        assertEquals(1, menus)
+        assertEquals(0, input.buttons(1))
+        input.reserveRemotePort(1, false)
+    }
+
+    @Test fun pausedPhoneReleasesItsHoldWithoutAFramePulse() {
+        val descriptor = companionControllerDescriptor("phone-hold")
+        config = config.assignDevice(RetroInputKind.COMPANION, descriptor,
+            RetroInputTarget.Menu(RetroMenuTrigger.HOLD), companionControllerKey(RetroPadButton.B))
+        input.reserveRemotePort(0, true, descriptor)
+        input.remoteState(0, RetroPadButton.B.mask, 0f, 0f, 0f, 0f)
+        assertEquals(0, input.buttons(0))
+        input.clearRemotePort(0)
+        advance(KEY_BINDING_LONG_PRESS_MS + 100)
+        assertEquals(0, menus)
+        assertEquals(0, input.buttons(0))
+    }
+
     @Test fun pauseAndMenuReleaseVirtualButtonsToo() {
         input.touchButton(RetroPadButton.START, true)
         input.touchStick(1, 1f, 0f)
