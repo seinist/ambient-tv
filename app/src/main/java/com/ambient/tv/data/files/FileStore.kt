@@ -22,7 +22,7 @@ class FileStore @Inject constructor(
     val revision = changes.asStateFlow()
     // Imports also write AppPreferences directly. Keep every retained browser up to date.
     private val sourceListener = SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
-        if (key == "file_sources") changed()
+        if (key == "file_sources" || key == "game_library_folders") changed()
     }
     init { prefs.registerOnSharedPreferenceChangeListener(sourceListener) }
     /** All configured sources, including Games-only sources (required for playback and WOL). */
