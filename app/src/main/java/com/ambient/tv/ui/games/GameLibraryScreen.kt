@@ -253,6 +253,52 @@ fun GameLibraryScreen(
                                 )
                             }
                         }
+                    } else if (state.view == "rows") {
+                        // As on Home, each console has a horizontal row with its own lazy
+                        // viewport. Entirely cached data means the NAS never wakes for layout.
+                        val grouped = remember(games) {
+                            games.groupBy { it.systemId }.toList().sortedBy {
+                                GameSystems.byId(it.first)?.name ?: it.first
+                            }
+                        }
+                        TvLazyColumn(
+                            modifier = Modifier.weight(1f).fillMaxHeight().focusGroup(),
+                            verticalArrangement = Arrangement.spacedBy(15.dp),
+                        ) {
+                            items(grouped, key = { it.first }) { (system, entries) ->
+                                Column(verticalArrangement = Arrangement.spacedBy(7.dp)) {
+                                    Row(verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(9.dp)) {
+                                        androidx.compose.material3.Icon(
+                                            painterResource(GameSystemIcons.drawable(system)),
+                                            contentDescription = null,
+                                            modifier = Modifier.size(26.dp),
+                                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        )
+                                        Text(GameSystems.byId(system)?.name ?: system,
+                                            style = MaterialTheme.typography.titleMedium)
+                                    }
+                                    LazyRow(
+                                        modifier = Modifier.fillMaxWidth().focusGroup(),
+                                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                                        contentPadding = PaddingValues(horizontal = 4.dp, vertical = 5.dp),
+                                    ) {
+                                        items(entries, key = { it.fileId }) { game ->
+                                            GameTile(game,
+                                                onPlay = { goPlay(game) },
+                                                onFavorite = { model.favorite(game) },
+                                                onFocus = { focusedId = game.fileId },
+                                                onRequester = { itemRequests[game.fileId] = it },
+                                                onDisposed = { itemRequests.remove(game.fileId) },
+                                                modifier = (if (games.firstOrNull()?.fileId == game.fileId)
+                                                    Modifier.focusRequester(firstFocus) else Modifier)
+                                                    .width((224f * 8f / state.gridColumns).coerceIn(130f, 275f).dp),
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        }
                     } else {
                         TvLazyVerticalGrid(
                             columns = deviceDensityGridCells(state.gridColumns, 150.dp, 8),
