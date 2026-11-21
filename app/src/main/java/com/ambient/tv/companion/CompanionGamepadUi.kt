@@ -95,14 +95,14 @@ internal fun CompanionGamepadScreen(manager: CompanionManager, modifier: Modifie
     }
 
     // Press edges are sent immediately below. Axis, pointer and gyro snapshots are sampled
-    // at ~30Hz; an idle heartbeat at 500ms keeps TV deadman state and buttons alive.
+    // at ~60Hz; an idle heartbeat at 500ms keeps TV deadman state and buttons alive.
     LaunchedEffect(playing, info?.sessionId, motionEnabled) {
         if (playing) {
             var last: CompanionGamepadState? = null
             var ticks = 0
             while (true) {
                 val next = pad.copy(motion = if (motionEnabled) motion.snapshot() else null)
-                if (next != last || ticks >= 15) {
+                if (next != last || ticks >= 30) {
                     if (manager.gamepadInput(next)) {
                         last = next
                         ticks = 0
@@ -121,7 +121,7 @@ internal fun CompanionGamepadScreen(manager: CompanionManager, modifier: Modifie
                     }
                 }
                 ticks++
-                delay(32)
+                delay(16)
             }
         }
     }
