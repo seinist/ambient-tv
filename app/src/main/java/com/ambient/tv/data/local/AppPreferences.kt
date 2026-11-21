@@ -206,6 +206,30 @@ class AppPreferences @Inject constructor(
         return decode(raw).also { decodedLists[key] = raw to it }
     }
 
+    /**
+     * Portable Games view configuration (unlike each device's disk catalog or SAF grants).
+     * Keep keys explicit so a malformed/old backup cannot inject arbitrary preferences.
+     */
+    var gameLibraryOptions: Map<String, String>
+        get() = mapOf(
+            "view" to (prefs.getString("game_library_view_style", "grid") ?: "grid"),
+            "title" to (prefs.getString("game_library_title_style", "auto") ?: "auto"),
+            "grid" to prefs.getInt("game_library_grid_columns", 8).toString(),
+            "list" to prefs.getInt("game_library_list_rows", 7).toString(),
+            "sort" to (prefs.getString("game_library_sort", "name") ?: "name"),
+            "descending" to prefs.getBoolean("game_library_descending", false).toString(),
+        )
+        set(settings) {
+            prefs.edit {
+                settings["view"]?.takeIf { it in setOf("grid", "list", "rows") }?.let { putString("game_library_view_style", it) }
+                settings["title"]?.takeIf { it in setOf("auto", "internal", "filename") }?.let { putString("game_library_title_style", it) }
+                settings["grid"]?.toIntOrNull()?.let { putInt("game_library_grid_columns", it.coerceIn(4, 12)) }
+                settings["list"]?.toIntOrNull()?.let { putInt("game_library_list_rows", it.coerceIn(4, 10)) }
+                settings["sort"]?.takeIf { it in setOf("name", "system", "recent") }?.let { putString("game_library_sort", it) }
+                settings["descending"]?.toBooleanStrictOrNull()?.let { putBoolean("game_library_descending", it) }
+            }
+        }
+
     /** Game collections refer to existing FileSource IDs: never duplicate NAS logins/WOL. */
     var gameLibraryFolders: List<com.ambient.tv.games.library.GameLibraryFolder>
         get() = runCatching {
