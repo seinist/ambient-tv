@@ -230,13 +230,35 @@ object CompanionGamepadSession {
     fun info(): CompanionGamepadInfo? = active?.let { it.info.copy(ready = it.ready) }
     fun port(session: String): Int = ports[session] ?: -1
 
-    /** The assigned port is stable for this socket; prefer ports unused by local devices. */
-    fun claim(session: String): Int {
+    /**
+     * Phone identity is the pinned Companion fingerprint, not a transient TLS nonce or the
+     * display name. The existing game-input config persists the same descriptor as hardware.
+     * Explicit fixed ports may intentionally share a local physical player's port; two phones
+     * never silently share one port. An OFF setting disables this handset completely.
+     */
+    fun claim(session: String, fingerprint: String = session): Int {
         val game = active ?: return -1
-        ports[session]?.let { return it }
-        val occupied = ports.values.toSet() + game.input.localUsedPorts()
-        val port = (0 until RetroPorts.COUNT).firstOrNull { it !in occupied } ?: return -1
-        game.input.reserveRemotePort(port, true)
+        val descriptor = com.ambient.tv.ui.gamepad.retro.companionControllerDescriptor(fingerprint)
+        val configured = com.ambient.tv.ui.gamepad.retro.RetroInputSettings.config.ports[descriptor]
+            ?: RetroPorts.AUTO
+        if (configured == RetroPorts.OFF) {
+            release(session)
+            return -1
+        }
+        ports[session]?.let { existing ->
+            if (configured == RetroPorts.AUTO || configured == existing) return existing
+            release(session) // A changed fixed-player setting takes effect on the next claim.
+        }
+        val occupiedPhones = ports.values.toSet()
+        val port = if (configured in 0 until RetroPorts.COUNT) {
+            configured.takeUnless { it in occupiedPhones } ?: return -1
+        } else {
+            val reserved = com.ambient.tv.ui.gamepad.retro.RetroInputSettings.config.ports.values
+                .filter { it in 0 until RetroPorts.COUNT }.toSet()
+            val occupied = occupiedPhones + reserved + game.input.localUsedPorts()
+            (0 until RetroPorts.COUNT).firstOrNull { it !in occupied } ?: return -1
+        }
+        game.input.reserveRemotePort(port, true, descriptor)
         ports[session] = port
         return port
     }
