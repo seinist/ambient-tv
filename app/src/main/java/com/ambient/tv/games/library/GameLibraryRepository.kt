@@ -241,7 +241,7 @@ class GameLibraryRepository @Inject constructor(
                     // Verified disc magic and archive contents beat a misleading folder label.
                     val detected = classify(entry, source)
                     val signatureConflict = ext == "iso" && detected?.id in setOf("wii", "gamecube") &&
-                        detected.id != folder.systemId
+                        detected?.id != folder.systemId
                     val system = assigned?.takeIf { !signatureConflict &&
                         (ext in it.extensions || ext in GameSystems.ambiguousExtensions ||
                             (ext in GameSystems.archiveExtensions && detected?.id == it.id))
