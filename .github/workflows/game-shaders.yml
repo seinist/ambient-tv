@@ -1,0 +1,44 @@
+name: Publish optional game shaders
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: New immutable shader pack release tag (shader-packs-v1, etc.)
+        required: true
+        type: string
+        default: shader-packs-v1
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: Install GLSL validator
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq glslang-tools
+      - name: Validate signed-pack GLSL source
+        run: python3 scripts/check_game_glsl.py
+      - name: Sign bounded pack and publish
+        env:
+          SIGNING_KEY: ${{ secrets.CORES_SIGNING_KEY }}
+          RELEASE_TAG: ${{ inputs.tag }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          [[ "$RELEASE_TAG" =~ ^shader-packs-[a-zA-Z0-9._-]+$ ]] || exit 1
+          test -n "$SIGNING_KEY" || { echo "::error::CORES_SIGNING_KEY unavailable"; exit 1; }
+          umask 077
+          key="$RUNNER_TEMP/shader-signing.pem"
+          printf '%s\n' "$SIGNING_KEY" > "$key"
+          trap 'rm -f "$key"' EXIT
+          python3 scripts/build_game_shader_pack.py \
+            --input shader_packs --output dist/shader-pack.zip --key "$key"
+          test "$(stat -c%s dist/shader-pack.zip)" -le 524288
+          # New tags only. Never silently replace a public signed artifact.
+          gh release create "$RELEASE_TAG" dist/shader-pack.zip \
+            --title "Optional game shaders $RELEASE_TAG" \
+            --notes "Signed optional GLSL ES 100 presets. No native code. CC0."
