@@ -38,6 +38,7 @@ import androidx.tv.material3.Surface
 import androidx.tv.material3.Text
 import com.ambient.tv.R
 import com.ambient.tv.data.files.FileSource
+import com.ambient.tv.ui.files.NetworkSourceDialog
 import com.ambient.tv.games.GameSystems
 import com.ambient.tv.games.library.LibraryGame
 import com.ambient.tv.ui.common.AlphabetBar
@@ -72,6 +73,7 @@ fun GameLibraryScreen(
     val state by model.state.collectAsState()
     var managing by rememberSaveable { mutableStateOf(false) }
     var choosingSystem by rememberSaveable { mutableStateOf(false) }
+    var networkEditor by remember { mutableStateOf<FileSource?>(null) }
     var showOptions by remember { mutableStateOf(false) }
     var showSearch by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
@@ -115,6 +117,9 @@ fun GameLibraryScreen(
 
     val folderPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
         if (uri != null) model.addLocalSource(uri)
+    }
+    LaunchedEffect(state.selectedSource?.id) {
+        if (state.selectedSource != null) networkEditor = null
     }
     val goPlay: (LibraryGame) -> Unit = { game ->
         model.requestPlay(game) { onPlay(game) }
@@ -267,6 +272,11 @@ fun GameLibraryScreen(
                     if (model.assign(system)) { choosingSystem = false; managing = false }
                 },
                 onRemove = model::remove,
+                onFolderFileVisibility = model::setAlsoShowInFiles,
+                onDeleteSource = model::deleteUnusedGameSource,
+                onAddNetwork = {
+                    networkEditor = FileSource(name = "Retro NAS", kind = "smb", showInFiles = false)
+                },
                 onWake = model::wakeCurrentSource,
                 onAddLocal = {
                     try { folderPicker.launch(null) }
@@ -275,6 +285,18 @@ fun GameLibraryScreen(
                 onCloseSource = model::closePicker,
             )
         }
+    }
+    networkEditor?.let { source ->
+        NetworkSourceDialog(
+            source = source,
+            saving = state.savingNetworkSource,
+            testing = state.testingNetworkSource,
+            feedback = null,
+            wireGuardAvailable = model.wireGuardConfigured(),
+            onDismiss = { networkEditor = null },
+            onTest = model::testNewNetworkSource,
+            onSave = model::saveNewNetworkSource,
+        )
     }
     if (showOptions) {
         com.ambient.tv.ui.common.RightPanelOverlay(onOutsideTap = { showOptions = false }) {
@@ -317,10 +339,16 @@ private fun GameFolderManager(
     onEnter: (com.ambient.tv.data.files.FileEntry) -> Unit,
     onAdd: (String) -> Unit,
     onRemove: (com.ambient.tv.games.library.GameLibraryFolder) -> Unit,
+    onFolderFileVisibility: (com.ambient.tv.games.library.GameLibraryFolder, Boolean) -> Unit,
+    onDeleteSource: (FileSource) -> Unit,
+    onAddNetwork: () -> Unit,
     onWake: () -> Unit,
     onAddLocal: () -> Unit,
     onCloseSource: () -> Unit,
 ) {
+    if (state.error != null) Text(state.error,
+        color = MaterialTheme.colorScheme.error,
+        style = MaterialTheme.typography.bodySmall)
     if (choosingSystem) {
         Text(stringResource(R.string.game_library_select_system),
             style = MaterialTheme.typography.titleMedium)
@@ -342,11 +370,24 @@ private fun GameFolderManager(
                 TvActionButton(stringResource(R.string.game_library_add_local),
                     onClick = onAddLocal, icon = Icons.Filled.CreateNewFolder, fillWidth = true)
             }
+            item {
+                TvActionButton(stringResource(R.string.game_library_add_network),
+                    onClick = onAddNetwork, icon = Icons.Filled.Storage, fillWidth = true)
+            }
             item { Text(stringResource(R.string.game_library_existing_sources),
                 style = MaterialTheme.typography.titleMedium) }
             items(state.sources, key = { it.id }) { entry ->
-                TvActionButton(entry.name + " · " + entry.kind.uppercase(),
-                    onClick = { onSelectSource(entry) }, icon = Icons.Filled.Folder, fillWidth = true)
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    TvActionButton(entry.name + " · " + entry.kind.uppercase() +
+                        (if (entry.showInFiles) " · Dateien + Spiele" else " · Nur Spiele"),
+                        onClick = { onSelectSource(entry) }, icon = Icons.Filled.Folder,
+                        modifier = Modifier.weight(1f))
+                    if (!entry.showInFiles && state.folders.none { it.sourceId == entry.id }) {
+                        TvActionButton(stringResource(R.string.game_library_remove),
+                            onClick = { onDeleteSource(entry) }, icon = Icons.Filled.Delete)
+                    }
+                }
             }
             item { Text(stringResource(R.string.game_library_assigned),
                 style = MaterialTheme.typography.titleMedium) }
@@ -357,6 +398,11 @@ private fun GameFolderManager(
                         " / " + folder.path + " · " +
                         (GameSystems.byId(folder.systemId)?.shortName ?: stringResource(R.string.game_library_auto)),
                         modifier = Modifier.weight(1f), maxLines = 2)
+                    TvActionButton(stringResource(R.string.game_library_show_in_files),
+                        onClick = { onFolderFileVisibility(folder, !folder.alsoShowInFiles) },
+                        selected = folder.alsoShowInFiles,
+                        icon = if (folder.alsoShowInFiles) Icons.Filled.Visibility
+                            else Icons.Filled.VisibilityOff)
                     TvActionButton(stringResource(R.string.game_library_remove),
                         onClick = { onRemove(folder) }, icon = Icons.Filled.Delete)
                 }
