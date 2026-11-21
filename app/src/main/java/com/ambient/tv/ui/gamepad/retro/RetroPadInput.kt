@@ -103,7 +103,8 @@ class RetroPadInput(
 
     fun onKey(event: KeyEvent): Boolean {
         val state = state(event.deviceId) ?: return false
-        val profile = config().profile(state.info.kind)
+        val profile = profileContext?.let { config().profile(state.info.kind, it) }
+            ?: config().profile(state.info.kind)
         val code = event.keyCode
         if (!profile.handles(code) && code !in state.menuKeys) return false
         when (event.action) {
