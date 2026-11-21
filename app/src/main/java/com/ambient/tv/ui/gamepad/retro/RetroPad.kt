@@ -275,6 +275,23 @@ object RetroPorts {
     const val OFF = -1
 }
 
+/** Per-TV/per-console full-page phone controls, included in the existing retro settings backup. */
+data class CompanionTouchProfile(
+    val mode: String = "pad",
+    val input: String = "pad",
+    val region: String = "full",
+    val motion: Boolean = false,
+) {
+    fun valid(): Boolean = mode in setOf("pad", "analog", "hybrid", "dual") &&
+        input in setOf("pad", "touch", "mouse", "gun") &&
+        region in setOf("full", "upper", "lower", "left", "right")
+}
+
+/** A stable key scoped to the authenticated target TV and the emulated console system. */
+fun companionTouchProfileKey(tvFingerprint: String?, systemId: String?): String =
+    if (tvFingerprint.isNullOrBlank() || systemId.isNullOrBlank()) ""
+    else "$tvFingerprint|$systemId"
+
 data class RetroInputConfig(
     /** Start + Select together open the game menu on controllers. */
     val startSelectMenu: Boolean = true,
@@ -288,6 +305,8 @@ data class RetroInputConfig(
     val deviceProfiles: Map<String, RetroInputOverlay> = emptyMap(),
     /** Input device descriptor → player index (0-based) or [RetroPorts.OFF]; missing = automatic. */
     val ports: Map<String, Int> = emptyMap(),
+    /** Local phone UI layouts; not tied to a transient Companion socket session. */
+    val companionTouchProfiles: Map<String, CompanionTouchProfile> = emptyMap(),
 ) {
     fun profile(kind: RetroInputKind): RetroInputProfile = profiles[kind] ?: defaultRetroProfile(kind)
 
@@ -347,6 +366,10 @@ data class RetroInputConfig(
     fun withPort(descriptor: String, port: Int): RetroInputConfig =
         copy(ports = if (port == RetroPorts.AUTO) ports - descriptor else ports + (descriptor to port))
 
+    fun withCompanionTouchProfile(key: String, profile: CompanionTouchProfile): RetroInputConfig =
+        if (key.isBlank() || key.length > 160 || !profile.valid()) this
+        else copy(companionTouchProfiles = companionTouchProfiles + (key to profile))
+
     fun encode(): Map<String, String> = buildMap {
         put("start_select_menu", if (startSelectMenu) "1" else "0")
         put("dpad_stick", if (dpadAsStick) "1" else "0")
@@ -375,6 +398,14 @@ data class RetroInputConfig(
             }
         }
         ports.forEach { (descriptor, port) -> put("port.$descriptor", if (port == RetroPorts.OFF) "off" else "${port + 1}") }
+        companionTouchProfiles.forEach { (identity, profile) ->
+            if (identity.isNotBlank() && identity.length <= 160 && profile.valid()) {
+                val token = java.util.Base64.getUrlEncoder().withoutPadding()
+                    .encodeToString(identity.toByteArray(Charsets.UTF_8))
+                put("companionui.$token", listOf(profile.mode, profile.input, profile.region,
+                    if (profile.motion) "1" else "0").joinToString(","))
+            }
+        }
     }
 
     companion object {
@@ -440,7 +471,18 @@ data class RetroInputConfig(
                     }
                 }
             }
+            val phoneLayouts = stored.filterKeys { it.startsWith("companionui.") }.mapNotNull { (key, value) ->
+                val identity = runCatching {
+                    val bytes = java.util.Base64.getUrlDecoder().decode(key.removePrefix("companionui."))
+                    if (bytes.isEmpty() || bytes.size > 160) null else bytes.toString(Charsets.UTF_8)
+                }.getOrNull()?.takeIf { it.isNotBlank() && it.length <= 160 } ?: return@mapNotNull null
+                val fields = value.split(',')
+                if (fields.size != 4 || fields[3] !in listOf("0", "1")) return@mapNotNull null
+                val profile = CompanionTouchProfile(fields[0], fields[1], fields[2], fields[3] == "1")
+                if (!profile.valid()) null else identity to profile
+            }.toMap()
             return RetroInputConfig(
+                companionTouchProfiles = phoneLayouts,
                 scopedProfiles = layers,
                 deviceProfiles = deviceLayers,
                 startSelectMenu = stored["start_select_menu"] != "0",
