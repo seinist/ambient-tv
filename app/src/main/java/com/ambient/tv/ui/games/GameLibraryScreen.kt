@@ -18,6 +18,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -340,7 +341,7 @@ private fun GameFolderManager(
                         " / " + folder.path + " · " +
                         (GameSystems.byId(folder.systemId)?.shortName ?: stringResource(R.string.game_library_auto)),
                         modifier = Modifier.weight(1f), maxLines = 2)
-                    TvActionButton(stringResource(R.string.action_remove),
+                    TvActionButton(stringResource(R.string.game_library_remove),
                         onClick = { onRemove(folder) }, icon = Icons.Filled.Delete)
                 }
             }
@@ -354,7 +355,7 @@ private fun GameFolderManager(
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         TvActionButton(stringResource(R.string.game_library_use_folder),
             onClick = { onChooseSystem(true) }, icon = Icons.Filled.Check)
-        TvActionButton(stringResource(R.string.action_back),
+        TvActionButton(stringResource(R.string.game_library_back),
             onClick = onCloseSource, icon = Icons.Filled.ArrowBack)
         if (source.wolMac.isNotBlank()) {
             TvActionButton(stringResource(R.string.game_library_wake),
