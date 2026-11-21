@@ -1,6 +1,7 @@
 package com.ambient.tv.ui.settings
 
 import android.view.InputDevice
+import android.hardware.input.InputManager
 import android.view.KeyEvent
 import androidx.compose.foundation.layout.*
 import androidx.compose.runtime.*
@@ -22,6 +23,24 @@ import com.ambient.tv.ui.gamepad.retro.*
 import com.ambient.tv.ui.keyboard.keyLabel
 import com.ambient.tv.ui.theme.LocalUiTokens
 import kotlinx.coroutines.delay
+
+/** Device changes are reflected without recreating the Settings view. */
+@Composable
+private fun rememberPlayableDevices(): List<RetroInputDevice> {
+    val context = LocalContext.current
+    var devices by remember { mutableStateOf(playableInputDevices()) }
+    DisposableEffect(context) {
+        val manager = context.getSystemService(InputManager::class.java)
+        val listener = object : InputManager.InputDeviceListener {
+            override fun onInputDeviceAdded(deviceId: Int) { devices = playableInputDevices() }
+            override fun onInputDeviceRemoved(deviceId: Int) { devices = playableInputDevices() }
+            override fun onInputDeviceChanged(deviceId: Int) { devices = playableInputDevices() }
+        }
+        manager?.registerInputDeviceListener(listener, null)
+        onDispose { manager?.unregisterInputDeviceListener(listener) }
+    }
+    return devices
+}
 
 private val systemOwnedKeys = setOf(
     KeyEvent.KEYCODE_HOME, KeyEvent.KEYCODE_POWER, KeyEvent.KEYCODE_VOLUME_UP,
@@ -54,7 +73,7 @@ internal fun VisualGameControls() {
     val profile = if (level == null) config.profile(kind) else config.profile(kind, ctx, level)
     val target: RetroInputTarget = menuTarget?.let { RetroInputTarget.Menu(it) }
         ?: RetroInputTarget.Button(RetroPadButton.fromKey(targetKey) ?: RetroPadButton.B)
-    val devices = remember(kindKey) { playableInputDevices() }
+    val devices = rememberPlayableDevices()
     val device = devices.firstOrNull { it.kind == kind }
     val labels = GamepadLabels.forVendor(device?.let { InputDevice.getDevice(it.id)?.vendorId })
     val physicalArt = attachedArtwork(kindKey, labels)
