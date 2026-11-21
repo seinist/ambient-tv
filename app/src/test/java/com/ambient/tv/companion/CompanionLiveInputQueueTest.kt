@@ -63,6 +63,33 @@ class CompanionLiveInputQueueTest {
         q.close()
     }
 
+    @Test fun criticalMouseClickPreservesPendingRelativeMovement() {
+        val q = CompanionLiveInputQueue()
+        val normal = Channel<CompanionFrame>(4)
+        val drag = CompanionFrame(type = "gamepad_input", gamepadState = CompanionGamepadState(
+            pointer = CompanionPointerState(kind = "mouse", dx = 0.4f, dy = -0.2f)))
+        val click = CompanionFrame(type = "gamepad_input", gamepadState = CompanionGamepadState(
+            pointer = CompanionPointerState(kind = "mouse", buttons = 1)))
+        assertTrue(q.offerGamepad(drag, critical = false))
+        assertTrue(q.offerGamepad(click, critical = true))
+        assertEquals(drag, q.poll(normal))
+        assertEquals(click, q.poll(normal))
+        assertNull(q.poll(normal))
+        q.close()
+    }
+
+    @Test fun boundedCriticalQueueFailsClosedRatherThanSilentlyDroppingRelease() {
+        var overflows = 0
+        val q = CompanionLiveInputQueue(onOverflow = { overflows++ }, edgeCapacity = 2)
+        assertTrue(q.offerGamepad(pad(1), critical = true))
+        assertTrue(q.offerGamepad(pad(0), critical = true))
+        assertFalse(q.offerGamepad(CompanionFrame(type = "gamepad_release"), critical = true))
+        assertEquals(1, overflows)
+        assertFalse(q.offerGamepad(pad(1), critical = true))
+        assertEquals(1, overflows)
+        q.close()
+    }
+
     @Test fun wakeupCanSelectANewInputBeforeOutstandingReplyArrives() = runBlocking {
         val q = CompanionLiveInputQueue()
         val ordinary = Channel<CompanionFrame>(1)
