@@ -477,16 +477,17 @@ class GameLibraryRepository @Inject constructor(
                         val indexed = ArrayList<IndexedGame>()
                         val descriptors = mutableMapOf<String, Set<String>>()
                         var lease: GameScanFileSession? = null
+                        fun reader(): GameScanFileSession =
+                            lease ?: access.gameScanSession(source).also { lease = it }
                         try {
                             for (entry in queue) {
                                 kotlinx.coroutines.currentCoroutineContext().ensureActive()
-                                // An empty folder should not establish three unnecessary
-                                // SMB/NFS sessions. Connect each worker on its first file.
-                                val session = lease ?: access.gameScanSession(source).also { lease = it }
+                                // Cached ROMs need no file open and no extra login; create
+                                // the worker's session only on the first actual metadata read.
                                 val ext = GameSystems.extension(entry.name)
                                 if (ext in setOf("cue", "gdi", "m3u")) {
                                     val refs = runCatching {
-                                        val text = session.readText(entry.path, 256 * 1024)
+                                        val text = reader().readText(entry.path, 256 * 1024)
                                         GameDiscGrouping.referenced(entry.path, text)
                                     }.getOrDefault(emptySet())
                                     if (refs.isNotEmpty()) descriptors[entry.path] = refs
@@ -503,13 +504,13 @@ class GameLibraryRepository @Inject constructor(
                                         val nested = entry.name.substringBeforeLast('.')
                                         GameArchives.Metadata(nested, GameSystems.forFile(nested))
                                     } else runCatching {
-                                        session.open(entry.path).use {
+                                        reader().open(entry.path).use {
                                             GameArchives.probe(entry.name, it)
                                         }
                                     }.getOrNull()
                                 } else null
                                 val detected = if (cachedProbe) GameSystems.byId(last!!.systemId)
-                                    else archive?.system ?: classify(entry, session, skipArchives = true)
+                                    else archive?.system ?: classify(entry, reader(), skipArchives = true)
                                 val mismatch = ext == "iso" &&
                                     detected?.id in setOf("wii", "gamecube") &&
                                     detected?.id != folder.systemId
@@ -521,14 +522,14 @@ class GameLibraryRepository @Inject constructor(
                                 if (system != null) {
                                     val internal = if (cachedProbe) last!!.internalTitle
                                         else archive?.internalTitle ?: if (ext in GameSystems.archiveExtensions)
-                                            null else extractTitle(entry, session, system.id)
+                                            null else extractTitle(entry, reader(), system.id)
                                     val crc = if (cachedProbe) last!!.archiveCrc else archive?.crc32
                                     val version = datVersions[system.id] ?: 0L
                                     val verified = when {
                                         version == 0L -> null
                                         unchanged && last!!.datVersion == version -> last.verifiedTitle
                                         crc != null -> datNameFromCrc(system.id, crc)
-                                        else -> datTitle(session, entry, system.id)
+                                        else -> datTitle(reader(), entry, system.id)
                                     }
                                     indexed += IndexedGame(entry, system.id, internal,
                                         last?.favorite ?: false, last?.lastPlayed ?: 0L,
