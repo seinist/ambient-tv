@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.sizeIn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CheckCircle
@@ -53,6 +54,7 @@ import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.dismiss
 import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
@@ -274,7 +276,8 @@ internal fun CompactConnectionStatus(
             text = "",
             onClick = onDetails,
             icon = Icons.Filled.Info,
-            modifier = Modifier.testTag("connection-status-details")
+            modifier = Modifier.sizeIn(minWidth = 48.dp, minHeight = 48.dp)
+                .testTag("connection-status-details")
                 .semantics { contentDescription = detailsLabel }
                 .then(if (!handheld) Modifier.focusRequester(wakeFocus.requester) else Modifier)
                 .onFocusChanged { detailsFocused = it.isFocused },
@@ -294,7 +297,8 @@ internal fun CompactConnectionStatus(
                     text = "",
                     onClick = { onCancel(cancel) },
                     icon = Icons.Filled.Close,
-                    modifier = Modifier.testTag("connection-status-cancel")
+                    modifier = Modifier.sizeIn(minWidth = 48.dp, minHeight = 48.dp)
+                        .testTag("connection-status-cancel")
                         .semantics { contentDescription = cancelLabel }
                         .onFocusChanged { cancelFocused = it.isFocused },
                 )
