@@ -245,12 +245,14 @@ class GameLibraryRepository @Inject constructor(
         return ids
     }
 
-    private fun datTitle(source: FileSource, entry: FileEntry, systemId: String): String? {
+    private data class DatLookup(val title: String?, val completed: Boolean)
+
+    private fun datTitle(source: FileSource, entry: FileEntry, systemId: String): DatLookup {
         // Never hash a huge NAS ISO or an archive merely to populate library artwork.
         if (entry.size <= 0 || entry.size > 128L * 1024 * 1024 ||
             GameSystems.extension(entry.name) in
                 (GameSystems.archiveExtensions + setOf("cue", "m3u", "gdi", "chd",
-                    "iso", "cso", "zso", "wbfs", "rvz", "ciso", "pbp"))) return null
+                    "iso", "cso", "zso", "wbfs", "rvz", "ciso", "pbp"))) return DatLookup(null, true)
         val checksum = runCatching {
             access.open(source, entry.path).use { media ->
                 val crc = CRC32()
@@ -266,11 +268,12 @@ class GameLibraryRepository @Inject constructor(
                 }
                 java.lang.Long.toHexString(crc.value).uppercase(Locale.ROOT).padStart(8, '0')
             }
-        }.getOrNull() ?: return null
-        return db.readableDatabase.rawQuery(
+        }.getOrNull() ?: return DatLookup(null, false) // Transient I/O failures must be retried.
+        val title = db.readableDatabase.rawQuery(
             "SELECT title FROM game_dat_entries WHERE system_id=? AND crc32=? LIMIT 1",
             arrayOf(systemId, checksum),
         ).use { rows -> if (rows.moveToFirst()) rows.getString(0) else null }
+        return DatLookup(title, true)
     }
 
     fun sortKey(): String = prefs.getString("game_library_sort", "name").orEmpty()
@@ -465,16 +468,15 @@ class GameLibraryRepository @Inject constructor(
                     val sameFile = previousGame?.let {
                         it.size == entry.size && it.modified == entry.modified && entry.modified != 0L
                     } ?: false
-                    val datChecked = system.id in datSystems
-                    val verified = when {
-                        !datChecked -> null
+                    val datLookup = when {
+                        system.id !in datSystems -> DatLookup(null, false)
                         reuseDatLookup(previousGame, system.id, entry.size, entry.modified) ->
-                            previousGame?.verifiedTitle
+                            DatLookup(previousGame?.verifiedTitle, true)
                         else -> datTitle(source, entry, system.id)
                     }
                     selected += IndexedGame(entry, system.id, internalTitle,
                         previousGame?.favorite ?: false, previousGame?.lastPlayed ?: 0L,
-                        previousGame?.customTitle, verified, datChecked)
+                        previousGame?.customTitle, datLookup.title, datLookup.completed)
                     require(selected.size <= 200000) { "Game library item limit reached" }
                 }
             }
