@@ -81,6 +81,7 @@ class GamePlayerViewModel @Inject constructor(
     val shaderPacks: com.ambient.tv.games.GameShaderPackStore,
 ) : ViewModel() {
     private val fileId: String = checkNotNull(saved.get<String>("fileId")) { "fileId" }
+    private val assignedSystem: String? = saved.get<String>("system")?.takeIf(String::isNotBlank)
     private val mutable = MutableStateFlow<GameUiState>(GameUiState.Preparing(null))
     val state: StateFlow<GameUiState> = mutable.asStateFlow()
     private val stateList = MutableStateFlow<List<GameStateEntry>>(emptyList())
@@ -133,7 +134,7 @@ class GamePlayerViewModel @Inject constructor(
             prepared = null
             directFailed = false
             val game = try {
-                preparer.prepare(fileId, { progress -> mutable.value = GameUiState.Preparing(progress) }, forceCache)
+                preparer.prepare(fileId, { progress -> mutable.value = GameUiState.Preparing(progress) }, forceCache, assignedSystem)
             } catch (error: GameDirectUnavailableException) {
                 directFailed = true
                 mutable.value = GameUiState.Failed(GameFailure.DIRECT_ACCESS, error.message)
