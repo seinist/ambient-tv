@@ -1978,6 +1978,7 @@ private fun rankedHomeSources(context: android.content.Context, system: String):
 private fun homeRowSystemGroupTitle(system: String): String {
     MediaSystem.fromKey(system)?.let { return systemName(it) }
     return when (system) {
+        HomeRowDefinition.SYSTEM_GAMES -> stringResource(R.string.game_library_title)
         HomeRowDefinition.SYSTEM_PHOTOS -> stringResource(R.string.settings_photos_title)
         HomeRowDefinition.SYSTEM_ALL -> stringResource(R.string.settings_home_group_all)
         else -> system
