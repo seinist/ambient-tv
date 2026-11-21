@@ -69,6 +69,30 @@ class GameCoreRollbackTest {
             manager.remove(core)
         }
     }
+    @Test fun failedAtomicRollbackPreservesThePreviousCore() = runBlocking {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val manager = GameCoreManager(context, GameCoreChannel())
+        val core = GameCore("rollback_failure_test", "Rollback error fixture", "MIT")
+        manager.remove(core)
+        val old = elf(7, manager.abi)
+        try {
+            manager.install(core, old.inputStream(), zipped = false, origin = "old")
+            manager.install(core, elf(8, manager.abi).inputStream(), zipped = false, origin = "new")
+            val active = manager.file(core)
+            assertTrue(active.delete())
+            assertTrue(active.mkdir())
+            java.io.File(active, "block-rename").writeText("marker")
+            assertFalse(manager.rollback(core))
+            assertTrue(java.io.File(active, "block-rename").isFile)
+            assertTrue(manager.canRollback(core))
+            assertArrayEquals(old,
+                java.io.File(active.parentFile, "${core.id}_libretro_android.previous.so").readBytes())
+        } finally {
+            manager.file(core).deleteRecursively()
+            manager.remove(core)
+        }
+    }
+
     @Test fun mismatchedAbiOrWrongZipCoreCannotBeInstalled() = runBlocking {
         val context = ApplicationProvider.getApplicationContext<Context>()
         val manager = GameCoreManager(context, GameCoreChannel())
