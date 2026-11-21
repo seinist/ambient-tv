@@ -97,6 +97,11 @@ class CompanionGamepadTest {
         assertEquals(frame, restored)
     }
 
+    @Test fun gamepadIsAHandheldPageInsteadOfACompanionDialog() {
+        assertTrue(CompanionState(gamepadPanel = true).handheldPageOpen())
+        assertFalse(CompanionState().handheldPageOpen())
+    }
+
     @Test fun layoutDefaultsRespectConsoleFamilies() {
         assertEquals(GameTouchMode.DPAD, companionDefaultTouchMode("snes"))
         assertEquals(GameTouchMode.HYBRID, companionDefaultTouchMode("n64"))
