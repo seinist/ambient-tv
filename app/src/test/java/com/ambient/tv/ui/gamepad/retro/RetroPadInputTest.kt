@@ -241,4 +241,48 @@ class RetroPadInputTest {
         press(4, KeyEvent.KEYCODE_MENU)
         assertEquals(0, input.buttons(0))
     }
+    @Test fun systemCoreGameInputProfilesInheritOnlyChangedButtons() {
+        val context = RetroInputProfileContext("snes", "snes9x", "rom-one")
+        val otherGame = context.copy(gameId = "rom-two")
+        var current = RetroInputConfig()
+        // Use a face button that was previously free; the other default stays intact.
+        current = current.assign(RetroInputKind.GAMEPAD, context, RetroInputLayerScope.SYSTEM,
+            RetroInputTarget.Button(RetroPadButton.B), KeyEvent.KEYCODE_BUTTON_Y)
+        assertEquals(RetroPadButton.B, current.profile(RetroInputKind.GAMEPAD, context).button(KeyEvent.KEYCODE_BUTTON_Y))
+        assertEquals(RetroPadButton.A, current.profile(RetroInputKind.GAMEPAD, context).button(KeyEvent.KEYCODE_BUTTON_B))
+
+        current = current.assign(RetroInputKind.GAMEPAD, context, RetroInputLayerScope.CORE,
+            RetroInputTarget.Button(RetroPadButton.X), KeyEvent.KEYCODE_BUTTON_A)
+        assertEquals(RetroPadButton.X, current.profile(RetroInputKind.GAMEPAD, context).button(KeyEvent.KEYCODE_BUTTON_A))
+        // Another core on the same system has the system profile, but not this core's changes.
+        assertEquals(RetroPadButton.B, current.profile(RetroInputKind.GAMEPAD, context.copy(coreId = "bsnes"))
+            .button(KeyEvent.KEYCODE_BUTTON_A))
+
+        current = current.assign(RetroInputKind.GAMEPAD, context, RetroInputLayerScope.GAME,
+            RetroInputTarget.Button(RetroPadButton.SELECT), KeyEvent.KEYCODE_BUTTON_R1)
+        assertEquals(RetroPadButton.SELECT, current.profile(RetroInputKind.GAMEPAD, context)
+            .button(KeyEvent.KEYCODE_BUTTON_R1))
+        assertEquals(RetroPadButton.R, current.profile(RetroInputKind.GAMEPAD, otherGame)
+            .button(KeyEvent.KEYCODE_BUTTON_R1))
+        assertEquals(current, RetroInputConfig.decode(current.encode()))
+        assertEquals(
+            current.profile(RetroInputKind.GAMEPAD, context),
+            RetroInputConfig.decode(current.encode()).profile(RetroInputKind.GAMEPAD, context),
+        )
+        val reverted = current.resetScope(RetroInputKind.GAMEPAD, context, RetroInputLayerScope.GAME)
+        assertEquals(RetroPadButton.R, reverted.profile(RetroInputKind.GAMEPAD, context)
+            .button(KeyEvent.KEYCODE_BUTTON_R1))
+    }
+
+    @Test fun emptyScopedProfileDoesNotPolluteStorage() {
+        val context = RetroInputProfileContext("megadrive", "genesis_plus_gx", "rom/with space.zip")
+        val baseline = RetroInputConfig()
+        val defaultKey = KeyEvent.KEYCODE_BUTTON_A
+        val unchanged = baseline.assign(RetroInputKind.GAMEPAD, context, RetroInputLayerScope.CORE,
+            RetroInputTarget.Button(RetroPadButton.B), defaultKey)
+        assertTrue(unchanged.scopedProfiles.isEmpty())
+        assertTrue(unchanged.encode().keys.none { it.startsWith("preset.") })
+    }
+
+
 }
