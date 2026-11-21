@@ -2466,4 +2466,12 @@
     <string name="game_library_show_in_files">Auch in Dateien anzeigen</string>
     <string name="game_library_source_files_games">Dateien + Spiele</string>
     <string name="game_library_source_games_only">Nur Spiele</string>
+    <string name="game_library_edit_title">Spiel umbenennen</string>
+    <string name="game_library_dat_system">Retro-System für diese DAT-Datei auswählen</string>
+    <string name="game_library_custom_title">Angezeigter Titel</string>
+    <string name="game_library_name_hint">Eigener Titel optional; leer lassen für ROM-/Datenbanknamen</string>
+    <string name="game_library_sort_name">Spieletitel</string>
+    <string name="game_library_sort_system">Retro-System</string>
+    <string name="game_library_sort_recent">Zuletzt gespielt</string>
+    <string name="game_library_import_dat">Spielenamen-Katalog importieren (XML-DAT)</string>
 </resources>
