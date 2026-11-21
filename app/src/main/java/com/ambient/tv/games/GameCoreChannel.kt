@@ -97,11 +97,26 @@ class GameCoreChannel @Inject constructor() {
         return build to url
     }
 
+    /** Release-list and signature files are untrusted until the manifest signature is verified. */
     private fun get(url: String): ByteArray {
         val request = Request.Builder().url(url).header("Accept", "application/octet-stream, application/json").build()
         http.newCall(request).execute().use { response ->
             if (!response.isSuccessful) throw IOException("HTTP ${response.code}")
-            return response.body.bytes()
+            val body = response.body
+            if (body.contentLength() > MAX_METADATA_BYTES)
+                throw IOException("Core channel metadata exceeds limit")
+            val result = java.io.ByteArrayOutputStream()
+            body.byteStream().use { input ->
+                val buffer = ByteArray(16 * 1024)
+                while (true) {
+                    val n = input.read(buffer)
+                    if (n < 0) break
+                    if (result.size().toLong() + n > MAX_METADATA_BYTES)
+                        throw IOException("Core channel metadata exceeds limit")
+                    result.write(buffer, 0, n)
+                }
+            }
+            return result.toByteArray()
         }
     }
 
@@ -118,6 +133,7 @@ class GameCoreChannel @Inject constructor() {
 
     companion object {
         private const val CACHE_MS = 30 * 60_000L
+        private const val MAX_METADATA_BYTES = 8L * 1024 * 1024
 
         /** ECDSA P-256 / SHA-256 over [data] (signature DER, as openssl dgst -sign writes it). */
         fun verify(data: ByteArray, signature: ByteArray, publicKeyBase64: String): Boolean = runCatching {

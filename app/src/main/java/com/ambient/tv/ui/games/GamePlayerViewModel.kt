@@ -181,10 +181,13 @@ class GamePlayerViewModel @Inject constructor(
     }
 
     private suspend fun start(game: PreparedGame, chosen: GameCore, core: File) {
-        val stamp = GameStateStore.coreStamp(core)
         val session = withContext(Dispatchers.IO) {
+            val stamp = GameStateStore.coreStamp(core)
+            val legacyStamp = GameStateStore.legacyCoreStamp(core)
             runCatching { files.record(game.entry) }
-            val auto = states.entry(game, GameStateKind.AUTO)?.takeIf { chosen.saveStates && it.coreStamp == stamp }
+            val auto = states.entry(game, GameStateKind.AUTO)?.takeIf {
+                chosen.saveStates && GameStateStore.compatible(it, chosen.id, stamp, legacyStamp)
+            }
             GameSession(
                 game = game,
                 core = chosen,

@@ -59,6 +59,7 @@ internal fun VisualGameControls() {
     var systemId by rememberSaveable { mutableStateOf(GameSystems.all.first().id) }
     var coreId by rememberSaveable { mutableStateOf(GameSystems.all.first().core.id) }
     var scopeKey by rememberSaveable { mutableStateOf("default") }
+    var selectedDescriptor by rememberSaveable { mutableStateOf("") }
     var consoleVariant by rememberSaveable { mutableStateOf("") }
     var targetKey by rememberSaveable { mutableStateOf("b") }
     var physicalKey by rememberSaveable { mutableStateOf<String?>(null) }
@@ -70,12 +71,19 @@ internal fun VisualGameControls() {
     val core = system.core(coreId) ?: system.core
     val last = lastPlayed?.takeIf { it.systemId == system.id && it.coreId == core.id }
     val ctx = RetroInputProfileContext(system.id, core.id, last?.gameId)
+    val devices = rememberPlayableDevices()
+    val compatibleDevices = devices.filter { it.kind == kind }
+    val device = compatibleDevices.firstOrNull { it.descriptor == selectedDescriptor }
+        ?: compatibleDevices.firstOrNull()
+    val deviceScope = scopeKey == "device" && device != null
     val level = RetroInputLayerScope.entries.firstOrNull { it.key == scopeKey }
-    val profile = if (level == null) config.profile(kind) else config.profile(kind, ctx, level)
+    val profile = when {
+        deviceScope -> config.deviceProfile(kind, device!!.descriptor)
+        level == null -> config.profile(kind)
+        else -> config.profile(kind, ctx, level)
+    }
     val target: RetroInputTarget = menuTarget?.let { RetroInputTarget.Menu(it) }
         ?: RetroInputTarget.Button(RetroPadButton.fromKey(targetKey) ?: RetroPadButton.B)
-    val devices = rememberPlayableDevices()
-    val device = devices.firstOrNull { it.kind == kind }
     val labels = GamepadLabels.forVendor(device?.let { InputDevice.getDevice(it.id)?.vendorId })
     val physicalArt = attachedArtwork(kindKey, labels)
     val variants = consoleArtworkVariants(system.id)
@@ -85,13 +93,14 @@ internal fun VisualGameControls() {
     fun assign(code: Int) {
         if (code in systemOwnedKeys || code <= KeyEvent.KEYCODE_UNKNOWN) return
         RetroInputSettings.update { old ->
-            if (level == null) old.withProfile(kind, old.profile(kind).assign(target, code))
+            if (deviceScope) old.assignDevice(kind, device!!.descriptor, target, code)
+            else if (level == null) old.withProfile(kind, old.profile(kind).assign(target, code))
             else old.assign(kind, ctx, level, target, code)
         }
     }
 
     if (listening) {
-        DisposableEffect(kind, ctx, level, target) {
+        DisposableEffect(kind, ctx, level, device?.descriptor, deviceScope, target) {
             var downCode = KeyEvent.KEYCODE_UNKNOWN
             val listener: (KeyEvent) -> Boolean = capture@{ event ->
                 if (event.keyCode in systemOwnedKeys) return@capture false
@@ -120,6 +129,16 @@ internal fun VisualGameControls() {
                     onClick = { listening = false; kindKey = option.key; physicalKey = null })
             }
         }
+        if (compatibleDevices.isNotEmpty()) SettingsSelect(
+            label = stringResource(R.string.input_mapping_device),
+            options = compatibleDevices.map { option ->
+                SettingsSelectOption(
+                    text = option.name.ifBlank { option.descriptor },
+                    selected = option.descriptor == device?.descriptor,
+                    onClick = { listening = false; selectedDescriptor = option.descriptor },
+                )
+            },
+        )
         SettingsSelect(
             label = stringResource(R.string.input_mapping_system),
             options = GameSystems.all.map { option ->
@@ -145,18 +164,23 @@ internal fun VisualGameControls() {
                     onClick = { listening = false; consoleVariant = id })
             },
         )
-        val choices: List<Pair<RetroInputLayerScope?, Int>> = listOf(
-            null to R.string.input_mapping_scope_global,
-            RetroInputLayerScope.SYSTEM to R.string.input_mapping_scope_system,
-            RetroInputLayerScope.CORE to R.string.input_mapping_scope_core,
-            RetroInputLayerScope.GAME to R.string.input_mapping_scope_game,
+        val choices: List<Triple<String, RetroInputLayerScope?, Int>> = listOf(
+            Triple("default", null, R.string.input_mapping_scope_global),
+            Triple("device", null, R.string.input_mapping_scope_device),
+            Triple("system", RetroInputLayerScope.SYSTEM, R.string.input_mapping_scope_system),
+            Triple("core", RetroInputLayerScope.CORE, R.string.input_mapping_scope_core),
+            Triple("game", RetroInputLayerScope.GAME, R.string.input_mapping_scope_game),
         )
         SettingsSelect(
             label = stringResource(R.string.input_mapping_scope),
-            options = choices.map { (value, title) ->
-                SettingsSelectOption(stringResource(title), level == value,
-                    enabled = value != RetroInputLayerScope.GAME || last != null,
-                    onClick = { listening = false; scopeKey = value?.key ?: "default" })
+            options = choices.map { (key, value, title) ->
+                SettingsSelectOption(stringResource(title), scopeKey == key,
+                    enabled = when (key) {
+                        "device" -> device != null
+                        "game" -> last != null
+                        else -> true
+                    },
+                    onClick = { listening = false; scopeKey = key })
             },
         )
         if (last == null) SettingsHint(stringResource(R.string.input_mapping_no_game))
@@ -225,13 +249,19 @@ internal fun VisualGameControls() {
             onClick = { listening = !listening },
         )
         SettingsHint(stringResource(R.string.input_mapping_capture_hint))
-        val hasOverride = if (level == null) kind in config.profiles
-            else ctx.layerId(level, kind) in config.scopedProfiles
+        val hasOverride = when {
+            deviceScope -> config.deviceProfiles.containsKey(
+                "${kind.key}." + java.util.Base64.getUrlEncoder().withoutPadding()
+                    .encodeToString(device!!.descriptor.toByteArray(Charsets.UTF_8)))
+            level == null -> kind in config.profiles
+            else -> ctx.layerId(level, kind) in config.scopedProfiles
+        }
         if (hasOverride) SettingsActionRow {
             TvActionButton(stringResource(R.string.input_mapping_reset_scope), onClick = {
                 listening = false
                 RetroInputSettings.update {
-                    if (level == null) it.copy(profiles = it.profiles - kind)
+                    if (deviceScope) it.resetDevice(kind, device!!.descriptor)
+                    else if (level == null) it.copy(profiles = it.profiles - kind)
                     else it.resetScope(kind, ctx, level)
                 }
             })

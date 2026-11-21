@@ -11,6 +11,7 @@ import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.io.FileNotFoundException
+import android.util.AtomicFile
 import java.io.IOException
 import java.io.InputStream
 import javax.inject.Inject
@@ -72,33 +73,44 @@ class GameDataImporter @Inject constructor(
             val entries = access.list(source, path, MAX_FILES) { true }.entries
             for (entry in entries) {
                 currentCoroutineContext().ensureActive()
+                var copiedBytes = 0L
                 val name = entry.name
                 val childRelative = if (relative.isEmpty()) safeName(name) else "$relative/${safeName(name)}"
                 when {
                     entry.directory -> if (depth < MAX_DEPTH && !name.startsWith(".")) walk(entry.path, childRelative, depth + 1)
-                    files >= MAX_FILES || bytes + entry.size > MAX_BYTES -> skipped++
+                    files >= MAX_FILES || entry.size < 0 || entry.size > MAX_BYTES - bytes -> skipped++
                     GameSystems.coreForFile(name) != null -> {
                         val core = GameSystems.coreForFile(name)!!
-                        if (runCatching { installCore(source, entry.path, name, core) }.isSuccess) installed += core else skipped++
+                        if (runCatching { installCore(source, entry.path, name, core) }.isSuccess) {
+                            installed += core
+                            copiedBytes = entry.size
+                        } else skipped++
                     }
                     GameSystems.isBios(name) -> {
                         val matches = GameSystems.bios(name)
                         val target = File(storage.systemDirectory, matches.first().second.file)
-                        copy(source, entry.path, target)
-                        biosCount++
-                        val digest = GameBiosManager.md5(target)
-                        if (matches.any { it.second.md5.equals(digest, ignoreCase = true) }) verified++
+                        // Never replace a recognized BIOS with an unchecked or incompatible file.
+                        val digest = digestSource(source, entry.path, MAX_BIOS_BYTES)
+                        if (matches.none { it.second.md5.equals(digest, ignoreCase = true) }) {
+                            skipped++
+                        } else {
+                            copiedBytes = copy(source, entry.path, target, MAX_BIOS_BYTES)
+                            biosCount++
+                            verified++
+                        }
                     }
                     !wanted(entry) -> skipped++
                     else -> {
                         val target = File(storage.systemDirectory, childRelative)
-                        if (!target.isFile || target.length() != entry.size) copy(source, entry.path, target)
+                        if (!target.isFile || target.length() != entry.size)
+                            copiedBytes = copy(source, entry.path, target, MAX_BYTES - bytes)
                         extras++
                     }
                 }
                 if (!entry.directory) {
                     files++
-                    bytes += entry.size
+                    // Count what was actually written, not skipped files or untrusted size hints.
+                    bytes += copiedBytes
                     onProgress(files)
                 }
             }
@@ -137,15 +149,46 @@ class GameDataImporter @Inject constructor(
         cores.install(core, mediaStream(source, path), zipped = name.lowercase().endsWith(".zip"), origin = name)
     }
 
-    private suspend fun copy(source: FileSource, path: String, target: File) {
+    private suspend fun copy(source: FileSource, path: String, target: File, maxBytes: Long = MAX_BYTES): Long {
         target.parentFile?.mkdirs()
-        val partial = File(target.parentFile, target.name + ".partial")
-        mediaStream(source, path).use { input -> partial.outputStream().use { input.copyTo(it, 256 * 1024) } }
-        target.delete()
-        if (!partial.renameTo(target)) {
-            partial.delete()
-            throw IOException("Cannot store ${target.name}")
+        val atomic = AtomicFile(target)
+        val stream = atomic.startWrite()
+        var bytes = 0L
+        try {
+            mediaStream(source, path).use { input ->
+                val buffer = ByteArray(256 * 1024)
+                while (true) {
+                    currentCoroutineContext().ensureActive()
+                    val n = input.read(buffer)
+                    if (n < 0) break
+                    if (n.toLong() > maxBytes - bytes) throw IOException("Imported game data exceeds limit")
+                    stream.write(buffer, 0, n)
+                    bytes += n
+                }
+            }
+            atomic.finishWrite(stream)
+            return bytes
+        } catch (error: Exception) {
+            atomic.failWrite(stream)
+            throw error
         }
+    }
+
+    private suspend fun digestSource(source: FileSource, path: String, maxBytes: Long): String {
+        val hash = java.security.MessageDigest.getInstance("MD5")
+        mediaStream(source, path).use { input ->
+            val buffer = ByteArray(256 * 1024)
+            var bytes = 0L
+            while (true) {
+                currentCoroutineContext().ensureActive()
+                val n = input.read(buffer)
+                if (n < 0) break
+                if (n.toLong() > maxBytes - bytes) throw IOException("BIOS exceeds limit")
+                hash.update(buffer, 0, n)
+                bytes += n
+            }
+        }
+        return hash.digest().joinToString("") { "%02x".format(it) }
     }
 
     /** A plain stream over a file of any source (device, USB, NAS). */
@@ -181,6 +224,7 @@ class GameDataImporter @Inject constructor(
         const val MAX_DEPTH = 4
         const val MAX_FILES = 5000
         const val MAX_BYTES = 4L * 1024 * 1024 * 1024
+        private const val MAX_BIOS_BYTES = 32L * 1024 * 1024
 
         /** Games, films and music stay where they are; the system folder is for core data. */
         internal fun wanted(entry: FileEntry): Boolean = !entry.game && !entry.playable && !entry.name.startsWith(".")

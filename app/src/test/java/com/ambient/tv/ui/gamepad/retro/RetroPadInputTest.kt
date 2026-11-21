@@ -308,4 +308,58 @@ class RetroPadInputTest {
         assertEquals(state, RetroInputConfig.decode(state.encode()))
     }
 
+    @Test fun unplugReleasesOnlyItsOwnInputWithoutMovingOtherPlayers() {
+        press(1, KeyEvent.KEYCODE_BUTTON_A)
+        press(2, KeyEvent.KEYCODE_BUTTON_B)
+        assertEquals(RetroPadButton.B.mask, input.buttons(0))
+        assertEquals(RetroPadButton.A.mask, input.buttons(1))
+        input.deviceRemoved(1)
+        assertEquals(0, input.buttons(0))
+        assertEquals(RetroPadButton.A.mask, input.buttons(1))
+        // The same descriptor after reconnect can reclaim its previous free port.
+        press(1, KeyEvent.KEYCODE_BUTTON_A)
+        assertEquals(RetroPadButton.B.mask, input.buttons(0))
+        assertEquals(RetroPadButton.A.mask, input.buttons(1))
+    }
+
+    @Test fun remappingRemoteBackCannotRemoveTheEmergencyMenu() {
+        config = config.withProfile(RetroInputKind.REMOTE,
+            defaultRetroProfile(RetroInputKind.REMOTE)
+                .assign(RetroInputTarget.Button(RetroPadButton.A), KeyEvent.KEYCODE_BACK))
+        press(4, KeyEvent.KEYCODE_BACK)
+        advance(RetroPadInput.EMERGENCY_MENU_HOLD_MS + 50)
+        assertEquals(1, menus)
+        release(4, KeyEvent.KEYCODE_BACK)
+        assertEquals(0, input.buttons(0))
+    }
+
+    @Test fun physicalGamepadProfileIsInheritedThenOverriddenBySystemCoreAndGame() {
+        val ctx = RetroInputProfileContext("snes", "snes9x", "supermario")
+        val key = KeyEvent.KEYCODE_BUTTON_Y
+        var c = RetroInputConfig()
+            .assignDevice(RetroInputKind.GAMEPAD, "dual-sense", RetroInputTarget.Button(RetroPadButton.A), key)
+        assertEquals(RetroPadButton.A,
+            c.profile(RetroInputKind.GAMEPAD, ctx, deviceDescriptor = "dual-sense").button(key))
+        assertEquals(RetroPadButton.X,
+            c.profile(RetroInputKind.GAMEPAD, ctx, deviceDescriptor = "xbox").button(key))
+        c = c.assign(RetroInputKind.GAMEPAD, ctx, RetroInputLayerScope.SYSTEM,
+            RetroInputTarget.Button(RetroPadButton.B), key)
+        assertEquals(RetroPadButton.B,
+            c.profile(RetroInputKind.GAMEPAD, ctx, deviceDescriptor = "dual-sense").button(key))
+        assertEquals(c, RetroInputConfig.decode(c.encode()))
+        assertEquals(c.profile(RetroInputKind.GAMEPAD, ctx, deviceDescriptor = "dual-sense"),
+            RetroInputConfig.decode(c.encode()).profile(RetroInputKind.GAMEPAD, ctx, deviceDescriptor = "dual-sense"))
+        assertTrue(c.resetDevice(RetroInputKind.GAMEPAD, "dual-sense").deviceProfiles.isEmpty())
+    }
+
+    @Test fun disconnectAfterOpeningOsdStillReleasesAutomaticPort() {
+        press(1, KeyEvent.KEYCODE_BUTTON_A)
+        press(2, KeyEvent.KEYCODE_BUTTON_B)
+        input.releaseAll() // the game menu cleared active button states
+        input.deviceRemoved(1) // Android now forgets the disconnected device
+        val fresh = RetroInputDevice(5, RetroInputKind.GAMEPAD, "dev-5", "Replacement")
+        assertEquals(0, input.port(fresh))
+        assertEquals(1, input.port(RetroInputDevice(2, RetroInputKind.GAMEPAD, "dev-2", "Remaining")))
+    }
+
 }

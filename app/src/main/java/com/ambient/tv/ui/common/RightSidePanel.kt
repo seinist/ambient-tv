@@ -538,11 +538,17 @@ private fun RightSidePanelChrome(
         }
         if (!standaloneMotion.dismiss.claim()) return
         dismissScope.launch {
-            standaloneMotion.progress.animateTo(
-                0f,
-                tween(if (reducedEffects) com.ambient.tv.ui.player.PLAYER_PANEL_REDUCED_MS
-                    else com.ambient.tv.ui.player.PLAYER_PANEL_EXIT_MS, easing = FastOutSlowInEasing),
-            )
+            val duration = if (reducedEffects) com.ambient.tv.ui.player.PLAYER_PANEL_REDUCED_MS
+                else com.ambient.tv.ui.player.PLAYER_PANEL_EXIT_MS
+            // A stalled Compose animation (surface loss, frame clock disruption, driver
+            // transition) must never strand the user in an unresponsive, closing panel.
+            // Normal exits still animate fully; an actual cancellation of this scope
+            // does not perform stale navigation into another screen.
+            kotlinx.coroutines.withTimeoutOrNull(duration * 4L + 250L) {
+                standaloneMotion.progress.animateTo(
+                    0f, tween(duration, easing = FastOutSlowInEasing),
+                )
+            }
             action()
         }
     }
