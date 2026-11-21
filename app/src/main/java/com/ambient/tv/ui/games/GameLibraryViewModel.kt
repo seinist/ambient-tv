@@ -55,6 +55,7 @@ class GameLibraryViewModel @Inject constructor(
     private val library: GameLibraryRepository,
     private val files: FileStore,
     private val access: FileAccess,
+    private val wakeMachines: com.ambient.tv.wol.WakeMachines,
     private val preferences: AppPreferences,
     @ApplicationContext private val context: Context,
 ) : ViewModel() {
@@ -146,11 +147,28 @@ class GameLibraryViewModel @Inject constructor(
         }
     }
 
+    /**
+     * A second SMB/NFS share on a known machine inherits its MAC and
+     * broadcast settings, but credentials remain per share.
+     */
+    private fun inheritMachineWake(source: FileSource): FileSource {
+        if (source.wolMac.isNotBlank() || files.sources().any { it.id == source.id }) return source
+        val sibling = files.sources().firstOrNull { it.kind != "local" &&
+            it.host.equals(source.host, ignoreCase = true) && it.wolMac.isNotBlank() }
+        if (sibling != null) return source.copy(
+            wolMac = sibling.wolMac, wolBroadcast = sibling.wolBroadcast,
+            wolPort = sibling.wolPort, wolWaitSeconds = sibling.wolWaitSeconds,
+            wolAuto = sibling.wolAuto, wireGuard = source.wireGuard || sibling.wireGuard,
+        )
+        val mac = wakeMachines.groupFor("files", source.host, null).second.firstOrNull()
+        return if (mac != null) source.copy(wolMac = mac) else source
+    }
+
     fun testNewNetworkSource(source: FileSource, password: String, keepPassword: Boolean, sshKey: String?) {
         viewModelScope.launch {
             mutable.update { it.copy(testingNetworkSource = true, error = null) }
             try {
-                val valid = source.copy(showInFiles = false).validated()
+                val valid = inheritMachineWake(source.copy(showInFiles = false).validated())
                 access.prepare(valid)
                 val original = files.sources().firstOrNull { it.id == valid.id }
                 val secret = if (keepPassword && original != null) files.password(original) else password
@@ -170,7 +188,7 @@ class GameLibraryViewModel @Inject constructor(
         viewModelScope.launch {
             mutable.update { it.copy(savingNetworkSource = true, error = null) }
             try {
-                val valid = source.copy(showInFiles = false).validated()
+                val valid = inheritMachineWake(source.copy(showInFiles = false).validated())
                 val match = files.sources().firstOrNull { it.id != valid.id &&
                     it.sameLocation(valid) && it.username == valid.username && it.domain == valid.domain }
                 if (match != null) {
