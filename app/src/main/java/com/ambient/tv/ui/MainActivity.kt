@@ -1521,7 +1521,10 @@ private fun AmbientTvApp(
         files = appPreferences.filesEnabled,
         trailers = appPreferences.trailersEnabled && !tokenStore.tmdbApiKey.isNullOrBlank(),
         iptvSourceId = configuredIptvSourceId,
-    )
+    ) ?: Destinations.GAME_LIBRARY.takeIf {
+        appPreferences.fileSources.any { !it.showInFiles } ||
+            appPreferences.gameLibraryFolders.isNotEmpty()
+    }
     val rootRoute = if (appPreferences.needsInitialSetup) Destinations.INITIAL_SETUP
         else configuredStartDestination() ?: Destinations.INITIAL_SETUP
     val startDestination = if (appPreferences.isConfigured && startupState.shouldChooseAtStartup)
@@ -2736,7 +2739,7 @@ private fun AmbientTvApp(
                         )
                     }
                     composable(Destinations.SETUP_COMPLETE, arguments = listOf(navArgument("destination") { type = NavType.StringType })) { entry ->
-                        val destination = entry.arguments?.getString("destination")?.takeIf { it in setOf(Destinations.HOME, Destinations.YOUTUBE, Destinations.TELEGRAM, Destinations.SPOTIFY, Destinations.RADIO, Destinations.FILES) || it == configuredStartDestination() } ?: Destinations.HOME
+                        val destination = entry.arguments?.getString("destination")?.takeIf { it in setOf(Destinations.HOME, Destinations.YOUTUBE, Destinations.TELEGRAM, Destinations.SPOTIFY, Destinations.RADIO, Destinations.FILES, Destinations.GAME_LIBRARY) || it == configuredStartDestination() } ?: Destinations.HOME
                         com.ambient.tv.ui.setup.SetupCompleteScreen(
                             onStart = { navController.navigate(destination) { popUpTo(Destinations.INITIAL_SETUP) { inclusive = true } } },
                             onAddSource = { navController.popBackStack(Destinations.INITIAL_SETUP, false) },
