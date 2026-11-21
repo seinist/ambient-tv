@@ -102,6 +102,8 @@ class RetroPadInput(
         if (port !in 0 until RetroPorts.COUNT) return
         if (!reserved) remoteState(port, 0, 0f, 0f, 0f, 0f)
         remoteReserved[port] = reserved
+        // A physical auto-assignment may have moved when this port was reserved/freed.
+        recomputeAll()
     }
 
     /** Complete phone state, rather than synthetic clicks: holds, diagonals and analog axes survive. */
@@ -322,7 +324,7 @@ class RetroPadInput(
         for (axis in 0 until 4) {
             // The strongest lean wins when several devices share a player.
             var value = (playing.map { it.analog[axis] } + listOf(remoteAnalog[port * 4 + axis]) +
-                if (port == 0) listOf(touchAnalog[axis]) else emptyList()).maxByOrNull { abs(it) } ?: 0
+                (if (port == 0) listOf(touchAnalog[axis]) else emptyList())).maxByOrNull { abs(it) } ?: 0
             if (axis < 2 && value == 0 && config().dpadAsStick) value = dpadAxis(buttons, axis)
             portAnalog.set(port * 4 + axis, value)
         }
