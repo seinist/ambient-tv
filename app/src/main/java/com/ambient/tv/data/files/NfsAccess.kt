@@ -10,6 +10,8 @@ import java.util.concurrent.atomic.AtomicInteger
  * Sources set to NFSv4 go to [Nfs4Access]. */
 class NfsAccess(private val rpcBindPort: Int = 111) {
     private val v4 = Nfs4Access()
+    /** NFSv4 worker lease, isolated from NFSv3's MOUNT/RPC session. */
+    internal fun v4ScanSession(source: FileSource): Nfs4Access.ScanSession = v4.ScanSession(source)
     private inner class Session(val source: FileSource) : Closeable {
         private val mountPort: Int = if (source.nfsMountPort > 0) source.nfsMountPort else NfsRpc(source, rpcBindPort).use { rpc ->
             rpc.call(100000, 2, 3, NfsXdr().apply { int(100005); int(3); int(6); int(0) }).int().also { require(it in 1..65535) }
