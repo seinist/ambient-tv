@@ -92,7 +92,14 @@ internal fun CompanionGamePointerPad(
                 if (!enabled) return@pointerInput
                 awaitEachGesture {
                     val down = awaitFirstDown(requireUnconsumed = false)
-                    pendingRelease.getAndSet(null)?.cancel()
+                    // A second tap can arrive during the 48ms hold window of the first.
+                    // Canceling its timer without sending UP left the mouse button/lightgun
+                    // trigger or stylus pressed across gestures. Emit the pending release
+                    // explicitly before starting the new contact.
+                    pendingRelease.getAndSet(null)?.let { pending ->
+                        pending.cancel()
+                        currentSend(null)
+                    }
                     val width = size.width.toFloat().coerceAtLeast(1f)
                     val height = size.height.toFloat().coerceAtLeast(1f)
                     // Stable per-finger ports: removing finger 0 cannot silently turn finger 1
