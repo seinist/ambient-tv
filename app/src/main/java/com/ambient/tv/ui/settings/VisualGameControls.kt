@@ -94,7 +94,8 @@ internal fun VisualGameControls() {
     val profile = when {
         deviceScope -> config.deviceProfile(kind, device!!.descriptor)
         level == null -> config.profile(kind)
-        else -> config.profile(kind, ctx, level)
+        else -> config.profile(kind, ctx, level,
+            deviceDescriptor = device?.descriptor.takeIf { kind == RetroInputKind.COMPANION })
     }
     val target: RetroInputTarget = menuTarget?.let { RetroInputTarget.Menu(it) }
         ?: RetroInputTarget.Button(RetroPadButton.fromKey(targetKey) ?: RetroPadButton.B)
