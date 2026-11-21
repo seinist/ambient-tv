@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="64dp" android:height="64dp" android:viewportWidth="64" android:viewportHeight="64">
+    <!-- Original Ambient TV vector silhouette, colored by the active UI accent. -->
+    <path android:fillColor="#00000000" android:strokeColor="#FFFFFFFF" android:strokeWidth="2.35" android:strokeLineCap="round" android:strokeLineJoin="round" android:pathData="M12,22 Q20,18 27,21 H37 Q44,18 52,22 L59,39 Q60,51 53,52 L43,44 L39,56 Q37,59 32,58 Q27,59 25,56 L21,44 L11,52 Q4,51 5,39 Z"/>
+    <path android:fillColor="#00000000" android:strokeColor="#FFFFFFFF" android:strokeWidth="2.35" android:strokeLineCap="round" android:strokeLineJoin="round" android:pathData="M14,34 H22 M18,30 V38"/>
+    <path android:fillColor="#00000000" android:strokeColor="#FFFFFFFF" android:strokeWidth="2.35" android:strokeLineCap="round" android:strokeLineJoin="round" android:pathData="M27,37 a5,5 0,1 0,10,0 a5,5 0,1 0,-10,0"/>
+    <path android:fillColor="#FFFFFFFF" android:pathData="M43.1,34 a1.9,1.9 0,1 0,3.8,0 a1.9,1.9 0,1 0,-3.8,0"/><path android:fillColor="#FFFFFFFF" android:pathData="M49.1,37 a1.9,1.9 0,1 0,3.8,0 a1.9,1.9 0,1 0,-3.8,0"/><path android:fillColor="#FFFFFFFF" android:pathData="M47.1,30 a1.9,1.9 0,1 0,3.8,0 a1.9,1.9 0,1 0,-3.8,0"/><path android:fillColor="#FFFFFFFF" android:pathData="M52.1,32 a1.9,1.9 0,1 0,3.8,0 a1.9,1.9 0,1 0,-3.8,0"/>
+    <path android:fillColor="#FFFFFFFF" android:pathData="M37.1,43 a2.9,2.9 0,1 0,5.8,0 a2.9,2.9 0,1 0,-5.8,0"/>
+</vector>
