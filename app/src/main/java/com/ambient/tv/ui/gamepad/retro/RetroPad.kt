@@ -35,11 +35,21 @@ enum class RetroPadButton(val key: String, val id: Int, @StringRes val titleRes:
     }
 }
 
+/** Stable descriptor: pairs the phone's pinned Companion identity to all device/port settings. */
+fun companionControllerDescriptor(fingerprint: String): String = "companion:$fingerprint"
+
+/** Synthetic keys do not collide with Android KeyEvent codes. Stored in existing profiles. */
+const val COMPANION_KEY_BASE = 4000
+fun companionControllerKey(button: RetroPadButton): Int = COMPANION_KEY_BASE + button.id
+fun companionControllerButton(code: Int): RetroPadButton? =
+    RetroPadButton.entries.firstOrNull { companionControllerKey(it) == code }
+
 /** Kinds of input device that can play; each has its own key layout. Stored by [key]. */
 enum class RetroInputKind(val key: String, @StringRes val titleRes: Int) {
     GAMEPAD("gamepad", AppR.string.retro_kind_gamepad),
     KEYBOARD("keyboard", AppR.string.retro_kind_keyboard),
     REMOTE("remote", AppR.string.retro_kind_remote),
+    COMPANION("companion", AppR.string.retro_kind_companion),
     ;
 
     companion object {
@@ -181,6 +191,11 @@ internal fun RetroInputProfile.full() = RetroInputProfile(
 )
 
 private fun defaultLayout(kind: RetroInputKind): RetroInputProfile = when (kind) {
+    RetroInputKind.COMPANION -> RetroInputProfile(
+        // Phone touch controls already use Libretro face positions, not Xbox scan codes.
+        buttons = RetroPadButton.entries.associateWith { listOf(companionControllerKey(it)) },
+        menu = emptyMap(),
+    )
     RetroInputKind.GAMEPAD -> RetroInputProfile(
         buttons = dpad() + mapOf(
             RetroPadButton.B to listOf(KeyEvent.KEYCODE_BUTTON_A),
