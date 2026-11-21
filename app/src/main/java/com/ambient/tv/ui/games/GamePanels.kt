@@ -207,9 +207,25 @@ internal fun GameCheatsPanel(
 
 /** Host, find or leave a two-player game with another Ambient TV in the same network. */
 @Composable
-internal fun GameNetplayPanel(netplay: GameNetplay, view: GLRetroView, game: PreparedGame, coreStamp: String) {
-    val identity by produceState<NetplayIdentity?>(null, game.file) {
-        value = withContext(Dispatchers.IO) { runCatching { GameNetplay.identity(game.file, coreStamp, game.title) }.getOrNull() }
+internal fun GameNetplayPanel(
+    netplay: GameNetplay,
+    view: GLRetroView,
+    game: PreparedGame,
+    coreStamp: String,
+    vulkan: Boolean,
+    options: Map<String, String>,
+    systemDirectory: java.io.File,
+) {
+    val identity by produceState<NetplayIdentity?>(null, game.file, coreStamp, vulkan, options, systemDirectory) {
+        value = withContext(Dispatchers.IO) {
+            runCatching {
+                val compatibleCore = GameNetplay.configurationStamp(
+                    coreStamp, vulkan, options,
+                    game.system.bios.map { java.io.File(systemDirectory, it.file) },
+                )
+                GameNetplay.identity(game.file, compatibleCore, game.title)
+            }.getOrNull()
+        }
     }
     val idle = netplay.state is NetplayState.Idle || netplay.state is NetplayState.Failed
     LaunchedEffect(identity, idle) {
