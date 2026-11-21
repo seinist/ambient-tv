@@ -234,13 +234,6 @@ diff --git a/src/main/cpp/vulkan/vulkanbackend.h b/src/main/cpp/vulkan/vulkanbac
      uint32_t getNativeSdrStatus() const { return nativeSdrStatus.load(std::memory_order_acquire); }
  
      bool ensureFrameBuffer(unsigned width, unsigned height);
-@@ -172,6 +174,6 @@
-     struct PendingImage {
-         VkImage image = VK_NULL_HANDLE;
-         VkFormat format = VK_FORMAT_UNDEFINED;
-         VkImageLayout layout = VK_IMAGE_LAYOUT_UNDEFINED;
-         VkImageSubresourceRange range {};
-         uint32_t srcQueueFamily = VK_QUEUE_FAMILY_IGNORED;
 @@ -270,6 +275,9 @@
      uint32_t nativeOutputTransfer = 0; // SDR by default, per-session only
      uint32_t nativeCoreSourceTransfer = 0; // no trusted PQ/HLG source by default
