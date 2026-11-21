@@ -2462,4 +2462,5 @@
     <string name="game_library_title_filename">File name</string>
     <string name="game_library_remove">Remove</string>
     <string name="game_library_back">Back</string>
+    <string name="game_library_offline_wake">%1$s is offline. Wake the server to play this game?</string>
 </resources>
