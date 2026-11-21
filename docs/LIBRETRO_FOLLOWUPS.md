@@ -51,13 +51,17 @@ keyboard/mouse/lightgun), device EOTF and renderer parity gates below remain req
 
 ## Outstanding features (not represented as completed)
 
-1. **Full Libretro input abstractions:** Physical keyboard as `RETRO_DEVICE_KEYBOARD`,
-   relative mouse, lightgun and multiple pointer contacts. The pinned Argosy fork currently
-   implements joypad/analog/one pointer, not full keyboard/mouse/lightgun polling; requires
-   native frontend work plus a game-focus mode separate from menu key bindings.
-2. **System-specific controls:** DS dual-screen layouts and touch targeting, Wii Remote
-   infrared/motion/nunchuck controls and Wii U GamePad secondary-screen input. A basic
-   Android touch→pointer bridge does **not** solve those features.
+1. **Full Libretro input abstractions:** `RETRO_DEVICE_KEYBOARD` (raw held physical keys,
+   keyboard callback/text), mouse wheel/extra buttons and advanced per-core device negotiation.
+   PR #441 adds up to four pointer contacts, relative mouse and lightgun polling to the pinned
+   LibretroDroid frontend; their compatibility must still be tested on actual cores.
+2. **System-specific controls:** PR #441 adds a separate phone touchscreen/stylus pad with
+   user-selectable top/bottom/left/right/full-frame calibration (DS/3DS/Wii U default lower),
+   Wii-style pointer/IR aiming via the touch surface, mouse/lightgun modes and opt-in phone
+   accelerometer/gyroscope readings routed per Libretro player port. **The core must actually
+   consume these Libretro input/sensor devices.** This does not emulate every proprietary
+   Wiimote/Nunchuk/IR extension, camera/light-sensor, or stream Wii U GamePad/DS video to the
+   handset. Real two-screen and motion compatibility requires per-core/device testing.
 3. **Frame advance and Run-Ahead:** Single-frame stepping needs an explicit paused-core call;
    Run-Ahead needs measured core state serialization and extra emulation steps and must be
    off on expensive GPU cores and netplay/hardcore.
