@@ -336,7 +336,7 @@ internal object CompanionBackupPolicy {
         // Remap game folder foreign keys after fileSources have been matched on the TV.
         // Preserve existing local folders and never transfer SAF grants or device paths.
         val gameFolders = (current["gameLibraryFolders"] as? JsonArray).orEmpty().map { it.jsonObject }.toMutableList()
-        val validSources = result.list("fileSources").map { it.text("id") }.toSet()
+        val validSources = (result["fileSources"] as? JsonArray).orEmpty().map { it.jsonObject.text("id") }.toSet()
         val sourceIds = mappedIds["fileSources"].orEmpty()
         for (folder in (incoming["gameLibraryFolders"] as? JsonArray).orEmpty().map { it.jsonObject }) {
             val mappedSource = sourceIds[folder.text("sourceId")] ?: continue
