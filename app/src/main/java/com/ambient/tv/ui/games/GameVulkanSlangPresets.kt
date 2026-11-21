@@ -18,6 +18,7 @@ internal object GameVulkanSlangPresets {
         GameShader.CRT_LIGHT to "crt-light",
         GameShader.CRT_GEOMETRY to "crt-geometry",
         GameShader.CRT_APERTURE to "crt-aperture",
+        GameShader.CRT_GLOW to "crt-glow",
         GameShader.GAMEBOY_DMG to "gb-dmg",
         GameShader.GBC_GRID to "gbc-grid",
         GameShader.NTSC_COMPOSITE to "ntsc",
@@ -36,8 +37,10 @@ internal object GameVulkanSlangPresets {
             val directory = File(context.noBackupFilesDir, "games/vulkan-slang/$VERSION")
             if (!directory.isDirectory && !directory.mkdirs())
                 error("Cannot prepare Vulkan shader storage")
-            listOf("slang", "slangp").forEach { ext ->
-                val filename = "$name.$ext"
+            val files = if (name == "crt-glow")
+                listOf("crt-glow-horizontal.slang", "crt-glow-final.slang", "crt-glow.slangp")
+            else listOf("$name.slang", "$name.slangp")
+            files.forEach { filename ->
                 val source = context.assets.open("games/slang/$filename").use { input ->
                     input.readBytes().also { check(it.size in 1..16_384) }
                 }
