@@ -231,6 +231,31 @@ class RetroPadInputTest {
         assertEquals(0, input.analog(0, 0, 1))
     }
 
+    @Test fun remotePhonesKeepTheirOwnPortsAndClearOnRelease() {
+        input.reserveRemotePort(0, true)
+        input.reserveRemotePort(2, true)
+        input.remoteState(0, RetroPadButton.A.mask, 0.5f, 0f, 0f, 0f)
+        input.remoteState(2, RetroPadButton.B.mask, 0f, 0f, -1f, 0f)
+        assertEquals(RetroPadButton.A.mask, input.buttons(0))
+        assertEquals(RetroPadButton.B.mask, input.buttons(2))
+        assertTrue(input.analog(0, 0, 0) > 10_000)
+        assertEquals(-RetroPadInput.ANALOG_MAX, input.analog(2, 1, 0))
+        input.reserveRemotePort(0, false)
+        assertEquals(0, input.buttons(0))
+        assertEquals(0, input.analog(0, 0, 0))
+        assertEquals(RetroPadButton.B.mask, input.buttons(2))
+        input.releaseAll()
+        assertEquals(0, input.buttons(2))
+        assertEquals(0, input.analog(2, 1, 0))
+    }
+
+    @Test fun localControllerAvoidsAReservedPhonePort() {
+        input.reserveRemotePort(0, true)
+        assertTrue(press(1, KeyEvent.KEYCODE_BUTTON_A))
+        assertEquals(RetroPadButton.B.mask, input.buttons(1))
+        assertEquals(0, input.buttons(0))
+    }
+
     @Test fun pauseAndMenuReleaseVirtualButtonsToo() {
         input.touchButton(RetroPadButton.START, true)
         input.touchStick(1, 1f, 0f)
