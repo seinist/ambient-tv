@@ -70,7 +70,7 @@ class GameRomPreparer @Inject constructor(
         val ext = GameSystems.extension(entry.name)
         // Explicit folder assignment only resolves compatible/ambiguous formats. A verified
         // Wii or GameCube disc signature always beats a misleading folder assignment.
-        val assigned = GameSystems.byId(systemOverride)?.takeIf { system ->
+        val assigned = systemOverride?.let(GameSystems::byId)?.takeIf { system ->
             ext in system.extensions || ext in GameSystems.archiveExtensions ||
                 (ext in GameSystems.ambiguousExtensions &&
                     !(ext == "iso" && isoHeader != null && detectedSystem != null && detectedSystem.id != system.id))
