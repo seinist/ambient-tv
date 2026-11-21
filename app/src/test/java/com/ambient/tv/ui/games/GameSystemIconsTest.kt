@@ -13,7 +13,7 @@ import org.robolectric.annotation.Config
 
 /** Every registered console must inflate its own original, theme-tintable vector. */
 @RunWith(RobolectricTestRunner::class)
-@Config(sdk = [28])
+@Config(sdk = [35])
 class GameSystemIconsTest {
     @Test fun oneUniqueVectorPerSupportedSystem() {
         val registered = GameSystems.all.map { it.id }.toSet()
