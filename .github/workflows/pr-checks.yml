@@ -17,6 +17,7 @@ concurrency:
 
 permissions:
   contents: read
+  pull-requests: read
 
 env:
   NDK_VERSION: "30.0.16248370"
@@ -25,6 +26,40 @@ env:
   SKIP_MPV_NATIVE: "1"
 
 jobs:
+  games-changes:
+    runs-on: ubuntu-latest
+    outputs:
+      native: ${{ steps.detect.outputs.native }}
+      slang: ${{ steps.detect.outputs.slang }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 2
+      - name: Detect game/renderer changes by file, not PR title or branch name
+        id: detect
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          BEFORE: ${{ github.event.before }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "$GITHUB_EVENT_NAME" = "pull_request" ]; then
+            files=$(gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER/files?per_page=100" --paginate --jq '.[].filename')
+          elif [ "$GITHUB_EVENT_NAME" = "push" ]; then
+            files=$(git diff --name-only "$BEFORE" "$GITHUB_SHA" || git ls-files)
+          else
+            files=$(git ls-files)
+          fi
+          echo 'native=false' >> "$GITHUB_OUTPUT"
+          echo 'slang=false' >> "$GITHUB_OUTPUT"
+          if grep -Eq '^(app/src/(main|test)/java/com/ambient/tv/(games|ui/games|ui/gamepad)/|app/src/main/assets/games/|libretrodroid_wrapper/|scripts/(patches/libretrodroid/|native_libretro_vulkan/|fetch_libretrodroid\.sh|build_librashader_android\.sh)|gradle/external-versions\.properties|\.github/workflows/pr-checks\.yml)' <<< "$files"; then
+            echo 'native=true' >> "$GITHUB_OUTPUT"
+          fi
+          if grep -Eq '^(app/src/main/assets/games/slang/|app/src/main/java/com/ambient/tv/ui/games/|scripts/(native_libretro_vulkan/|patches/libretrodroid/|build_librashader_android\.sh|test_librashader_preset_api\.py)|gradle/external-versions\.properties|\.github/workflows/pr-checks\.yml)' <<< "$files"; then
+            echo 'slang=true' >> "$GITHUB_OUTPUT"
+          fi
+
   unit-tests:
     runs-on: ubuntu-latest
     timeout-minutes: 45
@@ -95,13 +130,9 @@ jobs:
   # verify 16-KiB ELF LOAD-segment alignment. A green ARM64-only build
   # cannot prove that the native frontend works on the other release ABIs.
   native-vulkan-abis:
-    # Verify all four native ABIs whenever a Games/Libretro PR is reviewed, not just #427.
-    if: >-
-      github.event_name == 'pull_request' &&
-      (contains(github.event.pull_request.title, 'Games') ||
-       contains(github.event.pull_request.title, 'Libretro') ||
-       startsWith(github.head_ref, 'fix/games') ||
-       github.head_ref == 'feat/libretro-vulkan-hdr-output')
+    needs: games-changes
+    # All game-native changes are checked on PRs AND on main, even after branch merges.
+    if: needs.games-changes.outputs.native == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 45
     strategy:
@@ -144,10 +175,8 @@ jobs:
   # pass while a missing/incompatible librashader.so would fail on device.
   # Build exactly the pinned Vulkan-only features, for every supported ABI.
   native-slang-runtime:
-    if: >-
-      github.event_name == 'pull_request' &&
-      (github.head_ref == 'feat/libretro-shader-library-small-apk' ||
-       github.head_ref == 'feat/libretro-vulkan-slang-pipeline')
+    needs: games-changes
+    if: needs.games-changes.outputs.slang == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 60
     strategy:
@@ -180,10 +209,8 @@ jobs:
 
   # Validate the actual pinned parser and C ABI, not just GLSL stage syntax.
   slang-preset-api:
-    if: >-
-      github.event_name == 'pull_request' &&
-      (contains(github.event.pull_request.title, 'Games') ||
-       contains(github.event.pull_request.title, 'Libretro'))
+    needs: games-changes
+    if: needs.games-changes.outputs.slang == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 35
     steps:
