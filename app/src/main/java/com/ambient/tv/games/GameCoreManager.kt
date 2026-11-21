@@ -101,7 +101,12 @@ class GameCoreManager @Inject constructor(
         // executable is already installed and remains loadable. Retain the old metadata
         // until a successful replace, allowing recovery after a storage error.
         if (oldInfo.isFile) {
-            if (runCatching { Os.rename(stagedInfo.absolutePath, infoFile(core).absolutePath) }.isSuccess) {
+            if (runCatching {
+                Files.move(
+                    stagedInfo.toPath(), infoFile(core).toPath(),
+                    StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING,
+                )
+            }.isSuccess) {
                 oldInfo.delete()
             }
         } else infoFile(core).delete()
