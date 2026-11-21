@@ -12,6 +12,7 @@ import com.ambient.tv.data.files.FileSource
 import com.ambient.tv.data.files.FileStore
 import com.ambient.tv.games.library.GameLibraryFolder
 import com.ambient.tv.games.library.GameLibraryRepository
+import com.ambient.tv.data.local.AppPreferences
 import com.ambient.tv.games.library.LibraryGame
 import dagger.hilt.android.lifecycle.HiltViewModel
 import javax.inject.Inject
@@ -48,6 +49,7 @@ class GameLibraryViewModel @Inject constructor(
     private val library: GameLibraryRepository,
     private val files: FileStore,
     private val access: FileAccess,
+    private val preferences: AppPreferences,
     @ApplicationContext private val context: Context,
 ) : ViewModel() {
     private val mutable = MutableStateFlow(GameLibraryUiState())
@@ -57,7 +59,7 @@ class GameLibraryViewModel @Inject constructor(
 
     init {
         viewModelScope.launch {
-            combine(library.revisions, files.revision) { _, _ -> Unit }.collect {
+            combine(library.revisions, files.revision, preferences.changes()) { _, _, _ -> Unit }.collect {
                 reload()
             }
         }
