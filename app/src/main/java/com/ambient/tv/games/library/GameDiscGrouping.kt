@@ -33,8 +33,12 @@ internal object GameDiscGrouping {
         // Suppress only references whose parent descriptor is actually in the scan results.
         // A broken missing playlist never deletes independent games from the library.
         references.forEach { (descriptor, children) ->
-            if (GameSystems.extension(descriptor) == "m3u" && descriptor in paths)
-                hidden += children.filter { it != descriptor && it in paths }
+            // A partial playlist is not playable as a complete multi-disc title.
+            // Retain each standalone disc if any referenced disc is missing.
+            if (GameSystems.extension(descriptor) == "m3u" && descriptor in paths &&
+                children.isNotEmpty() && children.all { it in paths }) {
+                hidden += children.filter { it != descriptor }
+            }
         }
         return paths - hidden
     }

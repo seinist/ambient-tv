@@ -18,6 +18,19 @@ class GameDiscGroupingTest {
         assertFalse("/absolute.iso" in refs)
         assertTrue("Games/Safe.chd" in refs)
     }
+    @Test fun incompletePlaylistNeverHidesItsStillPlayableDiscs() {
+        val paths = setOf("PSX/game.m3u", "PSX/disc1.cue", "PSX/other.chd")
+        val refs = GameDiscGrouping.referenced("PSX/game.m3u", "disc1.cue\ndisc2.chd\n")
+        assertEquals(paths, GameDiscGrouping.visiblePaths(paths, mapOf("PSX/game.m3u" to refs)))
+    }
+
+    @Test fun completePlaylistStillHidesEveryReferencedDisc() {
+        val paths = setOf("PSX/game.m3u", "PSX/disc1.cue", "PSX/disc2.chd", "PSX/other.chd")
+        val refs = GameDiscGrouping.referenced("PSX/game.m3u", "disc1.cue\ndisc2.chd\n")
+        assertEquals(setOf("PSX/game.m3u", "PSX/other.chd"),
+            GameDiscGrouping.visiblePaths(paths, mapOf("PSX/game.m3u" to refs)))
+    }
+
     @Test fun standaloneCueRemainsAVisiblePlayableGame() {
         val paths = setOf("Dreamcast/game.gdi", "PSX/game.cue")
         val refs = mapOf("PSX/game.cue" to setOf("PSX/game.bin"))
