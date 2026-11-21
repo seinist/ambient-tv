@@ -163,6 +163,14 @@ internal fun CompanionGamepadScreen(manager: CompanionManager, modifier: Modifie
                 dy = ((existing?.dy ?: 0f) + pointer.dy).coerceIn(-1f, 1f),
             ))
         } else {
+            // A click, release or input-mode change must never replace mouse travel that has
+            // not yet reached the 60Hz sampler. Enqueue those relative deltas first.
+            val pending = padFrame.value.pointer
+            if (pending?.kind == "mouse" && (pending.dx != 0f || pending.dy != 0f)) {
+                if (manager.gamepadInput(padFrame.value)) {
+                    padFrame.value = padFrame.value.copy(pointer = pending.copy(dx = 0f, dy = 0f))
+                }
+            }
             val previous = padFrame.value.pointer
             val next = padFrame.value.copy(pointer = pointer)
             if (next != padFrame.value) {
