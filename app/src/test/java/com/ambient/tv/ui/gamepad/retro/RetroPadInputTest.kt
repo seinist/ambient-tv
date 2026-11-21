@@ -288,6 +288,24 @@ class RetroPadInputTest {
             companionMappedButtons(RetroPadButton.B.mask, restored.deviceProfile(RetroInputKind.COMPANION, descriptor)))
     }
 
+    @Test fun phoneCoreOverrideIsAppliedOnlyForItsSelectedLibretroCore() {
+        val context = RetroInputProfileContext("snes", "snes9x", "game-one")
+        val descriptor = companionControllerDescriptor("core-specific-phone")
+        val saved = RetroInputConfig().assign(RetroInputKind.COMPANION, context,
+            RetroInputLayerScope.CORE, RetroInputTarget.Button(RetroPadButton.X),
+            companionControllerKey(RetroPadButton.B))
+        fun player(ctx: RetroInputProfileContext) = RetroPadInput(
+            config = { saved }, profileContext = ctx,
+            schedule = { _, _ -> {} }, onMenu = {},
+        ).apply { reserveRemotePort(1, true, descriptor) }
+        val first = player(context)
+        val second = player(context.copy(coreId = "bsnes"))
+        first.remoteState(1, RetroPadButton.B.mask, 0f, 0f, 0f, 0f)
+        second.remoteState(1, RetroPadButton.B.mask, 0f, 0f, 0f, 0f)
+        assertEquals(RetroPadButton.X.mask, first.buttons(1))
+        assertEquals(RetroPadButton.B.mask, second.buttons(1))
+    }
+
     @Test fun configuredPhoneMenuAndRewindBindingsActuallyReachTheGamePlayer() {
         val descriptor = companionControllerDescriptor("phone-hotkeys")
         config = config.assignDevice(RetroInputKind.COMPANION, descriptor,
