@@ -181,6 +181,7 @@ sealed interface HomeUiState {
 class HomeViewModel @Inject constructor(
     @ApplicationContext private val context: Context,
     private val appPreferences: AppPreferences,
+    private val gameLibrary: com.ambient.tv.games.library.GameLibraryRepository,
     private val mediaRepository: MediaRepository,
     val metadataPrefetcher: com.ambient.tv.data.browse.MetadataPrefetcher,
     val availability: com.ambient.tv.data.browse.SourceAvailability,
@@ -280,6 +281,9 @@ class HomeViewModel @Inject constructor(
     internal val pendingYouTubePlaybackReturn = youtubePlaybackContext.pendingReturn
     internal val pendingTelegramPlaybackReturn = telegramPlaybackContext.pendingReturn
     private var radioRows: List<ContentRowData> = emptyList()
+    private var gameRows: List<ContentRowData> = emptyList()
+    private var gameRowsJob: Job? = null
+    private var gameRowsGeneration = 0
     /** The actual stations behind each displayed Radio Browser Home row. */
     private val radioSourceRows = java.util.concurrent.ConcurrentHashMap<String, List<RadioStation>>()
     fun radioHomePlaybackStations(rowId: String): List<RadioStation> = radioSourceRows[rowId].orEmpty()
@@ -522,6 +526,15 @@ class HomeViewModel @Inject constructor(
     }
 
     init {
+        viewModelScope.launch {
+            gameLibrary.revisions.drop(1).collect {
+                if (hasEntered && !plexOnly && !jellyfinOnly && !embyOnly)
+                    loadGameRows()
+            }
+        }
+    }
+
+    init {
         var favoriteIds = appPreferences.radioFavorites.map(RadioStation::id)
         var recentIds = appPreferences.recentRadioStations.map(RadioStation::id)
         viewModelScope.launch {
@@ -659,6 +672,7 @@ class HomeViewModel @Inject constructor(
         loadPhotoRow()
         loadTrailerRows()
         loadRadioRows(forceRefresh = refreshing)
+        loadGameRows()
         loadYouTubeRows(youtubeMode)
         loadTelegramRows()
         if (!plexOnly && !jellyfinOnly && !embyOnly && liveTvRegistry.configured().isNotEmpty()) startTvPreview()
@@ -1949,6 +1963,30 @@ class HomeViewModel @Inject constructor(
         }
     }
 
+    /** Cached ROM metadata only: no automatic network wake or directory listing on Home. */
+    private fun loadGameRows() {
+        val revision = ++gameRowsGeneration
+        gameRowsJob?.cancel()
+        if (plexOnly || jellyfinOnly || embyOnly) {
+            gameRows = emptyList()
+            return
+        }
+        val definitions = appPreferences.homeRows.filter {
+            it.enabled && it.system == HomeRowDefinition.SYSTEM_GAMES
+        }
+        if (definitions.isEmpty() || gameLibrary.folders().isEmpty()) {
+            gameRows = emptyList()
+            return
+        }
+        gameRowsJob = viewModelScope.launch {
+            val games = kotlinx.coroutines.withContext(Dispatchers.IO) { gameLibrary.games() }
+            if (revision != gameRowsGeneration) return@launch
+            gameRows = gameHomeRows(context, definitions, games, HOME_ROW_LIMIT)
+            if (!_uiState.value.isFailurePage())
+                publishRows((_uiState.value as? HomeUiState.Loaded)?.rows.orEmpty())
+        }
+    }
+
     private fun loadRadioRows(forceRefresh: Boolean = false) {
         val generation = ++radioRowsGeneration
         radioJob?.cancel()
@@ -2186,7 +2224,7 @@ class HomeViewModel @Inject constructor(
     private fun publishRows(rows: List<ContentRowData>) =
         publishRowsInternal(
             withAllContinueRow(applyOverviewStyle(rows)),
-            hasRows = rows.isNotEmpty() || radioRows.isNotEmpty() || youtubeRows.isNotEmpty() || telegramRows.isNotEmpty(),
+            hasRows = rows.isNotEmpty() || radioRows.isNotEmpty() || gameRows.isNotEmpty() || youtubeRows.isNotEmpty() || telegramRows.isNotEmpty(),
         )
 
     /** Re-applies the system overview's page view. Rows already carry a resolved tile style. */
@@ -2331,8 +2369,8 @@ class HomeViewModel @Inject constructor(
         @Suppress("NAME_SHADOWING")
         val combinedRows = rows.filterNot {
             it.id == PHOTO_ROW_ID || it.id.startsWith("trailers.") || it.id.startsWith("radio.") ||
-                it.id.startsWith("youtube.") || it.id.startsWith("telegram.") || homeRowHidden(it.id)
-        } + listOfNotNull(photoRow?.takeUnless { homeRowHidden(it.id) }) + trailerRows + radioRows + youtubeRows + telegramRows
+                it.id.startsWith("youtube.") || it.id.startsWith("telegram.") || it.id.startsWith("games.") || homeRowHidden(it.id)
+        } + listOfNotNull(photoRow?.takeUnless { homeRowHidden(it.id) }) + trailerRows + radioRows + gameRows + youtubeRows + telegramRows
         val playedRow = trailerPlaybackReturn.source?.takeIf {
             playbackRowEnabled(it) || (it.items.none { item -> homeTrailerVideoId(item.ratingKey) != null ||
                 homeYouTubeVideoId(item.ratingKey) != null || item.ratingKey.startsWith(com.ambient.tv.data.telegram.TELEGRAM_MEDIA_PREFIX) } &&
@@ -2648,6 +2686,7 @@ class HomeViewModel @Inject constructor(
         youtubeReady = appPreferences.youtubeEnabled,
         spotifyReady = appPreferences.spotifyEnabled && spotifyRepository.nativeAvailable && spotifyRepository.webAuthorized,
         radioReady = appPreferences.radioEnabled,
+        gamesReady = gameLibrary.folders().isNotEmpty(),
         telegramReady = appPreferences.telegramEnabled && telegramRepository.available,
         embyReady = embyOnly || appPreferences.isEmbyConfigured,
         photosReady = photoRepository.hasAnyPhotoSource(),
