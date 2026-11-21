@@ -1979,7 +1979,7 @@ class HomeViewModel @Inject constructor(
             return
         }
         gameRowsJob = viewModelScope.launch {
-            val games = kotlinx.coroutines.withContext(Dispatchers.IO) { gameLibrary.games() }
+            val games = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { gameLibrary.games() }
             if (revision != gameRowsGeneration) return@launch
             gameRows = gameHomeRows(context, definitions, games, HOME_ROW_LIMIT)
             if (!_uiState.value.isFailurePage())
