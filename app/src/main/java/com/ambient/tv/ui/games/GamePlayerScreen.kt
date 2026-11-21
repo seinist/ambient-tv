@@ -309,9 +309,15 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
     val integerScaling = settings.integerScaling(system)
     val touchControls = settings.touchControls(system)
     val touchMode = settings.touchMode(system)
-    // Native RAW blit matches only the PIXEL preset; aspect and integer
-    // scaling are passed to Vulkan, while real shader presets stay in GLES.
-    val nativePictureSupported = selectedPack == null && GameVulkanPictureCompatibility.rawFullscreenEligible(shader)
+    // A trusted small Slang preset may opt into the experimental native WSI.
+    // Existing GLES filters remain available for all other choices and for HDR.
+    val nativeSlangPath = remember(context, shader, selectedPack, nativeTransfer, session.vulkan) {
+        if (session.vulkan && nativeTransfer == GameVulkanTransferMode.SDR)
+            GameVulkanSlangPresets.prepare(context, shader, selectedPack)
+        else null
+    }
+    val nativePictureSupported = selectedPack == null &&
+        (GameVulkanPictureCompatibility.rawFullscreenEligible(shader) || nativeSlangPath != null)
     val saveStates by model.saveStates.collectAsState()
 
     val chrome = remember { PlayerChromeState() }
@@ -470,6 +476,9 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
     }
     LaunchedEffect(integerScaling, vulkanSurfaceHost) {
         vulkanSurfaceHost?.updateIntegerScaling(integerScaling)
+    }
+    LaunchedEffect(nativeSlangPath, vulkanSurfaceHost) {
+        vulkanSurfaceHost?.updateShaderPreset(nativeSlangPath)
     }
     LaunchedEffect(coreReady, vulkanSurfaceHost) {
         if (coreReady) vulkanSurfaceHost?.coreReady()
@@ -1447,10 +1456,15 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
                                             },
                                         )
                                         val fullscreenAvailable = nativePictureSupported &&
+                                            (nativeSlangPath == null || nativeSdrStatus.shaderPresenting) &&
                                             GameVulkanFullscreenPolicy.canEnable(
                                                 session.vulkan, toneMap, nativeSdrDiagnostic,
                                                 nativeSdrStatus, netplay.active, displayHdr, vulkanSurfaceFormats,
                                             )
+                                        if (nativeSlangPath != null) {
+                                            GamePanelText(stringResource(if (nativeSdrStatus.shaderPresenting)
+                                                R.string.games_vulkan_shader_presenting else R.string.games_vulkan_shader_pending))
+                                        }
                                         if (!nativePictureSupported) {
                                             GamePanelText(stringResource(R.string.game_info_native_picture_requires_gles))
                                         }
