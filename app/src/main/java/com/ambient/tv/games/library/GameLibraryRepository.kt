@@ -476,9 +476,13 @@ class GameLibraryRepository @Inject constructor(
                     async(Dispatchers.IO) {
                         val indexed = ArrayList<IndexedGame>()
                         val descriptors = mutableMapOf<String, Set<String>>()
-                        access.gameScanSession(source).use { session ->
+                        var lease: GameScanFileSession? = null
+                        try {
                             for (entry in queue) {
                                 kotlinx.coroutines.currentCoroutineContext().ensureActive()
+                                // An empty folder should not establish three unnecessary
+                                // SMB/NFS sessions. Connect each worker on its first file.
+                                val session = lease ?: access.gameScanSession(source).also { lease = it }
                                 val ext = GameSystems.extension(entry.name)
                                 if (ext in setOf("cue", "gdi", "m3u")) {
                                     val refs = runCatching {
@@ -534,6 +538,8 @@ class GameLibraryRepository @Inject constructor(
                                 if (count % 16 == 0 || count == discovered.get())
                                     onProgress(count, discovered.get())
                             }
+                        } finally {
+                            lease?.close()
                         }
                         indexed to descriptors
                     }
