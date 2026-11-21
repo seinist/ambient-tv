@@ -110,6 +110,11 @@ class CompactPlaybackFooterTest {
         rule.onNodeWithText("Einfach").performClick()
         rule.runOnIdle { assertEquals("simple", chosen) }
         rule.onNodeWithContentDescription("Einstellungsumfang: Einfach", useUnmergedTree = true).assertExists()
+        // The anchored selector popup is a separate Compose window. Its closing
+        // frame must detach before the next physical pointer tap reaches Back;
+        // otherwise Robolectric can route that tap to the stale popup scrim.
+        rule.mainClock.advanceTimeBy(400L)
+        rule.waitForIdle()
         // Exercise the button's real pointer/TV surface rather than only the Robolectric
         // semantics click on the nested text node.
         rule.onNodeWithText(rule.activity.getString(R.string.back)).performTouchInput { click() }
