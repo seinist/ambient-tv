@@ -21,6 +21,8 @@ import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.text.TextLayoutResult
 import com.ambient.tv.R
 import com.ambient.tv.ui.mobile.LocalHandheldUi
+import com.ambient.tv.ui.player.LocalPlayerPanelMotion
+import com.ambient.tv.ui.player.PlayerPanelMotionState
 import com.ambient.tv.ui.theme.AmbientTvTheme
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -41,7 +43,12 @@ class CompactPlaybackFooterTest {
 
     private fun mount(value: String = "Erweitert") {
         rule.setContent {
-            CompositionLocalProvider(LocalHandheldUi provides false) {
+            // The compact selector is used by player-owned settings panels. Model that
+            // actual host here; the standalone drawer entrance/exit is covered separately.
+            CompositionLocalProvider(
+                LocalHandheldUi provides false,
+                LocalPlayerPanelMotion provides PlayerPanelMotionState(active = true),
+            ) {
                 AmbientTvTheme {
                     RightSidePanel(
                         title = "Wiedergabe",
@@ -99,13 +106,8 @@ class CompactPlaybackFooterTest {
         rule.runOnIdle { assertEquals("simple", chosen) }
         rule.onNodeWithContentDescription("Einstellungsumfang: Einfach", useUnmergedTree = true).assertExists()
         rule.onNodeWithText(rule.activity.getString(R.string.back)).performClick()
-        // Standalone panels animate before notifying navigation. Advance frames repeatedly:
-        // a single large virtual-time jump can begin the coroutine at its end in Robolectric.
-        repeat(15) {
-            rule.mainClock.advanceTimeBy(100L)
-            rule.waitForIdle()
-        }
-        rule.waitUntil(timeoutMillis = 3_000L) { backCount == 1 }
+        // PlayerPanelVisibility handles the exit animation outside the right panel.
+        // The Back action must be delivered synchronously to that shared panel host.
         rule.runOnIdle { assertEquals(1, backCount) }
     }
 }
