@@ -48,6 +48,34 @@ class CompanionGamepadTest {
         }
     }
 
+    @Test fun liveFixedToAutoPortTransitionAndReclaimClearAllHeldState() {
+        val input = pad()
+        val settings = com.ambient.tv.ui.gamepad.retro.RetroInputSettings
+        val descriptor = com.ambient.tv.ui.gamepad.retro.companionControllerDescriptor("device-1")
+        settings.attach(emptyMap()) {}
+        try {
+            settings.update { it.withPort(descriptor, 2) }
+            CompanionGamepadSession.attach(input, "snes", "snes9x", "Game", false) {}
+            CompanionGamepadSession.setReady(input, true)
+            assertEquals(2, CompanionGamepadSession.claim("socket-a", "device-1"))
+            assertTrue(CompanionGamepadSession.input("socket-a",
+                CompanionGamepadState(buttons = RetroPadButton.A.mask)))
+            assertEquals(RetroPadButton.A.mask, input.buttons(2))
+            settings.update { it.withPort(descriptor, com.ambient.tv.ui.gamepad.retro.RetroPorts.AUTO) }
+            assertTrue(CompanionGamepadSession.input("socket-a", CompanionGamepadState()))
+            assertEquals(0, CompanionGamepadSession.port("socket-a"))
+            assertEquals(0, input.buttons(2))
+            CompanionGamepadSession.release("socket-a")
+            assertEquals(-1, CompanionGamepadSession.port("socket-a"))
+            assertEquals(0, CompanionGamepadSession.claim("socket-a", "device-1"))
+            assertTrue(CompanionGamepadSession.input("socket-a", CompanionGamepadState()))
+            assertEquals(0, input.buttons(0))
+        } finally {
+            CompanionGamepadSession.detach(input)
+            settings.attach(emptyMap()) {}
+        }
+    }
+
     @Test fun separateAuthenticatedSessionsOwnDifferentPorts() {
         val input = pad()
         try {
