@@ -63,6 +63,14 @@ class RetroPadInput(
     private val remoteReserved = BooleanArray(RetroPorts.COUNT)
     private val remoteButtons = IntArray(RetroPorts.COUNT)
     private val remoteAnalog = IntArray(RetroPorts.COUNT * 4)
+    /** Each paired handset keeps its own persistent device descriptor and inherited profile. */
+    private val remoteDescriptors = arrayOfNulls<String>(RetroPorts.COUNT)
+    private val remoteRawButtons = IntArray(RetroPorts.COUNT)
+    private val remoteRewindHeld = BooleanArray(RetroPorts.COUNT)
+    private val remoteMenuCombo = BooleanArray(RetroPorts.COUNT)
+    private val remotePulseButtons = IntArray(RetroPorts.COUNT)
+    private val remoteHoldTimers = mutableMapOf<Pair<Int, RetroPadButton>, () -> Unit>()
+    private val remoteHoldOpened = mutableSetOf<Pair<Int, RetroPadButton>>()
 
     /** Called on the main thread after any player's buttons or sticks changed. */
     var onChanged: (() -> Unit)? = null
@@ -98,10 +106,22 @@ class RetroPadInput(
     fun localUsedPorts(): Set<Int> = devices.values.mapNotNull { port(it.info) }.toSet()
 
     /** Reserve a phone's port so automatically assigned physical controllers skip it. */
-    fun reserveRemotePort(port: Int, reserved: Boolean) {
+    fun reserveRemotePort(port: Int, reserved: Boolean, descriptor: String? = null) {
         if (port !in 0 until RetroPorts.COUNT) return
         if (!reserved) remoteState(port, 0, 0f, 0f, 0f, 0f)
         remoteReserved[port] = reserved
+        remoteDescriptors[port] = if (reserved) descriptor else null
+        if (!reserved) {
+            remoteRawButtons[port] = 0
+            remotePulseButtons[port] = 0
+            remoteMenuCombo[port] = false
+            remoteHoldTimers.keys.filter { it.first == port }.toList().forEach {
+                remoteHoldTimers.remove(it)?.invoke()
+            }
+            remoteHoldOpened.removeAll { it.first == port }
+            remoteRewindHeld[port] = false
+            if (rewinding() == 0 && remoteRewindHeld.none { it }) onRewind(false)
+        }
         // A physical auto-assignment may have moved when this port was reserved/freed.
         recomputeAll()
     }
@@ -110,7 +130,76 @@ class RetroPadInput(
     fun remoteState(port: Int, buttons: Int, leftX: Float, leftY: Float, rightX: Float, rightY: Float) {
         if (port !in 0 until RetroPorts.COUNT || !remoteReserved[port]) return
         val at = port * 4
-        val nextButtons = buttons and 0xffff
+        val sourceButtons = buttons and 0xffff
+        val descriptor = remoteDescriptors[port]
+        val profile = descriptor?.let {
+            profileContext?.let { context -> config().profile(RetroInputKind.COMPANION, context, deviceDescriptor = it) }
+                ?: config().deviceProfile(RetroInputKind.COMPANION, it)
+        }
+        val previousRaw = remoteRawButtons[port]
+        if (profile != null && previousRaw != sourceButtons) {
+            for (source in RetroPadButton.entries) {
+                val code = companionControllerKey(source)
+                val wasDown = previousRaw and source.mask != 0
+                val isDown = sourceButtons and source.mask != 0
+                if (isDown == wasDown) continue
+                val holdKey = port to source
+                if (isDown) {
+                    if (profile.opensMenu(code)) {
+                        remoteRawButtons[port] = sourceButtons
+                        openMenu()
+                        return
+                    }
+                    if (profile.fastForwards(code)) onFastForward()
+                    if (profile.holdOpensMenu(code)) {
+                        remoteHoldTimers[holdKey]?.invoke()
+                        remoteHoldTimers[holdKey] = schedule(KEY_BINDING_LONG_PRESS_MS) {
+                            if (remoteHoldTimers.remove(holdKey) != null) {
+                                remoteHoldOpened += holdKey
+                                openMenu()
+                            }
+                        }
+                    }
+                } else if (profile.holdOpensMenu(code)) {
+                    val cancel = remoteHoldTimers.remove(holdKey)
+                    cancel?.invoke()
+                    if (remoteHoldOpened.remove(holdKey).not() && cancel != null) {
+                        profile.button(code)?.let { target ->
+                            remotePulseButtons[port] = remotePulseButtons[port] or target.mask
+                            schedule(PULSE_MS) {
+                                remotePulseButtons[port] = remotePulseButtons[port] and target.mask.inv()
+                                recompute(port)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        remoteRawButtons[port] = sourceButtons
+        val rewind = profile != null && RetroPadButton.entries.any {
+            sourceButtons and it.mask != 0 && profile.rewinds(companionControllerKey(it))
+        }
+        if (rewind != remoteRewindHeld[port]) {
+            remoteRewindHeld[port] = rewind
+            onRewind(rewinding() > 0 || remoteRewindHeld.any { it })
+        }
+        var nextButtons = if (profile != null) companionMappedButtons(sourceButtons, profile)
+            else sourceButtons
+        if (profile != null) RetroPadButton.entries.forEach { source ->
+            if (profile.holdOpensMenu(companionControllerKey(source)) && sourceButtons and source.mask != 0)
+                profile.button(companionControllerKey(source))?.let { nextButtons = nextButtons and it.mask.inv() }
+        }
+        if (profile != null && config().startSelectMenu) {
+            val combo = RetroPadButton.START.mask or RetroPadButton.SELECT.mask
+            val together = nextButtons and combo == combo
+            if (together && !remoteMenuCombo[port]) {
+                remoteMenuCombo[port] = true
+                openMenu()
+                return
+            }
+            if (!together) remoteMenuCombo[port] = false
+        }
+        nextButtons = nextButtons or remotePulseButtons[port]
         val nextX = stick(leftX)
         val nextY = stick(leftY)
         val nextRX = stick(rightX)
