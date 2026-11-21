@@ -83,6 +83,13 @@ class FileAccess @Inject constructor(
             smbLease?.close()
             throw error
         }
+        val nfs4Lease = try {
+            if (source.kind == "nfs" && source.nfsVersion == 4)
+                nfs.v4ScanSession(source) else null
+        } catch (error: Throwable) {
+            try { smbLease?.close() } finally { nfsLease?.close() }
+            throw error
+        }
         return object : GameScanFileSession {
             @Volatile private var closed = false
             override suspend fun list(path: String, limit: Int,
@@ -104,6 +111,7 @@ class FileAccess @Inject constructor(
                     when {
                         smbLease != null -> smbLease.open(path)
                         nfsLease != null -> nfsLease.open(path)
+                        nfs4Lease != null -> nfs4Lease.open(path)
                         else -> openSource(source, path)
                     }
                 }
@@ -123,7 +131,10 @@ class FileAccess @Inject constructor(
             override fun close() {
                 if (!closed) {
                     closed = true
-                    try { smbLease?.close() } finally { nfsLease?.close() }
+                    try { smbLease?.close() }
+                    finally {
+                        try { nfsLease?.close() } finally { nfs4Lease?.close() }
+                    }
                 }
             }
         }
