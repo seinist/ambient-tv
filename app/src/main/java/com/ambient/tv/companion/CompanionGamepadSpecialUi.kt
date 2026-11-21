@@ -26,6 +26,7 @@ import androidx.compose.ui.unit.dp
 import com.ambient.tv.R
 import java.util.concurrent.atomic.AtomicReference
 import kotlin.math.hypot
+import kotlinx.coroutines.delay
 
 /** The core receives a single normalized frame, not the dimensions of this remote handset. */
 internal fun companionPointerCoordinates(x: Float, y: Float, region: String): Pair<Float, Float> {
@@ -124,12 +125,21 @@ internal fun CompanionGamePointerPad(
                             }
                             if (kind == "mouse") {
                                 if (dx != 0f || dy != 0f) deliver(dx, dy)
-                            } else deliver()
+                            } else {
+                                // A rapid pen tap must cross at least one 60Hz core poll. Libretro
+                                // input_state may otherwise see DOWN and UP between two frames.
+                                if (pressed.isEmpty()) {
+                                    val elapsed = SystemClock.uptimeMillis() - started
+                                    if (elapsed < 48L) delay(48L - elapsed)
+                                }
+                                deliver()
+                            }
                         }
                         if (kind == "mouse" && movement < width * 0.025f &&
                             SystemClock.uptimeMillis() - started < 300L) {
                             // Short taps are separate frames; coalescing must preserve the edge.
                             currentSend(CompanionPointerState(kind = "mouse", buttons = 1))
+                            delay(48L)
                             currentSend(CompanionPointerState(kind = "mouse", buttons = 0))
                         }
                     } finally {
