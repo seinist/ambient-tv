@@ -172,6 +172,16 @@ class GameLibraryRepository @Inject constructor(
         changed()
     }
 
+    /** A launch probe is user-initiated and passive. No magic packets are sent. */
+    suspend fun needsWakeForLaunch(sourceId: String): Boolean {
+        val source = files.sources().firstOrNull { it.id == sourceId }
+            ?: throw IOException("Source was removed")
+        if (!source.network || source.wolAuto || source.wolMac.isBlank()) return false
+        // Ensure the existing WireGuard route first, without automatically waking the NAS.
+        access.prepare(source.copy(wolAuto = false))
+        return !wake.isReachable(source)
+    }
+
     /** Explicit manual wake uses the SAME machine coordinator and notification as Files. */
     suspend fun wakeSource(sourceId: String): Boolean = withContext(Dispatchers.IO) {
         val source = files.sources().firstOrNull { it.id == sourceId } ?: return@withContext false
