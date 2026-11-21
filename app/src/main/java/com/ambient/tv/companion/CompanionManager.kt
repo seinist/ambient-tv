@@ -379,6 +379,7 @@ class CompanionManager @Inject constructor(@ApplicationContext private val conte
     @Volatile private var remoteServiceRequested = false
     private var remoteServiceFailed = false
     private val inputLease = CompanionInputLease()
+    private var inputLeaseRefreshAtMs = 0L
     private var leaseTimer: Job? = null
     private var offerExpiry: Job? = null
     private var offerSession: String? = null
@@ -959,6 +960,7 @@ class CompanionManager @Inject constructor(@ApplicationContext private val conte
         synchronized(inputLease) {
             val previous = inputLease.name
             if (inputLease.release(session)) {
+                inputLeaseRefreshAtMs = 0L
                 leaseTimer?.cancel(); leaseTimer = null
                 mutable.update { it.copy(controller = "") }
                 scope.launch(Dispatchers.Main) { CompanionRemoteInput.hide() }
@@ -969,8 +971,10 @@ class CompanionManager @Inject constructor(@ApplicationContext private val conte
     private fun claimControl(session: String, name: String) {
         synchronized(inputLease) {
             val previous = inputLease.owner
-            check(inputLease.claim(session, name, SystemClock.elapsedRealtime()))
-            mutable.update { it.copy(controller = name) }
+            val now = SystemClock.elapsedRealtime()
+            check(inputLease.claim(session, name, now))
+            inputLeaseRefreshAtMs = now
+            if (mutable.value.controller != name) mutable.update { it.copy(controller = name) }
             if (previous != session) notice(R.string.companion_control_started, name)
             leaseTimer?.cancel()
             leaseTimer = scope.launch { delay(60_000); releaseRemoteControl(session) }
@@ -1509,7 +1513,11 @@ class CompanionManager @Inject constructor(@ApplicationContext private val conte
                             require(foreground || request.type == "start" && receiverServiceActive && mutable.value.backgroundReceiver || request.type in setOf("status", "play", "pause", "stop", "seek", "volume", "select", "shuffle", "repeat", "next", "previous", "queue_add", "queue_remove", "queue_move", "queue_clear", "queue_page", "input_release", "gamepad_release"))
                             when (request.type) {
                                 "status" -> {
-                                    if (synchronized(inputLease) { inputLease.owns(nonce, SystemClock.elapsedRealtime()) }) claimControl(nonce, peer.name)
+                                    // Avoid restarting a 60s lease coroutine for every idle status or
+                                    // mouse/DPAD event. Renew infrequently, well before expiry.
+                                    if (synchronized(inputLease) { inputLease.owns(nonce, SystemClock.elapsedRealtime()) } &&
+                                        SystemClock.elapsedRealtime() - inputLeaseRefreshAtMs >= 10_000L)
+                                        claimControl(nonce, peer.name)
                                 }
                                 "input_claim" -> {
                                     if (!synchronized(inputLease) { inputLease.owner == null || inputLease.owns(nonce, SystemClock.elapsedRealtime()) }) {
@@ -1536,7 +1544,8 @@ class CompanionManager @Inject constructor(@ApplicationContext private val conte
                                 }
                                 "input" -> {
                                     check(synchronized(inputLease) { inputLease.owns(nonce, SystemClock.elapsedRealtime()) })
-                                    claimControl(nonce, peer.name)
+                                    if (SystemClock.elapsedRealtime() - inputLeaseRefreshAtMs >= 10_000L)
+                                        claimControl(nonce, peer.name)
                                     requireNotNull(request.input).validate()
                                     error = "input_unavailable"
                                     check(CompanionRemoteInput.dispatch(request.input))
@@ -1580,10 +1589,14 @@ class CompanionManager @Inject constructor(@ApplicationContext private val conte
                         catch (failure: Exception) { if (error.isEmpty()) error = if (failure is CompanionSourceUnavailableException) "source_unavailable" else if (failure is CompanionLaunchException) failure.reason else "unsupported"; if (request.type.startsWith("backup_")) transfer = null }
                         val back = returnSession
                         check(back?.pending == null) // Every return frame must be acknowledged by the next request.
-                        val next = back?.frames?.tryReceive()?.getOrNull()
+                        // Realtime traffic never carries a settings return frame. This is required
+                        // to pipeline several inputs without round-trip blocking on sync acknowledgements.
+                        val realtime = request.type == "gamepad_input" || request.type == "input"
+                        val next = if (realtime) null else back?.frames?.tryReceive()?.getOrNull()
                         val returned = next?.let { CompanionSyncFrame.from(++back.sequence, it.first).also { frame -> back.pending = frame to it.second } }
-                        // Motion uses a tiny acknowledgement; never fetch artwork at input frequency.
-                        val playback = if (request.type == "gamepad_input")
+                        // Both the gaming and normal remote controllers benefit: a tiny ACK avoids
+                        // artwork decoding, media metadata and queue enumeration on every touch.
+                        val playback = if (realtime)
                             CompanionFrame(type = "state", gamepadInfo = CompanionGamepadSession.info())
                         else playbackState(queueOffset).let { if (returned == null) it else it.copy(artwork = "", options = emptyList(), queue = emptyList()) }
                         val result = backupResults[nonce]
@@ -1830,9 +1843,10 @@ class CompanionManager @Inject constructor(@ApplicationContext private val conte
                                 else -> R.string.companion_play_failed }, error = true)
                         // Preserve playback/queue fields when the receiver returns a small gamepad ACK.
                         mutable.update { old ->
-                            val remote = if (command.type == "gamepad_input" && old.remote != null)
+                            val remote = if (command.type in setOf("gamepad_input", "input") && old.remote != null)
                                 old.remote.copy(gamepadInfo = state.gamepadInfo,
-                                    gamepadPort = state.gamepadPort)
+                                    gamepadPort = state.gamepadPort,
+                                    inputGranted = state.inputGranted, controller = state.controller)
                             else state.copy(receiverId = trusted.fingerprint)
                             old.copy(remote = remote)
                         }
