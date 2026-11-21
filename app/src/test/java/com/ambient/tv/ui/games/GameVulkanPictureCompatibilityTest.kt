@@ -16,6 +16,7 @@ class GameVulkanPictureCompatibilityTest {
     @Test fun onlyAllowlistedOriginalSlangPresetsEligibleForNativeShaderOutput() {
         val allowed = setOf(
             GameShader.CRT_LIGHT, GameShader.CRT_GEOMETRY, GameShader.CRT_APERTURE,
+            GameShader.CRT_GLOW, // two-pass Vulkan Slang framebuffer chain
             GameShader.GAMEBOY_DMG, GameShader.GBC_GRID, GameShader.NTSC_COMPOSITE,
             GameShader.COLOR_BOOST, GameShader.SHARP_BILINEAR,
         )
