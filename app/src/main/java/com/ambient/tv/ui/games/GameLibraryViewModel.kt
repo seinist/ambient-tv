@@ -45,6 +45,8 @@ data class GameLibraryUiState(
     val directoryEntries: List<FileEntry> = emptyList(),
     val browsing: Boolean = false,
     val pendingWakeGame: LibraryGame? = null,
+    val savingNetworkSource: Boolean = false,
+    val testingNetworkSource: Boolean = false,
 )
 
 @HiltViewModel
@@ -121,6 +123,63 @@ class GameLibraryViewModel @Inject constructor(
     }
 
     fun remove(folder: GameLibraryFolder) = library.removeFolder(folder.id)
+    fun setAlsoShowInFiles(folder: GameLibraryFolder, show: Boolean) =
+        library.setAlsoShowInFiles(folder.id, show)
+
+    fun deleteUnusedGameSource(source: FileSource) {
+        if (source.showInFiles || library.folders().any { it.sourceId == source.id }) return
+        viewModelScope.launch {
+            try {
+                withContext(Dispatchers.IO) {
+                    files.removeSource(source.id)
+                    if (source.kind == "local" && files.sources().none { it.treeUri == source.treeUri }) {
+                        runCatching {
+                            context.contentResolver.releasePersistableUriPermission(
+                                Uri.parse(source.treeUri), Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                        }
+                    }
+                }
+                closePicker()
+            } catch (error: Exception) { mutable.update { it.copy(error = error.message) } }
+        }
+    }
+
+    fun testNewNetworkSource(source: FileSource, password: String, keepPassword: Boolean, sshKey: String?) {
+        viewModelScope.launch {
+            mutable.update { it.copy(testingNetworkSource = true, error = null) }
+            try {
+                val valid = source.copy(showInFiles = false).validated()
+                access.prepare(valid)
+                when (valid.kind) {
+                    "smb" -> access.testSmb(valid, password)
+                    "nfs" -> access.testNfs(valid)
+                    "webdav" -> access.testWebDav(valid, password)
+                    "sftp" -> access.testSftp(valid, password, sshKey.orEmpty())
+                }
+            } catch (cancel: CancellationException) { throw cancel }
+            catch (error: Exception) { mutable.update { it.copy(error = error.message) } }
+            finally { mutable.update { it.copy(testingNetworkSource = false) } }
+        }
+    }
+
+    fun saveNewNetworkSource(source: FileSource, password: String, keepPassword: Boolean, sshKey: String?) {
+        viewModelScope.launch {
+            mutable.update { it.copy(savingNetworkSource = true, error = null) }
+            try {
+                val valid = source.copy(showInFiles = false).validated()
+                val match = files.sources().firstOrNull { it.id != valid.id &&
+                    it.sameLocation(valid) && it.username == valid.username && it.domain == valid.domain }
+                if (match != null) {
+                    mutable.update { it.copy(error = "This network share is already configured; select the existing source.") }
+                    return@launch
+                }
+                withContext(Dispatchers.IO) { files.saveSource(valid, password.takeIf { it.isNotEmpty() }, sshKey) }
+                selectSource(valid)
+            } catch (cancel: CancellationException) { throw cancel }
+            catch (error: Exception) { mutable.update { it.copy(error = error.message) } }
+            finally { mutable.update { it.copy(savingNetworkSource = false) } }
+        }
+    }
     fun scanAll() {
         if (scan?.isActive == true) return
         scan = viewModelScope.launch {
@@ -147,7 +206,7 @@ class GameLibraryViewModel @Inject constructor(
         try {
             context.contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
             val name = uri.lastPathSegment?.substringAfterLast(':')?.takeIf { it.isNotBlank() } ?: "Retro ROMs"
-            val source = FileSource(name = name.take(160), kind = "local", treeUri = uri.toString())
+            val source = FileSource(name = name.take(160), kind = "local", treeUri = uri.toString(), showInFiles = false)
             files.saveSource(source, null)
             selectSource(source)
         } catch (error: Exception) { mutable.update { it.copy(error = error.message) } }
