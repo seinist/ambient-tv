@@ -35,7 +35,7 @@ import com.ambient.tv.ui.common.TvActionButton
 import com.ambient.tv.ui.common.TvTextField
 
 /** Phone pages drawn over the content area by the handheld navigation host instead of dialogs. */
-internal fun CompanionState.handheldPageOpen(): Boolean = pairingFlow || remotePanel || panel && sharedMedia == null
+internal fun CompanionState.handheldPageOpen(): Boolean = pairingFlow || remotePanel || gamepadPanel || panel && sharedMedia == null
 
 /**
  * Full-page frame for a phone companion page: back arrow, title, optional subtitle and a
