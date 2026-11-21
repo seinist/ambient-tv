@@ -54,3 +54,35 @@ optional pack/runtime installer are unfinished separate projects.
 For a compact APK, any future authentic shader pack should be optional,
 on-demand and removable with a pinned/signed manifest, per-file hashes,
 licenses, strict extraction limits and per-device compatibility rules.
+
+
+## Signed optional packs (follow-up PR #436)
+
+Signed, opt-in GLSL ES 100 shader packs are handled outside the APK by
+GameShaderPackStore and GameShaderPackChannel. The initial optional demonstration pack
+contains five original effects in shader_packs/shaders (all CC0-1.0). The base app
+contains no pack textures, no GLSL release archive and no new native runtime.
+
+- The user explicitly downloads a shader-pack release in Settings > Playback > Games.
+  No download or account check is performed while opening a game.
+- The publisher creates a new immutable shader-packs-* GitHub release using the
+  manual game-shaders.yml workflow and the existing CORES_SIGNING_KEY private key.
+  Each archive contains manifest.json, manifest.sig (ECDSA P-256) and hashed
+  shaders/*.frag. Pack content, license and source provenance are reviewed first.
+- Only single-pass GLSL ES 100 fragments are accepted. Imports, arbitrary
+  files, nested shader archives, native binaries, LUTs and temporal history are
+  deliberately not enabled in this safe format.
+- Limits: 512 KiB compressed, 256 KiB summed extracted bytes, 16 KiB per
+  shader, 32 presets, eight installed packs. Signature/hash verification, path
+  allowlist, atomic replacement and confirmation to remove are required.
+- Shader selections are serialized in the existing game Settings map and
+  included in backup and TV sync. Pack files intentionally are not backed up:
+  if not installed on the receiving device, the built-in shader is used
+  instead and the picture panel explains the missing selected pack.
+- Native Vulkan raw fullscreen cannot silently bypass pack effects. Any
+  external shader runs through GLES, including the Vulkan-core bridge; selected
+  PQ/HLG input retains the mandatory HDR-to-SDR conversion before the effect.
+
+A production release still needs hardware testing and a signed package published
+via the manual workflow. This subset is not full RetroArch .glslp/.slangp compatibility;
+librashader and original multipass assets remain tracked separately in issue #435.

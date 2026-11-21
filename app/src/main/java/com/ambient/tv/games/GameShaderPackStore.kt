@@ -231,10 +231,13 @@ class GameShaderPackStore @Inject constructor(@ApplicationContext private val co
 
     private fun validateInstalled(folder: File, expectedId: String = folder.name): GameShaderPackManifest? = runCatching {
         if (!folder.isDirectory) return@runCatching null
-        val raw = File(folder, "manifest.json").readBytes()
-        val sig = File(folder, "manifest.sig").readBytes()
-        if (raw.size !in 1..32768 || sig.size !in 1..512 ||
-            !GameCoreChannel.verify(raw, sig, key)) return@runCatching null
+        val manifestFile = File(folder, "manifest.json")
+        val signatureFile = File(folder, "manifest.sig")
+        if (manifestFile.length() !in 1..32768 || signatureFile.length() !in 1..512)
+            return@runCatching null
+        val raw = manifestFile.readBytes()
+        val sig = signatureFile.readBytes()
+        if (!GameCoreChannel.verify(raw, sig, key)) return@runCatching null
         val manifest = json.decodeFromString<GameShaderPackManifest>(raw.decodeToString())
         if (manifest.version != 1 || manifest.id != expectedId ||
             manifest.presets.isEmpty() || manifest.presets.size > 32) return@runCatching null

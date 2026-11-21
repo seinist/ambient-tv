@@ -301,6 +301,7 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
     val selectedPack = settings.packShader(system, game.saveKey)
     val gameShaderScope = settings.values.containsKey("shader.game." + game.saveKey)
     val installedShaders = remember(model) { model.shaderPacks.installed() }
+    val selectedPackConfig = remember(selectedPack, model) { model.shaderPacks.config(selectedPack) }
     val toneMap = settings.hdrToneMap(core)
     val nativeTransfer = GameVulkanTransferMode.forInput(toneMap)
     val aspect = settings.aspect(system)
@@ -422,7 +423,7 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
                 .map { (key, value) -> Variable(key, value) }.toTypedArray()
             saveRAMState = session.sram
             this.shader = GameHdrToneMapShader.forConfig(
-                model.shaderPacks.config(selectedPack) ?: shader.config(shaderIntensity),
+                selectedPackConfig ?: shader.config(shaderIntensity),
                 toneMap, session.vulkan, pixel = selectedPack == null && shader == GameShader.PIXEL,
             )
             rumbleEventsEnabled = true
@@ -1130,6 +1131,9 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
                             }
                             if (session.vulkan && toneMap != GameHdrToneMap.OFF) {
                                 GamePanelText(stringResource(R.string.game_picture_hdr_filter_note))
+                            }
+                            if (selectedPack != null && selectedPackConfig == null) {
+                                GamePanelText(stringResource(R.string.games_shader_packs_missing))
                             }
                             GamePanelText(stringResource(R.string.game_picture_filter))
                             RightPanelChoice(

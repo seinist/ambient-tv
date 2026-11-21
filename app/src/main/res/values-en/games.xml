@@ -307,4 +307,5 @@
     <string name="games_shader_packs_unavailable">The signing key is not configured for this build.</string>
     <string name="games_shader_packs_installed">Installed: %1$s</string>
     <string name="games_shader_packs_failed">Shader pack installation failed: %1$s</string>
+    <string name="games_shader_packs_missing">Selected shader pack is missing or invalid. Using the built-in picture filter until it is installed.</string>
 </resources>
