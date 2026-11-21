@@ -297,7 +297,7 @@ class SidebarViewModel @Inject constructor(
             gameLibrary.systemIds()).distinct().filter { com.ambient.tv.games.GameSystems.byId(it) != null }
 
     private fun networkFileSourcesFromStore(): List<FileSource> =
-        fileStore.sources().filter { it.network }
+        fileStore.fileBrowserSources().filter { it.network }
 
     private fun currentOfflineSources(): Set<String> {
         val configured = buildSet {
