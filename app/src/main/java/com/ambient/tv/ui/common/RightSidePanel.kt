@@ -6,7 +6,6 @@ import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.tween
 import androidx.tv.material3.LocalTextStyle
-import com.ambient.tv.ui.mobile.DeviceActionRow
 import com.ambient.tv.ui.mobile.deviceDp
 
 import androidx.compose.foundation.background
@@ -350,6 +349,8 @@ fun RightSidePanel(
     onOutsideTap: (() -> Unit)? = onBack,
     retainFocus: Boolean = true,
     focusRescue: PanelFocusRescue? = null,
+    /** Optional pinned leading footer control; never changes the panel's width. */
+    footerStart: (@Composable () -> Unit)? = null,
     content: @Composable ColumnScope.() -> Unit,
 ) {
     val scrollState = rememberScrollState()
@@ -382,6 +383,7 @@ fun RightSidePanel(
         onOutsideTap = onOutsideTap,
         retainFocus = retainFocus,
         focusRescue = focusRescue,
+        footerStart = footerStart,
     ) {
         Column(
             modifier = Modifier
@@ -495,6 +497,7 @@ private fun RightSidePanelChrome(
     focusRescue: PanelFocusRescue? = null,
     bodyOwnsNavigation: Boolean = false,
     footerReturnFocus: FocusRequester? = null,
+    footerStart: (@Composable () -> Unit)? = null,
     body: @Composable () -> Unit,
 ) {
     com.ambient.tv.ui.player.SleepWarningKeyGate.BlockWhileShown()
@@ -562,7 +565,7 @@ private fun RightSidePanelChrome(
                 RightSidePanelChrome(title, onBack, Modifier, subtitle, width, closeInsteadOfBack, requestHeaderFocus,
                     scrollToTop, scrollToEnd, scrollbar, canScrollBackward, canScrollForward, header, onOutsideTap = null,
                     retainFocus = retainFocus, focusRescue = focusRescue, bodyOwnsNavigation = bodyOwnsNavigation,
-                    footerReturnFocus = footerReturnFocus, body = body)
+                    footerReturnFocus = footerReturnFocus, footerStart = footerStart, body = body)
             }
         }
         return
@@ -584,6 +587,7 @@ private fun RightSidePanelChrome(
         enabled = playerPanelInteractive && !LocalRightPanelOverlayOwnsBack.current,
     ) { dismissBack() }
     val footerFocus = remember { FocusRequester() }
+    val footerStartFocus = remember { FocusRequester() }
     val bodyFocus = remember { FocusRequester() }
     var footerWrapJob by remember { mutableStateOf<kotlinx.coroutines.Job?>(null) }
     var panelHasFocus by remember { mutableStateOf(false) }
@@ -798,13 +802,42 @@ private fun RightSidePanelChrome(
             }
         }
         OverlayHairline()
-        DeviceActionRow(
+        // Keep both controls side by side even on a narrow handset. The wrapping
+        // selected value absorbs width pressure; FlowRow could otherwise move Back down.
+        Row(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(top = tokens.itemGap),
             horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End),
             verticalAlignment = Alignment.CenterVertically,
         ) {
+            if (footerStart != null) {
+                // Keep the leading control inside the existing fixed width. The Back button
+                // measures its natural width; the selector takes only the remaining space.
+                Box(
+                    Modifier.weight(1f)
+                        .focusRequester(footerStartFocus)
+                        .onPreviewKeyEvent { event ->
+                            when (event.key) {
+                                Key.DirectionRight -> {
+                                    if (event.type == KeyEventType.KeyDown) runCatching { footerFocus.requestFocus() }
+                                    true
+                                }
+                                Key.DirectionLeft -> {
+                                    if (event.type == KeyEventType.KeyDown) {
+                                        // A second Left returns to the last scrolled setting.
+                                        val returned = footerReturnFocus?.let {
+                                            runCatching { it.requestFocus() }.getOrDefault(false)
+                                        } == true
+                                        if (!returned && !bodyFocus.restoreFocusedChild()) bodyFocus.requestFocus()
+                                    }
+                                    true
+                                }
+                                else -> false
+                            }
+                        },
+                ) { footerStart() }
+            }
             TvActionButton(
                 text = stringResource(if (closeInsteadOfBack) R.string.action_close else R.string.back),
                 onClick = { dismiss(onBack) },
@@ -824,12 +857,18 @@ private fun RightSidePanelChrome(
                         }
                         if (event.key != Key.DirectionLeft) return@onPreviewKeyEvent false
                         if (event.type == KeyEventType.KeyDown) {
-                            // Keep the lazy panel's list -> scrollbar -> footer route reversible.
-                            // Its nested focus groups cannot reliably restore the bar implicitly.
-                            val returned = footerReturnFocus?.let {
-                                runCatching { it.requestFocus() }.getOrDefault(false)
-                            } == true
-                            if (!returned && !bodyFocus.restoreFocusedChild()) bodyFocus.requestFocus()
+                            // With two footer controls, Left moves from Back to the selector;
+                            // another Left from the selector returns to the scrolled body.
+                            val leadingFocused = footerStart != null &&
+                                runCatching { footerStartFocus.requestFocus() }.getOrDefault(false)
+                            if (!leadingFocused) {
+                                // Keep the lazy panel's list -> scrollbar -> footer route reversible.
+                                // Its nested focus groups cannot reliably restore the bar implicitly.
+                                val returned = footerReturnFocus?.let {
+                                    runCatching { it.requestFocus() }.getOrDefault(false)
+                                } == true
+                                if (!returned && !bodyFocus.restoreFocusedChild()) bodyFocus.requestFocus()
+                            }
                         }
                         true
                     },

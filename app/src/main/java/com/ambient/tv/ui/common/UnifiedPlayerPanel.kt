@@ -622,6 +622,8 @@ fun UnifiedPlayerSidePanel(
     onBack: () -> Unit,
     modifier: Modifier = Modifier,
     header: (@Composable () -> Unit)? = null,
+    /** Pinned beside Back only for the Playback settings root, not its subpages. */
+    footerStart: (@Composable () -> Unit)? = null,
     content: @Composable ColumnScope.() -> Unit,
 ) {
     // A level re-entered by Back focuses the row that opened the child instead of its first row.
@@ -647,6 +649,7 @@ fun UnifiedPlayerSidePanel(
         retainFocus = true,
         focusRescue = navigation?.focusRescue(),
         header = header,
+        footerStart = footerStart,
         content = content,
     )
 }
