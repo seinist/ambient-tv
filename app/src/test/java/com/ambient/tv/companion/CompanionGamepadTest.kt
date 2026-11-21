@@ -151,10 +151,7 @@ class CompanionGamepadTest {
 
     @Test fun pointerCalibrationHandlesDualScreensAndOutsideBounds() {
         assertEquals(0.5f to 0.75f, companionPointerCoordinates(0.5f, 0.5f, "lower"))
-        assertEquals(0.25f to 0.25f, companionPointerCoordinates(0.5f, 0.5f, "upper").let {
-            // Upper screen retains horizontal full width while Y uses the top half.
-            (it.first / 2f) to it.second
-        })
+        assertEquals(0.5f to 0.25f, companionPointerCoordinates(0.5f, 0.5f, "upper"))
         assertEquals(0.75f to 0.5f, companionPointerCoordinates(0.5f, 0.5f, "right"))
         assertEquals(0f to 1f, companionPointerCoordinates(-4f, 8f, "full"))
         assertEquals("lower", companionDefaultPointerRegion("nds"))
