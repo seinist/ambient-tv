@@ -155,6 +155,9 @@ class GameLibraryRepository @Inject constructor(
         preferences.gameLibraryFolders = existing.map {
             if (it.id == id) it.copy(alsoShowInFiles = visible) else it
         }
+        // A Games-only share may be the device's first visible Files source.
+        // Opting in explicitly makes the Files system reachable as well.
+        if (visible) preferences.filesEnabled = true
         changed()
     }
 

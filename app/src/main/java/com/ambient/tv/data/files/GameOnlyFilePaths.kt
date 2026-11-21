@@ -19,14 +19,19 @@ internal fun filePathVisibleInBrowser(
 ): Boolean {
     val folders = assignments.filter { it.sourceId == sourceId }
     val matching = folders.filter { insideFileTree(path, it.path) }
-        .maxByOrNull { it.path.length }
+    val mostSpecificLength = matching.maxOfOrNull { it.path.length }
+    // A ROM directory can be assigned to multiple cores. Publishing it from
+    // ANY equally specific assignment makes its Files visibility unambiguous.
+    val explicitlyVisible = matching.any {
+        it.path.length == mostSpecificLength && it.alsoShowInFiles
+    }
     val navigatesToVisibleChild = folders.any {
         it.alsoShowInFiles && insideFileTree(it.path, path)
     }
-    return when (matching?.alsoShowInFiles) {
-        true -> true
-        false -> navigatesToVisibleChild
-        null -> sourceVisible || navigatesToVisibleChild
+    return when {
+        explicitlyVisible -> true
+        mostSpecificLength != null -> navigatesToVisibleChild
+        else -> sourceVisible || navigatesToVisibleChild
     }
 }
 
