@@ -17,6 +17,7 @@ import com.ambient.tv.data.local.AppPreferences
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.ensureActive
 import com.ambient.tv.games.GameSystems
+import com.ambient.tv.games.GameArchives
 import dagger.hilt.android.qualifiers.ApplicationContext
 import java.io.IOException
 import java.util.UUID
@@ -274,11 +275,21 @@ class GameLibraryRepository @Inject constructor(
                 ByteArray(0x20).also { if (media.read(0, it, it.size) != it.size) return@use null }
             } }.getOrNull()
         } else null
+        val ext = GameSystems.extension(entry.name)
+        if (ext in GameSystems.archiveExtensions) {
+            val fromArchive = runCatching {
+                access.open(source, entry.path).use { media ->
+                    GameArchives.system(entry.name, media)
+                }
+            }.getOrNull()
+            if (fromArchive != null) return fromArchive
+        }
         return GameSystems.forSourceFile(entry.name, entry.path, head)
     }
 
     private fun extractTitle(entry: FileEntry, source: FileSource, system: String): String? {
-        if (entry.size <= 0) return null
+        if (entry.size <= 0 || system !in setOf("gb", "gba", "nds", "snes", "megadrive",
+                "n64", "gamecube", "wii", "psp")) return null
         return runCatching {
             access.open(source, entry.path).use { media ->
                 GameRomTitles.extract(system, entry.name) { offset, count ->
