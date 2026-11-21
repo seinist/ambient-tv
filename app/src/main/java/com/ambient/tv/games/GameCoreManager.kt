@@ -101,12 +101,15 @@ class GameCoreManager @Inject constructor(
             }
             if (found != null) {
                 val (build, url) = found
-                val bytes = fetch(url, onProgress)
-                if (!GameCoreChannel.sha256(bytes).equals(build.sha256, ignoreCase = true)) {
-                    throw GameCoreSignatureException("${core.id}: checksum does not match the signed manifest")
+                val archive = fetchVerifiedZip(url, build.sha256, onProgress)
+                try {
+                    val tag = channel.manifest()?.first?.tag.orEmpty()
+                    return@withContext archive.inputStream().use { input ->
+                        install(core, input, zipped = true, origin = SOURCE_AMBIENT_PREFIX + tag)
+                    }
+                } finally {
+                    archive.delete()
                 }
-                val tag = channel.manifest()?.first?.tag.orEmpty()
-                return@withContext install(core, bytes.inputStream(), zipped = true, origin = SOURCE_AMBIENT_PREFIX + tag)
             }
             if (source == GameCoreSource.AMBIENT) throw GameCoreIncompatibleException("${core.id} is not in the app's core build for $abi")
         }
@@ -230,7 +233,12 @@ class GameCoreManager @Inject constructor(
         }
     }
 
-    private fun fetch(url: String, onProgress: (Float?) -> Unit): ByteArray {
+    /**
+     * Streams signed core assets to a temporary file while hashing. Never allocates the
+     * entire ZIP on a TV with limited Java heap; a failed signature leaves no install.
+     */
+    private fun fetchVerifiedZip(url: String, expectedSha: String, onProgress: (Float?) -> Unit): File {
+        val temporary = File.createTempFile("libretro-signed-", ".zip", context.cacheDir)
         val connection = (URL(url).openConnection() as HttpURLConnection).apply {
             connectTimeout = 15_000
             readTimeout = 30_000
@@ -239,18 +247,31 @@ class GameCoreManager @Inject constructor(
         try {
             if (connection.responseCode != HttpURLConnection.HTTP_OK) throw IOException("HTTP ${connection.responseCode}")
             val total = connection.contentLengthLong.takeIf { it > 0 }
-            val out = java.io.ByteArrayOutputStream()
+            if (total != null && total > MAX_CORE_ZIP) throw IOException("Core ZIP too large")
+            val digest = java.security.MessageDigest.getInstance("SHA-256")
+            var count = 0L
             connection.inputStream.use { input ->
-                val buffer = ByteArray(64 * 1024)
-                while (true) {
-                    val count = input.read(buffer)
-                    if (count < 0) break
-                    out.write(buffer, 0, count)
-                    if (out.size() > MAX_CORE_ZIP) throw IOException("Core archive too large")
-                    onProgress(total?.let { (out.size().toFloat() / it).coerceIn(0f, 1f) })
+                temporary.outputStream().buffered(256 * 1024).use { out ->
+                    val buffer = ByteArray(256 * 1024)
+                    while (true) {
+                        val read = input.read(buffer)
+                        if (read < 0) break
+                        if (read.toLong() > MAX_CORE_ZIP - count) throw IOException("Core ZIP too large")
+                        out.write(buffer, 0, read)
+                        digest.update(buffer, 0, read)
+                        count += read
+                        onProgress(total?.let { (count.toFloat() / it).coerceIn(0f, 1f) })
+                    }
                 }
             }
-            return out.toByteArray()
+            if (total != null && count != total) throw IOException("Incomplete core download")
+            val actual = digest.digest().joinToString("") { "%02x".format(it) }
+            if (!actual.equals(expectedSha, ignoreCase = true))
+                throw GameCoreSignatureException("Core ZIP checksum does not match signed manifest")
+            return temporary
+        } catch (error: Exception) {
+            temporary.delete()
+            throw error
         } finally {
             connection.disconnect()
         }
