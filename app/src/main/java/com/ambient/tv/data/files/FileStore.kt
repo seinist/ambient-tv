@@ -47,11 +47,7 @@ class FileStore @Inject constructor(
     } else ""
 
     private fun hiddenFolder(sourceId: String, path: String): Boolean =
-        preferences.gameLibraryFolders.any { folder ->
-            folder.sourceId == sourceId && !folder.alsoShowInFiles &&
-                (folder.path == path || folder.path.isEmpty() ||
-                    path.startsWith(folder.path.trimEnd('/') + "/"))
-        }
+        isGamesOnlyFilePath(sourceId, path, preferences.gameLibraryFolders)
     /** Credentials and source identity must be read atomically with edits and imports. */
     internal fun <T> withCurrentSource(source: FileSource, action: () -> T): T = synchronized(preferences.fileSourceLock) {
         if (sources().none { it == source }) throw java.io.IOException("Source configuration changed")
