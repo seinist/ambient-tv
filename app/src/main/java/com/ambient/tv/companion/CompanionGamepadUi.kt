@@ -30,8 +30,6 @@ import com.ambient.tv.games.GameTouchMode
 import com.ambient.tv.ui.gamepad.retro.RetroPadButton
 import com.ambient.tv.ui.games.GameTouchControls
 import kotlinx.coroutines.delay
-import kotlin.properties.ReadWriteProperty
-import kotlin.reflect.KProperty
 import kotlinx.coroutines.launch
 
 /** Initial layout follows the console but never changes the TV's authoritative core mapping. */
@@ -61,12 +59,9 @@ internal fun companionPointerEdge(old: CompanionPointerState?, next: CompanionPo
 /** No Compose invalidation per raw stick/sensor sample. Child controls repaint their own knobs,
  * while the full-page header/layout recomposes only when an actual UI setting changes.
  */
-private class CompanionInputFrame : ReadWriteProperty<Any?, CompanionGamepadState> {
-    @Volatile private var frame = CompanionGamepadState()
-    override fun getValue(thisRef: Any?, property: KProperty<*>): CompanionGamepadState = frame
-    override fun setValue(thisRef: Any?, property: KProperty<*>, value: CompanionGamepadState) {
-        frame = value
-    }
+private class CompanionInputFrame {
+    // A plain holder prevents full-screen Compose recomposition on each 60Hz stick sample.
+    @Volatile var value: CompanionGamepadState = CompanionGamepadState()
 }
 
 /** Dedicated phone page, never a dialog: navigation, MiniPlayer and playback bars are absent. */
@@ -88,7 +83,7 @@ internal fun CompanionGamepadScreen(manager: CompanionManager, modifier: Modifie
     }
     var motionEnabled by rememberSaveable(state.target?.fingerprint, info?.systemId) { mutableStateOf(false) }
     val mode = GameTouchMode.fromKey(modeKey)
-    var pad by remember(info?.sessionId) { CompanionInputFrame() }
+    val padFrame = remember(info?.sessionId) { CompanionInputFrame() }
     val motion = rememberCompanionMotionSource(playing && motionEnabled)
     val haptics = LocalHapticFeedback.current
     val scope = rememberCoroutineScope()
@@ -114,7 +109,7 @@ internal fun CompanionGamepadScreen(manager: CompanionManager, modifier: Modifie
             var last: CompanionGamepadState? = null
             var ticks = 0
             while (true) {
-                val next = pad.copy(motion = if (motionEnabled) motion.snapshot() else null)
+                val next = padFrame.value.copy(motion = if (motionEnabled) motion.snapshot() else null)
                 if (next != last || ticks >= 30) {
                     if (manager.gamepadInput(next)) {
                         last = next
@@ -123,9 +118,9 @@ internal fun CompanionGamepadScreen(manager: CompanionManager, modifier: Modifie
                         // enqueue consumes them once, never repeating them on the heartbeat.
                         if (next.pointer?.kind == "mouse" &&
                             (next.pointer.dx != 0f || next.pointer.dy != 0f)) {
-                            val pointerNow = pad.pointer
+                            val pointerNow = padFrame.value.pointer
                             if (pointerNow?.kind == "mouse") {
-                                pad = pad.copy(pointer = pointerNow.copy(
+                                padFrame.value = padFrame.value.copy(pointer = pointerNow.copy(
                                     dx = (pointerNow.dx - next.pointer.dx).coerceIn(-1f, 1f),
                                     dy = (pointerNow.dy - next.pointer.dy).coerceIn(-1f, 1f),
                                 ))
@@ -139,22 +134,22 @@ internal fun CompanionGamepadScreen(manager: CompanionManager, modifier: Modifie
         }
     }
     LaunchedEffect(playing) {
-        if (!playing) pad = CompanionGamepadState()
+        if (!playing) padFrame.value = CompanionGamepadState()
     }
     LaunchedEffect(inputKind) {
-        if (pad.pointer != null) {
-            pad = pad.copy(pointer = null)
-            if (playing) manager.gamepadInput(pad)
+        if (padFrame.value.pointer != null) {
+            padFrame.value = padFrame.value.copy(pointer = null)
+            if (playing) manager.gamepadInput(padFrame.value)
         }
     }
     DisposableEffect(claimed, info?.sessionId) {
         onDispose { if (claimed) manager.gamepadInput(CompanionGamepadState()) }
     }
     val setButton: (RetroPadButton, Boolean) -> Unit = { button, pressed ->
-        val mask = if (pressed) pad.buttons or button.mask else pad.buttons and button.mask.inv()
-        if (pad.buttons != mask) {
-            pad = pad.copy(buttons = mask)
-            manager.gamepadInput(pad)
+        val mask = if (pressed) padFrame.value.buttons or button.mask else padFrame.value.buttons and button.mask.inv()
+        if (padFrame.value.buttons != mask) {
+            padFrame.value = padFrame.value.copy(buttons = mask)
+            manager.gamepadInput(padFrame.value)
             if (pressed) haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
         }
     }
@@ -162,16 +157,16 @@ internal fun CompanionGamepadScreen(manager: CompanionManager, modifier: Modifie
         if (pointer?.kind == "mouse" && (pointer.dx != 0f || pointer.dy != 0f)) {
             // Accumulate relative movement until the next bounded sender tick. No one-packet-
             // per-touch-sample storm, and no duplicates from the periodic heartbeat.
-            val existing = pad.pointer?.takeIf { it.kind == "mouse" }
-            pad = pad.copy(pointer = pointer.copy(
+            val existing = padFrame.value.pointer?.takeIf { it.kind == "mouse" }
+            padFrame.value = padFrame.value.copy(pointer = pointer.copy(
                 dx = ((existing?.dx ?: 0f) + pointer.dx).coerceIn(-1f, 1f),
                 dy = ((existing?.dy ?: 0f) + pointer.dy).coerceIn(-1f, 1f),
             ))
         } else {
-            val previous = pad.pointer
-            val next = pad.copy(pointer = pointer)
-            if (next != pad) {
-                pad = next
+            val previous = padFrame.value.pointer
+            val next = padFrame.value.copy(pointer = pointer)
+            if (next != padFrame.value) {
+                padFrame.value = next
                 // Press/release and mode switches are immediate; continuous drag positions
                 // flow only through the sampled sender above.
                 if (companionPointerEdge(previous, pointer)) manager.gamepadInput(next)
@@ -257,17 +252,17 @@ internal fun CompanionGamepadScreen(manager: CompanionManager, modifier: Modifie
                             mode = mode,
                             onButton = setButton,
                             onDpadDirections = { directions ->
-                                val mask = companionDpadMask(pad.buttons, directions)
-                                if (mask != pad.buttons) {
-                                    pad = pad.copy(buttons = mask)
-                                    manager.gamepadInput(pad) // one atomic frame per direction
+                                val mask = companionDpadMask(padFrame.value.buttons, directions)
+                                if (mask != padFrame.value.buttons) {
+                                    padFrame.value = padFrame.value.copy(buttons = mask)
+                                    manager.gamepadInput(padFrame.value) // one atomic frame per direction
                                 }
                             },
                             onStick = { index, x, y ->
-                                val next = if (index == 0) pad.copy(leftX = x, leftY = y)
-                                    else pad.copy(rightX = x, rightY = y)
-                                if (next != pad) {
-                                    pad = next
+                                val next = if (index == 0) padFrame.value.copy(leftX = x, leftY = y)
+                                    else padFrame.value.copy(rightX = x, rightY = y)
+                                if (next != padFrame.value) {
+                                    padFrame.value = next
                                     if (x == 0f && y == 0f) manager.gamepadInput(next)
                                 }
                             },
