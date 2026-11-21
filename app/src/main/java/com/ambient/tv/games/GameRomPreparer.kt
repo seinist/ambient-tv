@@ -202,13 +202,16 @@ class GameRomPreparer @Inject constructor(
         relativeBase: String = "",
     ) {
         val parent = path.substringBeforeLast('/', "")
-        val seen = HashSet<String>()
+        val seen = HashMap<String, String>()
         names.forEach { name ->
             val relative = safeRelativePath(name)
                 ?: throw IOException("Unsafe disc companion path: $name")
             val targetRelative = if (relativeBase.isEmpty()) relative else "$relativeBase/$relative"
-            if (!seen.add(targetRelative.lowercase(java.util.Locale.ROOT))) {
-                throw IOException("Duplicate disc companion: $name")
+            val key = targetRelative.lowercase(java.util.Locale.ROOT)
+            val previous = seen.putIfAbsent(key, targetRelative)
+            if (previous != null) {
+                if (previous != targetRelative) throw IOException("Colliding disc companion: $name")
+                return@forEach // CUE files may repeat the same FILE for several tracks.
             }
             val target = File(folder, targetRelative)
             val childPath = FilePaths.relative(listOf(parent, relative).filter(String::isNotEmpty).joinToString("/"))
@@ -289,9 +292,14 @@ class GameRomPreparer @Inject constructor(
 
         /** Verify all referenced local files before trusting the completed cache marker. */
         internal fun cachedCompanionsComplete(main: File): Boolean {
-            val seen = HashSet<String>()
+            val visited = HashSet<String>()
+            val active = HashSet<String>()
             fun check(descriptor: File): Boolean {
-                if (!descriptor.isFile || !seen.add(descriptor.canonicalPath) || seen.size > 128) return false
+                if (!descriptor.isFile) return false
+                val path = descriptor.canonicalPath
+                if (path in active || visited.size > 128) return false
+                if (path in visited) return true
+                active.add(path)
                 val names = when (GameSystems.extension(descriptor.name)) {
                     "cue" -> cueFiles(descriptor.readText())
                     "gdi" -> gdiFiles(descriptor.readText())
@@ -299,7 +307,7 @@ class GameRomPreparer @Inject constructor(
                     else -> return descriptor.length() > 0
                 }
                 if (names.isEmpty()) return false
-                return names.all { name ->
+                val complete = names.all { name ->
                     val relative = safeRelativePath(name) ?: return@all false
                     val child = File(descriptor.parentFile, relative)
                     if (!child.isFile || child.length() <= 0) return@all false
@@ -308,6 +316,9 @@ class GameRomPreparer @Inject constructor(
                         else -> true
                     }
                 }
+                active.remove(path)
+                if (complete) visited.add(path)
+                return complete
             }
             return runCatching { check(main) }.getOrDefault(false)
         }
