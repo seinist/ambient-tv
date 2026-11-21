@@ -111,7 +111,9 @@ object GameArchives {
                     titleFromPrefix(system, entry.name, buffer.copyOf(count))
                 }.getOrNull()
             } else null
-            Metadata(entry.name, system, title)
+            val crc = if (entry.hasCrc) entry.crcValue.takeIf { it in 0..0xffffffffL }
+                ?.toString(16)?.uppercase(Locale.ROOT)?.padStart(8, '0') else null
+            Metadata(entry.name, system, title, crc)
         }
         "gz" -> {
             val name = fileName.substringBeforeLast('.')
