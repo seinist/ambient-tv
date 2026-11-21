@@ -314,4 +314,7 @@
     <string name="games_shader_packs_missing">Selected shader pack is missing or invalid. Using the built-in picture filter until it is installed.</string>
     <string name="games_vulkan_shader_presenting">Vulkan Slang shader: a filtered SDR frame was presented on the real output surface (experimental).</string>
     <string name="games_vulkan_shader_pending">Vulkan Slang shader selected, but no filtered SDR frame has been confirmed yet. GLES remains available.</string>
+    <string name="game_buildbot_confirm_title">Confirm unverified core source</string>
+    <string name="game_buildbot_confirm_body">The signed Ambient TV core channel does not have a usable build for %1$s. The Libretro buildbot offers native executable code without Ambient TV's signed manifest. Continue only if you trust that source.</string>
+    <string name="game_buildbot_confirm_action">Install from Libretro buildbot</string>
 </resources>
