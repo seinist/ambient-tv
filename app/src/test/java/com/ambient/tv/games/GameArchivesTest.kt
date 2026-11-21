@@ -144,16 +144,16 @@ class GameArchivesTest {
 
     @Test fun cachedDiscSidecarsAreValidatedIncludingNestedCueTracks() {
         val root = folder.newFolder("cached-disc")
-        val playlist = File(root, "game.m3u").apply { writeText("disc/disc.cue\\n") }
+        val playlist = File(root, "game.m3u").apply { writeText("disc/disc.cue") }
         val cue = File(root, "disc/disc.cue").also { it.parentFile!!.mkdirs() }
-        cue.writeText("FILE \\"tracks/data.bin\\" BINARY\\n")
+        cue.writeText("""FILE "tracks/data.bin" BINARY""")
         assertFalse(GameRomPreparer.cachedCompanionsComplete(playlist))
         File(root, "disc/tracks/data.bin").also {
             it.parentFile!!.mkdirs()
             it.writeBytes(byteArrayOf(42))
         }
         assertTrue(GameRomPreparer.cachedCompanionsComplete(playlist))
-        assertEquals("disc/tracks/data.bin", GameRomPreparer.safeRelativePath("disc\\\\tracks/data.bin"))
+        assertEquals("disc/tracks/data.bin", GameRomPreparer.safeRelativePath("disc\\tracks/data.bin"))
         assertEquals(null, GameRomPreparer.safeRelativePath("../escape.bin"))
         assertEquals(null, GameRomPreparer.safeRelativePath("/absolute/game.cue"))
         assertEquals(null, GameRomPreparer.safeRelativePath("C:/disc.bin"))
