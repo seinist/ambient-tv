@@ -37,6 +37,8 @@ data class GameLibraryFolder(
     /** "auto" infers the console from a known signature, suffix or unambiguous parent. */
     val systemId: String = "auto",
     val recursive: Boolean = true,
+    /** Excluded from Files by default, even on a shared video + ROM NAS source. */
+    val alsoShowInFiles: Boolean = false,
 )
 
 data class LibraryGame(
@@ -101,6 +103,15 @@ class GameLibraryRepository @Inject constructor(
         preferences.gameLibraryFolders = present + folder
         changed()
         return folder
+    }
+
+    fun setAlsoShowInFiles(id: String, visible: Boolean) {
+        val existing = folders()
+        if (existing.none { it.id == id }) return
+        preferences.gameLibraryFolders = existing.map {
+            if (it.id == id) it.copy(alsoShowInFiles = visible) else it
+        }
+        changed()
     }
 
     fun removeFolder(id: String) {
