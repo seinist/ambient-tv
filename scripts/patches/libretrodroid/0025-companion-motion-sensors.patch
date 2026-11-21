@@ -48,7 +48,7 @@ diff --git a/src/main/cpp/sensors/coresensors.cpp b/src/main/cpp/sensors/coresen
      switch (action) {
          case RETRO_SENSOR_ACCELEROMETER_ENABLE:
          case RETRO_SENSOR_ACCELEROMETER_DISABLE:
-@@ -63,38 +73,46 @@
+@@ -63,37 +73,45 @@
      return true;
  }
  
@@ -126,7 +126,6 @@ diff --git a/src/main/cpp/sensors/coresensors.cpp b/src/main/cpp/sensors/coresen
 +}
  
  }
- 
 diff --git a/src/main/cpp/libretrodroidjni.cpp b/src/main/cpp/libretrodroidjni.cpp
 --- a/src/main/cpp/libretrodroidjni.cpp
 +++ b/src/main/cpp/libretrodroidjni.cpp
