@@ -401,7 +401,19 @@ class CompanionManager @Inject constructor(@ApplicationContext private val conte
     private val admission = CompanionAdmission()
     private var commands = Channel<CompanionFrame>(16)
     /** The real-time mailbox belongs to one TLS connection, never shared across reconnects. */
-    private var liveInputs = CompanionLiveInputQueue()
+    private var liveInputs = newLiveInputs()
+    private fun newLiveInputs(): CompanionLiveInputQueue {
+        lateinit var mailbox: CompanionLiveInputQueue
+        mailbox = CompanionLiveInputQueue(onOverflow = {
+            // A release must never be silently dropped. A congested peer is disconnected,
+            // releasing every TV input in the server's authenticated-session finally block.
+            if (liveInputs === mailbox) {
+                val socket = clientSocket
+                scope.launch(Dispatchers.IO) { runCatching { socket?.close() } }
+            }
+        })
+        return mailbox
+    }
     private var lastQueuedGamepadState: CompanionGamepadState? = null
     @Volatile private var foreground = false
     @Volatile private var television = com.ambient.tv.ui.mobile.isTelevision(context)
@@ -1692,7 +1704,7 @@ class CompanionManager @Inject constructor(@ApplicationContext private val conte
         disconnect(clearTarget = true)
         remoteAfterConnect = peer.fingerprint.takeIf { openRemote }
         val queue = Channel<CompanionFrame>(16); commands = queue
-        val live = CompanionLiveInputQueue().also { liveInputs = it }
+        val live = newLiveInputs().also { liveInputs = it }
         mutable.update { it.copy(target = peer, busy = true, connectionError = "", connectionStage = R.string.companion_connecting, settingsPanel = keepSettingsPanel, sendingTo = if (initialMedia != null) peer.name else null) }
         clientJob = scope.launch {
             var connected = false
@@ -1987,7 +1999,7 @@ class CompanionManager @Inject constructor(@ApplicationContext private val conte
         clientJob?.cancel(); clientJob = null
         // Invalidate the old connection before its finally block can reset a newer send.
         commands.close(); commands = Channel(16)
-        liveInputs.close(); liveInputs = CompanionLiveInputQueue()
+        liveInputs.close(); liveInputs = newLiveInputs()
         lastQueuedGamepadState = null
         runCatching { clientSocket?.close() }; clientSocket = null
         confirmation?.complete(false)
