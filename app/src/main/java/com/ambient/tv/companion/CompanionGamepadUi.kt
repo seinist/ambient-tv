@@ -30,6 +30,7 @@ import com.ambient.tv.games.GameTouchMode
 import com.ambient.tv.ui.gamepad.retro.RetroPadButton
 import com.ambient.tv.ui.games.GameTouchControls
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 
 /** Initial layout follows the console but never changes the TV's authoritative core mapping. */
 internal fun companionDefaultTouchMode(systemId: String?): GameTouchMode = when (systemId) {
@@ -37,6 +38,23 @@ internal fun companionDefaultTouchMode(systemId: String?): GameTouchMode = when 
     "psx", "ps2", "psp", "n3ds", "gamecube", "wiiu", "dreamcast", "saturn" -> GameTouchMode.DUAL
     else -> GameTouchMode.DPAD
 }
+
+private val COMPANION_DPAD_BUTTONS = setOf(
+    RetroPadButton.UP, RetroPadButton.DOWN, RetroPadButton.LEFT, RetroPadButton.RIGHT,
+)
+private val COMPANION_DPAD_MASK = COMPANION_DPAD_BUTTONS.fold(0) { mask, button -> mask or button.mask }
+
+/** Replace only direction bits; ABXY/shoulder holds are preserved across DPAD drags. */
+internal fun companionDpadMask(previous: Int, pressed: Set<RetroPadButton>): Int =
+    (previous and COMPANION_DPAD_MASK.inv()) or
+        pressed.filter { it in COMPANION_DPAD_BUTTONS }.fold(0) { mask, button -> mask or button.mask }
+
+/** True for transitions that must bypass movement sampling and survive queue pressure. */
+internal fun companionPointerEdge(old: CompanionPointerState?, next: CompanionPointerState?): Boolean =
+    old?.kind != next?.kind || old?.buttons != next?.buttons ||
+        old?.offscreen != next?.offscreen ||
+        old?.contacts?.filter { it.pressed }?.map { it.index } !=
+        next?.contacts?.filter { it.pressed }?.map { it.index }
 
 /** Dedicated phone page, never a dialog: navigation, MiniPlayer and playback bars are absent. */
 @Composable
@@ -60,6 +78,7 @@ internal fun CompanionGamepadScreen(manager: CompanionManager, modifier: Modifie
     var pad by remember(info?.sessionId) { mutableStateOf(CompanionGamepadState()) }
     val motion = rememberCompanionMotionSource(playing && motionEnabled)
     val haptics = LocalHapticFeedback.current
+    val scope = rememberCoroutineScope()
     val view = LocalView.current
     DisposableEffect(view) {
         val wasKeptOn = view.keepScreenOn
@@ -84,7 +103,22 @@ internal fun CompanionGamepadScreen(manager: CompanionManager, modifier: Modifie
             while (true) {
                 val next = pad.copy(motion = if (motionEnabled) motion.snapshot() else null)
                 if (next != last || ticks >= 15) {
-                    if (manager.gamepadInput(next)) { last = next; ticks = 0 }
+                    if (manager.gamepadInput(next)) {
+                        last = next
+                        ticks = 0
+                        // Mouse deltas are relative, not a held position. A successful
+                        // enqueue consumes them once, never repeating them on the heartbeat.
+                        if (next.pointer?.kind == "mouse" &&
+                            (next.pointer.dx != 0f || next.pointer.dy != 0f)) {
+                            val pointerNow = pad.pointer
+                            if (pointerNow?.kind == "mouse") {
+                                pad = pad.copy(pointer = pointerNow.copy(
+                                    dx = (pointerNow.dx - next.pointer.dx).coerceIn(-1f, 1f),
+                                    dy = (pointerNow.dy - next.pointer.dy).coerceIn(-1f, 1f),
+                                ))
+                            }
+                        }
+                    }
                 }
                 ticks++
                 delay(32)
@@ -112,15 +146,23 @@ internal fun CompanionGamepadScreen(manager: CompanionManager, modifier: Modifie
         }
     }
     val setPointer: (CompanionPointerState?) -> Unit = { pointer ->
-        val next = pad.copy(pointer = pointer)
         if (pointer?.kind == "mouse" && (pointer.dx != 0f || pointer.dy != 0f)) {
-            // A relative delta is consumed once. Keep a neutral snapshot in the Compose
-            // state so the 500ms heartbeat can never replay the last mouse movement.
-            manager.gamepadInput(next)
-            pad = next.copy(pointer = pointer.copy(dx = 0f, dy = 0f))
-        } else if (next != pad) {
-            pad = next
-            manager.gamepadInput(next)
+            // Accumulate relative movement until the next bounded sender tick. No one-packet-
+            // per-touch-sample storm, and no duplicates from the periodic heartbeat.
+            val existing = pad.pointer?.takeIf { it.kind == "mouse" }
+            pad = pad.copy(pointer = pointer.copy(
+                dx = ((existing?.dx ?: 0f) + pointer.dx).coerceIn(-1f, 1f),
+                dy = ((existing?.dy ?: 0f) + pointer.dy).coerceIn(-1f, 1f),
+            ))
+        } else {
+            val previous = pad.pointer
+            val next = pad.copy(pointer = pointer)
+            if (next != pad) {
+                pad = next
+                // Press/release and mode switches are immediate; continuous drag positions
+                // flow only through the sampled sender above.
+                if (companionPointerEdge(previous, pointer)) manager.gamepadInput(next)
+            }
         }
     }
 
@@ -188,7 +230,10 @@ internal fun CompanionGamepadScreen(manager: CompanionManager, modifier: Modifie
                 }
                 if (inputKind == "gun") TextButton(onClick = {
                     setPointer(CompanionPointerState(kind = "gun", offscreen = true, buttons = 2))
-                    setPointer(CompanionPointerState(kind = "gun"))
+                    scope.launch {
+                        delay(48L) // Core must observe the reload edge for at least one frame.
+                        setPointer(CompanionPointerState(kind = "gun"))
+                    }
                 }) { Text(stringResource(R.string.companion_gamepad_reload)) }
             }
 
@@ -198,6 +243,13 @@ internal fun CompanionGamepadScreen(manager: CompanionManager, modifier: Modifie
                         GameTouchControls(
                             mode = mode,
                             onButton = setButton,
+                            onDpadDirections = { directions ->
+                                val mask = companionDpadMask(pad.buttons, directions)
+                                if (mask != pad.buttons) {
+                                    pad = pad.copy(buttons = mask)
+                                    manager.gamepadInput(pad) // one atomic frame per direction
+                                }
+                            },
                             onStick = { index, x, y ->
                                 val next = if (index == 0) pad.copy(leftX = x, leftY = y)
                                     else pad.copy(rightX = x, rightY = y)
