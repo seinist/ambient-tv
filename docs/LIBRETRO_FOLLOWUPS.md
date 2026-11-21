@@ -19,7 +19,9 @@ and **unimplemented features**. A core appearing in the catalog does **not** est
 | Picture / OSD | Per-system aspect presets (core, 1:1, 8:7, 4:3, 3:2, 16:10, 16:9), integer scaling, existing GLES shaders plus CUT2, 16-tap bicubic and 5-tap adaptive sharpening; accurate paused/running indicator tied to the actual emulation state | Measure shader cost and GLES fallback on Shield/Philips/phone, test real SNES aspect/pause rendering and TV focus for the picture/controls panels |
 | Vulkan HDR → SDR (experimental) | Explicit PQ/HLG→SDR shader and optional Vulkan→GLES FP16 AHardwareBuffer transport; runtime format capability check, allocation and GLES-import fallback to RGBA8. Disabled for SDR; selecting HDR restarts the core | Core must really output encoded PQ/HLG; FP16 availability, high-quality highlights and correct colors require physical-device tests |
 
-The virtual controller settings are stored in the existing `gameSettings` preference map, which participates in backup and companion settings synchronization. All new picture shaders run on GLES; they are **not** native Vulkan shaders, librashader, FSR or an HDR signal. The game still pauses when its interactive OSD is deliberately opened; the label no longer claims a paused state when the core is actually running.
+The virtual controller settings are stored in the existing `gameSettings` preference map, which participates in backup and companion settings synchronization. Most picture shaders still run on GLES. PR #434 additionally has eight original
+built-in Slang presets on an **experimental native Vulkan SDR** WSI chain via
+pinned librashader; this is not FSR or evidence of native HDR. The game still pauses when its interactive OSD is deliberately opened; the label no longer claims a paused state when the core is actually running.
 
 
 See [game shaders and footprint policy](LIBRETRO_GAME_SHADERS.md) for the compact GLES
@@ -75,8 +77,8 @@ keyboard/mouse/lightgun), device EOTF and renderer parity gates below remain req
    negotiation or color-space signaling. HDR cannot be detected automatically and a core may
    have clipped or quantized data before the bridge. The chosen transfer function must match
    the actual core output. Proper 10-bit/FP16 **core output** negotiation, HDR output
-   metadata and color-space-aware swapchains and `librashader` slang shaders are separate
-   work. Vulkan hardware acceleration alone is not HDR output.
+   metadata and color-space-aware swapchains are separate from the new experimental
+   SDR-only Slang path. Vulkan hardware acceleration alone is not HDR output.
 5. **Audio and timing:** Choose audio latency/resampling and video refresh matching per core,
    without interfering with Media3/VLC/MPV playback.
 6. **Patch and special data types:** IPS/BPS/UPS import or overlay, libretro subsystem content,

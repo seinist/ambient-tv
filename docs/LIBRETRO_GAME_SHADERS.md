@@ -16,9 +16,11 @@ These are **not** byte-for-byte ports of RetroArch GLSL/Slang shaders and do not
 claim the pixel-accurate look of CRT-Royale, Guest Advanced or other heavyweight presets.
 
 The sources are in a single Kotlin file with an enforced 16 KiB source limit.
-Only the selected shader is compiled. No PNG textures, LUTs, shader pack archives,
-precompiled variants or additional native libraries are packaged. The APK footprint
-must be measured after building, but source cost is tiny.
+Only the selected GLES shader is compiled. A GLES-only build has no native shader
+runtime. Full native Vulkan builds include a pinned librashader shared library
+per ABI (ARM64 stripped output: 6,665,232 bytes in CI before APK compression).
+Set SKIP_LIBRASHADER_NATIVE=1 for a smaller GLES-only APK; final APK size
+still needs measurement.
 
 New effects have bounded strength steps 50/75/100/125/150 percent. Shader selection
 follows global/system settings unless a game override is chosen. Everything is stored
@@ -31,10 +33,37 @@ unchanged (Sharp); no shaders are downloaded automatically.
 - Vulkan core + GLES compositor: retained optional FP16 bridge and a required PQ/HLG
   to SDR prepass *before* the picture effect. LibretroDroid patch 0022 composes these.
   If a picture shader fails to compile, fallback must retain the color conversion.
-- Native Vulkan WSI fullscreen is still only Pixel/Nearest. All other effects run
-  in the GLES compositor; there is **no native librashader renderer yet**.
+- The experimental native Vulkan **SDR** WSI now supports eight pinned, original
+  small Slang presets through the Vulkan-only librashader C runtime. Raw Pixel is
+  unchanged; all other shaders, signed external GLSL packs and adjusted strength
+  remain on GLES. This is not a native HDR signal.
 - CI validates every fragment as GLSL ES 100 and checks the 16 KiB source budget.
   Compilation on glslang is not a guarantee of speed or correctness on hardware.
+
+## Native Vulkan Slang: experimental SDR path (PR #434)
+
+Eight tiny original .slang/.slangp presets are bundled: crt-light, crt-geometry,
+crt-aperture, gb-dmg, gbc-grid, ntsc, color-boost and sharp-bilinear.
+They are **not** copied RetroArch presets. The Slang validator compiles both
+stages to SPIR-V in CI.
+
+The pinned Vulkan-only librashader C runtime builds for all four Android ABIs
+with 16-KiB page alignment. The renderer uses the actual Vulkan device and queue,
+records shader passes into a WSI color-attachment swapchain and samples the
+existing Vulkan/AHardwareBuffer RGBA8 intermediate. The libretro callback supplies
+VkImageViewCreateInfo, so its hidden VkImage usage and allocation extent are not
+guessed. Native transitions restore the AHardwareBuffer for ordinary GLES playback.
+
+A native Slang frame is only available when the core uses Vulkan, the user opts
+into native WSI diagnostic/fullscreen, source and target are SDR, the preset is
+allowlisted, and shader strength is 100%. Only an **actually presented filtered
+frame** sets native status bit 6. Any failure preserves the original GLES renderer
+and HDR-to-SDR conversion. Native PQ/HLG-through-Slang output remains disabled.
+
+The full APK includes a Vulkan-only shared Rust library per ABI. For a smaller
+GLES-only APK, use SKIP_LIBRASHADER_NATIVE=1. Real device tests on Shield, Philips
+and Android phone are mandatory before calling this a production player.
+See docs/LIBRETRO_VULKAN_HDR.md for all color/output acceptance gates.
 
 ## Required hardware verification
 
@@ -45,11 +74,12 @@ test correctly negotiated HDR10 input, tone mapping and safe GLES fallbacks.
 
 ## Future full RetroArch preset support
 
-Original RetroArch GLSL and Slang packs can require multi-pass chains, external
-textures, parameters, temporal history and a dedicated Vulkan runtime such as
-librashader. They **cannot safely be executed by feeding presets to the current
-custom GLES shader interface**. Native Vulkan WSI shader parity and a signed
-optional pack/runtime installer are unfinished separate projects.
+Original RetroArch GLSL/Slang packs can require multi-pass chains, texture LUTs,
+parameters and frame history. The pinned Vulkan-only librashader runtime has
+those engine capabilities, but the app currently allowlists only eight original
+built-in single-pass Slang presets. Signed external pack files remain a separate
+GLES100 format, not arbitrary Slang. Original RetroArch preset import, parameters,
+and native HDR parity are separate follow-ups.
 
 For a compact APK, any future authentic shader pack should be optional,
 on-demand and removable with a pinned/signed manifest, per-file hashes,
@@ -84,5 +114,6 @@ contains no pack textures, no GLSL release archive and no new native runtime.
   PQ/HLG input retains the mandatory HDR-to-SDR conversion before the effect.
 
 A production release still needs hardware testing and a signed package published
-via the manual workflow. This subset is not full RetroArch .glslp/.slangp compatibility;
-librashader and original multipass assets remain tracked separately in issue #435.
+via the manual workflow. The native Slang runtime now exists for eight built-in
+presets, but original RetroArch multipass assets and native HDR color parity
+remain open in issue #435.
