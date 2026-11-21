@@ -96,7 +96,11 @@ object KeyBindings {
     val bindings: Map<KeyAction, KeyBinding> get() = mutable.value
     private val deviceMutable = mutableStateOf<Map<String, Map<KeyAction, KeyBinding>>>(emptyMap())
     val deviceBindings: Map<String, Map<KeyAction, KeyBinding>> get() = deviceMutable.value
+    private val disabledMutable = mutableStateOf<Map<String, Set<KeyAction>>>(emptyMap())
+    val deviceDisabled: Map<String, Set<KeyAction>> get() = disabledMutable.value
     fun bindingsFor(kind: String): Map<KeyAction, KeyBinding> = deviceBindings[kind].orEmpty()
+    fun effectiveBindingsFor(kind: String): Map<KeyAction, KeyBinding> =
+        bindings.filterKeys { it !in deviceDisabled[kind].orEmpty() } + bindingsFor(kind)
     private var persist: (Map<String, String>) -> Unit = {}
 
     /**
@@ -115,11 +119,13 @@ object KeyBindings {
         persist = save
         mutable.value = decode(stored)
         deviceMutable.value = decodeDevice(stored)
+        disabledMutable.value = decodeDisabled(stored)
     }
 
     fun reload(stored: Map<String, String>) {
         mutable.value = decode(stored)
         deviceMutable.value = decodeDevice(stored)
+        disabledMutable.value = decodeDisabled(stored)
     }
 
     fun encoded(): Map<String, String> = encodeAll()
@@ -133,6 +139,7 @@ object KeyBindings {
         }?.key
         val updated = old - listOfNotNull(replaced) + (action to binding)
         deviceMutable.value = deviceBindings + (kind to updated)
+        disabledMutable.value = deviceDisabled + (kind to (deviceDisabled[kind].orEmpty() - action))
         persist(encodeAll())
         return replaced
     }
@@ -140,6 +147,13 @@ object KeyBindings {
     fun clearFor(kind: String, action: KeyAction) {
         val current = bindingsFor(kind) - action
         deviceMutable.value = if (current.isEmpty()) deviceBindings - kind else deviceBindings + (kind to current)
+        disabledMutable.value = deviceDisabled + (kind to (deviceDisabled[kind].orEmpty() + action))
+        persist(encodeAll())
+    }
+
+    fun inheritFor(kind: String, action: KeyAction) {
+        deviceMutable.value = deviceBindings + (kind to (bindingsFor(kind) - action))
+        disabledMutable.value = deviceDisabled + (kind to (deviceDisabled[kind].orEmpty() - action))
         persist(encodeAll())
     }
 
@@ -166,6 +180,9 @@ object KeyBindings {
         deviceBindings.forEach { (kind, actions) ->
             actions.forEach { (action, binding) -> put("device.$kind.${action.key}", binding.encode()) }
         }
+        deviceDisabled.forEach { (kind, actions) ->
+            actions.forEach { action -> put("device.$kind.${action.key}", "none") }
+        }
     }
 
     /** Device-specific assignments have priority; other actions retain legacy fallbacks. */
@@ -176,13 +193,23 @@ object KeyBindings {
         val kind = com.ambient.tv.ui.gamepad.retro.retroInputDevice(deviceId).kind.key
         val own = bindingsFor(kind)
         return resolveKeyAction(own, keyCode, long, player)
-            ?: resolveKeyAction(bindings.filterKeys { it !in own.keys }, keyCode, long, player)
+            ?: resolveKeyAction(bindings.filterKeys {
+                it !in own.keys && it !in deviceDisabled[kind].orEmpty()
+            }, keyCode, long, player)
     }
 
     internal fun decode(stored: Map<String, String>): Map<KeyAction, KeyBinding> =
         stored.mapNotNull { (action, binding) ->
             val resolved = KeyAction.fromKey(action) ?: return@mapNotNull null
             KeyBinding.decode(binding)?.let { resolved to it }
+        }.toMap()
+
+    private fun decodeDisabled(stored: Map<String, String>): Map<String, Set<KeyAction>> =
+        listOf("remote", "keyboard").mapNotNull { kind ->
+            val actions = stored.filter { (key, value) ->
+                key.startsWith("device.$kind.") && value == "none"
+            }.keys.mapNotNull { KeyAction.fromKey(it.removePrefix("device.$kind.")) }.toSet()
+            kind.takeIf { actions.isNotEmpty() }?.let { it to actions }
         }.toMap()
 
     private fun decodeDevice(stored: Map<String, String>): Map<String, Map<KeyAction, KeyBinding>> =
