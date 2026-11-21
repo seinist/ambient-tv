@@ -22,7 +22,11 @@ internal object GameDiscGrouping {
         }
         if (relatives.size !in 1..128) return emptySet()
         val parent = descriptor.substringBeforeLast('/', "")
-        return relatives.mapNotNull { GameRomPreparer.safeRelativePath(it) }
+        val safe = relatives.map { GameRomPreparer.safeRelativePath(it) }
+        // Reject the entire descriptor on any unsafe entry. Dropping only that
+        // entry could incorrectly hide a playable disc under a broken playlist.
+        if (safe.any { it == null }) return emptySet()
+        return safe.filterNotNull()
             .map { if (parent.isBlank()) it else "$parent/$it" }
             .toSet()
     }
@@ -33,8 +37,12 @@ internal object GameDiscGrouping {
         // Suppress only references whose parent descriptor is actually in the scan results.
         // A broken missing playlist never deletes independent games from the library.
         references.forEach { (descriptor, children) ->
-            if (GameSystems.extension(descriptor) == "m3u" && descriptor in paths)
-                hidden += children.filter { it != descriptor && it in paths }
+            // A partial playlist is not playable as a complete multi-disc title.
+            // Retain each standalone disc if any referenced disc is missing.
+            if (GameSystems.extension(descriptor) == "m3u" && descriptor in paths &&
+                children.isNotEmpty() && children.all { it in paths }) {
+                hidden += children.filter { it != descriptor }
+            }
         }
         return paths - hidden
     }

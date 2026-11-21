@@ -1967,15 +1967,22 @@ class HomeViewModel @Inject constructor(
     private fun loadGameRows() {
         val revision = ++gameRowsGeneration
         gameRowsJob?.cancel()
-        if (plexOnly || jellyfinOnly || embyOnly) {
+        fun clearRows() {
+            val changed = gameRows.isNotEmpty()
             gameRows = emptyList()
+            if (changed && !_uiState.value.isFailurePage()) {
+                publishRows((_uiState.value as? HomeUiState.Loaded)?.rows.orEmpty())
+            }
+        }
+        if (plexOnly || jellyfinOnly || embyOnly) {
+            clearRows()
             return
         }
         val definitions = appPreferences.homeRows.filter {
             it.enabled && it.system == HomeRowDefinition.SYSTEM_GAMES
         }
-        if (definitions.isEmpty() || gameLibrary.folders().isEmpty()) {
-            gameRows = emptyList()
+        if (definitions.isEmpty() || !gameLibrary.hasConfiguredFolders()) {
+            clearRows()
             return
         }
         gameRowsJob = viewModelScope.launch {
@@ -2686,7 +2693,7 @@ class HomeViewModel @Inject constructor(
         youtubeReady = appPreferences.youtubeEnabled,
         spotifyReady = appPreferences.spotifyEnabled && spotifyRepository.nativeAvailable && spotifyRepository.webAuthorized,
         radioReady = appPreferences.radioEnabled,
-        gamesReady = gameLibrary.folders().isNotEmpty(),
+        gamesReady = gameLibrary.hasConfiguredFolders(),
         telegramReady = appPreferences.telegramEnabled && telegramRepository.available,
         embyReady = embyOnly || appPreferences.isEmbyConfigured,
         photosReady = photoRepository.hasAnyPhotoSource(),
