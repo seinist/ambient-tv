@@ -29,6 +29,9 @@ import kotlin.math.hypot
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.Job
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 
 /** The core receives a single normalized frame, not the dimensions of this remote handset. */
 internal fun companionPointerCoordinates(x: Float, y: Float, region: String): Pair<Float, Float> {
@@ -201,15 +204,19 @@ internal class CompanionPhoneMotion(context: Context) : SensorEventListener {
     private val gyro = sensors?.getDefaultSensor(Sensor.TYPE_GYROSCOPE)
     val availableMask = (if (accel != null) 1 else 0) or (if (gyro != null) 2 else 0)
     private val latest = AtomicReference<CompanionMotionState?>(null)
+    private var started = false
 
     fun start() {
-        if (availableMask == 0) return
+        if (availableMask == 0 || started) return
+        started = true
         latest.set(CompanionMotionState(mask = availableMask))
         accel?.let { sensors?.registerListener(this, it, SensorManager.SENSOR_DELAY_GAME) }
         gyro?.let { sensors?.registerListener(this, it, SensorManager.SENSOR_DELAY_GAME) }
     }
 
     fun stop() {
+        if (!started) return
+        started = false
         sensors?.unregisterListener(this)
         latest.set(null)
     }
@@ -243,10 +250,24 @@ internal class CompanionPhoneMotion(context: Context) : SensorEventListener {
 @Composable
 internal fun rememberCompanionMotionSource(active: Boolean): CompanionPhoneMotion {
     val context = androidx.compose.ui.platform.LocalContext.current
+    val owner = LocalLifecycleOwner.current
     val source = remember(context) { CompanionPhoneMotion(context) }
-    DisposableEffect(source, active) {
-        if (active) source.start()
-        onDispose { source.stop() }
+    DisposableEffect(source, active, owner) {
+        // App focus loss must revoke permission to read motion immediately, even if the
+        // controller page stays in the navigation back stack while Android is backgrounded.
+        val observer = LifecycleEventObserver { _, event ->
+            when (event) {
+                Lifecycle.Event.ON_RESUME -> if (active) source.start()
+                Lifecycle.Event.ON_PAUSE, Lifecycle.Event.ON_STOP -> source.stop()
+                else -> Unit
+            }
+        }
+        owner.lifecycle.addObserver(observer)
+        if (active && owner.lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)) source.start()
+        onDispose {
+            owner.lifecycle.removeObserver(observer)
+            source.stop()
+        }
     }
     return source
 }
