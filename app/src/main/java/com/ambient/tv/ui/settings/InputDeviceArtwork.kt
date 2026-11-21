@@ -40,6 +40,7 @@ import androidx.tv.material3.Text
 import com.ambient.tv.ui.gamepad.GamepadButton
 import com.ambient.tv.ui.gamepad.GamepadLabels
 import com.ambient.tv.ui.gamepad.retro.RetroPadButton
+import com.ambient.tv.ui.theme.animatedFocusBorder
 
 /**
  * One vector material family for attached devices and emulated console pads.
@@ -80,13 +81,13 @@ private fun snesKeys() = direction() + listOf(
 internal fun attachedArtwork(kind: String, labels: GamepadLabels = GamepadLabels.XBOX): InputArtwork = when (kind) {
     "remote" -> InputArtwork("Fernbedienung", InputArtworkShape.REMOTE, listOf(
         key("power", "⏻", .50f, .13f),
-        key("back", "↩", .41f, .25f), key("menu", "☰", .59f, .25f),
-        key("up", "▲", .50f, .39f), key("left", "◀", .39f, .49f),
-        key("ok", "OK", .50f, .49f), key("right", "▶", .61f, .49f),
+        key("back", "↩", .445f, .25f), key("menu", "☰", .555f, .25f),
+        key("up", "▲", .50f, .39f), key("left", "◀", .435f, .49f),
+        key("ok", "OK", .50f, .49f), key("right", "▶", .565f, .49f),
         key("down", "▼", .50f, .59f),
-        key("home", "⌂", .41f, .69f), key("play", "▶Ⅱ", .59f, .69f),
-        key("red", "R", .35f, .81f), key("green", "G", .45f, .81f),
-        key("yellow", "Y", .55f, .81f), key("blue", "B", .65f, .81f),
+        key("home", "⌂", .445f, .69f), key("play", "▶Ⅱ", .555f, .69f),
+        key("red", "R", .44f, .81f), key("green", "G", .48f, .81f),
+        key("yellow", "Y", .52f, .81f), key("blue", "B", .56f, .81f),
     ))
     "keyboard" -> InputArtwork("Tastatur", InputArtworkShape.KEYBOARD, buildList {
         val first = listOf("Esc", "F1", "F2", "F3", "F4", "F5", "F6", "F7", "F8", "F9", "F10", "F11", "F12")
@@ -201,8 +202,8 @@ private fun DrawScope.drawArtworkBody(shape: InputArtworkShape, base: androidx.c
             drawRoundRect(rim, Offset(w*.055f,h*.12f), Size(w*.89f,h*.80f), CornerRadius(h*.06f), style=Stroke(width=1.6.dp.toPx()))
         }
         InputArtworkShape.REMOTE -> {
-            drawRoundRect(plate, Offset(w*.33f,h*.045f), Size(w*.34f,h*.91f), CornerRadius(w*.11f))
-            drawRoundRect(rim, Offset(w*.33f,h*.045f), Size(w*.34f,h*.91f), CornerRadius(w*.11f), style=Stroke(width=1.6.dp.toPx()))
+            drawRoundRect(plate, Offset(w*.39f,h*.045f), Size(w*.22f,h*.91f), CornerRadius(w*.055f))
+            drawRoundRect(rim, Offset(w*.39f,h*.045f), Size(w*.22f,h*.91f), CornerRadius(w*.055f), style=Stroke(width=1.6.dp.toPx()))
         }
         InputArtworkShape.OVAL, InputArtworkShape.HANDHELD, InputArtworkShape.DUAL_SCREEN -> {
             val top = if (shape == InputArtworkShape.DUAL_SCREEN) .12f else .20f
@@ -249,7 +250,7 @@ internal fun InputDeviceArtwork(
 ) {
     val colors = MaterialTheme.colorScheme
     val isRemote = artwork.shape == InputArtworkShape.REMOTE
-    BoxWithConstraints(modifier.fillMaxWidth().aspectRatio(if (isRemote) 2.15f else 2.35f)) {
+    BoxWithConstraints(modifier.fillMaxWidth().aspectRatio(if (isRemote) 1.7f else 2.35f)) {
         val maxW = maxWidth
         val maxH = maxHeight
         val tiny = maxW < 400.dp
@@ -271,18 +272,21 @@ internal fun InputDeviceArtwork(
             }
             val shape = RoundedCornerShape(if (artwork.shape == InputArtworkShape.KEYBOARD) 5.dp else 10.dp)
             var focused by remember(artwork.title, entry.id) { mutableStateOf(false) }
-            val active = entry.id == selectedKey || focused
+            val selected = entry.id == selectedKey
+            val active = selected || focused
             Box(
                 modifier = Modifier
                     .offset(x = maxW * entry.x - keyWidth / 2, y = maxH * entry.y - keyHeight / 2)
                     .width(keyWidth).height(keyHeight)
                     .clip(shape)
                     .background(if (active) colors.primary.copy(alpha=.23f) else colors.surfaceVariant)
-                    .border(if (active) 2.dp else 1.dp,
-                        if (active) colors.primary else colors.onSurfaceVariant.copy(alpha=.28f), shape)
+                    .border(1.dp,
+                        if (selected) colors.primary.copy(alpha=.65f) else colors.onSurfaceVariant.copy(alpha=.28f), shape)
                     .onFocusChanged { focused = it.isFocused }
                     .clickable { onSelectKey(entry) }
                     .focusable()
+                    .animatedFocusBorder(focused = focused, shape = shape,
+                        focusedColor = colors.primary, width = 2.dp)
                     .semantics { contentDescription = "${artwork.title}: ${entry.label}" },
                 contentAlignment = Alignment.Center,
             ) {
