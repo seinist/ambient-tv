@@ -118,8 +118,8 @@ fun GameLibraryScreen(
     val folderPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
         if (uri != null) model.addLocalSource(uri)
     }
-    LaunchedEffect(state.selectedSource?.id) {
-        if (state.selectedSource != null) networkEditor = null
+    LaunchedEffect(state.networkSaveRevision) {
+        if (state.networkSaveRevision > 0) networkEditor = null
     }
     val goPlay: (LibraryGame) -> Unit = { game ->
         model.requestPlay(game) { onPlay(game) }
