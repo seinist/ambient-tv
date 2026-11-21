@@ -1593,7 +1593,12 @@ class CompanionManager @Inject constructor(@ApplicationContext private val conte
                         // to pipeline several inputs without round-trip blocking on sync acknowledgements.
                         val realtime = request.type == "gamepad_input" || request.type == "input"
                         val next = if (realtime) null else back?.frames?.tryReceive()?.getOrNull()
-                        val returned = next?.let { CompanionSyncFrame.from(++back.sequence, it.first).also { frame -> back.pending = frame to it.second } }
+                        val returned = next?.let { item ->
+                            val activeReturn = requireNotNull(back)
+                            CompanionSyncFrame.from(++activeReturn.sequence, item.first).also { frame ->
+                                activeReturn.pending = frame to item.second
+                            }
+                        }
                         // Both the gaming and normal remote controllers benefit: a tiny ACK avoids
                         // artwork decoding, media metadata and queue enumeration on every touch.
                         val playback = if (realtime)
