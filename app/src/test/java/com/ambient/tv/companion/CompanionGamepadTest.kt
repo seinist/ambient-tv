@@ -23,6 +23,31 @@ class CompanionGamepadTest {
         onMenu = {},
     )
 
+    @Test fun pairedPhonesUsePersistentPlayerSettingsAndDoNotHijackEachOther() {
+        val input = pad()
+        val first = com.ambient.tv.ui.gamepad.retro.companionControllerDescriptor("fingerprint-a")
+        val second = com.ambient.tv.ui.gamepad.retro.companionControllerDescriptor("fingerprint-b")
+        val config = com.ambient.tv.ui.gamepad.retro.RetroInputSettings
+        config.attach(emptyMap()) {}
+        try {
+            config.update { it.withPort(first, 2).withPort(second, 2) }
+            CompanionGamepadSession.attach(input, "snes", "snes9x", "Test", false) {}
+            CompanionGamepadSession.setReady(input, true)
+            assertEquals(2, CompanionGamepadSession.claim("tls-a", "fingerprint-a"))
+            assertEquals(-1, CompanionGamepadSession.claim("tls-b", "fingerprint-b"))
+            // Reconfiguration is respected immediately when the handset reclaims its slot.
+            config.update { it.withPort(second, 1) }
+            assertEquals(1, CompanionGamepadSession.claim("tls-b", "fingerprint-b"))
+            config.update { it.withPort(first, com.ambient.tv.ui.gamepad.retro.RetroPorts.OFF) }
+            assertEquals(-1, CompanionGamepadSession.claim("tls-a", "fingerprint-a"))
+            assertEquals(-1, CompanionGamepadSession.port("tls-a"))
+            assertEquals(1, CompanionGamepadSession.port("tls-b"))
+        } finally {
+            CompanionGamepadSession.detach(input)
+            config.attach(emptyMap()) {}
+        }
+    }
+
     @Test fun separateAuthenticatedSessionsOwnDifferentPorts() {
         val input = pad()
         try {
