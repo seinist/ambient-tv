@@ -30,6 +30,8 @@ import com.ambient.tv.games.GameTouchMode
 import com.ambient.tv.ui.gamepad.retro.RetroPadButton
 import com.ambient.tv.ui.games.GameTouchControls
 import kotlinx.coroutines.delay
+import kotlin.properties.ReadWriteProperty
+import kotlin.reflect.KProperty
 import kotlinx.coroutines.launch
 
 /** Initial layout follows the console but never changes the TV's authoritative core mapping. */
@@ -56,6 +58,17 @@ internal fun companionPointerEdge(old: CompanionPointerState?, next: CompanionPo
         old?.contacts?.filter { it.pressed }?.map { it.index } !=
         next?.contacts?.filter { it.pressed }?.map { it.index }
 
+/** No Compose invalidation per raw stick/sensor sample. Child controls repaint their own knobs,
+ * while the full-page header/layout recomposes only when an actual UI setting changes.
+ */
+private class CompanionInputFrame : ReadWriteProperty<Any?, CompanionGamepadState> {
+    @Volatile private var frame = CompanionGamepadState()
+    override fun getValue(thisRef: Any?, property: KProperty<*>): CompanionGamepadState = frame
+    override fun setValue(thisRef: Any?, property: KProperty<*>, value: CompanionGamepadState) {
+        frame = value
+    }
+}
+
 /** Dedicated phone page, never a dialog: navigation, MiniPlayer and playback bars are absent. */
 @Composable
 internal fun CompanionGamepadScreen(manager: CompanionManager, modifier: Modifier = Modifier) {
@@ -75,7 +88,7 @@ internal fun CompanionGamepadScreen(manager: CompanionManager, modifier: Modifie
     }
     var motionEnabled by rememberSaveable(state.target?.fingerprint, info?.systemId) { mutableStateOf(false) }
     val mode = GameTouchMode.fromKey(modeKey)
-    var pad by remember(info?.sessionId) { mutableStateOf(CompanionGamepadState()) }
+    var pad by remember(info?.sessionId) { CompanionInputFrame() }
     val motion = rememberCompanionMotionSource(playing && motionEnabled)
     val haptics = LocalHapticFeedback.current
     val scope = rememberCoroutineScope()
