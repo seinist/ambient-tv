@@ -206,6 +206,7 @@ fun GameLibraryScreen(
                                     onFocus = { focusedId = game.fileId },
                                     onRequester = { itemRequests[game.fileId] = it },
                                     onDisposed = { itemRequests.remove(game.fileId) },
+                                    onDisposed = { itemRequests.remove(game.fileId) },
                                     modifier = if (games.firstOrNull()?.fileId == game.fileId)
                                         Modifier.focusRequester(firstFocus) else Modifier,
                                 )
