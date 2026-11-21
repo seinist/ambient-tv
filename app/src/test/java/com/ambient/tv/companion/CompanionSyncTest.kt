@@ -64,7 +64,9 @@ class CompanionSyncTest {
     }
 
     @Test fun phoneReceiverRejectsPlaybackInputAndUnknownCommands() {
-        listOf("start", "play", "pause", "stop", "input_claim", "input", "queue_add", "select", "anything").forEach {
+        listOf("start", "play", "pause", "stop", "input_claim", "input",
+            "gamepad_claim", "gamepad_input", "gamepad_menu", "gamepad_release",
+            "queue_add", "select", "anything").forEach {
             assertFalse(it, companionCommandAllowed(false, it))
         }
         listOf("status", "input_release").forEach {
