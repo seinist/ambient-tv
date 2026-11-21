@@ -90,8 +90,8 @@ internal object GameRetroShaders {
             vec3 r = texture2D(texture, coords+vec2(d.x, 0.0)).rgb;
             vec3 u = texture2D(texture, coords-vec2(0.0, d.y)).rgb;
             vec3 b = texture2D(texture, coords+vec2(0.0, d.y)).rgb;
-            float flat = 1.0-smoothstep(0.06, 0.35, length(l-r)+length(u-b));
-            gl_FragColor = vec4(mix(c.rgb, (l+r+u+b)*0.25, 0.30*flat*INTENSITY), c.a);
+            float flatness = 1.0-smoothstep(0.06, 0.35, length(l-r)+length(u-b));
+            gl_FragColor = vec4(mix(c.rgb, (l+r+u+b)*0.25, 0.30*flatness*INTENSITY), c.a);
         }
     """
     private const val CRT_LIGHT = """
