@@ -19,6 +19,7 @@
     <string name="retro_kind_gamepad">Controller</string>
     <string name="retro_kind_keyboard">Keyboard</string>
     <string name="retro_kind_remote">Remote</string>
+    <string name="retro_kind_companion">Phone controller</string>
     <string name="game_controls_title">Game controls</string>
     <string name="game_controls_hint">Play with a controller, keyboard or remote and choose the players</string>
     <string name="game_controls_explanation">In games, controllers, keyboards and remotes all play. Each kind has its own layout on the game pad (A right, B bottom, X top, Y left). Several devices can share a player.</string>
