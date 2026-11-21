@@ -99,10 +99,13 @@ class CompactPlaybackFooterTest {
         rule.runOnIdle { assertEquals("simple", chosen) }
         rule.onNodeWithContentDescription("Einstellungsumfang: Einfach", useUnmergedTree = true).assertExists()
         rule.onNodeWithText(rule.activity.getString(R.string.back)).performClick()
-        // Standalone panels run an exit animation before calling onBack. Advance its
-        // Compose frame clock, then observe the completed callback rather than one idle frame.
-        rule.mainClock.advanceTimeBy(1_000L)
-        rule.waitForIdle()
+        // Standalone panels animate before notifying navigation. Advance frames repeatedly:
+        // a single large virtual-time jump can begin the coroutine at its end in Robolectric.
+        repeat(15) {
+            rule.mainClock.advanceTimeBy(100L)
+            rule.waitForIdle()
+        }
+        rule.waitUntil(timeoutMillis = 3_000L) { backCount == 1 }
         rule.runOnIdle { assertEquals(1, backCount) }
     }
 }
