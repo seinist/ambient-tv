@@ -223,31 +223,6 @@ class GameRomPreparer @Inject constructor(
         }
     }
 
-    /** Verify all referenced local files before trusting the completed cache marker. */
-    private fun cachedCompanionsComplete(main: File): Boolean {
-        val seen = HashSet<String>()
-        fun check(descriptor: File): Boolean {
-            if (!descriptor.isFile || !seen.add(descriptor.canonicalPath) || seen.size > 128) return false
-            val names = when (GameSystems.extension(descriptor.name)) {
-                "cue" -> cueFiles(descriptor.readText())
-                "gdi" -> gdiFiles(descriptor.readText())
-                "m3u" -> m3uFiles(descriptor.readText())
-                else -> return descriptor.length() > 0
-            }
-            if (names.isEmpty()) return false
-            return names.all { name ->
-                val relative = safeRelativePath(name) ?: return@all false
-                val child = File(descriptor.parentFile, relative)
-                if (!child.isFile || child.length() <= 0) return@all false
-                when (GameSystems.extension(child.name)) {
-                    "cue", "gdi", "m3u" -> check(child)
-                    else -> true
-                }
-            }
-        }
-        return runCatching { check(main) }.getOrDefault(false)
-    }
-
     /**
      * Unpacks [archive] completely into "content" next to it (once per archive version; a disc needs
      * its tracks too) and returns the file to start: playlist, cue sheet, disc image or cartridge.
@@ -311,6 +286,31 @@ class GameRomPreparer @Inject constructor(
 
         fun sha1(value: String): String =
             MessageDigest.getInstance("SHA-1").digest(value.toByteArray()).joinToString("") { "%02x".format(it) }
+
+        /** Verify all referenced local files before trusting the completed cache marker. */
+        internal fun cachedCompanionsComplete(main: File): Boolean {
+            val seen = HashSet<String>()
+            fun check(descriptor: File): Boolean {
+                if (!descriptor.isFile || !seen.add(descriptor.canonicalPath) || seen.size > 128) return false
+                val names = when (GameSystems.extension(descriptor.name)) {
+                    "cue" -> cueFiles(descriptor.readText())
+                    "gdi" -> gdiFiles(descriptor.readText())
+                    "m3u" -> m3uFiles(descriptor.readText())
+                    else -> return descriptor.length() > 0
+                }
+                if (names.isEmpty()) return false
+                return names.all { name ->
+                    val relative = safeRelativePath(name) ?: return@all false
+                    val child = File(descriptor.parentFile, relative)
+                    if (!child.isFile || child.length() <= 0) return@all false
+                    when (GameSystems.extension(child.name)) {
+                        "cue", "gdi", "m3u" -> check(child)
+                        else -> true
+                    }
+                }
+            }
+            return runCatching { check(main) }.getOrDefault(false)
+        }
 
         /** Reject traversal and absolute paths, but preserve safe nested disc tracks. */
         internal fun safeRelativePath(name: String): String? {
