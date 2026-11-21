@@ -1,6 +1,6 @@
 package com.ambient.tv.ui.games
 
-import androidx.appcompat.content.res.AppCompatResources
+import androidx.core.content.ContextCompat
 import com.ambient.tv.games.GameSystems
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
@@ -26,7 +26,7 @@ class GameSystemIconsTest {
         GameSystems.all.forEach { system ->
             val resource = GameSystemIcons.drawable(system.id)
             assertEquals(system.id, "drawable", context.resources.getResourceTypeName(resource))
-            val art = AppCompatResources.getDrawable(context, resource)
+            val art = ContextCompat.getDrawable(context, resource)
             assertNotNull("Cannot inflate vector for " + system.id, art)
             assertTrue("Missing icon width for " + system.id, art!!.intrinsicWidth > 0)
             assertTrue("Missing icon height for " + system.id, art.intrinsicHeight > 0)
