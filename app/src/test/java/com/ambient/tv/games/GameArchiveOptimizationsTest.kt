@@ -99,6 +99,9 @@ class GameArchiveOptimizationsTest {
         val metadata = GameArchives.probe("game.gba.gz", Bytes(output.toByteArray()))
         assertEquals("gba", metadata?.system?.id)
         assertEquals("METROIDFUS", metadata?.internalTitle)
+        val crc = CRC32().apply { update(rom) }.value
+            .toString(16).uppercase().padStart(8, '0')
+        assertEquals("GZIP footer should match DAT without full hashing", crc, metadata?.crc32)
         val folder = Files.createTempDirectory("ambient-game-gz").toFile()
         try {
             val staged = GameArchives.stageSingle("game.gba.gz",
