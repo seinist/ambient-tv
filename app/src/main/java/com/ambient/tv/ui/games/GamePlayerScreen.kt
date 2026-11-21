@@ -795,8 +795,8 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
                     val selection = if (kind == null) {
                         GameSettings.state.controllerType(core, port)
                             ?.let { wanted -> types.firstOrNull { it.id == wanted } }
-                            ?: types.firstOrNull { it.id >= 0 && it.id and 255 == requested }
-                    } else types.firstOrNull { it.id >= 0 && it.id and 255 == requested }
+                            ?: types.firstOrNull { it.id >= 0 && (it.id and 255) == requested }
+                    } else types.firstOrNull { it.id >= 0 && (it.id and 255) == requested }
                     selection?.let { chosen ->
                         runCatching { retroView.setControllerType(port, chosen.id) }
                     }
