@@ -26,6 +26,14 @@ fun HomeRowDefinition.displayTitle(context: Context): String {
         return context.getString(R.string.telegram_home_row, context.getString(key))
             .replaceFirst(context.getString(R.string.telegram_title), name)
     }
+    if (system == HomeRowDefinition.SYSTEM_GAMES) {
+        val suffix = when (contentKey) {
+            HomeRowDefinition.GAMES_FAVORITES -> R.string.game_library_home_favorites
+            HomeRowDefinition.GAMES_RECENT -> R.string.game_library_home_recent
+            else -> R.string.game_library_all
+        }
+        return context.getString(R.string.game_library_title) + " · " + context.getString(suffix)
+    }
     if (system == HomeRowDefinition.SYSTEM_TRAILERS) {
         val feed = com.ambient.tv.trailers.TrailerFeed.entries.firstOrNull { it.name == contentKey }
         val name = MediaSystem.TRAILERS.customName ?: context.getString(R.string.trailers_title)
