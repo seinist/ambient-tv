@@ -2514,6 +2514,9 @@ class AppPreferences @Inject constructor(
             HomeRowDefinition.SYSTEM_TELEGRAM,
             HomeRowDefinition.SYSTEM_SPOTIFY,
             HomeRowDefinition.SYSTEM_PHOTOS,
+            HomeRowDefinition.SYSTEM_RADIO,
+            HomeRowDefinition.SYSTEM_TRAILERS,
+            HomeRowDefinition.SYSTEM_GAMES,
         )
         const val KEY_INITIAL_SETUP_COMPLETED = "initial_setup_completed"
         const val KEY_TELEGRAM_ENABLED = "telegram_enabled"
