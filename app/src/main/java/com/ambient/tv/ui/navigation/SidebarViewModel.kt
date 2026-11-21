@@ -241,7 +241,11 @@ class SidebarViewModel @Inject constructor(
         }
         viewModelScope.launch {
             fileStore.revision.collect {
-                _uiState.update { state -> state.copy(networkFileSources = networkFileSourcesFromStore()) }
+                _uiState.update { state -> state.copy(
+                    networkFileSources = networkFileSourcesFromStore(),
+                    gamesAvailable = fileStore.sources().isNotEmpty() || gameLibrary.folders().isNotEmpty(),
+                    gameSystemIds = librarySystemIds(),
+                ) }
             }
         }
         viewModelScope.launch { dlnaStore.serverRevision.collect { _uiState.update { it.copy(dlnaServers = dlnaStore.servers()) } } }
