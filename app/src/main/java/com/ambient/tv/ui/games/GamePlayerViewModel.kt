@@ -76,6 +76,7 @@ class GamePlayerViewModel @Inject constructor(
     private val states: GameStateStore,
     private val bios: GameBiosManager,
     private val files: FileStore,
+    private val gameLibrary: com.ambient.tv.games.library.GameLibraryRepository,
     val retroAchievements: com.ambient.tv.games.RetroAchievementsClient,
     private val cheatStore: com.ambient.tv.games.GameCheatStore,
     val shaderPacks: com.ambient.tv.games.GameShaderPackStore,
@@ -91,6 +92,7 @@ class GamePlayerViewModel @Inject constructor(
     private var prepared: PreparedGame? = null
     private var forceCache = false
     private var directFailed = false
+    private var recordedSession: GameSession? = null
 
     /** A failed direct mount or unsupported core can be retried with a LOCAL COPY only by consent. */
     val canUseCache: Boolean get() = directFailed && !forceCache
@@ -199,7 +201,6 @@ class GamePlayerViewModel @Inject constructor(
         val session = withContext(Dispatchers.IO) {
             val stamp = GameStateStore.coreStamp(core)
             val legacyStamp = GameStateStore.legacyCoreStamp(core)
-            runCatching { files.record(game.entry) }
             val auto = states.entry(game, GameStateKind.AUTO)?.takeIf {
                 chosen.saveStates && GameStateStore.compatible(it, chosen.id, stamp, legacyStamp)
             }
@@ -224,6 +225,20 @@ class GamePlayerViewModel @Inject constructor(
     }
 
     fun biosStatus(game: PreparedGame): List<GameBiosStatus> = bios.status(game.system)
+
+    /**
+     * Record history only after Libretro actually renders its first game frame.
+     * Missing cores, failed mounts and crashing cores must not pollute Recent games.
+     */
+    fun firstFrameRendered(session: GameSession) {
+        if ((mutable.value as? GameUiState.Ready)?.session !== session ||
+            recordedSession === session) return
+        recordedSession = session
+        viewModelScope.launch(Dispatchers.IO) {
+            runCatching { files.record(session.game.entry) }
+            runCatching { gameLibrary.recordPlayed(session.game.fileId) }
+        }
+    }
 
     /** The core failed to load or crashed while starting. */
     fun failed(detail: String?) {

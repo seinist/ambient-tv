@@ -45,6 +45,8 @@ object Destinations {
     const val YOUTUBE_FEED = "youtube_feed/{feedKey}"
     const val SPOTIFY = "spotify"
     const val GAME_LIBRARY = "game_library"
+    /** Settings entry works while the normal Games sidebar is still hidden. */
+    const val GAME_LIBRARY_SETUP = "game_library_setup"
     const val GAME_LIBRARY_SECTION = "game_library/{sectionKey}"
     fun gameLibrarySection(key: String) = if (key == "all") GAME_LIBRARY else "game_library/${Uri.encode(key)}"
     const val RADIO = "radio"

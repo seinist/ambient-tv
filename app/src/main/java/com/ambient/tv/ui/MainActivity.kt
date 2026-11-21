@@ -1179,7 +1179,7 @@ internal fun radioSectionTransitionIsInstant(fromRoute: String?, toRoute: String
     return isRadioBrowse(fromRoute) && isRadioBrowse(toRoute)
 }
 
-internal val SIDEBAR_ROUTES = setOf(Destinations.TRAILERS, Destinations.TRAILER_FEED, Destinations.GAME_LIBRARY, Destinations.GAME_LIBRARY_SECTION, Destinations.FILES, Destinations.FILE_SOURCE, Destinations.FILE_FAVORITES, Destinations.FILE_RECENT, Destinations.FILE_CONTINUE, Destinations.DLNA, Destinations.DLNA_SERVER, Destinations.HOME, Destinations.WEATHER, Destinations.PLEX, Destinations.JELLYFIN, Destinations.EMBY, Destinations.SEARCH, Destinations.YOUTUBE, Destinations.YOUTUBE_FEED, Destinations.TELEGRAM, Destinations.TELEGRAM_SECTION, Destinations.SPOTIFY, Destinations.SPOTIFY_SECTION, Destinations.RADIO, Destinations.RADIO_SECTION, Destinations.LIVE_TV, Destinations.LIVE_TV_SECTION, Destinations.SETTINGS, Destinations.SECTION)
+internal val SIDEBAR_ROUTES = setOf(Destinations.TRAILERS, Destinations.TRAILER_FEED, Destinations.GAME_LIBRARY, Destinations.GAME_LIBRARY_SECTION, Destinations.GAME_LIBRARY_SETUP, Destinations.FILES, Destinations.FILE_SOURCE, Destinations.FILE_FAVORITES, Destinations.FILE_RECENT, Destinations.FILE_CONTINUE, Destinations.DLNA, Destinations.DLNA_SERVER, Destinations.HOME, Destinations.WEATHER, Destinations.PLEX, Destinations.JELLYFIN, Destinations.EMBY, Destinations.SEARCH, Destinations.YOUTUBE, Destinations.YOUTUBE_FEED, Destinations.TELEGRAM, Destinations.TELEGRAM_SECTION, Destinations.SPOTIFY, Destinations.SPOTIFY_SECTION, Destinations.RADIO, Destinations.RADIO_SECTION, Destinations.LIVE_TV, Destinations.LIVE_TV_SECTION, Destinations.SETTINGS, Destinations.SECTION)
 internal val FULLSCREEN_ROUTES = setOf(Destinations.ITEM_TRAILERS, Destinations.TMDB_TRAILERS, Destinations.PHOTO_VIEWER, Destinations.GAME_PLAYER, Destinations.SETUP_COMPLETE, Destinations.INITIAL_SETUP, Destinations.SETUP_SETTINGS, Destinations.WEATHER_PLAYER, Destinations.PLAYER, Destinations.TVH_PLAYER, Destinations.YOUTUBE_PLAYER, Destinations.TELEGRAM_PLAYER, Destinations.TELEGRAM_DETAIL, Destinations.YOUTUBE_DETAIL, Destinations.YOUTUBE_CHANNEL, Destinations.SPOTIFY_PLAYER, Destinations.RADIO_PLAYER, Destinations.RADIO_DETAIL, Destinations.SPOTIFY_DETAIL, Destinations.SERVER_SELECT, Destinations.DETAIL, Destinations.DETAIL_FILTERED_BROWSE)
 // Details are ordinary page navigation (even though they hide the sidebar).
 // Exclude only player/video, setup and system-only destinations from page motion.
@@ -1450,7 +1450,6 @@ private fun AmbientTvApp(
                     if (needsWake) {
                         navController.navigate(Destinations.gameLibrarySection(game.systemId))
                     } else {
-                        gameLibraryRepository.recordPlayed(game.fileId)
                         playOnSelectedTarget(Destinations.gamePlayer(game.fileId, game.systemId))
                     }
                 } finally {
@@ -1562,10 +1561,7 @@ private fun AmbientTvApp(
         files = appPreferences.filesEnabled,
         trailers = appPreferences.trailersEnabled && !tokenStore.tmdbApiKey.isNullOrBlank(),
         iptvSourceId = configuredIptvSourceId,
-    ) ?: Destinations.GAME_LIBRARY.takeIf {
-        appPreferences.fileSources.any { !it.showInFiles } ||
-            appPreferences.gameLibraryFolders.isNotEmpty()
-    }
+    ) ?: Destinations.GAME_LIBRARY.takeIf { gameLibraryRepository.hasConfiguredFolders() }
     val rootRoute = if (appPreferences.needsInitialSetup) Destinations.INITIAL_SETUP
         else configuredStartDestination() ?: Destinations.INITIAL_SETUP
     val startDestination = if (appPreferences.isConfigured && startupState.shouldChooseAtStartup)
@@ -1687,7 +1683,7 @@ private fun AmbientTvApp(
     val currentTvheadendTab = if (currentRoute == Destinations.LIVE_TV_SECTION) currentBackStackEntry?.arguments?.getString("tab") else null
     val currentFileSourceId = if (currentRoute == Destinations.FILE_SOURCE) currentBackStackEntry?.arguments?.getString("sourceId") else null
     val currentDlnaServerId = if (currentRoute == Destinations.DLNA_SERVER) currentBackStackEntry?.arguments?.getString("serverId") else null
-    val waitsForSidebarContent = currentRoute in setOf(Destinations.GAME_LIBRARY, Destinations.GAME_LIBRARY_SECTION, Destinations.FILES, Destinations.FILE_SOURCE, Destinations.FILE_FAVORITES, Destinations.FILE_RECENT, Destinations.FILE_CONTINUE) || currentRoute == Destinations.HOME ||
+    val waitsForSidebarContent = currentRoute in setOf(Destinations.GAME_LIBRARY, Destinations.GAME_LIBRARY_SECTION, Destinations.GAME_LIBRARY_SETUP, Destinations.FILES, Destinations.FILE_SOURCE, Destinations.FILE_FAVORITES, Destinations.FILE_RECENT, Destinations.FILE_CONTINUE) || currentRoute == Destinations.HOME ||
         currentRoute == Destinations.DLNA || currentRoute == Destinations.DLNA_SERVER ||
         currentRoute == Destinations.PLEX ||
         currentRoute == Destinations.JELLYFIN ||
@@ -2135,7 +2131,7 @@ private fun AmbientTvApp(
     }
 
     LaunchedEffect(sidebarRoute, currentSectionKey, currentFeedKey, currentTrailerFeedKey, currentSpotifySectionKey, currentRadioSectionKey, currentTelegramSectionKey, currentTvheadendTab, currentLiveTvSourceId, currentFileSourceId, currentDlnaServerId) {
-        if (sidebarRoute in SIDEBAR_ROUTES && sidebarRoute != Destinations.SETTINGS) {
+        if (sidebarRoute in SIDEBAR_ROUTES && sidebarRoute !in setOf(Destinations.SETTINGS, Destinations.GAME_LIBRARY_SETUP)) {
             lastTopLevelRoute = when (sidebarRoute) {
                 Destinations.YOUTUBE_FEED -> currentFeedKey?.let(Destinations::youtubeFeed) ?: Destinations.YOUTUBE
                 Destinations.TRAILER_FEED -> currentTrailerFeedKey?.let(Destinations::trailerFeed) ?: Destinations.TRAILERS
@@ -2768,6 +2764,7 @@ private fun AmbientTvApp(
                             onPerformanceModePreview = onPerformanceModePreview,
                             onVisibleBackgroundVideoPlaybackPreview = onVisibleBackgroundVideoPlaybackPreview,
                             onUiLanguageSaved = onUiLanguageSaved,
+                            onOpenGames = { navController.navigate(Destinations.GAME_LIBRARY_SETUP) },
                             onOpenFiles = {
                                 appPreferences.filesEnabled = true
                                 appPreferences.initialSetupCompleted = true
@@ -3317,6 +3314,16 @@ private fun AmbientTvApp(
                             }
                         }
                     }
+                    composable(Destinations.GAME_LIBRARY_SETUP) {
+                        RestorableSidebarContent {
+                            com.ambient.tv.ui.games.GameLibraryScreen(
+                                initialSection = "all",
+                                startManaging = true,
+                                onBack = { navController.popBackStack() },
+                                onPlay = { game -> navController.navigate(Destinations.gamePlayer(game.fileId, game.systemId)) },
+                            )
+                        }
+                    }
                     composable(Destinations.GAME_LIBRARY) {
                         RestorableSidebarContent {
                             com.ambient.tv.ui.games.GameLibraryScreen(
@@ -3424,6 +3431,7 @@ private fun AmbientTvApp(
                                         appPreferences.initialSetupCompleted = true
                                         navController.navigate(Destinations.FILES)
                                     },
+                                    onOpenGames = { navController.navigate(Destinations.GAME_LIBRARY_SETUP) },
                                     onOpenDlna = { navController.navigate(Destinations.DLNA) },
                                     onTestScreensaver = { state ->
                                         screensaverPreview = state.toScreensaverPreview()
