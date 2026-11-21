@@ -65,6 +65,24 @@ GLES-only APK, use SKIP_LIBRASHADER_NATIVE=1. Real device tests on Shield, Phili
 and Android phone are mandatory before calling this a production player.
 See docs/LIBRETRO_VULKAN_HDR.md for all color/output acceptance gates.
 
+### Final code-only checks
+
+- A dedicated host CI job links the exact pinned librashader C API, parses all nine
+  bundled `.slangp` presets (including the 2-pass CRT Glow) and asserts SDR
+  color-space output. GLSL/SPIR-V syntax checks run separately.
+- All four Android ABI builds verify 16-KiB ELF LOAD alignment. The size gate
+  rejects a stripped runtime above 12 MiB per ABI and publishes the raw ELF
+  and gzip-compressed sizes for footprint comparison. The compressed size is a
+  proxy: it is **not** the measured final split/universal APK delta.
+- Frame uniforms use the libretro core-reported FPS and bounded monotonic
+  frame deltas instead of a fixed assumed 60 fps.
+- The C++ runtime rejects symlinked preset files; the app sets native Slang only
+  for its verified built-in files. `SKIP_LIBRASHADER_NATIVE=1` excludes the
+  library and disables native Slang selection in the resulting app.
+- These are software/CI release gates. Real Android GPU synchronization,
+  OSD-layering, input, HDR television signaling, 4K latency and picture quality
+  remain hardware acceptance tests and cannot be inferred from green CI.
+
 ## Required hardware verification
 
 Test Shield TV, Philips TV and Android phone; GLES2/3, 720p/1080p/4K,
