@@ -76,7 +76,7 @@ internal object CompanionBackupPolicy {
             "allContinueSystems", "filterBarShown", "launcherIntegrationEnabled", "settingsLevelKey",
             "autoPictureInPicture", "projectmShowPresetName", "projectmPresetShuffle", "gaplessMusicEnabled",
             "teletextSubtitleChoice", "lyricsVisible", "lyricsOnlineEnabled", "frameDropOverlayHistory",
-            "liveTvReminderAutoSwitch", "autoUpdateCheck", "projectmFavorites", "keyBindings", "gamepadSettings", "retroInputSettings", "gameSettings", "gameLibraryOptions",
+            "liveTvReminderAutoSwitch", "autoUpdateCheck", "projectmFavorites", "keyBindings", "gamepadSettings", "retroInputSettings", "gameSettings", "gameLibraryOptions", "gameLibraryOverrides",
             "viewTransitionStyleKey",
         ),
         "device" to setOf("imageCacheMb", "cardImages1080"),
