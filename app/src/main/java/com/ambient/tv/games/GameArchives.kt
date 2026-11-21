@@ -37,16 +37,21 @@ object GameArchives {
         val names = mutableSetOf<String>()
         val files = mutableListOf<File>()
         fun target(name: String, size: Long): File? {
-            val base = GameRomPreparer.safeName(name)
-            if (base.isBlank() || base.startsWith(".")) return null
-            // Flattened archives must not overwrite an earlier track with the same name.
-            if (!names.add(base.lowercase(java.util.Locale.ROOT))) {
-                throw GameArchiveException("${archive.name}: duplicate extracted file $base")
+            // Keep safe relative paths: a CUE in Game/disc.cue must find its tracks
+            // in Game/tracks/, without flattening unrelated names onto each other.
+            val relative = GameRomPreparer.safeRelativePath(name)
+                ?: throw GameArchiveException("${archive.name}: unsafe extracted path $name")
+            if (!names.add(relative.lowercase(java.util.Locale.ROOT))) {
+                throw GameArchiveException("${archive.name}: duplicate extracted file $relative")
             }
             if (size >= 0 && size > maxOutputBytes - total) {
                 throw GameArchiveException("${archive.name}: extracted data too large")
             }
-            return File(folder, base).also(files::add)
+            val out = File(folder, relative)
+            if (out.parentFile?.mkdirs() == false && out.parentFile?.isDirectory != true) {
+                throw GameArchiveException("${archive.name}: cannot prepare extracted folder")
+            }
+            return out.also(files::add)
         }
         fun checkedWrite(out: OutputStream, bytes: ByteArray, off: Int, length: Int) {
             if (length < 0 || length.toLong() > maxOutputBytes - total) {
