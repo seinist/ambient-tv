@@ -235,6 +235,8 @@ class GamesTest {
     private fun elf(align: Long): File {
         val buffer = ByteBuffer.allocate(0x40 + 0x38).order(ByteOrder.LITTLE_ENDIAN)
         buffer.put(byteArrayOf(0x7f, 'E'.code.toByte(), 'L'.code.toByte(), 'F'.code.toByte(), 2, 1, 1))
+        buffer.putShort(0x10, 3) // ET_DYN shared object: new ELF guard validates it.
+        buffer.putShort(0x12, 183) // AArch64, architecture is irrelevant without expectedAbi.
         buffer.putLong(0x20, 0x40) // e_phoff
         buffer.putShort(0x36, 0x38) // e_phentsize
         buffer.putShort(0x38, 1) // e_phnum
