@@ -105,7 +105,7 @@ private fun InputControlsPage(scope: KeyBindingScope) {
             RemoteKeyboardMapping(scope, kind, selectedKey, long)
             // The original press-to-learn rows are still available for unfamiliar buttons.
             SettingsSubheader(stringResource(R.string.input_mapping_all_actions))
-            KeyBindingSettings(scope)
+            KeyBindingSettings(scope, kind)
         }
     }
 }
@@ -158,7 +158,7 @@ private fun RemoteKeyboardMapping(scope: KeyBindingScope, kind: String, key: Str
         return
     }
     val binding = KeyBinding(code, long)
-    val selected = KeyBindings.bindings.entries.firstOrNull {
+    val selected = KeyBindings.effectiveBindingsFor(kind).entries.firstOrNull {
         it.key.scope == scope && it.value == binding
     }?.key
 
@@ -170,8 +170,8 @@ private fun RemoteKeyboardMapping(scope: KeyBindingScope, kind: String, key: Str
                     ?: context.getString(R.string.key_binding_none),
                 selected = selected == action,
                 onClick = {
-                    if (action == null) selected?.let(KeyBindings::clear)
-                    else KeyBindings.bind(action, binding)
+                    if (action == null) selected?.let { KeyBindings.clearFor(kind, it) }
+                    else KeyBindings.bindFor(kind, action, binding)
                 },
             )
         },
