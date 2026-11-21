@@ -2693,7 +2693,7 @@ class HomeViewModel @Inject constructor(
         youtubeReady = appPreferences.youtubeEnabled,
         spotifyReady = appPreferences.spotifyEnabled && spotifyRepository.nativeAvailable && spotifyRepository.webAuthorized,
         radioReady = appPreferences.radioEnabled,
-        gamesReady = gameLibrary.folders().isNotEmpty(),
+        gamesReady = gameLibrary.hasConfiguredFolders(),
         telegramReady = appPreferences.telegramEnabled && telegramRepository.available,
         embyReady = embyOnly || appPreferences.isEmbyConfigured,
         photosReady = photoRepository.hasAnyPhotoSource(),
