@@ -257,7 +257,7 @@ class GameLibraryRepository @Inject constructor(
                         detected?.id != folder.systemId
                     val system = assigned?.takeIf { !signatureConflict &&
                         (ext in it.extensions || ext in GameSystems.ambiguousExtensions ||
-                            (ext in GameSystems.archiveExtensions && detected?.id == it.id))
+                            (ext in GameSystems.archiveExtensions && (detected == null || detected.id == it.id)))
                     } ?: detected
                     if (system == null) continue
                     val internalTitle = if (previousGame != null && previousGame.size == entry.size &&
