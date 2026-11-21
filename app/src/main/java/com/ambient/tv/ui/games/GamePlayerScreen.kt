@@ -779,7 +779,8 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
             onPointer = { port, pointer ->
                 val kind = pointer?.kind
                 val previous = companionInputKinds[port]
-                if (kind != previous && !companionNetplayActive && coreReady && !destroyed) {
+                if (kind != previous && !companionNetplayActive && coreReady && !destroyed &&
+                    (kind == null || port !in input.localUsedPorts())) {
                     // Some cores advertise distinct Libretro controller device types for
                     // mouse/lightgun/pointer. Choose one ONLY when the core declares it; else
                     // preserve its original device type (many cores accept POINTER in addition
