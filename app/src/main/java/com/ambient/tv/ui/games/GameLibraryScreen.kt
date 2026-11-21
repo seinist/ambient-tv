@@ -277,6 +277,7 @@ fun GameLibraryScreen(
                 onAddNetwork = {
                     networkEditor = FileSource(name = "Retro NAS", kind = "smb", showInFiles = false)
                 },
+                onEditSource = { source -> networkEditor = source },
                 onWake = model::wakeCurrentSource,
                 onAddLocal = {
                     try { folderPicker.launch(null) }
@@ -342,6 +343,7 @@ private fun GameFolderManager(
     onFolderFileVisibility: (com.ambient.tv.games.library.GameLibraryFolder, Boolean) -> Unit,
     onDeleteSource: (FileSource) -> Unit,
     onAddNetwork: () -> Unit,
+    onEditSource: (FileSource) -> Unit,
     onWake: () -> Unit,
     onAddLocal: () -> Unit,
     onCloseSource: () -> Unit,
@@ -384,6 +386,10 @@ private fun GameFolderManager(
                         else " · " + stringResource(R.string.game_library_source_games_only)),
                         onClick = { onSelectSource(entry) }, icon = Icons.Filled.Folder,
                         modifier = Modifier.weight(1f))
+                    if (!entry.showInFiles && entry.network) {
+                        TvActionButton(stringResource(R.string.files_edit),
+                            onClick = { onEditSource(entry) }, icon = Icons.Filled.Edit)
+                    }
                     if (!entry.showInFiles && state.folders.none { it.sourceId == entry.id }) {
                         TvActionButton(stringResource(R.string.game_library_remove),
                             onClick = { onDeleteSource(entry) }, icon = Icons.Filled.Delete)
