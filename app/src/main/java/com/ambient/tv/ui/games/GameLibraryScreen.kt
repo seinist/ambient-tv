@@ -42,6 +42,9 @@ import com.ambient.tv.ui.files.NetworkSourceDialog
 import com.ambient.tv.games.GameSystems
 import com.ambient.tv.games.library.LibraryGame
 import com.ambient.tv.ui.common.AlphabetBar
+import com.ambient.tv.ui.common.AppDialog
+import com.ambient.tv.ui.common.PanelOption
+import com.ambient.tv.ui.common.sortDirectionOptions
 import com.ambient.tv.ui.common.PageHeader
 import com.ambient.tv.ui.common.TvActionButton
 import com.ambient.tv.ui.common.TvChip
@@ -74,6 +77,10 @@ fun GameLibraryScreen(
     var managing by rememberSaveable { mutableStateOf(false) }
     var choosingSystem by rememberSaveable { mutableStateOf(false) }
     var networkEditor by remember { mutableStateOf<FileSource?>(null) }
+    var renaming by remember { mutableStateOf<LibraryGame?>(null) }
+    var renameText by remember { mutableStateOf("") }
+    var choosingDatSystem by remember { mutableStateOf(false) }
+    var datSystemId by rememberSaveable { mutableStateOf("snes") }
     var showOptions by remember { mutableStateOf(false) }
     var showSearch by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
@@ -88,7 +95,9 @@ fun GameLibraryScreen(
 
     BackHandler {
         when {
+            renaming != null -> renaming = null
             showOptions -> showOptions = false
+            choosingDatSystem -> choosingDatSystem = false
             choosingSystem -> choosingSystem = false
             state.selectedSource != null -> if (!model.folderUp()) model.closePicker()
             managing -> managing = false
@@ -96,25 +105,38 @@ fun GameLibraryScreen(
         }
     }
     val sourcesById = remember(state.sources) { state.sources.associateBy { it.id } }
-    val games = remember(state.games, state.section, state.query, searchText) {
-        state.games.filter { game ->
+    val games = remember(state.games, state.section, state.sortKey, state.sortDescending, searchText) {
+        val filtered = state.games.filter { game ->
             (state.section == "all" ||
                 state.section == "favorites" && game.favorite ||
                 state.section == "recent" && game.lastPlayed != 0L ||
                 state.section == game.systemId) &&
             (searchText.isBlank() || game.title.contains(searchText, ignoreCase = true) ||
                 game.filename.contains(searchText, ignoreCase = true))
-        }.let { entries ->
-            if (state.section == "recent") entries.sortedByDescending { it.lastPlayed }
-            else entries.sortedWith(compareBy<LibraryGame> { it.title.lowercase(Locale.ROOT) }.thenBy { it.fileId })
+        }
+        if (state.section == "recent") filtered.sortedByDescending { it.lastPlayed }
+        else {
+            val sorted = when (state.sortKey) {
+                "system" -> filtered.sortedWith(compareBy<LibraryGame> { it.systemId }
+                    .thenBy { it.title.lowercase(Locale.ROOT) }.thenBy { it.fileId })
+                "recent" -> filtered.sortedWith(compareByDescending<LibraryGame> { it.lastPlayed }
+                    .thenBy { it.title.lowercase(Locale.ROOT) })
+                else -> filtered.sortedWith(compareBy<LibraryGame> { it.title.lowercase(Locale.ROOT) }
+                    .thenBy { it.fileId })
+            }
+            if (state.sortDescending) sorted.reversed() else sorted
         }
     }
-    val alphabet = remember(games, state.section) {
-        if (state.section == "recent") emptyList() else games.mapNotNull { game ->
+    val alphabet = remember(games, state.section, state.view, state.sortKey) {
+        if (state.section == "recent" || state.view == "rows" || state.sortKey != "name") emptyList()
+        else games.mapNotNull { game ->
             game.title.firstOrNull()?.uppercaseChar()?.takeIf { it in 'A'..'Z' }
         }.distinct()
     }
 
+    val datPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null) model.importDat(datSystemId, uri)
+    }
     val folderPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
         if (uri != null) model.addLocalSource(uri)
     }
@@ -136,6 +158,15 @@ fun GameLibraryScreen(
                     iconOnly = true, loading = state.busy, loadingOnlyAfterClick = true,
                     onClick = model::scanAll)
                 ViewOptionsChip(0, onClick = { showOptions = true })
+                TvChip(text = stringResource(R.string.game_library_edit_title),
+                    icon = Icons.Filled.Edit, iconOnly = true, enabled = focusedId != null,
+                    onClick = {
+                        val game = state.games.firstOrNull { it.fileId == focusedId }
+                        if (game != null) {
+                            renameText = game.customTitle ?: game.title
+                            renaming = game
+                        }
+                    })
             }
             TvChip(text = stringResource(R.string.game_library_manage), icon = Icons.Filled.Folder,
                 iconOnly = true, selected = managing, onClick = {
@@ -268,6 +299,18 @@ fun GameLibraryScreen(
                     }
                 }
             }
+        } else if (choosingDatSystem) {
+            Text(stringResource(R.string.game_library_dat_system), style = MaterialTheme.typography.titleMedium)
+            TvLazyColumn(modifier = Modifier.fillMaxSize(),
+                verticalArrangement = Arrangement.spacedBy(7.dp)) {
+                items(GameSystems.all, key = { it.id }) { system ->
+                    TvActionButton(system.name, onClick = {
+                        datSystemId = system.id
+                        choosingDatSystem = false
+                        datPicker.launch(arrayOf("application/xml", "text/xml", "*/*"))
+                    }, icon = gameSystemVector(system.id), fillWidth = true)
+                }
+            }
         } else {
             GameFolderManager(
                 state = state, choosingSystem = choosingSystem,
@@ -283,6 +326,7 @@ fun GameLibraryScreen(
                 onAddNetwork = {
                     networkEditor = FileSource(name = "Retro NAS", kind = "smb", showInFiles = false)
                 },
+                onImportDat = { choosingDatSystem = true },
                 onEditSource = { source -> networkEditor = source },
                 onWake = model::wakeCurrentSource,
                 onAddLocal = {
@@ -291,6 +335,25 @@ fun GameLibraryScreen(
                 },
                 onCloseSource = model::closePicker,
             )
+        }
+    }
+    renaming?.let { game ->
+        AppDialog(
+            onDismiss = { renaming = null },
+            title = stringResource(R.string.game_library_edit_title),
+            footer = {
+                TvActionButton(stringResource(R.string.files_cancel), onClick = { renaming = null })
+                TvActionButton(stringResource(R.string.files_save), onClick = {
+                    model.rename(game, renameText)
+                    renaming = null
+                })
+            },
+        ) {
+            TvTextField(renameText, { renameText = it },
+                stringResource(R.string.game_library_custom_title),
+                modifier = Modifier.fillMaxWidth())
+            Text(stringResource(R.string.game_library_name_hint),
+                style = MaterialTheme.typography.bodySmall)
         }
     }
     networkEditor?.let { source ->
@@ -312,10 +375,21 @@ fun GameLibraryScreen(
                     views = listOf(
                         ViewOption("grid", stringResource(R.string.library_view_grid), ViewPreview.GRID),
                         ViewOption("list", stringResource(R.string.library_view_list), ViewPreview.LIST),
+                        ViewOption("rows", stringResource(R.string.library_view_rows), ViewPreview.ROWS),
                     ),
                     selectedView = state.view, onView = model::view,
                     gridColumns = state.gridColumns, listRows = state.listRows,
                     onGridColumns = model::gridColumns, onListRows = model::listRows,
+                    densityPreview = if (state.view == "rows") ViewPreview.ROWS else null,
+                    sorts = listOf(
+                        PanelOption("name", stringResource(R.string.game_library_sort_name)),
+                        PanelOption("system", stringResource(R.string.game_library_sort_system)),
+                        PanelOption("recent", stringResource(R.string.game_library_sort_recent)),
+                    ),
+                    selectedSort = state.sortKey, onSort = model::sort,
+                    sortOrders = sortDirectionOptions("A–Z", "Z–A"),
+                    selectedSortOrder = if (state.sortDescending) "DESCENDING" else "ASCENDING",
+                    onSortOrder = { model.sortDescending(it == "DESCENDING") },
                     title = stringResource(R.string.game_library_title),
                     onClose = { showOptions = false },
                     extraContent = {
@@ -349,6 +423,7 @@ private fun GameFolderManager(
     onFolderFileVisibility: (com.ambient.tv.games.library.GameLibraryFolder, Boolean) -> Unit,
     onDeleteSource: (FileSource) -> Unit,
     onAddNetwork: () -> Unit,
+    onImportDat: () -> Unit,
     onEditSource: (FileSource) -> Unit,
     onWake: () -> Unit,
     onAddLocal: () -> Unit,
@@ -383,6 +458,14 @@ private fun GameFolderManager(
                 TvActionButton(stringResource(R.string.game_library_add_network),
                     onClick = onAddNetwork, icon = Icons.Filled.Storage, fillWidth = true)
             }
+            item {
+                TvActionButton(stringResource(R.string.game_library_import_dat),
+                    onClick = onImportDat, icon = Icons.Filled.LibraryBooks, fillWidth = true)
+            }
+            state.message?.let { feedback -> item {
+                Text(feedback, style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+            } }
             item { Text(stringResource(R.string.game_library_existing_sources),
                 style = MaterialTheme.typography.titleMedium) }
             items(state.sources, key = { it.id }) { entry ->
