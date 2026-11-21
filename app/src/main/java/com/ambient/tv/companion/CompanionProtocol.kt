@@ -344,10 +344,27 @@ internal fun sharedMedia(text: String): CompanionMedia? {
  * cannot be merged: another frame type, or a sum outside the protocol's -1..1 range.
  */
 internal fun coalesceCompanionInput(first: CompanionFrame, next: CompanionFrame): CompanionFrame? {
-    // Gamepad packets are complete snapshots: the newest supersedes older analog positions.
-    // Release and menu commands are distinct types and cannot be swallowed here.
+    // Do not coalesce across press/release transitions: a very quick tap must survive the
+    // queue even when the phone sends DOWN and UP before the TV acknowledges either one.
     if (first.type == "gamepad_input" && next.type == "gamepad_input" &&
-        first.gamepadState != null && next.gamepadState != null) return next
+        first.gamepadState != null && next.gamepadState != null) {
+        val a = first.gamepadState
+        val b = next.gamepadState
+        val pa = a.pointer
+        val pb = b.pointer
+        if (a.buttons != b.buttons || pa?.kind != pb?.kind || pa?.buttons != pb?.buttons ||
+            pa?.offscreen != pb?.offscreen || a.motion?.mask != b.motion?.mask ||
+            pa?.contacts?.filter { it.pressed }?.map { it.index } !=
+                pb?.contacts?.filter { it.pressed }?.map { it.index }) return null
+        // The mouse is relative (unlike absolute pointers): preserve the sum of movement.
+        val pointer = if (pa?.kind == "mouse" && pb != null) {
+            val dx = pa.dx + pb.dx
+            val dy = pa.dy + pb.dy
+            if (dx !in -1f..1f || dy !in -1f..1f) return null
+            pb.copy(dx = dx, dy = dy)
+        } else pb
+        return next.copy(gamepadState = b.copy(pointer = pointer))
+    }
     val a = first.input ?: return null
     val b = next.input ?: return null
     if (first.type != "input" || next.type != "input" || a.action != b.action || a.action !in setOf("move", "scroll")) return null
