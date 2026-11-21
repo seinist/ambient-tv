@@ -365,6 +365,12 @@ android {
             excludes += setOf("**/mips/libjnidispatch.so", "**/mips64/libjnidispatch.so", "**/armeabi/libjnidispatch.so")
             // An earlier build may have left the Spotify core in jniLibs: never ship it when disabled.
             if (!spotifyEnabled) excludes += "**/libspotify_receiver_core.so"
+            // An earlier full Vulkan build may leave a 6+ MB native library in
+            // jniLibs. A later GLES-only build must never accidentally ship it.
+            val includeNativeSlang = providers.gradleProperty("LIBRASHADER_NATIVE")
+                .orElse(providers.environmentVariable("LIBRASHADER_NATIVE"))
+                .orElse("0").get() == "1"
+            if (!includeNativeSlang) excludes += "**/liblibrashader_capi.so"
 
             // AGP's llvm-strip rejects these prebuilt ELFs and would keep their debug info.
             // The release strip below still runs llvm-strip --strip-unneeded on every .so.
