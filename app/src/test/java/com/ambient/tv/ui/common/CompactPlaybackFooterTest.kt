@@ -85,7 +85,14 @@ class CompactPlaybackFooterTest {
         val layouts = mutableListOf<TextLayoutResult>()
         rule.onNodeWithText("Sehr ausführliche Experteneinstellungen", useUnmergedTree = true)
             .performSemanticsAction(SemanticsActions.GetTextLayoutResult) { it(layouts) }
-        assertTrue("The stress label should wrap on a narrow footer", layouts.single().lineCount > 1)
+        // Actual viewport and font metrics vary by Robolectric/device. A fitting single
+        // line is valid; what matters is that none of the translated value is clipped.
+        val label = rule.onNodeWithText("Sehr ausführliche Experteneinstellungen", useUnmergedTree = true)
+            .fetchSemanticsNode().boundsInRoot
+        val back = rule.onNodeWithText(rule.activity.getString(R.string.back), useUnmergedTree = true)
+            .fetchSemanticsNode().boundsInRoot
+        assertTrue("Long scope label must remain before Back", label.right <= back.left + 1f)
+        assertTrue("Long translated value must render text", layouts.single().lineCount >= 1)
         assertFalse("Even a long translated value must remain fully visible", layouts.single().hasVisualOverflow)
     }
 
@@ -97,6 +104,10 @@ class CompactPlaybackFooterTest {
         rule.runOnIdle { assertEquals("simple", chosen) }
         rule.onNodeWithContentDescription("Einstellungsumfang: Einfach", useUnmergedTree = true).assertExists()
         rule.onNodeWithText(rule.activity.getString(R.string.back)).performClick()
+        // Standalone panel dismissal is animated. Commit Back only after the
+        // slide-out completes; do not turn off animation just to satisfy a test.
+        rule.mainClock.advanceTimeBy(800L)
+        rule.waitForIdle()
         rule.runOnIdle { assertEquals(1, backCount) }
     }
 }

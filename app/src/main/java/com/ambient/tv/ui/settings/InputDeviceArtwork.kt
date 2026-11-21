@@ -342,7 +342,13 @@ internal fun consoleArtwork(systemId: String, variant: String = ""): InputArtwor
         "dreamcast" -> InputArtwork(title, InputArtworkShape.SCREEN_PAD,
             direction() + fourFace() + shoulderPair("L", "R") + startSelect("Start", ""))
         "saturn" -> InputArtwork(title, InputArtworkShape.OVAL,
-            direction() + sixFace() + shoulderPair() + startSelect("Start", ""))
+            // Six face buttons already occupy the RetroPad L/R slots for X/Z.
+            // Separate Saturn shoulder triggers get distinct IDs and L2/R2 slots,
+            // rather than the duplicate L/R artwork/actions that hid two keys.
+            direction() + sixFace() + listOf(
+                key("l2", "L", .24f, .22f, RetroPadButton.L2),
+                key("r2", "R", .76f, .22f, RetroPadButton.R2),
+            ) + startSelect("Start", ""))
         "c64", "c128", "vic20", "plus4", "pet", "cbm2" ->
             InputArtwork("$title · Tastatur/Joystick", InputArtworkShape.KEYBOARD, retroKeyRows())
         "a7800" -> InputArtwork(title, InputArtworkShape.JOYSTICK, listOf(
