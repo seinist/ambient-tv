@@ -1,6 +1,7 @@
 package com.ambient.tv.companion
 
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.channels.ReceiveChannel
 import kotlinx.coroutines.selects.select
 import kotlinx.coroutines.withTimeoutOrNull
 
@@ -99,6 +100,24 @@ internal class CompanionLiveInputQueue {
                 }
             }
             next
+        }
+    }
+
+    /** While a TV ACK is pending, allow newer motion to be sent without waiting for RTT.
+     * The second item is true for an already-arrived reply, false for a new input command.
+     * The caller bounds the number of outstanding requests to protect the TCP write buffer.
+     */
+    suspend fun receiveOrReply(normal: Channel<CompanionFrame>,
+                               replies: ReceiveChannel<CompanionFrame>): Pair<CompanionFrame, Boolean> {
+        poll(normal)?.let { return it to false }
+        while (true) {
+            val result = select<Pair<CompanionFrame?, Boolean>> {
+                replies.onReceive { it to true }
+                edges.onReceive { it to false }
+                normal.onReceive { it to false }
+                signal.onReceive { takeContinuous() to false }
+            }
+            result.first?.let { return it to result.second }
         }
     }
 
