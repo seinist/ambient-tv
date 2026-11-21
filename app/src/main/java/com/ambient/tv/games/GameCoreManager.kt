@@ -95,6 +95,10 @@ class GameCoreManager @Inject constructor(
         if (source != GameCoreSource.BUILDBOT && channel.available) {
             val found = try {
                 channel.build(core, abi)
+            } catch (error: GameCoreSignatureException) {
+                // A signature failure is an integrity incident, never silently downgrade
+                // AUTO to an unsigned buildbot artifact.
+                throw error
             } catch (error: IOException) {
                 if (source == GameCoreSource.AMBIENT) throw error
                 null
