@@ -643,6 +643,9 @@ class SettingsBackupManager @Inject constructor(
                     gamepadSettings = preferences.gamepadSettings,
                     retroInputSettings = preferences.retroInputSettings,
                     gameSettings = preferences.gameSettings,
+                    gameLibraryOptions = preferences.gameLibraryOptions,
+                    gameLibraryOverrides = preferences.gameLibraryOverrides,
+                    gameLibraryFolders = preferences.gameLibraryFolders,
                 ),
                 device = DeviceSettingsExtras(
                     imageCacheMb = preferences.imageCacheMb,
@@ -663,6 +666,31 @@ class SettingsBackupManager @Inject constructor(
         validateAccountBackup(backup)
         backup.smartTubeAccounts?.let { smartTube?.validateAccounts(it) }
         backup.fileSources.filter { it.kind in com.ambient.tv.data.files.FileKinds.ALL }.forEach { it.validated() }
+        backup.extras?.portable?.gameLibraryOverrides?.let { overrides ->
+            require(overrides.size <= 5000)
+            require(overrides.distinctBy { it.sourceId to it.path }.size == overrides.size)
+            overrides.forEach {
+                require(it.sourceId.length in 1..80 && it.path.length in 1..4096)
+                require(it.path.none { ch -> ch.isISOControl() })
+                require(it.title == null || it.title.length <= 160 && it.title.none { ch -> ch.isISOControl() })
+                require(it.lastPlayed >= 0L)
+            }
+        }
+        backup.extras?.portable?.gameLibraryFolders?.let { folders ->
+            require(folders.size <= 200 && folders.distinctBy { it.id }.size == folders.size)
+            folders.forEach { folder ->
+                require(folder.id.matches(Regex("[A-Za-z0-9-]{1,80}")))
+                require(folder.sourceId.matches(Regex("[A-Za-z0-9-]{1,80}")))
+                require(folder.path.length <= 4096 && folder.path.none { it.code < 32 })
+                val source = backup.fileSources.firstOrNull { it.id == folder.sourceId }
+                if (source != null && source.kind != "local") {
+                    require(com.ambient.tv.data.files.FilePaths.relative(folder.path) == folder.path) {
+                        "Game folder path must be a safe source-relative path"
+                    }
+                }
+                require(folder.systemId == "auto" || com.ambient.tv.games.GameSystems.byId(folder.systemId) != null)
+            }
+        }
         backup.dlnaServers.forEach { it.validated() }
         backup.iptvSources?.let { sources ->
             require(sources.size <= com.ambient.tv.data.iptv.IptvStore.MAX_SOURCES && sources.distinctBy { it.id }.size == sources.size)
@@ -731,6 +759,12 @@ class SettingsBackupManager @Inject constructor(
             previous.keys.filterNot { it in keptIds }.forEach { tokenStore.setSmbPassword(it, null) }
             previous.keys.filterNot { it in keptKeyIds }.forEach { tokenStore.setSshKey(it, null) }
             preferences.fileSources = fileSources
+            // Restore folder links only to known sources; old backups do not clear them.
+            backup.extras?.portable?.gameLibraryFolders?.let { folders ->
+                preferences.gameLibraryFolders = folders.filter { folder ->
+                    fileSources.any { it.id == folder.sourceId }
+                }
+            }
             preferences.filesEnabled = backup.filesEnabled
             fileSources.filter { it.usesPassword }.forEach { source ->
                 backup.smbPasswords[source.id]?.let { tokenStore.setSmbPassword(source.id, it) }
@@ -1133,6 +1167,10 @@ class SettingsBackupManager @Inject constructor(
             settings.lyricsOnlineEnabled?.let { preferences.lyricsOnlineEnabled = it }
             settings.frameDropOverlayHistory?.let { preferences.frameDropOverlayHistory = it }
             settings.viewTransitionStyleKey?.let { preferences.viewTransitionStyleKey = it }
+            settings.gameLibraryOptions?.let { preferences.gameLibraryOptions = it }
+            settings.gameLibraryOverrides?.let { preferences.gameLibraryOverrides = it.filter { row ->
+                row.sourceId in preferences.fileSources.map { source -> source.id }
+            }.takeLast(5000) }
             settings.gameSettings?.let {
                 preferences.gameSettings = it
                 com.ambient.tv.games.GameSettings.reload(it)
@@ -1173,7 +1211,7 @@ class SettingsBackupManager @Inject constructor(
     }
 
     internal companion object {
-        const val CURRENT_SCHEMA_VERSION = 82
+        const val CURRENT_SCHEMA_VERSION = 83
         val PORTABLE_DISPLAY_MODES = setOf("system", AppPreferences.DISPLAY_MODE_AUTO_CONTENT, AppPreferences.DISPLAY_MODE_AUTO_DISPLAY)
     }
 }

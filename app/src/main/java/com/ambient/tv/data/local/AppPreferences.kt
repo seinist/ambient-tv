@@ -206,6 +206,49 @@ class AppPreferences @Inject constructor(
         return decode(raw).also { decodedLists[key] = raw to it }
     }
 
+    /**
+     * Portable Games view configuration (unlike each device's disk catalog or SAF grants).
+     * Keep keys explicit so a malformed/old backup cannot inject arbitrary preferences.
+     */
+    var gameLibraryOptions: Map<String, String>
+        get() = mapOf(
+            "view" to (prefs.getString("game_library_view_style", "grid") ?: "grid"),
+            "title" to (prefs.getString("game_library_title_style", "auto") ?: "auto"),
+            "grid" to prefs.getInt("game_library_grid_columns", 8).toString(),
+            "list" to prefs.getInt("game_library_list_rows", 7).toString(),
+            "sort" to (prefs.getString("game_library_sort", "name") ?: "name"),
+            "descending" to prefs.getBoolean("game_library_descending", false).toString(),
+        )
+        set(settings) {
+            prefs.edit {
+                settings["view"]?.takeIf { it in setOf("grid", "list", "rows") }?.let { putString("game_library_view_style", it) }
+                settings["title"]?.takeIf { it in setOf("auto", "internal", "filename") }?.let { putString("game_library_title_style", it) }
+                settings["grid"]?.toIntOrNull()?.let { putInt("game_library_grid_columns", it.coerceIn(4, 12)) }
+                settings["list"]?.toIntOrNull()?.let { putInt("game_library_list_rows", it.coerceIn(4, 10)) }
+                settings["sort"]?.takeIf { it in setOf("name", "system", "recent") }?.let { putString("game_library_sort", it) }
+                settings["descending"]?.toBooleanStrictOrNull()?.let { putBoolean("game_library_descending", it) }
+            }
+        }
+
+    /** Portable user changes; scanner metadata and ROM payloads remain on each device. */
+    var gameLibraryOverrides: List<com.ambient.tv.games.library.GamePortableState>
+        get() = runCatching {
+            json.decodeFromString<List<com.ambient.tv.games.library.GamePortableState>>(
+                prefs.getString("game_library_overrides", "[]") ?: "[]")
+        }.getOrDefault(emptyList()).distinctBy { it.sourceId to it.path }.takeLast(5000)
+        set(value) = prefs.edit {
+            putString("game_library_overrides", json.encodeToString(
+                value.distinctBy { it.sourceId to it.path }.takeLast(5000)))
+        }
+
+    /** Game collections refer to existing FileSource IDs: never duplicate NAS logins/WOL. */
+    var gameLibraryFolders: List<com.ambient.tv.games.library.GameLibraryFolder>
+        get() = runCatching {
+            json.decodeFromString<List<com.ambient.tv.games.library.GameLibraryFolder>>(
+                prefs.getString("game_library_folders", "[]") ?: "[]")
+        }.getOrDefault(emptyList()).take(200)
+        set(value) = prefs.edit { putString("game_library_folders", json.encodeToString(value.take(200))) }
+
     var fileSources: List<com.ambient.tv.data.files.FileSource>
         get() = runCatching { decodeCached("file_sources", prefs.getString("file_sources", "[]")!!) { json.decodeFromString<List<com.ambient.tv.data.files.FileSource>>(it) } }
             .getOrDefault(emptyList()).mapNotNull { runCatching { it.validated() }.getOrNull() }.distinctBy { it.id }.take(50)
@@ -221,10 +264,16 @@ class AppPreferences @Inject constructor(
             val history = runCatching {
                 json.decodeFromString<List<com.ambient.tv.data.files.FileHistory>>(prefs.getString("file_history", "[]")!!)
             }.getOrDefault(emptyList()).filter { it.entry.sourceId in reusable }.take(500)
+            // ROM directory assignments must not follow an ID to a different NAS/share/root.
+            // Full backup imports restore their validated folder links after the source list.
+            val retainedGames = gameLibraryFolders.filter { it.sourceId in reusable }
+            val retainedGameOverrides = gameLibraryOverrides.filter { it.sourceId in reusable }
             prefs.edit {
                 putString("file_sources", json.encodeToString(next))
                 putString("file_favorites", json.encodeToString(favorites))
                 putString("file_history", json.encodeToString(history))
+                putString("game_library_folders", json.encodeToString(retainedGames))
+                putString("game_library_overrides", json.encodeToString(retainedGameOverrides))
             }
         }
 
@@ -592,7 +641,7 @@ class AppPreferences @Inject constructor(
     }
 
     val needsInitialSetup: Boolean
-        get() = !initialSetupCompleted && !filesEnabled && !radioEnabled && !(com.ambient.tv.BuildConfig.MONOGRAM_NATIVE && telegramEnabled) && !isConfigured && !isJellyfinConfigured && !isEmbyConfigured && !isTvheadendConfigured
+        get() = !initialSetupCompleted && !filesEnabled && fileSources.isEmpty() && !radioEnabled && !(com.ambient.tv.BuildConfig.MONOGRAM_NATIVE && telegramEnabled) && !isConfigured && !isJellyfinConfigured && !isEmbyConfigured && !isTvheadendConfigured
 
     var host: String
         get() = prefs.getString(KEY_HOST, "") ?: ""
@@ -2478,6 +2527,9 @@ class AppPreferences @Inject constructor(
             HomeRowDefinition.SYSTEM_TELEGRAM,
             HomeRowDefinition.SYSTEM_SPOTIFY,
             HomeRowDefinition.SYSTEM_PHOTOS,
+            HomeRowDefinition.SYSTEM_RADIO,
+            HomeRowDefinition.SYSTEM_TRAILERS,
+            HomeRowDefinition.SYSTEM_GAMES,
         )
         const val KEY_INITIAL_SETUP_COMPLETED = "initial_setup_completed"
         const val KEY_TELEGRAM_ENABLED = "telegram_enabled"

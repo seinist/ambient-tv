@@ -264,11 +264,34 @@ internal fun SidebarContent(
     val embyShown = embyEnabled
     val networkFileSources = sidebarState.networkFileSources
     val dlnaServers = sidebarState.dlnaServers
+    // Reuse the exact same tinted console vectors as the Games grid and category chips.
+    // A visible menu can have at most 31 system entries: loading is bounded and cached.
+    val gameSystemIcons = mutableMapOf<String, ImageVector>()
+    for (id in sidebarState.gameSystemIds) {
+        gameSystemIcons[id] = com.ambient.tv.ui.games.gameSystemVector(id)
+    }
     val systems = buildList {
         if (dlnaServers.isNotEmpty()) add(MenuSystem("dlna", menuSystemName(MediaSystem.DLNA), Icons.Filled.VideoLibrary, system = MediaSystem.DLNA, entries =
             dlnaMenuDestinations(sidebarState)))
         if (filesEnabled) add(MenuSystem("files", menuSystemName(MediaSystem.FILES), Icons.Filled.Folder, system = MediaSystem.FILES, entries =
             filesMenuDestinations(sidebarState)))
+        if (sidebarState.gamesAvailable) add(MenuSystem(
+            "games", stringResource(R.string.game_library_title), Icons.Filled.SportsEsports,
+            entries = (listOf(
+                MenuDestination("games:all", stringResource(R.string.game_library_all),
+                    Icons.Filled.Apps, Destinations.GAME_LIBRARY),
+                MenuDestination("games:favorites", stringResource(R.string.radio_favorites),
+                    Icons.Filled.Favorite, Destinations.gameLibrarySection("favorites")),
+                MenuDestination("games:recent", stringResource(R.string.radio_recent),
+                    Icons.Filled.History, Destinations.gameLibrarySection("recent")),
+            ) + sidebarState.gameSystemIds.mapNotNull { id ->
+                com.ambient.tv.games.GameSystems.byId(id)?.let { system ->
+                    MenuDestination("games:$id", system.shortName,
+                        gameSystemIcons[id] ?: Icons.Filled.SportsEsports,
+                        Destinations.gameLibrarySection(id))
+                }
+            }),
+        ))
         if (plexShown) add(MenuSystem("plex", offlineLabel(menuSystemName(MediaSystem.PLEX), "plex" in sidebarState.offlineSystems), Icons.Filled.VideoLibrary, system = MediaSystem.PLEX, entries =
             providerMenuDestinations(sidebarState, "plex")))
         if (jellyfinShown) add(MenuSystem("jellyfin", offlineLabel(menuSystemName(MediaSystem.JELLYFIN), "jellyfin" in sidebarState.offlineSystems), Icons.Filled.VideoLibrary, system = MediaSystem.JELLYFIN, entries =

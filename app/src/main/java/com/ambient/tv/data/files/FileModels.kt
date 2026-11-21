@@ -35,6 +35,12 @@ data class FileSource(
      * system does not trust (self-signed NAS). Format "SHA256:<base64>", empty = not confirmed.
      */
     val serverKey: String = "",
+    /**
+     * Expose this source in the regular Files browser. A Games-only NAS/SAF
+     * source still uses the same credentials, connectivity and Wake-on-LAN.
+     * Defaults to true for every existing saved source and older backups.
+     */
+    val showInFiles: Boolean = true,
 ) {
     val network: Boolean get() = kind in FileKinds.NETWORK
     val usesPassword: Boolean get() = kind in FileKinds.WITH_PASSWORD

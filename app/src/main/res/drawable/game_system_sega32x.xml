@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+ android:width="64dp" android:height="64dp"
+ android:viewportWidth="64" android:viewportHeight="64">
+ <!-- Ambient TV: corrected upright system hardware, intentionally no brand logos. -->
+ <path android:pathData="M6,38 a26,15 0,1 0,52,0 a26,15 0,1 0,-52,0" android:fillColor="#FFFFFFFF" android:fillAlpha="0.12" android:strokeColor="#FFFFFFFF" android:strokeWidth="2.25" android:strokeLineCap="round" android:strokeLineJoin="round"/>
+ <path android:pathData="M20,35 a12,12 0,1 0,24,0 a12,12 0,1 0,-24,0" android:fillColor="#FFFFFFFF" android:fillAlpha="0.035" android:strokeColor="#FFFFFFFF" android:strokeWidth="2.25" android:strokeLineCap="round" android:strokeLineJoin="round"/>
+ <path android:pathData="M13,48 L51,48" android:fillColor="#00000000" android:strokeColor="#FFFFFFFF" android:strokeWidth="1.7" android:strokeLineCap="round" android:strokeLineJoin="round"/>
+ <path android:pathData="M21,19 L23,12 H42 L44,19 L47,32 H18 Z" android:fillColor="#FFFFFFFF" android:fillAlpha="0.14" android:strokeColor="#FFFFFFFF" android:strokeWidth="2.25" android:strokeLineCap="round" android:strokeLineJoin="round"/>
+ <path android:pathData="M26,15 H39 Q40,15 40,16 V19 Q40,20 39,20 H26 Q25,20 25,19 V16 Q25,15 26,15 Z" android:fillColor="#FFFFFFFF" android:fillAlpha="0.035" android:strokeColor="#FFFFFFFF" android:strokeWidth="2.25" android:strokeLineCap="round" android:strokeLineJoin="round"/>
+ <path android:pathData="M22,31 L44,31" android:fillColor="#00000000" android:strokeColor="#FFFFFFFF" android:strokeWidth="1.6" android:strokeLineCap="round" android:strokeLineJoin="round"/>
+ <path android:pathData="M14,38 a2,2 0,1 0,4,0 a2,2 0,1 0,-4,0" android:fillColor="#FFFFFFFF" android:fillAlpha="0.95"/>
+ <path android:pathData="M46,38 a2,2 0,1 0,4,0 a2,2 0,1 0,-4,0" android:fillColor="#FFFFFFFF" android:fillAlpha="0.95"/>
+</vector>

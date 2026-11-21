@@ -1180,6 +1180,7 @@ internal fun homeRowSourceAddable(system: String, contentKey: String, state: Set
             youtubeReady = sourceConfigured(SettingsCategory.YOUTUBE, state) && state.youtubeAvailable,
             spotifyReady = sourceConfigured(SettingsCategory.SPOTIFY, state),
             radioReady = sourceConfigured(SettingsCategory.RADIO, state),
+            gamesReady = true,
             telegramReady = sourceConfigured(SettingsCategory.TELEGRAM, state),
             photosReady = sourceConfigured(SettingsCategory.PLEX, state) ||
                 sourceConfigured(SettingsCategory.JELLYFIN, state) || sourceConfigured(SettingsCategory.EMBY, state),

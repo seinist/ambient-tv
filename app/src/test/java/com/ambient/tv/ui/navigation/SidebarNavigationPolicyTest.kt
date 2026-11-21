@@ -193,6 +193,7 @@ class SidebarNavigationPolicyTest {
             "spotify_section/liked",
             "radio_section/favorites",
             "live_tv/guide?sourceId=iptv%3Aone",
+            "game_library/snes",
             "files_source/nas",
             "dlna/server-1",
         ).forEach { assertTrue(it, isParameterizedSidebarRoute(it)) }

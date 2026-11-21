@@ -50,6 +50,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.tv.material3.ClickableSurfaceDefaults
 import androidx.tv.material3.MaterialTheme
@@ -266,7 +267,23 @@ fun MediaTile(
                     val imageUrl = mediaTileImageUrl(visualItem, resolvedStyle)
                     // Monogram channel cards follow SmartTube's round-avatar treatment.
                     // Content remains the normal shared card/focus component on TV and phone.
-                    if (visualItem.ratingKey.startsWith("telegram-channel:")) {
+                    if (visualItem.ratingKey.startsWith(com.ambient.tv.ui.home.GAME_HOME_ITEM_PREFIX)) {
+                        // Games has original theme-tinted system vectors rather than remote
+                        // posters. Use drawable resources directly: Coil/android.resource
+                        // support varies across devices, and Home must not download ROM art.
+                        val id = visualItem.ratingKey.substringAfterLast('|', "")
+                        Box(
+                            Modifier.fillMaxSize().background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = .24f)),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Icon(
+                                painter = painterResource(com.ambient.tv.ui.games.GameSystemIcons.drawable(id)),
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.fillMaxWidth(.70f).aspectRatio(1f),
+                            )
+                        }
+                    } else if (visualItem.ratingKey.startsWith("telegram-channel:")) {
                         Box(
                             Modifier.fillMaxSize().background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = .45f)),
                             contentAlignment = Alignment.Center,

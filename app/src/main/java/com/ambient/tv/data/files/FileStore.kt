@@ -22,10 +22,32 @@ class FileStore @Inject constructor(
     val revision = changes.asStateFlow()
     // Imports also write AppPreferences directly. Keep every retained browser up to date.
     private val sourceListener = SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
-        if (key == "file_sources") changed()
+        if (key == "file_sources" || key == "game_library_folders") changed()
     }
     init { prefs.registerOnSharedPreferenceChangeListener(sourceListener) }
+    /** All configured sources, including Games-only sources (required for playback and WOL). */
     fun sources() = preferences.fileSources
+
+    /** Only sources that actually belong in the normal Files browser and sidebar. */
+    fun fileBrowserSources(): List<FileSource> = sources().filter { source ->
+        source.showInFiles && !hiddenFolder(source.id, sourceRoot(source))
+    }
+
+    fun visibleInFiles(entry: FileEntry): Boolean = visibleInFiles(entry.sourceId, entry.path)
+
+    fun visibleInFiles(sourceId: String, path: String): Boolean {
+        val source = sources().firstOrNull { it.id == sourceId } ?: return false
+        return source.showInFiles && !hiddenFolder(sourceId, path)
+    }
+
+    private fun sourceRoot(source: FileSource): String = if (source.kind == "local") {
+        runCatching {
+            android.provider.DocumentsContract.getTreeDocumentId(android.net.Uri.parse(source.treeUri))
+        }.getOrDefault("")
+    } else ""
+
+    private fun hiddenFolder(sourceId: String, path: String): Boolean =
+        isGamesOnlyFilePath(sourceId, path, preferences.gameLibraryFolders)
     /** Credentials and source identity must be read atomically with edits and imports. */
     internal fun <T> withCurrentSource(source: FileSource, action: () -> T): T = synchronized(preferences.fileSourceLock) {
         if (sources().none { it == source }) throw java.io.IOException("Source configuration changed")
@@ -46,7 +68,8 @@ class FileStore @Inject constructor(
         else if (sshKey != null) tokens.setSshKey(valid.id, sshKey)
         preferences.fileSources = existing + valid
         // Adding a source turns Files on; editing one (e.g. its wake settings) leaves the switch alone.
-        if (added) preferences.filesEnabled = true
+        if (valid.showInFiles && (added || all.firstOrNull { it.id == valid.id }?.showInFiles == false))
+            preferences.filesEnabled = true
         changed()
     }
     /**
@@ -63,6 +86,7 @@ class FileStore @Inject constructor(
     }
     fun removeSource(id: String) = synchronized(preferences.fileSourceLock) {
         preferences.fileSources = sources().filterNot { it.id == id }
+        preferences.gameLibraryFolders = preferences.gameLibraryFolders.filterNot { it.sourceId == id }
         tokens.setSmbPassword(id, null)
         tokens.setSshKey(id, null)
         saveFavorites(favorites().filterNot { it.sourceId == id })

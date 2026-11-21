@@ -41,6 +41,12 @@ data class PortableSettingsExtras(
     val retroInputSettings: Map<String, String>? = null,
     /** Game picture filters and core options (see games.GameSettingsState). */
     val gameSettings: Map<String, String>? = null,
+    /** Console browse mode, density, sorting and ROM-title priority (no ROMs or catalog cache). */
+    val gameLibraryOptions: Map<String, String>? = null,
+    /** Portable ROM title overrides, favorites and recent launches (no ROM data). */
+    val gameLibraryOverrides: List<com.ambient.tv.games.library.GamePortableState>? = null,
+    /** Source-linked ROM folder assignments live in Extras to stay under JVM 255-slot limit. */
+    val gameLibraryFolders: List<com.ambient.tv.games.library.GameLibraryFolder>? = null,
 )
 
 @Serializable

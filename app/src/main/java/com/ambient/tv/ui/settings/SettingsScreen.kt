@@ -1978,6 +1978,7 @@ private fun rankedHomeSources(context: android.content.Context, system: String):
 private fun homeRowSystemGroupTitle(system: String): String {
     MediaSystem.fromKey(system)?.let { return systemName(it) }
     return when (system) {
+        HomeRowDefinition.SYSTEM_GAMES -> stringResource(R.string.game_library_title)
         HomeRowDefinition.SYSTEM_PHOTOS -> stringResource(R.string.settings_photos_title)
         HomeRowDefinition.SYSTEM_ALL -> stringResource(R.string.settings_home_group_all)
         else -> system
@@ -2048,6 +2049,9 @@ private fun HomeRowAddButtons(
         stringResource(R.string.settings_home_source_radio_popular) to (HomeRowDefinition.SYSTEM_RADIO to HomeRowDefinition.RADIO_POPULAR),
         stringResource(R.string.settings_home_source_radio_favorites) to (HomeRowDefinition.SYSTEM_RADIO to HomeRowDefinition.RADIO_FAVORITES),
         stringResource(R.string.settings_home_source_radio_recent) to (HomeRowDefinition.SYSTEM_RADIO to HomeRowDefinition.RADIO_RECENT),
+        stringResource(R.string.game_library_all) to (HomeRowDefinition.SYSTEM_GAMES to HomeRowDefinition.GAMES_ALL),
+        stringResource(R.string.game_library_home_favorites) to (HomeRowDefinition.SYSTEM_GAMES to HomeRowDefinition.GAMES_FAVORITES),
+        stringResource(R.string.game_library_home_recent) to (HomeRowDefinition.SYSTEM_GAMES to HomeRowDefinition.GAMES_RECENT),
         stringResource(R.string.settings_home_source_photos_recent) to (HomeRowDefinition.SYSTEM_PHOTOS to "recent"),
         stringResource(R.string.trailers_cinema) to (HomeRowDefinition.SYSTEM_TRAILERS to "CINEMA"),
         stringResource(R.string.trailers_upcoming) to (HomeRowDefinition.SYSTEM_TRAILERS to "UPCOMING"),
@@ -2083,6 +2087,7 @@ private fun HomeRowAddButtons(
             HomeRowDefinition.SYSTEM_TELEGRAM,
             HomeRowDefinition.SYSTEM_SPOTIFY,
             HomeRowDefinition.SYSTEM_RADIO,
+            HomeRowDefinition.SYSTEM_GAMES,
             HomeRowDefinition.SYSTEM_PHOTOS,
             HomeRowDefinition.SYSTEM_TRAILERS,
         )

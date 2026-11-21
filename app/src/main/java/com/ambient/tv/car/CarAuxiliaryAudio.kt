@@ -87,7 +87,7 @@ internal class CarAuxiliaryAudio @Inject constructor(
     private val liveRadioStates = mutableMapOf<String, LiveRadioState>()
 
     fun hasStorage(): Boolean =
-        (preferences.filesEnabled && fileStore.sources().isNotEmpty()) || dlnaStore.servers().isNotEmpty()
+        (preferences.filesEnabled && fileStore.fileBrowserSources().isNotEmpty()) || dlnaStore.servers().isNotEmpty()
 
     fun hasLive(system: String): Boolean = liveRepositories().any { it.source.system == system }
 
@@ -186,7 +186,7 @@ internal class CarAuxiliaryAudio @Inject constructor(
         return when (parent) {
             CarAudioIds.STORAGE_ROOT -> slice(buildList {
                 if (dlnaStore.servers().isNotEmpty()) add(folder(CarAudioIds.DLNA_ROOT, "DLNA"))
-                if (preferences.filesEnabled && fileStore.sources().isNotEmpty()) {
+                if (preferences.filesEnabled && fileStore.fileBrowserSources().isNotEmpty()) {
                     add(folder(CarAudioIds.FILES_ROOT, "SMB / NAS / Dateien"))
                     add(folder(CarAudioIds.FILE_FAVORITES, context.getString(com.ambient.tv.R.string.car_audio_favorites)))
                     add(folder(CarAudioIds.FILE_RECENT, context.getString(com.ambient.tv.R.string.car_audio_recent)))
@@ -195,13 +195,13 @@ internal class CarAuxiliaryAudio @Inject constructor(
             CarAudioIds.DLNA_ROOT -> slice(dlnaStore.servers().map {
                 folder(CarAudioIds.dlnaServer(it.id), it.name)
             })
-            CarAudioIds.FILES_ROOT -> slice(if (preferences.filesEnabled) fileStore.sources().map {
+            CarAudioIds.FILES_ROOT -> slice(if (preferences.filesEnabled) fileStore.fileBrowserSources().map {
                 folder(CarAudioIds.fileSource(it.id), it.name)
             } else emptyList())
             CarAudioIds.FILE_FAVORITES -> slice(if (preferences.filesEnabled)
-                fileStore.favorites().filter(::carAudioFileEligible).map(::fileEntry) else emptyList())
+                fileStore.favorites().filter(fileStore::visibleInFiles).filter(::carAudioFileEligible).map(::fileEntry) else emptyList())
             CarAudioIds.FILE_RECENT -> slice(if (preferences.filesEnabled)
-                fileStore.history().map { it.entry }.filter(::carAudioFileEligible).distinctBy { it.id }.map(::fileEntry)
+                fileStore.history().map { it.entry }.filter(fileStore::visibleInFiles).filter(::carAudioFileEligible).distinctBy { it.id }.map(::fileEntry)
                 else emptyList())
             CarAudioIds.LIVE_RADIO_IPTV, CarAudioIds.LIVE_RADIO_TVH -> {
                 val system = if (parent == CarAudioIds.LIVE_RADIO_IPTV) "iptv" else "tvheadend"
@@ -260,18 +260,20 @@ internal class CarAuxiliaryAudio @Inject constructor(
                     val fileSource = CarAudioIds.fileSourceId(parent)
                     val location = if (fileSource != null) fileSource to null
                         else FileKeys.parse(requireNotNull(CarAudioIds.fileFolderId(parent))).let { it.first to it.second }
-                    val source = fileStore.sources().firstOrNull { it.id == location.first }
+                    val source = fileStore.fileBrowserSources().firstOrNull { it.id == location.first }
                         ?: return CarAudioPage(emptyList())
                     val path = location.second ?: access.root(source)
+                    if (!fileStore.visibleInFiles(source.id, path)) return CarAudioPage(emptyList())
                     // FileAccess already takes care of SMB credentials, WireGuard, WOL and sorting.
                     // Its listing has a limit rather than an offset, so request a bounded prefix.
                     if (offset >= 2000) return CarAudioPage(emptyList())
                     val wanted = (offset + limit + 1).coerceAtMost(2000)
                     val listing = access.list(source, path, wanted, FileEntry::audio)
-                    CarAudioPage(listing.entries.drop(offset).take(limit).map { entry ->
+                    val visible = listing.entries.filter(fileStore::visibleInFiles)
+                    CarAudioPage(visible.drop(offset).take(limit).map { entry ->
                         if (entry.directory) folder(CarAudioIds.fileFolder(entry.id), entry.name)
                         else fileEntry(entry)
-                    }, listing.more || listing.entries.size > offset + limit)
+                    }, listing.more || visible.size > offset + limit)
                 }
                 else -> null
             }

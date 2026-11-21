@@ -22,16 +22,19 @@ class FilesPhotoSource @Inject constructor(
 ) : PhotoSource {
     override val system = PhotoSystem.FILES
     override fun owns(key: String) = FileKeys.owns(key)
-    override fun available() = preferences.filesEnabled && store.sources().isNotEmpty()
+    override fun available() = preferences.filesEnabled && store.fileBrowserSources().isNotEmpty()
 
-    override suspend fun libraries(): List<PhotoLibrary> = store.sources().map { source ->
+    override suspend fun libraries(): List<PhotoLibrary> = store.fileBrowserSources().map { source ->
         PhotoLibrary(FileKeys.key(source.id, access.root(source)), source.name, system)
     }
 
     override suspend fun list(albumKey: String): List<PhotoEntry> {
         val (sourceId, path) = FileKeys.parse(albumKey)
-        val source = store.sources().firstOrNull { it.id == sourceId } ?: throw java.io.FileNotFoundException("Source removed")
-        return access.list(source, path, MAX_ITEMS) { it.image || it.playable && !it.audio }.entries.map(::entry)
+        val source = store.fileBrowserSources().firstOrNull { it.id == sourceId }
+            ?: throw java.io.FileNotFoundException("File source unavailable")
+        if (!store.visibleInFiles(sourceId, path)) throw java.io.FileNotFoundException("Excluded from Files")
+        return access.list(source, path, MAX_ITEMS) { it.image || it.playable && !it.audio }
+            .entries.filter(store::visibleInFiles).map(::entry)
     }
 
     override suspend fun listRecursive(albumKey: String, limit: Int): List<PhotoEntry> {
@@ -83,7 +86,9 @@ class FilesPhotoSource @Inject constructor(
 
     /** Whole file (bounded) for Coil decoding and EXIF parsing. */
     suspend fun read(ref: FileImageRef, maxBytes: Int = IMAGE_READ_LIMIT): ByteArray = withContext(Dispatchers.IO) {
-        val source = store.sources().firstOrNull { it.id == ref.sourceId } ?: throw java.io.FileNotFoundException("Source removed")
+        val source = store.fileBrowserSources().firstOrNull { it.id == ref.sourceId }
+            ?: throw java.io.FileNotFoundException("File source unavailable")
+        if (!store.visibleInFiles(ref.sourceId, ref.path)) throw java.io.FileNotFoundException("Excluded from Files")
         // Same preparation as browsing: WireGuard route and wake-on-LAN for a sleeping NAS.
         access.prepare(source)
         access.open(source, ref.path).use { media ->
