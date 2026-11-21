@@ -763,6 +763,8 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
             LibretroDroid.onCompanionPointer(port, kind, index, x, y, flags)
         }
     }
+    val companionInputKinds = remember(input) { mutableMapOf<Int, String>() }
+    val companionNetplayActive by rememberUpdatedState(netplay.active)
     // The Companion gamepad uses the same RetroPadInput as real controllers, without injecting
     // synthetic Android keys into the activity. This is a TV-only, full game-session registration.
     val latestCompanionMenu by rememberUpdatedState<() -> Unit>({
@@ -774,7 +776,35 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
         if (!handheld) com.ambient.tv.companion.CompanionGamepadSession.attach(
             input, system.id, core.id, game.file.nameWithoutExtension, system.pointerInput,
             onMenu = { latestCompanionMenu() },
-            onPointer = { port, pointer -> companionPointerRelay.update(port, pointer) },
+            onPointer = { port, pointer ->
+                val kind = pointer?.kind
+                val previous = companionInputKinds[port]
+                if (kind != previous && !companionNetplayActive && coreReady && !destroyed) {
+                    // Some cores advertise distinct Libretro controller device types for
+                    // mouse/lightgun/pointer. Choose one ONLY when the core declares it; else
+                    // preserve its original device type (many cores accept POINTER in addition
+                    // to an ordinary JOYPAD without advertising a selectable pointer device).
+                    val types = runCatching { retroView.getControllers().getOrNull(port).orEmpty() }
+                        .getOrDefault(emptyArray())
+                    val requested = when (kind) {
+                        "mouse" -> 2 // RETRO_DEVICE_MOUSE
+                        "gun" -> 4 // RETRO_DEVICE_LIGHTGUN
+                        "touch" -> 6 // RETRO_DEVICE_POINTER
+                        else -> 1 // restore JOYPAD or the configured device type
+                    }
+                    val selection = if (kind == null) {
+                        GameSettings.state.controllerType(core, port)
+                            ?.let { wanted -> types.firstOrNull { it.id == wanted } }
+                            ?: types.firstOrNull { it.id >= 0 && it.id and 255 == requested }
+                    } else types.firstOrNull { it.id >= 0 && it.id and 255 == requested }
+                    selection?.let { chosen ->
+                        runCatching { retroView.setControllerType(port, chosen.id) }
+                    }
+                    if (kind == null) companionInputKinds.remove(port)
+                    else companionInputKinds[port] = kind
+                }
+                companionPointerRelay.update(port, pointer)
+            },
             onMotion = { port, motion ->
                 LibretroDroid.setCompanionSensorReadings(port, motion?.mask ?: 0,
                     motion?.gx ?: 0f, motion?.gy ?: 0f, motion?.gz ?: 0f,
