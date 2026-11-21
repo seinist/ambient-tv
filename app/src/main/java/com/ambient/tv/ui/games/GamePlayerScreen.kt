@@ -734,7 +734,7 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
         }
     }
     LaunchedEffect(running) {
-        if (!running) (0 until RetroPorts.COUNT).forEach { GameRumble.stop(input.deviceIds(it)) }
+        if (!running) GameRumble.stopAll()
     }
     // Hardcore (once the session confirms it) plays without cheats and rewind.
     LaunchedEffect(achievements.state) {
@@ -781,7 +781,13 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
                 }
             }
         }
-        onDispose { input.onChanged = null }
+        val onRemoved: (Int) -> Unit = { id -> input.deviceRemoved(id) }
+        GamepadInput.deviceRemovedSink = onRemoved
+        onDispose {
+            input.onChanged = null
+            if (GamepadInput.deviceRemovedSink === onRemoved) GamepadInput.deviceRemovedSink = null
+            GameRumble.stopAll()
+        }
     }
     DisposableEffect(running, input) {
         val sink: (android.view.InputEvent) -> Boolean = { event -> input.onEvent(event) }

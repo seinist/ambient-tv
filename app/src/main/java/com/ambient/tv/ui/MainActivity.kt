@@ -315,7 +315,11 @@ open class MainActivity : ComponentActivity() {
     private val gamepadDeviceListener = object : android.hardware.input.InputManager.InputDeviceListener {
         override fun onInputDeviceAdded(deviceId: Int) = Unit
         override fun onInputDeviceChanged(deviceId: Int) = Unit
-        override fun onInputDeviceRemoved(deviceId: Int) = gamepadController.deviceRemoved(deviceId)
+        override fun onInputDeviceRemoved(deviceId: Int) {
+            gamepadController.deviceRemoved(deviceId)
+            com.ambient.tv.ui.gamepad.GamepadInput.deviceRemovedSink?.invoke(deviceId)
+            com.ambient.tv.ui.games.GameRumble.stop(listOf(deviceId))
+        }
     }
     private var replayingBoundKey = false
     private var middleMouseDownTimeMs = 0L

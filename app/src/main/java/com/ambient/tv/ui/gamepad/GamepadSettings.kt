@@ -231,6 +231,9 @@ object GamepadInput {
      */
     var rawSink: ((android.view.InputEvent) -> Boolean)? = null
 
+    /** Active game disconnect handler, even while its menu owns the input focus. */
+    var deviceRemovedSink: ((Int) -> Unit)? = null
+
     /** While Settings records a key for a game layout it receives every key first, untranslated. */
     var capture: ((android.view.KeyEvent) -> Boolean)? = null
 

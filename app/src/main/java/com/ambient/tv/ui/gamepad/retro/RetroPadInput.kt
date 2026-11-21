@@ -50,7 +50,8 @@ class RetroPadInput(
 
     private val devices = mutableMapOf<Int, DeviceState>()
     /** Controllers in the order they were first used: automatic players 1, 2, 3, 4. */
-    private val controllerOrder = mutableListOf<String>()
+    /** Keep assigned player ports stable when another controller is unplugged. */
+    private val automaticPorts = mutableMapOf<String, Int>()
     private val portButtons = AtomicIntegerArray(RetroPorts.COUNT)
     private val portAnalog = AtomicIntegerArray(RetroPorts.COUNT * 4)
     /** Virtual handset controls share player 1 with physical inputs; union, never replace, their state. */
@@ -97,8 +98,14 @@ class RetroPadInput(
     fun port(info: RetroInputDevice): Int? {
         config().ports[info.descriptor]?.let { return it.takeIf { port -> port >= 0 } }
         if (info.kind != RetroInputKind.GAMEPAD) return 0
-        if (info.descriptor !in controllerOrder) controllerOrder += info.descriptor
-        return controllerOrder.indexOf(info.descriptor).takeIf { it < RetroPorts.COUNT }
+        val reserved = config().ports.values.filter { it in 0 until RetroPorts.COUNT }.toSet()
+        val existing = automaticPorts[info.descriptor]
+        if (existing != null && existing !in reserved) return existing
+        val occupied = automaticPorts.filterKeys { it != info.descriptor }.values.toSet() + reserved
+        val free = (0 until RetroPorts.COUNT).firstOrNull { it !in occupied }
+        if (free == null) automaticPorts.remove(info.descriptor)
+        else automaticPorts[info.descriptor] = free
+        return free
     }
 
     fun onKey(event: KeyEvent): Boolean {
@@ -106,12 +113,25 @@ class RetroPadInput(
         val profile = profileContext?.let { config().profile(state.info.kind, it) }
             ?: config().profile(state.info.kind)
         val code = event.keyCode
-        if (!profile.handles(code) && code !in state.menuKeys) return false
+        val emergencyBack = state.info.kind == RetroInputKind.REMOTE &&
+            code == KeyEvent.KEYCODE_BACK && !profile.opensMenu(code) && !profile.holdOpensMenu(code)
+        if (!profile.handles(code) && code !in state.menuKeys && !emergencyBack) return false
         when (event.action) {
-            KeyEvent.ACTION_DOWN -> if (event.repeatCount == 0) keyDown(state, profile, code)
+            KeyEvent.ACTION_DOWN -> if (event.repeatCount == 0) {
+                if (emergencyBack) emergencyBackDown(state, code) else keyDown(state, profile, code)
+            }
             KeyEvent.ACTION_UP -> keyUp(state, profile, code, event.isCanceled)
         }
         return true
+    }
+
+    private fun emergencyBackDown(state: DeviceState, code: Int) {
+        if (state.holds.containsKey(code)) return
+        state.holds[code] = schedule(EMERGENCY_MENU_HOLD_MS) {
+            if (state.holds.remove(code) == null) return@schedule
+            state.menuKeys += code
+            openMenu()
+        }
     }
 
     private fun keyDown(state: DeviceState, profile: RetroInputProfile, code: Int) {
@@ -218,6 +238,7 @@ class RetroPadInput(
 
     fun deviceRemoved(deviceId: Int) {
         val state = devices.remove(deviceId) ?: return
+        if (state.info.kind == RetroInputKind.GAMEPAD) automaticPorts.remove(state.info.descriptor)
         state.holds.values.forEach { it() }
         if (state.rewindKeys.isNotEmpty() && rewinding() == 0) onRewind(false)
         recomputeAll()
@@ -287,6 +308,7 @@ class RetroPadInput(
         const val ANALOG_MAX = 0x7fff
         const val PULSE_MS = 80L
         const val STICK_DEADZONE = 0.1f
+        const val EMERGENCY_MENU_HOLD_MS = 1_800L
     }
 }
 

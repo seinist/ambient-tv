@@ -12,10 +12,12 @@ import android.view.InputDevice
  */
 internal object GameRumble {
     private const val HOLD_MS = 10_000L
+    private val activeDevices = java.util.concurrent.ConcurrentHashMap.newKeySet<Int>()
 
     fun apply(deviceId: Int, weak: Float, strong: Float) {
-        val device = InputDevice.getDevice(deviceId) ?: return
         val strength = maxOf(weak, strong).coerceIn(0f, 1f)
+        if (strength <= 0f) activeDevices.remove(deviceId) else activeDevices.add(deviceId)
+        val device = InputDevice.getDevice(deviceId) ?: return
         runCatching {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
                 val manager = device.vibratorManager
@@ -41,4 +43,5 @@ internal object GameRumble {
     }
 
     fun stop(deviceIds: Collection<Int>) = deviceIds.forEach { apply(it, 0f, 0f) }
+    fun stopAll() = stop(activeDevices.toList())
 }
