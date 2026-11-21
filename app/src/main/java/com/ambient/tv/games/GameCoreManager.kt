@@ -31,6 +31,9 @@ private data class GameCoreDeclaredOption(val key: String, val description: Stri
 /** A core file that cannot run on this device (wrong layout for its memory pages, not a library). */
 class GameCoreIncompatibleException(message: String) : IOException(message)
 
+/** AUTO never silently downgrades signed executable code to an unauthenticated buildbot binary. */
+class GameCoreBuildbotConsentRequired(message: String) : IOException(message)
+
 /**
  * Installed libretro cores. A core is fetched once, on the user's request, from the libretro
  * buildbot for this device's ABI, checked (ELF, page alignment) and stored read-only in app storage.
@@ -72,14 +75,30 @@ class GameCoreManager @Inject constructor(
         val current = file(core)
         if (!old.isFile) return false
         if (runCatching { checkElf(old, pageSize(), abi) }.isFailure) return false
-        if (current.exists() && !current.delete()) return false
-        if (!old.renameTo(current)) return false
-        current.setReadOnly()
         val oldInfo = rollbackInfoFile(core)
+        val stagedInfo = File(directory, "${core.id}.rollback-info.tmp")
+        try {
+            // Prepare metadata before touching either binary. A full disk leaves the running
+            // core and the previous core untouched.
+            stagedInfo.delete()
+            if (oldInfo.isFile) oldInfo.copyTo(stagedInfo)
+            // POSIX rename is an atomic replacement on the same app-private filesystem.
+            // Never delete the current executable before its replacement is ready.
+            Os.rename(old.absolutePath, current.absolutePath)
+        } catch (_: Exception) {
+            stagedInfo.delete()
+            return false
+        }
+        current.setReadOnly()
+        // A metadata write failure must not report a failed binary rollback: the old
+        // executable is already installed and remains loadable. Retain the old metadata
+        // until a successful replace, allowing recovery after a storage error.
         if (oldInfo.isFile) {
-            runCatching { oldInfo.copyTo(infoFile(core), overwrite = true) }
-            oldInfo.delete()
+            if (runCatching { Os.rename(stagedInfo.absolutePath, infoFile(core).absolutePath) }.isSuccess) {
+                oldInfo.delete()
+            }
         } else infoFile(core).delete()
+        stagedInfo.delete()
         return true
     }
 
@@ -101,7 +120,9 @@ class GameCoreManager @Inject constructor(
                 throw error
             } catch (error: IOException) {
                 if (source == GameCoreSource.AMBIENT) throw error
-                null
+                throw GameCoreBuildbotConsentRequired(
+                    "Signed core channel unavailable: ${error.message}. Confirm the buildbot source explicitly."
+                )
             }
             if (found != null) {
                 val (build, url) = found
@@ -116,6 +137,14 @@ class GameCoreManager @Inject constructor(
                 }
             }
             if (source == GameCoreSource.AMBIENT) throw GameCoreIncompatibleException("${core.id} is not in the app's core build for $abi")
+            throw GameCoreBuildbotConsentRequired(
+                "No signed ${core.id} build for $abi. Confirm the unsigned buildbot source explicitly."
+            )
+        }
+        if (source == GameCoreSource.AUTO) {
+            throw GameCoreBuildbotConsentRequired(
+                "No signed core channel configured. Confirm the unsigned buildbot source explicitly."
+            )
         }
         val url = sourceUrl(core) ?: throw GameCoreIncompatibleException("No core build for ${Build.SUPPORTED_ABIS.joinToString()}")
         val connection = (URL(url).openConnection() as HttpURLConnection).apply {
