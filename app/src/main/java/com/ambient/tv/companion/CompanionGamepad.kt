@@ -122,8 +122,41 @@ object CompanionGamepadSession {
     private val deadlines = LinkedHashMap<String, Long>()
     private val previousPointer = mutableMapOf<Int, CompanionPointerState>()
     private val previousMotion = mutableMapOf<Int, CompanionMotionState>()
+    private val buttonGates = mutableMapOf<String, CompanionButtonEdgeGate>()
+    private val lastState = mutableMapOf<String, CompanionGamepadState>()
+    private val delayedRelease = mutableMapOf<String, Runnable>()
+
+    private fun clearButtons(port: Int) {
+        ports.filterValues { it == port }.keys.forEach { session ->
+            buttonGates.remove(session)?.clear()
+            lastState.remove(session)
+            delayedRelease.remove(session)?.let(handler::removeCallbacks)
+        }
+    }
+
+    private fun scheduleButtonRelease(session: String, game: Active, port: Int) {
+        if (session in delayedRelease) return
+        val gate = buttonGates[session] ?: return
+        val delay = gate.nextReleaseDelay(android.os.SystemClock.uptimeMillis()) ?: return
+        lateinit var task: Runnable
+        task = Runnable {
+            delayedRelease.remove(session)
+            if (active === game && ports[session] == port) {
+                val current = lastState[session]
+                if (current != null) {
+                    val mask = gate.settle(android.os.SystemClock.uptimeMillis())
+                    game.input.remoteState(port, mask, current.leftX, current.leftY,
+                        current.rightX, current.rightY)
+                    scheduleButtonRelease(session, game, port)
+                }
+            }
+        }
+        delayedRelease[session] = task
+        handler.postDelayed(task, delay)
+    }
 
     private fun releaseInputs(game: Active, port: Int) {
+        clearButtons(port)
         game.input.remoteState(port, 0, 0f, 0f, 0f, 0f)
         game.onPointer(port, null)
         game.onMotion(port, null)
@@ -216,7 +249,11 @@ object CompanionGamepadSession {
             releaseInputs(game, port)
             return false
         }
-        game.input.remoteState(port, packet.buttons, packet.leftX, packet.leftY, packet.rightX, packet.rightY)
+        val gate = buttonGates.getOrPut(session) { CompanionButtonEdgeGate() }
+        lastState[session] = packet
+        val visibleButtons = gate.update(packet.buttons, android.os.SystemClock.uptimeMillis())
+        game.input.remoteState(port, visibleButtons, packet.leftX, packet.leftY, packet.rightX, packet.rightY)
+        scheduleButtonRelease(session, game, port)
         // Relative mouse movement is an event, not an absolute position: identical consecutive
         // deltas are still distinct movement and must not disappear in deduplication.
         if (packet.pointer != previousPointer[port] || packet.pointer?.let {
