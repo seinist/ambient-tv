@@ -7,6 +7,9 @@ import org.apache.commons.compress.archivers.sevenz.SevenZFile
 import org.apache.commons.compress.archivers.zip.ZipFile
 import java.io.File
 import java.io.IOException
+import java.io.FilterOutputStream
+import java.io.OutputStream
+import java.io.InputStream
 import java.nio.ByteBuffer
 import java.nio.channels.NonWritableChannelException
 import java.nio.channels.SeekableByteChannel
@@ -27,23 +30,44 @@ object GameArchives {
     const val MAX_BYTES = 8L * 1024 * 1024 * 1024
 
     /** Unpacks [archive] into [folder] (names flattened) and returns the unpacked files. */
-    fun extract(archive: File, folder: File): List<File> {
+    fun extract(archive: File, folder: File, maxOutputBytes: Long = MAX_BYTES): List<File> {
+        require(maxOutputBytes in 1..MAX_BYTES)
         folder.mkdirs()
         var total = 0L
+        val names = mutableSetOf<String>()
         val files = mutableListOf<File>()
         fun target(name: String, size: Long): File? {
             val base = GameRomPreparer.safeName(name)
             if (base.isBlank() || base.startsWith(".")) return null
-            total += size.coerceAtLeast(0)
-            if (total > MAX_BYTES) throw GameArchiveException("${archive.name}: too large")
+            // Flattened archives must not overwrite an earlier track with the same name.
+            if (!names.add(base.lowercase(java.util.Locale.ROOT))) {
+                throw GameArchiveException("${archive.name}: duplicate extracted file $base")
+            }
+            if (size >= 0 && size > maxOutputBytes - total) {
+                throw GameArchiveException("${archive.name}: extracted data too large")
+            }
             return File(folder, base).also(files::add)
+        }
+        fun checkedWrite(out: OutputStream, bytes: ByteArray, off: Int, length: Int) {
+            if (length < 0 || length.toLong() > maxOutputBytes - total) {
+                throw GameArchiveException("${archive.name}: extracted data exceeds limit")
+            }
+            out.write(bytes, off, length)
+            total += length
+        }
+        fun copyChecked(input: InputStream, out: OutputStream) {
+            val buffer = ByteArray(256 * 1024)
+            while (true) {
+                val count = input.read(buffer)
+                if (count < 0) break
+                checkedWrite(out, buffer, 0, count)
+            }
         }
         when (GameSystems.extension(archive.name)) {
             "zip" -> ZipFile.builder().setFile(archive).get().use { zip ->
                 zip.entries.asSequence().filter { !it.isDirectory }.forEach { entry ->
                     val out = target(entry.name, entry.size) ?: return@forEach
-                    if (out.isFile && out.length() == entry.size) return@forEach
-                    zip.getInputStream(entry).use { input -> out.outputStream().use { input.copyTo(it, 256 * 1024) } }
+                    zip.getInputStream(entry).use { input -> out.outputStream().use { copyChecked(input, it) } }
                 }
             }
             "7z" -> SevenZFile.builder().setFile(archive).get().use { seven ->
@@ -56,7 +80,7 @@ object GameArchives {
                         while (true) {
                             val count = seven.read(buffer)
                             if (count < 0) break
-                            stream.write(buffer, 0, count)
+                            checkedWrite(stream, buffer, 0, count)
                         }
                     }
                 }
@@ -65,7 +89,17 @@ object GameArchives {
                 Archive(archive).use { rar ->
                     rar.fileHeaders.filter { !it.isDirectory }.forEach { header ->
                         val out = target(header.fileName.replace('\\', '/'), header.fullUnpackSize) ?: return@forEach
-                        out.outputStream().buffered(256 * 1024).use { rar.extractFile(header, it) }
+                        out.outputStream().buffered(256 * 1024).use { stream ->
+                            val capped = object : FilterOutputStream(stream) {
+                                override fun write(value: Int) {
+                                    checkedWrite(stream, byteArrayOf(value.toByte()), 0, 1)
+                                }
+                                override fun write(b: ByteArray, off: Int, len: Int) {
+                                    checkedWrite(stream, b, off, len)
+                                }
+                            }
+                            rar.extractFile(header, capped)
+                        }
                     }
                 }
             } catch (error: UnsupportedRarV5Exception) {
@@ -74,10 +108,7 @@ object GameArchives {
             "gz" -> {
                 val out = target(archive.name.removeSuffix(".gz").removeSuffix(".GZ"), 0) ?: throw GameArchiveException(archive.name)
                 GZIPInputStream(archive.inputStream().buffered(256 * 1024)).use { input ->
-                    out.outputStream().use { stream ->
-                        val copied = input.copyTo(stream, 256 * 1024)
-                        if (copied > MAX_BYTES) throw GameArchiveException("${archive.name}: too large")
-                    }
+                    out.outputStream().use { stream -> copyChecked(input, stream) }
                 }
             }
             else -> throw GameArchiveException(archive.name)

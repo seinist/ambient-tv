@@ -122,10 +122,11 @@ class GameRomPreparer @Inject constructor(
                 throw IOException("ROM exceeds the 4 GiB cache limit; direct access is required")
             }
             val free = StatFs(context.cacheDir.absolutePath).availableBytes
-            if (entry.size > free - CACHE_RESERVE_BYTES) {
+            val copyBudget = minOf(CACHE_LIMIT_BYTES, free - CACHE_RESERVE_BYTES)
+            if (copyBudget <= 0 || entry.size > copyBudget) {
                 throw IOException("Insufficient free space for a local game copy")
             }
-            copy(source, path, entry.size, main, onProgress)
+            copy(source, path, entry.size, main, onProgress, copyBudget)
             when (GameSystems.extension(entry.name)) {
                 "cue" -> copyReferenced(source, path, cueFiles(main.readText()), folder)
                 "gdi" -> copyReferenced(source, path, gdiFiles(main.readText()), folder)
@@ -142,6 +143,7 @@ class GameRomPreparer @Inject constructor(
         folder.setLastModified(System.currentTimeMillis())
         trim(keep = folder)
         val playable = if (GameSystems.extension(main.name) in GameSystems.archiveExtensions) unpack(main, folder) else main
+        trim(keep = folder)
         val system = GameSystems.forPreparedFile(playable, entry.path) ?: throw UnknownGameException(entry.name)
         PreparedGame(
             fileId = fileId,
@@ -154,21 +156,31 @@ class GameRomPreparer @Inject constructor(
         )
     }
 
-    private suspend fun copy(source: FileSource, path: String, size: Long, target: File, onProgress: (Float?) -> Unit) {
-        access.open(source, path).use { media ->
-            val total = media.size.takeIf { it > 0 } ?: size
-            target.outputStream().buffered(256 * 1024).use { out ->
-                val buffer = ByteArray(1024 * 1024)
-                var position = 0L
-                while (true) {
-                    currentCoroutineContext().ensureActive()
-                    val count = media.read(position, buffer, buffer.size)
-                    if (count <= 0) break
-                    out.write(buffer, 0, count)
-                    position += count
-                    onProgress(if (total > 0) (position.toFloat() / total).coerceIn(0f, 1f) else null)
+    private suspend fun copy(source: FileSource, path: String, size: Long, target: File,
+                             onProgress: (Float?) -> Unit, maxBytes: Long = CACHE_LIMIT_BYTES) {
+        try {
+            access.open(source, path).use { media ->
+                val total = media.size.takeIf { it > 0 } ?: size
+                target.outputStream().buffered(256 * 1024).use { out ->
+                    val buffer = ByteArray(1024 * 1024)
+                    var position = 0L
+                    while (true) {
+                        currentCoroutineContext().ensureActive()
+                        val count = media.read(position, buffer, buffer.size)
+                        if (count <= 0) break
+                        if (count.toLong() > maxBytes - position) {
+                            throw IOException("ROM copy exceeds available storage or cache budget")
+                        }
+                        out.write(buffer, 0, count)
+                        position += count
+                        onProgress(if (total > 0) (position.toFloat() / total).coerceIn(0f, 1f) else null)
+                    }
+                    if (total > 0 && position < total) throw IOException("Incomplete ROM copy: $path")
                 }
             }
+        } catch (error: Exception) {
+            target.delete()
+            throw error
         }
     }
 
@@ -180,10 +192,12 @@ class GameRomPreparer @Inject constructor(
             val target = File(folder, safeName(name))
             if (target.isFile) return@forEach
             val childPath = if (parent.isEmpty()) name else "$parent/$name"
-            runCatching {
-                val child: FileEntry = access.stat(source, childPath)
-                copy(source, childPath, child.size, target) {}
-            }
+            val child: FileEntry = access.stat(source, childPath)
+            val used = folder.walkTopDown().filter { it.isFile }.sumOf { it.length() }
+            val free = StatFs(context.cacheDir.absolutePath).availableBytes - CACHE_RESERVE_BYTES
+            val budget = minOf(CACHE_LIMIT_BYTES - used, free)
+            if (budget <= 0 || child.size > budget) throw IOException("Insufficient cache for disc track $name")
+            copy(source, childPath, child.size, target, {}, budget)
         }
     }
 
@@ -198,7 +212,13 @@ class GameRomPreparer @Inject constructor(
             content.listFiles()?.toList().orEmpty()
         } else {
             content.deleteRecursively()
-            GameArchives.extract(archive, content).also { done.writeText(archive.length().toString()) }
+            val used = folder.walkTopDown().filter { it.isFile }.sumOf { it.length() }
+            val free = StatFs(context.cacheDir.absolutePath).availableBytes - CACHE_RESERVE_BYTES
+            val budget = minOf(GameArchives.MAX_BYTES, CACHE_LIMIT_BYTES - used, free)
+            if (budget <= 0) throw IOException("Insufficient cache space for extracted game")
+            GameArchives.extract(archive, content, budget).also {
+                done.writeText(archive.length().toString())
+            }
         }
         return GameArchives.choose(files) { it.name } ?: throw UnknownGameException(archive.name)
     }
