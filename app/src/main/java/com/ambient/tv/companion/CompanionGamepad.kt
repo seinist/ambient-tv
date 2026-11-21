@@ -117,6 +117,7 @@ object CompanionGamepadSession {
 
     private var active: Active? = null
     private val ports = LinkedHashMap<String, Int>()
+    private val deviceFingerprints = LinkedHashMap<String, String>()
     private val handler by lazy { Handler(Looper.getMainLooper()) }
     private val deadman = LinkedHashMap<String, Runnable>()
     private val deadlines = LinkedHashMap<String, Long>()
@@ -260,12 +261,23 @@ object CompanionGamepadSession {
         }
         game.input.reserveRemotePort(port, true, descriptor)
         ports[session] = port
+        deviceFingerprints[session] = fingerprint
         return port
     }
 
     fun input(session: String, packet: CompanionGamepadState): Boolean {
         packet.validate()
         val game = active ?: return false
+        // A port setting changed during a live game takes effect on the next input; OFF
+        // revokes control immediately, while a fixed-port change reclaims it safely.
+        deviceFingerprints[session]?.let { fingerprint ->
+            val target = com.ambient.tv.ui.gamepad.retro.RetroInputSettings.config.ports[
+                com.ambient.tv.ui.gamepad.retro.companionControllerDescriptor(fingerprint)]
+            if (target == RetroPorts.OFF || target != null && target in 0 until RetroPorts.COUNT &&
+                ports[session] != target) {
+                if (claim(session, fingerprint) < 0) return false
+            }
+        }
         val port = ports[session] ?: return false
         if (!game.ready) {
             releaseInputs(game, port)
@@ -303,6 +315,7 @@ object CompanionGamepadSession {
 
     fun release(session: String) {
         cancelDeadman(session)
+        deviceFingerprints.remove(session)
         val port = ports.remove(session) ?: return
         active?.let { releaseInputs(it, port); it.input.reserveRemotePort(port, false) }
     }
@@ -316,6 +329,7 @@ object CompanionGamepadSession {
         val game = active ?: return
         ports.values.forEach { releaseInputs(game, it); game.input.reserveRemotePort(it, false) }
         ports.clear()
+        deviceFingerprints.clear()
         active = null
     }
 }
