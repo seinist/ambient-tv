@@ -198,7 +198,7 @@ fun GameLibraryScreen(
                     if (state.view == "list") {
                         TvLazyColumn(modifier = Modifier.weight(1f).fillMaxHeight(),
                             state = listState, focusActionsOnRight = false,
-                            verticalArrangement = Arrangement.spacedBy(9.dp)) {
+                            verticalArrangement = Arrangement.spacedBy((9f * 7 / state.listRows).coerceIn(6f, 16f).dp)) {
                             items(games, key = { it.fileId }) { game ->
                                 GameListEntry(game, source = sourcesById[game.sourceId]?.name.orEmpty(),
                                     onPlay = { goPlay(game) }, onFavorite = { model.favorite(game) },
@@ -211,7 +211,7 @@ fun GameLibraryScreen(
                         }
                     } else {
                         TvLazyVerticalGrid(
-                            columns = deviceDensityGridCells(8, 150.dp, 8),
+                            columns = deviceDensityGridCells(state.gridColumns, 150.dp, 8),
                             modifier = Modifier.weight(1f).fillMaxHeight().focusGroup(),
                             state = gridState,
                             contentPadding = PaddingValues(bottom = 40.dp),
@@ -221,6 +221,7 @@ fun GameLibraryScreen(
                             items(games, key = { it.fileId }) { game ->
                                 GameTile(game,
                                     onPlay = { goPlay(game) },
+                                    onFavorite = { model.favorite(game) },
                                     onFocus = { focusedId = game.fileId },
                                     onRequester = { itemRequests[game.fileId] = it },
                                     modifier = if (games.firstOrNull()?.fileId == game.fileId)
@@ -236,7 +237,7 @@ fun GameLibraryScreen(
                             letters = alphabet, selected = focusedLetter,
                             gridFocus = firstFocus,
                             onReturnToContent = {
-                                itemRequests[focusedId]?.let { runCatching { it.requestFocus() } }
+                                focusedId?.let { itemRequests[it] }?.let { runCatching { it.requestFocus() } }
                                     ?: runCatching { firstFocus.requestFocus() }
                             },
                             onSelect = { letter ->
@@ -281,8 +282,8 @@ fun GameLibraryScreen(
                         ViewOption("list", stringResource(R.string.library_view_list), ViewPreview.LIST),
                     ),
                     selectedView = state.view, onView = model::view,
-                    gridColumns = 8, listRows = 7, onGridColumns = {}, onListRows = {},
-                    showDensity = false,
+                    gridColumns = state.gridColumns, listRows = state.listRows,
+                    onGridColumns = model::gridColumns, onListRows = model::listRows,
                     title = stringResource(R.string.game_library_title),
                     onClose = { showOptions = false },
                     extraContent = {
@@ -375,6 +376,8 @@ private fun GameFolderManager(
         }
     }
     state.error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+    if (state.browsing) Text(stringResource(R.string.player_loading),
+        style = MaterialTheme.typography.bodySmall)
     TvLazyColumn(modifier = Modifier.fillMaxSize(),
         verticalArrangement = Arrangement.spacedBy(8.dp)) {
         items(state.directoryEntries, key = { it.id }) { folder ->
@@ -389,6 +392,7 @@ private fun GameTile(
     game: LibraryGame,
     modifier: Modifier = Modifier,
     onPlay: () -> Unit,
+    onFavorite: () -> Unit,
     onFocus: () -> Unit,
     onRequester: (FocusRequester) -> Unit,
 ) {
@@ -396,6 +400,7 @@ private fun GameTile(
     val requester = remember(game.fileId) { FocusRequester() }
     SideEffect { onRequester(requester) }
     val shape = RoundedCornerShape(10.dp)
+    Box(Modifier.fillMaxWidth()) {
     Surface(onClick = onPlay,
         colors = transparentSurfaceColors(),
         scale = noSurfaceScale(),
@@ -417,11 +422,7 @@ private fun GameTile(
                 .background(MaterialTheme.colorScheme.onSurface.copy(alpha = .04f), shape),
                 contentAlignment = Alignment.Center) {
                 GameSystemArt(game.systemId, Modifier.fillMaxSize(.48f))
-                if (game.favorite) {
-                    androidx.compose.material3.Icon(Icons.Filled.Favorite, null,
-                        Modifier.align(Alignment.TopEnd).padding(7.dp).size(18.dp),
-                        tint = MaterialTheme.colorScheme.primary)
-                }
+                // The favorite action lives outside the playing Surface as a TV focus target.
             }
             Text(game.title, maxLines = 2, overflow = TextOverflow.Ellipsis,
                 style = MaterialTheme.typography.titleSmall,
@@ -431,6 +432,10 @@ private fun GameTile(
                 style = MaterialTheme.typography.bodySmall,
                 textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth())
         }
+    }
+    TvActionButton("", onClick = onFavorite, selected = game.favorite,
+        icon = if (game.favorite) Icons.Filled.Favorite else Icons.Filled.FavoriteBorder,
+        modifier = Modifier.align(Alignment.TopEnd).padding(6.dp))
     }
 }
 
