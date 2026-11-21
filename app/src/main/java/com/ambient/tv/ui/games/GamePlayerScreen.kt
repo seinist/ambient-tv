@@ -341,6 +341,7 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
         if (panel == GamePanel.INFO) displayHdr = GameHdrDisplayProbe.capture(context)
     }
     var optionCategory by remember { mutableStateOf<String?>(null) }
+    var shaderGroup by remember { mutableStateOf<GameShaderGroup?>(null) }
     var optionKey by remember { mutableStateOf<String?>(null) }
     /** Core option changes go to this game only (true) or to every game of the core. */
     var gameScope by remember { mutableStateOf(settings.gameCoreOptions(core, game.saveKey).isNotEmpty()) }
@@ -528,6 +529,7 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
         panel = null
         optionKey = null
         optionCategory = null
+        shaderGroup = null
         statesOpen = false
         menuOpen = false
         osd.close()
@@ -818,6 +820,7 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
         panel = null
         optionKey = null
         optionCategory = null
+        shaderGroup = null
     }
 
     CompositionLocalProvider(
@@ -1027,6 +1030,7 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
                     title = when {
                         option != null -> option.title
                         open == GamePanel.CORE && category != null -> categoryTitle.orEmpty()
+                        open == GamePanel.PICTURE && shaderGroup != null -> stringResource(shaderGroup!!.titleRes)
                         open == GamePanel.PICTURE -> stringResource(R.string.game_panel_picture)
                         open == GamePanel.CORE -> stringResource(R.string.game_panel_core)
                         open == GamePanel.DISC -> stringResource(R.string.game_panel_disc)
@@ -1047,10 +1051,11 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
                         when {
                             option != null -> optionKey = null
                             category != null -> optionCategory = null
+                            shaderGroup != null -> shaderGroup = null
                             else -> closePanel()
                         }
                     },
-                    closeInsteadOfBack = option == null && category == null,
+                    closeInsteadOfBack = option == null && category == null && shaderGroup == null,
                 ) {
                     when {
                         option != null -> {
@@ -1068,6 +1073,22 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
                                         }
                                         optionsVersion++
                                         optionKey = null
+                                    },
+                                )
+                            }
+                        }
+                        open == GamePanel.PICTURE && shaderGroup != null -> {
+                            GameShader.entries.filter { it.group == shaderGroup }.forEach { choice ->
+                                RightPanelChoice(
+                                    text = stringResource(choice.titleRes),
+                                    subtitle = stringResource(choice.hintRes),
+                                    selected = choice == shader,
+                                    onClick = {
+                                        retroView.shader = GameHdrToneMapShader.forGame(choice, toneMap, session.vulkan, shaderIntensity)
+                                        GameSettings.update {
+                                            if (gameShaderScope) it.withGameShader(game.saveKey, choice)
+                                            else it.withShader(system, choice)
+                                        }
                                     },
                                 )
                             }
@@ -1099,21 +1120,13 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
                                 },
                             )
                             GameShaderGroup.entries.forEach { group ->
-                                GamePanelText(stringResource(group.titleRes))
-                                GameShader.entries.filter { it.group == group }.forEach { choice ->
-                                    RightPanelChoice(
-                                        text = stringResource(choice.titleRes),
-                                        subtitle = stringResource(choice.hintRes),
-                                        selected = choice == shader,
-                                        onClick = {
-                                            retroView.shader = GameHdrToneMapShader.forGame(choice, toneMap, session.vulkan, shaderIntensity)
-                                            GameSettings.update {
-                                                if (gameShaderScope) it.withGameShader(game.saveKey, choice)
-                                                else it.withShader(system, choice)
-                                            }
-                                        },
-                                    )
-                                }
+                                RightPanelChoice(
+                                    text = stringResource(group.titleRes),
+                                    subtitle = GameShader.entries.firstOrNull { it == shader && it.group == group }
+                                        ?.let { stringResource(it.titleRes) },
+                                    selected = shader.group == group,
+                                    onClick = { shaderGroup = group },
+                                )
                             }
                             if (GameRetroShaders.isCustom(shader)) RightPanelChoice(
                                 text = stringResource(R.string.game_shader_strength),
