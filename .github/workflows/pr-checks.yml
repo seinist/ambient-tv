@@ -139,3 +139,36 @@ jobs:
           mapfile -t libs < <(find libretrodroid_wrapper/build -type f -path "*/${{ matrix.abi }}/*.so" | sort -u)
           test "${#libs[@]}" -gt 0 || { echo "::error::No native output libraries found"; exit 1; }
           python3 scripts/check_elf_page_alignment.py "$readelf" "${libs[@]}"
+
+  # The Rust Vulkan runtime is a separate library: the LibretroDroid NDK build can
+  # pass while a missing/incompatible librashader.so would fail on device.
+  # Build exactly the pinned Vulkan-only features, for every supported ABI.
+  native-slang-runtime:
+    if: >-
+      github.event_name == 'pull_request' &&
+      (github.head_ref == 'feat/libretro-shader-library-small-apk' ||
+       github.head_ref == 'feat/libretro-vulkan-slang-pipeline')
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        abi: [arm64-v8a, armeabi-v7a, x86, x86_64]
+    steps:
+      - uses: actions/checkout@v5
+      - name: Install pinned Android NDK
+        run: |
+          sdkmanager="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          [ -x "$sdkmanager" ] || sdkmanager="$(command -v sdkmanager)"
+          yes | "$sdkmanager" --licenses > /dev/null 2>&1 || true
+          "$sdkmanager" "ndk;30.0.16248370"
+      - name: Build Vulkan-only librashader C runtime
+        env:
+          LIBRASHADER_ABIS: ${{ matrix.abi }}
+        run: |
+          set -euo pipefail
+          rustup --version
+          cargo --version
+          bash scripts/build_librashader_android.sh
+          test -s "app/src/main/jniLibs/$LIBRASHADER_ABIS/liblibrashader_capi.so"
+          file "app/src/main/jniLibs/$LIBRASHADER_ABIS/liblibrashader_capi.so"
