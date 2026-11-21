@@ -82,6 +82,25 @@ data class CompanionGamepadState(
 }
 
 /**
+ * Edges (press/release, contact begin/end, gun reload and device/motion mode changes) must
+ * remain ordered when the network queue is full. Continuous axes and drag coordinates
+ * are safely superseded by a newer snapshot.
+ */
+internal fun companionGamepadCriticalEdge(
+    previous: CompanionGamepadState?, next: CompanionGamepadState,
+): Boolean {
+    if (previous == null) return next.buttons != 0 || next.pointer?.contacts?.any { it.pressed } == true ||
+        next.pointer?.buttons != 0 || (next.motion?.mask ?: 0) != 0
+    val a = previous.pointer
+    val b = next.pointer
+    return previous.buttons != next.buttons || a?.kind != b?.kind ||
+        a?.buttons != b?.buttons || a?.offscreen != b?.offscreen ||
+        a?.contacts?.filter { it.pressed }?.map { it.index } !=
+            b?.contacts?.filter { it.pressed }?.map { it.index } ||
+        previous.motion?.mask != next.motion?.mask
+}
+
+/**
  * Main-thread bridge between authenticated Companion TLS sessions and the active Libretro core.
  * Independent of TV remote-control leases: up to four paired phones can play together.
  * All entry points run on the main dispatcher (including release on socket teardown).
