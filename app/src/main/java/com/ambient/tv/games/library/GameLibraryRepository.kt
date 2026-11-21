@@ -266,8 +266,7 @@ class GameLibraryRepository @Inject constructor(
             GameSystems.extension(entry.name) in
                 (GameSystems.archiveExtensions + setOf("cue", "m3u", "gdi", "chd",
                     "iso", "cso", "zso", "wbfs", "rvz", "ciso", "pbp"))) return null
-        val checksum = runCatching {
-            session.open(entry.path).use { media ->
+        val checksum = session.open(entry.path).use { media ->
                 val crc = CRC32()
                 val chunk = ByteArray(128 * 1024)
                 var offset = 0L
@@ -281,7 +280,6 @@ class GameLibraryRepository @Inject constructor(
                 }
                 java.lang.Long.toHexString(crc.value).uppercase(Locale.ROOT).padStart(8, '0')
             }
-        }.getOrNull() ?: return null
         return datNameFromCrc(systemId, checksum)
     }
 
@@ -503,11 +501,21 @@ class GameLibraryRepository @Inject constructor(
                                         // remote archives for metadata we cannot read in-place.
                                         val nested = entry.name.substringBeforeLast('.')
                                         GameArchives.Metadata(nested, GameSystems.forFile(nested))
-                                    } else runCatching {
-                                        reader().open(entry.path).use {
-                                            GameArchives.probe(entry.name, it)
+                                    } else {
+                                        val probed = runCatching {
+                                            reader().open(entry.path).use {
+                                                GameArchives.probe(entry.name, it)
+                                            }
                                         }
-                                    }.getOrNull()
+                                        // Network/decoder errors must NOT silently delete a
+                                        // previously indexed title and commit a truncated DB.
+                                        probed.getOrElse { problem ->
+                                            throw IOException(
+                                                "Archive metadata read failed: ${entry.name}",
+                                                problem,
+                                            )
+                                        }
+                                    }
                                 } else null
                                 val detected = if (cachedProbe) GameSystems.byId(last!!.systemId)
                                     else archive?.system ?: classify(entry, reader(), skipArchives = true)
