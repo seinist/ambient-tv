@@ -16,6 +16,7 @@ on:
         description: Core ids to build, comma separated (empty = all)
         default: ""
   push:
+    branches: [main]
     paths:
       - cores/cores.json
       - .github/workflows/cores.yml
