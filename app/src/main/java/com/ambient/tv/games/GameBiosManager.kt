@@ -7,6 +7,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.io.FileNotFoundException
+import java.io.IOException
 import java.security.MessageDigest
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -46,9 +47,11 @@ class GameBiosManager @Inject constructor(
     /** A required firmware file missing for a game with [extension], or null. */
     /** A firmware file [core] cannot start [system]'s game without, or null when it has what it needs. */
     fun missingRequired(system: GameSystem, extension: String, core: GameCore = system.core): GameBios? =
-        system.bios.firstOrNull { it.requiredFor(extension) && !file(it).isFile }
-            // Cores without a built-in replacement need one of the system's firmware files.
-            ?: system.bios.takeIf { core.needsBios && it.isNotEmpty() && it.none { bios -> file(bios).isFile } }?.first()
+        system.bios.firstOrNull { it.requiredFor(extension) && status(system).firstOrNull { st -> st.bios == it }?.state != GameBiosState.PRESENT }
+            // Cores without a built-in replacement need at least one recognized firmware dump.
+            ?: system.bios.takeIf { core.needsBios && it.isNotEmpty() &&
+                status(system).none { item -> item.state == GameBiosState.PRESENT }
+            }?.first()
 
     suspend fun import(fileId: String): GameBiosImport = withContext(Dispatchers.IO) {
         val (sourceId, path) = FileKeys.parse(fileId)
@@ -59,20 +62,36 @@ class GameBiosManager @Inject constructor(
         access.prepare(source)
         val target = File(storage.systemDirectory, matches.first().second.file)
         val partial = File(target.parentFile, target.name + ".partial")
-        access.open(source, path).use { media ->
-            partial.outputStream().use { out ->
-                val buffer = ByteArray(256 * 1024)
-                var position = 0L
-                while (true) {
-                    val count = media.read(position, buffer, buffer.size)
-                    if (count <= 0) break
-                    out.write(buffer, 0, count)
-                    position += count
+        try {
+            access.open(source, path).use { media ->
+                if (media.size > MAX_BIOS_BYTES) throw IOException("BIOS file exceeds limit")
+                partial.outputStream().use { out ->
+                    val buffer = ByteArray(256 * 1024)
+                    var position = 0L
+                    while (true) {
+                        val count = media.read(position, buffer, buffer.size)
+                        if (count <= 0) break
+                        if (count.toLong() > MAX_BIOS_BYTES - position)
+                            throw IOException("BIOS file exceeds limit")
+                        out.write(buffer, 0, count)
+                        position += count
+                    }
+                    if (media.size > 0 && media.size != position) throw IOException("Incomplete BIOS file")
                 }
             }
-        }
-        target.delete()
-        if (!partial.renameTo(target)) throw java.io.IOException("Cannot store ${target.name}")
+            val digest = md5(partial)
+            if (matches.none { it.second.md5.equals(digest, ignoreCase = true) })
+                throw IOException("BIOS checksum does not match any known firmware version")
+            val old = File(target.parentFile, target.name + ".previous")
+            old.delete()
+            if (target.isFile && !target.renameTo(old)) throw IOException("Cannot back up old BIOS")
+            if (!partial.renameTo(target)) {
+                if (old.isFile) old.renameTo(target)
+                throw IOException("Cannot store ${target.name}")
+            }
+            old.delete()
+            checked.remove(target.path)
+        } finally { partial.delete() }
         val digest = md5(target)
         GameBiosImport(
             file = target.name,
@@ -82,7 +101,9 @@ class GameBiosManager @Inject constructor(
     }
 
     fun remove(bios: GameBios) {
-        file(bios).delete()
+        val target = file(bios)
+        checked.remove(target.path)
+        target.delete()
     }
 
     private fun md5Cached(file: File): String {
@@ -92,6 +113,7 @@ class GameBiosManager @Inject constructor(
     }
 
     companion object {
+        private const val MAX_BIOS_BYTES = 32L * 1024 * 1024
         fun md5(file: File): String {
             val digest = MessageDigest.getInstance("MD5")
             file.inputStream().use { input ->

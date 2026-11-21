@@ -119,11 +119,13 @@ class GameCoreManager @Inject constructor(
         try {
             if (connection.responseCode != HttpURLConnection.HTTP_OK) throw IOException("HTTP ${connection.responseCode}")
             val total = connection.contentLengthLong.takeIf { it > 0 }
+            if (total != null && total > MAX_CORE_ZIP) throw IOException("Core archive exceeds download limit")
             var read = 0L
             val counting = object : java.io.FilterInputStream(connection.inputStream) {
                 override fun read(b: ByteArray, off: Int, len: Int): Int = super.read(b, off, len).also { count ->
                     if (count > 0) {
                         read += count
+                        if (read > MAX_CORE_ZIP) throw IOException("Core archive exceeds download limit")
                         onProgress(total?.let { (read.toFloat() / it).coerceIn(0f, 1f) })
                     }
                 }
@@ -146,25 +148,36 @@ class GameCoreManager @Inject constructor(
         try {
             fun copy(from: InputStream) = partial.outputStream().use { out ->
                 val buffer = ByteArray(64 * 1024)
+                var written = 0L
                 while (true) {
                     job?.ensureActive()
                     val count = from.read(buffer)
                     if (count < 0) break
+                    if (count.toLong() > MAX_CORE_BINARY - written)
+                        throw GameCoreIncompatibleException("Core binary exceeds 128 MiB limit")
                     out.write(buffer, 0, count)
+                    written += count
                 }
             }
             if (zipped) {
                 var found = false
+                // Reject a ZIP containing an unrelated .so instead of installing it under
+                // a trusted core ID. The streaming copy has a separate decompressed cap.
                 ZipInputStream(input).use { zip ->
+                    val expected = setOf("${core.id}_libretro_android.so", "${core.id}_libretro.so")
                     while (true) {
                         val entry = zip.nextEntry ?: break
-                        if (entry.isDirectory || !entry.name.endsWith(".so")) continue
+                        if (entry.isDirectory) continue
+                        val name = entry.name.replace('\\', '/').substringAfterLast('/')
+                        if (name !in expected) continue
+                        if (entry.size > MAX_CORE_BINARY)
+                            throw GameCoreIncompatibleException("Core binary exceeds limit")
                         copy(zip)
                         found = true
                         break
                     }
                 }
-                if (!found) throw GameCoreIncompatibleException("No library in ${core.id} archive")
+                if (!found) throw GameCoreIncompatibleException("No matching ${core.id} library in archive")
             } else input.use(::copy)
             checkElf(partial, pageSize())
             val target = file(core)
@@ -262,6 +275,7 @@ class GameCoreManager @Inject constructor(
         /** [GameCoreInfo.origin] prefix of cores from the app's own signed build, followed by the release tag. */
         const val SOURCE_AMBIENT_PREFIX = "ambient:"
         private const val MAX_CORE_ZIP = 128L * 1024 * 1024
+        private const val MAX_CORE_BINARY = 128L * 1024 * 1024
         private val json = Json { ignoreUnknownKeys = true }
         private val declaredSerializer = kotlinx.serialization.builtins.ListSerializer(GameCoreDeclaredOption.serializer())
         const val BUILDBOT = "https://buildbot.libretro.com/nightly/android/latest"
@@ -280,6 +294,8 @@ class GameCoreManager @Inject constructor(
                 if (ident[0] != 0x7f.toByte() || ident[1] != 'E'.code.toByte() || ident[2] != 'L'.code.toByte() || ident[3] != 'F'.code.toByte()) {
                     throw GameCoreIncompatibleException("Not an ELF library")
                 }
+                if (ident[4].toInt() !in 1..2 || ident[5].toInt() !in 1..2)
+                    throw GameCoreIncompatibleException("Invalid ELF class or endian format")
                 val is64 = ident[4].toInt() == 2
                 val little = ident[5].toInt() == 1
                 fun u16(at: Long): Int { elf.seek(at); val b0 = elf.read(); val b1 = elf.read(); return if (little) b0 or (b1 shl 8) else (b0 shl 8) or b1 }
@@ -293,14 +309,22 @@ class GameCoreManager @Inject constructor(
                 val phOffset = if (is64) u64(0x20) else u32(0x1C)
                 val phEntrySize = u16(if (is64) 0x36L else 0x2AL)
                 val phCount = u16(if (is64) 0x38L else 0x2CL)
+                if (phCount <= 0 || phEntrySize < (if (is64) 56 else 32) ||
+                    phOffset < 0 || phOffset > elf.length() ||
+                    phCount.toLong() * phEntrySize > elf.length() - phOffset) {
+                    throw GameCoreIncompatibleException("Invalid ELF program headers")
+                }
+                var foundLoad = false
                 for (index in 0 until phCount) {
                     val header = phOffset + index.toLong() * phEntrySize
                     if (u32(header) != PT_LOAD) continue
+                    foundLoad = true
                     val align = if (is64) u64(header + 0x30) else u32(header + 0x1C)
                     if (align < pageSize) {
                         throw GameCoreIncompatibleException("Core is aligned to $align bytes, device pages are $pageSize")
                     }
                 }
+                if (!foundLoad) throw GameCoreIncompatibleException("ELF has no loadable segments")
             }
         }
 
