@@ -42,6 +42,7 @@ data class GameLibraryUiState(
     val busy: Boolean = false,
     val ready: Boolean = false,
     val error: String? = null,
+    val message: String? = null,
     val selectedSource: FileSource? = null,
     val browsedPaths: List<Pair<String, String>> = emptyList(),
     val directoryEntries: List<FileEntry> = emptyList(),
@@ -96,6 +97,21 @@ class GameLibraryViewModel @Inject constructor(
     fun sort(value: String) = library.setSortKey(value)
     fun sortDescending(value: Boolean) = library.setSortDescending(value)
     fun rename(game: LibraryGame, value: String) = library.setCustomTitle(game.fileId, value)
+    /** Optional, offline, user-supplied DAT files. Never download a catalog implicitly. */
+    fun importDat(systemId: String, uri: Uri) {
+        viewModelScope.launch {
+            mutable.update { it.copy(busy = true, error = null, message = null) }
+            try {
+                val count = withContext(Dispatchers.IO) {
+                    context.contentResolver.openInputStream(uri)?.let { library.importDat(systemId, it) }
+                        ?: throw java.io.FileNotFoundException("DAT file is unavailable")
+                }
+                mutable.update { it.copy(message = "$count names imported · rescan ROM folders to match") }
+            } catch (cancelled: CancellationException) { throw cancelled }
+            catch (error: Exception) { mutable.update { it.copy(error = error.message ?: "DAT import failed") } }
+            finally { mutable.update { it.copy(busy = false) } }
+        }
+    }
     fun favorite(game: LibraryGame) = library.setFavorite(game.fileId, !game.favorite)
     fun played(game: LibraryGame) = library.recordPlayed(game.fileId)
 
