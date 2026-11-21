@@ -1450,7 +1450,6 @@ private fun AmbientTvApp(
                     if (needsWake) {
                         navController.navigate(Destinations.gameLibrarySection(game.systemId))
                     } else {
-                        gameLibraryRepository.recordPlayed(game.fileId)
                         playOnSelectedTarget(Destinations.gamePlayer(game.fileId, game.systemId))
                     }
                 } finally {
