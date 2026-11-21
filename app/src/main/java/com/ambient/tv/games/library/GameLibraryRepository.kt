@@ -69,9 +69,16 @@ data class LibraryGame(
     val lastPlayed: Long,
     val customTitle: String? = null,
     val verifiedTitle: String? = null,
+    /** Reuse a previous negative DAT result too; no repeated 128 MiB read on each rescan. */
+    val datChecked: Boolean = false,
 )
 
-private class GameIndexDb(context: Context) : SQLiteOpenHelper(context, "game_library.db", null, 2) {
+/** An unchanged ROM with a checked DAT checksum does not need another whole-file read. */
+internal fun reuseDatLookup(previous: LibraryGame?, systemId: String, size: Long, modified: Long): Boolean =
+    previous != null && previous.datChecked && previous.systemId == systemId &&
+        modified != 0L && previous.size == size && previous.modified == modified
+
+private class GameIndexDb(context: Context) : SQLiteOpenHelper(context, "game_library.db", null, 3) {
     override fun onCreate(db: SQLiteDatabase) {
         db.execSQL("""CREATE TABLE game_entries (
             folder_id TEXT NOT NULL, file_id TEXT NOT NULL, source_id TEXT NOT NULL,
@@ -79,6 +86,7 @@ private class GameIndexDb(context: Context) : SQLiteOpenHelper(context, "game_li
             internal_title TEXT, file_size INTEGER NOT NULL, modified INTEGER NOT NULL,
             favorite INTEGER NOT NULL DEFAULT 0, last_played INTEGER NOT NULL DEFAULT 0,
             seen INTEGER NOT NULL DEFAULT 0, manual_title TEXT, verified_title TEXT,
+            dat_checked INTEGER NOT NULL DEFAULT 0,
             PRIMARY KEY(folder_id, file_id))""")
         db.execSQL("CREATE INDEX game_entries_system ON game_entries(system_id)")
         db.execSQL("CREATE INDEX game_entries_source ON game_entries(source_id)")
@@ -93,6 +101,9 @@ private class GameIndexDb(context: Context) : SQLiteOpenHelper(context, "game_li
             db.execSQL("""CREATE TABLE IF NOT EXISTS game_dat_entries (
                 system_id TEXT NOT NULL, crc32 TEXT NOT NULL, title TEXT NOT NULL,
                 PRIMARY KEY(system_id, crc32))""")
+        }
+        if (oldVersion < 3) {
+            db.execSQL("ALTER TABLE game_entries ADD COLUMN dat_checked INTEGER NOT NULL DEFAULT 0")
         }
     }
 }
@@ -212,7 +223,7 @@ class GameLibraryRepository @Inject constructor(
                     }
                 }
                 require(imported > 0) { "DAT contains no ROM CRC32 entries" }
-                writable.execSQL("UPDATE game_entries SET verified_title=NULL WHERE system_id=?",
+                writable.execSQL("UPDATE game_entries SET verified_title=NULL,dat_checked=0 WHERE system_id=?",
                     arrayOf<Any>(systemId))
                 writable.setTransactionSuccessful()
                 changed()
@@ -282,14 +293,14 @@ class GameLibraryRepository @Inject constructor(
     }
 
     /** Disk cache is loaded even if the NAS is sleeping; opening the library never wakes it. */
-    fun games(): List<LibraryGame> {
+    fun games(deduplicate: Boolean = true): List<LibraryGame> {
         val current = files.sources().map { it.id }.toSet()
         val allowed = folders().filter { it.sourceId in current }.associateBy { it.id }
         val style = titleStyle()
         val overrides = preferences.gameLibraryOverrides.associateBy { it.sourceId to it.path }
         val result = mutableListOf<LibraryGame>()
         db.readableDatabase.rawQuery(
-            "SELECT folder_id,file_id,source_id,path,filename,system_id,internal_title,file_size,modified,favorite,last_played,manual_title,verified_title FROM game_entries",
+            "SELECT folder_id,file_id,source_id,path,filename,system_id,internal_title,file_size,modified,favorite,last_played,manual_title,verified_title,dat_checked FROM game_entries",
             null,
         ).use { cursor ->
             while (cursor.moveToNext()) {
@@ -315,12 +326,13 @@ class GameLibraryRepository @Inject constructor(
                     favorite = portable?.favorite ?: (cursor.getInt(9) == 1),
                     lastPlayed = maxOf(cursor.getLong(10), portable?.lastPlayed ?: 0L),
                     customTitle = custom, verifiedTitle = verified,
+                    datChecked = cursor.getInt(13) == 1,
                 )
             }
         }
         // Overlapping assignments are legal. Prefer the deepest matching folder
         // (e.g. NAS/Games/SNES) to a generic NAS/Games auto-detect root.
-        return result.sortedWith(compareByDescending<LibraryGame> {
+        return if (!deduplicate) result else result.sortedWith(compareByDescending<LibraryGame> {
             allowed[it.folderId]?.path?.length ?: 0
         }.thenBy { it.fileId }).distinctBy { it.fileId }
     }
@@ -450,13 +462,16 @@ class GameLibraryRepository @Inject constructor(
                     val sameFile = previousGame?.let {
                         it.size == entry.size && it.modified == entry.modified && entry.modified != 0L
                     } ?: false
-                    val verified = if (sameFile && previousGame?.verifiedTitle != null)
-                        previousGame.verifiedTitle
-                    else if (system.id in datSystems) datTitle(source, entry, system.id)
-                    else null
+                    val datChecked = system.id in datSystems
+                    val verified = when {
+                        !datChecked -> null
+                        reuseDatLookup(previousGame, system.id, entry.size, entry.modified) ->
+                            previousGame?.verifiedTitle
+                        else -> datTitle(source, entry, system.id)
+                    }
                     selected += IndexedGame(entry, system.id, internalTitle,
                         previousGame?.favorite ?: false, previousGame?.lastPlayed ?: 0L,
-                        previousGame?.customTitle, verified)
+                        previousGame?.customTitle, verified, datChecked)
                     require(selected.size <= 200000) { "Game library item limit reached" }
                 }
             }
@@ -476,6 +491,7 @@ class GameLibraryRepository @Inject constructor(
                         put("modified", e.modified); put("favorite", if (game.favorite) 1 else 0)
                         put("last_played", game.lastPlayed); put("seen", generation)
                         put("manual_title", game.customTitle); put("verified_title", game.verifiedTitle)
+                        put("dat_checked", if (game.datChecked) 1 else 0)
                     }
                     writable.insertWithOnConflict("game_entries", null, values, SQLiteDatabase.CONFLICT_REPLACE)
                 }
@@ -492,10 +508,10 @@ class GameLibraryRepository @Inject constructor(
 
     private data class IndexedGame(val entry: FileEntry, val systemId: String,
         val internalTitle: String?, val favorite: Boolean, val lastPlayed: Long,
-        val customTitle: String?, val verifiedTitle: String?)
+        val customTitle: String?, val verifiedTitle: String?, val datChecked: Boolean)
 
     private fun existing(folderId: String): Map<String, LibraryGame> =
-        games().filter { it.folderId == folderId }.associateBy { it.fileId }
+        games(deduplicate = false).filter { it.folderId == folderId }.associateBy { it.fileId }
 
     private fun classify(entry: FileEntry, source: FileSource): com.ambient.tv.games.GameSystem? {
         val head = if (GameSystems.extension(entry.name) == "iso") {
