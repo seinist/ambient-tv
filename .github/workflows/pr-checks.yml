@@ -59,6 +59,12 @@ jobs:
           bash -n build.sh
           python3 -m unittest discover -s scripts/tests -p 'test_*.py'
 
+      - name: Validate game GLSL ES 100 shader sources
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq glslang-tools
+          python3 scripts/check_game_glsl.py
+
       - name: Fetch LibretroDroid
         # The games frontend (pinned Argosy fork plus scripts/patches/libretrodroid).
         run: ./scripts/fetch_libretrodroid.sh
@@ -88,7 +94,7 @@ jobs:
   # verify 16-KiB ELF LOAD-segment alignment. A green ARM64-only build
   # cannot prove that the native frontend works on the other release ABIs.
   native-vulkan-abis:
-    if: github.event_name == 'pull_request' && github.head_ref == 'feat/libretro-vulkan-hdr-output'
+    if: github.event_name == 'pull_request' && (github.head_ref == 'feat/libretro-vulkan-hdr-output' || github.head_ref == 'feat/libretro-shader-library-small-apk')
     runs-on: ubuntu-latest
     timeout-minutes: 45
     strategy:

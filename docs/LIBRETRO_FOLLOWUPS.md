@@ -21,6 +21,10 @@ and **unimplemented features**. A core appearing in the catalog does **not** est
 
 The virtual controller settings are stored in the existing `gameSettings` preference map, which participates in backup and companion settings synchronization. All new picture shaders run on GLES; they are **not** native Vulkan shaders, librashader, FSR or an HDR signal. The game still pauses when its interactive OSD is deliberately opened; the label no longer claims a paused state when the core is actually running.
 
+
+See [game shaders and footprint policy](LIBRETRO_GAME_SHADERS.md) for the compact GLES
+catalog, HDR prefix, device-acceptance checklist and deferred optional-pack support.
+
 ## Outstanding features (not represented as completed)
 
 1. **Full Libretro input abstractions:** Physical keyboard as `RETRO_DEVICE_KEYBOARD`,
