@@ -47,6 +47,7 @@ data class GameLibraryUiState(
     val pendingWakeGame: LibraryGame? = null,
     val savingNetworkSource: Boolean = false,
     val testingNetworkSource: Boolean = false,
+    val networkSaveRevision: Long = 0,
 )
 
 @HiltViewModel
@@ -178,6 +179,7 @@ class GameLibraryViewModel @Inject constructor(
                 }
                 withContext(Dispatchers.IO) { files.saveSource(valid, if (keepPassword) null else password, sshKey) }
                 selectSource(valid)
+                mutable.update { it.copy(networkSaveRevision = it.networkSaveRevision + 1) }
             } catch (cancel: CancellationException) { throw cancel }
             catch (error: Exception) { mutable.update { it.copy(error = error.message) } }
             finally { mutable.update { it.copy(savingNetworkSource = false) } }
