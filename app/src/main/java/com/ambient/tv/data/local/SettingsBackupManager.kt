@@ -672,6 +672,12 @@ class SettingsBackupManager @Inject constructor(
                 require(folder.id.matches(Regex("[A-Za-z0-9-]{1,80}")))
                 require(folder.sourceId.matches(Regex("[A-Za-z0-9-]{1,80}")))
                 require(folder.path.length <= 4096 && folder.path.none { it.code < 32 })
+                val source = backup.fileSources.firstOrNull { it.id == folder.sourceId }
+                if (source != null && source.kind != "local") {
+                    require(com.ambient.tv.data.files.FilePaths.relative(folder.path) == folder.path) {
+                        "Game folder path must be a safe source-relative path"
+                    }
+                }
                 require(folder.systemId == "auto" || com.ambient.tv.games.GameSystems.byId(folder.systemId) != null)
             }
         }
