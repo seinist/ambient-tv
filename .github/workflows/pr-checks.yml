@@ -64,6 +64,9 @@ jobs:
   unit-tests:
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    env:
+      # Robolectric downloads android-all separately from Gradle; repo1 can return 429.
+      ROBOLECTRIC_MAVEN_MIRROR: https://maven-central.storage-download.googleapis.com/maven2/
     steps:
       - uses: actions/checkout@v5
 
