@@ -222,3 +222,83 @@ diff --git a/src/main/cpp/vulkan/vulkanbackend.cpp b/src/main/cpp/vulkan/vulkanb
      nativeSdrStatus.store(0u, std::memory_order_release);
      if (device != VK_NULL_HANDLE) {
          if (vk.deviceWaitIdle != nullptr) vk.deviceWaitIdle(device);
+diff --git a/src/main/cpp/vulkan/vulkanbackend.h b/src/main/cpp/vulkan/vulkanbackend.h
+--- a/src/main/cpp/vulkan/vulkanbackend.h
++++ b/src/main/cpp/vulkan/vulkanbackend.h
+@@ -35,6 +35,7 @@
+ 
+ #include "../libretro/libretro-common/include/libretro.h"
+ #include "../libretro/libretro-common/include/libretro_vulkan.h"
++#include "vulkanslangpipeline.h"
+ 
+ struct AImageReader;
+ 
+@@ -104,6 +105,7 @@
+     void setNativeCoreSourceTransfer(uint32_t sourceTransfer);
+     // Current game's integer-scaling setting; this only affects the opt-in WSI blit.
+     void setNativeIntegerScaling(bool enabled) { nativeIntegerScaling = enabled; }
++    void setNativeShaderPresetPath(const std::string& path);
+     uint32_t getNativeSdrStatus() const { return nativeSdrStatus.load(std::memory_order_acquire); }
+ 
+     bool ensureFrameBuffer(unsigned width, unsigned height);
+@@ -172,6 +174,9 @@
+     struct PendingImage {
+         VkImage image = VK_NULL_HANDLE;
+         VkFormat format = VK_FORMAT_UNDEFINED;
++        VkImageUsageFlags usage = 0;
++        uint32_t width = 0;
++        uint32_t height = 0;
+         VkImageLayout layout = VK_IMAGE_LAYOUT_UNDEFINED;
+         VkImageSubresourceRange range {};
+         uint32_t srcQueueFamily = VK_QUEUE_FAMILY_IGNORED;
+@@ -270,6 +275,9 @@
+     uint32_t nativeOutputTransfer = 0; // SDR by default, per-session only
+     uint32_t nativeCoreSourceTransfer = 0; // no trusted PQ/HLG source by default
+     bool nativeIntegerScaling = false; // session-local geometry; default off
++    VulkanSlangPipeline nativeSlang;
++    std::string nativeSlangPath;
++    uint64_t nativeSlangFrame = 0;
+     // bit 0 window requested, bit 1 swapchain ready, bit 2 frames presented,
+     // bit 4 actual PQ/BT.2020, bit 5 actual HLG/BT.2020,
+     // bit 3 fallback due to unsupported device/surface/runtime failure.
+diff --git a/src/main/cpp/CMakeLists.txt b/src/main/cpp/CMakeLists.txt
+--- a/src/main/cpp/CMakeLists.txt
++++ b/src/main/cpp/CMakeLists.txt
+@@ -97,6 +97,8 @@
+         video.cpp
+         vulkan/vulkanbackend.h
+         vulkan/vulkanbackend.cpp
++        vulkan/vulkanslangpipeline.h
++        vulkan/vulkanslangpipeline.cpp
+         immersivemode.h
+         immersivemode.cpp
+         backgroundframe.h
+diff --git a/src/main/cpp/libretrodroidjni.cpp b/src/main/cpp/libretrodroidjni.cpp
+--- a/src/main/cpp/libretrodroidjni.cpp
++++ b/src/main/cpp/libretrodroidjni.cpp
+@@ -850,3 +850,18 @@
+     VulkanBackend::getInstance().setNativeIntegerScaling(enabled == JNI_TRUE);
+ }
+ 
++JNIEXPORT void JNICALL Java_com_swordfish_libretrodroid_LibretroDroid_setNativeVulkanShaderPreset(
++    JNIEnv* env, jclass, jstring value
++) {
++    if (value == nullptr) {
++        VulkanBackend::getInstance().setNativeShaderPresetPath("");
++        return;
++    }
++    const char* chars = env->GetStringUTFChars(value, nullptr);
++    if (chars == nullptr) return;
++    const std::string path(chars);
++    env->ReleaseStringUTFChars(value, chars);
++    VulkanBackend::getInstance().setNativeShaderPresetPath(path);
++}
++
+diff --git a/src/main/java/com/swordfish/libretrodroid/LibretroDroid.java b/src/main/java/com/swordfish/libretrodroid/LibretroDroid.java
+--- a/src/main/java/com/swordfish/libretrodroid/LibretroDroid.java
++++ b/src/main/java/com/swordfish/libretrodroid/LibretroDroid.java
+@@ -149,2 +149,4 @@
+     public static native void setNativeVulkanIntegerScaling(boolean enabled);
++    /** A verified app-private Slang preset path; empty string returns to raw nearest output. */
++    public static native void setNativeVulkanShaderPreset(String path);
+     /** Android panel capabilities (not authored content metadata); GL thread only. */
