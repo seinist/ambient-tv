@@ -298,7 +298,9 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
     val settings = GameSettings.state
     val shader = settings.shader(system, game.saveKey)
     val shaderIntensity = settings.shaderStrength(system, game.saveKey)
-    val gameShaderScope = settings.ownGameShader(game.saveKey) != null
+    val selectedPack = settings.packShader(system, game.saveKey)
+    val gameShaderScope = settings.values.containsKey("shader.game." + game.saveKey)
+    val installedShaders = remember(model) { model.shaderPacks.installed() }
     val toneMap = settings.hdrToneMap(core)
     val nativeTransfer = GameVulkanTransferMode.forInput(toneMap)
     val aspect = settings.aspect(system)
@@ -307,7 +309,7 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
     val touchMode = settings.touchMode(system)
     // Native RAW blit matches only the PIXEL preset; aspect and integer
     // scaling are passed to Vulkan, while real shader presets stay in GLES.
-    val nativePictureSupported = GameVulkanPictureCompatibility.rawFullscreenEligible(shader)
+    val nativePictureSupported = selectedPack == null && GameVulkanPictureCompatibility.rawFullscreenEligible(shader)
     val saveStates by model.saveStates.collectAsState()
 
     val chrome = remember { PlayerChromeState() }
@@ -342,6 +344,7 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
     }
     var optionCategory by remember { mutableStateOf<String?>(null) }
     var shaderGroup by remember { mutableStateOf<GameShaderGroup?>(null) }
+    var shaderPacksOpen by remember { mutableStateOf(false) }
     var optionKey by remember { mutableStateOf<String?>(null) }
     /** Core option changes go to this game only (true) or to every game of the core. */
     var gameScope by remember { mutableStateOf(settings.gameCoreOptions(core, game.saveKey).isNotEmpty()) }
@@ -418,7 +421,10 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
             variables = (settings.effectiveCoreOptions(core, game.saveKey) + if (session.vulkan) core.vulkanOptions else core.glOptions)
                 .map { (key, value) -> Variable(key, value) }.toTypedArray()
             saveRAMState = session.sram
-            this.shader = GameHdrToneMapShader.forGame(shader, toneMap, session.vulkan, shaderIntensity)
+            this.shader = GameHdrToneMapShader.forConfig(
+                model.shaderPacks.config(selectedPack) ?: shader.config(shaderIntensity),
+                toneMap, session.vulkan, pixel = selectedPack == null && shader == GameShader.PIXEL,
+            )
             rumbleEventsEnabled = true
             preferLowLatencyAudio = true
             preferVulkan = session.vulkan
@@ -530,6 +536,7 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
         optionKey = null
         optionCategory = null
         shaderGroup = null
+        shaderPacksOpen = false
         statesOpen = false
         menuOpen = false
         osd.close()
@@ -821,6 +828,7 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
         optionKey = null
         optionCategory = null
         shaderGroup = null
+        shaderPacksOpen = false
     }
 
     CompositionLocalProvider(
@@ -1030,6 +1038,7 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
                     title = when {
                         option != null -> option.title
                         open == GamePanel.CORE && category != null -> categoryTitle.orEmpty()
+                        open == GamePanel.PICTURE && shaderPacksOpen -> stringResource(R.string.games_shader_packs_title)
                         open == GamePanel.PICTURE && shaderGroup != null -> stringResource(shaderGroup!!.titleRes)
                         open == GamePanel.PICTURE -> stringResource(R.string.game_panel_picture)
                         open == GamePanel.CORE -> stringResource(R.string.game_panel_core)
@@ -1052,10 +1061,11 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
                             option != null -> optionKey = null
                             category != null -> optionCategory = null
                             shaderGroup != null -> shaderGroup = null
+                            shaderPacksOpen -> shaderPacksOpen = false
                             else -> closePanel()
                         }
                     },
-                    closeInsteadOfBack = option == null && category == null && shaderGroup == null,
+                    closeInsteadOfBack = option == null && category == null && shaderGroup == null && !shaderPacksOpen,
                 ) {
                     when {
                         option != null -> {
@@ -1077,12 +1087,33 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
                                 )
                             }
                         }
+                        open == GamePanel.PICTURE && shaderPacksOpen -> {
+                            if (installedShaders.isEmpty()) GamePanelText(stringResource(R.string.games_shader_packs_empty))
+                            installedShaders.forEach { preset ->
+                                RightPanelChoice(
+                                    text = preset.title,
+                                    subtitle = preset.packTitle + " · " + preset.license,
+                                    selected = selectedPack == preset.selection,
+                                    onClick = {
+                                        val verified = model.shaderPacks.config(preset.selection)
+                                        if (verified != null) {
+                                            retroView.shader = GameHdrToneMapShader.forConfig(
+                                                verified, toneMap, session.vulkan,
+                                            )
+                                            GameSettings.update {
+                                                it.withPackShader(system, game.saveKey.takeIf { gameShaderScope }, preset.selection)
+                                            }
+                                        }
+                                    },
+                                )
+                            }
+                        }
                         open == GamePanel.PICTURE && shaderGroup != null -> {
                             GameShader.entries.filter { it.group == shaderGroup }.forEach { choice ->
                                 RightPanelChoice(
                                     text = stringResource(choice.titleRes),
                                     subtitle = stringResource(choice.hintRes),
-                                    selected = choice == shader,
+                                    selected = selectedPack == null && choice == shader,
                                     onClick = {
                                         retroView.shader = GameHdrToneMapShader.forGame(choice, toneMap, session.vulkan, shaderIntensity)
                                         GameSettings.update {
@@ -1109,26 +1140,39 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
                                     if (gameShaderScope) {
                                         val systemShader = settings.shader(system)
                                         val systemStrength = settings.shaderStrength(system)
+                                        val systemPack = settings.packShader(system)
                                         GameSettings.update {
                                             it.withGameShader(game.saveKey, null)
                                                 .withShaderStrength(system, game.saveKey, 1f)
                                         }
-                                        retroView.shader = GameHdrToneMapShader.forGame(systemShader, toneMap, session.vulkan, systemStrength)
+                                        retroView.shader = GameHdrToneMapShader.forConfig(
+                                            model.shaderPacks.config(systemPack) ?: systemShader.config(systemStrength),
+                                            toneMap, session.vulkan, pixel = systemPack == null && systemShader == GameShader.PIXEL,
+                                        )
                                     } else {
-                                        GameSettings.update { it.withGameShader(game.saveKey, shader) }
+                                        GameSettings.update {
+                                            if (selectedPack != null) it.withPackShader(system, game.saveKey, selectedPack)
+                                            else it.withGameShader(game.saveKey, shader)
+                                        }
                                     }
                                 },
+                            )
+                            if (installedShaders.isNotEmpty()) RightPanelChoice(
+                                text = stringResource(R.string.games_shader_packs_title),
+                                subtitle = installedShaders.firstOrNull { it.selection == selectedPack }?.title,
+                                selected = selectedPack != null,
+                                onClick = { shaderPacksOpen = true },
                             )
                             GameShaderGroup.entries.forEach { group ->
                                 RightPanelChoice(
                                     text = stringResource(group.titleRes),
                                     subtitle = GameShader.entries.firstOrNull { it == shader && it.group == group }
                                         ?.let { stringResource(it.titleRes) },
-                                    selected = shader.group == group,
+                                    selected = selectedPack == null && shader.group == group,
                                     onClick = { shaderGroup = group },
                                 )
                             }
-                            if (GameRetroShaders.isCustom(shader)) RightPanelChoice(
+                            if (selectedPack == null && GameRetroShaders.isCustom(shader)) RightPanelChoice(
                                 text = stringResource(R.string.game_shader_strength),
                                 subtitle = stringResource(R.string.game_shader_strength_value, (shaderIntensity * 100).toInt()),
                                 selected = false,
