@@ -24,4 +24,5 @@
     <string name="companion_gamepad_touch_hint">Tippen und ziehen für den Core-Pointer</string>
     <string name="companion_gamepad_mouse_hint">Ziehen zum Bewegen · Tippen zum Klicken</string>
     <string name="companion_gamepad_gun_hint">Zielen und tippen zum Schießen</string>
+    <string name="companion_gamepad_rtt_p95">RTT P95 %1$d ms</string>
 </resources>
