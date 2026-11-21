@@ -1,6 +1,8 @@
 package com.ambient.tv.companion
 
 import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.layout.*
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -13,6 +15,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -46,6 +50,12 @@ internal fun CompanionGamepadScreen(manager: CompanionManager, modifier: Modifie
     val mode = GameTouchMode.fromKey(modeKey)
     var pad by remember(info?.sessionId) { mutableStateOf(CompanionGamepadState()) }
     val haptics = LocalHapticFeedback.current
+    val view = LocalView.current
+    DisposableEffect(view) {
+        val wasKeptOn = view.keepScreenOn
+        view.keepScreenOn = true
+        onDispose { view.keepScreenOn = wasKeptOn }
+    }
 
     BackHandler { manager.showRemote() }
 
@@ -76,7 +86,12 @@ internal fun CompanionGamepadScreen(manager: CompanionManager, modifier: Modifie
         onDispose { if (claimed) manager.gamepadInput(CompanionGamepadState()) }
     }
 
-    Surface(modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
+    Surface(
+        modifier.fillMaxSize().pointerInput(Unit) {
+            awaitEachGesture { awaitFirstDown(requireUnconsumed = false) }
+        },
+        color = MaterialTheme.colorScheme.background,
+    ) {
         Column(Modifier.fillMaxSize()) {
             Row(
                 Modifier.fillMaxWidth().heightIn(min = 56.dp).padding(horizontal = 8.dp),
@@ -110,7 +125,7 @@ internal fun CompanionGamepadScreen(manager: CompanionManager, modifier: Modifie
                     Spacer(Modifier.width(4.dp))
                     Text(stringResource(mode.titleRes), maxLines = 1)
                 }
-                TextButton(onClick = manager::gamepadMenu, enabled = claimed) {
+                TextButton(onClick = { manager.gamepadMenu() }, enabled = claimed) {
                     Text(stringResource(R.string.companion_gamepad_menu))
                 }
             }
