@@ -134,9 +134,10 @@ object CompanionGamepadSession {
     }
 
     fun attach(input: RetroPadInput, systemId: String, coreId: String, title: String,
-               pointerInput: Boolean, onMenu: () -> Unit,
+               pointerInput: Boolean,
                onPointer: (Int, CompanionPointerState?) -> Unit = { _, _ -> },
-               onMotion: (Int, CompanionMotionState?) -> Unit = { _, _ -> }) {
+               onMotion: (Int, CompanionMotionState?) -> Unit = { _, _ -> },
+               onMenu: () -> Unit) {
         if (active?.input === input && active?.info?.systemId == systemId &&
             active?.info?.coreId == coreId && active?.info?.title == title.take(120)) return
         detachCurrent()
