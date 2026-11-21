@@ -43,6 +43,8 @@ data class PortableSettingsExtras(
     val gameSettings: Map<String, String>? = null,
     /** Console browse mode, density, sorting and ROM-title priority (no ROMs or catalog cache). */
     val gameLibraryOptions: Map<String, String>? = null,
+    /** Portable ROM title overrides, favorites and recent launches (no ROM data). */
+    val gameLibraryOverrides: List<com.ambient.tv.games.library.GamePortableState>? = null,
 )
 
 @Serializable
