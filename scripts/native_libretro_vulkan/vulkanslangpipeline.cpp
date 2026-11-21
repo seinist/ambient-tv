@@ -5,6 +5,8 @@
 #include <android/log.h>
 #include <sys/stat.h>
 #include <cstring>
+#include <algorithm>
+#include <cmath>
 #include <utility>
 
 namespace libretrodroid {
@@ -20,7 +22,8 @@ namespace {
         struct stat info {};
         return !path.empty() && path.size() < MAX_PRESET_PATH_BYTES &&
             path[0] == '/' && path.find("..") == std::string::npos &&
-            stat(path.c_str(), &info) == 0 && S_ISREG(info.st_mode) &&
+            lstat(path.c_str(), &info) == 0 && S_ISREG(info.st_mode) &&
+            path.size() >= 7 && path.compare(path.size() - 7, 7, ".slangp") == 0 &&
             info.st_size > 0 && info.st_size <= 64 * 1024;
     }
 }
@@ -143,7 +146,7 @@ bool VulkanSlangPipeline::record(VkCommandBuffer commands, uint64_t frameCount,
                                   uint32_t targetWidth, uint32_t targetHeight,
                                   float viewportX, float viewportY,
                                   uint32_t viewportWidth, uint32_t viewportHeight,
-                                  float sourceAspect) {
+                                  float sourceAspect, double coreFps) {
     if (chain == nullptr || errorForThisPreset || commands == VK_NULL_HANDLE ||
         input == VK_NULL_HANDLE || target == VK_NULL_HANDLE ||
         sourceWidth == 0 || sourceHeight == 0 || targetWidth == 0 || targetHeight == 0 ||
@@ -161,7 +164,17 @@ bool VulkanSlangPipeline::record(VkCommandBuffer commands, uint64_t frameCount,
     options.total_subframes = 1;
     options.current_subframe = 1;
     options.aspect_ratio = sourceAspect;
-    options.frames_per_second = 60.0f;  // libretro frame-time extension follow-up
+    // Read libretro core timing instead of hardcoding 60 fps for the Slang uniforms.
+    options.frames_per_second = std::isfinite(coreFps) && coreFps >= 1.0 &&
+        coreFps <= 240.0 ? static_cast<float>(coreFps) : 60.0f;
+    const auto now = std::chrono::steady_clock::now();
+    if (hasPreviousFrameTime) {
+        const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+            now - previousFrameTime).count();
+        options.frametime_delta = static_cast<uint32_t>(std::clamp<int64_t>(elapsed, 0, 250));
+    }
+    previousFrameTime = now;
+    hasPreviousFrameTime = true;
     options.color_space = LIBRA_COLOR_SPACE_SDR;
     options.brightness_nits = 200.0f;
 
@@ -180,6 +193,7 @@ void VulkanSlangPipeline::releaseGpu() {
         logError("Vulkan filter-chain cleanup", freeChain(&chain));
     }
     chain = nullptr;
+    hasPreviousFrameTime = false;
 }
 
 void VulkanSlangPipeline::releaseLibrary() {

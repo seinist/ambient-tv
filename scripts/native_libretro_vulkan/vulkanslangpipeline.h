@@ -5,6 +5,7 @@
 #define LIBRA_RUNTIME_VULKAN
 #include "librashader.h"
 #include <cstdint>
+#include <chrono>
 #include <string>
 
 namespace libretrodroid {
@@ -30,7 +31,7 @@ public:
                 VkImage input, VkFormat inputFormat, uint32_t sourceWidth, uint32_t sourceHeight,
                 VkImage target, VkFormat targetFormat, uint32_t targetWidth, uint32_t targetHeight,
                 float viewportX, float viewportY, uint32_t viewportWidth, uint32_t viewportHeight,
-                float sourceAspect);
+                float sourceAspect, double coreFps);
     void releaseGpu();   // Must be called after the queue/device is idle (also on resize/shutdown).
 
 private:
@@ -42,6 +43,8 @@ private:
     void* dynamicLibrary = nullptr;
     libra_vk_filter_chain_t chain = nullptr;
     bool errorForThisPreset = false;
+    std::chrono::steady_clock::time_point previousFrameTime {};
+    bool hasPreviousFrameTime = false;
 
     PFN_libra_instance_abi_version abiVersion = nullptr;
     PFN_libra_instance_api_version apiVersion = nullptr;
