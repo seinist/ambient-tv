@@ -668,6 +668,16 @@ class SettingsBackupManager @Inject constructor(
         validateAccountBackup(backup)
         backup.smartTubeAccounts?.let { smartTube?.validateAccounts(it) }
         backup.fileSources.filter { it.kind in com.ambient.tv.data.files.FileKinds.ALL }.forEach { it.validated() }
+        backup.extras?.portable?.gameLibraryOverrides?.let { overrides ->
+            require(overrides.size <= 5000)
+            require(overrides.distinctBy { it.sourceId to it.path }.size == overrides.size)
+            overrides.forEach {
+                require(it.sourceId.length in 1..80 && it.path.length in 1..4096)
+                require(it.path.none { ch -> ch.isISOControl() })
+                require(it.title == null || it.title.length <= 160 && it.title.none { ch -> ch.isISOControl() })
+                require(it.lastPlayed >= 0L)
+            }
+        }
         backup.gameLibraryFolders?.let { folders ->
             require(folders.size <= 200 && folders.distinctBy { it.id }.size == folders.size)
             folders.forEach { folder ->
