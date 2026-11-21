@@ -114,6 +114,18 @@ data class GameSettingsState(val values: Map<String, String> = emptyMap()) {
     fun withGameShader(gameKey: String, shader: GameShader?): GameSettingsState =
         set("shader.game.$gameKey", shader?.key)
 
+    /** Signed pack selections reuse built-in shader precedence, never a separate dangling override. */
+    fun packShader(system: GameSystem, gameKey: String? = null): String? {
+        val value = gameKey?.let { values["shader.game." + it] }
+            ?: values["shader." + system.id] ?: values["shader"]
+        return value?.takeIf { it.startsWith("pack:") }?.removePrefix("pack:")
+    }
+
+    fun withPackShader(system: GameSystem, gameKey: String?, selection: String?): GameSettingsState {
+        val key = if (gameKey != null) "shader.game." + gameKey else "shader." + system.id
+        return set(key, selection?.let { "pack:" + it })
+    }
+
     fun withShader(system: GameSystem?, shader: GameShader?): GameSettingsState {
         val key = if (system == null) "shader" else "shader.${system.id}"
         return copy(values = if (shader == null) values - key else values + (key to shader.key))
