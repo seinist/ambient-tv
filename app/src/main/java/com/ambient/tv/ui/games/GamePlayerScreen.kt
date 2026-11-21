@@ -759,7 +759,9 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
     // The Companion gamepad uses the same RetroPadInput as real controllers, without injecting
     // synthetic Android keys into the activity. This is a TV-only, full game-session registration.
     val latestCompanionMenu by rememberUpdatedState<() -> Unit>({
-        if (menuOpen) resume() else openMenu()
+        if (coreReady && !destroyed && !exiting) {
+            if (menuOpen) resume() else openMenu()
+        }
     })
     DisposableEffect(input, handheld, system.id, core.id, game.saveKey) {
         if (!handheld) com.ambient.tv.companion.CompanionGamepadSession.attach(
