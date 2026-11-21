@@ -37,6 +37,8 @@ data class GameLibraryUiState(
     val gridColumns: Int = 8,
     val listRows: Int = 7,
     val titleStyle: String = "auto",
+    val sortKey: String = "name",
+    val sortDescending: Boolean = false,
     val busy: Boolean = false,
     val ready: Boolean = false,
     val error: String? = null,
@@ -77,7 +79,8 @@ class GameLibraryViewModel @Inject constructor(
         mutable.update { it.copy(
             games = games, folders = library.folders(), sources = files.sources(),
             view = library.viewStyle(), gridColumns = library.gridColumns(),
-            listRows = library.listRows(), titleStyle = library.titleStyle(), ready = true,
+            listRows = library.listRows(), titleStyle = library.titleStyle(),
+            sortKey = library.sortKey(), sortDescending = library.sortDescending(), ready = true,
         ) }
     }
 
@@ -90,6 +93,9 @@ class GameLibraryViewModel @Inject constructor(
     fun gridColumns(value: Int) = library.setGridColumns(value)
     fun listRows(value: Int) = library.setListRows(value)
     fun titleStyle(value: String) = library.setTitleStyle(value)
+    fun sort(value: String) = library.setSortKey(value)
+    fun sortDescending(value: Boolean) = library.setSortDescending(value)
+    fun rename(game: LibraryGame, value: String) = library.setCustomTitle(game.fileId, value)
     fun favorite(game: LibraryGame) = library.setFavorite(game.fileId, !game.favorite)
     fun played(game: LibraryGame) = library.recordPlayed(game.fileId)
 
