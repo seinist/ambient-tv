@@ -12,11 +12,25 @@ import kotlinx.coroutines.withTimeoutOrNull
  * 16-slot command channel is full. Analog/pointer positions supersede obsolete samples rather
  * than accumulating 30 Hz worth of stale frames during a slow network round trip.
  *
- * The unlimited edge queue only holds genuine discrete user interactions, not motion samples.
+ * A bounded edge queue holds genuine discrete user interactions, not motion samples.
+ * If that FIFO is exhausted, the TLS owner closes its session instead of losing a release.
  * It belongs to one authenticated Companion connection and is replaced on reconnect.
  */
-internal class CompanionLiveInputQueue {
-    private val edges = Channel<CompanionFrame>(Channel.UNLIMITED)
+internal class CompanionLiveInputQueue(
+    private val onOverflow: () -> Unit = {},
+    private val edgeCapacity: Int = 64,
+) {
+    private val edges = Channel<CompanionFrame>(edgeCapacity)
+    private var overflowed = false
+
+    /** A full FIFO is a broken transport, not an excuse to discard UP/release and stick keys. */
+    private fun sendEdge(frame: CompanionFrame): Boolean {
+        if (overflowed) return false
+        if (edges.trySend(frame).isSuccess) return true
+        overflowed = true
+        onOverflow() // The owner closes this TLS connection so the TV clears all held input.
+        return false
+    }
     private val signal = Channel<Unit>(Channel.CONFLATED)
     private var gamepadMotion: CompanionFrame? = null
     private var remoteMotion: CompanionFrame? = null
@@ -25,9 +39,13 @@ internal class CompanionLiveInputQueue {
         require(frame.type in setOf("gamepad_input", "gamepad_menu", "gamepad_release"))
         if (critical || frame.type != "gamepad_input") {
             synchronized(this) {
-                // Edge snapshots also contain the current axes. An older sample would be stale.
+                // Relative mouse deltas are movements, not replaceable absolute positions:
+                // send the outstanding movement BEFORE the next click/press/mode change.
+                gamepadMotion?.takeIf { it.gamepadState?.pointer?.kind == "mouse" &&
+                    (it.gamepadState.pointer.dx != 0f || it.gamepadState.pointer.dy != 0f)
+                }?.let { if (!sendEdge(it)) return false }
                 gamepadMotion = null
-                return edges.trySend(frame).isSuccess
+                return sendEdge(frame)
             }
         }
         synchronized(this) {
@@ -39,7 +57,7 @@ internal class CompanionLiveInputQueue {
                 else {
                     // An overflow or changed input mode must not discard an earlier mouse delta.
                     if (previous.gamepadState?.pointer?.kind == "mouse") {
-                        if (!edges.trySend(previous).isSuccess) return false
+                        if (!sendEdge(previous)) return false
                     }
                     gamepadMotion = frame
                 }
@@ -61,7 +79,7 @@ internal class CompanionLiveInputQueue {
                     else {
                         // Keep both summed segments when direction or mode changes or the
                         // normalized sum would overflow; never lose distance during a drag.
-                        if (!edges.trySend(old).isSuccess) return false
+                        if (!sendEdge(old)) return false
                         remoteMotion = frame
                     }
                 } else remoteMotion = frame
@@ -69,9 +87,9 @@ internal class CompanionLiveInputQueue {
                 return true
             }
             // A click acts at the most recently touched position, never one gesture behind.
-            remoteMotion?.let { if (!edges.trySend(it).isSuccess) return false }
+            remoteMotion?.let { if (!sendEdge(it)) return false }
             remoteMotion = null
-            return edges.trySend(frame).isSuccess
+            return sendEdge(frame)
         }
     }
 
@@ -123,6 +141,7 @@ internal class CompanionLiveInputQueue {
 
     fun close() {
         synchronized(this) {
+            overflowed = true
             gamepadMotion = null
             remoteMotion = null
         }
