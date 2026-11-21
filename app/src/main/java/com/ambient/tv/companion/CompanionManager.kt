@@ -1779,29 +1779,21 @@ class CompanionManager @Inject constructor(@ApplicationContext private val conte
                 var returnDeadline = 0L
                 var carried: CompanionFrame? = null
                 if (initialMedia != null) queue.send(CompanionFrame(type = "start", media = initialMedia))
-                while (isActive && (canSendToTv || remoteServiceRequested)) {
-                    require(if (route.vpn) connectionTransport?.alive(route) == true else sessionLan()?.address == link?.address)
-                    var command = carried?.also { carried = null }
-                        ?: live.receive(queue, if (returnTransfer != null || returnAck != 0L) 50L else 1_000L)
-                        ?: CompanionFrame(type = "status")
-                    // Each frame waits for the TV's answer, so touchpad moves queued meanwhile are
-                    // summed into one frame instead of trailing behind the finger.
-                    while (true) {
-                        val next = live.poll(queue) ?: break
-                        val merged = coalesceCompanionInput(command, next)
-                        if (merged == null) { carried = next; break }
-                        command = merged
+                // The TLS stream remains encrypted, ordered, and sequence-checked, but realtime
+                // inputs may have up to four outstanding acknowledgements. A slow Wi-Fi roundtrip
+                // must not stop the next thumb/analog sample from reaching the TV.
+                socket.soTimeout = 30_000 // also covers long media-start acknowledgements
+                val replies = Channel<CompanionFrame>(8)
+                val reader = launch(Dispatchers.IO) {
+                    try {
+                        while (isActive) replies.send(input.readFrame())
+                    } catch (failure: Throwable) {
+                        replies.close(failure)
                     }
-                    val result = withContext(Dispatchers.Main) { backupResults[nonce] }
-                    val request = command.copy(nonce = nonce, sequence = ++sequence,
-                        capabilities = emptyList(),
-                        syncAck = returnAck, syncError = returnError,
-                        syncResultId = result?.first.orEmpty(), syncResult = result?.second.orEmpty(),
-                        syncPort = if (foreground && !route.vpn) server?.localPort ?: 0 else 0)
-                    socket.soTimeout = if (command.type == "start") 30_000 else 8_000
-                    output.writeFrame(request)
-                    val state = input.readFrame()
-                    require(state.type == "state" && state.nonce == nonce && state.sequence == sequence)
+                }
+                val inflight = java.util.ArrayDeque<CompanionFrame>()
+                suspend fun processReply(command: CompanionFrame, state: CompanionFrame) {
+                    require(state.type == "state" && state.nonce == nonce && state.sequence == command.sequence)
                     returnAck = 0L; returnError = ""
                     state.syncReturn?.let { returned ->
                         require(returned.sequence == returnSequence + 1)
@@ -1833,7 +1825,7 @@ class CompanionManager @Inject constructor(@ApplicationContext private val conte
                     }
                     synchronized(this@CompanionManager) {
                         ensureActive(); check(commands === queue)
-                        require(state.type == "state" && state.nonce == nonce && state.sequence == sequence)
+                        require(state.type == "state" && state.nonce == nonce && state.sequence == command.sequence)
                         // Transfer frames report their own classified failure from sendSettings.
                         if (state.error.isNotEmpty() && !command.type.startsWith("backup_") &&
                             !command.type.startsWith("gamepad_") &&
@@ -1848,15 +1840,18 @@ class CompanionManager @Inject constructor(@ApplicationContext private val conte
                                     gamepadPort = state.gamepadPort,
                                     inputGranted = state.inputGranted, controller = state.controller)
                             else state.copy(receiverId = trusted.fingerprint)
-                            old.copy(remote = remote)
+                            if (remote == old.remote) old else old.copy(remote = remote)
                         }
                         if (command.type == "start" && command.startRequestId.isNotEmpty()) {
                             playbackStartAck?.takeIf { it.first == command.startRequestId }?.second?.complete(state)
                         }
-                        ensureRemoteService()
-                        approveMonogramLogin(trusted.fingerprint, state.monogramLogin, name)
+                        if (command.type !in setOf("gamepad_input", "input")) {
+                            ensureRemoteService()
+                            approveMonogramLogin(trusted.fingerprint, state.monogramLogin, name)
+                        }
                         if (command.type.startsWith("backup_")) { backupAckError = state.error; backupAck?.complete(companionBackupAckOk(state.error)) }
-                        updateBackupResult(state.transferId, state.backupStatus, name)
+                        if (command.type !in setOf("gamepad_input", "input"))
+                            updateBackupResult(state.transferId, state.backupStatus, name)
                         if (command.type == "start" && mutable.value.sendingTo != null) {
                             headlessShareCompletion?.complete(state.error.isEmpty())
                             if (state.error.isEmpty()) {
@@ -1868,6 +1863,76 @@ class CompanionManager @Inject constructor(@ApplicationContext private val conte
                             mutable.update { it.copy(sendingTo = null) }
                         }
                     }
+                }
+                suspend fun receiveOne() {
+                    val reply = replies.receive()
+                    val sent = inflight.removeFirst()
+                    processReply(sent, reply)
+                }
+                try {
+                    while (isActive && (canSendToTv || remoteServiceRequested)) {
+                        require(if (route.vpn) connectionTransport?.alive(route) == true else sessionLan()?.address == link?.address)
+                        if (inflight.size >= 4 ||
+                            (carried != null && inflight.isNotEmpty() &&
+                             carried?.type !in setOf("gamepad_input", "input"))) {
+                            receiveOne()
+                            continue
+                        }
+                        var command: CompanionFrame
+                        if (carried != null) {
+                            command = requireNotNull(carried)
+                            carried = null
+                        } else if (inflight.isNotEmpty()) {
+                            val (frame, isReply) = live.receiveOrReply(queue, replies)
+                            if (isReply) {
+                                val sent = inflight.removeFirst()
+                                processReply(sent, frame)
+                                continue
+                            }
+                            command = frame
+                        } else {
+                            command = live.receive(queue, if (returnTransfer != null || returnAck != 0L) 50L else 1_000L)
+                                ?: CompanionFrame(type = "status")
+                        }
+                        // Merge only supersedable continuous snapshots; input edges remain FIFO.
+                        while (true) {
+                            val next = live.poll(queue) ?: break
+                            val merged = coalesceCompanionInput(command, next)
+                            if (merged == null) { carried = next; break }
+                            command = merged
+                        }
+                        val realtime = command.type in setOf("gamepad_input", "input")
+                        if (inflight.isNotEmpty() && !realtime) {
+                            // Playback, pairing and settings transfers retain their old strict
+                            // request/reply semantics. Never pipeline across syncReturn.
+                            carried = command
+                            receiveOne()
+                            continue
+                        }
+                        if (realtime && (returnAck != 0L || returnTransfer != null)) {
+                            // First acknowledge a TV-originated settings transfer in the original
+                            // protocol; this cannot be piggybacked on pipelined input frames.
+                            carried = command
+                            command = CompanionFrame(type = "status")
+                        }
+                        val fast = command.type in setOf("gamepad_input", "input")
+                        val result = if (fast) null else withContext(Dispatchers.Main) { backupResults[nonce] }
+                        val request = command.copy(nonce = nonce, sequence = ++sequence,
+                            capabilities = emptyList(),
+                            syncAck = if (fast) 0L else returnAck,
+                            syncError = if (fast) "" else returnError,
+                            syncResultId = result?.first.orEmpty(), syncResult = result?.second.orEmpty(),
+                            syncPort = if (foreground && !route.vpn) server?.localPort ?: 0 else 0)
+                        output.writeFrame(request)
+                        inflight.addLast(request)
+                        if (!fast) receiveOne()
+                    }
+                    // No reply is used as proof of an accepted button until it is checked in
+                    // sequence. Cancellation/socket-close still resets all inputs on the TV.
+                    while (inflight.isNotEmpty() && isActive) receiveOne()
+                } finally {
+                    reader.cancel()
+                    replies.cancel()
                 }
             } catch (failure: CancellationException) {
                 throw failure
