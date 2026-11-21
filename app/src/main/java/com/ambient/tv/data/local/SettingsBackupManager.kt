@@ -26,8 +26,6 @@ data class SettingsBackup(
     val activeServerId: String? = null,
     val filesEnabled: Boolean = false,
     val fileSources: List<com.ambient.tv.data.files.FileSource> = emptyList(),
-    /** Null: backup predates the Games library; do not reset the receiver. */
-    val gameLibraryFolders: List<com.ambient.tv.games.library.GameLibraryFolder>? = null,
     val dlnaServers: List<com.ambient.tv.data.dlna.DlnaServer> = emptyList(),
     val smbPasswords: Map<String, String> = emptyMap(),
     /** SFTP private keys by source id; only in exports that include credentials. */
@@ -366,7 +364,6 @@ class SettingsBackupManager @Inject constructor(
             activeServerId = preferences.activeServerId,
             filesEnabled = preferences.filesEnabled,
             fileSources = fileSources,
-            gameLibraryFolders = preferences.gameLibraryFolders,
             dlnaServers = dlnaStore?.servers().orEmpty(),
             smbPasswords = smbPasswords,
             sshKeys = sshKeys,
@@ -648,6 +645,7 @@ class SettingsBackupManager @Inject constructor(
                     gameSettings = preferences.gameSettings,
                     gameLibraryOptions = preferences.gameLibraryOptions,
                     gameLibraryOverrides = preferences.gameLibraryOverrides,
+                    gameLibraryFolders = preferences.gameLibraryFolders,
                 ),
                 device = DeviceSettingsExtras(
                     imageCacheMb = preferences.imageCacheMb,
@@ -678,7 +676,7 @@ class SettingsBackupManager @Inject constructor(
                 require(it.lastPlayed >= 0L)
             }
         }
-        backup.gameLibraryFolders?.let { folders ->
+        backup.extras?.portable?.gameLibraryFolders?.let { folders ->
             require(folders.size <= 200 && folders.distinctBy { it.id }.size == folders.size)
             folders.forEach { folder ->
                 require(folder.id.matches(Regex("[A-Za-z0-9-]{1,80}")))
@@ -762,7 +760,7 @@ class SettingsBackupManager @Inject constructor(
             previous.keys.filterNot { it in keptKeyIds }.forEach { tokenStore.setSshKey(it, null) }
             preferences.fileSources = fileSources
             // Restore folder links only to known sources; old backups do not clear them.
-            backup.gameLibraryFolders?.let { folders ->
+            backup.extras?.portable?.gameLibraryFolders?.let { folders ->
                 preferences.gameLibraryFolders = folders.filter { folder ->
                     fileSources.any { it.id == folder.sourceId }
                 }
