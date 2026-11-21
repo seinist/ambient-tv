@@ -1022,6 +1022,7 @@ open class MainActivity : ComponentActivity() {
                         plexRefreshBus = plexRefreshBus,
                         mediaRepository = mediaRepository,
                         radioBrowserRepository = radioBrowserRepository,
+                        gameLibraryRepository = gameLibraryRepository,
                         telegramRepository = telegramRepository,
                         radioPlaybackLauncher = radioPlaybackLauncher,
                         playbackAvailability = playbackAvailability,
@@ -1216,6 +1217,7 @@ private fun AmbientTvApp(
     plexRefreshBus: PlexRefreshBus,
     mediaRepository: MediaRepository,
     radioBrowserRepository: com.ambient.tv.data.radio.RadioBrowserRepository,
+    gameLibraryRepository: com.ambient.tv.games.library.GameLibraryRepository,
     telegramRepository: com.ambient.tv.data.telegram.TelegramRepository,
     radioPlaybackLauncher: com.ambient.tv.ui.radio.RadioPlaybackLauncher,
     playbackAvailability: com.ambient.tv.data.browse.PlaybackAvailability,
@@ -1438,7 +1440,7 @@ private fun AmbientTvApp(
                     }
                     if (navController.currentBackStackEntry?.id != originEntry) return@launch
                     if (game == null) {
-                        navigateTopLevel(Destinations.GAME_LIBRARY)
+                        navController.navigate(Destinations.GAME_LIBRARY) { launchSingleTop = true }
                         return@launch
                     }
                     val needsWake = runCatching {
@@ -1446,7 +1448,7 @@ private fun AmbientTvApp(
                     }.getOrDefault(true)
                     if (navController.currentBackStackEntry?.id != originEntry) return@launch
                     if (needsWake) {
-                        navigateToSection(Destinations.gameLibrarySection(game.systemId))
+                        navController.navigate(Destinations.gameLibrarySection(game.systemId))
                     } else {
                         gameLibraryRepository.recordPlayed(game.fileId)
                         playOnSelectedTarget(Destinations.gamePlayer(game.fileId, game.systemId))
