@@ -255,7 +255,8 @@ class RetroPadInputTest {
             RetroInputTarget.Button(RetroPadButton.X), KeyEvent.KEYCODE_BUTTON_A)
         assertEquals(RetroPadButton.X, current.profile(RetroInputKind.GAMEPAD, context).button(KeyEvent.KEYCODE_BUTTON_A))
         // Another core on the same system has the system profile, but not this core's changes.
-        assertEquals(RetroPadButton.B, current.profile(RetroInputKind.GAMEPAD, context.copy(coreId = "bsnes"))
+        // The system reassigned B away from physical BUTTON_A; another core inherits that absence.
+        assertEquals(null, current.profile(RetroInputKind.GAMEPAD, context.copy(coreId = "bsnes"))
             .button(KeyEvent.KEYCODE_BUTTON_A))
 
         current = current.assign(RetroInputKind.GAMEPAD, context, RetroInputLayerScope.GAME,
