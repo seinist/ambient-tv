@@ -151,11 +151,13 @@ class GameLibraryViewModel @Inject constructor(
             try {
                 val valid = source.copy(showInFiles = false).validated()
                 access.prepare(valid)
+                val original = files.sources().firstOrNull { it.id == valid.id }
+                val secret = if (keepPassword && original != null) files.password(original) else password
                 when (valid.kind) {
-                    "smb" -> access.testSmb(valid, password)
+                    "smb" -> access.testSmb(valid, secret)
                     "nfs" -> access.testNfs(valid)
-                    "webdav" -> access.testWebDav(valid, password)
-                    "sftp" -> access.testSftp(valid, password, sshKey.orEmpty())
+                    "webdav" -> access.testWebDav(valid, secret)
+                    "sftp" -> access.testSftp(valid, secret, sshKey ?: original?.let(files::sshKey).orEmpty())
                 }
             } catch (cancel: CancellationException) { throw cancel }
             catch (error: Exception) { mutable.update { it.copy(error = error.message) } }
@@ -174,7 +176,7 @@ class GameLibraryViewModel @Inject constructor(
                     mutable.update { it.copy(error = "This network share is already configured; select the existing source.") }
                     return@launch
                 }
-                withContext(Dispatchers.IO) { files.saveSource(valid, password.takeIf { it.isNotEmpty() }, sshKey) }
+                withContext(Dispatchers.IO) { files.saveSource(valid, if (keepPassword) null else password, sshKey) }
                 selectSource(valid)
             } catch (cancel: CancellationException) { throw cancel }
             catch (error: Exception) { mutable.update { it.copy(error = error.message) } }
@@ -205,6 +207,10 @@ class GameLibraryViewModel @Inject constructor(
     /** Persist the exact SAF tree grant and register it with Files, just like video folders. */
     fun addLocalSource(uri: Uri) {
         try {
+            files.sources().firstOrNull { it.kind == "local" && it.treeUri == uri.toString() }?.let {
+                selectSource(it)
+                return
+            }
             context.contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
             val name = uri.lastPathSegment?.substringAfterLast(':')?.takeIf { it.isNotBlank() } ?: "Retro ROMs"
             val source = FileSource(name = name.take(160), kind = "local", treeUri = uri.toString(), showInFiles = false)
