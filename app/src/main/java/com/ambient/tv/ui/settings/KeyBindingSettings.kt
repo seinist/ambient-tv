@@ -37,20 +37,21 @@ internal fun LazyListScope.keyBindingItems() {
 }
 
 @Composable
-internal fun KeyBindingSettings(scopeFilter: KeyBindingScope? = null) {
+internal fun KeyBindingSettings(scopeFilter: KeyBindingScope? = null, deviceKind: String? = null) {
     val context = LocalContext.current
     var listening by remember { mutableStateOf<KeyAction?>(null) }
     var message by remember { mutableStateOf<String?>(null) }
-    val bindings = KeyBindings.bindings
+    val bindings = deviceKind?.let(KeyBindings::effectiveBindingsFor) ?: KeyBindings.bindings
 
     fun finish(action: KeyAction, binding: KeyBinding?) {
         listening = null
         if (binding == null) {
-            KeyBindings.clear(action)
+            if (deviceKind == null) KeyBindings.clear(action) else KeyBindings.clearFor(deviceKind, action)
             message = null
             return
         }
-        val replaced = KeyBindings.bind(action, binding)
+        val replaced = if (deviceKind == null) KeyBindings.bind(action, binding)
+            else KeyBindings.bindFor(deviceKind, action, binding)
         message = replaced?.let {
             context.getString(R.string.key_binding_replaced, keyBindingLabel(context, binding),
                 context.getString(it.titleRes), context.getString(action.titleRes))
@@ -63,6 +64,9 @@ internal fun KeyBindingSettings(scopeFilter: KeyBindingScope? = null) {
         var downCode = KeyEvent.KEYCODE_UNKNOWN
         var decided = false
         KeyBindings.capture = capture@{ event ->
+            if (deviceKind != null &&
+                com.ambient.tv.ui.gamepad.retro.retroInputDevice(event.deviceId).kind.key != deviceKind
+            ) return@capture false
             val code = event.keyCode
             when (code) {
                 KeyEvent.KEYCODE_BACK, KeyEvent.KEYCODE_ESCAPE -> {
@@ -128,7 +132,7 @@ internal fun KeyBindingSettings(scopeFilter: KeyBindingScope? = null) {
                 )
             }
         }
-        if (bindings.isNotEmpty()) SettingsActionRow {
+        if (bindings.isNotEmpty() && deviceKind == null) SettingsActionRow {
             TvActionButton(stringResource(R.string.key_bindings_reset), onClick = {
                 listening = null
                 message = null
