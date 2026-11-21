@@ -63,18 +63,19 @@ diff --git a/src/main/cpp/vulkan/vulkanbackend.cpp b/src/main/cpp/vulkan/vulkanb
      if (nativeSdrWindow != nullptr && !nativeSdrDisabled && ensureNativeSdrSwapchain()) {
          // Source format comes from retro_vulkan_image::create_info.format.
          // Unknown, sRGB-encoded and HDR/FP16 sources cannot be blindly blitted.
-@@ -1138,8 +1163,17 @@
+@@ -1138,8 +1163,18 @@
                 pendingImage.format == VK_FORMAT_A2R10G10B10_UNORM_PACK32);
          VkFormatProperties sourceProps {};
          if (supported) vk.getPhysicalDeviceFormatProperties(gpu, pendingImage.format, &sourceProps);
-+        const bool sampled = nativeSlang.requested() &&
-+            (pendingImage.usage & VK_IMAGE_USAGE_SAMPLED_BIT) != 0 &&
-+            (sourceProps.optimalTilingFeatures & VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT) != 0 &&
-+            pendingImage.range.baseMipLevel == 0 && pendingImage.range.baseArrayLayer == 0 &&
-+            pendingImage.width == width && pendingImage.height == height;
++        // retro_vulkan_image.create_info is a VkImageViewCreateInfo: it does NOT
++        // expose VkImage usage flags or allocation extent. The existing GLES
++        // AHardwareBuffer bridge already owns a known-SAMPLED image with tracked
++        // extent and format; filter that exact copy without guessing core usage.
++        const bool sampled = nativeSlang.requested() && frameImage != VK_NULL_HANDLE &&
++            !fp16Frame && copyWidth == frameWidth && copyHeight == frameHeight;
 +        if (!supported || (sourceProps.optimalTilingFeatures & VK_FORMAT_FEATURE_BLIT_SRC_BIT) == 0 ||
 +            (nativeSlang.requested() && !sampled)) {
-+            disableNativeSdrSwapchain("core VkImage lacks required blit/sample usage for shader");
++            disableNativeSdrSwapchain("intermediate sampled image unavailable; GLES retained");
 +        } else if (nativeSlang.requested() &&
 +                   !nativeSlang.ensure(instance, gpu, device, queue, vk.getInstanceProcAddr)) {
 +            disableNativeSdrSwapchain("librashader unavailable or preset failed; GLES retained");
@@ -83,7 +84,7 @@ diff --git a/src/main/cpp/vulkan/vulkanbackend.cpp b/src/main/cpp/vulkan/vulkanb
          } else {
              const VkResult acquired = vk.acquireNextImage(
                  device, nativeSdrSwapchain, 0, nativeSdrAcquire, VK_NULL_HANDLE, &sdrIndex);
-@@ -1201,6 +1235,8 @@
+@@ -1201,6 +1236,8 @@
      vk.cmdBlitImage(commandBuffer, pendingImage.image, sourceLayout, frameImage,
                      VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &blit, VK_FILTER_NEAREST);
  
@@ -92,7 +93,7 @@ diff --git a/src/main/cpp/vulkan/vulkanbackend.cpp b/src/main/cpp/vulkan/vulkanb
      if (useDirect) {
          // Both present paths consume the same core image in a single submission.
          // GLES remains available for shaders, captures and immediate fallback.
-@@ -1256,26 +1292,68 @@
+@@ -1256,18 +1293,58 @@
          VkImageBlit nativeBlit = blit;
          nativeBlit.dstOffsets[0] = { left, top, 0 };
          nativeBlit.dstOffsets[1] = { left + dstW, top + dstH, 1 };
@@ -102,12 +103,12 @@ diff --git a/src/main/cpp/vulkan/vulkanbackend.cpp b/src/main/cpp/vulkan/vulkanb
 +            VkImageMemoryBarrier sampledBarrier { VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER };
 +            sampledBarrier.srcAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
 +            sampledBarrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
-+            sampledBarrier.oldLayout = sourceLayout;
++            sampledBarrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
 +            sampledBarrier.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
 +            sampledBarrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
 +            sampledBarrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-+            sampledBarrier.image = pendingImage.image;
-+            sampledBarrier.subresourceRange = sourceRange;
++            sampledBarrier.image = frameImage;
++            sampledBarrier.subresourceRange = targetRange;
 +            VkImageMemoryBarrier colorBarrier { VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER };
 +            colorBarrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
 +            colorBarrier.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
@@ -125,7 +126,7 @@ diff --git a/src/main/cpp/vulkan/vulkanbackend.cpp b/src/main/cpp/vulkan/vulkanb
 +                                  VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
 +                                  0, 0, nullptr, 0, nullptr, 1, &colorBarrier);
 +            shaderRecorded = nativeSlang.record(commandBuffer, nativeSlangFrame++,
-+                pendingImage.image, pendingImage.format, copyWidth, copyHeight,
++                frameImage, VK_FORMAT_R8G8B8A8_UNORM, frameWidth, frameHeight,
 +                target, nativeSdrFormat, nativeSdrExtent.width, nativeSdrExtent.height,
 +                static_cast<float>(left), static_cast<float>(top),
 +                static_cast<uint32_t>(dstW), static_cast<uint32_t>(dstH), coreAspect);
@@ -156,19 +157,21 @@ diff --git a/src/main/cpp/vulkan/vulkanbackend.cpp b/src/main/cpp/vulkan/vulkanb
                                VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, 0, 0, nullptr, 0, nullptr, 1, &toPresent);
      }
  
-     VkImageMemoryBarrier release[2] {};
-     release[0].sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-+    release[0].srcAccessMask = shaderRecorded ? VK_ACCESS_SHADER_READ_BIT :
-+        VK_ACCESS_TRANSFER_READ_BIT;
--    release[0].srcAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
-     release[0].dstAccessMask = 0;
-+    release[0].oldLayout = nativeSlang.requested() && useDirect ?
-+        VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL : sourceLayout;
--    release[0].oldLayout = sourceLayout;
-     release[0].newLayout = pendingImage.layout;
-     release[0].srcQueueFamilyIndex = transferOwnership ? queueFamily : VK_QUEUE_FAMILY_IGNORED;
-     release[0].dstQueueFamilyIndex = transferOwnership ? pendingImage.srcQueueFamily : VK_QUEUE_FAMILY_IGNORED;
-@@ -1293,7 +1371,8 @@
+@@ -1283,9 +1360,11 @@
+     release[0].subresourceRange = sourceRange;
+ 
+     release[1].sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
++    release[1].srcAccessMask = nativeSlang.requested() && useDirect ?
++        VK_ACCESS_SHADER_READ_BIT : VK_ACCESS_TRANSFER_WRITE_BIT;
+-    release[1].srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+     release[1].dstAccessMask = 0;
++    release[1].oldLayout = nativeSlang.requested() && useDirect ?
++        VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL : VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+-    release[1].oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+     release[1].newLayout = VK_IMAGE_LAYOUT_GENERAL;
+     release[1].srcQueueFamilyIndex = queueFamily;
+     release[1].dstQueueFamilyIndex = VK_QUEUE_FAMILY_FOREIGN_EXT;
+@@ -1293,7 +1372,8 @@
      release[1].subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 };
  
      vk.cmdPipelineBarrier(commandBuffer,
@@ -178,7 +181,7 @@ diff --git a/src/main/cpp/vulkan/vulkanbackend.cpp b/src/main/cpp/vulkan/vulkanb
                            0, 0, nullptr, 0, nullptr, 2, release);
      vk.endCommandBuffer(commandBuffer);
  
-@@ -1338,7 +1417,12 @@
+@@ -1338,7 +1418,12 @@
      }
      frameInFlight = true;
      waitForFrame();
@@ -192,7 +195,7 @@ diff --git a/src/main/cpp/vulkan/vulkanbackend.cpp b/src/main/cpp/vulkan/vulkanb
          const VkSemaphore finished = nativeSdrComplete[sdrIndex];
          VkPresentInfoKHR present { VK_STRUCTURE_TYPE_PRESENT_INFO_KHR };
          present.waitSemaphoreCount = 1;
-@@ -1353,7 +1437,8 @@
+@@ -1353,7 +1438,8 @@
          }
          if (presentResult == VK_SUCCESS || presentResult == VK_SUBOPTIMAL_KHR) {
              nativeSdrStatus.store(7u |
@@ -202,17 +205,7 @@ diff --git a/src/main/cpp/vulkan/vulkanbackend.cpp b/src/main/cpp/vulkan/vulkanb
                  std::memory_order_release);
          } else {
              disableNativeSdrSwapchain("frame presentation failed; GLES retained");
-@@ -1367,6 +1452,9 @@
-     auto* self = static_cast<VulkanBackend*>(handle);
-     self->pendingImage.image = image->create_info.image;
-     self->pendingImage.format = image->create_info.format;
-+    self->pendingImage.usage = image->create_info.usage;
-+    self->pendingImage.width = image->create_info.extent.width;
-+    self->pendingImage.height = image->create_info.extent.height;
-     self->coreSourceFormat.store(static_cast<uint32_t>(image->create_info.format),
-                                  std::memory_order_release);
-     self->pendingImage.layout = image->image_layout;
-@@ -1424,6 +1512,9 @@
+@@ -1424,6 +1510,9 @@
      nativeOutputTransfer = 0u;
      nativeCoreSourceTransfer = 0u;
      nativeIntegerScaling = false;
@@ -241,13 +234,10 @@ diff --git a/src/main/cpp/vulkan/vulkanbackend.h b/src/main/cpp/vulkan/vulkanbac
      uint32_t getNativeSdrStatus() const { return nativeSdrStatus.load(std::memory_order_acquire); }
  
      bool ensureFrameBuffer(unsigned width, unsigned height);
-@@ -172,6 +174,9 @@
+@@ -172,6 +174,6 @@
      struct PendingImage {
          VkImage image = VK_NULL_HANDLE;
          VkFormat format = VK_FORMAT_UNDEFINED;
-+        VkImageUsageFlags usage = 0;
-+        uint32_t width = 0;
-+        uint32_t height = 0;
          VkImageLayout layout = VK_IMAGE_LAYOUT_UNDEFINED;
          VkImageSubresourceRange range {};
          uint32_t srcQueueFamily = VK_QUEUE_FAMILY_IGNORED;
