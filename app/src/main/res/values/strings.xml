@@ -2435,4 +2435,7 @@
     <string name="input_mapping_keep_core_default">Console labels reflect the core's default RetroPad input; they do not modify core options.</string>
     <string name="input_mapping_key_selected">Selected: %1$s</string>
     <string name="input_mapping_capture_hint">Press a key on the connected device to remap the selected console button.</string>
+    <string name="input_mapping_visual_variant">Controller illustration</string>
+    <string name="input_mapping_visual_variant_hint">Visual reference only; the actual device type is configured by the core.</string>
+    <string name="input_mapping_retropad_target">Libretro virtual button</string>
 </resources>
