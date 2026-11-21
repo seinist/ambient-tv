@@ -86,6 +86,8 @@ data class CompanionState(
     val sharedMedia: CompanionMedia? = null,
     val sendingTo: String? = null,
     val remotePanel: Boolean = false,
+    /** Separate full-screen phone page, not a dialog. */
+    val gamepadPanel: Boolean = false,
     val settingsPanel: Boolean = false,
     val controller: String = "",
     val backupOffer: CompanionBackupOffer? = null,
@@ -443,6 +445,7 @@ class CompanionManager @Inject constructor(@ApplicationContext private val conte
     fun startPairingFlow() {
         if (television) { showPairing(); return }
         if (mutable.value.remotePanel) hideRemote()
+        if (mutable.value.gamepadPanel) hideGamepad()
         mutable.update { it.copy(pairingFlow = true, pairingResult = "", panel = false, settingsPanel = false, nowPlayingPanel = false) }
         discover()
     }
@@ -450,6 +453,7 @@ class CompanionManager @Inject constructor(@ApplicationContext private val conte
     fun closeHandheldPages() {
         if (mutable.value.pairingFlow) closePairingFlow()
         if (mutable.value.remotePanel) hideRemote()
+        if (mutable.value.gamepadPanel) hideGamepad()
         if (mutable.value.panel) hidePanel()
     }
     fun closePairingFlow() {
@@ -618,6 +622,7 @@ class CompanionManager @Inject constructor(@ApplicationContext private val conte
             // The phone connects to a TV only when the user asks for it; resuming the app must not
             // dial the last TV (off-network that only produced "connection failed" notices).
         } else {
+            if (!television && mutable.value.gamepadPanel) hideGamepad()
             releaseRemoteControl()
             rejectBackup("expired")
             closePairing()
@@ -656,16 +661,48 @@ class CompanionManager @Inject constructor(@ApplicationContext private val conte
 
     fun showPanel() {
         if (mutable.value.remotePanel) hideRemote()
+        if (mutable.value.gamepadPanel) hideGamepad()
         mutable.update { it.copy(panel = true, nowPlayingPanel = false, settingsPanel = false, pairingFlow = false, pairingResult = "") }
         discover()
     }
     fun showRemote() {
         if (television) return
         if (!mutable.value.online) { notice(R.string.companion_unreachable_notice, mutable.value.target?.name.orEmpty(), error = true); return }
-        mutable.update { it.copy(remotePanel = true, panel = false, nowPlayingPanel = false, settingsPanel = false) }; send(CompanionFrame(type = "input_claim")) }
+        if (mutable.value.gamepadPanel) hideGamepad()
+        mutable.update { it.copy(remotePanel = true, gamepadPanel = false, panel = false, nowPlayingPanel = false, settingsPanel = false) }; send(CompanionFrame(type = "input_claim")) }
     fun hideRemote() { send(CompanionFrame(type = "input_release")); mutable.update { it.copy(remotePanel = false) } }
+
+    /** Gamepad is a standalone phone page, with a separate per-player claim from TV navigation. */
+    fun showGamepad() {
+        if (television || !mutable.value.online) return
+        if (mutable.value.remotePanel) hideRemote()
+        mutable.update { it.copy(gamepadPanel = true, remotePanel = false, panel = false,
+            nowPlayingPanel = false, settingsPanel = false) }
+        if (mutable.value.remote?.gamepadInfo != null) claimGamepad()
+    }
+    fun claimGamepad(): Boolean = if (mutable.value.gamepadPanel && mutable.value.online &&
+        mutable.value.remote?.gamepadInfo != null) send(CompanionFrame(type = "gamepad_claim")) else false
+
+    /** Best-effort snapshots are coalesced on the connection; unlike clicks they are idempotent. */
+    fun gamepadInput(state: CompanionGamepadState): Boolean {
+        if (!mutable.value.gamepadPanel || !mutable.value.online ||
+            mutable.value.remote?.gamepadPort !in 0 until com.ambient.tv.ui.gamepad.retro.RetroPorts.COUNT) return false
+        state.validate()
+        return commands.trySend(CompanionFrame(type = "gamepad_input", gamepadState = state)).isSuccess
+    }
+    fun gamepadMenu(): Boolean = if (mutable.value.gamepadPanel && mutable.value.online &&
+        mutable.value.remote?.gamepadPort in 0 until com.ambient.tv.ui.gamepad.retro.RetroPorts.COUNT)
+        send(CompanionFrame(type = "gamepad_menu")) else false
+
+    fun hideGamepad() {
+        if (!mutable.value.gamepadPanel) return
+        gamepadInput(CompanionGamepadState())
+        send(CompanionFrame(type = "gamepad_release"))
+        mutable.update { it.copy(gamepadPanel = false) }
+    }
     fun showNowPlaying() {
         if (mutable.value.remotePanel) hideRemote()
+        if (mutable.value.gamepadPanel) hideGamepad()
         mutable.update { it.copy(nowPlayingPanel = true, panel = false, remotePanel = false, settingsPanel = false) }
     }
     fun hideNowPlaying() { mutable.update { it.copy(nowPlayingPanel = false) } }
@@ -720,7 +757,9 @@ class CompanionManager @Inject constructor(@ApplicationContext private val conte
         val source = CompanionPlaybackControls.current()
         val options = if (useSpotify) emptyList() else CompanionPlaybackControls.options().filter { foreground || it.kind == "subtitle" || it.kind == "audio" && source.audio == null }
         val nativeQueue = if (useSpotify) music.queue.take(64).mapIndexed { i, t -> CompanionQueueItem("spotify:$i:${t.id}", CompanionMedia("spotify:track", t.id), t.name.take(160)) } else playbackQueue.entries
+        val gamepadInfo = CompanionGamepadSession.info()
         val capabilities = buildList {
+            if (gamepadInfo != null) add("gamepad")
             add("start_confirmation")
             if (foreground && settingsService != null) addAll(listOf("nav_sounds", "settings_sync", "settings_only"))
             add("queue_page")
@@ -750,7 +789,7 @@ class CompanionManager @Inject constructor(@ApplicationContext private val conte
             snapshot.generation != receiverStartGeneration && frame.phase == "error" -> "error"
             else -> "accepted"
         }
-        frame = frame.copy(capabilities = capabilities, options = options,
+        frame = frame.copy(capabilities = capabilities, options = options, gamepadInfo = gamepadInfo,
             startRequestId = receiverStartId, startStatus = startStatus,
             volume = if (useSpotify) music.volume.takeIf { music.supportsVolume == true } else if (adjustable) audio.getStreamVolume(android.media.AudioManager.STREAM_MUSIC) else null,
             volumeMax = if (useSpotify) if (music.supportsVolume == true) 100 else 0 else if (adjustable) audio.getStreamMaxVolume(android.media.AudioManager.STREAM_MUSIC) else 0,
@@ -1443,7 +1482,7 @@ class CompanionManager @Inject constructor(@ApplicationContext private val conte
                         }
                         var error = ""
                         try {
-                            if (request.type !in setOf("status", "input_release", "backup_cancel") &&
+                            if (request.type !in setOf("status", "input_release", "gamepad_release", "backup_cancel") &&
                                 (mutable.value.backupOffer != null || mutable.value.backupBusy || mutable.value.restoreDialog || mutable.value.prompt != null || mutable.value.pullRequest != null)) {
                                 error = "consent_pending"; error("Local consent is pending")
                             }
@@ -1454,7 +1493,7 @@ class CompanionManager @Inject constructor(@ApplicationContext private val conte
                                     .copy(host = socket.inetAddress.hostAddress.orEmpty(), port = request.syncPort)
                                 if (mutable.value.paired.firstOrNull { it.fingerprint == sessionPin } != endpoint) savePeer(endpoint)
                             }
-                            require(foreground || request.type == "start" && receiverServiceActive && mutable.value.backgroundReceiver || request.type in setOf("status", "play", "pause", "stop", "seek", "volume", "select", "shuffle", "repeat", "next", "previous", "queue_add", "queue_remove", "queue_move", "queue_clear", "queue_page", "input_release"))
+                            require(foreground || request.type == "start" && receiverServiceActive && mutable.value.backgroundReceiver || request.type in setOf("status", "play", "pause", "stop", "seek", "volume", "select", "shuffle", "repeat", "next", "previous", "queue_add", "queue_remove", "queue_move", "queue_clear", "queue_page", "input_release", "gamepad_release"))
                             when (request.type) {
                                 "status" -> {
                                     if (synchronized(inputLease) { inputLease.owns(nonce, SystemClock.elapsedRealtime()) }) claimControl(nonce, peer.name)
@@ -1466,6 +1505,22 @@ class CompanionManager @Inject constructor(@ApplicationContext private val conte
                                     claimControl(nonce, peer.name)
                                 }
                                 "input_release" -> releaseRemoteControl(nonce)
+                                "gamepad_claim" -> {
+                                    error = "gamepad_unavailable"
+                                    check(CompanionGamepadSession.claim(nonce) >= 0)
+                                    error = ""
+                                }
+                                "gamepad_release" -> CompanionGamepadSession.release(nonce)
+                                "gamepad_input" -> {
+                                    error = "gamepad_unavailable"
+                                    check(CompanionGamepadSession.input(nonce, requireNotNull(request.gamepadState)))
+                                    error = ""
+                                }
+                                "gamepad_menu" -> {
+                                    error = "gamepad_unavailable"
+                                    check(CompanionGamepadSession.menu(nonce))
+                                    error = ""
+                                }
                                 "input" -> {
                                     check(synchronized(inputLease) { inputLease.owns(nonce, SystemClock.elapsedRealtime()) })
                                     claimControl(nonce, peer.name)
@@ -1514,11 +1569,15 @@ class CompanionManager @Inject constructor(@ApplicationContext private val conte
                         check(back?.pending == null) // Every return frame must be acknowledged by the next request.
                         val next = back?.frames?.tryReceive()?.getOrNull()
                         val returned = next?.let { CompanionSyncFrame.from(++back.sequence, it.first).also { frame -> back.pending = frame to it.second } }
-                        val playback = playbackState(queueOffset).let { if (returned == null) it else it.copy(artwork = "", options = emptyList(), queue = emptyList()) }
+                        // Motion uses a tiny acknowledgement; never fetch artwork at input frequency.
+                        val playback = if (request.type == "gamepad_input")
+                            CompanionFrame(type = "state", gamepadInfo = CompanionGamepadSession.info())
+                        else playbackState(queueOffset).let { if (returned == null) it else it.copy(artwork = "", options = emptyList(), queue = emptyList()) }
                         val result = backupResults[nonce]
                         playback.copy(nonce = nonce, sequence = request.sequence, syncReturn = returned,
                             monogramLogin = monogramLogin?.receiverLink.orEmpty(),
                             controller = mutable.value.controller, inputGranted = synchronized(inputLease) { inputLease.owns(nonce, SystemClock.elapsedRealtime()) },
+                            gamepadPort = CompanionGamepadSession.port(nonce),
                             transferId = result?.first.orEmpty(), backupStatus = result?.second.orEmpty(),
                             error = companionReplyError(error, playback.phase, request.type))
                     } finally { if (mutatesPlayback) playbackMutation.unlock() }
@@ -1540,6 +1599,7 @@ class CompanionManager @Inject constructor(@ApplicationContext private val conte
             authDeadline.cancel()
             releaseRemoteControl(session)
             withContext(NonCancellable + Dispatchers.Main) {
+                CompanionGamepadSession.release(session)
                 if (offerSession == session && !mutable.value.backupBusy) rejectBackup("expired")
                 if (mutable.value.pullRequest?.session == session) mutable.update { it.copy(pullRequest = null) }
                 backupResults.remove(session)
@@ -1751,7 +1811,14 @@ class CompanionManager @Inject constructor(@ApplicationContext private val conte
                             when { command.type.startsWith("input") -> R.string.companion_control_failed
                                 command.type.startsWith("backup_") -> R.string.companion_backup_failed
                                 else -> R.string.companion_play_failed }, error = true)
-                        mutable.update { it.copy(remote = state.copy(receiverId = trusted.fingerprint)) }
+                        // Preserve playback/queue fields when the receiver returns a small gamepad ACK.
+                        mutable.update { old ->
+                            val remote = if (command.type == "gamepad_input" && old.remote != null)
+                                old.remote.copy(gamepadInfo = state.gamepadInfo,
+                                    gamepadPort = state.gamepadPort)
+                            else state.copy(receiverId = trusted.fingerprint)
+                            old.copy(remote = remote)
+                        }
                         if (command.type == "start" && command.startRequestId.isNotEmpty()) {
                             playbackStartAck?.takeIf { it.first == command.startRequestId }?.second?.complete(state)
                         }
@@ -1822,7 +1889,7 @@ class CompanionManager @Inject constructor(@ApplicationContext private val conte
         confirmation?.complete(false)
         if (mutable.value.online) notice(R.string.companion_disconnected, mutable.value.target?.name.orEmpty())
         mutable.update { it.copy(target = if (clearTarget) null else it.target, online = false, busy = false, remote = null, sendingTo = null,
-            remotePanel = false, settingsPanel = false, nowPlayingPanel = false, enqueueSelection = false, backupBusy = it.backupOffer != null && it.backupBusy,
+            remotePanel = false, gamepadPanel = false, settingsPanel = false, nowPlayingPanel = false, enqueueSelection = false, backupBusy = it.backupOffer != null && it.backupBusy,
             backupStatus = if (it.backupStatus in setOf("pending", "sending")) "failed" else it.backupStatus) }
     }
     @Synchronized fun send(command: CompanionFrame): Boolean {
