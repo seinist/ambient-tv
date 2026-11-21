@@ -112,7 +112,7 @@ data class RetroInputProfileContext(
     fun layerId(scope: RetroInputLayerScope, kind: RetroInputKind): String? {
         val identity = when (scope) {
             RetroInputLayerScope.SYSTEM -> systemId.takeIf(String::isNotBlank)
-            RetroInputLayerScope.CORE -> coreId.takeIf(String::isNotBlank)
+            RetroInputLayerScope.CORE -> coreId.takeIf(String::isNotBlank)?.let { "$systemId\u0000$it" }
             RetroInputLayerScope.GAME -> gameId?.takeIf(String::isNotBlank)?.let { "$systemId\u0000$coreId\u0000$it" }
         } ?: return null
         // Safe for SharedPreferences maps, filenames and user-supplied ROM paths.
