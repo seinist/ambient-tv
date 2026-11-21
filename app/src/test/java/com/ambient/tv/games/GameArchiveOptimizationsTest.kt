@@ -93,12 +93,12 @@ class GameArchiveOptimizationsTest {
     }
 
     @Test fun gzipTitleAndDirectStreamRequireNoArchiveCopy() {
-        val rom = gba("METROID FUSION", 90_000)
+        val rom = gba("METROIDFUS", 90_000)
         val output = ByteArrayOutputStream()
         GZIPOutputStream(output).use { it.write(rom) }
         val metadata = GameArchives.probe("game.gba.gz", Bytes(output.toByteArray()))
         assertEquals("gba", metadata?.system?.id)
-        assertEquals("METROID FUSION", metadata?.internalTitle)
+        assertEquals("METROIDFUS", metadata?.internalTitle)
         val folder = Files.createTempDirectory("ambient-game-gz").toFile()
         try {
             val staged = GameArchives.stageSingle("game.gba.gz",
