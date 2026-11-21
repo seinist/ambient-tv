@@ -139,7 +139,7 @@ class GamepadSettingsTest {
         val reset = changed.withDeviceCommand(device, GamepadContext.MENUS, slot,
             key(GamepadKeyCommand.CONFIRM))
         assertTrue(reset.deviceOverrides.isEmpty())
-        assertEquals(GamepadConfig(), GamepadConfig.decode(mapOf("device.not-base64.menus.a" to "none")))
+        assertEquals(GamepadConfig(), GamepadConfig.decode(mapOf("device.@@@.menus.a" to "none")))
     }
 
 }

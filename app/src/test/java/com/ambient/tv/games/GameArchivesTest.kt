@@ -129,4 +129,13 @@ class GameArchivesTest {
         }.exceptionOrNull() is GameArchiveException)
     }
 
+    @Test fun netplayRejectsOutOfWindowAndNegativeFrameNumbers() {
+        assertTrue(com.ambient.tv.ui.games.GameNetplay.acceptableFrame(3, 0))
+        assertTrue(com.ambient.tv.ui.games.GameNetplay.acceptableFrame(64, 0))
+        assertFalse(com.ambient.tv.ui.games.GameNetplay.acceptableFrame(65, 0))
+        assertFalse(com.ambient.tv.ui.games.GameNetplay.acceptableFrame(-1, 0))
+        assertFalse(com.ambient.tv.ui.games.GameNetplay.acceptableFrame(99, 100))
+        assertTrue(com.ambient.tv.ui.games.GameNetplay.acceptableFrame(105, 100))
+    }
+
 }

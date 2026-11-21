@@ -2437,4 +2437,7 @@
     <string name="input_mapping_visual_variant">Controller-Darstellung</string>
     <string name="input_mapping_visual_variant_hint">Nur die Darstellung. Den tatsächlichen Controllertyp legt der Core fest.</string>
     <string name="input_mapping_retropad_target">Virtuelle Libretro-Taste</string>
+    <string name="input_mapping_device">Eingabegerät</string>
+    <string name="input_mapping_all_controllers">Alle Controller (Standardbelegung)</string>
+    <string name="input_mapping_scope_device">Dieses angeschlossene Gerät</string>
 </resources>
