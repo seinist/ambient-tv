@@ -18,6 +18,29 @@ data class FileListing(val entries: List<FileEntry>, val more: Boolean)
 
 class WireGuardUnavailableException(message: String?) : java.io.IOException(message)
 
+/** Scoped read-only connection for large Games scans; never kept alive after cancellation. */
+interface GameScanFileSession : java.io.Closeable {
+    suspend fun list(path: String, limit: Int = 20_000,
+                     accept: (FileEntry) -> Boolean = FileEntry::game): FileListing
+    fun open(path: String): SeekableMedia
+
+    fun readText(path: String, maxBytes: Int = 256 * 1024): String = open(path).use { media ->
+        if (media.size > maxBytes) throw java.io.IOException("Descriptor too large")
+        val out = java.io.ByteArrayOutputStream(media.size.toInt())
+        val buffer = ByteArray(8 * 1024)
+        var position = 0L
+        while (position < media.size) {
+            if (Thread.currentThread().isInterrupted) throw java.io.InterruptedIOException()
+            val count = minOf(buffer.size.toLong(), media.size - position).toInt()
+            val read = media.read(position, buffer, count)
+            if (read <= 0) throw java.io.IOException("Incomplete descriptor")
+            out.write(buffer, 0, read)
+            position += read
+        }
+        com.ambient.tv.vpn.decodeWireGuardBytes(out.toByteArray())
+    }
+}
+
 @Singleton
 class FileAccess @Inject constructor(
     @ApplicationContext private val context: Context,
@@ -44,6 +67,68 @@ class FileAccess @Inject constructor(
     private val nfs = NfsAccess()
     private val webdav = WebDavAccess(okhttp3.OkHttpClient())
     private val sftp = SftpAccess()
+
+    /**
+     * The caller prepares the source once, then owns an independent SMB2/3 or NFSv3 lease.
+     * Other protocols preserve the existing Files transport and security checks.
+     */
+    fun gameScanSession(source: FileSource): GameScanFileSession {
+        store.withCurrentSource(source) { Unit }
+        val smbLease = if (source.kind == "smb" && source.smbVersion == 2)
+            smb2.ScanSession(source, store.password(source)) else null
+        val nfsLease = try {
+            if (source.kind == "nfs" && source.nfsVersion == 3)
+                nfs.ScanSession(source) else null
+        } catch (error: Throwable) {
+            smbLease?.close()
+            throw error
+        }
+        return object : GameScanFileSession {
+            @Volatile private var closed = false
+            override suspend fun list(path: String, limit: Int,
+                                      accept: (FileEntry) -> Boolean): FileListing {
+                if (closed) throw java.io.IOException("Scan session closed")
+                store.withCurrentSource(source) { Unit }
+                val result = when {
+                    smbLease != null -> observedIO(source) { smbLease.list(path, limit, accept) }
+                    else -> this@FileAccess.list(source, path, limit, accept)
+                }
+                return result.copy(entries = result.entries.sortedWith(
+                    compareBy<FileEntry> { !it.directory }
+                        .thenBy(String.CASE_INSENSITIVE_ORDER) { it.name }))
+            }
+            override fun open(path: String): SeekableMedia {
+                if (closed) throw java.io.IOException("Scan session closed")
+                val media = observe(source) {
+                    store.withCurrentSource(source) { Unit }
+                    when {
+                        smbLease != null -> smbLease.open(path)
+                        nfsLease != null -> nfsLease.open(path)
+                        else -> openSource(source, path)
+                    }
+                }
+                if (source.kind == "local") return media
+                val binding = hosts.beginEndpoint("files:${source.id}", source.host, source.port)
+                return object : SeekableMedia {
+                    override val size: Long = media.size
+                    override fun read(position: Long, buffer: ByteArray, count: Int): Int {
+                        if (closed) throw java.io.IOException("Scan session closed")
+                        val check = hosts.nextCheck(binding)
+                        try { return media.read(position, buffer, count) }
+                        catch (error: java.io.IOException) { hosts.failure(check); throw error }
+                    }
+                    override fun close() = media.close()
+                }
+            }
+            override fun close() {
+                if (!closed) {
+                    closed = true
+                    try { smbLease?.close() } finally { nfsLease?.close() }
+                }
+            }
+        }
+    }
+
     private fun smb(source: FileSource): SmbProtocol = if (source.smbVersion == 1) smb1 else smb2
     fun root(source: FileSource): String = if (source.kind == "local") DocumentsContract.getTreeDocumentId(Uri.parse(source.treeUri)) else ""
     fun uri(source: FileSource, path: String): Uri = DocumentsContract.buildDocumentUriUsingTree(Uri.parse(source.treeUri), path)
