@@ -685,12 +685,12 @@ class CompanionManager @Inject constructor(@ApplicationContext private val conte
     /** Best-effort snapshots are coalesced on the connection; unlike clicks they are idempotent. */
     fun gamepadInput(state: CompanionGamepadState): Boolean {
         if (!mutable.value.gamepadPanel || !mutable.value.online ||
-            mutable.value.remote?.gamepadPort !in 0 until com.ambient.tv.ui.gamepad.retro.RetroPorts.COUNT) return false
+            (mutable.value.remote?.gamepadPort ?: -1) !in 0 until com.ambient.tv.ui.gamepad.retro.RetroPorts.COUNT) return false
         state.validate()
         return commands.trySend(CompanionFrame(type = "gamepad_input", gamepadState = state)).isSuccess
     }
     fun gamepadMenu(): Boolean = if (mutable.value.gamepadPanel && mutable.value.online &&
-        mutable.value.remote?.gamepadPort in 0 until com.ambient.tv.ui.gamepad.retro.RetroPorts.COUNT)
+        (mutable.value.remote?.gamepadPort ?: -1) in 0 until com.ambient.tv.ui.gamepad.retro.RetroPorts.COUNT)
         send(CompanionFrame(type = "gamepad_menu")) else false
 
     fun hideGamepad() {
