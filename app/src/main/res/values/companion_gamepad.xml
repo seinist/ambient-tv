@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="remote_tab_gamepad">Gamepad</string>
+    <string name="companion_gamepad_title">Game controller</string>
+    <string name="companion_gamepad_back">Back to TV remote</string>
+    <string name="companion_gamepad_player">Player %1$d · Connected</string>
+    <string name="companion_gamepad_menu">Game menu</string>
+    <string name="companion_gamepad_no_game">Start a Libretro game on the TV. Both devices must have a version with gamepad support.</string>
+    <string name="companion_gamepad_not_claimed">No free player slot, or the TV has not granted this controller yet.</string>
+    <string name="companion_gamepad_paused">The TV game is paused. Use Game menu to resume it.</string>
+    <string name="companion_gamepad_claim">Connect controller</string>
+</resources>
