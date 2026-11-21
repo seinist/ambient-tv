@@ -44,6 +44,13 @@ fun companionControllerKey(button: RetroPadButton): Int = COMPANION_KEY_BASE + b
 fun companionControllerButton(code: Int): RetroPadButton? =
     RetroPadButton.entries.firstOrNull { companionControllerKey(it) == code }
 
+/** Translate actual phone RetroPad button bits using the same profiles as hardware devices. */
+fun companionMappedButtons(rawButtons: Int, profile: RetroInputProfile): Int =
+    RetroPadButton.entries.fold(0) { mask, source ->
+        if (rawButtons and source.mask == 0) mask
+        else mask or (profile.button(companionControllerKey(source))?.mask ?: 0)
+    }
+
 /** Kinds of input device that can play; each has its own key layout. Stored by [key]. */
 enum class RetroInputKind(val key: String, @StringRes val titleRes: Int) {
     GAMEPAD("gamepad", AppR.string.retro_kind_gamepad),
