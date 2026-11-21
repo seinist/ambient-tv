@@ -647,6 +647,7 @@ class SettingsBackupManager @Inject constructor(
                     retroInputSettings = preferences.retroInputSettings,
                     gameSettings = preferences.gameSettings,
                     gameLibraryOptions = preferences.gameLibraryOptions,
+                    gameLibraryOverrides = preferences.gameLibraryOverrides,
                 ),
                 device = DeviceSettingsExtras(
                     imageCacheMb = preferences.imageCacheMb,
@@ -1159,6 +1160,9 @@ class SettingsBackupManager @Inject constructor(
             settings.frameDropOverlayHistory?.let { preferences.frameDropOverlayHistory = it }
             settings.viewTransitionStyleKey?.let { preferences.viewTransitionStyleKey = it }
             settings.gameLibraryOptions?.let { preferences.gameLibraryOptions = it }
+            settings.gameLibraryOverrides?.let { preferences.gameLibraryOverrides = it.filter { row ->
+                row.sourceId in preferences.fileSources.map { source -> source.id }
+            }.takeLast(5000) }
             settings.gameSettings?.let {
                 preferences.gameSettings = it
                 com.ambient.tv.games.GameSettings.reload(it)
