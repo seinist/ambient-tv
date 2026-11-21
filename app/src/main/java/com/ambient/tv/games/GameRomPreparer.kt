@@ -122,8 +122,50 @@ class GameRomPreparer @Inject constructor(
         val marker = File(folder, ".complete")
         val stamp = "${entry.size}:${entry.modified}"
         val main = File(folder, safeName(entry.name))
-        if (!(marker.isFile && marker.readText() == stamp && main.isFile &&
-                cachedCompanionsComplete(main))) {
+        val archiveCached = marker.isFile && marker.readText() == stamp &&
+            main.isFile && cachedCompanionsComplete(main)
+        if (ext in setOf("zip", "7z", "gz")) {
+            val singleMarker = File(folder, ".single.complete")
+            val saved = runCatching {
+                singleMarker.readLines().takeIf { it.size == 3 && it[0] == stamp }
+                    ?.let { lines ->
+                        val relative = safeRelativePath(lines[1]) ?: return@let null
+                        File(folder, relative).takeIf { it.isFile && it.length().toString() == lines[2] }
+                    }
+            }.getOrNull()
+            // Do not re-copy already cached compressed archives or materialized single ROMs.
+            val single = if (saved != null) saved else if (archiveCached) null else {
+                folder.deleteRecursively()
+                folder.mkdirs()
+                val free = StatFs(context.cacheDir.absolutePath).availableBytes - CACHE_RESERVE_BYTES
+                val budget = minOf(GameArchives.MAX_BYTES, CACHE_LIMIT_BYTES, free)
+                if (budget <= 0) throw IOException("Insufficient cache space for ROM extraction")
+                val staged = access.open(source, path).use { media ->
+                    GameArchives.stageSingle(entry.name, media, File(folder, "content"),
+                        budget, onProgress)
+                }
+                if (staged != null) {
+                    singleMarker.writeText(
+                        "$stamp\n${staged.relativeTo(folder).invariantSeparatorsPath}\n${staged.length()}"
+                    )
+                }
+                staged
+            }
+            if (single != null) {
+                folder.setLastModified(System.currentTimeMillis())
+                trim(keep = folder)
+                val detected = GameSystems.forPreparedFile(single, entry.path)
+                val preparedExt = GameSystems.extension(single.name)
+                val chosen = assigned?.takeIf {
+                    preparedExt in it.extensions || (preparedExt in GameSystems.ambiguousExtensions &&
+                        (detected == null || detected.id == it.id))
+                } ?: detected ?: throw UnknownGameException(entry.name)
+                return@withContext PreparedGame(fileId = fileId,
+                    title = entry.name.substringBeforeLast('.'), file = single, system = chosen,
+                    saveKey = key, sourceName = source.name, entry = entry)
+            }
+        }
+        if (!archiveCached) {
             folder.deleteRecursively()
             folder.mkdirs()
             // A manual fallback is never allowed to exhaust the device or silently evict saves.
