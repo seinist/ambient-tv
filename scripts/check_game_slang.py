@@ -76,6 +76,10 @@ def main():
                 assert f"filter_linear{i} = true" in directives or f"filter_linear{i} = false" in directives
                 scale_mode = "viewport" if i == len(sources)-1 else "source"
                 assert f"scale_type{i} = {scale_mode}" in directives
+                if i < len(sources) - 1:
+                    # Multi-pass CRT bloom allocates only a quarter-size source
+                    # frame for its intermediate, not another full-resolution 4K FBO.
+                    assert f"scale{i} = 0.5" in directives
             assert len(directives) <= 1 + len(sources) * 4
     print(f"OK: {len(PRESETS)} original Slang presets / {len(expected_sources)} stages, {total} bytes")
 
