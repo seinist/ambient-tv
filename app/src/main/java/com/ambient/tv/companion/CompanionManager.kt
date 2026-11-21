@@ -1528,7 +1528,7 @@ class CompanionManager @Inject constructor(@ApplicationContext private val conte
                                 "input_release" -> releaseRemoteControl(nonce)
                                 "gamepad_claim" -> {
                                     error = "gamepad_unavailable"
-                                    check(CompanionGamepadSession.claim(nonce) >= 0)
+                                    check(CompanionGamepadSession.claim(nonce, peer.fingerprint) >= 0)
                                     error = ""
                                 }
                                 "gamepad_release" -> CompanionGamepadSession.release(nonce)
