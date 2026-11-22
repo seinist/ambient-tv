@@ -2,6 +2,7 @@ package com.ambient.tv.games.library
 
 import android.content.Context
 import android.database.sqlite.SQLiteDatabase
+import android.graphics.BitmapFactory
 import com.ambient.tv.companion.CompanionConnectionStore
 import com.ambient.tv.connectivity.HostConnectivity
 import com.ambient.tv.data.dlna.DlnaStore
@@ -41,9 +42,11 @@ import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.RuntimeEnvironment
 import org.robolectric.annotation.Config
+import org.robolectric.annotation.GraphicsMode
 
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [29], application = android.app.Application::class, manifest = Config.NONE)
+@GraphicsMode(GraphicsMode.Mode.NATIVE)
 class GameLibraryRepositoryQueryTest {
     private val context: Context get() = RuntimeEnvironment.getApplication()
     private val prefs get() = context.getSharedPreferences("game-query-test", Context.MODE_PRIVATE)
@@ -241,7 +244,27 @@ class GameLibraryRepositoryQueryTest {
     }
 
     private fun imageBytes(): ByteArray = Base64.getDecoder().decode(
-        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jL1kAAAAASUVORK5CYII=")
+        // Valid 4×3 RGB PNG, independently decoded and checked for all PNG chunk CRCs.
+        "iVBORw0KGgoAAAANSUhEUgAAAAQAAAADCAIAAAA7ljmRAAAAFElEQVR4nGPUSljAAANMDEgAhQMAKzgBMKX6+B0AAAAASUVORK5CYII=")
+
+    @Test fun nativeArtworkDecoderReadsMimeBoundsAndPixelsFromTheValidatedFixture() {
+        // Artwork staging uses a .part suffix, so detection must inspect the actual bytes.
+        val file = File(context.cacheDir, "native-artwork-fixture.part").apply { writeBytes(imageBytes()) }
+        try {
+            val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+            assertNull(BitmapFactory.decodeFile(file.absolutePath, bounds))
+            assertEquals("image/png", bounds.outMimeType)
+            assertEquals(4, bounds.outWidth)
+            assertEquals(3, bounds.outHeight)
+            val decoded = BitmapFactory.decodeFile(file.absolutePath)
+            assertNotNull(decoded)
+            try {
+                assertEquals(4, decoded!!.width)
+                assertEquals(3, decoded.height)
+                assertEquals(0xff2a60a0.toInt(), decoded.getPixel(0, 0))
+            } finally { decoded?.recycle() }
+        } finally { file.delete() }
+    }
 
     @Test fun removingOneOverlapPreservesTheOtherButTheLastRemovalPurgesAllOwnedData() {
         seed("same", folder = "root")

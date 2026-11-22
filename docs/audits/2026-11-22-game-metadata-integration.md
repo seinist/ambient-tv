@@ -75,6 +75,14 @@ native ABI builds and shader checks remain the release gate. The final PR result
 their outcome. No physical phone/TV test or authenticated live ScreenScraper/TheGamesDB
 account test was performed in this environment; those must not be represented as verified.
 
+The first full PR run compiled production/Compose/Hilt and device-test sources successfully;
+all nine native/shader/detection jobs passed. Its 5,590-test app suite exposed six new fixture
+failures: the XML test needed the same Robolectric runner as the existing DAT parser tests,
+and five image-storage tests shared a PNG with an invalid IDAT checksum. The fixtures now use
+the Android parser and a verified PNG with native Android image decoding. A direct decoder
+regression checks the fixture's MIME type, dimensions and decoded bitmap. Production image
+validation was not relaxed to accommodate invalid test input.
+
 Feature audit reports:
 [providers](2026-11-22-game-metadata-providers.md),
 [storage](2026-11-22-game-metadata-storage.md),

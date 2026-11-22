@@ -65,3 +65,11 @@ The same directory contains `manifest.json` with exact compiler/JUnit arguments 
 `GameLibraryRepositoryQueryTest` additionally contains real Robolectric/SQLite integration regressions for v4/v5 migration, warm-query behavior, overlap removal, owned/original image separation, remove/re-add and source/file version races, portable cleanup, pins/unlock, cache coexistence/expiry/bounds, folder pages/point lookup ambiguity, automatic artwork eviction, batch notifications, cached detail/favorite/removal and cold library navigation without NAS wake. The real coordinator fixtures close their preference watcher after each VM test.
 
 The Android/Robolectric integration suite, Compose/Hilt wiring and full Gradle build still require CI: the local Gradle wrapper could not obtain Gradle 9.8.1 and no local Android SDK is installed. Host SQLite and API compilation do not substitute for those gates or for device lifecycle/UI testing.
+
+## First CI follow-up
+
+PR #448's first CI run compiled production, Compose/Hilt and instrumentation sources successfully. Its 5,590-test run exposed six test failures: five artwork integration cases shared an invalid PNG fixture, and the separate XML reader test lacked its Android/Robolectric runner. The XML runner correction is tracked with the integration work.
+
+The original one-pixel PNG had a bad IDAT checksum: its stored CRC was `0xefa32f59`, while the chunk contents calculate to `0xefa2a75b`. Pillow independently rejected it. The replacement is a generated 4×3 RGB PNG whose chunk CRCs, full decoding and pixel values were checked independently. The repository test class now explicitly uses Robolectric `GraphicsMode.NATIVE`, ensuring Android graphics code supplies image bounds and MIME type instead of depending on legacy graphics fakes. An added test decodes a `.part`-named fixture, asserts PNG MIME and 4×3 dimensions, then fully decodes and checks a pixel. The original artwork size, format, dimension and ownership checks remain unchanged in production.
+
+The corrected native-decoder integration tests require the next CI run; local fixture validation alone is not reported as their execution.

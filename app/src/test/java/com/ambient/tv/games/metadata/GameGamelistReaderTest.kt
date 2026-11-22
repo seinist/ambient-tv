@@ -4,7 +4,12 @@ import java.io.ByteArrayInputStream
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.*
 import org.junit.Test
+import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
+import org.robolectric.annotation.Config
 
+@RunWith(RobolectricTestRunner::class)
+@Config(sdk = [35], application = android.app.Application::class)
 class GameGamelistReaderTest {
     @Test fun readsPortableTextAndImagePathsWithoutFollowingThem() = runBlocking {
         val records = mutableListOf<GameGamelistEntry>()
