@@ -28,6 +28,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -230,7 +231,9 @@ class GamePlayerViewModel @Inject constructor(
     }
 
     private fun refreshStates(game: PreparedGame) {
-        stateList.value = states.list(game)
+        // A checkpoint scan can race a manual save/delete. Retry the disk snapshot
+        // when another refresh publishes first instead of restoring an older list.
+        stateList.update { states.list(game) }
     }
 
     fun biosStatus(game: PreparedGame): List<GameBiosStatus> = bios.status(game.system)
