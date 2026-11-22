@@ -41,12 +41,16 @@ class PlaybackItemControlsTest {
         var position = 60_000L
         var playing = true
         var ended = false
+        var acknowledgeSeeks = true
         val seeks = mutableListOf<Long>()
         override fun status() = PlaybackStatus(positionMs = position, durationMs = 120_000, playing = playing, ended = ended)
         override fun canSeekNow() = seekable
         override fun play() { playing = true }
         override fun pause() { playing = false }
-        override fun seekTo(positionMs: Long) { seeks += positionMs; position = positionMs }
+        override fun seekTo(positionMs: Long) {
+            seeks += positionMs
+            if (acknowledgeSeeks) { position = positionMs; ended = false }
+        }
         override fun release() = Unit
     }
 
@@ -404,6 +408,69 @@ class PlaybackItemControlsTest {
             assertEquals(listOf(successor), fixture.advances)
             assertTrue("A chosen successor must not be stopped by the old prompt's timer",
                 BackgroundPlaybackSession.snapshot.value.active)
+        }
+    }
+
+    @Test fun aSeekDuringEofGraceCancelsTheOutgoingAutoplayDeadlineBeforeDecoderAck() {
+        val fixture = mount(metadata().copy(nextUpConfig = NextUpConfig(
+            enabled = true, autoplay = true, showOverlay = false,
+        )), clock = Clock().apply { acknowledgeSeeks = false })
+        rule.mainClock.autoAdvance = false
+        rule.runOnIdle {
+            fixture.clock.position = 120_000L
+            BackgroundPlaybackSession.tick()
+        }
+        rule.mainClock.advanceTimeByFrame()
+        rule.waitForIdle()
+        rule.mainClock.advanceTimeBy(NEXT_UP_EOF_GRACE_MS - 500L)
+        rule.runOnIdle { BackgroundPlaybackSession.seekTo(10_000L) }
+        // The decoder has accepted the seek but still publishes the old end position.
+        rule.mainClock.advanceTimeBy(1_000L)
+        rule.waitForIdle()
+        rule.runOnIdle {
+            assertEquals(listOf(10_000L), fixture.clock.seeks)
+            assertTrue("A pre-seek EOF deadline must not advance the title", fixture.advances.isEmpty())
+            fixture.clock.position = 10_000L
+            BackgroundPlaybackSession.tick()
+        }
+        rule.mainClock.advanceTimeBy(NEXT_UP_EOF_GRACE_MS + 1_000L)
+        rule.waitForIdle()
+        rule.runOnIdle {
+            assertTrue(fixture.advances.isEmpty())
+            assertTrue(BackgroundPlaybackSession.snapshot.value.active)
+        }
+    }
+
+    @Test fun aSeekDuringStillWatchingCancelsTheOldStopDeadlineBeforeDecoderAck() {
+        val fixture = mount(metadata().copy(nextUpConfig = NextUpConfig(
+            enabled = true, autoplay = true, stillWatchingEvery = 1,
+        )), clock = Clock().apply { acknowledgeSeeks = false })
+        rule.mainClock.autoAdvance = false
+        rule.runOnIdle {
+            BackgroundPlaybackSession.recordAutomaticNextUp(successor)
+            fixture.clock.position = 120_000L
+            fixture.clock.ended = true
+            fixture.clock.playing = false
+            BackgroundPlaybackSession.tick()
+        }
+        rule.mainClock.advanceTimeByFrame()
+        rule.waitForIdle()
+        rule.mainClock.advanceTimeBy(NEXT_UP_CONFIRMATION_TIMEOUT_MS - 500L)
+        rule.runOnIdle { BackgroundPlaybackSession.seekTo(10_000L) }
+        rule.mainClock.advanceTimeBy(1_000L)
+        rule.waitForIdle()
+        rule.runOnIdle {
+            assertTrue("A pre-seek confirmation deadline must not stop the title",
+                BackgroundPlaybackSession.snapshot.value.active)
+            fixture.clock.position = 10_000L
+            fixture.clock.ended = false
+            BackgroundPlaybackSession.tick()
+        }
+        rule.mainClock.advanceTimeBy(NEXT_UP_CONFIRMATION_TIMEOUT_MS + 1_000L)
+        rule.waitForIdle()
+        rule.runOnIdle {
+            assertTrue(BackgroundPlaybackSession.snapshot.value.active)
+            assertTrue(fixture.advances.isEmpty())
         }
     }
 

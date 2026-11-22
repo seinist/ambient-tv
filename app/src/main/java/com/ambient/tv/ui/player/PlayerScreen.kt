@@ -663,14 +663,16 @@ private fun PlayerContent(
     val projectMBrowser = rememberProjectMBrowser(state.projectmPresetCategoryKey)
     // One remote handling for the engine and, while the focus is in the panel above it, the panel host.
     val chapterNavigation = com.ambient.tv.ui.player.LocalPlaybackNavigation.current
-    val osdKeys: (androidx.compose.ui.input.key.KeyEvent) -> Boolean = { event ->
+    val osdKeys: (androidx.compose.ui.input.key.KeyEvent) -> Boolean = osdKeys@{ event ->
+        if (!seek.isActive) return@osdKeys false
+        val seekPositionMs = seek.refreshForInput()
         // Shared remote handling (PlayerOsdKeys); only the actions below are Media3's own.
         val restartTitle = { seek.seekTo(0L) }
         handlePlayerOsdKey(
             event.key, event.type == KeyEventType.KeyDown,
             OsdKeyState(OsdContent.VIDEO, controlsVisible && !osd.seekFeedback && !osd.closing,
                 panel != UnifiedPlayerPanel.NONE, osd.seekFeedback, closing = osd.closing, seekBarFocused = osd.seekBarFocused),
-            progressiveOsdSeekSteps(BackgroundPlaybackSession.seekJumpMs(state.seekJumpMs), seek.positionMs,
+            progressiveOsdSeekSteps(BackgroundPlaybackSession.seekJumpMs(state.seekJumpMs), seekPositionMs,
                 state.durationMs?.takeIf { it > 0 } ?: (exoPlayer.duration.takeIf { it > 0 }?.plus(state.timelineOffsetMs) ?: 0L), osd),
             object : OsdKeyTarget {
                 override fun chapterSeekDelta(direction: Int): Long? {
@@ -1164,8 +1166,9 @@ internal fun TvPlayerSeekBar(
     // PlaybackSeekState remains the authority for issuing actual seek commands.
     var awaitingVisualTarget by remember(timelineKey, seekState) { mutableStateOf<Long?>(null) }
     // Input must read the live target: the persistent OSD model may be a frame behind.
-    fun currentPosition() = latestSeekState?.positionMs ?: latestPositionMs
+    fun currentPosition() = latestSeekState?.refreshForInput() ?: latestPositionMs
     fun submitTarget(target: Long) {
+        if (latestSeekState?.isActive == false) return
         awaitingVisualTarget = target
         BackgroundPlaybackSession.userSeek()
         latestSeekState?.seekTo(target) ?: latestOnSeekBy(target - currentPosition())
@@ -1279,6 +1282,7 @@ internal fun TvPlayerSeekBar(
                 if (!it.isFocused) { progressiveSeek.cancel(); pendingTarget = null; pendingDirection = 0; lastPreview = null }
             }
             .onPreviewKeyEvent { event ->
+                if (latestSeekState?.isActive == false) return@onPreviewKeyEvent false
                 if (osd != null && (event.key == Key.DirectionDown || event.key == Key.DirectionUp)) {
                     if (event.type == KeyEventType.KeyDown && event.nativeKeyEvent.repeatCount == 0) {
                         navigation?.interact(); osd.interact()

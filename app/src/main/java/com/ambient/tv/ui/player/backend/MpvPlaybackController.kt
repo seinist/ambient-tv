@@ -255,9 +255,11 @@ class MpvPlaybackController(
         lastProgress = SystemClock.elapsedRealtime()
         main.post {
             if (!released) {
-                val changed = state != next || values != readings
+                val seekWasPending = pendingSeek.isPending
+                pendingSeek.observe(completed, next.status.positionMs, next.status.error != null)
+                val changed = state != next || values != readings || seekWasPending != pendingSeek.isPending
                 if (values != readings) valuesRevision++
-                if (pendingSeekRevision?.let { completed >= it } == true) { pendingSeekRevision = null; pendingSeekTargetMs = null }
+                if (pendingSeekRevision?.let { completed >= it } == true) pendingSeekRevision = null
                 state = next
                 values = readings
                 if ((pendingImage?.first ?: Long.MAX_VALUE) <= completed) pendingImage = null
@@ -326,6 +328,7 @@ class MpvPlaybackController(
     private var acceptedOverloadSignature: String? = null
     val overloadContinueSignature get() = acceptedOverloadSignature ?: state.overloadContinueSignature
     val errorMessage get() = failure ?: state.status.error
+    private val pendingSeek = MpvPendingSeek()
     private var pendingSeekRevision: Long? = null
     val ended get() = pendingSeekRevision == null && state.status.ended
     val mediaInfoGeneration get() = state.mediaInfoGeneration
@@ -382,16 +385,16 @@ class MpvPlaybackController(
     override fun reopenGeneration() = state.reopenGeneration
     override fun reopenAudioOutput() { command("ao-reload") { reopenAudioOutput() } }
     fun playPause() { if (wantsToPlay()) pause() else play() }
-    /** Target of a seek the engine has not applied yet; quick repeated steps build on it. */
-    private var pendingSeekTargetMs: Long? = null
     override fun seekTo(positionMs: Long) {
-        pendingSeekTargetMs = positionMs
+        if (released) return
+        pendingSeek.request(revision + 1, positionMs)
         pendingSeekRevision = command("seek") { seekTo(positionMs) }
     }
-    fun seekBy(deltaMs: Long) = seekTo(mpvSeekByTarget(pendingSeekTargetMs, positionMs(), deltaMs))
+    fun seekBy(deltaMs: Long) = seekTo(mpvSeekByTarget(pendingSeek.targetMs, positionMs(), deltaMs))
     override fun restoreAfterRendererSwitch(positionMs: Long, playWhenReady: Boolean, isLive: Boolean) {
         hostRequestedPlay = playWhenReady
         playIntent = playWhenReady
+        if (!isLive && !released) pendingSeek.request(revision + 1, positionMs)
         command("restore-playback") { restoreAfterRendererSwitch(positionMs, playWhenReady, isLive) }
     }
     fun setSpeed(speed: Float) { command("speed") { setSpeed(speed) } }
@@ -609,10 +612,6 @@ private data class MpvEngineState(
 /** Media info must be re-read when mpv reported a load/reconfigure since the last sample. */
 internal fun mpvMediaInfoChanged(sampledGeneration: Int, currentGeneration: Int): Boolean =
     sampledGeneration != currentGeneration
-
-/** A step from the not-yet-applied seek target if any, else from the last sampled position. */
-internal fun mpvSeekByTarget(pendingTargetMs: Long?, sampledPositionMs: Long, deltaMs: Long): Long =
-    ((pendingTargetMs ?: sampledPositionMs) + deltaMs).coerceAtLeast(0L)
 
 /** Upper bound for surfaceDestroyed waiting on the VO detach (main thread; far below ANR). */
 internal const val SURFACE_DETACH_WAIT_MS = 500L

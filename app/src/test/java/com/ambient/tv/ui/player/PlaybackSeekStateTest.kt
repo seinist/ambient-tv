@@ -1,6 +1,9 @@
 package com.ambient.tv.ui.player
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class PlaybackSeekStateTest {
@@ -126,5 +129,111 @@ class PlaybackSeekStateTest {
         assertEquals(10_000L, seek.chapterPositionMs)
         seek.flushPending()
         assertEquals(listOf(50_000L), commits)
+    }
+
+    @Test fun settledDebounceCommitsLatestTargetDespiteElapsedClockRounding() {
+        val seek = seekState(100_000)
+        seek.seekBy(10_000, 600_000)
+        now = 40
+        seek.seekBy(10_000, 600_000)
+        // The coroutine's debounce has elapsed, but elapsedRealtime rounded one ms below it.
+        now = 40 + PlaybackSeekCoordinator.DEBOUNCE_MS - 1
+        seek.commitSettled()
+        assertEquals(listOf(110_000L, 120_000L), commits)
+    }
+
+    @Test fun reusedDecoderCannotCommitThePreviousItemsPendingTarget() {
+        val owner = Any()
+        var generation = 1L
+        var interactions = 0
+        val seek = PlaybackSeekState(PlaybackSeekCoordinator(nowMs = { now }), 100_000,
+            onSeekRequested = { interactions++ },
+            isCurrent = { playbackSeekOwnerIsCurrent(owner, 1L, owner, generation, false) },
+            commit = { commits += it })
+        seek.seekTo(110_000)
+        seek.seekTo(120_000)
+        generation = 2L // Gapless/Next Up changed the item but kept the decoder.
+        seek.flushPending()
+        seek.commitSettled()
+        seek.seekBy(10_000, 600_000)
+        seek.seekTo(0)
+        seek.followExternalSeek(5_000)
+        assertEquals(listOf(110_000L), commits)
+        assertEquals(2, interactions)
+        assertEquals(120_000L, seek.positionMs)
+        assertNull(seek.pendingTargetMs) // Stop/resume cannot save the outgoing item's target.
+    }
+
+    @Test fun pendingSourceReplacementRejectsOldInputBeforeItChangesUserIntent() {
+        val owner = Any()
+        var replacing = false
+        var interactions = 0
+        val seek = PlaybackSeekState(PlaybackSeekCoordinator(nowMs = { now }), 10_000,
+            onSeekRequested = { interactions++ },
+            isCurrent = { playbackSeekOwnerIsCurrent(owner, 1L, owner, 1L, replacing) },
+            commit = { commits += it })
+        replacing = true
+        seek.seekTo(60_000)
+        assertTrue(commits.isEmpty())
+        assertEquals(0, interactions)
+        assertFalse(seek.awaitingSeekAck)
+    }
+
+    @Test fun hiddenPositionIsSampledBeforeTheNextRelativeSeek() {
+        var engine = 100_000L
+        val seek = PlaybackSeekState(PlaybackSeekCoordinator(nowMs = { now }), engine,
+            readEnginePositionMs = { engine }, commit = { commits += it })
+        // The reduced-playback profile did not poll the hidden OSD during this interval.
+        now = 180_000
+        engine = 280_000
+        seek.seekBy(10_000, 600_000)
+        assertEquals(290_000L, seek.positionMs)
+        assertEquals(listOf(290_000L), commits)
+    }
+
+    @Test fun freshInputPreservesASeekStillInFlight() {
+        val engine = 100_000L
+        val seek = PlaybackSeekState(PlaybackSeekCoordinator(nowMs = { now }), engine,
+            readEnginePositionMs = { engine }, commit = { commits += it })
+        seek.seekBy(10_000, 600_000)
+        now = 40
+        seek.seekBy(10_000, 600_000)
+        assertEquals(120_000L, seek.positionMs)
+        assertTrue(seek.awaitingSeekAck)
+        seek.commitSettled()
+        assertEquals(listOf(110_000L, 120_000L), commits)
+    }
+
+    @Test fun acknowledgementEndsTheNeedToPollHiddenChrome() {
+        val seek = seekState(100_000)
+        assertFalse(seek.awaitingSeekAck)
+        seek.seekTo(120_000)
+        assertTrue(seek.awaitingSeekAck)
+        now = 700
+        seek.sync(119_900)
+        now = 1_200
+        seek.sync(120_500)
+        assertFalse(seek.awaitingSeekAck)
+        assertEquals(120_500L, seek.positionMs)
+    }
+
+    @Test fun pendingOnlyPollingRetiresALostSeekBeforeTheNextHiddenInput() {
+        var engine = 10_000L
+        val seek = PlaybackSeekState(PlaybackSeekCoordinator(nowMs = { now }), engine,
+            readEnginePositionMs = { engine }, commit = { commits += it })
+        seek.seekTo(200_000)
+        // Chrome has hidden, but a pending target still requires reconciliation.
+        repeat(30) {
+            now += 250
+            engine += 250
+            if (seek.awaitingSeekAck) seek.sync(engine)
+        }
+        assertFalse(seek.awaitingSeekAck)
+        assertNull(seek.pendingTargetMs)
+        now = 300_000
+        engine = 300_000
+        seek.seekBy(10_000, 600_000)
+        assertEquals(310_000L, seek.positionMs)
+        assertEquals(listOf(200_000L, 310_000L), commits)
     }
 }

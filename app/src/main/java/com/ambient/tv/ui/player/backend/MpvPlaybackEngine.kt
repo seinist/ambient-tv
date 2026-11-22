@@ -239,7 +239,7 @@ internal class MpvPlaybackEngine(
     private var detachedVideoSelection: String? = null
     private var startupOpenedAt = 0L
     private var loaded = false
-    private var pendingInitialSeekMs: Long? = initialStartPositionMs.takeIf { !liveStream && it > 0 }
+    private val deferredSeek = MpvDeferredSeek(initialStartPositionMs.takeIf { !liveStream && it > 0 })
     private val dvResumeWorkaround get() = !liveStream && !gpuQualityMode &&
         com.ambient.tv.ui.player.needsDolbyVisionResumePriming(android.os.Build.MANUFACTURER,
             android.os.Build.VERSION.SDK_INT, declaredHdr, 1L)
@@ -614,7 +614,7 @@ internal class MpvPlaybackEngine(
             setProperty("force-window", "no")
             command("loadfile", playbackUrlForOpen(), "replace")
             loaded = true
-            pendingInitialSeekMs = null
+            deferredSeek.takeOpenPosition()
             setProperty("pause", if (nativePlayWanted) "no" else "yes")
         }
         startEventPump()
@@ -731,7 +731,8 @@ internal class MpvPlaybackEngine(
             startupOpenedAt = System.nanoTime()
             com.ambient.tv.ui.player.logPlaybackStartup("mpv", "initial_load_requested", startupConstructionAt,
                 "cache=$networkCacheEnabled readahead_s=${if (networkCacheEnabled) 20 else 0}")
-            val requestedResume = pendingInitialSeekMs
+            val requestedResume = deferredSeek.takeOpenPosition()
+            if (requestedResume != null) lastPlaybackPositionMs = requestedResume
             val prime = dvResumeWorkaround && (requestedResume ?: 0) > 0
             if (prime) beginDvPrime(requestedResume!!)
             val resume = requestedResume?.takeUnless { prime }
@@ -741,7 +742,6 @@ internal class MpvPlaybackEngine(
             if (prime) command("loadfile", playbackUrlForOpen(), "replace", "-1", "start=0")
             else if (resume == null) command("loadfile", playbackUrlForOpen(), "replace")
             else command("loadfile", playbackUrlForOpen(), "replace", "-1", "start=${resume / 1000.0}")
-            pendingInitialSeekMs = null
             loaded = true
             detachedVideoSelection?.let { setProperty("vid", it) }
             detachedVideoSelection = null
@@ -804,12 +804,12 @@ internal class MpvPlaybackEngine(
         sdrSurfaceFailed = false
         sdrToHdr.reset()
         if (dvResumeWorkaround && loaded) {
-            val resume = positionMs()
+            val resume = deferredSeek.takeReopenPosition(positionMs(), preferPendingSeek = true)
             finishDvPrime()
             fallbackTrackSelection = captureOutputRestartState()
             dvSurfaceRestart = true
             command("stop")
-            pendingInitialSeekMs = resume
+            deferredSeek.resetForOpen(resume)
             loaded = false
             fileReady = false
             svpFilterDecided = false
@@ -902,6 +902,9 @@ internal class MpvPlaybackEngine(
                 (getPropertyDouble("time-pos", 0.0).coerceAtLeast(0.0) * 1000.0).toLong()
             else this.positionMs()
             safePlaybackEndSeekTarget(current, duration) ?: run {
+                // Already in the tail: do not rewind it, but supersede an older seek that is
+                // still waiting for FILE_LOADED. Replay will check the ready clock again.
+                deferredSeek.defer(positionMs, loadRequested = loaded, fileReady = fileReady, openPositionMs = current)
                 // The tail can play out; an older priming seek must not run afterwards.
                 if (dvPrimeTarget != null || dvPrimeTask != null || dvPrimeMute != null) finishDvPrime()
                 return
@@ -914,7 +917,7 @@ internal class MpvPlaybackEngine(
         ended = false
         observed["eof-reached"] = false
         if (reopenEndedFile) {
-            reopenStream(target)
+            reopenStream(target, preferPendingSeek = false)
             return
         }
         if (dvPrimeTarget != null) {
@@ -922,6 +925,10 @@ internal class MpvPlaybackEngine(
             if (dvPrimeSeeking) command("seek", (dvPrimeTarget!! / 1000.0).toString(), "absolute+exact")
             return
         }
+        // loadfile returns before the demuxer/decoder is ready. A seek during that window
+        // would fail or be discarded; before the first surface it belongs in loadfile's start
+        // option, afterwards the newest target is replayed at FILE_LOADED.
+        if (deferredSeek.defer(positionMs, loadRequested = loaded, fileReady = fileReady, openPositionMs = target)) return
         // Prefer a keyframe seek for the Android hardware decoder for the same reason as seekBy().
         // The final tail must be exact so a preceding keyframe cannot replay the last chapter.
         command("seek", (target / 1000.0).toString(), if (endSeek) "absolute+exact" else "absolute+keyframes")
@@ -943,12 +950,8 @@ internal class MpvPlaybackEngine(
 
     override fun restoreAfterRendererSwitch(positionMs: Long, playWhenReady: Boolean, isLive: Boolean) {
         desiredPlayWhenReady = playWhenReady
-        if (isLive) pendingInitialSeekMs = null
-        if (!isLive) {
-            val resumePositionMs = positionMs.coerceAtLeast(0L)
-            if (loaded) seekTo(resumePositionMs)
-            else pendingInitialSeekMs = resumePositionMs
-        }
+        if (isLive) deferredSeek.resetForOpen(null)
+        else seekTo(positionMs.coerceAtLeast(0L))
         setProperty("pause", if (playWhenReady || dvPrimeTarget != null) "no" else "yes")
     }
 
@@ -2027,11 +2030,12 @@ internal class MpvPlaybackEngine(
 
     fun positionMs(): Long {
         dvPrimeTarget?.let { return it }
-        val current = (getPropertyDouble("time-pos", 0.0).coerceAtLeast(0.0) * 1000.0).toLong()
-        if (current > 0L) lastPlaybackPositionMs = current
-        // During detach/VO teardown time-pos can briefly read 0. Renderer switches must
-        // still resume from the last confirmed clock, not the start of the file.
-        return if (current > 0L) current else lastPlaybackPositionMs.coerceAtLeast(0L)
+        // A reopen can still expose the old file's clock until FILE_LOADED. Missing time-pos
+        // during detach/VO teardown uses NaN so it cannot be mistaken for a real seek to zero.
+        if (fileReady) lastPlaybackPositionMs = mpvConfirmedPositionMs(
+            getPropertyDouble("time-pos", Double.NaN), lastPlaybackPositionMs,
+        )
+        return lastPlaybackPositionMs.coerceAtLeast(0L)
     }
     fun durationMs(): Long = ((if (isObserved("duration")) observedDouble("duration") ?: 0.0
         else getPropertyDouble("duration", 0.0)).coerceAtLeast(0.0) * 1000.0).toLong()
@@ -2523,6 +2527,7 @@ internal class MpvPlaybackEngine(
                         return
                     }
                     fileReady = true
+                    deferredSeek.takePendingPosition()?.let(::seekTo)
                     if (shieldSoftwareDecode) {
                         setDeinterlace(deinterlaceModeKey != "off", deinterlaceFilterKey, deinterlaceModeKey == "auto")
                     }
@@ -2616,13 +2621,18 @@ internal class MpvPlaybackEngine(
     @Volatile var reopenGeneration = 0
         private set
 
-    private fun reopenStream(positionMs: Long) {
+    private fun reopenStream(positionMs: Long, preferPendingSeek: Boolean = true) {
+        val resumePositionMs = deferredSeek.takeReopenPosition(
+            if (liveStream) 0L else positionMs, preferPendingSeek && !liveStream,
+        )
+        fileReady = false
+        lastPlaybackPositionMs = resumePositionMs
         reopenGeneration++
         // Same watchdog allowance as the first open while loadfile and the first frames run.
         ownerStep?.reopening("reopen:loadfile")
         startupOpenedAt = System.nanoTime()
         if (liveStream) command("loadfile", playbackUrlForOpen(), "replace")
-        else command("loadfile", playbackUrlForOpen(), "replace", "-1", "start=${com.ambient.tv.ui.player.rendererReopenPositionMs(false, positionMs) / 1000.0}")
+        else command("loadfile", playbackUrlForOpen(), "replace", "-1", "start=${com.ambient.tv.ui.player.rendererReopenPositionMs(false, resumePositionMs) / 1000.0}")
     }
 
     /**

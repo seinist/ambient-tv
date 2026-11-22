@@ -128,7 +128,6 @@ import com.ambient.tv.ui.common.PlayerControlBar
 import com.ambient.tv.ui.common.UnifiedBackendPlayerPanel
 import com.ambient.tv.ui.common.UnifiedPlayerPanel
 import com.ambient.tv.ui.player.PlaybackSeekCoordinator
-import com.ambient.tv.youtube.lateYouTubeResumeTarget
 import com.ambient.tv.ui.player.TvPlayerSeekBar
 import com.ambient.tv.ui.player.PlayerTimelineSlot
 import com.ambient.tv.ui.player.rememberPlayerTimelineDuration
@@ -487,14 +486,7 @@ fun YouTubePlayerScreen(
                 }
                 else -> {
                     // VLC/MPV sessions build the MPD in the background; Media3 opens it once ready.
-                    val pendingDash = enginePlayback.deferredDash
-                    val media3Playback by produceState<YouTubePlayback?>(enginePlayback.takeIf { pendingDash == null }, enginePlayback) {
-                        value = pendingDash?.let { deferred ->
-                            val mpd = runCatching { deferred.await() }.getOrNull()
-                            if (mpd != null) enginePlayback.copy(uri = mpd, mimeType = "application/dash+xml", deferredDash = null)
-                            else enginePlayback.copy(deferredDash = null)
-                        } ?: enginePlayback
-                    }
+                    val media3Playback by rememberYouTubeMedia3Playback(enginePlayback)
                     val media3 = media3Playback
                     if (media3 == null) {
                         Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { PlayerBufferingSpinner(visible = true) }
@@ -740,27 +732,16 @@ private fun YouTubeMedia3Playback(
     var playbackStarted by remember(playback.videoId) { mutableStateOf(false) }
     var playbackState by remember { mutableIntStateOf(Player.STATE_BUFFERING) }
     var playWhenReady by remember { mutableStateOf(true) }
-    var position by remember { mutableLongStateOf(startPositionMs) }
-    var duration by remember { mutableLongStateOf(playback.durationMs) }
+    var position by remember(playback.videoId) { mutableLongStateOf(startPositionMs) }
+    var duration by remember(playback.videoId) { mutableLongStateOf(playback.durationMs) }
     var speed by remember { mutableFloatStateOf(1f) }
     var resizeMode by remember { mutableIntStateOf(AspectRatioFrameLayout.RESIZE_MODE_FIT) }
     var aspectKey by remember { mutableStateOf("auto") }
     var zoomFactor by remember { mutableFloatStateOf(1f) }
-    var error by remember { mutableStateOf<String?>(null) }
     var tracks by remember { mutableStateOf<Tracks?>(null) }
-    var defaultAudioTrackApplied by remember(playback.videoId) { mutableStateOf(false) }
     var completionPending by remember { mutableStateOf(false) }
-    val seekCoordinator = remember(playback.videoId) { PlaybackSeekCoordinator(holdSeekTargetUntilReached = !playback.isLive) }
-    SyncYouTubeSessionSeek(seekCoordinator, playback, seekCoordinator)
-    var lateResumeApplied by remember(seekCoordinator) { mutableStateOf(startPositionMs > 0L) }
-    var userSeeked by remember(playback.videoId) { mutableStateOf(false) }
-    // A seek from the phone or the session controls is a user seek too: the late resume
-    // position must not overwrite it.
-    val externalSeekBase = remember(playback.videoId) { com.ambient.tv.ui.player.BackgroundPlaybackSession.externalSeekVersion }
-    LaunchedEffect(com.ambient.tv.ui.player.BackgroundPlaybackSession.externalSeekVersion) {
-        if (com.ambient.tv.ui.player.BackgroundPlaybackSession.externalSeekVersion != externalSeekBase) userSeeked = true
-    }
-    var seekCommitVersion by remember(playback.videoId) { mutableIntStateOf(0) }
+    val resume = rememberYouTubePlaybackResume(playback.videoId, startPositionMs,
+        BackgroundPlaybackSession.externalSeekVersion)
     val metadata = checkNotNull(LocalPlaybackMetadata.current)
     val currentOnCompleted by rememberUpdatedState(onCompleted)
     val target = remember(presetKey, maxVideoHeight) {
@@ -769,7 +750,7 @@ private fun YouTubeMedia3Playback(
     val startupAudioLanguage = remember(playback.adaptiveFormats, sponsorPrefs.playbackAudioLanguage) {
         com.ambient.tv.youtube.youtubeStartupAudioLanguage(playback.adaptiveFormats, sponsorPrefs.playbackAudioLanguage)
     }
-    val player = remember(playback.uri, playback.headers, startPositionMs, audioPassthroughEnabled, streamTuning, refreshGeneration, startupAudioLanguage) {
+    val player = remember(playback.videoId, playback.uri, playback.headers, startPositionMs, audioPassthroughEnabled, streamTuning, refreshGeneration, startupAudioLanguage) {
         BackgroundPlaybackSession.acquire(context, metadata, "media3",
             listOf(playback.uri, playback.headers, startPositionMs, audioPassthroughEnabled, streamTuning, refreshGeneration)) {
             val appContext = context.applicationContext
@@ -805,6 +786,15 @@ private fun YouTubeMedia3Playback(
             } }
         }.player
     }
+    // Errors and track overrides belong to this decoder, including a same-video reload.
+    var error by remember(player) { mutableStateOf<String?>(null) }
+    var defaultAudioTrackApplied by remember(player) { mutableStateOf(false) }
+    val seekIsCurrent = rememberYouTubeSeekOwner(player, playback.videoId)
+    // A refreshed source has a new decoder. Do not keep a target already consumed by the
+    // outgoing player; its acknowledgement and polling lifetime ended with that player.
+    val seekCoordinator = remember(player) { PlaybackSeekCoordinator(holdSeekTargetUntilReached = !playback.isLive) }
+    var seekCommitVersion by remember(player) { mutableIntStateOf(0) }
+    SyncYouTubeSessionSeek(seekCoordinator, playback, seekCoordinator)
     var liveDvrWindow by remember(player) { mutableStateOf<YouTubeLiveDvrWindow?>(null) }
     com.ambient.tv.ui.player.RestoreMedia3PlaybackProfile(player, metadata)
     com.ambient.tv.ui.player.Media3RenderOverloadDialog(player, panelNavigation) { panelNavigation.openVideoSettings() }
@@ -1008,6 +998,7 @@ private fun YouTubeMedia3Playback(
         controls, playing, panelOpen, changingItem,
     ) { controls = it }
     fun commitSeek(targetMs: Long) {
+        if (!seekIsCurrent()) return
         // A decoder seek to the end of a live manifest is not an EOF seek. Media3 knows the
         // current default live position even while the manifest's window keeps moving.
         com.ambient.tv.diagnostics.DiagnosticLog.info("seek",
@@ -1016,10 +1007,11 @@ private fun YouTubeMedia3Playback(
         else player.seekToPlaybackPosition(targetMs)
     }
     fun seek(delta: Long) {
+        if (!seekIsCurrent()) return
         if (playback.isLive && liveDvrWindow == null) return
         BackgroundPlaybackSession.userSeek()
         osd.interact()
-        userSeeked = true
+        resume.userSeek()
         val window = liveDvrWindow
         val limit = if (playback.isLive) window?.windowEndMs ?: return
             else duration.takeIf { it > 0L } ?: playback.durationMs
@@ -1063,13 +1055,10 @@ private fun YouTubeMedia3Playback(
         seek((window.windowEndMs - (seekCoordinator.pendingTarget ?: position)).coerceAtLeast(0L))
     }
     YouTubeSeekCommit(seekCommitVersion, seekCoordinator, ::commitSeek)
-    LaunchedEffect(playback.resumeMs, playback.resumeResolved) {
-        if (!playback.resumeResolved) return@LaunchedEffect
-        val target = lateYouTubeResumeTarget(playback.isLive, startPositionMs, playback.resumeMs, userSeeked,
-            resumeAlreadyApplied = lateResumeApplied)
-        // Zero is a resolved target too: later metadata must not deduct/apply the resume again.
-        lateResumeApplied = true
-        if (target == null) return@LaunchedEffect
+    LaunchedEffect(player, resume, playback.resumeMs, playback.resumeResolved) {
+        if (!seekIsCurrent()) return@LaunchedEffect
+        val target = resume.resolve(playback.isLive, playback.resumeMs, playback.resumeResolved,
+            BackgroundPlaybackSession.externalSeekVersion) ?: return@LaunchedEffect
         position = seekCoordinator.requestAbsolute(target)
         seekCoordinator.consumeCommit()?.let(player::seekToPlaybackPosition)
     }
@@ -1099,7 +1088,8 @@ private fun YouTubeMedia3Playback(
     // One remote handling for the engine and, while the focus is in the OSD or panel above it, the host.
     val chapterNavigation = com.ambient.tv.ui.player.LocalPlaybackNavigation.current
     val itemControls = LocalPlaybackItemControls.current
-    val osdKeys: (androidx.compose.ui.input.key.KeyEvent) -> Boolean = { e ->
+    val osdKeys: (androidx.compose.ui.input.key.KeyEvent) -> Boolean = osdKeys@{ e ->
+        if (!seekIsCurrent()) return@osdKeys false
         // Shared remote handling (PlayerOsdKeys); only the actions below are Media3's own.
         val seekRelative: (Long) -> Unit = { seek(it) }
         val seekWithBar: (Long) -> Unit = { seekInMode(it) }
@@ -1370,15 +1360,10 @@ private fun YouTubeVlcPlayback(playback: YouTubePlayback, audioUri: String?, str
         }
     }
     val seekCoordinator = remember(controller) { PlaybackSeekCoordinator(holdSeekTargetUntilReached = !playback.isLive) }
+    val seekIsCurrent = rememberYouTubeSeekOwner(controller, playback.videoId)
     SyncYouTubeSessionSeek(seekCoordinator, playback, seekCoordinator)
-    var lateResumeApplied by remember(seekCoordinator) { mutableStateOf(startPositionMs > 0L) }
-    var userSeeked by remember(controller) { mutableStateOf(false) }
-    // A seek from the phone or the session controls is a user seek too: the late resume
-    // position must not overwrite it.
-    val externalSeekBase = remember(controller) { com.ambient.tv.ui.player.BackgroundPlaybackSession.externalSeekVersion }
-    LaunchedEffect(com.ambient.tv.ui.player.BackgroundPlaybackSession.externalSeekVersion) {
-        if (com.ambient.tv.ui.player.BackgroundPlaybackSession.externalSeekVersion != externalSeekBase) userSeeked = true
-    }
+    val resume = rememberYouTubePlaybackResume(playback.videoId, startPositionMs,
+        BackgroundPlaybackSession.externalSeekVersion)
     var seekCommitVersion by remember(controller) { mutableIntStateOf(0) }
     var displayedPosition by remember(controller) { mutableLongStateOf(startPositionMs.coerceAtLeast(0L)) }
     var resize by remember { mutableStateOf("fit") }
@@ -1411,6 +1396,7 @@ private fun YouTubeVlcPlayback(playback: YouTubePlayback, audioUri: String?, str
     LaunchedEffect(controller.ended) { if (!playback.isLive && controller.ended) onCompleted() }
     val sponsorSkipEnabled = LocalPlaybackMetadata.current?.sponsorSkipEnabled == true
     fun commitSeek(targetMs: Long) {
+        if (!seekIsCurrent()) return
         val edge = liveDvrWindow
         // libVLC can mistake an exact seek to the end of a live buffer for EOF.
         val decoderTarget = if (playback.isLive && edge?.targetsLiveEdge(targetMs) == true)
@@ -1420,10 +1406,11 @@ private fun YouTubeVlcPlayback(playback: YouTubePlayback, audioUri: String?, str
         controller.seekTo(decoderTarget)
     }
     fun seek(delta: Long) {
+        if (!seekIsCurrent()) return
         if (playback.isLive && liveDvrWindow == null) return
         BackgroundPlaybackSession.userSeek()
         osd.interact()
-        userSeeked = true
+        resume.userSeek()
         val window = liveDvrWindow
         val limit = if (playback.isLive) window?.windowEndMs ?: return
             else snapshot.durationMs.takeIf { it > 0L } ?: playback.durationMs
@@ -1465,13 +1452,10 @@ private fun YouTubeVlcPlayback(playback: YouTubePlayback, audioUri: String?, str
         seek((window.windowEndMs - (seekCoordinator.pendingTarget ?: displayedPosition)).coerceAtLeast(0L))
     }
     YouTubeSeekCommit(seekCommitVersion, seekCoordinator, ::commitSeek)
-    LaunchedEffect(playback.resumeMs, playback.resumeResolved) {
-        if (!playback.resumeResolved) return@LaunchedEffect
-        val target = lateYouTubeResumeTarget(playback.isLive, startPositionMs, playback.resumeMs, userSeeked,
-            resumeAlreadyApplied = lateResumeApplied)
-        // Zero is a resolved target too: later metadata must not deduct/apply the resume again.
-        lateResumeApplied = true
-        if (target == null) return@LaunchedEffect
+    LaunchedEffect(controller, resume, playback.resumeMs, playback.resumeResolved) {
+        if (!seekIsCurrent()) return@LaunchedEffect
+        val target = resume.resolve(playback.isLive, playback.resumeMs, playback.resumeResolved,
+            BackgroundPlaybackSession.externalSeekVersion) ?: return@LaunchedEffect
         displayedPosition = seekCoordinator.requestAbsolute(target)
         seekCoordinator.consumeCommit()?.let(controller::seekTo)
     }
@@ -1490,7 +1474,8 @@ private fun YouTubeVlcPlayback(playback: YouTubePlayback, audioUri: String?, str
     // One remote handling for the engine and, while the focus is in the OSD or panel above it, the host.
     val chapterNavigation = com.ambient.tv.ui.player.LocalPlaybackNavigation.current
     val itemControls = LocalPlaybackItemControls.current
-    val osdKeys: (androidx.compose.ui.input.key.KeyEvent) -> Boolean = { e ->
+    val osdKeys: (androidx.compose.ui.input.key.KeyEvent) -> Boolean = osdKeys@{ e ->
+        if (!seekIsCurrent()) return@osdKeys false
         // Shared remote handling (PlayerOsdKeys); only the actions below are VLC's own.
         val seekRelative: (Long) -> Unit = { seek(it) }
         val seekWithBar: (Long) -> Unit = { seekInMode(it) }
@@ -1717,15 +1702,10 @@ private fun YouTubeMpvPlayback(playback: YouTubePlayback, streams: YouTubeStream
     }
     com.ambient.tv.ui.player.MpvRenderOverloadDialog(controller, panelNavigation)
     val seekCoordinator = remember(controller) { PlaybackSeekCoordinator(holdSeekTargetUntilReached = !playback.isLive) }
+    val seekIsCurrent = rememberYouTubeSeekOwner(controller, playback.videoId)
     SyncYouTubeSessionSeek(seekCoordinator, playback, seekCoordinator)
-    var lateResumeApplied by remember(seekCoordinator) { mutableStateOf(startPositionMs > 0L) }
-    var userSeeked by remember(controller) { mutableStateOf(false) }
-    // A seek from the phone or the session controls is a user seek too: the late resume
-    // position must not overwrite it.
-    val externalSeekBase = remember(controller) { com.ambient.tv.ui.player.BackgroundPlaybackSession.externalSeekVersion }
-    LaunchedEffect(com.ambient.tv.ui.player.BackgroundPlaybackSession.externalSeekVersion) {
-        if (com.ambient.tv.ui.player.BackgroundPlaybackSession.externalSeekVersion != externalSeekBase) userSeeked = true
-    }
+    val resume = rememberYouTubePlaybackResume(playback.videoId, startPositionMs,
+        BackgroundPlaybackSession.externalSeekVersion)
     var seekCommitVersion by remember(controller) { mutableIntStateOf(0) }
     var displayedPosition by remember(controller) { mutableLongStateOf(startPositionMs.coerceAtLeast(0L)) }
     var resize by remember { mutableStateOf("fit") }
@@ -1758,6 +1738,7 @@ private fun YouTubeMpvPlayback(playback: YouTubePlayback, streams: YouTubeStream
     LaunchedEffect(controller.ended) { if (!playback.isLive && controller.ended) onCompleted() }
     val sponsorSkipEnabled = LocalPlaybackMetadata.current?.sponsorSkipEnabled == true
     fun commitSeek(targetMs: Long) {
+        if (!seekIsCurrent()) return
         val edge = liveDvrWindow
         // mpv's live timeline ends at the current window edge, not the end of the video.
         val decoderTarget = if (playback.isLive && edge?.targetsLiveEdge(targetMs) == true)
@@ -1767,10 +1748,11 @@ private fun YouTubeMpvPlayback(playback: YouTubePlayback, streams: YouTubeStream
         controller.seekTo(decoderTarget)
     }
     fun seek(delta: Long) {
+        if (!seekIsCurrent()) return
         if (playback.isLive && liveDvrWindow == null) return
         BackgroundPlaybackSession.userSeek()
         osd.interact()
-        userSeeked = true
+        resume.userSeek()
         val window = liveDvrWindow
         val limit = if (playback.isLive) window?.windowEndMs ?: return
             else snapshot.durationMs.takeIf { it > 0L } ?: playback.durationMs
@@ -1812,13 +1794,10 @@ private fun YouTubeMpvPlayback(playback: YouTubePlayback, streams: YouTubeStream
         seek((window.windowEndMs - (seekCoordinator.pendingTarget ?: displayedPosition)).coerceAtLeast(0L))
     }
     YouTubeSeekCommit(seekCommitVersion, seekCoordinator, ::commitSeek)
-    LaunchedEffect(playback.resumeMs, playback.resumeResolved) {
-        if (!playback.resumeResolved) return@LaunchedEffect
-        val target = lateYouTubeResumeTarget(playback.isLive, startPositionMs, playback.resumeMs, userSeeked,
-            resumeAlreadyApplied = lateResumeApplied)
-        // Zero is a resolved target too: later metadata must not deduct/apply the resume again.
-        lateResumeApplied = true
-        if (target == null) return@LaunchedEffect
+    LaunchedEffect(controller, resume, playback.resumeMs, playback.resumeResolved) {
+        if (!seekIsCurrent()) return@LaunchedEffect
+        val target = resume.resolve(playback.isLive, playback.resumeMs, playback.resumeResolved,
+            BackgroundPlaybackSession.externalSeekVersion) ?: return@LaunchedEffect
         displayedPosition = seekCoordinator.requestAbsolute(target)
         seekCoordinator.consumeCommit()?.let(controller::seekTo)
     }
@@ -1837,7 +1816,8 @@ private fun YouTubeMpvPlayback(playback: YouTubePlayback, streams: YouTubeStream
     // One remote handling for the engine and, while the focus is in the OSD or panel above it, the host.
     val chapterNavigation = com.ambient.tv.ui.player.LocalPlaybackNavigation.current
     val itemControls = LocalPlaybackItemControls.current
-    val osdKeys: (androidx.compose.ui.input.key.KeyEvent) -> Boolean = { e ->
+    val osdKeys: (androidx.compose.ui.input.key.KeyEvent) -> Boolean = osdKeys@{ e ->
+        if (!seekIsCurrent()) return@osdKeys false
         // Shared remote handling (PlayerOsdKeys); only the actions below are MPV's own.
         val seekRelative: (Long) -> Unit = { seek(it) }
         val seekWithBar: (Long) -> Unit = { seekInMode(it) }
@@ -2251,6 +2231,20 @@ private fun adjustedYouTubeSeekTarget(
         backward = backward)
 } else requestedMs
 
+/** Retained OSD callbacks must not seek the retired decoder during a Next Up hand-over. */
+@Composable
+private fun rememberYouTubeSeekOwner(owner: Any, videoId: String): () -> Boolean {
+    val generation = remember(owner, videoId) { BackgroundPlaybackSession.snapshot.value.generation }
+    return {
+        val session = BackgroundPlaybackSession.snapshot.value
+        val active = BackgroundPlaybackSession.activeHandle()
+        com.ambient.tv.ui.player.playbackSeekOwnerIsCurrent(
+            owner, generation, (active as? Media3PlaybackHandle)?.player ?: active,
+            session.generation, session.replacingSource,
+        )
+    }
+}
+
 /**
  * A service-driven SponsorBlock seek supersedes any pending manual target. Without this
  * notification the OSD can stay on a time inside the skipped range while the decoder plays
@@ -2280,7 +2274,7 @@ private fun YouTubeSeekCommit(
     commit: (Long) -> Unit,
 ) {
     val commitState = rememberUpdatedState(commit)
-    LaunchedEffect(generation) {
+    LaunchedEffect(coordinator, generation) {
         if (generation == 0) return@LaunchedEffect
         delay(coordinator.debounceMs)
         // This effect is the debounce: a newer request restarted it. Do not let clock rounding

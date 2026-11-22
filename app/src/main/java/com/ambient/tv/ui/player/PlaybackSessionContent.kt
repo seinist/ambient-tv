@@ -102,6 +102,9 @@ fun PlaybackSessionContent(
     val observedSnapshot by BackgroundPlaybackSession.snapshot.collectAsState()
     // acquire() updates synchronously during composition; collectAsState may still hold the old item.
     val snapshot = remember(observedSnapshot, BackgroundPlaybackSession.activeHandle()) { BackgroundPlaybackSession.snapshot.value }
+    // A decoder may still report EOF/the old end position while a seek is being applied.
+    // Timers armed before that user request must not stop or advance the current title.
+    val seekVersion = BackgroundPlaybackSession.externalSeekVersion
     var acquired by remember(metadata.route, acquisitionKey) { mutableStateOf(false) }
     var dismissedKey by remember(metadata.route) { mutableStateOf<String?>(null) }
     var handledKey by remember(metadata.route) { mutableStateOf<String?>(null) }
@@ -278,13 +281,14 @@ fun PlaybackSessionContent(
     // This effect is keyed by the title/session and terminal eligibility, not position ticks
     // or the sometimes-flapping native ended flag. A real seek back, dismissal or source
     // handoff cancels or invalidates the deadline.
-    LaunchedEffect(metadata.route, snapshot.generation, candidateKey, confirmationNeedsTimeout) {
+    LaunchedEffect(metadata.route, snapshot.generation, candidateKey, confirmationNeedsTimeout, seekVersion) {
         if (!confirmationNeedsTimeout) return@LaunchedEffect
         if (!atEnd) kotlinx.coroutines.delay(NEXT_UP_EOF_GRACE_MS)
         kotlinx.coroutines.delay(NEXT_UP_CONFIRMATION_TIMEOUT_MS)
         val current = BackgroundPlaybackSession.snapshot.value
         if (current.metadata?.route != metadata.route ||
             current.generation != snapshot.generation || current.replacingSource ||
+            BackgroundPlaybackSession.externalSeekVersion != seekVersion ||
             current.metadata.mediaId != metadata.mediaId ||
             handledKey == candidateKey || dismissedKey == candidateKey ||
             com.ambient.tv.companion.CompanionQueuePlayback.pending) return@LaunchedEffect
@@ -335,7 +339,7 @@ fun PlaybackSessionContent(
     // "0" forever. Once the countdown has reached 0, hand over after a short grace for a real EOF.
     val countdownExpired = !atEnd && !creditsDue && autoAdvanceDue &&
         creditsRemainingMs == null && timing.remainingMs <= 0L && snapshot.wantsToPlay
-    LaunchedEffect(acquired, atEnd, creditsDue, countdownExpired, terminalSponsorHandoff, candidateKey, showNextUp, nextUpDue, autoAdvanceDue, config.autoplay, stillWatching, queuePending, changingItem, metadata.successorsLoading, snapshot.generation) {
+    LaunchedEffect(acquired, atEnd, creditsDue, countdownExpired, terminalSponsorHandoff, candidateKey, showNextUp, nextUpDue, autoAdvanceDue, config.autoplay, stillWatching, queuePending, changingItem, metadata.successorsLoading, snapshot.generation, seekVersion) {
         if (terminalSponsorHandoff) {
             // This is the same guarded, once-per-candidate transition as ordinary EOF.
             // It runs only with an actual next item and only for an auto-skipped EOF range.
@@ -347,9 +351,13 @@ fun PlaybackSessionContent(
             val current = BackgroundPlaybackSession.snapshot.value
             if (!acquired || !ownsSnapshot || changingItem || metadata.successorsLoading ||
                 current.replacingSource || current.generation != snapshot.generation ||
+                BackgroundPlaybackSession.externalSeekVersion != seekVersion ||
                 current.metadata?.route != metadata.route ||
                 com.ambient.tv.companion.CompanionQueuePlayback.pending ||
                 (handledKey != null && handledKey == candidateKey)) return@LaunchedEffect
+            // Re-read the clock and play intent: their latest tick can precede recomposition.
+            if (!current.wantsToPlay || current.status.error != null ||
+                current.status.positionMs + metadata.timelineOffsetMs < durationMs) return@LaunchedEffect
             // Only the autoplay hand-over: never stop playback before a real end here.
             playNext(automatic = true)
             return@LaunchedEffect

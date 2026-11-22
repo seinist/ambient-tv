@@ -6,6 +6,7 @@ import androidx.compose.runtime.Stable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
@@ -23,6 +24,8 @@ class PlaybackSeekState internal constructor(
     private val coordinator: PlaybackSeekCoordinator,
     initialPositionMs: Long,
     private val onSeekRequested: () -> Unit = {},
+    private val isCurrent: () -> Boolean = { true },
+    private val readEnginePositionMs: (() -> Long)? = null,
     private val commit: (Long) -> Unit,
 ) {
     /** What the OSD shows: the requested target while a seek is in flight, else the engine. */
@@ -32,37 +35,64 @@ class PlaybackSeekState internal constructor(
     val chapterPositionMs: Long get() = coordinator.chapterPositionMs(positionMs)
     internal var requestVersion by mutableIntStateOf(0)
         private set
+    /** Hidden chrome must still reconcile a committed seek before suspending its clock. */
+    internal var awaitingSeekAck by mutableStateOf(false)
+        private set
 
-    fun seekBy(deltaMs: Long, durationMs: Long) =
+    internal val isActive: Boolean get() = isCurrent()
+
+    fun seekBy(deltaMs: Long, durationMs: Long) {
+        if (!isActive) return
+        refreshForInput()
         request(coordinator.requestRelative(deltaMs, positionMs, durationMs))
+    }
 
-    fun seekTo(targetMs: Long) = request(coordinator.requestAbsolute(targetMs))
+    fun seekTo(targetMs: Long) {
+        if (!isActive) return
+        refreshForInput()
+        request(coordinator.requestAbsolute(targetMs))
+    }
+
+    /** Hidden OSD polling may be suspended; input still starts from the current decoder clock. */
+    internal fun refreshForInput(): Long {
+        if (isActive) readEnginePositionMs?.let { sync(it()) }
+        return positionMs
+    }
 
     private fun request(target: Long) {
         onSeekRequested()
         positionMs = target
+        awaitingSeekAck = coordinator.pendingTarget != null
         coordinator.consumeCommit()?.let(commit)
         requestVersion++
     }
 
-    internal val pendingTargetMs: Long? get() = coordinator.pendingTarget
+    internal val pendingTargetMs: Long? get() = coordinator.pendingTarget.takeIf { isActive }
 
     /** A session/remote seek supersedes the local target without sending it to the decoder again. */
     internal fun followExternalSeek(targetMs: Long) {
+        if (!isActive) return
         coordinator.followExternalSeek(targetMs)
         positionMs = targetMs.coerceAtLeast(0L)
+        awaitingSeekAck = coordinator.pendingTarget != null
     }
 
     internal fun flushPending() {
+        if (!isActive) return
         coordinator.consumeCommit(force = true)?.let(commit)
     }
 
     internal fun commitSettled() {
-        coordinator.consumeCommit()?.let(commit)
+        if (!isActive) return
+        // The effect already waited for the last request. Checking a second clock here can
+        // miss its boundary by a millisecond and silently drop the burst's final commit.
+        coordinator.consumeCommit(force = true)?.let(commit)
     }
 
     internal fun sync(enginePositionMs: Long) {
+        if (!isActive) return
         positionMs = coordinator.displayedPosition(enginePositionMs)
+        awaitingSeekAck = coordinator.pendingTarget != null
     }
 
     internal val debounceMs: Long get() = coordinator.debounceMs
@@ -78,36 +108,51 @@ fun rememberPlaybackSeekState(
     enginePositionMs: () -> Long,
     commit: (Long) -> Unit,
     pollIntervalMs: Long = 250L,
-    /** When false, timeline position is not polled (used with PerformanceProfile OSD gate). */
+    /** Hidden chrome stops polling once any pending seek has been reconciled. */
     pollEnabled: Boolean = true,
     /** Live/Timeshift keeps its own seek owner; recording-only states must not take it over. */
     registerWithSession: Boolean = true,
 ): PlaybackSeekState {
-    val currentEngine by rememberUpdatedState(enginePositionMs)
-    val currentCommit by rememberUpdatedState(commit)
-    val state = remember(key) {
-        PlaybackSeekState(PlaybackSeekCoordinator(), currentEngine(),
-            commit = { currentCommit(it) }, onSeekRequested = BackgroundPlaybackSession::userSeek)
-    }
-    androidx.compose.runtime.DisposableEffect(state, registerWithSession) {
-        val owner = BackgroundPlaybackSession.activeHandle().takeIf { registerWithSession }
-        BackgroundPlaybackSession.registerSeekState(owner, state)
-        onDispose {
-            if (owner != null && BackgroundPlaybackSession.owns(owner)) state.flushPending()
-            BackgroundPlaybackSession.unregisterSeekState(state)
+    val owner = BackgroundPlaybackSession.activeHandle()
+    val generation = BackgroundPlaybackSession.snapshot.value.generation
+    // Gapless playback reuses one decoder across items. Scope both state and updated callbacks
+    // to its session generation, so disposal cannot flush an old target through a new callback.
+    return androidx.compose.runtime.key(key, owner, generation) {
+        val currentEngine by rememberUpdatedState(enginePositionMs)
+        val currentCommit by rememberUpdatedState(commit)
+        val state = remember {
+            PlaybackSeekState(PlaybackSeekCoordinator(), currentEngine(),
+                onSeekRequested = BackgroundPlaybackSession::userSeek,
+                isCurrent = {
+                    val current = BackgroundPlaybackSession.snapshot.value
+                    playbackSeekOwnerIsCurrent(owner, generation, BackgroundPlaybackSession.activeHandle(),
+                        current.generation, current.replacingSource)
+                },
+                readEnginePositionMs = { currentEngine() },
+                commit = { currentCommit(it) })
         }
-    }
-    LaunchedEffect(state, pollEnabled, pollIntervalMs) {
-        if (!pollEnabled) return@LaunchedEffect
-        while (true) {
-            state.sync(currentEngine())
-            delay(pollIntervalMs)
+        androidx.compose.runtime.DisposableEffect(state, registerWithSession) {
+            if (registerWithSession) BackgroundPlaybackSession.registerSeekState(owner, state)
+            onDispose {
+                // Minimize keeps the owner and flushes; a replaced item/decoder is already inert.
+                if (registerWithSession) state.flushPending()
+                BackgroundPlaybackSession.unregisterSeekState(state)
+            }
         }
+        val shouldPoll = pollEnabled || state.awaitingSeekAck
+        LaunchedEffect(state, shouldPoll, pollIntervalMs) {
+            if (!shouldPoll) return@LaunchedEffect
+            while (true) {
+                if (!state.isActive) return@LaunchedEffect
+                state.sync(currentEngine())
+                delay(pollIntervalMs)
+            }
+        }
+        LaunchedEffect(state, state.requestVersion) {
+            if (state.requestVersion == 0) return@LaunchedEffect
+            delay(state.debounceMs)
+            state.commitSettled()
+        }
+        state
     }
-    LaunchedEffect(state, state.requestVersion) {
-        if (state.requestVersion == 0) return@LaunchedEffect
-        delay(state.debounceMs)
-        state.commitSettled()
-    }
-    return state
 }

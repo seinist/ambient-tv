@@ -52,7 +52,7 @@ internal fun progressiveOsdSeekSteps(
     progressive = osd.progressiveSeek,
     currentPositionMs = currentPositionMs,
     durationMs = durationMs,
-    onProgressiveStart = osd::showSeekFeedback,
+    onProgressiveStart = osd::startUserSeekFeedback,
 )
 
 /** The player the keys act on. Each engine maps these to its own controller. */
