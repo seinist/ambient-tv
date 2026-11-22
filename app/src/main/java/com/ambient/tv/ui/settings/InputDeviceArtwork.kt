@@ -24,6 +24,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
@@ -64,6 +65,15 @@ private fun artworkKeyLabel(entry: InputArtworkKey): String = when (entry.id) {
     "left" -> stringResource(R.string.input_artwork_left)
     "right" -> stringResource(R.string.input_artwork_right)
     "Space" -> stringResource(R.string.input_artwork_space)
+    "power" -> stringResource(R.string.input_artwork_power)
+    "menu" -> stringResource(R.string.input_artwork_menu)
+    "home" -> stringResource(R.string.input_artwork_home)
+    "back" -> stringResource(R.string.input_artwork_back)
+    "play" -> stringResource(R.string.input_artwork_play_pause)
+    "red" -> stringResource(R.string.input_artwork_red)
+    "green" -> stringResource(R.string.input_artwork_green)
+    "yellow" -> stringResource(R.string.input_artwork_yellow)
+    "blue" -> stringResource(R.string.input_artwork_blue)
     else -> entry.label
 }
 
@@ -189,9 +199,21 @@ private fun ArtworkKeyMark(
             } else Modifier.clearAndSetSemantics { })
         .animatedFocusBorder(focused = focused, shape = shape, focusedColor = colors.primary, width = 2.dp),
         contentAlignment = Alignment.Center) {
-        Text(display, textAlign = TextAlign.Center, color = if (active) colors.primary else colors.onSurface,
-            style = MaterialTheme.typography.labelSmall.copy(fontSize = textSize, lineHeight = textSize),
-            maxLines = 1, softWrap = false)
+        val foreground = if (active) colors.primary else colors.onSurface
+        if (entry.id == "power") Canvas(Modifier.fillMaxSize()) {
+            // U+23FB is missing from some Android fonts. Draw the standard power mark as
+            // geometry so the remote never shows a missing-glyph box on those devices.
+            val side = size.minDimension
+            val stroke = side * .075f
+            drawArc(foreground, -45f, 270f, false,
+                topLeft = Offset(size.width * .25f, size.height * .30f),
+                size = Size(size.width * .50f, size.height * .50f),
+                style = Stroke(stroke, cap = StrokeCap.Round))
+            drawLine(foreground, Offset(size.width * .5f, size.height * .20f),
+                Offset(size.width * .5f, size.height * .52f), strokeWidth = stroke, cap = StrokeCap.Round)
+        } else Text(display, textAlign = TextAlign.Center, color = foreground,
+                style = MaterialTheme.typography.labelSmall.copy(fontSize = textSize, lineHeight = textSize),
+                maxLines = 1, softWrap = false)
     }
 }
 

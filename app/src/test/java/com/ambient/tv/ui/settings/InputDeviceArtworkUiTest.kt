@@ -14,6 +14,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.InputMode
+import androidx.compose.ui.input.InputModeManager
+import androidx.compose.ui.platform.LocalInputModeManager
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.test.*
@@ -40,9 +43,11 @@ import java.io.File
 class InputDeviceArtworkUiTest {
     @get:Rule val rule = createAndroidComposeRule<ComponentActivity>()
     private var selected: String? by mutableStateOf(null)
+    private lateinit var inputModeManager: InputModeManager
 
     private fun render(artwork: InputArtwork, handheld: Boolean) {
         rule.setContent {
+            inputModeManager = LocalInputModeManager.current
             CompositionLocalProvider(LocalHandheldUi provides handheld) {
                 AmbientTvTheme {
                     Box(Modifier.width(320.dp).background(androidx.tv.material3.MaterialTheme.colorScheme.background)
@@ -83,10 +88,15 @@ class InputDeviceArtworkUiTest {
 
     @Test fun tvKeepsDirectFocusableButtonSelection() {
         render(attachedArtwork("controller", controllerModel = ControllerModel.XBOX_ONE), handheld = false)
+        // The narrow preview uses a phone-sized Android test window. Changing the app's
+        // presentation does not change Android's Touch mode; a TV/D-pad uses Keyboard mode.
+        rule.runOnIdle { assertTrue(inputModeManager.requestInputMode(InputMode.Keyboard)) }
+        rule.waitForIdle()
+        rule.runOnIdle { assertEquals(InputMode.Keyboard, inputModeManager.inputMode) }
         rule.onNodeWithTag("input-artwork-key-strip").assertDoesNotExist()
         val key = rule.onNodeWithTag("input-artwork-key-a")
         key.assertHasClickAction()
-        key.performSemanticsAction(SemanticsActions.RequestFocus) { it() }
+        key.performSemanticsAction(SemanticsActions.RequestFocus) { assertTrue(it()) }
         key.assertIsFocused()
         key.performKeyInput { pressKey(Key.Enter) }
         rule.runOnIdle { assertEquals("a", selected) }
