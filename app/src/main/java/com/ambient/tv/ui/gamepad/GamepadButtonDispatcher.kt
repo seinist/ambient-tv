@@ -12,6 +12,12 @@ interface GamepadHost {
     fun perform(action: KeyAction)
     fun volume(command: GamepadVolumeCommand)
     val playerForeground: Boolean
+    /** A game owns its own menu context, independently of the background-media player layer. */
+    val gameInputMode: GameInputMode? get() = null
+    /** Changes on session/mode transitions, invalidating held keys and deferred actions. */
+    val gameInputGeneration: Long get() = 0L
+    /** Activity and game dialogs share physical hold quarantine across their different roots. */
+    val gameInputTransitions: GameInputTransitions? get() = null
     /** While Settings records a remote key only keys are sent, no actions. */
     val recordingKey: Boolean
     /** Same clock as [KeyEvent.getEventTime] (uptime milliseconds). */
@@ -37,6 +43,8 @@ class GamepadButtonDispatcher(
         val deviceId: Int,
         val short: GamepadCommand,
         val long: GamepadCommand,
+        val generation: Long,
+        val mode: GameInputMode?,
     ) {
         var emittedCode: Int? = null
         var emittedDownTime = 0L
@@ -65,17 +73,25 @@ class GamepadButtonDispatcher(
         fun allowed(command: GamepadCommand) =
             if (host.recordingKey && command !is GamepadCommand.Key) GamepadCommand.None else command
         val descriptor = InputDevice.getDevice(deviceId)?.descriptor
+        val mode = host.gameInputMode
+        fun resolve(long: Boolean): GamepadCommand = when {
+            mode.isGameMenu -> gameMenuCommand(button, long, cfg.confirmOnB)
+            mode != null -> GamepadCommand.None
+            else -> cfg.resolve(button, long, player, descriptor)
+        }
         val press = Press(
             deviceId = deviceId,
-            short = allowed(cfg.resolve(button, long = false, player = player, deviceDescriptor = descriptor)),
-            long = allowed(cfg.resolve(button, long = true, player = player, deviceDescriptor = descriptor)),
+            short = allowed(resolve(long = false)),
+            long = allowed(resolve(long = true)),
+            generation = host.gameInputGeneration,
+            mode = mode,
         )
         presses[identity] = press
         if (press.long == GamepadCommand.None) {
             start(press, press.short, time)
         } else {
             press.cancel = host.schedule(KEY_BINDING_LONG_PRESS_MS) {
-                if (presses[identity] !== press) return@schedule
+                if (presses[identity] !== press || !current(press)) return@schedule
                 press.longFired = true
                 start(press, press.long, host.now())
             }
@@ -86,7 +102,7 @@ class GamepadButtonDispatcher(
         val press = presses.remove(identity(deviceId, button)) ?: return
         press.cancel?.invoke()
         press.cancel = null
-        if (press.emittedCode == null && !press.longFired && !canceled && press.long != GamepadCommand.None) {
+        if (current(press) && press.emittedCode == null && !press.longFired && !canceled && press.long != GamepadCommand.None) {
             // Released before the long press: the short command, as one tap.
             start(press, press.short, host.now(), repeat = false)
         }
@@ -110,6 +126,7 @@ class GamepadButtonDispatcher(
     }
 
     private fun start(press: Press, command: GamepadCommand, time: Long, repeat: Boolean = true) {
+        if (!current(press)) return
         when (command) {
             is GamepadCommand.Key -> {
                 val code = command.command.keyCode
@@ -117,7 +134,7 @@ class GamepadButtonDispatcher(
                 press.emittedDownTime = time
                 press.repeatCount = 0
                 host.emitKey(gamepadKeyEvent(time, time, KeyEvent.ACTION_DOWN, code, 0, press.deviceId))
-                if (repeat) scheduleRepeat(press, KEY_REPEAT_TIMEOUT_MS)
+                if (repeat && current(press) && press in presses.values) scheduleRepeat(press, KEY_REPEAT_TIMEOUT_MS)
             }
             is GamepadCommand.Action -> host.perform(command.action)
             is GamepadCommand.Volume -> host.volume(command.command)
@@ -129,6 +146,10 @@ class GamepadButtonDispatcher(
         press.cancel = host.schedule(delayMs) {
             val code = press.emittedCode ?: return@schedule
             if (press !in presses.values) return@schedule
+            if (!current(press)) {
+                releaseWhere { it === press }
+                return@schedule
+            }
             press.repeatCount++
             host.emitKey(gamepadKeyEvent(press.emittedDownTime, host.now(), KeyEvent.ACTION_DOWN, code,
                 press.repeatCount, press.deviceId))
@@ -142,6 +163,9 @@ class GamepadButtonDispatcher(
         host.emitKey(gamepadKeyEvent(press.emittedDownTime, host.now(), KeyEvent.ACTION_UP, code, 0,
             press.deviceId, canceled))
     }
+
+    private fun current(press: Press) =
+        press.generation == host.gameInputGeneration && press.mode == host.gameInputMode
 
     private fun identity(deviceId: Int, button: GamepadButton): Long =
         (deviceId.toLong() shl 32) xor (button.keyCode.toLong() and 0xffffffffL)

@@ -1,0 +1,5 @@
+<resources>
+    <string name="companion_gamepad_osd_title">Spielemenü auf dem TV</string>
+    <string name="companion_gamepad_busy">Der TV verarbeitet das Spiel.</string>
+    <string name="companion_gamepad_background">Öffne Ambient TV auf dem TV, um fortzufahren.</string>
+</resources>

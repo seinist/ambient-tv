@@ -174,7 +174,7 @@ fun UnifiedBackendPlayerPanel(
     }
     when (panel) {
         // The details dialog is drawn by the player panel host, not as a settings page.
-        UnifiedPlayerPanel.NONE, UnifiedPlayerPanel.DETAILS -> Unit
+        UnifiedPlayerPanel.NONE, UnifiedPlayerPanel.DETAILS, UnifiedPlayerPanel.GAME -> Unit
         UnifiedPlayerPanel.SETTINGS -> UnifiedPlayerSidePanel(
             title = stringResource(R.string.player_playback_settings),
             modifier = modifier,

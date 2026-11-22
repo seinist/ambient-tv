@@ -311,8 +311,8 @@ object GamepadInput {
     val lastButton = mutableStateOf<GamepadButton?>(null)
 
     /**
-     * A game in front takes controller input before any translation. Returning false lets the
-     * event take its normal way (e.g. while the game's OSD is open).
+     * A running game takes input before translation. [GameInputRouting] keeps stale raw sinks
+     * inactive in menus, dialogs and blocked states; unmapped game keys retain their normal path.
      */
     var rawSink: ((android.view.InputEvent) -> Boolean)? = null
 

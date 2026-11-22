@@ -36,7 +36,7 @@ internal class CompanionLiveInputQueue(
     private var remoteMotion: CompanionFrame? = null
 
     fun offerGamepad(frame: CompanionFrame, critical: Boolean): Boolean {
-        require(frame.type in setOf("gamepad_claim", "gamepad_input", "gamepad_menu", "gamepad_release"))
+        require(frame.type in setOf("gamepad_claim", "gamepad_input", "gamepad_menu", "gamepad_command", "gamepad_release"))
         if (critical || frame.type != "gamepad_input") {
             synchronized(this) {
                 // Relative mouse deltas are movements, not replaceable absolute positions:

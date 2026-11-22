@@ -23,6 +23,8 @@ class GamepadInputTest {
         val performed = mutableListOf<KeyAction>()
         val volumes = mutableListOf<GamepadVolumeCommand>()
         override var playerForeground = false
+        override var gameInputMode: GameInputMode? = null
+        override var gameInputGeneration = 0L
         override var recordingKey = false
         var time = 1_000L
         private val tasks = mutableListOf<Task>()
@@ -235,5 +237,95 @@ class GamepadInputTest {
         controller.handleMotion(stick(values = mapOf(MotionEvent.AXIS_X to -1f)))
         controller.deviceRemoved(7)
         assertEquals(2, host.sent.count { it.action == KeyEvent.ACTION_UP && it.canceled })
+    }
+
+    @Test fun aGameMenuUsesSafeNavigationInsteadOfGlobalControllerShortcuts() {
+        host.gameInputMode = GameInputMode.MENU
+        host.gameInputGeneration++
+        config = config.withCommand(GamepadContext.MENUS, GamepadSlot(GamepadButton.A, false),
+            GamepadCommand.Action(KeyAction.START_PAGE))
+        tap(KeyEvent.KEYCODE_BUTTON_MODE)
+        tap(KeyEvent.KEYCODE_BUTTON_Y)
+        tap(KeyEvent.KEYCODE_BUTTON_START, holdMs = 800)
+        tap(KeyEvent.KEYCODE_BUTTON_A)
+        assertTrue(host.performed.isEmpty())
+        assertEquals(1, host.downs(KeyEvent.KEYCODE_DPAD_CENTER))
+        assertTrue(host.downs(KeyEvent.KEYCODE_MENU) >= 2)
+        config = config.copy(confirmOnB = true)
+        tap(KeyEvent.KEYCODE_BUTTON_B)
+        assertEquals(2, host.downs(KeyEvent.KEYCODE_DPAD_CENTER))
+    }
+
+    @Test fun menuContextIgnoresAStaleRawSinkAndReleasesCannotReachTheResumedGame() {
+        val raw = mutableListOf<Int>()
+        sink = { raw += (it as? KeyEvent)?.keyCode ?: -1; true }
+        host.gameInputMode = GameInputMode.MENU
+        host.gameInputGeneration++
+        controller.handleKey(key(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_BUTTON_A))
+        assertTrue(raw.isEmpty())
+        assertEquals(1, host.downs(KeyEvent.KEYCODE_DPAD_CENTER))
+        host.gameInputMode = GameInputMode.RUNNING
+        host.gameInputGeneration++
+        controller.notifyGameInputChanged()
+        host.advance(1_000)
+        controller.handleKey(key(KeyEvent.ACTION_UP, KeyEvent.KEYCODE_BUTTON_A))
+        assertTrue(raw.isEmpty())
+        assertEquals(1, host.downs(KeyEvent.KEYCODE_DPAD_CENTER))
+        tap(KeyEvent.KEYCODE_BUTTON_A)
+        assertEquals(listOf(KeyEvent.KEYCODE_BUTTON_A, KeyEvent.KEYCODE_BUTTON_A), raw)
+    }
+
+    @Test fun openingTheGameCancelsAnOldGlobalLongPress() {
+        controller.handleKey(key(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_BUTTON_START))
+        host.gameInputMode = GameInputMode.MENU
+        host.gameInputGeneration++
+        controller.notifyGameInputChanged()
+        host.advance(800)
+        controller.handleKey(key(KeyEvent.ACTION_UP, KeyEvent.KEYCODE_BUTTON_START))
+        assertTrue(host.performed.isEmpty())
+        assertEquals(0, host.downs(KeyEvent.KEYCODE_MENU))
+    }
+
+    @Test fun aHeldStickCannotLeakAcrossGameMenuTransitions() {
+        host.gameInputMode = GameInputMode.MENU
+        host.gameInputGeneration++
+        controller.handleMotion(stick(values = mapOf(MotionEvent.AXIS_X to 0.8f)))
+        assertEquals(1, host.downs(KeyEvent.KEYCODE_DPAD_RIGHT))
+        host.gameInputMode = GameInputMode.RUNNING
+        host.gameInputGeneration++
+        var rawMoves = 0
+        sink = { if (it is MotionEvent) rawMoves++; true }
+        controller.notifyGameInputChanged()
+        host.advance(2_000)
+        controller.handleMotion(stick(values = mapOf(MotionEvent.AXIS_X to 0.8f)))
+        controller.handleMotion(stick(values = emptyMap()))
+        assertEquals(0, rawMoves)
+        assertEquals(1, host.downs(KeyEvent.KEYCODE_DPAD_RIGHT))
+        controller.handleMotion(stick(values = mapOf(MotionEvent.AXIS_X to 0.8f)))
+        assertEquals(1, rawMoves)
+    }
+
+    @Test fun scheduledMenuRepeatsCheckTheirContextEvenWithoutANewHardwareEvent() {
+        host.gameInputMode = GameInputMode.MENU
+        host.gameInputGeneration++
+        controller.handleKey(key(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_BUTTON_L1))
+        host.gameInputMode = GameInputMode.BLOCKED
+        host.gameInputGeneration++
+        host.advance(2_000)
+        assertEquals(1, host.downs(KeyEvent.KEYCODE_PAGE_UP))
+        assertTrue(host.sent.last().canceled)
+    }
+
+    @Test fun blockedGamesKeepSystemKeysAndBackButCannotDriveMenuActions() {
+        host.gameInputMode = GameInputMode.BLOCKED
+        host.gameInputGeneration++
+        assertTrue(controller.handleKey(key(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_BUTTON_A)))
+        assertTrue(controller.handleKey(key(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_DPAD_DOWN)))
+        assertTrue(controller.handleMotion(stick(values = mapOf(MotionEvent.AXIS_X to 0.8f))))
+        assertFalse(controller.handleKey(key(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_HOME)))
+        assertFalse(controller.handleKey(key(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_VOLUME_UP)))
+        assertFalse(controller.handleKey(key(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_BACK)))
+        assertTrue(host.sent.isEmpty())
+        assertTrue(host.performed.isEmpty())
     }
 }

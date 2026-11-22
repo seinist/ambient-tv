@@ -18,6 +18,7 @@ import androidx.compose.material.icons.filled.ClosedCaption
 import androidx.compose.material.icons.filled.Code
 import androidx.compose.material.icons.filled.EmojiEvents
 import androidx.compose.material.icons.filled.FastForward
+import androidx.compose.material.icons.filled.FastRewind
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.FiberManualRecord
 import androidx.compose.material.icons.filled.FullscreenExit
@@ -102,6 +103,7 @@ internal val OsdButton.icon: ImageVector get() = when (this) {
     OsdButton.GAME_STATES -> Icons.Filled.Bookmarks
     OsdButton.GAME_RESET -> Icons.Filled.RestartAlt
     OsdButton.GAME_FAST_FORWARD -> Icons.Filled.FastForward
+    OsdButton.GAME_REWIND -> Icons.Filled.FastRewind
     OsdButton.GAME_PICTURE -> Icons.Filled.Wallpaper
     OsdButton.GAME_CORE -> Icons.Filled.Tune
     OsdButton.GAME_CONTROLS -> Icons.Filled.SportsEsports

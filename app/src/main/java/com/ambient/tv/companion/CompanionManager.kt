@@ -710,15 +710,61 @@ class CompanionManager @Inject constructor(@ApplicationContext private val conte
         if (!mutable.value.gamepadPanel || !mutable.value.online ||
             (mutable.value.remote?.gamepadPort ?: -1) !in 0 until com.ambient.tv.ui.gamepad.retro.RetroPorts.COUNT) return false
         state.validate()
-        val critical = companionGamepadCriticalEdge(lastQueuedGamepadState, state)
+        val info = mutable.value.remote?.gamepadInfo ?: return false
+        val stamped = if (info.interaction != null) state.copy(sessionId = info.sessionId,
+            contextRevision = info.contextRevision) else state
+        val critical = companionGamepadCriticalEdge(lastQueuedGamepadState, stamped)
         val accepted = liveInputs.offerGamepad(CompanionFrame(type = "gamepad_input",
-            gamepadState = state, gamepadQueuedAtMs = SystemClock.elapsedRealtime()), critical)
-        if (accepted) lastQueuedGamepadState = state
+            gamepadState = stamped, gamepadQueuedAtMs = SystemClock.elapsedRealtime()), critical)
+        if (accepted) lastQueuedGamepadState = stamped
         return accepted
     }
-    fun gamepadMenu(): Boolean = if (mutable.value.gamepadPanel && mutable.value.online &&
-        (mutable.value.remote?.gamepadPort ?: -1) in 0 until com.ambient.tv.ui.gamepad.retro.RetroPorts.COUNT)
-        liveInputs.offerGamepad(CompanionFrame(type = "gamepad_menu"), critical = true) else false
+    fun gamepadMenu(expected: CompanionGamepadInfo? = mutable.value.remote?.gamepadInfo): Boolean {
+        val info = expected ?: return false
+        val current = mutable.value
+        if (!current.gamepadPanel || !current.online ||
+            (current.remote?.gamepadPort ?: -1) !in 0 until com.ambient.tv.ui.gamepad.retro.RetroPorts.COUNT ||
+            current.remote?.gamepadInfo?.sessionId != info.sessionId) return false
+        return if (info.interaction == null) {
+            liveInputs.offerGamepad(CompanionFrame(type = "gamepad_menu"), critical = true)
+        } else if (info.acceptsGameplay) gamepadCommand("menu", expected = info)
+        else if (info.acceptsResume) gamepadCommand("resume", expected = info) else false
+    }
+
+    /** Commands use the context actually displayed/held, never a newly ACKed replacement. */
+    fun gamepadNavigate(action: String, expected: CompanionGamepadInfo? = mutable.value.remote?.gamepadInfo): Boolean =
+        action in COMPANION_GAMEPAD_NAVIGATION && gamepadCommand(action, expected = expected)
+
+    fun gamepadRewind(pressed: Boolean, expected: CompanionGamepadInfo? = mutable.value.remote?.gamepadInfo): Boolean =
+        gamepadCommand("rewind", pressed, expected)
+
+    private fun gamepadCommand(action: String, pressed: Boolean = false,
+                               expected: CompanionGamepadInfo? = mutable.value.remote?.gamepadInfo): Boolean {
+        val info = expected ?: return false
+        return sendGamepadCommand(CompanionGamepadCommand(info.sessionId, info.contextRevision, action, pressed))
+    }
+
+    internal fun sendGamepadCommand(command: CompanionGamepadCommand): Boolean {
+        command.validate()
+        val current = mutable.value
+        val info = current.remote?.gamepadInfo ?: return false
+        val port = current.remote.gamepadPort
+        if (!current.gamepadPanel || !current.online || port !in 0..3 || info.interaction == null ||
+            command.sessionId != info.sessionId) return false
+        val release = command.action in setOf("ok_up", "ok_cancel") || command.action == "rewind" && !command.pressed
+        if (!release && command.contextRevision != info.contextRevision) return false
+        val allowed = when (command.action) {
+            in COMPANION_GAMEPAD_NAVIGATION, "ok_down", "ok_renew" -> info.acceptsNavigation
+            "resume" -> info.acceptsResume
+            "ok_up", "ok_cancel" -> true
+            "menu" -> info.acceptsGameplay
+            "rewind" -> !command.pressed || (port == 0 && info.acceptsGameplay && info.rewindAvailable)
+            else -> false
+        }
+        if (!allowed) return false
+        return liveInputs.offerGamepad(CompanionFrame(type = "gamepad_command", gamepadCommand = command,
+            gamepadQueuedAtMs = SystemClock.elapsedRealtime()), critical = true)
+    }
 
     fun hideGamepad() {
         if (!mutable.value.gamepadPanel) return
@@ -1517,7 +1563,11 @@ class CompanionManager @Inject constructor(@ApplicationContext private val conte
                         }
                         var error = ""
                         try {
-                            if (request.type !in setOf("status", "input_release", "gamepad_release", "backup_cancel") &&
+                            val gamepadControlRelease = request.type == "gamepad_command" &&
+                                request.gamepadCommand?.let { it.action in setOf("ok_up", "ok_cancel") ||
+                                    it.action == "rewind" && !it.pressed } == true
+                            if (request.type !in setOf("status", "gamepad_status", "input_release", "gamepad_release", "backup_cancel") &&
+                                !gamepadControlRelease &&
                                 (mutable.value.backupOffer != null || mutable.value.backupBusy || mutable.value.restoreDialog || mutable.value.prompt != null || mutable.value.pullRequest != null)) {
                                 error = "consent_pending"; error("Local consent is pending")
                             }
@@ -1528,7 +1578,7 @@ class CompanionManager @Inject constructor(@ApplicationContext private val conte
                                     .copy(host = socket.inetAddress.hostAddress.orEmpty(), port = request.syncPort)
                                 if (mutable.value.paired.firstOrNull { it.fingerprint == sessionPin } != endpoint) savePeer(endpoint)
                             }
-                            require(foreground || request.type == "start" && receiverServiceActive && mutable.value.backgroundReceiver || request.type in setOf("status", "play", "pause", "stop", "seek", "volume", "select", "shuffle", "repeat", "next", "previous", "queue_add", "queue_remove", "queue_move", "queue_clear", "queue_page", "input_release", "gamepad_release"))
+                            require(foreground || gamepadControlRelease || request.type == "start" && receiverServiceActive && mutable.value.backgroundReceiver || request.type in setOf("status", "gamepad_status", "play", "pause", "stop", "seek", "volume", "select", "shuffle", "repeat", "next", "previous", "queue_add", "queue_remove", "queue_move", "queue_clear", "queue_page", "input_release", "gamepad_release"))
                             when (request.type) {
                                 "status" -> {
                                     // Avoid restarting a 60s lease coroutine for every idle status or
@@ -1544,6 +1594,7 @@ class CompanionManager @Inject constructor(@ApplicationContext private val conte
                                     claimControl(nonce, peer.name)
                                 }
                                 "input_release" -> releaseRemoteControl(nonce)
+                                "gamepad_status" -> Unit // Cached game context only; no playback/artwork enumeration.
                                 "gamepad_claim" -> {
                                     error = "gamepad_unavailable"
                                     check(CompanionGamepadSession.claim(nonce, peer.fingerprint) >= 0)
@@ -1558,6 +1609,11 @@ class CompanionManager @Inject constructor(@ApplicationContext private val conte
                                 "gamepad_menu" -> {
                                     error = "gamepad_unavailable"
                                     check(CompanionGamepadSession.menu(nonce))
+                                    error = ""
+                                }
+                                "gamepad_command" -> {
+                                    error = "gamepad_unavailable"
+                                    check(CompanionGamepadSession.command(nonce, requireNotNull(request.gamepadCommand)))
                                     error = ""
                                 }
                                 "input" -> {
@@ -1609,7 +1665,7 @@ class CompanionManager @Inject constructor(@ApplicationContext private val conte
                         check(back?.pending == null) // Every return frame must be acknowledged by the next request.
                         // Realtime traffic never carries a settings return frame. This is required
                         // to pipeline several inputs without round-trip blocking on sync acknowledgements.
-                        val realtime = request.type == "gamepad_input" || request.type == "input"
+                        val realtime = request.type in setOf("gamepad_input", "gamepad_command", "gamepad_status", "input")
                         val next = if (realtime) null else back?.frames?.tryReceive()?.getOrNull()
                         val returned = next?.let { item ->
                             val activeReturn = requireNotNull(back)
@@ -1632,7 +1688,7 @@ class CompanionManager @Inject constructor(@ApplicationContext private val conte
                             error = companionReplyError(error, playback.phase, request.type))
                     } finally { if (mutatesPlayback) playbackMutation.unlock() }
                 }
-                output.writeFrame(reply, compact = request.type in setOf("gamepad_input", "input"))
+                output.writeFrame(reply, compact = request.type in setOf("gamepad_input", "gamepad_command", "gamepad_status", "input"))
             }
         } catch (failure: CancellationException) {
             throw failure
@@ -1821,7 +1877,7 @@ class CompanionManager @Inject constructor(@ApplicationContext private val conte
                 val inflight = java.util.ArrayDeque<CompanionFrame>()
                 suspend fun processReply(command: CompanionFrame, state: CompanionFrame) {
                     require(state.type == "state" && state.nonce == nonce && state.sequence == command.sequence)
-                    if (command.gamepadQueuedAtMs > 0L && command.type in setOf("gamepad_input", "input")) {
+                    if (command.gamepadQueuedAtMs > 0L && command.type in setOf("gamepad_input", "gamepad_command", "gamepad_status", "input")) {
                         val now = SystemClock.elapsedRealtime()
                         latencyWindow.record(now - command.gamepadQueuedAtMs)
                         if (now - lastLatencyReportAt >= 1_000L) {
@@ -1875,7 +1931,7 @@ class CompanionManager @Inject constructor(@ApplicationContext private val conte
                         // Preserve playback/queue fields when the receiver returns a small gamepad ACK.
                         mutable.update { old ->
                             val gamepadInfo = companionGamepadInfoWithMetadata(old.remote?.gamepadInfo, state.gamepadInfo)
-                            val remote = if (command.type in setOf("gamepad_input", "input") && old.remote != null)
+                            val remote = if (command.type in setOf("gamepad_input", "gamepad_command", "gamepad_status", "input") && old.remote != null)
                                 old.remote.copy(gamepadInfo = gamepadInfo,
                                     gamepadPort = state.gamepadPort,
                                     inputGranted = state.inputGranted, controller = state.controller)
@@ -1885,12 +1941,12 @@ class CompanionManager @Inject constructor(@ApplicationContext private val conte
                         if (command.type == "start" && command.startRequestId.isNotEmpty()) {
                             playbackStartAck?.takeIf { it.first == command.startRequestId }?.second?.complete(state)
                         }
-                        if (command.type !in setOf("gamepad_input", "input")) {
+                        if (command.type !in setOf("gamepad_input", "gamepad_command", "gamepad_status", "input")) {
                             ensureRemoteService()
                             approveMonogramLogin(trusted.fingerprint, state.monogramLogin, name)
                         }
                         if (command.type.startsWith("backup_")) { backupAckError = state.error; backupAck?.complete(companionBackupAckOk(state.error)) }
-                        if (command.type !in setOf("gamepad_input", "input"))
+                        if (command.type !in setOf("gamepad_input", "gamepad_command", "gamepad_status", "input"))
                             updateBackupResult(state.transferId, state.backupStatus, name)
                         if (command.type == "start" && mutable.value.sendingTo != null) {
                             headlessShareCompletion?.complete(state.error.isEmpty())
@@ -1909,12 +1965,13 @@ class CompanionManager @Inject constructor(@ApplicationContext private val conte
                     val sent = inflight.removeFirst()
                     processReply(sent, reply)
                 }
+                var lastFullStateRequestAt = SystemClock.elapsedRealtime()
                 try {
                     while (isActive && (canSendToTv || remoteServiceRequested)) {
                         require(if (route.vpn) connectionTransport?.alive(route) == true else sessionLan()?.address == link?.address)
                         if (inflight.size >= 4 ||
                             (carried != null && inflight.isNotEmpty() &&
-                             carried?.type !in setOf("gamepad_input", "input"))) {
+                             carried?.type !in setOf("gamepad_input", "gamepad_command", "gamepad_status", "input"))) {
                             receiveOne()
                             continue
                         }
@@ -1931,8 +1988,18 @@ class CompanionManager @Inject constructor(@ApplicationContext private val conte
                             }
                             command = frame
                         } else {
-                            command = live.receive(queue, if (returnTransfer != null || returnAck != 0L) 50L else 1_000L)
-                                ?: CompanionFrame(type = "status")
+                            val gameMenuPolling = mutable.value.let { current ->
+                                current.gamepadPanel && current.remote?.gamepadInfo?.let {
+                                    it.interaction != null && !it.acceptsGameplay
+                                } == true
+                            }
+                            command = live.receive(queue, when {
+                                returnTransfer != null || returnAck != 0L -> 50L
+                                gameMenuPolling -> 250L
+                                else -> 1_000L
+                            }) ?: CompanionFrame(type = if (gameMenuPolling && returnTransfer == null && returnAck == 0L &&
+                                SystemClock.elapsedRealtime() - lastFullStateRequestAt < 1_000L)
+                                "gamepad_status" else "status")
                         }
                         // Merge only supersedable continuous snapshots; input edges remain FIFO.
                         while (true) {
@@ -1941,7 +2008,7 @@ class CompanionManager @Inject constructor(@ApplicationContext private val conte
                             if (merged == null) { carried = next; break }
                             command = merged
                         }
-                        val realtime = command.type in setOf("gamepad_input", "input")
+                        val realtime = command.type in setOf("gamepad_input", "gamepad_command", "gamepad_status", "input")
                         if (inflight.isNotEmpty() && !realtime) {
                             // Playback, pairing and settings transfers retain their old strict
                             // request/reply semantics. Never pipeline across syncReturn.
@@ -1955,7 +2022,10 @@ class CompanionManager @Inject constructor(@ApplicationContext private val conte
                             carried = command
                             command = CompanionFrame(type = "status")
                         }
-                        val fast = command.type in setOf("gamepad_input", "input")
+                        val fast = command.type in setOf("gamepad_input", "gamepad_command", "gamepad_status", "input")
+                        // Keep the normal once-per-second full state for descriptor updates and
+                        // settings return frames; the intervening menu polls are cached ACKs.
+                        if (!fast) lastFullStateRequestAt = SystemClock.elapsedRealtime()
                         val result = if (fast) null else withContext(Dispatchers.Main) { backupResults[nonce] }
                         val request = command.copy(nonce = nonce, sequence = ++sequence,
                             capabilities = emptyList(),

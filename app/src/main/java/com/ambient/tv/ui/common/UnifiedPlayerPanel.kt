@@ -103,6 +103,8 @@ enum class UnifiedPlayerPanel {
     OSD_BUTTONS,
     /** A-B repeat, frame step and screenshot. */
     TOOLS,
+    /** Game-owned destinations use the same origin/focus stack, with their own page content. */
+    GAME,
     /** Information about what is playing, shown as a dialog over the picture. */
     DETAILS;
 
@@ -121,7 +123,7 @@ enum class UnifiedPlayerPanel {
  */
 @Stable
 class PlayerPanelNavigation {
-    private class Level(val panel: UnifiedPlayerPanel, val originKey: String?) {
+    private class Level(val panel: UnifiedPlayerPanel, val originKey: String?, val externalPage: Any? = null) {
         /** Last focused keyed row of this level; focus returns there when the level's content is rebuilt. */
         var focusedKey: String? = null
         var hadFocus = false
@@ -144,17 +146,25 @@ class PlayerPanelNavigation {
     internal var restoreFailed by mutableStateOf(false)
 
     val panel: UnifiedPlayerPanel get() = path.lastOrNull()?.panel ?: UnifiedPlayerPanel.NONE
+    internal val externalPage: Any? get() = path.lastOrNull()?.externalPage
+    internal fun hasExternalParent(page: Any): Boolean = path.dropLast(1).any { it.externalPage == page }
+    /** Used by non-panel overlays, such as the game-state strip, to retain their opening button. */
+    internal val currentOriginKey: String? get() = pendingOrigin ?: path.lastOrNull()?.focusedKey
     /** Current visual hierarchy depth: root panel = 1, each child level increments it. */
     internal val depth: Int get() = path.size
 
     operator fun getValue(thisRef: Any?, property: KProperty<*>): UnifiedPlayerPanel = panel
     operator fun setValue(thisRef: Any?, property: KProperty<*>, value: UnifiedPlayerPanel) = open(value)
 
-    fun open(target: UnifiedPlayerPanel) {
+    fun open(target: UnifiedPlayerPanel) = openLevel(target, null)
+
+    internal fun openExternal(page: Any) = openLevel(UnifiedPlayerPanel.GAME, page)
+
+    private fun openLevel(target: UnifiedPlayerPanel, externalPage: Any?) {
         activity.interact()
         when {
             target == UnifiedPlayerPanel.NONE -> close()
-            target == panel -> Unit
+            target == panel && externalPage == this.externalPage -> Unit
             else -> {
                 // Sublevels and renderer handoffs keep the existing drawer. A genuinely new
                 // root session enters from the edge even if its model arrives after opening.
@@ -169,7 +179,7 @@ class PlayerPanelNavigation {
                 // navigate without fromOrigin(); do not discard the parent's remembered row.
                 val origin = pendingOrigin ?: if (pendingRoot) null else path.lastOrNull()?.focusedKey
                 if (pendingRoot) path.clear()
-                path.add(Level(target, origin))
+                path.add(Level(target, origin, externalPage))
             }
         }
     }
@@ -258,7 +268,7 @@ class PlayerPanelNavigation {
 
     /** Hiding the OSD invalidates any pending hand-back to one of its buttons. */
     fun cancelFocusReturn() {
-        if (restoreKey == null) return
+        if (restoreKey == null && !restoreFailed) return
         restoreKey = null
         restoreFailed = false
         restoreGeneration++
@@ -331,6 +341,10 @@ class PlayerPanelNavigation {
         restoreFailed = false
         restoreGeneration++
     }
+
+    internal fun restoreExternalOrigin(key: String?) {
+        if (panel == UnifiedPlayerPanel.NONE) restore(key)
+    }
 }
 
 /** Whether "adjust video" has to open the video panel: not while one of its levels is shown. */
@@ -345,6 +359,16 @@ fun rememberPlayerPanelNavigation(vararg keys: Any?): PlayerPanelNavigation {
     val chrome = com.ambient.tv.ui.player.LocalPlayerChromeState.current
     val navigation = chrome?.panels
         ?: remember(*keys) { PlayerPanelNavigation() }
+    RestorePlayerPanelFocus(navigation, chrome)
+    return navigation
+}
+
+/** Shared retry lifecycle for video players and game-owned panel destinations. */
+@Composable
+internal fun RestorePlayerPanelFocus(
+    navigation: PlayerPanelNavigation,
+    chrome: com.ambient.tv.ui.player.PlayerChromeState?,
+) {
     LaunchedEffect(navigation, navigation.restoreGeneration) {
         val key = navigation.restoreKey ?: return@LaunchedEffect
         val generation = navigation.restoreGeneration
@@ -375,7 +399,6 @@ fun rememberPlayerPanelNavigation(vararg keys: Any?): PlayerPanelNavigation {
         if (placed) return@LaunchedEffect
         navigation.restoreFailed = true
     }
-    return navigation
 }
 
 /** How long the player OSD stays up without input; shared by app and player settings. */
@@ -779,6 +802,8 @@ fun PlayerIconButton(
     osd: com.ambient.tv.ui.player.OsdButton? = null,
     /** Round image (e.g. a channel avatar) shown instead of [icon] once loaded. */
     imageUrl: String? = null,
+    /** Momentary game/tool action; releasing, cancellation or leaving the screen ends it. */
+    onHold: ((Boolean) -> Unit)? = null,
 ) {
     if (osd != null) {
         // Registered before the visibility check: a hidden button stays switchable in the settings.
@@ -828,9 +853,10 @@ fun PlayerIconButton(
                 focused = visuallyFocused, selected = selected, enabled = enabled || loading,
                 shape = shape, pressed = pressed && enabled && barInteractive,
             )
-            .activateOnTvKey(onClick = click)
-            .clickable(interactionSource = interactions, indication = null,
-                enabled = barInteractive, role = Role.Button, onClick = click),
+            .then(if (onHold != null) Modifier.holdAction(enabled && barInteractive, onHold, interactions)
+                else Modifier.activateOnTvKey(onClick = click)
+                    .clickable(interactionSource = interactions, indication = null,
+                        enabled = barInteractive, role = Role.Button, onClick = click)),
         horizontalArrangement = Arrangement.Center,
         verticalAlignment = Alignment.CenterVertically,
     ) {

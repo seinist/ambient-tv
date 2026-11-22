@@ -40,7 +40,6 @@ import com.ambient.tv.R
 import com.ambient.tv.games.GameCheat
 import com.ambient.tv.games.PreparedGame
 import com.ambient.tv.games.RaAchievement
-import com.ambient.tv.ui.common.RightPanelChoice
 import com.ambient.tv.ui.common.TvActionButton
 import com.ambient.tv.ui.common.TvTextField
 import com.swordfish.libretrodroid.Controller
@@ -96,17 +95,18 @@ internal fun GameDeviceTypesPanel(
     enabled: Boolean,
     onChoose: (port: Int, type: Int) -> Unit,
 ) {
+    if (!enabled) return
     val ports = controllers.withIndex().filter { (_, types) -> types.count { it.id >= 0 } > 1 }
     if (ports.isEmpty()) return
     GamePanelText(stringResource(R.string.game_device_types))
     ports.take(4).forEach { (port, types) ->
         val choices = types.filter { it.id >= 0 }
         val selected = current(port)?.let { id -> choices.firstOrNull { it.id == id } } ?: choices.first()
-        RightPanelChoice(
+        GamePanelChoice(
             text = stringResource(R.string.game_controls_port_player, port + 1),
             subtitle = selected.description ?: selected.id.toString(),
             selected = false,
-            enabled = enabled,
+            focusKey = "game-device-port:$port",
             onClick = {
                 val next = choices[(choices.indexOf(selected) + 1) % choices.size]
                 onChoose(port, next.id)
@@ -131,13 +131,14 @@ internal fun GameAchievementsPanel(achievements: GameAchievements) {
             ))
             list.sortedBy { it.id !in achievements.unlocked }.forEach { item ->
                 val done = item.id in achievements.unlocked
-                RightPanelChoice(
+                GamePanelChoice(
                     text = item.title,
                     subtitle = listOf(stringResource(R.string.game_achievement_points, item.points), item.description)
                         .filter { it.isNotBlank() }.joinToString(" · "),
                     selected = false,
                     icon = if (done) Icons.Filled.CheckCircle else Icons.Filled.Lock,
                     onClick = {},
+                    focusKey = "game-achievement:${item.id}",
                 )
             }
         }
@@ -164,25 +165,28 @@ internal fun GameCheatsPanel(
             TvTextField(draft.first, { onDraft(it to draft.second) }, stringResource(R.string.game_cheats_description))
             TvTextField(draft.second, { onDraft(draft.first to it) }, stringResource(R.string.game_cheats_code))
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                TvActionButton(stringResource(R.string.game_cheats_save), { onAdd(draft.first, draft.second) }, enabled = draft.second.isNotBlank())
+                if (!blocked && draft.second.isNotBlank()) {
+                    TvActionButton(stringResource(R.string.game_cheats_save), { onAdd(draft.first, draft.second) })
+                }
                 TvActionButton(stringResource(R.string.game_cheats_cancel), { onDraft(null) })
             }
         }
         return
     }
-    if (blocked) GamePanelText(stringResource(R.string.game_cheats_netplay))
     GamePanelText(stringResource(R.string.game_cheats_hint))
+    if (loading) GamePanelText(stringResource(R.string.game_cheats_database_loading))
     cheats.forEachIndexed { index, cheat ->
-        RightPanelChoice(
+        GamePanelChoice(
             text = cheat.description,
             subtitle = if (deleting) stringResource(R.string.game_cheats_delete_one) else cheat.code,
             selected = !deleting && cheat.enabled,
             icon = if (deleting) Icons.Filled.Delete else null,
-            enabled = !blocked,
+            enabled = deleting || !blocked,
+            focusKey = "game-cheat:$index:${cheat.code}",
             onClick = { if (deleting) onDelete(index) else onToggle(index) },
         )
     }
-    RightPanelChoice(
+    GamePanelChoice(
         text = stringResource(R.string.game_cheats_database),
         subtitle = stringResource(if (loading) R.string.game_cheats_database_loading else R.string.game_cheats_database_hint),
         selected = false,
@@ -190,14 +194,14 @@ internal fun GameCheatsPanel(
         enabled = !loading && !blocked,
         onClick = onDatabase,
     )
-    RightPanelChoice(
+    GamePanelChoice(
         text = stringResource(R.string.game_cheats_add),
         selected = false,
         icon = Icons.Filled.Add,
         enabled = !blocked,
         onClick = { onDraft("" to "") },
     )
-    if (cheats.isNotEmpty()) RightPanelChoice(
+    if (cheats.isNotEmpty()) GamePanelChoice(
         text = stringResource(if (deleting) R.string.game_cheats_delete_done else R.string.game_cheats_delete),
         selected = deleting,
         icon = Icons.Filled.Delete,
@@ -233,28 +237,34 @@ internal fun GameNetplayPanel(
         if (id != null && idle) netplay.discover(id) else netplay.stopDiscovery()
     }
     DisposableEffect(netplay) { onDispose { netplay.stopDiscovery() } }
-    when (val state = netplay.state) {
+    if (netplay.synchronizing) {
+        GamePanelText(stringResource(R.string.game_netplay_synchronizing))
+        GamePanelChoice(stringResource(R.string.game_netplay_cancel), selected = false, onClick = netplay::stop)
+    } else when (val state = netplay.state) {
         is NetplayState.Approval -> {
             GamePanelText(stringResource(R.string.game_netplay_approval, state.peer))
-            RightPanelChoice(stringResource(R.string.game_netplay_accept), selected = false,
+            GamePanelChoice(stringResource(R.string.game_netplay_accept), selected = false,
                 onClick = netplay::approvePeer)
-            RightPanelChoice(stringResource(R.string.game_netplay_reject), selected = false,
+            GamePanelChoice(stringResource(R.string.game_netplay_reject), selected = false,
                 onClick = netplay::rejectPeer)
         }
         is NetplayState.Hosting -> {
             GamePanelText(stringResource(R.string.game_netplay_hosting, state.name))
-            RightPanelChoice(stringResource(R.string.game_netplay_cancel), selected = false, onClick = netplay::stop)
+            GamePanelChoice(stringResource(R.string.game_netplay_cancel), selected = false, onClick = netplay::stop)
         }
-        NetplayState.Joining -> GamePanelText(stringResource(R.string.game_netplay_joining))
+        NetplayState.Joining -> {
+            GamePanelText(stringResource(R.string.game_netplay_joining))
+            GamePanelChoice(stringResource(R.string.game_netplay_cancel), selected = false, onClick = netplay::stop)
+        }
         is NetplayState.Connected -> {
             GamePanelText(stringResource(R.string.game_netplay_connected, state.peer, state.localPlayer))
-            RightPanelChoice(stringResource(R.string.game_netplay_leave), selected = false, onClick = netplay::stop)
+            GamePanelChoice(stringResource(R.string.game_netplay_leave), selected = false, onClick = netplay::stop)
         }
         else -> {
             (state as? NetplayState.Failed)?.let { GamePanelText(stringResource(it.reason.messageRes())) }
             GamePanelText(stringResource(R.string.game_netplay_hint))
             val id = identity
-            RightPanelChoice(
+            GamePanelChoice(
                 text = stringResource(R.string.game_netplay_host),
                 subtitle = stringResource(R.string.game_netplay_host_hint, netplay.deviceName),
                 selected = false,
@@ -263,11 +273,12 @@ internal fun GameNetplayPanel(
             )
             if (netplay.peers.isEmpty()) GamePanelText(stringResource(R.string.game_netplay_searching))
             netplay.peers.forEach { peer ->
-                RightPanelChoice(
+                GamePanelChoice(
                     text = peer.name,
                     subtitle = stringResource(R.string.game_netplay_join),
                     selected = false,
                     enabled = id != null,
+                    focusKey = "game-netplay-peer:${peer.host}:${peer.port}",
                     onClick = { id?.let { netplay.join(view, peer, it) } },
                 )
             }

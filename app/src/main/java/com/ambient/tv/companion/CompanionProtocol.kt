@@ -45,6 +45,8 @@ data class CompanionFrame(
     val input: CompanionInput? = null,
     /** Complete virtual RetroPad input, sent only by a paired handheld. */
     val gamepadState: CompanionGamepadState? = null,
+    /** Game-local navigation or a held rewind action, guarded by the current context ticket. */
+    val gamepadCommand: CompanionGamepadCommand? = null,
     /** Sender-local timestamp for queue-to-ACK diagnostics. Never used for TV trust decisions. */
     val gamepadQueuedAtMs: Long = 0L,
     /** Current TV game; absent on older receivers or outside the games player. */
@@ -357,7 +359,8 @@ internal fun coalesceCompanionInput(first: CompanionFrame, next: CompanionFrame)
         val b = next.gamepadState
         val pa = a.pointer
         val pb = b.pointer
-        if (a.buttons != b.buttons || pa?.kind != pb?.kind || pa?.buttons != pb?.buttons ||
+        if (a.sessionId != b.sessionId || a.contextRevision != b.contextRevision ||
+            a.buttons != b.buttons || pa?.kind != pb?.kind || pa?.buttons != pb?.buttons ||
             pa?.offscreen != pb?.offscreen || a.motion?.mask != b.motion?.mask ||
             pa?.contacts?.filter { it.pressed }?.map { it.index } !=
                 pb?.contacts?.filter { it.pressed }?.map { it.index }) return null

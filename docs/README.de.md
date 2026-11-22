@@ -28,6 +28,7 @@ Aktuelle Funktionen im Kompendium:
 - [Monogram (optionale Telegram-Medien): Funktionen, sechs Home-Reihen und Anmeldung](DOCUMENTATION.de.md#411-monogram-telegram-medien)
 - [Monogram-API-ID/-Hash, QR-Anmeldung und technische Integration](monogram-integration.md)
 - [Spiele-Metadaten, Cover, Build-Schlüssel und einzelne ROM-Ordner](game-metadata.md)
+- [Spiele-OSD, Controller, Handy-Menüsteuerung und Rewind](game-player-osd.md)
 - [System- und Sprachsuche](DOCUMENTATION.de.md#111-android-tv)
 
 ## Weitere Projektnotizen (Repo-Root)

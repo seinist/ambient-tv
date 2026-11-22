@@ -172,6 +172,31 @@ object CompanionRemoteInput {
         return true
     }
 
+    /**
+     * A game-local OK hold, pinned to the original window. The owner must release it (cancelled
+     * on context/lifecycle loss); the game bridge additionally bounds the hold with a watchdog.
+     * This avoids turning a held rewind button into repeated OK taps or an UP in a new dialog.
+     */
+    internal fun beginGameConfirm(deviceId: Int): ((Boolean) -> Unit)? {
+        hide()
+        val endpoint = active() ?: return null
+        windows.values.lastOrNull { it.interaction != null }?.interaction?.invoke()
+        val downTime = SystemClock.uptimeMillis()
+        fun event(action: Int, cancelled: Boolean = false) = KeyEvent(
+            downTime, SystemClock.uptimeMillis(), action, KeyEvent.KEYCODE_DPAD_CENTER, 0, 0,
+            deviceId, 0, if (cancelled) KeyEvent.FLAG_CANCELED else 0, InputDevice.SOURCE_DPAD)
+        endpoint.dispatchKeyEvent(event(KeyEvent.ACTION_DOWN))
+        var released = false
+        return { cancelled ->
+            if (!released) {
+                released = true
+                val current = active()
+                val lost = current == null || current.window !== endpoint.window || current.root !== endpoint.root
+                endpoint.dispatchKeyEvent(event(KeyEvent.ACTION_UP, cancelled || lost))
+            }
+        }
+    }
+
     @Composable fun Overlay(window: Window?) {
         val state by cursor.collectAsState()
         val accent = androidx.tv.material3.MaterialTheme.colorScheme.primary

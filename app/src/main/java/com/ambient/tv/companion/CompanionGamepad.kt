@@ -10,6 +10,38 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import java.util.UUID
 
+/** A paused core is not necessarily a menu: loading, state IO and backgrounding stay inert. */
+enum class CompanionGamepadInteraction(val key: String) {
+    LOADING("loading"), PLAYING("playing"), MENU("menu"), DIALOG("dialog"),
+    BUSY("busy"), BACKGROUND("background");
+
+    val navigation: Boolean get() = this == MENU || this == DIALOG
+
+    companion object {
+        fun fromKey(key: String?): CompanionGamepadInteraction? = entries.firstOrNull { it.key == key }
+    }
+}
+
+/** Every discrete menu/rewind command belongs to one game and one interaction context. */
+@Serializable
+data class CompanionGamepadCommand(
+    val sessionId: String,
+    val contextRevision: Long,
+    val action: String,
+    val pressed: Boolean = false,
+) {
+    fun validate() {
+        require(sessionId.isNotBlank() && sessionId.length <= 64 && contextRevision >= 0L)
+        require(action in COMPANION_GAMEPAD_ACTIONS)
+        require(!pressed || action == "rewind")
+    }
+}
+
+internal val COMPANION_GAMEPAD_NAVIGATION = setOf("up", "down", "left", "right", "ok", "back")
+internal val COMPANION_GAMEPAD_CONFIRM = setOf("ok_down", "ok_up", "ok_cancel", "ok_renew")
+private val COMPANION_GAMEPAD_ACTIONS = COMPANION_GAMEPAD_NAVIGATION + COMPANION_GAMEPAD_CONFIRM +
+    setOf("menu", "resume", "rewind")
+
 /** The layout selection is advisory; the TV remains the authority for the active core. */
 @Serializable
 data class CompanionGamepadInfo(
@@ -21,7 +53,27 @@ data class CompanionGamepadInfo(
     val ready: Boolean = false,
     /** Optional per-port core action labels; older peers ignore this field. */
     val inputDescriptions: Map<String, String>? = null,
+    /** Null on older receivers. Unknown future modes never grant menu or gameplay control. */
+    val interaction: String? = null,
+    val contextRevision: Long = 0,
+    /** Rewind is global: only the primary player's claim receives this capability. */
+    val rewindAvailable: Boolean = false,
+    val rewindSeconds: Float = 0f,
+    /** A netplay handshake may leave the menu usable while continuation is unsafe. */
+    val canResume: Boolean = true,
 )
+
+internal val CompanionGamepadInfo.interactionMode: CompanionGamepadInteraction?
+    get() = CompanionGamepadInteraction.fromKey(interaction)
+
+internal val CompanionGamepadInfo.acceptsGameplay: Boolean
+    get() = ready && (interaction == null || interactionMode == CompanionGamepadInteraction.PLAYING)
+
+internal val CompanionGamepadInfo.acceptsNavigation: Boolean
+    get() = !ready && interactionMode?.navigation == true
+
+internal val CompanionGamepadInfo.acceptsResume: Boolean
+    get() = acceptsNavigation && canResume
 
 /** Small realtime ACKs omit descriptions. They may only inherit metadata from this same game. */
 internal fun companionGamepadInfoWithMetadata(previous: CompanionGamepadInfo?, incoming: CompanionGamepadInfo?): CompanionGamepadInfo? {
@@ -94,12 +146,17 @@ data class CompanionGamepadState(
     /** Null means an older peer: derive full pressure from its L2/R2 button bits. */
     val leftTrigger: Float? = null,
     val rightTrigger: Float? = null,
+    /** Optional context ticket. Legacy senders are still limited by the current ready gate. */
+    val sessionId: String = "",
+    val contextRevision: Long? = null,
 ) {
     fun validate() {
         require(buttons in 0..0xffff)
         require(listOf(leftX, leftY, rightX, rightY).all { it.isFinite() && it in -1f..1f })
         require(leftTrigger == null || leftTrigger.isFinite() && leftTrigger in 0f..1f)
         require(rightTrigger == null || rightTrigger.isFinite() && rightTrigger in 0f..1f)
+        require(sessionId.length <= 64 && (contextRevision == null || contextRevision >= 0L))
+        require((sessionId.isEmpty()) == (contextRevision == null))
         pointer?.validate()
         motion?.validate()
     }
@@ -118,7 +175,8 @@ internal fun companionGamepadCriticalEdge(
         (next.pointer?.buttons ?: 0) != 0 || (next.motion?.mask ?: 0) != 0
     val a = previous.pointer
     val b = next.pointer
-    return previous.buttons != next.buttons ||
+    return previous.sessionId != next.sessionId || previous.contextRevision != next.contextRevision ||
+        previous.buttons != next.buttons ||
         ((previous.leftTrigger ?: 0f) > 0f) != ((next.leftTrigger ?: 0f) > 0f) ||
         ((previous.rightTrigger ?: 0f) > 0f) != ((next.rightTrigger ?: 0f) > 0f) || a?.kind != b?.kind ||
         a?.buttons != b?.buttons || a?.offscreen != b?.offscreen ||
@@ -139,8 +197,17 @@ object CompanionGamepadSession {
         val onMenu: () -> Unit,
         val onPointer: (Int, CompanionPointerState?) -> Unit,
         val onMotion: (Int, CompanionMotionState?) -> Unit,
+        val onRewind: (Boolean) -> Unit,
         var ready: Boolean = false,
+        var rewindSession: String? = null,
+        var interactionContext: Any? = null,
+        var confirm: Confirm? = null,
     )
+
+    private class Confirm(val session: String, val revision: Long, val release: (Boolean) -> Unit) {
+        var deadline = 0L
+        var watchdog: Runnable? = null
+    }
 
     private var active: Active? = null
     private val ports = LinkedHashMap<String, Int>()
@@ -165,6 +232,62 @@ object CompanionGamepadSession {
     private val triggerEdges = mutableMapOf<String, CompanionTriggerEdges>()
     private val lastState = mutableMapOf<String, CompanionGamepadState>()
     private val delayedRelease = mutableMapOf<String, Runnable>()
+    private var rewindDeadline = 0L
+    private var rewindDeadman: Runnable? = null
+
+    private fun releaseConfirm(game: Active, cancelled: Boolean = true) {
+        val confirm = game.confirm ?: return
+        game.confirm = null
+        confirm.watchdog?.let(handler::removeCallbacks)
+        confirm.release(cancelled)
+    }
+
+    private fun renewConfirm(game: Active, confirm: Confirm) {
+        confirm.deadline = android.os.SystemClock.uptimeMillis() + 1_500L
+        if (confirm.watchdog != null) return
+        lateinit var task: Runnable
+        task = Runnable {
+            if (active !== game || game.confirm !== confirm || confirm.session !in ports) {
+                if (game.confirm === confirm) releaseConfirm(game)
+            } else {
+                val remaining = confirm.deadline - android.os.SystemClock.uptimeMillis()
+                if (remaining > 0L) handler.postDelayed(task, remaining) else releaseConfirm(game)
+            }
+        }
+        confirm.watchdog = task
+        handler.postDelayed(task, 1_500L)
+    }
+
+    private fun stopRewind(game: Active) {
+        rewindDeadman?.let(handler::removeCallbacks)
+        rewindDeadman = null
+        rewindDeadline = 0L
+        if (game.rewindSession != null) {
+            game.rewindSession = null
+            game.onRewind(false)
+        }
+    }
+
+    private fun holdRewind(game: Active, session: String) {
+        if (game.rewindSession != session) {
+            stopRewind(game)
+            game.rewindSession = session
+            game.onRewind(true)
+        }
+        rewindDeadline = android.os.SystemClock.uptimeMillis() + 1_500L
+        if (rewindDeadman != null) return
+        lateinit var task: Runnable
+        task = Runnable {
+            if (active !== game || game.rewindSession != session || ports[session] != 0) {
+                stopRewind(game)
+            } else {
+                val remaining = rewindDeadline - android.os.SystemClock.uptimeMillis()
+                if (remaining > 0L) handler.postDelayed(task, remaining) else stopRewind(game)
+            }
+        }
+        rewindDeadman = task
+        handler.postDelayed(task, 1_500L)
+    }
 
     private fun clearButtons(port: Int) {
         ports.filterValues { it == port }.keys.forEach { session ->
@@ -199,7 +322,9 @@ object CompanionGamepadSession {
         handler.postDelayed(task, delay)
     }
 
-    private fun releaseInputs(game: Active, port: Int, suppressHeld: Boolean = false) {
+    private fun releaseInputs(game: Active, port: Int, suppressHeld: Boolean = false, releaseMenu: Boolean = true) {
+        if (releaseMenu && game.confirm?.session?.let { ports[it] == port } == true) releaseConfirm(game)
+        if (game.rewindSession?.let { ports[it] == port } == true) stopRewind(game)
         clearButtons(port)
         game.input.clearRemotePort(port, suppressHeld = suppressHeld)
         game.onPointer(port, null)
@@ -251,6 +376,7 @@ object CompanionGamepadSession {
                pointerInput: Boolean,
                onPointer: (Int, CompanionPointerState?) -> Unit = { _, _ -> },
                onMotion: (Int, CompanionMotionState?) -> Unit = { _, _ -> },
+               onRewind: (Boolean) -> Unit = {},
                onMenu: () -> Unit) {
         if (active?.input === input && active?.info?.systemId == systemId &&
             active?.info?.coreId == coreId && active?.info?.title == title.take(120)) return
@@ -259,17 +385,41 @@ object CompanionGamepadSession {
             sessionId = UUID.randomUUID().toString(),
             systemId = systemId.take(40), coreId = coreId.take(80),
             title = title.take(120), pointerInput = pointerInput,
-        ), onMenu, onPointer, onMotion)
+            interaction = CompanionGamepadInteraction.LOADING.key,
+        ), onMenu, onPointer, onMotion, onRewind)
     }
 
     fun setReady(input: RetroPadInput, ready: Boolean) {
+        setInteraction(input, if (ready) CompanionGamepadInteraction.PLAYING else CompanionGamepadInteraction.BUSY)
+    }
+
+    fun setInteraction(input: RetroPadInput, interaction: CompanionGamepadInteraction, context: Any? = null,
+                       canResume: Boolean = true) {
         val game = active?.takeIf { it.input === input } ?: return
-        if (game.ready == ready) return
+        if (game.info.interaction == interaction.key && game.interactionContext == context &&
+            game.info.canResume == canResume) return
+        releaseConfirm(game)
+        game.interactionContext = context
+        game.info = game.info.copy(interaction = interaction.key, contextRevision = game.info.contextRevision + 1,
+            canResume = canResume)
+        val ready = interaction == CompanionGamepadInteraction.PLAYING
         game.ready = ready
         if (!ready) {
+            stopRewind(game)
             deadman.keys.toList().forEach(::cancelDeadman)
             ports.values.forEach { releaseInputs(game, it, suppressHeld = true) }
         }
+    }
+
+    /** Cheap status only; the player obtains the actual buffered duration outside this bridge. */
+    fun setRewind(input: RetroPadInput, available: Boolean, seconds: Float) {
+        val game = active?.takeIf { it.input === input } ?: return
+        val bounded = seconds.takeIf { it.isFinite() }?.coerceIn(0f, 60f) ?: 0f
+        val enabled = available && bounded > 0f
+        if (game.info.rewindAvailable != enabled || game.info.rewindSeconds != bounded) {
+            game.info = game.info.copy(rewindAvailable = enabled, rewindSeconds = bounded)
+        }
+        if (!enabled) stopRewind(game)
     }
 
     fun setInputDescriptions(input: RetroPadInput, descriptions: Map<String, String>) {
@@ -284,7 +434,9 @@ object CompanionGamepadSession {
             session == null -> game.info.inputDescriptions
             else -> game.input.remoteInputDescriptions(ports[session] ?: -1, game.info.inputDescriptions.orEmpty())
         }
-        game.info.copy(ready = game.ready, inputDescriptions = descriptions)
+        game.info.copy(ready = game.ready, inputDescriptions = descriptions,
+            rewindAvailable = game.ready && game.info.rewindAvailable &&
+                (session == null || ports[session] == 0))
     }
     fun port(session: String): Int = ports[session] ?: -1
 
@@ -329,6 +481,8 @@ object CompanionGamepadSession {
     fun input(session: String, packet: CompanionGamepadState): Boolean {
         packet.validate()
         val game = active ?: return false
+        if (packet.contextRevision != null && (packet.sessionId != game.info.sessionId ||
+                packet.contextRevision != game.info.contextRevision)) return false
         // A port setting changed during a live game takes effect on the next input; OFF
         // revokes control immediately, while a fixed-port change reclaims it safely.
         deviceFingerprints[session]?.let { fingerprint ->
@@ -342,7 +496,8 @@ object CompanionGamepadSession {
         }
         val port = ports[session] ?: return false
         if (!game.ready) {
-            releaseInputs(game, port, suppressHeld = true)
+            // A late neutral gameplay packet cannot cancel a new OK hold in the OSD.
+            releaseInputs(game, port, suppressHeld = true, releaseMenu = false)
             return false
         }
         val gate = buttonGates.getOrPut(session) { CompanionButtonEdgeGate() }
@@ -380,9 +535,82 @@ object CompanionGamepadSession {
 
     fun menu(session: String): Boolean {
         val game = active ?: return false
-        if (session !in ports) return false
+        if (!refreshClaim(session) || (!game.ready &&
+                (game.info.interactionMode?.navigation != true || !game.info.canResume))) return false
+        setInteraction(game.input, if (game.ready) CompanionGamepadInteraction.MENU else CompanionGamepadInteraction.BUSY,
+            context = game.interactionContext, canResume = game.info.canResume)
         game.onMenu()
         return true
+    }
+
+    /** Game-controller claims authorize only this game, never the app-wide remote lease. */
+    fun command(session: String, command: CompanionGamepadCommand): Boolean = command(session, command,
+        navigate = { menuInputReady() && CompanionRemoteInput.dispatch(it) },
+        beginConfirm = { port -> if (menuInputReady()) CompanionRemoteInput.beginGameConfirm(-64 - port) else null })
+
+    private fun menuInputReady(): Boolean {
+        val mode = com.ambient.tv.ui.gamepad.GameInputRouting.mode
+        // Native callbacks may precede Compose's route publication by one frame.
+        return mode == com.ambient.tv.ui.gamepad.GameInputMode.MENU || mode == com.ambient.tv.ui.gamepad.GameInputMode.DIALOG
+    }
+
+    internal fun command(session: String, command: CompanionGamepadCommand,
+                         navigate: (CompanionInput) -> Boolean): Boolean = command(session, command, { null }, navigate)
+
+    internal fun command(session: String, command: CompanionGamepadCommand,
+                         beginConfirm: (Int) -> ((Boolean) -> Unit)?,
+                         navigate: (CompanionInput) -> Boolean): Boolean {
+        command.validate()
+        val game = active ?: return false
+        if (command.sessionId != game.info.sessionId || !refreshClaim(session)) return false
+        // A release may have been queued before a pause. It is always safe for its owner.
+        if (command.action == "rewind" && !command.pressed) {
+            if (game.rewindSession == session) stopRewind(game)
+            return true
+        }
+        if (command.action == "ok_up" || command.action == "ok_cancel") {
+            val confirm = game.confirm
+            if (confirm?.session == session && confirm.revision == command.contextRevision) {
+                releaseConfirm(game, cancelled = command.action == "ok_cancel" ||
+                    game.info.contextRevision != confirm.revision || game.info.interactionMode?.navigation != true)
+            }
+            return true
+        }
+        if (command.contextRevision != game.info.contextRevision) return false
+        return when (command.action) {
+            in COMPANION_GAMEPAD_NAVIGATION -> if (game.info.interactionMode?.navigation == true && !game.ready) {
+                releaseConfirm(game)
+                navigate(CompanionInput("key", key = command.action))
+            } else false
+            "ok_down" -> if (game.info.interactionMode?.navigation == true && !game.ready && game.confirm == null) {
+                val release = beginConfirm(ports.getValue(session)) ?: return false
+                Confirm(session, command.contextRevision, release).also {
+                    game.confirm = it
+                    renewConfirm(game, it)
+                }
+                true
+            } else false
+            "ok_renew" -> game.confirm?.takeIf { it.session == session && it.revision == command.contextRevision }
+                ?.let { renewConfirm(game, it); true } ?: false
+            "menu" -> game.ready && menu(session)
+            "resume" -> game.info.interactionMode?.navigation == true && menu(session)
+            "rewind" -> if (game.ready && game.info.rewindAvailable && ports[session] == 0) {
+                holdRewind(game, session)
+                true
+            } else false
+            else -> false
+        }
+    }
+
+    private fun refreshClaim(session: String): Boolean {
+        val fingerprint = deviceFingerprints[session] ?: return false
+        val configured = com.ambient.tv.ui.gamepad.retro.RetroInputSettings.config.ports[
+            com.ambient.tv.ui.gamepad.retro.companionControllerDescriptor(fingerprint)] ?: RetroPorts.AUTO
+        if (configured != lastPortSetting[session]) {
+            if (configured == RetroPorts.AUTO) forceAutoReassignment.add(session)
+            return claim(session, fingerprint) >= 0
+        }
+        return session in ports
     }
 
     fun release(session: String) {
@@ -405,6 +633,8 @@ object CompanionGamepadSession {
     private fun detachCurrent() {
         deadman.keys.toList().forEach(::cancelDeadman)
         val game = active ?: return
+        releaseConfirm(game)
+        stopRewind(game)
         ports.values.forEach { releaseInputs(game, it); game.input.reserveRemotePort(it, false) }
         ports.clear()
         deviceFingerprints.clear()

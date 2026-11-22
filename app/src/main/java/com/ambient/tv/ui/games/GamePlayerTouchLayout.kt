@@ -8,13 +8,16 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Menu
+import androidx.compose.material.icons.filled.FastRewind
 import androidx.compose.material.icons.filled.SportsEsports
 import androidx.compose.material3.Icon
+import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -28,6 +31,7 @@ import com.ambient.tv.R
 import com.ambient.tv.games.GameTouchMode
 import com.ambient.tv.ui.gamepad.retro.RetroPadButton
 import com.ambient.tv.ui.gamepad.retro.TouchControlStyle
+import com.ambient.tv.ui.common.holdAction
 
 /** Layout stays stable when the OSD opens, so pausing never resizes/recreates the native surface. */
 @Composable
@@ -47,6 +51,8 @@ internal fun GamePlayerTouchLayout(
     coreActions: Map<RetroPadButton, String> = emptyMap(),
     hiddenForGamepad: Boolean = false,
     onShowTouch: () -> Unit = {},
+    rewindSeconds: Float? = null,
+    onRewind: (Boolean) -> Unit = {},
 ) {
     BoxWithConstraints(Modifier.fillMaxSize().then(if (handheld) Modifier.safeDrawingPadding() else Modifier)) {
         val docked = handheld && touchEnabled && maxHeight > maxWidth
@@ -97,6 +103,19 @@ internal fun GamePlayerTouchLayout(
             ) {
                 Icon(Icons.Filled.Menu, contentDescription = stringResource(R.string.game_controls_menu),
                     tint = Color.White, modifier = Modifier.size(24.dp))
+            }
+        }
+        if (handheld && playing && !menuVisible && rewindSeconds != null) {
+            Column(Modifier.align(Alignment.TopCenter).padding(top = 12.dp),
+                horizontalAlignment = Alignment.CenterHorizontally) {
+                Box(Modifier.size(48.dp).testTag("game-player-rewind").clip(CircleShape)
+                    .background(Color.Black.copy(alpha = .58f)).holdAction(onHold = onRewind),
+                    contentAlignment = Alignment.Center) {
+                    Icon(Icons.Filled.FastRewind, stringResource(R.string.game_rewind_hold),
+                        tint = Color.White, modifier = Modifier.size(24.dp))
+                }
+                Text(stringResource(R.string.game_rewind_buffer_seconds, rewindSeconds),
+                    color = Color.White, style = androidx.compose.material3.MaterialTheme.typography.labelSmall)
             }
         }
     }

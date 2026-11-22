@@ -71,6 +71,9 @@ class GameNetplay(
     /** True while the other device does not send (its menu is open, or it is slow). */
     var waiting by mutableStateOf(false)
         private set
+    /** The exchanged state is frozen; local controls must not resume or alter it. */
+    var synchronizing by mutableStateOf(false)
+        private set
 
     private val nsd: NsdManager? get() = context.getSystemService(Context.NSD_SERVICE) as? NsdManager
     private var registration: NsdManager.RegistrationListener? = null
@@ -152,7 +155,11 @@ class GameNetplay(
                     throw NetplayRefused(refusal)
                 }
                 // The guest starts from exactly this moment of the game.
-                view.pauseEmulation()
+                withContext(Dispatchers.Main) {
+                    synchronizing = true
+                    view.suppressAutoResume = true
+                    view.pauseEmulation()
+                }
                 val serializeSize = view.getSerializeSize()
                 if (serializeSize !in 1L..MAX_STATE.toLong()) throw IOException("state size")
                 val bytes = view.serializeState()
@@ -238,7 +245,11 @@ class GameNetplay(
                 if (size !in 1..MAX_STATE) throw IOException("state size")
                 val bytes = ByteArray(size).also { input.readFully(it) }
                 val hostName = input.readUTF()
-                view.pauseEmulation()
+                withContext(Dispatchers.Main) {
+                    synchronizing = true
+                    view.suppressAutoResume = true
+                    view.pauseEmulation()
+                }
                 if (!view.unserializeState(bytes)) throw NetplayRefused(NetplayFailure.STATE)
                 begin(view, input, output, port = 1, peer = hostName)
             } catch (error: Exception) {
@@ -264,8 +275,9 @@ class GameNetplay(
             view.rewindEnabled = false
             LibretroDroid.setNetplayActive(true)
             view.netplayTick = { tick(view, output) }
+            synchronizing = false
             state = NetplayState.Connected(peer, port + 1)
-            view.resumeEmulation()
+            if (!view.suppressAutoResume) view.resumeEmulation()
         }
         // Stop a stalled or malicious peer from retaining socket and session indefinitely.
         socket?.soTimeout = ACTIVE_READ_TIMEOUT_MS
@@ -344,6 +356,7 @@ class GameNetplay(
         }
         closeSockets()
         waiting = false
+        synchronizing = false
         state = if (reason == null) NetplayState.Idle else NetplayState.Failed(reason)
     }
 

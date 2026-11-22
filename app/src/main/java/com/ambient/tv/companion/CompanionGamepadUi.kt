@@ -14,6 +14,9 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.SportsEsports
 import androidx.compose.material.icons.filled.Tune
+import androidx.compose.material.icons.filled.FastRewind
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -25,6 +28,8 @@ import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.ambient.tv.R
@@ -37,11 +42,12 @@ import com.ambient.tv.ui.games.GameTouchControls
 import com.ambient.tv.ui.games.GameTouchOptions
 import com.ambient.tv.ui.games.gameTouchPresentation
 import com.ambient.tv.ui.gamepad.GamepadInput
+import com.ambient.tv.ui.gamepad.GameInputMode
+import com.ambient.tv.ui.common.holdAction
 import com.ambient.tv.ui.gamepad.retro.RetroPadInput
 import com.ambient.tv.ui.gamepad.retro.RetroPorts
 import com.ambient.tv.ui.gamepad.retro.RetroInputProfileContext
 import com.ambient.tv.ui.gamepad.retro.isPhysicalGamepadActivity
-import com.ambient.tv.ui.gamepad.retro.isPhysicalGamepadEvent
 import android.os.Handler
 import android.os.Looper
 import kotlinx.coroutines.delay
@@ -89,7 +95,7 @@ internal fun CompanionGamepadScreen(manager: CompanionManager, modifier: Modifie
     val info = state.remote?.gamepadInfo
     val port = state.remote?.gamepadPort ?: -1
     val claimed = state.online && info != null && port in 0..3
-    val playing = claimed && info?.ready == true
+    val playing = claimed && info?.acceptsGameplay == true
     val lifecycleOwner = LocalLifecycleOwner.current
     var resumed by remember(lifecycleOwner) {
         mutableStateOf(lifecycleOwner.lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED))
@@ -106,6 +112,35 @@ internal fun CompanionGamepadScreen(manager: CompanionManager, modifier: Modifie
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
     val transmitting = playing && resumed
+    val navigating = claimed && resumed && info?.acceptsNavigation == true
+    val renderedInfo by rememberUpdatedState(info)
+    val confirmHold = remember(manager) { CompanionGamepadHold(rewind = false, manager::sendGamepadCommand) }
+    val rewindHold = remember(manager) { CompanionGamepadHold(rewind = true, manager::sendGamepadCommand) }
+    val touchConfirmOwner = remember { Any() }
+    val touchRewindOwner = remember { Any() }
+    val hardwareRewindOwner = remember { Any() }
+    LaunchedEffect(confirmHold.held) {
+        while (confirmHold.held) { delay(500); if (confirmHold.held) confirmHold.renew() }
+    }
+    LaunchedEffect(rewindHold.held) {
+        while (rewindHold.held) { delay(500); if (rewindHold.held) rewindHold.renew() }
+    }
+    DisposableEffect(lifecycleOwner, confirmHold, rewindHold) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_PAUSE || event == Lifecycle.Event.ON_STOP) {
+                confirmHold.clear(); rewindHold.clear()
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer); confirmHold.clear(); rewindHold.clear() }
+    }
+    LaunchedEffect(info?.sessionId, info?.contextRevision) {
+        confirmHold.clear(); rewindHold.clear()
+    }
+    LaunchedEffect(navigating, transmitting, info?.rewindAvailable) {
+        if (!navigating) confirmHold.clear()
+        if (!transmitting || info?.rewindAvailable != true) rewindHold.clear()
+    }
     var touchOptionsOpen by remember { mutableStateOf(false) }
     val touchStyle = RetroInputSettings.config.touchStyle
     val touchVariant = RetroInputSettings.config.touchVariants[info?.systemId].orEmpty()
@@ -158,11 +193,45 @@ internal fun CompanionGamepadScreen(manager: CompanionManager, modifier: Modifie
                 handler.postDelayed(runnable, delay)
                 ({ handler.removeCallbacks(runnable) })
             },
-            onMenu = { manager.gamepadMenu() },
+            onMenu = { renderedInfo?.takeIf { it.acceptsGameplay }?.let { manager.gamepadMenu(it) } },
+            onRewind = { rewindHold.set(hardwareRewindOwner, it, renderedInfo) },
         )
     }
-    DisposableEffect(hardwareInput, transmitting, touchOptionsOpen) {
-        val enabled = transmitting && !touchOptionsOpen
+    val currentHardwareInput by rememberUpdatedState(hardwareInput)
+    val physicalRouter = remember(manager) {
+        val handler = Handler(Looper.getMainLooper())
+        CompanionGamepadMenuInput(
+            gameInput = { currentHardwareInput.onEvent(it) },
+            navigate = { action, session, revision ->
+                manager.sendGamepadCommand(CompanionGamepadCommand(session, revision, action))
+            },
+            resume = { session, revision ->
+                manager.sendGamepadCommand(CompanionGamepadCommand(session, revision, "resume"))
+            },
+            confirm = { device, held, cancelled, session, revision ->
+                confirmHold.set(device, held, renderedInfo?.takeIf {
+                    it.sessionId == session && it.contextRevision == revision
+                }, cancelled)
+            },
+            scheduler = { delay, task ->
+                val runnable = Runnable(task)
+                handler.postDelayed(runnable, delay)
+                ({ handler.removeCallbacks(runnable) })
+            },
+            clock = android.os.SystemClock::uptimeMillis,
+        )
+    }
+    val physicalMode = when {
+        !claimed || !resumed || touchOptionsOpen -> GameInputMode.BLOCKED
+        transmitting -> GameInputMode.RUNNING
+        navigating && info?.interactionMode == CompanionGamepadInteraction.DIALOG -> GameInputMode.DIALOG
+        navigating -> GameInputMode.MENU
+        else -> GameInputMode.BLOCKED
+    }
+    SideEffect { physicalRouter.update(physicalMode, info?.contextRevision ?: 0L, info?.sessionId.orEmpty()) }
+    val currentTransmitting by rememberUpdatedState(transmitting)
+    DisposableEffect(hardwareInput, physicalRouter, claimed, resumed, touchOptionsOpen) {
+        val enabled = claimed && resumed
         hardwareInput.onChanged = {
             var buttons = 0
             for (player in 0 until RetroPorts.COUNT) buttons = buttons or hardwareInput.buttons(player)
@@ -188,15 +257,18 @@ internal fun CompanionGamepadScreen(manager: CompanionManager, modifier: Modifie
                 (previous.rightY != 0f && padInputs.axis(3) == 0f) ||
                 ((previous.leftTrigger ?: 0f) > 0f) != (padInputs.trigger(0) > 0f) ||
                 ((previous.rightTrigger ?: 0f) > 0f) != (padInputs.trigger(1) > 0f)
-            currentPublishPad(edge)
+            currentPublishPad(edge && currentTransmitting)
         }
         val sink: (android.view.InputEvent) -> Boolean = { event ->
-            val handled = isPhysicalGamepadEvent(event) && hardwareInput.onEvent(event)
-            if (handled && hideTouchForGamepad && isPhysicalGamepadActivity(event, hardwareInput)) hidingGamepadId = event.deviceId
-            handled
+            val handled = physicalRouter.onEvent(event)
+            if (currentTransmitting && handled && hideTouchForGamepad && isPhysicalGamepadActivity(event, hardwareInput)) hidingGamepadId = event.deviceId
+            // Observe held input even in the phone's own options dialog, but let that dialog
+            // receive its normal UI navigation instead of forwarding it to the TV.
+            handled && !touchOptionsOpen
         }
         val removed: (Int) -> Unit = { id ->
             hardwareInput.deviceRemoved(id)
+            physicalRouter.deviceRemoved(id)
             if (hidingGamepadId == id) hidingGamepadId = null
         }
         if (enabled) {
@@ -207,6 +279,7 @@ internal fun CompanionGamepadScreen(manager: CompanionManager, modifier: Modifie
             if (GamepadInput.rawSink === sink) GamepadInput.rawSink = null
             if (GamepadInput.deviceRemovedSink === removed) GamepadInput.deviceRemovedSink = null
             hardwareInput.onChanged = null
+            physicalRouter.releaseAll()
             hardwareInput.releaseAll()
             padInputs.clearHardware()
             currentPublishPad(true)
@@ -266,9 +339,13 @@ internal fun CompanionGamepadScreen(manager: CompanionManager, modifier: Modifie
             // App background, screen lock or TV OSD: never send held-button heartbeats.
             // The TV's own deadman remains a fallback if this neutral frame is lost.
             padInputs.clear()
+            hardwareInput.releaseAll()
             padFrame.value = CompanionGamepadState()
             manager.gamepadInput(CompanionGamepadState())
         }
+    }
+    LaunchedEffect(playing) {
+        if (!playing) { touchOptionsOpen = false }
     }
     LaunchedEffect(inputKind) {
         if (padFrame.value.pointer != null) {
@@ -396,7 +473,7 @@ internal fun CompanionGamepadScreen(manager: CompanionManager, modifier: Modifie
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
-                if (compactHeader) Box {
+                if (compactHeader && transmitting) Box {
                     IconButton(onClick = { optionsOpen = !optionsOpen }) {
                         Icon(Icons.Default.Tune, stringResource(R.string.game_touch_controls))
                     }
@@ -406,15 +483,37 @@ internal fun CompanionGamepadScreen(manager: CompanionManager, modifier: Modifie
                         modifier = Modifier.width(320.dp),
                     ) { options() }
                 }
-                TextButton(onClick = { manager.gamepadMenu() }, enabled = claimed) {
+                if (compactHeader && transmitting && info?.rewindAvailable == true && !touchOptionsOpen) {
+                    key(info.sessionId, info.contextRevision) {
+                        CompanionGamepadRewindControl(info.rewindSeconds,
+                            onPressed = { rewindHold.set(touchRewindOwner, it, info) }, compact = true)
+                    }
+                }
+                if (claimed && resumed && (transmitting || info?.interaction == null))
+                    TextButton(onClick = { manager.gamepadMenu(info) }) {
                     Text(stringResource(R.string.companion_gamepad_menu))
                 }
             }
 
-            if (!compactHeader) options()
+            if (!compactHeader && transmitting) options()
+
+            if (!compactHeader && transmitting && info?.rewindAvailable == true && !touchOptionsOpen) {
+                key(info.sessionId, info.contextRevision) {
+                    CompanionGamepadRewindControl(info.rewindSeconds,
+                        onPressed = { rewindHold.set(touchRewindOwner, it, info) },
+                        modifier = Modifier.align(Alignment.CenterHorizontally).padding(horizontal = 12.dp, vertical = 4.dp))
+                }
+            }
 
             Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
-                if (transmitting && !touchOptionsOpen) {
+                if (navigating) {
+                    key(info?.sessionId, info?.contextRevision) {
+                        CompanionGameMenuControls(onNavigate = { manager.gamepadNavigate(it, info) },
+                            onResume = { manager.gamepadMenu(info) },
+                            onConfirm = { held, cancelled -> confirmHold.set(touchConfirmOwner, held, info, cancelled) },
+                            canResume = info?.acceptsResume == true)
+                    }
+                } else if (transmitting && !touchOptionsOpen) {
                     if (inputKind == "pad" && touchStyle.hideOnGamepadInput && hidingGamepadId != null) {
                         TextButton(onClick = { hidingGamepadId = null }) {
                             Icon(Icons.Default.SportsEsports, null)
@@ -472,6 +571,9 @@ internal fun CompanionGamepadScreen(manager: CompanionManager, modifier: Modifie
                             !state.online -> R.string.remote_disconnected
                             info == null -> R.string.companion_gamepad_no_game
                             !claimed -> R.string.companion_gamepad_not_claimed
+                            info?.interactionMode == CompanionGamepadInteraction.LOADING -> R.string.game_preparing
+                            info?.interactionMode == CompanionGamepadInteraction.BUSY -> R.string.companion_gamepad_busy
+                            info?.interactionMode == CompanionGamepadInteraction.BACKGROUND -> R.string.companion_gamepad_background
                             else -> R.string.companion_gamepad_paused
                         }), style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -494,6 +596,31 @@ internal fun CompanionGamepadScreen(manager: CompanionManager, modifier: Modifie
         } },
         confirmButton = { TextButton(onClick = { touchOptionsOpen = false }) { Text(stringResource(android.R.string.ok)) } },
     )
+}
+
+/** Bounded renewals keep the primary player's held rewind alive, never a toggle. */
+@Composable
+private fun CompanionGamepadRewindControl(
+    seconds: Float,
+    onPressed: (Boolean) -> Unit,
+    modifier: Modifier = Modifier,
+    compact: Boolean = false,
+) {
+    val interactions = remember { MutableInteractionSource() }
+    val pressed by interactions.collectIsPressedAsState()
+    val label = stringResource(R.string.game_rewind_hold)
+    Surface(modifier.heightIn(min = 48.dp).semantics { contentDescription = label }
+        .holdAction(onHold = onPressed, interactionSource = interactions),
+        shape = RoundedCornerShape(14.dp),
+        color = if (pressed) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant,
+        border = BorderStroke(1.dp, if (pressed) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant)) {
+        Row(Modifier.padding(horizontal = if (compact) 8.dp else 16.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(if (compact) 4.dp else 8.dp)) {
+            Icon(Icons.Default.FastRewind, null, Modifier.size(22.dp))
+            if (!compact) Text(stringResource(R.string.game_rewind))
+            Text(stringResource(R.string.game_rewind_buffer_seconds, seconds), style = MaterialTheme.typography.labelMedium)
+        }
+    }
 }
 
 /** Press-and-hold is not an onClick pulse: cores see every DOWN and UP transition. */

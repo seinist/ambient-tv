@@ -25,7 +25,7 @@
     <string name="game_message_load_failed">The quick save could not be loaded</string>
     <string name="game_reset">Start over</string>
     <string name="game_panel_picture">Picture</string>
-    <string name="game_osd_buttons_hint">Show or hide game actions. Continue and settings always stay available.</string>
+    <string name="game_osd_buttons_hint">Show or hide game actions.</string>
     <string name="game_panel_core">Core options</string>
     <string name="game_panel_controls">Players</string>
     <string name="game_panel_info">Info</string>
