@@ -5,6 +5,7 @@ import com.ambient.tv.data.local.HomeRowDefinition
 import com.ambient.tv.games.library.LibraryGame
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -52,6 +53,7 @@ class GameHomeRowsTest {
         val entry = game("Local cover", "snes", true, 0L).copy(
             coverPath = "/app/private/game images/cover #1.png",
             backdropPath = "/app/private/game images/screen.png", metadataYear = 1994,
+            coverWidth = 720, coverHeight = 480,
         )
         val def = listOf(HomeRowDefinition(system = HomeRowDefinition.SYSTEM_GAMES,
             contentKey = HomeRowDefinition.GAMES_ALL))
@@ -61,5 +63,37 @@ class GameHomeRowsTest {
         assertEquals(entry.backdropPath, Uri.parse(item.artUrl).path)
         assertEquals(1994, item.year)
         assertEquals(entry.title, item.title)
+        assertEquals(1.5f, item.gameCoverAspectRatio!!, 0.0001f)
+        val hero = item.toHomeHeroContent()
+        assertEquals("games:${item.ratingKey}", hero.key)
+        assertEquals("SNES", hero.providerLabel)
+    }
+
+    @Test fun missingCoverUsesNativeFallbackWithSystemGeometryAndNoFakeImageUrl() {
+        val def = listOf(HomeRowDefinition(system = HomeRowDefinition.SYSTEM_GAMES,
+            contentKey = HomeRowDefinition.GAMES_ALL))
+        val items = gameHomeRows(RuntimeEnvironment.getApplication(), def,
+            listOf(game("Western SNES", "snes", false, 0L), game("NES", "nes", false, 0L)))
+            .single().items
+        assertTrue(items.all { it.thumbUrl == null })
+        assertNull(items.first().artUrl)
+        assertTrue(items.first { it.title == "Western SNES" }.gameCoverAspectRatio!! > 1f)
+        assertTrue(items.first { it.title == "NES" }.gameCoverAspectRatio!! < 1f)
+    }
+
+    @Test fun homeCacheRoundTripPreservesGeometryAndOlderEntriesRemainReadable() {
+        val def = listOf(HomeRowDefinition(system = HomeRowDefinition.SYSTEM_GAMES,
+            contentKey = HomeRowDefinition.GAMES_ALL))
+        val item = gameHomeRows(RuntimeEnvironment.getApplication(), def,
+            listOf(game("Cover", "snes", false, 0L).copy(coverWidth = 441, coverHeight = 639)))
+            .single().items.single()
+        val serializer = com.ambient.tv.domain.model.MediaItem.serializer()
+        val json = kotlinx.serialization.json.Json
+        val restored = json.decodeFromString(serializer, json.encodeToString(serializer, item))
+        assertEquals(item.gameCoverAspectRatio, restored.gameCoverAspectRatio)
+        val old = item.copy(gameCoverAspectRatio = null)
+        val oldPayload = json.encodeToString(serializer, old)
+        assertFalse(oldPayload.contains("gameCoverAspectRatio"))
+        assertNull(json.decodeFromString(serializer, oldPayload).gameCoverAspectRatio)
     }
 }

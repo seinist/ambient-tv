@@ -111,6 +111,7 @@ data class HomeHeroLive(val timeLabel: String, val startEpochSeconds: Long, val 
 
 internal fun MediaItem.toHomeHeroContent() = HomeHeroContent(
     key = "${when {
+        ratingKey.startsWith(GAME_HOME_ITEM_PREFIX) -> "games"
         ratingKey.startsWith("trailer-video:") -> "trailers"
         ratingKey.startsWith(RADIO_HOME_ITEM_PREFIX) -> "radio"
         ratingKey.startsWith(com.ambient.tv.data.telegram.TELEGRAM_MEDIA_PREFIX) -> "telegram"
@@ -124,6 +125,8 @@ internal fun MediaItem.toHomeHeroContent() = HomeHeroContent(
     thumbnailUrl = thumbUrl,
     titleLogoUrl = logoUrl,
     providerLabel = when {
+        ratingKey.startsWith(GAME_HOME_ITEM_PREFIX) ->
+            com.ambient.tv.games.GameSystems.byId(ratingKey.substringAfterLast('|'))?.shortName ?: summary
         ratingKey.startsWith("trailer-video:") -> "trailers"
         ratingKey.startsWith(RADIO_HOME_ITEM_PREFIX) -> MediaSystem.RADIO.customName ?: "Radio Browser"
         ratingKey.startsWith(com.ambient.tv.data.telegram.TELEGRAM_MEDIA_PREFIX) -> MediaSystem.TELEGRAM.customName ?: "Monogram"
@@ -288,6 +291,8 @@ class HomeViewModel @Inject constructor(
     private var radioRows: List<ContentRowData> = emptyList()
     private var gameRows: List<ContentRowData> = emptyList()
     private var gameRowsJob: Job? = null
+    /** Independent of row refreshes, so publishing migrated covers cannot cancel its own work. */
+    private var gameGeometryJob: Job? = null
     private var gameRowsGeneration = 0
     /** The actual stations behind each displayed Radio Browser Home row. */
     private val radioSourceRows = java.util.concurrent.ConcurrentHashMap<String, List<RadioStation>>()
@@ -2044,6 +2049,14 @@ class HomeViewModel @Inject constructor(
         if (definitions.isEmpty() || !gameLibrary.hasConfiguredFolders()) {
             clearRows()
             return
+        }
+        if (gameGeometryJob == null) {
+            gameGeometryJob = viewModelScope.launch {
+                try {
+                    gameLibrary.backfillCoverGeometry()
+                } catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
+                catch (error: Exception) { timber.log.Timber.w(error, "Game Home cover migration unavailable") }
+            }
         }
         gameRowsJob = viewModelScope.launch {
             val rows = try {

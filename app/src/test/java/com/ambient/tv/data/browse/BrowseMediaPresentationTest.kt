@@ -80,4 +80,11 @@ class BrowseMediaPresentationTest {
             ).browsePresentationKey(),
         )
     }
+
+    @Test fun migratedGameCoverGeometryInvalidatesCachedTilePresentation() {
+        val before = item().copy(ratingKey = "game-home:file|snes", type = "game")
+        val after = before.copy(gameCoverAspectRatio = 1.4f)
+        assertNotEquals(before.browsePresentationKey(), after.browsePresentationKey())
+        assertNotEquals(after.browsePresentationKey(), after.copy(gameCoverAspectRatio = 0.55f).browsePresentationKey())
+    }
 }

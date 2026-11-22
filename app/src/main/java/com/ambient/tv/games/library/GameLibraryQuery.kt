@@ -112,7 +112,8 @@ internal fun gameLibrarySql(query: GameLibraryQuery, titleStyle: String): GameLi
     // reach the cursor; scan-only CRC/parser columns are not hydrated by library/Home queries.
     return GameLibrarySql("""SELECT g.folder_id,g.file_id,g.source_id,g.path,g.filename,g.system_id,
         q.title_$style,g.internal_title,g.file_size,g.modified,q.favorite,q.last_played,
-        q.custom_title,g.verified_title,q.metadata_title,q.metadata_year,q.cover_path,q.backdrop_path
+        q.custom_title,g.verified_title,q.metadata_title,q.metadata_year,q.cover_path,q.backdrop_path,
+        q.cover_width,q.cover_height,q.metadata_region,q.metadata_platform
         FROM game_query q JOIN game_entries g ON g.folder_id=q.folder_id AND g.file_id=q.file_id
         $where ORDER BY $order$limit""".trimIndent(), args.toTypedArray())
 }

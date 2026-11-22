@@ -24,12 +24,14 @@ internal object GameMetadataStorage {
     fun create(db: SQLiteDatabase) {
         db.execSQL("""CREATE TABLE game_metadata (
             file_id TEXT NOT NULL PRIMARY KEY,title TEXT,year INTEGER,
-            payload TEXT NOT NULL,updated_at INTEGER NOT NULL)""")
+            payload TEXT NOT NULL,updated_at INTEGER NOT NULL,region TEXT,platform TEXT)""")
         db.execSQL("""CREATE TABLE game_artwork (
             file_id TEXT NOT NULL,kind TEXT NOT NULL,path TEXT NOT NULL,
             bytes INTEGER NOT NULL,pinned INTEGER NOT NULL DEFAULT 0,updated_at INTEGER NOT NULL,
+            image_width INTEGER,image_height INTEGER,geometry_checked INTEGER NOT NULL DEFAULT 0,
             PRIMARY KEY(file_id,kind))""")
         db.execSQL("CREATE INDEX game_artwork_retention ON game_artwork(pinned,updated_at)")
+        createGeometryIndexes(db)
         db.execSQL("""CREATE TABLE game_metadata_checks (
             file_id TEXT NOT NULL,provider TEXT NOT NULL,fingerprint TEXT NOT NULL,
             status TEXT NOT NULL,expires_at INTEGER NOT NULL,
@@ -42,11 +44,35 @@ internal object GameMetadataStorage {
         db.execSQL("CREATE INDEX IF NOT EXISTS game_entries_folder_filename ON game_entries(folder_id,filename)")
     }
 
+    /** Header reads are deferred to the existing IO maintenance worker, not database upgrade. */
+    fun addCoverGeometryColumns(db: SQLiteDatabase) {
+        db.execSQL("ALTER TABLE game_metadata ADD COLUMN region TEXT")
+        db.execSQL("ALTER TABLE game_metadata ADD COLUMN platform TEXT")
+        db.execSQL("ALTER TABLE game_artwork ADD COLUMN image_width INTEGER")
+        db.execSQL("ALTER TABLE game_artwork ADD COLUMN image_height INTEGER")
+        db.execSQL("ALTER TABLE game_artwork ADD COLUMN geometry_checked INTEGER NOT NULL DEFAULT 0")
+        createGeometryIndexes(db)
+    }
+
+    private fun createGeometryIndexes(db: SQLiteDatabase) {
+        // Once maintenance finishes these partial indexes are empty. A large imported
+        // collection must not rescan all previously checked rows for every 32-item batch.
+        db.execSQL("CREATE INDEX game_artwork_geometry_pending ON game_artwork(file_id) WHERE kind='cover' AND geometry_checked=0")
+        db.execSQL("CREATE INDEX game_metadata_region_pending ON game_metadata(file_id) WHERE region IS NULL")
+    }
+
+    /** Only a provider namespace names a platform; emulator/core names are never identities. */
+    fun platform(metadata: GameMetadata): String = if (metadata.provider == GameMetadataProviderIds.LIBRETRO)
+        metadata.providerGameId.substringBefore('|', "").take(128) else ""
+
+    fun decode(payload: String): GameMetadata? =
+        runCatching { json.decodeFromString<GameMetadata>(payload).bounded() }.getOrNull()
+
     fun read(db: SQLiteDatabase, fileId: String): GameMetadata? = db.rawQuery(
         "SELECT payload FROM game_metadata WHERE file_id=?", arrayOf(fileId),
     ).use { rows ->
         if (!rows.moveToFirst()) null
-        else runCatching { json.decodeFromString<GameMetadata>(rows.getString(0)).bounded() }.getOrNull()
+        else decode(rows.getString(0))
     }
 
     fun write(db: SQLiteDatabase, fileId: String, metadata: GameMetadata) {
@@ -57,6 +83,8 @@ internal object GameMetadataStorage {
             if (value.year == null) putNull("year") else put("year", value.year)
             put("payload", json.encodeToString(value))
             put("updated_at", value.updatedAt)
+            put("region", value.region)
+            put("platform", platform(value))
         })
     }
 
