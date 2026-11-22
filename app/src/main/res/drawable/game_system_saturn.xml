@@ -1,13 +1,15 @@
 <?xml version="1.0" encoding="utf-8"?>
-<vector xmlns:android="http://schemas.android.com/apk/res/android"
- android:width="64dp" android:height="64dp"
- android:viewportWidth="64" android:viewportHeight="64">
- <!-- Ambient TV: corrected upright system hardware, intentionally no brand logos. -->
- <path android:pathData="M11,13 H53 Q57,13 57,18 V49 Q57,53 53,53 H11 Q7,53 7,49 V18 Q7,13 11,13 Z" android:fillColor="#FFFFFFFF" android:fillAlpha="0.13" android:strokeColor="#FFFFFFFF" android:strokeWidth="2.25" android:strokeLineCap="round" android:strokeLineJoin="round"/>
- <path android:pathData="M18,19 H45 Q50,19 50,23 V38 H14 V23 Q14,19 18,19 Z" android:fillColor="#FFFFFFFF" android:fillAlpha="0.035" android:strokeColor="#FFFFFFFF" android:strokeWidth="2.25" android:strokeLineCap="round" android:strokeLineJoin="round"/>
- <path android:pathData="M22,28 a10,10 0,1 0,20,0 a10,10 0,1 0,-20,0" android:fillColor="#FFFFFFFF" android:fillAlpha="0.025" android:strokeColor="#FFFFFFFF" android:strokeWidth="2.25" android:strokeLineCap="round" android:strokeLineJoin="round"/>
- <path android:pathData="M29.6,28 a2.4,2.4 0,1 0,4.8,0 a2.4,2.4 0,1 0,-4.8,0" android:fillColor="#FFFFFFFF" android:fillAlpha="0.95"/>
- <path android:pathData="M17,46 H26 Q28,46 28,48 V49 Q28,51 26,51 H17 Q15,51 15,49 V48 Q15,46 17,46 Z" android:fillColor="#FFFFFFFF" android:fillAlpha="0.035" android:strokeColor="#FFFFFFFF" android:strokeWidth="2.25" android:strokeLineCap="round" android:strokeLineJoin="round"/>
- <path android:pathData="M38,46 H47 Q49,46 49,48 V49 Q49,51 47,51 H38 Q36,51 36,49 V48 Q36,46 38,46 Z" android:fillColor="#FFFFFFFF" android:fillAlpha="0.035" android:strokeColor="#FFFFFFFF" android:strokeWidth="2.25" android:strokeLineCap="round" android:strokeLineJoin="round"/>
- <path android:pathData="M11,42 L53,42" android:fillColor="#00000000" android:strokeColor="#FFFFFFFF" android:strokeWidth="1.5" android:strokeLineCap="round" android:strokeLineJoin="round"/>
+<!--
+    RetroArch Assets / XMB Monochrome, CC BY 4.0.
+    Source: src/xmb/monochrome/Sega - Saturn.svg
+    Revision: 8c918e2872482139273374ef4cc6c7aff34d7585
+    Native vector conversion; source geometry retained.
+    Credits and license: third_party_assets/game_system_icons/README.md
+    Regenerate with scripts/import_game_system_icons.py.
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android" android:width="64dp" android:height="64dp" android:viewportWidth="64" android:viewportHeight="64">
+    <clip-path android:pathData="M0,0H64V64H0Z" />
+    <group android:scaleX="1" android:scaleY="1" android:translateX="0" android:translateY="-128">
+        <path android:fillColor="#FFFFFFFF" android:fillType="nonZero" android:pathData="M47,142c-5.75,0-10.5,3-15,3s-9.25-3-15-3c-7.584,0-14,19.584-14,27s6.25,9,9,9  c4,0,13.333-10,20-10s16,10,20,10c2.75,0,9-1.584,9-9S54.584,142,47,142z M44,152c1.104,0,2,0.896,2,2s-0.896,2-2,2s-2-0.896-2-2  S42.896,152,44,152z M20,160.5c0,0.553-0.447,1-1,1h-2.5v2.5c0,0.553-0.447,1-1,1h-1c-0.553,0-1-0.447-1-1v-2.5H11  c-0.553,0-1-0.447-1-1v-1c0-0.553,0.447-1,1-1h2.5V156c0-0.553,0.447-1,1-1h1c0.553,0,1,0.447,1,1v2.5H19c0.553,0,1,0.447,1,1V160.5  z M32,165c-1.104,0-2-0.224-2-0.5s0.896-0.5,2-0.5s2,0.224,2,0.5S33.104,165,32,165z M37,157c0-1.104,0.896-2,2-2s2,0.896,2,2  s-0.896,2-2,2S37,158.104,37,157z M41,167c-1.657,0-3-1.343-3-3s1.343-3,3-3s3,1.343,3,3S42.657,167,41,167z M47,162  c-1.657,0-3-1.343-3-3s1.343-3,3-3s3,1.343,3,3S48.657,162,47,162z M49,153c-1.104,0-2-0.896-2-2s0.896-2,2-2s2,0.896,2,2  S50.104,153,49,153z M54,159c-1.657,0-3-1.343-3-3s1.343-3,3-3s3,1.343,3,3S55.657,159,54,159z" />
+    </group>
 </vector>

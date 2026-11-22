@@ -48,6 +48,7 @@ class MenuOrderUiTest {
     private fun allSystems() = SidebarUiState(
         trailersConfigured = true,
         filesEnabled = true,
+        gamesAvailable = true,
         dlnaServers = listOf(DlnaServer(
             id = "nas", udn = "uuid:nas", name = "NAS",
             descriptionUrl = "http://192.0.2.1/description.xml",
@@ -78,8 +79,8 @@ class MenuOrderUiTest {
             SideEffect { items = current }
         }
         rule.runOnIdle {
-            assertEquals(MediaSystem.entries.map { it.key }.toSet() + "weather", items.map { it.id }.toSet())
-            assertEquals(MediaSystem.entries.size + 1, items.size)
+            assertEquals(MediaSystem.entries.map { it.key }.toSet() + setOf("weather", "games"), items.map { it.id }.toSet())
+            assertEquals(MediaSystem.entries.size + 2, items.size)
             assertEquals(listOf("weather", "radio", "tvheadend", "iptv"), items.take(4).map { it.id })
             val byId = items.associateBy { it.id }
             assertEquals("TVHeadend", byId.getValue("tvheadend").label)
@@ -89,7 +90,33 @@ class MenuOrderUiTest {
             assertEquals(rule.activity.getString(R.string.nav_files), byId.getValue("files").label)
             assertEquals(rule.activity.getString(R.string.weather_title), byId.getValue("weather").label)
             assertNull(byId.getValue("weather").system)
+            assertEquals(rule.activity.getString(R.string.game_library_title), byId.getValue("games").label)
         }
+    }
+
+    @Test fun gamesAppearAfterFolderSetupAndKeepTheirSavedOrderAndName() {
+        val storage = memoryPreferences()
+        val prefs = AppPreferences(storage)
+        prefs.systemNames = mapOf("games" to "Retro")
+        prefs.sidebarSystemOrder = listOf("games", "files")
+        val restored = AppPreferences(storage)
+        var state by mutableStateOf(SidebarUiState(filesEnabled = true,
+            systemOrder = restored.sidebarSystemOrder))
+        var items = emptyList<MenuOrderItem>()
+        rule.setContent {
+            val current = menuOrderItems(state)
+            SideEffect { items = current }
+        }
+        rule.runOnIdle {
+            assertFalse(items.any { it.id == "games" })
+            state = state.copy(gamesAvailable = true)
+        }
+        rule.runOnIdle {
+            assertEquals(listOf("games", "files"), items.map { it.id })
+            assertEquals("Retro", items.first().label)
+            state = state.copy(gamesAvailable = false)
+        }
+        rule.runOnIdle { assertEquals(listOf("files"), items.map { it.id }) }
     }
 
     @Test fun customNamesUpdateEveryEntryWithoutChangingDefaultsOrShowingDisabledWeather() {

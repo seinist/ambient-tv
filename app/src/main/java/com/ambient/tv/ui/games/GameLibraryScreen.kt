@@ -118,7 +118,9 @@ fun GameLibraryScreen(
         if (state.section == "recent") filtered.sortedByDescending { it.lastPlayed }
         else {
             val sorted = when (state.sortKey) {
-                "system" -> filtered.sortedWith(compareBy<LibraryGame> { it.systemId }
+                "system" -> filtered.sortedWith(compareBy<LibraryGame> {
+                    (GameSystems.byId(it.systemId)?.shortName ?: it.systemId).lowercase(Locale.ROOT)
+                }
                     .thenBy { it.title.lowercase(Locale.ROOT) }.thenBy { it.fileId })
                 "recent" -> filtered.sortedWith(compareByDescending<LibraryGame> { it.lastPlayed }
                     .thenBy { it.title.lowercase(Locale.ROOT) })
@@ -202,9 +204,9 @@ fun GameLibraryScreen(
                 stringResource(R.string.action_search), Modifier.fillMaxWidth())
             LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 val sections = listOf("all", "favorites", "recent") +
-                    state.folders.map { it.systemId }.filter { it != "auto" } +
-                    state.games.map { it.systemId }
-                items(sections.distinct(), key = { it }) { key ->
+                    GameSystems.sortIdsByName(state.folders.map { it.systemId }.filter { it != "auto" } +
+                        state.games.map { it.systemId })
+                items(sections, key = { it }) { key ->
                     val label = when (key) {
                         "all" -> stringResource(R.string.game_library_all)
                         "favorites" -> stringResource(R.string.radio_favorites)
@@ -272,7 +274,7 @@ fun GameLibraryScreen(
                         // viewport. Entirely cached data means the NAS never wakes for layout.
                         val grouped = remember(games) {
                             games.groupBy { it.systemId }.toList().sortedBy {
-                                GameSystems.byId(it.first)?.name ?: it.first
+                                (GameSystems.byId(it.first)?.name ?: it.first).lowercase(Locale.ROOT)
                             }
                         }
                         TvLazyColumn(
@@ -363,7 +365,7 @@ fun GameLibraryScreen(
             Text(stringResource(R.string.game_library_dat_system), style = MaterialTheme.typography.titleMedium)
             TvLazyColumn(modifier = Modifier.fillMaxSize(),
                 verticalArrangement = Arrangement.spacedBy(7.dp)) {
-                items(GameSystems.all, key = { it.id }) { system ->
+                items(GameSystems.alphabetical, key = { it.id }) { system ->
                     TvActionButton(system.name, onClick = {
                         datSystemId = system.id
                         choosingDatSystem = false
@@ -499,7 +501,7 @@ private fun GameFolderManager(
             verticalArrangement = Arrangement.spacedBy(8.dp)) {
             item { TvActionButton(stringResource(R.string.game_library_auto),
                 onClick = { onAdd("auto") }, fillWidth = true) }
-            items(GameSystems.all, key = { it.id }) { system ->
+            items(GameSystems.alphabetical, key = { it.id }) { system ->
                 TvActionButton(system.name, onClick = { onAdd(system.id) },
                     icon = gameSystemVector(system.id), fillWidth = true)
             }

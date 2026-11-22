@@ -1,6 +1,7 @@
 package com.ambient.tv.ui.games
 
 import androidx.core.content.ContextCompat
+import androidx.core.graphics.PathParser
 import com.ambient.tv.games.GameSystems
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
@@ -37,30 +38,41 @@ class GameSystemIconsTest {
         }
     }
 
-    @Test fun allVectorsHaveRealDistinctGeometryNotBlankPlaceholders() {
+    @Test fun allVectorsHaveParseablePaintedGeometryAndConsistentViewports() {
         val context = RuntimeEnvironment.getApplication()
         val namespace = "http://schemas.android.com/apk/res/android"
         for (system in GameSystems.all) {
             val id = GameSystemIcons.drawable(system.id)
             val paths = mutableListOf<String>()
-            var viewport = 0f
+            var viewportWidth = 0f
+            var viewportHeight = 0f
             context.resources.getXml(id).use { parser ->
                 while (parser.eventType != XmlPullParser.END_DOCUMENT) {
                     if (parser.eventType == XmlPullParser.START_TAG) {
                         when (parser.name) {
-                            "vector" -> viewport =
-                                parser.getAttributeValue(namespace, "viewportWidth")?.toFloatOrNull() ?: 0f
+                            "vector" -> {
+                                viewportWidth = parser.getAttributeValue(namespace, "viewportWidth")?.toFloatOrNull() ?: 0f
+                                viewportHeight = parser.getAttributeValue(namespace, "viewportHeight")?.toFloatOrNull() ?: 0f
+                            }
                             "path" -> parser.getAttributeValue(namespace, "pathData")?.let(paths::add)
                         }
                     }
                     parser.next()
                 }
             }
-            assertEquals("Unexpected vector scale for ${system.id}", 64f, viewport)
-            assertTrue("Too little geometry for ${system.id}", paths.size >= 4)
-            assertTrue("Repeated or blank paths for ${system.id}",
-                paths.all { it.isNotBlank() && it.startsWith("M") } &&
-                    paths.distinct().size >= 4)
+            assertEquals("Unexpected vector width for ${system.id}", 64f, viewportWidth, 0f)
+            assertEquals("Unexpected vector height for ${system.id}", 64f, viewportHeight, 0f)
+            assertTrue("No painted paths for ${system.id}", paths.isNotEmpty())
+            paths.forEach { data ->
+                val nodes = PathParser.createNodesFromPathData(data)
+                assertNotNull("Invalid path in ${system.id}", nodes)
+                assertTrue("Blank or non-finite path in ${system.id}",
+                    nodes.isNotEmpty() && nodes.all { node -> node.params.all { it.isFinite() } })
+                assertTrue("Path contains no drawn segments in ${system.id}", nodes.any { node ->
+                    node.type.uppercaseChar() in "LHVCSQTA" ||
+                        (node.type.uppercaseChar() == 'M' && node.params.size > 2)
+                })
+            }
         }
     }
 }

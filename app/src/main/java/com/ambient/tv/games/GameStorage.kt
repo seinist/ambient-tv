@@ -1,7 +1,7 @@
 package com.ambient.tv.games
 
 import android.content.Context
-import android.util.AtomicFile
+import androidx.core.util.AtomicFile
 import dagger.hilt.android.qualifiers.ApplicationContext
 import java.io.File
 import javax.inject.Inject
@@ -27,7 +27,11 @@ class GameStorage @Inject constructor(@ApplicationContext private val context: C
         file.takeIf { it.isFile && it.length() in 1..MAX_READ_BYTES }?.readBytes()
     }.getOrNull()
 
-    /** AtomicFile preserves the old save if the app crashes or storage is full. */
+    /**
+     * AndroidX writes a separate file before publishing, including on Android 10 where
+     * platform AtomicFile writes into the visible file. Readers keep the complete old
+     * save until publication; callers must still serialize writes to the same path.
+     */
     fun write(file: File, bytes: ByteArray) {
         if (bytes.isEmpty()) return
         file.parentFile?.mkdirs()

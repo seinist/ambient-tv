@@ -20,6 +20,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.res.stringResource
@@ -219,6 +220,59 @@ internal fun CompanionGamepadScreen(manager: CompanionManager, modifier: Modifie
         }
     }
 
+    val configuration = LocalConfiguration.current
+    val landscape = configuration.screenWidthDp > configuration.screenHeightDp
+    val compactHeader = landscape || configuration.screenHeightDp < 600
+    var optionsOpen by remember(compactHeader) { mutableStateOf(false) }
+    // Short windows keep the whole thumb area: configuration moves into the header's popover.
+    // On tall portrait phones the same controls remain visible above the gamepad.
+    val options: @Composable () -> Unit = {
+        Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState())
+            .padding(horizontal = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+            TextButton(onClick = {
+                val choices = listOf("pad", "touch", "mouse", "gun")
+                inputKind = choices[(choices.indexOf(inputKind) + 1) % choices.size]
+            }) {
+                Text(stringResource(when (inputKind) {
+                    "touch" -> R.string.companion_gamepad_input_touch
+                    "mouse" -> R.string.companion_gamepad_input_mouse
+                    "gun" -> R.string.companion_gamepad_input_gun
+                    else -> R.string.companion_gamepad_input_pad
+                }))
+            }
+            if (inputKind == "pad") TextButton(onClick = {
+                val next = (GameTouchMode.entries.indexOf(mode) + 1) % GameTouchMode.entries.size
+                modeKey = GameTouchMode.entries[next].key
+            }) {
+                Icon(Icons.Default.Tune, null, Modifier.size(17.dp))
+                Text(stringResource(mode.titleRes), maxLines = 1)
+            }
+            if (inputKind == "touch") TextButton(onClick = {
+                val regions = listOf("full", "lower", "upper", "left", "right")
+                pointerRegion = regions[(regions.indexOf(pointerRegion) + 1) % regions.size]
+            }) {
+                Text(stringResource(when (pointerRegion) {
+                    "lower" -> R.string.companion_gamepad_region_lower
+                    "upper" -> R.string.companion_gamepad_region_upper
+                    "left" -> R.string.companion_gamepad_region_left
+                    "right" -> R.string.companion_gamepad_region_right
+                    else -> R.string.companion_gamepad_region_full
+                }))
+            }
+            if (motion.availableMask != 0) TextButton(onClick = { motionEnabled = !motionEnabled }) {
+                Text(stringResource(if (motionEnabled) R.string.companion_gamepad_motion_on
+                    else R.string.companion_gamepad_motion_off))
+            }
+            if (inputKind == "gun") TextButton(onClick = {
+                setPointer(CompanionPointerState(kind = "gun", offscreen = true, buttons = 2))
+                scope.launch {
+                    delay(48L) // Core must observe the reload edge for at least one frame.
+                    setPointer(CompanionPointerState(kind = "gun"))
+                }
+            }) { Text(stringResource(R.string.companion_gamepad_reload)) }
+        }
+    }
+
     Surface(modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
         Column(Modifier.fillMaxSize()) {
             Row(Modifier.fillMaxWidth().heightIn(min = 52.dp).padding(horizontal = 6.dp),
@@ -240,69 +294,40 @@ internal fun CompanionGamepadScreen(manager: CompanionManager, modifier: Modifie
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
+                if (compactHeader) Box {
+                    IconButton(onClick = { optionsOpen = !optionsOpen }) {
+                        Icon(Icons.Default.Tune, stringResource(R.string.game_touch_controls))
+                    }
+                    DropdownMenu(
+                        expanded = optionsOpen,
+                        onDismissRequest = { optionsOpen = false },
+                        modifier = Modifier.width(320.dp),
+                    ) { options() }
+                }
                 TextButton(onClick = { manager.gamepadMenu() }, enabled = claimed) {
                     Text(stringResource(R.string.companion_gamepad_menu))
                 }
             }
 
-            // These are controls in the page, not dialogs or overlays. Horizontal scrolling
-            // prevents clipped labels on portrait phones and uses the same accent as the app.
-            Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState())
-                .padding(horizontal = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-                TextButton(onClick = {
-                    val choices = listOf("pad", "touch", "mouse", "gun")
-                    inputKind = choices[(choices.indexOf(inputKind) + 1) % choices.size]
-                }) {
-                    Text(stringResource(when (inputKind) {
-                        "touch" -> R.string.companion_gamepad_input_touch
-                        "mouse" -> R.string.companion_gamepad_input_mouse
-                        "gun" -> R.string.companion_gamepad_input_gun
-                        else -> R.string.companion_gamepad_input_pad
-                    }))
-                }
-                if (inputKind == "pad") TextButton(onClick = {
-                    val next = (GameTouchMode.entries.indexOf(mode) + 1) % GameTouchMode.entries.size
-                    modeKey = GameTouchMode.entries[next].key
-                }) {
-                    Icon(Icons.Default.Tune, null, Modifier.size(17.dp))
-                    Text(stringResource(mode.titleRes), maxLines = 1)
-                }
-                if (inputKind == "touch") TextButton(onClick = {
-                    val regions = listOf("full", "lower", "upper", "left", "right")
-                    pointerRegion = regions[(regions.indexOf(pointerRegion) + 1) % regions.size]
-                }) {
-                    Text(stringResource(when (pointerRegion) {
-                        "lower" -> R.string.companion_gamepad_region_lower
-                        "upper" -> R.string.companion_gamepad_region_upper
-                        "left" -> R.string.companion_gamepad_region_left
-                        "right" -> R.string.companion_gamepad_region_right
-                        else -> R.string.companion_gamepad_region_full
-                    }))
-                }
-                if (motion.availableMask != 0) TextButton(onClick = { motionEnabled = !motionEnabled }) {
-                    Text(stringResource(if (motionEnabled) R.string.companion_gamepad_motion_on
-                        else R.string.companion_gamepad_motion_off))
-                }
-                if (inputKind == "gun") TextButton(onClick = {
-                    setPointer(CompanionPointerState(kind = "gun", offscreen = true, buttons = 2))
-                    scope.launch {
-                        delay(48L) // Core must observe the reload edge for at least one frame.
-                        setPointer(CompanionPointerState(kind = "gun"))
-                    }
-                }) { Text(stringResource(R.string.companion_gamepad_reload)) }
-            }
+            if (!compactHeader) options()
 
             Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
                 if (transmitting) {
                     if (inputKind == "pad") {
                         GameTouchControls(
                             mode = mode,
+                            portrait = !landscape,
                             onButton = setButton,
-                            onDpadDirections = { directions ->
-                                val mask = companionDpadMask(padFrame.value.buttons, directions)
-                                if (mask != padFrame.value.buttons) {
+                            onButtonsChanged = { buttons ->
+                                val previous = padFrame.value.buttons
+                                val mask = buttons.fold(0) { bits, button -> bits or button.mask }
+                                if (mask != previous) {
                                     padFrame.value = padFrame.value.copy(buttons = mask)
-                                    manager.gamepadInput(padFrame.value) // one atomic frame per direction
+                                    // A complete snapshot avoids intermediate releases during face-button rolls.
+                                    manager.gamepadInput(padFrame.value)
+                                    if (mask and previous.inv() and COMPANION_DPAD_MASK.inv() != 0) {
+                                        haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                    }
                                 }
                             },
                             onStick = { index, x, y ->

@@ -33,6 +33,7 @@ import androidx.compose.material.icons.filled.LiveTv
 import androidx.compose.material.icons.filled.Movie
 import androidx.compose.material.icons.filled.PowerSettingsNew
 import androidx.compose.material.icons.filled.SmartDisplay
+import androidx.compose.material.icons.filled.SportsEsports
 import androidx.compose.material.icons.filled.Subscriptions
 import androidx.compose.material.icons.filled.Tv
 import androidx.compose.material.icons.filled.VideoLibrary
@@ -97,7 +98,10 @@ internal fun menuOrderItems(state: SidebarUiState): List<MenuOrderItem> {
     val items = menuOrderSystems(state).map { system ->
         MenuOrderItem(system.key, menuSystemName(system), menuSystemIcon(system), system,
             defaultLabel = menuSystemDefaultName(system))
-    } + if (state.weatherEnabled) listOf(
+    } + (if (state.gamesAvailable) listOf(
+        MenuOrderItem(GAMES_MENU_ID, gamesMenuName(), Icons.Filled.SportsEsports,
+            defaultLabel = stringResource(R.string.game_library_title)),
+    ) else emptyList()) + if (state.weatherEnabled) listOf(
         MenuOrderItem(WEATHER_MENU_ID, weatherMenuName(), Icons.Filled.Cloud,
             defaultLabel = stringResource(R.string.weather_title)),
     ) else emptyList()

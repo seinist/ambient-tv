@@ -179,7 +179,7 @@ private fun GamesRetroAchievements() {
 private fun GamesBios() {
     val bios = gamesEntryPoint().bios()
     var version by remember { mutableIntStateOf(0) }
-    val systems = remember(version) { GameSystems.all.filter { it.bios.isNotEmpty() }.map { it to bios.status(it) } }
+    val systems = remember(version) { GameSystems.alphabetical.filter { it.bios.isNotEmpty() }.map { it to bios.status(it) } }
     Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(LocalUiTokens.current.compactGap)) {
         SettingsSubheader(stringResource(R.string.games_bios))
         SettingsHint(stringResource(R.string.games_bios_hint))
@@ -279,7 +279,7 @@ private fun GamesSystemCores() {
     Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(LocalUiTokens.current.compactGap)) {
         SettingsSubheader(stringResource(R.string.games_system_cores))
         SettingsHint(stringResource(R.string.games_system_cores_hint))
-        GameSystems.all.filter { it.alternatives.isNotEmpty() }.forEach { system ->
+        GameSystems.alphabetical.filter { it.alternatives.isNotEmpty() }.forEach { system ->
             val current = settings.systemCore(system)
             SettingsNavigationRow(
                 title = system.name,
@@ -325,7 +325,7 @@ private fun GamesCores() {
         failed?.let { SettingsHint(it) }
         GameSystems.cores.forEach { core ->
             key(core.id, version) {
-                val systems = GameSystems.all.filter { system -> system.cores.any { it.id == core.id } }.joinToString(", ") { it.name }
+                val systems = GameSystems.alphabetical.filter { system -> system.cores.any { it.id == core.id } }.joinToString(", ") { it.name }
                 val info = remember(version) { cores.info(core) }
                 val progress = downloads[core.id]
                 val downloading = core.id in downloads

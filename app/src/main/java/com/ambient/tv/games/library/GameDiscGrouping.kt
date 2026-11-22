@@ -37,6 +37,11 @@ internal object GameDiscGrouping {
         // Suppress only references whose parent descriptor is actually in the scan results.
         // A broken missing playlist never deletes independent games from the library.
         references.forEach { (descriptor, children) ->
+            // Explicitly assigned systems also accept raw .bin ROMs. A CUE/GDI owns its
+            // matching tracks; those are not separate game tiles beside the descriptor.
+            if (descriptor in paths && GameSystems.extension(descriptor) in setOf("cue", "gdi")) {
+                hidden += children.filter { it != descriptor }
+            }
             // A partial playlist is not playable as a complete multi-disc title.
             // Retain each standalone disc if any referenced disc is missing.
             if (GameSystems.extension(descriptor) == "m3u" && descriptor in paths &&

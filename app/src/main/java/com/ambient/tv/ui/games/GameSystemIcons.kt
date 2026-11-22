@@ -7,9 +7,11 @@ import androidx.compose.ui.res.vectorResource
 import com.ambient.tv.R
 
 /**
- * Individual original Android VectorDrawables for every registered Libretro system.
- * They deliberately share InputDeviceArtwork's quiet, single-tone geometric language.
- * Tint is supplied by the current Ambient TV theme, not a platform-specific logo palette.
+ * Native Android vectors from RetroArch's XMB Monochrome theme (CC BY 4.0), with the original
+ * Ambient TV C128 artwork retained because upstream provides no corresponding SVG source.
+ * Controller, handheld and computer silhouettes keep the source geometry and use the current
+ * Ambient TV theme's tint. Provenance and reproduction instructions are recorded in
+ * third_party_assets/game_system_icons; attribution is also available in the About settings.
  */
 object GameSystemIcons {
     val supportedSystemIds: Set<String> = setOf(

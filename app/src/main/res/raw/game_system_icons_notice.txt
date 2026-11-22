@@ -1,0 +1,56 @@
+Game system icons: RetroArch Assets / XMB Monochrome
+
+Attribution
+XMB Monochrome theme by Kivutar, with contributions by baxysquare and other RetroArch Assets contributors.
+
+Source
+https://github.com/libretro/retroarch-assets
+Revision: 8c918e2872482139273374ef4cc6c7aff34d7585
+https://github.com/libretro/retroarch-assets/tree/8c918e2872482139273374ef4cc6c7aff34d7585/src/xmb/monochrome
+
+License
+Creative Commons Attribution 4.0 International (CC BY 4.0)
+https://creativecommons.org/licenses/by/4.0/
+The complete upstream license follows this notice in the app and is bundled as game_system_icons_cc_by_4_0.txt.
+Original license: https://github.com/libretro/retroarch-assets/blob/8c918e2872482139273374ef4cc6c7aff34d7585/COPYING
+
+Changes made for Ambient TV
+The original SVG paths and affine transformations were converted to Android VectorDrawable resources with 64 x 64 viewports. The artwork uses the app theme color through tinting. The original icon shapes were preserved.
+The Commodore 128 icon remains original Ambient TV artwork and is not part of this RetroArch asset import. No RetroArch theme fonts are included.
+
+Theme documentation and creator references
+https://github.com/libretro/retroarch-assets/blob/8c918e2872482139273374ef4cc6c7aff34d7585/xmb/monochrome/README.md
+https://github.com/libretro/retroarch-assets/blob/8c918e2872482139273374ef4cc6c7aff34d7585/xmb/systematic/README.md
+https://github.com/baxysquare/baxy-retroarch-themes/blob/3798875e3a592b2b5d737212be3a2d4bc9454629/README.md
+
+Imported artwork (30 SVG files at the source revision above)
+src/xmb/monochrome/Atari - 2600.svg
+src/xmb/monochrome/Atari - 5200.svg
+src/xmb/monochrome/Atari - 7800.svg
+src/xmb/monochrome/Atari - Lynx.svg
+src/xmb/monochrome/Bandai - WonderSwan.svg
+src/xmb/monochrome/Commodore - 64.svg
+src/xmb/monochrome/Commodore - CBM-II.svg
+src/xmb/monochrome/Commodore - PET.svg
+src/xmb/monochrome/Commodore - Plus-4.svg
+src/xmb/monochrome/Commodore - VIC-20.svg
+src/xmb/monochrome/NEC - PC Engine - TurboGrafx 16.svg
+src/xmb/monochrome/Nintendo - Game Boy Advance.svg
+src/xmb/monochrome/Nintendo - Game Boy.svg
+src/xmb/monochrome/Nintendo - GameCube.svg
+src/xmb/monochrome/Nintendo - Nintendo 3DS.svg
+src/xmb/monochrome/Nintendo - Nintendo 64.svg
+src/xmb/monochrome/Nintendo - Nintendo DS.svg
+src/xmb/monochrome/Nintendo - Nintendo Entertainment System.svg
+src/xmb/monochrome/Nintendo - Super Nintendo Entertainment System.svg
+src/xmb/monochrome/Nintendo - Virtual Boy.svg
+src/xmb/monochrome/Nintendo - Wii U.svg
+src/xmb/monochrome/Nintendo - Wii.svg
+src/xmb/monochrome/SNK - Neo Geo Pocket.svg
+src/xmb/monochrome/Sega - 32X.svg
+src/xmb/monochrome/Sega - Dreamcast.svg
+src/xmb/monochrome/Sega - Mega Drive - Genesis.svg
+src/xmb/monochrome/Sega - Saturn.svg
+src/xmb/monochrome/Sony - PlayStation 2.svg
+src/xmb/monochrome/Sony - PlayStation Portable.svg
+src/xmb/monochrome/Sony - PlayStation.svg

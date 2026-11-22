@@ -8,6 +8,7 @@ import com.ambient.tv.ui.common.MediaSystem
 import com.ambient.tv.ui.common.systemName
 
 internal const val WEATHER_MENU_ID = "weather"
+internal const val GAMES_MENU_ID = "games"
 
 /** Navigation names identify the provider; a page title such as "Live TV" may name its content. */
 @Composable
@@ -22,3 +23,7 @@ internal fun menuSystemName(system: MediaSystem): String = systemName(system, me
 @Composable
 internal fun weatherMenuName(): String =
     SystemNameOverrides.names[WEATHER_MENU_ID] ?: stringResource(R.string.weather_title)
+
+@Composable
+internal fun gamesMenuName(): String =
+    SystemNameOverrides.names[GAMES_MENU_ID] ?: stringResource(R.string.game_library_title)

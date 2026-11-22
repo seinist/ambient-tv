@@ -12,6 +12,7 @@ class PlayerReturnFocusPolicyTest {
             Destinations.TVH_PLAYER,
             Destinations.YOUTUBE_PLAYER,
             Destinations.SPOTIFY_PLAYER,
+            Destinations.GAME_PLAYER,
         ).forEach { playerRoute ->
             assertTrue(returnsFromFullscreenPlayer(playerRoute, Destinations.HOME))
             assertTrue(returnsFromFullscreenPlayer(playerRoute, Destinations.DETAIL))
@@ -22,6 +23,7 @@ class PlayerReturnFocusPolicyTest {
     fun browseNavigationAndPlayerReplacementDoNotTriggerReturnFocus() {
         assertFalse(returnsFromFullscreenPlayer(Destinations.HOME, Destinations.SECTION))
         assertFalse(returnsFromFullscreenPlayer(Destinations.PLAYER, Destinations.PLAYER))
+        assertFalse(returnsFromFullscreenPlayer(Destinations.PLAYER, Destinations.GAME_PLAYER))
         assertFalse(returnsFromFullscreenPlayer(null, Destinations.HOME))
     }
 }

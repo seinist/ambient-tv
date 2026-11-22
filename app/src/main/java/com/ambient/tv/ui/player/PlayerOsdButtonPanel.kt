@@ -24,6 +24,7 @@ private enum class OsdButtonSection(@StringRes val title: Int) {
     LIVE_TV(R.string.settings_live_tv_title),
     YOUTUBE(R.string.osd_buttons_section_youtube),
     RADIO(R.string.radio_title),
+    GAMES(R.string.game_library_title),
     TOOLS(R.string.player_tools),
     INFORMATION(R.string.player_osd_info_information),
 }
@@ -41,18 +42,29 @@ private val OsdButton.section: OsdButtonSection get() = when (this) {
     OsdButton.SCREENSHOT, OsdButton.BOOKMARK, OsdButton.AB_REPEAT, OsdButton.FRAME_STEP,
     OsdButton.LYRICS, OsdButton.TOOLS -> OsdButtonSection.TOOLS
     OsdButton.DETAILS, OsdButton.STATS, OsdButton.FPS -> OsdButtonSection.INFORMATION
+    OsdButton.GAME_SAVE, OsdButton.GAME_LOAD, OsdButton.GAME_STATES, OsdButton.GAME_RESET,
+    OsdButton.GAME_FAST_FORWARD -> OsdButtonSection.PLAYBACK
+    OsdButton.GAME_PICTURE -> OsdButtonSection.PICTURE_SOUND
+    OsdButton.GAME_CORE, OsdButton.GAME_CONTROLS, OsdButton.GAME_ACHIEVEMENTS,
+    OsdButton.GAME_CHEATS, OsdButton.GAME_NETPLAY, OsdButton.GAME_DISC -> OsdButtonSection.GAMES
+    OsdButton.GAME_INFO -> OsdButtonSection.INFORMATION
 }
 
 @Composable
-internal fun PlayerOsdButtonPanelControls(hasVideo: Boolean) {
-    val player = activeOsdPlayer ?: return
+internal fun PlayerOsdButtonPanelControls(
+    hasVideo: Boolean,
+    player: OsdPlayer? = activeOsdPlayer,
+    offered: List<OsdButton>? = null,
+) {
+    player ?: return
     val context = LocalContext.current
     val preferences = remember(context) { videoImagePreferences(context) }
     val handheld = LocalHandheldUi.current
     val hidden = osdHiddenButtons()
     // Group only actual actions: an audio-only player must not leave an empty Information heading.
-    val sections = filterVideoDiagnosticButtons(player.offeredButtons(), hasVideo).groupBy { it.section }
-    Text(stringResource(R.string.osd_buttons_hint), style = MaterialTheme.typography.bodySmall)
+    val sections = filterVideoDiagnosticButtons(offered ?: player.offeredButtons(), hasVideo).groupBy { it.section }
+    Text(stringResource(if (player == OsdPlayer.GAMES) R.string.game_osd_buttons_hint else R.string.osd_buttons_hint),
+        style = MaterialTheme.typography.bodySmall)
     OsdButtonSection.entries.forEach { section ->
         sections[section]?.let { buttons ->
             key(player, section) {

@@ -25,6 +25,7 @@
     <string name="game_message_load_failed">The quick save could not be loaded</string>
     <string name="game_reset">Start over</string>
     <string name="game_panel_picture">Picture</string>
+    <string name="game_osd_buttons_hint">Show or hide game actions. Continue and settings always stay available.</string>
     <string name="game_panel_core">Core options</string>
     <string name="game_panel_controls">Players</string>
     <string name="game_panel_info">Info</string>
@@ -317,4 +318,6 @@
     <string name="game_buildbot_confirm_title">Confirm unverified core source</string>
     <string name="game_buildbot_confirm_body">The signed Ambient TV core channel does not have a usable build for %1$s. The Libretro buildbot offers native executable code without a signed Ambient TV manifest. Continue only if you trust that source.</string>
     <string name="game_buildbot_confirm_action">Install from Libretro buildbot</string>
+    <string name="game_failed_previous_session">Previous game did not finish</string>
+    <string name="game_failed_previous_session_body">The previous game session could not be closed safely. Restart Ambient TV, then open the game again.</string>
 </resources>

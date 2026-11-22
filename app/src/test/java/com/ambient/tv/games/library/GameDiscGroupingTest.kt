@@ -36,4 +36,14 @@ class GameDiscGroupingTest {
         val refs = mapOf("PSX/game.cue" to setOf("PSX/game.bin"))
         assertEquals(paths, GameDiscGrouping.visiblePaths(paths, refs))
     }
+
+    @Test fun explicitRawDiscTracksAreHiddenUnderTheirDescriptorOnly() {
+        val paths = setOf("PSX/game.cue", "PSX/track1.bin", "PSX/track2.bin", "PSX/standalone.bin")
+        val refs = GameDiscGrouping.referenced("PSX/game.cue",
+            "FILE track1.bin BINARY\nFILE track2.bin BINARY")
+        assertEquals(setOf("PSX/game.cue", "PSX/standalone.bin"),
+            GameDiscGrouping.visiblePaths(paths, mapOf("PSX/game.cue" to refs)))
+        assertEquals(paths - "PSX/game.cue",
+            GameDiscGrouping.visiblePaths(paths - "PSX/game.cue", mapOf("PSX/game.cue" to refs)))
+    }
 }

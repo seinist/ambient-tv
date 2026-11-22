@@ -297,10 +297,10 @@ class SidebarViewModel @Inject constructor(
     )
 
     private fun librarySystemIds(): List<String> =
-        (gameLibrary.folders().filter { folder ->
+        com.ambient.tv.games.GameSystems.sortIdsByName(gameLibrary.folders().filter { folder ->
             fileStore.sources().any { it.id == folder.sourceId }
         }.map { it.systemId }.filter { it != "auto" } +
-            gameLibrary.systemIds()).distinct().filter { com.ambient.tv.games.GameSystems.byId(it) != null }
+            gameLibrary.systemIds())
 
     private fun networkFileSourcesFromStore(): List<FileSource> =
         fileStore.fileBrowserSources().filter { it.network }

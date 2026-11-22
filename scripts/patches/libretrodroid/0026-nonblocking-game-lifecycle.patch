@@ -1,0 +1,276 @@
+diff --git a/src/main/java/com/swordfish/libretrodroid/GLRetroView.kt b/src/main/java/com/swordfish/libretrodroid/GLRetroView.kt
+--- a/src/main/java/com/swordfish/libretrodroid/GLRetroView.kt
++++ b/src/main/java/com/swordfish/libretrodroid/GLRetroView.kt
+@@ -110,11 +110,20 @@
+     override fun onResume(owner: LifecycleOwner) {
+         sensorsResumed = true
+         updateMotionSensors()
++        // SurfaceHolder/GLSurfaceView handle window loss and recreation themselves.
++        // Avoid GLSurfaceView.onResume(): it waits synchronously for the render thread
++        // and can freeze Android's main thread while a core/driver is still resuming.
++        renderMode = RENDERMODE_CONTINUOUSLY
++        requestRender()
+     }
+ 
+     override fun onPause(owner: LifecycleOwner) {
+         sensorsResumed = false
+         updateMotionSensors()
++        isEmulationReady = false
++        // Keep the core/context alive, stop continuous drawing, and let the Surface
++        // lifecycle release the window. queueEvent still drains while no surface exists.
++        renderMode = RENDERMODE_WHEN_DIRTY
+     }
+ 
+     override fun onAttachedToWindow() {
+@@ -274,10 +283,10 @@
+ 
+     private var isGameLoaded = false
+     @Volatile private var isEmulationReady = false
+-    private var isNativeResumed = false
+-    var suppressAutoResume = false
++    @Volatile var suppressAutoResume = false
+     private var isAborted = false
+     @Volatile private var isDestroyed = false
++    private val glQueueLock = Any()
+     private var previewModeEnabled = false
+ 
+     private val retroGLEventsSubject = MutableSharedFlow<GLRetroEvents>(1)
+@@ -315,7 +324,22 @@
+         Log.i(TAG_LOG, "TEARDOWN GLSurfaceView.onPause END")
+     }
+ 
++    // A retired Surface/shader callback must not reach a later session's native singleton.
++    // Linearize acceptance with destroyNative; already accepted checkpoint tasks still drain.
++    override fun queueEvent(r: Runnable) {
++        synchronized(glQueueLock) {
++            if (!isDestroyed) super.queueEvent(r)
++        }
++    }
++
++    /**
++     * Main-thread owner cleanup before GLSurfaceView terminates its GL queue. A retained View
++     * may attach again; its owner must recreate the retired native session in that case.
++     */
++    var beforeDetach: (() -> Unit)? = null
++
+     override fun onDetachedFromWindow() {
++        beforeDetach?.invoke()
+         motionSensors.setRequiredSensors(0)
+         Log.i(TAG_LOG, "TEARDOWN onDetachedFromWindow BEGIN destroyed=$isDestroyed")
+         super<GLSurfaceView>.onDetachedFromWindow()
+@@ -372,11 +396,11 @@
+     }
+ 
+     fun sendKeyEvent(action: Int, keyCode: Int, port: Int = 0) {
+-        LibretroDroid.onKeyEvent(port, action, keyCode)
++        if (!isDestroyed) LibretroDroid.onKeyEvent(port, action, keyCode)
+     }
+ 
+     fun sendMotionEvent(source: Int, xAxis: Float, yAxis: Float, port: Int = 0) {
+-        LibretroDroid.onMotionEvent(port, source, xAxis, yAxis)
++        if (!isDestroyed) LibretroDroid.onMotionEvent(port, source, xAxis, yAxis)
+     }
+ 
+     override fun onTouchEvent(event: MotionEvent?): Boolean {
+@@ -576,13 +600,21 @@
+         LibretroDroid.destroyRewindBuffer()
+     }
+ 
+-    fun destroyNative() {
+-        if (isDestroyed) return
+-        isDestroyed = true
++    fun destroyNative(onComplete: (Throwable?) -> Unit = {}) {
++        synchronized(glQueueLock) {
++            if (isDestroyed) return
++            isDestroyed = true
++        }
+         post { updateMotionSensors() }
+         renderMode = RENDERMODE_WHEN_DIRTY
+         runOnGLThreadVoid {
+-            LibretroDroid.destroy()
++            try {
++                LibretroDroid.destroy()
++                onComplete(null)
++            } catch (error: Throwable) {
++                onComplete(error)
++                throw error
++            }
+         }
+     }
+ 
+@@ -674,29 +706,18 @@
+ 
+     // These functions are called only after the GLSurfaceView has been created.
+     private inner class RenderLifecycleObserver : DefaultLifecycleObserver {
+-        fun manualResume() = catchExceptions {
+-            LibretroDroid.resume()
+-            isEmulationReady = true
+-        }
+-
+-        override fun onResume(owner: LifecycleOwner) = catchExceptions {
+-            if (!isNativeResumed) {
+-                isNativeResumed = true
+-                LibretroDroid.resume()
+-                // GLSurfaceView.onResume() is called by LibretroActivity.onResume() --
+-                // do NOT call it again here or it corrupts the GL thread state mid-frame.
+-                if (!suppressAutoResume) {
+-                    isEmulationReady = true
+-                }
+-            }
+-        }
+-
+-        override fun onPause(owner: LifecycleOwner) = catchExceptions {
+-            isNativeResumed = false
++        private val transitions = RenderThreadLifecycle(
++            enqueue = { action -> queueEvent { catchExceptions(action) } },
++            resumeNative = { LibretroDroid.resume() },
++            pauseNative = { LibretroDroid.pause() },
++            onReady = { if (!suppressAutoResume) isEmulationReady = true },
++        )
++
++        override fun onResume(owner: LifecycleOwner) = transitions.resume()
++
++        override fun onPause(owner: LifecycleOwner) {
+             isEmulationReady = false
+-            // GLSurfaceView.onPause() is called by LibretroActivity.onPause() --
+-            // do NOT call it again here.
+-            LibretroDroid.pause()
++            transitions.pause()
+         }
+     }
+ 
+@@ -850,6 +871,7 @@
+     }
+ 
+     private fun <T> runOnGLThread(block: () -> T): T {
++        check(!isDestroyed) { "The game renderer has been destroyed" }
+         if (Thread.currentThread().name.startsWith("GLThread")) {
+             return block()
+         }
+@@ -857,13 +879,16 @@
+         val latch = CountDownLatch(1)
+         var result: T? = null
+         var failure: Throwable? = null
+-        queueEvent {
+-            try {
+-                result = block()
+-            } catch (t: Throwable) {
+-                failure = t
+-            } finally {
+-                latch.countDown()
++        synchronized(glQueueLock) {
++            check(!isDestroyed) { "The game renderer has been destroyed" }
++            super.queueEvent {
++                try {
++                    result = block()
++                } catch (t: Throwable) {
++                    failure = t
++                } finally {
++                    latch.countDown()
++                }
+             }
+         }
+ 
+@@ -883,7 +908,8 @@
+ 
+         val latch = CountDownLatch(1)
+         var failure: Throwable? = null
+-        queueEvent {
++        // Destruction is the final accepted task; public queueEvent is already closed.
++        super.queueEvent {
+             try {
+                 block()
+             } catch (t: Throwable) {
+diff --git a/src/main/cpp/libretrodroid.cpp b/src/main/cpp/libretrodroid.cpp
+--- a/src/main/cpp/libretrodroid.cpp
++++ b/src/main/cpp/libretrodroid.cpp
+@@ -99,7 +99,8 @@
+     audio = nullptr;
+     video = nullptr;
+     fpsSync = nullptr;
+-    input = nullptr;
++    input->reset();
++    input->setNetplayActive(false);
+     rumble = nullptr;
+ }
+ 
+@@ -745,7 +746,9 @@
+ void LibretroDroid::resume() {
+     LOGD("Performing libretrodroid resume");
+ 
+-    input = std::make_unique<Input>();
++    // Input is shared with Android/companion JNI callbacks. Never replace it on
++    // resume: another thread may be holding its mutex. Clear the stable instance.
++    if (input) input->reset();
+ 
+     fpsSync->reset();
+     audio->start();
+@@ -756,7 +759,8 @@
+     LOGD("Performing libretrodroid pause");
+     audio->stop();
+ 
+-    input = nullptr;
++    // Pause is queued between core frames; reset also locks out concurrent UI input.
++    if (input) input->reset();
+ }
+ 
+ void LibretroDroid::step() {
+diff --git a/src/main/cpp/libretrodroid.h b/src/main/cpp/libretrodroid.h
+--- a/src/main/cpp/libretrodroid.h
++++ b/src/main/cpp/libretrodroid.h
+@@ -299,7 +299,9 @@
+     std::unique_ptr<Audio> audio;
+     std::unique_ptr<Video> video;
+     std::unique_ptr<FPSSync> fpsSync;
+-    std::unique_ptr<Input> input;
++    // JNI callbacks may be in flight across pause/resume and even a session switch.
++    // Keep the instance/mutex stable for the frontend lifetime; reset its contents.
++    const std::unique_ptr<Input> input = std::make_unique<Input>();
+     std::unique_ptr<Rumble> rumble;
+     Achievements achievements;
+ };
+diff --git a/src/main/cpp/input.cpp b/src/main/cpp/input.cpp
+--- a/src/main/cpp/input.cpp
++++ b/src/main/cpp/input.cpp
+@@ -27,6 +27,12 @@
+ #include "../../libretro-common/include/libretro.h"
+ 
+ namespace libretrodroid {
++
++void Input::reset() {
++    std::lock_guard<std::mutex> lock(inputMutex);
++    for (auto& pad : pads) pad = GamePadState {};
++    for (auto& pad : captured) pad = GamePadState {};
++}
+ 
+ int16_t Input::getInputState(unsigned port, unsigned device, unsigned index, unsigned id) {
+     if (port >= 4 || port < 0) return 0;
+diff --git a/src/main/cpp/input.h b/src/main/cpp/input.h
+--- a/src/main/cpp/input.h
++++ b/src/main/cpp/input.h
+@@ -72,6 +72,8 @@
+     void onCompanionPointer(unsigned port, unsigned kind, unsigned index,
+                             float x, float y, unsigned flags);
+     void flushPendingReleases();
++    /** Release all keys, axes and pointer contacts without destroying the shared mutex. */
++    void reset();
+ 
+     void onKeyEvent(unsigned int port, int action, int keyCode);
+     void onMotionEvent(int port, int motionSource, float xAxis, float yAxis);
+diff --git a/src/main/cpp/video.cpp b/src/main/cpp/video.cpp
+--- a/src/main/cpp/video.cpp
++++ b/src/main/cpp/video.cpp
+@@ -606,7 +606,12 @@
+             hwRenderDepthStencil = 0;
+         }
+         if (hwCtx != EGL_NO_CONTEXT) {
+-            eglMakeCurrent(eglDisplay, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT);
++            // onSurfaceCreated may be retiring this Video after GLSurfaceView made
++            // a NEW context current. Unbinding it would make the replacement
++            // renderer initialize with no GL context after background/standby.
++            if (eglGetCurrentContext() == hwCtx) {
++                eglMakeCurrent(eglDisplay, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT);
++            }
+             eglDestroyContext(eglDisplay, hwCtx);
+             hwCtx = EGL_NO_CONTEXT;
+         }

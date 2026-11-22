@@ -1,17 +1,30 @@
 <?xml version="1.0" encoding="utf-8"?>
-<vector xmlns:android="http://schemas.android.com/apk/res/android"
- android:width="64dp" android:height="64dp"
- android:viewportWidth="64" android:viewportHeight="64">
- <!-- Ambient TV: corrected upright system hardware, intentionally no brand logos. -->
- <path android:pathData="M11,16 Q4,17 4,25 V42 Q4,49 12,49 H52 Q60,49 60,42 V25 Q60,17 53,16 Z" android:fillColor="#FFFFFFFF" android:fillAlpha="0.13" android:strokeColor="#FFFFFFFF" android:strokeWidth="2.25" android:strokeLineCap="round" android:strokeLineJoin="round"/>
- <path android:pathData="M21,20 H43 Q45,20 45,22 V43 Q45,45 43,45 H21 Q19,45 19,43 V22 Q19,20 21,20 Z" android:fillColor="#FFFFFFFF" android:fillAlpha="0.04" android:strokeColor="#FFFFFFFF" android:strokeWidth="2.25" android:strokeLineCap="round" android:strokeLineJoin="round"/>
- <path android:pathData="M23,23 H41 Q42,23 42,24 V41 Q42,42 41,42 H23 Q22,42 22,41 V24 Q22,23 23,23 Z" android:fillColor="#FFFFFFFF" android:fillAlpha="0.03" android:strokeColor="#FFFFFFFF" android:strokeWidth="2.25" android:strokeLineCap="round" android:strokeLineJoin="round"/>
- <path android:pathData="M8.6,28 a3.4,3.4 0,1 0,6.8,0 a3.4,3.4 0,1 0,-6.8,0" android:fillColor="#FFFFFFFF" android:fillAlpha="0.055" android:strokeColor="#FFFFFFFF" android:strokeWidth="2.25" android:strokeLineCap="round" android:strokeLineJoin="round"/>
- <path android:pathData="M48.6,28 a3.4,3.4 0,1 0,6.8,0 a3.4,3.4 0,1 0,-6.8,0" android:fillColor="#FFFFFFFF" android:fillAlpha="0.055" android:strokeColor="#FFFFFFFF" android:strokeWidth="2.25" android:strokeLineCap="round" android:strokeLineJoin="round"/>
- <path android:pathData="M10.75,36.25 H13.25 V38.75 H15.75 V41.25 H13.25 V43.75 H10.75 V41.25 H8.25 V38.75 H10.75 Z" android:fillColor="#FFFFFFFF" android:fillAlpha="0.21" android:strokeColor="#FFFFFFFF" android:strokeWidth="1.65" android:strokeLineCap="round" android:strokeLineJoin="round"/>
- <path android:pathData="M50.5,37 a1.5,1.5 0,1 0,3,0 a1.5,1.5 0,1 0,-3,0" android:fillColor="#FFFFFFFF" android:fillAlpha="0.95"/>
- <path android:pathData="M54.5,40 a1.5,1.5 0,1 0,3,0 a1.5,1.5 0,1 0,-3,0" android:fillColor="#FFFFFFFF" android:fillAlpha="0.95"/>
- <path android:pathData="M50.5,43 a1.5,1.5 0,1 0,3,0 a1.5,1.5 0,1 0,-3,0" android:fillColor="#FFFFFFFF" android:fillAlpha="0.95"/>
- <path android:pathData="M46.5,40 a1.5,1.5 0,1 0,3,0 a1.5,1.5 0,1 0,-3,0" android:fillColor="#FFFFFFFF" android:fillAlpha="0.95"/>
- <path android:pathData="M30.6,47 a1.4,1.4 0,1 0,2.8,0 a1.4,1.4 0,1 0,-2.8,0" android:fillColor="#FFFFFFFF" android:fillAlpha="0.95"/>
+<!--
+    RetroArch Assets / XMB Monochrome, CC BY 4.0.
+    Source: src/xmb/monochrome/Nintendo - Wii U.svg
+    Revision: 8c918e2872482139273374ef4cc6c7aff34d7585
+    Native vector conversion; source geometry retained.
+    Credits and license: third_party_assets/game_system_icons/README.md
+    Regenerate with scripts/import_game_system_icons.py.
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android" android:width="64dp" android:height="64dp" android:viewportWidth="64" android:viewportHeight="64">
+    <clip-path android:pathData="M0,0H64V64H0Z" />
+    <group android:scaleX="1" android:scaleY="1" android:translateX="0" android:translateY="0">
+        <group>
+            <group android:translateX="0" android:translateY="64" android:scaleX="1.25" android:scaleY="-1.25">
+                <group>
+                    <group android:scaleX="0.8" android:scaleY="0.8">
+                        <group>
+                            <clip-path android:pathData="M 0,64 64,64 64,0 0,0 0,64 z" />
+                            <group>
+                                <group android:translateX="54.5" android:translateY="37">
+                                    <path android:fillColor="#FFFFFFFF" android:fillType="nonZero" android:pathData="M 0,0 C -1.381,0 -2.5,1.119 -2.5,2.5 -2.5,3.881 -1.381,5 0,5 1.381,5 2.5,3.881 2.5,2.5 2.5,1.119 1.381,0 0,0 m -0.5,-5 c -0.553,0 -1,0.448 -1,1 0,0.552 0.447,1 1,1 0.553,0 1,-0.448 1,-1 0,-0.552 -0.447,-1 -1,-1 m -2,-2 c -0.553,0 -1,0.447 -1,1 0,0.552 0.447,1 1,1 0.553,0 1,-0.448 1,-1 0,-0.553 -0.447,-1 -1,-1 m -2,2 c -0.553,0 -1,0.448 -1,1 0,0.552 0.447,1 1,1 0.553,0 1,-0.448 1,-1 0,-0.552 -0.447,-1 -1,-1 M -5,-10 c -0.276,0 -0.5,0.224 -0.5,0.5 0,0.276 0.224,0.5 0.5,0.5 0.276,0 0.5,-0.224 0.5,-0.5 0,-0.276 -0.224,-0.5 -0.5,-0.5 m 0,-2 c -0.276,0 -0.5,0.224 -0.5,0.5 0,0.276 0.224,0.5 0.5,0.5 0.276,0 0.5,-0.224 0.5,-0.5 0,-0.276 -0.224,-0.5 -0.5,-0.5 m -2.5,-2 -30,0 0,18 30,0 0,-18 z M -8,-17 c -0.276,0 -0.5,0.224 -0.5,0.5 0,0.276 0.224,0.5 0.5,0.5 0.276,0 0.5,-0.224 0.5,-0.5 0,-0.276 -0.224,-0.5 -0.5,-0.5 m -3,0 c -0.276,0 -0.5,0.224 -0.5,0.5 0,0.276 0.224,0.5 0.5,0.5 0.276,0 0.5,-0.224 0.5,-0.5 0,-0.276 -0.224,-0.5 -0.5,-0.5 m -11.5,-1 c -0.827,0 -1.5,0.673 -1.5,1.5 0,0.827 0.673,1.5 1.5,1.5 0.827,0 1.5,-0.673 1.5,-1.5 0,-0.827 -0.673,-1.5 -1.5,-1.5 m -17,13 -2,0 0,-2 -2,0 0,2 -2,0 0,2 2,0 0,2 2,0 0,-2 2,0 0,-2 z m -8,7.5 c 0,1.381 1.119,2.5 2.5,2.5 1.381,0 2.5,-1.119 2.5,-2.5 0,-1.381 -1.119,-2.5 -2.5,-2.5 -1.381,0 -2.5,1.119 -2.5,2.5 m 25,5.5 c 0.552,0 1,-0.448 1,-1 0,-0.552 -0.448,-1 -1,-1 -0.552,0 -1,0.448 -1,1 0,0.552 0.448,1 1,1 m 20,-9 c 0.553,0 1,-0.448 1,-1 0,-0.552 -0.447,-1 -1,-1 -0.553,0 -1,0.448 -1,1 0,0.552 0.447,1 1,1 m 3,10 -46,0 c -2.2,0 -4,-1.8 -4,-4 l 0,-20 c 0,-2.2 1.8,-4 4,-4 l 46,0 c 2.2,0 4,1.8 4,4 l 0,20 c 0,2.2 -1.8,4 -4,4" />
+                                </group>
+                            </group>
+                        </group>
+                    </group>
+                </group>
+            </group>
+        </group>
+    </group>
 </vector>
