@@ -1,6 +1,7 @@
 package com.ambient.tv.ui.common
 
 import com.ambient.tv.ui.theme.SelectionIndicator
+import com.ambient.tv.network.artworkRefreshRevision
 import coil3.request.crossfade
 import coil3.request.bitmapConfig
 import androidx.activity.compose.BackHandler
@@ -446,6 +447,19 @@ private class ArtworkRequestContinuity {
 private val CardArtworkKeys = ArtworkMemoryKeyIndex()
 private val BackdropArtworkKeys = ArtworkMemoryKeyIndex(maxModels = 64)
 
+/** Only the edited URLs restart their requests; ordinary frames/progress never emit here. */
+@Composable
+private fun rememberArtworkRefresh(model: Any?): Long {
+    val url = remember(model) { com.ambient.tv.data.browse.displayArtworkUrl(model as? String) }
+    val revision by androidx.compose.runtime.produceState(0L, url) {
+        value = 0L
+        if (url != null) com.ambient.tv.network.MediaArtworkRefreshEvents.changes.collect { event ->
+            if (url in event.urls) value = event.sequence
+        }
+    }
+    return revision
+}
+
 @Composable
 fun ArtworkImage(
     model: Any?,
@@ -490,10 +504,11 @@ fun ArtworkImage(
     }
     var candidateIndex by remember(candidates) { mutableStateOf(0) }
     val currentModel = candidates.getOrNull(candidateIndex)
+    val refreshRevision = rememberArtworkRefresh(currentModel)
     val hasModel = currentModel != null
     val continuity = remember { ArtworkRequestContinuity() }
-    val requestIdentity = remember(currentModel) {
-        com.ambient.tv.data.browse.artworkRequestIdentity(currentModel)
+    val requestIdentity = remember(currentModel, refreshRevision) {
+        com.ambient.tv.data.browse.artworkRequestIdentity(currentModel) to refreshRevision
     }
     var containerSize by remember { mutableStateOf(IntSize.Zero) }
     val constrainDecode = LocalPerformanceProfile.current.constrainImageDecodeSize
@@ -510,13 +525,13 @@ fun ArtworkImage(
             imageLoader.memoryCache?.get(key) != null
     }
     val keyIndex = if (backdrop) BackdropArtworkKeys else CardArtworkKeys
-    val cachedKey = remember(currentModel, continuityKey, backdrop) {
+    val cachedKey = remember(currentModel, continuityKey, backdrop, refreshRevision) {
         currentModel?.let { model -> keyIndex.cachedKey(model) { imageLoader.memoryCache?.get(it) != null } }
             ?: continuityKey
     }
     // The key can outlive the bitmap. A miss must still show the pulse; Coil's placeholder
     // only draws when the bitmap is actually still in memory.
-    val shownFromMemory = remember(currentModel, cachedKey, context) {
+    val shownFromMemory = remember(currentModel, cachedKey, context, refreshRevision) {
         val key = cachedKey ?: return@remember false
         imageLoader.memoryCache?.get(key) != null
     }
@@ -546,7 +561,7 @@ fun ArtworkImage(
     val cap1080 = !backdrop && density > CARD_IMAGE_1080_DENSITY &&
         remember(context) { com.ambient.tv.ui.player.videoImagePreferences(context).cardImages1080 }
     val cardSize = remember(cap1080, density) { if (cap1080) CardImage1080SizeResolver(density) else null }
-    val request = remember(currentModel, context, headers, constrainDecode, cardSize, crossfadeOnLoad) {
+    val request = remember(currentModel, context, headers, constrainDecode, cardSize, crossfadeOnLoad, refreshRevision) {
         ImageRequest.Builder(context).data(currentModel).crossfade(crossfadeOnLoad)
             .placeholderMemoryCacheKey(cachedKey)
             .apply {
@@ -554,6 +569,7 @@ fun ArtworkImage(
                 // identical layout constraints; global URL aliases could incorrectly reuse a
                 // small tile bitmap for a large detail/backdrop request.
                 if (continuityKey != null) memoryCacheKey(continuityKey)
+                artworkRefreshRevision(refreshRevision)
                 requestHeaders(artworkHeadersForModel(currentModel, headers))
                 // AsyncImage's constraints resolver decodes at the measured view size.
                 // Do not wait for onSizeChanged/recomposition before creating the painter.
@@ -567,8 +583,8 @@ fun ArtworkImage(
     }
     var loading by remember(currentModel) { mutableStateOf(hasModel && !shownFromMemory) }
     var failed by remember(candidates) { mutableStateOf(false) }
-    var visibleFraction by remember(currentModel, headers) { mutableStateOf<Float?>(null) }
-    var focusRevision by remember(currentModel, headers) { mutableStateOf<String?>(null) }
+    var visibleFraction by remember(currentModel, headers, refreshRevision) { mutableStateOf<Float?>(null) }
+    var focusRevision by remember(currentModel, headers, refreshRevision) { mutableStateOf<String?>(null) }
     val focusModel = (currentModel as? String)?.takeIf { focusCrop && contentScale == ContentScale.Crop }
     val focus = if (focusModel != null) rememberArtworkFocusCrop(focusModel, artworkHeadersForModel(focusModel, headers), visibleFraction, focusRevision) else null
     val hdrFilter = com.ambient.tv.ui.display.rememberUiHdrBitmapColorFilter()
@@ -646,7 +662,7 @@ fun ArtworkImage(
     }
 }
 
-private class BackdropLayer(val id: Long, val model: Any) {
+private class BackdropLayer(val id: Long, val model: Any, val refreshRevision: Long) {
     val alpha = androidx.compose.animation.core.Animatable(0f)
 }
 
@@ -676,12 +692,13 @@ fun CrossfadeBackdropImage(
     val layers = remember { androidx.compose.runtime.mutableStateListOf<BackdropLayer>() }
     var nextId by remember { mutableStateOf(0L) }
     val normalized = model?.takeIf { it !is String || it.isNotBlank() }
-    LaunchedEffect(normalized) {
+    val refreshRevision = rememberArtworkRefresh(normalized)
+    LaunchedEffect(normalized, refreshRevision) {
         if (normalized == null) {
             layers.clear()
-        } else if (layers.lastOrNull()?.model != normalized) {
+        } else if (layers.lastOrNull()?.model != normalized || layers.lastOrNull()?.refreshRevision != refreshRevision) {
             layers.removeAll { it.alpha.value == 0f && !it.alpha.isRunning }
-            layers.add(BackdropLayer(nextId++, normalized))
+            layers.add(BackdropLayer(nextId++, normalized, refreshRevision))
         }
     }
     var containerSize by remember { mutableStateOf(IntSize.Zero) }
@@ -691,6 +708,7 @@ fun CrossfadeBackdropImage(
             androidx.compose.runtime.key(layer.id) {
                 val request = remember(layer.model, context, headers, constrainDecode, decodeSize) {
                     ImageRequest.Builder(context).data(layer.model).crossfade(false)
+                        .artworkRefreshRevision(layer.refreshRevision)
                         .apply {
                             requestHeaders(artworkHeadersForModel(layer.model, headers))
                             if (decodeSize != null) {

@@ -95,3 +95,5 @@ system-label or title-key rules change, so previously cached rows rebuild locall
 ## Independent review
 
 Root review checked projection construction/deduplication before filters, imported override merge and transaction boundaries, query cancellation, Home row limits, single-game lookup and sidebar startup. The broad invalidation and missing initial preference emission findings were corrected before commit; the ViewModel regression test covers cold start and unrelated progress writes. No remaining blocking finding was identified in this review. Complete Android CI remains the compile/integration gate.
+
+The first full-app CI compile found a remaining Locale import used by system rows and obsolete parameterless scan reload calls. The import was restored; scans now use their existing committed catalog revision, avoiding duplicate reads and competing publishers. Native ABI, runtime and Slang checks passed in that run; app tests wait for the corrected compilation.

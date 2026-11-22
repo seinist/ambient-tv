@@ -84,6 +84,7 @@ class DetailViewModel @Inject constructor(
     private val browseScopes: BrowseScopes,
     private val tmdb: com.ambient.tv.trailers.TmdbTrailerRepository,
     private val refreshBus: com.ambient.tv.ui.common.PlexRefreshBus,
+    private val artworkRefresh: com.ambient.tv.network.MediaArtworkRefresh,
 ) : ViewModel() {
     private val ratingKey: String = checkNotNull(savedStateHandle["ratingKey"])
     /** Match the cache's server/account identity without retaining credentials in focus memory. */
@@ -438,6 +439,12 @@ class DetailViewModel @Inject constructor(
                 updateLoaded { it.copy(item = refreshed) }
                 if (metadataEditVisible(before, refreshed)) break
             }
+            // Some providers replace the bytes at the same URL. Re-reading metadata alone
+            // cannot invalidate either Coil RAM budget, its disk image, or the crop analysis.
+            val after = (_uiState.value as? DetailUiState.Loaded)?.item
+            artworkRefresh.refresh(listOfNotNull(before, after).flatMap { item -> listOf(
+                item.thumbUrl, item.artUrl, item.logoUrl, item.parentThumbUrl, item.grandparentThumbUrl,
+            ) })
             // Also when the opened version looks unchanged: another version may have left the
             // merged title, which only the full load (duplicate resolution) shows.
             _fallbackBackdrop.value = null

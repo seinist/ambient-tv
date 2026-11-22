@@ -295,12 +295,12 @@ class GameLibraryViewModel @Inject constructor(
                     }
                     done = mutable.value.scanProcessed
                     discovered = mutable.value.scanDiscovered
-                    // Display each completed folder immediately, without waiting for a second NAS.
-                    reload()
+                    // Each committed scan emits a catalog revision. The single query collector
+                    // publishes this folder immediately using the current section/search.
                 }
             } catch (error: CancellationException) { throw error }
             catch (error: Exception) { mutable.update { it.copy(error = error.message ?: "Scan failed") } }
-            finally { mutable.update { it.copy(busy = false, scanning = false) }; reload() }
+            finally { mutable.update { it.copy(busy = false, scanning = false) } }
         }
     }
     fun scanFolder(folder: GameLibraryFolder) {
@@ -314,7 +314,7 @@ class GameLibraryViewModel @Inject constructor(
                 }
             } catch (error: CancellationException) { throw error }
             catch (error: Exception) { mutable.update { it.copy(error = error.message ?: "Scan failed") } }
-            finally { mutable.update { it.copy(busy = false, scanning = false) }; reload() }
+            finally { mutable.update { it.copy(busy = false, scanning = false) } }
         }
     }
     /** Persist the exact SAF tree grant and register it with Files, just like video folders. */

@@ -63,6 +63,7 @@ import com.ambient.tv.ui.navigation.ReportSidebarContentReady
 import com.ambient.tv.ui.theme.animatedFocusBorder
 import com.ambient.tv.ui.mobile.deviceDensityGridCells
 import kotlinx.coroutines.launch
+import java.util.Locale
 
 /** The existing app's Files source and game player remain responsible for transport and playback. */
 @Composable

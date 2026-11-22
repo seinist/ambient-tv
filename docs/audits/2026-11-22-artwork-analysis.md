@@ -38,3 +38,40 @@ are intentionally not represented as locally executed without an Android runtime
 No physical-device frame-time improvement is claimed. Explicit same-URL artwork
 refresh is a separate integration operation; expiry does not override Coil's
 network cache policy or force background downloads.
+
+## Explicit same-URL refresh and integration audit
+
+Accepted server metadata/artwork edits now invalidate the affected item's old and refreshed
+poster/backdrop/logo/ancestor-image URLs after the existing metadata polling. A persistent,
+account-scoped image revision is committed before selective RAM/disk eviction. Both Coil RAM
+budgets participate; their shared image disk cache is processed once. Old in-flight requests
+can finish under an old key but cannot make that key current again. The resulting Coil disk key
+also versions face/crop analysis, so a new image cannot reuse an old crop decision.
+
+Only configured Plex/Jellyfin/Emby image endpoints use this policy. External/signed CDN images,
+photos and Telegram models retain their existing fetch/key behavior. The memory key now includes
+the same hashed provider/account identity as the disk key, including when an in-place card reuses
+a successful memory key across a token-free snapshot/live-response transition.
+
+A bounded 512-entry RAM lookup avoids repeated SQL and dispatcher hops. Before the first explicit
+edit, one empty-table check serves all subsequent images without per-image SQL. Reads do not
+update timestamps or serialize a full JSON map. Only explicitly refreshed images create a tiny
+SQLite revision row (a digest and random revision; no URL or credential). These invalidation
+records are retained: expiring one would risk reviving an old disk key. Binary images stay in
+Coil's size-bounded file cache. The SQLite metadata is local/rebuildable and is not part of
+portable backups or TV setting synchronization.
+
+The UI observes only explicit refresh events and restarts matching image requests. During audit,
+creating a new otherwise-equal `ImageRequest` was found insufficient: Coil Compose compares
+`memoryCacheKeyExtras`. A temporary refresh marker now changes that equality, and the interceptor
+replaces it with the persisted revision before caching. This avoids per-session cache duplicates.
+Crossfade backdrops create a new layer and retain the previous valid image until replacement loads.
+
+Four added Robolectric regressions cover same-URL/account isolation across reopen, late-old-key
+unreachability, no writes during 1,000 ordinary reads, indexed selective revisions and the actual
+Coil Compose request-equality contract. They await the next full CI run. The original analysis-cache
+feature's Android compile/unit-test CI passed in run 45006273694 at commit 3003571cbff011796a4ecf06f9b55ee6d8351862.
+
+Primary API checked: [Coil 3.6.3 model equality](https://github.com/coil-kt/coil/blob/3.6.3/coil-compose-core/src/commonMain/kotlin/coil3/compose/LocalAsyncImageModelEqualityDelegate.kt)
+and [request cache-key builder](https://github.com/coil-kt/coil/blob/3.6.3/coil-core/src/commonMain/kotlin/coil3/request/ImageRequest.kt).
+This is workload/correctness evidence, not a measured phone/TV latency improvement.
