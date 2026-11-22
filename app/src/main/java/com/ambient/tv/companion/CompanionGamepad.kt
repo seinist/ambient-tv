@@ -6,6 +6,8 @@ import com.ambient.tv.ui.gamepad.retro.RetroPadInput
 import com.ambient.tv.ui.gamepad.retro.RetroPorts
 import com.ambient.tv.games.GameInputDescriptions
 import kotlinx.serialization.Serializable
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import java.util.UUID
 
 /** The layout selection is advisory; the TV remains the authority for the active core. */
@@ -143,6 +145,15 @@ object CompanionGamepadSession {
     private var active: Active? = null
     private val ports = LinkedHashMap<String, Int>()
     private val deviceFingerprints = LinkedHashMap<String, String>()
+    private val mutablePlayerPorts = MutableStateFlow<Map<String, Int>>(emptyMap())
+    /** Stable phone identity -> claimed player port. Only membership/port changes publish a value. */
+    val playerPorts = mutablePlayerPorts.asStateFlow()
+
+    private fun publishPlayerPorts() {
+        mutablePlayerPorts.value = deviceFingerprints.mapNotNull { (session, fingerprint) ->
+            ports[session]?.let { fingerprint to it }
+        }.toMap()
+    }
     private val forceAutoReassignment = mutableSetOf<String>()
     private val lastPortSetting = mutableMapOf<String, Int>()
     private val handler by lazy { Handler(Looper.getMainLooper()) }
@@ -311,6 +322,7 @@ object CompanionGamepadSession {
         deviceFingerprints[session] = fingerprint
         forceAutoReassignment.remove(session)
         lastPortSetting[session] = configured
+        publishPlayerPorts()
         return port
     }
 
@@ -380,9 +392,10 @@ object CompanionGamepadSession {
         lastPortSetting.remove(session)
         // Clear while this TLS session still owns its slot. clearButtons() resolves ownership
         // from ports; removing the mapping first leaked pulse gates and delayed callbacks.
-        val port = ports[session] ?: return
+        val port = ports[session] ?: run { publishPlayerPorts(); return }
         active?.let { releaseInputs(it, port); it.input.reserveRemotePort(port, false) }
         ports.remove(session)
+        publishPlayerPorts()
     }
 
     fun detach(input: RetroPadInput) {
@@ -395,6 +408,7 @@ object CompanionGamepadSession {
         ports.values.forEach { releaseInputs(game, it); game.input.reserveRemotePort(it, false) }
         ports.clear()
         deviceFingerprints.clear()
+        publishPlayerPorts()
         forceAutoReassignment.clear()
         lastPortSetting.clear()
         active = null

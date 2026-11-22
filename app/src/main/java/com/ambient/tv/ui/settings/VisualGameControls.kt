@@ -2,14 +2,20 @@ package com.ambient.tv.ui.settings
 
 import android.view.InputDevice
 import android.view.KeyEvent
+import androidx.compose.foundation.focusGroup
 import androidx.compose.foundation.layout.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
+import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import com.ambient.tv.R
+import com.ambient.tv.companion.CompanionViewModel
 import com.ambient.tv.games.GameSystems
 import com.ambient.tv.ui.common.SettingsActionRow
 import com.ambient.tv.ui.common.SettingsHint
@@ -17,9 +23,9 @@ import com.ambient.tv.ui.common.SettingsNavigationRow
 import com.ambient.tv.ui.common.TvActionButton
 import com.ambient.tv.ui.gamepad.GamepadButton
 import com.ambient.tv.ui.gamepad.GamepadInput
-import com.ambient.tv.ui.gamepad.GamepadLabels
 import com.ambient.tv.ui.gamepad.retro.*
 import com.ambient.tv.ui.keyboard.keyLabel
+import com.ambient.tv.ui.mobile.LocalHandheldUi
 import com.ambient.tv.ui.theme.LocalUiTokens
 import kotlinx.coroutines.delay
 
@@ -46,45 +52,85 @@ internal fun VisualGameControls() {
     var physicalKey by rememberSaveable { mutableStateOf<String?>(null) }
     var menuTarget by remember { mutableStateOf<RetroMenuTrigger?>(null) }
     var listening by remember { mutableStateOf(false) }
+    var captureDescriptor by remember { mutableStateOf<String?>(null) }
+    var captureDeviceId by remember { mutableIntStateOf(-1) }
 
-    val kind = RetroInputKind.fromKey(kindKey) ?: RetroInputKind.GAMEPAD
+    val availability = rememberPlayableDeviceAvailability()
+    val devices = availability.devices
+    val availableKinds = availableGameInputKinds(devices)
+    val availableKindKey = availableInputSelection(kindKey, availableKinds.map { it.key })
+    val kind = RetroInputKind.fromKey(availableKindKey.orEmpty()) ?: RetroInputKind.GAMEPAD
     val system = GameSystems.byId(systemId) ?: GameSystems.all.first()
     val core = system.core(coreId) ?: system.core
     val last = lastPlayed?.takeIf { it.systemId == system.id && it.coreId == core.id }
     val ctx = RetroInputProfileContext(system.id, core.id, last?.gameId)
-    val devices = rememberPlayableDevices()
     val compatibleDevices = devices.filter { it.kind == kind }
     val device = compatibleDevices.firstOrNull { it.descriptor == selectedDescriptor }
         ?: compatibleDevices.firstOrNull()
     val deviceScope = scopeKey == "device" && device != null
     val level = RetroInputLayerScope.entries.firstOrNull { it.key == scopeKey }
     val profile = when {
-        deviceScope -> config.deviceProfile(kind, device!!.descriptor)
+        deviceScope -> config.deviceProfile(kind, device.descriptor)
         level == null -> config.profile(kind)
         else -> config.profile(kind, ctx, level,
             deviceDescriptor = device?.descriptor.takeIf { kind == RetroInputKind.COMPANION })
     }
     val target: RetroInputTarget = menuTarget?.let { RetroInputTarget.Menu(it) }
         ?: RetroInputTarget.Button(RetroPadButton.fromKey(targetKey) ?: RetroPadButton.B)
-    val labels = GamepadLabels.forVendor(device?.let { InputDevice.getDevice(it.id)?.vendorId })
-    val physicalArt = attachedArtwork(kindKey, labels)
+    val physicalController = device?.takeIf { it.kind == RetroInputKind.GAMEPAD }?.let { selected ->
+        InputDevice.getDevice(selected.id)?.takeIf { it.descriptor == selected.descriptor }
+    }
+    val controllerModel = GamepadInput.config.controllerModel(physicalController)
+    val physicalArt = attachedArtwork(kind.key, controllerModel.labels, controllerModel = controllerModel)
     val variants = consoleArtworkVariants(system.id)
     val effectiveVariant = variants.firstOrNull { it.first == consoleVariant }?.first ?: variants.firstOrNull()?.first.orEmpty()
     val consoleArt = consoleArtwork(system.id, effectiveVariant)
+    val handheld = LocalHandheldUi.current
+    val companion: CompanionViewModel = hiltViewModel()
+    val fallbackFocus = remember { FocusRequester() }
+    var editorFocused by remember { mutableStateOf(false) }
+    var previousDescriptor by remember { mutableStateOf(device?.descriptor) }
+    var previousDeviceId by remember { mutableIntStateOf(device?.id ?: -1) }
+    val removedSelection = previousDescriptor != null && devices.none { it.descriptor == previousDescriptor }
+    val recoverFocus = editorFocused && removedSelection
+    LaunchedEffect(availableKindKey, device?.descriptor, device?.id) {
+        if (availableKindKey != null) kindKey = availableKindKey
+        // Persist the effective fallback too: reconnecting an old device must not switch the
+        // mapping target away from the controller the user has been editing in the meantime.
+        selectedDescriptor = device?.descriptor.orEmpty()
+        if (previousDescriptor != device?.descriptor || previousDeviceId != (device?.id ?: -1)) {
+            listening = false
+            captureDescriptor = null
+            captureDeviceId = -1
+            physicalKey = null
+            previousDescriptor = device?.descriptor
+            previousDeviceId = device?.id ?: -1
+            if (recoverFocus) {
+                withFrameNanos { }
+                runCatching { fallbackFocus.requestFocus() }
+            }
+        }
+    }
 
     fun assign(code: Int) {
-        if (code in systemOwnedKeys || code <= KeyEvent.KEYCODE_UNKNOWN) return
+        if (device == null || code in systemOwnedKeys || code <= KeyEvent.KEYCODE_UNKNOWN) return
+        // Input-device callbacks and recomposition are asynchronous. A click/capture from the
+        // previous frame must not write a profile after unplugging or reusing an Android ID.
+        if (kind != RetroInputKind.COMPANION &&
+            InputDevice.getDevice(device.id)?.descriptor != device.descriptor) return
         RetroInputSettings.update { old ->
-            if (deviceScope) old.assignDevice(kind, device!!.descriptor, target, code)
+            if (deviceScope) old.assignDevice(kind, device.descriptor, target, code)
             else if (level == null) old.withProfile(kind, old.profile(kind).assign(target, code))
             else old.assign(kind, ctx, level, target, code)
         }
     }
 
-    if (listening && kind != RetroInputKind.COMPANION) {
-        DisposableEffect(kind, ctx, level, device?.descriptor, deviceScope, target) {
+    if (listening && kind != RetroInputKind.COMPANION && device != null &&
+        captureDescriptor == device.descriptor && captureDeviceId == device.id) {
+        DisposableEffect(kind, ctx, level, device.descriptor, device.id, deviceScope, target) {
             var downCode = KeyEvent.KEYCODE_UNKNOWN
             val listener: (KeyEvent) -> Boolean = capture@{ event ->
+                if (event.deviceId != device.id || event.device?.descriptor != device.descriptor) return@capture false
                 if (event.keyCode in systemOwnedKeys) return@capture false
                 if (event.action == KeyEvent.ACTION_DOWN && event.repeatCount == 0 &&
                     downCode == KeyEvent.KEYCODE_UNKNOWN) {
@@ -103,12 +149,21 @@ internal fun VisualGameControls() {
         }
     }
 
-    Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(LocalUiTokens.current.compactGap)) {
+    Column(Modifier.fillMaxWidth().onFocusChanged { editorFocused = it.hasFocus }.focusGroup(),
+        verticalArrangement = Arrangement.spacedBy(LocalUiTokens.current.compactGap)) {
         SettingsHint(stringResource(R.string.game_controls_explanation))
-        SettingsActionRow {
-            RetroInputKind.entries.forEach { option ->
+        if (availableKinds.isNotEmpty()) SettingsActionRow {
+            availableKinds.forEach { option ->
                 TvActionButton(stringResource(option.titleRes), selected = option == kind,
-                    onClick = { listening = false; kindKey = option.key; physicalKey = null })
+                    onClick = { listening = false; kindKey = option.key; physicalKey = null },
+                    modifier = if (option == kind) Modifier.focusRequester(fallbackFocus) else Modifier)
+            }
+        }
+        if (device == null) SettingsHint(stringResource(if (handheld)
+            R.string.input_device_touch_available else R.string.input_device_no_controller))
+        if (!handheld && RetroInputKind.COMPANION !in availableKinds) {
+            SettingsActionRow {
+                TvActionButton(stringResource(R.string.input_device_connect_phone), companion.manager::showPairing)
             }
         }
         if (compatibleDevices.isNotEmpty()) SettingsSelect(
@@ -121,6 +176,10 @@ internal fun VisualGameControls() {
                 )
             },
         )
+        physicalController?.let { ControllerModelSettings(it) }
+        if (device?.kind == RetroInputKind.COMPANION) {
+            SettingsHint(companionControllerStatus(availability.companion[device.descriptor]))
+        }
         SettingsSelect(
             label = stringResource(R.string.input_mapping_system),
             options = GameSystems.alphabetical.map { option ->
@@ -156,12 +215,11 @@ internal fun VisualGameControls() {
             Triple("core", RetroInputLayerScope.CORE, R.string.input_mapping_scope_core),
             Triple("game", RetroInputLayerScope.GAME, R.string.input_mapping_scope_game),
         )
-        SettingsSelect(
+        if (device != null) SettingsSelect(
             label = stringResource(R.string.input_mapping_scope),
             options = choices.map { (key, value, title) ->
                 SettingsSelectOption(stringResource(title), scopeKey == key,
                     enabled = when (key) {
-                        "device" -> device != null
                         "game" -> last != null
                         else -> true
                     },
@@ -170,13 +228,20 @@ internal fun VisualGameControls() {
         )
         if (last == null) SettingsHint(stringResource(R.string.input_mapping_no_game))
         BoxWithConstraints(Modifier.fillMaxWidth()) {
-            if (maxWidth >= 650.dp) {
+            if (device == null) {
+                Column {
+                    SettingsSubheader(stringResource(R.string.input_mapping_console_preview, consoleArt.title))
+                    InputDeviceArtwork(consoleArt, targetKey, { entry ->
+                        entry.target?.let { targetKey = it.key; menuTarget = null; listening = false }
+                    }, modifier = Modifier.focusRequester(fallbackFocus))
+                }
+            } else if (maxWidth >= 650.dp) {
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(LocalUiTokens.current.itemGap)) {
                     Column(Modifier.weight(1f)) {
-                        SettingsSubheader(stringResource(R.string.input_mapping_attached_preview, device?.name ?: physicalArt.title))
+                        SettingsSubheader(stringResource(R.string.input_mapping_attached_preview, device.name))
                         InputDeviceArtwork(physicalArt, physicalKey, { entry ->
                             physicalKey = entry.id
-                            visualKeyCode(kindKey, entry.id)?.let(::assign)
+                            visualKeyCode(kind.key, entry.id)?.let(::assign)
                         })
                     }
                     Column(Modifier.weight(1f)) {
@@ -192,69 +257,77 @@ internal fun VisualGameControls() {
                     InputDeviceArtwork(consoleArt, targetKey, { entry ->
                         entry.target?.let { targetKey = it.key; menuTarget = null; listening = false }
                     })
-                    SettingsSubheader(stringResource(R.string.input_mapping_attached_preview, device?.name ?: physicalArt.title))
+                    SettingsSubheader(stringResource(R.string.input_mapping_attached_preview, device.name))
                     InputDeviceArtwork(physicalArt, physicalKey, { entry ->
                         physicalKey = entry.id
-                        visualKeyCode(kindKey, entry.id)?.let(::assign)
+                        visualKeyCode(kind.key, entry.id)?.let(::assign)
                     })
                 }
             }
         }
         SettingsHint(stringResource(R.string.input_mapping_keep_core_default))
-        SettingsSelect(
-            label = stringResource(R.string.input_mapping_retropad_target),
-            options = RetroPadButton.entries.map { button ->
-                SettingsSelectOption(
-                    stringResource(button.titleRes),
-                    selected = menuTarget == null && button.key == targetKey,
-                    onClick = { menuTarget = null; targetKey = button.key; listening = false },
-                )
-            },
-        )
-        SettingsSelect(
-            label = stringResource(R.string.game_controls_menu),
-            options = (listOf<RetroMenuTrigger?>(null) + RetroMenuTrigger.entries).map { option ->
-                SettingsSelectOption(
-                    option?.let { stringResource(it.titleRes) } ?: stringResource(R.string.key_binding_none),
-                    selected = option == menuTarget,
-                    onClick = { menuTarget = option; listening = false },
-                )
-            },
-        )
-        val name = when (val t = target) {
-            is RetroInputTarget.Button -> stringResource(t.button.titleRes)
-            is RetroInputTarget.Menu -> stringResource(t.trigger.titleRes)
-        }
-        val keys = profile.keys(target).joinToString(" · ") { code ->
-            if (kind == RetroInputKind.COMPANION)
-                companionControllerButton(code)?.let { host.getString(it.titleRes) } ?: keyLabel(host, code)
-            else GamepadButton.fromKeyCode(code)?.let(labels::label) ?: keyLabel(host, code)
-        }.ifBlank { stringResource(R.string.key_binding_none) }
-        SettingsNavigationRow(
-            title = name,
-            summary = if (listening) stringResource(R.string.game_controls_listening) else keys,
-            // The virtual phone sends no Android KeyEvent to capture: choose the desired target
-            // above and tap the source key in the interactive device illustration instead.
-            onClick = { if (kind != RetroInputKind.COMPANION) listening = !listening },
-        )
-        SettingsHint(stringResource(if (kind == RetroInputKind.COMPANION)
-            R.string.game_controls_companion_mapping_hint else R.string.input_mapping_capture_hint))
-        val hasOverride = when {
-            deviceScope -> config.deviceProfiles.containsKey(
-                "${kind.key}." + java.util.Base64.getUrlEncoder().withoutPadding()
-                    .encodeToString(device!!.descriptor.toByteArray(Charsets.UTF_8)))
-            level == null -> kind in config.profiles
-            else -> ctx.layerId(level, kind) in config.scopedProfiles
-        }
-        if (hasOverride) SettingsActionRow {
-            TvActionButton(stringResource(R.string.input_mapping_reset_scope), onClick = {
-                listening = false
-                RetroInputSettings.update {
-                    if (deviceScope) it.resetDevice(kind, device!!.descriptor)
-                    else if (level == null) it.copy(profiles = it.profiles - kind)
-                    else it.resetScope(kind, ctx, level)
-                }
-            })
+        if (device != null) {
+            SettingsSelect(
+                label = stringResource(R.string.input_mapping_retropad_target),
+                options = RetroPadButton.entries.map { button ->
+                    SettingsSelectOption(
+                        stringResource(button.titleRes),
+                        selected = menuTarget == null && button.key == targetKey,
+                        onClick = { menuTarget = null; targetKey = button.key; listening = false },
+                    )
+                },
+            )
+            SettingsSelect(
+                label = stringResource(R.string.game_controls_menu),
+                options = (listOf<RetroMenuTrigger?>(null) + RetroMenuTrigger.entries).map { option ->
+                    SettingsSelectOption(
+                        option?.let { stringResource(it.titleRes) } ?: stringResource(R.string.key_binding_none),
+                        selected = option == menuTarget,
+                        onClick = { menuTarget = option; listening = false },
+                    )
+                },
+            )
+            val name = when (val t = target) {
+                is RetroInputTarget.Button -> stringResource(t.button.titleRes)
+                is RetroInputTarget.Menu -> stringResource(t.trigger.titleRes)
+            }
+            val keys = profile.keys(target).joinToString(" · ") { code ->
+                if (kind == RetroInputKind.COMPANION)
+                    companionControllerButton(code)?.let { host.getString(it.titleRes) } ?: keyLabel(host, code)
+                else GamepadButton.fromKeyCode(code)?.let(controllerModel::label) ?: keyLabel(host, code)
+            }.ifBlank { stringResource(R.string.key_binding_none) }
+            SettingsNavigationRow(
+                title = name,
+                summary = if (listening) stringResource(R.string.game_controls_listening) else keys,
+                // The virtual phone sends no Android KeyEvent to capture: choose the desired target
+                // above and tap the source key in the interactive device illustration instead.
+                onClick = {
+                    if (kind != RetroInputKind.COMPANION) {
+                        captureDescriptor = device.descriptor
+                        captureDeviceId = device.id
+                        listening = !listening
+                    }
+                },
+            )
+            SettingsHint(stringResource(if (kind == RetroInputKind.COMPANION)
+                R.string.game_controls_companion_mapping_hint else R.string.input_mapping_capture_hint))
+            val hasOverride = when {
+                deviceScope -> config.deviceProfiles.containsKey(
+                    "${kind.key}." + java.util.Base64.getUrlEncoder().withoutPadding()
+                        .encodeToString(device.descriptor.toByteArray(Charsets.UTF_8)))
+                level == null -> kind in config.profiles
+                else -> ctx.layerId(level, kind) in config.scopedProfiles
+            }
+            if (hasOverride) SettingsActionRow {
+                TvActionButton(stringResource(R.string.input_mapping_reset_scope), onClick = {
+                    listening = false
+                    RetroInputSettings.update {
+                        if (deviceScope) it.resetDevice(kind, device.descriptor)
+                        else if (level == null) it.copy(profiles = it.profiles - kind)
+                        else it.resetScope(kind, ctx, level)
+                    }
+                })
+            }
         }
     }
 }

@@ -37,6 +37,7 @@ import com.ambient.tv.ui.gamepad.retro.RetroPadButton
 import com.ambient.tv.ui.gamepad.retro.RetroPorts
 import com.ambient.tv.ui.gamepad.retro.playableInputDevices
 import com.ambient.tv.ui.gamepad.retro.rememberPlayableDevices
+import com.ambient.tv.ui.gamepad.retro.rememberPlayableDeviceAvailability
 import com.ambient.tv.ui.keyboard.keyLabel
 import com.ambient.tv.ui.theme.LocalUiTokens
 import kotlinx.coroutines.delay
@@ -61,7 +62,8 @@ private fun playableDevices(): List<RetroInputDevice> = playableInputDevices()
 @Composable
 private fun GameControlsPlayers() {
     val config = RetroInputSettings.config
-    val devices = rememberPlayableDevices()
+    val availability = rememberPlayableDeviceAvailability()
+    val devices = availability.devices
     Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(LocalUiTokens.current.compactGap)) {
         SettingsHint(stringResource(R.string.game_controls_explanation))
         SettingsSubheader(stringResource(R.string.game_controls_players))
@@ -71,7 +73,9 @@ private fun GameControlsPlayers() {
             val current = config.ports[device.descriptor] ?: RetroPorts.AUTO
             SettingsSelect(
                 label = device.name.ifBlank { stringResource(device.kind.titleRes) },
-                description = stringResource(device.kind.titleRes),
+                description = if (device.kind == RetroInputKind.COMPANION)
+                    companionControllerStatus(availability.companion[device.descriptor])
+                else stringResource(device.kind.titleRes),
                 options = choices.map { port ->
                     SettingsSelectOption(
                         text = when (port) {

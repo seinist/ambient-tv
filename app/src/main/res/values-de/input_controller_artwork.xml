@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="input_controller_artwork_title">Controller-Grafiken</string>
+    <string name="input_controller_artwork_credit">Controller-Zeichnungen von Kieran McClung.</string>
+    <string name="input_controller_artwork_details">Quellen, Änderungen und Lizenz</string>
+    <string name="input_controller_artwork_modifications">Die originalen SVG-Pfade wurden in Android-Vektoren mit beschnittenen Leerrändern, unveränderten Proportionen und Designfarben umgewandelt.</string>
+</resources>

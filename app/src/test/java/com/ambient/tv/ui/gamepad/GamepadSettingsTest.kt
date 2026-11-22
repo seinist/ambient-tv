@@ -142,4 +142,61 @@ class GamepadSettingsTest {
         assertEquals(GamepadConfig(), GamepadConfig.decode(mapOf("device.@@@.menus.a" to "none")))
     }
 
+    @Test fun visualControllerChoicesRoundTripPerDescriptorAndCanReturnToAutomatic() {
+        val first = "Wohnzimmer / Controller.ä"
+        val second = "Bedroom / Controller.2"
+        val configured = GamepadConfig()
+            .withControllerModel(first, ControllerModel.PS5)
+            .withControllerModel(second, ControllerModel.XBOX_SERIES)
+        assertEquals(configured, GamepadConfig.decode(configured.encode()))
+        assertEquals(mapOf(second to ControllerModel.XBOX_SERIES),
+            configured.withControllerModel(first, null).controllerModels)
+        assertEquals(GamepadConfig(), configured.withControllerModel(first, null).withControllerModel(second, null))
+    }
+
+    @Test fun aVisualOverrideDoesNotChangeAnyShortLongPlayerOrMenuBinding() {
+        val source = GamepadConfig(confirmOnB = true)
+            .withDeviceCommand("one", GamepadContext.MENUS, GamepadSlot(GamepadButton.X, true),
+                GamepadCommand.Action(KeyAction.REFRESH))
+        val changed = source.withControllerModel("one", ControllerModel.PS4)
+        for (descriptor in listOf(null, "one", "two")) {
+            for (button in GamepadButton.entries) for (long in listOf(false, true)) for (player in listOf(false, true)) {
+                assertEquals(source.resolve(button, long, player, descriptor),
+                    changed.resolve(button, long, player, descriptor))
+            }
+        }
+        assertEquals(changed, GamepadConfig.decode(changed.encode()))
+    }
+
+    @Test fun malformedOrOversizedVisualOverridesAreIgnoredWithoutDroppingValidOnes() {
+        fun id(value: String) = java.util.Base64.getUrlEncoder().withoutPadding()
+            .encodeToString(value.toByteArray(Charsets.UTF_8))
+        val stored = mapOf(
+            "model.@@@" to "ps5",
+            "model." to "ps5",
+            "model.${id(" ")}" to "ps5",
+            "model.${id("x".repeat(GamepadConfig.MAX_CONTROLLER_DESCRIPTOR_LENGTH + 1))}" to "ps5",
+            "model._w" to "ps5", // Invalid UTF-8, not a controller descriptor.
+            "model.${id("future")}" to "future-model",
+            "model.${id("good")}" to "ps4",
+        )
+        assertEquals(mapOf("good" to ControllerModel.PS4), GamepadConfig.decode(stored).controllerModels)
+        assertEquals(GamepadConfig(), GamepadConfig().withControllerModel(" ", ControllerModel.PS5))
+    }
+
+    @Test fun visualOverrideCapacityIsBoundedAndExistingChoicesRemainEditable() {
+        val models = (0..GamepadConfig.MAX_CONTROLLER_MODELS).associate { "pad-$it" to ControllerModel.PS3 }
+        val decoded = GamepadConfig.decode(GamepadConfig(controllerModels = models).encode())
+        assertEquals(GamepadConfig.MAX_CONTROLLER_MODELS, decoded.controllerModels.size)
+        val unboundedStored = models.mapKeys { (descriptor, _) ->
+            "model." + java.util.Base64.getUrlEncoder().withoutPadding()
+                .encodeToString(descriptor.toByteArray(Charsets.UTF_8))
+        }.mapValues { (_, model) -> model.key }
+        assertEquals(GamepadConfig.MAX_CONTROLLER_MODELS, GamepadConfig.decode(unboundedStored).controllerModels.size)
+        assertEquals(decoded, decoded.withControllerModel("new-controller", ControllerModel.PS5))
+        assertEquals(ControllerModel.PS4, decoded.withControllerModel("pad-0", ControllerModel.PS4).controllerModels["pad-0"])
+        assertEquals(GamepadConfig.MAX_CONTROLLER_MODELS - 1,
+            decoded.withControllerModel("pad-0", null).controllerModels.size)
+    }
+
 }

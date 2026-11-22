@@ -68,6 +68,7 @@ internal fun rememberConnectedControllers(): List<InputDevice> {
             override fun onInputDeviceChanged(deviceId: Int) { devices = connectedControllers() }
         }
         manager?.registerInputDeviceListener(listener, null)
+        devices = connectedControllers()
         onDispose { manager?.unregisterInputDeviceListener(listener) }
     }
     return devices
@@ -80,7 +81,7 @@ private fun controllerLabels(): GamepadLabels =
 @Composable
 internal fun ControllerStatus() {
     val devices = rememberConnectedControllers()
-    val labels = GamepadLabels.forVendor(devices.firstOrNull()?.vendorId)
+    val model = GamepadInput.config.controllerModel(devices.firstOrNull())
     val config = GamepadInput.config
     Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(LocalUiTokens.current.compactGap)) {
         SettingsHint(stringResource(R.string.gamepad_settings_explanation))
@@ -90,7 +91,7 @@ internal fun ControllerStatus() {
         )
         GamepadInput.lastButton.value?.takeIf { config.enabled }?.let { button ->
             val command = config.resolve(button, long = false, player = false)
-            SettingsHint(stringResource(R.string.gamepad_last_button, labels.label(button), stringResource(command.titleRes())))
+            SettingsHint(stringResource(R.string.gamepad_last_button, model.label(button), stringResource(command.titleRes())))
         }
     }
 }
@@ -161,9 +162,9 @@ internal fun ControllerMapping(context: GamepadContext, long: Boolean, selectedB
                                deviceDescriptor: String? = null) {
     val config = GamepadInput.config
     val devices = rememberConnectedControllers()
-    val labels = GamepadLabels.forVendor(devices.firstOrNull {
+    val model = config.controllerModel(devices.firstOrNull {
         deviceDescriptor == null || it.descriptor == deviceDescriptor
-    }?.vendorId)
+    })
     val choices = remember(context) { gamepadCommandChoices(context) }
     val title = stringResource(when (context) {
         GamepadContext.MENUS -> if (long) R.string.gamepad_section_menus_long else R.string.gamepad_section_menus
@@ -181,7 +182,7 @@ internal fun ControllerMapping(context: GamepadContext, long: Boolean, selectedB
         (selectedButton?.let { listOf(it) } ?: GamepadButton.entries).forEach { button ->
             val slot = GamepadSlot(button, long)
             val current = config.configured(context, slot, deviceDescriptor)
-            val name = labels.label(button)
+            val name = model.label(button)
             SettingsSelect(
                 label = if (long) stringResource(R.string.key_binding_long, name) else name,
                 options = choices.map { command ->

@@ -1,0 +1,794 @@
+{
+  "schema": 1,
+  "upstream_repository": "https://github.com/controllercons/controllercons.github.io",
+  "upstream_commit": "384ac8a1b22b6c173d4a44447df6d73ee96d0427",
+  "collection": "Controllercons 2.1 / duotone",
+  "license": "OFL-1.1",
+  "license_file": "LICENSE.txt",
+  "license_sha256": "111f7ffc892775f0bb64185c6dec8d9776e01591d54df1ffb170131cff92de29",
+  "credits": "Copyright (c) 2023 Kieran McClung",
+  "bounds_method": "Inkscape --query-all visual bounds, rounded outwards to 0.001 source units with 0.25 units of antialias padding on each edge. Original SVG viewBox: 0 0 64 64.",
+  "modifications": "Original SVG paths retained; black fills converted to white for theme tinting; secondary path opacity remains 0.5. Transparent page margins trimmed using a translation-only group and proportional intrinsic dimensions. No fonts, bitmaps, raster tracing or nonuniform scaling.",
+  "assets": [
+    {
+      "id": "atari-2600",
+      "upstream_path": "versions/2.1/svg/duotone/atari-2600.svg",
+      "upstream_blob": "854bccf1ea9b1c4fb873d7060abe92f6d820cfc6",
+      "source_file": "duotone/atari-2600.svg",
+      "source_sha256": "2ec7f50c307fe969557b17dccf37f3e09c1acc53e573f9108d3d725aa530d0f2",
+      "source_viewbox": [
+        0,
+        0,
+        64,
+        64
+      ],
+      "artwork_bounds": [
+        -1.77636e-15,
+        -1.77636e-15,
+        64.0,
+        64.0
+      ],
+      "viewport_bounds": [
+        -0.251,
+        -0.251,
+        64.501,
+        64.501
+      ],
+      "output": "app/src/main/res/drawable/input_controller_atari_2600.xml"
+    },
+    {
+      "id": "atari-jaguar",
+      "upstream_path": "versions/2.1/svg/duotone/atari-jaguar.svg",
+      "upstream_blob": "3b3801b5575ec8c0e516107ccb84020d17448ec8",
+      "source_file": "duotone/atari-jaguar.svg",
+      "source_sha256": "51e62ed57b9f5ff10ba4d03e6f3e382910c3f047b1597ad1e68ef11f4c6383b9",
+      "source_viewbox": [
+        0,
+        0,
+        64,
+        64
+      ],
+      "artwork_bounds": [
+        -0.00185304,
+        7.38,
+        64.0044,
+        49.2405
+      ],
+      "viewport_bounds": [
+        -0.252,
+        7.13,
+        64.505,
+        49.741
+      ],
+      "output": "app/src/main/res/drawable/input_controller_atari_jaguar.xml"
+    },
+    {
+      "id": "dreamcast",
+      "upstream_path": "versions/2.1/svg/duotone/dreamcast.svg",
+      "upstream_blob": "56cc8e9d67cf5172e5d2e80c2f5cb9c470995f47",
+      "source_file": "duotone/dreamcast.svg",
+      "source_sha256": "e1516905936a9d5a67a0f49e2cfa36477cce7df25a25d3b091a50b4f91fdf412",
+      "source_viewbox": [
+        0,
+        0,
+        64,
+        64
+      ],
+      "artwork_bounds": [
+        1.50192,
+        -0.00734202,
+        60.9962,
+        64.0044
+      ],
+      "viewport_bounds": [
+        1.251,
+        -0.258,
+        61.498,
+        64.506
+      ],
+      "output": "app/src/main/res/drawable/input_controller_dreamcast.xml"
+    },
+    {
+      "id": "gamecube",
+      "upstream_path": "versions/2.1/svg/duotone/gamecube.svg",
+      "upstream_blob": "5f07107de52247ab1483c1cd2474c8a74c1ebeee",
+      "source_file": "duotone/gamecube.svg",
+      "source_sha256": "6d89095b709aa77ccc25a3303df84b100bf99b6d7b2a43377921cc029faab15d",
+      "source_viewbox": [
+        0,
+        0,
+        64,
+        64
+      ],
+      "artwork_bounds": [
+        -2.4576e-05,
+        7.86,
+        64.0001,
+        48.2788
+      ],
+      "viewport_bounds": [
+        -0.251,
+        7.61,
+        64.502,
+        48.779
+      ],
+      "output": "app/src/main/res/drawable/input_controller_gamecube.xml"
+    },
+    {
+      "id": "joy-con-l",
+      "upstream_path": "versions/2.1/svg/duotone/joy-con-l.svg",
+      "upstream_blob": "9b29e6e33f27fccc599e715250a1841b4ef87ad9",
+      "source_file": "duotone/joy-con-l.svg",
+      "source_sha256": "a471fb3584b31525fadfde20e7ac73323e85849759873406c360cb4b5cb837b6",
+      "source_viewbox": [
+        0,
+        0,
+        64,
+        64
+      ],
+      "artwork_bounds": [
+        16.784,
+        0.008,
+        30.433,
+        63.984
+      ],
+      "viewport_bounds": [
+        16.534,
+        -0.242,
+        30.933,
+        64.485
+      ],
+      "output": "app/src/main/res/drawable/input_controller_joy_con_l.xml"
+    },
+    {
+      "id": "joy-con-r",
+      "upstream_path": "versions/2.1/svg/duotone/joy-con-r.svg",
+      "upstream_blob": "c37336d9eb415285354dad2c7d7f6a591cfc6f32",
+      "source_file": "duotone/joy-con-r.svg",
+      "source_sha256": "4121b5abbe25d746eb3040808c17f82e02987bf0a6c4e8899e53ca2ae99f98d0",
+      "source_viewbox": [
+        0,
+        0,
+        64,
+        64
+      ],
+      "artwork_bounds": [
+        16.787,
+        0.008,
+        30.426,
+        63.993
+      ],
+      "viewport_bounds": [
+        16.537,
+        -0.242,
+        30.926,
+        64.494
+      ],
+      "output": "app/src/main/res/drawable/input_controller_joy_con_r.xml"
+    },
+    {
+      "id": "joy-cons",
+      "upstream_path": "versions/2.1/svg/duotone/joy-cons.svg",
+      "upstream_blob": "ee3e2e46ef33e319021acd58f704632af62e6c3d",
+      "source_file": "duotone/joy-cons.svg",
+      "source_sha256": "67044d29b170253d6b3335fc96db531a874b0dac6e5bb23b2ed2331a94096301",
+      "source_viewbox": [
+        0,
+        0,
+        64,
+        64
+      ],
+      "artwork_bounds": [
+        0.00501107,
+        8.825,
+        64.0003,
+        46.351
+      ],
+      "viewport_bounds": [
+        -0.245,
+        8.575,
+        64.501,
+        46.851
+      ],
+      "output": "app/src/main/res/drawable/input_controller_joy_cons.xml"
+    },
+    {
+      "id": "master-system",
+      "upstream_path": "versions/2.1/svg/duotone/master-system.svg",
+      "upstream_blob": "e06da3320758444e94fcd4b434049744e434b9af",
+      "source_file": "duotone/master-system.svg",
+      "source_sha256": "b1dd9004142a33e2ca5487b74716a395d433f6311608f23bd704cf74b7c89ee4",
+      "source_viewbox": [
+        0,
+        0,
+        64,
+        64
+      ],
+      "artwork_bounds": [
+        -8.10735e-05,
+        19.0,
+        64.0002,
+        26.0
+      ],
+      "viewport_bounds": [
+        -0.251,
+        18.75,
+        64.502,
+        26.5
+      ],
+      "output": "app/src/main/res/drawable/input_controller_master_system.xml"
+    },
+    {
+      "id": "mega-drive",
+      "upstream_path": "versions/2.1/svg/duotone/mega-drive.svg",
+      "upstream_blob": "64cf6502c72053dbbd823281f9eefc5365f47b79",
+      "source_file": "duotone/mega-drive.svg",
+      "source_sha256": "42c55991331d7f7bb87c8b4154d1dee729048c8924b0da377d01ff8692440d11",
+      "source_viewbox": [
+        0,
+        0,
+        64,
+        64
+      ],
+      "artwork_bounds": [
+        -0.000389183,
+        12.9703,
+        64.0,
+        38.0601
+      ],
+      "viewport_bounds": [
+        -0.251,
+        12.72,
+        64.501,
+        38.561
+      ],
+      "output": "app/src/main/res/drawable/input_controller_mega_drive.xml"
+    },
+    {
+      "id": "n64",
+      "upstream_path": "versions/2.1/svg/duotone/n64.svg",
+      "upstream_blob": "df7dde9433e55fc211c0fb248f62e2ffc58f7773",
+      "source_file": "duotone/n64.svg",
+      "source_sha256": "307cc4ad99d665b4b900f73a5d88d71176253cd625486a9e1c8001084166842d",
+      "source_viewbox": [
+        0,
+        0,
+        64,
+        64
+      ],
+      "artwork_bounds": [
+        -0.0108915,
+        0.992495,
+        64.022,
+        62.0165
+      ],
+      "viewport_bounds": [
+        -0.261,
+        0.742,
+        64.523,
+        62.517
+      ],
+      "output": "app/src/main/res/drawable/input_controller_n64.xml"
+    },
+    {
+      "id": "nes",
+      "upstream_path": "versions/2.1/svg/duotone/nes.svg",
+      "upstream_blob": "915da15a470a6481ceb305c731ca8b7b102aebde",
+      "source_file": "duotone/nes.svg",
+      "source_sha256": "dd02571ced577b641663b2778dde33e9ffce9113e555e592cfae43e6386b7abe",
+      "source_viewbox": [
+        0,
+        0,
+        64,
+        64
+      ],
+      "artwork_bounds": [
+        0.0,
+        17.977,
+        64.0,
+        27.999
+      ],
+      "viewport_bounds": [
+        -0.25,
+        17.727,
+        64.5,
+        28.499
+      ],
+      "output": "app/src/main/res/drawable/input_controller_nes.xml"
+    },
+    {
+      "id": "ps1",
+      "upstream_path": "versions/2.1/svg/duotone/ps1.svg",
+      "upstream_blob": "554347fc08ded70001659859c9736474775fb594",
+      "source_file": "duotone/ps1.svg",
+      "source_sha256": "983c0d68c2d8f464e865cacf4c81ab71d1b982ba0d618cabad74ac8d85b80517",
+      "source_viewbox": [
+        0,
+        0,
+        64,
+        64
+      ],
+      "artwork_bounds": [
+        0.0,
+        11.163,
+        64.0002,
+        41.4765
+      ],
+      "viewport_bounds": [
+        -0.25,
+        10.913,
+        64.501,
+        41.977
+      ],
+      "output": "app/src/main/res/drawable/input_controller_ps1.xml"
+    },
+    {
+      "id": "ps2",
+      "upstream_path": "versions/2.1/svg/duotone/ps2.svg",
+      "upstream_blob": "f2ffe8cbbe001c54a708370442e31a675928e93c",
+      "source_file": "duotone/ps2.svg",
+      "source_sha256": "e0fafe2fe802754aad13f450f4ed3bb132d379dc0e13153a9caca1ff9032949c",
+      "source_viewbox": [
+        0,
+        0,
+        64,
+        64
+      ],
+      "artwork_bounds": [
+        0.0137162,
+        11.9553,
+        63.9999,
+        39.9936
+      ],
+      "viewport_bounds": [
+        -0.237,
+        11.705,
+        64.501,
+        40.494
+      ],
+      "output": "app/src/main/res/drawable/input_controller_ps2.xml"
+    },
+    {
+      "id": "ps3",
+      "upstream_path": "versions/2.1/svg/duotone/ps3.svg",
+      "upstream_blob": "efc9e4201d60dd602a7fc95c30e121b2bfbddc52",
+      "source_file": "duotone/ps3.svg",
+      "source_sha256": "816f2488d0a27f73736d13f04e5a54a9f548caec01dceaf01dc0d2bdc28d6822",
+      "source_viewbox": [
+        0,
+        0,
+        64,
+        64
+      ],
+      "artwork_bounds": [
+        -0.000563326,
+        11.9565,
+        64.0008,
+        39.9924
+      ],
+      "viewport_bounds": [
+        -0.251,
+        11.706,
+        64.502,
+        40.493
+      ],
+      "output": "app/src/main/res/drawable/input_controller_ps3.xml"
+    },
+    {
+      "id": "ps4",
+      "upstream_path": "versions/2.1/svg/duotone/ps4.svg",
+      "upstream_blob": "49841cfea1b432ad1a82944a0319c49cf228caf0",
+      "source_file": "duotone/ps4.svg",
+      "source_sha256": "cf3bdb893bf5ef8aff3130270c7599eb605d828c4e109dd67eadd102fc120f9f",
+      "source_viewbox": [
+        0,
+        0,
+        64,
+        64
+      ],
+      "artwork_bounds": [
+        -0.000362937,
+        11.9037,
+        63.9995,
+        40.1923
+      ],
+      "viewport_bounds": [
+        -0.251,
+        11.653,
+        64.501,
+        40.693
+      ],
+      "output": "app/src/main/res/drawable/input_controller_ps4.xml"
+    },
+    {
+      "id": "ps5",
+      "upstream_path": "versions/2.1/svg/duotone/ps5.svg",
+      "upstream_blob": "9bb3fca6ec1ee99b16dc7de4e7f936a42a76710e",
+      "source_file": "duotone/ps5.svg",
+      "source_sha256": "98203e1ca73cfd574bc61de93881469e35825770af8bab32202c384a9dc1e88f",
+      "source_viewbox": [
+        0,
+        0,
+        64,
+        64
+      ],
+      "artwork_bounds": [
+        -0.00611278,
+        10.7377,
+        63.9992,
+        42.4999
+      ],
+      "viewport_bounds": [
+        -0.257,
+        10.487,
+        64.501,
+        43.001
+      ],
+      "output": "app/src/main/res/drawable/input_controller_ps5.xml"
+    },
+    {
+      "id": "sega-saturn",
+      "upstream_path": "versions/2.1/svg/duotone/sega-saturn.svg",
+      "upstream_blob": "3993117fed1f96a78a428e8aeef09991ff441e1e",
+      "source_file": "duotone/sega-saturn.svg",
+      "source_sha256": "0e894b3a9fe402312380524c3e0fdd588e22f6f70de4b4ce44c62dc4800bc438",
+      "source_viewbox": [
+        0,
+        0,
+        64,
+        64
+      ],
+      "artwork_bounds": [
+        0.0311265,
+        9.52947,
+        63.9381,
+        44.9212
+      ],
+      "viewport_bounds": [
+        -0.219,
+        9.279,
+        64.439,
+        45.422
+      ],
+      "output": "app/src/main/res/drawable/input_controller_sega_saturn.xml"
+    },
+    {
+      "id": "snes",
+      "upstream_path": "versions/2.1/svg/duotone/snes.svg",
+      "upstream_blob": "b2b1b19b4ad3fe1caef8d421037634267419ef71",
+      "source_file": "duotone/snes.svg",
+      "source_sha256": "0d98e164b70de17a5c6dda74023a761281a59a073a41b6b85794854036e111cf",
+      "source_viewbox": [
+        0,
+        0,
+        64,
+        64
+      ],
+      "artwork_bounds": [
+        0.00516112,
+        18.0679,
+        63.9973,
+        27.8696
+      ],
+      "viewport_bounds": [
+        -0.245,
+        17.817,
+        64.498,
+        28.371
+      ],
+      "output": "app/src/main/res/drawable/input_controller_snes.xml"
+    },
+    {
+      "id": "stadia",
+      "upstream_path": "versions/2.1/svg/duotone/stadia.svg",
+      "upstream_blob": "03f0b854b19d486d99b3f1dc9204270d131dc5bc",
+      "source_file": "duotone/stadia.svg",
+      "source_sha256": "80fca17bf40efbfa732573ddf7ddf7c374c155785a8479cb8681a3a6039f0d76",
+      "source_viewbox": [
+        0,
+        0,
+        64,
+        64
+      ],
+      "artwork_bounds": [
+        0.00242612,
+        10.9437,
+        63.9991,
+        42.0808
+      ],
+      "viewport_bounds": [
+        -0.248,
+        10.693,
+        64.5,
+        42.582
+      ],
+      "output": "app/src/main/res/drawable/input_controller_stadia.xml"
+    },
+    {
+      "id": "switch-pro",
+      "upstream_path": "versions/2.1/svg/duotone/switch-pro.svg",
+      "upstream_blob": "3792082dd7d934284f21343ecbb1d1eec6e36a9f",
+      "source_file": "duotone/switch-pro.svg",
+      "source_sha256": "9dd5580d9db0c1bb479da4939c6f27a4b709dbb901cb48ba7c7b8e26cb3fe519",
+      "source_viewbox": [
+        0,
+        0,
+        64,
+        64
+      ],
+      "artwork_bounds": [
+        -1.27348e-06,
+        9.72205,
+        64.0004,
+        44.556
+      ],
+      "viewport_bounds": [
+        -0.251,
+        9.472,
+        64.502,
+        45.057
+      ],
+      "output": "app/src/main/res/drawable/input_controller_switch_pro.xml"
+    },
+    {
+      "id": "virtual-boy",
+      "upstream_path": "versions/2.1/svg/duotone/virtual-boy.svg",
+      "upstream_blob": "8d1327abcd6c9cdd7145e838ae28ab9c6b2a4dbc",
+      "source_file": "duotone/virtual-boy.svg",
+      "source_sha256": "8cd8c5d6f42d64d2590de5651c3615587d234af8c5ad0c3b1ebe7c4f454562ba",
+      "source_viewbox": [
+        0,
+        0,
+        64,
+        64
+      ],
+      "artwork_bounds": [
+        -0.000119843,
+        5.01228,
+        64.0002,
+        53.9757
+      ],
+      "viewport_bounds": [
+        -0.251,
+        4.762,
+        64.502,
+        54.476
+      ],
+      "output": "app/src/main/res/drawable/input_controller_virtual_boy.xml"
+    },
+    {
+      "id": "wii-classic",
+      "upstream_path": "versions/2.1/svg/duotone/wii-classic.svg",
+      "upstream_blob": "0544cd86e01202f650e71aa6334804de9f431688",
+      "source_file": "duotone/wii-classic.svg",
+      "source_sha256": "43adfe163987490634d11b682d5494dbab2a13e7a36725822ca4e9ba9fbf1b19",
+      "source_viewbox": [
+        0,
+        0,
+        64,
+        64
+      ],
+      "artwork_bounds": [
+        0.013,
+        15.502,
+        63.974,
+        32.5082
+      ],
+      "viewport_bounds": [
+        -0.237,
+        15.252,
+        64.474,
+        33.009
+      ],
+      "output": "app/src/main/res/drawable/input_controller_wii_classic.xml"
+    },
+    {
+      "id": "wii-u-pro",
+      "upstream_path": "versions/2.1/svg/duotone/wii-u-pro.svg",
+      "upstream_blob": "83bced671509ffd4543e948d59dc0de0b737184c",
+      "source_file": "duotone/wii-u-pro.svg",
+      "source_sha256": "47360d1983accb1240573dd4f689a5934e7d0c92f4a9f32ee39fd6e081c2486b",
+      "source_viewbox": [
+        0,
+        0,
+        64,
+        64
+      ],
+      "artwork_bounds": [
+        0.000259364,
+        8.51389,
+        63.9996,
+        46.6116
+      ],
+      "viewport_bounds": [
+        -0.25,
+        8.263,
+        64.5,
+        47.113
+      ],
+      "output": "app/src/main/res/drawable/input_controller_wii_u_pro.xml"
+    },
+    {
+      "id": "wii-u",
+      "upstream_path": "versions/2.1/svg/duotone/wii-u.svg",
+      "upstream_blob": "4d369415b215f6bcc99d427cdfea80da70aabffc",
+      "source_file": "duotone/wii-u.svg",
+      "source_sha256": "da5bff3358038549768ec4bd95edc4ec9b8dd86e6a2d5982a3f78c0fa5b7fc13",
+      "source_viewbox": [
+        0,
+        0,
+        64,
+        64
+      ],
+      "artwork_bounds": [
+        0.00101763,
+        15.007,
+        63.9996,
+        33.985
+      ],
+      "viewport_bounds": [
+        -0.249,
+        14.757,
+        64.5,
+        34.485
+      ],
+      "output": "app/src/main/res/drawable/input_controller_wii_u.xml"
+    },
+    {
+      "id": "wii",
+      "upstream_path": "versions/2.1/svg/duotone/wii.svg",
+      "upstream_blob": "5aac0faa5a156665b5449e27296c0290eaab069c",
+      "source_file": "duotone/wii.svg",
+      "source_sha256": "7d275422da8e864a4c1ade96fdc8acb3fe656a63480b3a16551777a8aee8fa30",
+      "source_viewbox": [
+        0,
+        0,
+        64,
+        64
+      ],
+      "artwork_bounds": [
+        24.0,
+        0.0,
+        16.0,
+        64.0
+      ],
+      "viewport_bounds": [
+        23.75,
+        -0.25,
+        16.5,
+        64.5
+      ],
+      "output": "app/src/main/res/drawable/input_controller_wii.xml"
+    },
+    {
+      "id": "xbox-360",
+      "upstream_path": "versions/2.1/svg/duotone/xbox-360.svg",
+      "upstream_blob": "98b3534efacb105509ee89bc5387a6c4cd60f39e",
+      "source_file": "duotone/xbox-360.svg",
+      "source_sha256": "8db02e5ffeed99949db558c9bd4f188bfc9ff0019fcd161af7841895b381e31c",
+      "source_viewbox": [
+        0,
+        0,
+        64,
+        64
+      ],
+      "artwork_bounds": [
+        -0.000387791,
+        9.98238,
+        64.0003,
+        44.0351
+      ],
+      "viewport_bounds": [
+        -0.251,
+        9.732,
+        64.501,
+        44.536
+      ],
+      "output": "app/src/main/res/drawable/input_controller_xbox_360.xml"
+    },
+    {
+      "id": "xbox-controller-s",
+      "upstream_path": "versions/2.1/svg/duotone/xbox-controller-s.svg",
+      "upstream_blob": "4dfa982197d4bc3aefa486bb43b3d2a4c7c3251e",
+      "source_file": "duotone/xbox-controller-s.svg",
+      "source_sha256": "a5c7dd88bde324bb6070b56daff3517bf61307828ee570a8b925977c6a43868c",
+      "source_viewbox": [
+        0,
+        0,
+        64,
+        64
+      ],
+      "artwork_bounds": [
+        -0.00023491,
+        7.9997,
+        64.0002,
+        48.0017
+      ],
+      "viewport_bounds": [
+        -0.251,
+        7.749,
+        64.501,
+        48.503
+      ],
+      "output": "app/src/main/res/drawable/input_controller_xbox_controller_s.xml"
+    },
+    {
+      "id": "xbox-one",
+      "upstream_path": "versions/2.1/svg/duotone/xbox-one.svg",
+      "upstream_blob": "94bf82f6abd5c3c7fdcc1b67159b0fd3c0d82be3",
+      "source_file": "duotone/xbox-one.svg",
+      "source_sha256": "7aea042cb59afd591adad2a2a74caabe6569c51ac6050c3def754fd5cdd653ca",
+      "source_viewbox": [
+        0,
+        0,
+        64,
+        64
+      ],
+      "artwork_bounds": [
+        -0.000232986,
+        9.56687,
+        64.0013,
+        44.8652
+      ],
+      "viewport_bounds": [
+        -0.251,
+        9.316,
+        64.503,
+        45.367
+      ],
+      "output": "app/src/main/res/drawable/input_controller_xbox_one.xml"
+    },
+    {
+      "id": "xbox-series-x",
+      "upstream_path": "versions/2.1/svg/duotone/xbox-series-x.svg",
+      "upstream_blob": "c22f52b49d1659fd3d061ae901de8a67872aa515",
+      "source_file": "duotone/xbox-series-x.svg",
+      "source_sha256": "3e088c82c1ed4ec9feda7f38c245ab4ea4caa66ce3fea888631ff00d78bdb308",
+      "source_viewbox": [
+        0,
+        0,
+        64,
+        64
+      ],
+      "artwork_bounds": [
+        7.85201e-05,
+        9.76093,
+        63.9998,
+        44.4774
+      ],
+      "viewport_bounds": [
+        -0.25,
+        9.51,
+        64.5,
+        44.979
+      ],
+      "output": "app/src/main/res/drawable/input_controller_xbox_series_x.xml"
+    },
+    {
+      "id": "xbox",
+      "upstream_path": "versions/2.1/svg/duotone/xbox.svg",
+      "upstream_blob": "18218d98285a6c09030a99e4eee36d09deaed457",
+      "source_file": "duotone/xbox.svg",
+      "source_sha256": "8eeaba45d18a0adc65e7615cc93ce1f6c8211ddbccd4dc1a6430e96a0f8ad155",
+      "source_viewbox": [
+        0,
+        0,
+        64,
+        64
+      ],
+      "artwork_bounds": [
+        0.00122086,
+        6.99963,
+        63.9996,
+        50.0002
+      ],
+      "viewport_bounds": [
+        -0.249,
+        6.749,
+        64.5,
+        50.501
+      ],
+      "output": "app/src/main/res/drawable/input_controller_xbox.xml"
+    }
+  ]
+}

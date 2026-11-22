@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="input_device_model">Controller appearance</string>
+    <string name="input_device_model_hint">Image and button labels for %1$s. Choose a model if automatic detection is incomplete.</string>
+    <string name="input_device_model_auto">Automatic: %1$s</string>
+    <string name="input_device_model_generic">Neutral controller</string>
+    <string name="input_device_model_xbox">Xbox family</string>
+    <string name="input_device_model_playstation">PlayStation family</string>
+    <string name="input_device_model_nintendo">Nintendo family</string>
+    <string name="input_device_phone_offline">Paired · offline · configuration available</string>
+    <string name="input_device_phone_connected">Connected · ready to configure</string>
+    <string name="input_device_phone_active">Active · player %1$d</string>
+    <string name="input_device_connect_phone">Connect a phone</string>
+    <string name="input_device_no_controller">Connect an input device or pair a phone to configure its buttons.</string>
+    <string name="input_device_touch_available">No external input device connected. Touch controls and console layout settings remain available.</string>
+</resources>

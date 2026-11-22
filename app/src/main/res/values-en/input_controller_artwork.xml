@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="input_controller_artwork_title">Controller artwork</string>
+    <string name="input_controller_artwork_credit">Controller illustrations by Kieran McClung.</string>
+    <string name="input_controller_artwork_details">Source, changes and license</string>
+    <string name="input_controller_artwork_modifications">The original SVG paths were converted to Android vectors with trimmed margins, preserved proportions and theme colors.</string>
+</resources>

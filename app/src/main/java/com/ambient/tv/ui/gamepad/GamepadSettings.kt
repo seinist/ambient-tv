@@ -62,7 +62,20 @@ data class GamepadConfig(
     val overrides: Map<GamepadContext, Map<GamepadSlot, GamepadCommand>> = emptyMap(),
     /** Optional physical-controller overrides, inherited from the global mapping. */
     val deviceOverrides: Map<String, Map<GamepadContext, Map<GamepadSlot, GamepadCommand>>> = emptyMap(),
+    /** Explicit artwork/legend choice per physical descriptor; absent means automatic detection. */
+    val controllerModels: Map<String, ControllerModel> = emptyMap(),
 ) {
+    fun controllerModel(device: android.view.InputDevice?): ControllerModel =
+        resolveControllerModel(device, device?.descriptor?.let { controllerModels[it]?.key })
+
+    /** This changes presentation only. Existing button commands and input events stay untouched. */
+    fun withControllerModel(descriptor: String, model: ControllerModel?): GamepadConfig {
+        if (!validControllerDescriptor(descriptor)) return this
+        if (model != null && descriptor !in controllerModels && controllerModels.size >= MAX_CONTROLLER_MODELS) return this
+        val models = if (model == null) controllerModels - descriptor else controllerModels + (descriptor to model)
+        return copy(controllerModels = models)
+    }
+
     /** The setting shown for [slot] in [context]: the player layer may show [GamepadCommand.Inherit]. */
     fun configured(context: GamepadContext, slot: GamepadSlot, deviceDescriptor: String? = null): GamepadCommand =
         deviceDescriptor?.let { deviceOverrides[it]?.get(context)?.get(slot) }
@@ -130,9 +143,32 @@ data class GamepadConfig(
                 layer.forEach { (slot, command) -> put("device.$id.${slot.storageKey(context)}", command.storageKey) }
             }
         }
+        controllerModels.asSequence().filter { validControllerDescriptor(it.key) }
+            .take(MAX_CONTROLLER_MODELS).forEach { (descriptor, model) ->
+                val id = java.util.Base64.getUrlEncoder().withoutPadding()
+                    .encodeToString(descriptor.toByteArray(Charsets.UTF_8))
+                put("model.$id", model.key)
+            }
     }
 
     companion object {
+        internal const val MAX_CONTROLLER_MODELS = 64
+        internal const val MAX_CONTROLLER_DESCRIPTOR_LENGTH = 1024
+        // A UTF-16 code unit occupies at most three UTF-8 bytes (a surrogate pair uses four).
+        private const val MAX_ENCODED_CONTROLLER_DESCRIPTOR_LENGTH = MAX_CONTROLLER_DESCRIPTOR_LENGTH * 4
+
+        private fun validControllerDescriptor(descriptor: String) =
+            descriptor.isNotBlank() && descriptor.length <= MAX_CONTROLLER_DESCRIPTOR_LENGTH
+
+        private fun decodeControllerDescriptor(encoded: String): String? {
+            if (encoded.isEmpty() || encoded.length > MAX_ENCODED_CONTROLLER_DESCRIPTOR_LENGTH) return null
+            return runCatching {
+                val bytes = java.util.Base64.getUrlDecoder().decode(encoded)
+                // Reject malformed UTF-8 rather than allowing replacement characters to alias IDs.
+                Charsets.UTF_8.newDecoder().decode(java.nio.ByteBuffer.wrap(bytes)).toString()
+            }.getOrNull()?.takeIf(::validControllerDescriptor)
+        }
+
         private fun Boolean.flag() = if (this) "1" else "0"
 
         fun decode(stored: Map<String, String>): GamepadConfig {
@@ -171,7 +207,17 @@ data class GamepadConfig(
                 devices.getOrPut(descriptor) { mutableMapOf() }
                     .getOrPut(context) { mutableMapOf() }[GamepadSlot(button, parts.size == 4)] = command
             }
-            return base.copy(overrides = overrides, deviceOverrides = devices.mapValues { (_, v) -> v.toMap() })
+            val models = mutableMapOf<String, ControllerModel>()
+            for ((key, value) in stored) {
+                if (!key.startsWith("model.")) continue
+                if (models.size >= MAX_CONTROLLER_MODELS) break
+                if (key.length > "model.".length + MAX_ENCODED_CONTROLLER_DESCRIPTOR_LENGTH) continue
+                val model = ControllerModel.fromKey(value) ?: continue
+                val descriptor = decodeControllerDescriptor(key.removePrefix("model.")) ?: continue
+                models[descriptor] = model
+            }
+            return base.copy(overrides = overrides, deviceOverrides = devices.mapValues { (_, v) -> v.toMap() },
+                controllerModels = models.toMap())
         }
     }
 }

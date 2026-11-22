@@ -1,0 +1,51 @@
+Controller artwork: Controllercons 2.1 / Duotone
+
+Attribution
+Copyright (c) 2023 Kieran McClung
+
+Source
+https://github.com/controllercons/controllercons.github.io
+Revision: 384ac8a1b22b6c173d4a44447df6d73ee96d0427
+https://github.com/controllercons/controllercons.github.io/tree/384ac8a1b22b6c173d4a44447df6d73ee96d0427/versions/2.1/svg/duotone
+
+License
+SIL Open Font License 1.1 (OFL-1.1)
+https://github.com/controllercons/controllercons.github.io/blob/384ac8a1b22b6c173d4a44447df6d73ee96d0427/LICENSE.txt
+The complete original copyright and license follow this notice in the app and are bundled as input_controller_artwork_ofl_1_1.txt.
+
+Changes made for Ambient TV
+Original SVG paths retained; black fills converted to white for theme tinting; secondary path opacity remains 0.5. Transparent page margins trimmed using a translation-only group and proportional intrinsic dimensions. No fonts, bitmaps, raster tracing or nonuniform scaling.
+
+The depicted controller designs are unofficial illustrations. Controllercons and Ambient TV do not imply endorsement by the hardware manufacturers. The remote, keyboard and generic fallback artwork in Ambient TV is separate original work.
+
+Imported original SVG paths (30 devices)
+versions/2.1/svg/duotone/atari-2600.svg
+versions/2.1/svg/duotone/atari-jaguar.svg
+versions/2.1/svg/duotone/dreamcast.svg
+versions/2.1/svg/duotone/gamecube.svg
+versions/2.1/svg/duotone/joy-con-l.svg
+versions/2.1/svg/duotone/joy-con-r.svg
+versions/2.1/svg/duotone/joy-cons.svg
+versions/2.1/svg/duotone/master-system.svg
+versions/2.1/svg/duotone/mega-drive.svg
+versions/2.1/svg/duotone/n64.svg
+versions/2.1/svg/duotone/nes.svg
+versions/2.1/svg/duotone/ps1.svg
+versions/2.1/svg/duotone/ps2.svg
+versions/2.1/svg/duotone/ps3.svg
+versions/2.1/svg/duotone/ps4.svg
+versions/2.1/svg/duotone/ps5.svg
+versions/2.1/svg/duotone/sega-saturn.svg
+versions/2.1/svg/duotone/snes.svg
+versions/2.1/svg/duotone/stadia.svg
+versions/2.1/svg/duotone/switch-pro.svg
+versions/2.1/svg/duotone/virtual-boy.svg
+versions/2.1/svg/duotone/wii-classic.svg
+versions/2.1/svg/duotone/wii-u-pro.svg
+versions/2.1/svg/duotone/wii-u.svg
+versions/2.1/svg/duotone/wii.svg
+versions/2.1/svg/duotone/xbox-360.svg
+versions/2.1/svg/duotone/xbox-controller-s.svg
+versions/2.1/svg/duotone/xbox-one.svg
+versions/2.1/svg/duotone/xbox-series-x.svg
+versions/2.1/svg/duotone/xbox.svg
