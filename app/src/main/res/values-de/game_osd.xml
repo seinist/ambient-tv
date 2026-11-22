@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="game_exit">Spiel beenden</string>
+    <string name="game_rewind">Zurückspulen</string>
+    <string name="game_rewind_buffer_seconds">≈ %1$.1f s</string>
+    <string name="game_rewind_hold">Zum Zurückspulen halten</string>
+    <string name="game_reset_failed">Das Spiel konnte nicht neu gestartet werden</string>
+    <string name="game_netplay_synchronizing">Spielstand wird synchronisiert…</string>
+</resources>

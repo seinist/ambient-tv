@@ -49,6 +49,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.Dp
 import com.ambient.tv.R
 import com.ambient.tv.ui.common.TvActionButton
 import com.ambient.tv.ui.common.ProvideControlContent
@@ -144,31 +145,34 @@ internal fun CompanionRemoteScreen(manager: CompanionManager, modifier: Modifier
 }
 
 @Composable
-private fun RemoteDirectionPad(enabled: Boolean, key: (String) -> Unit) {
-    Text(stringResource(R.string.remote_dpad_hint), style = MaterialTheme.typography.bodyMedium,
+internal fun RemoteDirectionPad(enabled: Boolean, key: (String) -> Unit, compact: Boolean = false,
+                               showHint: Boolean = true, confirmControl: (@Composable (Dp) -> Unit)? = null) {
+    if (showHint) Text(stringResource(R.string.remote_dpad_hint), style = MaterialTheme.typography.bodyMedium,
         textAlign = TextAlign.Center, color = MaterialTheme.colorScheme.onSurfaceVariant)
     Surface(Modifier.widthIn(max = 320.dp).fillMaxWidth(), shape = RoundedCornerShape(32.dp),
         color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f),
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)) {
         Column(Modifier.padding(12.dp), horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            RemoteDirectionButton(Icons.Default.KeyboardArrowUp, R.string.remote_up, enabled) { key("up") }
+            RemoteDirectionButton(Icons.Default.KeyboardArrowUp, R.string.remote_up, enabled, compact) { key("up") }
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly,
                 verticalAlignment = Alignment.CenterVertically) {
-                RemoteDirectionButton(Icons.AutoMirrored.Filled.KeyboardArrowLeft, R.string.remote_left, enabled) { key("left") }
-                RemoteIconButton({ key("ok") }, enabled = enabled, modifier = Modifier.size(76.dp), shape = CircleShape, prominent = true) {
+                RemoteDirectionButton(Icons.AutoMirrored.Filled.KeyboardArrowLeft, R.string.remote_left, enabled, compact) { key("left") }
+                if (confirmControl != null) confirmControl(if (compact) 56.dp else 76.dp)
+                else RemoteIconButton({ key("ok") }, enabled = enabled, modifier = Modifier.size(if (compact) 56.dp else 76.dp), shape = CircleShape, prominent = true) {
                     Icon(Icons.Default.Check, stringResource(R.string.remote_ok), Modifier.size(32.dp))
                 }
-                RemoteDirectionButton(Icons.AutoMirrored.Filled.KeyboardArrowRight, R.string.remote_right, enabled) { key("right") }
+                RemoteDirectionButton(Icons.AutoMirrored.Filled.KeyboardArrowRight, R.string.remote_right, enabled, compact) { key("right") }
             }
-            RemoteDirectionButton(Icons.Default.KeyboardArrowDown, R.string.remote_down, enabled) { key("down") }
+            RemoteDirectionButton(Icons.Default.KeyboardArrowDown, R.string.remote_down, enabled, compact) { key("down") }
         }
     }
 }
 
 @Composable
-private fun RemoteDirectionButton(icon: ImageVector, label: Int, enabled: Boolean, action: () -> Unit) {
-    RemoteIconButton(action, enabled = enabled, modifier = Modifier.size(64.dp), shape = RoundedCornerShape(20.dp)) {
+private fun RemoteDirectionButton(icon: ImageVector, label: Int, enabled: Boolean, compact: Boolean,
+                                  action: () -> Unit) {
+    RemoteIconButton(action, enabled = enabled, modifier = Modifier.size(if (compact) 48.dp else 64.dp), shape = RoundedCornerShape(20.dp)) {
         Icon(icon, stringResource(label), Modifier.size(34.dp))
     }
 }

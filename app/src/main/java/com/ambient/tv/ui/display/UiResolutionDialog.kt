@@ -139,17 +139,22 @@ internal fun UiResolutionDialog(
                             callbacks = UiRenderHostCallbacks(
                                 onViewportChanged = { viewport = it },
                                 dispatchKeyEvent = { event, dispatch ->
-                                    val consumedByContent = dispatch()
-                                    if (event.keyCode == KeyEvent.KEYCODE_BACK ||
-                                        event.keyCode == KeyEvent.KEYCODE_ESCAPE) {
-                                        if (backKeyGate.onKeyEvent(event, consumedByContent)) {
-                                            val dispatcher = (window.callback as? OnBackPressedDispatcherOwner)?.onBackPressedDispatcher
-                                                ?: ownerView.findViewTreeOnBackPressedDispatcherOwner()?.onBackPressedDispatcher
-                                            if (dispatcher != null) dispatcher.onBackPressed()
-                                            else if (currentProperties.dismissOnBackPress) currentDismiss()
-                                        }
-                                        true
-                                    } else consumedByContent
+                                    com.ambient.tv.ui.gamepad.dispatchGameDialogKey(window, event) {
+                                        val consumedByContent = dispatch()
+                                        if (event.keyCode == KeyEvent.KEYCODE_BACK ||
+                                            event.keyCode == KeyEvent.KEYCODE_ESCAPE) {
+                                            if (backKeyGate.onKeyEvent(event, consumedByContent)) {
+                                                val dispatcher = (com.ambient.tv.ui.gamepad.gameDialogWindowCallback(window) as? OnBackPressedDispatcherOwner)?.onBackPressedDispatcher
+                                                    ?: ownerView.findViewTreeOnBackPressedDispatcherOwner()?.onBackPressedDispatcher
+                                                if (dispatcher != null) dispatcher.onBackPressed()
+                                                else if (currentProperties.dismissOnBackPress) currentDismiss()
+                                            }
+                                            true
+                                        } else consumedByContent
+                                    }
+                                },
+                                dispatchGenericMotionEvent = { event, dispatch ->
+                                    com.ambient.tv.ui.gamepad.dispatchGameDialogMotion(window, event, dispatch)
                                 },
                                 onWindowFocusChanged = { focused ->
                                     if (!focused) {
@@ -189,6 +194,7 @@ private fun DialogInputContent(focusable: Boolean, content: @Composable () -> Un
     Box(propagateMinConstraints = true) {
         content()
         if (focusable) {
+            com.ambient.tv.ui.gamepad.GameDialogInputSurface()
             // The cursor follows the measured content and must not expand compact native dialogs.
             Box(Modifier.matchParentSize()) { CompanionDialogInputSurface() }
         }

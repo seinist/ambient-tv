@@ -1,0 +1,48 @@
+Ambient TV: discard replaced/invalid rewind timelines without stepping forward.
+
+diff --git a/src/main/cpp/libretrodroid.cpp b/src/main/cpp/libretrodroid.cpp
+--- a/src/main/cpp/libretrodroid.cpp
++++ b/src/main/cpp/libretrodroid.cpp
+@@ -795,13 +795,20 @@
+ 
+         if (hasState && lastSize > 0) {
+             int8_t* lastData = reinterpret_cast<int8_t*>(rewindTempBuffer.data());
+-            core->retro_unserialize(lastData, lastSize);
+-            if (video && video->isHWAccelerated()) {
+-                video->bindHWContext();
+-            }
+-            core->retro_run();
+-            if (video && video->isHWAccelerated()) {
+-                video->bindMainContext();
++            if (core->retro_unserialize(lastData, lastSize)) {
++                if (video && video->isHWAccelerated()) {
++                    video->bindHWContext();
++                }
++                core->retro_run();
++                if (video && video->isHWAccelerated()) {
++                    video->bindMainContext();
++                }
++            } else {
++                // A rejected state must never advance the timeline while Rewind is held.
++                // Keep this frozen branch until the frontend sees empty history and releases.
++                LOGW("Rewind disabled: core rejected a stored state");
++                rewindBuffer->clear();
++                rewindEnabled = false;
+             }
+         }
+ 
+diff --git a/src/main/java/com/swordfish/libretrodroid/GLRetroView.kt b/src/main/java/com/swordfish/libretrodroid/GLRetroView.kt
+--- a/src/main/java/com/swordfish/libretrodroid/GLRetroView.kt
++++ b/src/main/java/com/swordfish/libretrodroid/GLRetroView.kt
+@@ -456,7 +456,10 @@
+     }
+ 
+     fun unserializePersistedState(data: ByteArray): Boolean = runOnGLThread {
+-        LibretroDroid.unserializePersistedState(data)
++        LibretroDroid.unserializePersistedState(data).also { restored ->
++            // Auto-resume and manual loads both replace the timeline atomically on GL.
++            if (restored) LibretroDroid.clearRewindBuffer()
++        }
+     }
+ 
+     fun serializeSRAM(): ByteArray =

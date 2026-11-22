@@ -7,8 +7,9 @@ import android.view.MotionEvent
 /**
  * Entry point for controller input, called by the activity before anything else sees a key or
  * motion: a game in front gets raw input ([GamepadInput.rawSink]); otherwise buttons, triggers,
- * sticks and the hat become the app's keys and actions. Disabled, every event takes its normal
- * way (Android's own controller fallbacks).
+ * sticks and the hat become the app's keys and actions. Game menus use a safe navigation layer
+ * even when the app-wide controller mapper is disabled. Outside games, disabling it retains
+ * Android's normal controller fallbacks.
  */
 class GamepadController(
     private val host: GamepadHost,
@@ -27,18 +28,39 @@ class GamepadController(
     private val triggerKeyDevices = mutableSetOf<Int>()
     private val axisTriggers = mutableSetOf<Pair<Int, GamepadButton>>()
     private val swallowedTriggerKeys = mutableSetOf<Pair<Int, Int>>()
+    private var gameGeneration = host.gameInputGeneration
+    private var gameMode = host.gameInputMode
+    private val transitions = host.gameInputTransitions ?: GameInputTransitions()
+
+    /** Called by the active-game context observer, also checked before every input event. */
+    fun notifyGameInputChanged() {
+        val mode = host.gameInputMode
+        val generation = host.gameInputGeneration
+        if (gameMode == mode && gameGeneration == generation) return
+        transitions.advance(generation, mode != null)
+        gameMode = mode
+        gameGeneration = generation
+        releaseAll()
+    }
 
     /**
      * True when the key has been handled: recorded by Settings, taken by a game in front (any key:
      * controllers, keyboards and remotes all play), or a translated controller button.
      */
     fun handleKey(event: KeyEvent): Boolean {
+        notifyGameInputChanged()
+        val blocked = transitions.key(event)
         capture()?.let { sink -> if (sink(event)) return true }
-        rawSink()?.let { sink -> if (sink(event)) return true }
+        if (blocked) return true
+        if (gameMode == null || gameMode == GameInputMode.RUNNING) {
+            rawSink()?.let { sink -> if (sink(event)) return true }
+        }
         val code = event.keyCode
+        if (gameMode == GameInputMode.BLOCKED && gameTracksKey(code) &&
+            code != KeyEvent.KEYCODE_BACK && code != KeyEvent.KEYCODE_ESCAPE) return true
         if (!isGamepadButtonKeyCode(code)) return false
-        if (!config().enabled) return false
-        val button = GamepadButton.fromKeyCode(code) ?: return false
+        if (!config().enabled && gameMode == null) return false
+        val button = GamepadButton.fromKeyCode(code) ?: return gameMode != null
         if (button == GamepadButton.L2 || button == GamepadButton.R2) {
             val identity = event.deviceId to code
             triggerKeyDevices += event.deviceId
@@ -59,23 +81,36 @@ class GamepadController(
     /** True when the motion was controller stick/hat/trigger movement and has been handled. */
     fun handleMotion(event: MotionEvent): Boolean {
         if (!event.isFromSource(InputDevice.SOURCE_JOYSTICK) || event.actionMasked != MotionEvent.ACTION_MOVE) return false
-        rawSink()?.let { sink -> if (sink(event)) return true }
-        if (!config().enabled) return false
+        notifyGameInputChanged()
         val deviceId = event.deviceId
         val time = event.eventTime
         val layout = layouts.getOrPut(deviceId) { axisLayout(deviceId) }
+        val cfg = config()
+        val hatX = event.getAxisValue(MotionEvent.AXIS_HAT_X)
+        val hatY = event.getAxisValue(MotionEvent.AXIS_HAT_Y)
+        val leftX = event.getAxisValue(MotionEvent.AXIS_X)
+        val leftY = event.getAxisValue(MotionEvent.AXIS_Y)
+        val rightX = layout.rightStickX(event)
+        val rightY = layout.rightStickY(event)
+        val leftTrigger = layout.leftTriggerValue(event)
+        val rightTrigger = layout.rightTriggerValue(event)
+        val moving = kotlin.math.abs(hatX) >= 0.5f || kotlin.math.abs(hatY) >= 0.5f ||
+            kotlin.math.abs(leftX) > cfg.deadzone.release || kotlin.math.abs(leftY) > cfg.deadzone.release ||
+            kotlin.math.abs(rightX) > cfg.deadzone.release || kotlin.math.abs(rightY) > cfg.deadzone.release ||
+            leftTrigger >= TRIGGER_RELEASE || rightTrigger >= TRIGGER_RELEASE
+        if (transitions.motion(deviceId, moving)) return true
+        if (gameMode == null || gameMode == GameInputMode.RUNNING) {
+            rawSink()?.let { sink -> if (sink(event)) return true }
+        }
+        if (gameMode == GameInputMode.BLOCKED || gameMode == GameInputMode.RUNNING) return true
+        if (!cfg.enabled && gameMode == null) return false
         // Once a controller sends trigger keys, its axes only finish a pull they started.
         if (deviceId !in triggerKeyDevices || (deviceId to GamepadButton.L2) in axisTriggers) trigger(deviceId, GamepadButton.L2,
-            layout.leftTriggerValue(event), time)
+            leftTrigger, time)
         if (deviceId !in triggerKeyDevices || (deviceId to GamepadButton.R2) in axisTriggers) trigger(deviceId, GamepadButton.R2,
-            layout.rightTriggerValue(event), time)
+            rightTrigger, time)
         sticks.update(deviceId, GamepadStickNavigator.Axes(
-            hatX = event.getAxisValue(MotionEvent.AXIS_HAT_X),
-            hatY = event.getAxisValue(MotionEvent.AXIS_HAT_Y),
-            leftX = event.getAxisValue(MotionEvent.AXIS_X),
-            leftY = event.getAxisValue(MotionEvent.AXIS_Y),
-            rightX = layout.rightStickX(event),
-            rightY = layout.rightStickY(event),
+            hatX = hatX, hatY = hatY, leftX = leftX, leftY = leftY, rightX = rightX, rightY = rightY,
         ), time)
         // Consumed, so Android does not turn the same movement into arrow keys a second time.
         return true
@@ -110,6 +145,7 @@ class GamepadController(
         triggerKeyDevices -= deviceId
         axisTriggers.removeAll { it.first == deviceId }
         swallowedTriggerKeys.removeAll { it.first == deviceId }
+        transitions.removeDevice(deviceId)
     }
 
     private companion object {

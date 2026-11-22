@@ -25,7 +25,7 @@
     <string name="game_message_load_failed">Der Schnellspeicherstand konnte nicht geladen werden</string>
     <string name="game_reset">Neu starten</string>
     <string name="game_panel_picture">Bild</string>
-    <string name="game_osd_buttons_hint">Spielaktionen ein- oder ausblenden. Fortsetzen und Einstellungen bleiben immer erreichbar.</string>
+    <string name="game_osd_buttons_hint">Spielaktionen ein- oder ausblenden.</string>
     <string name="game_panel_core">Core-Optionen</string>
     <string name="game_panel_controls">Spieler</string>
     <string name="game_panel_info">Info</string>

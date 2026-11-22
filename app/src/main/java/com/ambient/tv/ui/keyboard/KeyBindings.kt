@@ -272,12 +272,20 @@ fun RegisterKeyAction(action: KeyAction, enabled: Boolean = true, handler: () ->
  * Turns bound key presses into actions before the focused control sees them. A key bound only
  * for a long press still works normally when pressed briefly: its press is replayed.
  */
-class KeyBindingDispatcher {
+class KeyBindingDispatcher(
+    private val playerForeground: () -> Boolean = { KeyBindings.playerForeground },
+) {
     private class Pending(val keyCode: Int, val down: KeyEvent) {
         var longFired = false
     }
     private var pending: Pending? = null
     private val consumedShort = mutableSetOf<Int>()
+
+    /** A mode transition must not finish an old long press in the new screen's bindings. */
+    fun cancelPending() {
+        pending?.let { consumedShort += it.keyCode }
+        pending = null
+    }
 
     /** Null when the event is not a bound key: the caller dispatches it as usual. */
     fun handle(event: KeyEvent, perform: (KeyAction) -> Unit, replay: (KeyEvent) -> Unit): Boolean? {
@@ -285,8 +293,8 @@ class KeyBindingDispatcher {
         if (KeyBindings.bindings.isEmpty() && KeyBindings.deviceBindings.isEmpty()) return null
         val code = event.keyCode
         if (!isBindableKey(code)) return null
-        val short = KeyBindings.actionFor(code, long = false, deviceId = event.deviceId)
-        val long = KeyBindings.actionFor(code, long = true, deviceId = event.deviceId)
+        val short = KeyBindings.actionFor(code, long = false, player = playerForeground(), deviceId = event.deviceId)
+        val long = KeyBindings.actionFor(code, long = true, player = playerForeground(), deviceId = event.deviceId)
         if (short == null && long == null) {
             if (event.action == KeyEvent.ACTION_UP && consumedShort.remove(code)) return true
             return null

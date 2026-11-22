@@ -1,0 +1,89 @@
+Ambient TV: expose bounded atomic rewind history snapshots without a UI/GL wait.
+
+diff --git a/src/main/cpp/libretrodroid.h b/src/main/cpp/libretrodroid.h
+--- a/src/main/cpp/libretrodroid.h
++++ b/src/main/cpp/libretrodroid.h
+@@ -264,6 +264,9 @@
+     std::atomic<bool> rewindEnabled{false};
+     std::atomic<bool> rewinding{false};
+     std::atomic<unsigned int> rewindSpeed{1};
++    // UI/Companion observers never dereference the GL-owned ring buffer.
++    std::atomic<int> rewindValidCount{0};
++    std::atomic<int> rewindCapacity{0};
+     double contentFps = 60.0;
+ 
+     ShaderManager::Config fragmentShaderConfig = ShaderManager::Config {
+diff --git a/src/main/cpp/libretrodroid.cpp b/src/main/cpp/libretrodroid.cpp
+--- a/src/main/cpp/libretrodroid.cpp
++++ b/src/main/cpp/libretrodroid.cpp
+@@ -750,6 +750,8 @@
+ 
+     rewindEnabled = false;
+     rewinding = false;
++    rewindValidCount.store(0, std::memory_order_relaxed);
++    rewindCapacity.store(0, std::memory_order_relaxed);
+     rewindBuffer.reset();
+     rewindTempBuffer.clear();
+     rewindTempBuffer.shrink_to_fit();
+@@ -803,6 +805,7 @@
+             }
+         }
+ 
++        rewindValidCount.store(static_cast<int>(rewindBuffer->getValidCount()), std::memory_order_relaxed);
+         audioEnabled = hadAudio;
+     } else {
+         unsigned frames;
+@@ -833,6 +836,7 @@
+             if (sz > 0 && sz <= rewindBuffer->getMaxStateSize()) {
+                 if (core->retro_serialize(rewindTempBuffer.data(), sz)) {
+                     rewindBuffer->push(rewindTempBuffer.data(), sz);
++                    rewindValidCount.store(static_cast<int>(rewindBuffer->getValidCount()), std::memory_order_relaxed);
+                 }
+             }
+         }
+@@ -1012,6 +1016,8 @@
+ 
+ void LibretroDroid::initRewindBuffer(int maxSlots, jlong budgetBytes) {
+     constexpr size_t MIN_SLOTS = 4;
++    // A failed reinitialization must not advertise stale history from a previous buffer.
++    destroyRewindBuffer();
+ 
+     const uint64_t quirks = Environment::getInstance().getSerializationQuirks();
+     if (quirks & (RETRO_SERIALIZATION_QUIRK_INCOMPLETE |
+@@ -1039,6 +1045,7 @@
+     try {
+         rewindBuffer = std::make_unique<RewindBuffer>(slots, stateSize);
+         rewindTempBuffer.resize(stateSize);
++        rewindCapacity.store(static_cast<int>(slots), std::memory_order_relaxed);
+     } catch (const std::bad_alloc&) {
+         LOGE("Rewind unavailable: failed to allocate %zu slots of %zu bytes", slots, stateSize);
+         rewindBuffer.reset();
+@@ -1054,6 +1061,8 @@
+ void LibretroDroid::destroyRewindBuffer() {
+     rewindEnabled = false;
+     rewinding = false;
++    rewindValidCount.store(0, std::memory_order_relaxed);
++    rewindCapacity.store(0, std::memory_order_relaxed);
+     rewindBuffer.reset();
+     rewindTempBuffer.clear();
+     rewindTempBuffer.shrink_to_fit();
+@@ -1063,14 +1072,17 @@
+     if (rewindBuffer) {
+         rewindBuffer->clear();
+     }
++    rewindValidCount.store(0, std::memory_order_relaxed);
+ }
+ 
+ float LibretroDroid::getRewindBufferUsage() const {
+-    return rewindBuffer ? rewindBuffer->getUsage() : 0.0f;
++    const int capacity = rewindCapacity.load(std::memory_order_relaxed);
++    const int count = rewindValidCount.load(std::memory_order_relaxed);
++    return capacity > 0 ? std::min(1.0f, static_cast<float>(count) / capacity) : 0.0f;
+ }
+ 
+ int LibretroDroid::getRewindBufferValidCount() const {
+-    return rewindBuffer ? static_cast<int>(rewindBuffer->getValidCount()) : 0;
++    return rewindValidCount.load(std::memory_order_relaxed);
+ }
+ 
+ double LibretroDroid::getContentFps() const {

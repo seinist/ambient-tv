@@ -62,7 +62,10 @@ internal fun GameStateStrip(
     onDelete: (GameStateEntry) -> Unit,
     onRename: (GameStateEntry, String) -> Unit,
     onClose: () -> Unit,
+    canLoad: (GameStateEntry) -> Boolean,
     enabled: Boolean = true,
+    compatible: (GameStateEntry) -> Boolean = { it.coreStamp == coreStamp },
+    onDialogVisibilityChanged: (Boolean) -> Unit = {},
 ) {
     val requesters = remember { mutableMapOf<String, FocusRequester>() }
     val rowState = rememberLazyListState()
@@ -85,6 +88,16 @@ internal fun GameStateStrip(
             withFrameNanos { }
             runCatching { requesters[states.first().id]?.requestFocus() }
         }
+    }
+    LaunchedEffect(enabled) {
+        // A background operation dismisses the menu; completing it must not reopen an old dialog.
+        if (!enabled) selectedId = null
+    }
+    val selectedEntry = states.firstOrNull { it.id == selectedId }?.takeIf { open && enabled }
+    val reportDialogVisibility by rememberUpdatedState(onDialogVisibilityChanged)
+    DisposableEffect(selectedEntry != null) {
+        if (selectedEntry != null) reportDialogVisibility(true)
+        onDispose { if (selectedEntry != null) reportDialogVisibility(false) }
     }
     val context = LocalContext.current
     AnimatedVisibility(
@@ -138,7 +151,7 @@ internal fun GameStateStrip(
                         Text(title(entry), color = Color.White, maxLines = 1, style = MaterialTheme.typography.bodyMedium)
                         val date = java.util.Date(entry.createdAt)
                         Text(
-                            if (entry.coreStamp != coreStamp) stringResource(R.string.game_state_other_core)
+                            if (!compatible(entry)) stringResource(R.string.game_state_other_core)
                             else formatter.first.format(date) + " " + formatter.second.format(date),
                             color = Color.White.copy(alpha = 0.72f), maxLines = 1,
                             style = MaterialTheme.typography.labelSmall,
@@ -150,9 +163,13 @@ internal fun GameStateStrip(
             }
         }
     }
-    states.firstOrNull { it.id == selectedId }?.takeIf { open && enabled }?.let { entry ->
+    selectedEntry?.let { entry ->
         GameStateActionsDialog(entry, title(entry), onDismiss = { selectedId = null; returnFocusId = entry.id },
-            onLoad = { selectedId = null; onLoad(entry) },
+            loadAvailable = canLoad(entry),
+            onLoad = {
+                // The player also checks at execution; this avoids stale clicks in the UI itself.
+                if (canLoad(entry)) { selectedId = null; onLoad(entry) }
+            },
             onDelete = {
                 selectedId = null
                 val at = states.indexOfFirst { it.id == entry.id }
@@ -172,6 +189,7 @@ internal fun GameStateActionsDialog(
     onLoad: () -> Unit,
     onDelete: () -> Unit,
     onRename: (String) -> Unit,
+    loadAvailable: Boolean = true,
 ) {
     var rename by remember(entry.id) { mutableStateOf(false) }
     var deleting by remember(entry.id) { mutableStateOf(false) }
@@ -195,7 +213,8 @@ internal fun GameStateActionsDialog(
             }, content = null,
         )
         else -> AppDialog(onDismiss = onDismiss, title = title) {
-            TvActionButton(stringResource(R.string.game_state_load), onClick = onLoad, modifier = Modifier.fillMaxWidth())
+            if (loadAvailable) TvActionButton(stringResource(R.string.game_state_load),
+                onClick = onLoad, modifier = Modifier.fillMaxWidth())
             if (entry.kind == GameStateKind.MANUAL) TvActionButton(stringResource(R.string.game_state_rename),
                 onClick = { rename = true }, modifier = Modifier.fillMaxWidth())
             TvActionButton(stringResource(R.string.saved_profiles_delete), onClick = { deleting = true }, modifier = Modifier.fillMaxWidth())

@@ -15,6 +15,8 @@ import com.ambient.tv.games.GameStateKind
 import com.ambient.tv.ui.mobile.LocalHandheldUi
 import com.ambient.tv.ui.theme.AmbientTvTheme
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -27,7 +29,8 @@ class GameStateActionsTest {
     @get:Rule val rule = createAndroidComposeRule<ComponentActivity>()
     private val entry = GameStateEntry("m1", GameStateKind.MANUAL, 1L, "core", "build")
 
-    private fun showDialog(onLoad: () -> Unit, onDelete: () -> Unit = {}, onRename: (String) -> Unit = {}) {
+    private fun showDialog(onLoad: () -> Unit, onDelete: () -> Unit = {}, onRename: (String) -> Unit = {},
+        loadAvailable: Boolean = true) {
         rule.setContent {
             // Phone dimensions alone do not select the app's touch controls or dialog layout.
             CompositionLocalProvider(LocalHandheldUi provides true) {
@@ -37,7 +40,7 @@ class GameStateActionsTest {
                         onDismiss = { open = false },
                         onLoad = { open = false; onLoad() },
                         onDelete = { open = false; onDelete() },
-                        onRename = { open = false; onRename(it) })
+                        onRename = { open = false; onRename(it) }, loadAvailable = loadAvailable)
                 }
             }
         }
@@ -81,5 +84,79 @@ class GameStateActionsTest {
             .performTouchInput { click() }
         rule.runOnIdle { assertEquals("Checkpoint", label); assertEquals(0, loads) }
         rule.onNodeWithText(rename).assertDoesNotExist()
+    }
+
+    @Test fun unavailableLoadIsAbsentWhileRenameAndDeleteRemainUsable() {
+        var loads = 0
+        var deletes = 0
+        showDialog(onLoad = { loads++ }, onDelete = { deletes++ }, loadAvailable = false)
+        rule.onNodeWithText(rule.activity.getString(R.string.game_state_load)).assertDoesNotExist()
+        rule.onNodeWithText(rule.activity.getString(R.string.game_state_rename)).assertIsDisplayed()
+        val delete = rule.activity.getString(R.string.saved_profiles_delete)
+        rule.onNodeWithText(delete).assertIsDisplayed().performTouchInput { click() }
+        rule.onNodeWithText(delete).assertIsDisplayed().performTouchInput { click() }
+        rule.runOnIdle { assertEquals(0, loads); assertEquals(1, deletes) }
+    }
+
+    @Test fun changedSessionRestrictionRemovesLoadFromAnAlreadyOpenDialog() {
+        var loadAvailable by mutableStateOf(true)
+        var loads = 0
+        rule.setContent {
+            CompositionLocalProvider(LocalHandheldUi provides true) {
+                AmbientTvTheme {
+                    GameStateActionsDialog(entry, "State 1", onDismiss = {}, onLoad = { loads++ },
+                        onDelete = {}, onRename = {}, loadAvailable = loadAvailable)
+                }
+            }
+        }
+        val load = rule.activity.getString(R.string.game_state_load)
+        rule.onNodeWithText(load).assertIsDisplayed()
+        rule.runOnIdle { loadAvailable = false }
+        rule.onNodeWithText(load).assertDoesNotExist()
+        rule.onNodeWithText(rule.activity.getString(R.string.game_state_rename)).assertIsDisplayed()
+        rule.runOnIdle { assertEquals(0, loads) }
+    }
+
+    @Test fun stripReportsDialogUntilNestedEditorClosesAndClearsItWhenDisposed() {
+        var mounted by mutableStateOf(true)
+        val visibility = mutableListOf<Boolean>()
+        rule.setContent {
+            CompositionLocalProvider(LocalHandheldUi provides true) {
+                AmbientTvTheme {
+                    if (mounted) GameStateStrip(open = true, states = listOf(entry), coreStamp = "build",
+                        title = { "State 1" }, screenshot = { null }, onLoad = {}, onDelete = {},
+                        onRename = { _, _ -> }, onClose = {}, canLoad = { false },
+                        onDialogVisibilityChanged = { visibility += it })
+                }
+            }
+        }
+        rule.onNodeWithText("State 1").performTouchInput { click() }
+        rule.runOnIdle { assertEquals(listOf(true), visibility) }
+        rule.onNodeWithText(rule.activity.getString(R.string.game_state_rename)).performTouchInput { click() }
+        rule.runOnIdle { assertEquals(listOf(true), visibility) }
+        rule.onNodeWithText(rule.activity.getString(R.string.files_cancel)).performTouchInput { click() }
+        rule.runOnIdle { assertEquals(listOf(true), visibility) }
+        rule.runOnIdle { mounted = false }
+        rule.runOnIdle { assertEquals(listOf(true, false), visibility) }
+    }
+
+    @Test fun becomingBusyDismissesStateDialogAndCompletionDoesNotReopenIt() {
+        var enabled by mutableStateOf(true)
+        var dialog = false
+        rule.setContent {
+            CompositionLocalProvider(LocalHandheldUi provides true) {
+                AmbientTvTheme {
+                    GameStateStrip(open = true, states = listOf(entry), coreStamp = "build",
+                        title = { "State 1" }, screenshot = { null }, onLoad = {}, onDelete = {},
+                        onRename = { _, _ -> }, onClose = {}, canLoad = { true }, enabled = enabled,
+                        onDialogVisibilityChanged = { dialog = it })
+                }
+            }
+        }
+        rule.onNodeWithText("State 1").performTouchInput { click() }
+        rule.runOnIdle { assertTrue(dialog); enabled = false }
+        rule.runOnIdle { assertFalse(dialog); enabled = true }
+        rule.onNodeWithText(rule.activity.getString(R.string.game_state_load)).assertDoesNotExist()
+        rule.runOnIdle { assertFalse(dialog) }
     }
 }

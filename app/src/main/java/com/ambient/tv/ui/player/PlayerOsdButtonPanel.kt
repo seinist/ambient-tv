@@ -5,6 +5,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.VisibilityOff
+import androidx.compose.material.icons.filled.Stop
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.key
 import androidx.compose.runtime.remember
@@ -43,7 +44,7 @@ private val OsdButton.section: OsdButtonSection get() = when (this) {
     OsdButton.LYRICS, OsdButton.TOOLS -> OsdButtonSection.TOOLS
     OsdButton.DETAILS, OsdButton.STATS, OsdButton.FPS -> OsdButtonSection.INFORMATION
     OsdButton.GAME_SAVE, OsdButton.GAME_LOAD, OsdButton.GAME_STATES, OsdButton.GAME_RESET,
-    OsdButton.GAME_FAST_FORWARD -> OsdButtonSection.PLAYBACK
+    OsdButton.GAME_FAST_FORWARD, OsdButton.GAME_REWIND -> OsdButtonSection.PLAYBACK
     OsdButton.GAME_PICTURE -> OsdButtonSection.PICTURE_SOUND
     OsdButton.GAME_CORE, OsdButton.GAME_CONTROLS, OsdButton.GAME_ACHIEVEMENTS,
     OsdButton.GAME_CHEATS, OsdButton.GAME_NETPLAY, OsdButton.GAME_DISC -> OsdButtonSection.GAMES
@@ -73,8 +74,13 @@ internal fun PlayerOsdButtonPanelControls(
                     key(button) {
                         val visible = osdButtonVisible(button, player, hidden)
                         PlayerPanelEntry(
-                            icon = if (button == OsdButton.EXIT && handheld) Icons.AutoMirrored.Filled.ArrowBack else button.icon,
-                            title = stringResource(button.label),
+                            icon = when {
+                                button == OsdButton.EXIT && player == OsdPlayer.GAMES -> Icons.Filled.Stop
+                                button == OsdButton.EXIT && handheld -> Icons.AutoMirrored.Filled.ArrowBack
+                                else -> button.icon
+                            },
+                            title = stringResource(if (button == OsdButton.EXIT && player == OsdPlayer.GAMES)
+                                R.string.game_exit else button.label),
                             value = stringResource(if (visible) R.string.osd_button_shown else R.string.osd_button_hidden),
                             trailingIcon = if (visible) Icons.Filled.Visibility else Icons.Filled.VisibilityOff,
                             onClick = { setOsdButtonVisible(preferences, player, button, !visible) },

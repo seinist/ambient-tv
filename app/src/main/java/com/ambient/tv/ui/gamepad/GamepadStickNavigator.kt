@@ -24,7 +24,8 @@ class GamepadStickNavigator(
         val rightY: Float = 0f,
     )
 
-    private class Held(val keyCode: Int, val deviceId: Int, val downTime: Long) {
+    private class Held(val keyCode: Int, val deviceId: Int, val downTime: Long,
+                       val generation: Long, val mode: GameInputMode?) {
         var repeatCount = 0
         var cancel: (() -> Unit)? = null
     }
@@ -69,15 +70,20 @@ class GamepadStickNavigator(
             end(current, canceled = false)
         }
         if (keyCode == null) return
-        val press = Held(keyCode, deviceId, time)
+        val press = Held(keyCode, deviceId, time, host.gameInputGeneration, host.gameInputMode)
         held[key] = press
         host.emitKey(gamepadKeyEvent(time, time, KeyEvent.ACTION_DOWN, keyCode, 0, deviceId))
-        scheduleRepeat(key, press, config().repeat.initialDelayMs)
+        if (held[key] === press) scheduleRepeat(key, press, config().repeat.initialDelayMs)
     }
 
     private fun scheduleRepeat(key: Pair<Int, Channel>, press: Held, delayMs: Long) {
         press.cancel = host.schedule(delayMs) {
             if (held[key] !== press) return@schedule
+            if (press.generation != host.gameInputGeneration || press.mode != host.gameInputMode) {
+                held.remove(key)
+                end(press, canceled = true)
+                return@schedule
+            }
             press.repeatCount++
             val now = host.now()
             host.emitKey(gamepadKeyEvent(press.downTime, now, KeyEvent.ACTION_DOWN, press.keyCode, press.repeatCount, press.deviceId))
@@ -118,8 +124,8 @@ class GamepadStickNavigator(
         Direction.UP -> KeyEvent.KEYCODE_PAGE_UP
         Direction.DOWN -> KeyEvent.KEYCODE_PAGE_DOWN
         // Winding only means something in the player; in menus left/right stay unused.
-        Direction.LEFT -> KeyEvent.KEYCODE_MEDIA_REWIND.takeIf { host.playerForeground }
-        Direction.RIGHT -> KeyEvent.KEYCODE_MEDIA_FAST_FORWARD.takeIf { host.playerForeground }
+        Direction.LEFT -> KeyEvent.KEYCODE_MEDIA_REWIND.takeIf { host.playerForeground && host.gameInputMode == null }
+        Direction.RIGHT -> KeyEvent.KEYCODE_MEDIA_FAST_FORWARD.takeIf { host.playerForeground && host.gameInputMode == null }
     }
 
     private companion object {

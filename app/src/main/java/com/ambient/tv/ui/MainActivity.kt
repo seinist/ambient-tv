@@ -293,11 +293,14 @@ open class MainActivity : ComponentActivity() {
     private val consumedKodiKeyboardKeys = mutableSetOf<Int>()
     private val consumedMouseButtons = mutableSetOf<Int>()
     private var suppressMouseBackKeyUntilMs = 0L
-    private val keyBindingDispatcher = com.ambient.tv.ui.keyboard.KeyBindingDispatcher()
+    private val keyBindingDispatcher = com.ambient.tv.ui.keyboard.KeyBindingDispatcher {
+        com.ambient.tv.ui.keyboard.KeyBindings.playerForeground || com.ambient.tv.ui.gamepad.GameInputRouting.active
+    }
+    private var gameInputObserver: Any? = null
     /** Controller buttons, triggers, sticks and the hat as the app's keys and actions (ui.gamepad). */
     private val gamepadController = com.ambient.tv.ui.gamepad.GamepadController(object : com.ambient.tv.ui.gamepad.GamepadHost {
         private val handler = android.os.Handler(android.os.Looper.getMainLooper())
-        override fun emitKey(event: KeyEvent) { this@MainActivity.dispatchKeyEvent(event) }
+        override fun emitKey(event: KeyEvent) { dispatchGamepadUiKeyEvent(event) }
         override fun perform(action: com.ambient.tv.ui.keyboard.KeyAction) = performBoundKeyAction(action)
         override fun volume(command: com.ambient.tv.ui.gamepad.GamepadVolumeCommand) = adjustKeyboardVolume(when (command) {
             com.ambient.tv.ui.gamepad.GamepadVolumeCommand.UP -> android.media.AudioManager.ADJUST_RAISE
@@ -305,6 +308,9 @@ open class MainActivity : ComponentActivity() {
             com.ambient.tv.ui.gamepad.GamepadVolumeCommand.MUTE -> android.media.AudioManager.ADJUST_TOGGLE_MUTE
         })
         override val playerForeground: Boolean get() = com.ambient.tv.ui.keyboard.KeyBindings.playerForeground
+        override val gameInputMode get() = com.ambient.tv.ui.gamepad.GameInputRouting.mode
+        override val gameInputGeneration get() = com.ambient.tv.ui.gamepad.GameInputRouting.generation
+        override val gameInputTransitions get() = com.ambient.tv.ui.gamepad.GameInputRouting.transitions
         override val recordingKey: Boolean get() = com.ambient.tv.ui.keyboard.KeyBindings.capture != null
         override fun now(): Long = SystemClock.uptimeMillis()
         override fun schedule(delayMs: Long, task: () -> Unit): () -> Unit {
@@ -380,6 +386,8 @@ open class MainActivity : ComponentActivity() {
 
     override fun onDestroy() {
         stopDismissedPipIfFinishing()
+        gameInputObserver?.let(com.ambient.tv.ui.gamepad.GameInputRouting::removeObserver)
+        gameInputObserver = null
         getSystemService(android.hardware.input.InputManager::class.java)?.unregisterInputDeviceListener(gamepadDeviceListener)
         if (ownsBrowseUiSession) browseUiSessionPolicy.destroy(browseUiOwner, isChangingConfigurations)
         uiResolutionHost?.close()
@@ -498,7 +506,20 @@ open class MainActivity : ComponentActivity() {
         uiResolutionHost?.dispatchKeyEventToContent(event) ?: super.dispatchKeyEvent(event)
     }
 
-    private fun dispatchUiKeyEvent(event: KeyEvent, dispatchToContent: () -> Boolean): Boolean {
+    private fun dispatchUiKeyEvent(event: KeyEvent, dispatchToContent: () -> Boolean): Boolean =
+        dispatchUiKeyEventInternal(event, fromGamepadUi = false, dispatchToContent)
+
+    private fun dispatchGamepadUiKeyEvent(event: KeyEvent) {
+        // These events belong to UI navigation, never to a newly resumed emulator raw sink.
+        val mode = com.ambient.tv.ui.gamepad.GameInputRouting.mode
+        if (mode == com.ambient.tv.ui.gamepad.GameInputMode.RUNNING ||
+            mode == com.ambient.tv.ui.gamepad.GameInputMode.BLOCKED) return
+        dispatchUiKeyEventInternal(event, fromGamepadUi = true) {
+            uiResolutionHost?.dispatchKeyEventToContent(event) ?: super.dispatchKeyEvent(event)
+        }
+    }
+
+    private fun dispatchUiKeyEventInternal(event: KeyEvent, fromGamepadUi: Boolean, dispatchToContent: () -> Boolean): Boolean {
         // The start intro covers the UI: a key only skips it, volume keeps working.
         if (com.ambient.tv.ui.intro.IntroPresentation.active && event.keyCode !in setOf(
                 KeyEvent.KEYCODE_VOLUME_UP, KeyEvent.KEYCODE_VOLUME_DOWN, KeyEvent.KEYCODE_VOLUME_MUTE)) {
@@ -517,7 +538,11 @@ open class MainActivity : ComponentActivity() {
                 screensaverActive.value, screensaverOverlayPresent.value))) return true
         if (event.action == KeyEvent.ACTION_DOWN) registerUserInteraction()
         // Controller buttons become the app's keys and actions (or go to a game in front).
-        if (gamepadController.handleKey(event)) return true
+        if (!fromGamepadUi && gamepadController.handleKey(event)) return true
+        // Menu/media keys keep their game meaning even when a global shortcut uses that key.
+        // A key recorder still receives its keys unchanged.
+        if (com.ambient.tv.ui.keyboard.KeyBindings.capture == null &&
+            com.ambient.tv.ui.gamepad.GameInputRouting.handleKey(event)) return true
         // Sleep pre-warning: OK extends by 30 min instead of reaching the focused control.
         if (com.ambient.tv.ui.player.SleepWarningKeyGate.takesOk(BackgroundPlaybackSession.sleepWarningDeadline != null) && event.keyCode in setOf(
                 KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER, KeyEvent.KEYCODE_NUMPAD_ENTER)) {
@@ -574,7 +599,8 @@ open class MainActivity : ComponentActivity() {
         ) ?: return false
         return when (event.action) {
             KeyEvent.ACTION_DOWN -> {
-                val playbackActive = BackgroundPlaybackSession.snapshot.value.active
+                val playbackActive = BackgroundPlaybackSession.snapshot.value.active ||
+                    com.ambient.tv.ui.gamepad.GameInputRouting.active
                 if (action.requiresPlayback && !playbackActive) return false
                 consumedKodiKeyboardKeys += event.keyCode
                 if (event.repeatCount == 0 || action.repeatable) performKodiKeyboardAction(action)
@@ -586,6 +612,7 @@ open class MainActivity : ComponentActivity() {
     }
 
     private fun performBoundKeyAction(action: com.ambient.tv.ui.keyboard.KeyAction) {
+        if (com.ambient.tv.ui.gamepad.GameInputRouting.perform(action)) return
         if (com.ambient.tv.ui.keyboard.KeyActionHandlers.perform(action)) return
         com.ambient.tv.notifications.AppNotifications.post(com.ambient.tv.notifications.AppNotice(
             key = "key-binding-unavailable",
@@ -614,6 +641,23 @@ open class MainActivity : ComponentActivity() {
     }
 
     private fun performKodiKeyboardAction(action: KodiKeyboardAction) {
+        if (com.ambient.tv.ui.gamepad.GameInputRouting.active) {
+            when (action) {
+                KodiKeyboardAction.TOGGLE_PLAYBACK -> {
+                    com.ambient.tv.ui.gamepad.GameInputRouting.perform(com.ambient.tv.ui.keyboard.KeyAction.PLAY_PAUSE)
+                    return
+                }
+                KodiKeyboardAction.PLAY -> {
+                    if (com.ambient.tv.ui.gamepad.GameInputRouting.mode != com.ambient.tv.ui.gamepad.GameInputMode.RUNNING) {
+                        com.ambient.tv.ui.gamepad.GameInputRouting.perform(com.ambient.tv.ui.keyboard.KeyAction.PLAY_PAUSE)
+                    }
+                    return
+                }
+                KodiKeyboardAction.BACK, KodiKeyboardAction.VOLUME_DOWN,
+                KodiKeyboardAction.VOLUME_UP, KodiKeyboardAction.TOGGLE_MUTE -> Unit
+                else -> return
+            }
+        }
         when (action) {
             KodiKeyboardAction.BACK -> onBackPressedDispatcher.onBackPressed()
             KodiKeyboardAction.TOGGLE_PLAYBACK -> BackgroundPlaybackSession.userToggle()
@@ -837,6 +881,10 @@ open class MainActivity : ComponentActivity() {
         // UI starts fresh even if a background service kept the old process alive.
         val restoredState = savedInstanceState.takeIf { restoreBrowseState }
         super.onCreate(restoredState)
+        gameInputObserver = com.ambient.tv.ui.gamepad.GameInputRouting.observeChanges {
+            gamepadController.notifyGameInputChanged()
+            keyBindingDispatcher.cancelPending()
+        }
         // After super.onCreate: Hilt injects the preferences there.
         com.ambient.tv.ui.common.PlayerOsdTimeout.seconds = appPreferences.playerOsdSeconds
         // Controller buttons once stored as remote keys move to the controller page.

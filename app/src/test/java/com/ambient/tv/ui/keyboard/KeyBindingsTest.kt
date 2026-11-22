@@ -104,6 +104,25 @@ class KeyBindingsTest {
         assertEquals(listOf(KeyAction.SEARCH), performed)
     }
 
+    @Test fun aContextChangeCancelsAPendingLongPressWithoutReplayingIt() {
+        KeyBindings.bind(KeyAction.SEARCH, KeyBinding(KeyEvent.KEYCODE_PROG_BLUE, long = true))
+        send(event(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_PROG_BLUE))
+        dispatcher.cancelPending()
+        send(event(KeyEvent.ACTION_UP, KeyEvent.KEYCODE_PROG_BLUE, 0, 700))
+        assertTrue(performed.isEmpty())
+        assertTrue(replayed.isEmpty())
+    }
+
+    @Test fun aGameCanUsePlayerBindingsWithoutBecomingABackgroundMediaPlayer() {
+        val red = KeyBinding(KeyEvent.KEYCODE_PROG_RED, long = false)
+        KeyBindings.bind(KeyAction.START_PAGE, red)
+        KeyBindings.bind(KeyAction.SHOW_OSD, red)
+        val gameDispatcher = KeyBindingDispatcher { true }
+        assertFalse(KeyBindings.playerForeground)
+        gameDispatcher.handle(event(KeyEvent.ACTION_DOWN, red.keyCode), { performed += it }) {}
+        assertEquals(listOf(KeyAction.SHOW_OSD), performed)
+    }
+
     @Test fun briefPressOfALongOnlyKeyIsReplayedUnchanged() {
         KeyBindings.bind(KeyAction.SEARCH, KeyBinding(KeyEvent.KEYCODE_MENU, long = true))
         assertEquals(true, send(event(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_MENU)))
