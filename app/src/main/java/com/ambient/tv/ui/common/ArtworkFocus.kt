@@ -30,8 +30,9 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import timber.log.Timber
-import java.security.MessageDigest
 import kotlin.math.roundToInt
 
 /**
@@ -68,18 +69,20 @@ data class ArtworkFocusCrop(val alignment: Alignment, val ready: Boolean)
  * revisited artwork is ready as soon as it has loaded.
  */
 @Composable
-fun rememberArtworkFocusCrop(model: String?, headers: Map<String, String>, visibleFraction: Float?): ArtworkFocusCrop {
+fun rememberArtworkFocusCrop(model: String?, headers: Map<String, String>, visibleFraction: Float?, imageRevision: String? = null): ArtworkFocusCrop {
     val context = LocalContext.current.applicationContext
-    var focus by remember(model) { mutableStateOf(model?.let { ArtworkFocusStore.cachedMemory(it) }) }
-    var detectionDone by remember(model) { mutableStateOf(false) }
+    val identity = remember(model, headers, imageRevision) { model?.let { artworkFocusKey(it, headers, imageRevision) } }
+    var focus by remember(identity) { mutableStateOf(identity?.let { ArtworkFocusStore.cachedMemory(it) }) }
+    var detectionDone by remember(identity) { mutableStateOf(false) }
     val worthDetecting = model != null && visibleFraction != null && visibleFraction < 0.85f
-    LaunchedEffect(model, headers, worthDetecting) {
+    LaunchedEffect(identity, worthDetecting) {
         if (!worthDetecting || focus != null) return@LaunchedEffect
-        val imageModel = model
-        // First access to SharedPreferences and its pruning scan must not block TV focus.
-        focus = withContext(Dispatchers.IO) { ArtworkFocusStore.cached(context, imageModel) }
+        val imageModel = model ?: return@LaunchedEffect
+        val imageKey = identity ?: return@LaunchedEffect
+        // Database open/read and selective pruning must not block TV focus.
+        focus = withContext(Dispatchers.IO) { ArtworkFocusStore.cached(context, imageKey) }
         // A slow device shows the default crop rather than holding the image back.
-        if (focus == null) focus = withTimeoutOrNull(1_500) { ArtworkFocusStore.detect(context, imageModel, headers) }
+        if (focus == null) focus = withTimeoutOrNull(1_500) { ArtworkFocusStore.detect(context, imageModel, headers, imageKey) }
         detectionDone = true
     }
     val target = focus?.takeIf { it.isSpecified } ?: DefaultArtworkFocus
@@ -98,55 +101,50 @@ fun cropVisibleFraction(image: Size, container: IntSize): Float? {
 /** Per-image focus points. [Offset.Unspecified] records "analyzed, no faces". Keys are hashes,
  * so the image URLs (which can carry access tokens) never reach disk. */
 private object ArtworkFocusStore {
-    private const val PREFS = "artwork_focus"
-    private const val MAX_PERSISTED = 2000
     private const val ANALYSIS_SIZE = 640
-    private const val NO_FACES = "-"
     private val memory = LruCache<String, Offset>(256)
-    /** Entries on disk. Counted once per process instead of copying the whole map per detection. */
-    private var persistedCount = -1
+    private val analysisGate = Mutex()
+    @Volatile private var disk: ArtworkFocusCache? = null
 
-    fun cachedMemory(url: String): Offset? = memory.get(key(url))
+    private fun cache(context: Context): ArtworkFocusCache = disk ?: synchronized(this) {
+        disk ?: ArtworkFocusCache(context).also { disk = it }
+    }
 
-    fun cached(context: Context, url: String): Offset? {
-        val key = key(url)
+    fun cachedMemory(key: String): Offset? = memory.get(key)
+
+    fun cached(context: Context, key: String): Offset? {
         memory.get(key)?.let { return it }
-        val stored = prefs(context).getString(key, null) ?: return null
-        val focus = if (stored == NO_FACES) {
-            Offset.Unspecified
-        } else {
-            val parts = stored.split(',')
-            val x = parts.getOrNull(0)?.toFloatOrNull() ?: return null
-            val y = parts.getOrNull(1)?.toFloatOrNull() ?: return null
-            Offset(x, y)
-        }
+        val stored = try { cache(context).get(key) } catch (error: android.database.sqlite.SQLiteException) {
+            Timber.w("Artwork analysis cache read failed: %s", error.javaClass.simpleName)
+            null
+        } ?: return null
+        val focus = if (stored.x == null || stored.y == null) Offset.Unspecified else Offset(stored.x, stored.y)
         memory.put(key, focus)
         return focus
     }
 
-    suspend fun detect(context: Context, url: String, headers: Map<String, String>): Offset? {
+    suspend fun detect(context: Context, url: String, headers: Map<String, String>, key: String): Offset? = analysisGate.withLock {
+        // Several visible layers can request one image. Do not decode/analyze it twice, and keep
+        // face detection from competing with the two visible-artwork decoder slots.
+        memory.get(key)?.let { return@withLock it }
         val focus = try {
-            val bitmap = loadAnalysisBitmap(context, url, headers) ?: return null
+            val bitmap = loadAnalysisBitmap(context, url, headers) ?: return@withLock null
             withContext(Dispatchers.Default) { faceFocus(bitmap) }
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
             Timber.w("Artwork face detection failed: %s", e.javaClass.simpleName)
-            return null
+            return@withLock null
         }
-        val key = key(url)
-        memory.put(key, focus)
         withContext(Dispatchers.IO) {
-            val prefs = prefs(context)
-            val editor = prefs.edit()
-            synchronized(this@ArtworkFocusStore) {
-                if (persistedCount < 0) persistedCount = prefs.all.size
-                if (!prefs.contains(key)) persistedCount++
-                if (persistedCount > MAX_PERSISTED) { editor.clear(); persistedCount = 1 }
+            try {
+                cache(context).put(key, if (focus.isSpecified) ArtworkFocusPoint(focus.x, focus.y) else ArtworkFocusPoint(null, null))
+            } catch (error: android.database.sqlite.SQLiteException) {
+                Timber.w("Artwork analysis cache write failed: %s", error.javaClass.simpleName)
             }
-            editor.putString(key, if (focus.isSpecified) "${focus.x},${focus.y}" else NO_FACES).apply()
         }
-        return focus
+        memory.put(key, focus)
+        focus
     }
 
     private suspend fun loadAnalysisBitmap(context: Context, url: String, headers: Map<String, String>): Bitmap? {
@@ -199,9 +197,4 @@ private object ArtworkFocusStore {
         )
     }
 
-    private fun prefs(context: Context) = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-
-    private fun key(url: String): String =
-        MessageDigest.getInstance("SHA-256").digest(url.toByteArray())
-            .take(12).joinToString("") { "%02x".format(it) }
 }

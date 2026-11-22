@@ -567,9 +567,10 @@ fun ArtworkImage(
     }
     var loading by remember(currentModel) { mutableStateOf(hasModel && !shownFromMemory) }
     var failed by remember(candidates) { mutableStateOf(false) }
-    var visibleFraction by remember(currentModel) { mutableStateOf<Float?>(null) }
+    var visibleFraction by remember(currentModel, headers) { mutableStateOf<Float?>(null) }
+    var focusRevision by remember(currentModel, headers) { mutableStateOf<String?>(null) }
     val focusModel = (currentModel as? String)?.takeIf { focusCrop && contentScale == ContentScale.Crop }
-    val focus = if (focusModel != null) rememberArtworkFocusCrop(focusModel, artworkHeadersForModel(focusModel, headers), visibleFraction) else null
+    val focus = if (focusModel != null) rememberArtworkFocusCrop(focusModel, artworkHeadersForModel(focusModel, headers), visibleFraction, focusRevision) else null
     val hdrFilter = com.ambient.tv.ui.display.rememberUiHdrBitmapColorFilter()
     Box(modifier = if (focusCrop) modifier.onSizeChanged { containerSize = it } else modifier) {
         if (hasModel) {
@@ -613,7 +614,10 @@ fun ArtworkImage(
                         continuity.identity = requestIdentity
                         continuity.memoryKey = key
                     }
-                    if (focusCrop) visibleFraction = cropVisibleFraction(it.painter.intrinsicSize, containerSize) ?: 1f
+                    if (focusCrop) {
+                        focusRevision = it.result.diskCacheKey ?: it.result.memoryCacheKey?.key
+                        visibleFraction = cropVisibleFraction(it.painter.intrinsicSize, containerSize) ?: 1f
+                    }
                 },
                 onError = {
                     loading = false
@@ -699,9 +703,10 @@ fun CrossfadeBackdropImage(
                         }
                         .build()
                 }
-                var visibleFraction by remember { mutableStateOf<Float?>(null) }
+                var visibleFraction by remember(headers) { mutableStateOf<Float?>(null) }
+                var focusRevision by remember(headers) { mutableStateOf<String?>(null) }
                 val focusModel = (layer.model as? String)?.takeIf { focusCrop && contentScale == ContentScale.Crop }
-                val focus = if (focusModel != null) rememberArtworkFocusCrop(focusModel, artworkHeadersForModel(focusModel, headers), visibleFraction) else null
+                val focus = if (focusModel != null) rememberArtworkFocusCrop(focusModel, artworkHeadersForModel(focusModel, headers), visibleFraction, focusRevision) else null
                 var loaded by remember { mutableStateOf(false) }
                 LaunchedEffect(loaded, focus?.ready) {
                     // With focusCrop, fade in only once the crop is final so it never shifts on screen.
@@ -727,7 +732,10 @@ fun CrossfadeBackdropImage(
                         alpha = layer.alpha.value
                     },
                     onSuccess = {
-                        if (focusCrop) visibleFraction = cropVisibleFraction(it.painter.intrinsicSize, containerSize) ?: 1f
+                        if (focusCrop) {
+                            focusRevision = it.result.diskCacheKey ?: it.result.memoryCacheKey?.key
+                            visibleFraction = cropVisibleFraction(it.painter.intrinsicSize, containerSize) ?: 1f
+                        }
                         loaded = true
                     },
                     onError = {
