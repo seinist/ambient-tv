@@ -8,11 +8,25 @@ REPO="$(prop LIBRASHADER_REPO)"
 PIN="$(prop LIBRASHADER_COMMIT)"
 [[ "$REPO" == "https://github.com/SnowflakePowered/librashader" && "$PIN" =~ ^[0-9a-f]{40}$ ]] ||
     { echo "Invalid librashader source pin" >&2; exit 1; }
-NDK="${ANDROID_NDK_HOME:-}"
-[[ -n "$NDK" ]] || NDK="${ANDROID_NDK_ROOT:-}"
-[[ -n "$NDK" ]] || NDK="${ANDROID_HOME:-}/ndk/30.0.16248370"
+NDK_VERSION=30.0.16248370
+NDK="${ANDROID_NDK_HOME:-${ANDROID_NDK_ROOT:-}}"
+if [[ -z "$NDK" ]]; then
+    SDK="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-}}"
+    if [[ -z "$SDK" && -f "$ROOT/local.properties" ]]; then
+        SDK="$(sed -nE 's/^[[:space:]]*sdk\.dir[[:space:]]*=[[:space:]]*(.*)$/\1/p' "$ROOT/local.properties" \
+            | tail -n 1 | sed 's/\r$//; s/\\:/:/g; s/\\ / /g; s/\\\\/\\/g')"
+    fi
+    [[ -n "$SDK" ]] || {
+        echo "Android SDK not found. Set ANDROID_HOME or ANDROID_SDK_ROOT, or configure sdk.dir in local.properties." >&2
+        exit 1
+    }
+    NDK="$SDK/ndk/$NDK_VERSION"
+fi
 BIN="$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin"
-[[ -x "$BIN/llvm-strip" ]] || { echo "NDK 30 required" >&2; exit 1; }
+[[ -x "$BIN/llvm-strip" ]] || {
+    printf 'Android NDK %s required. Missing executable: %s\n' "$NDK_VERSION" "$BIN/llvm-strip" >&2
+    exit 1
+}
 command -v cargo >/dev/null && command -v rustup >/dev/null ||
     { echo "Rust and rustup required" >&2; exit 1; }
 WORK="$ROOT/third_party/.librashader-src"
