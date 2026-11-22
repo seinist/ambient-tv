@@ -10,6 +10,9 @@ data class GameLibraryQuery(
     val descending: Boolean = false,
     val limit: Int? = null,
     val fileId: String? = null,
+    /** Folder membership includes overlapping assignments, independently of display deduplication. */
+    val folderId: String? = null,
+    val afterFileId: String? = null,
 )
 
 /** Only catalog-affecting values; unrelated playback/settings preference writes compare equal. */
@@ -18,6 +21,7 @@ internal data class GameLibraryRevision(
     val folders: String,
     val overrides: String,
     val sources: String,
+    val sourceScopes: String = "",
 )
 
 internal data class GameLibrarySql(val sql: String, val args: Array<String>)
@@ -81,6 +85,11 @@ internal fun gameLibrarySql(query: GameLibraryQuery, titleStyle: String): GameLi
         else -> { predicates += "q.system_id=?"; args += query.section }
     }
     query.fileId?.let { predicates += "q.file_id=?"; args += it }
+    query.folderId?.let {
+        predicates += "EXISTS(SELECT 1 FROM game_entries member WHERE member.folder_id=? AND member.file_id=q.file_id)"
+        args += it
+    }
+    query.afterFileId?.let { predicates += "q.file_id>?"; args += it }
     if (query.search.isNotBlank()) {
         predicates += "(instr(q.search_$style,?)>0 OR instr(q.search_filename_raw,?)>0)"
         val needle = gameSearchKey(query.search)
@@ -91,6 +100,7 @@ internal fun gameLibrarySql(query: GameLibraryQuery, titleStyle: String): GameLi
     val direction = if (reversed) "DESC" else "ASC"
     val recentDirection = if (reversed) "ASC" else "DESC"
     val order = when {
+        query.folderId != null -> "q.file_id ASC"
         query.section == "recent" -> "q.last_played DESC,q.folder_depth DESC,q.file_id ASC"
         query.sort == "recent" -> "q.last_played $recentDirection,q.sort_$style $direction,q.folder_depth $recentDirection,q.file_id $direction"
         query.sort == "system" -> "q.sort_system $direction,q.sort_$style $direction,q.file_id $direction"
@@ -102,7 +112,7 @@ internal fun gameLibrarySql(query: GameLibraryQuery, titleStyle: String): GameLi
     // reach the cursor; scan-only CRC/parser columns are not hydrated by library/Home queries.
     return GameLibrarySql("""SELECT g.folder_id,g.file_id,g.source_id,g.path,g.filename,g.system_id,
         q.title_$style,g.internal_title,g.file_size,g.modified,q.favorite,q.last_played,
-        q.custom_title,g.verified_title
+        q.custom_title,g.verified_title,q.metadata_title,q.metadata_year,q.cover_path,q.backdrop_path
         FROM game_query q JOIN game_entries g ON g.folder_id=q.folder_id AND g.file_id=q.file_id
         $where ORDER BY $order$limit""".trimIndent(), args.toTypedArray())
 }

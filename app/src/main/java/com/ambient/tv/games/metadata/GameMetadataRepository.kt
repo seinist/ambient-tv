@@ -1,0 +1,457 @@
+package com.ambient.tv.games.metadata
+
+import android.content.Context
+import android.content.SharedPreferences
+import android.graphics.BitmapFactory
+import android.net.Uri
+import com.ambient.tv.games.library.GameLibraryRepository
+import com.ambient.tv.games.library.LibraryGame
+import com.ambient.tv.data.local.RegularPrefs
+import dagger.hilt.android.qualifiers.ApplicationContext
+import java.io.File
+import java.io.IOException
+import javax.inject.Inject
+import javax.inject.Singleton
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.job
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.flow.receiveAsFlow
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.sync.withPermit
+import kotlinx.coroutines.withContext
+
+/**
+ * Background enrichment and explicit edits share one lifecycle. No method reads a ROM to hash it;
+ * browsing consumes the SQLite projection and local files. Tickets reject late work after removal.
+ */
+@Singleton
+class GameMetadataRepository @Inject constructor(
+    @ApplicationContext private val context: Context,
+    private val library: GameLibraryRepository,
+    private val providers: GameMetadataProviders,
+    private val settings: GameMetadataSettings,
+    private val localImport: GameMetadataLocalImporter,
+    @RegularPrefs private val preferences: SharedPreferences,
+) {
+    private val gameLocks = Array(32) { Mutex() }
+    private val previewLocks = Array(16) { Mutex() }
+    private val downloadSlots = Semaphore(2)
+    private val jobsLock = Any()
+    private val folderJobs = mutableMapOf<String, MutableMap<Job, Int>>()
+    private val previews get() = File(context.cacheDir, "game_metadata_previews")
+    private val incoming get() = File(context.cacheDir, "game_metadata_fetch")
+    private val maintenanceScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val reconcileRequests = Channel<Unit>(Channel.CONFLATED)
+    private val preferenceListener = SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
+        if (key in setOf("game_library_folders", "file_sources", "file_playback_scopes")) {
+            reconcileRequests.trySend(Unit)
+        }
+    }
+
+    init {
+        preferences.registerOnSharedPreferenceChangeListener(preferenceListener)
+        maintenanceScope.launch {
+            reconcileRequests.receiveAsFlow().collect {
+                try {
+                    library.reconcile()
+                    reconcilePreviews()
+                }
+                catch (error: java.util.concurrent.CancellationException) { throw error }
+                catch (error: Exception) { timber.log.Timber.w(error, "Game metadata cleanup deferred") }
+            }
+        }
+        reconcileRequests.trySend(Unit)
+    }
+
+    fun availableProviders(): List<String> = providers.availableProviders()
+
+    internal suspend fun closeForTests() {
+        preferences.unregisterOnSharedPreferenceChangeListener(preferenceListener)
+        reconcileRequests.close()
+        maintenanceScope.coroutineContext.job.cancelAndJoin()
+    }
+
+    suspend fun detail(fileId: String): GameMetadata? = withContext(Dispatchers.IO) {
+        val game = library.game(fileId) ?: return@withContext null
+        val stored = library.metadata(fileId) ?: GameMetadata(title = game.title)
+        game.customTitle?.takeIf(String::isNotBlank)?.let { title ->
+            stored.copy(title = title, lockedFields = stored.lockedFields + "title")
+        } ?: stored
+    }
+
+    suspend fun search(game: LibraryGame, query: String, provider: String): List<GameMetadataCandidate> =
+        withGame(game) { current ->
+            val ticket = library.metadataTicket(current.fileId) ?: return@withGame emptyList()
+            val options = settings.options()
+            val request = gameMetadataQuery(current, library.metadata(current.fileId),
+                settings.language(), options.region, ticket.crc32, query)
+            if (request.title.isBlank()) emptyList() else providers.search(request, provider).take(30)
+        }
+
+    suspend fun applyMatch(game: LibraryGame, candidate: GameMetadataCandidate): Boolean = withGame(game) { current ->
+        applyCandidate(current, candidate, manual = true, force = true)
+    }
+
+    suspend fun artworkChoices(game: LibraryGame, kind: GameArtworkKind): List<GameMetadataCandidate> =
+        withGame(game) { current ->
+            val stored = library.metadata(current.fileId) ?: return@withGame emptyList()
+            val ticket = library.metadataTicket(current.fileId) ?: return@withGame emptyList()
+            if (stored.provider !in providers.availableProviders()) return@withGame emptyList()
+            val query = gameMetadataQuery(current, stored, settings.language(), settings.options().region, ticket.crc32)
+            providers.artworkChoices(query, stored.provider, kind).take(30)
+        }
+
+    suspend fun save(game: LibraryGame, metadata: GameMetadata, lockedFields: Set<String>): Boolean =
+        withGame(game) { current ->
+            val ticket = library.metadataTicket(current.fileId) ?: return@withGame false
+            val record = metadata.copy(lockedFields = lockedFields, updatedAt = System.currentTimeMillis()).bounded()
+            val accepted = library.saveMetadata(ticket, record, record.lockedFields, manual = true)
+            if (accepted) library.setCustomTitle(current.fileId,
+                if ("title" in record.lockedFields) record.title else "")
+            accepted
+        }
+
+    suspend fun setLocalArtwork(game: LibraryGame, kind: GameArtworkKind, uri: Uri): Boolean =
+        withGame(game) { current ->
+            require(uri.scheme == "content") { "Select an image with the document picker" }
+            val ticket = library.metadataTicket(current.fileId) ?: return@withGame false
+            val staged = context.contentResolver.openInputStream(uri)?.use(library.artworkFiles::stage)
+                ?: throw IOException("The selected image cannot be read")
+            try {
+                currentCoroutineContext().ensureActive()
+                if (!library.setArtwork(ticket, kind, staged, pinned = true)) return@withGame false
+                val previous = library.metadata(current.fileId) ?: GameMetadata(title = current.title)
+                val updated = previous.withArtwork(kind, null, null, null).copy(
+                    lockedFields = previous.lockedFields + gameArtworkLock(kind),
+                    updatedAt = System.currentTimeMillis())
+                library.saveMetadata(ticket, updated, updated.lockedFields, manual = true)
+            } finally { library.artworkFiles.discard(staged) }
+        }
+
+    /** Choosing an image does not replace the text match or the other image. */
+    suspend fun setArtwork(game: LibraryGame, kind: GameArtworkKind, candidate: GameMetadataCandidate): Boolean =
+        withGame(game) { current ->
+            val reference = candidate.metadata.artwork(kind) ?: return@withGame false
+            val ticket = library.metadataTicket(current.fileId) ?: return@withGame false
+            val provider = candidate.metadata.artworkProviders[kind.key] ?: candidate.metadata.provider
+            val staged = downloadStage(provider, reference) ?: return@withGame false
+            try {
+                currentCoroutineContext().ensureActive()
+                if (!library.setArtwork(ticket, kind, staged, pinned = true)) return@withGame false
+                val previous = library.metadata(current.fileId) ?: GameMetadata(title = current.title)
+                val record = previous.withArtwork(kind, reference, provider,
+                    candidate.metadata.artworkSources[kind.key] ?: candidate.metadata.sourceUrl).copy(
+                    lockedFields = previous.lockedFields + gameArtworkLock(kind), updatedAt = System.currentTimeMillis())
+                library.saveMetadata(ticket, record, record.lockedFields, manual = true)
+            } finally { library.artworkFiles.discard(staged) }
+        }
+
+    /** Used only by visible artwork choices. URLs with provider authentication never reach Coil. */
+    suspend fun previewArtwork(candidate: GameMetadataCandidate, kind: GameArtworkKind, fileId: String? = null): String? =
+        withContext(Dispatchers.IO) {
+            val reference = candidate.metadata.artwork(kind) ?: return@withContext null
+            val provider = candidate.metadata.artworkProviders[kind.key] ?: candidate.metadata.provider
+            val ticket = fileId?.let { library.metadataTicket(it) }
+            if (fileId != null && ticket == null) return@withContext null
+            val owner = ticket?.folderId ?: "unassigned"
+            val job = currentCoroutineContext().job
+            register(owner, job)
+            val key = gameMetadataDigest("$provider\u0000$reference")
+            try { previewLocks[(key.hashCode() and Int.MAX_VALUE) % previewLocks.size].withLock {
+                val directory = File(previews, gameMetadataDigest(owner))
+                val output = File(directory, "$key.image")
+                if (ticket != null && library.metadataTicket(ticket.fileId) != ticket) return@withLock null
+                if (output.isFile && System.currentTimeMillis() - output.lastModified() < PREVIEW_TTL) {
+                    return@withLock output.absolutePath
+                }
+                directory.mkdirs()
+                val temporary = File.createTempFile("preview-", ".tmp", directory)
+                try {
+                    val found = downloadSlots.withPermit { providers.downloadArtwork(provider, reference, temporary) }
+                    currentCoroutineContext().ensureActive()
+                    if (!found) return@withLock null
+                    validateImage(temporary)
+                    if (ticket != null && library.metadataTicket(ticket.fileId) != ticket) return@withLock null
+                    if (!temporary.renameTo(output)) throw IOException("The image preview cannot be stored")
+                    trimPreviews(output)
+                    output.absolutePath
+                } finally { temporary.delete() }
+            } } finally { unregister(owner, job) }
+        }
+
+    /** A detail page can request its background without another metadata lookup or ROM read. */
+    suspend fun ensureArtwork(game: LibraryGame, kind: GameArtworkKind): Boolean = withGame(game) { current ->
+        val metadata = library.metadata(current.fileId) ?: return@withGame false
+        ensureStoredArtwork(current, metadata, kind, force = false)
+    }
+
+    suspend fun refresh(game: LibraryGame, force: Boolean = false): Boolean = withGame(game) { current ->
+        val options = settings.options()
+        if (!options.enabled) return@withGame false
+        val ticket = library.metadataTicket(current.fileId) ?: return@withGame false
+        val old = library.metadata(current.fileId)
+        val provider = old?.provider?.takeIf { old.matchLocked } ?: options.provider
+        // A manually identified game must not silently switch sources when its key is removed.
+        if (old?.matchLocked == true && provider !in providers.availableProviders())
+            throw GameMetadataProviderException(GameMetadataFailure.CREDENTIALS)
+        val known = old?.takeIf { it.provider == provider }
+        val query = gameMetadataQuery(current, known, settings.language(), options.region, ticket.crc32)
+        val fingerprint = gameMetadataFingerprint(current, query)
+        if (!force) {
+            when (library.lookupStatus(current.fileId, provider, fingerprint)) {
+                "found" -> {
+                    if (known != null) ensureStoredArtwork(current, known, GameArtworkKind.COVER, force = false)
+                    return@withGame known != null
+                }
+                "not_found", "ambiguous" -> return@withGame false
+            }
+            if (known != null && known.updatedAt > System.currentTimeMillis() - FOUND_TTL) {
+                ensureStoredArtwork(current, known, GameArtworkKind.COVER, force = false)
+                return@withGame true
+            }
+        }
+        val candidates = try { providers.search(query, provider) }
+        catch (error: GameMetadataProviderException) {
+            if (error.kind != GameMetadataFailure.UNSUPPORTED) throw error
+            library.saveLookupStatus(ticket, provider, fingerprint, "not_found", System.currentTimeMillis() + MISSING_TTL)
+            return@withGame false
+        }
+        currentCoroutineContext().ensureActive()
+        val confirmed = candidates.filter { it.exactMatch }
+        // Libretro's static URL is validated by an actual image response. It is not an API match.
+        val selected = if (provider == GameMetadataProviderIds.LIBRETRO) candidates
+            else confirmed.singleOrNull()?.let(::listOf).orEmpty()
+        for (candidate in selected) {
+            if (applyCandidate(current, candidate, manual = false, force = force)) {
+                library.saveLookupStatus(ticket, provider, fingerprint, "found", System.currentTimeMillis() + FOUND_TTL)
+                return@withGame true
+            }
+        }
+        val status = if (candidates.isNotEmpty() && provider != GameMetadataProviderIds.LIBRETRO) "ambiguous" else "not_found"
+        library.saveLookupStatus(ticket, provider, fingerprint, status, System.currentTimeMillis() + MISSING_TTL)
+        false
+    }
+
+    /** Explicit folder scans feed this bounded queue; Home never starts a folder scan. */
+    suspend fun enrichFolder(folderId: String, automatic: Boolean = false,
+                             onProgress: (Int, Int) -> Unit = { _, _ -> }): Unit =
+        withContext(Dispatchers.IO) {
+            coroutineScope {
+                val job = currentCoroutineContext().job
+                register(folderId, job)
+                library.beginMetadataBatch()
+                try {
+                    if (library.folders().none { it.id == folderId }) return@coroutineScope
+                    val options = settings.options()
+                    if (!options.enabled) {
+                        if (!automatic) throw IOException(context.getString(
+                            com.ambient.tv.R.string.game_metadata_settings_off_hint))
+                        return@coroutineScope
+                    }
+                    if (automatic && !options.automatic) return@coroutineScope
+                    val total = library.folderGameCount(folderId)
+                    var completed = 0
+                    var after: String? = null
+                    var lastPulse = System.nanoTime()
+                    onProgress(0, total)
+                    while (true) {
+                        currentCoroutineContext().ensureActive()
+                        if (library.folders().none { it.id == folderId }) break
+                        val page = library.folderGames(folderId, after, 64)
+                        if (page.isEmpty()) break
+                        for (game in page) {
+                            currentCoroutineContext().ensureActive()
+                            refresh(game)
+                            completed++
+                            if (System.nanoTime() - lastPulse >= BATCH_PULSE_NS) {
+                                library.flushMetadataBatch()
+                                onProgress(completed, total)
+                                lastPulse = System.nanoTime()
+                            }
+                        }
+                        after = page.last().fileId
+                    }
+                    onProgress(completed, total)
+                } finally { library.endMetadataBatch(); unregister(folderId, job) }
+            }
+        }
+
+    /** Called only after an explicit ROM-folder scan; local sidecars have precedence over downloads. */
+    suspend fun importLocalFolder(folderId: String) = withContext(Dispatchers.IO) {
+        val job = currentCoroutineContext().job
+        register(folderId, job)
+        library.beginMetadataBatch()
+        var lastPulse = System.nanoTime()
+        try { localImport.importFolder(folderId) {
+            if (System.nanoTime() - lastPulse >= BATCH_PULSE_NS) {
+                library.flushMetadataBatch()
+                lastPulse = System.nanoTime()
+            }
+        } }
+        finally { library.endMetadataBatch(); unregister(folderId, job) }
+    }
+
+    suspend fun cancelFolder(folderId: String) {
+        val current = currentCoroutineContext().job
+        val running = synchronized(jobsLock) { folderJobs[folderId]?.keys?.filter { it !== current }.orEmpty() }
+        running.forEach { it.cancel() }
+        running.forEach { it.join() }
+        withContext(Dispatchers.IO) {
+            val directory = File(previews, gameMetadataDigest(folderId))
+            directory.listFiles()?.forEach { it.delete() }
+            directory.delete()
+        }
+    }
+
+    private suspend fun applyCandidate(
+        game: LibraryGame, candidate: GameMetadataCandidate, manual: Boolean, force: Boolean,
+    ): Boolean {
+        val ticket = library.metadataTicket(game.fileId) ?: return false
+        val previous = library.metadata(game.fileId)
+        if (!manual && previous?.matchLocked == true &&
+            (previous.provider != candidate.metadata.provider || previous.providerGameId != candidate.metadata.providerGameId))
+            return false
+        var incomingMetadata = candidate.metadata.copy(
+            matchLocked = manual || previous?.matchLocked == true,
+            updatedAt = System.currentTimeMillis())
+        var confirmedImage: GameArtworkFile? = null
+        val coverLocked = previous?.lockedFields?.contains("cover") == true
+        if (incomingMetadata.provider == GameMetadataProviderIds.LIBRETRO) {
+            for (kind in listOf(GameArtworkKind.COVER, GameArtworkKind.BACKDROP, GameArtworkKind.TITLE)) {
+                val reference = incomingMetadata.artwork(kind) ?: continue
+                confirmedImage = downloadStage(incomingMetadata.provider, reference)
+                if (confirmedImage != null) {
+                    if (kind != GameArtworkKind.COVER && !coverLocked) incomingMetadata = incomingMetadata.withArtwork(
+                        GameArtworkKind.COVER, reference, incomingMetadata.provider, incomingMetadata.sourceUrl)
+                    break
+                }
+            }
+            if (confirmedImage == null) return false
+        }
+        try {
+            currentCoroutineContext().ensureActive()
+            val metadata = preserveGameMetadataLocks(previous, incomingMetadata)
+            if (!library.saveMetadata(ticket, metadata, metadata.lockedFields, manual)) return false
+            if (confirmedImage != null && !coverLocked) {
+                if (!library.setArtwork(ticket, GameArtworkKind.COVER, confirmedImage, pinned = false)) return false
+            } else ensureStoredArtwork(game, metadata, GameArtworkKind.COVER, force)
+            if (manual) ensureStoredArtwork(game, metadata, GameArtworkKind.BACKDROP, force)
+            return true
+        } finally { confirmedImage?.let(library.artworkFiles::discard) }
+    }
+
+    private suspend fun ensureStoredArtwork(
+        game: LibraryGame, metadata: GameMetadata, kind: GameArtworkKind, force: Boolean,
+    ): Boolean {
+        val present = library.artworkPath(game.fileId, kind)?.let(::File)?.isFile == true
+        if (present && (!force || gameArtworkLock(kind) in metadata.lockedFields)) return true
+        val reference = metadata.artwork(kind) ?: return present
+        val provider = metadata.artworkProviders[kind.key] ?: metadata.provider
+        val ticket = library.metadataTicket(game.fileId) ?: return false
+        val fingerprint = gameMetadataDigest("image:${kind.key}:$provider:$reference")
+        if (!force && library.lookupStatus(game.fileId, provider, fingerprint) == "not_found") return false
+        val staged = downloadStage(provider, reference) ?: run {
+            currentCoroutineContext().ensureActive()
+            library.saveLookupStatus(ticket, provider, fingerprint, "not_found", System.currentTimeMillis() + MISSING_TTL)
+            return false
+        }
+        return try {
+            currentCoroutineContext().ensureActive()
+            library.setArtwork(ticket, kind, staged, pinned = gameArtworkLock(kind) in metadata.lockedFields)
+        } finally { library.artworkFiles.discard(staged) }
+    }
+
+    private suspend fun downloadStage(provider: String, reference: String): GameArtworkFile? {
+        incoming.mkdirs()
+        val temporary = File.createTempFile("art-", ".tmp", incoming)
+        return try {
+            if (!downloadSlots.withPermit { providers.downloadArtwork(provider, reference, temporary) }) return null
+            currentCoroutineContext().ensureActive()
+            temporary.inputStream().use(library.artworkFiles::stage)
+        } finally { temporary.delete() }
+    }
+
+    private suspend fun <T> withGame(game: LibraryGame, action: suspend (LibraryGame) -> T): T =
+        withContext(Dispatchers.IO) {
+            val job = currentCoroutineContext().job
+            register(game.folderId, job)
+            try {
+                gameLocks[(game.fileId.hashCode() and Int.MAX_VALUE) % gameLocks.size].withLock {
+                    currentCoroutineContext().ensureActive()
+                    val current = library.game(game.fileId)
+                    if (current != null && (current.systemId != game.systemId || current.sourceId != game.sourceId ||
+                            current.path != game.path || current.size != game.size || current.modified != game.modified)) {
+                        throw IOException("The game changed; open its details again")
+                    }
+                    // The captured game is used only to return a stale-ticket result, never to recreate it.
+                    action(current ?: game)
+                }
+            } finally { unregister(game.folderId, job) }
+        }
+
+    private fun register(folderId: String, job: Job) = synchronized(jobsLock) {
+        val jobs = folderJobs.getOrPut(folderId) { mutableMapOf() }
+        jobs[job] = (jobs[job] ?: 0) + 1
+    }
+
+    private fun unregister(folderId: String, job: Job) = synchronized(jobsLock) {
+        val jobs = folderJobs[folderId] ?: return@synchronized
+        val count = (jobs[job] ?: 1) - 1
+        if (count <= 0) jobs.remove(job) else jobs[job] = count
+        if (jobs.isEmpty()) folderJobs.remove(folderId)
+    }
+
+    private fun validateImage(file: File) {
+        if (file.length() !in 1..GameArtworkFiles.MAX_IMAGE_BYTES) throw IOException("Invalid image size")
+        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        BitmapFactory.decodeFile(file.absolutePath, bounds)
+        if (bounds.outWidth !in 1..8192 || bounds.outHeight !in 1..8192 ||
+            bounds.outWidth.toLong() * bounds.outHeight > GameArtworkFiles.MAX_IMAGE_PIXELS)
+            throw IOException("Invalid image dimensions")
+    }
+
+    /** Folder/source/backup reconciliation also removes short-lived image chooser previews. */
+    private fun reconcilePreviews() {
+        if (!previews.isDirectory) return
+        val folders = library.folders().associateBy { gameMetadataDigest(it.id) }
+        for (directory in previews.listFiles().orEmpty()) {
+            val folder = folders[directory.name]
+            if ((folder == null || library.folderGameCount(folder.id) == 0) &&
+                directory.name.matches(Regex("[a-f0-9]{64}")) &&
+                directory.canonicalFile.parentFile == previews.canonicalFile) {
+                directory.listFiles()?.forEach { it.delete() }
+                directory.delete()
+            }
+        }
+    }
+
+    private fun trimPreviews(keep: File) {
+        val entries = previews.listFiles()?.filter { it.isDirectory && it.name.matches(Regex("[a-f0-9]{64}")) }
+            ?.flatMap { it.listFiles().orEmpty().asList() }?.filter { it.isFile && it.extension == "image" }
+            ?.sortedByDescending(File::lastModified).orEmpty()
+        var used = 0L
+        var retained = 0
+        for (entry in entries) {
+            if (entry != keep && (retained >= 48 || used + entry.length() > 32L * 1024 * 1024 ||
+                    System.currentTimeMillis() - entry.lastModified() > PREVIEW_TTL)) entry.delete()
+            else { used += entry.length(); retained++ }
+        }
+    }
+
+    companion object {
+        private const val FOUND_TTL = 30L * 24 * 60 * 60 * 1000
+        private const val MISSING_TTL = 7L * 24 * 60 * 60 * 1000
+        private const val PREVIEW_TTL = 24L * 60 * 60 * 1000
+        private const val BATCH_PULSE_NS = 250_000_000L
+    }
+}

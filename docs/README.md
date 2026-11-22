@@ -27,6 +27,7 @@ Current features in the compendium:
 - [Home layout and offline servers](DOCUMENTATION.md#31-home-rows)
 - [Monogram (optional Telegram media): features, six Home rows and sign-in](DOCUMENTATION.md#411-monogram-telegram-media)
 - [Monogram API ID/hash, QR login and technical integration](monogram-integration.md)
+- [Game metadata, artwork, private-build keys and individual ROM folders](game-metadata.md)
 - [System and voice search](DOCUMENTATION.md#111-android-tv)
 
 ## Other project notes (repo root)

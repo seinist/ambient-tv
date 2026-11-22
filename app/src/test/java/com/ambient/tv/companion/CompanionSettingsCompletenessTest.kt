@@ -115,6 +115,8 @@ class CompanionSettingsCompletenessTest {
             liveTvReminderAutoSwitch = true, autoUpdateCheck = false, projectmFavorites = setOf("chosen.milk"),
             keyBindings = mapOf("refresh" to "183:0"), gamepadSettings = mapOf("confirm" to "b"), retroInputSettings = mapOf("dpad_stick" to "1"), gameSettings = mapOf("shader" to "crt"),
             viewTransitionStyleKey = "slide",
+            gameMetadataOptions = com.ambient.tv.games.metadata.GameMetadataOptions(
+                provider = "thegamesdb", automatic = false, region = "jp", language = "de"),
         )
         val incoming = source().copy(tvheadendHost = "tvh.example", extras = SettingsBackupExtras(
             portable = portable, device = DeviceSettingsExtras(128, true), connections = ConnectionSettingsExtras(9984)))
@@ -140,6 +142,7 @@ class CompanionSettingsCompletenessTest {
             assertFalse(target.lyricsOnlineEnabled)
             assertTrue(target.frameDropOverlayHistory)
             assertEquals("slide", target.viewTransitionStyleKey)
+            assertEquals(portable.gameMetadataOptions, target.gameMetadataOptions)
             assertEquals(mapOf("refresh" to "183:0"), target.keyBindings)
             assertEquals(mapOf("confirm" to "b"), target.gamepadSettings)
             assertEquals(mapOf("dpad_stick" to "1"), target.retroInputSettings)

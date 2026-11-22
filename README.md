@@ -195,6 +195,8 @@ Artifacts land under `dist/` (e.g. `ambient-tv-arm64-<version>.apk`, `ambient-tv
 
 Gradle only (no native preflight): `./gradlew :app:assembleDebug` — prefer `./build.sh` for product-like builds. `SKIP_MPV_NATIVE=1` skips the native MPV build (quick builds/CI), e.g. `SKIP_MPV_NATIVE=1 ./gradlew :app:assembleDebug :app:testDebugUnitTest`.
 
+Optional game metadata keys and provider setup: [docs/game-metadata.md](docs/game-metadata.md).
+
 Details & env vars: [docs/DOCUMENTATION.md §14](docs/DOCUMENTATION.md#14-development-and-build) · [EXTERNAL_LIBRARIES.md](EXTERNAL_LIBRARIES.md)
 
 </details>

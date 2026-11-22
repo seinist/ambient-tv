@@ -21,18 +21,26 @@ internal fun syncAccountChoices(source: SettingsBackup): List<CompanionAccountCh
     if (source.monogramApiCredentials != null || source.telegramEnabled) add(CompanionAccountChoice(MONOGRAM_CHOICE, "Monogram"))
     source.wireGuardProfile?.takeIf { it.endpointHost.isNotBlank() }?.let { add(CompanionAccountChoice(WIREGUARD_CHOICE, "WireGuard · ${it.endpointHost}")) }
     if (!source.tmdbApiKey.isNullOrBlank()) add(CompanionAccountChoice("tmdb", "TMDB"))
+    if (source.extras?.credentials?.gameMetadata?.isEmpty == false)
+        add(CompanionAccountChoice(GAME_METADATA_CHOICE, "ScreenScraper / TheGamesDB"))
 }
 
 /** A WireGuard identity used on two devices at once makes the peer flap between them, so it is opt-in. */
 internal const val WIREGUARD_CHOICE = "wireguard"
 internal const val MONOGRAM_CHOICE = "monogram"
+internal const val GAME_METADATA_CHOICE = "game_metadata"
 internal fun defaultSyncAccounts(choices: List<CompanionAccountChoice>) = choices.map { it.key }.toSet() - WIREGUARD_CHOICE
 
 internal fun SpotifyAccountBackup?.signedIn() = this != null && (refreshToken != null || accessToken != null)
 
 /** Provider-qualified IDs keep coincident IDs on different providers independent. */
 internal fun selectSyncAccounts(source: SettingsBackup, selected: Set<String>): SettingsBackup = source.copy(
-    extras = source.extras?.copy(connections = source.extras.connections.takeIf { "tvheadend" in selected }),
+    extras = source.extras?.copy(
+        connections = source.extras.connections.takeIf { "tvheadend" in selected },
+        credentials = source.extras.credentials?.copy(
+            gameMetadata = source.extras.credentials.gameMetadata.takeIf { GAME_METADATA_CHOICE in selected },
+        ),
+    ),
     iptvSources = source.iptvSources?.filter { "iptv:${it.id}" in selected },
     openSubtitlesApiKey = source.openSubtitlesApiKey.takeIf { "opensubtitles" in selected },
     openSubtitlesUsername = source.openSubtitlesUsername.takeIf { "opensubtitles" in selected },
