@@ -11,6 +11,8 @@ object Destinations {
     const val FILES = "files_browse"
     const val FILE_SOURCE = "files_source/{sourceId}"
     const val PHOTO_VIEWER = "photo_viewer"
+    const val GAME_DETAIL = "game_detail/{fileId}"
+    fun gameDetail(fileId: String) = "game_detail/${Uri.encode(fileId)}"
     const val GAME_PLAYER = "game_player/{fileId}?system={system}"
     fun gamePlayer(fileId: String, systemId: String? = null) =
         "game_player/${Uri.encode(fileId)}" + systemId?.let { "?system=${Uri.encode(it)}" }.orEmpty()
@@ -68,7 +70,7 @@ object Destinations {
 
     /** NavDestination route patterns, not the concrete URLs passed to navigate(). */
     fun isDetailRoute(route: String?): Boolean =
-        route == DETAIL || route == YOUTUBE_DETAIL || route == SPOTIFY_DETAIL || route == TELEGRAM_DETAIL || route == RADIO_DETAIL
+        route == GAME_DETAIL || route == DETAIL || route == YOUTUBE_DETAIL || route == SPOTIFY_DETAIL || route == TELEGRAM_DETAIL || route == RADIO_DETAIL
 
     fun setupSettings(category: String) = "setup_settings/${Uri.encode(category)}"
     fun detail(ratingKey: String, collectionId: String? = null, collectionSort: String? = null) = buildString {

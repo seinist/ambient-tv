@@ -75,6 +75,17 @@ internal fun LazyListScope.gamesSettingsItems(onOpenLibrary: () -> Unit) {
             onClick = onOpenLibrary,
         )
     }
+    item(key = "games-metadata") {
+        var sourcesOpen by remember { mutableStateOf(false) }
+        SettingsNavigationRow(
+            title = stringResource(R.string.game_metadata_settings_title),
+            summary = stringResource(R.string.game_metadata_settings_hint),
+            onClick = { sourcesOpen = true },
+        )
+        if (sourcesOpen) com.ambient.tv.ui.games.GameMetadataSettingsPanel(
+            onDismiss = { sourcesOpen = false },
+        )
+    }
     item(key = "games-play") { GamesPlay() }
     item(key = "games-ra") { GamesRetroAchievements() }
     item(key = "games-system-cores") { GamesSystemCores() }

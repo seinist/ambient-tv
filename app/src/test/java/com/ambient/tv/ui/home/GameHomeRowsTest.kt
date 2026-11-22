@@ -47,4 +47,19 @@ class GameHomeRowsTest {
         assertTrue(gameHomeRows(RuntimeEnvironment.getApplication(), def,
             listOf(game("None", "nes", false, 0L))).isEmpty())
     }
+
+    @Test fun storedGameArtworkAndYearReachHomeWithoutDependingOnTheRomSource() {
+        val entry = game("Local cover", "snes", true, 0L).copy(
+            coverPath = "/app/private/game images/cover #1.png",
+            backdropPath = "/app/private/game images/screen.png", metadataYear = 1994,
+        )
+        val def = listOf(HomeRowDefinition(system = HomeRowDefinition.SYSTEM_GAMES,
+            contentKey = HomeRowDefinition.GAMES_ALL))
+        val item = gameHomeRows(RuntimeEnvironment.getApplication(), def, listOf(entry)).single().items.single()
+        assertEquals("file", Uri.parse(item.thumbUrl).scheme)
+        assertEquals(entry.coverPath, Uri.parse(item.thumbUrl).path)
+        assertEquals(entry.backdropPath, Uri.parse(item.artUrl).path)
+        assertEquals(1994, item.year)
+        assertEquals(entry.title, item.title)
+    }
 }

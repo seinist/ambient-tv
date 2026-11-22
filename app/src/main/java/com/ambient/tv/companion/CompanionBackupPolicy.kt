@@ -78,9 +78,11 @@ internal object CompanionBackupPolicy {
             "teletextSubtitleChoice", "lyricsVisible", "lyricsOnlineEnabled", "frameDropOverlayHistory",
             "liveTvReminderAutoSwitch", "autoUpdateCheck", "projectmFavorites", "keyBindings", "gamepadSettings", "retroInputSettings", "gameSettings", "gameLibraryOptions", "gameLibraryOverrides", "gameLibraryFolders",
             "viewTransitionStyleKey",
+            "gameMetadataOptions",
         ),
         "device" to setOf("imageCacheMb", "cardImages1080"),
         "connections" to setOf("tvheadendHtspPort"),
+        "credentials" to setOf("gameMetadata"),
     )
     /**
      * Fields that are not synced through the companion today (unchanged behaviour, now explicit):
@@ -114,11 +116,12 @@ internal object CompanionBackupPolicy {
     /** Preserve wire presence across decoding: an omitted profile is not an explicitly empty one. */
     internal fun presentFields(raw: String): Set<String> = json.parseToJsonElement(raw).jsonObject.keys
 
-    private fun preparedExtras(source: JsonObject, mode: String): JsonElement {
+    private fun preparedExtras(source: JsonObject, mode: String, credentials: Boolean = false): JsonElement {
         val extras = source["extras"] as? JsonObject ?: return JsonNull
         val groups = buildSet {
             if (mode in setOf("settings", "preferences")) addAll(listOf("portable", "device"))
             if (mode in setOf("settings", "accounts") && source.text("tvheadendHost").isNotBlank()) add("connections")
+            if (credentials && mode in setOf("settings", "accounts")) add("credentials")
         }
         return JsonObject(extras.filterKeys { it in groups }.mapValues { (group, value) ->
             if (value is JsonObject) JsonObject(value.filterKeys {
@@ -176,7 +179,7 @@ internal object CompanionBackupPolicy {
         }.toMutableMap().apply { put("extras", preparedExtras(incoming, mode)) }, presentFields)
         val allowed = accounts + if (mode == "settings") portable + hardware else emptySet()
         val s = incoming.filterKeys { it in allowed }.toMutableMap()
-        s["extras"] = preparedExtras(incoming, mode)
+        s["extras"] = preparedExtras(incoming, mode, credentials)
         if (!sessions) {
             for (field in listOf("servers", "jellyfinServers", "embyServers")) s[field] = JsonArray(s.getValue(field).jsonArray.map {
                 JsonObject(it.jsonObject.toMutableMap().apply { put("token", JsonNull) })
@@ -460,6 +463,28 @@ internal object CompanionBackupPolicy {
         if (incoming.optional("monogramApiCredentials") != null &&
             current.optional("monogramApiCredentials") == null) {
             result["monogramApiCredentials"] = incoming.getValue("monogramApiCredentials")
+        }
+        // Optional game provider identities are independent. Missing fields preserve the
+        // receiver; each ScreenScraper pair travels atomically, including its password.
+        val incomingGameKeys = source.extras?.credentials?.gameMetadata
+        if (incomingGameKeys != null) {
+            val existing = target.extras?.credentials?.gameMetadata
+                ?: com.ambient.tv.games.metadata.GameMetadataCredentials()
+            val copyDev = incomingGameKeys.screenScraperDevId != null && (overwrite || existing.screenScraperDevId == null)
+            val copyUser = incomingGameKeys.screenScraperUser != null && (overwrite || existing.screenScraperUser == null)
+            val copyGamesDb = incomingGameKeys.theGamesDbApiKey != null && (overwrite || existing.theGamesDbApiKey == null)
+            val merged = existing.copy(
+                screenScraperDevId = if (copyDev) incomingGameKeys.screenScraperDevId else existing.screenScraperDevId,
+                screenScraperDevPassword = if (copyDev) incomingGameKeys.screenScraperDevPassword else existing.screenScraperDevPassword,
+                screenScraperUser = if (copyUser) incomingGameKeys.screenScraperUser else existing.screenScraperUser,
+                screenScraperPassword = if (copyUser) incomingGameKeys.screenScraperPassword else existing.screenScraperPassword,
+                theGamesDbApiKey = if (copyGamesDb) incomingGameKeys.theGamesDbApiKey else existing.theGamesDbApiKey,
+            ).validated()
+            val extras = (result["extras"] as? JsonObject).orEmpty()
+            val credentialGroup = (extras["credentials"] as? JsonObject).orEmpty()
+            result["extras"] = JsonObject(extras + ("credentials" to JsonObject(
+                credentialGroup + ("gameMetadata" to json.encodeToJsonElement(merged))
+            )))
         }
         // OpenSubtitles: key and account travel together.
         if (incoming.optional("openSubtitlesApiKey") != null && (overwrite || current.optional("openSubtitlesApiKey") == null)) {

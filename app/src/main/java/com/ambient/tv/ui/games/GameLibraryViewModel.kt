@@ -15,6 +15,7 @@ import com.ambient.tv.games.library.GameLibraryQuery
 import com.ambient.tv.games.library.GameLibraryRepository
 import com.ambient.tv.data.local.AppPreferences
 import com.ambient.tv.games.library.LibraryGame
+import com.ambient.tv.games.metadata.GameMetadataRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
 import javax.inject.Inject
 import kotlinx.coroutines.CancellationException
@@ -31,6 +32,7 @@ import kotlinx.coroutines.flow.onStart
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.cancelAndJoin
 
 data class GameLibraryUiState(
     val games: List<LibraryGame> = emptyList(),
@@ -50,6 +52,9 @@ data class GameLibraryUiState(
     val scanProcessed: Int = 0,
     val scanDiscovered: Int = 0,
     val scanFolderName: String = "",
+    val activeScanFolderId: String? = null,
+    val enriching: Boolean = false,
+    val removingFolders: Set<String> = emptySet(),
     val ready: Boolean = false,
     val error: String? = null,
     val message: String? = null,
@@ -71,6 +76,7 @@ class GameLibraryViewModel @Inject constructor(
     private val wakeMachines: com.ambient.tv.wol.WakeMachines,
     private val preferences: AppPreferences,
     @ApplicationContext private val context: Context,
+    private val metadata: GameMetadataRepository,
 ) : ViewModel() {
     private val mutable = MutableStateFlow(GameLibraryUiState())
     val state: StateFlow<GameLibraryUiState> = mutable.asStateFlow()
@@ -197,7 +203,19 @@ class GameLibraryViewModel @Inject constructor(
         }
     }
 
-    fun remove(folder: GameLibraryFolder) = editCatalog { library.removeFolder(folder.id) }
+    fun remove(folder: GameLibraryFolder) {
+        if (folder.id in mutable.value.removingFolders) return
+        mutable.update { it.copy(removingFolders = it.removingFolders + folder.id, error = null) }
+        viewModelScope.launch {
+            try {
+                if (mutable.value.activeScanFolderId == folder.id) scan?.cancelAndJoin()
+                metadata.cancelFolder(folder.id)
+                withContext(Dispatchers.IO) { library.removeFolder(folder.id) }
+            } catch (cancelled: CancellationException) { throw cancelled }
+            catch (error: Exception) { mutable.update { it.copy(error = error.message) } }
+            finally { mutable.update { it.copy(removingFolders = it.removingFolders - folder.id) } }
+        }
+    }
     fun setAlsoShowInFiles(folder: GameLibraryFolder, show: Boolean) =
         library.setAlsoShowInFiles(folder.id, show)
 
@@ -283,38 +301,55 @@ class GameLibraryViewModel @Inject constructor(
             mutable.update { it.copy(busy = true, scanning = true,
                 scanProcessed = 0, scanDiscovered = 0, error = null) }
             try {
-                var done = 0
-                var discovered = 0
                 for (folder in library.folders()) {
-                    val baseDone = done
-                    val baseDiscovered = discovered
-                    library.scan(folder.id) { processed, known ->
-                        mutable.update { it.copy(scanProcessed = baseDone + processed,
-                            scanDiscovered = baseDiscovered + known,
-                            scanFolderName = folder.path.ifBlank { folder.sourceId }) }
-                    }
-                    done = mutable.value.scanProcessed
-                    discovered = mutable.value.scanDiscovered
+                    // A folder may have been removed while another NAS was being scanned.
+                    if (folder.id in mutable.value.removingFolders || library.folders().none { it.id == folder.id }) continue
+                    scanAndEnrich(folder, scanFiles = true)
                     // Each committed scan emits a catalog revision. The single query collector
                     // publishes this folder immediately using the current section/search.
                 }
             } catch (error: CancellationException) { throw error }
             catch (error: Exception) { mutable.update { it.copy(error = error.message ?: "Scan failed") } }
-            finally { mutable.update { it.copy(busy = false, scanning = false) } }
+            finally { mutable.update { it.copy(busy = false, scanning = false,
+                activeScanFolderId = null, enriching = false) } }
         }
     }
     fun scanFolder(folder: GameLibraryFolder) {
+        startFolderWork(folder, scanFiles = true)
+    }
+
+    /** Uses only the indexed files of this folder; no NAS listing or ROM hashing is repeated. */
+    fun enrichFolder(folder: GameLibraryFolder) {
+        startFolderWork(folder, scanFiles = false)
+    }
+
+    private fun startFolderWork(folder: GameLibraryFolder, scanFiles: Boolean) {
         if (scan?.isActive == true) return
+        if (folder.id in mutable.value.removingFolders) return
         scan = viewModelScope.launch {
             mutable.update { it.copy(busy = true, scanning = true, scanProcessed = 0,
                 scanDiscovered = 0, scanFolderName = folder.path, error = null) }
             try {
-                library.scan(folder.id) { processed, known ->
-                    mutable.update { it.copy(scanProcessed = processed, scanDiscovered = known) }
-                }
+                scanAndEnrich(folder, scanFiles)
             } catch (error: CancellationException) { throw error }
             catch (error: Exception) { mutable.update { it.copy(error = error.message ?: "Scan failed") } }
-            finally { mutable.update { it.copy(busy = false, scanning = false) } }
+            finally { mutable.update { it.copy(busy = false, scanning = false,
+                activeScanFolderId = null, enriching = false) } }
+        }
+    }
+
+    private suspend fun scanAndEnrich(folder: GameLibraryFolder, scanFiles: Boolean) {
+        mutable.update { it.copy(activeScanFolderId = folder.id,
+            scanFolderName = folder.path.ifBlank { folder.sourceId },
+            scanProcessed = 0, scanDiscovered = 0, enriching = !scanFiles) }
+        if (scanFiles) library.scan(folder.id) { processed, known ->
+            mutable.update { it.copy(scanProcessed = processed, scanDiscovered = known) }
+        }
+        if (folder.id in mutable.value.removingFolders || library.folders().none { it.id == folder.id }) return
+        mutable.update { it.copy(enriching = true, scanProcessed = 0, scanDiscovered = 0) }
+        if (scanFiles) metadata.importLocalFolder(folder.id)
+        metadata.enrichFolder(folder.id, automatic = scanFiles) { processed, known ->
+            mutable.update { it.copy(scanProcessed = processed, scanDiscovered = known) }
         }
     }
     /** Persist the exact SAF tree grant and register it with Files, just like video folders. */

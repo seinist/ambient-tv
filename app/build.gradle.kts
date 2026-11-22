@@ -65,6 +65,7 @@ val privateKeys: Map<String, String> = run {
 val privateKeyNames = listOf(
     "SPOTIFY_CLIENT_ID", "MONOGRAM_API_ID", "MONOGRAM_API_HASH",
     "TMDB_API_KEY", "FANART_API_KEY", "OPENSUBTITLES_API_KEY",
+    "SCREENSCRAPER_DEV_ID", "SCREENSCRAPER_DEV_PASSWORD", "THEGAMESDB_API_KEY",
 )
 privateKeys.keys.filterNot { it in privateKeyNames }.let { unknown ->
     require(unknown.isEmpty()) { "Unknown keys in privateKeysFile: ${unknown.joinToString()}" }

@@ -24,6 +24,7 @@ data class MonogramApiBackup(
 )
 
 internal fun validateAccountBackup(backup: SettingsBackup) {
+    backup.extras?.credentials?.gameMetadata?.validated()
     backup.smartTubeAccounts?.let { accounts ->
         require(accounts.size <= 50 && accounts.distinctBy { it.id }.size == accounts.size)
         accounts.forEach {

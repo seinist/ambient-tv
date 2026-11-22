@@ -646,12 +646,16 @@ class SettingsBackupManager @Inject constructor(
                     gameLibraryOptions = preferences.gameLibraryOptions,
                     gameLibraryOverrides = preferences.gameLibraryOverrides,
                     gameLibraryFolders = preferences.gameLibraryFolders,
+                    gameMetadataOptions = preferences.gameMetadataOptions,
                 ),
                 device = DeviceSettingsExtras(
                     imageCacheMb = preferences.imageCacheMb,
                     cardImages1080 = preferences.cardImages1080,
                 ),
                 connections = ConnectionSettingsExtras(tvheadendHtspPort = preferences.tvheadendHtspPort),
+                credentials = if (includeCredentials) tokenStore.exportGameMetadataCredentials()?.let {
+                    CredentialSettingsExtras(gameMetadata = it)
+                } else null,
             ),
         )
         return json.encodeToString(backup)
@@ -1147,6 +1151,7 @@ class SettingsBackupManager @Inject constructor(
                 tokenStore.setMonogramCredentials(api.apiId, api.apiHash)
             }
         }
+        backup.extras?.credentials?.gameMetadata?.let(tokenStore::importGameMetadataCredentials)
     }
 
     private fun applyExtras(extras: SettingsBackupExtras?) {
@@ -1168,6 +1173,7 @@ class SettingsBackupManager @Inject constructor(
             settings.frameDropOverlayHistory?.let { preferences.frameDropOverlayHistory = it }
             settings.viewTransitionStyleKey?.let { preferences.viewTransitionStyleKey = it }
             settings.gameLibraryOptions?.let { preferences.gameLibraryOptions = it }
+            settings.gameMetadataOptions?.let { preferences.gameMetadataOptions = it }
             settings.gameLibraryOverrides?.let { preferences.gameLibraryOverrides = it.filter { row ->
                 row.sourceId in preferences.fileSources.map { source -> source.id }
             }.takeLast(5000) }
@@ -1211,7 +1217,7 @@ class SettingsBackupManager @Inject constructor(
     }
 
     internal companion object {
-        const val CURRENT_SCHEMA_VERSION = 83
+        const val CURRENT_SCHEMA_VERSION = 84
         val PORTABLE_DISPLAY_MODES = setOf("system", AppPreferences.DISPLAY_MODE_AUTO_CONTENT, AppPreferences.DISPLAY_MODE_AUTO_DISPLAY)
     }
 }

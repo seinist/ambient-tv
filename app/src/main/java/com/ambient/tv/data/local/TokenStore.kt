@@ -10,6 +10,62 @@ class TokenStore @Inject constructor(
     @EncryptedPrefs private val prefs: SharedPreferences,
     private val appPreferences: AppPreferences,
 ) {
+    /** Built-in application identities take precedence, just like Monogram and TMDB. */
+    fun gameMetadataCredentials(): com.ambient.tv.games.metadata.GameMetadataCredentials {
+        val local = localGameMetadataCredentials()
+        val screenScraper = BuiltInKeys.screenScraper
+        return local.copy(
+            screenScraperDevId = screenScraper?.first ?: local.screenScraperDevId,
+            screenScraperDevPassword = screenScraper?.second ?: local.screenScraperDevPassword,
+            theGamesDbApiKey = BuiltInKeys.theGamesDbApiKey ?: local.theGamesDbApiKey,
+        )
+    }
+
+    private fun localGameMetadataCredentials() = com.ambient.tv.games.metadata.GameMetadataCredentials(
+        screenScraperDevId = prefs.getString("game_ss_dev_id", null),
+        screenScraperDevPassword = prefs.getString("game_ss_dev_password", null),
+        screenScraperUser = prefs.getString("game_ss_user", null),
+        screenScraperPassword = prefs.getString("game_ss_password", null),
+        theGamesDbApiKey = prefs.getString("game_tgdb_api_key", null),
+    )
+
+    /** Private-build keys never enter exports, including encrypted backups and TV transfers. */
+    fun exportGameMetadataCredentials(): com.ambient.tv.games.metadata.GameMetadataCredentials? =
+        localGameMetadataCredentials().let { local ->
+            local.copy(
+                screenScraperDevId = local.screenScraperDevId.takeIf { BuiltInKeys.screenScraper == null },
+                screenScraperDevPassword = local.screenScraperDevPassword.takeIf { BuiltInKeys.screenScraper == null },
+                theGamesDbApiKey = local.theGamesDbApiKey.takeIf { BuiltInKeys.theGamesDbApiKey == null },
+            ).takeUnless { it.isEmpty }
+        }
+
+    fun setGameMetadataCredentials(value: com.ambient.tv.games.metadata.GameMetadataCredentials) {
+        value.validated()
+        prefs.edit {
+            fun store(key: String, text: String?) { if (text == null) remove(key) else putString(key, text) }
+            if (BuiltInKeys.screenScraper == null) {
+                store("game_ss_dev_id", value.screenScraperDevId)
+                store("game_ss_dev_password", value.screenScraperDevPassword)
+            }
+            store("game_ss_user", value.screenScraperUser)
+            store("game_ss_password", value.screenScraperPassword)
+            if (BuiltInKeys.theGamesDbApiKey == null) store("game_tgdb_api_key", value.theGamesDbApiKey)
+        }
+    }
+
+    /** An omitted provider in an old or partial backup preserves this installation's identity. */
+    fun importGameMetadataCredentials(value: com.ambient.tv.games.metadata.GameMetadataCredentials) {
+        value.validated()
+        val current = localGameMetadataCredentials()
+        setGameMetadataCredentials(current.copy(
+            screenScraperDevId = value.screenScraperDevId ?: current.screenScraperDevId,
+            screenScraperDevPassword = value.screenScraperDevPassword ?: current.screenScraperDevPassword,
+            screenScraperUser = value.screenScraperUser ?: current.screenScraperUser,
+            screenScraperPassword = value.screenScraperPassword ?: current.screenScraperPassword,
+            theGamesDbApiKey = value.theGamesDbApiKey ?: current.theGamesDbApiKey,
+        ))
+    }
+
     val tmdbCredentialVersion = kotlinx.coroutines.flow.MutableStateFlow(0L)
     /** User-owned TMDB API key; exported only when credentials are explicitly included. */
     var tmdbApiKey: String?

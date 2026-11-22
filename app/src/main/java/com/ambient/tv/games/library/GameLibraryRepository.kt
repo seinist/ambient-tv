@@ -17,6 +17,12 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.ensureActive
 import com.ambient.tv.games.GameSystems
 import com.ambient.tv.games.GameArchives
+import com.ambient.tv.games.metadata.GameArtworkFile
+import com.ambient.tv.games.metadata.GameArtworkFiles
+import com.ambient.tv.games.metadata.GameArtworkKind
+import com.ambient.tv.games.metadata.GameMetadata
+import com.ambient.tv.games.metadata.GameMetadataStorage
+import com.ambient.tv.games.metadata.GameMetadataTicket
 import dagger.hilt.android.qualifiers.ApplicationContext
 import java.io.IOException
 import java.io.InputStream
@@ -56,6 +62,8 @@ data class GamePortableState(
     val title: String? = null,
     val favorite: Boolean = false,
     val lastPlayed: Long = 0L,
+    /** Explicit user edits/matches only. Automatic scraper payloads remain in SQLite. */
+    val metadata: GameMetadata? = null,
 )
 
 data class LibraryGame(
@@ -80,6 +88,10 @@ data class LibraryGame(
     val archiveCrc: String? = null,
     /** Compatibility with Settings/Game library audit: DAT check completed for this revision. */
     val datChecked: Boolean = false,
+    val metadataTitle: String? = null,
+    val metadataYear: Int? = null,
+    val coverPath: String? = null,
+    val backdropPath: String? = null,
 )
 
 /** Preserve the previous fast-negative-match contract for existing library users/tests. */
@@ -102,7 +114,7 @@ internal fun cachedGameMatchesFolder(
         else GameSystems.acceptsFile(system, filename)
 }
 
-private class GameIndexDb(context: Context) : SQLiteOpenHelper(context, "game_library.db", null, 5) {
+private class GameIndexDb(context: Context) : SQLiteOpenHelper(context, "game_library.db", null, 6) {
     init { setWriteAheadLoggingEnabled(true) }
     override fun onCreate(db: SQLiteDatabase) {
         db.execSQL("""CREATE TABLE game_entries (
@@ -123,6 +135,7 @@ private class GameIndexDb(context: Context) : SQLiteOpenHelper(context, "game_li
         db.execSQL("""CREATE TABLE game_dat_versions (
             system_id TEXT NOT NULL PRIMARY KEY, revision INTEGER NOT NULL)""")
         GameLibraryQueryIndex.create(db)
+        GameMetadataStorage.create(db)
     }
     override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
         if (oldVersion < 2) {
@@ -146,6 +159,11 @@ private class GameIndexDb(context: Context) : SQLiteOpenHelper(context, "game_li
                 SELECT DISTINCT system_id,1 FROM game_dat_entries""")
         }
         if (oldVersion < 5) GameLibraryQueryIndex.create(db)
+        if (oldVersion < 6) {
+            GameMetadataStorage.create(db)
+            // A migration from v4 creates the current projection directly.
+            if (oldVersion >= 5) GameLibraryQueryIndex.addMetadataColumns(db)
+        }
     }
 }
 
@@ -159,6 +177,7 @@ class GameLibraryRepository @Inject constructor(
     private val wake: WakeOnLan,
 ) {
     private val db = GameIndexDb(context)
+    val artworkFiles = GameArtworkFiles(context)
     private val changeSignal = MutableStateFlow(0L)
     private val catalogRevision = java.util.concurrent.atomic.AtomicLong()
     val revisions = changeSignal.asStateFlow()
@@ -166,6 +185,10 @@ class GameLibraryRepository @Inject constructor(
     private val queryLock = Any()
     private val queryExecutions = java.util.concurrent.atomic.AtomicLong()
     private var queryConfiguration: QueryConfiguration? = null
+    private var artworkReconciled = false
+    private val folderEpochs = mutableMapOf<String, Long>()
+    private var metadataBatchDepth = 0
+    private var metadataChangePending = false
     /** Diagnostic counter for invalidation audits; counting does not perform database writes. */
     internal val readQueryCount: Long get() = queryExecutions.get()
     private fun changed(catalog: Boolean = true) {
@@ -173,11 +196,32 @@ class GameLibraryRepository @Inject constructor(
         changeSignal.update { it + 1 }
     }
 
+    /** Folder enrichment can write many records without reloading every visible row per ROM. */
+    fun beginMetadataBatch() = synchronized(queryLock) { metadataBatchDepth += 1 }
+
+    fun flushMetadataBatch() = synchronized(queryLock) {
+        if (metadataChangePending) {
+            metadataChangePending = false
+            changed()
+        }
+    }
+
+    fun endMetadataBatch() = synchronized(queryLock) {
+        check(metadataBatchDepth > 0) { "Metadata batch was not started" }
+        metadataBatchDepth -= 1
+        if (metadataBatchDepth == 0) flushMetadataBatch()
+    }
+
+    private fun metadataChanged() {
+        if (metadataBatchDepth > 0) metadataChangePending = true else changed()
+    }
+
     internal fun revisionSnapshot(includeOverrides: Boolean = true): GameLibraryRevision = GameLibraryRevision(
         catalog = catalogRevision.get(),
         folders = prefs.getString("game_library_folders", "[]").orEmpty(),
         overrides = if (includeOverrides) prefs.getString("game_library_overrides", "[]").orEmpty() else "",
         sources = prefs.getString("file_sources", "[]").orEmpty(),
+        sourceScopes = prefs.getString("file_playback_scopes", "{}").orEmpty(),
     )
 
     fun folders(): List<GameLibraryFolder> = preferences.gameLibraryFolders.filter {
@@ -217,12 +261,35 @@ class GameLibraryRepository @Inject constructor(
     }
 
     fun removeFolder(id: String) = synchronized(queryLock) {
-        preferences.gameLibraryFolders = folders().filterNot { it.id == id }
-        db.writableDatabase.delete("game_entries", "folder_id=?", arrayOf(id))
-        // Removing an assignment can expose an overlapping parent folder. Rebuild once from
-        // the new configuration instead of deleting an otherwise still playable game.
+        val current = folders()
+        val removed = current.firstOrNull { it.id == id }
+        val remaining = current.filterNot { it.id == id }
+        // Imported explicit choices may exist before this device has scanned the ROM.
+        // Remove those too, while retaining choices still covered by another assignment.
+        val unindexedChoices = if (removed == null) emptySet() else preferences.gameLibraryOverrides
+            .filter { choice -> folderContains(removed, choice.sourceId, choice.path) &&
+                remaining.none { folderContains(it, choice.sourceId, choice.path) } }
+            .mapTo(hashSetOf()) { it.sourceId to it.path }
+        // Invalidate pending scans even if an import immediately restores the same folder ID.
+        folderEpochs[id] = (folderEpochs[id] ?: 0L) + 1L
+        preferences.gameLibraryFolders = remaining
+        // The configuration reconciliation removes catalog, metadata, checks and owned files
+        // together while preserving an overlapping folder's references.
         ensureQueryIndex()
+        if (purgePortableChoices(unindexedChoices)) ensureQueryIndex()
         changed()
+    }
+
+    private fun folderContains(folder: GameLibraryFolder, sourceId: String, path: String): Boolean {
+        if (folder.sourceId != sourceId) return false
+        val prefix = folder.path.trimEnd('/')
+        val relative = if (prefix.isEmpty()) path else path.takeIf { it.startsWith("$prefix/") }
+            ?.removePrefix("$prefix/") ?: return false
+        if (!folder.recursive && '/' in relative) return false
+        val filename = relative.substringAfterLast('/')
+        val system = GameSystems.byId(folder.systemId)
+        return if (system == null) GameSystems.isGame(filename) else GameSystems.acceptsFile(system, filename) ||
+            (GameSystems.extension(filename) in GameSystems.archiveExtensions && GameSystems.isGame(filename))
     }
 
     /** Minimal catalog lookup for the sidebar; don't load every game on the UI thread. */
@@ -390,6 +457,8 @@ class GameLibraryRepository @Inject constructor(
                         systemId = rows.getString(5), title = rows.getString(6), internalTitle = rows.getString(7),
                         size = rows.getLong(8), modified = rows.getLong(9), favorite = rows.getInt(10) == 1,
                         lastPlayed = rows.getLong(11), customTitle = rows.getString(12), verifiedTitle = rows.getString(13),
+                        metadataTitle = rows.getString(14), metadataYear = if (rows.isNull(15)) null else rows.getInt(15),
+                        coverPath = rows.getString(16), backdropPath = rows.getString(17),
                     ))
                 }
             }
@@ -398,11 +467,238 @@ class GameLibraryRepository @Inject constructor(
 
     fun game(fileId: String): LibraryGame? = games(GameLibraryQuery(fileId = fileId, limit = 1)).firstOrNull()
 
+    /** IO-only hook for Settings/Companion source changes while the library screen is closed. */
+    fun reconcile() = synchronized(queryLock) { ensureQueryIndex(); Unit }
+
+    /** Stable pages for enrichment; a 100,000-ROM folder does not become one in-memory job. */
+    fun folderGames(folderId: String, afterFileId: String? = null, limit: Int = 128): List<LibraryGame> =
+        synchronized(queryLock) {
+            val folder = folders().firstOrNull { it.id == folderId } ?: return@synchronized emptyList()
+            games(GameLibraryQuery(section = if (folder.systemId == "auto") "all" else folder.systemId,
+                folderId = folderId, afterFileId = afterFileId, limit = limit.coerceIn(1, 512)))
+        }
+
+    fun folderGameCount(folderId: String): Int = synchronized(queryLock) {
+        ensureQueryIndex()
+        val folder = folders().firstOrNull { it.id == folderId } ?: return@synchronized 0
+        val system = if (folder.systemId == "auto") "" else " AND q.system_id=?"
+        val args = if (folder.systemId == "auto") arrayOf(folderId) else arrayOf(folderId, folder.systemId)
+        db.readableDatabase.rawQuery("""SELECT COUNT(*) FROM game_query q WHERE EXISTS(
+            SELECT 1 FROM game_entries g WHERE g.folder_id=? AND g.file_id=q.file_id)$system""", args).use {
+            if (it.moveToFirst()) it.getInt(0) else 0
+        }
+    }
+
+    /** Indexed point lookups keep streaming sidecar imports independent of library size. */
+    fun folderGameByPath(folderId: String, path: String): LibraryGame? =
+        folderGameLookup(folderId, "g.path", path)
+
+    /** Opaque SAF document IDs need a name fallback; duplicate filenames deliberately fail. */
+    fun folderGameByUniqueFilename(folderId: String, filename: String): LibraryGame? =
+        folderGameLookup(folderId, "g.filename", filename)
+
+    private fun folderGameLookup(folderId: String, column: String, value: String): LibraryGame? = synchronized(queryLock) {
+        val folder = ensureQueryIndex().folders[folderId] ?: return@synchronized null
+        val system = if (folder.systemId == "auto") "" else " AND q.system_id=? AND g.system_id=?"
+        val args = mutableListOf(folderId, folder.sourceId, value)
+        if (folder.systemId != "auto") { args += folder.systemId; args += folder.systemId }
+        val id = db.readableDatabase.rawQuery("""SELECT g.file_id FROM game_entries g
+            JOIN game_query q ON q.file_id=g.file_id
+            WHERE g.folder_id=? AND g.source_id=? AND $column=?$system LIMIT 2""", args.toTypedArray()).use {
+            if (!it.moveToFirst()) null else it.getString(0).takeUnless { _ -> it.moveToNext() }
+        } ?: return@synchronized null
+        game(id)
+    }
+
+    fun metadata(fileId: String): GameMetadata? = synchronized(queryLock) {
+        ensureQueryIndex()
+        GameMetadataStorage.read(db.readableDatabase, fileId)
+    }
+
+    /** Obtain on IO before starting a provider request. It reads existing catalog data only. */
+    fun metadataTicket(fileId: String, originFolderId: String? = null,
+                       originToken: String? = null): GameMetadataTicket? = synchronized(queryLock) {
+        ensureQueryIndex()
+        val game = game(fileId) ?: return@synchronized null
+        val folder = folders().firstOrNull { it.id == (originFolderId ?: game.folderId) } ?: return@synchronized null
+        if (originFolderId != null && (folderFingerprint(folder) != originToken ||
+            !db.readableDatabase.rawQuery("SELECT 1 FROM game_entries WHERE folder_id=? AND file_id=?",
+                arrayOf(folder.id, fileId)).use { it.moveToFirst() })) return@synchronized null
+        val fingerprint = metadataFileFingerprint(game)
+        val writable = db.writableDatabase
+        val previous = writable.rawQuery("SELECT fingerprint,epoch FROM game_metadata_guards WHERE file_id=?",
+            arrayOf(fileId)).use { if (it.moveToFirst()) it.getString(0) to it.getString(1) else null }
+        val epoch = previous?.takeIf { it.first == fingerprint }?.second ?: UUID.randomUUID().toString().also {
+            writable.execSQL("INSERT OR REPLACE INTO game_metadata_guards(file_id,fingerprint,epoch) VALUES(?,?,?)",
+                arrayOf(fileId, fingerprint, it))
+        }
+        val crc = writable.rawQuery("SELECT archive_crc FROM game_entries WHERE folder_id=? AND file_id=?",
+            arrayOf(game.folderId, fileId)).use { if (it.moveToFirst()) it.getString(0) else null }
+        GameMetadataTicket(fileId, folder.id, folderFingerprint(folder), fingerprint, epoch, crc)
+    }
+
+    /** Capture before sidecar/source IO; a removal/re-add cannot adopt the old in-flight read. */
+    internal fun folderToken(folderId: String): String? = synchronized(queryLock) {
+        ensureQueryIndex().folders[folderId]?.let(::folderFingerprint)
+    }
+
+    private fun metadataFileFingerprint(game: LibraryGame): String = gameQueryDigest(listOf(
+        game.sourceId, game.path, game.systemId, game.size.toString(), game.modified.toString(),
+        preferences.filePlaybackScopes[game.sourceId].orEmpty(),
+    ))
+
+    private fun folderFingerprint(folder: GameLibraryFolder): String = gameQueryDigest(listOf(
+        folder.id, folder.sourceId, folder.path, folder.systemId, folder.recursive.toString(),
+        preferences.filePlaybackScopes[folder.sourceId].orEmpty(), (folderEpochs[folder.id] ?: 0L).toString(),
+    ))
+
+    private fun accepts(ticket: GameMetadataTicket): Boolean {
+        val folder = folders().firstOrNull { it.id == ticket.folderId } ?: return false
+        if (folderFingerprint(folder) != ticket.folderFingerprint) return false
+        val game = game(ticket.fileId) ?: return false
+        if (metadataFileFingerprint(game) != ticket.fileFingerprint) return false
+        return db.readableDatabase.rawQuery("SELECT epoch FROM game_metadata_guards WHERE file_id=?",
+            arrayOf(ticket.fileId)).use { it.moveToFirst() && it.getString(0) == ticket.epoch }
+    }
+
+    fun saveMetadata(
+        ticket: GameMetadataTicket,
+        metadata: GameMetadata,
+        lockedFields: Set<String> = metadata.lockedFields,
+        manual: Boolean = false,
+    ): Boolean = synchronized(queryLock) {
+        ensureQueryIndex()
+        if (!accepts(ticket)) return@synchronized false
+        val writable = db.writableDatabase
+        val previous = GameMetadataStorage.read(writable, ticket.fileId)
+        val merged = GameMetadataStorage.merge(previous,
+            metadata.copy(lockedFields = lockedFields, updatedAt = System.currentTimeMillis()), manual)
+        // Sidecar rescans and a provider's unchanged response need neither a payload rewrite
+        // nor a browse refresh. Explicit edits still synchronize portable choices and pins.
+        if (!manual && previous?.copy(updatedAt = merged.updatedAt) == merged) return@synchronized true
+        writable.beginTransaction()
+        try {
+            GameMetadataStorage.write(writable, ticket.fileId, merged)
+            if (manual) {
+                GameArtworkKind.entries.forEach { kind ->
+                    val field = if (kind == GameArtworkKind.TITLE) "title_screen" else kind.key
+                    writable.execSQL("UPDATE game_artwork SET pinned=? WHERE file_id=? AND kind=?",
+                        arrayOf<Any>(if (field in merged.lockedFields) 1 else 0, ticket.fileId, kind.key))
+                }
+                savePortableChoice(ticket.fileId, merged)
+            }
+            refreshQueryFiles(listOf(ticket.fileId), ensureQueryIndex())
+            writable.setTransactionSuccessful()
+        } finally { writable.endTransaction() }
+        if (manual) changed() else metadataChanged()
+        true
+    }
+
+    fun artworkPath(fileId: String, kind: GameArtworkKind): String? = synchronized(queryLock) {
+        ensureQueryIndex()
+        db.readableDatabase.rawQuery("SELECT path FROM game_artwork WHERE file_id=? AND kind=?",
+            arrayOf(fileId, kind.key)).use { if (it.moveToFirst()) it.getString(0) else null }
+    }
+
+    fun artworkPinned(fileId: String, kind: GameArtworkKind): Boolean = synchronized(queryLock) {
+        ensureQueryIndex()
+        db.readableDatabase.rawQuery("SELECT pinned FROM game_artwork WHERE file_id=? AND kind=?",
+            arrayOf(fileId, kind.key)).use { it.moveToFirst() && it.getInt(0) == 1 }
+    }
+
+    /** A staged image is always consumed, including stale work and attempts to replace a pin. */
+    fun setArtwork(ticket: GameMetadataTicket, kind: GameArtworkKind, staged: GameArtworkFile?,
+                   pinned: Boolean = false): Boolean = synchronized(queryLock) {
+        ensureQueryIndex()
+        if (!accepts(ticket) || (!pinned && artworkPinned(ticket.fileId, kind))) {
+            staged?.let(artworkFiles::discard)
+            return@synchronized false
+        }
+        val writable = db.writableDatabase
+        val previous = artworkPath(ticket.fileId, kind)
+        var nextPath: String? = null
+        var committed = false
+        try {
+            nextPath = staged?.let { artworkFiles.commit(ticket.fileId, kind, it) }
+            writable.beginTransaction()
+            try {
+                if (nextPath == null) writable.delete("game_artwork", "file_id=? AND kind=?", arrayOf(ticket.fileId, kind.key))
+                else writable.execSQL("""INSERT OR REPLACE INTO game_artwork(file_id,kind,path,bytes,pinned,updated_at)
+                    VALUES(?,?,?,?,?,?)""", arrayOf<Any>(ticket.fileId, kind.key, nextPath, staged!!.bytes,
+                    if (pinned) 1 else 0, System.currentTimeMillis()))
+                refreshQueryFiles(listOf(ticket.fileId), ensureQueryIndex())
+                writable.setTransactionSuccessful()
+                committed = true
+            } finally { writable.endTransaction() }
+        } finally {
+            staged?.let(artworkFiles::discard)
+            if (!committed) nextPath?.let(artworkFiles::removePath)
+        }
+        previous?.takeIf { it != nextPath }?.let(artworkFiles::removePath)
+        trimArtwork()
+        metadataChanged()
+        true
+    }
+
+    fun lookupStatus(fileId: String, provider: String, fingerprint: String,
+                     now: Long = System.currentTimeMillis()): String? = synchronized(queryLock) {
+        ensureQueryIndex()
+        db.readableDatabase.rawQuery("""SELECT status FROM game_metadata_checks
+            WHERE file_id=? AND provider=? AND fingerprint=? AND expires_at>?""",
+            arrayOf(fileId, provider, fingerprint, now.toString())).use { if (it.moveToFirst()) it.getString(0) else null }
+    }
+
+    fun saveLookupStatus(ticket: GameMetadataTicket, provider: String, fingerprint: String,
+                         status: String, expiresAt: Long): Boolean = synchronized(queryLock) {
+        require(provider.length in 1..64 && fingerprint.length in 1..256)
+        require(status in setOf("found", "not_found", "ambiguous"))
+        ensureQueryIndex()
+        if (!accepts(ticket)) return@synchronized false
+        val writable = db.writableDatabase
+        writable.beginTransaction()
+        try {
+            writable.execSQL("""INSERT OR REPLACE INTO game_metadata_checks
+                (file_id,provider,fingerprint,status,expires_at) VALUES(?,?,?,?,?)""",
+                arrayOf<Any>(ticket.fileId, provider, fingerprint, status, expiresAt))
+            // Query matches and each image's miss coexist. Expired/old identity variants are
+            // pruned per ROM, avoiding an unbounded history or a whole-table expiry scan.
+            writable.delete("game_metadata_checks", "file_id=? AND expires_at<=?",
+                arrayOf(ticket.fileId, System.currentTimeMillis().toString()))
+            writable.execSQL("""DELETE FROM game_metadata_checks WHERE file_id=? AND rowid NOT IN (
+                SELECT rowid FROM game_metadata_checks WHERE file_id=? ORDER BY expires_at DESC,rowid DESC LIMIT 32)""",
+                arrayOf(ticket.fileId, ticket.fileId))
+            writable.setTransactionSuccessful()
+        } finally { writable.endTransaction() }
+        true
+    }
+
+    private fun trimArtwork() {
+        val writable = db.writableDatabase
+        var bytes = writable.rawQuery("SELECT COALESCE(SUM(bytes),0) FROM game_artwork WHERE pinned=0", null)
+            .use { it.moveToFirst(); it.getLong(0) }
+        if (bytes <= GameArtworkFiles.CACHE_BYTES) return
+        val evicted = mutableListOf<Triple<String, String, String>>()
+        writable.rawQuery("SELECT file_id,kind,path,bytes FROM game_artwork WHERE pinned=0 ORDER BY updated_at", null).use { rows ->
+            while (bytes > GameArtworkFiles.CACHE_BYTES && rows.moveToNext()) {
+                evicted += Triple(rows.getString(0), rows.getString(1), rows.getString(2))
+                bytes -= rows.getLong(3)
+            }
+        }
+        writable.beginTransaction()
+        try {
+            evicted.forEach { (file, kind, _) -> writable.delete("game_artwork", "file_id=? AND kind=?", arrayOf(file, kind)) }
+            refreshQueryFiles(evicted.map { it.first }.toSet(), ensureQueryIndex())
+            writable.setTransactionSuccessful()
+        } finally { writable.endTransaction() }
+        evicted.forEach { artworkFiles.removePath(it.third) }
+    }
+
     /** Read configuration only once per actual preference change, not per search keystroke. */
     private data class QueryConfiguration(
         val folderJson: String,
         val overrideJson: String,
         val sourceIds: Set<String>,
+        val sourceScopes: String,
         val folders: Map<String, GameLibraryFolder>,
         val overrides: Map<Pair<String, String>, GamePortableState>,
         val signature: String,
@@ -412,27 +708,33 @@ class GameLibraryRepository @Inject constructor(
         val folderJson = prefs.getString("game_library_folders", "[]").orEmpty()
         val overrideJson = prefs.getString("game_library_overrides", "[]").orEmpty()
         val sourceIds = files.sources().mapTo(hashSetOf()) { it.id }
+        val sourceScopes = prefs.getString("file_playback_scopes", "{}").orEmpty()
         queryConfiguration?.takeIf {
-            it.folderJson == folderJson && it.overrideJson == overrideJson && it.sourceIds == sourceIds
+            it.folderJson == folderJson && it.overrideJson == overrideJson && it.sourceIds == sourceIds &&
+                it.sourceScopes == sourceScopes
         }?.let { return it }
         val signature = gameQueryDigest(listOf(GameLibraryQueryIndex.POLICY_VERSION.toString(),
-            folderJson, overrideJson) + sourceIds.sorted())
-        return QueryConfiguration(folderJson, overrideJson, sourceIds,
+            folderJson, overrideJson, sourceScopes) + sourceIds.sorted())
+        return QueryConfiguration(folderJson, overrideJson, sourceIds, sourceScopes,
             folders().filter { it.sourceId in sourceIds }.associateBy { it.id },
             preferences.gameLibraryOverrides.associateBy { it.sourceId to it.path }, signature)
     }
 
     /** A backup/import rebuilds local display data once; scans and single-ROM edits update only affected files. */
     private fun ensureQueryIndex(): QueryConfiguration {
-        val configuration = currentQueryConfiguration()
+        var configuration = currentQueryConfiguration()
         val previous = queryConfiguration
         if (configuration === previous) return configuration
         val writable = db.writableDatabase
         if (GameLibraryQueryIndex.signature(writable) != configuration.signature) {
+            var abandoned = emptySet<String>()
+            var removedChoices = emptySet<Pair<String, String>>()
             writable.beginTransaction()
             try {
+                removedChoices = pruneRemovedAssignments(writable, configuration)
+                restorePortableMetadata(writable, configuration, previous)
                 if (previous != null && previous.folderJson == configuration.folderJson &&
-                    previous.sourceIds == configuration.sourceIds) {
+                    previous.sourceIds == configuration.sourceIds && previous.sourceScopes == configuration.sourceScopes) {
                     val changedPaths = (previous.overrides.keys + configuration.overrides.keys).filter {
                         previous.overrides[it] != configuration.overrides[it]
                     }
@@ -446,12 +748,120 @@ class GameLibraryRepository @Inject constructor(
                     writable.delete("game_query", null, null)
                     forEachIndexedGame(configuration) { game -> putQueryGame(writable, game, configuration, checkExisting = false) }
                 }
+                abandoned = pruneOrphanedMetadata(writable)
                 GameLibraryQueryIndex.signature(writable, configuration.signature)
                 writable.setTransactionSuccessful()
             } finally { writable.endTransaction() }
+            // Files are removed only after the catalog transaction succeeds. A crash between
+            // these steps leaves a harmless orphan, collected during the next reconciliation.
+            abandoned.forEach(artworkFiles::remove)
+            if (purgePortableChoices(removedChoices)) {
+                configuration = currentQueryConfiguration()
+                GameLibraryQueryIndex.signature(writable, configuration.signature)
+            }
         }
         queryConfiguration = configuration
+        if (!artworkReconciled) {
+            val retained = writable.rawQuery("SELECT path FROM game_artwork", null).use { rows -> buildSet {
+                while (rows.moveToNext()) add(rows.getString(0))
+            } }
+            artworkFiles.reconcile(retained)
+            artworkReconciled = true
+        }
         return configuration
+    }
+
+    /** Reconcile folder/source removal from Settings, backups and Companion without any NAS IO. */
+    private fun pruneRemovedAssignments(writable: SQLiteDatabase,
+                                        configuration: QueryConfiguration): Set<Pair<String, String>> {
+        val storedScopes = writable.rawQuery("SELECT folder_id,source_id,path,source_scope FROM game_folder_scopes", null)
+            .use { rows -> buildMap { while (rows.moveToNext()) put(rows.getString(0),
+                Triple(rows.getString(1), rows.getString(2), rows.getString(3))) } }
+        val currentScopes = preferences.filePlaybackScopes
+        val changedFolders = configuration.folders.filter { (id, folder) ->
+            storedScopes[id]?.let { it != Triple(folder.sourceId, folder.path, currentScopes[folder.sourceId].orEmpty()) } == true
+        }.keys
+        val groups = writable.rawQuery("SELECT DISTINCT folder_id,source_id FROM game_entries", null).use { rows -> buildList {
+            while (rows.moveToNext()) add(rows.getString(0) to rows.getString(1))
+        } }
+        val removedChoices = hashSetOf<Pair<String, String>>()
+        groups.forEach { (folderId, sourceId) ->
+            val folder = configuration.folders[folderId]
+            if (folder == null || folder.sourceId != sourceId || folderId in changedFolders) {
+                folderEpochs[folderId] = (folderEpochs[folderId] ?: 0L) + 1L
+                removedChoices += existingChoices(writable, "folder_id=? AND source_id=?", arrayOf(folderId, sourceId), configuration)
+                writable.delete("game_entries", "folder_id=? AND source_id=?", arrayOf(folderId, sourceId))
+            }
+        }
+        storedScopes.keys.filterNot(configuration.folders::containsKey).forEach {
+            writable.delete("game_folder_scopes", "folder_id=?", arrayOf(it))
+        }
+        configuration.folders.forEach { (id, folder) ->
+            val expected = Triple(folder.sourceId, folder.path, currentScopes[folder.sourceId].orEmpty())
+            if (storedScopes[id] != expected) writable.execSQL(
+                "INSERT OR REPLACE INTO game_folder_scopes(folder_id,source_id,path,source_scope) VALUES(?,?,?,?)",
+                arrayOf(id, expected.first, expected.second, expected.third))
+        }
+        return removedChoices
+    }
+
+    /** Only retain at most the existing 5,000 portable keys while streaming a large deletion. */
+    private fun existingChoices(writable: SQLiteDatabase, where: String, args: Array<String>,
+                                configuration: QueryConfiguration): Set<Pair<String, String>> {
+        if (configuration.overrides.isEmpty()) return emptySet()
+        return writable.rawQuery("SELECT source_id,path FROM game_entries WHERE $where", args).use { rows -> buildSet {
+            while (rows.moveToNext()) {
+                val key = rows.getString(0) to rows.getString(1)
+                if (key in configuration.overrides) add(key)
+            }
+        } }
+    }
+
+    private fun purgePortableChoices(candidates: Set<Pair<String, String>>): Boolean {
+        if (candidates.isEmpty()) return false
+        val removed = candidates.filterTo(hashSetOf()) { (source, path) ->
+            !db.readableDatabase.rawQuery("""SELECT 1 FROM game_entries g JOIN game_query q ON q.file_id=g.file_id
+                WHERE g.source_id=? AND g.path=? LIMIT 1""", arrayOf(source, path)).use { it.moveToFirst() }
+        }
+        if (removed.isEmpty()) return false
+        val old = preferences.gameLibraryOverrides
+        val next = old.filterNot { (it.sourceId to it.path) in removed }
+        if (next == old) return false
+        preferences.gameLibraryOverrides = next
+        return true
+    }
+
+    private fun restorePortableMetadata(writable: SQLiteDatabase, configuration: QueryConfiguration,
+                                        previous: QueryConfiguration?) {
+        configuration.overrides.forEach { (key, value) ->
+            val incoming = value.metadata?.bounded() ?: return@forEach
+            if (previous?.overrides?.get(key)?.metadata == incoming) return@forEach
+            val ids = writable.rawQuery("SELECT DISTINCT file_id FROM game_entries WHERE source_id=? AND path=?",
+                arrayOf(key.first, key.second)).use { rows -> buildList { while (rows.moveToNext()) add(rows.getString(0)) } }
+            ids.forEach { id ->
+                val current = GameMetadataStorage.read(writable, id)
+                // A projection-policy migration must not roll back later automatic enrichment.
+                val restored = if (current != null && current.updatedAt > incoming.updatedAt &&
+                    current.provider == incoming.provider && current.providerGameId == incoming.providerGameId)
+                    GameMetadataStorage.merge(incoming, current, manual = false) else incoming
+                if (current != restored) GameMetadataStorage.write(writable, id, restored)
+            }
+        }
+    }
+
+    private fun pruneOrphanedMetadata(writable: SQLiteDatabase): Set<String> {
+        val orphaned = writable.rawQuery("""SELECT file_id FROM (
+            SELECT file_id FROM game_metadata UNION SELECT file_id FROM game_artwork
+            UNION SELECT file_id FROM game_metadata_checks UNION SELECT file_id FROM game_metadata_guards) candidates
+            WHERE NOT EXISTS(SELECT 1 FROM game_query q WHERE q.file_id=candidates.file_id)""", null).use { rows -> buildSet {
+            while (rows.moveToNext()) add(rows.getString(0))
+        } }
+        orphaned.chunked(400).forEach { ids ->
+            val clause = "file_id IN (${ids.joinToString(",") { "?" }})"
+            for (table in listOf("game_metadata", "game_artwork", "game_metadata_checks", "game_metadata_guards"))
+                writable.delete(table, clause, ids.toTypedArray())
+        }
+        return orphaned
     }
 
     private fun refreshQueryFiles(fileIds: Collection<String>, configuration: QueryConfiguration) {
@@ -481,10 +891,14 @@ class GameLibraryRepository @Inject constructor(
         deduplicate: Boolean = true,
         consume: (LibraryGame) -> Unit,
     ) {
-        val clause = where?.let { " WHERE $it" }.orEmpty()
-        db.readableDatabase.rawQuery("""SELECT folder_id,file_id,source_id,path,filename,system_id,
-            internal_title,file_size,modified,favorite,last_played,manual_title,verified_title,
-            probe_version,dat_version,archive_crc,dat_checked FROM game_entries$clause ORDER BY file_id,rowid""", args).use { cursor ->
+        val clause = where?.let { " WHERE " + it.replace(Regex("\\b(file_id|folder_id)\\b"), "g.$1") }.orEmpty()
+        db.readableDatabase.rawQuery("""SELECT g.folder_id,g.file_id,g.source_id,g.path,g.filename,g.system_id,
+            g.internal_title,g.file_size,g.modified,g.favorite,g.last_played,g.manual_title,g.verified_title,
+            g.probe_version,g.dat_version,g.archive_crc,g.dat_checked,m.title,m.year,c.path,b.path
+            FROM game_entries g LEFT JOIN game_metadata m ON m.file_id=g.file_id
+            LEFT JOIN game_artwork c ON c.file_id=g.file_id AND c.kind='cover'
+            LEFT JOIN game_artwork b ON b.file_id=g.file_id AND b.kind='backdrop'
+            $clause ORDER BY g.file_id,g.rowid""", args).use { cursor ->
             var selected: LibraryGame? = null
             var depth = -1
             while (cursor.moveToNext()) {
@@ -500,12 +914,15 @@ class GameLibraryRepository @Inject constructor(
                 val game = LibraryGame(
                     fileId = cursor.getString(1), folderId = cursor.getString(0),
                     sourceId = cursor.getString(2), path = cursor.getString(3), filename = filename,
-                    systemId = cursor.getString(5), title = custom ?: verified ?: internal ?: gameDisplayFileName(filename),
+                    systemId = cursor.getString(5), title = custom ?: cursor.getString(17)?.takeIf(String::isNotBlank)
+                        ?: verified ?: internal ?: gameDisplayFileName(filename),
                     internalTitle = cursor.getString(6), size = cursor.getLong(7), modified = cursor.getLong(8),
                     favorite = portable?.favorite ?: (cursor.getInt(9) == 1),
                     lastPlayed = maxOf(cursor.getLong(10), portable?.lastPlayed ?: 0L),
                     customTitle = custom, verifiedTitle = verified, probeVersion = cursor.getInt(13),
                     datVersion = cursor.getLong(14), archiveCrc = cursor.getString(15), datChecked = cursor.getInt(16) == 1,
+                    metadataTitle = cursor.getString(17), metadataYear = if (cursor.isNull(18)) null else cursor.getInt(18),
+                    coverPath = cursor.getString(19), backdropPath = cursor.getString(20),
                 )
                 if (!deduplicate) { consume(game); continue }
                 if (selected?.fileId != game.fileId) {
@@ -557,18 +974,20 @@ class GameLibraryRepository @Inject constructor(
         changed()
     }
 
-    private fun savePortableChoice(fileId: String) {
+    private fun savePortableChoice(fileId: String, metadata: GameMetadata? = null) {
         db.readableDatabase.rawQuery(
             "SELECT source_id,path,manual_title,favorite,last_played FROM game_entries WHERE file_id=? LIMIT 1",
             arrayOf(fileId)
         ).use { rows ->
             if (!rows.moveToFirst()) return
+            val existing = preferences.gameLibraryOverrides
+            val before = existing.firstOrNull { it.sourceId == rows.getString(0) && it.path == rows.getString(1) }
             val value = GamePortableState(
                 sourceId = rows.getString(0), path = rows.getString(1),
                 title = rows.getString(2)?.takeIf(String::isNotBlank),
                 favorite = rows.getInt(3) == 1, lastPlayed = rows.getLong(4),
+                metadata = metadata ?: before?.metadata,
             )
-            val existing = preferences.gameLibraryOverrides
             preferences.gameLibraryOverrides = (existing.filterNot {
                 it.sourceId == value.sourceId && it.path == value.path
             } + value).takeLast(5000)
@@ -605,6 +1024,7 @@ class GameLibraryRepository @Inject constructor(
     ): Int = scanLock.withLock {
         withContext(Dispatchers.IO) {
             val folder = folders().firstOrNull { it.id == folderId } ?: return@withContext 0
+            val folderRevision = synchronized(queryLock) { folderFingerprint(folder) }
             val assigned = GameSystems.byId(folder.systemId)
             fun candidate(entry: FileEntry): Boolean {
                 if (entry.directory) return false
@@ -758,8 +1178,15 @@ class GameLibraryRepository @Inject constructor(
             selected.removeAll { it.entry.path !in visible }
             kotlinx.coroutines.currentCoroutineContext().ensureActive()
             val scanContext = kotlinx.coroutines.currentCoroutineContext()
-            synchronized(queryLock) {
+            val discardedPaths = mutableListOf<String>()
+            var abandoned = emptySet<String>()
+            var removedChoices = emptySet<Pair<String, String>>()
+            val accepted = synchronized(queryLock) {
                 val configuration = ensureQueryIndex()
+                // Scanning can outlive removal, source edits or a backup restore. Its old
+                // snapshot must never recreate the removed folder's rows or metadata.
+                if (configuration.folders[folder.id] != folder || folderFingerprint(folder) != folderRevision ||
+                    files.sources().none { it.sameLocation(source) && it.id == source.id }) return@synchronized false
                 val writable = db.writableDatabase
                 writable.beginTransaction()
                 try {
@@ -770,6 +1197,16 @@ class GameLibraryRepository @Inject constructor(
                     for (game in selected) {
                         scanContext.ensureActive()
                         val e = game.entry
+                        val last = previous[e.id]
+                        if (last != null && (last.size != e.size || last.modified != e.modified || last.systemId != game.systemId)) {
+                            writable.rawQuery("SELECT path FROM game_artwork WHERE file_id=? AND pinned=0", arrayOf(e.id)).use { rows ->
+                                while (rows.moveToNext()) discardedPaths += rows.getString(0)
+                            }
+                            writable.delete("game_artwork", "file_id=? AND pinned=0", arrayOf(e.id))
+                            writable.delete("game_metadata", "file_id=?", arrayOf(e.id))
+                            writable.delete("game_metadata_checks", "file_id=?", arrayOf(e.id))
+                            writable.delete("game_metadata_guards", "file_id=?", arrayOf(e.id))
+                        }
                         val values = android.content.ContentValues().apply {
                             put("folder_id", folder.id); put("file_id", e.id); put("source_id", e.sourceId)
                             put("path", e.path); put("filename", e.name); put("system_id", game.systemId)
@@ -783,15 +1220,29 @@ class GameLibraryRepository @Inject constructor(
                         }
                         writable.insertWithOnConflict("game_entries", null, values,
                             SQLiteDatabase.CONFLICT_REPLACE)
+                        configuration.overrides[e.sourceId to e.path]?.metadata?.let { portable ->
+                            if (GameMetadataStorage.read(writable, e.id) == null) GameMetadataStorage.write(writable, e.id, portable)
+                        }
                     }
+                    removedChoices = existingChoices(writable, "folder_id=? AND seen!=?",
+                        arrayOf(folder.id, generation.toString()), configuration)
                     writable.delete("game_entries", "folder_id=? AND seen!=?",
                         arrayOf(folder.id, generation.toString()))
                     refreshQueryFiles(affected, configuration)
+                    abandoned = pruneOrphanedMetadata(writable)
                     writable.setTransactionSuccessful()
                 } finally {
                     writable.endTransaction()
                 }
+                abandoned.forEach(artworkFiles::remove)
+                discardedPaths.forEach(artworkFiles::removePath)
+                if (purgePortableChoices(removedChoices)) {
+                    queryConfiguration = null
+                    ensureQueryIndex()
+                }
+                true
             }
+            if (!accepted) return@withContext 0
             onProgress(processed.get(), discovered.get())
             changed()
             selected.size

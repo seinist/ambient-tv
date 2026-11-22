@@ -11,6 +11,12 @@ object BuiltInKeys {
     val tmdbApiKey: String? get() = BuildConfig.BUILTIN_TMDB_API_KEY.trim().takeIf(String::isNotEmpty)
     val fanartApiKey: String? get() = BuildConfig.BUILTIN_FANART_API_KEY.trim().takeIf(String::isNotEmpty)
     val openSubtitlesApiKey: String? get() = BuildConfig.BUILTIN_OPENSUBTITLES_API_KEY.trim().takeIf(String::isNotEmpty)
+    val theGamesDbApiKey: String? get() = BuildConfig.BUILTIN_THEGAMESDB_API_KEY.trim().takeIf(String::isNotEmpty)
+    val screenScraper: Pair<String, String>? get() {
+        val id = BuildConfig.BUILTIN_SCREENSCRAPER_DEV_ID.trim().takeIf(String::isNotEmpty) ?: return null
+        val password = BuildConfig.BUILTIN_SCREENSCRAPER_DEV_PASSWORD.trim().takeIf(String::isNotEmpty) ?: return null
+        return id to password
+    }
 
     /** Both Telegram application values, only when both are valid. */
     val monogram: Pair<Int, String>? get() {

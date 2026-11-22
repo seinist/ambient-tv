@@ -22,6 +22,13 @@ class AppPreferences @Inject constructor(
     @TitleSettingsPrefs private val titlePrefs: SharedPreferences = prefs,
 ) {
     private val json = Json { ignoreUnknownKeys = true }
+    /** Optional game catalogue provider; secrets are in TokenStore, never this JSON. */
+    var gameMetadataOptions: com.ambient.tv.games.metadata.GameMetadataOptions
+        get() = runCatching {
+            json.decodeFromString<com.ambient.tv.games.metadata.GameMetadataOptions>(
+                prefs.getString("game_metadata_options", "{}") ?: "{}")
+        }.getOrDefault(com.ambient.tv.games.metadata.GameMetadataOptions()).normalized()
+        set(value) = prefs.edit { putString("game_metadata_options", json.encodeToString(value.normalized())) }
     /** Optional weather module; empty map provider IDs require an explicit user choice. */
     var weatherSettings: com.ambient.tv.data.weather.WeatherSettings
         get() = runCatching {
@@ -252,9 +259,11 @@ class AppPreferences @Inject constructor(
             json.decodeFromString<List<com.ambient.tv.games.library.GamePortableState>>(
                 prefs.getString("game_library_overrides", "[]") ?: "[]")
         }.getOrDefault(emptyList()).distinctBy { it.sourceId to it.path }.takeLast(5000)
+            .map { it.copy(metadata = it.metadata?.bounded()) }
         set(value) = prefs.edit {
             putString("game_library_overrides", json.encodeToString(
-                value.distinctBy { it.sourceId to it.path }.takeLast(5000)))
+                value.distinctBy { it.sourceId to it.path }.takeLast(5000)
+                    .map { it.copy(metadata = it.metadata?.bounded()) }))
         }
 
     /** Game collections refer to existing FileSource IDs: never duplicate NAS logins/WOL. */

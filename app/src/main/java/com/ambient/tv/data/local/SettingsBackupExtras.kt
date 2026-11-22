@@ -12,6 +12,8 @@ data class SettingsBackupExtras(
     val portable: PortableSettingsExtras? = null,
     val device: DeviceSettingsExtras? = null,
     val connections: ConnectionSettingsExtras? = null,
+    /** Present only when the user explicitly includes credentials. Never contains built-in keys. */
+    val credentials: CredentialSettingsExtras? = null,
 )
 
 @Serializable
@@ -47,6 +49,7 @@ data class PortableSettingsExtras(
     val gameLibraryOverrides: List<com.ambient.tv.games.library.GamePortableState>? = null,
     /** Source-linked ROM folder assignments live in Extras to stay under JVM 255-slot limit. */
     val gameLibraryFolders: List<com.ambient.tv.games.library.GameLibraryFolder>? = null,
+    val gameMetadataOptions: com.ambient.tv.games.metadata.GameMetadataOptions? = null,
 )
 
 @Serializable
@@ -58,4 +61,9 @@ data class DeviceSettingsExtras(
 @Serializable
 data class ConnectionSettingsExtras(
     val tvheadendHtspPort: Int? = null,
+)
+
+@Serializable
+data class CredentialSettingsExtras(
+    val gameMetadata: com.ambient.tv.games.metadata.GameMetadataCredentials? = null,
 )

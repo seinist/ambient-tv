@@ -41,6 +41,7 @@ import com.ambient.tv.data.files.FileSource
 import com.ambient.tv.ui.files.NetworkSourceDialog
 import com.ambient.tv.games.GameSystems
 import com.ambient.tv.games.library.LibraryGame
+import com.ambient.tv.games.library.GameLibraryFolder
 import com.ambient.tv.ui.common.AlphabetBar
 import com.ambient.tv.ui.common.AppDialog
 import com.ambient.tv.ui.common.PanelOption
@@ -69,7 +70,7 @@ import java.util.Locale
 @Composable
 fun GameLibraryScreen(
     initialSection: String,
-    onPlay: (LibraryGame) -> Unit,
+    onOpenDetails: (LibraryGame) -> Unit,
     startManaging: Boolean = false,
     onBack: () -> Unit,
     model: GameLibraryViewModel = hiltViewModel(),
@@ -78,8 +79,8 @@ fun GameLibraryScreen(
     var managing by rememberSaveable(startManaging) { mutableStateOf(startManaging) }
     var choosingSystem by rememberSaveable { mutableStateOf(false) }
     var networkEditor by remember { mutableStateOf<FileSource?>(null) }
-    var renaming by remember { mutableStateOf<LibraryGame?>(null) }
-    var renameText by remember { mutableStateOf("") }
+    var removing by remember { mutableStateOf<GameLibraryFolder?>(null) }
+    var metadataSettingsOpen by remember { mutableStateOf(false) }
     var choosingDatSystem by remember { mutableStateOf(false) }
     var datSystemId by rememberSaveable { mutableStateOf("snes") }
     var showOptions by remember { mutableStateOf(false) }
@@ -97,7 +98,8 @@ fun GameLibraryScreen(
 
     BackHandler {
         when {
-            renaming != null -> renaming = null
+            removing != null -> removing = null
+            metadataSettingsOpen -> metadataSettingsOpen = false
             showOptions -> showOptions = false
             choosingDatSystem -> choosingDatSystem = false
             choosingSystem -> choosingSystem = false
@@ -125,9 +127,7 @@ fun GameLibraryScreen(
     LaunchedEffect(state.networkSaveRevision) {
         if (state.networkSaveRevision > 0) networkEditor = null
     }
-    val goPlay: (LibraryGame) -> Unit = { game ->
-        model.requestPlay(game) { onPlay(game) }
-    }
+    val openDetails: (LibraryGame) -> Unit = onOpenDetails
     Column(
         Modifier.fillMaxSize().padding(horizontal = 26.dp, vertical = 14.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
@@ -143,16 +143,16 @@ fun GameLibraryScreen(
                     text = stringResource(R.string.game_library_scan_cancel),
                     icon = Icons.Filled.Close, iconOnly = true, onClick = model::cancelScan)
                 ViewOptionsChip(0, onClick = { showOptions = true })
-                TvChip(text = stringResource(R.string.game_library_edit_title),
-                    icon = Icons.Filled.Edit, iconOnly = true, enabled = focusedId != null,
+                TvChip(text = stringResource(R.string.game_detail_title),
+                    icon = Icons.Filled.Info, iconOnly = true, enabled = focusedId != null,
                     onClick = {
                         val game = state.games.firstOrNull { it.fileId == focusedId }
-                        if (game != null) {
-                            renameText = game.customTitle ?: game.title
-                            renaming = game
-                        }
+                        if (game != null) onOpenDetails(game)
                     })
             }
+            TvChip(text = stringResource(R.string.game_detail_settings),
+                icon = Icons.Filled.Settings, iconOnly = true,
+                onClick = { metadataSettingsOpen = true })
             TvChip(text = stringResource(R.string.game_library_manage), icon = Icons.Filled.Folder,
                 iconOnly = true, selected = managing, onClick = {
                     managing = !managing
@@ -172,9 +172,9 @@ fun GameLibraryScreen(
             if (state.scanning) {
                 Text(
                     if (state.scanDiscovered > 0)
-                        stringResource(R.string.game_library_scan_progress,
+                        stringResource(if (state.enriching) R.string.game_folder_metadata_progress else R.string.game_library_scan_progress,
                             state.scanProcessed, state.scanDiscovered)
-                    else stringResource(R.string.game_library_scanning),
+                    else stringResource(if (state.enriching) R.string.game_folder_enrich else R.string.game_library_scanning),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -206,19 +206,6 @@ fun GameLibraryScreen(
                 Text(error, color = MaterialTheme.colorScheme.error,
                     style = MaterialTheme.typography.bodySmall)
             }
-            state.pendingWakeGame?.let { pending ->
-                Row(verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Text(stringResource(R.string.game_library_offline_wake,
-                        sourcesById[pending.sourceId]?.name ?: pending.sourceId),
-                        style = MaterialTheme.typography.bodySmall,
-                        modifier = Modifier.weight(1f))
-                    TvActionButton(stringResource(R.string.game_library_wake),
-                        onClick = { model.wakeAndPlay(onPlay) }, icon = Icons.Filled.PowerSettingsNew)
-                    TvActionButton(stringResource(R.string.game_library_back),
-                        onClick = model::dismissWakeOffer)
-                }
-            }
             if (state.folders.isEmpty()) {
                 Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     Text(stringResource(R.string.game_library_empty),
@@ -239,7 +226,7 @@ fun GameLibraryScreen(
                             verticalArrangement = Arrangement.spacedBy((9f * 7 / state.listRows).coerceIn(6f, 16f).dp)) {
                             items(games, key = { it.fileId }) { game ->
                                 GameListEntry(game, source = sourcesById[game.sourceId]?.name.orEmpty(),
-                                    onPlay = { goPlay(game) }, onFavorite = { model.favorite(game) },
+                                    onPlay = { openDetails(game) }, onFavorite = { model.favorite(game) },
                                     onFocus = { focusedId = game.fileId },
                                     onRequester = { itemRequests[game.fileId] = it },
                                     onDisposed = { itemRequests.remove(game.fileId) },
@@ -280,7 +267,7 @@ fun GameLibraryScreen(
                                     ) {
                                         items(entries, key = { it.fileId }) { game ->
                                             GameTile(game,
-                                                onPlay = { goPlay(game) },
+                                                onPlay = { openDetails(game) },
                                                 onFavorite = { model.favorite(game) },
                                                 onFocus = { focusedId = game.fileId },
                                                 onRequester = { itemRequests[game.fileId] = it },
@@ -305,7 +292,7 @@ fun GameLibraryScreen(
                         ) {
                             items(games, key = { it.fileId }) { game ->
                                 GameTile(game,
-                                    onPlay = { goPlay(game) },
+                                    onPlay = { openDetails(game) },
                                     onFavorite = { model.favorite(game) },
                                     onFocus = { focusedId = game.fileId },
                                     onRequester = { itemRequests[game.fileId] = it },
@@ -361,7 +348,10 @@ fun GameLibraryScreen(
                 onAdd = { system ->
                     if (model.assign(system)) { choosingSystem = false; managing = false }
                 },
-                onRemove = model::remove,
+                onRemove = { removing = it },
+                onScan = model::scanFolder,
+                onEnrich = model::enrichFolder,
+                onCancelScan = model::cancelScan,
                 onFolderFileVisibility = model::setAlsoShowInFiles,
                 onDeleteSource = model::deleteUnusedGameSource,
                 onAddNetwork = {
@@ -378,25 +368,23 @@ fun GameLibraryScreen(
             )
         }
     }
-    renaming?.let { game ->
+    removing?.let { folder ->
         AppDialog(
-            onDismiss = { renaming = null },
-            title = stringResource(R.string.game_library_edit_title),
+            onDismiss = { removing = null },
+            title = stringResource(R.string.game_folder_remove_title),
+            hint = stringResource(R.string.game_folder_remove_hint),
             footer = {
-                TvActionButton(stringResource(R.string.files_cancel), onClick = { renaming = null })
-                TvActionButton(stringResource(R.string.files_save), onClick = {
-                    model.rename(game, renameText)
-                    renaming = null
+                TvActionButton(stringResource(R.string.files_cancel), onClick = { removing = null })
+                TvActionButton(stringResource(R.string.game_library_remove), onClick = {
+                    model.remove(folder)
+                    removing = null
                 })
             },
         ) {
-            TvTextField(renameText, { renameText = it },
-                stringResource(R.string.game_library_custom_title),
-                modifier = Modifier.fillMaxWidth())
-            Text(stringResource(R.string.game_library_name_hint),
-                style = MaterialTheme.typography.bodySmall)
+            Text(folder.path.ifBlank { sourcesById[folder.sourceId]?.name ?: folder.sourceId })
         }
     }
+    if (metadataSettingsOpen) GameMetadataSettingsPanel(onDismiss = { metadataSettingsOpen = false })
     networkEditor?.let { source ->
         NetworkSourceDialog(
             source = source,
@@ -461,6 +449,9 @@ private fun GameFolderManager(
     onEnter: (com.ambient.tv.data.files.FileEntry) -> Unit,
     onAdd: (String) -> Unit,
     onRemove: (com.ambient.tv.games.library.GameLibraryFolder) -> Unit,
+    onScan: (GameLibraryFolder) -> Unit,
+    onEnrich: (GameLibraryFolder) -> Unit,
+    onCancelScan: () -> Unit,
     onFolderFileVisibility: (com.ambient.tv.games.library.GameLibraryFolder, Boolean) -> Unit,
     onDeleteSource: (FileSource) -> Unit,
     onAddNetwork: () -> Unit,
@@ -530,19 +521,44 @@ private fun GameFolderManager(
             item { Text(stringResource(R.string.game_library_assigned),
                 style = MaterialTheme.typography.titleMedium) }
             items(state.folders, key = { it.id }) { folder ->
-                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Column(Modifier.fillMaxWidth().padding(vertical = 5.dp),
+                    verticalArrangement = Arrangement.spacedBy(7.dp)) {
                     Text((state.sources.firstOrNull { it.id == folder.sourceId }?.name ?: folder.sourceId) +
                         " / " + folder.path + " · " +
                         (GameSystems.byId(folder.systemId)?.shortName ?: stringResource(R.string.game_library_auto)),
-                        modifier = Modifier.weight(1f), maxLines = 2)
-                    TvActionButton(stringResource(R.string.game_library_show_in_files),
-                        onClick = { onFolderFileVisibility(folder, !folder.alsoShowInFiles) },
-                        selected = folder.alsoShowInFiles,
-                        icon = if (folder.alsoShowInFiles) Icons.Filled.Visibility
-                            else Icons.Filled.VisibilityOff)
-                    TvActionButton(stringResource(R.string.game_library_remove),
-                        onClick = { onRemove(folder) }, icon = Icons.Filled.Delete)
+                        maxLines = 2)
+                    if (state.activeScanFolderId == folder.id) {
+                        Text(stringResource(if (state.enriching) R.string.game_folder_metadata_progress
+                            else R.string.game_folder_scan_progress, state.scanProcessed, state.scanDiscovered),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    com.ambient.tv.ui.mobile.DeviceActionRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        if (state.activeScanFolderId == folder.id) {
+                            TvActionButton(stringResource(R.string.game_library_scan_cancel),
+                                onClick = onCancelScan, icon = Icons.Filled.Close)
+                        } else {
+                            TvActionButton(stringResource(R.string.game_folder_scan),
+                                onClick = { onScan(folder) }, enabled = !state.scanning && folder.id !in state.removingFolders,
+                                icon = Icons.Filled.Refresh)
+                        }
+                        TvActionButton(stringResource(R.string.game_folder_enrich),
+                            onClick = { onEnrich(folder) }, enabled = !state.scanning && folder.id !in state.removingFolders,
+                            icon = Icons.Filled.Image)
+                    }
+                    com.ambient.tv.ui.mobile.DeviceActionRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        TvActionButton(stringResource(R.string.game_library_show_in_files),
+                            onClick = { onFolderFileVisibility(folder, !folder.alsoShowInFiles) },
+                            enabled = folder.id !in state.removingFolders,
+                            selected = folder.alsoShowInFiles,
+                            icon = if (folder.alsoShowInFiles) Icons.Filled.Visibility
+                                else Icons.Filled.VisibilityOff)
+                        TvActionButton(stringResource(R.string.game_library_remove),
+                            onClick = { onRemove(folder) }, enabled = folder.id !in state.removingFolders,
+                            icon = Icons.Filled.Delete)
+                    }
+                    if (folder.id in state.removingFolders) Text(stringResource(R.string.game_folder_removing),
+                        style = MaterialTheme.typography.bodySmall)
                 }
             }
             item { Text(stringResource(R.string.game_library_add_network_hint),
@@ -609,7 +625,12 @@ private fun GameTile(
             Box(Modifier.fillMaxWidth().aspectRatio(1f)
                 .background(MaterialTheme.colorScheme.onSurface.copy(alpha = .04f), shape),
                 contentAlignment = Alignment.Center) {
-                GameSystemArt(game.systemId, Modifier.fillMaxSize(.48f))
+                com.ambient.tv.ui.common.ArtworkImage(
+                    model = game.coverPath?.let { java.io.File(it) }, title = game.title,
+                    modifier = Modifier.fillMaxSize(), contentScale = androidx.compose.ui.layout.ContentScale.Fit,
+                    staggerUncached = true, prioritizeUncached = focused,
+                    fallbackContent = { GameSystemArt(game.systemId, Modifier.fillMaxSize(.48f)) },
+                )
                 // The favorite action lives outside the playing Surface as a TV focus target.
             }
             Text(game.title, maxLines = 2, overflow = TextOverflow.Ellipsis,
@@ -642,6 +663,12 @@ private fun GameListEntry(
     DisposableEffect(requester) { onRequester(requester); onDispose(onDisposed) }
     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        com.ambient.tv.ui.common.ArtworkImage(
+            model = game.coverPath?.let { java.io.File(it) }, title = game.title,
+            modifier = Modifier.width(48.dp).height(64.dp),
+            contentScale = androidx.compose.ui.layout.ContentScale.Fit, staggerUncached = true,
+            fallbackContent = { GameSystemArt(game.systemId, Modifier.size(32.dp)) },
+        )
         TvActionButton(game.title + " · " +
             (GameSystems.byId(game.systemId)?.shortName ?: game.systemId) + " · " + source,
             onClick = onPlay, fillWidth = false,
