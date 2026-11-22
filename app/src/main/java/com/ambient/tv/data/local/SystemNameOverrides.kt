@@ -13,7 +13,7 @@ object SystemNameOverrides {
     const val MAX_LENGTH = 30
     // Also used to retain menu order and dividers across restarts. Append new entries so
     // existing installations keep the same default order for their configured systems.
-    val KEYS = listOf("plex", "jellyfin", "emby", "youtube", "telegram", "spotify", "radio", "tvheadend", "dlna", "files", "trailers", "iptv", "weather")
+    val KEYS = listOf("plex", "jellyfin", "emby", "youtube", "telegram", "spotify", "radio", "tvheadend", "dlna", "files", "trailers", "iptv", "weather", "games")
 
     var names: Map<String, String> by mutableStateOf(emptyMap())
         internal set

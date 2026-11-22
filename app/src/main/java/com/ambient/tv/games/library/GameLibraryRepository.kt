@@ -87,6 +87,21 @@ internal fun reuseDatLookup(previous: LibraryGame?, systemId: String, size: Long
     previous != null && previous.datChecked && previous.systemId == systemId &&
         modified != 0L && previous.size == size && previous.modified == modified
 
+/** Also filter old cache rows immediately, without opening a ROM or waking its source. */
+internal fun cachedGameMatchesFolder(
+    folder: GameLibraryFolder,
+    sourceId: String,
+    filename: String,
+    systemId: String,
+): Boolean {
+    if (folder.sourceId != sourceId || (folder.systemId != "auto" && folder.systemId != systemId)) return false
+    val system = GameSystems.byId(systemId) ?: return false
+    // Prior archive indices did not persist the inner filename. Preserve their offline cache;
+    // the parser revision forces one content check on the next explicit refresh.
+    return if (GameSystems.extension(filename) in GameSystems.archiveExtensions) GameSystems.isGame(filename)
+        else GameSystems.acceptsFile(system, filename)
+}
+
 private class GameIndexDb(context: Context) : SQLiteOpenHelper(context, "game_library.db", null, 4) {
     override fun onCreate(db: SQLiteDatabase) {
         db.execSQL("""CREATE TABLE game_entries (
@@ -191,12 +206,17 @@ class GameLibraryRepository @Inject constructor(
     /** Minimal catalog lookup for the sidebar; don't load every game on the UI thread. */
     fun systemIds(): List<String> {
         val current = files.sources().map { it.id }.toSet()
-        val allowed = folders().filter { it.sourceId in current }.map { it.id }.toSet()
+        val allowed = folders().filter { it.sourceId in current }.associateBy { it.id }
         val systems = linkedSetOf<String>()
-        db.readableDatabase.rawQuery("SELECT DISTINCT folder_id,system_id FROM game_entries", null).use { rows ->
-            while (rows.moveToNext()) if (rows.getString(0) in allowed) systems += rows.getString(1)
+        db.readableDatabase.rawQuery("SELECT DISTINCT folder_id,source_id,system_id FROM game_entries", null).use { rows ->
+            while (rows.moveToNext()) {
+                val folder = allowed[rows.getString(0)] ?: continue
+                val systemId = rows.getString(2)
+                if (folder.sourceId == rows.getString(1) && GameSystems.byId(systemId) != null &&
+                    (folder.systemId == "auto" || folder.systemId == systemId)) systems += systemId
+            }
         }
-        return systems.toList()
+        return GameSystems.sortIdsByName(systems)
     }
 
     fun gridColumns(): Int = prefs.getInt("game_library_grid_columns", 8).coerceIn(4, 12)
@@ -339,8 +359,9 @@ class GameLibraryRepository @Inject constructor(
             null,
         ).use { cursor ->
             while (cursor.moveToNext()) {
-                if (cursor.getString(0) !in allowed) continue
+                val folder = allowed[cursor.getString(0)] ?: continue
                 val filename = cursor.getString(4)
+                if (!cachedGameMatchesFolder(folder, cursor.getString(2), filename, cursor.getString(5))) continue
                 val portable = overrides[cursor.getString(2) to cursor.getString(3)]
                 val custom = portable?.title?.takeIf { it.isNotBlank() }
                     ?: cursor.getString(11)?.takeIf { it.isNotBlank() }
@@ -439,6 +460,12 @@ class GameLibraryRepository @Inject constructor(
     ): Int = scanLock.withLock {
         withContext(Dispatchers.IO) {
             val folder = folders().firstOrNull { it.id == folderId } ?: return@withContext 0
+            val assigned = GameSystems.byId(folder.systemId)
+            fun candidate(entry: FileEntry): Boolean {
+                if (entry.directory) return false
+                return if (assigned == null) entry.game else GameSystems.acceptsFile(assigned, entry.name) ||
+                    (GameSystems.extension(entry.name) in GameSystems.archiveExtensions && entry.game)
+            }
             val source = files.sources().firstOrNull { it.id == folder.sourceId }
                 ?: throw IOException("Source was removed")
             // Only explicit scans wake a NAS. All workers reuse its prepared VPN/WOL route.
@@ -466,11 +493,11 @@ class GameLibraryRepository @Inject constructor(
                                     "Game folder scan limit reached"
                                 }
                                 var limit = 20_000
-                                var listing = session.list(path, limit) { it.game }
+                                var listing = session.list(path, limit, ::candidate)
                                 while (listing.more && limit < 200_000) {
                                     kotlinx.coroutines.currentCoroutineContext().ensureActive()
                                     limit = (limit * 2).coerceAtMost(200_000)
-                                    listing = session.list(path, limit) { it.game }
+                                    listing = session.list(path, limit, ::candidate)
                                 }
                                 if (listing.more) throw IOException(
                                     "Directory exceeds 200000 entries; the existing catalog was not changed"
@@ -480,7 +507,7 @@ class GameLibraryRepository @Inject constructor(
                                         if (folder.recursive) pending.add(entry.path to depth + 1)
                                         continue
                                     }
-                                    if (!entry.game) continue
+                                    if (!candidate(entry)) continue
                                     val known = discovered.incrementAndGet()
                                     require(known <= 200000) { "Game library item limit reached" }
                                     queue.send(entry)
@@ -513,10 +540,10 @@ class GameLibraryRepository @Inject constructor(
                                     if (refs.isNotEmpty()) descriptors[entry.path] = refs
                                 }
                                 val last = previous[entry.id]
-                                val assigned = GameSystems.byId(folder.systemId)
                                 val unchanged = last != null && last.size == entry.size &&
                                     last.modified == entry.modified && entry.modified != 0L
-                                val cachedProbe = unchanged && last!!.probeVersion == PROBE_VERSION
+                                val cachedProbe = unchanged && last!!.probeVersion == PROBE_VERSION &&
+                                    (folder.systemId == "auto" || folder.systemId == last.systemId)
                                 val archive = if (ext in GameSystems.archiveExtensions && !cachedProbe) {
                                     if (ext == "rar") {
                                         // RAR title inference is filename-only. Don't open 1,000
@@ -526,7 +553,7 @@ class GameLibraryRepository @Inject constructor(
                                     } else {
                                         val probed = runCatching {
                                             reader().open(entry.path).use {
-                                                GameArchives.probe(entry.name, it)
+                                                GameArchives.probe(entry.name, it, assigned?.id)
                                             }
                                         }
                                         // Network/decoder errors must NOT silently delete a
@@ -539,16 +566,15 @@ class GameLibraryRepository @Inject constructor(
                                         }
                                     }
                                 } else null
-                                val detected = if (cachedProbe) GameSystems.byId(last!!.systemId)
-                                    else archive?.system ?: classify(entry, reader(), skipArchives = true)
-                                val mismatch = ext == "iso" &&
-                                    detected?.id in setOf("wii", "gamecube") &&
-                                    detected?.id != folder.systemId
-                                val system = assigned?.takeIf { !mismatch &&
-                                    (ext in it.extensions || ext in GameSystems.ambiguousExtensions ||
-                                        (ext in GameSystems.archiveExtensions &&
-                                            (detected == null || detected.id == it.id)))
-                                } ?: detected
+                                val system = when {
+                                    cachedProbe -> GameSystems.byId(last!!.systemId)
+                                    ext in GameSystems.archiveExtensions -> archive?.innerName?.let { inner ->
+                                        val detected = archive.system ?: GameSystems.forSourceFile(inner, entry.path)
+                                        GameSystems.forAssignedFile(inner, folder.systemId, detected,
+                                            archive.systemFromHeader)
+                                    }
+                                    else -> classify(entry, reader(), folder.systemId)
+                                }
                                 if (system != null) {
                                     val internal = if (cachedProbe) last!!.internalTitle
                                         else archive?.internalTitle ?: if (ext in GameSystems.archiveExtensions)
@@ -627,26 +653,19 @@ class GameLibraryRepository @Inject constructor(
     private fun existing(folderId: String): Map<String, LibraryGame> =
         games(deduplicate = false).filter { it.folderId == folderId }.associateBy { it.fileId }
 
-    private fun classify(entry: FileEntry, session: GameScanFileSession, skipArchives: Boolean = false): com.ambient.tv.games.GameSystem? {
+    private fun classify(entry: FileEntry, session: GameScanFileSession, systemId: String): com.ambient.tv.games.GameSystem? {
         val head = if (GameSystems.extension(entry.name) == "iso") {
             runCatching { session.open(entry.path).use { media ->
                 ByteArray(0x20).also { if (media.read(0, it, it.size) != it.size) return@use null }
             } }.getOrNull()
         } else null
-        val ext = GameSystems.extension(entry.name)
-        if (!skipArchives && ext in GameSystems.archiveExtensions) {
-            val fromArchive = runCatching {
-                session.open(entry.path).use { media ->
-                    GameArchives.system(entry.name, media)
-                }
-            }.getOrNull()
-            if (fromArchive != null) return fromArchive
-        }
-        return GameSystems.forSourceFile(entry.name, entry.path, head)
+        return GameSystems.forAssignedFile(entry.name, systemId,
+            GameSystems.forSourceFile(entry.name, entry.path, head),
+            systemFromHeader = GameSystems.forDiscHeader(entry.name, head) != null)
     }
 
     private companion object {
-        const val PROBE_VERSION = 1
+        const val PROBE_VERSION = 2
     }
 
     private fun extractTitle(entry: FileEntry, session: GameScanFileSession, system: String): String? {

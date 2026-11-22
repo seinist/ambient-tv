@@ -256,36 +256,102 @@ object GameSystems {
             shortName = "32X"),
     )
 
+    /** Display order is independent of registration/default-core order. */
+    val alphabetical: List<GameSystem> = all.sortedWith(
+        compareBy<GameSystem> { it.name.lowercase(Locale.ROOT) }.thenBy { it.id }
+    )
+
+    /** Menus and chips display short names, so sort by exactly those labels. */
+    fun sortIdsByName(ids: Iterable<String>): List<String> = ids.distinct().filter { byId(it) != null }.sortedWith(
+        compareBy<String> { (byId(it)?.shortName ?: it).lowercase(Locale.ROOT) }.thenBy { it }
+    )
+
     /** Archives may hold a game (also a disc with its tracks); the system is decided by the files inside. */
     val archiveExtensions = GameArchives.extensions
 
+    private val commodoreIds = setOf("c64", "c128", "vic20", "plus4", "pet", "cbm2")
+
+    /**
+     * Shared suffixes still have a bounded set of compatible systems. A folder assignment
+     * resolves that ambiguity; it never makes a disc image playable by a cartridge core.
+     * Keep these separate from the unambiguous extension defaults above.
+     */
+    private val sharedFormats: Map<String, Set<String>> = mapOf(
+        "iso" to setOf("psx", "psp", "ps2", "saturn", "gamecube", "wii"),
+        "rvz" to setOf("gamecube", "wii"),
+        "chd" to setOf("psx", "psp", "ps2", "saturn", "dreamcast"),
+        "cue" to setOf("psx", "saturn", "dreamcast"),
+        "m3u" to (setOf("psx", "ps2", "saturn", "dreamcast", "gamecube", "wii") + commodoreIds),
+        "pbp" to setOf("psx", "psp"),
+        "ciso" to setOf("gamecube", "wii", "ps2"),
+        "cso" to setOf("psp", "ps2"),
+        "zso" to setOf("psp", "ps2"),
+    ) + all.first { it.id == "c64" }.extensions.associateWith { commodoreIds }
+
+    // Raw dumps have no universal console identity. Offer them only under an explicit
+    // compatible folder assignment; generic Files/auto-detection must not guess from .bin.
+    private val assignedOnlyFormats = mapOf(
+        "bin" to (setOf("megadrive", "sega32x", "a2600", "a5200", "a7800", "psx", "ps2", "dreamcast") + commodoreIds),
+    )
+
     /** Extensions that belong to several consoles, or need the disc header to identify them. */
-    val ambiguousExtensions = setOf("iso", "rvz", "chd", "cue", "m3u", "pbp", "ciso", "gdi", "prg", "tap", "crt", "t64", "d64", "d71", "d81")
+    val ambiguousExtensions: Set<String> = sharedFormats.keys
+
+    /** A concrete ROM/descriptor, never an uninspected archive or a firmware/core file. */
+    fun acceptsFile(system: GameSystem, name: String): Boolean =
+        !isBios(name.substringAfterLast('/').substringAfterLast('\\')) && !isCore(name) &&
+            extension(name).let { it in system.extensions || system.id in sharedFormats[it].orEmpty() ||
+                system.id in assignedOnlyFormats[it].orEmpty() }
+
+    /**
+     * Explicit library assignments are a filter, not a fallback to another console. Shared
+     * disc/VICE formats may use that assignment; a Wii/GameCube ISO signature remains final.
+     * Archives call this with their selected inner filename after bounded metadata probing.
+     */
+    fun forAssignedFile(
+        name: String,
+        systemId: String?,
+        detected: GameSystem? = forFile(name),
+        systemFromHeader: Boolean = false,
+    ): GameSystem? {
+        if (systemId == null || systemId == "auto") return detected?.takeIf { acceptsFile(it, name) }
+        val assigned = byId(systemId) ?: return null
+        if (!acceptsFile(assigned, name)) return null
+        if (systemFromHeader && detected?.id != assigned.id) return null
+        return assigned
+    }
 
     /**
      * Determine the actual system after the ROM was copied from local storage or NAS.
      * GameCube/Wii ISO headers are authoritative; folders only disambiguate shared
      * extensions when no signature is available. No guessing from "game.iso".
      */
-    fun forPreparedFile(file: File, originalPath: String = file.name): GameSystem? {
+    fun forPreparedFile(file: File, originalPath: String = file.name, systemId: String? = null): GameSystem? {
         val header = if (extension(file.name) == "iso") runCatching {
             RandomAccessFile(file, "r").use { disk ->
                 if (disk.length() < 0x20) null else ByteArray(0x20).also(disk::readFully)
             }
         }.getOrNull() else null
-        return forSourceFile(file.name, originalPath, header)
+        return forAssignedFile(file.name, systemId, forSourceFile(file.name, originalPath, header),
+            systemFromHeader = forDiscHeader(file.name, header) != null)
     }
 
-    /** Resolves ambiguous file types without copying a large source, using at most 32 header bytes. */
-    fun forSourceFile(name: String, originalPath: String, header: ByteArray? = null): GameSystem? {
-        val ext = extension(name)
-        if (ext == "iso" && header != null && header.size >= 0x20) {
+    /** A verified disc signature, kept separate from a folder-name hint. */
+    fun forDiscHeader(name: String, header: ByteArray?): GameSystem? {
+        if (extension(name) == "iso" && header != null && header.size >= 0x20) {
             val ints = ByteBuffer.wrap(header).order(ByteOrder.BIG_ENDIAN)
             when {
                 ints.getInt(0x18) == 0x5D1C9EA3 -> return byId("wii")
                 ints.getInt(0x1c) == 0xC2339F3DL.toInt() -> return byId("gamecube")
             }
         }
+        return null
+    }
+
+    /** Resolves ambiguous file types without copying a large source, using at most 32 header bytes. */
+    fun forSourceFile(name: String, originalPath: String, header: ByteArray? = null): GameSystem? {
+        forDiscHeader(name, header)?.let { return it }
+        val ext = extension(name)
         if (ext in ambiguousExtensions) {
             val folders = originalPath.replace('\\', '/').lowercase(Locale.ROOT)
                 .substringBeforeLast('/', "").split('/').filter(String::isNotBlank)
@@ -304,7 +370,9 @@ object GameSystems {
                 "dreamcast" to "dreamcast", "sega dreamcast" to "dreamcast",
                 "psx" to "psx", "ps1" to "psx", "playstation" to "psx",
             )
-            folders.asReversed().firstNotNullOfOrNull { folderIds[it] }?.let { return byId(it) }
+            folders.asReversed().firstNotNullOfOrNull { folder ->
+                folderIds[folder]?.let(::byId)?.takeIf { acceptsFile(it, name) }
+            }?.let { return it }
         }
         return forFile(name)
     }

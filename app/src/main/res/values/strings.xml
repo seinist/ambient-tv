@@ -1198,6 +1198,11 @@
     <string name="settings_about_app_version">Version %1$s · Build %2$d</string>
     <string name="settings_about_playback">Playback engines</string>
     <string name="settings_about_services">Media services</string>
+    <string name="settings_about_artwork">Artwork</string>
+    <string name="settings_about_game_icons_title">Game system icons</string>
+    <string name="settings_about_game_icons_credit">Monochrome theme by Kivutar, with contributions by baxysquare and other RetroArch Assets contributors.</string>
+    <string name="settings_about_game_icons_details">Source, changes and license</string>
+    <string name="settings_about_game_icons_modifications">The original SVG icons were converted to Android vectors and use the app theme color. The Commodore 128 icon is original Ambient TV artwork.</string>
     <string name="settings_about_commit">Commit %1$s</string>
     <string name="settings_about_source">Source: %1$s</string>
     <string name="settings_about_role_video_engine">Native video playback engine</string>

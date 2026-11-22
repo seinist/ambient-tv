@@ -156,7 +156,7 @@ internal fun VisualGameControls() {
         )
         SettingsSelect(
             label = stringResource(R.string.input_mapping_system),
-            options = GameSystems.all.map { option ->
+            options = GameSystems.alphabetical.map { option ->
                 SettingsSelectOption(option.name, option.id == system.id,
                     onClick = {
                         listening = false; systemId = option.id; coreId = option.core.id

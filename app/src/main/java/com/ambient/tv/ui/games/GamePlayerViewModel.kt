@@ -33,8 +33,11 @@ import kotlinx.coroutines.withContext
 import java.io.File
 import javax.inject.Inject
 
-/** Everything a running game needs. */
-data class GameSession(
+/**
+ * One native game session. Identity must differ on every start, even for the same ROM/core:
+ * a fast restart may replace Ready before Compose observes the intermediate Preparing state.
+ */
+class GameSession(
     val game: PreparedGame,
     /** The core playing it (the game's or the system's choice). */
     val core: GameCore,
@@ -47,12 +50,7 @@ data class GameSession(
     val sram: ByteArray?,
     /** The automatic state to continue from, if its core build matches. */
     val autoState: ByteArray?,
-) {
-    override fun equals(other: Any?) =
-        other is GameSession && other.game == game && other.coreFile == coreFile &&
-            other.coreStamp == coreStamp && other.vulkan == vulkan
-    override fun hashCode() = ((game.hashCode() * 31 + coreFile.hashCode()) * 31 + coreStamp.hashCode()) * 31 + vulkan.hashCode()
-}
+)
 
 sealed interface GameUiState {
     /** Copying the game; [progress] 0…1 or null while unknown. */
@@ -65,7 +63,7 @@ sealed interface GameUiState {
     data class Failed(val reason: GameFailure, val detail: String? = null) : GameUiState
 }
 
-enum class GameFailure { NOT_FOUND, UNKNOWN_SYSTEM, DIRECT_ACCESS, CORE_DOWNLOAD, CORE_INCOMPATIBLE, NO_ABI, BIOS_MISSING, START }
+enum class GameFailure { NOT_FOUND, UNKNOWN_SYSTEM, DIRECT_ACCESS, CORE_DOWNLOAD, CORE_INCOMPATIBLE, NO_ABI, BIOS_MISSING, PREVIOUS_SESSION, START }
 
 @HiltViewModel
 class GamePlayerViewModel @Inject constructor(
@@ -198,6 +196,17 @@ class GamePlayerViewModel @Inject constructor(
     }
 
     private suspend fun start(game: PreparedGame, chosen: GameCore, core: File) {
+        try {
+            withContext(Dispatchers.IO) {
+                gameNativeSessions.awaitClosed()
+                GameCheckpointIo.awaitPendingWrites()
+            }
+        } catch (error: kotlinx.coroutines.CancellationException) {
+            throw error
+        } catch (_: Exception) {
+            mutable.value = GameUiState.Failed(GameFailure.PREVIOUS_SESSION)
+            return
+        }
         val session = withContext(Dispatchers.IO) {
             val stamp = GameStateStore.coreStamp(core)
             val legacyStamp = GameStateStore.legacyCoreStamp(core)
@@ -245,6 +254,10 @@ class GamePlayerViewModel @Inject constructor(
         mutable.value = GameUiState.Failed(GameFailure.START, detail)
     }
 
+    internal fun previousSessionUnavailable() {
+        mutable.value = GameUiState.Failed(GameFailure.PREVIOUS_SESSION)
+    }
+
     /** Removes a core (e.g. after it failed) so the next start loads it again. */
     /** A corrupt update can be replaced by its previous installed core without downloading. */
     fun rollbackCore(core: GameCore): Boolean = cores.rollback(core)
@@ -263,7 +276,18 @@ class GamePlayerViewModel @Inject constructor(
         viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) { cores.saveDeclaredOptions(core, options) }
     }
 
-    fun saveSram(game: PreparedGame, bytes: ByteArray) = storage.write(storage.sramFile(game), bytes)
+    /** Reserve before GL capture; disk/JPEG work outlives the screen on the serial IO queue. */
+    internal fun reserveCheckpoint(session: GameSession, screenshot: Bitmap?): GameCheckpointTicket<Pair<ByteArray?, ByteArray?>> =
+        GameCheckpointIo.reserve { (sram, state) ->
+            sram?.let { runCatching { storage.write(storage.sramFile(session.game), it) } }
+            state?.let {
+                runCatching {
+                    states.save(session.game, GameStateKind.AUTO, it, screenshot, session.coreStamp,
+                        coreId = session.core.id)
+                }
+            }
+            refreshStates(session.game)
+        }
 
     fun saveState(session: GameSession, kind: GameStateKind, bytes: ByteArray, screenshot: Bitmap?): GameStateEntry {
         val entry = states.save(session.game, kind, bytes, screenshot, session.coreStamp, coreId = session.core.id)
@@ -284,7 +308,10 @@ class GamePlayerViewModel @Inject constructor(
 
     /** "Start over": the next start does not continue from the automatic state. */
     fun clearAutoState(game: PreparedGame) {
-        states.entry(game, GameStateKind.AUTO)?.let { states.delete(game, it) }
-        refreshStates(game)
+        // Ordered after an earlier background save, so it cannot resurrect an old auto-state.
+        GameCheckpointIo.execute {
+            states.entry(game, GameStateKind.AUTO)?.let { states.delete(game, it) }
+            refreshStates(game)
+        }
     }
 }

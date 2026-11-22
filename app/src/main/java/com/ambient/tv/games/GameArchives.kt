@@ -30,13 +30,16 @@ object GameArchives {
 
     /** Metadata discovery needs no archive copy. CRC comes from ZIP central-directory entries. */
     data class Metadata(val innerName: String?, val system: GameSystem?,
-                        val internalTitle: String? = null, val crc32: String? = null)
+                        val internalTitle: String? = null, val crc32: String? = null,
+                        val systemFromHeader: Boolean = false)
 
     /** Bound both decompressed header reads and the number of archive entries inspected. */
     internal const val MAX_PROBE_HEADER = 72 * 1024
     internal const val MAX_PROBE_ENTRIES = 5_000
 
     private fun prefixLength(system: GameSystem?, name: String): Int = when {
+        // Disc signatures must also constrain explicit assignments of packed ISO files.
+        GameSystems.extension(name) == "iso" -> 512
         system == null -> 0
         system.id == "snes" -> MAX_PROBE_HEADER
         system.id == "psp" && GameSystems.extension(name) == "pbp" -> MAX_PROBE_HEADER
@@ -73,34 +76,37 @@ object GameArchives {
      * 7z solid folders may still require extra decoder work, so only probe the first
      * selected entry. RAR4/RAR5 remain filename/folder hints, not arbitrary remote extraction.
      */
-    fun probe(fileName: String, media: SeekableMedia): Metadata? = when (GameSystems.extension(fileName)) {
+    fun probe(fileName: String, media: SeekableMedia, systemId: String? = null): Metadata? = when (GameSystems.extension(fileName)) {
         "zip" -> ZipFile.builder().setSeekableByteChannel(MediaChannel(media)).get().use { zip ->
             val candidates = zip.entries.asSequence().filter { !it.isDirectory }
                 .take(MAX_PROBE_ENTRIES + 1).toList()
             if (candidates.size > MAX_PROBE_ENTRIES) return@use null
-            val entry = choose(candidates) { it.name } ?: return@use null
-            val system = GameSystems.forFile(entry.name)
-            val length = prefixLength(system, entry.name)
-            val title = if (length > 0 && entry.size >= 0 &&
-                zip.canReadEntryData(entry)) runCatching {
+            val entry = choose(candidates.filter(zip::canReadEntryData), systemId) { it.name } ?: return@use null
+            val byName = GameSystems.forAssignedFile(entry.name, systemId,
+                GameSystems.forSourceFile(entry.name, entry.name))
+            val length = prefixLength(byName, entry.name)
+            val prefix = if (length > 0 && entry.size >= 0) runCatching {
                 zip.getInputStream(entry).use { readPrefix(it, length) }
-                    .let { titleFromPrefix(system, entry.name, it) }
             }.getOrNull() else null
+            val system = GameSystems.forDiscHeader(entry.name, prefix) ?: byName
+            val title = prefix?.let { titleFromPrefix(system, entry.name, it) }
             val crc = entry.crc.takeIf { it in 0..0xffffffffL }
                 ?.toString(16)?.uppercase(Locale.ROOT)?.padStart(8, '0')
-            Metadata(entry.name, system, title, crc)
+            Metadata(entry.name, system, title, crc,
+                systemFromHeader = GameSystems.forDiscHeader(entry.name, prefix) != null)
         }
         "7z" -> SevenZFile.builder().setSeekableByteChannel(MediaChannel(media))
             .setMaxMemoryLimitKb(48 * 1024).get().use { seven ->
             val candidates = seven.entries.take(MAX_PROBE_ENTRIES + 1)
             if (candidates.size > MAX_PROBE_ENTRIES) return@use null
-            val entry = choose(candidates.filterNot { it.isDirectory }) { it.name } ?: return@use null
-            val system = GameSystems.forFile(entry.name)
+            val entry = choose(candidates.filterNot { it.isDirectory }, systemId) { it.name } ?: return@use null
+            val byName = GameSystems.forAssignedFile(entry.name, systemId,
+                GameSystems.forSourceFile(entry.name, entry.name))
             // Advancing to later entries of a solid 7z could decompress gigabytes.
             val first = seven.nextEntry
-            val title = if (first?.name == entry.name && !first.isDirectory &&
-                first.hasStream() && prefixLength(system, entry.name) > 0) {
-                val buffer = ByteArray(prefixLength(system, entry.name))
+            val prefix = if (first?.name == entry.name && !first.isDirectory &&
+                first.hasStream() && prefixLength(byName, entry.name) > 0) {
+                val buffer = ByteArray(prefixLength(byName, entry.name))
                 var count = 0
                 runCatching {
                     while (count < buffer.size) {
@@ -109,22 +115,27 @@ object GameArchives {
                         if (n <= 0) break
                         count += n
                     }
-                    titleFromPrefix(system, entry.name, buffer.copyOf(count))
+                    buffer.copyOf(count)
                 }.getOrNull()
             } else null
+            val system = GameSystems.forDiscHeader(entry.name, prefix) ?: byName
+            val title = prefix?.let { titleFromPrefix(system, entry.name, it) }
             val crc = if (entry.hasCrc) entry.crcValue.takeIf { it in 0..0xffffffffL }
                 ?.toString(16)?.uppercase(Locale.ROOT)?.padStart(8, '0') else null
-            Metadata(entry.name, system, title, crc)
+            Metadata(entry.name, system, title, crc,
+                systemFromHeader = GameSystems.forDiscHeader(entry.name, prefix) != null)
         }
         "gz" -> {
             val name = fileName.substringBeforeLast('.')
-            val system = GameSystems.forFile(name)
-            val length = prefixLength(system, name)
-            val title = if (length > 0) runCatching {
+            val byName = GameSystems.forAssignedFile(name, systemId, GameSystems.forSourceFile(name, name))
+            val length = prefixLength(byName, name)
+            val prefix = if (length > 0) runCatching {
                 GZIPInputStream(BoundedMediaInput(media, 2 * 1024 * 1024)).use {
-                    titleFromPrefix(system, name, readPrefix(it, length))
+                    readPrefix(it, length)
                 }
             }.getOrNull() else null
+            val system = GameSystems.forDiscHeader(name, prefix) ?: byName
+            val title = prefix?.let { titleFromPrefix(system, name, it) }
             // RFC 1952 footer stores the CRC32 of the *uncompressed* ROM,
             // so a DAT match does not require reading or decompressing the whole file.
             val footer = ByteArray(8)
@@ -135,12 +146,13 @@ object GameArchives {
                         ((footer[2].toLong() and 255) shl 16) or
                         ((footer[3].toLong() and 255) shl 24)
                 ).uppercase(Locale.ROOT).padStart(8, '0') else null
-            Metadata(name, system, title, crc)
+            Metadata(name, system, title, crc,
+                systemFromHeader = GameSystems.forDiscHeader(name, prefix) != null)
         }
         "rar" -> {
             // A RAR archive's original filename may already include a known ROM extension.
             val name = fileName.substringBeforeLast('.')
-            Metadata(name, GameSystems.forFile(name))
+            Metadata(name, GameSystems.forAssignedFile(name, systemId))
         }
         else -> null
     }
@@ -278,6 +290,7 @@ object GameArchives {
         media: SeekableMedia,
         content: File,
         maxOutputBytes: Long,
+        systemId: String? = null,
         onProgress: (Float?) -> Unit,
     ): File? {
         require(maxOutputBytes in 1..MAX_BYTES)
@@ -320,13 +333,14 @@ object GameArchives {
                 partial.delete()
             }
         }
-        fun eligible(name: String): Boolean = GameSystems.forFile(name) != null &&
+        fun eligible(name: String): Boolean = GameSystems.forAssignedFile(name, systemId) != null &&
             GameSystems.extension(name) !in setOf("cue", "gdi", "m3u", "iso")
         return when (GameSystems.extension(archiveName)) {
             "zip" -> ZipFile.builder().setSeekableByteChannel(MediaChannel(media)).get().use { zip ->
                 val files = zip.entries.asSequence().filterNot { it.isDirectory }
                     .take(MAX_PROBE_ENTRIES + 1).toList()
                 if (files.size > MAX_PROBE_ENTRIES) return@use null
+                if (files.any { GameSystems.extension(it.name) in setOf("cue", "gdi", "m3u") }) return@use null
                 val roms = files.filter { eligible(it.name) }
                 if (roms.size != 1 || !zip.canReadEntryData(roms.single())) return@use null
                 val rom = roms.single()
@@ -337,6 +351,7 @@ object GameArchives {
             .setMaxMemoryLimitKb(48 * 1024).get().use { seven ->
                 val files = seven.entries.take(MAX_PROBE_ENTRIES + 1)
                 if (files.size > MAX_PROBE_ENTRIES) return@use null
+                if (files.any { !it.isDirectory && GameSystems.extension(it.name) in setOf("cue", "gdi", "m3u") }) return@use null
                 val roms = files.filter { !it.isDirectory && eligible(it.name) }
                 if (roms.size != 1) return@use null
                 val rom = roms.single()
@@ -385,8 +400,12 @@ object GameArchives {
      * The file to start among [names]: a playlist before a cue sheet before a disc image before a
      * cartridge; files of a system before unknown ones. Null when none plays.
      */
-    fun <T> choose(items: List<T>, name: (T) -> String): T? = items
-        .filter { GameSystems.forFile(name(it)) != null || GameSystems.extension(name(it)) in GameSystems.ambiguousExtensions }
+    fun <T> choose(items: List<T>, systemId: String? = null, name: (T) -> String): T? = items
+        .filter {
+            val filename = name(it).substringAfterLast('/').substringAfterLast('\\')
+            if (systemId != null && systemId != "auto") GameSystems.forAssignedFile(filename, systemId) != null
+            else GameSystems.isGame(filename) && GameSystems.extension(filename) !in extensions
+        }
         .minWithOrNull(compareBy({ rank(name(it)) }, { name(it).count { c -> c == '/' } }, { name(it).lowercase() }))
 
     private fun rank(name: String): Int = when (GameSystems.extension(name)) {

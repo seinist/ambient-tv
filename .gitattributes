@@ -1,0 +1,8 @@
+# Preserve the pinned upstream artwork and license bytes, including their original line endings.
+# The icon manifest verifies source SHA-256 values; these files are not reformatted locally.
+third_party_assets/game_system_icons/monochrome/*.svg -text -whitespace
+third_party_assets/game_system_icons/COPYING -text -whitespace
+app/src/main/res/raw/game_system_icons_cc_by_4_0.txt -text -whitespace
+
+# Unified patches represent an empty context line with a single required space.
+scripts/patches/**/*.patch whitespace=-blank-at-eol

@@ -1,14 +1,15 @@
 <?xml version="1.0" encoding="utf-8"?>
-<vector xmlns:android="http://schemas.android.com/apk/res/android"
- android:width="64dp" android:height="64dp"
- android:viewportWidth="64" android:viewportHeight="64">
- <!-- Ambient TV: corrected upright system hardware, intentionally no brand logos. -->
- <path android:pathData="M5,31 a27,18 0,1 0,54,0 a27,18 0,1 0,-54,0" android:fillColor="#FFFFFFFF" android:fillAlpha="0.14" android:strokeColor="#FFFFFFFF" android:strokeWidth="2.25" android:strokeLineCap="round" android:strokeLineJoin="round"/>
- <path android:pathData="M13,28 a19,13 0,1 0,38,0 a19,13 0,1 0,-38,0" android:fillColor="#FFFFFFFF" android:fillAlpha="0.04" android:strokeColor="#FFFFFFFF" android:strokeWidth="2.25" android:strokeLineCap="round" android:strokeLineJoin="round"/>
- <path android:pathData="M21,28 a11,11 0,1 0,22,0 a11,11 0,1 0,-22,0" android:fillColor="#FFFFFFFF" android:fillAlpha="0.025" android:strokeColor="#FFFFFFFF" android:strokeWidth="2.25" android:strokeLineCap="round" android:strokeLineJoin="round"/>
- <path android:pathData="M26,21 H38 Q40,21 40,23 V24 Q40,26 38,26 H26 Q24,26 24,24 V23 Q24,21 26,21 Z" android:fillColor="#FFFFFFFF" android:fillAlpha="0.06" android:strokeColor="#FFFFFFFF" android:strokeWidth="2.25" android:strokeLineCap="round" android:strokeLineJoin="round"/>
- <path android:pathData="M15,40 L49,40" android:fillColor="#00000000" android:strokeColor="#FFFFFFFF" android:strokeWidth="1.8" android:strokeLineCap="round" android:strokeLineJoin="round"/>
- <path android:pathData="M12.5,30 a2.5,2.5 0,1 0,5,0 a2.5,2.5 0,1 0,-5,0" android:fillColor="#FFFFFFFF" android:fillAlpha="0.95"/>
- <path android:pathData="M45.5,33 a2.5,2.5 0,1 0,5,0 a2.5,2.5 0,1 0,-5,0" android:fillColor="#FFFFFFFF" android:fillAlpha="0.95"/>
- <path android:pathData="M26,44 L38,44" android:fillColor="#00000000" android:strokeColor="#FFFFFFFF" android:strokeWidth="1.6" android:strokeLineCap="round" android:strokeLineJoin="round"/>
+<!--
+    RetroArch Assets / XMB Monochrome, CC BY 4.0.
+    Source: src/xmb/monochrome/Sega - Mega Drive - Genesis.svg
+    Revision: 8c918e2872482139273374ef4cc6c7aff34d7585
+    Native vector conversion; source geometry retained.
+    Credits and license: third_party_assets/game_system_icons/README.md
+    Regenerate with scripts/import_game_system_icons.py.
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android" android:width="64dp" android:height="64dp" android:viewportWidth="64" android:viewportHeight="64">
+    <clip-path android:pathData="M0,0H64V64H0Z" />
+    <group android:scaleX="1" android:scaleY="1" android:translateX="0" android:translateY="-128">
+        <path android:fillColor="#FFFFFFFF" android:fillType="nonZero" android:pathData="M31.977,140C16.977,140,1,147.083,1,161s8,19,12,19c4.963,0,5.514-7.524,9.977-9.263  c2.918-1.136,4.977-1.737,9-1.737s5.977,0.56,9,1.737C45.543,172.517,44,180,49,180c4,0,14-5.167,14-19S46.977,140,31.977,140z   M20,162c0,0.537-0.445,1-1,1h-2v2c0,0.539-0.449,1-1,1h-2c-0.553,0-1-0.461-1-1v-2h-2c-0.553,0-1-0.463-1-1v-2c0-0.537,0.447-1,1-1  h2v-2c0-0.539,0.447-1,1-1h2c0.551,0,1,0.461,1,1v2h2c0.555,0,1,0.463,1,1V162z M42.463,152.534l4.053-2.125  c0.465-0.244,1.061-0.1,1.328,0.325c0.27,0.421,0.111,0.963-0.355,1.205l-4.051,2.126c-0.465,0.244-1.061,0.1-1.33-0.325  C41.84,153.318,41.998,152.777,42.463,152.534z M42,166c-1.658,0-3-1.343-3-3s1.342-3,3-3c1.656,0,3,1.343,3,3S43.656,166,42,166z   M49,163c-1.658,0-3-1.343-3-3s1.342-3,3-3c1.656,0,3,1.343,3,3S50.656,163,49,163z M56,160c-1.658,0-3-1.343-3-3s1.342-3,3-3  c1.656,0,3,1.343,3,3S57.656,160,56,160z" />
+    </group>
 </vector>

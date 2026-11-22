@@ -1,6 +1,15 @@
 package com.ambient.tv.ui.games
 
 import android.graphics.Bitmap
+import com.ambient.tv.ui.performance.LocalPerformanceProfile
+import com.ambient.tv.ui.player.AmbientSurfaceBackdropLayer
+import com.ambient.tv.ui.player.osdButtonVisible
+import com.ambient.tv.ui.player.osdHiddenButtons
+import com.ambient.tv.ui.player.PlayerOsdButtonPanelControls
+import com.ambient.tv.ui.player.OsdPlayer
+import com.ambient.tv.ui.player.OsdButton
+import androidx.compose.material.icons.filled.ViewWeek
+import androidx.compose.material.icons.filled.Settings
 import android.graphics.BitmapFactory
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.FastOutSlowInEasing
@@ -48,6 +57,7 @@ import java.io.File
 import android.os.Handler
 import android.os.Looper
 import android.view.KeyEvent
+import android.view.View
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -113,7 +123,6 @@ import com.ambient.tv.ui.common.PlayerControlBar
 import com.ambient.tv.ui.common.PlayerExitButton
 import com.ambient.tv.ui.common.PlayerIconButton
 import com.ambient.tv.ui.common.RightPanelChoice
-import com.ambient.tv.ui.common.RightPanelOverlay
 import com.ambient.tv.ui.common.RightSidePanel
 import com.ambient.tv.ui.common.StatePanel
 import com.ambient.tv.ui.gamepad.GamepadInput
@@ -197,12 +206,23 @@ fun GamePlayerScreen(onBack: () -> Unit, model: GamePlayerViewModel = hiltViewMo
             )
             is GameUiState.Failed -> StatePanel(
                 title = stringResource(current.reason.titleRes()),
-                body = if (current.reason == GameFailure.BIOS_MISSING) {
-                    stringResource(R.string.game_failed_bios_missing_body, current.detail.orEmpty())
-                } else current.detail,
-                actionLabel = stringResource(if (model.canUseCache) R.string.game_cache_fallback else R.string.game_retry),
-                onAction = if (model.canUseCache) model::retryWithCache else model::retry,
-                secondaryActionLabel = stringResource(R.string.back), onSecondaryAction = onBack,
+                body = when (current.reason) {
+                    GameFailure.BIOS_MISSING -> stringResource(R.string.game_failed_bios_missing_body, current.detail.orEmpty())
+                    GameFailure.PREVIOUS_SESSION -> stringResource(R.string.game_failed_previous_session_body)
+                    else -> current.detail
+                },
+                actionLabel = stringResource(when {
+                    current.reason == GameFailure.PREVIOUS_SESSION -> R.string.back
+                    model.canUseCache -> R.string.game_cache_fallback
+                    else -> R.string.game_retry
+                }),
+                onAction = when {
+                    current.reason == GameFailure.PREVIOUS_SESSION -> onBack
+                    model.canUseCache -> model::retryWithCache
+                    else -> model::retry
+                },
+                secondaryActionLabel = if (current.reason == GameFailure.PREVIOUS_SESSION) null else stringResource(R.string.back),
+                onSecondaryAction = onBack,
                 modifier = center, centered = true,
             )
             // A new session (other core, OpenGL ES after Vulkan) is a new player.
@@ -219,6 +239,7 @@ private fun GameFailure.titleRes(): Int = when (this) {
     GameFailure.NO_ABI -> R.string.game_failed_no_abi
     GameFailure.START, GameFailure.DIRECT_ACCESS -> R.string.game_failed_start
     GameFailure.BIOS_MISSING -> R.string.game_failed_bios_missing
+    GameFailure.PREVIOUS_SESSION -> R.string.game_failed_previous_session
 }
 
 internal fun GameShader.config(intensity: Float = 1f): ShaderConfig = when (this) {
@@ -265,7 +286,7 @@ private class GameLifecycleOwner : LifecycleOwner {
     }
 }
 
-private enum class GamePanel { PICTURE, CORE, DISC, CONTROLS, INFO, ACHIEVEMENTS, CHEATS, NETPLAY }
+private enum class GamePanel { SETTINGS, OSD_BUTTONS, PICTURE, CORE, DISC, CONTROLS, INFO, ACHIEVEMENTS, CHEATS, NETPLAY }
 
 /** Rewind keeps this many seconds, within [REWIND_BUDGET_BYTES] of memory. */
 private const val REWIND_SECONDS = 20
@@ -297,6 +318,17 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
     val handheld = LocalHandheldUi.current
     val scope = rememberCoroutineScope()
     val activityLifecycle = LocalLifecycleOwner.current.lifecycle
+    val nativeOwner = remember(session) { GameNativeSessionOwner() }
+    val nativeClosed = nativeOwner.closed
+    if (nativeClosed == null) {
+        LaunchedEffect(session) { model.previousSessionUnavailable() }
+        return
+    }
+    nativeOwner.onRetainedAttach = {
+        // TV resolution-host replacement retains this composition but ends its GL thread.
+        // Preparing waits for native teardown and checkpoint writes before restoring the game.
+        if ((model.state.value as? GameUiState.Ready)?.session === session) model.restart()
+    }
     val game = session.game
     val system = game.system
     val core = session.core
@@ -339,6 +371,7 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
     val osd = chrome.osd
     var menuOpen by remember { mutableStateOf(false) }
     var panel by remember { mutableStateOf<GamePanel?>(null) }
+    var panelFromSettings by remember { mutableStateOf(false) }
     // A display or refresh-mode change can remove HDR while a Vulkan game is
     // running. Never infer active HDR from these platform capabilities.
     var displayHdr by remember(context) {
@@ -466,6 +499,30 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
             aspectRatioOverride = aspect.ratio ?: -1f
             this.integerScaling = integerScaling
         }.also { view ->
+            // Install before native creation, so even an abandoned first composition has
+            // a cleanup path. The complete player cleanup replaces this once constructed.
+            nativeOwner.cleanup = {
+                view.pauseEmulation()
+                runCatching {
+                    view.destroyNative { error ->
+                        if (error == null) nativeClosed.complete(Unit)
+                        else nativeClosed.completeExceptionally(error)
+                    }
+                }.onFailure(nativeClosed::completeExceptionally)
+                owner.move(Lifecycle.State.DESTROYED)
+                game.close()
+            }
+            view.beforeDetach = nativeOwner::release
+            view.addOnAttachStateChangeListener(object : View.OnAttachStateChangeListener {
+                override fun onViewAttachedToWindow(attached: View) {
+                    // A physical detach can also be temporary; wait until Compose has finished
+                    // the current apply pass before deciding whether this owner is still retained.
+                    attached.post {
+                        if (attached.isAttachedToWindow) nativeOwner.viewAttached()
+                    }
+                }
+                override fun onViewDetachedFromWindow(detached: View) = Unit
+            })
             owner.registry.addObserver(view)
             owner.move(Lifecycle.State.CREATED)
         }
@@ -525,11 +582,29 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
         applyCheats(list)
     }
 
-    /** Battery save and the "continue" state. Runs on the core's thread between frames. */
+    /**
+     * Queue a checkpoint between frames, before the queued native pause/destruction. Waiting
+     * for serializeSRAM/serializeState here used to hold Android's main thread for up to two
+     * GL timeouts, followed by disk/JPEG IO, during Home and TV standby transitions.
+     */
     fun persist() {
         if (!loaded || destroyed) return
-        runCatching { model.saveSram(game, retroView.serializeSRAM()) }
-        if (stateAvailable) runCatching { model.saveState(session, GameStateKind.AUTO, retroView.serializeState(), snapshot) }
+        val captureState = stateAvailable
+        val ticket = model.reserveCheckpoint(session, snapshot)
+        runCatching {
+            retroView.queueEvent {
+                // This task precedes destroyNative() in the same FIFO. Call native capture here:
+                // the view's synchronous wrappers can reject work once destruction is requested.
+                if (!ticket.pending) return@queueEvent
+                val sram = runCatching { LibretroDroid.serializeSRAM() }
+                val state = if (captureState) runCatching { LibretroDroid.serializeState() } else null
+                if (sram.isFailure && (state == null || state.isFailure)) {
+                    ticket.fail(checkNotNull(sram.exceptionOrNull()))
+                } else {
+                    ticket.complete(sram.getOrNull() to state?.getOrNull())
+                }
+            }
+        }.onFailure(ticket::fail)
     }
 
     /** Ends the core while its thread still runs; nothing reaches it afterwards. */
@@ -540,9 +615,15 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
         retroView.pauseEmulation()
         persist()
         destroyed = true
-        runCatching { retroView.destroyNative() }
+        runCatching {
+            retroView.destroyNative { error ->
+                if (error == null) nativeClosed.complete(Unit)
+                else nativeClosed.completeExceptionally(error)
+            }
+        }.onFailure(nativeClosed::completeExceptionally)
         game.close()
     }
+    nativeOwner.cleanup = { destroy() }
 
     fun stateTitle(entry: GameStateEntry): String = when (entry.kind) {
         GameStateKind.AUTO -> context.getString(R.string.game_state_auto)
@@ -559,6 +640,7 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
     }
     val resume: () -> Unit = {
         panel = null
+        panelFromSettings = false
         optionKey = null
         optionCategory = null
         shaderGroup = null
@@ -637,26 +719,27 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
             when (event) {
                 Lifecycle.Event.ON_RESUME -> {
                     if (!destroyed) {
-                        retroView.onResume()
+                        // The patched lifecycle queues native resume and re-enables drawing.
+                        // Calling GLSurfaceView.onResume() here waits for GL on the UI thread.
                         owner.move(Lifecycle.State.RESUMED)
                     }
                     activityResumed = true
                 }
                 Lifecycle.Event.ON_PAUSE -> {
                     activityResumed = false
-                    // Never retain a full-screen test surface through TV standby,
-                    // orientation changes or app backgrounding.
-                    nativeSdrFullscreenRequested = false
-                    vulkanSurfaceHost?.setFullscreenRequested(false)
-                    // Pause and save at once, not after the next composition: the app may stop right after.
+                    // Gate frames immediately. Capture, native pause and resume then run FIFO
+                    // on GL, with disk writes on IO; this callback performs no latch or IO wait.
                     retroView.suppressAutoResume = true
                     retroView.pauseEmulation()
                     if (!menuOpen && !exiting) menuOpen = true
                     persist()
                     if (!destroyed) {
                         owner.move(Lifecycle.State.STARTED)
-                        retroView.onPause()
                     }
+                    // Stop rendering before a fullscreen Vulkan resize/detach. Never retain
+                    // that test surface through TV standby, rotation or app backgrounding.
+                    nativeSdrFullscreenRequested = false
+                    vulkanSurfaceHost?.setFullscreenRequested(false)
                 }
                 else -> Unit
             }
@@ -666,8 +749,8 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
     }
     DisposableEffect(owner) {
         onDispose {
-            // Leaving without Exit: only while the view (and with it the core's thread) still lives.
-            if (retroView.isAttachedToWindow) destroy()
+            // beforeDetach uses the same idempotent cleanup if AndroidView is removed first.
+            nativeOwner.release()
             owner.move(Lifecycle.State.DESTROYED)
         }
     }
@@ -935,6 +1018,7 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
 
     val closePanel: () -> Unit = {
         panel = null
+        panelFromSettings = false
         optionKey = null
         optionCategory = null
         shaderGroup = null
@@ -953,42 +1037,30 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
             onVisibilityChanged = { osd.visible.value = it },
         )
         Box(Modifier.fillMaxSize().background(Color.Black)) {
-            AndroidView(
-                factory = { vulkanSurfaceHost ?: retroView },
-                modifier = Modifier.fillMaxSize()
-                    // Direct touch must reach GLRetroView for DS/3DS/Wii emulated pointers.
-                    // Other games keep the existing tap-to-open-menu handheld behavior.
-                    .then(if (handheld && !system.pointerInput)
-                        Modifier.clickable { if (!menuOpen) openMenu() } else Modifier),
+            if (handheld) AmbientSurfaceBackdropLayer(
+                surface = vulkanSurfaceHost?.presentationSurface() ?: retroView,
+                enabled = true,
+                landscape = androidx.compose.ui.platform.LocalConfiguration.current.orientation ==
+                    android.content.res.Configuration.ORIENTATION_LANDSCAPE,
+                modifier = Modifier.fillMaxSize(),
+                sampling = running,
+                reducedEffects = LocalPerformanceProfile.current.reducedEffects ||
+                    LocalPerformanceProfile.current.reducedPlayback,
             )
-            // All phones need a fixed menu target; touching a DS screen must not open the OSD.
-            if (handheld && !menuOpen) {
-                Box(
-                    modifier = Modifier.align(Alignment.TopStart)
-                        .padding(start = 12.dp, top = 12.dp)
-                        .size(44.dp)
-                        .clip(RoundedCornerShape(22.dp))
-                        .background(Color.Black.copy(alpha = 0.58f))
-                        .clickable { openMenu() },
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Icon(
-                        Icons.Filled.Menu,
-                        contentDescription = stringResource(R.string.game_controls_menu),
-                        tint = Color.White,
-                        modifier = Modifier.size(22.dp),
-                    )
-                }
-            }
-            // Non-interactive areas remain transparent so DS/Wii pointer events still reach GLRetroView.
-            if (handheld && running && touchControls && !menuOpen) {
-                GameTouchControls(
-                    mode = touchMode,
-                    onButton = { button, pressed -> input.touchButton(button, pressed) },
-                    onStick = { index, x, y -> input.touchStick(index, x, y) },
-                    modifier = Modifier.fillMaxSize(),
-                )
-            }
+            GamePlayerTouchLayout(
+                handheld = handheld,
+                directPointer = system.pointerInput,
+                touchEnabled = touchControls,
+                touchMode = touchMode,
+                playing = running,
+                menuVisible = menuOpen,
+                onMenu = openMenu,
+                onButton = { button, pressed -> input.touchButton(button, pressed) },
+                onStick = { index, x, y -> input.touchStick(index, x, y) },
+                surface = { surfaceModifier ->
+                    AndroidView(factory = { vulkanSurfaceHost ?: retroView }, modifier = surfaceModifier)
+                },
+            )
             GameAchievementBanner(achievements.banner, Modifier.align(Alignment.TopCenter).padding(top = 32.dp))
             if (netplay.waiting && !menuOpen) GameOverlayNote(
                 stringResource(R.string.game_netplay_waiting),
@@ -1052,6 +1124,7 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
                         },
                     )
                     PlayerControlBar(
+                        player = OsdPlayer.GAMES,
                         leftContent = {
                             PlayerIconButton(Icons.Filled.PlayArrow, stringResource(R.string.game_continue), resume,
                                 modifier = Modifier.focusRequester(playRequester), primary = true)
@@ -1060,60 +1133,76 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
                                 runCatching { model.saveState(session, GameStateKind.MANUAL, retroView.serializeState(), snapshot) }
                                     .onSuccess { message = context.getString(R.string.game_message_saved, stateTitle(it)) }
                                     .onFailure { message = context.getString(R.string.game_message_save_failed) }
-                            }, enabled = loaded && stateAvailable)
+                            }, enabled = loaded && stateAvailable, osd = OsdButton.GAME_SAVE)
                             PlayerIconButton(Icons.Filled.SettingsBackupRestore, stringResource(R.string.game_quick_load), {
                                 model.latestManualState(game)?.let(loadState)
-                            }, enabled = loaded && stateAvailable && !achievements.hardcore && !netplay.active && saveStates.any { it.kind == GameStateKind.MANUAL })
+                            }, enabled = loaded && stateAvailable && !achievements.hardcore && !netplay.active && saveStates.any { it.kind == GameStateKind.MANUAL },
+                                osd = OsdButton.GAME_LOAD)
                             PlayerIconButton(Icons.Filled.Bookmarks, stringResource(R.string.game_states), {
                                 osd.interact()
                                 statesOpen = !statesOpen
                             }, modifier = Modifier.focusRequester(statesRequester),
-                                selected = statesOpen, enabled = loaded && stateAvailable && saveStates.isNotEmpty())
+                                selected = statesOpen, enabled = loaded && stateAvailable && saveStates.isNotEmpty(),
+                                osd = OsdButton.GAME_STATES)
                             PlayerIconButton(Icons.Filled.RestartAlt, stringResource(R.string.game_reset), {
                                 runCatching { retroView.reset() }
                                 runCatching { retroView.clearRewindBuffer() }
                                 model.clearAutoState(game)
                                 resume()
-                            }, enabled = loaded && !netplay.active)
-                        },
-                        rightContent = {
+                            }, enabled = loaded && !netplay.active, osd = OsdButton.GAME_RESET)
                             PlayerIconButton(Icons.Filled.FastForward, stringResource(R.string.game_fast_forward), {
                                 fastForward = !fastForward
-                            }, selected = fastForward, enabled = loaded && !netplay.active)
-                            if (achievements.state != GameAchievementState.Off) PlayerIconButton(
-                                Icons.Filled.EmojiEvents, stringResource(R.string.game_panel_achievements), {
-                                    panel = GamePanel.ACHIEVEMENTS
-                                }, selected = panel == GamePanel.ACHIEVEMENTS)
-                            PlayerIconButton(Icons.Filled.Code, stringResource(R.string.game_panel_cheats), {
-                                panel = GamePanel.CHEATS
-                            }, selected = panel == GamePanel.CHEATS, enabled = loaded && core.cheats && !achievements.hardcore)
-                            PlayerIconButton(Icons.Filled.Groups, stringResource(R.string.game_panel_netplay), {
-                                panel = GamePanel.NETPLAY
-                            }, selected = panel == GamePanel.NETPLAY, enabled = loaded && stateAvailable && core.netplay && !game.direct)
-                            if (discCount > 1) PlayerIconButton(Icons.Filled.Album, stringResource(R.string.game_panel_disc), {
-                                panel = GamePanel.DISC
-                            }, selected = panel == GamePanel.DISC, enabled = !netplay.active)
+                            }, selected = fastForward, enabled = loaded && !netplay.active,
+                                osd = OsdButton.GAME_FAST_FORWARD)
+                        },
+                        rightContent = {
+                            // Same order as video: exit, playback options, information, settings.
+                            PlayerExitButton(exit)
                             PlayerIconButton(Icons.Filled.Wallpaper, stringResource(R.string.game_panel_picture), {
                                 panel = GamePanel.PICTURE
-                            }, selected = panel == GamePanel.PICTURE)
+                            }, selected = panel == GamePanel.PICTURE, osd = OsdButton.GAME_PICTURE)
                             PlayerIconButton(Icons.Filled.Tune, stringResource(R.string.game_panel_core), {
                                 optionsVersion++
                                 panel = GamePanel.CORE
-                            }, selected = panel == GamePanel.CORE, enabled = loaded && !netplay.active)
+                            }, selected = panel == GamePanel.CORE, enabled = loaded && !netplay.active,
+                                osd = OsdButton.GAME_CORE)
                             PlayerIconButton(Icons.Filled.SportsEsports, stringResource(R.string.game_panel_controls), {
                                 panel = GamePanel.CONTROLS
-                            }, selected = panel == GamePanel.CONTROLS)
+                            }, selected = panel == GamePanel.CONTROLS, osd = OsdButton.GAME_CONTROLS)
+                            if (achievements.state != GameAchievementState.Off) PlayerIconButton(
+                                Icons.Filled.EmojiEvents, stringResource(R.string.game_panel_achievements), {
+                                    panel = GamePanel.ACHIEVEMENTS
+                                }, selected = panel == GamePanel.ACHIEVEMENTS, osd = OsdButton.GAME_ACHIEVEMENTS)
+                            PlayerIconButton(Icons.Filled.Code, stringResource(R.string.game_panel_cheats), {
+                                panel = GamePanel.CHEATS
+                            }, selected = panel == GamePanel.CHEATS, enabled = loaded && core.cheats && !achievements.hardcore,
+                                osd = OsdButton.GAME_CHEATS)
+                            PlayerIconButton(Icons.Filled.Groups, stringResource(R.string.game_panel_netplay), {
+                                panel = GamePanel.NETPLAY
+                            }, selected = panel == GamePanel.NETPLAY, enabled = loaded && stateAvailable && core.netplay && !game.direct,
+                                osd = OsdButton.GAME_NETPLAY)
+                            if (discCount > 1) PlayerIconButton(Icons.Filled.Album, stringResource(R.string.game_panel_disc), {
+                                panel = GamePanel.DISC
+                            }, selected = panel == GamePanel.DISC, enabled = !netplay.active,
+                                osd = OsdButton.GAME_DISC)
                             PlayerIconButton(Icons.Filled.Info, stringResource(R.string.game_panel_info), {
                                 panel = GamePanel.INFO
-                            }, selected = panel == GamePanel.INFO)
-                            PlayerExitButton(exit)
+                            }, selected = panel == GamePanel.INFO, osd = OsdButton.GAME_INFO)
+                            // Never hide this recovery path: every optional panel remains reachable here.
+                            PlayerIconButton(Icons.Filled.Settings, stringResource(R.string.player_playback_settings), {
+                                panelFromSettings = false
+                                panel = GamePanel.SETTINGS
+                            }, selected = panel != null)
                         },
                     )
                 }
             }
 
             val open = panel
-            if (open != null) RightPanelOverlay(onOutsideTap = closePanel) {
+            if (open != null) GamePanelOverlay(
+                open, optionKey, optionCategory, shaderGroup, shaderPacksOpen,
+                onOutsideTap = closePanel,
+            ) {
                 val options = remember(optionsVersion, open) {
                     if (open == GamePanel.CORE && loaded && !destroyed) runCatching {
                         retroView.getVariables()
@@ -1147,6 +1236,8 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
                 RightSidePanel(
                     title = when {
                         option != null -> option.title
+                        open == GamePanel.SETTINGS -> stringResource(R.string.player_playback_settings)
+                        open == GamePanel.OSD_BUTTONS -> stringResource(R.string.osd_buttons)
                         open == GamePanel.CORE && category != null -> categoryTitle.orEmpty()
                         open == GamePanel.PICTURE && shaderPacksOpen -> stringResource(R.string.games_shader_packs_title)
                         open == GamePanel.PICTURE && shaderGroup != null -> stringResource(shaderGroup!!.titleRes)
@@ -1172,12 +1263,56 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
                             category != null -> optionCategory = null
                             shaderGroup != null -> shaderGroup = null
                             shaderPacksOpen -> shaderPacksOpen = false
+                            panelFromSettings -> { panelFromSettings = false; panel = GamePanel.SETTINGS }
                             else -> closePanel()
                         }
                     },
-                    closeInsteadOfBack = option == null && category == null && shaderGroup == null && !shaderPacksOpen,
+                    closeInsteadOfBack = option == null && category == null && shaderGroup == null && !shaderPacksOpen && !panelFromSettings,
                 ) {
                     when {
+                        open == GamePanel.SETTINGS -> {
+                            val offered = gameOsdButtons(achievements.state != GameAchievementState.Off, discCount > 1)
+                            val hidden = osdHiddenButtons()
+                            fun openSettingsPanel(target: GamePanel) {
+                                if (target == GamePanel.CORE) optionsVersion++
+                                panelFromSettings = true
+                                panel = target
+                            }
+                            RightPanelChoice(
+                                text = stringResource(R.string.osd_buttons),
+                                subtitle = stringResource(R.string.osd_buttons_summary,
+                                    offered.count { osdButtonVisible(it, OsdPlayer.GAMES, hidden) }, offered.size),
+                                icon = Icons.Filled.ViewWeek,
+                                selected = false,
+                                onClick = { openSettingsPanel(GamePanel.OSD_BUTTONS) },
+                            )
+                            RightPanelChoice(stringResource(R.string.game_panel_picture), selected = false,
+                                icon = Icons.Filled.Wallpaper, onClick = { openSettingsPanel(GamePanel.PICTURE) })
+                            RightPanelChoice(stringResource(R.string.game_panel_core), selected = false,
+                                icon = Icons.Filled.Tune, enabled = loaded && !netplay.active,
+                                onClick = { openSettingsPanel(GamePanel.CORE) })
+                            RightPanelChoice(stringResource(R.string.game_panel_controls), selected = false,
+                                icon = Icons.Filled.SportsEsports, onClick = { openSettingsPanel(GamePanel.CONTROLS) })
+                            if (achievements.state != GameAchievementState.Off) RightPanelChoice(
+                                stringResource(R.string.game_panel_achievements), selected = false,
+                                icon = Icons.Filled.EmojiEvents, onClick = { openSettingsPanel(GamePanel.ACHIEVEMENTS) })
+                            RightPanelChoice(stringResource(R.string.game_panel_cheats), selected = false,
+                                icon = Icons.Filled.Code, enabled = loaded && core.cheats && !achievements.hardcore,
+                                onClick = { openSettingsPanel(GamePanel.CHEATS) })
+                            RightPanelChoice(stringResource(R.string.game_panel_netplay), selected = false,
+                                icon = Icons.Filled.Groups, enabled = loaded && stateAvailable && core.netplay && !game.direct,
+                                onClick = { openSettingsPanel(GamePanel.NETPLAY) })
+                            if (discCount > 1) RightPanelChoice(stringResource(R.string.game_panel_disc), selected = false,
+                                icon = Icons.Filled.Album, enabled = !netplay.active,
+                                onClick = { openSettingsPanel(GamePanel.DISC) })
+                            RightPanelChoice(stringResource(R.string.game_panel_info), selected = false,
+                                icon = Icons.Filled.Info, onClick = { openSettingsPanel(GamePanel.INFO) })
+                        }
+                        open == GamePanel.OSD_BUTTONS -> PlayerOsdButtonPanelControls(
+                            hasVideo = true,
+                            player = OsdPlayer.GAMES,
+                            offered = gameOsdButtons(achievements.state != GameAchievementState.Off, discCount > 1),
+                        )
                         option != null -> {
                             if (option.info.isNotBlank()) GamePanelText(option.info)
                             option.values.forEach { choice ->

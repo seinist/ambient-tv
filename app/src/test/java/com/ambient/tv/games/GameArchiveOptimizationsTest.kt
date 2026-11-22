@@ -11,6 +11,8 @@ import org.junit.Test
 import java.io.ByteArrayOutputStream
 import java.io.File
 import java.nio.file.Files
+import java.nio.ByteBuffer
+import java.nio.ByteOrder
 import java.nio.charset.StandardCharsets
 import java.util.Random
 import java.util.zip.CRC32
@@ -159,5 +161,50 @@ class GameArchiveOptimizationsTest {
     @Test fun rarMetadataUsesOnlySafeOuterFileNameHint() {
         assertEquals("nes", GameArchives.probe("collection.nes.rar", Bytes(byteArrayOf()))?.system?.id)
         assertNull(GameArchives.probe("opaque.rar", Bytes(byteArrayOf()))?.system)
+    }
+
+    @Test fun assignedFoldersFilterByTheSelectedInnerRomNotTheArchiveSuffix() {
+        val metadata = GameArchives.probe("Games.zip", Bytes(zip("Mario.gba" to gba("MARIO"))))!!
+        assertNull(GameSystems.forAssignedFile(metadata.innerName!!, "snes", metadata.system))
+        assertEquals("gba", GameSystems.forAssignedFile(metadata.innerName, "gba", metadata.system)?.id)
+        assertNull(GameArchives.probe("Notes.zip", Bytes(zip("notes.txt" to byteArrayOf(1)))))
+        assertNull(GameArchives.probe("Bios.zip", Bytes(zip("firmware/bios_E.sms" to byteArrayOf(1)))))
+    }
+
+    @Test fun packedDiscHeaderRemainsAuthoritativeAndDescriptorsKeepAssignedSystem() {
+        val wii = ByteBuffer.allocate(512).order(ByteOrder.BIG_ENDIAN).putInt(0x18, 0x5D1C9EA3).array()
+        val metadata = GameArchives.probe("Disc.zip", Bytes(zip("Disc.iso" to wii)))!!
+        assertEquals("wii", metadata.system?.id)
+        assertTrue(metadata.systemFromHeader)
+        assertNull(GameSystems.forAssignedFile(metadata.innerName!!, "snes", metadata.system))
+        assertNull(GameSystems.forAssignedFile(metadata.innerName, "gamecube", metadata.system, metadata.systemFromHeader))
+        assertEquals("wii", GameSystems.forAssignedFile(metadata.innerName, "wii", metadata.system, metadata.systemFromHeader)?.id)
+
+        val cue = GameArchives.probe("Saturn.zip", Bytes(zip("Disc.cue" to "FILE track.bin BINARY".toByteArray())))!!
+        assertEquals("saturn", GameSystems.forAssignedFile(cue.innerName!!, "saturn", cue.system)?.id)
+        assertNull(GameSystems.forAssignedFile(cue.innerName, "snes", cue.system))
+    }
+
+    @Test fun explicitRawBinArchiveIsRecognizedButCueTracksAreNeverStagedAlone() {
+        val raw = zip("Sonic.bin" to ByteArray(512))
+        assertNull(GameArchives.probe("Sonic.zip", Bytes(raw)))
+        assertEquals("megadrive", GameArchives.probe("Sonic.zip", Bytes(raw), "megadrive")?.system?.id)
+        assertNull(GameArchives.probe("Sonic.zip", Bytes(raw), "snes"))
+        val folder = Files.createTempDirectory("ambient-disc-tracks").toFile()
+        try {
+            val tracks = zip("disc.cue" to "FILE track.bin BINARY".toByteArray(), "track.bin" to ByteArray(512))
+            assertNull(GameArchives.stageSingle("Disc.zip", Bytes(tracks), folder,
+                1024L * 1024, systemId = "psx") { })
+            val staged = GameArchives.stageSingle("Sonic.zip", Bytes(raw), folder,
+                1024L * 1024, systemId = "megadrive") { }
+            assertEquals("Sonic.bin", staged?.name)
+        } finally { folder.deleteRecursively() }
+    }
+
+    @Test fun mixedConsoleArchiveSelectsOnlyTheAssignedSystemsContent() {
+        val archive = zip("a-first.gba" to gba("ADVANCE"), "z-second.nes" to ByteArray(512))
+        assertEquals("a-first.gba", GameArchives.probe("Mixed.zip", Bytes(archive))?.innerName)
+        assertEquals("z-second.nes", GameArchives.probe("Mixed.zip", Bytes(archive), "nes")?.innerName)
+        assertNull(GameArchives.probe("Mixed.zip", Bytes(archive), "snes"))
     }
 }

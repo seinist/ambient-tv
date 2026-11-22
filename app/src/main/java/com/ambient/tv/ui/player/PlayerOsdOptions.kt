@@ -55,6 +55,10 @@ enum class OsdPlayer(val buttons: List<OsdButton>) {
         OsdButton.REPEAT, OsdButton.VOLUME, OsdButton.VISUALIZER)),
     RADIO(listOf(OsdButton.NEXT, OsdButton.STOP, OsdButton.EXIT, OsdButton.FAVORITE, OsdButton.AUDIO,
         OsdButton.VISUALIZER, OsdButton.SLEEP, OsdButton.DETAILS, OsdButton.TOOLS)),
+    GAMES(listOf(OsdButton.GAME_SAVE, OsdButton.GAME_LOAD, OsdButton.GAME_STATES, OsdButton.GAME_RESET,
+        OsdButton.GAME_FAST_FORWARD, OsdButton.EXIT, OsdButton.GAME_PICTURE, OsdButton.GAME_CORE,
+        OsdButton.GAME_CONTROLS, OsdButton.GAME_ACHIEVEMENTS, OsdButton.GAME_CHEATS,
+        OsdButton.GAME_NETPLAY, OsdButton.GAME_DISC, OsdButton.GAME_INFO)),
 }
 
 /**
@@ -78,6 +82,12 @@ enum class OsdButton(@StringRes val label: Int, val optIn: Boolean = false) {
     // Live TV teletext, decoded in the app for every engine.
     TELETEXT(R.string.player_teletext, optIn = true), TELETEXT_SUBTITLES(R.string.player_teletext_subtitles, optIn = true),
     HBBTV(R.string.player_hbbtv, optIn = true),
+    GAME_SAVE(R.string.game_save_state), GAME_LOAD(R.string.game_quick_load), GAME_STATES(R.string.game_states),
+    GAME_RESET(R.string.game_reset), GAME_FAST_FORWARD(R.string.game_fast_forward),
+    GAME_PICTURE(R.string.game_panel_picture), GAME_CORE(R.string.game_panel_core),
+    GAME_CONTROLS(R.string.game_panel_controls), GAME_ACHIEVEMENTS(R.string.game_panel_achievements),
+    GAME_CHEATS(R.string.game_panel_cheats), GAME_NETPLAY(R.string.game_panel_netplay),
+    GAME_DISC(R.string.game_panel_disc), GAME_INFO(R.string.game_panel_info),
 }
 
 private val toolButtons = listOf(OsdButton.SCREENSHOT, OsdButton.BOOKMARK, OsdButton.AB_REPEAT, OsdButton.FRAME_STEP,

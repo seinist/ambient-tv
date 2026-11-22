@@ -1,26 +1,24 @@
 package com.ambient.tv.ui.games
 
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.gestures.awaitEachGesture
-import androidx.compose.foundation.gestures.awaitFirstDown
-import androidx.compose.foundation.gestures.waitForUpOrCancellation
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
@@ -29,313 +27,299 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.Shadow
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.drawscope.rotate
+import androidx.compose.ui.input.pointer.PointerId
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
-import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.foundation.layout.offset
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.ambient.tv.games.GameTouchMode
 import com.ambient.tv.ui.gamepad.retro.RetroPadButton
-import kotlin.math.hypot
 import kotlin.math.roundToInt
 
-/** Responsive touch-only overlay. Empty areas remain transparent to core pointer input (DS/3DS). */
+private val DPAD_BUTTONS = setOf(
+    RetroPadButton.UP, RetroPadButton.DOWN, RetroPadButton.LEFT, RetroPadButton.RIGHT,
+)
+private val FACE_BUTTONS = setOf(RetroPadButton.A, RetroPadButton.B, RetroPadButton.X, RetroPadButton.Y)
+
+/**
+ * Shared by local play and the phone's TV controller. Neo-RetroPad's flat outlines and continuous
+ * eight-way areas are drawn natively: artwork and hit areas are deliberately separate. Only the
+ * control areas receive pointers; the rest of the picture stays available to native touch cores.
+ */
 @Composable
 internal fun GameTouchControls(
     mode: GameTouchMode,
     onButton: (RetroPadButton, Boolean) -> Unit,
     onStick: (Int, Float, Float) -> Unit,
     modifier: Modifier = Modifier,
-    /** Optional atomic DPAD event for network controllers; local controls use the usual callbacks. */
     onDpadDirections: ((Set<RetroPadButton>) -> Unit)? = null,
+    portrait: Boolean? = null,
+    applySafeInsets: Boolean = true,
+    // The remote sends one complete button mask per change, including a direct A-to-B slide.
+    onButtonsChanged: ((Set<RetroPadButton>) -> Unit)? = null,
 ) {
-    BoxWithConstraints(modifier.safeDrawingPadding()) {
-        val small = maxWidth < 600.dp
-        val key = if (small) 40.dp else 49.dp
-        val large = if (small) 116.dp else 148.dp
-        val margin = if (small) 8.dp else 18.dp
-        val bottom = if (small) 12.dp else 24.dp
-        val faceSize = if (mode == GameTouchMode.DUAL) key * 0.85f else key
-
-        if (mode == GameTouchMode.DPAD || mode == GameTouchMode.HYBRID) {
-            GameTouchDpad(
-                size = if (mode == GameTouchMode.HYBRID) large * 0.82f else large,
-                onDirection = { next ->
-                    // Exactly the changed bits are emitted. Holding A on another finger remains untouched.
-                    if (onDpadDirections != null) onDpadDirections(next)
-                    else RetroPadButton.entries.filter { it in DPAD_BUTTONS }.forEach { button ->
-                        onButton(button, button in next)
-                    }
-                },
-                modifier = Modifier.align(Alignment.BottomStart).padding(start = margin, bottom = bottom),
-            )
+    BoxWithConstraints(modifier.then(if (applySafeInsets) Modifier.safeDrawingPadding() else Modifier)) {
+        val tall = portrait ?: (maxWidth < maxHeight)
+        val density = LocalDensity.current.density
+        val lifecycleOwner = LocalLifecycleOwner.current
+        val layout = remember(mode, maxWidth, maxHeight, tall) {
+            gameTouchLayout(mode, maxWidth.value, maxHeight.value, tall)
         }
-        if (mode != GameTouchMode.DPAD) {
-            GameTouchStick(
-                index = 0,
-                diameter = if (mode == GameTouchMode.HYBRID) large * 0.72f else large,
-                onStick = onStick,
-                modifier = Modifier.align(if (mode == GameTouchMode.HYBRID) Alignment.TopStart else Alignment.BottomStart)
-                    .padding(start = margin, top = if (mode == GameTouchMode.HYBRID) 66.dp else 0.dp,
-                        bottom = if (mode == GameTouchMode.HYBRID) 0.dp else bottom),
-            )
-        }
-
-        if (mode == GameTouchMode.DUAL) {
-            GameTouchStick(
-                index = 1, diameter = large * 0.82f, onStick = onStick,
-                modifier = Modifier.align(Alignment.BottomEnd).padding(end = margin, bottom = bottom),
-            )
-        }
-        GameTouchFaces(
-            key = faceSize,
-            onButton = onButton,
-            modifier = Modifier.align(if (mode == GameTouchMode.DUAL) Alignment.TopEnd else Alignment.BottomEnd)
-                .padding(end = margin, top = if (mode == GameTouchMode.DUAL) 68.dp else 0.dp,
-                    bottom = if (mode == GameTouchMode.DUAL) 0.dp else bottom),
-        )
-
-        // L/R and secondary triggers are reachable while the left thumb is on the D-pad/stick.
-        Row(
-            modifier = Modifier.align(Alignment.TopStart).padding(start = 70.dp, top = 12.dp),
-            horizontalArrangement = Arrangement.spacedBy(4.dp),
-        ) {
-            GameTouchButton(RetroPadButton.L2, key * 0.85f, onButton)
-            GameTouchButton(RetroPadButton.L, key * 0.85f, onButton)
-        }
-        Row(
-            modifier = Modifier.align(Alignment.TopEnd).padding(end = margin, top = 12.dp),
-            horizontalArrangement = Arrangement.spacedBy(4.dp),
-        ) {
-            GameTouchButton(RetroPadButton.R, key * 0.85f, onButton)
-            GameTouchButton(RetroPadButton.R2, key * 0.85f, onButton)
-        }
-        Row(
-            modifier = Modifier.align(Alignment.BottomCenter).padding(
-                bottom = if (maxWidth < 460.dp) large + 8.dp else 8.dp,
-            ),
-            horizontalArrangement = Arrangement.spacedBy(10.dp),
-        ) {
-            GameTouchButton(RetroPadButton.SELECT, key * 0.85f, onButton, label = "SEL")
-            GameTouchButton(RetroPadButton.START, key * 0.85f, onButton, label = "START")
-        }
-    }
-}
-
-/** Input calculation is independent of Compose so diagonal drags and center release can be tested. */
-internal fun touchDpadDirections(position: Offset, size: IntSize): Set<RetroPadButton> {
-    if (size.width <= 0 || size.height <= 0) return emptySet()
-    val x = (position.x - size.width / 2f) / (size.width / 2f)
-    val y = (position.y - size.height / 2f) / (size.height / 2f)
-    return buildSet {
-        if (x < -0.28f) add(RetroPadButton.LEFT)
-        if (x > 0.28f) add(RetroPadButton.RIGHT)
-        if (y < -0.28f) add(RetroPadButton.UP)
-        if (y > 0.28f) add(RetroPadButton.DOWN)
-    }
-}
-
-private val DPAD_BUTTONS = setOf(
-    RetroPadButton.UP, RetroPadButton.DOWN, RetroPadButton.LEFT, RetroPadButton.RIGHT,
-)
-
-@Composable
-private fun GameTouchDpad(
-    size: Dp,
-    onDirection: (Set<RetroPadButton>) -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    var selected by remember { mutableStateOf(emptySet<RetroPadButton>()) }
-    val currentOnDirection by rememberUpdatedState(onDirection)
-    DisposableEffect(Unit) {
-        onDispose { currentOnDirection(emptySet()) }
-    }
-    Box(
-        modifier = modifier.size(size)
-            .clip(CircleShape)
-            .background(Color.Black.copy(alpha = 0.37f))
-            .border(1.dp, Color.White.copy(alpha = 0.35f), CircleShape)
-            .pointerInput(Unit) {
-                awaitEachGesture {
-                    val down = awaitFirstDown(requireUnconsumed = false)
-                    fun update(position: Offset) {
-                        val next = touchDpadDirections(position, this@pointerInput.size)
-                        if (next != selected) {
-                            selected = next
-                            currentOnDirection(next)
+        // A new layout cancels every old contact before its new targets become interactive.
+        key(mode, maxWidth, maxHeight, tall, density, lifecycleOwner) {
+            val input = remember { GameTouchInput(layout) }
+            var state by remember { mutableStateOf(input.state) }
+            val currentOnButton by rememberUpdatedState(onButton)
+            val currentOnStick by rememberUpdatedState(onStick)
+            val currentOnDpad by rememberUpdatedState(onDpadDirections)
+            val currentOnButtons by rememberUpdatedState(onButtonsChanged)
+            val publish: () -> Unit = {
+                val previous = state
+                val next = input.state
+                state = next
+                if (previous.buttons != next.buttons) {
+                    val wholePad = currentOnButtons
+                    if (wholePad != null) wholePad(next.buttons)
+                    else {
+                        val dpad = currentOnDpad
+                        if (dpad != null && previous.buttons.intersect(DPAD_BUTTONS) != next.buttons.intersect(DPAD_BUTTONS)) {
+                            dpad(next.buttons.intersect(DPAD_BUTTONS))
                         }
-                    }
-                    try {
-                        update(down.position)
-                        while (true) {
-                            val change = awaitPointerEvent().changes.firstOrNull { it.id == down.id } ?: break
-                            if (!change.pressed) break
-                            update(change.position)
-                            change.consume()
+                        (previous.buttons + next.buttons).forEach { button ->
+                            if ((dpad == null || button !in DPAD_BUTTONS) &&
+                                (button in previous.buttons) != (button in next.buttons)) {
+                                currentOnButton(button, button in next.buttons)
+                            }
                         }
-                    } finally {
-                        selected = emptySet()
-                        currentOnDirection(emptySet())
                     }
                 }
-            },
-    ) {
-        GameDpadArrow("▲", Alignment.TopCenter, RetroPadButton.UP in selected)
-        GameDpadArrow("▼", Alignment.BottomCenter, RetroPadButton.DOWN in selected)
-        GameDpadArrow("◀", Alignment.CenterStart, RetroPadButton.LEFT in selected)
-        GameDpadArrow("▶", Alignment.CenterEnd, RetroPadButton.RIGHT in selected)
+                if (previous.leftStick != next.leftStick) currentOnStick(0, next.leftStick.x, next.leftStick.y)
+                if (previous.rightStick != next.rightStick) currentOnStick(1, next.rightStick.x, next.rightStick.y)
+            }
+            val currentPublish by rememberUpdatedState(publish)
+            var acceptingInput by remember(lifecycleOwner) {
+                mutableStateOf(lifecycleOwner.lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED))
+            }
+            DisposableEffect(input, lifecycleOwner) {
+                val observer = LifecycleEventObserver { _, event ->
+                    when (event) {
+                        Lifecycle.Event.ON_RESUME -> acceptingInput = true
+                        Lifecycle.Event.ON_PAUSE, Lifecycle.Event.ON_STOP, Lifecycle.Event.ON_DESTROY -> {
+                            acceptingInput = false
+                            input.clear()
+                            currentPublish()
+                        }
+                        else -> Unit
+                    }
+                }
+                lifecycleOwner.lifecycle.addObserver(observer)
+                onDispose {
+                    acceptingInput = false
+                    lifecycleOwner.lifecycle.removeObserver(observer)
+                    input.clear()
+                    currentPublish()
+                }
+            }
+            fun Rect.receiver(): Modifier = position().size(width.dp, height.dp)
+                .gameTouchInput(input, topLeft, density, { acceptingInput }) { currentPublish() }
+
+            layout.dpad?.let { bounds ->
+                GameTouchDpad(state.buttons, bounds.receiver().testTag("game-touch-dpad"))
+            }
+            layout.leftStick?.let { bounds ->
+                GameTouchStick(0, bounds.width.dp, state.leftStick, state.leftStickHeld,
+                    bounds.receiver().testTag("game-touch-stick-0"))
+            }
+            layout.rightStick?.let { bounds ->
+                GameTouchStick(1, bounds.width.dp, state.rightStick, state.rightStickHeld,
+                    bounds.receiver().testTag("game-touch-stick-1"))
+            }
+            layout.faceButtonsBounds?.let { cluster ->
+                // One receiver includes the intermediate A+B / B+Y / Y+X / X+A sectors.
+                Box(cluster.receiver().testTag("game-touch-face-area")) {
+                    FACE_BUTTONS.forEach { button ->
+                        layout.buttons[button]?.let { bounds ->
+                            GameTouchButton(button, button in state.buttons,
+                                Modifier.offset((bounds.left - cluster.left).dp, (bounds.top - cluster.top).dp)
+                                    .size(bounds.width.dp, bounds.height.dp))
+                        }
+                    }
+                }
+            }
+            layout.buttons.filterKeys { it !in FACE_BUTTONS }.forEach { (button, bounds) ->
+                GameTouchButton(button, button in state.buttons, bounds.receiver())
+            }
+        }
+    }
+}
+
+private fun Rect.position(): Modifier = Modifier.offset(left.dp, top.dp)
+
+/**
+ * An original contact keeps its receiver until UP, even when it slides to another button.
+ * DOWN/MOVE/UP are all consumed; an ancestor must never interpret the final UP as an OSD tap.
+ * Fingers that started on the native picture are never acquired halfway through their gesture.
+ */
+private fun Modifier.gameTouchInput(
+    input: GameTouchInput,
+    origin: Offset,
+    density: Float,
+    acceptingInput: () -> Boolean,
+    onStateChanged: () -> Unit,
+): Modifier = pointerInput(input, origin, density) {
+    val contacts = mutableSetOf<PointerId>()
+    try {
+        awaitPointerEventScope {
+            while (true) {
+                val event = awaitPointerEvent()
+                var changed = false
+                event.changes.forEach { change ->
+                    val position = origin + change.position / density
+                    if (!change.previousPressed && change.pressed && !change.isConsumed && acceptingInput() &&
+                        input.press(change.id.value, position)) {
+                        contacts.add(change.id)
+                        changed = true
+                    }
+                    if (change.id in contacts) {
+                        if (change.pressed) input.move(change.id.value, position)
+                        else {
+                            input.release(change.id.value)
+                            contacts.remove(change.id)
+                        }
+                        change.consume()
+                        changed = true
+                    }
+                }
+                if (changed) onStateChanged()
+            }
+        }
+    } finally {
+        contacts.forEach { input.release(it.value) }
+        if (contacts.isNotEmpty()) onStateChanged()
     }
 }
 
 @Composable
-private fun BoxScope.GameDpadArrow(symbol: String, alignment: Alignment, pressed: Boolean) {
-    Text(
-        text = symbol,
-        fontSize = 27.sp,
-        color = if (pressed) Color.White else Color.White.copy(alpha = 0.68f),
-        modifier = Modifier.align(alignment).padding(14.dp),
-    )
-}
-
-/** Clamp a thumb gesture to the stick circle and return libretro axis signs. */
-internal fun touchStickAxes(position: Offset, size: IntSize): Offset {
-    if (size.width <= 0 || size.height <= 0) return Offset.Zero
-    val x = (position.x - size.width / 2f) / (size.width * 0.42f)
-    val y = (position.y - size.height / 2f) / (size.height * 0.42f)
-    val length = hypot(x.toDouble(), y.toDouble()).toFloat().coerceAtLeast(1f)
-    return Offset(x / length, y / length)
+private fun GameTouchDpad(selected: Set<RetroPadButton>, modifier: Modifier = Modifier) {
+    val accent = MaterialTheme.colorScheme.primary
+    val label = stringResource(GameTouchMode.DPAD.titleRes)
+    Canvas(modifier.semantics { contentDescription = label }) {
+        val side = size.minDimension
+        val segment = Path().apply {
+            moveTo(side * .34f, side * .05f)
+            lineTo(side * .66f, side * .05f)
+            lineTo(side * .66f, side * .30f)
+            lineTo(side * .50f, side * .46f)
+            lineTo(side * .34f, side * .30f)
+            close()
+        }
+        val arrow = Path().apply {
+            moveTo(side * .50f, side * .17f)
+            lineTo(side * .45f, side * .23f)
+            lineTo(side * .55f, side * .23f)
+            close()
+        }
+        listOf(RetroPadButton.UP, RetroPadButton.RIGHT, RetroPadButton.DOWN, RetroPadButton.LEFT)
+            .forEachIndexed { index, button ->
+                val held = button in selected
+                rotate(index * 90f) {
+                    drawPath(segment, if (held) accent.copy(alpha = .36f) else Color.Black.copy(alpha = .30f))
+                    drawPath(segment, Color.Black.copy(alpha = .45f), style = Stroke(3.dp.toPx()))
+                    drawPath(segment, if (held) accent else Color.White.copy(alpha = .74f), style = Stroke(2.dp.toPx()))
+                    drawPath(arrow, Color.White.copy(alpha = if (held) 1f else .70f), style = Stroke(1.5.dp.toPx()))
+                }
+            }
+        drawCircle(Color.White.copy(alpha = .24f), radius = 2.dp.toPx())
+    }
 }
 
 @Composable
 private fun GameTouchStick(
     index: Int,
     diameter: Dp,
-    onStick: (Int, Float, Float) -> Unit,
+    axes: Offset,
+    held: Boolean,
     modifier: Modifier = Modifier,
 ) {
-    var offset by remember { mutableStateOf(Offset.Zero) }
-    val currentOnStick by rememberUpdatedState(onStick)
-    DisposableEffect(index) {
-        onDispose { currentOnStick(index, 0f, 0f) }
-    }
+    val accent = MaterialTheme.colorScheme.primary
     val pixels = with(LocalDensity.current) { diameter.toPx() }
-    Box(
-        modifier = modifier.size(diameter)
-            .clip(CircleShape)
-            .background(Color.Black.copy(alpha = 0.37f))
-            .border(1.dp, Color.White.copy(alpha = 0.35f), CircleShape)
-            .pointerInput(index) {
-                awaitEachGesture {
-                    val down = awaitFirstDown(requireUnconsumed = false)
-                    fun update(position: Offset) {
-                        offset = touchStickAxes(position, this@pointerInput.size)
-                        currentOnStick(index, offset.x, offset.y)
-                    }
-                    try {
-                        update(down.position)
-                        while (true) {
-                            val change = awaitPointerEvent().changes.firstOrNull { it.id == down.id } ?: break
-                            if (!change.pressed) break
-                            update(change.position)
-                            change.consume()
-                        }
-                    } finally {
-                        offset = Offset.Zero
-                        currentOnStick(index, 0f, 0f)
-                    }
-                }
-            },
-        contentAlignment = Alignment.Center,
-    ) {
+    Box(modifier.padding(3.dp).border(2.dp, Color.White.copy(alpha = .46f), CircleShape),
+        contentAlignment = Alignment.Center) {
+        Box(Modifier.size(diameter * .68f).border(1.dp, Color.White.copy(alpha = .16f), CircleShape))
         Box(
-            modifier = Modifier
-                .offset {
-                    val travel = pixels * 0.28f
-                    IntOffset((offset.x * travel).roundToInt(), (offset.y * travel).roundToInt())
-                }
-                .size(diameter * 0.45f)
-                .clip(CircleShape)
-                .background(Color.White.copy(alpha = 0.32f))
-                .border(1.dp, Color.White.copy(alpha = 0.5f), CircleShape),
-        )
-    }
-}
-
-@Composable
-private fun GameTouchFaces(
-    key: Dp,
-    onButton: (RetroPadButton, Boolean) -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    Column(modifier, horizontalAlignment = Alignment.CenterHorizontally) {
-        Row {
-            Spacer(Modifier.size(key))
-            GameTouchButton(RetroPadButton.X, key, onButton)
-            Spacer(Modifier.size(key))
-        }
-        Row {
-            GameTouchButton(RetroPadButton.Y, key, onButton)
-            Spacer(Modifier.size(key))
-            GameTouchButton(RetroPadButton.A, key, onButton)
-        }
-        Row {
-            Spacer(Modifier.size(key))
-            GameTouchButton(RetroPadButton.B, key, onButton)
-            Spacer(Modifier.size(key))
+            Modifier.offset {
+                val travel = pixels * .25f
+                IntOffset((axes.x * travel).roundToInt(), (axes.y * travel).roundToInt())
+            }.size(diameter * .44f).clip(CircleShape)
+                .background(if (held) accent.copy(alpha = .30f) else Color.Black.copy(alpha = .30f))
+                .border(2.dp, if (held) accent else Color.White.copy(alpha = .70f), CircleShape),
+            contentAlignment = Alignment.Center,
+        ) {
+            Text(if (index == 0) "L" else "R", color = Color.White.copy(alpha = .84f),
+                fontSize = 17.sp, fontWeight = FontWeight.Medium)
         }
     }
 }
 
 @Composable
-private fun GameTouchButton(
-    button: RetroPadButton,
-    diameter: Dp,
-    onButton: (RetroPadButton, Boolean) -> Unit,
-    label: String = button.key.uppercase(),
-) {
-    var pressed by remember { mutableStateOf(false) }
-    val currentOnButton by rememberUpdatedState(onButton)
-    DisposableEffect(button) {
-        onDispose { currentOnButton(button, false) }
+private fun GameTouchButton(button: RetroPadButton, pressed: Boolean, modifier: Modifier = Modifier) {
+    val face = button in FACE_BUTTONS
+    val utility = button == RetroPadButton.START || button == RetroPadButton.SELECT
+    val shape = if (face) CircleShape else RoundedCornerShape(6.dp)
+    val accent = MaterialTheme.colorScheme.primary
+    val label = when (button) {
+        RetroPadButton.L -> "L1"
+        RetroPadButton.R -> "R1"
+        else -> button.key.uppercase()
     }
+    val ink = if (pressed) Color.White else Color.White.copy(alpha = .84f)
+    val labelStyle = TextStyle(shadow = Shadow(Color.Black.copy(alpha = .75f), blurRadius = 4f))
     Box(
-        modifier = Modifier.size(diameter)
-            .padding(2.dp)
-            .clip(RoundedCornerShape(50))
-            .background(Color.Black.copy(alpha = if (pressed) 0.78f else 0.43f))
-            .border(1.dp, Color.White.copy(alpha = if (pressed) 0.9f else 0.42f), CircleShape)
-            .semantics {
-                role = Role.Button
-                contentDescription = label
-            }
-            .pointerInput(button) {
-                awaitEachGesture {
-                    awaitFirstDown(requireUnconsumed = false)
-                    pressed = true
-                    currentOnButton(button, true)
-                    try {
-                        waitForUpOrCancellation()
-                    } finally {
-                        pressed = false
-                        currentOnButton(button, false)
-                    }
-                }
-            },
+        modifier.testTag("game-touch-${button.key}")
+            .semantics { role = Role.Button; contentDescription = label }
+            .padding(3.dp).clip(shape)
+            .background(if (pressed) accent.copy(alpha = .36f) else Color.Black.copy(alpha = .30f))
+            .border(3.dp, Color.Black.copy(alpha = .45f), shape)
+            .border(2.dp, if (pressed) accent else Color.White.copy(alpha = .74f), shape),
         contentAlignment = Alignment.Center,
     ) {
-        Text(
-            label,
-            fontSize = if (label.length > 2) 10.sp else 15.sp,
-            color = Color.White,
-        )
+        if (utility) Column(horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(3.dp)) {
+            Canvas(Modifier.size(20.dp, 12.dp)) {
+                if (button == RetroPadButton.START) {
+                    val triangle = Path().apply {
+                        moveTo(1.dp.toPx(), 1.dp.toPx())
+                        lineTo(size.width - 1.dp.toPx(), size.height / 2f)
+                        lineTo(1.dp.toPx(), size.height - 1.dp.toPx())
+                        close()
+                    }
+                    drawPath(triangle, ink, style = Stroke(1.5.dp.toPx()))
+                } else drawRect(ink, topLeft = Offset(1.dp.toPx(), 1.dp.toPx()),
+                    size = size.copy(width = size.width - 2.dp.toPx(), height = size.height - 2.dp.toPx()),
+                    style = Stroke(1.5.dp.toPx()))
+            }
+            Text(label, fontSize = 11.sp, lineHeight = 12.sp, fontWeight = FontWeight.Medium,
+                style = labelStyle, color = ink, maxLines = 1)
+        } else Text(label, fontSize = if (face) 23.sp else 16.sp,
+            fontWeight = FontWeight.Medium, style = labelStyle, color = ink, maxLines = 1)
     }
 }

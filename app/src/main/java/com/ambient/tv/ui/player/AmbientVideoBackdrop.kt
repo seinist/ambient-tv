@@ -15,6 +15,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.blur
@@ -116,36 +117,65 @@ internal class AmbientGlide {
 
 @Composable
 internal fun AmbientVideoBackdropLayer(modifier: Modifier = Modifier) {
-    val surface = AmbientVideoBackdrop.surface
+    AmbientSurfaceBackdropLayer(
+        surface = AmbientVideoBackdrop.surface,
+        enabled = AmbientVideoBackdrop.enabled,
+        landscape = AmbientVideoBackdrop.landscape,
+        modifier = modifier,
+        followVideoPillarbox = true,
+    )
+}
+
+/**
+ * Shared video/game ambient appearance. An explicit surface keeps a game independent of the
+ * persistent video's global attachment. PixelCopy samples the presented image, never the core's
+ * synchronous raw-frame API. Reduced effects keep the colour fill with sparse, unblurred updates.
+ */
+@Composable
+internal fun AmbientSurfaceBackdropLayer(
+    surface: SurfaceView?,
+    enabled: Boolean,
+    landscape: Boolean,
+    modifier: Modifier = Modifier,
+    sampling: Boolean = true,
+    reducedEffects: Boolean = false,
+    followVideoPillarbox: Boolean = false,
+) {
     val glide = remember(surface) { AmbientGlide() }
     var shown by remember(surface) { mutableStateOf<Bitmap?>(null) }
     var version by remember(surface) { mutableIntStateOf(0) }
     val lifecycle = LocalLifecycleOwner.current.lifecycle
     var layerWidth by remember { mutableIntStateOf(0) }
-    LaunchedEffect(surface, lifecycle) {
+    val currentEnabled by rememberUpdatedState(enabled)
+    val currentSampling by rememberUpdatedState(sampling)
+    val active = enabled && (!followVideoPillarbox || !landscape || AmbientVideoBackdrop.pillarbox)
+    val currentActive by rememberUpdatedState(active)
+    LaunchedEffect(surface, lifecycle, reducedEffects, followVideoPillarbox) {
         surface ?: return@LaunchedEffect
         val handler = Handler(Looper.getMainLooper())
         lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
             launch {
                 while (true) {
                     // Widescreen in landscape keeps its black top/bottom bars.
-                    AmbientVideoBackdrop.pillarbox = layerWidth > 0 && surface.width > 0 &&
-                        surface.width * surface.scaleX < layerWidth * PILLARBOX_THRESHOLD
+                    if (followVideoPillarbox) AmbientVideoBackdrop.pillarbox =
+                        layerWidth > 0 && surface.width > 0 &&
+                            surface.width * surface.scaleX < layerWidth * PILLARBOX_THRESHOLD
                     // Nothing to fill (widescreen in landscape): no frame copies.
-                    if (AmbientVideoBackdrop.active) captureFrame(surface, handler)?.let { captured ->
+                    val captureActive = if (followVideoPillarbox) AmbientVideoBackdrop.active else currentActive
+                    if (currentEnabled && captureActive && currentSampling) captureFrame(surface, handler)?.let { captured ->
                         val pixels = IntArray(captured.width * captured.height)
                         captured.getPixels(pixels, 0, captured.width, 0, 0, captured.width, captured.height)
                         glide.setTarget(pixels, captured.width, captured.height)
                         captured.recycle()
                     }
-                    delay(CAPTURE_INTERVAL_MS)
+                    delay(if (reducedEffects) CAPTURE_INTERVAL_MS * 3 else CAPTURE_INTERVAL_MS)
                 }
             }
             var last = android.os.SystemClock.uptimeMillis()
             while (true) {
-                delay(GLIDE_FRAME_MS)
+                delay(if (reducedEffects) CAPTURE_INTERVAL_MS * 3 else GLIDE_FRAME_MS)
                 val now = android.os.SystemClock.uptimeMillis()
-                if (glide.step((now - last).toFloat()) || shown == null) {
+                if (glide.step(if (reducedEffects) Float.MAX_VALUE else (now - last).toFloat()) || shown == null) {
                     val width = glide.width
                     val height = glide.height
                     if (width > 0 && height > 0) {
@@ -161,11 +191,12 @@ internal fun AmbientVideoBackdropLayer(modifier: Modifier = Modifier) {
     }
     Box(modifier.background(Color.Black).onSizeChanged { layerWidth = it.width }) {
         val bitmap = shown
-        val landscape = AmbientVideoBackdrop.landscape
-        if (bitmap != null && AmbientVideoBackdrop.active) {
+        if (bitmap != null && active) {
             val image = remember(bitmap) { bitmap.asImageBitmap() }
             // A 32 px frame upscaled bilinearly is already soft; blur (API 31+) smooths the rest.
-            Canvas(Modifier.fillMaxSize().blur(48.dp).graphicsLayer { alpha = 0.6f }) {
+            Canvas(Modifier.fillMaxSize()
+                .then(if (reducedEffects) Modifier else Modifier.blur(48.dp))
+                .graphicsLayer { alpha = 0.6f }) {
                 // Read in the draw phase: each glide step redraws without recomposing.
                 version
                 val scale = maxOf(size.width / image.width, size.height / image.height)
@@ -194,10 +225,20 @@ private suspend fun captureFrame(surface: SurfaceView, handler: Handler): Bitmap
     if (surface.width <= 0 || surface.height <= 0 || surface.holder.surface?.isValid != true) return null
     val height = (CAPTURE_WIDTH * surface.height / surface.width.toFloat()).roundToInt().coerceIn(1, CAPTURE_WIDTH * 4)
     val bitmap = Bitmap.createBitmap(CAPTURE_WIDTH, height, Bitmap.Config.ARGB_8888)
-    val ok = runCatching {
-        suspendCancellableCoroutine { cont ->
-            PixelCopy.request(surface, bitmap, { result -> cont.resume(result == PixelCopy.SUCCESS) }, handler)
+    return suspendCancellableCoroutine { cont ->
+        try {
+            PixelCopy.request(surface, bitmap, { result ->
+                if (result != PixelCopy.SUCCESS || !cont.isActive) {
+                    // A cancelled copy still owns its destination until this callback runs.
+                    bitmap.recycle()
+                    if (cont.isActive) cont.resume(null)
+                } else {
+                    cont.resume(bitmap, onCancellation = { _, abandoned, _ -> abandoned?.recycle() })
+                }
+            }, handler)
+        } catch (_: RuntimeException) {
+            bitmap.recycle()
+            cont.resume(null)
         }
-    }.getOrDefault(false)
-    return if (ok) bitmap else { bitmap.recycle(); null }
+    }
 }

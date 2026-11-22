@@ -1,14 +1,15 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!--
+    RetroArch Assets / XMB Monochrome, CC BY 4.0.
+    Source: src/xmb/monochrome/Nintendo - Nintendo 64.svg
+    Revision: 8c918e2872482139273374ef4cc6c7aff34d7585
+    Native vector conversion; source geometry retained.
+    Credits and license: third_party_assets/game_system_icons/README.md
+    Regenerate with scripts/import_game_system_icons.py.
+-->
 <vector xmlns:android="http://schemas.android.com/apk/res/android" android:width="64dp" android:height="64dp" android:viewportWidth="64" android:viewportHeight="64">
-<!-- Clean, upright hardware geometry; front controls stay inset from the chassis edge. -->
-<path android:pathData="M17,22 Q17,17 25,17 H39 Q47,17 47,22 L55,44 Q57,53 50,53 H14 Q7,53 9,44 Z" android:fillColor="#FFFFFFFF" android:fillAlpha="0.14" android:strokeColor="#FFFFFFFF" android:strokeWidth="2.25" android:strokeLineCap="round" android:strokeLineJoin="round"/>
-<path android:pathData="M28,9 H36 Q39,9 39,12 V19 Q39,22 36,22 H28 Q25,22 25,19 V12 Q25,9 28,9 Z" android:fillColor="#FFFFFFFF" android:fillAlpha="0.08" android:strokeColor="#FFFFFFFF" android:strokeWidth="2.25" android:strokeLineCap="round" android:strokeLineJoin="round"/>
-<path android:pathData="M29,12 H35 Q36,12 36,13 V19 Q36,20 35,20 H29 Q28,20 28,19 V13 Q28,12 29,12 Z" android:fillColor="#FFFFFFFF" android:fillAlpha="0.03" android:strokeColor="#FFFFFFFF" android:strokeWidth="2.25" android:strokeLineCap="round" android:strokeLineJoin="round"/>
-<path android:pathData="M18,30 Q32,26 46,30" android:fillColor="#00000000" android:strokeColor="#FFFFFFFF" android:strokeWidth="2" android:strokeLineCap="round" android:strokeLineJoin="round"/>
-<path android:pathData="M15,43 L49,43" android:fillColor="#00000000" android:strokeColor="#FFFFFFFF" android:strokeWidth="1.5" android:strokeLineCap="round" android:strokeLineJoin="round"/>
-<path android:pathData="M18,46 H24 Q25,46 25,47 V49 Q25,50 24,50 H18 Q17,50 17,49 V47 Q17,46 18,46 Z" android:fillColor="#FFFFFFFF" android:fillAlpha="0.05" android:strokeColor="#FFFFFFFF" android:strokeWidth="2.25" android:strokeLineCap="round" android:strokeLineJoin="round"/>
-<path android:pathData="M29,46 H35 Q36,46 36,47 V49 Q36,50 35,50 H29 Q28,50 28,49 V47 Q28,46 29,46 Z" android:fillColor="#FFFFFFFF" android:fillAlpha="0.05" android:strokeColor="#FFFFFFFF" android:strokeWidth="2.25" android:strokeLineCap="round" android:strokeLineJoin="round"/>
-<path android:pathData="M40,46 H46 Q47,46 47,47 V49 Q47,50 46,50 H40 Q39,50 39,49 V47 Q39,46 40,46 Z" android:fillColor="#FFFFFFFF" android:fillAlpha="0.05" android:strokeColor="#FFFFFFFF" android:strokeWidth="2.25" android:strokeLineCap="round" android:strokeLineJoin="round"/>
-<path android:pathData="M16,36 a2,2 0,1 0,4,0 a2,2 0,1 0,-4,0" android:fillColor="#FFFFFFFF" android:fillAlpha="0.95"/>
-<path android:pathData="M44,36 a2,2 0,1 0,4,0 a2,2 0,1 0,-4,0" android:fillColor="#FFFFFFFF" android:fillAlpha="0.95"/>
+    <clip-path android:pathData="M0,0H64V64H0Z" />
+    <group android:scaleX="1" android:scaleY="1" android:translateX="0" android:translateY="-128">
+        <path android:fillColor="#FFFFFFFF" android:fillType="nonZero" android:pathData="M59.342,147.596l-0.011,0.012c-0.151-3.437-2.007-5.985-4.711-7.743  c0.034-0.032,0.068-0.068,0.093-0.109c0.144-0.24,0.066-0.552-0.174-0.696c-1.846-1.11-4.121-1.721-5.67-2.083  c-1.451-0.34-3.124-0.623-4.938-0.85l-0.791-1.897l-0.012,0.064c-0.075-0.465-0.524-0.684-1.003-0.876  C39.596,132.404,35.987,132,32,132s-7.596,0.404-10.127,1.417c-0.459,0.183-0.971,0.401-1.02,0.828l-0.785,1.881  c-1.812,0.227-3.484,0.51-4.938,0.85c-0.014,0.002-0.025,0.006-0.036,0.01c-0.348,0.092-4.025,1.101-5.636,2.074  c-0.24,0.146-0.317,0.457-0.172,0.695c0.024,0.041,0.057,0.079,0.091,0.111c-2.702,1.756-4.558,4.307-4.709,7.741l-0.011-0.012  C3.538,150.953,3,155.641,3,160c0,7.604,1.812,14.862,5.8,14.862c3.263,0,5.595-9.716,6.567-14.077l4.479,0.987  C25,163,24.025,188,32,188s7-25,12.151-26.228l4.482-0.987c0.972,4.361,3.304,14.077,6.566,14.077c3.987,0,5.8-7.259,5.8-14.862  C61,155.641,60.462,150.953,59.342,147.596z M19,149c0,0.553-0.447,1-1,1h-2v2c0,0.553-0.447,1-1,1h-1c-0.553,0-1-0.447-1-1v-2h-2  c-0.553,0-1-0.447-1-1v-1c0-0.553,0.447-1,1-1h2v-2c0-0.553,0.447-1,1-1h1c0.553,0,1,0.447,1,1v2h2c0.553,0,1,0.447,1,1V149z   M51.5,142c0.828,0,1.5,0.672,1.5,1.5s-0.672,1.5-1.5,1.5s-1.5-0.672-1.5-1.5S50.672,142,51.5,142z M48.5,145  c0.828,0,1.5,0.672,1.5,1.5s-0.672,1.5-1.5,1.5s-1.5-0.672-1.5-1.5S47.672,145,48.5,145z M32,148c1.104,0,2,0.896,2,2s-0.896,2-2,2  s-2-0.896-2-2S30.896,148,32,148z M34.829,164.829L32,166l-2.829-1.171L28,162l1.171-2.829L32,158l2.829,1.171L36,162  L34.829,164.829z M43.5,153c-1.381,0-2.5-1.119-2.5-2.5s1.119-2.5,2.5-2.5s2.5,1.119,2.5,2.5S44.881,153,43.5,153z M47.5,157  c-1.381,0-2.5-1.119-2.5-2.5s1.119-2.5,2.5-2.5s2.5,1.119,2.5,2.5S48.881,157,47.5,157z M51.5,151c-0.828,0-1.5-0.672-1.5-1.5  s0.672-1.5,1.5-1.5s1.5,0.672,1.5,1.5S52.328,151,51.5,151z M54.5,148c-0.828,0-1.5-0.672-1.5-1.5s0.672-1.5,1.5-1.5  s1.5,0.672,1.5,1.5S55.328,148,54.5,148z M32,160c-1.104,0-2,0.896-2,2s0.896,2,2,2s2-0.896,2-2S33.104,160,32,160z" />
+    </group>
 </vector>

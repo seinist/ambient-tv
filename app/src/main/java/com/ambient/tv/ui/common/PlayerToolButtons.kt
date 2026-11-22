@@ -7,17 +7,22 @@ import androidx.compose.material.icons.automirrored.filled.Subject
 import androidx.compose.material.icons.automirrored.filled.ViewList
 import androidx.compose.material.icons.automirrored.filled.VolumeUp
 import androidx.compose.material.icons.filled.AccountCircle
+import androidx.compose.material.icons.filled.Album
 import androidx.compose.material.icons.filled.Bedtime
 import androidx.compose.material.icons.filled.BookmarkAdd
+import androidx.compose.material.icons.filled.Bookmarks
 import androidx.compose.material.icons.filled.Build
 import androidx.compose.material.icons.filled.ChevronLeft
 import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.ClosedCaption
+import androidx.compose.material.icons.filled.Code
+import androidx.compose.material.icons.filled.EmojiEvents
 import androidx.compose.material.icons.filled.FastForward
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.FiberManualRecord
 import androidx.compose.material.icons.filled.FullscreenExit
 import androidx.compose.material.icons.filled.GraphicEq
+import androidx.compose.material.icons.filled.Groups
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.LiveTv
 import androidx.compose.material.icons.filled.Loop
@@ -25,13 +30,19 @@ import androidx.compose.material.icons.filled.Movie
 import androidx.compose.material.icons.filled.PhotoCamera
 import androidx.compose.material.icons.filled.ConnectedTv
 import androidx.compose.material.icons.filled.Repeat
+import androidx.compose.material.icons.filled.RestartAlt
+import androidx.compose.material.icons.filled.Save
+import androidx.compose.material.icons.filled.SettingsBackupRestore
 import androidx.compose.material.icons.filled.Shuffle
 import androidx.compose.material.icons.filled.SkipNext
 import androidx.compose.material.icons.filled.Speed
 import androidx.compose.material.icons.filled.Stop
+import androidx.compose.material.icons.filled.SportsEsports
 import androidx.compose.material.icons.filled.Subscriptions
 import androidx.compose.material.icons.filled.Subtitles
 import androidx.compose.material.icons.filled.SwapVert
+import androidx.compose.material.icons.filled.Tune
+import androidx.compose.material.icons.filled.Wallpaper
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.remember
@@ -86,6 +97,19 @@ internal val OsdButton.icon: ImageVector get() = when (this) {
     OsdButton.TELETEXT -> Icons.AutoMirrored.Filled.Article
     OsdButton.TELETEXT_SUBTITLES -> Icons.Filled.ClosedCaption
     OsdButton.HBBTV -> Icons.Filled.ConnectedTv
+    OsdButton.GAME_SAVE -> Icons.Filled.Save
+    OsdButton.GAME_LOAD -> Icons.Filled.SettingsBackupRestore
+    OsdButton.GAME_STATES -> Icons.Filled.Bookmarks
+    OsdButton.GAME_RESET -> Icons.Filled.RestartAlt
+    OsdButton.GAME_FAST_FORWARD -> Icons.Filled.FastForward
+    OsdButton.GAME_PICTURE -> Icons.Filled.Wallpaper
+    OsdButton.GAME_CORE -> Icons.Filled.Tune
+    OsdButton.GAME_CONTROLS -> Icons.Filled.SportsEsports
+    OsdButton.GAME_ACHIEVEMENTS -> Icons.Filled.EmojiEvents
+    OsdButton.GAME_CHEATS -> Icons.Filled.Code
+    OsdButton.GAME_NETPLAY -> Icons.Filled.Groups
+    OsdButton.GAME_DISC -> Icons.Filled.Album
+    OsdButton.GAME_INFO -> Icons.Filled.Info
 }
 
 /**

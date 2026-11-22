@@ -1,12 +1,27 @@
 <?xml version="1.0" encoding="utf-8"?>
-<vector xmlns:android="http://schemas.android.com/apk/res/android"
- android:width="64dp" android:height="64dp"
- android:viewportWidth="64" android:viewportHeight="64">
- <!-- Ambient TV: corrected upright system hardware, intentionally no brand logos. -->
- <path android:pathData="M20,5 H43 Q47,5 47,9 L48,40 H17 L17,9 Q17,5 20,5 Z" android:fillColor="#FFFFFFFF" android:fillAlpha="0.12" android:strokeColor="#FFFFFFFF" android:strokeWidth="2.25" android:strokeLineCap="round" android:strokeLineJoin="round"/>
- <path android:pathData="M24,11 H40 Q42,11 42,13 V32 Q42,34 40,34 H24 Q22,34 22,32 V13 Q22,11 24,11 Z" android:fillColor="#FFFFFFFF" android:fillAlpha="0.06" android:strokeColor="#FFFFFFFF" android:strokeWidth="2.25" android:strokeLineCap="round" android:strokeLineJoin="round"/>
- <path android:pathData="M27,15 H37 Q38,15 38,16 V29 Q38,30 37,30 H27 Q26,30 26,29 V16 Q26,15 27,15 Z" android:fillColor="#FFFFFFFF" android:fillAlpha="0.025" android:strokeColor="#FFFFFFFF" android:strokeWidth="2.25" android:strokeLineCap="round" android:strokeLineJoin="round"/>
- <path android:pathData="M15,43 H50 L55,56 H10 Z" android:fillColor="#FFFFFFFF" android:fillAlpha="0.1" android:strokeColor="#FFFFFFFF" android:strokeWidth="2.25" android:strokeLineCap="round" android:strokeLineJoin="round"/>
- <path android:pathData="M20,47 L45,47" android:fillColor="#00000000" android:strokeColor="#FFFFFFFF" android:strokeWidth="1.7" android:strokeLineCap="round" android:strokeLineJoin="round"/>
- <path android:pathData="M20,51 L45,51" android:fillColor="#00000000" android:strokeColor="#FFFFFFFF" android:strokeWidth="1.7" android:strokeLineCap="round" android:strokeLineJoin="round"/>
+<!--
+    RetroArch Assets / XMB Monochrome, CC BY 4.0.
+    Source: src/xmb/monochrome/Commodore - PET.svg
+    Revision: 8c918e2872482139273374ef4cc6c7aff34d7585
+    Native vector conversion; source geometry retained.
+    Credits and license: third_party_assets/game_system_icons/README.md
+    Regenerate with scripts/import_game_system_icons.py.
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android" android:width="64dp" android:height="64dp" android:viewportWidth="64" android:viewportHeight="64">
+    <clip-path android:pathData="M0,0H64V64H0Z" />
+    <group android:scaleX="1" android:scaleY="1" android:translateX="0" android:translateY="0">
+        <group>
+            <path android:fillColor="#FFFFFFFF" android:fillType="nonZero" android:pathData="M55.53,42.3h-47l-3.1,8.65h53.2L55.53,42.3z M25.8,46.91l-0.41,2.56H9.33v-2.15l1.68-3.73H25.8V46.91z    M28.04,48.86l0.49-3.89h17.15l0.97,3.89H28.04z M47.61,44.97h6.65l1.32,3.89h-7L47.61,44.97z" />
+            <path android:fillColor="#FFFFFFFF" android:fillType="nonZero" android:pathData="M53.69,34.1H10.31l-1.63,7.3h46.65L53.69,34.1z M10.91,39.94l0.69-3.16c0.14-0.78,0.82-1.35,1.62-1.35h37.52   c0.78,0,1.45,0.55,1.61,1.31l0.74,3.2C53.09,39.94,10.91,39.94,10.91,39.94z" />
+            <path android:fillColor="#FFFFFFFF" android:fillType="nonZero" android:pathData="M19.37,33.03h25.26v-1.78h4.57L45.23,9.64H18.77L14.8,31.25h4.57V33.03z M16.14,30.03l3.67-19.4h24.4   l3.67,19.4H16.14z" />
+            <path android:fillColor="#FFFFFFFF" android:fillType="nonZero" android:pathData="M12.35 47.73 12.35 48.92 13.66 48.92 13.66 47.73 14.03 46.84 12.71 46.84Z" />
+            <path android:fillColor="#FFFFFFFF" android:fillType="nonZero" android:pathData="M23.12 44.07 13.11 44.07 12.35 45.86 22.58 45.86Z" />
+            <path android:fillColor="#FFFFFFFF" android:fillType="nonZero" android:pathData="M14.12 47.73 14.12 48.92 15.42 48.92 15.42 47.73 15.8 46.84 14.47 46.84Z" />
+            <path android:fillColor="#FFFFFFFF" android:fillType="nonZero" android:pathData="M15.88 47.73 15.88 48.92 17.19 48.92 17.19 47.73 17.56 46.84 16.24 46.84Z" />
+            <path android:fillColor="#FFFFFFFF" android:fillType="nonZero" android:pathData="M17.65 47.73 17.65 48.92 18.95 48.92 18.95 47.73 19.33 46.84 18 46.84Z" />
+            <path android:fillColor="#FFFFFFFF" android:fillType="nonZero" android:pathData="M19.42 47.73 19.42 48.92 20.72 48.92 20.72 47.73 21.1 46.84 19.77 46.84Z" />
+            <path android:fillColor="#FFFFFFFF" android:fillType="nonZero" android:pathData="M58.79 52.06 5.25 52.06 5 54.36 59 54.36Z" />
+        </group>
+        <path android:fillColor="#FFFFFFFF" android:fillType="nonZero" android:pathData="M23.2,14.2c0,0-0.7,2.34-0.7,6.25s0.7,6.25,0.7,6.25s3.71,0.5,8.8,0.5s8.8-0.5,8.8-0.5s0.7-2.45,0.7-6.36  s-0.7-6.13-0.7-6.13s-3.37-0.5-8.8-0.5S23.2,14.2,23.2,14.2z" />
+    </group>
 </vector>

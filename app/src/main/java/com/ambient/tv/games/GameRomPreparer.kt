@@ -68,14 +68,15 @@ class GameRomPreparer @Inject constructor(
         }.getOrNull() else null
         val detectedSystem = GameSystems.forSourceFile(entry.name, entry.path, isoHeader)
         val ext = GameSystems.extension(entry.name)
-        // Explicit folder assignment only resolves compatible/ambiguous formats. A verified
-        // Wii or GameCube disc signature always beats a misleading folder assignment.
-        val assigned = systemOverride?.let(GameSystems::byId)?.takeIf { system ->
-            ext in system.extensions || ext in GameSystems.archiveExtensions ||
-                (ext in GameSystems.ambiguousExtensions &&
-                    !(ext == "iso" && isoHeader != null && detectedSystem != null && detectedSystem.id != system.id))
+        // Use the same compatibility filter as the library. An explicit assignment never
+        // launches a foreign console as a fallback. Archives are checked after extraction.
+        val assignedId = systemOverride?.takeUnless { it.isBlank() || it == "auto" }
+        val assigned = assignedId?.let { GameSystems.byId(it) ?: throw UnknownGameException(entry.name) }
+        val sourceSystem = if (ext in GameSystems.archiveExtensions) assigned else {
+            GameSystems.forAssignedFile(entry.name, assignedId, detectedSystem,
+                systemFromHeader = GameSystems.forDiscHeader(entry.name, isoHeader) != null)
+                ?: if (assigned != null) throw UnknownGameException(entry.name) else null
         }
-        val sourceSystem = assigned ?: detectedSystem
         val chosenCore = sourceSystem?.let { GameSettings.state.gameCore(it, key) }
         // Only cores declaring need_fullpath qualify. Uncompressed single-file discs and GDI
         // descriptors (including each track through named VFS descriptors) need no cached copy.
@@ -130,7 +131,8 @@ class GameRomPreparer @Inject constructor(
                 singleMarker.readLines().takeIf { it.size == 3 && it[0] == stamp }
                     ?.let { lines ->
                         val relative = safeRelativePath(lines[1]) ?: return@let null
-                        File(folder, relative).takeIf { it.isFile && it.length().toString() == lines[2] }
+                        File(folder, relative).takeIf { it.isFile && it.length().toString() == lines[2] &&
+                            GameSystems.forPreparedFile(it, entry.path, assignedId) != null }
                     }
             }.getOrNull()
             // Do not re-copy already cached compressed archives or materialized single ROMs.
@@ -142,7 +144,7 @@ class GameRomPreparer @Inject constructor(
                 if (budget <= 0) throw IOException("Insufficient cache space for ROM extraction")
                 val staged = access.open(source, path).use { media ->
                     GameArchives.stageSingle(entry.name, media, File(folder, "content"),
-                        budget, onProgress)
+                        budget, systemId = assignedId, onProgress = onProgress)
                 }
                 if (staged != null) {
                     singleMarker.writeText(
@@ -154,12 +156,8 @@ class GameRomPreparer @Inject constructor(
             if (single != null) {
                 folder.setLastModified(System.currentTimeMillis())
                 trim(keep = folder)
-                val detected = GameSystems.forPreparedFile(single, entry.path)
-                val preparedExt = GameSystems.extension(single.name)
-                val chosen = assigned?.takeIf {
-                    preparedExt in it.extensions || (preparedExt in GameSystems.ambiguousExtensions &&
-                        (detected == null || detected.id == it.id))
-                } ?: detected ?: throw UnknownGameException(entry.name)
+                val chosen = GameSystems.forPreparedFile(single, entry.path, assignedId)
+                    ?: throw UnknownGameException(entry.name)
                 return@withContext PreparedGame(fileId = fileId,
                     title = entry.name.substringBeforeLast('.'), file = single, system = chosen,
                     saveKey = key, sourceName = source.name, entry = entry)
@@ -201,15 +199,10 @@ class GameRomPreparer @Inject constructor(
         }
         folder.setLastModified(System.currentTimeMillis())
         trim(keep = folder)
-        val playable = if (GameSystems.extension(main.name) in GameSystems.archiveExtensions) unpack(main, folder) else main
+        val playable = if (GameSystems.extension(main.name) in GameSystems.archiveExtensions) unpack(main, folder, assignedId) else main
         trim(keep = folder)
-        val detectedPreparedSystem = GameSystems.forPreparedFile(playable, entry.path)
-        val preparedExt = GameSystems.extension(playable.name)
-        val system = assigned?.takeIf {
-            preparedExt in it.extensions ||
-                (preparedExt in GameSystems.ambiguousExtensions &&
-                    (detectedPreparedSystem == null || detectedPreparedSystem.id == it.id))
-        } ?: detectedPreparedSystem ?: throw UnknownGameException(entry.name)
+        val system = GameSystems.forPreparedFile(playable, entry.path, assignedId)
+            ?: throw UnknownGameException(entry.name)
         PreparedGame(
             fileId = fileId,
             title = entry.name.substringBeforeLast('.'),
@@ -286,7 +279,7 @@ class GameRomPreparer @Inject constructor(
      * Unpacks [archive] completely into "content" next to it (once per archive version; a disc needs
      * its tracks too) and returns the file to start: playlist, cue sheet, disc image or cartridge.
      */
-    private fun unpack(archive: File, folder: File): File {
+    private fun unpack(archive: File, folder: File, systemId: String?): File {
         val content = File(folder, "content")
         val done = File(folder, ".unpacked")
         val recorded = runCatching { done.readLines() }.getOrNull()
@@ -313,7 +306,8 @@ class GameRomPreparer @Inject constructor(
                 )
             }
         }
-        return GameArchives.choose(files) { it.name } ?: throw UnknownGameException(archive.name)
+        return GameArchives.choose(files, systemId) { it.relativeTo(content).invariantSeparatorsPath }
+            ?: throw UnknownGameException(archive.name)
     }
 
     /** Bytes the copied games take up. */

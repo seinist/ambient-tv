@@ -1,13 +1,15 @@
 <?xml version="1.0" encoding="utf-8"?>
-<vector xmlns:android="http://schemas.android.com/apk/res/android"
- android:width="64dp" android:height="64dp"
- android:viewportWidth="64" android:viewportHeight="64">
- <!-- Ambient TV: corrected upright system hardware, intentionally no brand logos. -->
- <path android:pathData="M19,6 H45 Q50,6 50,11 V52 Q50,58 44,58 H19 Q14,58 14,52 V11 Q14,6 19,6 Z" android:fillColor="#FFFFFFFF" android:fillAlpha="0.12" android:strokeColor="#FFFFFFFF" android:strokeWidth="2.25" android:strokeLineCap="round" android:strokeLineJoin="round"/>
- <path android:pathData="M23,11 H42 Q46,11 46,15 V36 Q46,40 42,40 H23 Q19,40 19,36 V15 Q19,11 23,11 Z" android:fillColor="#FFFFFFFF" android:fillAlpha="0.04" android:strokeColor="#FFFFFFFF" android:strokeWidth="2.25" android:strokeLineCap="round" android:strokeLineJoin="round"/>
- <path android:pathData="M24,15 H41 Q42,15 42,16 V35 Q42,36 41,36 H24 Q23,36 23,35 V16 Q23,15 24,15 Z" android:fillColor="#FFFFFFFF" android:fillAlpha="0.04" android:strokeColor="#FFFFFFFF" android:strokeWidth="2.25" android:strokeLineCap="round" android:strokeLineJoin="round"/>
- <path android:pathData="M18.9,48 a4.1,4.1 0,1 0,8.2,0 a4.1,4.1 0,1 0,-8.2,0" android:fillColor="#FFFFFFFF" android:fillAlpha="0.1" android:strokeColor="#FFFFFFFF" android:strokeWidth="2.25" android:strokeLineCap="round" android:strokeLineJoin="round"/>
- <path android:pathData="M39,46 a2,2 0,1 0,4,0 a2,2 0,1 0,-4,0" android:fillColor="#FFFFFFFF" android:fillAlpha="0.95"/>
- <path android:pathData="M43,51 a2,2 0,1 0,4,0 a2,2 0,1 0,-4,0" android:fillColor="#FFFFFFFF" android:fillAlpha="0.95"/>
- <path android:pathData="M29,55 L36,55" android:fillColor="#00000000" android:strokeColor="#FFFFFFFF" android:strokeWidth="1.3" android:strokeLineCap="round" android:strokeLineJoin="round"/>
+<!--
+    RetroArch Assets / XMB Monochrome, CC BY 4.0.
+    Source: src/xmb/monochrome/SNK - Neo Geo Pocket.svg
+    Revision: 8c918e2872482139273374ef4cc6c7aff34d7585
+    Native vector conversion; source geometry retained.
+    Credits and license: third_party_assets/game_system_icons/README.md
+    Regenerate with scripts/import_game_system_icons.py.
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android" android:width="64dp" android:height="64dp" android:viewportWidth="64" android:viewportHeight="64">
+    <clip-path android:pathData="M0,0H64V64H0Z" />
+    <group android:scaleX="1" android:scaleY="1" android:translateX="0" android:translateY="-128">
+        <path android:fillColor="#FFFFFFFF" android:fillType="nonZero" android:pathData="M57.896,144.362C57.139,143.551,44.569,143,32,143  c-12.568,0-25.139,0.551-25.896,1.362C5.597,144.578,5,145.587,5,146v26c0,1.728,2.805,3.367,4.523,3.559  C17.207,176.423,24.628,177,32,177c7.371,0,14.694-0.576,22.474-1.441C56.193,175.369,59,173.728,59,172v-26  C59,145.587,58.4,144.578,57.896,144.362z M15,149c0.553,0,1,0.447,1,1s-0.447,1-1,1s-1-0.447-1-1S14.447,149,15,149z M9,149h2  c0.553,0,1,0.447,1,1s-0.447,1-1,1H9c-0.553,0-1-0.447-1-1S8.447,149,9,149z M12.5,162c-2.485,0-4.5-2.015-4.5-4.5  s2.015-4.5,4.5-4.5s4.5,2.015,4.5,4.5S14.985,162,12.5,162z M44,169c0,1-24,1-24,0v-21c0-0.479,0.525-1,1-1h22c0.476,0,1,0.521,1,1  V169z M50,160c-1.104,0-2-0.896-2-2s0.896-2,2-2s2,0.896,2,2S51.104,160,50,160z M54,156c-1.104,0-2-0.896-2-2s0.896-2,2-2  s2,0.896,2,2S55.104,156,54,156z M54.5,149c-0.829,0-1.5-0.671-1.5-1.5s0.671-1.5,1.5-1.5s1.5,0.671,1.5,1.5S55.329,149,54.5,149z   M12.5,155c-1.381,0-2.5,1.119-2.5,2.5s1.119,2.5,2.5,2.5s2.5-1.119,2.5-2.5S13.881,155,12.5,155z" />
+    </group>
 </vector>

@@ -36,10 +36,14 @@ import com.ambient.tv.R
 import com.ambient.tv.ui.common.MediaSystem
 import com.ambient.tv.ui.common.SystemLogo
 import com.ambient.tv.ui.navigation.Destinations
+import com.ambient.tv.ui.navigation.GAMES_MENU_ID
+import com.ambient.tv.ui.navigation.SidebarUiState
 import com.ambient.tv.ui.navigation.SidebarViewModel
 import com.ambient.tv.ui.navigation.WEATHER_MENU_ID
 import com.ambient.tv.ui.navigation.menuOrderItems
 import com.ambient.tv.ui.navigation.menuSystemName
+import com.ambient.tv.ui.navigation.gamesMenuDestinations
+import com.ambient.tv.ui.navigation.gamesMenuName
 import com.ambient.tv.ui.navigation.sidebarShowsGlobalSearch
 import com.ambient.tv.ui.player.BackgroundPlaybackSession
 import com.ambient.tv.ui.player.PlaybackArtworkCard
@@ -96,8 +100,6 @@ fun HandheldNavigationHost(
         telegramCanSearch = com.ambient.tv.data.telegram.telegramSearchAvailable(
             com.ambient.tv.BuildConfig.MONOGRAM_NATIVE, sidebarState.telegramEnabled, sidebarState.telegramAuthorized),
     )
-    // Rotation switches between the Row and Column branches below. Moving the content instead of
-    // recreating it keeps the NavHost (and a running trailer, which stops on dispose) alive.
     val companion: com.ambient.tv.companion.CompanionViewModel = hiltViewModel()
     // Phone companion pages (pairing, remote, "Handy & TV") cover the content area, in this priority.
     val companionPage by remember(companion) {
@@ -143,23 +145,23 @@ fun HandheldNavigationHost(
     // safeDrawing would pad the portrait status bar / cutout onto the short edge in
     // landscape and leave a dead column beside the player. handheldContentWindowInsets
     // keeps that edge clear on every handheld page; television never reaches this branch.
-    if (isHandheldLandscape()) {
-        Row(Modifier.fillMaxSize().windowInsetsPadding(handheldContentWindowInsets()).imePadding()) {
-            if (showNavigation && !gamepadOpen) {
-                HandheldNavigationRail(
-                    currentRoute = currentRoute,
-                    showHome = showHome,
-                    showSearch = showSearch,
-                    onNavigate = navigate,
-                    onOpenSources = openSources,
-                )
-            }
-            Column(Modifier.weight(1f).fillMaxHeight(), content = page)
+    // Keep the same Row -> Column -> page parent path in both orientations. Moving a retained
+    // AndroidView between parents still detaches its native Surface and terminates its GL thread.
+    // Only navigation siblings change; the NavHost and any running player stay attached.
+    val landscape = isHandheldLandscape()
+    Row(Modifier.fillMaxSize().windowInsetsPadding(handheldContentWindowInsets()).imePadding()) {
+        if (landscape && showNavigation && !gamepadOpen) {
+            HandheldNavigationRail(
+                currentRoute = currentRoute,
+                showHome = showHome,
+                showSearch = showSearch,
+                onNavigate = navigate,
+                onOpenSources = openSources,
+            )
         }
-    } else {
-        Column(Modifier.fillMaxSize().windowInsetsPadding(handheldContentWindowInsets()).imePadding()) {
+        Column(Modifier.weight(1f).fillMaxHeight()) {
             page()
-            if (showNavigation && !gamepadOpen) {
+            if (!landscape && showNavigation && !gamepadOpen) {
                 HandheldNavigationBar(
                     currentRoute = currentRoute,
                     showHome = showHome,
@@ -335,14 +337,32 @@ private fun HandheldNavigationRail(
     }
 }
 
-private data class SourceEntry(
+internal data class SourceEntry(
     val key: String,
     val title: String,
     val route: String,
     val settingsCategory: String? = null,
     val offline: Boolean = false,
+    val icon: ImageVector? = null,
 )
-private data class SourceGroup(val system: MediaSystem, val entries: List<SourceEntry>)
+internal data class SourceGroup(val key: String, val system: MediaSystem?, val entries: List<SourceEntry>)
+
+/** Configured game folders are navigable before a scan and while their NAS is asleep. */
+@Composable
+internal fun handheldGameSourceGroup(state: SidebarUiState): SourceGroup? {
+    val destinations = gamesMenuDestinations(state)
+    if (destinations.isEmpty()) return null
+    val settings = if (GAMES_MENU_ID in state.settingsShortcutHidden) null else SourceEntry(
+        key = "settings",
+        title = stringResource(R.string.nav_system_settings, gamesMenuName()),
+        route = Destinations.SETTINGS,
+        settingsCategory = GAMES_MENU_ID,
+        icon = Icons.Default.Settings,
+    )
+    return SourceGroup(GAMES_MENU_ID, null, destinations.map {
+        SourceEntry(it.id, it.label, it.route, icon = it.icon)
+    } + listOfNotNull(settings))
+}
 
 /** A submenu only marks its exact active concrete route; settings shortcuts and
  * unrelated sections must never be highlighted just because they share a route pattern. */
@@ -421,9 +441,11 @@ private fun HandheldSources(
             route = Destinations.SETTINGS,
             settingsCategory = system.key,
         )
-        return SourceGroup(system, entries + listOfNotNull(settings))
+        return SourceGroup(system.key, system, entries + listOfNotNull(settings))
     }
+    val games = handheldGameSourceGroup(sidebarState)
     val groups = buildList {
+        games?.let(::add)
         if (dlnaServers.isNotEmpty()) add(withSettings(MediaSystem.DLNA,
             dlnaServers.map { SourceEntry(it.id, it.name, Destinations.dlnaServer(it.id), offline = "dlna:${it.id}" in sidebarState.offlineSystems) } +
                 listOf(SourceEntry("manage", stringResource(R.string.dlna_servers), Destinations.DLNA))))
@@ -516,7 +538,7 @@ private fun HandheldSources(
             SourceEntry(key, stringResource(label), if (key == "live") Destinations.LIVE_TV else Destinations.liveTvSection(key))
         }.ifEmpty { listOf(SourceEntry("live", stringResource(R.string.tvh_live), Destinations.LIVE_TV)) }))
     }
-    val groupsById = groups.associateBy { it.system.key }
+    val groupsById = groups.associateBy { it.key }
     var expanded by rememberSaveable { mutableStateOf<String?>(null) }
     ModalBottomSheet(onDismissRequest = onDismiss, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)) {
         Row(Modifier.fillMaxWidth().padding(horizontal = 20.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -544,24 +566,27 @@ private fun HandheldSources(
                     return@forEach
                 }
                 val group = groupsById[menuItem.id] ?: return@forEach
-                val open = groups.size == 1 || expanded == group.system.key
+                val open = groups.size == 1 || expanded == group.key
                 val groupActive = group.entries.any { handheldSourceSelected(activeRoute, it.route, it.settingsCategory) }
-                item(group.system.key) {
+                item(group.key) {
                     ListItem(
                         headlineContent = { Text(menuItem.label) },
-                        supportingContent = if (group.system.key in sidebarState.offlineSystems) {
+                        supportingContent = if (group.key in sidebarState.offlineSystems) {
                             { Text(stringResource(R.string.offline_badge)) }
                         } else null,
-                        leadingContent = { SystemLogo(group.system) },
+                        leadingContent = {
+                            group.system?.let { SystemLogo(it) } ?: Icon(menuItem.icon, null)
+                        },
                         trailingContent = { Icon(if (open) Icons.Default.ExpandLess else Icons.Default.ExpandMore, null) },
                         colors = handheldSourceColors(groupActive),
-                        modifier = Modifier.handheldSourceRow(groupActive) { expanded = if (open) null else group.system.key },
+                        modifier = Modifier.handheldSourceRow(groupActive) { expanded = if (open) null else group.key },
                     )
                 }
-                if (open) items(group.entries, key = { "${group.system.key}:${it.key}" }) { entry ->
+                if (open) items(group.entries, key = { "${group.key}:${it.key}" }) { entry ->
                     val active = handheldSourceSelected(activeRoute, entry.route, entry.settingsCategory)
                     ListItem(
                         headlineContent = { Text(entry.title) },
+                        leadingContent = entry.icon?.let { icon -> { Icon(icon, null, Modifier.size(28.dp)) } },
                         supportingContent = if (entry.offline) { { Text(stringResource(R.string.offline_badge)) } } else null,
                         trailingContent = { Icon(Icons.Default.ChevronRight, null) },
                         colors = handheldSourceColors(active),

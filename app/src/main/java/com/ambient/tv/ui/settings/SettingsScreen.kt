@@ -1671,6 +1671,8 @@ fun SettingsScreen(
                             items(aboutServiceComponents(), key = { "about-service-${it.name}" }) { component ->
                                 AboutComponentCard(component)
                             }
+                            item { SettingsSubheader(stringResource(R.string.settings_about_artwork)) }
+                            item { AboutGameIconsCard() }
                         }
                     }
                 }
@@ -1816,6 +1818,51 @@ private fun AboutAppCard() {
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
+        }
+    }
+}
+
+@Composable
+private fun AboutGameIconsCard() {
+    var showNotice by remember { mutableStateOf(false) }
+    SettingsGroup(
+        title = stringResource(R.string.settings_about_game_icons_title),
+        subtitle = "RetroArch Assets · XMB Monochrome",
+        card = true,
+    ) {
+        Text(
+            stringResource(R.string.settings_about_game_icons_credit),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Text(
+            "Creative Commons Attribution 4.0 International (CC BY 4.0)",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        SettingsActionRow {
+            TvActionButton(
+                text = stringResource(R.string.settings_about_game_icons_details),
+                onClick = { showNotice = true },
+            )
+        }
+    }
+    if (showNotice) {
+        val resources = LocalContext.current.resources
+        val notice = remember(resources) {
+            resources.openRawResource(R.raw.game_system_icons_notice).bufferedReader().use { it.readText() }
+        }
+        val license = remember(resources) {
+            resources.openRawResource(R.raw.game_system_icons_cc_by_4_0).bufferedReader().use { it.readText() }
+        }
+        AppDialog(
+            onDismiss = { showNotice = false },
+            title = stringResource(R.string.settings_about_game_icons_title),
+            hint = stringResource(R.string.settings_about_game_icons_modifications),
+            fillHeight = true,
+        ) {
+            Text(notice, style = MaterialTheme.typography.bodySmall)
+            Text(license, style = MaterialTheme.typography.bodySmall)
         }
     }
 }

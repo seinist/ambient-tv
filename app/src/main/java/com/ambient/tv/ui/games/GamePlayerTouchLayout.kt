@@ -1,0 +1,84 @@
+package com.ambient.tv.ui.games
+
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.safeDrawingPadding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Menu
+import androidx.compose.material3.Icon
+import androidx.compose.runtime.Composable
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.unit.dp
+import com.ambient.tv.R
+import com.ambient.tv.games.GameTouchMode
+import com.ambient.tv.ui.gamepad.retro.RetroPadButton
+
+/** Layout stays stable when the OSD opens, so pausing never resizes/recreates the native surface. */
+@Composable
+internal fun GamePlayerTouchLayout(
+    handheld: Boolean,
+    directPointer: Boolean,
+    touchEnabled: Boolean,
+    touchMode: GameTouchMode,
+    playing: Boolean,
+    menuVisible: Boolean,
+    onMenu: () -> Unit,
+    onButton: (RetroPadButton, Boolean) -> Unit,
+    onStick: (Int, Float, Float) -> Unit,
+    surface: @Composable (Modifier) -> Unit,
+) {
+    BoxWithConstraints(Modifier.fillMaxSize().then(if (handheld) Modifier.safeDrawingPadding() else Modifier)) {
+        val docked = handheld && touchEnabled && maxHeight > maxWidth
+        val deckHeight = if (docked) gameTouchDeckHeight(touchMode, maxWidth.value).dp.coerceAtMost(maxHeight) else 0.dp
+        val viewportHeight = (maxHeight - deckHeight).coerceAtLeast(1.dp)
+        surface(
+            Modifier.align(Alignment.TopCenter).fillMaxWidth().height(viewportHeight)
+                .testTag("game-player-surface")
+                // With a gamepad shown, only the dedicated menu button opens the OSD.
+                // Pointer systems continue to receive untouched native DS/3DS/Wii input.
+                .then(if (handheld && !directPointer && !touchEnabled && !menuVisible)
+                    Modifier.clickable(onClick = onMenu) else Modifier),
+        )
+        if (docked) Box(
+            Modifier.align(Alignment.BottomCenter).fillMaxWidth().height(deckHeight)
+                .background(Brush.verticalGradient(listOf(Color.Transparent, Color.Black.copy(alpha = .24f)))),
+        )
+        if (handheld && playing && touchEnabled && !menuVisible) {
+            GameTouchControls(
+                mode = touchMode,
+                onButton = onButton,
+                onStick = onStick,
+                modifier = Modifier.align(Alignment.BottomCenter).fillMaxWidth()
+                    .height(if (docked) deckHeight else maxHeight),
+                portrait = docked,
+                applySafeInsets = false,
+            )
+        }
+        if (handheld && !menuVisible) {
+            Box(
+                Modifier.align(Alignment.TopStart).padding(12.dp).size(48.dp)
+                    .testTag("game-player-menu")
+                    .clip(CircleShape).background(Color.Black.copy(alpha = .58f))
+                    .clickable(onClick = onMenu),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(Icons.Filled.Menu, contentDescription = stringResource(R.string.game_controls_menu),
+                    tint = Color.White, modifier = Modifier.size(24.dp))
+            }
+        }
+    }
+}

@@ -92,6 +92,9 @@ internal class GameVulkanSurfaceHost(
         tryProbe()
     }
 
+    /** Sample the actual presentation for handheld ambient fill, including native Vulkan WSI. */
+    fun presentationSurface(): SurfaceView = if (fullscreenVisible) probeSurface else retro
+
     fun updateDisplayHdr(info: GameHdrDisplayCapabilities) {
         if (disposed || displayHdr == info) return
         displayHdr = info

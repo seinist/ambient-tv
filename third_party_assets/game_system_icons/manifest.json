@@ -1,0 +1,232 @@
+{
+  "schema": 1,
+  "upstream_repository": "https://github.com/libretro/retroarch-assets",
+  "upstream_commit": "8c918e2872482139273374ef4cc6c7aff34d7585",
+  "theme": "XMB Monochrome",
+  "license": "CC-BY-4.0",
+  "license_file": "COPYING",
+  "license_sha256": "469faa8457ffed7428f1c150f4d8682ce25f2d991a694eec544e661f43452f50",
+  "credits": "RetroArch Assets contributors; XMB Monochrome theme by Kivutar, with contributions by baxysquare and other RetroArch Assets contributors.",
+  "modifications": "Original SVG path geometry and affine transforms converted to native Android VectorDrawables with a 64 x 64 viewport and theme tint. Polygon elements are represented as closed paths. No raster tracing, fonts or bitmap assets are included.",
+  "assets": [
+    {
+      "system_id": "a2600",
+      "upstream_path": "src/xmb/monochrome/Atari - 2600.svg",
+      "source_file": "monochrome/a2600.svg",
+      "source_sha256": "71faf87c840e6d7eb11f047b3c75fd2f99844ac5047b7fc6ad5e2509a33b4638",
+      "output": "app/src/main/res/drawable/game_system_a2600.xml"
+    },
+    {
+      "system_id": "a5200",
+      "upstream_path": "src/xmb/monochrome/Atari - 5200.svg",
+      "source_file": "monochrome/a5200.svg",
+      "source_sha256": "8915754011b16a11adcea60e5cfc13cc66cdae9f4a596fc7e62b75cbc072ca91",
+      "output": "app/src/main/res/drawable/game_system_a5200.xml"
+    },
+    {
+      "system_id": "a7800",
+      "upstream_path": "src/xmb/monochrome/Atari - 7800.svg",
+      "source_file": "monochrome/a7800.svg",
+      "source_sha256": "3ce054ac00a824b79696f549ee5218dfe04ed0d5dc8bb3b3a0c76e64b837f6d2",
+      "output": "app/src/main/res/drawable/game_system_a7800.xml"
+    },
+    {
+      "system_id": "c64",
+      "upstream_path": "src/xmb/monochrome/Commodore - 64.svg",
+      "source_file": "monochrome/c64.svg",
+      "source_sha256": "e84ec6c401dfd844ece7a16b132dd06a3cbb2f9b03170498cabf8fb61434f28b",
+      "output": "app/src/main/res/drawable/game_system_c64.xml"
+    },
+    {
+      "system_id": "cbm2",
+      "upstream_path": "src/xmb/monochrome/Commodore - CBM-II.svg",
+      "source_file": "monochrome/cbm2.svg",
+      "source_sha256": "555170beb522764bff1b71f9f8e05d139f8f016bccaaee48f403fc69ebcb62a2",
+      "output": "app/src/main/res/drawable/game_system_cbm2.xml"
+    },
+    {
+      "system_id": "dreamcast",
+      "upstream_path": "src/xmb/monochrome/Sega - Dreamcast.svg",
+      "source_file": "monochrome/dreamcast.svg",
+      "source_sha256": "284e7f243fa05c1a772f2fea1b173b2ec6c72db5e66138f0dca45c47d1f82a48",
+      "output": "app/src/main/res/drawable/game_system_dreamcast.xml"
+    },
+    {
+      "system_id": "gamecube",
+      "upstream_path": "src/xmb/monochrome/Nintendo - GameCube.svg",
+      "source_file": "monochrome/gamecube.svg",
+      "source_sha256": "bdb92468faea624be0d42477015d4ef51305abf6d70377c747f637642bf8f784",
+      "output": "app/src/main/res/drawable/game_system_gamecube.xml"
+    },
+    {
+      "system_id": "gb",
+      "upstream_path": "src/xmb/monochrome/Nintendo - Game Boy.svg",
+      "source_file": "monochrome/gb.svg",
+      "source_sha256": "39435c861c33defc9dcd59b6f406b2db67bbd9f31cedb0a155a1723f0dc7fa16",
+      "output": "app/src/main/res/drawable/game_system_gb.xml"
+    },
+    {
+      "system_id": "gba",
+      "upstream_path": "src/xmb/monochrome/Nintendo - Game Boy Advance.svg",
+      "source_file": "monochrome/gba.svg",
+      "source_sha256": "a4a91a1c15a947482dc2311eddb85b0d8356a364a199ecedecd0322152868188",
+      "output": "app/src/main/res/drawable/game_system_gba.xml"
+    },
+    {
+      "system_id": "lynx",
+      "upstream_path": "src/xmb/monochrome/Atari - Lynx.svg",
+      "source_file": "monochrome/lynx.svg",
+      "source_sha256": "4ed74274f93821b8ac0245d0d1c348a6df63cc7883bc0dd6226dc5ed7ac228d2",
+      "output": "app/src/main/res/drawable/game_system_lynx.xml"
+    },
+    {
+      "system_id": "megadrive",
+      "upstream_path": "src/xmb/monochrome/Sega - Mega Drive - Genesis.svg",
+      "source_file": "monochrome/megadrive.svg",
+      "source_sha256": "d4a3d9f5ea97f3b543ce63abb4d450d3f0763c0da44a983e10bb34603824e8cf",
+      "output": "app/src/main/res/drawable/game_system_megadrive.xml"
+    },
+    {
+      "system_id": "n3ds",
+      "upstream_path": "src/xmb/monochrome/Nintendo - Nintendo 3DS.svg",
+      "source_file": "monochrome/n3ds.svg",
+      "source_sha256": "57f0e6b759be041da75c0212e9f976a53394f1b1638049f9d37404db8b21de6a",
+      "output": "app/src/main/res/drawable/game_system_n3ds.xml"
+    },
+    {
+      "system_id": "n64",
+      "upstream_path": "src/xmb/monochrome/Nintendo - Nintendo 64.svg",
+      "source_file": "monochrome/n64.svg",
+      "source_sha256": "21fde90d4c5bd4351b1d391962319f54bcffd57263db3c39b73fe135ec0ccc2e",
+      "output": "app/src/main/res/drawable/game_system_n64.xml"
+    },
+    {
+      "system_id": "nds",
+      "upstream_path": "src/xmb/monochrome/Nintendo - Nintendo DS.svg",
+      "source_file": "monochrome/nds.svg",
+      "source_sha256": "b013699eb1d12960359d69ecd1d98837b0104e03d7f1e63d07fe233d7845e68f",
+      "output": "app/src/main/res/drawable/game_system_nds.xml"
+    },
+    {
+      "system_id": "nes",
+      "upstream_path": "src/xmb/monochrome/Nintendo - Nintendo Entertainment System.svg",
+      "source_file": "monochrome/nes.svg",
+      "source_sha256": "19b062e92a19a47ded39c29313d3c771b496543ddd2c6143099b4fac951f05eb",
+      "output": "app/src/main/res/drawable/game_system_nes.xml"
+    },
+    {
+      "system_id": "ngp",
+      "upstream_path": "src/xmb/monochrome/SNK - Neo Geo Pocket.svg",
+      "source_file": "monochrome/ngp.svg",
+      "source_sha256": "b64b5908b37773732e50c02bf8132769d65949680ec67e99432ac82c7055d27b",
+      "output": "app/src/main/res/drawable/game_system_ngp.xml"
+    },
+    {
+      "system_id": "pce",
+      "upstream_path": "src/xmb/monochrome/NEC - PC Engine - TurboGrafx 16.svg",
+      "source_file": "monochrome/pce.svg",
+      "source_sha256": "25a2b32040c26c6d2aff17e985e87821605d8d370f47f33382762fa6c651f87e",
+      "output": "app/src/main/res/drawable/game_system_pce.xml"
+    },
+    {
+      "system_id": "pet",
+      "upstream_path": "src/xmb/monochrome/Commodore - PET.svg",
+      "source_file": "monochrome/pet.svg",
+      "source_sha256": "260a7a10a0443100c6cc91db6bc63be74c32dba7e55ff5188b4bec47e26d0b82",
+      "output": "app/src/main/res/drawable/game_system_pet.xml"
+    },
+    {
+      "system_id": "plus4",
+      "upstream_path": "src/xmb/monochrome/Commodore - Plus-4.svg",
+      "source_file": "monochrome/plus4.svg",
+      "source_sha256": "21a813c8ec33d5c80e14522b603a4ff13ac92d31f42437d43f1e5a2b8d5f72a7",
+      "output": "app/src/main/res/drawable/game_system_plus4.xml"
+    },
+    {
+      "system_id": "ps2",
+      "upstream_path": "src/xmb/monochrome/Sony - PlayStation 2.svg",
+      "source_file": "monochrome/ps2.svg",
+      "source_sha256": "68510b2580a07183ab4175ab28fc107afa7a5f9e0b8ba82b15a0d79a97cf106a",
+      "output": "app/src/main/res/drawable/game_system_ps2.xml"
+    },
+    {
+      "system_id": "psp",
+      "upstream_path": "src/xmb/monochrome/Sony - PlayStation Portable.svg",
+      "source_file": "monochrome/psp.svg",
+      "source_sha256": "072cb3e5fc95b7b056c42013ca78d7e2984270ce76cc00f7a9740952b37f4988",
+      "output": "app/src/main/res/drawable/game_system_psp.xml"
+    },
+    {
+      "system_id": "psx",
+      "upstream_path": "src/xmb/monochrome/Sony - PlayStation.svg",
+      "source_file": "monochrome/psx.svg",
+      "source_sha256": "b1f964b8f95ab268f52c789f8fb21fb17975afabef0e8bd92336662eb8611e8f",
+      "output": "app/src/main/res/drawable/game_system_psx.xml"
+    },
+    {
+      "system_id": "saturn",
+      "upstream_path": "src/xmb/monochrome/Sega - Saturn.svg",
+      "source_file": "monochrome/saturn.svg",
+      "source_sha256": "37559645982097900cc12c791a346211450b0332880570cdf03fb33745ff187e",
+      "output": "app/src/main/res/drawable/game_system_saturn.xml"
+    },
+    {
+      "system_id": "sega32x",
+      "upstream_path": "src/xmb/monochrome/Sega - 32X.svg",
+      "source_file": "monochrome/sega32x.svg",
+      "source_sha256": "d4a3d9f5ea97f3b543ce63abb4d450d3f0763c0da44a983e10bb34603824e8cf",
+      "output": "app/src/main/res/drawable/game_system_sega32x.xml"
+    },
+    {
+      "system_id": "snes",
+      "upstream_path": "src/xmb/monochrome/Nintendo - Super Nintendo Entertainment System.svg",
+      "source_file": "monochrome/snes.svg",
+      "source_sha256": "ce183526f75b6e4ef6f07e9b39932597a199c35a2c49ee9d9b84df87c6ec7ff8",
+      "output": "app/src/main/res/drawable/game_system_snes.xml"
+    },
+    {
+      "system_id": "vb",
+      "upstream_path": "src/xmb/monochrome/Nintendo - Virtual Boy.svg",
+      "source_file": "monochrome/vb.svg",
+      "source_sha256": "073e3b42ca6bef2435496ca262dea7e34be47b778450cdce55c8c2e3564d1068",
+      "output": "app/src/main/res/drawable/game_system_vb.xml"
+    },
+    {
+      "system_id": "vic20",
+      "upstream_path": "src/xmb/monochrome/Commodore - VIC-20.svg",
+      "source_file": "monochrome/vic20.svg",
+      "source_sha256": "bf5fb2b6254884bd5ca1e931d993dd7aab0372f2dc51ca7023265241a81e8020",
+      "output": "app/src/main/res/drawable/game_system_vic20.xml"
+    },
+    {
+      "system_id": "wii",
+      "upstream_path": "src/xmb/monochrome/Nintendo - Wii.svg",
+      "source_file": "monochrome/wii.svg",
+      "source_sha256": "5a6ebdf5e4f5a5aeb02c7b9237225d81dcdb529237b88c00ce9c006075f9bea0",
+      "output": "app/src/main/res/drawable/game_system_wii.xml"
+    },
+    {
+      "system_id": "wiiu",
+      "upstream_path": "src/xmb/monochrome/Nintendo - Wii U.svg",
+      "source_file": "monochrome/wiiu.svg",
+      "source_sha256": "4bb4fefd9c6993938600501223d8731b1c6cf9fec6eafc3e9ab1d485e9668b84",
+      "output": "app/src/main/res/drawable/game_system_wiiu.xml"
+    },
+    {
+      "system_id": "wswan",
+      "upstream_path": "src/xmb/monochrome/Bandai - WonderSwan.svg",
+      "source_file": "monochrome/wswan.svg",
+      "source_sha256": "962f5ca1580ca0dd98b7ad2ac46ac85d344f5cc44809a1309c5a2b084cba7f49",
+      "output": "app/src/main/res/drawable/game_system_wswan.xml"
+    }
+  ],
+  "fallbacks": [
+    {
+      "system_id": "c128",
+      "output": "app/src/main/res/drawable/game_system_c128.xml",
+      "sha256": "3958a5a32ba018baeffd2540cbb46e5c1aa85efff3ea1281e9149a711d65d392",
+      "origin": "Existing original Ambient TV vector artwork; not a RetroArch asset.",
+      "reason": "The pinned RetroArch Monochrome theme provides Commodore - 128.png, but no corresponding SVG source."
+    }
+  ]
+}

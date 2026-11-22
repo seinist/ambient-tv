@@ -1,18 +1,15 @@
 <?xml version="1.0" encoding="utf-8"?>
-<vector xmlns:android="http://schemas.android.com/apk/res/android"
- android:width="64dp" android:height="64dp"
- android:viewportWidth="64" android:viewportHeight="64">
- <!-- Ambient TV: corrected upright system hardware, intentionally no brand logos. -->
- <path android:pathData="M6,9 H58 Q60,9 60,13 V29 H4 V13 Q4,9 6,9 Z" android:fillColor="#FFFFFFFF" android:fillAlpha="0.11" android:strokeColor="#FFFFFFFF" android:strokeWidth="2.25" android:strokeLineCap="round" android:strokeLineJoin="round"/>
- <path android:pathData="M15,12 H49 Q51,12 51,14 V24 Q51,26 49,26 H15 Q13,26 13,24 V14 Q13,12 15,12 Z" android:fillColor="#FFFFFFFF" android:fillAlpha="0.03" android:strokeColor="#FFFFFFFF" android:strokeWidth="2.25" android:strokeLineCap="round" android:strokeLineJoin="round"/>
- <path android:pathData="M18,14 H46 Q47,14 47,15 V23 Q47,24 46,24 H18 Q17,24 17,23 V15 Q17,14 18,14 Z" android:fillColor="#FFFFFFFF" android:fillAlpha="0.035" android:strokeColor="#FFFFFFFF" android:strokeWidth="2.25" android:strokeLineCap="round" android:strokeLineJoin="round"/>
- <path android:pathData="M5,31 L59,31" android:fillColor="#00000000" android:strokeColor="#FFFFFFFF" android:strokeWidth="1.8" android:strokeLineCap="round" android:strokeLineJoin="round"/>
- <path android:pathData="M4,33 H60 V50 Q60,55 55,55 H9 Q4,55 4,50 Z" android:fillColor="#FFFFFFFF" android:fillAlpha="0.12" android:strokeColor="#FFFFFFFF" android:strokeWidth="2.25" android:strokeLineCap="round" android:strokeLineJoin="round"/>
- <path android:pathData="M20,35 H44 Q46,35 46,37 V49 Q46,51 44,51 H20 Q18,51 18,49 V37 Q18,35 20,35 Z" android:fillColor="#FFFFFFFF" android:fillAlpha="0.035" android:strokeColor="#FFFFFFFF" android:strokeWidth="2.25" android:strokeLineCap="round" android:strokeLineJoin="round"/>
- <path android:pathData="M22,37 H42 Q43,37 43,38 V48 Q43,49 42,49 H22 Q21,49 21,48 V38 Q21,37 22,37 Z" android:fillColor="#FFFFFFFF" android:fillAlpha="0.03" android:strokeColor="#FFFFFFFF" android:strokeWidth="2.25" android:strokeLineCap="round" android:strokeLineJoin="round"/>
- <path android:pathData="M9.75,41.25 H12.25 V43.75 H14.75 V46.25 H12.25 V48.75 H9.75 V46.25 H7.25 V43.75 H9.75 Z" android:fillColor="#FFFFFFFF" android:fillAlpha="0.21" android:strokeColor="#FFFFFFFF" android:strokeWidth="1.65" android:strokeLineCap="round" android:strokeLineJoin="round"/>
- <path android:pathData="M50.5,40 a1.5,1.5 0,1 0,3,0 a1.5,1.5 0,1 0,-3,0" android:fillColor="#FFFFFFFF" android:fillAlpha="0.95"/>
- <path android:pathData="M53.5,43 a1.5,1.5 0,1 0,3,0 a1.5,1.5 0,1 0,-3,0" android:fillColor="#FFFFFFFF" android:fillAlpha="0.95"/>
- <path android:pathData="M50.5,46 a1.5,1.5 0,1 0,3,0 a1.5,1.5 0,1 0,-3,0" android:fillColor="#FFFFFFFF" android:fillAlpha="0.95"/>
- <path android:pathData="M47.5,43 a1.5,1.5 0,1 0,3,0 a1.5,1.5 0,1 0,-3,0" android:fillColor="#FFFFFFFF" android:fillAlpha="0.95"/>
+<!--
+    RetroArch Assets / XMB Monochrome, CC BY 4.0.
+    Source: src/xmb/monochrome/Nintendo - Nintendo DS.svg
+    Revision: 8c918e2872482139273374ef4cc6c7aff34d7585
+    Native vector conversion; source geometry retained.
+    Credits and license: third_party_assets/game_system_icons/README.md
+    Regenerate with scripts/import_game_system_icons.py.
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android" android:width="64dp" android:height="64dp" android:viewportWidth="64" android:viewportHeight="64">
+    <clip-path android:pathData="M0,0H64V64H0Z" />
+    <group android:scaleX="1" android:scaleY="1" android:translateX="0" android:translateY="-128">
+        <path android:fillColor="#FFFFFFFF" android:fillType="nonZero" android:pathData="M54,139c0-1,0-1-1-1H11c-1,0-1,0-1,1v20h1.5c-0.828,0-1.5,0.672-1.5,1.5s0.672,1.5,1.5,1.5  H10v19c0,1,0,1,1,1h42c1,0,1,0,1-1v-19c-0.768,0-1.5,0-1.5,0c0.828,0,1.5-0.672,1.5-1.5s-0.672-1.5-1.5-1.5c0,0,0.732,0,1.5,0V139z   M48.5,165c0.829,0,1.5,0.671,1.5,1.5s-0.671,1.5-1.5,1.5s-1.5-0.671-1.5-1.5S47.671,165,48.5,165z M17,171h-1v1c0,1,0,1-1,1  s-1,0-1-1v-1h-1c-1,0-1,0-1-1s0-1,1-1h1v-1c0-1,0-1,1-1s1,0,1,1v1h1c1,0,1,0,1,1S18,171,17,171z M42,179H22v-15h20V179z M42,156H22  v-15h20V156z M45.5,180c-0.276,0-0.5-0.224-0.5-0.5s0.224-0.5,0.5-0.5s0.5,0.224,0.5,0.5S45.776,180,45.5,180z M45.5,178  c-0.276,0-0.5-0.224-0.5-0.5s0.224-0.5,0.5-0.5s0.5,0.224,0.5,0.5S45.776,178,45.5,178z M45.5,171c-0.829,0-1.5-0.671-1.5-1.5  s0.671-1.5,1.5-1.5s1.5,0.671,1.5,1.5S46.329,171,45.5,171z M48.5,174c-0.829,0-1.5-0.671-1.5-1.5s0.671-1.5,1.5-1.5  s1.5,0.671,1.5,1.5S49.329,174,48.5,174z M53,169.5c0,0.829-0.671,1.5-1.5,1.5s-1.5-0.671-1.5-1.5s0.671-1.5,1.5-1.5  S53,168.671,53,169.5z" />
+    </group>
 </vector>
