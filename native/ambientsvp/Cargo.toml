@@ -12,9 +12,9 @@ default = ["vulkan"]
 vulkan = ["dep:wgpu", "dep:pollster"]
 
 [dependencies]
-svpflow1 = { git = "https://github.com/Z1xus/open-svpflow", rev = "badc0de2282d2300303f5b9461919a2bc4dbcf65" }
-svpflow-core = { git = "https://github.com/Z1xus/open-svpflow", rev = "badc0de2282d2300303f5b9461919a2bc4dbcf65" }
-svpflow-wasm = { git = "https://github.com/Z1xus/open-svpflow", rev = "badc0de2282d2300303f5b9461919a2bc4dbcf65" }
+svpflow1 = { git = "https://github.com/Z1xus/open-svpflow", rev = "badc0de73b274d73bb8dad4affece877261338ce" }
+svpflow-core = { git = "https://github.com/Z1xus/open-svpflow", rev = "badc0de73b274d73bb8dad4affece877261338ce" }
+svpflow-wasm = { git = "https://github.com/Z1xus/open-svpflow", rev = "badc0de73b274d73bb8dad4affece877261338ce" }
 rayon = "1.12"
 wgpu = { version = "=24.0.5", default-features = false, features = ["wgsl", "vulkan-portability"], optional = true }
 pollster = { version = "0.4", optional = true }
