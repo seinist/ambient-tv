@@ -75,3 +75,7 @@ feature's Android compile/unit-test CI passed in run 45006273694 at commit 30035
 Primary API checked: [Coil 3.6.3 model equality](https://github.com/coil-kt/coil/blob/3.6.3/coil-compose-core/src/commonMain/kotlin/coil3/compose/LocalAsyncImageModelEqualityDelegate.kt)
 and [request cache-key builder](https://github.com/coil-kt/coil/blob/3.6.3/coil-core/src/commonMain/kotlin/coil3/request/ImageRequest.kt).
 This is workload/correctness evidence, not a measured phone/TV latency improvement.
+
+Follow-up performance audit found that retaining the original request URL in the analysis identity repeated face detection across token-free snapshot/live URL variants even when Coil resolved them to the same scoped image. The analysis key now uses that resolved identity when available; URL/header isolation remains the fallback. A regression covers reuse, account isolation and unresolved-URL separation. Digest encoding also avoids per-field byte buffers and per-byte formatting allocations.
+
+All three pure analysis-identity tests passed locally after this follow-up against the actual production helper compiled with Android API signatures.

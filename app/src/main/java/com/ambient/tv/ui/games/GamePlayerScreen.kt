@@ -56,7 +56,6 @@ import kotlinx.coroutines.launch
 import java.io.File
 import android.os.Handler
 import android.os.Looper
-import android.view.KeyEvent
 import android.view.View
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
@@ -255,26 +254,6 @@ internal fun GameShader.config(intensity: Float = 1f): ShaderConfig = when (this
     else -> GameRetroShaders.config(this, intensity)
 }
 
-/** The Android key LibretroDroid reads as each RetroPad button (it maps by letter, not position). */
-internal fun RetroPadButton.libretroDroidKey(): Int = when (this) {
-    RetroPadButton.A -> KeyEvent.KEYCODE_BUTTON_A
-    RetroPadButton.B -> KeyEvent.KEYCODE_BUTTON_B
-    RetroPadButton.X -> KeyEvent.KEYCODE_BUTTON_X
-    RetroPadButton.Y -> KeyEvent.KEYCODE_BUTTON_Y
-    RetroPadButton.L -> KeyEvent.KEYCODE_BUTTON_L1
-    RetroPadButton.R -> KeyEvent.KEYCODE_BUTTON_R1
-    RetroPadButton.L2 -> KeyEvent.KEYCODE_BUTTON_L2
-    RetroPadButton.R2 -> KeyEvent.KEYCODE_BUTTON_R2
-    RetroPadButton.L3 -> KeyEvent.KEYCODE_BUTTON_THUMBL
-    RetroPadButton.R3 -> KeyEvent.KEYCODE_BUTTON_THUMBR
-    RetroPadButton.START -> KeyEvent.KEYCODE_BUTTON_START
-    RetroPadButton.SELECT -> KeyEvent.KEYCODE_BUTTON_SELECT
-    RetroPadButton.UP -> KeyEvent.KEYCODE_DPAD_UP
-    RetroPadButton.DOWN -> KeyEvent.KEYCODE_DPAD_DOWN
-    RetroPadButton.LEFT -> KeyEvent.KEYCODE_DPAD_LEFT
-    RetroPadButton.RIGHT -> KeyEvent.KEYCODE_DPAD_RIGHT
-}
-
 /** LibretroDroid follows a lifecycle; it mirrors the activity (the menu pauses the emulation itself). */
 private class GameLifecycleOwner : LifecycleOwner {
     val registry = LifecycleRegistry(this)
@@ -448,13 +427,13 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
     /** The picture when the menu opened: preview for every state saved from this menu. */
     var snapshot by remember { mutableStateOf<Bitmap?>(null) }
     val achievements = remember { GameAchievements(model.retroAchievements, scope) }
-    /** The input layer (created below); netplay reads the local player's buttons from it. */
-    val inputRef = remember { java.util.concurrent.atomic.AtomicReference<RetroPadInput?>(null) }
     val netplay = remember {
+        // Native captures masks/axes/pressures atomically and retains taps until this tick.
+        // One reusable array avoids a JNI array allocation on every lockstep frame.
+        val captured = IntArray(7)
         GameNetplay(context.applicationContext, scope) {
-            inputRef.get()?.let { pad ->
-                NetplayInput(pad.buttons(0), pad.analog(0, 0, 0), pad.analog(0, 0, 1), pad.analog(0, 1, 0), pad.analog(0, 1, 1))
-            } ?: NetplayInput.NONE
+            LibretroDroid.getInputPortSnapshot(0, captured)
+            NetplayInput(captured[0], captured[1], captured[2], captured[3], captured[4], captured[5], captured[6])
         }
     }
     var cheats by remember { mutableStateOf(model.cheats(game)) }
@@ -919,7 +898,27 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
             onMenu = { latestOpenMenu() },
             onRewind = { held -> rewinding = held && core.rewind && stateAvailable && serializationPolicy.frameExact },
             onFastForward = { if (!netplay.active) fastForward = !fastForward },
-        ).also(inputRef::set)
+        )
+    }
+    var coreInputDescriptions by remember(retroView) { mutableStateOf<Map<String, String>>(emptyMap()) }
+    val coreInputActions = remember(coreInputDescriptions) {
+        List(RetroPorts.COUNT) { com.ambient.tv.games.GameInputDescriptions.forPort(coreInputDescriptions, it) }
+    }
+    // A single atomic revision check per second; descriptors are copied/parsed only when
+    // they change. This also catches core-option/controller changes while the OSD is open.
+    LaunchedEffect(retroView, loaded, activityResumed, destroyed, optionsVersion, panel) {
+        if (!loaded || !activityResumed || destroyed) return@LaunchedEffect
+        var revision = -1L
+        while (true) {
+            val next = LibretroDroid.getInputDescriptorRevision()
+            if (next != revision) {
+                coreInputDescriptions = withContext(Dispatchers.Default) {
+                    com.ambient.tv.games.GameInputDescriptions.fromNative(LibretroDroid.getInputDescriptors())
+                }
+                revision = next
+            }
+            kotlinx.coroutines.delay(1_000L)
+        }
     }
     // Only changed pointer contacts go through JNI; the other device types do not receive
     // redundant six-call resets on each 60Hz phone position update.
@@ -982,6 +981,9 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
     LaunchedEffect(input, handheld, running) {
         if (!handheld) com.ambient.tv.companion.CompanionGamepadSession.setReady(input, running)
     }
+    LaunchedEffect(input, handheld, coreInputDescriptions) {
+        if (!handheld) com.ambient.tv.companion.CompanionGamepadSession.setInputDescriptions(input, coreInputDescriptions)
+    }
     // Vibration goes to the controllers of the player the core addresses.
     val runningNow by rememberUpdatedState(running)
     LaunchedEffect(Unit) {
@@ -1023,34 +1025,27 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
         }
     }
     DisposableEffect(input, retroView) {
-        val sentButtons = IntArray(RetroPorts.COUNT)
-        val sentAnalog = IntArray(RetroPorts.COUNT * 4)
-        input.onChanged = {
+        val sent = IntArray(RetroPorts.COUNT * 7)
+        input.onChanged = changed@{
+            if (destroyed) return@changed
             for (port in 0 until RetroPorts.COUNT) {
                 val buttons = input.buttons(port)
-                val changed = buttons xor sentButtons[port]
-                if (changed != 0) {
-                    RetroPadButton.entries.forEach { button ->
-                        if (changed and button.mask != 0) {
-                            val action = if (buttons and button.mask != 0) KeyEvent.ACTION_DOWN else KeyEvent.ACTION_UP
-                            retroView.sendKeyEvent(action, button.libretroDroidKey(), port)
-                        }
-                    }
-                    sentButtons[port] = buttons
-                }
-                for (index in 0..1) {
-                    val x = input.analog(port, index, 0)
-                    val y = input.analog(port, index, 1)
-                    val at = port * 4 + index * 2
-                    if (x != sentAnalog[at] || y != sentAnalog[at + 1]) {
-                        sentAnalog[at] = x
-                        sentAnalog[at + 1] = y
-                        retroView.sendMotionEvent(
-                            if (index == 0) GLRetroView.MOTION_SOURCE_ANALOG_LEFT else GLRetroView.MOTION_SOURCE_ANALOG_RIGHT,
-                            x / RetroPadInput.ANALOG_MAX.toFloat(), y / RetroPadInput.ANALOG_MAX.toFloat(), port,
-                        )
-                    }
-                }
+                val leftX = input.analog(port, 0, 0)
+                val leftY = input.analog(port, 0, 1)
+                val rightX = input.analog(port, 1, 0)
+                val rightY = input.analog(port, 1, 1)
+                val leftTrigger = input.trigger(port, 0)
+                val rightTrigger = input.trigger(port, 1)
+                val at = port * 7
+                if (sent[at] == buttons && sent[at + 1] == leftX && sent[at + 2] == leftY &&
+                    sent[at + 3] == rightX && sent[at + 4] == rightY &&
+                    sent[at + 5] == leftTrigger && sent[at + 6] == rightTrigger) continue
+                sent[at] = buttons; sent[at + 1] = leftX; sent[at + 2] = leftY
+                sent[at + 3] = rightX; sent[at + 4] = rightY
+                sent[at + 5] = leftTrigger; sent[at + 6] = rightTrigger
+                val range = RetroPadInput.ANALOG_MAX.toFloat()
+                LibretroDroid.onInputSnapshot(port, buttons, leftX / range, leftY / range,
+                    rightX / range, rightY / range, leftTrigger / range, rightTrigger / range)
             }
         }
         val onRemoved: (Int) -> Unit = { id ->
@@ -1133,6 +1128,7 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
                 touchMode = touchMode,
                 touchStyle = touchStyle,
                 presentation = touchPresentation,
+                coreActions = coreInputActions[0],
                 hiddenForGamepad = touchStyle.hideOnGamepadInput && hidingGamepadId != null,
                 onShowTouch = { hidingGamepadId = null },
                 playing = running,
@@ -1677,6 +1673,10 @@ private fun GameContent(session: GameSession, model: GamePlayerViewModel, onBack
                             }
                             GameTouchOptions(system.id)
                             GameControlsPanel()
+                            coreInputActions.forEachIndexed { port, actions ->
+                                GameCoreInputActions(actions, touchPresentation,
+                                    stringResource(R.string.game_core_input_actions_player, port + 1))
+                            }
                             GameDeviceTypesPanel(
                                 controllers = remember(open) { runCatching { retroView.getControllers() }.getOrDefault(emptyArray()) },
                                 current = { port -> settings.controllerType(core, port) },

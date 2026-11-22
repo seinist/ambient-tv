@@ -45,6 +45,7 @@ import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
@@ -79,6 +80,7 @@ internal fun GameTouchControls(
     onButtonsChanged: ((Set<RetroPadButton>) -> Unit)? = null,
     style: TouchControlStyle = TouchControlStyle(),
     presentation: GameTouchPresentation = GameTouchPresentation.Generic,
+    coreActions: Map<RetroPadButton, String> = emptyMap(),
 ) {
     BoxWithConstraints(modifier.then(if (applySafeInsets) Modifier.safeDrawingPadding() else Modifier)) {
         val tall = portrait ?: (maxWidth < maxHeight)
@@ -166,14 +168,14 @@ internal fun GameTouchControls(
                             GameTouchButton(button, button in state.buttons,
                                 Modifier.offset((bounds.left - cluster.left).dp, (bounds.top - cluster.top).dp)
                                     .size(bounds.width.dp, bounds.height.dp),
-                                label = presentation.labels[button].orEmpty(), face = true)
+                                label = presentation.labels[button].orEmpty(), action = coreActions[button], face = true)
                         }
                     }
                 }
             }
             layout.buttons.filterKeys { it !in layout.faces }.forEach { (button, bounds) ->
                 GameTouchButton(button, button in state.buttons, bounds.receiver(),
-                    label = presentation.labels[button].orEmpty(), face = false)
+                    label = presentation.labels[button].orEmpty(), action = coreActions[button], face = false)
             }
         }
     }
@@ -289,40 +291,46 @@ private fun GameTouchStick(
 
 @Composable
 private fun GameTouchButton(button: RetroPadButton, pressed: Boolean, modifier: Modifier = Modifier,
-    label: String, face: Boolean,
+    label: String, action: String? = null, face: Boolean,
 ) {
     val utility = button == RetroPadButton.START || button == RetroPadButton.SELECT
     val shape = if (face) CircleShape else RoundedCornerShape(6.dp)
     val accent = MaterialTheme.colorScheme.primary
     val ink = if (pressed) Color.White else Color.White.copy(alpha = .84f)
     val labelStyle = TextStyle(shadow = Shadow(Color.Black.copy(alpha = .75f), blurRadius = 4f))
+    val caption = action?.takeUnless { it.equals(label, ignoreCase = true) }
     Box(
         modifier.testTag("game-touch-${button.key}")
-            .semantics { role = Role.Button; contentDescription = label }
+            .semantics { role = Role.Button; contentDescription = if (caption == null) label else "$label: $caption" }
             .padding(3.dp).clip(shape)
             .background(if (pressed) accent.copy(alpha = .36f) else Color.Black.copy(alpha = .30f))
             .border(3.dp, Color.Black.copy(alpha = .45f), shape)
             .border(2.dp, if (pressed) accent else Color.White.copy(alpha = .74f), shape),
         contentAlignment = Alignment.Center,
     ) {
-        if (utility) Column(horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(3.dp)) {
-            Canvas(Modifier.size(20.dp, 12.dp)) {
-                if (button == RetroPadButton.START) {
-                    val triangle = Path().apply {
-                        moveTo(1.dp.toPx(), 1.dp.toPx())
-                        lineTo(size.width - 1.dp.toPx(), size.height / 2f)
-                        lineTo(1.dp.toPx(), size.height - 1.dp.toPx())
-                        close()
-                    }
-                    drawPath(triangle, ink, style = Stroke(1.5.dp.toPx()))
-                } else drawRect(ink, topLeft = Offset(1.dp.toPx(), 1.dp.toPx()),
-                    size = size.copy(width = size.width - 2.dp.toPx(), height = size.height - 2.dp.toPx()),
-                    style = Stroke(1.5.dp.toPx()))
-            }
-            Text(label, fontSize = 11.sp, lineHeight = 12.sp, fontWeight = FontWeight.Medium,
-                style = labelStyle, color = ink, maxLines = 1)
-        } else Text(label, fontSize = if (face) 23.sp else 16.sp,
-            fontWeight = FontWeight.Medium, style = labelStyle, color = ink, maxLines = 1)
+        Column(horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(if (caption == null) 3.dp else 1.dp),
+            modifier = Modifier.padding(horizontal = 3.dp)) {
+            if (utility) {
+                Canvas(Modifier.size(20.dp, 12.dp)) {
+                    if (button == RetroPadButton.START) {
+                        val triangle = Path().apply {
+                            moveTo(1.dp.toPx(), 1.dp.toPx())
+                            lineTo(size.width - 1.dp.toPx(), size.height / 2f)
+                            lineTo(1.dp.toPx(), size.height - 1.dp.toPx())
+                            close()
+                        }
+                        drawPath(triangle, ink, style = Stroke(1.5.dp.toPx()))
+                    } else drawRect(ink, topLeft = Offset(1.dp.toPx(), 1.dp.toPx()),
+                        size = size.copy(width = size.width - 2.dp.toPx(), height = size.height - 2.dp.toPx()),
+                        style = Stroke(1.5.dp.toPx()))
+                }
+                Text(label, fontSize = 11.sp, lineHeight = 12.sp, fontWeight = FontWeight.Medium,
+                    style = labelStyle, color = ink, maxLines = 1)
+            } else Text(label, fontSize = if (face) 23.sp else 16.sp,
+                fontWeight = FontWeight.Medium, style = labelStyle, color = ink, maxLines = 1)
+            if (caption != null) Text(caption, fontSize = 9.sp, lineHeight = 10.sp, style = labelStyle,
+                color = ink, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        }
     }
 }

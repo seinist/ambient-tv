@@ -69,6 +69,7 @@ class TvheadendRepository @Inject constructor(
     /** Runs the one TVHeadend wake (state, card, gate); a Provider because it uses this repository. */
     private val connection: javax.inject.Provider<com.ambient.tv.server.TvheadendConnectionManager>,
     private val browseReconnects: javax.inject.Provider<com.ambient.tv.data.browse.BrowseReconnects>,
+    private val guideIndex: com.ambient.tv.livetv.ProgrammeGuideIndex,
 ) {
     /** Last answers per server/account on disk: channels, guide and recordings stay visible offline. */
     private val diskCache = TvheadendDiskCache(BrowseTvheadendCacheStore(browseDisk))
@@ -84,7 +85,7 @@ class TvheadendRepository @Inject constructor(
 
     private val json = Json { ignoreUnknownKeys = true; isLenient = true }
     private val cacheMutex = Mutex()
-    /** The stored guide is read, merged and written by parallel per-channel loads. */
+    /** Serialize legacy migration and fresh-window merges from parallel per-channel loads. */
     private val epgPersistMutex = Mutex()
     private val cache = mutableMapOf<String, CacheValue<*>>()
     private var cacheScope: List<String>? = null
@@ -340,14 +341,12 @@ class TvheadendRepository @Inject constructor(
         val key = "epg:$channelId:${startEpochSeconds / 300}:$windowHours"
         return cached(key, 10 * 60_000, force,
             stale = { scope ->
-                diskCache.read(scope, TvheadendDiskCache.EPG, EVENT_LIST)?.filter {
-                    it.stopEpochSeconds >= startEpochSeconds && it.startEpochSeconds <= stop && (channelId == null || it.channelUuid == channelId)
-                }
+                indexedEpg(scope, startEpochSeconds, stop, channelId)
             },
             persist = { scope, events -> epgPersistMutex.withLock {
                 val now = System.currentTimeMillis() / 1000L
-                val stored = diskCache.read(scope, TvheadendDiskCache.EPG, EVENT_LIST).orEmpty()
-                diskCache.write(scope, TvheadendDiskCache.EPG, EVENT_LIST, TvheadendDiskCache.mergeEpg(stored, events, now))
+                migrateGuideIfNeeded(scope)
+                guideIndex.mergeWindow(EPG_INDEX_OWNER, scope, events, now, valid = { currentGuideScope(scope) })
             } },
         ) {
             loadTvhEpgPages(startEpochSeconds, stop, channelId) { params -> getJson("api/epg/events/grid", params) }
@@ -359,7 +358,7 @@ class TvheadendRepository @Inject constructor(
         stale = { scope ->
             val now = System.currentTimeMillis() / 1000L
             val stored = diskCache.read(scope, TvheadendDiskCache.NOW, EVENT_LIST)
-            val guide = diskCache.read(scope, TvheadendDiskCache.EPG, EVENT_LIST)
+            val guide = indexedEpg(scope, now, now + 1, inclusiveBounds = false)
             if (stored == null && guide == null) null
             else (stored.orEmpty() + guide.orEmpty()).filter { it.isLive(now) }.distinctBy { it.channelUuid }
         },
@@ -371,6 +370,30 @@ class TvheadendRepository @Inject constructor(
                 mapOf("mode" to "now", "limit" to "9999"),
             ),
         ).mapNotNull(::mapEvent)
+    }
+
+    private fun currentGuideScope(scope: String): Boolean = preferences.tvheadendEnabled &&
+        preferences.hasTvheadendEndpoint && diskScope() == scope
+
+    private suspend fun indexedEpg(
+        scope: String, from: Long, to: Long, channelId: String? = null, inclusiveBounds: Boolean = true,
+    ): List<TvhEpgEvent>? = epgPersistMutex.withLock {
+        if (!currentGuideScope(scope)) return@withLock null
+        guideIndex.query(EPG_INDEX_OWNER, scope, from, to, channelId, inclusiveBounds)?.let { return@withLock it }
+        migrateGuideIfNeeded(scope)
+        if (!currentGuideScope(scope)) return@withLock null
+        guideIndex.query(EPG_INDEX_OWNER, scope, from, to, channelId, inclusiveBounds)
+    }
+
+    /** Called under epgPersistMutex, including a first forced per-channel refresh after upgrade. */
+    private suspend fun migrateGuideIfNeeded(scope: String) {
+        if (!currentGuideScope(scope) || guideIndex.metadata(EPG_INDEX_OWNER, scope) != null) return
+        // Upgrade the old display snapshot once; subsequent reads query only this channel/window.
+        val legacy = diskCache.read(scope, TvheadendDiskCache.EPG, EVENT_LIST) ?: return
+        val now = System.currentTimeMillis() / 1000L
+        guideIndex.mergeWindow(EPG_INDEX_OWNER, scope, legacy, now, valid = { currentGuideScope(scope) })
+        if (!currentGuideScope(scope)) return
+        diskCache.write(scope, TvheadendDiskCache.EPG, EVENT_LIST, emptyList())
     }
 
     suspend fun upcomingRecordings(force: Boolean = false): List<TvhDvrEntry> = cached("dvr:upcoming", 60_000, force,
@@ -636,9 +659,12 @@ class TvheadendRepository @Inject constructor(
 
     /** TVHeadend disabled: the stored server data is deleted, not only expired. */
     fun clearPersistentCache() {
-        diskCache.clear(runCatching { diskScope() }.getOrNull())
+        val scopesToClear = diskCache.clear(runCatching { diskScope() }.getOrNull())
         _servingCachedData.value = false
-        background.launch { cacheMutex.withLock { cache.clear(); cacheGeneration++ } }
+        background.launch {
+            scopesToClear.forEach { guideIndex.removeScope(EPG_INDEX_OWNER, it) }
+            cacheMutex.withLock { cache.clear(); cacheGeneration++ }
+        }
     }
 
     /** Applies a confirmed change to the memory and disk copy of one list (kept expired). */
@@ -984,6 +1010,7 @@ class TvheadendRepository @Inject constructor(
 }
 
 private val CHANNEL_LIST = kotlinx.serialization.builtins.ListSerializer(com.ambient.tv.livetv.LiveTvChannel.serializer())
+private const val EPG_INDEX_OWNER = "tvheadend"
 private val EVENT_LIST = kotlinx.serialization.builtins.ListSerializer(com.ambient.tv.livetv.LiveTvProgramme.serializer())
 private val RECORDING_LIST = kotlinx.serialization.builtins.ListSerializer(com.ambient.tv.livetv.LiveTvRecording.serializer())
 private val AUTOREC_LIST = kotlinx.serialization.builtins.ListSerializer(com.ambient.tv.livetv.LiveTvSeriesTimer.serializer())

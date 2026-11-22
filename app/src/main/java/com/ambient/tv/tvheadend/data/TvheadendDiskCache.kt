@@ -14,12 +14,14 @@ import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 internal interface TvheadendCacheStore {
     fun put(scope: String, key: String, valid: () -> Boolean, encode: () -> String)
     suspend fun read(scope: String): Map<String, String>
+    suspend fun readKey(scope: String, key: String): String? = read(scope)[key]
     fun remove(scope: String)
 }
 
 internal class BrowseTvheadendCacheStore(private val disk: com.ambient.tv.data.browse.BrowseDiskStore) : TvheadendCacheStore {
     override fun put(scope: String, key: String, valid: () -> Boolean, encode: () -> String) = disk.put(scope, key, valid, encode)
     override suspend fun read(scope: String): Map<String, String> = disk.read(scope)
+    override suspend fun readKey(scope: String, key: String): String? = disk.read(scope, key)[key]
     override fun remove(scope: String) = disk.remove(scope)
 }
 
@@ -32,9 +34,9 @@ internal class BrowseTvheadendCacheStore(private val disk: com.ambient.tv.data.b
 internal class TvheadendDiskCache(private val store: TvheadendCacheStore) {
     private val json = Json { ignoreUnknownKeys = true }
     private class Scope(val key: String) {
-        @Volatile var raw: Map<String, String>? = null
         val values = ConcurrentHashMap<String, Any>()
-        val restoreLock = Mutex()
+        val missing = ConcurrentHashMap.newKeySet<String>()
+        val restoreLocks = Array(16) { Mutex() }
     }
     @Volatile private var active: Scope? = null
 
@@ -45,9 +47,11 @@ internal class TvheadendDiskCache(private val store: TvheadendCacheStore) {
     }
 
     /** TVHeadend disabled: forget the active scope's data (memory and disk). */
-    @Synchronized fun clear(scope: String?) {
-        setOfNotNull(scope, active?.key).forEach(store::remove)
+    @Synchronized fun clear(scope: String?): Set<String> {
+        val cleared = setOfNotNull(scope, active?.key)
+        cleared.forEach(store::remove)
         active = null
+        return cleared
     }
 
     @Suppress("UNCHECKED_CAST")
@@ -57,22 +61,26 @@ internal class TvheadendDiskCache(private val store: TvheadendCacheStore) {
             if (active !== state) return null
             (state.values[key] as? T)?.let { return it }
         }
-        val records = state.raw ?: state.restoreLock.withLock {
-            state.raw ?: store.read(scope).also { state.raw = it }
-        }
-        if (active !== state) return null
-        val decoded = records[key]?.let { runCatching { json.decodeFromString(serializer, it) }.getOrNull() } ?: return null
-        return synchronized(this) {
-            // Scope identity also rejects A -> B -> A and clear -> reload while decoding.
-            if (active !== state) return null
-            state.values.putIfAbsent(key, decoded)
-            state.values[key] as? T
+        return state.restoreLocks[(key.hashCode() and Int.MAX_VALUE) % state.restoreLocks.size].withLock {
+            if (active !== state || key in state.missing) return@withLock null
+            (state.values[key] as? T)?.let { return@withLock it }
+            // Opening Channels must not hydrate a legacy 8,000-event EPG JSON record too.
+            val raw = store.readKey(scope, key)
+            if (active !== state) return@withLock null
+            val decoded = raw?.let { runCatching { json.decodeFromString(serializer, it) }.getOrNull() }
+            synchronized(this) {
+                // Scope identity also rejects A -> B -> A and clear -> reload while decoding.
+                if (active !== state) return@synchronized null
+                if (decoded == null) state.missing += key else state.values.putIfAbsent(key, decoded)
+                state.values[key] as? T
+            }
         }
     }
 
     @Synchronized fun <T : Any> write(scope: String, key: String, serializer: KSerializer<T>, value: T) {
         val state = sync(scope)
         val stored = displayOnly(value)
+        state.missing.remove(key)
         state.values[key] = stored
         store.put(scope, key, { active === state && state.values[key] === stored }) { json.encodeToString(serializer, stored) }
     }

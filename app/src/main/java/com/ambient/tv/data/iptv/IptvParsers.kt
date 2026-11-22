@@ -123,61 +123,107 @@ data class XmltvGuide(val channels: List<XmltvChannel>, val programmes: List<Xml
 object XmltvParser {
     private val timeFormat = DateTimeFormatter.ofPattern("yyyyMMddHHmmss[ Z]", Locale.ROOT)
 
-    /** [onChannel] sees each guide channel as it ends; XMLTV lists channels before programmes, so [accept] can use them. */
+    /** Small callers retain the convenient list API; large imports consume [stream] directly. */
     fun parse(
         reader: Reader, fromEpoch: Long, toEpoch: Long, accept: (String) -> Boolean = { true }, maxProgrammes: Int = 100_000,
         onChannel: (XmltvChannel) -> Unit = {},
     ): XmltvGuide {
-        val xml = MiniXmlReader(reader)
         val channels = mutableListOf<XmltvChannel>()
         val programmes = mutableListOf<XmltvProgramme>()
+        stream(reader, fromEpoch, toEpoch, accept, maxProgrammes, strictLimit = false,
+            onChannel = { channels += it; onChannel(it) }, onProgramme = { programmes += it })
+        return XmltvGuide(channels, programmes)
+    }
+
+    /**
+     * Keeps one programme in memory. A complete, balanced TV document is required before an
+     * importer may publish its staging generation. The callback may flush bounded SQL batches.
+     */
+    fun stream(
+        reader: Reader, fromEpoch: Long, toEpoch: Long, accept: (String) -> Boolean = { true }, maxProgrammes: Int = 100_000,
+        strictLimit: Boolean = true, onChannel: (XmltvChannel) -> Unit = {},
+        checkActive: () -> Unit = {}, onProgramme: (XmltvProgramme) -> Unit,
+    ): Int {
+        require(maxProgrammes >= 0 && toEpoch >= fromEpoch)
+        val xml = MiniXmlReader(reader)
+        val stack = ArrayDeque<String>()
+        var rootSeen = false
+        var rootClosed = false
+        var count = 0
         var channel: Triple<String, MutableList<String>, String?>? = null
         var programme: MutableMap<String, String?>? = null
         var keep = false
         var field: String? = null
         val text = StringBuilder()
         while (true) {
+            checkActive()
             val event = xml.next() ?: break
             when (event) {
-                is MiniXmlReader.Event.Start -> when (event.name) {
-                    "channel" -> channel = Triple(event.attributes["id"].orEmpty(), mutableListOf(), null)
-                    "display-name" -> if (channel != null) { field = "display-name"; text.clear() }
-                    "programme" -> {
-                        val id = event.attributes["channel"].orEmpty()
-                        val start = time(event.attributes["start"])
-                        val stop = time(event.attributes["stop"]) ?: start?.plus(3600)
-                        keep = id.isNotEmpty() && start != null && stop != null && stop > fromEpoch && start < toEpoch && accept(id)
-                        programme = if (keep) mutableMapOf("channel" to id, "start" to start.toString(), "stop" to stop.toString()) else null
+                is MiniXmlReader.Event.Start -> {
+                    if (stack.isEmpty()) {
+                        if (rootSeen || event.name != "tv") throw java.io.IOException("Not an XMLTV guide")
+                        rootSeen = true
                     }
-                    "title", "sub-title", "desc" -> if (keep && programme?.get(event.name) == null) { field = event.name; text.clear() }
-                    "icon" -> {
-                        val src = event.attributes["src"]?.takeIf { it.startsWith("http://") || it.startsWith("https://") }
-                        if (keep && programme != null) programme["icon"] = programme["icon"] ?: src
-                        else if (channel != null && channel.third == null) channel = channel.copy(third = src)
+                    if (stack.size >= 64) throw java.io.IOException("Guide nesting is too deep")
+                    stack.addLast(event.name)
+                    when (event.name) {
+                        "channel" -> channel = Triple(event.attributes["id"].orEmpty(), mutableListOf(), null)
+                        "display-name" -> if (channel != null) { field = "display-name"; text.clear() }
+                        "programme" -> {
+                            val id = event.attributes["channel"].orEmpty()
+                            val start = time(event.attributes["start"])
+                            val stop = time(event.attributes["stop"]) ?: start?.plus(3600)
+                            keep = id.isNotEmpty() && start != null && stop != null && stop > start &&
+                                stop > fromEpoch && start < toEpoch && accept(id)
+                            programme = if (keep) mutableMapOf("channel" to id, "start" to start.toString(), "stop" to stop.toString()) else null
+                        }
+                        "title", "sub-title", "desc" -> if (keep && programme?.get(event.name) == null) { field = event.name; text.clear() }
+                        "icon" -> {
+                            val src = event.attributes["src"]?.takeIf { it.startsWith("http://") || it.startsWith("https://") }
+                            if (keep && programme != null) programme["icon"] = programme["icon"] ?: src
+                            else if (channel != null && channel.third == null) channel = channel.copy(third = src)
+                        }
                     }
                 }
-                is MiniXmlReader.Event.Text -> if (field != null && text.length < 4000) text.append(event.text)
-                is MiniXmlReader.Event.End -> when (event.name) {
-                    "display-name" -> { channel?.second?.add(text.toString().trim()); field = null }
-                    "title", "sub-title", "desc" -> { if (field == event.name) programme?.set(event.name, text.toString().trim()); field = null }
-                    "channel" -> {
-                        channel?.let { (id, names, icon) -> if (id.isNotEmpty()) XmltvChannel(id, names.filter(String::isNotEmpty), icon).also { channels += it; onChannel(it) } }
-                        channel = null
-                    }
-                    "programme" -> {
-                        programme?.let { p ->
-                            val title = p["title"]?.takeIf(String::isNotEmpty)
-                            if (title != null && programmes.size < maxProgrammes) programmes += XmltvProgramme(
-                                p.getValue("channel")!!, title, p["sub-title"]?.takeIf(String::isNotEmpty), p["desc"]?.takeIf(String::isNotEmpty),
-                                p.getValue("start")!!.toLong(), p.getValue("stop")!!.toLong(), p["icon"],
-                            )
+                is MiniXmlReader.Event.Text -> {
+                    if (!rootSeen && stack.isEmpty() && event.text.trim() == "\uFEFF") continue
+                    if (stack.isEmpty()) throw java.io.IOException("Text outside the guide")
+                    if (field != null && text.length < 4000) text.append(event.text.take(4000 - text.length))
+                }
+                is MiniXmlReader.Event.End -> {
+                    if (stack.removeLastOrNull() != event.name) throw java.io.IOException("Incomplete XMLTV element")
+                    when (event.name) {
+                        "display-name" -> { if ((channel?.second?.size ?: 32) < 32) channel?.second?.add(text.toString().trim()); field = null }
+                        "title", "sub-title", "desc" -> { if (field == event.name) programme?.set(event.name, text.toString().trim()); field = null }
+                        "channel" -> {
+                            channel?.let { (id, names, icon) -> if (id.isNotEmpty()) onChannel(XmltvChannel(id, names.filter(String::isNotEmpty), icon)) }
+                            channel = null
                         }
-                        programme = null; keep = false
+                        "programme" -> {
+                            programme?.let { p ->
+                                val title = p["title"]?.takeIf(String::isNotEmpty)
+                                if (title != null) {
+                                    if (count >= maxProgrammes) {
+                                        if (strictLimit) throw java.io.IOException("Guide contains too many programmes")
+                                    } else {
+                                        onProgramme(XmltvProgramme(
+                                            p.getValue("channel")!!, title, p["sub-title"]?.takeIf(String::isNotEmpty), p["desc"]?.takeIf(String::isNotEmpty),
+                                            p.getValue("start")!!.toLong(), p.getValue("stop")!!.toLong(), p["icon"],
+                                        ))
+                                        count++
+                                    }
+                                }
+                            }
+                            programme = null; keep = false
+                        }
                     }
+                    if (stack.isEmpty()) rootClosed = true
                 }
             }
         }
-        return XmltvGuide(channels, programmes)
+        checkActive()
+        if (!rootSeen || !rootClosed || stack.isNotEmpty()) throw java.io.IOException("Incomplete XMLTV guide")
+        return count
     }
 
     /** "20261014060000 +0200"; without an offset the time is UTC, as the format specifies. */
@@ -273,7 +319,7 @@ internal class MiniXmlReader(reader: Reader) {
     private fun readTag(): String {
         val out = StringBuilder(); var quote = 0
         while (true) {
-            val c = input.read(); if (c < 0) break
+            val c = input.read(); if (c < 0) throw java.io.EOFException("Incomplete XML tag")
             if (quote != 0) { if (c == quote) quote = 0 } else if (c == '"'.code || c == '\''.code) quote = c else if (c == '>'.code) break
             out.append(c.toChar())
             if (out.length > 64_000) throw java.io.IOException("Tag too long")
@@ -284,7 +330,7 @@ internal class MiniXmlReader(reader: Reader) {
     private fun readUntil(end: String): String {
         val out = StringBuilder()
         while (true) {
-            val c = input.read(); if (c < 0) break
+            val c = input.read(); if (c < 0) throw java.io.EOFException("Incomplete XML section")
             out.append(c.toChar())
             if (out.endsWith(end)) return out.substring(0, out.length - end.length)
             if (out.length > 1_000_000) throw java.io.IOException("Section too long")
@@ -295,7 +341,7 @@ internal class MiniXmlReader(reader: Reader) {
     private fun skipUntil(end: String) {
         val seen = StringBuilder()
         while (true) {
-            val c = input.read(); if (c < 0) return
+            val c = input.read(); if (c < 0) throw java.io.EOFException("Incomplete XML section")
             seen.append(c.toChar())
             if (seen.length > end.length) seen.deleteCharAt(0)
             if (seen.toString() == end) return
@@ -306,7 +352,7 @@ internal class MiniXmlReader(reader: Reader) {
     private fun skipDeclaration() {
         var depth = 0; var quote = 0
         while (true) {
-            val c = input.read(); if (c < 0) return
+            val c = input.read(); if (c < 0) throw java.io.EOFException("Incomplete XML declaration")
             when {
                 quote != 0 -> if (c == quote) quote = 0
                 c == '"'.code || c == '\''.code -> quote = c

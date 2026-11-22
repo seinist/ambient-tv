@@ -97,6 +97,39 @@ class RetroPadInputTest {
         assertEquals(RetroPadButton.B, defaultRetroProfile(RetroInputKind.KEYBOARD).button(KeyEvent.KEYCODE_Z))
     }
 
+    @Test fun hardwareTriggerPressureDoesNotBecomeFullFromItsDuplicateKeyEvent() {
+        motion(1, mapOf(MotionEvent.AXIS_LTRIGGER to .25f, MotionEvent.AXIS_RTRIGGER to .75f))
+        assertEquals(8192, input.trigger(0, 0))
+        assertEquals(24575, input.trigger(0, 1))
+        assertEquals(RetroPadButton.R2.mask, input.buttons(0))
+        press(1, KeyEvent.KEYCODE_BUTTON_L2)
+        press(1, KeyEvent.KEYCODE_BUTTON_R2)
+        assertEquals(8192, input.trigger(0, 0))
+        assertEquals(24575, input.trigger(0, 1))
+        motion(1, emptyMap())
+        assertEquals(0, input.trigger(0, 0))
+        assertEquals(0, input.trigger(0, 1))
+        assertEquals(0, input.buttons(0))
+        input.deviceRemoved(1)
+        // A digital-only pad remains fully usable without ever reporting trigger axes.
+        press(1, KeyEvent.KEYCODE_BUTTON_L2)
+        assertEquals(32767, input.trigger(0, 0))
+    }
+
+    @Test fun triggerAxesRespectUserRemappingAndUnchangedMotionDoesNotDispatch() {
+        config = config.assignDevice(RetroInputKind.GAMEPAD, "dev-1",
+            RetroInputTarget.Button(RetroPadButton.R2), KeyEvent.KEYCODE_BUTTON_L2)
+        var changed = 0
+        input.onChanged = { changed++ }
+        repeat(10) { motion(1, mapOf(MotionEvent.AXIS_LTRIGGER to .4f)) }
+        assertEquals(0, input.trigger(0, 0))
+        assertEquals(13107, input.trigger(0, 1))
+        assertEquals(1, changed)
+        assertTrue(input.hasActiveGamepad(1))
+        input.releaseAll()
+        assertEquals(0, input.trigger(0, 1))
+    }
+
     @Test fun assigningMovesTheKeyAndTheDefaultNeedsNoStorage() {
         val keyboard = defaultRetroProfile(RetroInputKind.KEYBOARD)
         val changed = keyboard.assign(RetroInputTarget.Button(RetroPadButton.A), KeyEvent.KEYCODE_Z)

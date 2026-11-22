@@ -1,0 +1,4 @@
+<resources>
+    <string name="game_core_input_actions">Game actions</string>
+    <string name="game_core_input_actions_player">Game actions · Player %1$d</string>
+</resources>

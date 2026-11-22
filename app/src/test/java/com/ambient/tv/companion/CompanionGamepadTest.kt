@@ -135,6 +135,51 @@ class CompanionGamepadTest {
         }
     }
 
+    @Test fun partialPressureHasADeadmanAndCannotReplayAcrossPause() {
+        val input = pad()
+        try {
+            CompanionGamepadSession.attach(input, "psx", "pcsx_rearmed", "Game", false) {}
+            CompanionGamepadSession.setReady(input, true)
+            CompanionGamepadSession.claim("phone")
+            val partial = CompanionGamepadState(leftTrigger = .25f, rightTrigger = .4f)
+            CompanionGamepadSession.input("phone", partial)
+            assertEquals(8192, input.trigger(0, 0))
+            CompanionGamepadSession.setReady(input, false)
+            assertEquals(0, input.trigger(0, 0))
+            CompanionGamepadSession.input("phone", partial)
+            CompanionGamepadSession.setReady(input, true)
+            CompanionGamepadSession.input("phone", partial)
+            assertEquals(0, input.trigger(0, 0))
+            CompanionGamepadSession.input("phone", CompanionGamepadState(leftTrigger = 0f, rightTrigger = 0f))
+            CompanionGamepadSession.input("phone", partial)
+            assertEquals(8192, input.trigger(0, 0))
+            Shadows.shadowOf(Looper.getMainLooper()).idleFor(1_501L, TimeUnit.MILLISECONDS)
+            assertEquals(0, input.trigger(0, 0))
+            assertEquals(0, input.trigger(0, 1))
+        } finally {
+            CompanionGamepadSession.detach(input)
+        }
+    }
+
+    @Test fun descriptorsAreOptionalInAcksAndDiscardedForANewGame() {
+        val input = pad()
+        val next = pad()
+        try {
+            CompanionGamepadSession.attach(input, "nes", "fceumm", "First", false) {}
+            CompanionGamepadSession.claim("phone")
+            CompanionGamepadSession.setInputDescriptions(input, mapOf("0:8" to "Jump", "1:8" to "Other player"))
+            assertEquals(mapOf("0:8" to "Jump"), CompanionGamepadSession.info("phone")?.inputDescriptions)
+            assertNull(CompanionGamepadSession.info("phone", includeDescriptions = false)?.inputDescriptions)
+            val session = CompanionGamepadSession.info()?.sessionId
+            CompanionGamepadSession.attach(next, "nes", "fceumm", "Second", false) {}
+            assertNotEquals(session, CompanionGamepadSession.info()?.sessionId)
+            assertTrue(CompanionGamepadSession.info()?.inputDescriptions.isNullOrEmpty())
+        } finally {
+            CompanionGamepadSession.detach(input)
+            CompanionGamepadSession.detach(next)
+        }
+    }
+
     @Test fun snapshotsValidateAndRetainCompatibilityWithLegacyFrames() {
         val pad = CompanionGamepadState(buttons = 0xffff, leftX = -1f, rightY = 1f)
         pad.validate()

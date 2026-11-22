@@ -19,4 +19,14 @@ class ArtworkFocusKeyTest {
         assertNotEquals(artworkFocusKey("ab", mapOf("c" to "d")), artworkFocusKey("a", mapOf("bc" to "d")))
         assertNotEquals(artworkFocusKey("image?v=1", emptyMap()), artworkFocusKey("image?v=2", emptyMap()))
     }
+
+    @Test fun resolvedImageReusesAnalysisAcrossSnapshotAndLiveUrlVariants() {
+        val snapshot = "https://media.example/art/one"
+        val live = "$snapshot?token=current-secret"
+        val resolved = "media-artwork-v1:account-a:$snapshot:refresh:revision-2"
+        assertEquals(artworkFocusKey(snapshot, emptyMap(), resolved), artworkFocusKey(live, emptyMap(), resolved))
+        assertNotEquals(artworkFocusKey(snapshot, emptyMap(), resolved),
+            artworkFocusKey(live, emptyMap(), resolved.replace("account-a", "account-b")))
+        assertNotEquals(artworkFocusKey(snapshot, emptyMap()), artworkFocusKey(live, emptyMap()))
+    }
 }

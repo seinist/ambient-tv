@@ -44,6 +44,7 @@ internal fun GamePlayerTouchLayout(
     surface: @Composable (Modifier) -> Unit,
     touchStyle: TouchControlStyle = TouchControlStyle(),
     presentation: GameTouchPresentation = GameTouchPresentation.Generic,
+    coreActions: Map<RetroPadButton, String> = emptyMap(),
     hiddenForGamepad: Boolean = false,
     onShowTouch: () -> Unit = {},
 ) {
@@ -74,6 +75,7 @@ internal fun GamePlayerTouchLayout(
                 applySafeInsets = false,
                 style = touchStyle,
                 presentation = presentation,
+                coreActions = coreActions,
             )
         }
         if (handheld && touchEnabled && hiddenForGamepad && !menuVisible) {

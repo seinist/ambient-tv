@@ -110,6 +110,10 @@ internal fun CompanionGamepadScreen(manager: CompanionManager, modifier: Modifie
     val touchStyle = RetroInputSettings.config.touchStyle
     val touchVariant = RetroInputSettings.config.touchVariants[info?.systemId].orEmpty()
     val touchPresentation = remember(info?.systemId, touchVariant) { gameTouchPresentation(info?.systemId, touchVariant) }
+    val coreActions = remember(info?.sessionId, info?.inputDescriptions, port) {
+        com.ambient.tv.games.GameInputDescriptions.forPort(
+            com.ambient.tv.games.GameInputDescriptions.normalized(info?.inputDescriptions.orEmpty()), port)
+    }
     var hidingGamepadId by remember(info?.sessionId) { mutableStateOf<Int?>(null) }
     val hideTouchForGamepad by rememberUpdatedState(touchStyle.hideOnGamepadInput)
     val touchProfileKey = companionTouchProfileKey(state.target?.fingerprint, info?.systemId)
@@ -137,7 +141,8 @@ internal fun CompanionGamepadScreen(manager: CompanionManager, modifier: Modifie
     val padInputs = remember(info?.sessionId) { CompanionPadInputs() }
     fun publishPad(send: Boolean = true) {
         val next = padFrame.value.copy(buttons = padInputs.buttons, leftX = padInputs.axis(0),
-            leftY = padInputs.axis(1), rightX = padInputs.axis(2), rightY = padInputs.axis(3))
+            leftY = padInputs.axis(1), rightX = padInputs.axis(2), rightY = padInputs.axis(3),
+            leftTrigger = padInputs.trigger(0), rightTrigger = padInputs.trigger(1))
         if (next != padFrame.value) {
             padFrame.value = next
             if (send) manager.gamepadInput(next)
@@ -170,12 +175,19 @@ internal fun CompanionGamepadScreen(manager: CompanionManager, modifier: Modifie
                 }
                 padInputs.hardwareAxis(axis, value / 32767f)
             }
+            for (trigger in 0..1) {
+                var value = 0
+                for (player in 0 until RetroPorts.COUNT) value = maxOf(value, hardwareInput.trigger(player, trigger))
+                padInputs.hardwareTrigger(trigger, value / 32767f)
+            }
             val previous = padFrame.value
             val edge = previous.buttons != padInputs.buttons ||
                 (previous.leftX != 0f && padInputs.axis(0) == 0f) ||
                 (previous.leftY != 0f && padInputs.axis(1) == 0f) ||
                 (previous.rightX != 0f && padInputs.axis(2) == 0f) ||
-                (previous.rightY != 0f && padInputs.axis(3) == 0f)
+                (previous.rightY != 0f && padInputs.axis(3) == 0f) ||
+                ((previous.leftTrigger ?: 0f) > 0f) != (padInputs.trigger(0) > 0f) ||
+                ((previous.rightTrigger ?: 0f) > 0f) != (padInputs.trigger(1) > 0f)
             currentPublishPad(edge)
         }
         val sink: (android.view.InputEvent) -> Boolean = { event ->
@@ -413,6 +425,7 @@ internal fun CompanionGamepadScreen(manager: CompanionManager, modifier: Modifie
                             mode = mode,
                             style = touchStyle,
                             presentation = touchPresentation,
+                            coreActions = coreActions,
                             portrait = !landscape,
                             onButton = setButton,
                             onButtonsChanged = { buttons ->
@@ -475,7 +488,10 @@ internal fun CompanionGamepadScreen(manager: CompanionManager, modifier: Modifie
     if (touchOptionsOpen) AlertDialog(
         onDismissRequest = { touchOptionsOpen = false },
         title = { Text(stringResource(R.string.game_touch_customize)) },
-        text = { Column(Modifier.verticalScroll(rememberScrollState())) { GameTouchOptions(info?.systemId) } },
+        text = { Column(Modifier.verticalScroll(rememberScrollState())) {
+            com.ambient.tv.ui.games.GameCoreInputActions(coreActions, touchPresentation)
+            GameTouchOptions(info?.systemId)
+        } },
         confirmButton = { TextButton(onClick = { touchOptionsOpen = false }) { Text(stringResource(android.R.string.ok)) } },
     )
 }

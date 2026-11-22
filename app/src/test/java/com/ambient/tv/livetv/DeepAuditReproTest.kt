@@ -119,11 +119,12 @@ class DeepAuditReproTest {
         } }
         server.start()
         val dir = kotlin.io.path.createTempDirectory("audit-guide").toFile()
+        val guideIndex = ProgrammeGuideIndex(org.robolectric.RuntimeEnvironment.getApplication())
         try {
             val config = IptvSource(id="same", name="Test", playlistUrl="$base/list", epgUrl="$base/old")
-            fun repo(c: IptvSource) = IptvLiveTvRepository(LiveTvSource("iptv:same", "iptv", "Test"), c, OkHttpClient(), dir)
+            fun repo(c: IptvSource) = IptvLiveTvRepository(LiveTvSource("iptv:same", "iptv", "Test"), c, OkHttpClient(), dir, guideIndex)
             assertEquals("OLD", repo(config).epgEvents(now.epochSecond, 1, false).single().title)
             assertEquals("NEW", repo(config.copy(epgUrl="$base/new")).epgEvents(now.epochSecond, 1, false).single().title)
-        } finally { server.stop(0); dir.deleteRecursively() }
+        } finally { guideIndex.close(); server.stop(0); dir.deleteRecursively() }
     }
 }

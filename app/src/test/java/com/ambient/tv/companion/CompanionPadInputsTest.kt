@@ -4,6 +4,20 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class CompanionPadInputsTest {
+    @Test fun touchTriggersTemporarilyOverridePhysicalPressureAndClearIndependently() {
+        val input = CompanionPadInputs()
+        input.hardwareTrigger(0, .25f)
+        input.hardwareTrigger(1, .75f)
+        input.touchButtons = com.ambient.tv.ui.gamepad.retro.RetroPadButton.L2.mask
+        assertEquals(1f, input.trigger(0), 0f)
+        assertEquals(.75f, input.trigger(1), 0f)
+        input.clearTouch()
+        assertEquals(.25f, input.trigger(0), 0f)
+        input.clearHardware()
+        assertEquals(0f, input.trigger(0), 0f)
+        assertEquals(0f, input.trigger(1), 0f)
+    }
+
     @Test fun removingTouchOverlayPreservesHardwareHoldsAndViceVersa() {
         val input = CompanionPadInputs()
         input.touchButtons = 1 or 2

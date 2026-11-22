@@ -15,7 +15,9 @@ internal data class ArtworkFocusPoint(val x: Float?, val y: Float?) {
 }
 
 /**
- * Includes the actual image version (including provider URL revisions) and request identity.
+ * Uses the actual resolved Coil image key (including account and image revisions), falling
+ * back to the request URL only before such an identity is available. Snapshot/live credential
+ * URL variants of the same resolved image must not trigger duplicate face detection.
  * Only this digest is persisted: neither signed URLs nor authentication headers reach disk.
  * Length prefixes prevent ambiguous URL/header concatenations. Header names are case insensitive.
  */
@@ -23,16 +25,20 @@ internal fun artworkFocusKey(url: String, headers: Map<String, String>, revision
     val digest = MessageDigest.getInstance("SHA-256")
     fun add(value: String) {
         val bytes = value.toByteArray(Charsets.UTF_8)
-        digest.update(java.nio.ByteBuffer.allocate(4).putInt(bytes.size).array())
+        for (shift in 24 downTo 0 step 8) digest.update((bytes.size ushr shift).toByte())
         digest.update(bytes)
     }
-    add("focus-analysis-v2")
-    add(url)
-    add(revision.orEmpty())
+    add("focus-analysis-v3")
+    add(if (revision.isNullOrEmpty()) "url" else "resolved-image")
+    add(revision?.takeIf(String::isNotEmpty) ?: url)
     headers.entries.map { it.key.lowercase(Locale.ROOT) to it.value }
         .sortedWith(compareBy<Pair<String, String>> { it.first }.thenBy { it.second })
         .forEach { (name, value) -> add(name); add(value) }
-    return digest.digest().joinToString("") { "%02x".format(it) }
+    val hex = "0123456789abcdef"
+    return buildString(64) { digest.digest().forEach { byte ->
+        val value = byte.toInt() and 255
+        append(hex[value ushr 4]); append(hex[value and 15])
+    } }
 }
 
 /**
