@@ -4,6 +4,7 @@ import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.Stable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -191,6 +192,20 @@ internal fun RequestGameOsdFocus(
     // This reads the observable control registrations and last button; disappearance is an
     // event, not a frame poll. Ordinary movement preserves its already focused destination.
     val registeredTarget = controls?.buttonTarget(recoveryRequester)
+    val hasControlFocus = controls?.hasFocus == true
+    val focusedTarget = if (hasControlFocus) controls.target(recoveryRequester) else null
+    var retainedTarget by remember(controls) { mutableStateOf<FocusRequester?>(null) }
+    val removedTarget = retainedTarget?.takeUnless { controls?.isRegistered(it) == true }
+    SideEffect {
+        if (!active || panels.panel != null || panels.statesOpen || navigation.restoreKey != null ||
+            navigation.dialogFocusOwner != null) {
+            retainedTarget = null
+        } else if (removedTarget == null && hasControlFocus) {
+            // Capture during composition: node removal can already change live focus before
+            // this side effect runs, while the outgoing registration is being disposed.
+            retainedTarget = focusedTarget
+        }
+    }
     fun unobstructed(): Boolean = currentActive && panels.panel == null && !panels.statesOpen &&
         navigation.restoreKey == null && navigation.dialogFocusOwner == null && window.isWindowFocused
     fun recover(): Boolean = runCatching { continueRequester.requestFocus() }.getOrDefault(false) ||
@@ -214,10 +229,16 @@ internal fun RequestGameOsdFocus(
             }
         }
     }
-    LaunchedEffect(active, registeredTarget, window.isWindowFocused) {
-        if (controls == null || controls.hasFocus || !unobstructed()) return@LaunchedEffect
+    LaunchedEffect(active, registeredTarget, hasControlFocus, removedTarget, window.isWindowFocused) {
+        // Detaching a focused button can make Compose focus its first surviving sibling.
+        // Retain the old registration until our hand-back finishes, so that automatic focus
+        // cannot disguise a removal as ordinary navigation (or land on Exit while saving).
+        if (controls == null || (removedTarget == null && controls.hasFocus) || !unobstructed()) return@LaunchedEffect
         retryFocusFor {
-            if (controls.hasFocus || !unobstructed()) true else recover()
+            if (!unobstructed() || (removedTarget == null && controls.hasFocus)) true
+            else recover().also { placed ->
+                if (placed) retainedTarget = controls.target(recoveryRequester)
+            }
         }
     }
 }

@@ -82,6 +82,10 @@ and the Companion protocol/UI. This audit covers the assembled screen and rewind
 13. Child panels now use the same hidden-action/focus wrapper. Unavailable device sections and
     draft Save disappear. Cheat deletion remains a usable storage action even when activating
     cheats is prohibited; Cancel/Done and netplay cancellation remain reachable.
+14. Full CI exposed a missing semantic boundary for held buttons inside a clickable player
+    surface. Hold controls now merge their own icon/label descendants as independent buttons,
+    preserving their accessibility action and preventing the parent OSD action from absorbing
+    them. The strict pointer/drag/disposal regressions remain unchanged.
 
 ## Validation
 

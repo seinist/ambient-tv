@@ -123,7 +123,9 @@ internal fun Modifier.holdAction(
                 } finally { state.set(owner, false) }
             }
         }
-        .semantics {
+        // A hold is an independent button, including inside the player's clickable surface.
+        // Preserve its label/action as a child boundary instead of merging into the OSD toggle.
+        .semantics(mergeDescendants = true) {
             role = Role.Button
             if (enabled) onClick {
                 scope.launch {

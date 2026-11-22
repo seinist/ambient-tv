@@ -11,16 +11,18 @@ import androidx.compose.ui.focus.FocusRequester
 internal class PlayerControlFocus {
     private data class Control(val requester: FocusRequester, val owner: Any)
     private val controls = mutableStateMapOf<String, Control>()
-    internal var lastKey: String? = null
+    internal var lastKey: String? by mutableStateOf(null)
         private set
     private var lastButtonKey: String? by mutableStateOf(null)
-    private var focusedOwner: Any? = null
+    private var focusedOwner: Any? by mutableStateOf(null)
 
     val hasFocus: Boolean get() = focusedOwner != null && controls[lastKey]?.owner === focusedOwner
     /** Observable so the action bar can slide away while the seek bar is focused. */
     var seekFocused: Boolean by mutableStateOf(false)
         private set
     fun target(fallback: FocusRequester): FocusRequester = controls[lastKey]?.requester ?: fallback
+    internal fun isRegistered(requester: FocusRequester): Boolean =
+        controls.values.any { it.requester === requester }
 
     fun buttonTarget(fallback: FocusRequester): FocusRequester =
         controls[lastButtonKey]?.requester ?: controls["play-pause"]?.requester ?: fallback

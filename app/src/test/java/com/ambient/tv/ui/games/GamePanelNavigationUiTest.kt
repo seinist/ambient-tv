@@ -189,5 +189,9 @@ class GamePanelNavigationUiTest {
         rule.onNodeWithTag("mutation").assertDoesNotExist()
         rule.onNodeWithTag("continue").assertDoesNotExist()
         rule.onNodeWithTag("settings").assertIsFocused()
+        // Recovery is one hand-back. Subsequent intentional navigation stays where it went.
+        rule.runOnIdle { assertTrue(panels.navigation.requestFocus("bar:States")) }
+        settle()
+        rule.onNodeWithTag("states").assertIsFocused()
     }
 }

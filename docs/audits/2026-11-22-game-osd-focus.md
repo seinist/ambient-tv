@@ -30,6 +30,10 @@ frame-based focus hand-back implementation.
 - Registration changes and window-focus changes drive bounded focus retries. There is
   no continuous polling or repeated focus reset during ordinary navigation. A panel, state
   strip, dialog, current focus or pending hand-back prevents competing recovery.
+  A removed focused toolbar control retains its former registration until the fallback
+  finishes: Compose's automatic focus on the first surviving sibling does not count as an
+  intentional destination. Focus ownership is observable, so a late focus-loss event also
+  restarts the bounded recovery when the registered target itself did not change.
 - Resume/exit discards panel and strip state and cancels pending/failed focus returns.
   A late Back callback is checked against its original typed page and cannot pop a
   replacement page.
@@ -70,3 +74,15 @@ are hidden using the same availability policy as the toolbar.
   surrounding Chrome and panel views are compile-only boundaries. Full Android and
   Robolectric UI execution remain the PR CI gate.
 - This audit does not claim physical phone/TV/controller execution.
+
+## CI follow-up
+
+The first full Android/native/test build compiled successfully. The strict busy-control UI
+regression found that removing Continue and the focused action could leave Compose's default
+sibling focused instead of Settings. The recovery guard previously treated any surviving focus
+as user navigation. It now retains and checks the outgoing registration, explicitly completes
+the fallback, then releases that target. The original Settings assertion is retained, and the
+same test also checks that a later deliberate move to States is not overwritten. The other
+three game navigation UI scenarios passed in that run; the corrected UI case remains gated on
+the next full CI run. The corrected helper and shared focus owner compile in the local Compose
+harness; its 57 action/navigation/registry/rescue/control-focus regressions pass.
