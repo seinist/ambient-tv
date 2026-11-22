@@ -8,6 +8,7 @@ import androidx.compose.foundation.gestures.waitForUpOrCancellation
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -33,6 +34,16 @@ import com.ambient.tv.ui.gamepad.retro.RetroInputSettings
 import com.ambient.tv.ui.gamepad.retro.CompanionTouchProfile
 import com.ambient.tv.ui.gamepad.retro.companionTouchProfileKey
 import com.ambient.tv.ui.games.GameTouchControls
+import com.ambient.tv.ui.games.GameTouchOptions
+import com.ambient.tv.ui.games.gameTouchPresentation
+import com.ambient.tv.ui.gamepad.GamepadInput
+import com.ambient.tv.ui.gamepad.retro.RetroPadInput
+import com.ambient.tv.ui.gamepad.retro.RetroPorts
+import com.ambient.tv.ui.gamepad.retro.RetroInputProfileContext
+import com.ambient.tv.ui.gamepad.retro.isPhysicalGamepadActivity
+import com.ambient.tv.ui.gamepad.retro.isPhysicalGamepadEvent
+import android.os.Handler
+import android.os.Looper
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import androidx.lifecycle.Lifecycle
@@ -95,6 +106,12 @@ internal fun CompanionGamepadScreen(manager: CompanionManager, modifier: Modifie
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
     val transmitting = playing && resumed
+    var touchOptionsOpen by remember { mutableStateOf(false) }
+    val touchStyle = RetroInputSettings.config.touchStyle
+    val touchVariant = RetroInputSettings.config.touchVariants[info?.systemId].orEmpty()
+    val touchPresentation = remember(info?.systemId, touchVariant) { gameTouchPresentation(info?.systemId, touchVariant) }
+    var hidingGamepadId by remember(info?.sessionId) { mutableStateOf<Int?>(null) }
+    val hideTouchForGamepad by rememberUpdatedState(touchStyle.hideOnGamepadInput)
     val touchProfileKey = companionTouchProfileKey(state.target?.fingerprint, info?.systemId)
     val storedTouchProfile = RetroInputSettings.config.companionTouchProfiles[touchProfileKey]
     var modeKey by rememberSaveable(state.target?.fingerprint, info?.systemId) {
@@ -117,6 +134,72 @@ internal fun CompanionGamepadScreen(manager: CompanionManager, modifier: Modifie
     }
     val mode = GameTouchMode.fromKey(modeKey)
     val padFrame = remember(info?.sessionId) { CompanionInputFrame() }
+    val padInputs = remember(info?.sessionId) { CompanionPadInputs() }
+    fun publishPad(send: Boolean = true) {
+        val next = padFrame.value.copy(buttons = padInputs.buttons, leftX = padInputs.axis(0),
+            leftY = padInputs.axis(1), rightX = padInputs.axis(2), rightY = padInputs.axis(3))
+        if (next != padFrame.value) {
+            padFrame.value = next
+            if (send) manager.gamepadInput(next)
+        }
+    }
+    val currentPublishPad by rememberUpdatedState<(Boolean) -> Unit>({ publishPad(it) })
+    val hardwareInput = remember(info?.sessionId) {
+        val handler = Handler(Looper.getMainLooper())
+        RetroPadInput(
+            profileContext = RetroInputProfileContext(info?.systemId.orEmpty(), info?.coreId.orEmpty()),
+            schedule = { delay, task ->
+                val runnable = Runnable(task)
+                handler.postDelayed(runnable, delay)
+                ({ handler.removeCallbacks(runnable) })
+            },
+            onMenu = { manager.gamepadMenu() },
+        )
+    }
+    DisposableEffect(hardwareInput, transmitting, touchOptionsOpen) {
+        val enabled = transmitting && !touchOptionsOpen
+        hardwareInput.onChanged = {
+            var buttons = 0
+            for (player in 0 until RetroPorts.COUNT) buttons = buttons or hardwareInput.buttons(player)
+            padInputs.hardwareButtons = buttons
+            for (axis in 0..3) {
+                var value = 0
+                for (player in 0 until RetroPorts.COUNT) {
+                    val candidate = hardwareInput.analog(player, axis / 2, axis % 2)
+                    if (kotlin.math.abs(candidate) > kotlin.math.abs(value)) value = candidate
+                }
+                padInputs.hardwareAxis(axis, value / 32767f)
+            }
+            val previous = padFrame.value
+            val edge = previous.buttons != padInputs.buttons ||
+                (previous.leftX != 0f && padInputs.axis(0) == 0f) ||
+                (previous.leftY != 0f && padInputs.axis(1) == 0f) ||
+                (previous.rightX != 0f && padInputs.axis(2) == 0f) ||
+                (previous.rightY != 0f && padInputs.axis(3) == 0f)
+            currentPublishPad(edge)
+        }
+        val sink: (android.view.InputEvent) -> Boolean = { event ->
+            val handled = isPhysicalGamepadEvent(event) && hardwareInput.onEvent(event)
+            if (handled && hideTouchForGamepad && isPhysicalGamepadActivity(event, hardwareInput)) hidingGamepadId = event.deviceId
+            handled
+        }
+        val removed: (Int) -> Unit = { id ->
+            hardwareInput.deviceRemoved(id)
+            if (hidingGamepadId == id) hidingGamepadId = null
+        }
+        if (enabled) {
+            GamepadInput.rawSink = sink
+            GamepadInput.deviceRemovedSink = removed
+        }
+        onDispose {
+            if (GamepadInput.rawSink === sink) GamepadInput.rawSink = null
+            if (GamepadInput.deviceRemovedSink === removed) GamepadInput.deviceRemovedSink = null
+            hardwareInput.onChanged = null
+            hardwareInput.releaseAll()
+            padInputs.clearHardware()
+            currentPublishPad(true)
+        }
+    }
     val motion = rememberCompanionMotionSource(transmitting && motionEnabled)
     val haptics = LocalHapticFeedback.current
     val scope = rememberCoroutineScope()
@@ -170,6 +253,7 @@ internal fun CompanionGamepadScreen(manager: CompanionManager, modifier: Modifie
         if (!transmitting) {
             // App background, screen lock or TV OSD: never send held-button heartbeats.
             // The TV's own deadman remains a fallback if this neutral frame is lost.
+            padInputs.clear()
             padFrame.value = CompanionGamepadState()
             manager.gamepadInput(CompanionGamepadState())
         }
@@ -184,10 +268,10 @@ internal fun CompanionGamepadScreen(manager: CompanionManager, modifier: Modifie
         onDispose { if (claimed) manager.gamepadInput(CompanionGamepadState()) }
     }
     val setButton: (RetroPadButton, Boolean) -> Unit = { button, pressed ->
-        val mask = if (pressed) padFrame.value.buttons or button.mask else padFrame.value.buttons and button.mask.inv()
-        if (padFrame.value.buttons != mask) {
-            padFrame.value = padFrame.value.copy(buttons = mask)
-            manager.gamepadInput(padFrame.value)
+        val mask = if (pressed) padInputs.touchButtons or button.mask else padInputs.touchButtons and button.mask.inv()
+        if (padInputs.touchButtons != mask) {
+            padInputs.touchButtons = mask
+            publishPad()
             if (pressed) haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
         }
     }
@@ -240,6 +324,12 @@ internal fun CompanionGamepadScreen(manager: CompanionManager, modifier: Modifie
                     else -> R.string.companion_gamepad_input_pad
                 }))
             }
+            if (inputKind == "pad") TextButton(onClick = {
+                optionsOpen = false
+                padInputs.clearTouch()
+                publishPad()
+                touchOptionsOpen = true
+            }) { Text(stringResource(R.string.game_touch_customize)) }
             if (inputKind == "pad") TextButton(onClick = {
                 val next = (GameTouchMode.entries.indexOf(mode) + 1) % GameTouchMode.entries.size
                 modeKey = GameTouchMode.entries[next].key
@@ -312,31 +402,34 @@ internal fun CompanionGamepadScreen(manager: CompanionManager, modifier: Modifie
             if (!compactHeader) options()
 
             Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
-                if (transmitting) {
-                    if (inputKind == "pad") {
+                if (transmitting && !touchOptionsOpen) {
+                    if (inputKind == "pad" && touchStyle.hideOnGamepadInput && hidingGamepadId != null) {
+                        TextButton(onClick = { hidingGamepadId = null }) {
+                            Icon(Icons.Default.SportsEsports, null)
+                            Text(stringResource(R.string.game_touch_show))
+                        }
+                    } else if (inputKind == "pad") {
                         GameTouchControls(
                             mode = mode,
+                            style = touchStyle,
+                            presentation = touchPresentation,
                             portrait = !landscape,
                             onButton = setButton,
                             onButtonsChanged = { buttons ->
-                                val previous = padFrame.value.buttons
+                                val previous = padInputs.touchButtons
                                 val mask = buttons.fold(0) { bits, button -> bits or button.mask }
                                 if (mask != previous) {
-                                    padFrame.value = padFrame.value.copy(buttons = mask)
+                                    padInputs.touchButtons = mask
                                     // A complete snapshot avoids intermediate releases during face-button rolls.
-                                    manager.gamepadInput(padFrame.value)
+                                    publishPad()
                                     if (mask and previous.inv() and COMPANION_DPAD_MASK.inv() != 0) {
                                         haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                                     }
                                 }
                             },
                             onStick = { index, x, y ->
-                                val next = if (index == 0) padFrame.value.copy(leftX = x, leftY = y)
-                                    else padFrame.value.copy(rightX = x, rightY = y)
-                                if (next != padFrame.value) {
-                                    padFrame.value = next
-                                    if (x == 0f && y == 0f) manager.gamepadInput(next)
-                                }
+                                padInputs.touchStick(index, x, y)
+                                publishPad(send = x == 0f && y == 0f)
                             },
                             modifier = Modifier.fillMaxSize(),
                         )
@@ -379,6 +472,12 @@ internal fun CompanionGamepadScreen(manager: CompanionManager, modifier: Modifie
             }
         }
     }
+    if (touchOptionsOpen) AlertDialog(
+        onDismissRequest = { touchOptionsOpen = false },
+        title = { Text(stringResource(R.string.game_touch_customize)) },
+        text = { Column(Modifier.verticalScroll(rememberScrollState())) { GameTouchOptions(info?.systemId) } },
+        confirmButton = { TextButton(onClick = { touchOptionsOpen = false }) { Text(stringResource(android.R.string.ok)) } },
+    )
 }
 
 /** Press-and-hold is not an onClick pulse: cores see every DOWN and UP transition. */

@@ -6,10 +6,14 @@ import com.ambient.tv.util.suspendResult
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.runInterruptible
 import kotlinx.coroutines.withContext
 
 @Singleton
-class FilesRepository @Inject constructor(val store: FileStore, private val access: FileAccess, private val server: MediaFileServer) : MediaRepository {
+class FilesRepository @Inject constructor(
+    val store: FileStore, private val access: FileAccess, private val server: MediaFileServer,
+    private val audioTagCache: AudioTagCache,
+) : MediaRepository {
     private data class Cached(val item: MediaItem, val source: FileSource)
     private val cache = LinkedHashMap<String, Cached>()
     private data class PlaybackBinding(val source: FileSource, val entryId: String)
@@ -36,7 +40,16 @@ class FilesRepository @Inject constructor(val store: FileStore, private val acce
         // Network listing happens before the source lock; a failure only means no sidecar tracks.
         val sidecars = if (entry.audio) emptyList() else findSidecarSubtitles(source, path, entry.name)
         // Music: tags for title/artist/album and the folder cover for the player and mini player.
-        val tags = if (entry.audio) withContext(Dispatchers.IO) { runCatching { access.open(source, path).use { AudioTagReader.read(it, entry.name) } }.getOrNull() } else null
+        val tags = if (entry.audio) readAudioTag(audioTagCache, source, entry,
+            valid = { store.sources().any { it == source } },
+            read = {
+                if (!AudioTagReader.supports(entry.name)) null
+                else audioTagCache.withReadPermit {
+                    runInterruptible(Dispatchers.IO) {
+                        access.open(source, path).use { AudioTagReader.readForCache(it, entry.name) }
+                    }
+                }
+            }) else null
         val cover = if (entry.audio) runCatching {
             MusicFolder.cover(access.list(source, parentFolder(source, path) { access.root(source) }, limit = 500, accept = { it.image }).entries)
         }.getOrNull() else null

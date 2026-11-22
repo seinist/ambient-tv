@@ -1436,7 +1436,7 @@ private fun AmbientTvApp(
             mediaSelectionScope.launch {
                 try {
                     val game = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-                        gameLibraryRepository.games().firstOrNull { it.fileId == fileId }
+                        gameLibraryRepository.game(fileId)
                     }
                     if (navController.currentBackStackEntry?.id != originEntry) return@launch
                     if (game == null) {
@@ -1452,6 +1452,10 @@ private fun AmbientTvApp(
                     } else {
                         playOnSelectedTarget(Destinations.gamePlayer(game.fileId, game.systemId))
                     }
+                } catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
+                catch (_: Exception) {
+                    if (navController.currentBackStackEntry?.id == originEntry)
+                        navController.navigate(Destinations.GAME_LIBRARY) { launchSingleTop = true }
                 } finally {
                     mediaSelectionBusy = false
                 }

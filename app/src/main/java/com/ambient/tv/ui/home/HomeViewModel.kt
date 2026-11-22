@@ -66,6 +66,8 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.drop
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.onStart
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.update
@@ -527,9 +529,12 @@ class HomeViewModel @Inject constructor(
 
     init {
         viewModelScope.launch {
-            gameLibrary.revisions.drop(1).collect {
-                if (hasEntered && !plexOnly && !jellyfinOnly && !embyOnly)
-                    loadGameRows()
+            combine(gameLibrary.revisions, appPreferences.changes().onStart { emit(Unit) }) { _, _ ->
+                Triple(gameLibrary.revisionSnapshot(), gameLibrary.titleStyle(), appPreferences.homeRows.filter {
+                    it.enabled && it.system == HomeRowDefinition.SYSTEM_GAMES
+                })
+            }.distinctUntilChanged().drop(1).collect {
+                if (hasEntered && !plexOnly && !jellyfinOnly && !embyOnly) loadGameRows()
             }
         }
     }
@@ -1986,9 +1991,22 @@ class HomeViewModel @Inject constructor(
             return
         }
         gameRowsJob = viewModelScope.launch {
-            val games = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { gameLibrary.games() }
+            val rows = try {
+                kotlinx.coroutines.runInterruptible(kotlinx.coroutines.Dispatchers.IO) {
+                    definitions.distinctBy(HomeRowDefinition::contentKey).flatMap { definition ->
+                        val games = gameLibrary.games(com.ambient.tv.games.library.GameLibraryQuery(
+                            section = definition.contentKey, limit = HOME_ROW_LIMIT,
+                        ))
+                        gameHomeRows(context, listOf(definition), games, HOME_ROW_LIMIT)
+                    }
+                }
+            } catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
+            catch (error: Exception) {
+                timber.log.Timber.w(error, "Game Home index unavailable")
+                return@launch
+            }
             if (revision != gameRowsGeneration) return@launch
-            gameRows = gameHomeRows(context, definitions, games, HOME_ROW_LIMIT)
+            gameRows = rows
             if (!_uiState.value.isFailurePage())
                 publishRows((_uiState.value as? HomeUiState.Loaded)?.rows.orEmpty())
         }

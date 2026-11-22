@@ -307,6 +307,9 @@ data class RetroInputConfig(
     val ports: Map<String, Int> = emptyMap(),
     /** Local phone UI layouts; not tied to a transient Companion socket session. */
     val companionTouchProfiles: Map<String, CompanionTouchProfile> = emptyMap(),
+    val touchStyle: TouchControlStyle = TouchControlStyle(),
+    /** Visual variants never change the core's controller type. */
+    val touchVariants: Map<String, String> = emptyMap(),
 ) {
     fun profile(kind: RetroInputKind): RetroInputProfile = profiles[kind] ?: defaultRetroProfile(kind)
 
@@ -373,6 +376,12 @@ data class RetroInputConfig(
     fun encode(): Map<String, String> = buildMap {
         put("start_select_menu", if (startSelectMenu) "1" else "0")
         put("dpad_stick", if (dpadAsStick) "1" else "0")
+        put("touch_style", touchStyle.encode())
+        touchVariants.forEach { (system, variant) ->
+            if (system.matches(Regex("[a-z0-9_]{1,32}")) && variant.matches(Regex("[a-z0-9_]{1,24}"))) {
+                put("touch_variant.$system", variant)
+            }
+        }
         deviceProfiles.forEach { (identity, overlay) ->
             overlay.buttons.forEach { (button, codes) ->
                 put("paddev.$identity.button.${button.key}", codes.joinToString(","))
@@ -483,6 +492,13 @@ data class RetroInputConfig(
             }.toMap()
             return RetroInputConfig(
                 companionTouchProfiles = phoneLayouts,
+                touchStyle = TouchControlStyle.decode(stored["touch_style"]),
+                touchVariants = stored.filterKeys { it.startsWith("touch_variant.") }
+                    .mapNotNull { (key, value) ->
+                        val system = key.removePrefix("touch_variant.")
+                        if (system.matches(Regex("[a-z0-9_]{1,32}")) && value.matches(Regex("[a-z0-9_]{1,24}")))
+                            system to value else null
+                    }.toMap(),
                 scopedProfiles = layers,
                 deviceProfiles = deviceLayers,
                 startSelectMenu = stored["start_select_menu"] != "0",

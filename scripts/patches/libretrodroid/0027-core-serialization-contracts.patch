@@ -1,0 +1,174 @@
+Ambient TV: honor core serialization contracts, expose flags and gate fixed-size rewind.
+
+diff --git a/src/main/cpp/environment.cpp b/src/main/cpp/environment.cpp
+--- a/src/main/cpp/environment.cpp
++++ b/src/main/cpp/environment.cpp
+@@ -42,6 +42,7 @@
+     callback_get_current_framebuffer = required_callback_get_current_framebuffer;
+     systemDirectory = requiredSystemDirectory;
+     savesDirectory = requiredSavesDirectory;
++    serializationQuirks.store(0u, std::memory_order_release);
+ }
+ 
+ void Environment::setConfiguredHdrOutput(unsigned mode) {
+@@ -62,6 +63,7 @@
+     callback_get_current_framebuffer = nullptr;
+     // Ambient TV: options belong to one core; another core must not inherit them.
+     variables.clear();
++    serializationQuirks.store(0u, std::memory_order_release);
+     optionMeta.clear();
+     updateDisplayCallback = nullptr;
+     dirtyVariables = false;
+@@ -588,6 +590,25 @@
+             return true;
+         }
+ 
++        case RETRO_ENVIRONMENT_SET_SERIALIZATION_QUIRKS: {
++            if (data == nullptr) return false;
++            auto* flags = static_cast<uint64_t*>(data);
++            constexpr uint64_t known = RETRO_SERIALIZATION_QUIRK_INCOMPLETE |
++                RETRO_SERIALIZATION_QUIRK_MUST_INITIALIZE |
++                RETRO_SERIALIZATION_QUIRK_CORE_VARIABLE_SIZE |
++                RETRO_SERIALIZATION_QUIRK_SINGLE_SESSION |
++                RETRO_SERIALIZATION_QUIRK_ENDIAN_DEPENDENT |
++                RETRO_SERIALIZATION_QUIRK_PLATFORM_DEPENDENT;
++            uint64_t accepted = *flags & known;
++            // Persisted loads use the core-validated size policy. Frame-sensitive features
++            // independently decline variable/incomplete/single-session states.
++            if (accepted & RETRO_SERIALIZATION_QUIRK_CORE_VARIABLE_SIZE)
++                accepted |= RETRO_SERIALIZATION_QUIRK_FRONT_VARIABLE_SIZE;
++            serializationQuirks.store(accepted, std::memory_order_release);
++            *flags = accepted;
++            return true;
++        }
++
+         case RETRO_ENVIRONMENT_SET_INPUT_DESCRIPTORS:
+             LOGD("Called SET_INPUT_DESCRIPTORS");
+             return false;
+diff --git a/src/main/cpp/environment.h b/src/main/cpp/environment.h
+--- a/src/main/cpp/environment.h
++++ b/src/main/cpp/environment.h
+@@ -80,6 +80,7 @@
+     void setConfiguredHdrOutput(unsigned mode);
+     /** Atomic handshake: bit 0 requested HDR10, bit 1 accepted HDR10, bit 2 requested scRGB. */
+     unsigned getHdrSourceStatus() const { return hdrSourceStatus.load(std::memory_order_acquire); }
++    uint64_t getSerializationQuirks() const { return serializationQuirks.load(std::memory_order_acquire); }
+ 
+ private:
+     Environment() {}
+@@ -189,6 +190,7 @@
+     unsigned hdrDisplayEotfs = 0; // 1 SDR, 2 PQ, 4 HLG; zero=unknown
+     unsigned configuredHdrOutput = 0; // 0 SDR/unknown, 1 configured PQ; reset at game exit
+     std::atomic<unsigned> hdrSourceStatus { 0u };
++    std::atomic<uint64_t> serializationQuirks { 0u };
+ 
+     int pixelFormat = RETRO_PIXEL_FORMAT_RGB565;
+     bool useHWAcceleration = false;
+diff --git a/src/main/cpp/libretrodroid.cpp b/src/main/cpp/libretrodroid.cpp
+--- a/src/main/cpp/libretrodroid.cpp
++++ b/src/main/cpp/libretrodroid.cpp
+@@ -195,7 +195,7 @@
+     StateLoadPolicy policy
+ ) {
+     const size_t currentSize = core->retro_serialize_size();
+-    if (currentSize == 0) {
++    if (currentSize == 0 || currentSize > 64u * 1024u * 1024u || size > 64u * 1024u * 1024u) {
+         LOGE("unserializeState: core reports no serialization support");
+         return false;
+     }
+@@ -998,6 +998,15 @@
+ void LibretroDroid::initRewindBuffer(int maxSlots, jlong budgetBytes) {
+     constexpr size_t MIN_SLOTS = 4;
+ 
++    const uint64_t quirks = Environment::getInstance().getSerializationQuirks();
++    if (quirks & (RETRO_SERIALIZATION_QUIRK_INCOMPLETE |
++                  RETRO_SERIALIZATION_QUIRK_CORE_VARIABLE_SIZE |
++                  RETRO_SERIALIZATION_QUIRK_SINGLE_SESSION)) {
++        destroyRewindBuffer();
++        LOGW("Rewind declined by the core serialization contract");
++        return;
++    }
++
+     size_t stateSize = core->retro_serialize_size();
+     if (stateSize == 0 || maxSlots <= 0 || budgetBytes <= 0) {
+         LOGE("Rewind unavailable: stateSize=%zu maxSlots=%d budget=%lld",
+@@ -1265,7 +1274,7 @@
+ 
+ std::pair<int8_t*, size_t> LibretroDroid::serializeState() {
+     size_t size = core->retro_serialize_size();
+-    if (size == 0) {
++    if (size == 0 || size > 64u * 1024u * 1024u) {
+         return std::pair(nullptr, 0);
+     }
+     auto data = new int8_t[size];
+diff --git a/src/main/cpp/libretrodroidjni.cpp b/src/main/cpp/libretrodroidjni.cpp
+--- a/src/main/cpp/libretrodroidjni.cpp
++++ b/src/main/cpp/libretrodroidjni.cpp
+@@ -191,11 +191,12 @@
+     jbyteArray state,
+     bool persisted
+ ) {
+-    try {
+-        jboolean isCopy = JNI_FALSE;
+-        jbyte* data = env->GetByteArrayElements(state, &isCopy);
+-        jsize size = env->GetArrayLength(state);
+-
++    if (state == nullptr) return JNI_FALSE;
++    const jsize size = env->GetArrayLength(state);
++    if (size <= 0 || size > 64 * 1024 * 1024) return JNI_FALSE;
++    jbyte* data = env->GetByteArrayElements(state, nullptr);
++    if (data == nullptr) return JNI_FALSE;
++    try {
+         const bool result = persisted
+             ? LibretroDroid::getInstance().unserializePersistedState(data, size)
+             : LibretroDroid::getInstance().unserializeState(data, size);
+@@ -204,6 +205,7 @@
+         return result ? JNI_TRUE : JNI_FALSE;
+ 
+     } catch (std::exception &exception) {
++        env->ReleaseByteArrayElements(state, data, JNI_ABORT);
+         LOGE("Error in unserializeState: %s", exception.what());
+         JavaUtils::throwRetroException(env, ERROR_SERIALIZATION);
+         return JNI_FALSE;
+@@ -238,7 +240,7 @@
+         }
+ 
+         jbyteArray result = env->NewByteArray(size);
+-        env->SetByteArrayRegion(result, 0, size, data);
++        if (result != nullptr) env->SetByteArrayRegion(result, 0, size, data);
+ 
+         delete[] data;
+ 
+@@ -250,6 +252,10 @@
+     }
+ 
+     return nullptr;
++}
++
++JNIEXPORT jlong JNICALL Java_com_swordfish_libretrodroid_LibretroDroid_getSerializationQuirks(JNIEnv*, jclass) {
++    return static_cast<jlong>(Environment::getInstance().getSerializationQuirks());
+ }
+ 
+ JNIEXPORT jlong JNICALL Java_com_swordfish_libretrodroid_LibretroDroid_getSerializeSize(
+diff --git a/src/main/cpp/libretrodroidjni.h b/src/main/cpp/libretrodroidjni.h
+--- a/src/main/cpp/libretrodroidjni.h
++++ b/src/main/cpp/libretrodroidjni.h
+@@ -27,6 +27,7 @@
+ JNIEXPORT jboolean JNICALL Java_com_swordfish_libretrodroid_LibretroDroid_unserializeState(JNIEnv* env, jclass obj, jbyteArray data);
+ JNIEXPORT jboolean JNICALL Java_com_swordfish_libretrodroid_LibretroDroid_unserializePersistedState(JNIEnv* env, jclass obj, jbyteArray data);
+ JNIEXPORT jlong JNICALL Java_com_swordfish_libretrodroid_LibretroDroid_getSerializeSize(JNIEnv* env, jclass obj);
++JNIEXPORT jlong JNICALL Java_com_swordfish_libretrodroid_LibretroDroid_getSerializationQuirks(JNIEnv* env, jclass obj);
+ JNIEXPORT jbyteArray JNICALL Java_com_swordfish_libretrodroid_LibretroDroid_serializeSRAM(JNIEnv* env, jclass obj);
+ JNIEXPORT jboolean JNICALL Java_com_swordfish_libretrodroid_LibretroDroid_unserializeSRAM(JNIEnv* env, jclass obj, jbyteArray data);
+ JNIEXPORT void JNICALL Java_com_swordfish_libretrodroid_LibretroDroid_onSurfaceCreated(JNIEnv* env, jclass obj);
+diff --git a/src/main/java/com/swordfish/libretrodroid/LibretroDroid.java b/src/main/java/com/swordfish/libretrodroid/LibretroDroid.java
+--- a/src/main/java/com/swordfish/libretrodroid/LibretroDroid.java
++++ b/src/main/java/com/swordfish/libretrodroid/LibretroDroid.java
+@@ -204,6 +204,7 @@
+     public static native boolean unserializeState(byte[] state);
+     public static native boolean unserializePersistedState(byte[] state);
+     public static native long getSerializeSize();
++    public static native long getSerializationQuirks();
+ 
+     public static native byte[] captureRawFrame();
+ 

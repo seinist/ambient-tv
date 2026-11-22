@@ -13,6 +13,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertDoesNotExist
 import androidx.compose.ui.test.click
 import androidx.compose.ui.test.getBoundsInRoot
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
@@ -24,6 +25,7 @@ import androidx.lifecycle.LifecycleRegistry
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.ambient.tv.games.GameTouchMode
 import com.ambient.tv.ui.gamepad.retro.RetroPadButton
+import com.ambient.tv.ui.gamepad.retro.TouchControlStyle
 import com.ambient.tv.ui.mobile.LocalHandheldUi
 import com.ambient.tv.ui.theme.AmbientTvTheme
 import org.junit.Assert.assertEquals
@@ -44,6 +46,8 @@ class GameTouchInputUiTest {
     private class Fixture {
         var menuVisible by mutableStateOf(false)
         var mode by mutableStateOf(GameTouchMode.DPAD)
+        var style by mutableStateOf(TouchControlStyle())
+        var hiddenForGamepad by mutableStateOf(false)
         var osdTaps = 0
         val held = mutableSetOf<RetroPadButton>()
         val aTransitions = mutableListOf<Boolean>()
@@ -69,6 +73,8 @@ class GameTouchInputUiTest {
                             touchMode = fixture.mode, playing = true, menuVisible = fixture.menuVisible,
                             onMenu = { fixture.osdTaps++ }, onButton = fixture::button, onStick = { _, _, _ -> },
                             surface = { modifier -> Box(modifier) },
+                            touchStyle = fixture.style, hiddenForGamepad = fixture.hiddenForGamepad,
+                            onShowTouch = { fixture.hiddenForGamepad = false },
                         )
                     }
                 }
@@ -245,6 +251,29 @@ class GameTouchInputUiTest {
         rule.runOnIdle { assertTrue(RetroPadButton.A in fixture.held); fixture.menuVisible = true }
         rule.runOnIdle { assertTrue(fixture.held.isEmpty()); assertEquals(0, fixture.osdTaps) }
         rule.onNodeWithTag("game-touch-root").performTouchInput { up(0) }
+    }
+
+    @Test fun opacityOnlyChangesDoNotReleaseHeldButtons() {
+        val fixture = mount()
+        rule.onNodeWithTag("game-touch-a", useUnmergedTree = true).performTouchInput { down(0, center) }
+        rule.runOnIdle { fixture.style = fixture.style.copy(opacityPercent = 25) }
+        rule.runOnIdle { assertEquals(setOf(RetroPadButton.A), fixture.held) }
+        rule.onNodeWithTag("game-touch-root").performTouchInput { up(0) }
+        rule.runOnIdle { assertTrue(fixture.held.isEmpty()); assertEquals(0, fixture.osdTaps) }
+    }
+
+    @Test fun hidingForHardwareReleasesTouchAndPreservesTheGameViewport() {
+        val fixture = mount()
+        val surface = rule.onNodeWithTag("game-player-surface", useUnmergedTree = true).getBoundsInRoot()
+        rule.onNodeWithTag("game-touch-a", useUnmergedTree = true).performTouchInput { down(0, center) }
+        rule.runOnIdle { fixture.hiddenForGamepad = true }
+        rule.runOnIdle { assertTrue(fixture.held.isEmpty()) }
+        rule.onNodeWithTag("game-touch-root").performTouchInput { up(0) }
+        rule.onNodeWithTag("game-touch-a", useUnmergedTree = true).assertDoesNotExist()
+        assertEquals(surface, rule.onNodeWithTag("game-player-surface", useUnmergedTree = true).getBoundsInRoot())
+        rule.onNodeWithTag("game-touch-show", useUnmergedTree = true).performTouchInput { click() }
+        rule.onNodeWithTag("game-touch-a", useUnmergedTree = true).assertIsDisplayed()
+        rule.runOnIdle { assertTrue(fixture.held.isEmpty()); assertEquals(0, fixture.osdTaps) }
     }
 
     @Test fun backgroundReleasesTouchesAndResumeRequiresANewContact() {

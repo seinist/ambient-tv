@@ -102,6 +102,10 @@ class GameNetplay(
     /** Hosts [game]: announces it and waits for one player. */
     fun host(view: GLRetroView, identity: NetplayIdentity) {
         stop()
+        if (!GameSerializationPolicy(LibretroDroid.getSerializationQuirks()).frameExact) {
+            state = NetplayState.Failed(NetplayFailure.STATE)
+            return
+        }
         this.view = view
         state = NetplayState.Hosting(deviceName)
         job = scope.launch(Dispatchers.IO) {
@@ -205,6 +209,10 @@ class GameNetplay(
     /** Joins [peer] as player 2; the game continues from the host's state. */
     fun join(view: GLRetroView, peer: NetplayPeer, identity: NetplayIdentity) {
         stop()
+        if (!GameSerializationPolicy(LibretroDroid.getSerializationQuirks()).frameExact) {
+            state = NetplayState.Failed(NetplayFailure.STATE)
+            return
+        }
         this.view = view
         state = NetplayState.Joining
         job = scope.launch(Dispatchers.IO) {

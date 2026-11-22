@@ -30,6 +30,8 @@ data class GameStateEntry(
     val coreId: String,
     val coreStamp: String,
     val number: Int = 0,
+    /** Optional user label; old metadata remains readable without it. */
+    val label: String? = null,
 )
 
 /**
@@ -40,7 +42,7 @@ data class GameStateEntry(
 class GameStateStore @Inject constructor(private val storage: GameStorage) {
     private val json = Json { ignoreUnknownKeys = true }
 
-    fun list(game: PreparedGame): List<GameStateEntry> {
+    @Synchronized fun list(game: PreparedGame): List<GameStateEntry> {
         val directory = storage.statesDirectory(game)
         return directory.listFiles { file -> file.name.endsWith(".json") }.orEmpty()
             .mapNotNull { meta ->
@@ -48,15 +50,15 @@ class GameStateStore @Inject constructor(private val storage: GameStorage) {
                     ?.takeIf { it.id.matches(Regex("(auto|undo|m[0-9]+)")) && meta.name == "${it.id}.json" }
                     ?.takeIf { File(directory, "${it.id}.state").isFile }
             }
-            .sortedWith(compareBy<GameStateEntry> { it.kind.ordinal }.thenByDescending { it.createdAt })
+            .sortedWith(compareBy<GameStateEntry> { it.kind.ordinal }.thenByDescending { it.createdAt }.thenByDescending { it.number })
     }
 
     fun latestManual(game: PreparedGame): GameStateEntry? =
-        list(game).filter { it.kind == GameStateKind.MANUAL }.maxByOrNull { it.createdAt }
+        list(game).filter { it.kind == GameStateKind.MANUAL }.maxWithOrNull(compareBy<GameStateEntry> { it.createdAt }.thenBy { it.number })
 
     fun entry(game: PreparedGame, kind: GameStateKind): GameStateEntry? = list(game).firstOrNull { it.kind == kind }
 
-    fun read(game: PreparedGame, entry: GameStateEntry): ByteArray? {
+    @Synchronized fun read(game: PreparedGame, entry: GameStateEntry): ByteArray? {
         val state = File(storage.statesDirectory(game), "${entry.id}.state")
         // Old states are untrusted local files. Never allocate an arbitrarily large ByteArray.
         if (!state.isFile || state.length() !in 1..MAX_STATE_BYTES) return null
@@ -67,7 +69,7 @@ class GameStateStore @Inject constructor(private val storage: GameStorage) {
         File(storage.statesDirectory(game), "${entry.id}.jpg").takeIf { it.isFile }
 
     /** Saves [bytes]; AUTO and UNDO replace their previous state, MANUAL adds a numbered one. */
-    fun save(
+    @Synchronized fun save(
         game: PreparedGame,
         kind: GameStateKind,
         bytes: ByteArray,
@@ -81,9 +83,14 @@ class GameStateStore @Inject constructor(private val storage: GameStorage) {
         }
         val directory = storage.statesDirectory(game)
         val existing = list(game)
+        // Two requests can share a millisecond. Never replace an earlier manual save.
+        var identifierTime = now.coerceAtLeast(0)
+        if (kind == GameStateKind.MANUAL) {
+            while (File(directory, "m$identifierTime.state").exists()) identifierTime++
+        }
         val entry = when (kind) {
             GameStateKind.MANUAL -> GameStateEntry(
-                id = "m$now", kind = kind, createdAt = now, coreId = coreId, coreStamp = coreStamp,
+                id = "m$identifierTime", kind = kind, createdAt = now, coreId = coreId, coreStamp = coreStamp,
                 number = (existing.filter { it.kind == GameStateKind.MANUAL }.maxOfOrNull { it.number } ?: 0) + 1,
             )
             else -> GameStateEntry(kind.name.lowercase(), kind, now, coreId, coreStamp)
@@ -91,22 +98,41 @@ class GameStateStore @Inject constructor(private val storage: GameStorage) {
         storage.write(File(directory, "${entry.id}.state"), bytes)
         val image = File(directory, "${entry.id}.jpg")
         if (screenshot != null) runCatching {
-            image.outputStream().use { screenshot.compress(Bitmap.CompressFormat.JPEG, 85, it) }
-        } else image.delete()
+            val encoded = java.io.ByteArrayOutputStream().use { output ->
+                check(screenshot.compress(Bitmap.CompressFormat.JPEG, 85, output))
+                output.toByteArray()
+            }
+            storage.write(image, encoded)
+        }.onFailure { image.delete() } else image.delete()
         storage.write(File(directory, "${entry.id}.json"), json.encodeToString(GameStateEntry.serializer(), entry).toByteArray())
         // Oldest manual states go once there are too many.
-        existing.filter { it.kind == GameStateKind.MANUAL }.sortedByDescending { it.createdAt }
+        existing.filter { it.kind == GameStateKind.MANUAL }
+            .sortedWith(compareByDescending<GameStateEntry> { it.createdAt }.thenByDescending { it.number })
             .drop(MAX_MANUAL - 1).takeIf { kind == GameStateKind.MANUAL }?.forEach { delete(game, it) }
         return entry
     }
 
-    fun delete(game: PreparedGame, entry: GameStateEntry) {
+    /** Renaming changes metadata only; binary state, preview, timestamp and compatibility stay intact. */
+    @Synchronized fun rename(game: PreparedGame, entry: GameStateEntry, label: String): GameStateEntry {
+        require(entry.kind == GameStateKind.MANUAL)
+        val normalized = label.trim().takeIf(String::isNotEmpty)
+        require(label.length <= MAX_LABEL && label.none(Char::isISOControl))
+        val current = list(game).firstOrNull { it.id == entry.id }
+            ?: throw java.io.FileNotFoundException("Save state no longer exists")
+        val renamed = current.copy(label = normalized)
+        storage.write(File(storage.statesDirectory(game), "${entry.id}.json"),
+            json.encodeToString(GameStateEntry.serializer(), renamed).toByteArray())
+        return renamed
+    }
+
+    @Synchronized fun delete(game: PreparedGame, entry: GameStateEntry) {
         val directory = storage.statesDirectory(game)
         listOf("state", "jpg", "json").forEach { File(directory, "${entry.id}.$it").delete() }
     }
 
     companion object {
         const val MAX_MANUAL = 50
+        const val MAX_LABEL = 80
         /** Includes native serialization plus the JVM buffer; keep memory use safe on Android TV. */
         const val MAX_STATE_BYTES = 64L * 1024 * 1024
 

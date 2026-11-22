@@ -61,6 +61,32 @@ class RetroPadInputTest {
             1f, 1f, device, 0, InputDevice.SOURCE_JOYSTICK, 0))
     }
 
+    @Test fun virtualSticksPreserveFineTravelAfterTheTouchDeadzone() {
+        input.touchStick(0, .04f, -.03f)
+        assertTrue(input.analog(0, 0, 0) > 0)
+        assertTrue(input.analog(0, 0, 1) < 0)
+        input.reserveRemotePort(1, true)
+        input.remoteState(1, 0, .04f, -.03f, .02f, -.01f)
+        assertEquals(input.analog(0, 0, 0), input.analog(1, 0, 0))
+        assertTrue(input.analog(1, 1, 0) > 0)
+        input.touchStick(0, Float.NaN, Float.POSITIVE_INFINITY)
+        assertEquals(0, input.analog(0, 0, 0))
+        assertEquals(0, input.analog(0, 0, 1))
+    }
+
+    @Test fun autoHideRequiresActiveMappedGamepadRatherThanTouchOrNoise() {
+        input.touchButton(RetroPadButton.A, true)
+        assertFalse(input.hasActiveGamepad(1))
+        motion(1, mapOf(MotionEvent.AXIS_X to .03f))
+        assertFalse(input.hasActiveGamepad(1))
+        press(1, KeyEvent.KEYCODE_BUTTON_A)
+        assertTrue(input.hasActiveGamepad(1))
+        config = config.withPort("dev-1", RetroPorts.OFF)
+        assertFalse(input.hasActiveGamepad(1))
+        press(3, KeyEvent.KEYCODE_Z)
+        assertFalse(input.hasActiveGamepad(3))
+    }
+
     @Test fun defaultsFollowPositions() {
         val pad = defaultRetroProfile(RetroInputKind.GAMEPAD)
         assertEquals(RetroPadButton.B, pad.button(KeyEvent.KEYCODE_BUTTON_A))

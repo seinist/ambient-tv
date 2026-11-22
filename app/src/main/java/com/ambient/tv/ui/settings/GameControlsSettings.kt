@@ -12,6 +12,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -35,6 +36,7 @@ import com.ambient.tv.ui.gamepad.retro.RetroMenuTrigger
 import com.ambient.tv.ui.gamepad.retro.RetroPadButton
 import com.ambient.tv.ui.gamepad.retro.RetroPorts
 import com.ambient.tv.ui.gamepad.retro.playableInputDevices
+import com.ambient.tv.ui.gamepad.retro.rememberPlayableDevices
 import com.ambient.tv.ui.keyboard.keyLabel
 import com.ambient.tv.ui.theme.LocalUiTokens
 import kotlinx.coroutines.delay
@@ -44,6 +46,7 @@ internal fun LazyListScope.gameControlsItems() {
     item(key = "game-controls-visual") { VisualGameControls() }
     item(key = "game-controls-players") { GameControlsPlayers() }
     item(key = "game-controls-options") { GameControlsOptions() }
+    item(key = "game-controls-touch") { com.ambient.tv.ui.games.GameTouchOptions() }
 }
 
 /** Keys Android keeps for itself; they never play. */
@@ -64,7 +67,7 @@ private fun GameControlsPlayers() {
         SettingsSubheader(stringResource(R.string.game_controls_players))
         if (devices.isEmpty()) SettingsHint(stringResource(R.string.game_controls_no_devices))
         val choices = listOf(RetroPorts.AUTO) + (0 until RetroPorts.COUNT) + RetroPorts.OFF
-        devices.forEach { device ->
+        devices.forEach { device -> key(device.descriptor) {
             val current = config.ports[device.descriptor] ?: RetroPorts.AUTO
             SettingsSelect(
                 label = device.name.ifBlank { stringResource(device.kind.titleRes) },
@@ -81,7 +84,7 @@ private fun GameControlsPlayers() {
                     )
                 },
             )
-        }
+        } }
     }
 }
 

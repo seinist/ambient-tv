@@ -26,6 +26,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Color
@@ -53,12 +54,12 @@ import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.ambient.tv.games.GameTouchMode
 import com.ambient.tv.ui.gamepad.retro.RetroPadButton
+import com.ambient.tv.ui.gamepad.retro.TouchControlStyle
 import kotlin.math.roundToInt
 
 private val DPAD_BUTTONS = setOf(
     RetroPadButton.UP, RetroPadButton.DOWN, RetroPadButton.LEFT, RetroPadButton.RIGHT,
 )
-private val FACE_BUTTONS = setOf(RetroPadButton.A, RetroPadButton.B, RetroPadButton.X, RetroPadButton.Y)
 
 /**
  * Shared by local play and the phone's TV controller. Neo-RetroPad's flat outlines and continuous
@@ -76,17 +77,20 @@ internal fun GameTouchControls(
     applySafeInsets: Boolean = true,
     // The remote sends one complete button mask per change, including a direct A-to-B slide.
     onButtonsChanged: ((Set<RetroPadButton>) -> Unit)? = null,
+    style: TouchControlStyle = TouchControlStyle(),
+    presentation: GameTouchPresentation = GameTouchPresentation.Generic,
 ) {
     BoxWithConstraints(modifier.then(if (applySafeInsets) Modifier.safeDrawingPadding() else Modifier)) {
         val tall = portrait ?: (maxWidth < maxHeight)
         val density = LocalDensity.current.density
+        val opacity = style.opacityPercent.coerceIn(25, 100) / 100f
         val lifecycleOwner = LocalLifecycleOwner.current
-        val layout = remember(mode, maxWidth, maxHeight, tall) {
-            gameTouchLayout(mode, maxWidth.value, maxHeight.value, tall)
+        val layout = remember(mode, maxWidth, maxHeight, tall, style, presentation) {
+            gameTouchLayout(mode, maxWidth.value, maxHeight.value, tall, style, presentation)
         }
         // A new layout cancels every old contact before its new targets become interactive.
-        key(mode, maxWidth, maxHeight, tall, density, lifecycleOwner) {
-            val input = remember { GameTouchInput(layout) }
+        key(layout, style.stickDeadzonePercent, style.diagonalSensitivity, density, lifecycleOwner) {
+            val input = remember { GameTouchInput(layout, style) }
             var state by remember { mutableStateOf(input.state) }
             val currentOnButton by rememberUpdatedState(onButton)
             val currentOnStick by rememberUpdatedState(onStick)
@@ -140,6 +144,7 @@ internal fun GameTouchControls(
                 }
             }
             fun Rect.receiver(): Modifier = position().size(width.dp, height.dp)
+                .graphicsLayer { alpha = opacity }
                 .gameTouchInput(input, topLeft, density, { acceptingInput }) { currentPublish() }
 
             layout.dpad?.let { bounds ->
@@ -156,17 +161,19 @@ internal fun GameTouchControls(
             layout.faceButtonsBounds?.let { cluster ->
                 // One receiver includes the intermediate A+B / B+Y / Y+X / X+A sectors.
                 Box(cluster.receiver().testTag("game-touch-face-area")) {
-                    FACE_BUTTONS.forEach { button ->
+                    layout.faces.forEach { button ->
                         layout.buttons[button]?.let { bounds ->
                             GameTouchButton(button, button in state.buttons,
                                 Modifier.offset((bounds.left - cluster.left).dp, (bounds.top - cluster.top).dp)
-                                    .size(bounds.width.dp, bounds.height.dp))
+                                    .size(bounds.width.dp, bounds.height.dp),
+                                label = presentation.labels[button].orEmpty(), face = true)
                         }
                     }
                 }
             }
-            layout.buttons.filterKeys { it !in FACE_BUTTONS }.forEach { (button, bounds) ->
-                GameTouchButton(button, button in state.buttons, bounds.receiver())
+            layout.buttons.filterKeys { it !in layout.faces }.forEach { (button, bounds) ->
+                GameTouchButton(button, button in state.buttons, bounds.receiver(),
+                    label = presentation.labels[button].orEmpty(), face = false)
             }
         }
     }
@@ -281,16 +288,12 @@ private fun GameTouchStick(
 }
 
 @Composable
-private fun GameTouchButton(button: RetroPadButton, pressed: Boolean, modifier: Modifier = Modifier) {
-    val face = button in FACE_BUTTONS
+private fun GameTouchButton(button: RetroPadButton, pressed: Boolean, modifier: Modifier = Modifier,
+    label: String, face: Boolean,
+) {
     val utility = button == RetroPadButton.START || button == RetroPadButton.SELECT
     val shape = if (face) CircleShape else RoundedCornerShape(6.dp)
     val accent = MaterialTheme.colorScheme.primary
-    val label = when (button) {
-        RetroPadButton.L -> "L1"
-        RetroPadButton.R -> "R1"
-        else -> button.key.uppercase()
-    }
     val ink = if (pressed) Color.White else Color.White.copy(alpha = .84f)
     val labelStyle = TextStyle(shadow = Shadow(Color.Black.copy(alpha = .75f), blurRadius = 4f))
     Box(

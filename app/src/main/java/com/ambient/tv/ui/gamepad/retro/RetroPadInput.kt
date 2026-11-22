@@ -99,8 +99,8 @@ class RetroPadInput(
     fun touchStick(index: Int, x: Float, y: Float) {
         if (index !in 0..1) return
         val at = index * 2
-        val nextX = stick(x.coerceIn(-1f, 1f))
-        val nextY = stick(y.coerceIn(-1f, 1f))
+        val nextX = virtualStick(x)
+        val nextY = virtualStick(y)
         if (touchAnalog[at] == nextX && touchAnalog[at + 1] == nextY) return
         touchAnalog[at] = nextX
         touchAnalog[at + 1] = nextY
@@ -109,6 +109,12 @@ class RetroPadInput(
 
     /** Player ports in use by local physical devices; remote claims avoid these where possible. */
     fun localUsedPorts(): Set<Int> = devices.values.mapNotNull { port(it.info) }.toSet()
+
+    /** Main thread: active, enabled physical gameplay input, excluding touch/Companion holds. */
+    fun hasActiveGamepad(deviceId: Int): Boolean = devices[deviceId]?.let {
+        it.info.kind == RetroInputKind.GAMEPAD && port(it.info) != null &&
+            (it.buttons() != 0 || it.analog.any { axis -> axis != 0 })
+    } ?: false
 
     /** Reserve a phone's port so automatically assigned physical controllers skip it. */
     fun reserveRemotePort(port: Int, reserved: Boolean, descriptor: String? = null) {
@@ -227,10 +233,10 @@ class RetroPadInput(
             if (!together) remoteMenuCombo[port] = false
         }
         nextButtons = nextButtons or remotePulseButtons[port]
-        val nextX = stick(leftX)
-        val nextY = stick(leftY)
-        val nextRX = stick(rightX)
-        val nextRY = stick(rightY)
+        val nextX = virtualStick(leftX)
+        val nextY = virtualStick(leftY)
+        val nextRX = virtualStick(rightX)
+        val nextRY = virtualStick(rightY)
         // Heartbeat frames are often identical: don't force four-port recompute and native
         // onChanged dispatch every 500 ms when the actual controller state has not moved.
         if (remoteButtons[port] == nextButtons && remoteAnalog[at] == nextX &&
@@ -470,6 +476,11 @@ class RetroPadInput(
             else -> 0
         }
     }
+
+    // Touch/Companion axes already have a configurable radial deadzone. Applying the
+    // hardware deadzone again would discard their fine travel (including a user-selected 0%).
+    private fun virtualStick(value: Float): Int =
+        if (!value.isFinite()) 0 else (value.coerceIn(-1f, 1f) * ANALOG_MAX).roundToInt()
 
     private fun stick(value: Float): Int =
         if (abs(value) < STICK_DEADZONE) 0 else (value.coerceIn(-1f, 1f) * ANALOG_MAX).roundToInt()

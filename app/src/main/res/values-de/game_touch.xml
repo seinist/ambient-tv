@@ -1,0 +1,21 @@
+<resources>
+    <string name="game_touch_customize">Touch-Anordnung</string>
+    <string name="game_touch_customization_hint">Für lokale Spiele und den Handy-Controller. Größe und Position passen sich dem verfügbaren Platz an; die Tasten bleiben gut erreichbar.</string>
+    <string name="game_touch_size">Größe der Bedienelemente</string>
+    <string name="game_touch_opacity">Deckkraft der Bedienelemente</string>
+    <string name="game_touch_portrait_position">Position im Hochformat</string>
+    <string name="game_touch_landscape_position">Position im Querformat</string>
+    <string name="game_touch_position_upper">Weiter oben</string>
+    <string name="game_touch_position_middle">Mittig</string>
+    <string name="game_touch_position_lower">Weiter unten</string>
+    <string name="game_touch_deadzone">Totzone der Sticks</string>
+    <string name="game_touch_diagonals">Steuerkreuz-Diagonalen</string>
+    <string name="game_touch_diagonals_narrow">Schmal</string>
+    <string name="game_touch_diagonals_equal">Ausgewogen</string>
+    <string name="game_touch_diagonals_wide">Breit</string>
+    <string name="game_touch_hide_gamepad">Bei Controller-Eingabe ausblenden</string>
+    <string name="game_touch_hide_gamepad_hint">Nach Eingaben eines an diesem Handy angeschlossenen Gamepads. Die Gamepad-Taste blendet die Touch-Steuerung wieder ein.</string>
+    <string name="game_touch_show">Touch-Steuerung einblenden</string>
+    <string name="game_touch_system_layout">Konsolenbelegung</string>
+    <string name="game_touch_full_retropad">Vollständiges RetroPad</string>
+</resources>

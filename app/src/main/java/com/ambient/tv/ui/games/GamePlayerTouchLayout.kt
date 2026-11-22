@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Menu
+import androidx.compose.material.icons.filled.SportsEsports
 import androidx.compose.material3.Icon
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
@@ -26,6 +27,7 @@ import androidx.compose.ui.unit.dp
 import com.ambient.tv.R
 import com.ambient.tv.games.GameTouchMode
 import com.ambient.tv.ui.gamepad.retro.RetroPadButton
+import com.ambient.tv.ui.gamepad.retro.TouchControlStyle
 
 /** Layout stays stable when the OSD opens, so pausing never resizes/recreates the native surface. */
 @Composable
@@ -40,10 +42,14 @@ internal fun GamePlayerTouchLayout(
     onButton: (RetroPadButton, Boolean) -> Unit,
     onStick: (Int, Float, Float) -> Unit,
     surface: @Composable (Modifier) -> Unit,
+    touchStyle: TouchControlStyle = TouchControlStyle(),
+    presentation: GameTouchPresentation = GameTouchPresentation.Generic,
+    hiddenForGamepad: Boolean = false,
+    onShowTouch: () -> Unit = {},
 ) {
     BoxWithConstraints(Modifier.fillMaxSize().then(if (handheld) Modifier.safeDrawingPadding() else Modifier)) {
         val docked = handheld && touchEnabled && maxHeight > maxWidth
-        val deckHeight = if (docked) gameTouchDeckHeight(touchMode, maxWidth.value).dp.coerceAtMost(maxHeight) else 0.dp
+        val deckHeight = if (docked) gameTouchDeckHeight(touchMode, maxWidth.value, touchStyle).dp.coerceAtMost(maxHeight) else 0.dp
         val viewportHeight = (maxHeight - deckHeight).coerceAtLeast(1.dp)
         surface(
             Modifier.align(Alignment.TopCenter).fillMaxWidth().height(viewportHeight)
@@ -57,7 +63,7 @@ internal fun GamePlayerTouchLayout(
             Modifier.align(Alignment.BottomCenter).fillMaxWidth().height(deckHeight)
                 .background(Brush.verticalGradient(listOf(Color.Transparent, Color.Black.copy(alpha = .24f)))),
         )
-        if (handheld && playing && touchEnabled && !menuVisible) {
+        if (handheld && playing && touchEnabled && !menuVisible && !hiddenForGamepad) {
             GameTouchControls(
                 mode = touchMode,
                 onButton = onButton,
@@ -66,7 +72,18 @@ internal fun GamePlayerTouchLayout(
                     .height(if (docked) deckHeight else maxHeight),
                 portrait = docked,
                 applySafeInsets = false,
+                style = touchStyle,
+                presentation = presentation,
             )
+        }
+        if (handheld && touchEnabled && hiddenForGamepad && !menuVisible) {
+            Box(Modifier.align(Alignment.BottomEnd).padding(12.dp).size(48.dp)
+                .testTag("game-touch-show").clip(CircleShape)
+                .background(Color.Black.copy(alpha = .58f)).clickable(onClick = onShowTouch),
+                contentAlignment = Alignment.Center) {
+                Icon(Icons.Filled.SportsEsports, stringResource(R.string.game_touch_show),
+                    tint = Color.White, modifier = Modifier.size(24.dp))
+            }
         }
         if (handheld && !menuVisible) {
             Box(
