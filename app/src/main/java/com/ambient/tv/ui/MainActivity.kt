@@ -1832,7 +1832,6 @@ private fun AmbientTvApp(
     // to the shell without animating the sidebar while the destination is still loading.
     val startupFocusRequester = remember { FocusRequester() }
     val sidebarContentPending = waitsForSidebarContent && !sidebarContentReady
-    var initialContentEntryPending by remember(sidebarDestinationKey) { mutableStateOf(waitsForSidebarContent) }
     val focusManager = LocalFocusManager.current
     val focusSoundView = LocalView.current
     val autoPipEnabled by remember(appPreferences) {
@@ -1982,15 +1981,19 @@ private fun AmbientTvApp(
             parkStartupFocus()
         }
     }
-    LaunchedEffect(sidebarContentPending, wakeFocus.hasFocus, windowInfo.isWindowFocused,
-        screensaverOverlayPresent, com.ambient.tv.ui.intro.IntroPresentation.active,
-        connectionStatusUi.isDetailsOpen) {
-        if (!sidebarContentPending && initialContentEntryPending && shellFocusAllowed()) {
-            initialContentEntryPending = false
-            androidx.compose.runtime.withFrameNanos { }
-            if (!wakeFocus.hasFocus) requestContentFocus()
-        }
-    }
+    var initialContentEntryPending by com.ambient.tv.ui.common.rememberInitialContentFocus(
+        // In-place SmartTube/Radio/Monogram changes keep this entry even though their
+        // sidebarDestinationKey and content readiness change with every category.
+        entryId = currentBackStackEntry?.id ?: currentRoute,
+        waitsForContent = waitsForSidebarContent,
+        contentPending = sidebarContentPending,
+        enabled = !handheld && shellFocusAllowed(),
+        hasUsableFocus = {
+            wakeFocus.hasFocus ||
+                (contentHasFocus && !contentContainerFocused && !startupAnchorHasFocus)
+        },
+        requestFocus = { requestContentFocus() },
+    )
     LaunchedEffect(currentRoute) {
         if (currentRoute == Destinations.SETTINGS) {
             settingsOpen = true

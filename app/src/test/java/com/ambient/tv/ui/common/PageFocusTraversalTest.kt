@@ -21,12 +21,14 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.test.assertIsFocused
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.unit.dp
 import com.ambient.tv.ui.theme.AmbientTvTheme
+import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -169,10 +171,21 @@ class PageFocusTraversalTest {
 
 
     @Test fun confirmingCategoryKeepsThePressedChipWhileSelectionAndRowsUpdate() {
+        assertConfirmedCategoryNeverVisitsAnotherChip(immediateSelection = false)
+    }
+
+    @Test fun immediateCategorySelectionNeverFlashesThePreviousChip() {
+        assertConfirmedCategoryNeverVisitsAnotherChip(immediateSelection = true)
+    }
+
+    private fun assertConfirmedCategoryNeverVisitsAnotherChip(immediateSelection: Boolean) {
         val selected = mutableIntStateOf(0)
         val requested = mutableIntStateOf(-1)
         val rowsRevision = mutableIntStateOf(0)
         val first = FocusRequester()
+        // Final-focus assertions miss a brief wrong focus repaired by the chip hold.
+        // Record every acquisition, including ones between rendered frames.
+        val focusVisits = mutableListOf<Int>()
         rule.setContent {
             AmbientTvTheme {
                 val chain = rememberPageFocusChain()
@@ -183,10 +196,17 @@ class PageFocusTraversalTest {
                                 text = "Category $index",
                                 selected = index == selected.intValue,
                                 modifier = Modifier.testTag("clicked-category-$index")
+                                    .onFocusChanged { if (it.isFocused) focusVisits += index }
                                     .then(if (index == 0) Modifier.focusRequester(first) else Modifier)
                                     .then(if (index == selected.intValue)
                                         Modifier.focusRequester(chain.selectedChip) else Modifier),
-                                onClick = { requested.intValue = index },
+                                onClick = {
+                                    requested.intValue = index
+                                    if (immediateSelection) {
+                                        selected.intValue = index
+                                        rowsRevision.intValue++
+                                    }
+                                },
                             )
                         }
                     }
@@ -200,18 +220,25 @@ class PageFocusTraversalTest {
         rule.runOnIdle { first.requestFocus() }
         press(AndroidKeyEvent.KEYCODE_DPAD_RIGHT)
         rule.onNodeWithTag("clicked-category-1").assertIsFocused()
+        rule.runOnIdle { focusVisits.clear() }
         press(AndroidKeyEvent.KEYCODE_DPAD_CENTER)
         rule.runOnIdle { check(requested.intValue == 1) }
         rule.onNodeWithTag("clicked-category-1").assertIsFocused()
 
-        // The server may confirm the selection later and replace the content below.
-        rule.runOnIdle {
-            selected.intValue = 1
-            rowsRevision.intValue++
+        if (!immediateSelection) {
+            // The server may confirm the selection later and replace the content below.
+            rule.runOnIdle {
+                selected.intValue = 1
+                rowsRevision.intValue++
+            }
         }
         rule.waitForIdle()
         rule.onNodeWithTag("clicked-category-1").assertIsFocused()
         rule.onNodeWithTag("clicked-category-0").assertExists()
+        rule.runOnIdle {
+            assertTrue("Confirmation briefly focused another category: $focusVisits",
+                focusVisits.all { it == 1 })
+        }
     }
 
 
@@ -219,6 +246,7 @@ class PageFocusTraversalTest {
         val selected = mutableIntStateOf(0)
         val requested = mutableIntStateOf(-1)
         val first = FocusRequester()
+        val focusVisits = mutableListOf<Int>()
         rule.setContent {
             AmbientTvTheme {
                 val chain = rememberPageFocusChain()
@@ -228,6 +256,7 @@ class PageFocusTraversalTest {
                             text = "Category $index",
                             selected = index == selected.intValue,
                             modifier = Modifier.testTag("fast-category-$index")
+                                .onFocusChanged { if (it.isFocused) focusVisits += index }
                                 .then(if (index == 0) Modifier.focusRequester(first) else Modifier)
                                 .then(if (index == selected.intValue)
                                     Modifier.focusRequester(chain.selectedChip) else Modifier),
@@ -241,14 +270,26 @@ class PageFocusTraversalTest {
         rule.runOnIdle { first.requestFocus() }
         press(AndroidKeyEvent.KEYCODE_DPAD_RIGHT)
         rule.onNodeWithTag("fast-category-1").assertIsFocused()
+        rule.runOnIdle { focusVisits.clear() }
         press(AndroidKeyEvent.KEYCODE_DPAD_CENTER)
         rule.runOnIdle { check(requested.intValue == 1) }
+        rule.runOnIdle {
+            assertTrue("Confirmation briefly focused another category: $focusVisits",
+                focusVisits.all { it == 1 })
+        }
         press(AndroidKeyEvent.KEYCODE_DPAD_RIGHT)
         rule.onNodeWithTag("fast-category-2").assertIsFocused()
 
-        rule.runOnIdle { selected.intValue = 1 }
+        rule.runOnIdle {
+            focusVisits.clear()
+            selected.intValue = 1
+        }
         rule.waitForIdle()
         rule.onNodeWithTag("fast-category-2").assertIsFocused()
+        rule.runOnIdle {
+            assertTrue("Delayed selection briefly undid the later D-pad move: $focusVisits",
+                focusVisits.all { it == 2 })
+        }
     }
 
     @Test fun externalCategoryChangeDoesNotStealContentFocusAndRestoresSelectedChipOnReturn() {
