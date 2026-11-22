@@ -638,6 +638,7 @@ class PlaybackItemControlsTest {
         }
         rule.onNodeWithText(rule.activity.getString(R.string.next_up_still_watching)).assertDoesNotExist()
         rule.runOnIdle { chrome.osd.progressiveSeek.cancel() }
+        rule.waitForIdle() // Recompose the released seek before advancing the confirmation entrance.
         rule.mainClock.advanceTimeBy(300L)
         rule.waitForIdle()
         rule.runOnIdle { assertFalse(chrome.osd.visible.value) }
@@ -683,6 +684,9 @@ class PlaybackItemControlsTest {
             assertEquals(120_000L, BackgroundPlaybackSession.snapshot.value.status.positionMs)
             assertTrue(fixture.advances.isEmpty())
         }
+        // Polling updates state outside the frame loop; let the newly composed 180ms entrance finish.
+        rule.mainClock.advanceTimeBy(200L)
+        rule.waitForIdle()
         rule.onNodeWithText(rule.activity.getString(R.string.next_up_continue)).assertIsDisplayed()
         // This is after the original deadline but before a deadline restarted on acknowledgement.
         rule.mainClock.advanceTimeBy(NEXT_UP_CONFIRMATION_TIMEOUT_MS + 1_000L - (rule.mainClock.currentTime - start))

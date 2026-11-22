@@ -276,10 +276,14 @@ fun PlaybackSessionContent(
     }
     // Compact Next Up waits for player controls and seeks to finish. This affects presentation
     // only: autoplay, still-watching timeout and dismiss/focus restoration keep their own state.
+    // Observe the poll's state writes even while the non-observable pending-seek guard below
+    // short-circuits. Otherwise a stopped decoder can acknowledge without ever showing the card.
+    val compactOsdVisible = config.minimal && chrome?.osd?.visible?.value == true
+    val compactReadyForPresentation = config.minimal && compactConfirmationReady
     val compactPresentationBlocked = config.minimal && (
         compactOtherOwner || compactSeekActive || chrome?.osdModel?.value?.hasPendingSeek() == true ||
-            chrome?.osd?.visible?.value == true ||
-            (!compactConfirmationReady && (chrome?.osd?.seekBarFocused == true || chrome?.osd?.seekFeedback == true))
+            compactOsdVisible ||
+            (!compactReadyForPresentation && (chrome?.osd?.seekBarFocused == true || chrome?.osd?.seekFeedback == true))
         )
     val nextUpPresented = showNextUp && !compactPresentationBlocked
     var nextUpFocused by remember(candidateKey) { mutableStateOf(false) }

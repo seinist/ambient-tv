@@ -202,10 +202,18 @@ class MinimalNextUpOverlayTest {
             rule.onNodeWithText(label(id), useUnmergedTree = true)
                 .performSemanticsAction(SemanticsActions.GetTextLayoutResult) { it(layouts) }
             val layout = layouts.single()
-            assertFalse("Action '${label(id)}' must remain legible: size=${layout.size}, " +
-                "constraints=${layout.layoutInput.constraints}, lines=${layout.lineCount}, " +
-                "widthOverflow=${layout.didOverflowWidth}, heightOverflow=${layout.didOverflowHeight}",
-                layout.hasVisualOverflow)
+            val lineBounds = (0 until layout.lineCount).map { layout.getLineLeft(it) to layout.getLineRight(it) }
+            val description = "Action '${label(id)}': size=${layout.size}, paragraphWidth=${layout.multiParagraph.width}, " +
+                "constraints=${layout.layoutInput.constraints}, lines=$lineBounds"
+            assertFalse("$description must not clip vertically", layout.didOverflowHeight)
+            // The cached paragraph retains its available width while Text wraps to the glyphs.
+            // Check actual line extents, allowing at most one physical pixel of integer rounding.
+            assertTrue("$description must not clip horizontally",
+                lineBounds.all { (left, right) -> left >= -1f && right <= layout.size.width + 1f })
+            assertTrue("$description must not truncate its label",
+                (0 until layout.lineCount).none(layout::isLineEllipsized))
+            assertEquals("$description must show every character", label(id).length,
+                layout.getLineEnd(layout.lineCount - 1, visibleEnd = true))
         }
     }
 
