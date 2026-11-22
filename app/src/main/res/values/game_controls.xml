@@ -22,7 +22,7 @@
     <string name="retro_kind_companion">Phone controller</string>
     <string name="game_controls_title">Game controls</string>
     <string name="game_controls_hint">Play with a controller, keyboard or remote and choose the players</string>
-    <string name="game_controls_explanation">In games, controllers, keyboards and remotes all play. Each kind has its own layout on the game pad (A right, B bottom, X top, Y left). Several devices can share a player.</string>
+    <string name="game_controls_explanation">Several devices can control the same player.</string>
     <string name="game_controls_players">Players</string>
     <string name="game_controls_no_devices">No controller, keyboard or remote found.</string>
     <string name="game_controls_port_auto">Automatic</string>
@@ -39,5 +39,5 @@
     <string name="game_controls_layout_hint">Choose a row, then press the key. It is removed from the other rows of this layout. A key for holding works as its button when pressed briefly.</string>
     <string name="game_controls_rewind">Rewind (hold)</string>
     <string name="game_controls_fast_forward">Fast forward on/off</string>
-    <string name="game_controls_companion_mapping_hint">For phone controllers, select the desired RetroPad button or menu action, then tap a key on the phone illustration. Profiles are inherited from global to system, core and game.</string>
+    <string name="game_controls_companion_mapping_hint">Choose a game button or menu action, then tap a button on the phone illustration.</string>
 </resources>

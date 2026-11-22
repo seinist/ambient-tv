@@ -38,6 +38,7 @@ import com.ambient.tv.ui.common.TvActionButton
 import com.ambient.tv.ui.common.TvSettingRow
 import com.ambient.tv.ui.common.TvTextField
 import com.ambient.tv.ui.games.titleRes
+import com.ambient.tv.ui.games.gameOperationError
 import com.ambient.tv.ui.theme.LocalUiTokens
 import dagger.hilt.EntryPoint
 import dagger.hilt.InstallIn
@@ -254,8 +255,7 @@ private fun GamesShaderPacks() {
                                 revision++
                             }
                             .onFailure {
-                                status = context.getString(R.string.games_shader_packs_failed,
-                                    it.message ?: "Unknown error")
+                                status = gameOperationError(context, it, R.string.games_shader_packs_failed)
                             }
                         loading = false
                     }

@@ -65,8 +65,8 @@ private fun GameControlsPlayers() {
     val availability = rememberPlayableDeviceAvailability()
     val devices = availability.devices
     Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(LocalUiTokens.current.compactGap)) {
-        SettingsHint(stringResource(R.string.game_controls_explanation))
         SettingsSubheader(stringResource(R.string.game_controls_players))
+        if (devices.isNotEmpty()) SettingsHint(stringResource(R.string.game_controls_explanation))
         if (devices.isEmpty()) SettingsHint(stringResource(R.string.game_controls_no_devices))
         val choices = listOf(RetroPorts.AUTO) + (0 until RetroPorts.COUNT) + RetroPorts.OFF
         devices.forEach { device -> key(device.descriptor) {

@@ -15,6 +15,15 @@ class GameArtworkFile internal constructor(
     internal val extension: String,
 )
 
+internal enum class GameArtworkFailure { FORMAT, BYTES, DIMENSIONS }
+
+/** Distinguishes a rejected image from storage/network errors without parsing diagnostics. */
+internal class GameArtworkValidationException(val kind: GameArtworkFailure) : IOException(when (kind) {
+    GameArtworkFailure.FORMAT -> "Artwork must be PNG, JPEG or WebP"
+    GameArtworkFailure.BYTES -> "Artwork exceeds 8 MiB"
+    GameArtworkFailure.DIMENSIONS -> "Artwork dimensions exceed the supported limit"
+})
+
 /**
  * Images are owned by a ROM identity. Two overlapping folders share that identity; different
  * ROMs own separate copies, so removal never deletes a user's original or another ROM's image.
@@ -37,7 +46,7 @@ class GameArtworkFiles(context: Context) {
                     if (read < 0) break
                     if (read == 0) continue
                     count += read
-                    if (count > MAX_IMAGE_BYTES) throw IOException("Artwork exceeds 8 MiB")
+                    if (count > MAX_IMAGE_BYTES) throw GameArtworkValidationException(GameArtworkFailure.BYTES)
                     output.write(buffer, 0, read)
                 }
             }
@@ -47,11 +56,11 @@ class GameArtworkFiles(context: Context) {
                 "image/png" -> "png"
                 "image/jpeg" -> "jpg"
                 "image/webp" -> "webp"
-                else -> throw IOException("Artwork must be PNG, JPEG or WebP")
+                else -> throw GameArtworkValidationException(GameArtworkFailure.FORMAT)
             }
             if (options.outWidth !in 1..8192 || options.outHeight !in 1..8192 ||
                 options.outWidth.toLong() * options.outHeight > MAX_IMAGE_PIXELS) {
-                throw IOException("Artwork dimensions exceed the supported limit")
+                throw GameArtworkValidationException(GameArtworkFailure.DIMENSIONS)
             }
             return GameArtworkFile(file, count, extension)
         } catch (failure: Throwable) {

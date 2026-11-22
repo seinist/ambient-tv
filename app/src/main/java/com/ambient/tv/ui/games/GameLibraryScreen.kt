@@ -381,7 +381,9 @@ fun GameLibraryScreen(
                 })
             },
         ) {
-            Text(folder.path.ifBlank { sourcesById[folder.sourceId]?.name ?: folder.sourceId })
+            Text(folder.path.ifBlank {
+                sourcesById[folder.sourceId]?.name ?: stringResource(R.string.game_folder_fallback)
+            })
         }
     }
     if (metadataSettingsOpen) GameMetadataSettingsPanel(onDismiss = { metadataSettingsOpen = false })
@@ -523,7 +525,8 @@ private fun GameFolderManager(
             items(state.folders, key = { it.id }) { folder ->
                 Column(Modifier.fillMaxWidth().padding(vertical = 5.dp),
                     verticalArrangement = Arrangement.spacedBy(7.dp)) {
-                    Text((state.sources.firstOrNull { it.id == folder.sourceId }?.name ?: folder.sourceId) +
+                    Text((state.sources.firstOrNull { it.id == folder.sourceId }?.name
+                        ?: stringResource(R.string.game_folder_fallback)) +
                         " / " + folder.path + " · " +
                         (GameSystems.byId(folder.systemId)?.shortName ?: stringResource(R.string.game_library_auto)),
                         maxLines = 2)
