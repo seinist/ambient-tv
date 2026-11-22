@@ -40,14 +40,11 @@ class MediaArtworkIdentityIntegrationTest {
         preferences = AppPreferences(regular, regular)
         tokens = TokenStore(credentials, preferences)
         scopes = BrowseScopes(preferences, tokens)
-        preferences.serverProfiles = listOf(ServerProfile("p", "Plex", "proxy.test", 443, true))
-        preferences.activeServerId = "p"; preferences.host = "proxy.test"; preferences.port = 443; preferences.plexUseHttps = true
-        preferences.jellyfinServerProfiles = listOf(JellyfinServerProfile("j", "JF", "proxy.test", 443, true, "/jf", userId = "j-a", authenticated = true))
-        preferences.activeJellyfinServerId = "j"; preferences.jellyfinHost = "proxy.test"; preferences.jellyfinPort = 443
-        preferences.jellyfinUseHttps = true; preferences.jellyfinBasePath = "/jf"; preferences.jellyfinUserId = "j-a"; preferences.jellyfinEnabled = true
-        preferences.embyServerProfiles = listOf(EmbyServerProfile("e", "Emby", "proxy.test", 443, true, "/emby", userId = "e-a", authenticated = true))
-        preferences.activeEmbyServerId = "e"; preferences.embyHost = "proxy.test"; preferences.embyPort = 443
-        preferences.embyUseHttps = true; preferences.embyBasePath = "/emby"; preferences.embyUserId = "e-a"; preferences.embyEnabled = true
+        preferences.upsertServerProfile(ServerProfile("p", "Plex", "proxy.test", 443, true))
+        preferences.upsertJellyfinServerProfile(JellyfinServerProfile("j", "JF", "proxy.test", 443, true, "/jf", userId = "j-a", authenticated = true))
+        preferences.jellyfinEnabled = true
+        preferences.upsertEmbyServerProfile(EmbyServerProfile("e", "Emby", "proxy.test", 443, true, "/emby", userId = "e-a", authenticated = true))
+        preferences.embyEnabled = true
         tokens.setTokenForServer("p", "plex-secret")
         tokens.setJellyfinTokenForServer("j", "jf-secret-a")
         tokens.setEmbyTokenForServer("e", "emby-secret")
