@@ -17,6 +17,7 @@ import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performClick
 import com.ambient.tv.ui.common.RightPanelChoice
 import com.ambient.tv.ui.common.RightSidePanel
+import com.ambient.tv.ui.player.PANEL_ENTRANCE_SETTLE_FRAMES
 import com.ambient.tv.ui.player.PLAYER_PANEL_ENTER_MS
 import com.ambient.tv.ui.player.PLAYER_PANEL_EXIT_MS
 import org.junit.Assert.assertEquals
@@ -89,13 +90,30 @@ class GamePanelOverlayTest {
     }
 
     private fun settle() {
-        rule.mainClock.advanceTimeBy(PLAYER_PANEL_EXIT_MS + PLAYER_PANEL_ENTER_MS + 160L)
+        rule.waitForIdle()
+        advanceFrame()
+        rule.mainClock.advanceTimeBy(PLAYER_PANEL_EXIT_MS.toLong())
+        rule.waitForIdle()
+        // A completed exit can create the parent only on the next composition frame.
+        // Drain Android's pending layout/draw work between levels: the parent's own
+        // onPlaced must open PanelEntranceGate before its entrance can advance.
+        advanceFrame()
+        // The production gate waits for a drawn frame after placement; Animatable then
+        // needs its first frame to establish the animation's start time.
+        repeat(PANEL_ENTRANCE_SETTLE_FRAMES + 1) { advanceFrame() }
+        rule.mainClock.advanceTimeBy(PLAYER_PANEL_ENTER_MS.toLong())
         rule.waitForIdle()
     }
 
-    private fun click(tag: String) {
+    private fun advanceFrame() {
+        rule.mainClock.advanceTimeByFrame()
+        rule.waitForIdle()
+    }
+
+    private fun click(tag: String, expected: Level) {
         rule.onNodeWithTag(tag).assertIsDisplayed().performClick()
         settle()
+        rule.runOnIdle { assertEquals("Click on $tag must open its panel", expected, level) }
     }
 
     private fun back() {
@@ -105,12 +123,12 @@ class GamePanelOverlayTest {
 
     @Test fun osdButtonsBackRestoresInteractiveSettingsAndCanCloseAgain() {
         mount()
-        click("open-osd-buttons")
+        click("open-osd-buttons", Level("osd-buttons"))
         back()
         rule.runOnIdle { assertEquals(Level("settings"), level) }
         // An unkeyed host retained the child's closing latch at progress zero. Its parent
         // could neither reopen a child nor receive another Back.
-        click("open-osd-buttons")
+        click("open-osd-buttons", Level("osd-buttons"))
         back()
         back()
         rule.runOnIdle {
@@ -121,9 +139,9 @@ class GamePanelOverlayTest {
 
     @Test fun nestedCoreOptionAndCategoryEachReturnToAUsableParent() {
         mount()
-        click("open-core")
-        click("open-category")
-        click("open-option")
+        click("open-core", Level("core"))
+        click("open-category", Level("core", category = "video"))
+        click("open-option", Level("core", category = "video", option = "renderer"))
         back()
         rule.onNodeWithTag("open-option").assertIsDisplayed()
         rule.runOnIdle { assertEquals(Level("core", category = "video"), level) }
