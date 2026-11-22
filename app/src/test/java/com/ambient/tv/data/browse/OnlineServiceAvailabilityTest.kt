@@ -37,6 +37,34 @@ class OnlineServiceAvailabilityTest {
             .unavailableServices(setOf("youtube", "radio", "plex")))
     }
 
+    @Test fun liveReplyOverridesAMissingDefaultRouteForBothMenuAndInternetStatus() {
+        val snapshot = OnlineServiceSnapshot(
+            internet = InternetReachability.UNAVAILABLE,
+            hasNetwork = false,
+            reachable = setOf("radio"),
+            failed = setOf("youtube"),
+        )
+
+        assertFalse(snapshot.internetUnavailable)
+        assertEquals(setOf("youtube"), snapshot.unavailableServices(setOf(
+            "radio", "youtube", "weather", "plex", "files:share",
+        )))
+        // Whether Android has announced a route must not change the meaning of a live reply.
+        assertFalse(snapshot.copy(hasNetwork = true).internetUnavailable)
+        assertEquals(snapshot.unavailableServices(ONLINE_SERVICE_KEYS),
+            snapshot.copy(hasNetwork = true).unavailableServices(ONLINE_SERVICE_KEYS))
+    }
+
+    @Test fun aMissingRouteWithoutFreshEvidenceStillMeansInternetIsUnavailable() {
+        val snapshot = OnlineServiceSnapshot(
+            internet = InternetReachability.UNAVAILABLE,
+            hasNetwork = false,
+        )
+
+        assertTrue(snapshot.internetUnavailable)
+        assertEquals(ONLINE_SERVICE_KEYS, snapshot.unavailableServices(ONLINE_SERVICE_KEYS + "plex"))
+    }
+
     @Test fun noProbeDoesNotMeanOfflineUntilInternetIsKnownUnavailable() {
         val snapshot = OnlineServiceSnapshot()
         assertTrue(snapshot.unavailableServices(ONLINE_SERVICE_KEYS).isEmpty())

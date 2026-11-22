@@ -4,6 +4,9 @@ import android.content.Context
 import android.net.ConnectivityManager
 import android.net.Network
 import android.net.NetworkCapabilities
+import androidx.lifecycle.DefaultLifecycleObserver
+import androidx.lifecycle.LifecycleOwner
+import androidx.lifecycle.ProcessLifecycleOwner
 import com.ambient.tv.R
 import com.ambient.tv.notifications.AppNotice
 import com.ambient.tv.notifications.AppNotifications
@@ -34,12 +37,15 @@ internal data class OnlineServiceSnapshot(
     val reachable: Set<String> = emptySet(),
     val failed: Set<String> = emptySet(),
 ) {
+    /** A current live reply disproves an older platform snapshot, including a missing default route. */
+    val internetUnavailable: Boolean
+        get() = internet == InternetReachability.UNAVAILABLE && reachable.isEmpty()
+
     fun unavailableServices(configured: Set<String>): Set<String> {
         val onlineOnly = configured.intersect(ONLINE_SERVICE_KEYS)
-        // A successful public API response proves internet access even when the platform's
-        // connectivity probe is blocked. Without a route, no such override is possible.
-        val internetBlocked = if (internet == InternetReachability.UNAVAILABLE &&
-            (!hasNetwork || reachable.isEmpty())) onlineOnly else emptySet()
+        // Known route loss discards old replies and request tokens. A reply accepted since
+        // that observation is fresh evidence, even if Android has not announced recovery yet.
+        val internetBlocked = if (internetUnavailable) onlineOnly else emptySet()
         return internetBlocked + failed.intersect(onlineOnly)
     }
 }
@@ -86,18 +92,22 @@ internal fun onlineServiceRequestReached(error: Throwable): Boolean {
  * A successful service response overrides a missing Android validation until the network changes.
  */
 @Singleton
-class OnlineServiceAvailability @Inject constructor(@ApplicationContext context: Context) {
+class OnlineServiceAvailability @Inject constructor(@ApplicationContext context: Context) : DefaultLifecycleObserver {
     private val connectivity = context.getSystemService(ConnectivityManager::class.java)
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
-    private val reports = OnlineServiceReports()
+    internal val reports = OnlineServiceReports()
     internal val state = reports.state
     private var settleJob: Job? = null
     private var networkReadGeneration = 0L
     private var started = false
+    private var callbackRegistered = false
 
     private val callback = object : ConnectivityManager.NetworkCallback() {
         override fun onAvailable(network: Network) = scheduleNetworkRead()
-        override fun onLost(network: Network) = scheduleNetworkRead()
+        override fun onLost(network: Network) {
+            reports.networkLost(network.toString())
+            scheduleNetworkRead()
+        }
         override fun onCapabilitiesChanged(network: Network, capabilities: NetworkCapabilities) = scheduleNetworkRead()
     }
 
@@ -109,18 +119,33 @@ class OnlineServiceAvailability @Inject constructor(@ApplicationContext context:
         // evidence when the initial callback's settled read arrives later.
         readNetwork()?.let { (id, reachability) -> reports.networkChanged(id, reachability) }
         scope.launch { observeNotices() }
-        runCatching { connectivity?.registerDefaultNetworkCallback(callback) }
-            .onFailure { Timber.w(it, "Could not observe internet availability") }
+        registerNetworkCallback()
+        ProcessLifecycleOwner.get().lifecycle.addObserver(this)
         scheduleNetworkRead()
     }
 
-    /** A reply must come from a real request, never a cached catalogue entry. */
-    fun succeeded(service: String) {
-        if (service !in ONLINE_SERVICE_KEYS) return
-        reports.succeeded(reports.begin(service))
+    override fun onStart(owner: LifecycleOwner) {
+        // Reconcile after sleep/foreground even if the platform missed a callback. Retry a
+        // failed registration here, without adding a polling loop or probing public services.
+        registerNetworkCallback()
+        scheduleNetworkRead()
     }
 
-    internal fun succeeded(request: OnlineServiceRequest) = reports.succeeded(request)
+    @Synchronized private fun registerNetworkCallback() {
+        if (callbackRegistered) return
+        val manager = connectivity ?: return
+        runCatching {
+            manager.registerDefaultNetworkCallback(callback)
+            callbackRegistered = true
+        }.onFailure { Timber.w(it, "Could not observe internet availability") }
+    }
+
+    /** Capture before existing provider work, after local cache and rate-limit checks. */
+    internal fun begin(service: String): OnlineServiceRequest = reports.begin(service)
+
+    /** Report using the original request token so a late reply cannot undo a real route loss. */
+    internal fun succeeded(request: OnlineServiceRequest, confirmsInternet: Boolean = true) =
+        reports.succeeded(request, confirmsInternet)
 
     /** Begin inside the actual provider work, after any browse-queue or cache lookup. */
     internal suspend fun <T> request(
@@ -130,16 +155,10 @@ class OnlineServiceAvailability @Inject constructor(@ApplicationContext context:
     ): T = reports.request(service, isFailure, block)
 
     /** Only a failed live request is evidence of service unavailability. */
-    fun failed(service: String, error: Throwable) {
-        if (service !in ONLINE_SERVICE_KEYS || !onlineServiceRequestFailed(error)) return
-        unavailable(service)
-    }
+    internal fun failed(request: OnlineServiceRequest, error: Throwable) = reports.failed(request, error)
 
     /** Called when the last mirror returned a transient server error or a forecast is unavailable. */
-    fun unavailable(service: String) {
-        if (service !in ONLINE_SERVICE_KEYS) return
-        reports.unavailable(reports.begin(service))
-    }
+    internal fun unavailable(request: OnlineServiceRequest) = reports.unavailable(request)
 
     private fun readNetwork(): Pair<String?, InternetReachability>? = runCatching {
         val manager = connectivity ?: return null
@@ -174,7 +193,7 @@ class OnlineServiceAvailability @Inject constructor(@ApplicationContext context:
         var internetNotified = false
         var servicesFailed = false
         state.collect { snapshot ->
-            val internetDown = snapshot.internet == InternetReachability.UNAVAILABLE
+            val internetDown = snapshot.internetUnavailable
             // A physically missing LAN is already reported by ResumeConnectivityMonitor.
             val shouldNotifyInternet = internetDown && snapshot.hasNetwork
             if (shouldNotifyInternet && !internetNotified) {

@@ -33,33 +33,57 @@ internal class OnlineServiceReports {
         return try {
             block(request)
         } catch (error: Exception) {
-            if (onlineServiceRequestReached(error)) succeeded(request)
-            else if (isFailure(error)) unavailable(request)
+            failed(request, error, isFailure)
             throw error
         }
     }
 
-    @Synchronized fun succeeded(request: OnlineServiceRequest) {
+    @Synchronized fun succeeded(request: OnlineServiceRequest, confirmsInternet: Boolean = true) {
         if (!current(request)) return
         lastSuccess[request.service] = ++clock
         val previous = mutable.value
         mutable.value = previous.copy(
-            reachable = previous.reachable + request.service,
+            // Some native providers can complete from their own cache. That can clear their
+            // request error, but cannot disprove an observed Internet/default-route outage.
+            reachable = if (confirmsInternet) previous.reachable + request.service else previous.reachable,
             failed = previous.failed - request.service,
         )
     }
 
-    @Synchronized fun unavailable(request: OnlineServiceRequest) {
-        if (!current(request) || request.started <= (lastSuccess[request.service] ?: 0L)) return
+    fun failed(
+        request: OnlineServiceRequest,
+        error: Throwable,
+        isFailure: (Throwable) -> Boolean = ::onlineServiceRequestFailed,
+    ): Boolean {
+        if (onlineServiceRequestReached(error)) {
+            succeeded(request)
+            return false
+        }
+        return isFailure(error) && unavailable(request)
+    }
+
+    /** True only if this request can still establish an outage in the current online period. */
+    @Synchronized fun unavailable(request: OnlineServiceRequest): Boolean {
+        if (!current(request) || request.started <= (lastSuccess[request.service] ?: 0L)) return false
         val previous = mutable.value
         mutable.value = previous.copy(
             reachable = previous.reachable - request.service,
             failed = previous.failed + request.service,
         )
+        return true
     }
 
     private fun current(request: OnlineServiceRequest): Boolean =
         request.service in ONLINE_SERVICE_KEYS && request.networkGeneration == networkGeneration
+
+    /** A real default-network loss invalidates replies even when platform reads still return null. */
+    @Synchronized fun networkLost(id: String) {
+        // A late callback for the outgoing route must not discard the replacement's evidence.
+        if (networkId != null && networkId != id) return
+        networkGeneration++
+        lastSuccess.clear()
+        mutable.value = mutable.value.copy(reachable = emptySet())
+    }
 
     @Synchronized fun networkChanged(id: String?, internet: InternetReachability) {
         val previous = mutable.value
@@ -71,7 +95,7 @@ internal class OnlineServiceReports {
             internet == InternetReachability.AVAILABLE
         // Initial observation is not a replacement route: a feed may already have replied.
         // A missing route and every real outage boundary invalidate old successful replies.
-        val reset = changedRoute || outageChanged || id == null
+        val reset = changedRoute || outageChanged || (!networkObserved && id == null)
         if (reset || (networkObserved && validated)) {
             networkGeneration++
             lastSuccess.clear()
@@ -81,7 +105,7 @@ internal class OnlineServiceReports {
         mutable.value = if (reset) OnlineServiceSnapshot(internet = internet, hasNetwork = id != null)
         else previous.copy(
             internet = internet,
-            hasNetwork = true,
+            hasNetwork = id != null,
             // Startup DNS/transport failures are stale once this route becomes validated.
             failed = if (validated) emptySet() else previous.failed,
         )

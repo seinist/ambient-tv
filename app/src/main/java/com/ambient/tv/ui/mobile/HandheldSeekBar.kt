@@ -79,6 +79,7 @@ fun HandheldSeekBar(
     paused: Boolean = false,
     interactive: Boolean = true,
     timelineContext: (@Composable (Long) -> Unit)? = null,
+    timelineKey: Any? = null,
 ) {
     val canSeek = interactive && durationMs > 0L
     val dataAlpha = com.ambient.tv.ui.player.playerTimelineRevealAlpha(durationMs > 0L)
@@ -104,13 +105,13 @@ fun HandheldSeekBar(
     val latestPositionMs by rememberUpdatedState(positionMs)
     val latestOnSeekBy by rememberUpdatedState(onSeekBy)
     val latestOnInteraction by rememberUpdatedState(onInteraction)
-    var dragFraction by remember { mutableStateOf<Float?>(null) }
-    var dragStartMs by remember { mutableStateOf(positionMs) }
-    var awaitingVisualTarget by remember { mutableStateOf<Long?>(null) }
+    var dragFraction by remember(timelineKey) { mutableStateOf<Float?>(null) }
+    var dragStartMs by remember(timelineKey) { mutableStateOf(positionMs) }
+    var awaitingVisualTarget by remember(timelineKey) { mutableStateOf<Long?>(null) }
     LaunchedEffect(canSeek) {
         if (!canSeek) { dragFraction = null; awaitingVisualTarget = null }
     }
-    LaunchedEffect(awaitingVisualTarget) {
+    LaunchedEffect(timelineKey, awaitingVisualTarget) {
         if (awaitingVisualTarget != null) {
             kotlinx.coroutines.delay(SEEK_VISUAL_ACK_TIMEOUT_MS)
             awaitingVisualTarget = null
@@ -134,7 +135,7 @@ fun HandheldSeekBar(
     )
     val playheadVisual = rememberSeekPlayheadVisual(playheadFraction)
     val showingSeekTarget = seekBarHasDistinctTarget(
-        positionMs, shownPosition, dragFraction != null || awaitingVisualTarget != null,
+        positionMs, shownPosition, dragFraction != null,
     )
     val preview = LocalSeekPreviewOverlayState.current
     val previewTarget = dragTarget
@@ -182,7 +183,7 @@ fun HandheldSeekBar(
                             true
                         }
                     }
-                    .then(if (canSeek) Modifier.pointerInput(durationMs) {
+                    .then(if (canSeek) Modifier.pointerInput(timelineKey, durationMs) {
                         detectTapGestures { point ->
                             com.ambient.tv.ui.player.BackgroundPlaybackSession.userSeek()
                             val target = (point.x / size.width.coerceAtLeast(1).toFloat()).coerceIn(0f, 1f)
@@ -192,7 +193,7 @@ fun HandheldSeekBar(
                             latestOnSeekBy(handheldSeekDelta(target, latestPositionMs, durationMs))
                         }
                     } else Modifier)
-                    .then(if (canSeek) Modifier.pointerInput(durationMs) {
+                    .then(if (canSeek) Modifier.pointerInput(timelineKey, durationMs) {
                         detectHorizontalDragGestures(
                             onDragStart = { point ->
                                 com.ambient.tv.ui.player.BackgroundPlaybackSession.userSeek()

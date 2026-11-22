@@ -78,6 +78,114 @@ class OnlineServiceReportsTest {
         assertEquals(ONLINE_SERVICE_KEYS, reports.state.value.unavailableServices(ONLINE_SERVICE_KEYS))
     }
 
+    @Test fun aFreshRadioOrYouTubeReplyDisprovesAStaleMissingRouteButKeepsOtherFailuresScoped() = runBlocking {
+        listOf("radio", "youtube").forEach { service ->
+            val reports = OnlineServiceReports()
+            reports.networkChanged(null, InternetReachability.UNAVAILABLE)
+            val other = if (service == "radio") "youtube" else "radio"
+            reports.unavailable(reports.begin(other))
+            assertTrue(reports.state.value.internetUnavailable)
+
+            reports.request(service) { request -> reports.succeeded(request) }
+
+            assertFalse("The platform snapshot has not changed", reports.state.value.hasNetwork)
+            assertFalse(reports.state.value.internetUnavailable)
+            assertEquals(setOf(service), reports.state.value.reachable)
+            assertEquals(setOf(other), reports.state.value.failed)
+            assertEquals(setOf(other), reports.state.value.unavailableServices(ONLINE_SERVICE_KEYS))
+        }
+    }
+
+    @Test fun repeatedMissingRouteSnapshotsDoNotEraseAReplyReceivedSinceTheOutageObservation() {
+        val reports = OnlineServiceReports()
+        reports.networkChanged(null, InternetReachability.UNAVAILABLE)
+        val fresh = reports.begin("radio")
+        reports.succeeded(fresh)
+
+        repeat(3) { reports.networkChanged(null, InternetReachability.UNAVAILABLE) }
+        reports.unavailable(fresh)
+
+        assertFalse(reports.state.value.hasNetwork)
+        assertFalse(reports.state.value.internetUnavailable)
+        assertEquals(setOf("radio"), reports.state.value.reachable)
+        assertTrue(reports.state.value.failed.isEmpty())
+        assertTrue(reports.state.value.unavailableServices(ONLINE_SERVICE_KEYS).isEmpty())
+    }
+
+    @Test fun aCachedTelegramPageClearsOnlyItsFailureWithoutProvingInternetRecovery() {
+        val reports = OnlineServiceReports()
+        reports.networkChanged(null, InternetReachability.UNAVAILABLE)
+        reports.unavailable(reports.begin("telegram"))
+        reports.unavailable(reports.begin("weather"))
+        val olderPage = reports.begin("telegram")
+        val cachedPage = reports.begin("telegram")
+
+        reports.succeeded(cachedPage, confirmsInternet = false)
+
+        assertEquals(setOf("weather"), reports.state.value.failed)
+        assertTrue(reports.state.value.reachable.isEmpty())
+        assertTrue(reports.state.value.internetUnavailable)
+        assertEquals(ONLINE_SERVICE_KEYS, reports.state.value.unavailableServices(ONLINE_SERVICE_KEYS))
+        assertFalse(reports.unavailable(olderPage))
+        assertEquals(setOf("weather"), reports.state.value.failed)
+        assertTrue(reports.state.value.internetUnavailable)
+    }
+
+    @Test fun anExplicitRouteLossRejectsOlderRepliesAndPreservesSpecificFailuresUntilTheSettledRead() {
+        val reports = OnlineServiceReports()
+        reports.networkChanged("wifi", InternetReachability.UNKNOWN)
+        reports.succeeded(reports.begin("radio"))
+        reports.unavailable(reports.begin("weather"))
+        val oldSuccess = reports.begin("youtube")
+        val oldFailure = reports.begin("radio")
+
+        reports.networkLost("wifi")
+        reports.succeeded(oldSuccess)
+        reports.unavailable(oldFailure)
+
+        assertTrue(reports.state.value.reachable.isEmpty())
+        assertEquals(setOf("weather"), reports.state.value.failed)
+        reports.networkChanged(null, InternetReachability.UNAVAILABLE)
+        assertTrue(reports.state.value.internetUnavailable)
+        assertEquals(ONLINE_SERVICE_KEYS, reports.state.value.unavailableServices(ONLINE_SERVICE_KEYS))
+    }
+
+    @Test fun anExplicitLossAfterAMissingRouteSnapshotDiscardsItsFreshRepliesAndPendingTokens() {
+        val reports = OnlineServiceReports()
+        reports.networkChanged(null, InternetReachability.UNAVAILABLE)
+        reports.succeeded(reports.begin("radio"))
+        reports.unavailable(reports.begin("weather"))
+        val pending = reports.begin("youtube")
+
+        reports.networkLost("wifi")
+        reports.succeeded(pending)
+
+        assertTrue(reports.state.value.reachable.isEmpty())
+        assertEquals(setOf("weather"), reports.state.value.failed)
+        assertTrue(reports.state.value.internetUnavailable)
+        assertEquals(ONLINE_SERVICE_KEYS, reports.state.value.unavailableServices(ONLINE_SERVICE_KEYS))
+        // Actual replies begun after this newer loss remain valid evidence of recovery.
+        reports.succeeded(reports.begin("youtube"))
+        assertFalse(reports.state.value.internetUnavailable)
+        assertEquals(setOf("weather"), reports.state.value.unavailableServices(ONLINE_SERVICE_KEYS))
+    }
+
+    @Test fun aLateLossCallbackForTheReplacedRouteCannotEraseNewRouteRepliesOrTokens() {
+        val reports = OnlineServiceReports()
+        reports.networkChanged("wifi", InternetReachability.UNKNOWN)
+        reports.networkChanged("ethernet", InternetReachability.AVAILABLE)
+        reports.succeeded(reports.begin("youtube"))
+        val replacementRequest = reports.begin("radio")
+
+        reports.networkLost("wifi")
+        reports.succeeded(replacementRequest)
+
+        assertEquals(setOf("youtube", "radio"), reports.state.value.reachable)
+        assertTrue(reports.state.value.failed.isEmpty())
+        assertFalse(reports.state.value.internetUnavailable)
+        assertTrue(reports.state.value.unavailableServices(ONLINE_SERVICE_KEYS).isEmpty())
+    }
+
     @Test fun partialSuccessPreventsItsLaterFeedFailureFromMarkingTheServiceOffline() {
         val reports = OnlineServiceReports()
         reports.networkChanged("ethernet", InternetReachability.UNKNOWN)

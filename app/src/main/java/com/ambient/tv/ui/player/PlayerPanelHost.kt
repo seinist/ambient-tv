@@ -354,8 +354,9 @@ private fun PlayerOsdContent(model: PlayerOsdModel, visible: Boolean, panel: Uni
     val seekFocusRequester = rememberPlayerSeekFocus()
     val playFocusRequester = rememberPlayerPlayFocus()
     // A renderer restart may briefly lose its duration; a different file/version must not reuse it.
+    val timelineKey = "media:${model.state.sourceRatingKey}:${model.state.sourceMediaIndex}"
     val durationMs = rememberPlayerTimelineDuration(
-        sourceIdentity = "media:${model.state.sourceRatingKey}:${model.state.sourceMediaIndex}",
+        sourceIdentity = timelineKey,
         durationMs = model.durationMs,
         fallbackDurationMs = model.state.durationMs ?: 0L,
     )
@@ -370,6 +371,7 @@ private fun PlayerOsdContent(model: PlayerOsdModel, visible: Boolean, panel: Uni
                 TvPlayerSeekBar(
                     positionMs = model.seekState.positionMs,
                     seekState = model.seekState,
+                    timelineKey = timelineKey,
                     durationMs = durationMs,
                     paused = model.paused,
                     onSeekBy = model.onSeekBarSeek,
