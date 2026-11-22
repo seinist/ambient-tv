@@ -31,11 +31,14 @@ fun PlaybackConnectionDialog(
     AppDialog(
         onDismiss = onCancel,
         title = stringResource(if (busy) R.string.offline_playback_checking else R.string.offline_playback_locked),
-        hint = when {
-            busy -> stringResource(R.string.offline_playback_checking_message)
-            failure?.authRequired == true -> stringResource(R.string.offline_playback_auth, failure.name)
-            else -> stringResource(R.string.offline_playback_unavailable, failure?.name.orEmpty())
-        } + title.takeIf(String::isNotBlank)?.let { "\n\n$it" }.orEmpty(),
+        hint = listOfNotNull(
+            when {
+                busy || failure == null -> null
+                failure.authRequired -> stringResource(R.string.offline_playback_auth, failure.name)
+                else -> stringResource(R.string.offline_playback_unavailable, failure.name)
+            },
+            title.takeIf(String::isNotBlank),
+        ).joinToString("\n\n").takeIf(String::isNotBlank),
         footer = {
             if (failure?.authRequired == true && !busy)
                 TvActionButton(stringResource(R.string.offline_playback_login), onClick = onLogin)

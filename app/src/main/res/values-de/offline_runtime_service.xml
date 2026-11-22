@@ -1,4 +1,4 @@
 <resources>
-    <string name="offline_playback_open_to_retry">Öffne den Player, um die Verbindung erneut zu prüfen und die Wiedergabe neu zu laden.</string>
+    <string name="offline_playback_open_to_retry">Zum Fortsetzen den Player öffnen.</string>
     <string name="offline_playback_open_player">Player öffnen</string>
 </resources>

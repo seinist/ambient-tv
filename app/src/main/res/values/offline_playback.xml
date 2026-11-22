@@ -1,8 +1,8 @@
 <resources>
     <string name="offline_playback_checking">Checking connection</string>
-    <string name="offline_playback_checking_message">Playback starts when access to this source is confirmed.</string>
+    <string name="offline_playback_checking_message">Preparing playback…</string>
     <string name="offline_playback_locked">Source unavailable</string>
-    <string name="offline_playback_auth">Sign in to %1$s again in Settings, then retry.</string>
-    <string name="offline_playback_login">Open sign-in settings</string>
-    <string name="offline_playback_unavailable">%1$s has not confirmed access. Retry checks the connection first and wakes the server only if needed.</string>
+    <string name="offline_playback_auth">Sign in to %1$s again.</string>
+    <string name="offline_playback_login">Sign in</string>
+    <string name="offline_playback_unavailable">%1$s is currently unavailable.</string>
 </resources>

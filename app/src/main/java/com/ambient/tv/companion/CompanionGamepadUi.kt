@@ -465,10 +465,8 @@ internal fun CompanionGamepadScreen(manager: CompanionManager, modifier: Modifie
                 Column(Modifier.weight(1f)) {
                     Text(info?.title?.ifBlank { null } ?: stringResource(R.string.companion_gamepad_title),
                         maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.titleMedium)
-                    Text(if (claimed) stringResource(R.string.companion_gamepad_player, port + 1) +
-                        (state.inputLatencyP95Ms?.let { " · " +
-                            stringResource(R.string.companion_gamepad_rtt_p95, it) } ?: "")
-                         else state.target?.name.orEmpty(),
+                    Text(if (claimed) stringResource(R.string.companion_gamepad_player, port + 1)
+                        else state.target?.name.orEmpty(),
                         maxLines = 1, overflow = TextOverflow.Ellipsis,
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant)

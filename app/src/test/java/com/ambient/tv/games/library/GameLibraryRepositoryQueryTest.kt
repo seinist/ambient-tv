@@ -17,6 +17,8 @@ import com.ambient.tv.vpn.WireGuardRouteController
 import com.ambient.tv.wol.WakeMachines
 import com.ambient.tv.ui.games.GameLibraryViewModel
 import com.ambient.tv.ui.games.GameDetailViewModel
+import com.ambient.tv.ui.games.gameOperationError
+import com.ambient.tv.R
 import com.ambient.tv.games.metadata.GameArtworkKind
 import com.ambient.tv.games.metadata.GameMetadata
 import com.ambient.tv.games.metadata.GameMetadataProviders
@@ -108,6 +110,29 @@ class GameLibraryRepositoryQueryTest {
             dat_version,archive_crc,dat_checked) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             arrayOf<Any?>(folder, id, source, "Games/SNES/$filename", filename, system, title, 100, 123,
                 if (favorite) 1 else 0, played, manual, verified, 2, 7, "12345678", 1))
+    }
+
+    @Test fun duplicateFolderShowsExistingAssignmentInsteadOfSuggestingRetry() {
+        val library = repository()
+        val error = runCatching { library.addFolder(files.sources().single(), root.path, root.systemId) }
+            .exceptionOrNull()
+        assertTrue(error is IllegalArgumentException)
+        assertEquals(context.getString(R.string.game_error_folder_assigned),
+            gameOperationError(context, error!!, R.string.game_error_update))
+        assertEquals(listOf(root, child), library.folders())
+    }
+
+    @Test fun folderLimitExplainsThatAnAssignmentMustBeRemoved() {
+        preferences.gameLibraryFolders = (0 until 200).map { index ->
+            root.copy(id = "folder-$index", path = "Games/$index")
+        }
+        val library = repository()
+        val error = runCatching { library.addFolder(files.sources().single(), "Another", "auto") }
+            .exceptionOrNull()
+        assertTrue(error is IllegalArgumentException)
+        assertEquals(context.getString(R.string.game_error_folder_limit),
+            gameOperationError(context, error!!, R.string.game_error_update))
+        assertEquals(200, library.folders().size)
     }
 
     @Test fun migrationPreservesMetadataAndDeduplicatesBeforeSectionAndFavoriteFiltering() {
@@ -519,7 +544,7 @@ class GameLibraryRepositoryQueryTest {
         Dispatchers.setMain(Dispatchers.Unconfined)
         try {
             val model = GameDetailViewModel(SavedStateHandle(mapOf("fileId" to "one")),
-                library, metadata)
+                library, metadata, files, context)
             owner.put("details", model)
             val loaded = withTimeout(10_000) { model.state.first { !it.loading } }
             assertNull(loaded.error)

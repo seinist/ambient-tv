@@ -1,33 +1,35 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="game_metadata_settings_title">Spiele-Metadatenanbieter</string>
+    <string name="game_metadata_settings_title">Spieldaten und Bilder</string>
     <string name="game_metadata_settings_hint">Wähle, woher Spielinformationen und Bilder stammen.</string>
     <string name="game_metadata_settings_provider">Anbieter</string>
     <string name="game_metadata_settings_off">Aus</string>
     <string name="game_metadata_settings_libretro">Libretro</string>
     <string name="game_metadata_settings_screenscraper">ScreenScraper</string>
     <string name="game_metadata_settings_thegamesdb">TheGamesDB</string>
-    <string name="game_metadata_settings_off_hint">Beim Einlesen von Ordnern werden keine Online-Metadaten geladen. Du kannst Spiele weiterhin bearbeiten und Treffer in den Details auswählen.</string>
-    <string name="game_metadata_settings_libretro_hint">Kostenlose Cover, Screenshots und Titelbilder anhand von System und Spielname. Kein API-Key erforderlich.</string>
-    <string name="game_metadata_settings_ss_hint">Beschreibungen, Erscheinungsdaten und regionale Bilder. Registriere deine Anwendung auf screenscraper.fr für eine Entwickler-ID und ein Passwort.</string>
-    <string name="game_metadata_settings_tgdb_hint">Beschreibungen, Erscheinungsdaten und Bilder auf Englisch. Ein Anwendungs-API-Key von thegamesdb.net ist erforderlich.</string>
+    <string name="game_metadata_settings_off_hint">Beim Einlesen werden keine Informationen oder Bilder aus dem Internet ergänzt.</string>
+    <string name="game_metadata_settings_libretro_hint">Cover, Bildschirmfotos und Titelbilder. Kein Konto erforderlich.</string>
+    <string name="game_metadata_settings_ss_hint">Beschreibungen, Erscheinungsdaten und regionale Bilder.</string>
+    <string name="game_metadata_settings_tgdb_hint">Beschreibungen, Erscheinungsdaten und Bilder auf Englisch.</string>
     <string name="game_metadata_settings_automatic">Eingelesene Spiele automatisch zuordnen</string>
-    <string name="game_metadata_settings_automatic_hint">Eindeutige Treffer können beim Einlesen übernommen werden. Mehrdeutige Treffer kannst du in den Spieldetails selbst auswählen.</string>
+    <string name="game_metadata_settings_automatic_hint">Bei mehreren Treffern wählst du das Spiel in den Details selbst aus.</string>
     <string name="game_metadata_settings_region">Bevorzugte Bildregion</string>
     <string name="game_metadata_region_eu">Europa</string>
     <string name="game_metadata_region_de">Deutschland</string>
     <string name="game_metadata_region_us">USA</string>
     <string name="game_metadata_region_jp">Japan</string>
     <string name="game_metadata_region_world">Weltweit</string>
-    <string name="game_metadata_settings_language">Metadatensprache</string>
-    <string name="game_metadata_language_auto">Metadatensprache der App</string>
-    <string name="game_metadata_settings_builtin">Anwendungs-Zugangsdaten sind in diesem Build enthalten.</string>
+    <string name="game_metadata_settings_language">Sprache der Spielinformationen</string>
+    <string name="game_metadata_language_auto">Wie für andere Medien</string>
+    <string name="game_metadata_settings_builtin">Zugang bereits eingerichtet.</string>
     <string name="game_metadata_settings_ss_dev_id">ScreenScraper-Entwickler-ID</string>
     <string name="game_metadata_settings_ss_dev_password">ScreenScraper-Entwicklerpasswort</string>
-    <string name="game_metadata_settings_ss_account_hint">Optionales ScreenScraper-Konto. Mit Anmeldung gelten die Limits deines Kontos; der Gastzugang hängt von der Verfügbarkeit des Dienstes ab.</string>
+    <string name="game_metadata_settings_ss_account_hint">Mit deinem ScreenScraper-Konto gelten dessen Abruflimits. Ohne Anmeldung ist der Zugriff möglicherweise eingeschränkt.</string>
     <string name="game_metadata_settings_ss_user">ScreenScraper-Benutzername (optional)</string>
     <string name="game_metadata_settings_ss_password">ScreenScraper-Passwort (optional)</string>
     <string name="game_metadata_settings_tgdb_key">TheGamesDB-API-Key</string>
-    <string name="game_metadata_settings_invalid">Fülle beide Felder eines ScreenScraper-Zugangsdatenpaars aus oder leere beide. Prüfe die Länge und entferne Steuerzeichen.</string>
-    <string name="game_metadata_settings_credentials_hint">Keys werden bei deinen Zugangsdaten gespeichert. Backups und TV-Übertragungen enthalten sie nur, wenn du Zugangsdaten ausdrücklich auswählst.</string>
+    <string name="game_metadata_settings_invalid">Prüfe die Zugangsdaten. Fülle bei ScreenScraper jeweils Name/ID und Passwort aus oder leere beide Felder.</string>
+    <string name="game_metadata_settings_credentials_hint">Zugangsdaten werden nur auf Wunsch gesichert oder an einen TV übertragen.</string>
+    <string name="game_metadata_settings_ss_setup_hint">Entwickler-ID und Passwort erhältst du auf screenscraper.fr.</string>
+    <string name="game_metadata_settings_tgdb_setup_hint">Einen API-Key erhältst du auf thegamesdb.net.</string>
 </resources>

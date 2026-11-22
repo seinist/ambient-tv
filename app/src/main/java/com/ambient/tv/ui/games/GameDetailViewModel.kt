@@ -1,9 +1,12 @@
 package com.ambient.tv.ui.games
 
+import android.content.Context
 import android.net.Uri
 import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.ambient.tv.R
+import com.ambient.tv.data.files.FileStore
 import com.ambient.tv.games.library.GameLibraryRepository
 import com.ambient.tv.games.library.LibraryGame
 import com.ambient.tv.games.metadata.GameArtworkKind
@@ -11,6 +14,7 @@ import com.ambient.tv.games.metadata.GameMetadata
 import com.ambient.tv.games.metadata.GameMetadataCandidate
 import com.ambient.tv.games.metadata.GameMetadataRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
+import dagger.hilt.android.qualifiers.ApplicationContext
 import javax.inject.Inject
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -25,6 +29,7 @@ import kotlinx.coroutines.withContext
 data class GameDetailUiState(
     val loading: Boolean = true,
     val game: LibraryGame? = null,
+    val sourceName: String = "",
     val metadata: GameMetadata = GameMetadata(),
     val busy: Boolean = false,
     val error: String? = null,
@@ -48,6 +53,8 @@ class GameDetailViewModel @Inject constructor(
     saved: SavedStateHandle,
     private val library: GameLibraryRepository,
     private val metadata: GameMetadataRepository,
+    private val files: FileStore,
+    @ApplicationContext private val context: Context,
 ) : ViewModel() {
     private val fileId = saved.get<String>("fileId").orEmpty()
     private val mutable = MutableStateFlow(GameDetailUiState())
@@ -64,7 +71,8 @@ class GameDetailViewModel @Inject constructor(
                 try { reload() }
                 catch (cancelled: CancellationException) { throw cancelled }
                 catch (error: Exception) {
-                    mutable.update { it.copy(loading = false, error = error.message) }
+                    val message = gameOperationError(context, error, R.string.game_error_library)
+                    mutable.update { it.copy(loading = false, error = message) }
                 }
             }
         }
@@ -78,7 +86,8 @@ class GameDetailViewModel @Inject constructor(
         // An action's reload and the database revision collector can overlap. Only the
         // newest read may publish, including when a folder was removed during image IO.
         if (revision != detailRevision) return
-        mutable.update { it.copy(loading = false, game = game, metadata = details,
+        val sourceName = files.sources().firstOrNull { it.id == game?.sourceId }?.name.orEmpty()
+        mutable.update { it.copy(loading = false, game = game, sourceName = sourceName, metadata = details,
             providers = metadata.availableProviders(), needsWake = it.needsWake && game != null) }
         val image = details.backdropUrl
         if (game != null && game.backdropPath == null && image != null && backdropAttempt != image) {
@@ -97,7 +106,7 @@ class GameDetailViewModel @Inject constructor(
         viewModelScope.launch {
             try { reload() }
             catch (cancelled: CancellationException) { throw cancelled }
-            catch (error: Exception) { mutable.update { it.copy(error = error.message) } }
+            catch (error: Exception) { showError(error, R.string.game_error_library) }
         }
     }
 
@@ -126,13 +135,17 @@ class GameDetailViewModel @Inject constructor(
                 if (revision == searchRevision) mutable.update { it.copy(matches = matches, searchCompleted = true) }
             } catch (cancelled: CancellationException) { throw cancelled }
             catch (error: Exception) {
-                if (revision == searchRevision) mutable.update { it.copy(error = error.message, searchCompleted = true) }
+                if (revision == searchRevision) {
+                    val message = gameOperationError(context, error, R.string.game_error_search)
+                    mutable.update { it.copy(error = message, searchCompleted = true) }
+                }
             }
             finally { if (revision == searchRevision) mutable.update { it.copy(searching = false) } }
         }
     }
 
-    private fun action(onDone: (Boolean) -> Unit = {}, block: suspend (LibraryGame) -> Boolean) {
+    private fun action(onDone: (Boolean) -> Unit = {}, failureMessage: Int = R.string.game_error_update,
+                       block: suspend (LibraryGame) -> Boolean) {
         if (actionJob?.isActive == true) return
         val game = mutable.value.game ?: return
         actionJob = viewModelScope.launch {
@@ -142,7 +155,7 @@ class GameDetailViewModel @Inject constructor(
                 reload()
                 onDone(applied)
             } catch (cancelled: CancellationException) { throw cancelled }
-            catch (error: Exception) { mutable.update { it.copy(error = error.message) } }
+            catch (error: Exception) { showError(error, failureMessage) }
             finally { mutable.update { it.copy(busy = false) } }
         }
     }
@@ -162,7 +175,7 @@ class GameDetailViewModel @Inject constructor(
     suspend fun previewArtwork(match: GameMetadataCandidate, kind: GameArtworkKind): String? =
         metadata.previewArtwork(match, kind, fileId)
 
-    fun refresh() = action(onDone = { applied ->
+    fun refresh() = action(failureMessage = R.string.game_error_search, onDone = { applied ->
         mutable.update { it.copy(refreshEmpty = !applied && it.game != null) }
     }) { metadata.refresh(it, force = true) }
 
@@ -171,7 +184,7 @@ class GameDetailViewModel @Inject constructor(
         true
     }
 
-    fun play(start: (LibraryGame) -> Unit) = action { game ->
+    fun play(start: (LibraryGame) -> Unit) = action(failureMessage = R.string.game_error_play) { game ->
         if (library.needsWakeForLaunch(game.sourceId)) {
             mutable.update { it.copy(needsWake = true) }
         } else start(game)
@@ -180,11 +193,16 @@ class GameDetailViewModel @Inject constructor(
 
     fun dismissWake() = mutable.update { it.copy(needsWake = false) }
 
-    fun wakeAndPlay(start: (LibraryGame) -> Unit) = action { game ->
+    fun wakeAndPlay(start: (LibraryGame) -> Unit) = action(failureMessage = R.string.files_wake_timeout) { game ->
         if (library.wakeSource(game.sourceId)) {
             mutable.update { it.copy(needsWake = false) }
             start(game)
         }
         true
+    }
+
+    private fun showError(error: Throwable, fallback: Int) {
+        val message = gameOperationError(context, error, fallback)
+        mutable.update { it.copy(error = message) }
     }
 }

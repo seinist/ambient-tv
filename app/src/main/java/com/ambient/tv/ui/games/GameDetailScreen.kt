@@ -204,7 +204,8 @@ fun GameDetailScreen(
     if (state.needsWake && state.game != null) AppDialog(
         onDismiss = model::dismissWake,
         title = stringResource(R.string.game_library_wake),
-        hint = stringResource(R.string.game_library_offline_wake, state.game!!.sourceId),
+        hint = stringResource(R.string.game_library_offline_wake,
+            state.sourceName.ifBlank { stringResource(R.string.game_source_fallback) }),
         footer = {
             TvActionButton(stringResource(R.string.files_cancel), onClick = model::dismissWake)
             TvActionButton(stringResource(R.string.game_library_wake),

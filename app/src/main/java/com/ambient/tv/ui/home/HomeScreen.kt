@@ -1319,9 +1319,6 @@ private fun HomeOfflineRow(system: String, columnFocus: RowColumnFocus?, rowKey:
             Text(stringResource(R.string.offline_library_title, media?.let { com.ambient.tv.ui.common.systemName(it) } ?: system),
                 style = MaterialTheme.typography.titleLarge)
         }
-        Text(stringResource(R.string.offline_browse_no_cache_body),
-            modifier = Modifier.padding(start = screenGutter(), end = screenGutter(), bottom = 10.dp),
-            style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
         Row(Modifier.padding(horizontal = screenGutter())) {
             TvActionButton(
                 text = offlineActionLabel(gate),

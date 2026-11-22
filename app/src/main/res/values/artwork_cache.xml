@@ -1,4 +1,4 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="notice_artwork_cache_retry">Reloading images. Please refresh again later so they also stay up to date after a restart.</string>
+    <string name="notice_artwork_cache_retry">Images could not be saved. Please refresh again later.</string>
 </resources>

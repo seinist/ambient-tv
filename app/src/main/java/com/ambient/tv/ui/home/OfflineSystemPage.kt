@@ -1,6 +1,5 @@
 package com.ambient.tv.ui.home
 
-import android.os.SystemClock
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -17,7 +16,6 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
@@ -31,11 +29,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
-import androidx.lifecycle.Lifecycle
-import androidx.lifecycle.compose.LocalLifecycleOwner
-import androidx.lifecycle.repeatOnLifecycle
 import com.ambient.tv.R
-import com.ambient.tv.connectivity.HostHealth
 import com.ambient.tv.connectivity.UnreachableServerGateState
 import com.ambient.tv.ui.common.MediaSystem
 import com.ambient.tv.ui.common.SystemLogo
@@ -43,19 +37,11 @@ import com.ambient.tv.ui.common.TvActionButton
 import com.ambient.tv.ui.common.browseFocusTarget
 import com.ambient.tv.ui.common.systemName
 import com.ambient.tv.ui.mobile.DeviceActionRow
-import kotlinx.coroutines.delay
 
 /** Always verify the selected service before deciding whether its machine still needs WOL. */
 @Composable
 fun offlineActionLabel(state: UnreachableServerGateState): String =
     stringResource(if (state.retrying) R.string.unreachable_retrying else R.string.home_retry)
-
-/** Monotonic deadline of the existing background retry (not a second retry timer). */
-internal fun offlineRetrySeconds(nextCheckAtElapsedMs: Long, nowElapsedMs: Long): Int? {
-    if (nextCheckAtElapsedMs <= 0L) return null
-    val remaining = (nextCheckAtElapsedMs - nowElapsedMs).coerceAtLeast(0L)
-    return ((remaining + 999L) / 1_000L).coerceAtMost(Int.MAX_VALUE.toLong()).toInt()
-}
 
 /** A source guard keeps its saved browse tree alive. Only playback/detail actions are gated. */
 @Composable
@@ -117,11 +103,12 @@ fun SavedBrowseStatus(
     ) {
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
             Text(stringResource(R.string.offline_browse_saved_title, names), style = MaterialTheme.typography.titleSmall)
-            Text(
-                savedAt?.let { stringResource(R.string.offline_browse_saved_at, it) }
-                    ?: stringResource(R.string.offline_browse_saved_body),
-                style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
+            savedAt?.let {
+                Text(
+                    stringResource(R.string.offline_browse_saved_at, it),
+                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
         }
         TvActionButton(
             text = stringResource(if (retrying) R.string.unreachable_retrying else R.string.home_retry),
@@ -136,7 +123,6 @@ fun OfflineSystemPage(
     state: UnreachableServerGateState,
     onReconnect: () -> Unit,
     onOpenSettings: () -> Unit,
-    nextCheckAtElapsedMs: Long = 0L,
 ) {
     val media = MediaSystem.entries.firstOrNull { it.key == system }
     val name = media?.let { systemName(it) } ?: system
@@ -151,24 +137,6 @@ fun OfflineSystemPage(
         runCatching {
             (if (lastFocusedAction == "settings") settingsFocus else reconnectFocus).requestFocus()
         }
-    }
-
-    val lifecycle = LocalLifecycleOwner.current.lifecycle
-    val nextCheckSeconds by produceState<Int?>(
-        offlineRetrySeconds(nextCheckAtElapsedMs, SystemClock.elapsedRealtime()),
-        nextCheckAtElapsedMs, lifecycle,
-    ) {
-        lifecycle.repeatOnLifecycle(Lifecycle.State.RESUMED) {
-            while (true) {
-                value = offlineRetrySeconds(nextCheckAtElapsedMs, SystemClock.elapsedRealtime())
-                delay(1_000L)
-            }
-        }
-    }
-    val hostStatus = when (state.hostHealth[system]) {
-        HostHealth.ONLINE -> R.string.offline_host_online
-        HostHealth.OFFLINE -> R.string.offline_host_offline
-        else -> R.string.offline_host_unknown
     }
 
     Box(
@@ -193,46 +161,6 @@ fun OfflineSystemPage(
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 textAlign = TextAlign.Center,
             )
-            Column(
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.spacedBy(6.dp),
-            ) {
-                Text(
-                    stringResource(hostStatus),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    textAlign = TextAlign.Center,
-                )
-                state.serverAddresses[system]?.takeIf { it.isNotBlank() }?.let { address ->
-                    Text(
-                        stringResource(R.string.offline_server_address, address),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        textAlign = TextAlign.Center,
-                    )
-                }
-                Text(
-                    stringResource(when {
-                        system in state.wakeReady -> R.string.offline_wol_ready
-                        state.hostHealth[system] == HostHealth.ONLINE -> R.string.offline_wol_not_needed
-                        else -> R.string.offline_wol_missing
-                    }),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    textAlign = TextAlign.Center,
-                )
-                Text(
-                    when {
-                        state.retrying -> stringResource(R.string.offline_auto_check_manual)
-                        nextCheckSeconds == null -> stringResource(R.string.offline_auto_check_waiting)
-                        nextCheckSeconds == 0 -> stringResource(R.string.offline_auto_check_now)
-                        else -> stringResource(R.string.offline_auto_check_in, nextCheckSeconds!!)
-                    },
-                    style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.primary,
-                    textAlign = TextAlign.Center,
-                )
-            }
             DeviceActionRow(
                 modifier = Modifier.padding(top = 8.dp),
                 horizontalArrangement = Arrangement.spacedBy(12.dp),

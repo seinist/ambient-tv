@@ -151,7 +151,6 @@ internal fun VisualGameControls() {
 
     Column(Modifier.fillMaxWidth().onFocusChanged { editorFocused = it.hasFocus }.focusGroup(),
         verticalArrangement = Arrangement.spacedBy(LocalUiTokens.current.compactGap)) {
-        SettingsHint(stringResource(R.string.game_controls_explanation))
         if (availableKinds.isNotEmpty()) SettingsActionRow {
             availableKinds.forEach { option ->
                 TvActionButton(stringResource(option.titleRes), selected = option == kind,
@@ -265,7 +264,6 @@ internal fun VisualGameControls() {
                 }
             }
         }
-        SettingsHint(stringResource(R.string.input_mapping_keep_core_default))
         if (device != null) {
             SettingsSelect(
                 label = stringResource(R.string.input_mapping_retropad_target),

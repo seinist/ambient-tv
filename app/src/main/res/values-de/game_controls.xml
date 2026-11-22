@@ -22,7 +22,7 @@
     <string name="retro_kind_companion">Handy-Controller</string>
     <string name="game_controls_title">Steuerung in Spielen</string>
     <string name="game_controls_hint">Mit Controller, Tastatur oder Fernbedienung spielen und Spieler zuordnen</string>
-    <string name="game_controls_explanation">In Spielen spielen Controller, Tastaturen und Fernbedienungen gleichermaßen. Jede Art hat ihre eigene Belegung des Spiele-Pads (A rechts, B unten, X oben, Y links). Mehrere Geräte können sich einen Spieler teilen.</string>
+    <string name="game_controls_explanation">Mehrere Geräte können denselben Spieler steuern.</string>
     <string name="game_controls_players">Spieler</string>
     <string name="game_controls_no_devices">Kein Controller, keine Tastatur und keine Fernbedienung gefunden.</string>
     <string name="game_controls_port_auto">Automatisch</string>
@@ -39,5 +39,5 @@
     <string name="game_controls_layout_hint">Zeile wählen, dann die Taste drücken. Sie wird aus den anderen Zeilen dieser Belegung entfernt. Eine Taste fürs Halten wirkt kurz gedrückt als ihre Spieltaste.</string>
     <string name="game_controls_rewind">Zurückspulen (halten)</string>
     <string name="game_controls_fast_forward">Vorspulen an/aus</string>
-    <string name="game_controls_companion_mapping_hint">Für Handy-Controller zuerst eine Spieltaste oder Menüaktion auswählen und dann die Taste auf der Handy-Abbildung antippen. Belegungen werden von Global über System und Core bis zum Spiel vererbt.</string>
+    <string name="game_controls_companion_mapping_hint">Spieltaste oder Menüaktion wählen, dann eine Taste auf der Handy-Abbildung antippen.</string>
 </resources>
