@@ -2029,8 +2029,9 @@ internal data class YouTubeOsdModel(
         val playFocusRequester = com.ambient.tv.ui.player.rememberPlayerPlayFocus()
         val navigation = LocalPlayerPanelNavigation.current
         val seekable = !playback.isLive || liveDvrWindow != null
+        val timelineKey = "youtube:${playback.videoId}"
         val seekDurationMs = rememberPlayerTimelineDuration(
-            sourceIdentity = "youtube:${playback.videoId}",
+            sourceIdentity = timelineKey,
             durationMs = if (playback.isLive) liveDvrWindow?.durationMs ?: 0L
                 else duration,
             retainDuration = !playback.isLive,
@@ -2064,6 +2065,7 @@ internal data class YouTubeOsdModel(
                         TvPlayerSeekBar(
                             positionMs = seekPositionMs.coerceIn(0L, seekDurationMs),
                             durationMs = seekDurationMs,
+                            timelineKey = timelineKey,
                             paused = paused,
                             onSeekBy = onSeek,
                             onInteraction = osd::interact,

@@ -11,39 +11,34 @@ import javax.inject.Singleton
  * A previously working mirror stays preferred until it fails; expired discovery is retried.
  */
 @Singleton
-class RadioBrowserServerPool @Inject constructor() {
+class RadioBrowserServerPool internal constructor(private val discovery: () -> List<String>) {
+    @Inject constructor() : this(::discoverRadioBrowserHosts)
     @Volatile private var cached: Cache? = null
     @Volatile private var lastHealthyHost: String? = null
+    private val discoveryLock = Any()
+    @Volatile internal var successGeneration: Long = 0L
+        private set
 
     fun hosts(nowMs: Long = System.currentTimeMillis()): List<String> {
         val current = cached?.takeIf { nowMs - it.createdAtMs in 0 until CACHE_MS }
-            ?: synchronized(this) {
+            ?: synchronized(discoveryLock) {
                 cached?.takeIf { nowMs - it.createdAtMs in 0 until CACHE_MS }
-                    ?: Cache(nowMs, discover().shuffled()).also { cached = it }
+                    ?: Cache(nowMs, discovery().shuffled()).also { cached = it }
             }
         return radioBrowserHostOrder(current.hosts, lastHealthyHost)
     }
 
-    internal fun markSuccessful(host: String) {
+    @Synchronized internal fun markSuccessful(host: String) {
         lastHealthyHost = host
+        successGeneration++
     }
 
-    /** Force DNS re-discovery after every mirror in the current list has failed. */
-    internal fun clear() {
+    /** An older failing request must not erase a mirror another request has just recovered. */
+    @Synchronized internal fun clear(expectedSuccessGeneration: Long) {
+        if (successGeneration != expectedSuccessGeneration) return
         cached = null
         lastHealthyHost = null
     }
-
-    private fun discover(): List<String> = runCatching {
-        InetAddress.getAllByName(DISCOVERY_HOST)
-            .map { it.canonicalHostName.trim().lowercase() }
-            .filter { host ->
-                host != DISCOVERY_HOST &&
-                    host.endsWith(".api.radio-browser.info") &&
-                    host.none(Char::isWhitespace)
-            }
-            .distinct()
-    }.getOrDefault(emptyList())
 
     private data class Cache(val createdAtMs: Long, val hosts: List<String>)
 
@@ -52,6 +47,17 @@ class RadioBrowserServerPool @Inject constructor() {
         private val CACHE_MS = TimeUnit.HOURS.toMillis(1)
     }
 }
+
+private fun discoverRadioBrowserHosts(): List<String> = runCatching {
+    InetAddress.getAllByName(RadioBrowserServerPool.DISCOVERY_HOST)
+        .map { it.canonicalHostName.trim().lowercase() }
+        .filter { host ->
+            host != RadioBrowserServerPool.DISCOVERY_HOST &&
+                host.endsWith(".api.radio-browser.info") &&
+                host.none(Char::isWhitespace)
+        }
+        .distinct()
+}.getOrDefault(emptyList())
 
 /** Do not depend on legacy nl1/at1 hosts: they no longer reliably resolve. */
 internal fun radioBrowserHostOrder(discovered: List<String>, lastHealthy: String?): List<String> {

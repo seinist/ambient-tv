@@ -38,9 +38,11 @@ class SmartTubeEngine @Inject constructor(
     @ApplicationContext private val context: Context,
     private val appPreferences: AppPreferences,
     private val localPlaybackDatabase: com.ambient.tv.data.local.LocalPlaybackDatabase,
+    private val onlineServices: com.ambient.tv.data.browse.OnlineServiceAvailability,
 ) {
     constructor(context: Context, appPreferences: AppPreferences) :
-        this(context, appPreferences, com.ambient.tv.data.local.LocalPlaybackDatabase.memory())
+        this(context, appPreferences, com.ambient.tv.data.local.LocalPlaybackDatabase.memory(),
+            com.ambient.tv.data.browse.OnlineServiceAvailability(context))
     @Volatile private var signInDisposable: Any? = null
     /** One diagnostic notice per incident, shared by Home and SmartTube views. */
     private val accountAttentionReported = java.util.concurrent.atomic.AtomicBoolean(false)
@@ -989,84 +991,89 @@ class SmartTubeEngine @Inject constructor(
         requestPlaybackWarmup()
         val rowScope = coroutineContext[RowContinuationScope]?.scope
         val content = service("getContentService")
-        var attempted = false
-        var lastFailure: Throwable? = null
-        var authFailure: Throwable? = null
-        var completedEmpty = false
-        for (method in methodNames) {
-            val invocation = content.invokeDetailed(method, *args)
-            if (!invocation.found) continue
-            attempted = true
-            if (invocation.error != null) {
-                lastFailure = invocation.error
-                if (smartTubeAuthRejected(invocation.error)) authFailure = invocation.error
-                Timber.w(invocation.error, "SmartTube content method %s failed", method)
-                continue
-            }
-            val accumulated = linkedMapOf<String, YouTubeRow>()
-            // Continuation handles of this load replace those of the previous load of the scope.
-            val continuations = rowScope?.let { scope ->
-                java.util.concurrent.ConcurrentHashMap<String, Any>().also { rowContinuations[scope] = it }
-            }
-            suspend fun publish(raw: Any?) {
-                val incoming = mapGroupsWithSource(raw)
-                if (incoming.isEmpty()) return
-                incoming.forEach { (row, group) ->
-                    val previous = accumulated[row.title]
-                    accumulated[row.title] = row.copy(items = (previous?.items.orEmpty() + row.items).distinctBy { it.videoId })
-                    if (continuations != null && group != null) continuations[row.title] = group
+        onlineServices.request("youtube", isFailure = ::smartTubeServiceRequestFailed) { request ->
+            var attempted = false
+            var lastFailure: Throwable? = null
+            var authFailure: Throwable? = null
+            var completedEmpty = false
+            for (method in methodNames) {
+                val invocation = content.invokeDetailed(method, *args)
+                if (!invocation.found) continue
+                attempted = true
+                if (invocation.error != null) {
+                    lastFailure = invocation.error
+                    if (smartTubeAuthRejected(invocation.error)) authFailure = invocation.error
+                    Timber.w(invocation.error, "SmartTube content method %s failed", method)
+                    continue
                 }
-                onRows(accumulated.values.toList())
-            }
-            try {
-                val stream = invocation.value?.let(::reactiveContent)
-                if (stream != null) {
-                    val progressiveRowsFeed = method.contains("Subscriptions") ||
-                        method.contains("SubscribedChannels") ||
-                        method.contains("PlaylistRows") ||
-                        method.contains("PlaylistsRow")
-                    val emissionLimit = if (progressiveRowsFeed) 128 else 16
-                    var emissions = 0
-                    val finished = stream.collectBoundedSnapshot(
-                        timeoutMs = 30_000L,
-                        maxEmissions = emissionLimit,
-                    ) { emissions++; publish(it) }
-                    if (progressiveRowsFeed) {
-                        // Subscription and playlist-row observables can emit one row at a time
-                        // and may stay open after useful content. Keep a populated snapshot if
-                        // the observation window ends instead of discarding already loaded rows.
-                        if (!finished && accumulated.isEmpty()) throw IncompleteYouTubeFeedException()
-                    } else if (!finished || emissions >= emissionLimit) {
-                        throw IncompleteYouTubeFeedException()
+                val accumulated = linkedMapOf<String, YouTubeRow>()
+                // Continuation handles of this load replace those of the previous load of the scope.
+                val continuations = rowScope?.let { scope ->
+                    java.util.concurrent.ConcurrentHashMap<String, Any>().also { rowContinuations[scope] = it }
+                }
+                suspend fun publish(raw: Any?) {
+                    // A provider emission proves reachability even when filtering leaves no tiles.
+                    // Record it before the UI callback and before a later collection limit/error.
+                    if (raw != null) onlineServices.succeeded(request)
+                    val incoming = mapGroupsWithSource(raw)
+                    if (incoming.isEmpty()) return
+                    incoming.forEach { (row, group) ->
+                        val previous = accumulated[row.title]
+                        accumulated[row.title] = row.copy(items = (previous?.items.orEmpty() + row.items).distinctBy { it.videoId })
+                        if (continuations != null && group != null) continuations[row.title] = group
                     }
-                } else {
-                    publish(unwrapReactive(invocation.value))
+                    onRows(accumulated.values.toList())
                 }
-            } catch (error: kotlinx.coroutines.TimeoutCancellationException) {
-                // A never-ending upstream feed must not hold the loading job open forever.
-                // Preserve partial content and still honour cancellation of the caller.
-                kotlinx.coroutines.currentCoroutineContext().ensureActive()
-                throw IncompleteYouTubeFeedException(error)
-            } catch (error: CancellationException) {
-                throw error
-            } catch (error: Exception) {
-                if (accumulated.isNotEmpty()) throw IncompleteYouTubeFeedException(error)
-                lastFailure = error
-                if (smartTubeAuthRejected(error)) authFailure = error
-                continue
+                try {
+                    val stream = invocation.value?.let(::reactiveContent)
+                    if (stream != null) {
+                        val progressiveRowsFeed = method.contains("Subscriptions") ||
+                            method.contains("SubscribedChannels") ||
+                            method.contains("PlaylistRows") ||
+                            method.contains("PlaylistsRow")
+                        val emissionLimit = if (progressiveRowsFeed) 128 else 16
+                        var emissions = 0
+                        val finished = stream.collectBoundedSnapshot(
+                            timeoutMs = 30_000L,
+                            maxEmissions = emissionLimit,
+                        ) { emissions++; publish(it) }
+                        if (progressiveRowsFeed) {
+                            // Subscription and playlist-row observables can emit one row at a time
+                            // and may stay open after useful content. Keep a populated snapshot if
+                            // the observation window ends instead of discarding already loaded rows.
+                            if (!finished && accumulated.isEmpty()) throw IncompleteYouTubeFeedException()
+                        } else if (!finished || emissions >= emissionLimit) {
+                            throw IncompleteYouTubeFeedException()
+                        }
+                    } else {
+                        publish(unwrapReactive(invocation.value))
+                    }
+                } catch (error: kotlinx.coroutines.TimeoutCancellationException) {
+                    // A never-ending upstream feed must not hold the loading job open forever.
+                    // Preserve partial content and still honour cancellation of the caller.
+                    kotlinx.coroutines.currentCoroutineContext().ensureActive()
+                    throw IncompleteYouTubeFeedException(error)
+                } catch (error: CancellationException) {
+                    throw error
+                } catch (error: Exception) {
+                    if (accumulated.isNotEmpty()) throw IncompleteYouTubeFeedException(error)
+                    lastFailure = error
+                    if (smartTubeAuthRejected(error)) authFailure = error
+                    continue
+                }
+                completedEmpty = true
+                if (accumulated.isNotEmpty()) return@request accumulated.values.toList()
+                Timber.d("SmartTube content method %s returned no mappable rows", method)
             }
-            completedEmpty = true
-            if (accumulated.isNotEmpty()) return@withContext accumulated.values.toList()
-            Timber.d("SmartTube content method %s returned no mappable rows", method)
+            if (!attempted) {
+                Timber.w("SmartTube has none of the requested content methods: %s", methodNames.joinToString())
+            }
+            // One older upstream variant may finish empty while the next one rejects an expired
+            // credential. Never transform that explicit authentication rejection into "no videos".
+            authFailure?.let { throw it }
+            if (!completedEmpty) throw IncompleteYouTubeFeedException(lastFailure)
+            emptyList()
         }
-        if (!attempted) {
-            Timber.w("SmartTube has none of the requested content methods: %s", methodNames.joinToString())
-        }
-        // One older upstream variant may finish empty while the next one rejects an expired
-        // credential. Never transform that explicit authentication rejection into "no videos".
-        authFailure?.let { throw it }
-        if (!completedEmpty) throw IncompleteYouTubeFeedException(lastFailure)
-        emptyList()
     }
 
     private suspend fun groups(block: () -> Any?): List<YouTubeRow> = io {
@@ -1536,8 +1543,6 @@ private fun Any.hasAnyMethod(vararg names: String): Boolean = names.any { hasMet
 private class RowContinuationScope(val scope: String) : kotlin.coroutines.AbstractCoroutineContextElement(RowContinuationScope) {
     companion object Key : kotlin.coroutines.CoroutineContext.Key<RowContinuationScope>
 }
-
-internal class IncompleteYouTubeFeedException(cause: Throwable? = null) : java.io.IOException("YouTube feed refresh incomplete", cause)
 
 private const val RENEW_TIMEOUT_MS = 20_000L
 /** MediaItem.TYPE_CHANNEL */

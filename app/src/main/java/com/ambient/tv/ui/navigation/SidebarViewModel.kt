@@ -224,15 +224,13 @@ class SidebarViewModel @Inject constructor(
         viewModelScope.launch {
             observeSidebarAvailability(
                 hosts.states,
+                onlineServices.state,
                 appPreferences.changes(),
                 fileStore.revision,
                 dlnaStore.serverRevision,
                 com.ambient.tv.data.local.LoginStateSignal.generation,
                 snapshot = ::currentOfflineSources,
             ).collect { offline -> _uiState.update { it.copy(offlineSystems = offline) } }
-        }
-        viewModelScope.launch {
-            onlineServices.state.collect { _uiState.update { state -> state.copy(offlineSystems = currentOfflineSources()) } }
         }
         viewModelScope.launch {
             combine(gameLibrary.revisions, fileStore.revision) { _, _ -> gameLibrary.revisionSnapshot(includeOverrides = false) }

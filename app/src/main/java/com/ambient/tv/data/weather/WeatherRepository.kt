@@ -187,14 +187,15 @@ class WeatherRepository @Inject constructor(
             lastAttemptKey = key
             lastAttemptMillis = now
             publish(token, WeatherState(saved, loading = true))
+            val serviceRequest = onlineServices?.begin("weather")
             try {
                 val snapshot = parseWeatherForecast(get(forecastUrl(place, selected), token), place, selected, System.currentTimeMillis())
+                serviceRequest?.let { onlineServices?.succeeded(it) }
                 synchronized(gate) {
                     cache = (cache + (key to snapshot)).entries.sortedByDescending { it.value.fetchedAtMillis }
                         .take(MAX_CACHE_ENTRIES).associate { it.key to it.value }
                 }
                 saveCache()
-                onlineServices?.succeeded("weather")
                 publish(token, WeatherState(snapshot))
             } catch (cancelled: CancellationException) {
                 // Returning to a visible consumer must retry immediately after its predecessor
@@ -213,7 +214,7 @@ class WeatherRepository @Inject constructor(
                 val failure = requestError(error)
                 if (synchronized(gate) { generation == token } &&
                     failure.reason in setOf(WeatherError.OFFLINE, WeatherError.UNAVAILABLE)) {
-                    onlineServices?.unavailable("weather")
+                    serviceRequest?.let { onlineServices?.unavailable(it) }
                 }
                 publish(token, WeatherState(saved, error = failure.reason, retryAfterMillis = failure.retryAfterMillis))
             }

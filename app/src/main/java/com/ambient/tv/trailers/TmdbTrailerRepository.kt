@@ -113,6 +113,7 @@ class TmdbTrailerRepository internal constructor(private val tokens: TokenStore,
                 val remaining = retryDeadlineNanos?.let { it - nanoTime() } ?: 0L
                 if (remaining > 0) throw TrailerRateLimited((remaining + 999_999_999L) / 1_000_000_000L)
             }
+            val serviceRequest = onlineServices?.begin("trailers")
             try {
                 withContext(Dispatchers.IO) {
                 client.newCall(Request.Builder().url(url).apply {
@@ -143,15 +144,17 @@ class TmdbTrailerRepository internal constructor(private val tokens: TokenStore,
                             refreshGeneration == requestRefreshGeneration)
                             cache[key] = Cached(nanoTime(), result)
                     }
-                    onlineServices?.succeeded("trailers")
+                    serviceRequest?.let { onlineServices?.succeeded(it) }
                     result
                 }
                 }
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (error: Exception) {
-                if (error is TrailerServiceUnavailable) onlineServices?.unavailable("trailers")
-                else onlineServices?.failed("trailers", error)
+                serviceRequest?.let {
+                    if (error is TrailerServiceUnavailable) onlineServices?.unavailable(it)
+                    else onlineServices?.failed(it, error)
+                }
                 throw error
             }
         }

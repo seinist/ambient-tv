@@ -1104,6 +1104,8 @@ internal fun TvPlayerSeekBar(
     timelineContext: (@Composable (Long) -> Unit)? = null,
     showEndTime: Boolean = com.ambient.tv.ui.common.LocalClockSettings.current.endTime,
     paused: Boolean = false,
+    /** The OSD survives Next Up; its seek previews belong to one media item. */
+    timelineKey: Any? = seekState,
 ) {
     // Keep the same touch geometry before metadata arrives. No unattached TV focus target
     // should be registered for the handheld branch, including its passive/loading state.
@@ -1113,6 +1115,7 @@ internal fun TvPlayerSeekBar(
             paused = paused,
             interactive = interactive && LocalPlayerChromeState.current?.osd?.show != false,
             timelineContext = timelineContext,
+            timelineKey = timelineKey,
         )
         return
     }
@@ -1159,7 +1162,7 @@ internal fun TvPlayerSeekBar(
     val latestOnInteraction by androidx.compose.runtime.rememberUpdatedState(onInteraction)
     // Keep the visual destination while a renderer still reports its pre-seek position.
     // PlaybackSeekState remains the authority for issuing actual seek commands.
-    var awaitingVisualTarget by remember { mutableStateOf<Long?>(null) }
+    var awaitingVisualTarget by remember(timelineKey, seekState) { mutableStateOf<Long?>(null) }
     // Input must read the live target: the persistent OSD model may be a frame behind.
     fun currentPosition() = latestSeekState?.positionMs ?: latestPositionMs
     fun submitTarget(target: Long) {
@@ -1167,7 +1170,7 @@ internal fun TvPlayerSeekBar(
         BackgroundPlaybackSession.userSeek()
         latestSeekState?.seekTo(target) ?: latestOnSeekBy(target - currentPosition())
     }
-    val progressiveSeek = remember(seekState) { ProgressiveSeekController() }
+    val progressiveSeek = remember(timelineKey, seekState) { ProgressiveSeekController() }
     ProgressiveSeekTicker(progressiveSeek)
     // Preserve the OSD timeout while a remote is continuously held without native repeats.
     LaunchedEffect(progressiveSeek.active) {
@@ -1176,12 +1179,12 @@ internal fun TvPlayerSeekBar(
             latestOnInteraction()
         }
     }
-    var pendingTarget by remember { mutableStateOf<Long?>(null) }
-    var pendingDirection by remember { mutableIntStateOf(0) }
-    var pointerTarget by remember { mutableStateOf<Long?>(null) }
-    var lastPreview by remember { mutableStateOf<Long?>(null) }
-    var previewVersion by remember { mutableIntStateOf(0) }
-    LaunchedEffect(awaitingVisualTarget) {
+    var pendingTarget by remember(timelineKey, seekState) { mutableStateOf<Long?>(null) }
+    var pendingDirection by remember(timelineKey, seekState) { mutableIntStateOf(0) }
+    var pointerTarget by remember(timelineKey, seekState) { mutableStateOf<Long?>(null) }
+    var lastPreview by remember(timelineKey, seekState) { mutableStateOf<Long?>(null) }
+    var previewVersion by remember(timelineKey, seekState) { mutableIntStateOf(0) }
+    LaunchedEffect(timelineKey, seekState, awaitingVisualTarget) {
         if (awaitingVisualTarget != null) {
             kotlinx.coroutines.delay(SEEK_VISUAL_ACK_TIMEOUT_MS)
             awaitingVisualTarget = null
@@ -1225,8 +1228,11 @@ internal fun TvPlayerSeekBar(
     var focused by remember { mutableStateOf(false) }
     val progress = if (durationMs > 0) (displayedPosition.toFloat() / durationMs.toFloat()).coerceIn(0f, 1f) else 0f
     val remaining = (durationMs - displayedPosition).coerceAtLeast(0L)
-    val aiming = pointerTarget != null || pendingTarget != null || progressiveTarget != null || awaitingVisualTarget != null
-    val showingSeekTarget = seekBarHasDistinctTarget(positionMs, displayedPosition, aiming)
+    val scrubbing = pointerTarget != null || pendingTarget != null || progressiveTarget != null
+    val aiming = scrubbing || awaitingVisualTarget != null
+    // Keep the live clock beside an uncommitted preview. Once released/tapped, the elapsed
+    // readout follows the same accepted target as the bar while the decoder catches up.
+    val showingSeekTarget = seekBarHasDistinctTarget(positionMs, displayedPosition, scrubbing)
     val highlighted = focused || aiming || passiveFeedback
     // Draw the current-position line only during scrubbing or brief direct-seek
     // feedback. Moving focus onto the timeline or expanding the button row is not
@@ -1338,7 +1344,7 @@ internal fun TvPlayerSeekBar(
                 onSeekBy(if (scroll < 0f) 10_000L else -10_000L)
                 true
             }
-            .pointerInput(Unit) {
+            .pointerInput(timelineKey, seekState) {
                 detectTapGestures { point ->
                     if (latestDurationMs <= 0L) return@detectTapGestures
                     navigation?.interact(); latestOnInteraction()
@@ -1348,7 +1354,7 @@ internal fun TvPlayerSeekBar(
                     previewVersion++
                 }
             }
-            .pointerInput(Unit) {
+            .pointerInput(timelineKey, seekState) {
                 detectHorizontalDragGestures(
                     onDragStart = { point ->
                         if (latestDurationMs > 0L) {

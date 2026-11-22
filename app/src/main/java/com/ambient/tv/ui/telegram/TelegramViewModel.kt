@@ -249,6 +249,7 @@ class TelegramViewModel @Inject constructor(
 
     private fun fetchPage(section: String, cursor: String?, generation: Int, invalidate: Boolean = false) {
         loadJob = viewModelScope.launch {
+            val serviceRequest = onlineServices.begin("telegram")
             try {
                 if (invalidate) repository.refreshCatalog()
                 // An audio/YouTube filter may encounter many consecutive text-only
@@ -286,7 +287,9 @@ class TelegramViewModel @Inject constructor(
                     requestCursor = next
                 }
                 if (generation != pageGeneration || mutableState.value.section != section) return@launch
-                onlineServices.succeeded("telegram")
+                // Native catalogue/history pages may come from Monogram's own cache.
+                // A completed page clears its error but does not prove an Internet route.
+                onlineServices.succeeded(serviceRequest, confirmsInternet = false)
                 publishPage(section, append = cursor != null, pageRows, pageMedia,
                     next?.takeUnless { it == requestCursor })
             } catch (cancelled: CancellationException) {
@@ -295,8 +298,8 @@ class TelegramViewModel @Inject constructor(
                 if (generation == pageGeneration) {
                     if (com.ambient.tv.data.telegram.classifyTelegramFailure(failure.message) ==
                         com.ambient.tv.data.telegram.TelegramFailureKind.NETWORK) {
-                        onlineServices.unavailable("telegram")
-                    } else onlineServices.failed("telegram", failure)
+                        onlineServices.unavailable(serviceRequest)
+                    } else onlineServices.failed(serviceRequest, failure)
                     val old = mutableState.value
                     val message = failure.message ?: context.getString(com.ambient.tv.R.string.monogram_error_request)
                     mutableState.value = old.copy(
