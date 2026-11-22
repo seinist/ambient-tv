@@ -194,6 +194,22 @@ class AppPreferences @Inject constructor(
 
     internal val fileSourceLock = Any()
 
+    /** Device-local incarnations of file sources; never part of settings backup/TV sync. */
+    internal val filePlaybackScopes: Map<String, String>
+        get() = runCatching {
+            decodeCached("file_playback_scopes", prefs.getString("file_playback_scopes", "{}") ?: "{}") {
+                json.decodeFromString<Map<String, String>>(it)
+            }
+        }.getOrDefault(emptyMap())
+
+    /** Seed old installations without treating their existing sources as newly imported ones. */
+    internal fun ensureFilePlaybackScopes(): Map<String, String> = synchronized(fileSourceLock) {
+        val existing = filePlaybackScopes
+        val next = fileSources.associate { it.id to (existing[it.id]?.takeIf(String::isNotBlank) ?: UUID.randomUUID().toString()) }
+        if (next != existing) prefs.edit { putString("file_playback_scopes", json.encodeToString(next)) }
+        next
+    }
+
     /**
      * Profiles, Home rows and file sources are JSON lists read on many UI paths. Decoding is
      * reused while the stored string is unchanged; the parsed lists are immutable.
@@ -256,22 +272,35 @@ class AppPreferences @Inject constructor(
             val next = value.map { it.validated() }.distinctBy { it.id }.take(50)
             val previous = fileSources.associateBy { it.id }
             val reusable = next.filter { previous[it.id]?.sameLocation(it) == true }.map { it.id }.toSet()
+            val oldScopes = filePlaybackScopes
+            val scopes = next.associate { source -> source.id to (
+                oldScopes[source.id]?.takeIf { source.id in reusable && it.isNotBlank() } ?: UUID.randomUUID().toString()
+            ) }
             // A source ID can survive an edit/import while its NAS/share/root changes. Never
             // apply the old path's favorite or playback position to a different filesystem.
-            val favorites = runCatching {
+            val favorites = if (prefs.contains("file_favorites")) runCatching {
                 json.decodeFromString<List<com.ambient.tv.data.files.FileEntry>>(prefs.getString("file_favorites", "[]")!!)
-            }.getOrDefault(emptyList()).filter { it.sourceId in reusable }.takeLast(300)
-            val history = runCatching {
+            }.getOrNull()?.filter { it.sourceId in reusable }?.takeLast(300) else null
+            val history = if (prefs.contains("file_history")) runCatching {
                 json.decodeFromString<List<com.ambient.tv.data.files.FileHistory>>(prefs.getString("file_history", "[]")!!)
-            }.getOrDefault(emptyList()).filter { it.entry.sourceId in reusable }.take(500)
+            }.getOrNull()?.filter { it.entry.sourceId in reusable }?.take(500) else null
             // ROM directory assignments must not follow an ID to a different NAS/share/root.
             // Full backup imports restore their validated folder links after the source list.
             val retainedGames = gameLibraryFolders.filter { it.sourceId in reusable }
             val retainedGameOverrides = gameLibraryOverrides.filter { it.sourceId in reusable }
             prefs.edit {
                 putString("file_sources", json.encodeToString(next))
-                putString("file_favorites", json.encodeToString(favorites))
-                putString("file_history", json.encodeToString(history))
+                // Atomic with the source list: queued row writes carry the old scope and are
+                // ineligible even if the same ID is removed and re-added before SQL catches up.
+                putString("file_playback_scopes", json.encodeToString(scopes))
+                favorites?.let { putString("file_favorites", json.encodeToString(it)) }
+                history?.let { putString("file_history", json.encodeToString(it)) }
+                // Preserve unreadable originals and their old identities for transactional
+                // recovery. A later import/re-add cannot stamp them with a new source scope.
+                if (favorites == null && prefs.contains("file_favorites") && !prefs.contains("file_favorites_legacy_scopes"))
+                    putString("file_favorites_legacy_scopes", json.encodeToString(oldScopes))
+                if (history == null && prefs.contains("file_history") && !prefs.contains("file_history_legacy_scopes"))
+                    putString("file_history_legacy_scopes", json.encodeToString(oldScopes))
                 putString("game_library_folders", json.encodeToString(retainedGames))
                 putString("game_library_overrides", json.encodeToString(retainedGameOverrides))
             }

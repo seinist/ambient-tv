@@ -8,7 +8,6 @@ import android.database.sqlite.SQLiteOpenHelper
 import android.util.LruCache
 import com.ambient.tv.backdropImageLoader
 import com.ambient.tv.data.browse.BrowseScopes
-import com.ambient.tv.data.browse.displayArtworkUrl
 import com.ambient.tv.data.local.AppPreferences
 import dagger.hilt.android.qualifiers.ApplicationContext
 import java.security.MessageDigest
@@ -18,6 +17,7 @@ import javax.inject.Singleton
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
@@ -25,6 +25,10 @@ import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 
 internal const val MEDIA_ARTWORK_IDENTITY_EXTRA = "ambient.media-artwork.identity"
 internal const val MEDIA_ARTWORK_REVISION_EXTRA = "ambient.media-artwork.revision"
+internal const val MEDIA_ARTWORK_HEADERS_EXTRA = "ambient.media-artwork.headers"
+
+internal fun mediaArtworkRefreshChanged(previous: String?, current: String?, explicitlyAffected: Boolean): Boolean =
+    explicitlyAffected || !current.isNullOrEmpty() && current != previous
 
 /** Compose compares these extras; a newly allocated but otherwise equal request would not reload. */
 internal fun coil3.request.ImageRequest.Builder.artworkRefreshRevision(sequence: Long) = apply {
@@ -52,6 +56,7 @@ internal class MediaArtworkRevisionStore(
     name: String = "media_artwork_revisions.db",
 ) : SQLiteOpenHelper(context.applicationContext, name, null, 1) {
     private val known = LruCache<String, String>(512)
+    private val memoryOnly = java.util.concurrent.ConcurrentHashMap<String, String>()
     @Volatile private var hasRevisions: Boolean? = null
 
     override fun onCreate(db: SQLiteDatabase) {
@@ -61,9 +66,12 @@ internal class MediaArtworkRevisionStore(
 
     // LruCache has its own short lock. Never acquire the SQLite transaction lock on a hot hit.
     fun cachedRevision(key: String): String? =
-        known.get(key) ?: if (hasRevisions == false) "" else null
+        memoryOnly[key] ?: known.get(key) ?: if (hasRevisions == false) "" else null
+
+    fun isMemoryOnly(key: String): Boolean = memoryOnly.containsKey(key)
 
     @Synchronized fun revision(key: String): String {
+        memoryOnly[key]?.let { return it }
         known.get(key)?.let { return it }
         val db = readableDatabase
         if (hasRevisions == null) hasRevisions = DatabaseUtils.longForQuery(db,
@@ -75,28 +83,42 @@ internal class MediaArtworkRevisionStore(
     }
 
     /** Publish all affected images in one transaction before any old cache key is removed. */
-    @Synchronized fun refresh(keys: Collection<String>): Map<String, String> {
+    @Synchronized fun refresh(keys: Collection<String>): MediaArtworkRevisionUpdate {
         val unique = keys.distinct()
-        if (unique.isEmpty()) return emptyMap()
-        val previous = unique.associateWith(::revision)
+        if (unique.isEmpty()) return MediaArtworkRevisionUpdate(emptyMap(), persisted = true)
+        val previous = unique.associateWith { key ->
+            try { revision(key) } catch (_: SQLiteException) { cachedRevision(key).orEmpty() }
+        }
         val next = UUID.randomUUID().toString()
-        val db = writableDatabase
-        db.beginTransaction()
-        try {
-            db.compileStatement("INSERT OR REPLACE INTO artwork_revision(image_key,revision) VALUES(?,?)").use { statement ->
-                unique.forEach { key ->
-                    statement.bindString(1, key)
-                    statement.bindString(2, next)
-                    statement.executeInsert()
+        val persisted = try {
+            val db = writableDatabase
+            db.beginTransaction()
+            try {
+                db.compileStatement("INSERT OR REPLACE INTO artwork_revision(image_key,revision) VALUES(?,?)").use { statement ->
+                    unique.forEach { key ->
+                        statement.bindString(1, key)
+                        statement.bindString(2, next)
+                        statement.executeInsert()
+                    }
                 }
-            }
-            db.setTransactionSuccessful()
-        } finally { db.endTransaction() }
+                db.setTransactionSuccessful()
+            } finally { db.endTransaction() }
+            unique.forEach(memoryOnly::remove)
+            true
+        } catch (error: SQLiteException) {
+            // A targeted retry must still get new bytes when the persistent cache cannot write.
+            // These transient revisions must never read/write the old persistent binary cache.
+            unique.forEach { memoryOnly[it] = next }
+            timber.log.Timber.w("Artwork revision write failed: %s", error.javaClass.simpleName)
+            false
+        }
         unique.forEach { known.put(it, next) }
         hasRevisions = true
-        return previous
+        return MediaArtworkRevisionUpdate(previous, persisted)
     }
 }
+
+internal data class MediaArtworkRevisionUpdate(val previous: Map<String, String>, val persisted: Boolean)
 
 internal data class MediaArtworkRefreshEvent(val sequence: Long = 0, val urls: Set<String> = emptySet())
 
@@ -107,9 +129,15 @@ internal object MediaArtworkRefreshEvents {
     fun publish(urls: Set<String>) { mutable.value = MediaArtworkRefreshEvent(mutable.value.sequence + 1, urls) }
 }
 
-internal data class MediaArtworkCacheIdentity(val baseKey: String, val imageKey: String, val revision: String) {
+internal data class MediaArtworkAddress(val baseKey: String, val imageKey: String, val scope: String, val providerScope: String?)
+
+internal data class MediaArtworkCacheIdentity(val baseKey: String, val imageKey: String, val revision: String, val persistent: Boolean = true, val providerScope: String? = null) {
     val diskKey: String get() = revisedMediaArtworkDiskKey(baseKey, revision)
 }
+
+internal fun mediaArtworkMemoryKeyMatches(extras: Map<String, String>, identity: MediaArtworkCacheIdentity?): Boolean =
+    identity != null && extras[MEDIA_ARTWORK_IDENTITY_EXTRA] == identity.imageKey &&
+        extras[MEDIA_ARTWORK_REVISION_EXTRA] == identity.revision
 
 /** Shared by both Coil loaders and metadata editing, with exactly the same provider/account scope. */
 @Singleton
@@ -117,31 +145,79 @@ class MediaArtworkRefresh @Inject constructor(
     @ApplicationContext private val context: Context,
     private val preferences: AppPreferences,
     private val scopes: BrowseScopes,
+    @com.ambient.tv.data.local.RegularPrefs private val regularPreferences: android.content.SharedPreferences,
+    @com.ambient.tv.data.local.EncryptedPrefs private val credentialPreferences: android.content.SharedPreferences,
 ) {
     private val revisions = MediaArtworkRevisionStore(context)
     private val keyHashes = LruCache<String, String>(512)
     private val refreshLock = Mutex()
+    private val mutableSources = MutableStateFlow(0L)
+    internal val sources = mutableSources.asStateFlow()
+    private val sourceListener = android.content.SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
+        if (mediaArtworkSourcePreference(key)) mutableSources.update { it + 1L }
+    }
+    private val sourceGuard = Any()
+    private var endpoints: Pair<Long, List<MediaImageEndpoint>>? = null
+    private val scopeValues = mutableMapOf<String, Pair<Long, String>>()
+    private data class AddressKey(val url: String, val headers: String?, val sourceVersion: Long)
+    private data class AddressValue(val address: MediaArtworkAddress?)
+    private val addresses = LruCache<AddressKey, AddressValue>(512)
 
-    private fun baseKey(url: String): String? {
-        val endpoint = url.toHttpUrlOrNull() ?: return null
-        fun matches(host: String, port: Int): Boolean {
-            val normalized = NetworkEndpoint.normalizeHost(host)
-            return normalized.isNotBlank() && NetworkEndpoint.sameEndpoint(endpoint.host, endpoint.port, normalized, port)
-        }
-        val provider = when {
-            matches(preferences.host, preferences.port) -> "plex"
-            matches(preferences.jellyfinHost, preferences.jellyfinPort) -> "jellyfin"
-            matches(preferences.embyHost, preferences.embyPort) -> "emby"
-            else -> return null
-        }
-        return normalizedMediaArtworkDiskKey(url, scopes.forProvider(provider))
+    init {
+        regularPreferences.registerOnSharedPreferenceChangeListener(sourceListener)
+        credentialPreferences.registerOnSharedPreferenceChangeListener(sourceListener)
     }
 
-    internal suspend fun identity(url: String): MediaArtworkCacheIdentity? {
-        val base = baseKey(url) ?: return null
-        val key = keyHashes.get(base) ?: mediaArtworkIdentityKey(base).also { keyHashes.put(base, it) }
-        revisions.cachedRevision(key)?.let { return MediaArtworkCacheIdentity(base, key, it) }
-        return withContext(Dispatchers.IO) { MediaArtworkCacheIdentity(base, key, revisions.revision(key)) }
+    /** Pure settings/hash lookup: safe during composition; no SQLite open/read occurs here. */
+    internal fun address(url: String, headers: Map<String, String> = emptyMap()): MediaArtworkAddress? {
+        val headerKey = mediaArtworkHeadersKey(headers)
+        while (true) {
+            val version = sources.value
+            val key = AddressKey(url, headerKey, version)
+            addresses.get(key)?.let { return it.address }
+            val endpoint = url.toHttpUrlOrNull() ?: return null
+            // Explicit Authorization owns the request independently of any automatic account.
+            val explicitAuthorization = explicitMediaImageCredential(endpoint, null, headers)
+            val provider = if (explicitAuthorization) null else {
+                val configured = synchronized(sourceGuard) {
+                    endpoints?.takeIf { it.first == version }?.second ?: mediaImageEndpoints(preferences).also { endpoints = version to it }
+                }
+                mediaImageProvider(endpoint, configured)
+            }
+            val result = if (provider == null || explicitMediaImageCredential(endpoint, provider, headers)) {
+                if (headerKey == null) null else {
+                    // Explicitly authenticated external/TVH images keep their original URL semantics.
+                    val base = "header-artwork-v1:" + hash("$headerKey:$url")
+                    MediaArtworkAddress(base, hash(base), "headers:$headerKey", null)
+                }
+            } else {
+                val providerScope = synchronized(sourceGuard) {
+                    scopeValues[provider]?.takeIf { it.first == version }?.second ?: scopes.forProvider(provider).also { scopeValues[provider] = version to it }
+                }
+                val scope = if (headerKey == null) providerScope else "$providerScope:$headerKey"
+                val base = normalizedMediaArtworkDiskKey(url, scope) ?: return null
+                val resource = mediaArtworkResourceUrl(url) ?: return null
+                MediaArtworkAddress(base, hash("media-artwork-resource-v1:$scope:$resource"), scope, providerScope)
+            }
+            if (sources.value != version) continue
+            addresses.put(key, AddressValue(result))
+            return result
+        }
+    }
+
+    private fun hash(value: String): String = keyHashes.get(value) ?: mediaArtworkIdentityKey(value).also { keyHashes.put(value, it) }
+
+    internal fun cachedIdentity(address: MediaArtworkAddress): MediaArtworkCacheIdentity? =
+        revisions.cachedRevision(address.imageKey)?.let { address.withRevision(it) }
+
+    private fun MediaArtworkAddress.withRevision(revision: String) = MediaArtworkCacheIdentity(
+        baseKey, imageKey, revision, !revisions.isMemoryOnly(imageKey), providerScope,
+    )
+
+    internal suspend fun identity(url: String, headers: Map<String, String> = emptyMap()): MediaArtworkCacheIdentity? {
+        val address = address(url, headers) ?: return null
+        cachedIdentity(address)?.let { return it }
+        return withContext(Dispatchers.IO) { address.withRevision(revisions.revision(address.imageKey)) }
     }
 
     /**
@@ -149,14 +225,23 @@ class MediaArtworkRefresh @Inject constructor(
      * Only matching entries are evicted, from both RAM budgets and their shared image disk cache.
      * The crop-analysis cache naturally follows the new SuccessResult.diskCacheKey.
      */
-    suspend fun refresh(urls: Collection<String?>): Boolean = refreshLock.withLock {
-        val affected = urls.filterNotNull().distinct().mapNotNull { url ->
-            baseKey(url)?.let { Triple(url, it, mediaArtworkIdentityKey(it)) }
-        }
+    suspend fun refresh(urls: Collection<String?>, valid: () -> Boolean = { true }): Boolean = refreshLock.withLock {
+        if (!valid()) return@withLock false
+        var sourceVersion: Long
+        var affected: List<Triple<String, String, String>>
+        do {
+            sourceVersion = sources.value
+            affected = urls.filterNotNull().distinct().mapNotNull { url ->
+                address(url)?.let { Triple(url, it.baseKey, it.imageKey) }
+            }
+            if (!valid()) return@withLock false
+        } while (sources.value != sourceVersion)
         if (affected.isEmpty()) return@withLock true
         try {
-            withContext(Dispatchers.IO) {
-                val previous = revisions.refresh(affected.map { it.third })
+            val persisted = withContext(Dispatchers.IO) {
+                if (!valid()) return@withContext false
+                val update = revisions.refresh(affected.map { it.third })
+                val previous = update.previous
                 val ids = previous.keys
                 val loaders = listOf(coil3.SingletonImageLoader.get(context), backdropImageLoader(context)).distinct()
                 loaders.forEach { loader ->
@@ -170,9 +255,10 @@ class MediaArtworkRefresh @Inject constructor(
                         runCatching { cache.remove(revisedMediaArtworkDiskKey(base, previous.getValue(id))) }
                     }
                 }
+                update.persisted
             }
-            MediaArtworkRefreshEvents.publish(affected.mapNotNull { displayArtworkUrl(it.first) }.toSet())
-            true
+            if (valid()) MediaArtworkRefreshEvents.publish(affected.mapNotNull { mediaArtworkResourceUrl(it.first) }.toSet())
+            persisted
         } catch (error: SQLiteException) {
             timber.log.Timber.w(error, "Artwork refresh metadata unavailable")
             false

@@ -2,6 +2,7 @@ package com.ambient.tv.network
 
 import coil3.intercept.Interceptor
 import coil3.request.ImageResult
+import coil3.network.httpHeaders
 import com.ambient.tv.data.browse.displayArtworkUrl
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -22,7 +23,8 @@ class MediaArtworkDiskCacheInterceptor @Inject constructor(
         val request = chain.request
         val url = request.data as? String ?: return chain.proceed()
         if (request.diskCacheKey != null) return chain.proceed()
-        val identity = try { refresh.identity(url) }
+        val headers = request.httpHeaders.asMap().mapValues { it.value.joinToString("\u0000") }
+        val identity = try { refresh.identity(url, headers) }
         catch (_: android.database.sqlite.SQLiteException) {
             // A broken metadata cache must not hide artwork or reuse an uncertain revision.
             return chain.withRequest(request.newBuilder()
@@ -32,7 +34,14 @@ class MediaArtworkDiskCacheInterceptor @Inject constructor(
         if (identity == null) return chain.proceed()
         return chain.withRequest(request.newBuilder().diskCacheKey(identity.diskKey)
             .memoryCacheKeyExtra(MEDIA_ARTWORK_IDENTITY_EXTRA, identity.imageKey)
-            .memoryCacheKeyExtra(MEDIA_ARTWORK_REVISION_EXTRA, identity.revision).build()).proceed()
+            .memoryCacheKeyExtra(MEDIA_ARTWORK_REVISION_EXTRA, identity.revision)
+            .memoryCacheKeyExtra(MEDIA_ARTWORK_HEADERS_EXTRA, mediaArtworkHeadersKey(headers))
+            .apply {
+                if (!identity.persistent) diskCachePolicy(coil3.request.CachePolicy.DISABLED)
+                identity.providerScope?.let { scope ->
+                    httpHeaders(request.httpHeaders.newBuilder().set(MEDIA_ARTWORK_SCOPE_HEADER, scope).build())
+                }
+            }.build()).proceed()
     }
 }
 

@@ -23,29 +23,40 @@ internal fun hasExplicitAuthorization(request: Request): Boolean =
 class MediaImageAuthInterceptor @Inject constructor(
     private val preferences: AppPreferences,
     private val tokenStore: TokenStore,
+    private val scopes: com.ambient.tv.data.browse.BrowseScopes,
 ) : Interceptor {
     override fun intercept(chain: Interceptor.Chain): Response {
         val original = chain.request()
+        val expectedScope = original.header(MEDIA_ARTWORK_SCOPE_HEADER)
+        val withoutFence = original.newBuilder().removeHeader(MEDIA_ARTWORK_SCOPE_HEADER).build()
         // A credential bound to another origin (TVHeadend password on an external logo host)
         // is removed before anything else runs.
-        val request = original.header("Authorization")
-            ?.takeUnless { CredentialScope.allows(it, original.url) }
-            ?.let { original.newBuilder().removeHeader("Authorization").build() }
-            ?: original
+        val request = withoutFence.header("Authorization")
+            ?.takeUnless { CredentialScope.allows(it, withoutFence.url) }
+            ?.let { withoutFence.newBuilder().removeHeader("Authorization").build() }
+            ?: withoutFence
         val host = request.url.host
         if (host.isBlank()) return chain.proceed(request)
+
+        val provider = mediaImageProvider(request.url, preferences)
+        val token = when (provider) {
+            "plex" -> tokenStore.token
+            "jellyfin" -> tokenStore.jellyfinToken
+            "emby" -> tokenStore.embyToken
+            else -> null
+        }
+        if (expectedScope != null && (provider == null || scopes.forMediaProviderToken(provider, token) != expectedScope))
+            throw java.io.IOException("Artwork source changed")
 
         // Callers such as TVHeadend pass Basic authentication directly with their image request.
         // Never replace that explicit credential with a token for another media server.
         if (hasExplicitAuthorization(request)) return chain.proceed(request)
 
-        val jellyfinHost = NetworkEndpoint.normalizeHost(preferences.jellyfinHost)
-        if (jellyfinHost.isNotBlank() && matchesEndpoint(request, jellyfinHost, preferences.jellyfinPort)) {
-            val token = tokenStore.jellyfinToken
+        if (provider == "jellyfin") {
             if (!token.isNullOrBlank() && request.header("X-Emby-Token").isNullOrBlank()) {
                 val authorization = mediaBrowserAuthorization(token)
                 return chain.proceed(
-                    request.newBuilder()
+                    request.withCurrentImageToken("ApiKey", token).newBuilder()
                         .header("Authorization", authorization)
                         .header("X-Emby-Authorization", authorization)
                         .header("X-Emby-Token", token)
@@ -55,13 +66,11 @@ class MediaImageAuthInterceptor @Inject constructor(
             }
         }
 
-        val embyHost = NetworkEndpoint.normalizeHost(preferences.embyHost)
-        if (embyHost.isNotBlank() && matchesEndpoint(request, embyHost, preferences.embyPort)) {
-            val token = tokenStore.embyToken
+        if (provider == "emby") {
             if (!token.isNullOrBlank() && request.header("X-Emby-Token").isNullOrBlank()) {
                 val authorization = mediaBrowserAuthorization(token)
                 return chain.proceed(
-                    request.newBuilder()
+                    request.withCurrentImageToken("api_key", token).newBuilder()
                         .header("Authorization", authorization)
                         .header("X-Emby-Authorization", authorization)
                         .header("X-Emby-Token", token)
@@ -71,12 +80,10 @@ class MediaImageAuthInterceptor @Inject constructor(
             }
         }
 
-        val plexHost = NetworkEndpoint.normalizeHost(preferences.host)
-        if (plexHost.isNotBlank() && matchesEndpoint(request, plexHost, preferences.port)) {
-            val token = tokenStore.token
+        if (provider == "plex") {
             if (!token.isNullOrBlank() && request.header("X-Plex-Token").isNullOrBlank()) {
                 return chain.proceed(
-                    request.newBuilder()
+                    request.withCurrentImageToken("X-Plex-Token", token).newBuilder()
                         .header("X-Plex-Token", token)
                         .build(),
                 )
@@ -93,6 +100,12 @@ class MediaImageAuthInterceptor @Inject constructor(
         append(", Token=\"").append(token).append('"')
     }
 
-    private fun matchesEndpoint(request: Request, configuredHost: String, configuredPort: Int): Boolean =
-        NetworkEndpoint.sameEndpoint(request.url.host, request.url.port, configuredHost, configuredPort)
+    private fun Request.withCurrentImageToken(name: String, token: String): Request {
+        val names = url.queryParameterNames.filter { it.equals(name, ignoreCase = true) ||
+            (name != "X-Plex-Token" && it.replace("_", "").equals("apikey", ignoreCase = true)) }
+        if (names.isEmpty()) return this
+        // Old live URLs can still contain a prior account's token; header and query must agree.
+        return newBuilder().url(url.newBuilder().apply { names.forEach(::removeAllQueryParameters) }
+            .addQueryParameter(name, token).build()).build()
+    }
 }

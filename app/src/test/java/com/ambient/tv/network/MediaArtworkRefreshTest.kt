@@ -34,7 +34,9 @@ class MediaArtworkRefreshTest {
         val otherAccount = mediaArtworkIdentityKey(requireNotNull(normalizedMediaArtworkDiskKey(url, "account-b")))
         val otherImage = mediaArtworkIdentityKey(requireNotNull(normalizedMediaArtworkDiskKey(url.replace("42", "43"), "account-a")))
         val oldDiskKey = revisedMediaArtworkDiskKey(base, store.revision(id))
-        assertEquals(mapOf(id to ""), store.refresh(listOf(id)))
+        val changed = store.refresh(listOf(id))
+        assertTrue(changed.persisted)
+        assertEquals(mapOf(id to ""), changed.previous)
         val revision = store.revision(id)
         assertTrue(revision.isNotBlank())
         assertNotEquals(oldDiskKey, revisedMediaArtworkDiskKey(base, revision))
@@ -67,7 +69,7 @@ class MediaArtworkRefreshTest {
         val first = store.revision("poster")
         val backdrop = store.revision("backdrop")
         assertEquals(first, backdrop)
-        assertEquals(mapOf("poster" to first), store.refresh(listOf("poster")))
+        assertEquals(mapOf("poster" to first), store.refresh(listOf("poster")).previous)
         assertNotEquals(first, store.revision("poster"))
         assertEquals(backdrop, store.revision("backdrop"))
         assertEquals(2L, DatabaseUtils.queryNumEntries(store.readableDatabase, "artwork_revision"))
@@ -87,6 +89,37 @@ class MediaArtworkRefreshTest {
         assertFalse(AsyncImageModelEqualityDelegate.Default.equals(request(1), request(2)))
         val resolved = request(2).newBuilder().memoryCacheKeyExtra(MEDIA_ARTWORK_REVISION_EXTRA, "persisted").build()
         assertEquals("persisted", resolved.memoryCacheKeyExtras[MEDIA_ARTWORK_REVISION_EXTRA])
+    }
+
+    @Test fun failedWriteGetsATargetedMemoryRevisionAndCannotReusePersistentBinaryData() {
+        store.refresh(listOf("poster"))
+        val old = store.revision("poster")
+        store.writableDatabase.execSQL("PRAGMA query_only=ON")
+        val failed = store.refresh(listOf("poster"))
+        assertFalse(failed.persisted)
+        assertEquals(old, failed.previous["poster"])
+        assertNotEquals(old, store.revision("poster"))
+        assertEquals(store.revision("poster"), store.cachedRevision("poster"))
+        assertTrue(store.isMemoryOnly("poster"))
+        assertFalse(store.isMemoryOnly("unrelated"))
+        val transient = store.revision("poster")
+        store.writableDatabase.execSQL("PRAGMA query_only=OFF")
+        assertTrue(store.refresh(listOf("poster")).persisted)
+        assertFalse(store.isMemoryOnly("poster"))
+        assertNotEquals(transient, store.revision("poster"))
+        val recovered = store.revision("poster")
+        store.close(); store = MediaArtworkRevisionStore(context, name)
+        assertEquals(recovered, store.revision("poster"))
+    }
+
+    @Test fun placeholdersAndContinuityRejectOldAccountRevisionAndUnknownIdentity() {
+        val current = MediaArtworkCacheIdentity("base", "account-a-image", "revision-2")
+        val valid = mapOf(MEDIA_ARTWORK_IDENTITY_EXTRA to current.imageKey, MEDIA_ARTWORK_REVISION_EXTRA to current.revision)
+        assertTrue(mediaArtworkMemoryKeyMatches(valid, current))
+        assertFalse(mediaArtworkMemoryKeyMatches(valid, current.copy(imageKey = "account-b-image")))
+        assertFalse(mediaArtworkMemoryKeyMatches(valid, current.copy(revision = "revision-3")))
+        assertFalse(mediaArtworkMemoryKeyMatches(valid, null))
+        assertFalse(mediaArtworkMemoryKeyMatches(emptyMap(), current))
     }
 
     private fun changes() = DatabaseUtils.longForQuery(store.readableDatabase, "SELECT total_changes()", null)

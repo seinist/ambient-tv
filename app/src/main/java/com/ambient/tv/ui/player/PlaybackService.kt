@@ -84,6 +84,7 @@ import java.io.ByteArrayOutputStream
 @AndroidEntryPoint
 class PlaybackService : MediaLibraryService() {
     @Inject lateinit var files: com.ambient.tv.data.files.FilesRepository
+    @Inject lateinit var dlna: com.ambient.tv.data.dlna.DlnaRepository
     @Inject lateinit var repository: MediaRepository
     @Inject lateinit var youtube: SmartTubeEngine
     @Inject lateinit var preferences: AppPreferences
@@ -389,7 +390,7 @@ class PlaybackService : MediaLibraryService() {
                 return
             }
             when (metadata.source) {
-                "plex", "jellyfin", "emby", "dlna" -> {
+                "plex", "jellyfin", "emby" -> {
                     val reportedPosition = if (stopped && clearResume) 0L else position
                     val reported = repository.reportProgress(metadata.mediaId, reportedPosition,
                         if (stopped) "stopped" else if (state.playing) "playing" else "paused")
@@ -417,9 +418,15 @@ class PlaybackService : MediaLibraryService() {
                         else if (watchedFailureNotified.add(state.generation)) notifyNotSaved(metadata, watched = true)
                     }
                 }
+                "dlna" -> dlna.reportPlaybackProgress(metadata.mediaId,
+                    if (stopped && clearResume) 0L else position,
+                    scope = metadata.localProgressScope ?: (metadata.resumeState as? PlayerUiState.Ready)?.item?.localProgressScope,
+                    completed = completed || (!metadata.hasVideo && duration > 0 && position.toDouble() / duration >= .9),
+                    terminal = stopped || !state.playing).getOrThrow()
                 "files" -> files.updateProgress(metadata.mediaId, position, state.status.durationMs.takeIf { it > 0 } ?: metadata.durationMs,
                     ended = if (metadata.hasVideo) completed else state.status.ended && state.status.error == null,
-                    streamUrl = (metadata.resumeState as? PlayerUiState.Ready)?.streamUrl)
+                    streamUrl = metadata.fileProgressStreamUrl ?: (metadata.resumeState as? PlayerUiState.Ready)?.streamUrl,
+                    flush = stopped || !state.playing).getOrThrow()
                 // YouTube live clocks are relative to a changing HLS window. Sending them
                 // as watch progress creates bogus "continue at saved position" entries.
                 "youtube" -> if (!metadata.isLive) {
@@ -431,7 +438,8 @@ class PlaybackService : MediaLibraryService() {
                         explicitSeek = state.requestedTimelinePositionMs != null,
                         completedByNavigation = state.completedByNavigation,
                     )?.let { progress ->
-                        youtube.updateHistory(metadata.mediaId, progress.positionMs, duration, progress.completed)
+                        youtube.updateHistory(metadata.mediaId, progress.positionMs, duration, progress.completed,
+                            flush = stopped || !state.playing)
                     }
                 }
                 // Telegram keeps its resume point on the device and needs only the final position;
@@ -693,6 +701,8 @@ class PlaybackService : MediaLibraryService() {
                         hasVideo = false,
                         artworkUrl = item.thumbUrl,
                         durationMs = item.durationMs ?: 0L,
+                        fileProgressStreamUrl = url.takeIf { source == "files" },
+                        localProgressScope = item.localProgressScope,
                     ),
                     audioOnly = true,
                 )

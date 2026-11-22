@@ -38,3 +38,11 @@ and editing without loading a core. Full runtime results are recorded in the int
 
 Physical-device acceptance still needs one large-core save/load and Home/return during a save.
 Worker dispatch removes the main-thread wait; it does not make a core serialize faster.
+
+The first combined CI run exposed two errors in the new phone test fixture: phone-sized
+Robolectric qualifiers did not supply `LocalHandheldUi`, and text entry skipped the field's
+explicit tap-to-edit step. The fixture now uses the real handheld composition and theme,
+touches the controls, enters edit mode, and closes the dialog through the same owner callbacks
+as `GameStateStrip`. Assertions still require a visible deletion confirmation, no premature
+delete/load, exactly one confirmed delete, the exact renamed label, and dialog removal.
+No production assertion or behavior was relaxed to make those tests pass.

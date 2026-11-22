@@ -432,19 +432,26 @@ class DetailViewModel @Inject constructor(
         _editSupport.value = mediaRepository.metadataEditSupport(before)
         notifyResult("detail:$ratingKey", detailSystem(), before.title, R.string.notice_metadata_updated, success = success, kind = NoticeKind.LIBRARY)
         if (!success) return
+        val editedScope = focusScope
         viewModelScope.launch {
             for (attempt in 0 until METADATA_EDIT_POLLS) {
                 kotlinx.coroutines.delay(if (attempt == 0) 400L else 1_500L)
+                if (focusScope != editedScope) return@launch
                 val refreshed = mediaRepository.getMetadataFast(ratingKey).getOrNull() ?: continue
+                if (focusScope != editedScope) return@launch
                 updateLoaded { it.copy(item = refreshed) }
                 if (metadataEditVisible(before, refreshed)) break
             }
             // Some providers replace the bytes at the same URL. Re-reading metadata alone
             // cannot invalidate either Coil RAM budget, its disk image, or the crop analysis.
             val after = (_uiState.value as? DetailUiState.Loaded)?.item
-            artworkRefresh.refresh(listOfNotNull(before, after).flatMap { item -> listOf(
+            if (focusScope != editedScope) return@launch
+            val persistentArtworkRefresh = artworkRefresh.refresh(listOfNotNull(before, after).flatMap { item -> listOf(
                 item.thumbUrl, item.artUrl, item.logoUrl, item.parentThumbUrl, item.grandparentThumbUrl,
-            ) })
+            ) }, valid = { focusScope == editedScope })
+            if (focusScope != editedScope) return@launch
+            if (!persistentArtworkRefresh) notifyResult("detail:$ratingKey:artwork", detailSystem(), before.title,
+                R.string.notice_artwork_cache_retry, success = false, kind = NoticeKind.LIBRARY)
             // Also when the opened version looks unchanged: another version may have left the
             // merged title, which only the full load (duplicate resolution) shows.
             _fallbackBackdrop.value = null

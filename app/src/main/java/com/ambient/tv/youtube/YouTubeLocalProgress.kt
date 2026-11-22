@@ -3,6 +3,10 @@ package com.ambient.tv.youtube
 import android.content.Context
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateMapOf
+import com.ambient.tv.data.local.LocalPlaybackDatabase
+import com.ambient.tv.data.local.LocalPlaybackRow
+import com.ambient.tv.data.local.UnreadablePlaybackLegacy
+import kotlinx.coroutines.CompletableDeferred
 import org.json.JSONObject
 import org.json.JSONArray
 
@@ -34,33 +38,70 @@ object YouTubeLocalProgress {
     @get:Synchronized
     val revision: Int get() = progressRevision.intValue
     @Volatile private var context: Context? = null
+    private var database: LocalPlaybackDatabase? = null
+    private var ready = CompletableDeferred<Unit>()
+    private var loaded = false
+    private var loading = false
+    private val beforeReady = mutableSetOf<String>()
+    private val remoteBeforeReady = mutableMapOf<String, Int>()
 
     @Synchronized
-    fun init(context: Context) {
+    fun init(context: Context, database: LocalPlaybackDatabase = LocalPlaybackDatabase(context)) {
         if (this.context != null) return
         this.context = context.applicationContext
-        val raw = runCatching {
-            context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString(KEY, null)
-        }.getOrNull() ?: return
-        runCatching {
-            val json = JSONObject(raw)
-            json.keys().forEach { id ->
-                val o = json.getJSONObject(id)
-                entries[id] = Entry(
-                    o.getInt("p").coerceIn(0, 100),
-                    if (o.has("r")) o.getInt("r").coerceIn(0, 100) else null,
-                    o.optLong("t"),
-                    if (o.has("position")) o.getLong("position").coerceAtLeast(0L) else null,
-                    if (o.has("duration")) o.getLong("duration").takeIf { it > 0L } else null,
-                    o.optJSONArray("pending")?.let { values ->
-                        (0 until values.length()).mapNotNull { index ->
-                            values.optInt(index, -1).takeIf { it in 0..100 }
-                        }.toSet()
-                    }.orEmpty(),
-                )
-            }
+        this.database = database
+        beforeReady += entries.keys
+        startLoad()
+    }
+
+    /** Local SQL priming only; never initializes SmartTube or performs a YouTube request. */
+    suspend fun awaitReady() {
+        val completion = synchronized(this) {
+            if (database == null) return
+            startLoad()
+            ready
         }
-        if (entries.isNotEmpty()) progressRevision.intValue++
+        completion.await()
+    }
+
+    suspend fun flush(): Boolean = synchronized(this) { database }?.flush() ?: true
+
+    private fun startLoad() {
+        if (loaded || loading) return
+        val storage = database ?: return
+        val prefs = requireNotNull(context).getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        loading = true
+        ready = CompletableDeferred()
+        val completion = ready
+        storage.load("youtube_progress", MAX_ENTRIES, legacy = {
+            val raw = prefs.getString(KEY, null) ?: "{}"
+            try {
+                val stored = JSONObject(raw)
+                stored.keys().asSequence().map { id ->
+                    val entry = decodeEntry(stored.getJSONObject(id))
+                    LocalPlaybackRow(id, "", "device", entry.savedAt, encodeEntry(entry))
+                }.toList()
+            } catch (error: Exception) { throw UnreadablePlaybackLegacy(raw, "device", error) }
+        }, cleanup = { if (prefs.contains(KEY)) prefs.edit().remove(KEY).apply() }, success = { rows ->
+            synchronized(this) {
+                rows.forEach { row ->
+                    if (row.key !in beforeReady) runCatching { decodeEntry(JSONObject(row.payload)) }.getOrNull()?.let { entries[row.key] = it }
+                }
+                loaded = true; loading = false
+                beforeReady.toList().forEach { persist(it) }
+                beforeReady.clear()
+                val fresh = remoteBeforeReady.toMap()
+                remoteBeforeReady.clear()
+                fresh.forEach { (id, percent) -> observeRemote(id, percent) }
+                trimEntries()
+                if (rows.isNotEmpty()) progressRevision.intValue++
+            }
+            completion.complete(Unit)
+        }, failure = { error ->
+            synchronized(this) { loading = false }
+            timber.log.Timber.w(error, "YouTube resume state could not be primed")
+            completion.completeExceptionally(error)
+        })
     }
 
     /** Only fresh card responses are authoritative; watch-next often has no watch position. */
@@ -70,6 +111,7 @@ object YouTubeLocalProgress {
         val remote = remotePercent.coerceIn(0, 100)
         val before = knownPercent(videoId)
         lastRemote[videoId] = remote
+        if (database != null && !loaded) remoteBeforeReady[videoId] = remote
         try {
             val entry = entries[videoId] ?: return
             when {
@@ -84,7 +126,7 @@ object YouTubeLocalProgress {
                 entry.remoteAtSave != remote -> entries.remove(videoId)
                 else -> return
             }
-            persist()
+            persist(videoId)
         } finally {
             publishPercentChange(videoId, before)
         }
@@ -104,7 +146,9 @@ object YouTubeLocalProgress {
     fun discardLive(videoId: String) {
         val before = knownPercent(videoId)
         lastRemote.remove(videoId)
-        if (entries.remove(videoId) != null) persist()
+        val removed = entries.remove(videoId) != null
+        // A live stream identified before cold loading must not resurrect an old VOD clock.
+        if (removed || (database != null && !loaded)) persist(videoId, immediate = true)
         publishPercentChange(videoId, before)
     }
 
@@ -127,14 +171,9 @@ object YouTubeLocalProgress {
             previous.pendingPercents + previous.percent + listOfNotNull(remote)
         else listOfNotNull(remote).toSet()
         entries[videoId] = Entry(percent, remote, now, position, duration, pending)
-        if (entries.size > MAX_ENTRIES) {
-            entries.entries.sortedBy { it.value.savedAt }.take(entries.size - MAX_ENTRIES)
-                .map { it.key }.forEach(entries::remove)
-            // Eviction can change another cached card's effective watch state too.
-            progressRevision.intValue++
-        }
+        trimEntries()
         publishPercentChange(videoId, before)
-        persist()
+        persist(videoId, immediate = completed)
     }
 
     private fun knownPercent(videoId: String): Int? = entries[videoId]?.percent ?: lastRemote[videoId]
@@ -170,19 +209,40 @@ object YouTubeLocalProgress {
         return duration?.let { youtubeResumeMs(it, percent, isLive = false) }
     }
 
-    private fun persist() {
-        val ctx = context ?: return
-        val json = JSONObject()
-        entries.forEach { (id, e) ->
-            json.put(id, JSONObject().put("p", e.percent).put("t", e.savedAt).apply {
-                e.remoteAtSave?.let { put("r", it) }
-                e.positionMs?.let { put("position", it) }
-                e.durationMs?.let { put("duration", it) }
-                if (e.pendingPercents.isNotEmpty()) put("pending", JSONArray(e.pendingPercents.toList()))
-            })
-        }
-        ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putString(KEY, json.toString()).apply()
+    private fun persist(videoId: String, immediate: Boolean = false) {
+        val storage = database ?: return
+        if (!loaded) { beforeReady += videoId; return }
+        val entry = entries[videoId]
+        if (entry == null) storage.delete("youtube_progress", videoId, "device", immediate)
+        else storage.put("youtube_progress", LocalPlaybackRow(videoId, "", "device", entry.savedAt, encodeEntry(entry)), immediate)
     }
+
+    private fun trimEntries() {
+        if (entries.size <= MAX_ENTRIES) return
+        entries.entries.sortedBy { it.value.savedAt }.take(entries.size - MAX_ENTRIES).map { it.key }.forEach {
+            entries.remove(it); persist(it)
+        }
+        // Eviction can change another cached card's effective watch state too.
+        progressRevision.intValue++
+    }
+
+    private fun encodeEntry(e: Entry): String = JSONObject().put("p", e.percent).put("t", e.savedAt).apply {
+        e.remoteAtSave?.let { put("r", it) }
+        e.positionMs?.let { put("position", it) }
+        e.durationMs?.let { put("duration", it) }
+        if (e.pendingPercents.isNotEmpty()) put("pending", JSONArray(e.pendingPercents.toList()))
+    }.toString()
+
+    private fun decodeEntry(o: JSONObject) = Entry(
+        o.getInt("p").coerceIn(0, 100),
+        if (o.has("r")) o.getInt("r").coerceIn(0, 100) else null,
+        o.optLong("t"),
+        if (o.has("position")) o.getLong("position").coerceAtLeast(0L) else null,
+        if (o.has("duration")) o.getLong("duration").takeIf { it > 0L } else null,
+        o.optJSONArray("pending")?.let { values -> (0 until values.length()).mapNotNull { index ->
+            values.optInt(index, -1).takeIf { it in 0..100 }
+        }.toSet() }.orEmpty(),
+    )
 }
 
 private const val YOUTUBE_PROGRESS_SYNC_WINDOW_MS = 120_000L

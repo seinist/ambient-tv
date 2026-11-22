@@ -14,6 +14,10 @@ internal data class ArtworkFocusPoint(val x: Float?, val y: Float?) {
         (x != null && y != null && x.isFinite() && y.isFinite() && x in 0f..1f && y in 0f..1f)
 }
 
+/** A cache-disabled response may have only a memory key; its account/revision extras still matter. */
+internal fun artworkFocusRevision(diskKey: String?, memoryKey: String?, extras: Map<String, String>): String? =
+    diskKey ?: memoryKey?.let { "memory:${artworkFocusKey(it, extras)}" }
+
 /**
  * Uses the actual resolved Coil image key (including account and image revisions), falling
  * back to the request URL only before such an identity is available. Snapshot/live credential

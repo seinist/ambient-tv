@@ -461,7 +461,18 @@ class FilesViewModel @Inject constructor(
         if (folders.isNotEmpty()) { folders = folders.dropLast(1) + folders.last().copy(visibleLimit = limit); rememberFolders() }
         refresh()
     }
-    fun favorite(entry: FileEntry) { viewModelScope.launch(Dispatchers.IO) { store.favorite(entry) } }
+    fun favorite(entry: FileEntry) {
+        viewModelScope.launch {
+            val result = com.ambient.tv.util.suspendResult {
+                withContext(Dispatchers.IO) {
+                    store.awaitReady()
+                    store.favorite(entry)
+                    if (!store.flush()) throw java.io.IOException("Local favorite could not be committed")
+                }
+            }
+            if (result.isFailure) _state.update { it.copy(error = fileError(R.string.notice_failed)) }
+        }
+    }
     fun remove(source: FileSource) {
         if (sourceMutationBusy) return
         sourceMutationBusy = true

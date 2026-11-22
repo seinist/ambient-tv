@@ -29,4 +29,12 @@ class ArtworkFocusKeyTest {
             artworkFocusKey(live, emptyMap(), resolved.replace("account-a", "account-b")))
         assertNotEquals(artworkFocusKey(snapshot, emptyMap()), artworkFocusKey(live, emptyMap()))
     }
+
+    @Test fun memoryOnlyResultIncludesAccountAndRefreshExtrasInTheAnalysisIdentity() {
+        val first = artworkFocusRevision(null, "same-url", mapOf("account" to "a", "revision" to "1"))
+        assertNotEquals(first, artworkFocusRevision(null, "same-url", mapOf("account" to "b", "revision" to "1")))
+        assertNotEquals(first, artworkFocusRevision(null, "same-url", mapOf("account" to "a", "revision" to "2")))
+        assertEquals("disk-version", artworkFocusRevision("disk-version", "same-url", emptyMap()))
+        assertNull(artworkFocusRevision(null, null, emptyMap()))
+    }
 }

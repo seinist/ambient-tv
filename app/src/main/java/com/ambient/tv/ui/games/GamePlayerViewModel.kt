@@ -246,7 +246,7 @@ class GamePlayerViewModel @Inject constructor(
             recordedSession === session) return
         recordedSession = session
         viewModelScope.launch(Dispatchers.IO) {
-            runCatching { files.record(session.game.entry) }
+            runCatching { files.awaitReady(); files.record(session.game.entry) }
             runCatching { gameLibrary.recordPlayed(session.game.fileId) }
         }
     }
