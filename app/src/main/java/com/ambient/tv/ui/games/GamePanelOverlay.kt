@@ -16,7 +16,9 @@ internal fun GamePanelOverlay(
     onOutsideTap: () -> Unit,
     content: @Composable BoxScope.() -> Unit,
 ) {
-    key(*level) {
+    // One structural key also supports a dynamic number of nested levels. The pinned
+    // Compose compiler cannot lower a spread-only vararg key call.
+    key(level.toList()) {
         RightPanelOverlay(onOutsideTap = onOutsideTap, content = content)
     }
 }

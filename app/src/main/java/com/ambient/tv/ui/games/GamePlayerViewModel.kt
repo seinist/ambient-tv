@@ -302,8 +302,13 @@ class GamePlayerViewModel @Inject constructor(
     fun latestManualState(game: PreparedGame): GameStateEntry? = states.latestManual(game)
 
     fun deleteState(game: PreparedGame, entry: GameStateEntry) {
-        states.delete(game, entry)
-        refreshStates(game)
+        val remove = {
+            states.delete(game, entry)
+            refreshStates(game)
+        }
+        // Only AUTO shares files with asynchronous checkpoints. Fence its deletion like
+        // "Start over", including captures that complete late after the IO wait timed out.
+        if (entry.kind == GameStateKind.AUTO) GameCheckpointIo.execute(remove) else remove()
     }
 
     /** "Start over": the next start does not continue from the automatic state. */
