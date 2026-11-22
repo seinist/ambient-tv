@@ -20,6 +20,7 @@ import com.ambient.tv.ui.games.GameDetailViewModel
 import com.ambient.tv.ui.games.gameOperationError
 import com.ambient.tv.R
 import com.ambient.tv.games.metadata.GameArtworkKind
+import com.ambient.tv.games.metadata.GameArtworkFiles
 import com.ambient.tv.games.metadata.GameMetadata
 import com.ambient.tv.games.metadata.GameMetadataProviders
 import com.ambient.tv.games.metadata.GameMetadataRepository
@@ -31,6 +32,10 @@ import kotlinx.serialization.json.Json
 import androidx.lifecycle.ViewModelStore
 import androidx.lifecycle.SavedStateHandle
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
@@ -148,7 +153,7 @@ class GameLibraryRepositoryQueryTest {
         assertEquals(listOf("other"), library.games(GameLibraryQuery(section = "gba")).map { it.fileId })
         assertTrue(library.games(GameLibraryQuery(section = "favorites")).isEmpty())
         raw().use { db ->
-            assertEquals(6, db.version)
+            assertEquals(7, db.version)
             db.rawQuery("SELECT revision FROM game_dat_versions WHERE system_id='snes'", null).use {
                 assertTrue(it.moveToFirst()); assertEquals(7L, it.getLong(0))
             }
@@ -244,7 +249,7 @@ class GameLibraryRepositoryQueryTest {
         assertEquals("Online title", library.game("one")!!.title)
         assertEquals(1995, library.game("one")!!.metadataYear)
         assertEquals("Full description", library.metadata("one")!!.summary)
-        raw().use { assertEquals(6, it.version) }
+        raw().use { assertEquals(7, it.version) }
     }
 
     @Test fun metadataLocksAndCanonicalIdentitySurviveTitleAndFavoriteEdits() {
@@ -271,6 +276,299 @@ class GameLibraryRepositoryQueryTest {
     private fun imageBytes(): ByteArray = Base64.getDecoder().decode(
         // Valid 4×3 RGB PNG, independently decoded and checked for all PNG chunk CRCs.
         "iVBORw0KGgoAAAANSUhEUgAAAAQAAAADCAIAAAA7ljmRAAAAFElEQVR4nGPUSljAAANMDEgAhQMAKzgBMKX6+B0AAAAASUVORK5CYII=")
+
+    @Test fun stagedCoverGeometryPersistsAndOverridesRegionalFallbackAcrossReopen() {
+        seed("one")
+        val library = repository()
+        val ticket = library.metadataTicket("one")!!
+        assertTrue(library.saveMetadata(ticket, GameMetadata(region = "jp", provider = "libretro",
+            providerGameId = "Nintendo - Super Nintendo Entertainment System|Chosen (Japan)")))
+        val staged = library.artworkFiles.stage(imageBytes().inputStream())
+        assertEquals(4, staged.width)
+        assertEquals(3, staged.height)
+        assertTrue(library.setArtwork(ticket, GameArtworkKind.COVER, staged, pinned = true))
+        val game = repository().game("one")!!
+        assertEquals(4, game.coverWidth)
+        assertEquals(3, game.coverHeight)
+        assertEquals("jp", game.metadataRegion)
+        assertEquals("Nintendo - Super Nintendo Entertainment System", game.metadataPlatform)
+        assertEquals(4f / 3f, game.coverAspectRatio, 0f)
+        raw().use { db -> db.rawQuery("SELECT geometry_checked FROM game_artwork", null).use {
+            assertTrue(it.moveToFirst()); assertEquals(1, it.getInt(0))
+        } }
+        assertTrue(library.setArtwork(ticket, GameArtworkKind.COVER, null, pinned = true))
+        assertNull(library.game("one")!!.coverWidth)
+        assertNull(library.game("one")!!.coverHeight)
+        assertEquals(0.55f, library.game("one")!!.coverAspectRatio, 0f)
+    }
+
+    private fun createVersionSixMetadataSchema(db: SQLiteDatabase) {
+        db.execSQL("""CREATE TABLE game_query (
+            file_id TEXT NOT NULL PRIMARY KEY,folder_id TEXT NOT NULL,system_id TEXT NOT NULL,
+            favorite INTEGER NOT NULL,last_played INTEGER NOT NULL,custom_title TEXT,folder_depth INTEGER NOT NULL,
+            title_auto TEXT NOT NULL,title_internal TEXT NOT NULL,title_filename TEXT NOT NULL,
+            sort_auto BLOB NOT NULL,sort_internal BLOB NOT NULL,sort_filename BLOB NOT NULL,sort_system BLOB NOT NULL,
+            search_auto TEXT NOT NULL,search_internal TEXT NOT NULL,search_filename TEXT NOT NULL,
+            search_filename_raw TEXT NOT NULL,projection_stamp TEXT NOT NULL,
+            metadata_title TEXT,metadata_year INTEGER,cover_path TEXT,backdrop_path TEXT)""")
+        db.execSQL("CREATE TABLE game_query_metadata(id INTEGER NOT NULL PRIMARY KEY,signature TEXT NOT NULL)")
+        db.execSQL("""CREATE TABLE game_metadata(file_id TEXT NOT NULL PRIMARY KEY,title TEXT,year INTEGER,
+            payload TEXT NOT NULL,updated_at INTEGER NOT NULL)""")
+        db.execSQL("""CREATE TABLE game_artwork(file_id TEXT NOT NULL,kind TEXT NOT NULL,path TEXT NOT NULL,
+            bytes INTEGER NOT NULL,pinned INTEGER NOT NULL DEFAULT 0,updated_at INTEGER NOT NULL,PRIMARY KEY(file_id,kind))""")
+        db.execSQL("""CREATE TABLE game_metadata_checks(file_id TEXT NOT NULL,provider TEXT NOT NULL,
+            fingerprint TEXT NOT NULL,status TEXT NOT NULL,expires_at INTEGER NOT NULL,PRIMARY KEY(file_id,provider,fingerprint))""")
+        db.execSQL("""CREATE TABLE game_metadata_guards(file_id TEXT NOT NULL PRIMARY KEY,
+            fingerprint TEXT NOT NULL,epoch TEXT NOT NULL)""")
+        db.execSQL("""CREATE TABLE game_folder_scopes(folder_id TEXT NOT NULL PRIMARY KEY,source_id TEXT NOT NULL,
+            path TEXT NOT NULL,source_scope TEXT NOT NULL)""")
+        db.version = 6
+    }
+
+    @Test fun versionSixUpgradeBackfillsOnlyLocalImageHeadersAndProjectsExistingMetadataOnce() = runBlocking {
+        seed("one", favorite = true, played = 1234)
+        val artwork = GameArtworkFiles(context)
+        val staged = artwork.stage(imageBytes().inputStream())
+        val path = artwork.commit("one", GameArtworkKind.COVER, staged)
+        val metadata = GameMetadata(title = "Chosen", region = "jp", provider = "libretro",
+            providerGameId = "Nintendo - Super Nintendo Entertainment System|Chosen (Japan)",
+            lockedFields = setOf("title", "cover"))
+        raw().use { db ->
+            createVersionSixMetadataSchema(db)
+            db.execSQL("INSERT INTO game_metadata VALUES(?,?,?,?,?)", arrayOf<Any?>("one", metadata.title, null,
+                Json.encodeToString(GameMetadata.serializer(), metadata), 1L))
+            db.execSQL("INSERT INTO game_artwork VALUES(?,?,?,?,?,?)", arrayOf<Any>("one", "cover", path, staged.bytes, 1, 1L))
+        }
+        val library = repository()
+        assertNull(library.game("one")!!.coverWidth) // Schema opening does not decode a bitmap.
+        assertNull(library.game("one")!!.metadataRegion)
+        assertEquals(1, library.backfillCoverGeometry())
+        val upgraded = library.game("one")!!
+        assertEquals(4, upgraded.coverWidth)
+        assertEquals(3, upgraded.coverHeight)
+        assertEquals("jp", upgraded.metadataRegion)
+        assertEquals(4f / 3f, upgraded.coverAspectRatio, 0f)
+        assertEquals(1234L, upgraded.lastPlayed)
+        assertTrue(upgraded.favorite)
+        assertEquals(metadata, library.metadata("one"))
+        assertEquals(path, upgraded.coverPath)
+        assertTrue(library.artworkPinned("one", GameArtworkKind.COVER))
+        val revision = library.revisions.value
+        assertEquals(0, library.backfillCoverGeometry { error("An already checked cover must not be reopened") })
+        assertEquals(revision, library.revisions.value)
+        raw().use { assertEquals(7, it.version) }
+    }
+
+    private fun pendingGeometry(fileId: String) = raw().use { db ->
+        db.execSQL("UPDATE game_artwork SET image_width=NULL,image_height=NULL,geometry_checked=0 WHERE file_id=?",
+            arrayOf(fileId))
+    }
+
+    private fun pendingGeometryLibrary(count: Int, withMetadata: Boolean = false): GameLibraryRepository {
+        repeat(count) { seed("geometry-$it") }
+        val metadata = GameMetadata(region = "jp", provider = "libretro",
+            providerGameId = "Nintendo - Super Nintendo Entertainment System|Chosen (Japan)")
+        raw().use { db ->
+            createVersionSixMetadataSchema(db)
+            db.beginTransaction()
+            try {
+                repeat(count) { index ->
+                    val id = "geometry-$index"
+                    // These tests supply header bounds through the seam, without bitmap IO.
+                    val path = File(context.cacheDir, "$id.png").absolutePath
+                    db.execSQL("INSERT INTO game_artwork VALUES(?,?,?,?,?,?)",
+                        arrayOf<Any>(id, "cover", path, 1L, 0, 1L))
+                    if (withMetadata) db.execSQL("INSERT INTO game_metadata VALUES(?,?,?,?,?)",
+                        arrayOf<Any?>(id, null, null,
+                            Json.encodeToString(GameMetadata.serializer(), metadata), 1L))
+                }
+                db.setTransactionSuccessful()
+            } finally { db.endTransaction() }
+        }
+        return repository().also { assertEquals(count, it.games().size) }
+    }
+
+    @Test fun backfillCoalescesMetadataAndGeometryBatchesWithoutSuppressingUserEdits() = runBlocking {
+        val library = pendingGeometryLibrary(65, withMetadata = true)
+        val revision = library.revisions.value
+        var readCount = 0
+        assertEquals(65, library.backfillCoverGeometry(monotonicNanos = { 0L }) {
+            readCount++
+            // All metadata batches, and any previous cover batches, have committed quietly.
+            assertEquals(revision + if (readCount > 33) 1 else 0, library.revisions.value)
+            if (readCount == 33) {
+                assertTrue(library.saveMetadata(library.metadataTicket("geometry-0")!!,
+                    GameMetadata(title = "User edit", region = "us")))
+                assertEquals(revision + 1, library.revisions.value)
+            }
+            4 to 3
+        })
+        assertEquals(65, readCount)
+        assertEquals(revision + 2, library.revisions.value) // User edit + final maintenance flush.
+        assertEquals("User edit", library.game("geometry-0")!!.metadataTitle)
+        assertEquals("jp", library.game("geometry-64")!!.metadataRegion)
+        assertTrue(library.games().all { it.coverWidth == 4 && it.coverHeight == 3 })
+    }
+
+    @Test fun backfillPublishesAtMostEvery500MillisecondsAndFlushesTheFinalBatch() = runBlocking {
+        val library = pendingGeometryLibrary(97)
+        val revision = library.revisions.value
+        var now = 0L
+        var readCount = 0
+        assertEquals(97, library.backfillCoverGeometry(monotonicNanos = { now }) {
+            readCount++
+            when (readCount) {
+                33 -> {
+                    assertEquals(revision, library.revisions.value)
+                    now = 499_999_999L
+                }
+                65 -> {
+                    assertEquals(revision, library.revisions.value)
+                    now = 500_000_000L
+                }
+                97 -> {
+                    assertEquals(revision + 1, library.revisions.value)
+                    now = 500_000_001L
+                }
+            }
+            4 to 3
+        })
+        assertEquals(revision + 2, library.revisions.value)
+    }
+
+    @Test fun cancellationFlushesPreviouslyCommittedGeometryAndLeavesThePendingBatchForResume() = runBlocking {
+        val library = pendingGeometryLibrary(33)
+        val revision = library.revisions.value
+        val entered = CompletableDeferred<Unit>()
+        var readCount = 0
+        val task = launch {
+            library.backfillCoverGeometry(monotonicNanos = { 0L }) {
+                if (++readCount == 33) {
+                    entered.complete(Unit)
+                    awaitCancellation()
+                }
+                4 to 3
+            }
+        }
+        withTimeout(5_000) { entered.await() }
+        assertEquals(revision, library.revisions.value)
+        task.cancelAndJoin()
+        assertEquals(revision + 1, library.revisions.value)
+        assertEquals(32, library.games().count { it.coverWidth == 4 && it.coverHeight == 3 })
+        assertEquals(1, library.backfillCoverGeometry(monotonicNanos = { 0L }) { 4 to 3 })
+        assertEquals(revision + 2, library.revisions.value)
+    }
+
+    @Test fun failedHeaderReadFlushesPreviouslyCommittedGeometryWithoutPublishingAnIncompleteBatch() = runBlocking {
+        val library = pendingGeometryLibrary(33)
+        val revision = library.revisions.value
+        var readCount = 0
+        val failure = IllegalStateException("Header reader failed")
+        val result = runCatching {
+            library.backfillCoverGeometry(monotonicNanos = { 0L }) {
+                if (++readCount == 33) throw failure
+                4 to 3
+            }
+        }
+        // Coroutine stacktrace recovery may copy the exception across the IO boundary.
+        val thrown = result.exceptionOrNull()
+        assertTrue(thrown is IllegalStateException)
+        assertEquals(failure.message, thrown?.message)
+        assertEquals(revision + 1, library.revisions.value)
+        assertEquals(32, library.games().count { it.coverWidth == 4 && it.coverHeight == 3 })
+        assertEquals(1, library.backfillCoverGeometry(monotonicNanos = { 0L }) { 4 to 3 })
+        assertEquals(revision + 2, library.revisions.value)
+    }
+
+    @Test fun backfillCannotResurrectARemovedGame() = runBlocking {
+        seed("remove")
+        val library = repository()
+        assertTrue(library.setArtwork(library.metadataTicket("remove")!!, GameArtworkKind.COVER,
+            library.artworkFiles.stage(imageBytes().inputStream()), pinned = true))
+        val oldPath = library.game("remove")!!.coverPath!!
+        pendingGeometry("remove")
+        assertEquals(0, library.backfillCoverGeometry { path ->
+            assertEquals(oldPath, path)
+            // Simulate a concurrent source removal; normal reconciliation owns deletion.
+            preferences.fileSources = emptyList()
+            library.reconcile()
+            2 to 8
+        })
+        assertTrue(library.games().isEmpty())
+        assertNull(library.game("remove"))
+        assertNull(library.artworkPath("remove", GameArtworkKind.COVER))
+        assertFalse(File(oldPath).exists())
+        raw().use { db -> db.rawQuery("SELECT COUNT(*) FROM game_artwork", null).use {
+            assertTrue(it.moveToFirst()); assertEquals(0, it.getInt(0))
+        } }
+    }
+
+    @Test fun replacingOneCoverDuringBackfillKeepsItsNewBoundsAndPath() = runBlocking {
+        seed("one")
+        val library = repository()
+        val ticket = library.metadataTicket("one")!!
+        library.setArtwork(ticket, GameArtworkKind.COVER, library.artworkFiles.stage(imageBytes().inputStream()), pinned = true)
+        val old = library.game("one")!!.coverPath
+        pendingGeometry("one")
+        assertEquals(0, library.backfillCoverGeometry {
+            library.setArtwork(ticket, GameArtworkKind.COVER, library.artworkFiles.stage(imageBytes().inputStream()), pinned = true)
+            2 to 9
+        })
+        val current = library.game("one")!!
+        assertNotEquals(old, current.coverPath)
+        assertEquals(4, current.coverWidth)
+        assertEquals(3, current.coverHeight)
+    }
+
+    @Test fun cancellationDoesNotMarkUnmeasuredImagesAndNextMaintenanceResumes() = runBlocking {
+        seed("one")
+        val library = repository()
+        library.setArtwork(library.metadataTicket("one")!!, GameArtworkKind.COVER,
+            library.artworkFiles.stage(imageBytes().inputStream()))
+        pendingGeometry("one")
+        val entered = CompletableDeferred<Unit>()
+        val task = launch { library.backfillCoverGeometry { entered.complete(Unit); awaitCancellation() } }
+        withTimeout(5_000) { entered.await() }
+        task.cancelAndJoin()
+        raw().use { db -> db.rawQuery("SELECT geometry_checked FROM game_artwork", null).use {
+            assertTrue(it.moveToFirst()); assertEquals(0, it.getInt(0))
+        } }
+        assertEquals(1, library.backfillCoverGeometry())
+        assertEquals(4f / 3f, library.game("one")!!.coverAspectRatio, 0f)
+    }
+
+    @Test fun missingOrCorruptLegacyImagesAreCheckedOnlyOnceAndUseAStableFallback() = runBlocking {
+        seed("missing")
+        seed("corrupt")
+        val library = repository()
+        for (id in listOf("missing", "corrupt")) {
+            library.setArtwork(library.metadataTicket(id)!!, GameArtworkKind.COVER,
+                library.artworkFiles.stage(imageBytes().inputStream()))
+            val image = File(library.game(id)!!.coverPath!!)
+            if (id == "missing") image.delete() else image.writeText("invalid image")
+            pendingGeometry(id)
+        }
+        assertEquals(2, library.backfillCoverGeometry())
+        for (id in listOf("missing", "corrupt")) {
+            assertNull(library.game(id)!!.coverWidth)
+            assertNull(library.game(id)!!.coverHeight)
+            assertEquals(1.4f, library.game(id)!!.coverAspectRatio, 0f)
+        }
+        assertEquals(0, library.backfillCoverGeometry { error("Failed images are not retried per query") })
+    }
+
+    @Test fun portableMetadataProjectsRegionAndGroupedPlatformWithoutReadingArtwork() {
+        seed("color", folder = "root", system = "gb", filename = "Game.zip")
+        preferences.gameLibraryOverrides = listOf(GamePortableState("nas", "Games/SNES/Game.zip",
+            metadata = GameMetadata(title = "Color game", region = "jp", provider = "libretro",
+                providerGameId = "Nintendo - Game Boy Color|Color game (Japan)")))
+        val game = repository().game("color")!!
+        assertEquals("jp", game.metadataRegion)
+        assertEquals("Nintendo - Game Boy Color", game.metadataPlatform)
+        assertEquals("gbc", GameCoverFormats.platformId(game.systemId, game.filename, game.metadataPlatform))
+        assertNull(game.coverWidth)
+        assertEquals(0.8f, game.coverAspectRatio, 0f)
+    }
 
     @Test fun nativeArtworkDecoderReadsMimeBoundsAndPixelsFromTheValidatedFixture() {
         // Artwork staging uses a .part suffix, so detection must inspect the actual bytes.

@@ -50,6 +50,8 @@ data class MediaItem(
     val watchedOverride: Boolean? = null,
     /** Device-local source incarnation, captured by playback metadata and excluded from disk/portable JSON. */
     @kotlinx.serialization.Transient val localProgressScope: String? = null,
+    /** Local game box-art geometry, known before image loading; other providers leave this unset. */
+    val gameCoverAspectRatio: Float? = null,
 ) {
     val allRatingKeys: List<String>
         get() = (linkedRatingKeys + ratingKey).distinct()

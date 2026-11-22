@@ -6,6 +6,7 @@ import com.ambient.tv.data.local.HomeRowDefinition
 import com.ambient.tv.domain.model.MediaItem
 import com.ambient.tv.games.GameSystems
 import com.ambient.tv.games.library.LibraryGame
+import com.ambient.tv.games.library.coverAspectRatio
 import com.ambient.tv.ui.common.ContentRowData
 import com.ambient.tv.ui.common.MediaTileStyle
 import com.ambient.tv.ui.common.displayTitle
@@ -36,14 +37,12 @@ internal fun gameHomeRows(
         title = definition.displayTitle(context),
         style = MediaTileStyle.POSTER,
         items = selected.map { game ->
-            val iconUri = Uri.Builder().scheme("android.resource").authority(context.packageName)
-                .appendPath("drawable").appendPath("game_system_${game.systemId}").build().toString()
             MediaItem(
                 ratingKey = gameHomeKey(game.fileId, game.systemId),
                 title = game.title,
                 type = "game",
                 index = null,
-                thumbUrl = game.coverPath?.let { Uri.fromFile(java.io.File(it)).toString() } ?: iconUri,
+                thumbUrl = game.coverPath?.let { Uri.fromFile(java.io.File(it)).toString() },
                 artUrl = game.backdropPath?.let { Uri.fromFile(java.io.File(it)).toString() },
                 year = game.metadataYear,
                 summary = GameSystems.byId(game.systemId)?.name ?: game.systemId,
@@ -57,6 +56,7 @@ internal fun gameHomeRows(
                 contentRating = null,
                 rating = null,
                 studio = "Games",
+                gameCoverAspectRatio = game.coverAspectRatio,
             )
         },
     )

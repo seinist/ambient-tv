@@ -34,7 +34,6 @@ data class GameDetailUiState(
     val busy: Boolean = false,
     val error: String? = null,
     val refreshEmpty: Boolean = false,
-    val needsWake: Boolean = false,
     val searching: Boolean = false,
     val searchCompleted: Boolean = false,
     val matches: List<GameMetadataCandidate> = emptyList(),
@@ -88,7 +87,7 @@ class GameDetailViewModel @Inject constructor(
         if (revision != detailRevision) return
         val sourceName = files.sources().firstOrNull { it.id == game?.sourceId }?.name.orEmpty()
         mutable.update { it.copy(loading = false, game = game, sourceName = sourceName, metadata = details,
-            providers = metadata.availableProviders(), needsWake = it.needsWake && game != null) }
+            providers = metadata.availableProviders()) }
         val image = details.backdropUrl
         if (game != null && game.backdropPath == null && image != null && backdropAttempt != image) {
             backdropAttempt = image
@@ -181,23 +180,6 @@ class GameDetailViewModel @Inject constructor(
 
     fun favorite() = action {
         withContext(Dispatchers.IO) { library.setFavorite(it.fileId, !it.favorite) }
-        true
-    }
-
-    fun play(start: (LibraryGame) -> Unit) = action(failureMessage = R.string.game_error_play) { game ->
-        if (library.needsWakeForLaunch(game.sourceId)) {
-            mutable.update { it.copy(needsWake = true) }
-        } else start(game)
-        true
-    }
-
-    fun dismissWake() = mutable.update { it.copy(needsWake = false) }
-
-    fun wakeAndPlay(start: (LibraryGame) -> Unit) = action(failureMessage = R.string.files_wake_timeout) { game ->
-        if (library.wakeSource(game.sourceId)) {
-            mutable.update { it.copy(needsWake = false) }
-            start(game)
-        }
         true
     }
 

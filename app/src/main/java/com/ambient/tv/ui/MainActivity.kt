@@ -117,6 +117,10 @@ import com.ambient.tv.ui.navigation.LocalSidebarContentPending
 import com.ambient.tv.ui.navigation.LocalSidebarContentReadyReporter
 import com.ambient.tv.ui.navigation.Sidebar
 import com.ambient.tv.ui.navigation.MediaSelectionDialog
+import com.ambient.tv.ui.navigation.GameSelectionCoordinator
+import com.ambient.tv.ui.navigation.GameSelectionDialog
+import com.ambient.tv.ui.navigation.gameSelectionFileId
+import com.ambient.tv.ui.navigation.gameSelectionSource
 import com.ambient.tv.ui.navigation.MediaSelectionResolver
 import com.ambient.tv.ui.keyboard.KodiKeyboardAction
 import com.ambient.tv.ui.keyboard.kodiKeyboardAction
@@ -1332,12 +1336,37 @@ private fun AmbientTvApp(
     val playbackRequests = remember { com.ambient.tv.ui.navigation.PlaybackStartRequests() }
     var playbackGateJob by remember { mutableStateOf<kotlinx.coroutines.Job?>(null) }
     var pendingPlaybackStart by remember { mutableStateOf<PendingPlaybackStart?>(null) }
+    var pendingMediaSelectionCollectionId by remember { mutableStateOf<String?>(null) }
+    var pendingMediaSelectionCollectionSort by remember { mutableStateOf<String?>(null) }
+    var radioSelectionJob by remember { mutableStateOf<kotlinx.coroutines.Job?>(null) }
+    var pendingYouTubeVideoId by remember { mutableStateOf<String?>(null) }
+    var pendingTelegramPost by remember { mutableStateOf<Triple<Long, Int, Long?>?>(null) }
+    var pendingYouTubeBrowseSession by remember { mutableStateOf<Long?>(null) }
 
     fun cancelPlaybackStart() {
         playbackRequests.cancel()
         playbackGateJob?.cancel()
         playbackGateJob = null
         pendingPlaybackStart = null
+    }
+
+    val browseSelectionIntents = remember(playbackRequests, companionVm.manager) {
+        com.ambient.tv.ui.navigation.BrowseSelectionIntents(
+            cancelPlayback = ::cancelPlaybackStart,
+            clearPending = {
+                pendingMediaSelection = null
+                pendingMediaSelectionOrigin = null
+                pendingMediaSelectionIdentity = null
+                pendingMediaSelectionCollectionId = null
+                pendingMediaSelectionCollectionSort = null
+                pendingYouTubeVideoId = null
+                pendingYouTubeBrowseSession = null
+                pendingTelegramPost = null
+                radioSelectionJob?.cancel()
+                radioSelectionJob = null
+                companionVm.manager.cancelPlaybackRequest()
+            },
+        )
     }
 
     fun runPlaybackStart(request: PendingPlaybackStart, retry: Boolean) {
@@ -1425,15 +1454,21 @@ private fun AmbientTvApp(
     ) {
         val origin = navController.currentBackStackEntry?.id
         val identity = playbackAvailability.routeIdentity(route)
+        val selectionIntent = browseSelectionIntents.capture()
         val localPlayback = {
-            if (origin == navController.currentBackStackEntry?.id && identity == playbackAvailability.routeIdentity(route)) {
+            if (browseSelectionIntents.current(selectionIntent) &&
+                origin == navController.currentBackStackEntry?.id && identity == playbackAvailability.routeIdentity(route)) {
                 requestLocalPlayback(route, title) { requested ->
-                    if (navigate != null) navigate(requested) else navController.navigate(requested, options)
+                    if (browseSelectionIntents.current(selectionIntent)) {
+                        if (navigate != null) navigate(requested) else navController.navigate(requested, options)
+                    }
                 }
             }
             Unit
         }
-        if (!handheld || route == Destinations.spotifyPlayer()) {
+        // The companion media protocol has no ROM/game destination. Keep games on this
+        // device, like Files' existing Open game action, instead of offering an inert TV target.
+        if (!handheld || route == Destinations.spotifyPlayer() || route.startsWith("game_player/")) {
             localPlayback()
         } else {
             companionVm.manager.requestPlayback(
@@ -1448,12 +1483,48 @@ private fun AmbientTvApp(
     }
     val spotifyTakeover by spotifyRepository.playbackTakeover.collectAsState()
     val mediaSelectionScope = rememberCoroutineScope()
-    var pendingMediaSelectionCollectionId by remember { mutableStateOf<String?>(null) }
-    var pendingMediaSelectionCollectionSort by remember { mutableStateOf<String?>(null) }
-    var mediaSelectionBusy by remember { mutableStateOf(false) }
-    var pendingYouTubeVideoId by remember { mutableStateOf<String?>(null) }
-    var pendingTelegramPost by remember { mutableStateOf<Triple<Long, Int, Long?>?>(null) }
-    var pendingYouTubeBrowseSession by remember { mutableStateOf<Long?>(null) }
+    val launchGameOnTarget = rememberUpdatedState<(
+        com.ambient.tv.games.library.LibraryGame, (() -> Unit) -> Unit,
+    ) -> Unit> { game, complete ->
+        playOnSelectedTarget(Destinations.gamePlayer(game.fileId, game.systemId), title = game.title,
+            navigate = { route -> complete { navController.navigate(route) { launchSingleTop = true } } })
+    }
+    val gameSelections = remember(mediaSelectionScope, navController, gameLibraryRepository, appPreferences, tokenStore, browseSelectionIntents) {
+        GameSelectionCoordinator(
+            scope = mediaSelectionScope,
+            origin = { navController.currentBackStackEntry?.id },
+            source = { fileId -> gameSelectionSource(appPreferences, tokenStore, fileId) },
+            lookup = { fileId -> kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                gameLibraryRepository.game(fileId)
+            } },
+            needsWake = gameLibraryRepository::needsWakeForLaunch,
+            wake = gameLibraryRepository::wakeSource,
+            onNewSelection = { browseSelectionIntents.begin() },
+            openDetails = { game -> navController.navigate(Destinations.gameDetail(game.fileId)) { launchSingleTop = true } },
+            launch = { game, complete -> launchGameOnTarget.value(game, complete) },
+        )
+    }
+    val gameSelectionState by gameSelections.state.collectAsState()
+    DisposableEffect(gameSelections, navController, playbackGateLifecycle) {
+        val listener = androidx.navigation.NavController.OnDestinationChangedListener { _, _, _ -> gameSelections.navigationChanged() }
+        val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
+            if (event == androidx.lifecycle.Lifecycle.Event.ON_STOP) gameSelections.cancel()
+        }
+        navController.addOnDestinationChangedListener(listener)
+        playbackGateLifecycle.addObserver(observer)
+        onDispose {
+            navController.removeOnDestinationChangedListener(listener)
+            playbackGateLifecycle.removeObserver(observer)
+            gameSelections.cancel()
+        }
+    }
+    LaunchedEffect(gameSelections, appPreferences) {
+        appPreferences.changes().collect { gameSelections.sourceChanged() }
+    }
+    fun beginMediaSelection(keepPlaybackRequest: Boolean = false): com.ambient.tv.ui.navigation.BrowseSelectionIntents.Ticket {
+        gameSelections.cancel()
+        return browseSelectionIntents.begin(keepPlaybackRequest)
+    }
 
     fun navigateToDetails(ratingKey: String, collectionId: String? = null, collectionSort: String? = null) {
         navController.navigate(Destinations.detail(ratingKey, collectionId, collectionSort))
@@ -1487,10 +1558,10 @@ private fun AmbientTvApp(
 
     val photoContext = LocalContext.current
     fun handleHomeRadioSelection(selection: com.ambient.tv.ui.home.HomeRadioPlaybackSelection) {
-        if (selection.stationId.isBlank() || mediaSelectionBusy) return
-        mediaSelectionBusy = true
+        if (selection.stationId.isBlank()) return
+        val selectionIntent = beginMediaSelection()
         val originEntry = navController.currentBackStackEntry?.id
-        mediaSelectionScope.launch {
+        radioSelectionJob = mediaSelectionScope.launch {
             try {
                 // Usually the Home ViewModel already owns all 24 source stations. When a
                 // cached Home row was displayed before its network refresh, hydrate that same
@@ -1517,15 +1588,16 @@ private fun AmbientTvApp(
                 val clicked = (selection.cachedStations + fetched).firstOrNull { it.id == selection.stationId }
                     ?: suspendResult { radioBrowserRepository.station(selection.stationId) }.getOrNull()
                     ?: return@launch
-                if (navController.currentBackStackEntry?.id != originEntry) return@launch
+                if (!browseSelectionIntents.current(selectionIntent) ||
+                    navController.currentBackStackEntry?.id != originEntry) return@launch
                 val sourceQueue = com.ambient.tv.ui.home.homeRadioPlaybackQueue(selection, fetched, clicked)
                 radioPlaybackLauncher.play(clicked, sourceQueue).onSuccess {
-                    if (navController.currentBackStackEntry?.id == originEntry) {
+                    if (browseSelectionIntents.current(selectionIntent) && navController.currentBackStackEntry?.id == originEntry) {
                         navController.navigate(Destinations.RADIO_PLAYER) { launchSingleTop = true }
                     }
                 }
             } finally {
-                mediaSelectionBusy = false
+                if (browseSelectionIntents.current(selectionIntent)) radioSelectionJob = null
             }
         }
     }
@@ -1538,6 +1610,7 @@ private fun AmbientTvApp(
         if (ratingKey.startsWith(com.ambient.tv.ui.telegram.TELEGRAM_CHANNEL_ITEM_PREFIX)) {
             ratingKey.removePrefix(com.ambient.tv.ui.telegram.TELEGRAM_CHANNEL_ITEM_PREFIX)
                 .toLongOrNull()?.let { chatId ->
+                    beginMediaSelection()
                     navController.navigate(Destinations.telegramSection("channel:$chatId")) {
                         launchSingleTop = true
                     }
@@ -1546,76 +1619,59 @@ private fun AmbientTvApp(
         }
         com.ambient.tv.data.telegram.telegramPostIds(ratingKey)?.let { (chatId, messageId) ->
             // A private post has a detail page with full text and every linked YouTube video.
+            beginMediaSelection()
             navController.navigate(Destinations.telegramDetail(chatId, messageId))
             return
         }
         if (ratingKey.startsWith(com.ambient.tv.data.radio.RADIO_HOME_ITEM_PREFIX)) {
             val stationId = ratingKey.removePrefix(com.ambient.tv.data.radio.RADIO_HOME_ITEM_PREFIX)
-            if (stationId.isBlank() || mediaSelectionBusy) return
-            mediaSelectionBusy = true
+            if (stationId.isBlank()) return
+            val selectionIntent = beginMediaSelection()
             val originEntry = navController.currentBackStackEntry?.id
-            mediaSelectionScope.launch {
-                val station = try {
-                    suspendResult { radioBrowserRepository.station(stationId) }.getOrNull()
-                } finally {
-                    mediaSelectionBusy = false
-                }
-                if (station == null || navController.currentBackStackEntry?.id != originEntry) return@launch
-                radioPlaybackLauncher.play(station, listOf(station))
-                    .onSuccess {
-                        if (navController.currentBackStackEntry?.id == originEntry) {
-                            navController.navigate(Destinations.RADIO_PLAYER) { launchSingleTop = true }
+            radioSelectionJob = mediaSelectionScope.launch {
+                try {
+                    val station = suspendResult { radioBrowserRepository.station(stationId) }.getOrNull()
+                    if (station == null || !browseSelectionIntents.current(selectionIntent) ||
+                        navController.currentBackStackEntry?.id != originEntry) return@launch
+                    radioPlaybackLauncher.play(station, listOf(station))
+                        .onSuccess {
+                            if (browseSelectionIntents.current(selectionIntent) &&
+                                navController.currentBackStackEntry?.id == originEntry) {
+                                navController.navigate(Destinations.RADIO_PLAYER) { launchSingleTop = true }
+                            }
                         }
-                    }
+                } finally {
+                    if (browseSelectionIntents.current(selectionIntent)) radioSelectionJob = null
+                }
             }
             return
         }
 
-        // Game details are entirely local catalog reads. Only their Play action probes/WOLs
-        // the source, so opening a cover on Home never wakes a NAS.
+        // Home and the game library share Details/Play/Ask. Options and details remain
+        // local catalog reads; only an explicit Play may probe or wake the ROM source.
         if (ratingKey.startsWith(com.ambient.tv.ui.home.GAME_HOME_ITEM_PREFIX)) {
-            if (mediaSelectionBusy) return
-            val payload = ratingKey.removePrefix(com.ambient.tv.ui.home.GAME_HOME_ITEM_PREFIX)
-            val fileId = android.net.Uri.decode(payload.substringBeforeLast('|', ""))
-            val system = payload.substringAfterLast('|', "")
-            if (fileId.isBlank() || com.ambient.tv.games.GameSystems.byId(system) == null) return
-            mediaSelectionBusy = true
-            val originEntry = navController.currentBackStackEntry?.id
-            mediaSelectionScope.launch {
-                try {
-                    val game = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-                        gameLibraryRepository.game(fileId)
-                    }
-                    if (navController.currentBackStackEntry?.id != originEntry) return@launch
-                    if (game == null) {
-                        navController.navigate(Destinations.GAME_LIBRARY) { launchSingleTop = true }
-                        return@launch
-                    }
-                    navController.navigate(Destinations.gameDetail(game.fileId)) { launchSingleTop = true }
-                } catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
-                catch (_: Exception) {
-                    if (navController.currentBackStackEntry?.id == originEntry)
-                        navController.navigate(Destinations.GAME_LIBRARY) { launchSingleTop = true }
-                } finally {
-                    mediaSelectionBusy = false
-                }
-            }
+            gameSelectionFileId(ratingKey)?.let { gameSelections.select(it, appPreferences.mediaSelectionBehaviorKey) }
             return
         }
 
         // Home "recently added photos" items open the photo viewer, not media details.
         if (ratingKey.startsWith("trailer-video:")) {
+            beginMediaSelection()
             playOnSelectedTarget(Destinations.trailerPlayer(ratingKey.substringAfter(':')))
             return
         }
         if (ratingKey.startsWith(com.ambient.tv.ui.photos.PhotoLaunch.HOME_PREFIX)) {
+            beginMediaSelection()
             if (com.ambient.tv.ui.photos.PhotoLaunch.prepareFromHome(photoContext, ratingKey)) navController.navigate(Destinations.PHOTO_VIEWER)
             return
         }
+        // The resolver's existing ticket still coalesces repeated video presses. Other
+        // pending choices and game IO no longer own Home once this choice is accepted.
+        beginMediaSelection(keepPlaybackRequest = appPreferences.mediaSelectionBehaviorKey in
+            setOf(MediaSelectionPreferences.PLAY, MediaSelectionPreferences.ASK))
         when (appPreferences.mediaSelectionBehaviorKey) {
             MediaSelectionPreferences.DETAILS -> navigateToDetails(ratingKey, collectionId, collectionSort)
             MediaSelectionPreferences.PLAY, MediaSelectionPreferences.ASK -> {
-                if (mediaSelectionBusy) return
                 var resolved: ResolvedMediaSelection? = null
                 requestPlaybackStart(
                     key = "selection:$ratingKey:$collectionId:$collectionSort",
@@ -1673,6 +1729,7 @@ private fun AmbientTvApp(
      * video/audio) can play directly; YouTube link posts and photos keep the post page.
      */
     fun openTelegramPost(chatId: Long, messageId: Int, queue: Long?) {
+        beginMediaSelection()
         val behavior = appPreferences.telegramMediaSelectionBehaviorKey
         when {
             queue == null || behavior == com.ambient.tv.data.local.MediaSelectionPreferences.DETAILS ->
@@ -1685,6 +1742,7 @@ private fun AmbientTvApp(
     }
 
     fun handleYouTubeSelection(videoId: String, browseSession: Long? = null) {
+        beginMediaSelection()
         // Channel tiles open the channel page whatever the selection behavior says.
         com.ambient.tv.youtube.youtubeChannelIdOf(videoId)?.let { channelId ->
             navController.navigate(Destinations.youtubeChannel(channelId))
@@ -2965,21 +3023,32 @@ private fun AmbientTvApp(
                                 onItemClick = { ratingKey ->
                                     val trailerParts = ratingKey.removePrefix("trailer-title:").split(':')
                                     if (ratingKey.startsWith("trailer-title:") && trailerParts.size == 2) {
-                                        trailerParts[1].toIntOrNull()?.let { navController.navigate(Destinations.tmdbTrailers(trailerParts[0], it)) }
+                                        trailerParts[1].toIntOrNull()?.let {
+                                            beginMediaSelection()
+                                            navController.navigate(Destinations.tmdbTrailers(trailerParts[0], it))
+                                        }
                                     } else {
                                         handleMediaSelection(ratingKey)
                                     }
                                 },
+                                onGameInfo = { key -> gameSelectionFileId(key)?.let(gameSelections::details) },
                                 onYouTubeVideoClick = { videoId, session -> handleYouTubeSelection(videoId, session) },
-                                onTrailerVideoClick = { videoId, session -> playOnSelectedTarget(Destinations.trailerPlayer(videoId, session)) },
+                                onTrailerVideoClick = { videoId, session ->
+                                    beginMediaSelection()
+                                    playOnSelectedTarget(Destinations.trailerPlayer(videoId, session))
+                                },
                                 onTelegramPostClick = { key, queue ->
                                     com.ambient.tv.data.telegram.telegramPostIds(key)?.let { (chatId, messageId) ->
                                         openTelegramPost(chatId, messageId, queue)
                                     } ?: handleMediaSelection(key)
                                 },
                                 onRadioHomeStationClick = ::handleHomeRadioSelection,
-                                onWatchLiveChannel = { channel -> playOnSelectedTarget(Destinations.tvhPlayer("channel", channel.uuid, channel.sourceId)) },
+                                onWatchLiveChannel = { channel ->
+                                    beginMediaSelection()
+                                    playOnSelectedTarget(Destinations.tvhPlayer("channel", channel.uuid, channel.sourceId))
+                                },
                                 onOpenHomeContent = { row ->
+                                    beginMediaSelection()
                                     when (row.system) {
                                         HomeRowDefinition.SYSTEM_YOUTUBE -> youtubeFeedRoute(row.contentKey).let { route -> if (route == Destinations.YOUTUBE) navigateTopLevel(route) else navigateToSection(route) }
                                         HomeRowDefinition.SYSTEM_SPOTIFY -> if (row.contentKey == "now_playing") playOnSelectedTarget(Destinations.spotifyPlayer()) else if (row.contentKey == "home") navigateTopLevel(Destinations.SPOTIFY) else navigateToSection(Destinations.spotifySection(row.contentKey))
@@ -3196,7 +3265,7 @@ private fun AmbientTvApp(
                     ) { entry ->
                         com.ambient.tv.ui.games.GameDetailScreen(
                             onBack = { if (navController.currentBackStackEntry === entry) navigateBack() },
-                            onPlay = { game -> playOnSelectedTarget(Destinations.gamePlayer(game.fileId, game.systemId)) },
+                            onPlay = { game -> gameSelections.play(game.fileId) },
                         )
                     }
                     composable(
@@ -3491,7 +3560,8 @@ private fun AmbientTvApp(
                                 initialSection = "all",
                                 startManaging = true,
                                 onBack = { navController.popBackStack() },
-                                onOpenDetails = { game -> navController.navigate(Destinations.gameDetail(game.fileId)) { launchSingleTop = true } },
+                                onSelect = { game -> gameSelections.select(game.fileId, appPreferences.mediaSelectionBehaviorKey) },
+                                onOpenDetails = { game -> gameSelections.details(game.fileId) },
                             )
                         }
                     }
@@ -3500,7 +3570,8 @@ private fun AmbientTvApp(
                             com.ambient.tv.ui.games.GameLibraryScreen(
                                 initialSection = "all",
                                 onBack = ::focusSidebar,
-                                onOpenDetails = { game -> navController.navigate(Destinations.gameDetail(game.fileId)) { launchSingleTop = true } },
+                                onSelect = { game -> gameSelections.select(game.fileId, appPreferences.mediaSelectionBehaviorKey) },
+                                onOpenDetails = { game -> gameSelections.details(game.fileId) },
                             )
                         }
                     }
@@ -3510,7 +3581,8 @@ private fun AmbientTvApp(
                             com.ambient.tv.ui.games.GameLibraryScreen(
                                 initialSection = entry.arguments?.getString("sectionKey").orEmpty(),
                                 onBack = ::focusSidebar,
-                                onOpenDetails = { game -> navController.navigate(Destinations.gameDetail(game.fileId)) { launchSingleTop = true } },
+                                onSelect = { game -> gameSelections.select(game.fileId, appPreferences.mediaSelectionBehaviorKey) },
+                                onOpenDetails = { game -> gameSelections.details(game.fileId) },
                             )
                         }
                     }
@@ -3940,6 +4012,13 @@ private fun AmbientTvApp(
                         )
                     }
                 }
+                GameSelectionDialog(
+                    state = gameSelectionState,
+                    onDismiss = gameSelections::cancel,
+                    onPlay = { gameSelections.playPending() },
+                    onWake = { gameSelections.playPending(allowWake = true) },
+                    onDetails = gameSelections::detailsPending,
+                )
                 pendingMediaSelection?.let { selection ->
                     MediaSelectionDialog(
                         selection = selection,
@@ -4063,7 +4142,7 @@ private fun AmbientTvApp(
     // Destination BackHandlers are composed inside NavHost. Register this one-shot handler
     // after them so Back returns directly to an active minimized player, whether minimized
     // via the OSD exit button (including from a fullscreen detail page) or sidebar Back.
-    if (!handheld && backgroundPlayerReturn.canInterceptBackToPlayer(
+    if (gameSelectionState == null && !handheld && backgroundPlayerReturn.canInterceptBackToPlayer(
             route = currentRoute,
             hasActivePlayback = backgroundPlayback.active,
             sidebarVisible = currentRoute !in FULLSCREEN_ROUTES,

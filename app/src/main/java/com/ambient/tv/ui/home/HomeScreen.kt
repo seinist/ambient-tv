@@ -188,6 +188,8 @@ fun HomeScreen(
     viewModel: HomeViewModel = hiltViewModel(),
     /** Contextual navigation for Library, Wake-on-LAN and the affected media provider. */
     onOpenRelevantSettings: (String) -> Unit = { onOpenSettings() },
+    /** Game details remain reachable when the primary selection starts playback. */
+    onGameInfo: ((String) -> Unit)? = null,
 ) {
     val browseSession = com.ambient.tv.ui.common.BrowseStartupFocusSessions.generation
     val viewModelSession = remember(viewModel) { browseSession }
@@ -236,6 +238,9 @@ fun HomeScreen(
     val returnKey = if (activeDestination) entryReturn?.key ?: acceptedReturnKey else null
     val openItem: (String) -> Unit = remember(viewModel, onItemClick) {
         { key -> viewModel.captureFocusForReturn(); onItemClick(key) }
+    }
+    val openGameInfo: ((String) -> Unit)? = remember(viewModel, onGameInfo) {
+        onGameInfo?.let { info -> { key -> viewModel.captureFocusForReturn(); info(key) } }
     }
     val watchLiveChannel: (String, TvhChannel) -> Unit = remember(viewModel, onWatchLiveChannel) {
         { rowId, channel -> viewModel.captureRowPlayback(rowId); onWatchLiveChannel(channel) }
@@ -417,6 +422,7 @@ fun HomeScreen(
                         focusSnapshot = focusSnapshot,
                         startupFocus = startupFocus,
                         onItemClick = openItem,
+                        onGameInfo = openGameInfo,
                         onTelegramRowItemClick = { rowId, key ->
                             viewModel.captureFocusForReturn()
                             onTelegramPostClick(key, viewModel.telegramPlaybackToken(rowId, key))
@@ -724,6 +730,7 @@ internal fun LibraryContent(
     returnToken: Any? = state.playbackReturnRevision.takeIf { it > 0 },
     returnFocus: com.ambient.tv.ui.common.BrowsePlaybackReturn? = null,
     startupFocus: com.ambient.tv.ui.common.BrowseStartupFocusGate? = null,
+    onGameInfo: ((String) -> Unit)? = null,
 ) {
     // Keep partial rows out of the focus tree until the initial library load settles.
     if (state.loading && (state.rowKeys.isEmpty() || state.initialFocusTarget != HomeInitialFocusTarget.NONE)) {
@@ -809,6 +816,8 @@ internal fun LibraryContent(
                                 }
                             }
                         }, onItemFocused = { onItemFocused(row.id, it) },
+                            onItemInfo = onGameInfo?.takeIf { row.id.startsWith("games.") }
+                                ?.let { info -> { item -> info(item.ratingKey) } },
                             restoreRatingKey = focusSnapshot.ratingKey.takeIf { row.id == focusSnapshot.rowId },
                             followFirstItem = followFirstItem)
                     }
@@ -1221,6 +1230,8 @@ internal fun LibraryContent(
                             state.rows.getOrNull(index)?.let { row ->
                                 ContentRow(
                                     row = row.withHomeYouTubeProgress(),
+                                    onItemInfo = onGameInfo?.takeIf { row.id.startsWith("games.") }
+                                        ?.let { info -> { item -> info(item.ratingKey) } },
                                     onItemClick = { item ->
                                         val trailerId = homeTrailerVideoId(item.ratingKey)
                                         val videoId = homeYouTubeVideoId(item.ratingKey)

@@ -38,6 +38,7 @@ internal data class BrowseMediaPresentationKey(
     val originallyAvailableAt: String?,
     val addedAt: Long?,
     val watchedOverride: Boolean?,
+    val gameCoverAspectRatio: Float?,
     val technical: List<BrowseTechnicalVersionKey>,
 )
 
@@ -86,6 +87,7 @@ internal fun MediaItem.browsePresentationKey(): BrowseMediaPresentationKey =
         originallyAvailableAt = originallyAvailableAt,
         addedAt = addedAt,
         watchedOverride = watchedOverride,
+        gameCoverAspectRatio = gameCoverAspectRatio,
         technical = mediaVersions.map { version ->
             BrowseTechnicalVersionKey(
                 resolution = version.resolution,

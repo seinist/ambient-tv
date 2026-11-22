@@ -8,13 +8,11 @@ import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -22,7 +20,6 @@ import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.FavoriteBorder
 import androidx.compose.material.icons.filled.PlayArrow
-import androidx.compose.material.icons.filled.PowerSettingsNew
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.runtime.Composable
@@ -40,7 +37,6 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalUriHandler
-import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
@@ -49,9 +45,9 @@ import androidx.tv.material3.Text
 import com.ambient.tv.R
 import com.ambient.tv.games.GameSystems
 import com.ambient.tv.games.library.LibraryGame
+import com.ambient.tv.games.library.coverAspectRatio
 import com.ambient.tv.games.metadata.GameArtworkKind
 import com.ambient.tv.games.metadata.GameMetadata
-import com.ambient.tv.ui.common.AppDialog
 import com.ambient.tv.ui.common.ArtworkImage
 import com.ambient.tv.ui.common.DetailEyebrow
 import com.ambient.tv.ui.common.DetailGenres
@@ -83,7 +79,7 @@ fun GameDetailScreen(
     val editFocus = remember { FocusRequester() }
     val handheld = LocalHandheldUi.current
     val listState = rememberLazyListState()
-    BackHandler(enabled = !editing && !settingsOpen && !state.needsWake, onBack = onBack)
+    BackHandler(enabled = !editing && !settingsOpen, onBack = onBack)
     LaunchedEffect(state.game?.fileId, handheld) {
         if (handheld || state.game == null) return@LaunchedEffect
         repeat(4) {
@@ -147,24 +143,22 @@ fun GameDetailScreen(
                     item("hero") {
                         BoxWithConstraints(Modifier.fillMaxWidth()) {
                             val compact = maxWidth < 600.dp
+                            val coverSize = gameCoverFrameSize(
+                                if (compact) minOf(maxWidth, 340.dp) else minOf(maxWidth * .42f, 440.dp),
+                                if (compact) 220.dp else 315.dp,
+                                game.coverAspectRatio,
+                            )
                             val cover: @Composable () -> Unit = {
-                                ArtworkImage(
-                                    model = game.coverPath?.let(::File), title = game.title,
-                                    modifier = Modifier.width(if (compact) 160.dp else 210.dp).aspectRatio(2f / 3f),
-                                    contentScale = ContentScale.Fit,
-                                    fallbackContent = {
-                                        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                                            androidx.compose.material3.Icon(painterResource(GameSystemIcons.drawable(game.systemId)),
-                                                contentDescription = null, modifier = Modifier.size(110.dp),
-                                                tint = MaterialTheme.colorScheme.onSurfaceVariant)
-                                        }
-                                    },
+                                GameCoverArtwork(
+                                    cover = game.coverPath?.let(::File), title = game.title,
+                                    systemId = game.systemId,
+                                    modifier = Modifier.size(coverSize),
                                 )
                             }
                             val information: @Composable () -> Unit = {
                                 GameDetailInformation(game, state.metadata,
                                     busy = state.busy,
-                                    onPlay = { model.play(onPlay) }, onFavorite = model::favorite,
+                                    onPlay = { onPlay(game) }, onFavorite = model::favorite,
                                     onEdit = { editing = true }, onRefresh = model::refresh,
                                     onSettings = { settingsOpen = true },
                                     primaryFocus = primaryFocus, editFocus = editFocus)
@@ -201,18 +195,6 @@ fun GameDetailScreen(
             }
         }
     }
-    if (state.needsWake && state.game != null) AppDialog(
-        onDismiss = model::dismissWake,
-        title = stringResource(R.string.game_library_wake),
-        hint = stringResource(R.string.game_library_offline_wake,
-            state.sourceName.ifBlank { stringResource(R.string.game_source_fallback) }),
-        footer = {
-            TvActionButton(stringResource(R.string.files_cancel), onClick = model::dismissWake)
-            TvActionButton(stringResource(R.string.game_library_wake),
-                onClick = { model.wakeAndPlay(onPlay) }, enabled = !state.busy,
-                icon = Icons.Filled.PowerSettingsNew)
-        },
-    )
     if (editing && state.game != null) GameMetadataEditor(
         game = state.game!!, state = state, model = model, onDismiss = closeEditor)
     if (settingsOpen) GameMetadataSettingsPanel(onDismiss = {
