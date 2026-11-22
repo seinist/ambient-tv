@@ -207,9 +207,25 @@ internal fun GameCheatsPanel(
 
 /** Host, find or leave a two-player game with another Ambient TV in the same network. */
 @Composable
-internal fun GameNetplayPanel(netplay: GameNetplay, view: GLRetroView, game: PreparedGame, coreStamp: String) {
-    val identity by produceState<NetplayIdentity?>(null, game.file) {
-        value = withContext(Dispatchers.IO) { runCatching { GameNetplay.identity(game.file, coreStamp, game.title) }.getOrNull() }
+internal fun GameNetplayPanel(
+    netplay: GameNetplay,
+    view: GLRetroView,
+    game: PreparedGame,
+    coreStamp: String,
+    vulkan: Boolean,
+    options: Map<String, String>,
+    systemDirectory: java.io.File,
+) {
+    val identity by produceState<NetplayIdentity?>(null, game.file, coreStamp, vulkan, options, systemDirectory) {
+        value = withContext(Dispatchers.IO) {
+            runCatching {
+                val compatibleCore = GameNetplay.configurationStamp(
+                    coreStamp, vulkan, options,
+                    game.system.bios.map { java.io.File(systemDirectory, it.file) },
+                )
+                GameNetplay.identity(game.file, compatibleCore, game.title)
+            }.getOrNull()
+        }
     }
     val idle = netplay.state is NetplayState.Idle || netplay.state is NetplayState.Failed
     LaunchedEffect(identity, idle) {
@@ -218,6 +234,13 @@ internal fun GameNetplayPanel(netplay: GameNetplay, view: GLRetroView, game: Pre
     }
     DisposableEffect(netplay) { onDispose { netplay.stopDiscovery() } }
     when (val state = netplay.state) {
+        is NetplayState.Approval -> {
+            GamePanelText(stringResource(R.string.game_netplay_approval, state.peer))
+            RightPanelChoice(stringResource(R.string.game_netplay_accept), selected = false,
+                onClick = netplay::approvePeer)
+            RightPanelChoice(stringResource(R.string.game_netplay_reject), selected = false,
+                onClick = netplay::rejectPeer)
+        }
         is NetplayState.Hosting -> {
             GamePanelText(stringResource(R.string.game_netplay_hosting, state.name))
             RightPanelChoice(stringResource(R.string.game_netplay_cancel), selected = false, onClick = netplay::stop)
@@ -258,4 +281,5 @@ private fun NetplayFailure.messageRes(): Int = when (this) {
     NetplayFailure.OTHER_CORE -> R.string.game_netplay_failed_core
     NetplayFailure.CLOSED -> R.string.game_netplay_closed
     NetplayFailure.STATE -> R.string.game_netplay_failed_state
+    NetplayFailure.REJECTED -> R.string.game_netplay_failed_rejected
 }

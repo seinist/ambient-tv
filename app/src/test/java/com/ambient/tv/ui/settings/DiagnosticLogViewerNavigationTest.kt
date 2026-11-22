@@ -76,22 +76,31 @@ class DiagnosticLogViewerNavigationTest {
         rule.waitForIdle()
     }
 
+    /** TV Surface semantics are reliably activated through the remote key path. */
+    private fun pressRemoteCenter(tag: String) {
+        rule.onNodeWithTag(tag).performSemanticsAction(SemanticsActions.RequestFocus) { it() }
+        rule.onNodeWithTag(tag).performKeyInput { pressKey(Key.DirectionCenter) }
+        rule.waitForIdle()
+    }
+
     @Test fun severityAndSourceFiltersKeepListUsable() {
         showViewer()
         rule.onNodeWithTag("diagnostics-entry:${warning.key}").assertExists()
         // LazyColumn detaches offscreen events; the persistent counter covers the full log.
         rule.onNodeWithText("3 of 3", substring = true).assertExists()
 
-        rule.onNodeWithTag("diagnostics-severity-ERRORS").performClick()
-        rule.waitForIdle()
+        pressRemoteCenter("diagnostics-severity-ERRORS")
+        rule.waitUntil(5_000) {
+            rule.onAllNodesWithTag("diagnostics-count").fetchSemanticsNodes()
+                .any { node -> node.config.toString().contains("1 of 3") }
+        }
         rule.onNodeWithText("1 of 3", substring = true).assertExists()
         rule.onNodeWithTag("diagnostics-entry:${recent.key}").assertExists()
         rule.onNodeWithTag("diagnostics-entry:${warning.key}").assertDoesNotExist()
         rule.onNodeWithTag("diagnostics-entry:${information.key}").assertDoesNotExist()
 
-        rule.onNodeWithTag("diagnostics-severity-ALL").performClick()
-        rule.onNodeWithTag("diagnostics-source-mpv").performClick()
-        rule.waitForIdle()
+        pressRemoteCenter("diagnostics-severity-ALL")
+        pressRemoteCenter("diagnostics-source-mpv")
         rule.onNodeWithText("1 of 3", substring = true).assertExists()
         rule.onNodeWithTag("diagnostics-entry:${warning.key}").assertExists()
         rule.onNodeWithTag("diagnostics-entry:${recent.key}").assertDoesNotExist()
@@ -121,13 +130,13 @@ class DiagnosticLogViewerNavigationTest {
     @Test fun dismissingDetailRestoresFocusToTheExactEntry() {
         showViewer()
         val entry = "diagnostics-entry:${recent.key}"
-        rule.onNodeWithTag(entry).performClick()
+        pressRemoteCenter(entry)
         // The details replace list content in the same dialog, avoiding a second window.
         rule.waitUntil(5_000) {
             rule.onAllNodesWithTag("diagnostics-copy").fetchSemanticsNodes().isNotEmpty()
         }
         rule.onNodeWithTag("diagnostics-copy").assertExists()
-        rule.onNodeWithTag("diagnostics-detail-back").performClick()
+        pressRemoteCenter("diagnostics-detail-back")
         // Back returns to the list without dismissing the owning dialog window.
         rule.waitUntil(5_000) {
             runCatching { rule.onNodeWithTag(entry).assertIsFocused() }.isSuccess

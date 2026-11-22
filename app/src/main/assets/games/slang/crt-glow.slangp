@@ -1,0 +1,8 @@
+shaders = 2
+shader0 = crt-glow-horizontal.slang
+filter_linear0 = true
+scale_type0 = source
+scale0 = 0.5
+shader1 = crt-glow-final.slang
+filter_linear1 = true
+scale_type1 = viewport

@@ -43,6 +43,14 @@ data class CompanionFrame(
     val title: String = "",
     val error: String = "",
     val input: CompanionInput? = null,
+    /** Complete virtual RetroPad input, sent only by a paired handheld. */
+    val gamepadState: CompanionGamepadState? = null,
+    /** Sender-local timestamp for queue-to-ACK diagnostics. Never used for TV trust decisions. */
+    val gamepadQueuedAtMs: Long = 0L,
+    /** Current TV game; absent on older receivers or outside the games player. */
+    val gamepadInfo: CompanionGamepadInfo? = null,
+    /** Assigned Libretro port, -1 when no claim exists for this TLS session. */
+    val gamepadPort: Int = -1,
     val controller: String = "",
     val inputGranted: Boolean = false,
     val transferId: String = "",
@@ -148,6 +156,8 @@ internal fun isPrivateV4(host: String): Boolean {
  * and unknown command types are still rejected as "unsupported" by the receiver.
  */
 internal val companionJson = Json { ignoreUnknownKeys = true; encodeDefaults = true }
+/** Compact, protocol-v1-compatible wire encoding for frequent real-time commands only. */
+internal val companionRealtimeJson = Json { ignoreUnknownKeys = true; encodeDefaults = false }
 
 /**
  * Short pairing code for typing on the phone. The alphabet leaves out every character that is
@@ -198,8 +208,9 @@ internal fun DataInputStream.readFrame(): CompanionFrame {
     readFully(bytes)
     return companionJson.decodeFromString<CompanionFrame>(bytes.toString(Charsets.UTF_8)).also { require(it.version == 1) }
 }
-internal fun DataOutputStream.writeFrame(frame: CompanionFrame) {
-    val bytes = companionJson.encodeToString(frame).toByteArray(Charsets.UTF_8)
+internal fun DataOutputStream.writeFrame(frame: CompanionFrame, compact: Boolean = false) {
+    val bytes = (if (compact) companionRealtimeJson else companionJson)
+        .encodeToString(frame).toByteArray(Charsets.UTF_8)
     require(bytes.size in 1..16_384)
     writeInt(bytes.size); write(bytes); flush()
 }
@@ -338,6 +349,29 @@ internal fun sharedMedia(text: String): CompanionMedia? {
  * cannot be merged: another frame type, or a sum outside the protocol's -1..1 range.
  */
 internal fun coalesceCompanionInput(first: CompanionFrame, next: CompanionFrame): CompanionFrame? {
+    // Do not coalesce across press/release transitions: a very quick tap must survive the
+    // queue even when the phone sends DOWN and UP before the TV acknowledges either one.
+    if (first.type == "gamepad_input" && next.type == "gamepad_input" &&
+        first.gamepadState != null && next.gamepadState != null) {
+        val a = first.gamepadState
+        val b = next.gamepadState
+        val pa = a.pointer
+        val pb = b.pointer
+        if (a.buttons != b.buttons || pa?.kind != pb?.kind || pa?.buttons != pb?.buttons ||
+            pa?.offscreen != pb?.offscreen || a.motion?.mask != b.motion?.mask ||
+            pa?.contacts?.filter { it.pressed }?.map { it.index } !=
+                pb?.contacts?.filter { it.pressed }?.map { it.index }) return null
+        // The mouse is relative (unlike absolute pointers): preserve the sum of movement.
+        val pointer = if (pa?.kind == "mouse" && pb != null) {
+            val dx = pa.dx + pb.dx
+            val dy = pa.dy + pb.dy
+            if (dx !in -1f..1f || dy !in -1f..1f) return null
+            pb.copy(dx = dx, dy = dy)
+        } else pb
+        return next.copy(gamepadState = b.copy(pointer = pointer),
+            // Report backlog age from the oldest merged event, not the newest sample.
+            gamepadQueuedAtMs = first.gamepadQueuedAtMs.takeIf { it > 0L } ?: next.gamepadQueuedAtMs)
+    }
     val a = first.input ?: return null
     val b = next.input ?: return null
     if (first.type != "input" || next.type != "input" || a.action != b.action || a.action !in setOf("move", "scroll")) return null

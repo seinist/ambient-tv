@@ -12,6 +12,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.test.assertContentDescriptionEquals
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.getBoundsInRoot
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
@@ -61,14 +62,70 @@ class ConnectionStatusUiTest {
                 }
             }
         }
-        rule.onNodeWithText(rule.activity.getString(R.string.home_cancel_wake)).assertIsDisplayed()
-        val details = rule.onNodeWithTag("connection-status-details").getBoundsInRoot()
-        val cancel = rule.onNodeWithTag("connection-status-cancel").getBoundsInRoot()
+        val detailsButton = rule.onNodeWithTag("connection-status-details")
+            .assertContentDescriptionEquals(rule.activity.getString(R.string.start_status_details))
+        val cancelButton = rule.onNodeWithTag("connection-status-cancel")
+            .assertContentDescriptionEquals(rule.activity.getString(R.string.home_cancel_wake))
+        val details = detailsButton.getBoundsInRoot()
+        val cancel = cancelButton.getBoundsInRoot()
         val card = rule.onNodeWithTag("connection-status-card").getBoundsInRoot()
         assertTrue(details.left >= card.left && cancel.right <= card.right)
         assertTrue(details.right <= cancel.left)
+        // Both icons share the summary's row; there is no second line of full-width buttons.
+        assertTrue(details.top < cancel.bottom && cancel.top < details.bottom)
+        assertTrue(card.bottom - card.top < 100.dp)
+        rule.onNodeWithText(rule.activity.getString(R.string.home_cancel_wake)).assertDoesNotExist()
         rule.onNodeWithText(rule.activity.getString(R.string.start_status_packets, 1, 3)).assertDoesNotExist()
         rule.onNodeWithText(rule.activity.getString(R.string.start_status_technical_details)).assertDoesNotExist()
+    }
+
+
+    @Test fun inlineIconActionsOpenDetailsOrCancelOnlyWhenExplicitlySelected() {
+        val current = status()
+        var detailsOpens = 0
+        val cancelled = mutableListOf<String>()
+        rule.setContent {
+            CompositionLocalProvider(LocalHandheldUi provides true) {
+                AmbientTvTheme {
+                    Box(Modifier.fillMaxWidth().padding(16.dp)) {
+                        CompactConnectionStatus(
+                            current, reduced = true,
+                            onDetails = { detailsOpens++ }, onCancel = { cancelled += it.key },
+                        )
+                    }
+                }
+            }
+        }
+        rule.onNodeWithTag("connection-status-details").performClick()
+        rule.runOnIdle {
+            assertEquals(1, detailsOpens)
+            assertTrue(cancelled.isEmpty())
+        }
+        rule.onNodeWithTag("connection-status-cancel").performClick()
+        rule.runOnIdle {
+            assertEquals(1, detailsOpens)
+            assertEquals(listOf("wake:medienserver"), cancelled)
+        }
+    }
+
+    @Test fun multipleActiveWakesKeepCancellationInsideTheDeviceDetails() {
+        val first = wake()
+        val second = wake().copy(key = "wake:backup", subject = "Backup-Server")
+        val current = ConnectivitySnapshot(
+            sessionId = 1, visible = true, presented = true,
+            entries = listOf(NoticeEntry(1, first, 0, 0, 0), NoticeEntry(2, second, 0, 0, 0)),
+        )
+        rule.setContent {
+            CompositionLocalProvider(LocalHandheldUi provides true) {
+                AmbientTvTheme {
+                    Box(Modifier.fillMaxWidth().padding(16.dp)) {
+                        CompactConnectionStatus(current, reduced = true, onDetails = {}, onCancel = {})
+                    }
+                }
+            }
+        }
+        rule.onNodeWithTag("connection-status-details").assertIsDisplayed()
+        rule.onNodeWithTag("connection-status-cancel").assertDoesNotExist()
     }
 
     @Test fun swipingMinimizesWithoutCancellingAndBadgeReopensStatus() {

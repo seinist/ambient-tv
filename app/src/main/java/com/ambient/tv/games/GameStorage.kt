@@ -1,6 +1,7 @@
 package com.ambient.tv.games
 
 import android.content.Context
+import android.util.AtomicFile
 import dagger.hilt.android.qualifiers.ApplicationContext
 import java.io.File
 import javax.inject.Inject
@@ -22,17 +23,26 @@ class GameStorage @Inject constructor(@ApplicationContext private val context: C
 
     fun sramFile(game: PreparedGame): File = File(savesDirectory, "${game.saveKey}.srm")
 
-    fun read(file: File): ByteArray? = runCatching { file.takeIf { it.isFile && it.length() > 0 }?.readBytes() }.getOrNull()
+    fun read(file: File): ByteArray? = runCatching {
+        file.takeIf { it.isFile && it.length() in 1..MAX_READ_BYTES }?.readBytes()
+    }.getOrNull()
 
-    /** Writes atomically, so a crash while saving never leaves half a save behind. */
+    /** AtomicFile preserves the old save if the app crashes or storage is full. */
     fun write(file: File, bytes: ByteArray) {
         if (bytes.isEmpty()) return
         file.parentFile?.mkdirs()
-        val partial = File(file.parentFile, file.name + ".partial")
-        partial.writeBytes(bytes)
-        if (!partial.renameTo(file)) {
-            file.delete()
-            partial.renameTo(file)
+        val atomic = AtomicFile(file)
+        val out = atomic.startWrite()
+        try {
+            out.write(bytes)
+            atomic.finishWrite(out)
+        } catch (error: Exception) {
+            atomic.failWrite(out)
+            throw error
         }
+    }
+
+    private companion object {
+        const val MAX_READ_BYTES = 64L * 1024 * 1024
     }
 }

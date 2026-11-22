@@ -39,6 +39,8 @@ data class SidebarUiState(
     val liveTvSources: List<com.ambient.tv.livetv.AvailableLiveTvSource> = emptyList(),
     val systemOrder: List<String> = emptyList(),
     val filesEnabled: Boolean = false,
+    val gamesAvailable: Boolean = false,
+    val gameSystemIds: List<String> = emptyList(),
     val networkFileSources: List<FileSource> = emptyList(),
     val dlnaServers: List<DlnaServer> = emptyList(),
     val plexEnabled: Boolean = false,
@@ -86,6 +88,7 @@ class SidebarViewModel @Inject constructor(
     private val liveTv: com.ambient.tv.livetv.LiveTvRegistry,
     private val tvheadendRepository: com.ambient.tv.tvheadend.data.TvheadendRepository,
     private val fileStore: FileStore,
+    private val gameLibrary: com.ambient.tv.games.library.GameLibraryRepository,
     private val dlnaStore: DlnaStore,
     private val mediaRepository: MediaRepository,
     val metadataPrefetcher: com.ambient.tv.data.browse.MetadataPrefetcher,
@@ -109,6 +112,8 @@ class SidebarViewModel @Inject constructor(
             trailersConfigured = appPreferences.trailersEnabled && !tokens.tmdbApiKey.isNullOrBlank(),
             systemOrder = appPreferences.sidebarSystemOrder,
             filesEnabled = appPreferences.filesEnabled,
+            gamesAvailable = gameLibrary.hasConfiguredFolders(),
+            gameSystemIds = librarySystemIds(),
             networkFileSources = networkFileSourcesFromStore(),
             dlnaServers = dlnaStore.servers(),
             plexEnabled = appPreferences.isConfigured,
@@ -203,6 +208,7 @@ class SidebarViewModel @Inject constructor(
             if (appPreferences.radioEnabled) add("radio")
             if (com.ambient.tv.BuildConfig.MONOGRAM_NATIVE && appPreferences.telegramEnabled) add("telegram")
             if (appPreferences.filesEnabled) add("files")
+            if (gameLibrary.hasConfiguredFolders()) add("games")
             if (dlnaStore.servers().isNotEmpty()) add("dlna")
         }
 
@@ -226,8 +232,20 @@ class SidebarViewModel @Inject constructor(
             onlineServices.state.collect { _uiState.update { state -> state.copy(offlineSystems = currentOfflineSources()) } }
         }
         viewModelScope.launch {
+            gameLibrary.revisions.collect {
+                _uiState.update { state -> state.copy(
+                    gamesAvailable = gameLibrary.hasConfiguredFolders(),
+                    gameSystemIds = librarySystemIds(),
+                ) }
+            }
+        }
+        viewModelScope.launch {
             fileStore.revision.collect {
-                _uiState.update { state -> state.copy(networkFileSources = networkFileSourcesFromStore()) }
+                _uiState.update { state -> state.copy(
+                    networkFileSources = networkFileSourcesFromStore(),
+                    gamesAvailable = gameLibrary.hasConfiguredFolders(),
+                    gameSystemIds = librarySystemIds(),
+                ) }
             }
         }
         viewModelScope.launch { dlnaStore.serverRevision.collect { _uiState.update { it.copy(dlnaServers = dlnaStore.servers()) } } }
@@ -262,6 +280,7 @@ class SidebarViewModel @Inject constructor(
         appPreferences.telegramSubmenuKeys,
         appPreferences.homeRows.any { it.enabled && it.system == com.ambient.tv.data.local.HomeRowDefinition.SYSTEM_RADIO },
         appPreferences.filesEnabled,
+        gameLibrary.folders(),
         appPreferences.trailersEnabled && !tokens.tmdbApiKey.isNullOrBlank(),
         // Keep explicit auth completions observable even when every preference-derived boolean
         // stayed the same (for example SmartTube signing in while it was already enabled).
@@ -277,8 +296,14 @@ class SidebarViewModel @Inject constructor(
         appPreferences.embyHiddenSectionKeys,
     )
 
+    private fun librarySystemIds(): List<String> =
+        (gameLibrary.folders().filter { folder ->
+            fileStore.sources().any { it.id == folder.sourceId }
+        }.map { it.systemId }.filter { it != "auto" } +
+            gameLibrary.systemIds()).distinct().filter { com.ambient.tv.games.GameSystems.byId(it) != null }
+
     private fun networkFileSourcesFromStore(): List<FileSource> =
-        fileStore.sources().filter { it.network }
+        fileStore.fileBrowserSources().filter { it.network }
 
     private fun currentOfflineSources(): Set<String> {
         val configured = buildSet {
@@ -407,6 +432,8 @@ class SidebarViewModel @Inject constructor(
         _uiState.update {
             it.copy(
                 filesEnabled = appPreferences.filesEnabled,
+                gamesAvailable = gameLibrary.hasConfiguredFolders(),
+                gameSystemIds = librarySystemIds(),
                 networkFileSources = networkFileSourcesFromStore(),
                 dlnaServers = dlnaStore.servers(),
                 systemOrder = appPreferences.sidebarSystemOrder,

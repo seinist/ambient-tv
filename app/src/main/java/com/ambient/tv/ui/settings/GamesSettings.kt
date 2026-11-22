@@ -53,6 +53,8 @@ internal interface GamesSettingsEntryPoint {
     fun data(): GameDataImporter
     fun retroAchievements(): RetroAchievementsClient
     fun channel(): GameCoreChannel
+    fun shaderPacks(): com.ambient.tv.games.GameShaderPackStore
+    fun shaderChannel(): com.ambient.tv.games.GameShaderPackChannel
 }
 
 private fun GameCoreSource.titleRes(): Int = when (this) {
@@ -65,11 +67,19 @@ private fun GameCoreSource.titleRes(): Int = when (this) {
  * Settings → Playback → Games: rewind, cores (load, update, remove, options for all games), firmware
  * (BIOS) per system, further system files and the game copy cache. Everything lives in app storage.
  */
-internal fun LazyListScope.gamesSettingsItems() {
+internal fun LazyListScope.gamesSettingsItems(onOpenLibrary: () -> Unit) {
+    item(key = "games-library") {
+        SettingsNavigationRow(
+            title = stringResource(R.string.game_library_settings_entry),
+            summary = stringResource(R.string.game_library_settings_entry_hint),
+            onClick = onOpenLibrary,
+        )
+    }
     item(key = "games-play") { GamesPlay() }
     item(key = "games-ra") { GamesRetroAchievements() }
     item(key = "games-system-cores") { GamesSystemCores() }
     item(key = "games-cores") { GamesCores() }
+    item(key = "games-shader-packs") { GamesShaderPacks() }
     item(key = "games-bios") { GamesBios() }
     item(key = "games-files") { GamesSystemFiles() }
     item(key = "games-cache") { GamesCache() }
@@ -194,6 +204,71 @@ private fun GamesBios() {
                 }
             }
         }
+    }
+}
+
+/** Signed shader packs are only ever downloaded by an explicit click; nothing at game launch. */
+@Composable
+private fun GamesShaderPacks() {
+    val entry = gamesEntryPoint()
+    val packs = entry.shaderPacks()
+    val channel = entry.shaderChannel()
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    var loading by remember { mutableStateOf(false) }
+    var revision by remember { mutableIntStateOf(0) }
+    var status by remember { mutableStateOf<String?>(null) }
+    var pendingRemoval by remember { mutableStateOf<String?>(null) }
+    val installed = remember(revision) {
+        packs.installed().groupBy { it.selection.substringBefore('/') }
+    }
+    SettingsGroup(
+        title = stringResource(R.string.games_shader_packs_title),
+        subtitle = stringResource(R.string.games_shader_packs_hint),
+        collapsible = true,
+    ) {
+        if (!channel.available) SettingsHint(stringResource(R.string.games_shader_packs_unavailable))
+        SettingsActionRow {
+            TvActionButton(
+                text = stringResource(R.string.games_shader_packs_download),
+                loading = loading,
+                enabled = !loading && channel.available,
+                onClick = {
+                    loading = true
+                    status = null
+                    scope.launch {
+                        runCatching { channel.installLatest() }
+                            .onSuccess {
+                                status = context.getString(R.string.games_shader_packs_installed, it.title)
+                                revision++
+                            }
+                            .onFailure {
+                                status = context.getString(R.string.games_shader_packs_failed,
+                                    it.message ?: "Unknown error")
+                            }
+                        loading = false
+                    }
+                },
+            )
+        }
+        installed.forEach { (id, entries) ->
+            SettingsActionRow {
+                TvActionButton(
+                    text = id + " (" + entries.size + ") · " +
+                        stringResource(if (pendingRemoval == id) R.string.games_shader_packs_confirm
+                            else R.string.games_shader_packs_remove),
+                    enabled = !loading,
+                    onClick = {
+                        if (pendingRemoval == id) {
+                            if (packs.remove(id)) revision++
+                            pendingRemoval = null
+                        } else pendingRemoval = id
+                    },
+                )
+            }
+        }
+        if (installed.isEmpty()) SettingsHint(stringResource(R.string.games_shader_packs_empty))
+        status?.let { SettingsHint(it) }
     }
 }
 

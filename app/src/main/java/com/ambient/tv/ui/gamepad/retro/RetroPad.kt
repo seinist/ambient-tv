@@ -35,11 +35,28 @@ enum class RetroPadButton(val key: String, val id: Int, @StringRes val titleRes:
     }
 }
 
+/** Stable descriptor: pairs the phone's pinned Companion identity to all device/port settings. */
+fun companionControllerDescriptor(fingerprint: String): String = "companion:$fingerprint"
+
+/** Synthetic keys do not collide with Android KeyEvent codes. Stored in existing profiles. */
+const val COMPANION_KEY_BASE = 4000
+fun companionControllerKey(button: RetroPadButton): Int = COMPANION_KEY_BASE + button.id
+fun companionControllerButton(code: Int): RetroPadButton? =
+    RetroPadButton.entries.firstOrNull { companionControllerKey(it) == code }
+
+/** Translate actual phone RetroPad button bits using the same profiles as hardware devices. */
+fun companionMappedButtons(rawButtons: Int, profile: RetroInputProfile): Int =
+    RetroPadButton.entries.fold(0) { mask, source ->
+        if (rawButtons and source.mask == 0) mask
+        else mask or (profile.button(companionControllerKey(source))?.mask ?: 0)
+    }
+
 /** Kinds of input device that can play; each has its own key layout. Stored by [key]. */
 enum class RetroInputKind(val key: String, @StringRes val titleRes: Int) {
     GAMEPAD("gamepad", AppR.string.retro_kind_gamepad),
     KEYBOARD("keyboard", AppR.string.retro_kind_keyboard),
     REMOTE("remote", AppR.string.retro_kind_remote),
+    COMPANION("companion", AppR.string.retro_kind_companion),
     ;
 
     companion object {
@@ -99,6 +116,75 @@ sealed interface RetroInputTarget {
 }
 
 /**
+ * The global layout stays backward compatible. Optional overlays change only assigned targets,
+ * so changes to a system's preset are inherited by every core and game unless overridden.
+ */
+enum class RetroInputLayerScope(val key: String) { SYSTEM("system"), CORE("core"), GAME("game") }
+
+data class RetroInputProfileContext(
+    val systemId: String,
+    val coreId: String,
+    val gameId: String? = null,
+) {
+    fun layerId(scope: RetroInputLayerScope, kind: RetroInputKind): String? {
+        val identity = when (scope) {
+            RetroInputLayerScope.SYSTEM -> systemId.takeIf(String::isNotBlank)
+            RetroInputLayerScope.CORE -> coreId.takeIf(String::isNotBlank)?.let { "$systemId\u0000$it" }
+            RetroInputLayerScope.GAME -> gameId?.takeIf(String::isNotBlank)?.let { "$systemId\u0000$coreId\u0000$it" }
+        } ?: return null
+        // Safe for SharedPreferences maps, filenames and user-supplied ROM paths.
+        val encoded = java.util.Base64.getUrlEncoder().withoutPadding()
+            .encodeToString(identity.toByteArray(Charsets.UTF_8))
+        return "${scope.key}.$encoded.${kind.key}"
+    }
+}
+
+/** Missing targets inherit the parent; an explicit empty list means unassigned. */
+data class RetroInputOverlay(
+    val buttons: Map<RetroPadButton, List<Int>> = emptyMap(),
+    val menu: Map<RetroMenuTrigger, List<Int>> = emptyMap(),
+) {
+    fun resolve(parent: RetroInputProfile): RetroInputProfile {
+        val resultButtons = parent.buttons.toMutableMap()
+        val resultMenu = parent.menu.toMutableMap()
+        // Newer layer always wins if the inherited profile later reuses the same physical key.
+        // Explicitly empty lists remain valid overrides (unassigned).
+        buttons.forEach { (button, codes) ->
+            resultButtons.keys.forEach { target ->
+                if (target != button) resultButtons[target] = resultButtons[target].orEmpty() - codes.toSet()
+            }
+            resultMenu.keys.forEach { target ->
+                resultMenu[target] = resultMenu[target].orEmpty() - codes.toSet()
+            }
+            resultButtons[button] = codes
+        }
+        menu.forEach { (trigger, codes) ->
+            resultButtons.keys.forEach { target ->
+                resultButtons[target] = resultButtons[target].orEmpty() - codes.toSet()
+            }
+            resultMenu.keys.forEach { target ->
+                if (target != trigger) resultMenu[target] = resultMenu[target].orEmpty() - codes.toSet()
+            }
+            resultMenu[trigger] = codes
+        }
+        return RetroInputProfile(resultButtons, resultMenu).full()
+    }
+
+    fun isEmpty(): Boolean = buttons.isEmpty() && menu.isEmpty()
+
+    companion object {
+        fun difference(parent: RetroInputProfile, updated: RetroInputProfile) = RetroInputOverlay(
+            RetroPadButton.entries.mapNotNull { button ->
+                updated.buttons[button]?.takeIf { it != parent.buttons[button] }?.let { button to it }
+            }.toMap(),
+            RetroMenuTrigger.entries.mapNotNull { trigger ->
+                updated.menu[trigger]?.takeIf { it != parent.menu[trigger] }?.let { trigger to it }
+            }.toMap(),
+        )
+    }
+}
+
+/**
  * Defaults. Controllers by position (Android reports the bottom face button as BUTTON_A on every
  * pad, Nintendo included). Keyboard as in RetroArch. The remote plays with arrows, OK and Back;
  * colour and media keys add the rest, and holding Back opens the game menu.
@@ -112,6 +198,11 @@ internal fun RetroInputProfile.full() = RetroInputProfile(
 )
 
 private fun defaultLayout(kind: RetroInputKind): RetroInputProfile = when (kind) {
+    RetroInputKind.COMPANION -> RetroInputProfile(
+        // Phone touch controls already use Libretro face positions, not Xbox scan codes.
+        buttons = RetroPadButton.entries.associateWith { listOf(companionControllerKey(it)) },
+        menu = emptyMap(),
+    )
     RetroInputKind.GAMEPAD -> RetroInputProfile(
         buttons = dpad() + mapOf(
             RetroPadButton.B to listOf(KeyEvent.KEYCODE_BUTTON_A),
@@ -184,6 +275,23 @@ object RetroPorts {
     const val OFF = -1
 }
 
+/** Per-TV/per-console full-page phone controls, included in the existing retro settings backup. */
+data class CompanionTouchProfile(
+    val mode: String = "pad",
+    val input: String = "pad",
+    val region: String = "full",
+    val motion: Boolean = false,
+) {
+    fun valid(): Boolean = mode in setOf("pad", "analog", "hybrid", "dual") &&
+        input in setOf("pad", "touch", "mouse", "gun") &&
+        region in setOf("full", "upper", "lower", "left", "right")
+}
+
+/** A stable key scoped to the authenticated target TV and the emulated console system. */
+fun companionTouchProfileKey(tvFingerprint: String?, systemId: String?): String =
+    if (tvFingerprint.isNullOrBlank() || systemId.isNullOrBlank()) ""
+    else "$tvFingerprint|$systemId"
+
 data class RetroInputConfig(
     /** Start + Select together open the game menu on controllers. */
     val startSelectMenu: Boolean = true,
@@ -191,10 +299,66 @@ data class RetroInputConfig(
     val dpadAsStick: Boolean = false,
     /** Only changed kinds; the rest come from [defaultRetroProfile]. */
     val profiles: Map<RetroInputKind, RetroInputProfile> = emptyMap(),
+    /** Sparse system/core/game overrides, keyed by stable scope identity and input kind. */
+    val scopedProfiles: Map<String, RetroInputOverlay> = emptyMap(),
+    /** Optional per physical device defaults, before system/core/game overrides. */
+    val deviceProfiles: Map<String, RetroInputOverlay> = emptyMap(),
     /** Input device descriptor → player index (0-based) or [RetroPorts.OFF]; missing = automatic. */
     val ports: Map<String, Int> = emptyMap(),
+    /** Local phone UI layouts; not tied to a transient Companion socket session. */
+    val companionTouchProfiles: Map<String, CompanionTouchProfile> = emptyMap(),
 ) {
     fun profile(kind: RetroInputKind): RetroInputProfile = profiles[kind] ?: defaultRetroProfile(kind)
+
+    private fun deviceId(kind: RetroInputKind, descriptor: String): String =
+        "${kind.key}." + java.util.Base64.getUrlEncoder().withoutPadding()
+            .encodeToString(descriptor.toByteArray(Charsets.UTF_8))
+
+    fun deviceProfile(kind: RetroInputKind, descriptor: String): RetroInputProfile =
+        deviceProfiles[deviceId(kind, descriptor)]?.resolve(profile(kind)) ?: profile(kind)
+
+    fun profile(kind: RetroInputKind, context: RetroInputProfileContext,
+                through: RetroInputLayerScope? = null, deviceDescriptor: String? = null): RetroInputProfile {
+        var current = deviceDescriptor?.let { deviceProfile(kind, it) } ?: profile(kind)
+        for (scope in RetroInputLayerScope.entries) {
+            if (through != null && scope.ordinal > through.ordinal) break
+            context.layerId(scope, kind)?.let { key ->
+                scopedProfiles[key]?.let { current = it.resolve(current) }
+            }
+        }
+        return current
+    }
+
+    /** Physical controller layout, inherited by games unless a system/core/game takes precedence. */
+    fun assignDevice(kind: RetroInputKind, descriptor: String,
+                     target: RetroInputTarget, keyCode: Int): RetroInputConfig {
+        if (descriptor.isBlank()) return this
+        val key = deviceId(kind, descriptor)
+        val overlay = RetroInputOverlay.difference(profile(kind),
+            deviceProfile(kind, descriptor).assign(target, keyCode))
+        return copy(deviceProfiles = if (overlay.isEmpty()) deviceProfiles - key
+            else deviceProfiles + (key to overlay))
+    }
+
+    fun resetDevice(kind: RetroInputKind, descriptor: String): RetroInputConfig =
+        copy(deviceProfiles = deviceProfiles - deviceId(kind, descriptor))
+
+    /** Change a single mapping in one scope without freezing unrelated inherited mappings. */
+    fun assign(
+        kind: RetroInputKind, context: RetroInputProfileContext,
+        scope: RetroInputLayerScope, target: RetroInputTarget, keyCode: Int,
+    ): RetroInputConfig {
+        val key = context.layerId(scope, kind) ?: return this
+        val parent = if (scope == RetroInputLayerScope.SYSTEM) profile(kind)
+            else profile(kind, context, RetroInputLayerScope.entries[scope.ordinal - 1])
+        val updated = profile(kind, context, scope).assign(target, keyCode)
+        val overlay = RetroInputOverlay.difference(parent, updated)
+        return copy(scopedProfiles = if (overlay.isEmpty()) scopedProfiles - key
+            else scopedProfiles + (key to overlay))
+    }
+
+    fun resetScope(kind: RetroInputKind, context: RetroInputProfileContext, scope: RetroInputLayerScope): RetroInputConfig =
+        context.layerId(scope, kind)?.let { copy(scopedProfiles = scopedProfiles - it) } ?: this
 
     fun withProfile(kind: RetroInputKind, profile: RetroInputProfile): RetroInputConfig =
         copy(profiles = if (profile == defaultRetroProfile(kind)) profiles - kind else profiles + (kind to profile))
@@ -202,9 +366,29 @@ data class RetroInputConfig(
     fun withPort(descriptor: String, port: Int): RetroInputConfig =
         copy(ports = if (port == RetroPorts.AUTO) ports - descriptor else ports + (descriptor to port))
 
+    fun withCompanionTouchProfile(key: String, profile: CompanionTouchProfile): RetroInputConfig =
+        if (key.isBlank() || key.length > 160 || !profile.valid()) this
+        else copy(companionTouchProfiles = companionTouchProfiles + (key to profile))
+
     fun encode(): Map<String, String> = buildMap {
         put("start_select_menu", if (startSelectMenu) "1" else "0")
         put("dpad_stick", if (dpadAsStick) "1" else "0")
+        deviceProfiles.forEach { (identity, overlay) ->
+            overlay.buttons.forEach { (button, codes) ->
+                put("paddev.$identity.button.${button.key}", codes.joinToString(","))
+            }
+            overlay.menu.forEach { (trigger, codes) ->
+                put("paddev.$identity.menu.${trigger.key}", codes.joinToString(","))
+            }
+        }
+        scopedProfiles.forEach { (identity, overlay) ->
+            overlay.buttons.forEach { (button, codes) ->
+                put("preset.$identity.button.${button.key}", codes.joinToString(","))
+            }
+            overlay.menu.forEach { (trigger, codes) ->
+                put("preset.$identity.menu.${trigger.key}", codes.joinToString(","))
+            }
+        }
         profiles.forEach { (kind, profile) ->
             RetroPadButton.entries.forEach { button ->
                 put("keys.${kind.key}.${button.key}", profile.buttons[button].orEmpty().joinToString(","))
@@ -214,6 +398,14 @@ data class RetroInputConfig(
             }
         }
         ports.forEach { (descriptor, port) -> put("port.$descriptor", if (port == RetroPorts.OFF) "off" else "${port + 1}") }
+        companionTouchProfiles.forEach { (identity, profile) ->
+            if (identity.isNotBlank() && identity.length <= 160 && profile.valid()) {
+                val token = java.util.Base64.getUrlEncoder().withoutPadding()
+                    .encodeToString(identity.toByteArray(Charsets.UTF_8))
+                put("companionui.$token", listOf(profile.mode, profile.input, profile.region,
+                    if (profile.motion) "1" else "0").joinToString(","))
+            }
+        }
     }
 
     companion object {
@@ -241,7 +433,58 @@ data class RetroInputConfig(
                 } ?: return@mapNotNull null
                 key.removePrefix("port.").takeIf(String::isNotEmpty)?.let { it to port }
             }.toMap()
+            val layers = mutableMapOf<String, RetroInputOverlay>()
+            stored.filterKeys { it.startsWith("preset.") }.forEach { (key, value) ->
+                val identityAndTarget = key.removePrefix("preset.").split('.')
+                if (identityAndTarget.size != 5 || identityAndTarget[0] !in setOf("system", "core", "game")) return@forEach
+                val kind = RetroInputKind.fromKey(identityAndTarget[2]) ?: return@forEach
+                val id = "${identityAndTarget[0]}.${identityAndTarget[1]}.${kind.key}"
+                val old = layers[id] ?: RetroInputOverlay()
+                val decodedCodes = codes(value) ?: return@forEach
+                when (identityAndTarget[3]) {
+                    "button" -> RetroPadButton.fromKey(identityAndTarget[4])?.let {
+                        layers[id] = old.copy(buttons = old.buttons + (it to decodedCodes))
+                    }
+                    "menu" -> RetroMenuTrigger.entries.firstOrNull { it.key == identityAndTarget[4] }?.let {
+                        layers[id] = old.copy(menu = old.menu + (it to decodedCodes))
+                    }
+                }
+            }
+            val deviceLayers = mutableMapOf<String, RetroInputOverlay>()
+            stored.filterKeys { it.startsWith("paddev.") }.forEach { (key, value) ->
+                val parts = key.removePrefix("paddev.").split('.')
+                if (parts.size != 4 || RetroInputKind.fromKey(parts[0]) == null) return@forEach
+                val valid = runCatching {
+                    val decoded = java.util.Base64.getUrlDecoder().decode(parts[1])
+                    decoded.isNotEmpty() && decoded.size <= 1024
+                }.getOrDefault(false)
+                if (!valid) return@forEach
+                val identity = "${parts[0]}.${parts[1]}"
+                val old = deviceLayers[identity] ?: RetroInputOverlay()
+                val decoded = codes(value) ?: return@forEach
+                when (parts[2]) {
+                    "button" -> RetroPadButton.fromKey(parts[3])?.let {
+                        deviceLayers[identity] = old.copy(buttons = old.buttons + (it to decoded))
+                    }
+                    "menu" -> RetroMenuTrigger.entries.firstOrNull { it.key == parts[3] }?.let {
+                        deviceLayers[identity] = old.copy(menu = old.menu + (it to decoded))
+                    }
+                }
+            }
+            val phoneLayouts = stored.filterKeys { it.startsWith("companionui.") }.mapNotNull { (key, value) ->
+                val identity = runCatching {
+                    val bytes = java.util.Base64.getUrlDecoder().decode(key.removePrefix("companionui."))
+                    if (bytes.isEmpty() || bytes.size > 160) null else bytes.toString(Charsets.UTF_8)
+                }.getOrNull()?.takeIf { it.isNotBlank() && it.length <= 160 } ?: return@mapNotNull null
+                val fields = value.split(',')
+                if (fields.size != 4 || fields[3] !in listOf("0", "1")) return@mapNotNull null
+                val profile = CompanionTouchProfile(fields[0], fields[1], fields[2], fields[3] == "1")
+                if (!profile.valid()) null else identity to profile
+            }.toMap()
             return RetroInputConfig(
+                companionTouchProfiles = phoneLayouts,
+                scopedProfiles = layers,
+                deviceProfiles = deviceLayers,
                 startSelectMenu = stored["start_select_menu"] != "0",
                 dpadAsStick = stored["dpad_stick"] == "1",
                 profiles = profiles,
@@ -253,6 +496,8 @@ data class RetroInputConfig(
 
 /** App-wide game input settings; MainActivity attaches storage. Main thread only. */
 object RetroInputSettings {
+    /** Last active game is session-only; paths and game identity never become synced settings. */
+    val lastPlayed = mutableStateOf<RetroInputProfileContext?>(null)
     private val mutable = mutableStateOf(RetroInputConfig())
     val config: RetroInputConfig get() = mutable.value
     private var persist: (Map<String, String>) -> Unit = {}

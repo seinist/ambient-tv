@@ -1,0 +1,76 @@
+diff --git a/src/main/cpp/vulkan/vulkanbackend.cpp b/src/main/cpp/vulkan/vulkanbackend.cpp
+--- a/src/main/cpp/vulkan/vulkanbackend.cpp
++++ b/src/main/cpp/vulkan/vulkanbackend.cpp
+@@ -18,12 +18,14 @@
+ #include "vulkanbackend.h"
+ 
+ #include <dlfcn.h>
+ #include <media/NdkImageReader.h>
+-#include <algorithm>
+-#include <cstring>
+-
+-#include "../log.h"
++#include <algorithm>
++#include <cstring>
++#include <cmath>
++
++#include "../log.h"
++#include "../environment.h"
+ 
+ #ifdef LIBRETRODROID_ADRENOTOOLS
+ #include <adrenotools/driver.h>
+ #endif
+@@ -1117,11 +1119,17 @@
+     if (!isStarted() || frameImage == VK_NULL_HANDLE || pendingImage.image == VK_NULL_HANDLE) return false;
+ 
+     waitForFrame();
+ 
+-    uint32_t sdrIndex = 0;
+-    bool useDirect = false;
+-    if (nativeSdrWindow != nullptr && !nativeSdrDisabled && ensureNativeSdrSwapchain()) {
++    uint32_t sdrIndex = 0;
++    bool useDirect = false;
++    // A raw VkImage blit cannot rotate 90/180/270 degrees. Do not hide the
++    // correctly rotated GLES image behind an incorrectly oriented Surface.
++    if (nativeSdrWindow != nullptr && !nativeSdrDisabled &&
++        std::fabs(Environment::getInstance().getScreenRotation()) > 0.0001f) {
++        disableNativeSdrSwapchain("core screen rotation requires GLES renderer");
++    }
++    if (nativeSdrWindow != nullptr && !nativeSdrDisabled && ensureNativeSdrSwapchain()) {
+         // Source format comes from retro_vulkan_image::create_info.format.
+         // Unknown, sRGB-encoded and HDR/FP16 sources cannot be blindly blitted.
+         const bool supported = nativeOutputTransfer == 0u
+             ? (pendingImage.format == VK_FORMAT_R8G8B8A8_UNORM ||
+@@ -1212,14 +1220,26 @@
+         VkClearColorValue black {};
+         black.float32[3] = 1.0f;
+         vk.cmdClearColorImage(commandBuffer, target, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                               &black, 1, &targetRange);
+-        const double scale = std::min(
+-            static_cast<double>(nativeSdrExtent.width) / std::max(1u, copyWidth),
+-            static_cast<double>(nativeSdrExtent.height) / std::max(1u, copyHeight));
+-        const int32_t dstW = std::max(1, static_cast<int32_t>(copyWidth * scale));
+-        const int32_t dstH = std::max(1, static_cast<int32_t>(copyHeight * scale));
+-        const int32_t left = (static_cast<int32_t>(nativeSdrExtent.width) - dstW) / 2;
++        // Vulkan core image dimensions are not always square-pixel display
++        // dimensions (e.g. consoles with nonsquare pixels). Use the libretro
++        // core-reported aspect, not blindly the VkImage width/height ratio.
++        float coreAspect = Environment::getInstance().retrieveGameSpecificAspectRatio();
++        if (!std::isfinite(coreAspect) || coreAspect < 0.1f || coreAspect > 10.0f)
++            coreAspect = static_cast<float>(std::max(1u, copyWidth)) /
++                         static_cast<float>(std::max(1u, copyHeight));
++        const double displayWidth = std::min(
++            static_cast<double>(nativeSdrExtent.width),
++            static_cast<double>(nativeSdrExtent.height) * coreAspect);
++        const double displayHeight = std::min(
++            static_cast<double>(nativeSdrExtent.height),
++            static_cast<double>(nativeSdrExtent.width) / coreAspect);
++        const int32_t dstW = std::clamp(static_cast<int32_t>(std::lround(displayWidth)),
++                                        1, static_cast<int32_t>(nativeSdrExtent.width));
++        const int32_t dstH = std::clamp(static_cast<int32_t>(std::lround(displayHeight)),
++                                        1, static_cast<int32_t>(nativeSdrExtent.height));
++        const int32_t left = (static_cast<int32_t>(nativeSdrExtent.width) - dstW) / 2;
+         const int32_t top = (static_cast<int32_t>(nativeSdrExtent.height) - dstH) / 2;
+         VkImageBlit nativeBlit = blit;
+         nativeBlit.dstOffsets[0] = { left, top, 0 };
+         nativeBlit.dstOffsets[1] = { left + dstW, top + dstH, 1 };

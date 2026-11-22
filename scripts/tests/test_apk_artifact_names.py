@@ -102,6 +102,7 @@ prepare_nnedi3_quality_ladder() { :; }
 ensure_spotify() { :; }
 ensure_youtube_engine() { :; }
 ensure_libretrodroid() { :; }
+ensure_librashader_native() { :; }
 ensure_mpv() { :; }
 ensure_vlc_vulkan() { :; }
 ensure_projectm() { :; }

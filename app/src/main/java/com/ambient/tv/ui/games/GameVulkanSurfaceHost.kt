@@ -1,0 +1,300 @@
+package com.ambient.tv.ui.games
+
+import android.content.Context
+import android.os.Handler
+import android.os.Looper
+import android.view.Gravity
+import android.view.Surface
+import android.view.SurfaceHolder
+import android.view.SurfaceView
+import android.widget.FrameLayout
+import com.swordfish.libretrodroid.GLRetroView
+import com.swordfish.libretrodroid.LibretroDroid
+
+/**
+ * A separate real Android Vulkan WSI Surface, initially only 1x1 in the UI.
+ *
+ * The GLSurfaceView keeps ownership of emulation, touch, input and the GLES
+ * fallback. Vulkan can be shown fullscreen ONLY after the tiny diagnostic has
+ * actually presented SDR frames and the user explicitly requests fullscreen.
+ * The media-overlay layer stays below the window's Compose OSD, never on top
+ * of the entire window. Its Z order is chosen before window attachment.
+ *
+ * All native Vulkan calls are serialized through GLRetroView.queueEvent.
+ */
+internal class GameVulkanSurfaceHost(
+    context: Context,
+    private val retro: GLRetroView,
+    private val outputTransfer: GameVulkanTransferMode,
+    private val onFormats: (GameVulkanSurfaceFormats) -> Unit,
+    private val onNativeStatus: (GameVulkanSdrStatus) -> Unit,
+    private val onFullscreenLost: () -> Unit,
+    private val onDiagnosticLost: () -> Unit,
+) : FrameLayout(context) {
+    private val main = Handler(Looper.getMainLooper())
+    @Volatile private var activeSurface: Surface? = null
+    @Volatile private var generation = 0L
+    @Volatile private var disposed = false
+    @Volatile private var nativeSdrDiagnostic = false
+    @Volatile private var nativeIntegerScaling = false
+    @Volatile private var nativeShaderPreset = ""
+    // Never treat a manual PQ/HLG selection as core source evidence.
+    @Volatile private var confirmedCoreTransfer: GameVulkanTransferMode? = null
+
+    private var canProbe = false
+    @Volatile private var displayHdr = GameHdrDisplayCapabilities()
+    private var fullscreenRequested = false
+    private var fullscreenVisible = false
+    private var fullscreenAttempt = 0L
+    private var lastStatus = GameVulkanSdrStatus()
+
+    private val probeSurface = SurfaceView(context).apply {
+        isFocusable = false
+        isFocusableInTouchMode = false
+        isClickable = false
+        // Above GLRetroView's Surface, but below the Activity/Compose window.
+        // setZOrderOnTop(true) would hide OSD, so never use it here.
+        setZOrderMediaOverlay(true)
+        holder.setFixedSize(16, 16)
+    }
+
+    init {
+        // The regular view hierarchy keeps touch with the fullscreen GLRetroView.
+        addView(probeSurface, LayoutParams(1, 1, Gravity.BOTTOM or Gravity.END))
+        addView(retro, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
+        probeSurface.holder.addCallback(object : SurfaceHolder.Callback {
+            override fun surfaceCreated(holder: SurfaceHolder) {
+                activeSurface = holder.surface
+                generation++
+                tryProbe()
+            }
+
+            override fun surfaceChanged(holder: SurfaceHolder, format: Int, width: Int, height: Int) {
+                activeSurface = holder.surface
+                generation++
+                tryProbe()
+            }
+
+            override fun surfaceDestroyed(holder: SurfaceHolder) {
+                activeSurface = null
+                generation++
+                detachNativeSdrSurface()
+                onFormats(GameVulkanSurfaceFormats())
+                onNativeStatus(GameVulkanSdrStatus())
+                // A view resize itself can destroy/recreate Surface. Only an
+                // explicit native failure or a watchdog timeout demotes fullscreen.
+            }
+        })
+    }
+
+    fun coreReady() {
+        canProbe = true
+        tryProbe()
+    }
+
+    fun updateDisplayHdr(info: GameHdrDisplayCapabilities) {
+        if (disposed || displayHdr == info) return
+        displayHdr = info
+        val hdrStillSupported = when (outputTransfer) {
+            GameVulkanTransferMode.SDR -> true
+            GameVulkanTransferMode.PQ_BT2020 -> info.hdr10
+            GameVulkanTransferMode.HLG_BT2020 -> info.hlg
+        }
+        if (!hdrStillSupported && nativeSdrDiagnostic) {
+            setNativeSdrDiagnostic(false)
+            onFullscreenLost()
+            onDiagnosticLost()
+        }
+        tryProbe() // Re-query capabilities from the current Android display mode.
+    }
+
+    /** A known bundled Slang preset, or empty for the fast raw-Pixel output. */
+    fun updateShaderPreset(path: String?) {
+        val selected = path.orEmpty()
+        if (disposed || nativeShaderPreset == selected) return
+        nativeShaderPreset = selected
+        // Disarm the old frame before changing a live WSI filter; a resized
+        // swapchain never inherits a "PRESENTING" badge from its previous filter.
+        if (fullscreenVisible) {
+            fullscreenRequested = false
+            demoteToProbe()
+            onFullscreenLost()
+        }
+        lastStatus = GameVulkanSdrStatus(1)
+        onNativeStatus(lastStatus)
+        if (canProbe) {
+            // The GL thread is the sole owner of Vulkan devices, swapchains and
+            // librashader history. tryProbe serializes setPreset before setSurface.
+            tryProbe()
+        }
+    }
+
+    /** Invalid/changed source evidence tears down an active experimental HDR surface. */
+    /** Follow the ordinary picture setting without recreating the Vulkan window. */
+    fun updateIntegerScaling(enabled: Boolean) {
+        if (disposed || nativeIntegerScaling == enabled) return
+        nativeIntegerScaling = enabled
+        if (canProbe) runCatching {
+            retro.queueEvent {
+                if (!disposed) LibretroDroid.setNativeVulkanIntegerScaling(nativeIntegerScaling)
+            }
+        }
+    }
+
+    fun updateSourceContract(transfer: GameVulkanTransferMode?) {
+        if (disposed || confirmedCoreTransfer == transfer) return
+        confirmedCoreTransfer = transfer
+        if (nativeSdrDiagnostic && outputTransfer != GameVulkanTransferMode.SDR &&
+            confirmedCoreTransfer != outputTransfer) {
+            setNativeSdrDiagnostic(false)
+            onDiagnosticLost()
+        } else if (nativeSdrDiagnostic) {
+            tryProbe()
+        }
+    }
+
+    fun setNativeSdrDiagnostic(enabled: Boolean) {
+        if (nativeSdrDiagnostic == enabled || disposed) return
+        if (enabled && outputTransfer != GameVulkanTransferMode.SDR &&
+            confirmedCoreTransfer != outputTransfer) {
+            onDiagnosticLost()
+            return
+        }
+        nativeSdrDiagnostic = enabled
+        // Invalidate any queued GL probe/attachment from the previous mode.
+        generation++
+        if (!enabled) {
+            setFullscreenRequested(false)
+            detachNativeSdrSurface()
+            onNativeStatus(GameVulkanSdrStatus())
+        } else {
+            tryProbe()
+        }
+    }
+
+    /** Must be requested on the UI thread; never auto-promote based on display HDR support. */
+    fun setFullscreenRequested(enabled: Boolean) {
+        if (disposed) return
+        if (!enabled) {
+            fullscreenRequested = false
+            demoteToProbe()
+            return
+        }
+        if (!nativeSdrDiagnostic || !canProbe) return
+        fullscreenRequested = true
+        if (GameVulkanTransferGate.frameConfirmed(outputTransfer, lastStatus)) promoteToFullscreen()
+    }
+
+    fun observeNativeStatus(status: GameVulkanSdrStatus) {
+        lastStatus = status
+        if (fullscreenVisible && GameVulkanFullscreenPolicy.mustFallback(status)) {
+            fullscreenRequested = false
+            demoteToProbe()
+            onFullscreenLost()
+        } else if (fullscreenRequested && !fullscreenVisible &&
+            GameVulkanFullscreenPolicy.shouldShowFullscreen(true, status, outputTransfer)) {
+            promoteToFullscreen()
+        }
+    }
+
+    private fun promoteToFullscreen() {
+        if (fullscreenVisible || disposed || !nativeSdrDiagnostic ||
+            !GameVulkanTransferGate.frameConfirmed(outputTransfer, lastStatus)) return
+        fullscreenVisible = true
+        val attempt = ++fullscreenAttempt
+        // Trigger a real Surface resize and Vulkan swapchain recreation.
+        // Compose overlays remain visible; GLRetroView still receives input.
+        probeSurface.holder.setSizeFromLayout()
+        probeSurface.layoutParams = LayoutParams(
+            LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT)
+        lastStatus = GameVulkanSdrStatus(1)
+        // Do not carry a "PRESENTING" badge from the old 16px swapchain into
+        // the newly resized fullscreen surface before its first native frame.
+        onNativeStatus(lastStatus)
+        main.postDelayed({
+            if (!disposed && fullscreenVisible && fullscreenAttempt == attempt &&
+                lastStatus.phase != GameVulkanSdrStatus.Phase.PRESENTING) {
+                fullscreenRequested = false
+                demoteToProbe()
+                onFullscreenLost()
+            }
+        }, 5000L)
+    }
+
+    private fun demoteToProbe() {
+        if (!fullscreenVisible) return
+        fullscreenVisible = false
+        fullscreenAttempt++
+        probeSurface.holder.setFixedSize(16, 16)
+        probeSurface.layoutParams = LayoutParams(1, 1, Gravity.BOTTOM or Gravity.END)
+    }
+
+    private fun detachNativeSdrSurface() {
+        if (!canProbe) return
+        runCatching { retro.queueEvent { LibretroDroid.setNativeSdrVulkanSurface(null) } }
+    }
+
+    private fun tryProbe() {
+        if (!canProbe || disposed) return
+        val surface = activeSurface?.takeIf { it.isValid } ?: return
+        val token = generation
+        runCatching {
+            retro.queueEvent {
+                // Do not attach an obsolete surface if destroy/recreation occurred
+                // while this task was queued on the GL thread.
+                if (disposed || token != generation || activeSurface !== surface || !surface.isValid)
+                    return@queueEvent
+                val bits = runCatching {
+                    val caps = displayHdr
+                    val eotfs = if (caps.hdr10 || caps.hlg || caps.hdr10Plus || caps.dolbyVision) {
+                        1 or (if (caps.hdr10) 2 else 0) or (if (caps.hlg) 4 else 0)
+                    } else 0
+                    LibretroDroid.setHdrDisplayInfo(
+                        caps.peakNits ?: 0f,
+                        caps.averageNits ?: 0f,
+                        caps.minimumNits ?: 0f,
+                        eotfs,
+                    )
+                    LibretroDroid.probeVulkanSurfaceFormats(surface)
+                }.getOrDefault(0)
+                if (nativeSdrDiagnostic && surface.isValid && token == generation) {
+                    runCatching {
+                        // Set transfer before creating a swapchain: the native
+                        // backend itself also checks VkFormat and WSI colorspace.
+                        // Native hard gate, in addition to the Compose UI gate. The
+                        // backend must reject HDR without a matching core source.
+                        LibretroDroid.setNativeVulkanCoreSourceTransfer(
+                            confirmedCoreTransfer?.nativeCode ?: 0,
+                        )
+                        LibretroDroid.setNativeVulkanIntegerScaling(nativeIntegerScaling)
+                        LibretroDroid.setNativeVulkanOutputTransfer(outputTransfer.nativeCode)
+                        // Set the shader before WSI attachment so swapchain image usage
+                        // includes a color attachment. Empty path keeps native raw Pixel.
+                        LibretroDroid.setNativeVulkanShaderPreset(nativeShaderPreset)
+                        LibretroDroid.setNativeSdrVulkanSurface(surface)
+                    }
+                }
+                val status = GameVulkanSdrStatus(runCatching {
+                    LibretroDroid.getNativeSdrVulkanStatus()
+                }.getOrDefault(0))
+                main.post {
+                    if (!disposed && token == generation && activeSurface === surface) {
+                        onFormats(GameVulkanSurfaceFormats(bits))
+                        onNativeStatus(status)
+                    }
+                }
+            }
+        }.onFailure { onFormats(GameVulkanSurfaceFormats()) }
+    }
+
+    fun dispose() {
+        if (disposed) return
+        fullscreenRequested = false
+        demoteToProbe()
+        if (nativeSdrDiagnostic) detachNativeSdrSurface()
+        disposed = true
+        activeSurface = null
+        generation++
+        fullscreenAttempt++
+    }
+}

@@ -93,6 +93,28 @@ class GameExtrasTest {
         assertEquals("core2", GameNetplay.identity(a, "core2", "A").core)
     }
 
+    @Test fun netplayHashChecksMiddleOfLargeRomAndCoreConfiguration() {
+        val game = folder.newFile("large-disc.chd")
+        java.io.RandomAccessFile(game, "rw").use { it.setLength(24L * 1024 * 1024) }
+        val before = GameNetplay.identity(game, "build-1", "Disc").rom
+        // Older range-only hashing missed bytes after 16 MiB but before the last 1 MiB.
+        java.io.RandomAccessFile(game, "rw").use {
+            it.seek(18L * 1024 * 1024)
+            it.writeByte(0x5a)
+        }
+        val changed = GameNetplay.identity(game, "build-1", "Disc").rom
+        assertNotEquals(before, changed)
+        assertEquals(64, changed.length) // SHA-256, not SHA-1
+
+        val bios = folder.newFile("bios.bin").apply { writeBytes(byteArrayOf(1, 2, 3)) }
+        val a = GameNetplay.configurationStamp("build-1", false, mapOf("region" to "pal"), listOf(bios))
+        assertEquals(a, GameNetplay.configurationStamp("build-1", false, mapOf("region" to "pal"), listOf(bios)))
+        assertNotEquals(a, GameNetplay.configurationStamp("build-1", true, mapOf("region" to "pal"), listOf(bios)))
+        assertNotEquals(a, GameNetplay.configurationStamp("build-1", false, mapOf("region" to "ntsc"), listOf(bios)))
+        bios.writeBytes(byteArrayOf(1, 2, 4))
+        assertNotEquals(a, GameNetplay.configurationStamp("build-1", false, mapOf("region" to "pal"), listOf(bios)))
+    }
+
     @Test fun settingsForPlayOptions() {
         val psx = GameSystems.byId("psx")!!.core
         var state = GameSettingsState()

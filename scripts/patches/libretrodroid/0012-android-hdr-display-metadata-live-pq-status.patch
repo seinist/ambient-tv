@@ -1,0 +1,134 @@
+diff --git a/src/main/cpp/environment.cpp b/src/main/cpp/environment.cpp
+--- a/src/main/cpp/environment.cpp
++++ b/src/main/cpp/environment.cpp
+@@ -44,6 +44,15 @@
+     savesDirectory = requiredSavesDirectory;
+ }
+ 
++void Environment::setHdrDisplayInfo(float peak, float average, float minimum, unsigned eotfs) {
++    // Caller uses the same GL/emulation thread as core environment callbacks.
++    // Reject nonsensical Android values; unknown capability stays zero.
++    hdrDisplayPeakNits = std::isfinite(peak) && peak > 0.0f ? peak : 0.0f;
++    hdrDisplayAverageNits = std::isfinite(average) && average > 0.0f ? average : 0.0f;
++    hdrDisplayMinNits = std::isfinite(minimum) && minimum >= 0.0f ? minimum : 0.0f;
++    hdrDisplayEotfs = eotfs & 7u;
++}
++
+ void Environment::deinitialize() {
+     callback_get_current_framebuffer = nullptr;
+     // Ambient TV: options belong to one core; another core must not inherit them.
+@@ -59,6 +68,10 @@
+     savesDirectory = std::string();
+     systemDirectory = std::string();
+     language = RETRO_LANGUAGE_ENGLISH;
++    hdrDisplayPeakNits = 0.0f;
++    hdrDisplayAverageNits = 0.0f;
++    hdrDisplayMinNits = 0.0f;
++    hdrDisplayEotfs = 0u;
+ 
+     pixelFormat = RETRO_PIXEL_FORMAT_RGB565;
+     useHWAcceleration = false;
+@@ -487,8 +500,20 @@
+             retro_hdr_metadata state {};
+             state.version = 1;
+             state.size = sizeof(state);
+-            // The existing GLES/video path cannot handle HDR10 or scRGB input
+-            // even when Vulkan->GLES frame transport happens to support FP16.
++            // The software/GLES path cannot accept HDR10/scRGB pixel formats.
++            // Report native PQ only after the *real* swapchain actually
++            // presented 10-bit PQ frames, never based on a requested setting.
++            const uint32_t status = libretrodroid::VulkanBackend::getInstance().getNativeSdrStatus();
++            if ((status & 23u) == 23u && (status & 8u) == 0u) {
++                state.output_mode = 1u; // PQ / BT.2020
++                state.color_primaries = 9u; // ITU-T H.273 BT.2020
++                state.transfer_function = 16u; // ITU-T H.273 SMPTE ST.2084
++                state.paper_white_nits = 203.0f; // frontend SDR reference white, not mastering max
++                state.max_nits = hdrDisplayPeakNits;
++                state.min_nits = hdrDisplayMinNits;
++                state.passthrough = true; // source already encoded; no extra PQ transform
++                // max_cll/max_fall remain zero: core content metadata unknown.
++            }
+             std::memcpy(query, &state, sizeof(state));
+             return true;
+         }
+@@ -502,9 +527,24 @@
+             state.size = sizeof(state);
+             state.hdr.version = 1;
+             state.hdr.size = sizeof(state.hdr);
+-            // No EDID, peak luminance, output EOTF or active HDR signal is
+-            // asserted until the real output renderer can report it accurately.
+-            // A zero supported_eotf_mask means "unknown", not SDR-only.
++            state.caps.peak_nits = hdrDisplayPeakNits;
++            state.caps.max_frame_avg_nits = hdrDisplayAverageNits;
++            state.caps.min_nits = hdrDisplayMinNits;
++            state.caps.supported_eotf_mask = hdrDisplayEotfs;
++            state.caps.capability_source = hdrDisplayEotfs != 0u ? 3u : 0u; // Android platform API
++            const uint32_t status = libretrodroid::VulkanBackend::getInstance().getNativeSdrStatus();
++            if ((status & 23u) == 23u && (status & 8u) == 0u) {
++                state.hdr.output_mode = 1u;
++                state.hdr.color_primaries = 9u;
++                state.hdr.transfer_function = 16u;
++                state.hdr.paper_white_nits = 203.0f;
++                state.hdr.max_nits = hdrDisplayPeakNits;
++                state.hdr.min_nits = hdrDisplayMinNits;
++                state.hdr.passthrough = true;
++            }
++            // A v1 output_mode has no HLG enum; do not falsely call HLG PQ.
++            // The platform EOTF mask can truthfully report HLG capability.
++            // Content-authored maxCLL/FALL and mastering primaries stay unknown.
+             std::memcpy(query, &state, sizeof(state));
+             return true;
+         }
+diff --git a/src/main/cpp/environment.h b/src/main/cpp/environment.h
+--- a/src/main/cpp/environment.h
++++ b/src/main/cpp/environment.h
+@@ -73,6 +73,9 @@
+ 
+     void setEnableMicrophone(bool value);
+ 
++    /** Platform display capability only, not source mastering metadata. */
++    void setHdrDisplayInfo(float peakNits, float averageNits, float minNits, unsigned eotfMask);
++
+ private:
+     Environment() {}
+ 
+@@ -175,6 +178,10 @@
+     retro_hw_get_current_framebuffer_t callback_get_current_framebuffer = nullptr;
+     unsigned language = RETRO_LANGUAGE_ENGLISH;
+     bool enableMicrophone = false;
++    float hdrDisplayPeakNits = 0.0f;
++    float hdrDisplayAverageNits = 0.0f;
++    float hdrDisplayMinNits = 0.0f;
++    unsigned hdrDisplayEotfs = 0; // 1 SDR, 2 PQ, 4 HLG; zero=unknown
+ 
+     int pixelFormat = RETRO_PIXEL_FORMAT_RGB565;
+     bool useHWAcceleration = false;
+diff --git a/src/main/cpp/libretrodroidjni.cpp b/src/main/cpp/libretrodroidjni.cpp
+--- a/src/main/cpp/libretrodroidjni.cpp
++++ b/src/main/cpp/libretrodroidjni.cpp
+@@ -833,6 +833,13 @@
+     VulkanBackend::getInstance().setNativeOutputTransfer(static_cast<uint32_t>(transfer));
+ }
+ 
++JNIEXPORT void JNICALL Java_com_swordfish_libretrodroid_LibretroDroid_setHdrDisplayInfo(
++    JNIEnv* env, jclass obj, jfloat peak, jfloat average, jfloat minimum, jint eotfMask
++) {
++    Environment::getInstance().setHdrDisplayInfo(
++        peak, average, minimum, static_cast<unsigned>(eotfMask));
++}
++
+ JNIEXPORT jint JNICALL Java_com_swordfish_libretrodroid_LibretroDroid_getNativeSdrVulkanStatus(
+     JNIEnv* env, jclass obj
+ ) {
+diff --git a/src/main/java/com/swordfish/libretrodroid/LibretroDroid.java b/src/main/java/com/swordfish/libretrodroid/LibretroDroid.java
+--- a/src/main/java/com/swordfish/libretrodroid/LibretroDroid.java
++++ b/src/main/java/com/swordfish/libretrodroid/LibretroDroid.java
+@@ -143,6 +143,8 @@
+     public static native void setNativeSdrVulkanSurface(android.view.Surface surface);
+     /** Explicit native transfer: 0 SDR, 1 PQ/BT.2020, 2 HLG/BT.2020; GL thread only. */
+     public static native void setNativeVulkanOutputTransfer(int transfer);
++    /** Android panel capabilities (not authored content metadata); GL thread only. */
++    public static native void setHdrDisplayInfo(float peak, float average, float minimum, int eotfMask);
+     /** Native status: bit 0 surface requested, 1 swapchain built, 2 presented, 3 fallback. */
+     public static native int getNativeSdrVulkanStatus();
+     public static native void setFrameSpeed(int speed);

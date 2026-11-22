@@ -11,8 +11,9 @@ object Destinations {
     const val FILES = "files_browse"
     const val FILE_SOURCE = "files_source/{sourceId}"
     const val PHOTO_VIEWER = "photo_viewer"
-    const val GAME_PLAYER = "game_player/{fileId}"
-    fun gamePlayer(fileId: String) = "game_player/${Uri.encode(fileId)}"
+    const val GAME_PLAYER = "game_player/{fileId}?system={system}"
+    fun gamePlayer(fileId: String, systemId: String? = null) =
+        "game_player/${Uri.encode(fileId)}" + systemId?.let { "?system=${Uri.encode(it)}" }.orEmpty()
     const val FILE_FAVORITES = "files_favorites"
     const val FILE_RECENT = "files_recent"
     const val FILE_CONTINUE = "files_continue"
@@ -43,6 +44,11 @@ object Destinations {
     fun tmdbTrailers(mediaType: String, tmdbId: Int) = "trailers/tmdb/${Uri.encode(mediaType)}/$tmdbId"
     const val YOUTUBE_FEED = "youtube_feed/{feedKey}"
     const val SPOTIFY = "spotify"
+    const val GAME_LIBRARY = "game_library"
+    /** Settings entry works while the normal Games sidebar is still hidden. */
+    const val GAME_LIBRARY_SETUP = "game_library_setup"
+    const val GAME_LIBRARY_SECTION = "game_library/{sectionKey}"
+    fun gameLibrarySection(key: String) = if (key == "all") GAME_LIBRARY else "game_library/${Uri.encode(key)}"
     const val RADIO = "radio"
     const val RADIO_SECTION = "radio_section/{sectionKey}"
     const val RADIO_PLAYER = "radio_player"

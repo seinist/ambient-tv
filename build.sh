@@ -557,6 +557,19 @@ ensure_libretrodroid() {
     "$ROOT_DIR/scripts/fetch_libretrodroid.sh" || fail "LibretroDroid could not be prepared."
 }
 
+# Build a single Vulkan-only librashader runtime per APK ABI; no D3D/Metal/OpenGL parts.
+ensure_librashader_native() {
+    if [[ "${SKIP_LIBRASHADER_NATIVE:-0}" == "1" ]]; then
+        export LIBRASHADER_NATIVE=0
+        warn "SKIP_LIBRASHADER_NATIVE=1: native Slang uses safe GLES fallback."
+        return 0
+    fi
+    local selected="$1"
+    export LIBRASHADER_NATIVE=1
+    log "Building pinned Vulkan Slang runtime for $selected"
+    LIBRASHADER_ABIS="$selected" bash "$ROOT_DIR/scripts/build_librashader_android.sh" || fail "librashader Vulkan runtime build failed"
+}
+
 ensure_youtube_engine() {
     if [[ "${SKIP_YOUTUBE_ENGINE:-0}" == "1" ]]; then
         warn "SKIP_YOUTUBE_ENGINE=1: YouTube UI stays available but engine calls will be unavailable."
@@ -983,6 +996,7 @@ build_debug() {
     prepare_nnedi3_quality_ladder
     ensure_spotify
     ensure_libretrodroid
+    ensure_librashader_native "${SUPPORTED_ABIS[*]}"
     ensure_youtube_engine
     ensure_mpv
     ensure_vlc_vulkan
@@ -1070,6 +1084,7 @@ build_release_variant() {
     ensure_monogram_native "$abi_mode"
     ensure_spotify
     ensure_libretrodroid
+    ensure_librashader_native "$abi_mode"
     ensure_youtube_engine
     ensure_mpv
     ensure_vlc_vulkan
@@ -1191,6 +1206,7 @@ build_release() {
     prepare_nnedi3_quality_ladder
     ensure_spotify
     ensure_libretrodroid
+    ensure_librashader_native "${SUPPORTED_ABIS[*]}"
     ensure_youtube_engine
     ensure_mpv
     ensure_vlc_vulkan

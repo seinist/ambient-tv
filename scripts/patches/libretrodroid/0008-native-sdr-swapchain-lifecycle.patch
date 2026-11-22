@@ -1,0 +1,338 @@
+diff --git a/src/main/cpp/vulkan/vulkanbackend.cpp b/src/main/cpp/vulkan/vulkanbackend.cpp
+--- a/src/main/cpp/vulkan/vulkanbackend.cpp
++++ b/src/main/cpp/vulkan/vulkanbackend.cpp
+@@ -347,6 +347,192 @@
+     LOGI("Vulkan presentation surface ready");
+ }
+ 
++void VulkanBackend::destroyNativeSdrSwapchain() {
++    // Surface changes and shutdown are synchronized on the GL/emulation thread.
++    if (device != VK_NULL_HANDLE && nativeSdrSwapchain != VK_NULL_HANDLE &&
++        vk.deviceWaitIdle != nullptr) {
++        vk.deviceWaitIdle(device);
++    }
++    if (device != VK_NULL_HANDLE && vk.destroySemaphore != nullptr) {
++        if (nativeSdrAcquire != VK_NULL_HANDLE) vk.destroySemaphore(device, nativeSdrAcquire, nullptr);
++        for (VkSemaphore semaphore : nativeSdrComplete) {
++            if (semaphore != VK_NULL_HANDLE) vk.destroySemaphore(device, semaphore, nullptr);
++        }
++    }
++    nativeSdrAcquire = VK_NULL_HANDLE;
++    nativeSdrComplete.clear();
++    nativeSdrImages.clear();
++    if (device != VK_NULL_HANDLE && nativeSdrSwapchain != VK_NULL_HANDLE &&
++        vk.destroySwapchain != nullptr) {
++        vk.destroySwapchain(device, nativeSdrSwapchain, nullptr);
++    }
++    nativeSdrSwapchain = VK_NULL_HANDLE;
++    if (instance != VK_NULL_HANDLE && nativeSdrSurface != VK_NULL_HANDLE && vk.destroySurface != nullptr) {
++        vk.destroySurface(instance, nativeSdrSurface, nullptr);
++    }
++    nativeSdrSurface = VK_NULL_HANDLE;
++    nativeSdrExtent = {};
++    nativeSdrFormat = VK_FORMAT_UNDEFINED;
++    nativeSdrStatus.store(nativeSdrWindow == nullptr ? 0u : (nativeSdrDisabled ? 9u : 1u),
++                          std::memory_order_release);
++}
++
++void VulkanBackend::setNativeSdrSurface(ANativeWindow* ownedWindow) {
++    // A repeated SurfaceChanged can have the same native pointer but different
++    // dimensions: always retire the old swapchain. The JNI caller owns the new
++    // reference until this function consumes it.
++    destroyNativeSdrSwapchain();
++    if (nativeSdrWindow != nullptr) ANativeWindow_release(nativeSdrWindow);
++    nativeSdrWindow = ownedWindow;
++    nativeSdrDisabled = false;
++    nativeSdrStatus.store(nativeSdrWindow != nullptr ? 1u : 0u, std::memory_order_release);
++}
++
++void VulkanBackend::disableNativeSdrSwapchain(const char* reason) {
++    LOGW("Native Vulkan SDR presentation disabled: %s", reason);
++    nativeSdrDisabled = true;
++    destroyNativeSdrSwapchain();
++}
++
++bool VulkanBackend::ensureNativeSdrSwapchain() {
++    if (nativeSdrSwapchain != VK_NULL_HANDLE) return true;
++    if (!isStarted() || nativeSdrWindow == nullptr || nativeSdrDisabled ||
++        surface == VK_NULL_HANDLE || !surfaceExtensionsEnabled ||
++        vk.createAndroidSurface == nullptr || vk.destroySurface == nullptr ||
++        vk.getPhysicalDeviceSurfaceSupport == nullptr ||
++        vk.getPhysicalDeviceSurfaceCapabilities == nullptr ||
++        vk.getPhysicalDeviceSurfaceFormats == nullptr ||
++        vk.getPhysicalDeviceFormatProperties == nullptr ||
++        vk.createSwapchain == nullptr || vk.destroySwapchain == nullptr ||
++        vk.getSwapchainImages == nullptr || vk.acquireNextImage == nullptr ||
++        vk.queuePresent == nullptr || vk.createSemaphore == nullptr ||
++        vk.destroySemaphore == nullptr) {
++        return false;
++    }
++    VkAndroidSurfaceCreateInfoKHR androidSurface { VK_STRUCTURE_TYPE_ANDROID_SURFACE_CREATE_INFO_KHR };
++    androidSurface.window = nativeSdrWindow;
++    if (vk.createAndroidSurface(instance, &androidSurface, nullptr, &nativeSdrSurface) != VK_SUCCESS) {
++        disableNativeSdrSwapchain("real Android Vulkan surface could not be created");
++        return false;
++    }
++
++    VkBool32 supportsPresent = VK_FALSE;
++    VkSurfaceCapabilitiesKHR caps {};
++    uint32_t formatCount = 0;
++    if (vk.getPhysicalDeviceSurfaceSupport(gpu, queueFamily, nativeSdrSurface, &supportsPresent) != VK_SUCCESS ||
++        supportsPresent != VK_TRUE ||
++        vk.getPhysicalDeviceSurfaceCapabilities(gpu, nativeSdrSurface, &caps) != VK_SUCCESS ||
++        (caps.supportedUsageFlags & VK_IMAGE_USAGE_TRANSFER_DST_BIT) == 0 ||
++        vk.getPhysicalDeviceSurfaceFormats(gpu, nativeSdrSurface, &formatCount, nullptr) != VK_SUCCESS ||
++        formatCount == 0) {
++        disableNativeSdrSwapchain("presentation queue, image transfer usage or surface formats unavailable");
++        return false;
++    }
++    std::vector<VkSurfaceFormatKHR> formats(formatCount);
++    const VkResult formatsResult = vk.getPhysicalDeviceSurfaceFormats(
++        gpu, nativeSdrSurface, &formatCount, formats.data());
++    if (formatsResult != VK_SUCCESS && formatsResult != VK_INCOMPLETE) {
++        disableNativeSdrSwapchain("surface format enumeration failed");
++        return false;
++    }
++
++    // Only SDR/sRGB nonlinear and a Vulkan-compatible UNORM image. HDR10 and HLG
++    // must never be selected until color-managed core source contracts exist.
++    VkSurfaceFormatKHR choice { VK_FORMAT_UNDEFINED, VK_COLOR_SPACE_SRGB_NONLINEAR_KHR };
++    for (uint32_t i = 0; i < formatCount; ++i) {
++        const auto& candidate = formats[i];
++        if (candidate.colorSpace != VK_COLOR_SPACE_SRGB_NONLINEAR_KHR ||
++            (candidate.format != VK_FORMAT_R8G8B8A8_UNORM &&
++             candidate.format != VK_FORMAT_B8G8R8A8_UNORM)) continue;
++        VkFormatProperties properties {};
++        vk.getPhysicalDeviceFormatProperties(gpu, candidate.format, &properties);
++        if ((properties.optimalTilingFeatures & VK_FORMAT_FEATURE_BLIT_DST_BIT) == 0) continue;
++        choice = candidate;
++        break;
++    }
++    if (choice.format == VK_FORMAT_UNDEFINED) {
++        disableNativeSdrSwapchain("no blit-capable SDR swapchain format");
++        return false;
++    }
++
++    VkExtent2D extent = caps.currentExtent;
++    if (extent.width == UINT32_MAX) {
++        const uint32_t width = static_cast<uint32_t>(std::max(1, ANativeWindow_getWidth(nativeSdrWindow)));
++        const uint32_t height = static_cast<uint32_t>(std::max(1, ANativeWindow_getHeight(nativeSdrWindow)));
++        extent.width = std::clamp(width, caps.minImageExtent.width, caps.maxImageExtent.width);
++        extent.height = std::clamp(height, caps.minImageExtent.height, caps.maxImageExtent.height);
++    }
++    if (extent.width == 0 || extent.height == 0) {
++        disableNativeSdrSwapchain("invalid window extent");
++        return false;
++    }
++
++    VkCompositeAlphaFlagBitsKHR alpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
++    if ((caps.supportedCompositeAlpha & alpha) == 0) {
++        const VkCompositeAlphaFlagBitsKHR possibilities[] = {
++            VK_COMPOSITE_ALPHA_PRE_MULTIPLIED_BIT_KHR,
++            VK_COMPOSITE_ALPHA_POST_MULTIPLIED_BIT_KHR,
++            VK_COMPOSITE_ALPHA_INHERIT_BIT_KHR
++        };
++        for (const auto item : possibilities) {
++            if (caps.supportedCompositeAlpha & item) { alpha = item; break; }
++        }
++        if ((caps.supportedCompositeAlpha & alpha) == 0) {
++            disableNativeSdrSwapchain("no supported composite alpha");
++            return false;
++        }
++    }
++    uint32_t images = caps.minImageCount + 1;
++    if (caps.maxImageCount != 0) images = std::min(images, caps.maxImageCount);
++    VkSwapchainCreateInfoKHR info { VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR };
++    info.surface = nativeSdrSurface;
++    info.minImageCount = images;
++    info.imageFormat = choice.format;
++    info.imageColorSpace = choice.colorSpace;
++    info.imageExtent = extent;
++    info.imageArrayLayers = 1;
++    info.imageUsage = VK_IMAGE_USAGE_TRANSFER_DST_BIT;
++    info.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE;
++    info.preTransform = caps.currentTransform;
++    info.compositeAlpha = alpha;
++    info.presentMode = VK_PRESENT_MODE_FIFO_KHR; // guaranteed by Vulkan WSI
++    info.clipped = VK_TRUE;
++    if (vk.createSwapchain(device, &info, nullptr, &nativeSdrSwapchain) != VK_SUCCESS) {
++        disableNativeSdrSwapchain("swapchain creation failed");
++        return false;
++    }
++
++    uint32_t count = 0;
++    if (vk.getSwapchainImages(device, nativeSdrSwapchain, &count, nullptr) != VK_SUCCESS || count == 0) {
++        disableNativeSdrSwapchain("swapchain contains no images");
++        return false;
++    }
++    nativeSdrImages.resize(count);
++    if (vk.getSwapchainImages(device, nativeSdrSwapchain, &count, nativeSdrImages.data()) != VK_SUCCESS) {
++        disableNativeSdrSwapchain("cannot obtain swapchain images");
++        return false;
++    }
++    nativeSdrImages.resize(count);
++    VkSemaphoreCreateInfo semaphoreInfo { VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO };
++    if (vk.createSemaphore(device, &semaphoreInfo, nullptr, &nativeSdrAcquire) != VK_SUCCESS) {
++        disableNativeSdrSwapchain("image acquisition semaphore allocation failed");
++        return false;
++    }
++    nativeSdrComplete.assign(count, VK_NULL_HANDLE);
++    for (auto& semaphore : nativeSdrComplete) {
++        if (vk.createSemaphore(device, &semaphoreInfo, nullptr, &semaphore) != VK_SUCCESS) {
++            disableNativeSdrSwapchain("image completion semaphore allocation failed");
++            return false;
++        }
++    }
++    nativeSdrExtent = extent;
++    nativeSdrFormat = choice.format;
++    nativeSdrStatus.store(3u, std::memory_order_release); // requested + built
++    LOGI("Experimental Vulkan SDR swapchain ready: %ux%u, %u images",
++         extent.width, extent.height, count);
++    return true;
++}
++
+ void VulkanBackend::destroyPresentationSurface() {
+     if (surface != VK_NULL_HANDLE && vk.destroySurface != nullptr) {
+         vk.destroySurface(instance, surface, nullptr);
+@@ -444,6 +630,8 @@
+         load("vkGetPhysicalDeviceSurfaceSupportKHR"));
+     vk.getPhysicalDeviceSurfaceFormats = reinterpret_cast<PFN_vkGetPhysicalDeviceSurfaceFormatsKHR>(
+         load("vkGetPhysicalDeviceSurfaceFormatsKHR"));
++    vk.getPhysicalDeviceSurfaceCapabilities = reinterpret_cast<PFN_vkGetPhysicalDeviceSurfaceCapabilitiesKHR>(
++        load("vkGetPhysicalDeviceSurfaceCapabilitiesKHR"));
+     vk.enumerateDeviceExtensionProperties = reinterpret_cast<PFN_vkEnumerateDeviceExtensionProperties>(
+         load("vkEnumerateDeviceExtensionProperties"));
+     vk.getPhysicalDeviceFeatures = reinterpret_cast<PFN_vkGetPhysicalDeviceFeatures>(
+@@ -626,6 +814,13 @@
+     vk.bindImageMemory = reinterpret_cast<PFN_vkBindImageMemory>(load("vkBindImageMemory"));
+     vk.getAndroidHardwareBufferProperties = reinterpret_cast<PFN_vkGetAndroidHardwareBufferPropertiesANDROID>(
+         load("vkGetAndroidHardwareBufferPropertiesANDROID"));
++    vk.createSwapchain = reinterpret_cast<PFN_vkCreateSwapchainKHR>(load("vkCreateSwapchainKHR"));
++    vk.destroySwapchain = reinterpret_cast<PFN_vkDestroySwapchainKHR>(load("vkDestroySwapchainKHR"));
++    vk.getSwapchainImages = reinterpret_cast<PFN_vkGetSwapchainImagesKHR>(load("vkGetSwapchainImagesKHR"));
++    vk.acquireNextImage = reinterpret_cast<PFN_vkAcquireNextImageKHR>(load("vkAcquireNextImageKHR"));
++    vk.queuePresent = reinterpret_cast<PFN_vkQueuePresentKHR>(load("vkQueuePresentKHR"));
++    vk.createSemaphore = reinterpret_cast<PFN_vkCreateSemaphore>(load("vkCreateSemaphore"));
++    vk.destroySemaphore = reinterpret_cast<PFN_vkDestroySemaphore>(load("vkDestroySemaphore"));
+ 
+     return vk.destroyDevice && vk.queueSubmit && vk.cmdBlitImage && vk.cmdClearColorImage && vk.createImage &&
+            vk.getAndroidHardwareBufferProperties;
+@@ -1045,6 +1240,13 @@
+ }
+ 
+ void VulkanBackend::shutdown() {
++    // Retire the real display WSI resources before destroying the core's VkDevice
++    // or its VkInstance, including when a SurfaceView disappears mid-session.
++    destroyNativeSdrSwapchain();
++    if (nativeSdrWindow != nullptr) ANativeWindow_release(nativeSdrWindow);
++    nativeSdrWindow = nullptr;
++    nativeSdrDisabled = false;
++    nativeSdrStatus.store(0u, std::memory_order_release);
+     if (device != VK_NULL_HANDLE) {
+         if (vk.deviceWaitIdle != nullptr) vk.deviceWaitIdle(device);
+         destroyFrameBuffer();
+diff --git a/src/main/cpp/vulkan/vulkanbackend.h b/src/main/cpp/vulkan/vulkanbackend.h
+--- a/src/main/cpp/vulkan/vulkanbackend.h
++++ b/src/main/cpp/vulkan/vulkanbackend.h
+@@ -91,6 +91,11 @@
+     // 16=linear FP16 scRGB surface format. Zero means unavailable/unknown.
+     uint32_t probeRealDisplaySurfaceFormats(ANativeWindow* window);
+ 
++    // Adopt one JNI ANativeWindow reference, or nullptr to detach. Only the GL
++    // thread may call this; never share a WSI swapchain across core contexts.
++    void setNativeSdrSurface(ANativeWindow* ownedWindow);
++    uint32_t getNativeSdrStatus() const { return nativeSdrStatus.load(std::memory_order_acquire); }
++
+     bool ensureFrameBuffer(unsigned width, unsigned height);
+     AHardwareBuffer* getFrameBuffer() const { return frameBuffer; }
+     unsigned getFrameBufferWidth() const { return frameWidth; }
+@@ -115,6 +120,7 @@
+         PFN_vkGetPhysicalDeviceQueueFamilyProperties getPhysicalDeviceQueueFamilyProperties = nullptr;
+         PFN_vkGetPhysicalDeviceSurfaceSupportKHR getPhysicalDeviceSurfaceSupport = nullptr;
+         PFN_vkGetPhysicalDeviceSurfaceFormatsKHR getPhysicalDeviceSurfaceFormats = nullptr;
++        PFN_vkGetPhysicalDeviceSurfaceCapabilitiesKHR getPhysicalDeviceSurfaceCapabilities = nullptr;
+         PFN_vkEnumerateDeviceExtensionProperties enumerateDeviceExtensionProperties = nullptr;
+         PFN_vkGetPhysicalDeviceFeatures getPhysicalDeviceFeatures = nullptr;
+         PFN_vkCreateDevice createDevice = nullptr;
+@@ -142,6 +148,13 @@
+         PFN_vkFreeMemory freeMemory = nullptr;
+         PFN_vkBindImageMemory bindImageMemory = nullptr;
+         PFN_vkGetAndroidHardwareBufferPropertiesANDROID getAndroidHardwareBufferProperties = nullptr;
++        PFN_vkCreateSwapchainKHR createSwapchain = nullptr;
++        PFN_vkDestroySwapchainKHR destroySwapchain = nullptr;
++        PFN_vkGetSwapchainImagesKHR getSwapchainImages = nullptr;
++        PFN_vkAcquireNextImageKHR acquireNextImage = nullptr;
++        PFN_vkQueuePresentKHR queuePresent = nullptr;
++        PFN_vkCreateSemaphore createSemaphore = nullptr;
++        PFN_vkDestroySemaphore destroySemaphore = nullptr;
+         PFN_vkCreateAndroidSurfaceKHR createAndroidSurface = nullptr;
+         PFN_vkDestroySurfaceKHR destroySurface = nullptr;
+     };
+@@ -171,6 +184,9 @@
+     bool createFrameBuffer(unsigned width, unsigned height, bool fp16);
+     void clearFrameImage();
+     void destroyFrameBuffer();
++    bool ensureNativeSdrSwapchain();
++    void destroyNativeSdrSwapchain();
++    void disableNativeSdrSwapchain(const char* reason);
+     std::vector<const char*> requiredDeviceExtensions() const;
+     uint32_t requestedApiVersion() const;
+ 
+@@ -229,6 +245,20 @@
+     std::vector<VkCommandBuffer> pendingCommandBuffers;
+     VkSemaphore pendingSignalSemaphore = VK_NULL_HANDLE;
+ 
++    // Optional native SDR presenter. No HDR output, no automatic activation.
++    ANativeWindow* nativeSdrWindow = nullptr;
++    VkSurfaceKHR nativeSdrSurface = VK_NULL_HANDLE;
++    VkSwapchainKHR nativeSdrSwapchain = VK_NULL_HANDLE;
++    VkFormat nativeSdrFormat = VK_FORMAT_UNDEFINED;
++    VkExtent2D nativeSdrExtent {};
++    std::vector<VkImage> nativeSdrImages;
++    VkSemaphore nativeSdrAcquire = VK_NULL_HANDLE;
++    std::vector<VkSemaphore> nativeSdrComplete;
++    bool nativeSdrDisabled = false;
++    // bit 0 window requested, bit 1 SDR swapchain ready, bit 2 frames presented,
++    // bit 3 fallback due to unsupported device/surface/runtime failure.
++    std::atomic<uint32_t> nativeSdrStatus { 0 };
++
+     std::mutex queueMutex;
+     retro_hw_render_interface_vulkan renderInterface {};
+ };
+diff --git a/src/main/cpp/libretrodroidjni.cpp b/src/main/cpp/libretrodroidjni.cpp
+--- a/src/main/cpp/libretrodroidjni.cpp
++++ b/src/main/cpp/libretrodroidjni.cpp
+@@ -820,6 +820,19 @@
+     return static_cast<jint>(flags);
+ }
+ 
++JNIEXPORT void JNICALL Java_com_swordfish_libretrodroid_LibretroDroid_setNativeSdrVulkanSurface(
++    JNIEnv* env, jclass obj, jobject surface
++) {
++    ANativeWindow* window = surface != nullptr ? ANativeWindow_fromSurface(env, surface) : nullptr;
++    VulkanBackend::getInstance().setNativeSdrSurface(window);
++}
++
++JNIEXPORT jint JNICALL Java_com_swordfish_libretrodroid_LibretroDroid_getNativeSdrVulkanStatus(
++    JNIEnv* env, jclass obj
++) {
++    return static_cast<jint>(VulkanBackend::getInstance().getNativeSdrStatus());
++}
++
+ JNIEXPORT void JNICALL Java_com_swordfish_libretrodroid_LibretroDroid_setRumbleEnabled(
+     JNIEnv* env,
+     jclass obj,
+diff --git a/src/main/java/com/swordfish/libretrodroid/LibretroDroid.java b/src/main/java/com/swordfish/libretrodroid/LibretroDroid.java
+--- a/src/main/java/com/swordfish/libretrodroid/LibretroDroid.java
++++ b/src/main/java/com/swordfish/libretrodroid/LibretroDroid.java
+@@ -139,6 +139,10 @@
+      * or enable native HDR. 1=presentable, 2=SDR, 4=PQ, 8=HLG, 16=scRGB FP16.
+      */
+     public static native int probeVulkanSurfaceFormats(android.view.Surface surface);
++    /** Experimental SDR Vulkan WSI backend: GL thread only. Null detaches. Default off. */
++    public static native void setNativeSdrVulkanSurface(android.view.Surface surface);
++    /** Native status: bit 0 surface requested, 1 swapchain built, 2 presented, 3 fallback. */
++    public static native int getNativeSdrVulkanStatus();
+     public static native void setFrameSpeed(int speed);
+     public static native void setAudioEnabled(boolean enabled);
+     public static native void setPitchPreservationEnabled(boolean enabled);

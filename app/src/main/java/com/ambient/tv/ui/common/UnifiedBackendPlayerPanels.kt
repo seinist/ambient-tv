@@ -2,6 +2,7 @@ package com.ambient.tv.ui.common
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.QueueMusic
@@ -178,6 +179,22 @@ fun UnifiedBackendPlayerPanel(
             title = stringResource(R.string.player_playback_settings),
             modifier = modifier,
             onBack = back,
+            footerStart = {
+                // Always reachable beside Back, even when the settings list is scrolled.
+                // No visible long label in the narrow footer; the full label is available
+                // to accessibility, and only this selector wraps instead of truncating.
+                PlayerDropUpSelector(
+                    label = stringResource(R.string.settings_level),
+                    value = stringResource(settingsLevel.labelRes),
+                    options = com.ambient.tv.ui.common.SettingsLevel.entries.map { it.key to stringResource(it.labelRes) },
+                    selectedKey = settingsLevel.key,
+                    modifier = Modifier.fillMaxWidth(),
+                    compactFooter = true,
+                    onSelected = { key ->
+                        com.ambient.tv.ui.common.SettingsLevels.set(preferences, com.ambient.tv.ui.common.SettingsLevel.fromKey(key))
+                    },
+                )
+            },
         ) {
             if (showVideo && hasVideo) {
                 PlayerPanelEntry(
@@ -299,17 +316,7 @@ fun UnifiedBackendPlayerPanel(
                     onClick = { onPanelChange(UnifiedPlayerPanel.DETAILS) },
                 )
             }
-            // Last row: how much this panel and Settings show. Hidden settings keep working.
-            PlayerDropUpSelector(
-                icon = Icons.Filled.Tune,
-                label = stringResource(R.string.settings_level),
-                value = stringResource(settingsLevel.labelRes),
-                options = com.ambient.tv.ui.common.SettingsLevel.entries.map { it.key to stringResource(it.labelRes) },
-                selectedKey = settingsLevel.key,
-                onSelected = { key ->
-                    com.ambient.tv.ui.common.SettingsLevels.set(preferences, com.ambient.tv.ui.common.SettingsLevel.fromKey(key))
-                },
-            )
+            // The scope selector lives in the fixed footer, not at the end of the list.
         }
         UnifiedPlayerPanel.SEEK -> UnifiedPlayerSidePanel(
             title = stringResource(R.string.settings_seek_page_title),

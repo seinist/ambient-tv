@@ -1,0 +1,166 @@
+Ambient TV: per-player Companion motion sensor access in the Libretro frontend.
+
+diff --git a/src/main/cpp/sensors/coresensors.h b/src/main/cpp/sensors/coresensors.h
+--- a/src/main/cpp/sensors/coresensors.h
++++ b/src/main/cpp/sensors/coresensors.h
+@@ -29,7 +29,9 @@
+ 
+     void setAccess(int mask);
+     void setAccelerometerScale(float scale);
+-    void setReadings(const std::array<float, 7>& readings);
++    void setReadings(const std::array<float, 7>& readings);
++    /** Four independent authenticated Companion motion sources (acceleration in g, gyro rad/s). */
++    void setCompanionReadings(unsigned port, int mask, const std::array<float, 7>& readings);
+     bool takeRequestChange(int& requested);
+     void reset();
+ 
+@@ -48,7 +50,10 @@
+     std::atomic<int> requested {0};
+     std::atomic<bool> requestChanged {false};
+     std::mutex readingsMutex;
+-    std::array<float, 7> readings {};
++    std::array<float, 7> readings {};
++    std::array<std::atomic<int>, 4> companionAccess {};
++    std::array<std::atomic<int>, 4> companionRequested {};
++    std::array<std::array<float, 7>, 4> companionReadings {};
+ };
+ 
+ }
+diff --git a/src/main/cpp/sensors/coresensors.cpp b/src/main/cpp/sensors/coresensors.cpp
+--- a/src/main/cpp/sensors/coresensors.cpp
++++ b/src/main/cpp/sensors/coresensors.cpp
+@@ -22,7 +22,17 @@
+     return getInstance().getSensorInput(port, id);
+ }
+ 
+-int CoreSensors::sensorForAction(retro_sensor_action action) {
++void CoreSensors::setCompanionReadings(unsigned port, int mask, const std::array<float, 7>& values) {
++    if (port >= 4) return;
++    const int permitted = mask & (ACCELEROMETER | GYROSCOPE);
++    {
++        std::lock_guard<std::mutex> lock(readingsMutex);
++        companionReadings[port] = permitted == 0 ? std::array<float, 7> {} : values;
++    }
++    companionAccess[port] = permitted;
++}
++
++int CoreSensors::sensorForAction(retro_sensor_action action) {
+     switch (action) {
+         case RETRO_SENSOR_ACCELEROMETER_ENABLE:
+         case RETRO_SENSOR_ACCELEROMETER_DISABLE:
+@@ -63,37 +73,48 @@
+     return true;
+ }
+ 
+-void CoreSensors::reset() {
+-    requested = 0;
+-    requestChanged = true;
+-    std::lock_guard<std::mutex> lock(readingsMutex);
+-    readings = {};
+-}
+-
+-bool CoreSensors::setSensorState(unsigned port, retro_sensor_action action) {
+-    int sensor = sensorForAction(action);
+-    if (port != 0 || sensor == 0) return false;
+-
+-    if (isEnableAction(action)) {
+-        if ((access & sensor) == 0) return false;
+-        requested |= sensor;
+-    } else {
+-        requested &= ~sensor;
+-    }
+-    requestChanged = true;
+-    return true;
+-}
+-
+-float CoreSensors::getSensorInput(unsigned port, unsigned id) {
+-    if (port != 0 || id > RETRO_SENSOR_ILLUMINANCE) return 0.0f;
+-
+-    int sensor = id <= RETRO_SENSOR_ACCELEROMETER_Z ? ACCELEROMETER
+-        : id <= RETRO_SENSOR_GYROSCOPE_Z ? GYROSCOPE
+-        : ILLUMINANCE;
+-    if ((requested & access & sensor) == 0) return 0.0f;
+-
+-    std::lock_guard<std::mutex> lock(readingsMutex);
+-    return sensor == ACCELEROMETER ? readings[id] * accelerometerScale : readings[id];
+-}
++void CoreSensors::reset() {
++    requested = 0;
++    requestChanged = true;
++    for (unsigned port = 0; port < 4; ++port) {
++        companionAccess[port] = 0;
++        companionRequested[port] = 0;
++    }
++    std::lock_guard<std::mutex> lock(readingsMutex);
++    readings = {};
++    companionReadings = {};
++}
++
++bool CoreSensors::setSensorState(unsigned port, retro_sensor_action action) {
++    const int sensor = sensorForAction(action);
++    if (port >= 4 || sensor == 0) return false;
++    // The virtual sensor interface can be claimed before a phone connects; return zero
++    // until a paired handset supplies readings, then activate without restarting the core.
++    const int permitted = (port == 0 ? access.load() : 0) | companionAccess[port].load()
++        | ACCELEROMETER | GYROSCOPE;
++    if (isEnableAction(action)) {
++        if ((permitted & sensor) == 0) return false;
++        if (port == 0) requested |= sensor;
++        else companionRequested[port] |= sensor;
++    } else {
++        if (port == 0) requested &= ~sensor;
++        else companionRequested[port] &= ~sensor;
++    }
++    if (port == 0) requestChanged = true;
++    return true;
++}
++
++float CoreSensors::getSensorInput(unsigned port, unsigned id) {
++    if (port >= 4 || id > RETRO_SENSOR_ILLUMINANCE) return 0.0f;
++    const int sensor = id <= RETRO_SENSOR_ACCELEROMETER_Z ? ACCELEROMETER
++        : id <= RETRO_SENSOR_GYROSCOPE_Z ? GYROSCOPE : ILLUMINANCE;
++    const bool remote = (companionAccess[port].load() & sensor) != 0;
++    const bool local = port == 0 && (access.load() & sensor) != 0;
++    const int wanted = port == 0 ? requested.load() : companionRequested[port].load();
++    if ((wanted & sensor) == 0 || (!remote && !local)) return 0.0f;
++    std::lock_guard<std::mutex> lock(readingsMutex);
++    const float reading = remote ? companionReadings[port][id] : readings[id];
++    return sensor == ACCELEROMETER ? reading * accelerometerScale : reading;
++}
+ 
+ }
+diff --git a/src/main/cpp/libretrodroidjni.cpp b/src/main/cpp/libretrodroidjni.cpp
+--- a/src/main/cpp/libretrodroidjni.cpp
++++ b/src/main/cpp/libretrodroidjni.cpp
+@@ -868,7 +868,15 @@
+     );
+ }
+ 
+-JNIEXPORT void JNICALL Java_com_swordfish_libretrodroid_LibretroDroid_setCoreSensorAccess(
++JNIEXPORT void JNICALL Java_com_swordfish_libretrodroid_LibretroDroid_setCompanionSensorReadings(
++    JNIEnv*, jclass, jint port, jint mask,
++    jfloat gx, jfloat gy, jfloat gz, jfloat ax, jfloat ay, jfloat az
++) {
++    CoreSensors::getInstance().setCompanionReadings(static_cast<unsigned>(port), mask,
++        {ax, ay, az, gx, gy, gz, 0.f});
++}
++
++JNIEXPORT void JNICALL Java_com_swordfish_libretrodroid_LibretroDroid_setCoreSensorAccess(
+     JNIEnv*, jclass,
+     jint mask
+ ) {
+diff --git a/src/main/java/com/swordfish/libretrodroid/LibretroDroid.java b/src/main/java/com/swordfish/libretrodroid/LibretroDroid.java
+--- a/src/main/java/com/swordfish/libretrodroid/LibretroDroid.java
++++ b/src/main/java/com/swordfish/libretrodroid/LibretroDroid.java
+@@ -141,7 +141,10 @@
+         float restX, float restY, float restZ,
+         float illuminance
+     );
+-    public static native void setCoreSensorAccess(int mask);
++    /** Per-player remote motion: accelerometer in g, gyro in rad/s, mask 1/2. */
++    public static native void setCompanionSensorReadings(int port, int mask,
++        float gx, float gy, float gz, float ax, float ay, float az);
++    public static native void setCoreSensorAccess(int mask);
+     public static native void setCoreAccelerometerScale(float scale);
+     public static native void setFilterMode(int mode);
+     public static native void setIntegerScaling(boolean enabled);

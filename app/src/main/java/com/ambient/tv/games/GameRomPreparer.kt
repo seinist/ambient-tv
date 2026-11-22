@@ -54,7 +54,7 @@ class GameRomPreparer @Inject constructor(
 ) {
     private val cache: File get() = File(context.cacheDir, "games/roms")
 
-    suspend fun prepare(fileId: String, onProgress: (Float?) -> Unit, forceCache: Boolean = false): PreparedGame = withContext(Dispatchers.IO) {
+    suspend fun prepare(fileId: String, onProgress: (Float?) -> Unit, forceCache: Boolean = false, systemOverride: String? = null): PreparedGame = withContext(Dispatchers.IO) {
         val (sourceId, path) = FileKeys.parse(fileId)
         val source = store.sources().firstOrNull { it.id == sourceId } ?: throw FileNotFoundException(path)
         access.prepare(source)
@@ -66,9 +66,17 @@ class GameRomPreparer @Inject constructor(
                 ByteArray(0x20).takeIf { media.read(0L, it, it.size) == it.size }
             }
         }.getOrNull() else null
-        val sourceSystem = GameSystems.forSourceFile(entry.name, entry.path, isoHeader)
-        val chosenCore = sourceSystem?.let { GameSettings.state.gameCore(it, key) }
+        val detectedSystem = GameSystems.forSourceFile(entry.name, entry.path, isoHeader)
         val ext = GameSystems.extension(entry.name)
+        // Explicit folder assignment only resolves compatible/ambiguous formats. A verified
+        // Wii or GameCube disc signature always beats a misleading folder assignment.
+        val assigned = systemOverride?.let(GameSystems::byId)?.takeIf { system ->
+            ext in system.extensions || ext in GameSystems.archiveExtensions ||
+                (ext in GameSystems.ambiguousExtensions &&
+                    !(ext == "iso" && isoHeader != null && detectedSystem != null && detectedSystem.id != system.id))
+        }
+        val sourceSystem = assigned ?: detectedSystem
+        val chosenCore = sourceSystem?.let { GameSettings.state.gameCore(it, key) }
         // Only cores declaring need_fullpath qualify. Uncompressed single-file discs and GDI
         // descriptors (including each track through named VFS descriptors) need no cached copy.
         if (!forceCache && sourceSystem != null && chosenCore?.directFile == true &&
@@ -114,7 +122,50 @@ class GameRomPreparer @Inject constructor(
         val marker = File(folder, ".complete")
         val stamp = "${entry.size}:${entry.modified}"
         val main = File(folder, safeName(entry.name))
-        if (!(marker.isFile && marker.readText() == stamp && main.isFile)) {
+        val archiveCached = marker.isFile && marker.readText() == stamp &&
+            main.isFile && cachedCompanionsComplete(main)
+        if (ext in setOf("zip", "7z", "gz")) {
+            val singleMarker = File(folder, ".single.complete")
+            val saved = runCatching {
+                singleMarker.readLines().takeIf { it.size == 3 && it[0] == stamp }
+                    ?.let { lines ->
+                        val relative = safeRelativePath(lines[1]) ?: return@let null
+                        File(folder, relative).takeIf { it.isFile && it.length().toString() == lines[2] }
+                    }
+            }.getOrNull()
+            // Do not re-copy already cached compressed archives or materialized single ROMs.
+            val single = if (saved != null) saved else if (archiveCached) null else {
+                folder.deleteRecursively()
+                folder.mkdirs()
+                val free = StatFs(context.cacheDir.absolutePath).availableBytes - CACHE_RESERVE_BYTES
+                val budget = minOf(GameArchives.MAX_BYTES, CACHE_LIMIT_BYTES, free)
+                if (budget <= 0) throw IOException("Insufficient cache space for ROM extraction")
+                val staged = access.open(source, path).use { media ->
+                    GameArchives.stageSingle(entry.name, media, File(folder, "content"),
+                        budget, onProgress)
+                }
+                if (staged != null) {
+                    singleMarker.writeText(
+                        "$stamp\n${staged.relativeTo(folder).invariantSeparatorsPath}\n${staged.length()}"
+                    )
+                }
+                staged
+            }
+            if (single != null) {
+                folder.setLastModified(System.currentTimeMillis())
+                trim(keep = folder)
+                val detected = GameSystems.forPreparedFile(single, entry.path)
+                val preparedExt = GameSystems.extension(single.name)
+                val chosen = assigned?.takeIf {
+                    preparedExt in it.extensions || (preparedExt in GameSystems.ambiguousExtensions &&
+                        (detected == null || detected.id == it.id))
+                } ?: detected ?: throw UnknownGameException(entry.name)
+                return@withContext PreparedGame(fileId = fileId,
+                    title = entry.name.substringBeforeLast('.'), file = single, system = chosen,
+                    saveKey = key, sourceName = source.name, entry = entry)
+            }
+        }
+        if (!archiveCached) {
             folder.deleteRecursively()
             folder.mkdirs()
             // A manual fallback is never allowed to exhaust the device or silently evict saves.
@@ -122,10 +173,11 @@ class GameRomPreparer @Inject constructor(
                 throw IOException("ROM exceeds the 4 GiB cache limit; direct access is required")
             }
             val free = StatFs(context.cacheDir.absolutePath).availableBytes
-            if (entry.size > free - CACHE_RESERVE_BYTES) {
+            val copyBudget = minOf(CACHE_LIMIT_BYTES, free - CACHE_RESERVE_BYTES)
+            if (copyBudget <= 0 || entry.size > copyBudget) {
                 throw IOException("Insufficient free space for a local game copy")
             }
-            copy(source, path, entry.size, main, onProgress)
+            copy(source, path, entry.size, main, onProgress, copyBudget)
             when (GameSystems.extension(entry.name)) {
                 "cue" -> copyReferenced(source, path, cueFiles(main.readText()), folder)
                 "gdi" -> copyReferenced(source, path, gdiFiles(main.readText()), folder)
@@ -133,7 +185,15 @@ class GameRomPreparer @Inject constructor(
                     val discs = m3uFiles(main.readText())
                     copyReferenced(source, path, discs, folder)
                     discs.filter { GameSystems.extension(it) == "cue" }.forEach { disc ->
-                        File(folder, safeName(disc)).takeIf(File::isFile)?.let { copyReferenced(source, path, cueFiles(it.readText()), folder) }
+                        val relative = safeRelativePath(disc)
+                            ?: throw IOException("Unsafe disc playlist entry: $disc")
+                        val localCue = File(folder, relative)
+                        if (!localCue.isFile) throw IOException("Missing playlist entry: $disc")
+                        val descriptorPath = FilePaths.relative(listOf(path.substringBeforeLast('/', ""), relative).filter(String::isNotEmpty).joinToString("/"))
+                        copyReferenced(
+                            source, descriptorPath, cueFiles(localCue.readText()), folder,
+                            relative.substringBeforeLast('/', ""),
+                        )
                     }
                 }
             }
@@ -142,7 +202,14 @@ class GameRomPreparer @Inject constructor(
         folder.setLastModified(System.currentTimeMillis())
         trim(keep = folder)
         val playable = if (GameSystems.extension(main.name) in GameSystems.archiveExtensions) unpack(main, folder) else main
-        val system = GameSystems.forPreparedFile(playable, entry.path) ?: throw UnknownGameException(entry.name)
+        trim(keep = folder)
+        val detectedPreparedSystem = GameSystems.forPreparedFile(playable, entry.path)
+        val preparedExt = GameSystems.extension(playable.name)
+        val system = assigned?.takeIf {
+            preparedExt in it.extensions ||
+                (preparedExt in GameSystems.ambiguousExtensions &&
+                    (detectedPreparedSystem == null || detectedPreparedSystem.id == it.id))
+        } ?: detectedPreparedSystem ?: throw UnknownGameException(entry.name)
         PreparedGame(
             fileId = fileId,
             title = entry.name.substringBeforeLast('.'),
@@ -154,36 +221,64 @@ class GameRomPreparer @Inject constructor(
         )
     }
 
-    private suspend fun copy(source: FileSource, path: String, size: Long, target: File, onProgress: (Float?) -> Unit) {
-        access.open(source, path).use { media ->
-            val total = media.size.takeIf { it > 0 } ?: size
-            target.outputStream().buffered(256 * 1024).use { out ->
-                val buffer = ByteArray(1024 * 1024)
-                var position = 0L
-                while (true) {
-                    currentCoroutineContext().ensureActive()
-                    val count = media.read(position, buffer, buffer.size)
-                    if (count <= 0) break
-                    out.write(buffer, 0, count)
-                    position += count
-                    onProgress(if (total > 0) (position.toFloat() / total).coerceIn(0f, 1f) else null)
+    private suspend fun copy(source: FileSource, path: String, size: Long, target: File,
+                             onProgress: (Float?) -> Unit, maxBytes: Long = CACHE_LIMIT_BYTES) {
+        try {
+            access.open(source, path).use { media ->
+                val total = media.size.takeIf { it > 0 } ?: size
+                target.outputStream().buffered(256 * 1024).use { out ->
+                    val buffer = ByteArray(1024 * 1024)
+                    var position = 0L
+                    while (true) {
+                        currentCoroutineContext().ensureActive()
+                        val count = media.read(position, buffer, buffer.size)
+                        if (count <= 0) break
+                        if (count.toLong() > maxBytes - position) {
+                            throw IOException("ROM copy exceeds available storage or cache budget")
+                        }
+                        out.write(buffer, 0, count)
+                        position += count
+                        onProgress(if (total > 0) (position.toFloat() / total).coerceIn(0f, 1f) else null)
+                    }
+                    if (total > 0 && position < total) throw IOException("Incomplete ROM copy: $path")
                 }
             }
+        } catch (error: Exception) {
+            target.delete()
+            throw error
         }
     }
 
-    /** Copies files a CUE/M3U names from the same folder; missing ones are left to the core to report. */
-    private suspend fun copyReferenced(source: FileSource, path: String, names: List<String>, folder: File) {
+    /**
+     * Copy every named disc sidecar and keep relative subdirectories. Missing, unsafe or
+     * colliding files are errors, not silent partially playable CUE/GDI/M3U games.
+     */
+    private suspend fun copyReferenced(
+        source: FileSource, path: String, names: List<String>, folder: File,
+        relativeBase: String = "",
+    ) {
         val parent = path.substringBeforeLast('/', "")
-        names.distinct().forEach { name ->
-            if (name.contains('/') || name.contains('\\') || name == "." || name == "..") return@forEach
-            val target = File(folder, safeName(name))
-            if (target.isFile) return@forEach
-            val childPath = if (parent.isEmpty()) name else "$parent/$name"
-            runCatching {
-                val child: FileEntry = access.stat(source, childPath)
-                copy(source, childPath, child.size, target) {}
+        val seen = HashMap<String, String>()
+        names.forEach { name ->
+            val relative = safeRelativePath(name)
+                ?: throw IOException("Unsafe disc companion path: $name")
+            val targetRelative = if (relativeBase.isEmpty()) relative else "$relativeBase/$relative"
+            val key = targetRelative.lowercase(java.util.Locale.ROOT)
+            val previous = seen.putIfAbsent(key, targetRelative)
+            if (previous != null) {
+                if (previous != targetRelative) throw IOException("Colliding disc companion: $name")
+                return@forEach // CUE files may repeat the same FILE for several tracks.
             }
+            val target = File(folder, targetRelative)
+            val childPath = FilePaths.relative(listOf(parent, relative).filter(String::isNotEmpty).joinToString("/"))
+            val child: FileEntry = access.stat(source, childPath)
+            if (target.isFile && target.length() == child.size && child.size > 0) return@forEach
+            target.parentFile?.mkdirs()
+            val used = folder.walkTopDown().filter { it.isFile }.sumOf { it.length() }
+            val free = StatFs(context.cacheDir.absolutePath).availableBytes - CACHE_RESERVE_BYTES
+            val budget = minOf(CACHE_LIMIT_BYTES - used, free)
+            if (budget <= 0 || child.size > budget) throw IOException("Insufficient cache for disc track $name")
+            copy(source, childPath, child.size, target, {}, budget)
         }
     }
 
@@ -194,11 +289,29 @@ class GameRomPreparer @Inject constructor(
     private fun unpack(archive: File, folder: File): File {
         val content = File(folder, "content")
         val done = File(folder, ".unpacked")
-        val files = if (done.isFile && content.isDirectory) {
-            content.listFiles()?.toList().orEmpty()
+        val recorded = runCatching { done.readLines() }.getOrNull()
+        val files = if (content.isDirectory && recorded != null && recorded.firstOrNull() == archive.length().toString() &&
+            recorded.size > 1 && recorded.drop(1).all { line ->
+                val parts = line.split('\t', limit = 2)
+                parts.size == 2 && safeRelativePath(parts[0]) == parts[0] &&
+                    File(content, parts[0]).let { it.isFile && it.length().toString() == parts[1] }
+            }
+        ) {
+            recorded.drop(1).map { line -> File(content, line.substringBefore('\t')) }
         } else {
             content.deleteRecursively()
-            GameArchives.extract(archive, content).also { done.writeText(archive.length().toString()) }
+            done.delete()
+            val used = folder.walkTopDown().filter { it.isFile }.sumOf { it.length() }
+            val free = StatFs(context.cacheDir.absolutePath).availableBytes - CACHE_RESERVE_BYTES
+            val budget = minOf(GameArchives.MAX_BYTES, CACHE_LIMIT_BYTES - used, free)
+            if (budget <= 0) throw IOException("Insufficient cache space for extracted game")
+            GameArchives.extract(archive, content, budget).also { extracted ->
+                done.writeText(
+                    (listOf(archive.length().toString()) +
+                        extracted.map { file -> "${file.relativeTo(content).invariantSeparatorsPath}\t${file.length()}" }
+                    ).joinToString("\n")
+                )
+            }
         }
         return GameArchives.choose(files) { it.name } ?: throw UnknownGameException(archive.name)
     }
@@ -232,6 +345,49 @@ class GameRomPreparer @Inject constructor(
 
         fun sha1(value: String): String =
             MessageDigest.getInstance("SHA-1").digest(value.toByteArray()).joinToString("") { "%02x".format(it) }
+
+        /** Verify all referenced local files before trusting the completed cache marker. */
+        internal fun cachedCompanionsComplete(main: File): Boolean {
+            val visited = HashSet<String>()
+            val active = HashSet<String>()
+            fun check(descriptor: File): Boolean {
+                if (!descriptor.isFile) return false
+                val path = descriptor.canonicalPath
+                if (path in active || visited.size > 128) return false
+                if (path in visited) return true
+                active.add(path)
+                val names = when (GameSystems.extension(descriptor.name)) {
+                    "cue" -> cueFiles(descriptor.readText())
+                    "gdi" -> gdiFiles(descriptor.readText())
+                    "m3u" -> m3uFiles(descriptor.readText())
+                    else -> return descriptor.length() > 0
+                }
+                if (names.isEmpty()) return false
+                val complete = names.all { name ->
+                    val relative = safeRelativePath(name) ?: return@all false
+                    val child = File(descriptor.parentFile, relative)
+                    if (!child.isFile || child.length() <= 0) return@all false
+                    when (GameSystems.extension(child.name)) {
+                        "cue", "gdi", "m3u" -> check(child)
+                        else -> true
+                    }
+                }
+                active.remove(path)
+                if (complete) visited.add(path)
+                return complete
+            }
+            return runCatching { check(main) }.getOrDefault(false)
+        }
+
+        /** Reject traversal and absolute paths, but preserve safe nested disc tracks. */
+        internal fun safeRelativePath(name: String): String? {
+            val normalized = name.replace('\\', '/')
+            if (normalized.isBlank() || normalized.startsWith('/') || ':' in normalized) return null
+            val parts = normalized.split('/')
+            if (parts.any { it.isBlank() || it == "." || it == ".." ||
+                    it.startsWith(".") || safeName(it) != it }) return null
+            return parts.joinToString("/")
+        }
 
         internal fun safeName(name: String): String =
             name.substringAfterLast('/').substringAfterLast('\\').replace(Regex("[\\u0000-\\u001f:*?\"<>|]"), "_")

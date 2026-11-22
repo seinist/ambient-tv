@@ -206,4 +206,305 @@ class RetroPadInputTest {
         assertTrue(MotionEvent.AXIS_RZ in generic.rightTrigger)
         assertEquals(GamepadAxisLayout.STANDARD, GamepadAxisLayout.forRanges(hasZ = false, zMin = null, rzMin = null, hasRx = false))
     }
+
+    @Test fun touchAndHardwareButtonsCanBeHeldTogether() {
+        press(1, KeyEvent.KEYCODE_BUTTON_A) // Xbox A is RetroPad B.
+        input.touchButton(RetroPadButton.A, true)
+        assertEquals(RetroPadButton.A.mask or RetroPadButton.B.mask, input.buttons(0))
+        input.touchButton(RetroPadButton.A, false)
+        assertEquals(RetroPadButton.B.mask, input.buttons(0))
+        release(1, KeyEvent.KEYCODE_BUTTON_A)
+        assertEquals(0, input.buttons(0))
+    }
+
+    @Test fun virtualSticksSharePortWithPhysicalControllers() {
+        input.touchStick(0, 0.75f, -0.6f)
+        assertTrue(input.analog(0, 0, 0) > 20_000)
+        assertTrue(input.analog(0, 0, 1) < -15_000)
+        // The physical stick can be independently held; the larger deflection wins.
+        motion(1, mapOf(MotionEvent.AXIS_X to -0.9f))
+        assertTrue(input.analog(0, 0, 0) < -25_000)
+        input.touchStick(0, 0f, 0f)
+        assertTrue(input.analog(0, 0, 0) < -25_000)
+        input.releaseAll()
+        assertEquals(0, input.analog(0, 0, 0))
+        assertEquals(0, input.analog(0, 0, 1))
+    }
+
+    @Test fun remotePhonesKeepTheirOwnPortsAndClearOnRelease() {
+        input.reserveRemotePort(0, true)
+        input.reserveRemotePort(2, true)
+        input.remoteState(0, RetroPadButton.A.mask, 0.5f, 0f, 0f, 0f)
+        input.remoteState(2, RetroPadButton.B.mask, 0f, 0f, -1f, 0f)
+        assertEquals(RetroPadButton.A.mask, input.buttons(0))
+        assertEquals(RetroPadButton.B.mask, input.buttons(2))
+        assertTrue(input.analog(0, 0, 0) > 10_000)
+        assertEquals(-RetroPadInput.ANALOG_MAX, input.analog(2, 1, 0))
+        input.reserveRemotePort(0, false)
+        assertEquals(0, input.buttons(0))
+        assertEquals(0, input.analog(0, 0, 0))
+        assertEquals(RetroPadButton.B.mask, input.buttons(2))
+        input.releaseAll()
+        assertEquals(0, input.buttons(2))
+        assertEquals(0, input.analog(2, 1, 0))
+    }
+
+    @Test fun localControllerAvoidsAReservedPhonePort() {
+        input.reserveRemotePort(0, true)
+        assertTrue(press(1, KeyEvent.KEYCODE_BUTTON_A))
+        assertEquals(RetroPadButton.B.mask, input.buttons(1))
+        assertEquals(0, input.buttons(0))
+    }
+
+    @Test fun companionPhoneControllerMapsItsButtonsUsingTheExistingDeviceProfile() {
+        val descriptor = companionControllerDescriptor("phone-one")
+        config = config.assignDevice(RetroInputKind.COMPANION, descriptor,
+            RetroInputTarget.Button(RetroPadButton.A), companionControllerKey(RetroPadButton.B))
+        input.reserveRemotePort(2, true, descriptor)
+        input.remoteState(2, RetroPadButton.B.mask, 0f, 0f, 0f, 0f)
+        assertEquals(RetroPadButton.A.mask, input.buttons(2))
+        assertEquals(0, input.buttons(0))
+        // A changed setting applies to the next state, even when a button stays pressed.
+        config = config.resetDevice(RetroInputKind.COMPANION, descriptor)
+        input.remoteState(2, RetroPadButton.B.mask, 0f, 0f, 0f, 0f)
+        assertEquals(RetroPadButton.B.mask, input.buttons(2))
+        input.reserveRemotePort(2, false)
+        assertEquals(0, input.buttons(2))
+    }
+
+    @Test fun companionProfileHasAnIdentityLayoutAndSurvivesSettingsEncoding() {
+        val descriptor = companionControllerDescriptor("phone-two")
+        val default = defaultRetroProfile(RetroInputKind.COMPANION)
+        assertEquals(RetroPadButton.UP.mask or RetroPadButton.B.mask,
+            companionMappedButtons(RetroPadButton.UP.mask or RetroPadButton.B.mask, default))
+        val saved = RetroInputConfig()
+            .withPort(descriptor, 1)
+            .assignDevice(RetroInputKind.COMPANION, descriptor,
+                RetroInputTarget.Button(RetroPadButton.X), companionControllerKey(RetroPadButton.B))
+        val restored = RetroInputConfig.decode(saved.encode())
+        assertEquals(saved, restored)
+        assertEquals(1, restored.ports[descriptor])
+        assertEquals(RetroPadButton.X.mask,
+            companionMappedButtons(RetroPadButton.B.mask, restored.deviceProfile(RetroInputKind.COMPANION, descriptor)))
+    }
+
+    @Test fun phoneCoreOverrideIsAppliedOnlyForItsSelectedLibretroCore() {
+        val context = RetroInputProfileContext("snes", "snes9x", "game-one")
+        val descriptor = companionControllerDescriptor("core-specific-phone")
+        val saved = RetroInputConfig().assign(RetroInputKind.COMPANION, context,
+            RetroInputLayerScope.CORE, RetroInputTarget.Button(RetroPadButton.X),
+            companionControllerKey(RetroPadButton.B))
+        fun player(ctx: RetroInputProfileContext) = RetroPadInput(
+            config = { saved }, profileContext = ctx,
+            schedule = { _, _ -> {} }, onMenu = {},
+        ).apply { reserveRemotePort(1, true, descriptor) }
+        val first = player(context)
+        val second = player(context.copy(coreId = "bsnes"))
+        first.remoteState(1, RetroPadButton.B.mask, 0f, 0f, 0f, 0f)
+        second.remoteState(1, RetroPadButton.B.mask, 0f, 0f, 0f, 0f)
+        assertEquals(RetroPadButton.X.mask, first.buttons(1))
+        assertEquals(RetroPadButton.B.mask, second.buttons(1))
+    }
+
+    @Test fun configuredPhoneMenuAndRewindBindingsActuallyReachTheGamePlayer() {
+        val descriptor = companionControllerDescriptor("phone-hotkeys")
+        config = config.assignDevice(RetroInputKind.COMPANION, descriptor,
+            RetroInputTarget.Menu(RetroMenuTrigger.REWIND), companionControllerKey(RetroPadButton.L))
+        config = config.assignDevice(RetroInputKind.COMPANION, descriptor,
+            RetroInputTarget.Menu(RetroMenuTrigger.PRESS), companionControllerKey(RetroPadButton.Y))
+        input.reserveRemotePort(1, true, descriptor)
+        input.remoteState(1, RetroPadButton.L.mask, 0f, 0f, 0f, 0f)
+        assertEquals(listOf(true), rewinds)
+        assertEquals(0, input.buttons(1))
+        input.remoteState(1, 0, 0f, 0f, 0f, 0f)
+        assertEquals(listOf(true, false), rewinds)
+        input.remoteState(1, RetroPadButton.Y.mask, 0f, 0f, 0f, 0f)
+        assertEquals(1, menus)
+        assertEquals(0, input.buttons(1))
+        input.reserveRemotePort(1, false)
+    }
+
+    @Test fun pausedPhoneReleasesItsHoldWithoutAFramePulse() {
+        val descriptor = companionControllerDescriptor("phone-hold")
+        config = config.assignDevice(RetroInputKind.COMPANION, descriptor,
+            RetroInputTarget.Menu(RetroMenuTrigger.HOLD), companionControllerKey(RetroPadButton.B))
+        input.reserveRemotePort(0, true, descriptor)
+        input.remoteState(0, RetroPadButton.B.mask, 0f, 0f, 0f, 0f)
+        assertEquals(0, input.buttons(0))
+        input.clearRemotePort(0)
+        advance(2_000L)
+        assertEquals(0, menus)
+        assertEquals(0, input.buttons(0))
+    }
+
+    @Test fun heldPhoneMenuKeyDoesNotReopenOnEveryHeartbeat() {
+        val descriptor = companionControllerDescriptor("phone-menu-repeat")
+        config = config.assignDevice(RetroInputKind.COMPANION, descriptor,
+            RetroInputTarget.Menu(RetroMenuTrigger.PRESS), companionControllerKey(RetroPadButton.Y))
+        input.reserveRemotePort(1, true, descriptor)
+        input.remoteState(1, RetroPadButton.Y.mask, 0f, 0f, 0f, 0f)
+        assertEquals(1, menus)
+        repeat(5) { input.remoteState(1, RetroPadButton.Y.mask, 0f, 0f, 0f, 0f) }
+        assertEquals(1, menus)
+        input.remoteState(1, 0, 0f, 0f, 0f, 0f)
+        input.remoteState(1, RetroPadButton.Y.mask, 0f, 0f, 0f, 0f)
+        assertEquals(2, menus)
+    }
+
+    @Test fun pausedPhoneCannotReplayAStillHeldButton() {
+        val descriptor = companionControllerDescriptor("phone-pause-hold")
+        input.reserveRemotePort(0, true, descriptor)
+        input.remoteState(0, RetroPadButton.B.mask, 0f, 0f, 0f, 0f)
+        assertEquals(RetroPadButton.B.mask, input.buttons(0))
+        input.releaseAll()
+        assertEquals(0, input.buttons(0))
+        input.remoteState(0, RetroPadButton.B.mask, 0f, 0f, 0f, 0f)
+        assertEquals(0, input.buttons(0))
+        input.remoteState(0, 0, 0f, 0f, 0f, 0f)
+        input.remoteState(0, RetroPadButton.B.mask, 0f, 0f, 0f, 0f)
+        assertEquals(RetroPadButton.B.mask, input.buttons(0))
+    }
+
+    @Test fun phoneSpecialLayoutSettingsSurviveTheExistingBackupRoundTrip() {
+        val key = companionTouchProfileKey("tv-fingerprint", "nds")
+        val value = CompanionTouchProfile(mode = "hybrid", input = "touch", region = "lower", motion = true)
+        val config = RetroInputConfig().withCompanionTouchProfile(key, value)
+        assertEquals(value, RetroInputConfig.decode(config.encode()).companionTouchProfiles[key])
+        assertEquals(config, RetroInputConfig.decode(config.encode()))
+        val malformed = config.encode().toMutableMap()
+        malformed["companionui.bad"] = "gun,unknown,nonsense,3"
+        assertEquals(config, RetroInputConfig.decode(malformed))
+    }
+
+    @Test fun pauseAndMenuReleaseVirtualButtonsToo() {
+        input.touchButton(RetroPadButton.START, true)
+        input.touchStick(1, 1f, 0f)
+        input.releaseAll()
+        assertEquals(0, input.buttons(0))
+        assertEquals(0, input.analog(0, 1, 0))
+        input.touchButton(RetroPadButton.A, true)
+        press(4, KeyEvent.KEYCODE_MENU)
+        assertEquals(0, input.buttons(0))
+    }
+    @Test fun systemCoreGameInputProfilesInheritOnlyChangedButtons() {
+        val context = RetroInputProfileContext("snes", "snes9x", "rom-one")
+        val otherGame = context.copy(gameId = "rom-two")
+        var current = RetroInputConfig()
+        // Use a face button that was previously free; the other default stays intact.
+        current = current.assign(RetroInputKind.GAMEPAD, context, RetroInputLayerScope.SYSTEM,
+            RetroInputTarget.Button(RetroPadButton.B), KeyEvent.KEYCODE_BUTTON_Y)
+        assertEquals(RetroPadButton.B, current.profile(RetroInputKind.GAMEPAD, context).button(KeyEvent.KEYCODE_BUTTON_Y))
+        assertEquals(RetroPadButton.A, current.profile(RetroInputKind.GAMEPAD, context).button(KeyEvent.KEYCODE_BUTTON_B))
+
+        current = current.assign(RetroInputKind.GAMEPAD, context, RetroInputLayerScope.CORE,
+            RetroInputTarget.Button(RetroPadButton.X), KeyEvent.KEYCODE_BUTTON_A)
+        assertEquals(RetroPadButton.X, current.profile(RetroInputKind.GAMEPAD, context).button(KeyEvent.KEYCODE_BUTTON_A))
+        // Another core on the same system has the system profile, but not this core's changes.
+        // The system reassigned B away from physical BUTTON_A; another core inherits that absence.
+        assertEquals(null, current.profile(RetroInputKind.GAMEPAD, context.copy(coreId = "bsnes"))
+            .button(KeyEvent.KEYCODE_BUTTON_A))
+
+        current = current.assign(RetroInputKind.GAMEPAD, context, RetroInputLayerScope.GAME,
+            RetroInputTarget.Button(RetroPadButton.SELECT), KeyEvent.KEYCODE_BUTTON_R1)
+        assertEquals(RetroPadButton.SELECT, current.profile(RetroInputKind.GAMEPAD, context)
+            .button(KeyEvent.KEYCODE_BUTTON_R1))
+        assertEquals(RetroPadButton.R, current.profile(RetroInputKind.GAMEPAD, otherGame)
+            .button(KeyEvent.KEYCODE_BUTTON_R1))
+        assertEquals(current, RetroInputConfig.decode(current.encode()))
+        assertEquals(
+            current.profile(RetroInputKind.GAMEPAD, context),
+            RetroInputConfig.decode(current.encode()).profile(RetroInputKind.GAMEPAD, context),
+        )
+        val reverted = current.resetScope(RetroInputKind.GAMEPAD, context, RetroInputLayerScope.GAME)
+        assertEquals(RetroPadButton.R, reverted.profile(RetroInputKind.GAMEPAD, context)
+            .button(KeyEvent.KEYCODE_BUTTON_R1))
+    }
+
+    @Test fun emptyScopedProfileDoesNotPolluteStorage() {
+        val context = RetroInputProfileContext("megadrive", "genesis_plus_gx", "rom/with space.zip")
+        val baseline = RetroInputConfig()
+        val defaultKey = KeyEvent.KEYCODE_BUTTON_A
+        val unchanged = baseline.assign(RetroInputKind.GAMEPAD, context, RetroInputLayerScope.CORE,
+            RetroInputTarget.Button(RetroPadButton.B), defaultKey)
+        assertTrue(unchanged.scopedProfiles.isEmpty())
+        assertTrue(unchanged.encode().keys.none { it.startsWith("preset.") })
+    }
+
+
+    @Test fun sharedDolphinCoreIsSeparatedByConsoleAndOverridesWin() {
+        val wii = RetroInputProfileContext("wii", "dolphin", "wii-game")
+        val cube = RetroInputProfileContext("gamecube", "dolphin", "cube-game")
+        val target = RetroInputTarget.Button(RetroPadButton.B)
+        var state = RetroInputConfig().assign(
+            RetroInputKind.GAMEPAD, wii, RetroInputLayerScope.CORE,
+            target, KeyEvent.KEYCODE_BUTTON_Y,
+        )
+        assertEquals(RetroPadButton.B, state.profile(RetroInputKind.GAMEPAD, wii)
+            .button(KeyEvent.KEYCODE_BUTTON_Y))
+        assertEquals(RetroPadButton.X, state.profile(RetroInputKind.GAMEPAD, cube)
+            .button(KeyEvent.KEYCODE_BUTTON_Y))
+        // A parent-level update cannot steal the key deliberately chosen in the child.
+        state = state.assign(RetroInputKind.GAMEPAD, wii, RetroInputLayerScope.SYSTEM,
+            RetroInputTarget.Button(RetroPadButton.A), KeyEvent.KEYCODE_BUTTON_Y)
+        assertEquals(RetroPadButton.B, state.profile(RetroInputKind.GAMEPAD, wii)
+            .button(KeyEvent.KEYCODE_BUTTON_Y))
+        assertEquals(RetroPadButton.A, state.profile(RetroInputKind.GAMEPAD, wii,
+            RetroInputLayerScope.SYSTEM).button(KeyEvent.KEYCODE_BUTTON_Y))
+        assertEquals(state, RetroInputConfig.decode(state.encode()))
+    }
+
+    @Test fun unplugReleasesOnlyItsOwnInputWithoutMovingOtherPlayers() {
+        press(1, KeyEvent.KEYCODE_BUTTON_A)
+        press(2, KeyEvent.KEYCODE_BUTTON_B)
+        assertEquals(RetroPadButton.B.mask, input.buttons(0))
+        assertEquals(RetroPadButton.A.mask, input.buttons(1))
+        input.deviceRemoved(1)
+        assertEquals(0, input.buttons(0))
+        assertEquals(RetroPadButton.A.mask, input.buttons(1))
+        // The same descriptor after reconnect can reclaim its previous free port.
+        press(1, KeyEvent.KEYCODE_BUTTON_A)
+        assertEquals(RetroPadButton.B.mask, input.buttons(0))
+        assertEquals(RetroPadButton.A.mask, input.buttons(1))
+    }
+
+    @Test fun remappingRemoteBackCannotRemoveTheEmergencyMenu() {
+        config = config.withProfile(RetroInputKind.REMOTE,
+            defaultRetroProfile(RetroInputKind.REMOTE)
+                .assign(RetroInputTarget.Button(RetroPadButton.A), KeyEvent.KEYCODE_BACK))
+        press(4, KeyEvent.KEYCODE_BACK)
+        advance(RetroPadInput.EMERGENCY_MENU_HOLD_MS + 50)
+        assertEquals(1, menus)
+        release(4, KeyEvent.KEYCODE_BACK)
+        assertEquals(0, input.buttons(0))
+    }
+
+    @Test fun physicalGamepadProfileIsInheritedThenOverriddenBySystemCoreAndGame() {
+        val ctx = RetroInputProfileContext("snes", "snes9x", "supermario")
+        val key = KeyEvent.KEYCODE_BUTTON_Y
+        var c = RetroInputConfig()
+            .assignDevice(RetroInputKind.GAMEPAD, "dual-sense", RetroInputTarget.Button(RetroPadButton.A), key)
+        assertEquals(RetroPadButton.A,
+            c.profile(RetroInputKind.GAMEPAD, ctx, deviceDescriptor = "dual-sense").button(key))
+        assertEquals(RetroPadButton.X,
+            c.profile(RetroInputKind.GAMEPAD, ctx, deviceDescriptor = "xbox").button(key))
+        c = c.assign(RetroInputKind.GAMEPAD, ctx, RetroInputLayerScope.SYSTEM,
+            RetroInputTarget.Button(RetroPadButton.B), key)
+        assertEquals(RetroPadButton.B,
+            c.profile(RetroInputKind.GAMEPAD, ctx, deviceDescriptor = "dual-sense").button(key))
+        assertEquals(c, RetroInputConfig.decode(c.encode()))
+        assertEquals(c.profile(RetroInputKind.GAMEPAD, ctx, deviceDescriptor = "dual-sense"),
+            RetroInputConfig.decode(c.encode()).profile(RetroInputKind.GAMEPAD, ctx, deviceDescriptor = "dual-sense"))
+        assertTrue(c.resetDevice(RetroInputKind.GAMEPAD, "dual-sense").deviceProfiles.isEmpty())
+    }
+
+    @Test fun disconnectAfterOpeningOsdStillReleasesAutomaticPort() {
+        press(1, KeyEvent.KEYCODE_BUTTON_A)
+        press(2, KeyEvent.KEYCODE_BUTTON_B)
+        input.releaseAll() // the game menu cleared active button states
+        input.deviceRemoved(1) // Android now forgets the disconnected device
+        val fresh = RetroInputDevice(5, RetroInputKind.GAMEPAD, "dev-5", "Replacement")
+        assertEquals(0, input.port(fresh))
+        assertEquals(1, input.port(RetroInputDevice(2, RetroInputKind.GAMEPAD, "dev-2", "Remaining")))
+    }
+
 }

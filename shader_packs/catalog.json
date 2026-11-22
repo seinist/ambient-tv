@@ -1,0 +1,41 @@
+{
+  "id": "ambient-extras",
+  "title": "Ambient TV Optional Effects",
+  "presets": [
+    {
+      "id": "crt-soft-bloom",
+      "title": "CRT Soft Bloom",
+      "category": "crt",
+      "license": "CC0-1.0",
+      "sourceUrl": "https://github.com/seinist/ambient-tv/blob/main/shader_packs/shaders/crt-soft-bloom.frag"
+    },
+    {
+      "id": "lcd-rgb-mask",
+      "title": "LCD RGB Mask",
+      "category": "handheld",
+      "license": "CC0-1.0",
+      "sourceUrl": "https://github.com/seinist/ambient-tv/blob/main/shader_packs/shaders/lcd-rgb-mask.frag"
+    },
+    {
+      "id": "pal-color-bleed",
+      "title": "PAL Color Bleed",
+      "category": "signal",
+      "license": "CC0-1.0",
+      "sourceUrl": "https://github.com/seinist/ambient-tv/blob/main/shader_packs/shaders/pal-color-bleed.frag"
+    },
+    {
+      "id": "adaptive-deblur",
+      "title": "Adaptive Deblur",
+      "category": "scaling",
+      "license": "CC0-1.0",
+      "sourceUrl": "https://github.com/seinist/ambient-tv/blob/main/shader_packs/shaders/adaptive-deblur.frag"
+    },
+    {
+      "id": "vintage-warm",
+      "title": "Vintage Warm Colors",
+      "category": "effects",
+      "license": "CC0-1.0",
+      "sourceUrl": "https://github.com/seinist/ambient-tv/blob/main/shader_packs/shaders/vintage-warm.frag"
+    }
+  ]
+}

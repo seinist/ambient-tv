@@ -57,7 +57,7 @@ private fun connectedControllers(): List<InputDevice> = InputDevice.getDeviceIds
 
 /** Connected controllers, updated while the page is shown. */
 @Composable
-private fun rememberConnectedControllers(): List<InputDevice> {
+internal fun rememberConnectedControllers(): List<InputDevice> {
     val context = LocalContext.current
     var devices by remember { mutableStateOf(connectedControllers()) }
     DisposableEffect(context) {
@@ -78,7 +78,7 @@ private fun controllerLabels(): GamepadLabels =
     GamepadLabels.forVendor(rememberConnectedControllers().firstOrNull()?.vendorId)
 
 @Composable
-private fun ControllerStatus() {
+internal fun ControllerStatus() {
     val devices = rememberConnectedControllers()
     val labels = GamepadLabels.forVendor(devices.firstOrNull()?.vendorId)
     val config = GamepadInput.config
@@ -96,7 +96,7 @@ private fun ControllerStatus() {
 }
 
 @Composable
-private fun ControllerGeneral() {
+internal fun ControllerGeneral() {
     val config = GamepadInput.config
     Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(LocalUiTokens.current.compactGap)) {
         SettingsSubheader(stringResource(R.string.gamepad_section_general))
@@ -157,9 +157,13 @@ private fun ControllerGeneral() {
 
 /** One select per button; the player and long-press layouts start folded. */
 @Composable
-private fun ControllerMapping(context: GamepadContext, long: Boolean) {
+internal fun ControllerMapping(context: GamepadContext, long: Boolean, selectedButton: GamepadButton? = null,
+                               deviceDescriptor: String? = null) {
     val config = GamepadInput.config
-    val labels = controllerLabels()
+    val devices = rememberConnectedControllers()
+    val labels = GamepadLabels.forVendor(devices.firstOrNull {
+        deviceDescriptor == null || it.descriptor == deviceDescriptor
+    }?.vendorId)
     val choices = remember(context) { gamepadCommandChoices(context) }
     val title = stringResource(when (context) {
         GamepadContext.MENUS -> if (long) R.string.gamepad_section_menus_long else R.string.gamepad_section_menus
@@ -172,11 +176,11 @@ private fun ControllerMapping(context: GamepadContext, long: Boolean) {
     SettingsGroup(
         title = title,
         subtitle = subtitle,
-        collapsible = context == GamepadContext.PLAYER || long,
+        collapsible = selectedButton == null && (context == GamepadContext.PLAYER || long),
     ) {
-        GamepadButton.entries.forEach { button ->
+        (selectedButton?.let { listOf(it) } ?: GamepadButton.entries).forEach { button ->
             val slot = GamepadSlot(button, long)
-            val current = config.configured(context, slot)
+            val current = config.configured(context, slot, deviceDescriptor)
             val name = labels.label(button)
             SettingsSelect(
                 label = if (long) stringResource(R.string.key_binding_long, name) else name,
@@ -184,7 +188,7 @@ private fun ControllerMapping(context: GamepadContext, long: Boolean) {
                     SettingsSelectOption(
                         text = stringResource(command.titleRes()),
                         selected = command == current,
-                        onClick = { GamepadInput.setCommand(context, slot, command) },
+                        onClick = { GamepadInput.setCommand(context, slot, command, deviceDescriptor) },
                     )
                 },
             )
@@ -193,9 +197,27 @@ private fun ControllerMapping(context: GamepadContext, long: Boolean) {
 }
 
 @Composable
-private fun ControllerReset() {
-    if (GamepadInput.config.overrides.isEmpty()) return
+internal fun ControllerReset(context: GamepadContext? = null, deviceDescriptor: String? = null) {
+    val config = GamepadInput.config
+    if (deviceDescriptor == null) {
+        if (context == null && config.overrides.isEmpty() && config.deviceOverrides.isEmpty()) return
+        if (context != null && config.overrides[context].isNullOrEmpty()) return
+    } else {
+        val device = config.deviceOverrides[deviceDescriptor].orEmpty()
+        if (context == null && device.isEmpty()) return
+        if (context != null && device[context].isNullOrEmpty()) return
+    }
     SettingsActionRow {
-        TvActionButton(stringResource(R.string.gamepad_reset), onClick = { GamepadInput.resetMappings() })
+        TvActionButton(stringResource(R.string.gamepad_reset), onClick = {
+            if (deviceDescriptor == null) {
+                if (context == null) GamepadInput.resetMappings()
+                else GamepadInput.update { it.copy(overrides = it.overrides - context) }
+            } else GamepadInput.update { old ->
+                val existing = old.deviceOverrides[deviceDescriptor].orEmpty()
+                val next = if (context == null) emptyMap() else existing - context
+                old.copy(deviceOverrides = if (next.isEmpty()) old.deviceOverrides - deviceDescriptor
+                    else old.deviceOverrides + (deviceDescriptor to next))
+            }
+        })
     }
 }

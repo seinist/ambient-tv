@@ -9,25 +9,29 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import com.swordfish.libretrodroid.GLRetroView
 import com.swordfish.libretrodroid.LibretroDroid
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.withContext
 import timber.log.Timber
 import java.io.DataInputStream
 import java.io.DataOutputStream
 import java.io.File
 import java.io.IOException
-import java.io.RandomAccessFile
+import java.io.FileInputStream
 import java.net.InetSocketAddress
 import java.net.ServerSocket
 import java.net.Socket
 import java.security.MessageDigest
 import java.util.concurrent.ConcurrentHashMap
-import java.util.concurrent.Executors
+import java.util.concurrent.ArrayBlockingQueue
+import java.util.concurrent.ThreadPoolExecutor
+import java.util.concurrent.TimeUnit
 
 /** A device in the local network hosting the same game. */
 data class NetplayPeer(val name: String, val host: String, val port: Int)
@@ -36,13 +40,15 @@ sealed interface NetplayState {
     data object Idle : NetplayState
     /** Waiting for a second player; [name] is how others see this device. */
     data class Hosting(val name: String) : NetplayState
+    /** No game state is disclosed until the host explicitly accepts this peer. */
+    data class Approval(val peer: String) : NetplayState
     data object Joining : NetplayState
     /** Playing together: this device is player [localPlayer] (1 host, 2 guest). */
     data class Connected(val peer: String, val localPlayer: Int) : NetplayState
     data class Failed(val reason: NetplayFailure) : NetplayState
 }
 
-enum class NetplayFailure { NETWORK, OTHER_GAME, OTHER_CORE, CLOSED, STATE }
+enum class NetplayFailure { NETWORK, OTHER_GAME, OTHER_CORE, CLOSED, STATE, REJECTED }
 
 /**
  * Two-player netplay between two Ambient TV devices in the same network, as lockstep: both run the
@@ -73,7 +79,12 @@ class GameNetplay(
     private var socket: Socket? = null
     private var job: Job? = null
     private var view: GLRetroView? = null
-    private val sender = Executors.newSingleThreadExecutor()
+    private val sender = ThreadPoolExecutor(1, 1, 0L, TimeUnit.MILLISECONDS,
+        ArrayBlockingQueue(SEND_QUEUE_LIMIT))
+    private var pendingApproval: CompletableDeferred<Boolean>? = null
+
+    fun approvePeer() { pendingApproval?.complete(true) }
+    fun rejectPeer() { pendingApproval?.complete(false) }
 
     // Lockstep, touched on the core's thread (tick) and the reader thread.
     private val remote = ConcurrentHashMap<Int, NetplayInput>()
@@ -95,13 +106,17 @@ class GameNetplay(
         state = NetplayState.Hosting(deviceName)
         job = scope.launch(Dispatchers.IO) {
             try {
-                val listening = ServerSocket(0).also { server = it }
+                val listening = ServerSocket(0).also {
+                    it.soTimeout = HOST_ACCEPT_TIMEOUT_MS
+                    server = it
+                }
                 register(listening.localPort, identity)
                 val client = listening.accept()
                 listening.close()
                 server = null
                 unregister()
                 client.tcpNoDelay = true
+                client.soTimeout = HANDSHAKE_TIMEOUT_MS
                 socket = client
                 val input = DataInputStream(client.getInputStream().buffered())
                 val output = DataOutputStream(client.getOutputStream().buffered())
@@ -109,10 +124,22 @@ class GameNetplay(
                 val peerRom = input.readUTF()
                 val peerCore = input.readUTF()
                 val peerName = input.readUTF()
-                val refusal = when {
+                var refusal = when {
                     peerRom != identity.rom -> NetplayFailure.OTHER_GAME
                     peerCore != identity.core -> NetplayFailure.OTHER_CORE
                     else -> null
+                }
+                if (refusal == null) {
+                    val approval = CompletableDeferred<Boolean>()
+                    withContext(Dispatchers.Main) {
+                        pendingApproval = approval
+                        state = NetplayState.Approval(peerName)
+                    }
+                    val accepted = withTimeoutOrNull(APPROVAL_TIMEOUT_MS) { approval.await() } == true
+                    withContext(Dispatchers.Main) {
+                        if (pendingApproval === approval) pendingApproval = null
+                    }
+                    if (!accepted) refusal = NetplayFailure.REJECTED
                 }
                 output.writeInt(MAGIC)
                 output.writeInt(refusal?.ordinal ?: -1)
@@ -122,7 +149,10 @@ class GameNetplay(
                 }
                 // The guest starts from exactly this moment of the game.
                 view.pauseEmulation()
+                val serializeSize = view.getSerializeSize()
+                if (serializeSize !in 1L..MAX_STATE.toLong()) throw IOException("state size")
                 val bytes = view.serializeState()
+                if (bytes.size !in 1..MAX_STATE) throw IOException("state size")
                 output.writeInt(bytes.size)
                 output.write(bytes)
                 output.writeUTF(deviceName)
@@ -182,6 +212,7 @@ class GameNetplay(
                 val client = Socket().apply {
                     tcpNoDelay = true
                     connect(InetSocketAddress(peer.host, peer.port), 10_000)
+                    soTimeout = HANDSHAKE_TIMEOUT_MS
                 }
                 socket = client
                 val input = DataInputStream(client.getInputStream().buffered())
@@ -228,12 +259,17 @@ class GameNetplay(
             state = NetplayState.Connected(peer, port + 1)
             view.resumeEmulation()
         }
+        // Stop a stalled or malicious peer from retaining socket and session indefinitely.
+        socket?.soTimeout = ACTIVE_READ_TIMEOUT_MS
         // Reader: the other player's buttons until the connection ends.
         try {
             while (true) {
                 when (input.readByte().toInt()) {
                     PACKET_INPUT -> {
                         val f = input.readInt()
+                        if (!acceptableFrame(f, frame) || (!remote.containsKey(f) && remote.size >= MAX_FRAME_AHEAD)) {
+                            throw IOException("Invalid or excessive netplay frame $f")
+                        }
                         remote[f] = NetplayInput.read(input)
                     }
                     PACKET_BYE -> break
@@ -253,15 +289,21 @@ class GameNetplay(
             val state = localInput()
             local[target] = state
             sentUpTo = target
-            sender.execute {
-                runCatching {
-                    synchronized(output) {
-                        output.writeByte(PACKET_INPUT)
-                        output.writeInt(target)
-                        state.write(output)
-                        output.flush()
+            runCatching {
+                sender.execute {
+                    runCatching {
+                        synchronized(output) {
+                            output.writeByte(PACKET_INPUT)
+                            output.writeInt(target)
+                            state.write(output)
+                            output.flush()
+                        }
+                    }.onFailure {
+                        scope.launch(Dispatchers.Main) { end(NetplayFailure.NETWORK) }
                     }
                 }
+            }.onFailure {
+                scope.launch(Dispatchers.Main) { end(NetplayFailure.NETWORK) }
             }
         }
         val theirs = remote[frame]
@@ -310,19 +352,12 @@ class GameNetplay(
 
     /** Ends hosting, searching or playing together; the game continues alone. */
     fun stop() {
+        pendingApproval?.complete(false)
+        pendingApproval = null
         job?.cancel()
         job = null
         stopDiscovery()
         unregister()
-        socket?.let { open ->
-            sender.execute {
-                runCatching {
-                    val output = DataOutputStream(open.getOutputStream())
-                    output.writeByte(PACKET_BYE)
-                    output.flush()
-                }
-            }
-        }
         end(null)
     }
 
@@ -359,7 +394,7 @@ class GameNetplay(
         server = null
         val open = socket
         socket = null
-        if (open != null) sender.execute { runCatching { open.close() } }
+        if (open != null) runCatching { open.close() }
     }
 
     private class NetplayRefused(val reason: NetplayFailure) : IOException(reason.name)
@@ -368,36 +403,74 @@ class GameNetplay(
         const val SERVICE_TYPE = "_ambienttv-np._tcp."
         const val DELAY_FRAMES = 3
         private const val MAGIC = 0x41544e50 // "ATNP"
-        private const val VERSION = 2
+        private const val VERSION = 4
         private const val PACKET_INPUT = 1
         private const val PACKET_BYE = 2
         private const val MAX_STATE = 64 * 1024 * 1024
+        private const val MAX_FRAME_AHEAD = 64
+        private const val SEND_QUEUE_LIMIT = 128
+        private const val HOST_ACCEPT_TIMEOUT_MS = 5 * 60_000
+        private const val HANDSHAKE_TIMEOUT_MS = 40_000
+        private const val APPROVAL_TIMEOUT_MS = 30_000L
+        private const val ACTIVE_READ_TIMEOUT_MS = 30_000
+
+        /** Only a short, bounded window ahead of the frame currently being emulated is legal. */
+        internal fun acceptableFrame(incoming: Int, current: Int): Boolean =
+            incoming >= 0 && incoming >= current &&
+                incoming.toLong() <= current.toLong() + MAX_FRAME_AHEAD
         private const val WAIT_NOTICE_NS = 500_000_000L
 
         /**
-         * What both devices must share: the game file (size plus its first 16 MiB and last 1 MiB, so
-         * disc images hash quickly) and the core build.
+         * Hash the WHOLE ROM rather than the first/last ranges. Two disc images with
+         * different middle sectors must never be mistaken for identical games.
+         * Called on Dispatchers.IO by the Netplay panel; never on the render thread.
          */
-        fun identity(file: File, coreStamp: String, title: String): NetplayIdentity {
-            val digest = MessageDigest.getInstance("SHA-1")
-            RandomAccessFile(file, "r").use { raf ->
-                val size = raf.length()
-                digest.update(size.toString().toByteArray())
-                val buffer = ByteArray(64 * 1024)
-                fun range(start: Long, length: Long) {
-                    raf.seek(start)
-                    var left = length
-                    while (left > 0) {
-                        val count = raf.read(buffer, 0, minOf(buffer.size.toLong(), left).toInt())
-                        if (count <= 0) break
-                        digest.update(buffer, 0, count)
-                        left -= count
-                    }
+        fun identity(file: File, coreStamp: String, title: String): NetplayIdentity =
+            NetplayIdentity(sha256(file), coreStamp, title)
+
+        /** Full streaming SHA-256; a fixed-size buffer also handles multi-gigabyte games. */
+        internal fun sha256(file: File): String {
+            val digest = MessageDigest.getInstance("SHA-256")
+            FileInputStream(file).buffered(256 * 1024).use { stream ->
+                val buffer = ByteArray(256 * 1024)
+                while (true) {
+                    val count = stream.read(buffer)
+                    if (count < 0) break
+                    digest.update(buffer, 0, count)
                 }
-                range(0, minOf(size, 16L shl 20))
-                if (size > 17L shl 20) range(size - (1L shl 20), 1L shl 20)
             }
-            return NetplayIdentity(digest.digest().joinToString("") { "%02x".format(it) }, coreStamp, title)
+            return digest.digest().joinToString("") { "%02x".format(it.toInt() and 0xff) }
+        }
+
+        /**
+         * Two players need the same core binary AND rendering/core options/known BIOS.
+         * The guest receives the host state, but differing emulation settings would
+         * still desynchronize subsequent frames.
+         */
+        fun configurationStamp(
+            coreStamp: String,
+            vulkan: Boolean,
+            options: Map<String, String>,
+            firmware: List<File>,
+        ): String {
+            val digest = MessageDigest.getInstance("SHA-256")
+            fun add(value: String) {
+                val bytes = value.toByteArray(Charsets.UTF_8)
+                digest.update(byteArrayOf(
+                    (bytes.size ushr 24).toByte(), (bytes.size ushr 16).toByte(),
+                    (bytes.size ushr 8).toByte(), bytes.size.toByte(),
+                ))
+                digest.update(bytes)
+            }
+            add("ambient-netplay-v4")
+            add(coreStamp)
+            add(if (vulkan) "vulkan" else "gles")
+            options.toSortedMap().forEach { (key, value) -> add(key); add(value) }
+            firmware.sortedBy { it.name }.forEach { file ->
+                add(file.name)
+                add(if (file.isFile) sha256(file) else "missing")
+            }
+            return "sha256:" + digest.digest().joinToString("") { "%02x".format(it.toInt() and 0xff) }
         }
     }
 }

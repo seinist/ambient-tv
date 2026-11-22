@@ -9,6 +9,9 @@ import com.ambient.tv.games.GameBiosManager
 import com.ambient.tv.games.GameBiosStatus
 import com.ambient.tv.games.GameCore
 import com.ambient.tv.games.GameCoreIncompatibleException
+import com.ambient.tv.games.GameCoreBuildbotConsentRequired
+import com.ambient.tv.games.GameCoreSource
+import com.ambient.tv.games.GameSettings
 import com.ambient.tv.games.GameCoreManager
 import com.ambient.tv.games.GameDirectUnavailableException
 import com.ambient.tv.games.GameRomPreparer
@@ -56,6 +59,7 @@ sealed interface GameUiState {
     data class Preparing(val progress: Float?) : GameUiState
     /** The system's core is not installed yet: the user decides whether to load it. */
     data class NeedsCore(val game: PreparedGame, val core: GameCore, val sourceUrl: String?) : GameUiState
+    data class ConfirmBuildbot(val game: PreparedGame, val core: GameCore, val reason: String) : GameUiState
     data class DownloadingCore(val game: PreparedGame, val core: GameCore, val progress: Float?) : GameUiState
     data class Ready(val session: GameSession) : GameUiState
     data class Failed(val reason: GameFailure, val detail: String? = null) : GameUiState
@@ -72,10 +76,13 @@ class GamePlayerViewModel @Inject constructor(
     private val states: GameStateStore,
     private val bios: GameBiosManager,
     private val files: FileStore,
+    private val gameLibrary: com.ambient.tv.games.library.GameLibraryRepository,
     val retroAchievements: com.ambient.tv.games.RetroAchievementsClient,
     private val cheatStore: com.ambient.tv.games.GameCheatStore,
+    val shaderPacks: com.ambient.tv.games.GameShaderPackStore,
 ) : ViewModel() {
     private val fileId: String = checkNotNull(saved.get<String>("fileId")) { "fileId" }
+    private val assignedSystem: String? = saved.get<String>("system")?.takeIf(String::isNotBlank)
     private val mutable = MutableStateFlow<GameUiState>(GameUiState.Preparing(null))
     val state: StateFlow<GameUiState> = mutable.asStateFlow()
     private val stateList = MutableStateFlow<List<GameStateEntry>>(emptyList())
@@ -85,6 +92,7 @@ class GamePlayerViewModel @Inject constructor(
     private var prepared: PreparedGame? = null
     private var forceCache = false
     private var directFailed = false
+    private var recordedSession: GameSession? = null
 
     /** A failed direct mount or unsupported core can be retried with a LOCAL COPY only by consent. */
     val canUseCache: Boolean get() = directFailed && !forceCache
@@ -128,7 +136,7 @@ class GamePlayerViewModel @Inject constructor(
             prepared = null
             directFailed = false
             val game = try {
-                preparer.prepare(fileId, { progress -> mutable.value = GameUiState.Preparing(progress) }, forceCache)
+                preparer.prepare(fileId, { progress -> mutable.value = GameUiState.Preparing(progress) }, forceCache, assignedSystem)
             } catch (error: GameDirectUnavailableException) {
                 directFailed = true
                 mutable.value = GameUiState.Failed(GameFailure.DIRECT_ACCESS, error.message)
@@ -158,17 +166,26 @@ class GamePlayerViewModel @Inject constructor(
     }
 
     /** The user agreed to load the core for this system. */
-    fun downloadCore() {
-        val needed = state.value as? GameUiState.NeedsCore ?: return
-        val game = needed.game
-        val chosen = needed.core
+    fun downloadCore() = downloadCoreFrom(GameSettings.state.coreSource)
+    /** User-facing confirmation after AUTO would otherwise switch to unsigned native code. */
+    fun confirmBuildbotCore() = downloadCoreFrom(GameCoreSource.BUILDBOT)
+
+    private fun downloadCoreFrom(source: GameCoreSource) {
+        val (game, chosen) = when (val needed = state.value) {
+            is GameUiState.NeedsCore -> needed.game to needed.core
+            is GameUiState.ConfirmBuildbot -> needed.game to needed.core
+            else -> return
+        }
         job?.cancel()
         job = viewModelScope.launch {
             mutable.value = GameUiState.DownloadingCore(game, chosen, null)
             val file = try {
-                cores.download(chosen, com.ambient.tv.games.GameSettings.state.coreSource) { progress ->
+                cores.download(chosen, source) { progress ->
                     mutable.value = GameUiState.DownloadingCore(game, chosen, progress)
                 }
+            } catch (error: GameCoreBuildbotConsentRequired) {
+                mutable.value = GameUiState.ConfirmBuildbot(game, chosen, error.message.orEmpty())
+                return@launch
             } catch (error: GameCoreIncompatibleException) {
                 mutable.value = GameUiState.Failed(GameFailure.CORE_INCOMPATIBLE, error.message); return@launch
             } catch (error: kotlinx.coroutines.CancellationException) {
@@ -181,10 +198,12 @@ class GamePlayerViewModel @Inject constructor(
     }
 
     private suspend fun start(game: PreparedGame, chosen: GameCore, core: File) {
-        val stamp = GameStateStore.coreStamp(core)
         val session = withContext(Dispatchers.IO) {
-            runCatching { files.record(game.entry) }
-            val auto = states.entry(game, GameStateKind.AUTO)?.takeIf { chosen.saveStates && it.coreStamp == stamp }
+            val stamp = GameStateStore.coreStamp(core)
+            val legacyStamp = GameStateStore.legacyCoreStamp(core)
+            val auto = states.entry(game, GameStateKind.AUTO)?.takeIf {
+                chosen.saveStates && GameStateStore.compatible(it, chosen.id, stamp, legacyStamp)
+            }
             GameSession(
                 game = game,
                 core = chosen,
@@ -206,6 +225,20 @@ class GamePlayerViewModel @Inject constructor(
     }
 
     fun biosStatus(game: PreparedGame): List<GameBiosStatus> = bios.status(game.system)
+
+    /**
+     * Record history only after Libretro actually renders its first game frame.
+     * Missing cores, failed mounts and crashing cores must not pollute Recent games.
+     */
+    fun firstFrameRendered(session: GameSession) {
+        if ((mutable.value as? GameUiState.Ready)?.session !== session ||
+            recordedSession === session) return
+        recordedSession = session
+        viewModelScope.launch(Dispatchers.IO) {
+            runCatching { files.record(session.game.entry) }
+            runCatching { gameLibrary.recordPlayed(session.game.fileId) }
+        }
+    }
 
     /** The core failed to load or crashed while starting. */
     fun failed(detail: String?) {

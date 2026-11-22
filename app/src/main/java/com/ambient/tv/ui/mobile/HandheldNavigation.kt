@@ -101,9 +101,10 @@ fun HandheldNavigationHost(
     val companion: com.ambient.tv.companion.CompanionViewModel = hiltViewModel()
     // Phone companion pages (pairing, remote, "Handy & TV") cover the content area, in this priority.
     val companionPage by remember(companion) {
-        companion.manager.state.map { when { it.pairingFlow -> 1; it.remotePanel -> 2; it.handheldPageOpen() -> 3; else -> 0 } }.distinctUntilChanged()
+        companion.manager.state.map { when { it.pairingFlow -> 1; it.gamepadPanel -> 4; it.remotePanel -> 2; it.handheldPageOpen() -> 3; else -> 0 } }.distinctUntilChanged()
     }.collectAsState(0)
-    val remoteOpen = companionPage == 2
+    val remoteOpen = companionPage == 2 || companionPage == 4
+    val gamepadOpen = companionPage == 4
     // Any other navigation target leaves a companion page; the remote tab itself keeps it open.
     val navigate: (String) -> Unit = { route -> if (companionPage != 0) companion.manager.closeHandheldPages(); onNavigate(route) }
     val openSources: () -> Unit = { if (companionPage != 0) companion.manager.closeHandheldPages(); showSources = true }
@@ -131,19 +132,20 @@ fun HandheldNavigationHost(
                 1 -> com.ambient.tv.companion.CompanionPairingScreen(companion.manager)
                 2 -> com.ambient.tv.companion.CompanionRemoteScreen(companion.manager)
                 3 -> com.ambient.tv.companion.CompanionDevicesScreen(companion.manager)
+                4 -> com.ambient.tv.companion.CompanionGamepadScreen(companion.manager)
             }
         }
         // The remote page carries its own playback controls and target name.
         if (showNavigation && companionPage == 0) com.ambient.tv.companion.CompanionOutputBar()
         if ((showNavigation || !playerVisible) && !remoteOpen && companionPage != 1) com.ambient.tv.companion.CompanionRemotePlaybackBar()
-        if (!playerVisible) HandheldMiniPlayer(onOpenPlayback)
+        if (!playerVisible && !gamepadOpen) HandheldMiniPlayer(onOpenPlayback)
     }
     // safeDrawing would pad the portrait status bar / cutout onto the short edge in
     // landscape and leave a dead column beside the player. handheldContentWindowInsets
     // keeps that edge clear on every handheld page; television never reaches this branch.
     if (isHandheldLandscape()) {
         Row(Modifier.fillMaxSize().windowInsetsPadding(handheldContentWindowInsets()).imePadding()) {
-            if (showNavigation) {
+            if (showNavigation && !gamepadOpen) {
                 HandheldNavigationRail(
                     currentRoute = currentRoute,
                     showHome = showHome,
@@ -157,7 +159,7 @@ fun HandheldNavigationHost(
     } else {
         Column(Modifier.fillMaxSize().windowInsetsPadding(handheldContentWindowInsets()).imePadding()) {
             page()
-            if (showNavigation) {
+            if (showNavigation && !gamepadOpen) {
                 HandheldNavigationBar(
                     currentRoute = currentRoute,
                     showHome = showHome,

@@ -64,10 +64,11 @@ class GamepadButtonDispatcher(
         val cfg = config()
         fun allowed(command: GamepadCommand) =
             if (host.recordingKey && command !is GamepadCommand.Key) GamepadCommand.None else command
+        val descriptor = InputDevice.getDevice(deviceId)?.descriptor
         val press = Press(
             deviceId = deviceId,
-            short = allowed(cfg.resolve(button, long = false, player = player)),
-            long = allowed(cfg.resolve(button, long = true, player = player)),
+            short = allowed(cfg.resolve(button, long = false, player = player, deviceDescriptor = descriptor)),
+            long = allowed(cfg.resolve(button, long = true, player = player, deviceDescriptor = descriptor)),
         )
         presses[identity] = press
         if (press.long == GamepadCommand.None) {

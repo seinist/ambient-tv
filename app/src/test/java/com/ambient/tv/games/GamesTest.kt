@@ -235,6 +235,8 @@ class GamesTest {
     private fun elf(align: Long): File {
         val buffer = ByteBuffer.allocate(0x40 + 0x38).order(ByteOrder.LITTLE_ENDIAN)
         buffer.put(byteArrayOf(0x7f, 'E'.code.toByte(), 'L'.code.toByte(), 'F'.code.toByte(), 2, 1, 1))
+        buffer.putShort(0x10, 3) // ET_DYN shared object: new ELF guard validates it.
+        buffer.putShort(0x12, 183) // AArch64, architecture is irrelevant without expectedAbi.
         buffer.putLong(0x20, 0x40) // e_phoff
         buffer.putShort(0x36, 0x38) // e_phentsize
         buffer.putShort(0x38, 1) // e_phnum
@@ -256,5 +258,35 @@ class GamesTest {
             fail("text accepted as a core")
         } catch (expected: GameCoreIncompatibleException) {
         }
+    }
+
+    @Test fun perSystemPhoneControlsAreConfigurableAndStored() {
+        val snes = GameSystems.byId("snes")!!
+        val ds = GameSystems.byId("nds")!!
+        val defaults = GameSettingsState()
+        assertTrue(defaults.touchControls(snes))
+        assertFalse(defaults.touchControls(ds))
+        assertEquals(GameTouchMode.DPAD, defaults.touchMode(snes))
+        val edited = defaults.withTouchControls(snes, false)
+            .withTouchControls(ds, true)
+            .withTouchMode(snes, GameTouchMode.DUAL)
+        assertFalse(edited.touchControls(snes))
+        assertTrue(edited.touchControls(ds))
+        assertEquals(GameTouchMode.DUAL, edited.touchMode(snes))
+        assertEquals(GameTouchMode.HYBRID, edited.withTouchMode(snes, GameTouchMode.HYBRID).touchMode(snes))
+        assertEquals("0", edited.values["touch.snes"])
+        assertEquals("1", edited.values["touch.nds"])
+        assertEquals(GameTouchMode.DPAD, edited.withTouchMode(snes, GameTouchMode.DPAD).touchMode(snes))
+    }
+
+    @Test fun extendedAspectRatiosPreserveTheOriginalKeys() {
+        assertEquals(GameAspect.CORE, GameAspect.fromKey("core"))
+        assertEquals(GameAspect.EIGHT_SEVEN, GameAspect.fromKey("8:7"))
+        assertEquals(GameAspect.SQUARE, GameAspect.fromKey("1:1"))
+        assertEquals(GameAspect.THREE_TWO, GameAspect.fromKey("3:2"))
+        assertEquals(GameAspect.SIXTEEN_TEN, GameAspect.fromKey("16:10"))
+        assertEquals(GameAspect.WIDE, GameAspect.fromKey("16:9"))
+        val snes = GameSystems.byId("snes")!!
+        assertEquals(GameAspect.EIGHT_SEVEN, GameSettingsState().withAspect(snes, GameAspect.EIGHT_SEVEN).aspect(snes))
     }
 }

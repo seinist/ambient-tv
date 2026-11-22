@@ -133,4 +133,25 @@ class KeyBindingsTest {
         assertTrue(KeyActionHandlers.perform(KeyAction.SETTINGS))
         assertEquals(listOf("second", "first", "fallback"), calls)
     }
+    @Test fun deviceSpecificOverridesAndDisabledActionsSurviveBackup() {
+        val legacy = KeyBinding(KeyEvent.KEYCODE_F5, long = false)
+        val keyboard = KeyBinding(KeyEvent.KEYCODE_F6, long = false)
+        KeyBindings.bind(KeyAction.REFRESH, legacy)
+        KeyBindings.bindFor("keyboard", KeyAction.REFRESH, keyboard)
+        KeyBindings.clearFor("remote", KeyAction.REFRESH)
+
+        assertNull(KeyBindings.effectiveBindingsFor("remote")[KeyAction.REFRESH])
+        assertEquals(keyboard, KeyBindings.effectiveBindingsFor("keyboard")[KeyAction.REFRESH])
+        assertEquals("none", saved["device.remote.refresh"])
+        assertEquals(keyboard.encode(), saved["device.keyboard.refresh"])
+        KeyBindings.reload(saved)
+        assertNull(KeyBindings.actionFor(KeyEvent.KEYCODE_F5, long = false, player = false))
+        assertEquals(keyboard, KeyBindings.effectiveBindingsFor("keyboard")[KeyAction.REFRESH])
+
+        KeyBindings.inheritFor("remote", KeyAction.REFRESH)
+        assertEquals(legacy, KeyBindings.effectiveBindingsFor("remote")[KeyAction.REFRESH])
+        assertFalse(KeyBindings.encoded().containsKey("device.remote.refresh"))
+    }
+
+
 }

@@ -1,0 +1,69 @@
+diff --git a/src/main/cpp/vulkan/vulkanbackend.cpp b/src/main/cpp/vulkan/vulkanbackend.cpp
+--- a/src/main/cpp/vulkan/vulkanbackend.cpp
++++ b/src/main/cpp/vulkan/vulkanbackend.cpp
+@@ -1318,6 +1318,8 @@
+     auto* self = static_cast<VulkanBackend*>(handle);
+     self->pendingImage.image = image->create_info.image;
+     self->pendingImage.format = image->create_info.format;
++    self->coreSourceFormat.store(static_cast<uint32_t>(image->create_info.format),
++                                 std::memory_order_release);
+     self->pendingImage.layout = image->image_layout;
+     self->pendingImage.range = image->create_info.subresourceRange;
+     self->pendingImage.srcQueueFamily = srcQueueFamily;
+@@ -1396,6 +1398,7 @@
+     negotiation = nullptr;
+     negotiatedDevice = false;
+     pendingImage = PendingImage {};
++    coreSourceFormat.store(0u, std::memory_order_release);
+     pendingCommandBuffers.clear();
+     pendingSignalSemaphore = VK_NULL_HANDLE;
+     renderInterface = {};
+diff --git a/src/main/cpp/vulkan/vulkanbackend.h b/src/main/cpp/vulkan/vulkanbackend.h
+--- a/src/main/cpp/vulkan/vulkanbackend.h
++++ b/src/main/cpp/vulkan/vulkanbackend.h
+@@ -77,6 +77,9 @@
+     bool isFp16Frame() const { return fp16Frame; }
+     // Actual frame transport, read atomically from the UI: Vulkan, FP16, requested, fallback.
+     uint32_t getFrameStatus() const { return frameStatus.load(std::memory_order_acquire); }
++    // Actual VkFormat of the latest libretro Vulkan core image; not its EOTF.
++    // 0 means no source image observed. UI reads an atomic snapshot.
++    uint32_t getCoreSourceFormat() const { return coreSourceFormat.load(std::memory_order_acquire); }
+     bool isPreferred() const { return preferVulkan; }
+     bool isAvailable();
+     void setNegotiationInterface(const retro_hw_render_context_negotiation_interface_vulkan* negotiation);
+@@ -239,6 +242,7 @@
+     bool forceRgba8Frame = false;
+     bool fp16Frame = false;
+     std::atomic<uint32_t> frameStatus { 0 };
++    std::atomic<uint32_t> coreSourceFormat { 0 };
+     AHardwareBuffer* frameBuffer = nullptr;
+     VkImage frameImage = VK_NULL_HANDLE;
+     VkDeviceMemory frameMemory = VK_NULL_HANDLE;
+diff --git a/src/main/cpp/libretrodroidjni.cpp b/src/main/cpp/libretrodroidjni.cpp
+--- a/src/main/cpp/libretrodroidjni.cpp
++++ b/src/main/cpp/libretrodroidjni.cpp
+@@ -799,6 +799,12 @@
+     return static_cast<jint>(VulkanBackend::getInstance().getFrameStatus());
+ }
+ 
++JNIEXPORT jint JNICALL Java_com_swordfish_libretrodroid_LibretroDroid_getVulkanCoreSourceFormat(
++    JNIEnv* env, jclass obj
++) {
++    return static_cast<jint>(VulkanBackend::getInstance().getCoreSourceFormat());
++}
++
+ JNIEXPORT void JNICALL Java_com_swordfish_libretrodroid_LibretroDroid_setVulkanFramePrecision(
+     JNIEnv* env,
+     jclass obj,
+diff --git a/src/main/java/com/swordfish/libretrodroid/LibretroDroid.java b/src/main/java/com/swordfish/libretrodroid/LibretroDroid.java
+--- a/src/main/java/com/swordfish/libretrodroid/LibretroDroid.java
++++ b/src/main/java/com/swordfish/libretrodroid/LibretroDroid.java
+@@ -133,6 +133,8 @@
+     public static native void setVulkanFramePrecision(boolean fp16);
+     /** Actual Vulkan-to-GLES transport (0 until frame allocation). */
+     public static native int getVulkanFrameStatus();
++    /** Most recent core VkImage format; numeric Vulkan enum, NOT proof of PQ/HLG. */
++    public static native int getVulkanCoreSourceFormat();
+     /**
+      * Read-only native WSI format probe for a REAL, distinct display SurfaceView
+      * surface. Call on the GL/emulation thread only. Does not create a swapchain

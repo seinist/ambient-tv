@@ -279,7 +279,7 @@ class SettingsViewModel @Inject constructor(
         if (page == SettingsCategory.YOUTUBE || page == SettingsCategory.HOME) loadYouTubeSettings()
         pageJob = viewModelScope.launch {
             when (page) {
-                SettingsCategory.FILES -> _uiState.update { it.copy(fileSourceCount = appPreferences.fileSources.size) }
+                SettingsCategory.FILES -> _uiState.update { it.copy(fileSourceCount = fileStore.fileBrowserSources().size) }
                 SettingsCategory.PLEX -> if (appPreferences.hasPlexEndpoint) {
                     val sections = mediaRepository.getLibrarySections().getOrDefault(emptyList())
                     _uiState.update { it.copy(plexLibrarySections = sections) }
@@ -431,7 +431,7 @@ class SettingsViewModel @Inject constructor(
         savedEmbyServers = appPreferences.embyServerProfiles,
         activeEmbyServerId = appPreferences.activeEmbyServerId,
         filesEnabled = appPreferences.filesEnabled,
-        fileSourceCount = appPreferences.fileSources.size,
+        fileSourceCount = fileStore.fileBrowserSources().size,
         dlnaServerCount = networkDlnaStore.servers().size,
         iptvSourceCount = iptvStore.sources().size,
         systemNames = appPreferences.systemNames,

@@ -1,0 +1,162 @@
+diff --git a/src/main/cpp/vulkan/vulkanbackend.h b/src/main/cpp/vulkan/vulkanbackend.h
+--- a/src/main/cpp/vulkan/vulkanbackend.h
++++ b/src/main/cpp/vulkan/vulkanbackend.h
+@@ -29,3 +29,4 @@
+ #include <android/hardware_buffer.h>
++#include <android/native_window.h>
+ #include <atomic>
+ #include <mutex>
+@@ -76,6 +77,13 @@
+     bool isStarted() const { return device != VK_NULL_HANDLE; }
+     const retro_hw_render_interface_vulkan* getRenderInterface() const;
+ 
++    // Read-only WSI capability probe on a separate, real display ANativeWindow.
++    // Call on the emulation/GL thread after Vulkan startup; does NOT present
++    // frames or take ownership of the window.
++    // 1=present queue+swapchain extension, 2=SDR, 4=HDR10/PQ, 8=HLG,
++    // 16=linear FP16 scRGB surface format. Zero means unavailable/unknown.
++    uint32_t probeRealDisplaySurfaceFormats(ANativeWindow* window);
++
+     bool ensureFrameBuffer(unsigned width, unsigned height);
+     AHardwareBuffer* getFrameBuffer() const { return frameBuffer; }
+     unsigned getFrameBufferWidth() const { return frameWidth; }
+@@ -99,2 +107,4 @@
+         PFN_vkGetPhysicalDeviceQueueFamilyProperties getPhysicalDeviceQueueFamilyProperties = nullptr;
++        PFN_vkGetPhysicalDeviceSurfaceSupportKHR getPhysicalDeviceSurfaceSupport = nullptr;
++        PFN_vkGetPhysicalDeviceSurfaceFormatsKHR getPhysicalDeviceSurfaceFormats = nullptr;
+         PFN_vkEnumerateDeviceExtensionProperties enumerateDeviceExtensionProperties = nullptr;
+diff --git a/src/main/cpp/vulkan/vulkanbackend.cpp b/src/main/cpp/vulkan/vulkanbackend.cpp
+--- a/src/main/cpp/vulkan/vulkanbackend.cpp
++++ b/src/main/cpp/vulkan/vulkanbackend.cpp
+@@ -239,6 +239,10 @@
+         }
+         extensions.push_back(name);
+     }
++    // The offscreen Vulkan/GLES path works without this. Enable HDR surface
++    // format enumeration only on drivers exposing the instance extension.
++    if (hasExtension(available, VK_EXT_SWAPCHAIN_COLOR_SPACE_EXTENSION_NAME))
++        extensions.push_back(VK_EXT_SWAPCHAIN_COLOR_SPACE_EXTENSION_NAME);
+     return extensions;
+ }
+ 
+@@ -340,6 +344,78 @@
+     }
+ }
+ 
++uint32_t VulkanBackend::probeRealDisplaySurfaceFormats(ANativeWindow* window) {
++    // This method is diagnostic only. The existing Vulkan->GLES compositor
++    // remains the sole presenter until a separate window swapchain backend is
++    // implemented and validated. Do not query the offscreen AImageReader!
++    if (!isStarted() || window == nullptr || surface == VK_NULL_HANDLE ||
++        vk.createAndroidSurface == nullptr || vk.destroySurface == nullptr ||
++        vk.getPhysicalDeviceSurfaceSupport == nullptr ||
++        vk.getPhysicalDeviceSurfaceFormats == nullptr ||
++        vk.enumerateDeviceExtensionProperties == nullptr) {
++        return 0;
++    }
++
++    // The existing core device must support swapchains, not only Vulkan rendering.
++    uint32_t extensionCount = 0;
++    if (vk.enumerateDeviceExtensionProperties(gpu, nullptr, &extensionCount, nullptr) != VK_SUCCESS)
++        return 0;
++    std::vector<VkExtensionProperties> extensions(extensionCount);
++    if (vk.enumerateDeviceExtensionProperties(gpu, nullptr, &extensionCount, extensions.data()) != VK_SUCCESS ||
++        !hasExtension(extensions, VK_KHR_SWAPCHAIN_EXTENSION_NAME))
++        return 0;
++
++    VkAndroidSurfaceCreateInfoKHR info { VK_STRUCTURE_TYPE_ANDROID_SURFACE_CREATE_INFO_KHR };
++    info.window = window;
++    VkSurfaceKHR realSurface = VK_NULL_HANDLE;
++    if (vk.createAndroidSurface(instance, &info, nullptr, &realSurface) != VK_SUCCESS ||
++        realSurface == VK_NULL_HANDLE) {
++        LOGW("Cannot create Vulkan surface for real display capability probe");
++        return 0;
++    }
++
++    uint32_t flags = 0;
++    do {
++        VkBool32 present = VK_FALSE;
++        if (vk.getPhysicalDeviceSurfaceSupport(gpu, queueFamily, realSurface, &present) != VK_SUCCESS ||
++            present == VK_FALSE)
++            break;
++
++        uint32_t count = 0;
++        if (vk.getPhysicalDeviceSurfaceFormats(gpu, realSurface, &count, nullptr) != VK_SUCCESS ||
++            count == 0)
++            break;
++        std::vector<VkSurfaceFormatKHR> formats(count);
++        const VkResult result = vk.getPhysicalDeviceSurfaceFormats(gpu, realSurface, &count, formats.data());
++        if (result != VK_SUCCESS && result != VK_INCOMPLETE) break;
++        flags = 1; // The existing graphics queue can present to this window.
++        for (uint32_t i = 0; i < count; ++i) {
++            const VkSurfaceFormatKHR& candidate = formats[i];
++            const bool rgba8 =
++                candidate.format == VK_FORMAT_R8G8B8A8_UNORM ||
++                candidate.format == VK_FORMAT_B8G8R8A8_UNORM ||
++                candidate.format == VK_FORMAT_R8G8B8A8_SRGB ||
++                candidate.format == VK_FORMAT_B8G8R8A8_SRGB;
++            const bool rgb10 =
++                candidate.format == VK_FORMAT_A2B10G10R10_UNORM_PACK32 ||
++                candidate.format == VK_FORMAT_A2R10G10B10_UNORM_PACK32;
++            const bool fp16 = candidate.format == VK_FORMAT_R16G16B16A16_SFLOAT;
++            if (rgba8 && candidate.colorSpace == VK_COLOR_SPACE_SRGB_NONLINEAR_KHR)
++                flags |= 2;
++            if (rgb10 && candidate.colorSpace == VK_COLOR_SPACE_HDR10_ST2084_EXT)
++                flags |= 4;
++            if (rgb10 && candidate.colorSpace == VK_COLOR_SPACE_HDR10_HLG_EXT)
++                flags |= 8;
++            if (fp16 && candidate.colorSpace == VK_COLOR_SPACE_EXTENDED_SRGB_LINEAR_EXT)
++                flags |= 16;
++        }
++    } while (false);
++
++    vk.destroySurface(instance, realSurface, nullptr);
++    // Only *available* formats; not actual swapchain creation nor HDR signaling.
++    return flags;
++}
++
+ bool VulkanBackend::loadInstanceFunctions() {
+     auto load = [this](const char* name) { return vk.getInstanceProcAddr(instance, name); };
+     vk.destroyInstance = reinterpret_cast<PFN_vkDestroyInstance>(load("vkDestroyInstance"));
+@@ -349,4 +425,8 @@
+     vk.getPhysicalDeviceQueueFamilyProperties = reinterpret_cast<PFN_vkGetPhysicalDeviceQueueFamilyProperties>(
+         load("vkGetPhysicalDeviceQueueFamilyProperties"));
++    vk.getPhysicalDeviceSurfaceSupport = reinterpret_cast<PFN_vkGetPhysicalDeviceSurfaceSupportKHR>(
++        load("vkGetPhysicalDeviceSurfaceSupportKHR"));
++    vk.getPhysicalDeviceSurfaceFormats = reinterpret_cast<PFN_vkGetPhysicalDeviceSurfaceFormatsKHR>(
++        load("vkGetPhysicalDeviceSurfaceFormatsKHR"));
+     vk.enumerateDeviceExtensionProperties = reinterpret_cast<PFN_vkEnumerateDeviceExtensionProperties>(
+         load("vkEnumerateDeviceExtensionProperties"));
+diff --git a/src/main/cpp/libretrodroidjni.cpp b/src/main/cpp/libretrodroidjni.cpp
+--- a/src/main/cpp/libretrodroidjni.cpp
++++ b/src/main/cpp/libretrodroidjni.cpp
+@@ -796,3 +796,16 @@
++// Invoked exclusively on the GL/emulation thread while the independent
++// target SurfaceView is valid. The caller keeps ownership of Surface.
++JNIEXPORT jint JNICALL Java_com_swordfish_libretrodroid_LibretroDroid_probeVulkanSurfaceFormats(
++    JNIEnv* env, jclass obj, jobject surface
++) {
++    if (surface == nullptr) return 0;
++    ANativeWindow* window = ANativeWindow_fromSurface(env, surface);
++    if (window == nullptr) return 0;
++    const uint32_t flags = VulkanBackend::getInstance().probeRealDisplaySurfaceFormats(window);
++    ANativeWindow_release(window);
++    return static_cast<jint>(flags);
++}
++
+ JNIEXPORT void JNICALL Java_com_swordfish_libretrodroid_LibretroDroid_setRumbleEnabled(
+     JNIEnv* env,
+     jclass obj,
+diff --git a/src/main/java/com/swordfish/libretrodroid/LibretroDroid.java b/src/main/java/com/swordfish/libretrodroid/LibretroDroid.java
+--- a/src/main/java/com/swordfish/libretrodroid/LibretroDroid.java
++++ b/src/main/java/com/swordfish/libretrodroid/LibretroDroid.java
+@@ -132,3 +132,9 @@
++    /**
++     * Read-only native WSI format probe for a REAL, distinct display SurfaceView
++     * surface. Call on the GL/emulation thread only. Does not create a swapchain
++     * or enable native HDR. 1=presentable, 2=SDR, 4=PQ, 8=HLG, 16=scRGB FP16.
++     */
++    public static native int probeVulkanSurfaceFormats(android.view.Surface surface);
+     public static native void setFrameSpeed(int speed);
+     public static native void setAudioEnabled(boolean enabled);
+     public static native void setPitchPreservationEnabled(boolean enabled);

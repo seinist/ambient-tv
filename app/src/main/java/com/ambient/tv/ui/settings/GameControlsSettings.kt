@@ -41,11 +41,9 @@ import kotlinx.coroutines.delay
 
 /** Settings → App & data → Game controls: who plays as which player, and each kind's key layout. */
 internal fun LazyListScope.gameControlsItems() {
+    item(key = "game-controls-visual") { VisualGameControls() }
     item(key = "game-controls-players") { GameControlsPlayers() }
     item(key = "game-controls-options") { GameControlsOptions() }
-    RetroInputKind.entries.forEach { kind ->
-        item(key = "game-controls-layout-${kind.key}") { GameControlsLayout(kind) }
-    }
 }
 
 /** Keys Android keeps for itself; they never play. */
@@ -60,7 +58,7 @@ private fun playableDevices(): List<RetroInputDevice> = playableInputDevices()
 @Composable
 private fun GameControlsPlayers() {
     val config = RetroInputSettings.config
-    val devices = remember { playableDevices() }
+    val devices = rememberPlayableDevices()
     Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(LocalUiTokens.current.compactGap)) {
         SettingsHint(stringResource(R.string.game_controls_explanation))
         SettingsSubheader(stringResource(R.string.game_controls_players))

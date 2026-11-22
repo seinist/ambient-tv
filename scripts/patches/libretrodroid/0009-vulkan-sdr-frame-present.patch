@@ -1,0 +1,351 @@
+diff --git a/src/main/cpp/vulkan/vulkanbackend.cpp b/src/main/cpp/vulkan/vulkanbackend.cpp
+--- a/src/main/cpp/vulkan/vulkanbackend.cpp
++++ b/src/main/cpp/vulkan/vulkanbackend.cpp
+@@ -740,127 +740,222 @@
+     frameInFlight = false;
+ }
+ 
+-bool VulkanBackend::presentFrame(unsigned width, unsigned height) {
+-    if (!isStarted() || frameImage == VK_NULL_HANDLE || pendingImage.image == VK_NULL_HANDLE) return false;
+-
+-    waitForFrame();
+-
+-    const uint32_t copyWidth = std::min(width, frameWidth);
+-    const uint32_t copyHeight = std::min(height, frameHeight);
+-    const bool generalLayout = pendingImage.layout == VK_IMAGE_LAYOUT_GENERAL;
+-    const VkImageLayout sourceLayout = generalLayout ? VK_IMAGE_LAYOUT_GENERAL : VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+-    const bool transferOwnership = pendingImage.srcQueueFamily != VK_QUEUE_FAMILY_IGNORED &&
+-                                   pendingImage.srcQueueFamily != queueFamily;
+-
+-    vk.resetCommandBuffer(commandBuffer, 0);
+-    VkCommandBufferBeginInfo begin { VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO };
+-    begin.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+-    vk.beginCommandBuffer(commandBuffer, &begin);
+-
+-    VkImageSubresourceRange sourceRange = pendingImage.range;
+-    sourceRange.levelCount = 1;
+-    sourceRange.layerCount = 1;
+-
+-    VkImageMemoryBarrier acquire[2] {};
+-    acquire[0].sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+-    acquire[0].srcAccessMask = VK_ACCESS_MEMORY_WRITE_BIT;
+-    acquire[0].dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+-    acquire[0].oldLayout = pendingImage.layout;
+-    acquire[0].newLayout = sourceLayout;
+-    acquire[0].srcQueueFamilyIndex = transferOwnership ? pendingImage.srcQueueFamily : VK_QUEUE_FAMILY_IGNORED;
+-    acquire[0].dstQueueFamilyIndex = transferOwnership ? queueFamily : VK_QUEUE_FAMILY_IGNORED;
+-    acquire[0].image = pendingImage.image;
+-    acquire[0].subresourceRange = sourceRange;
+-
+-    acquire[1].sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+-    acquire[1].srcAccessMask = 0;
+-    acquire[1].dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+-    acquire[1].oldLayout = VK_IMAGE_LAYOUT_GENERAL;
+-    acquire[1].newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+-    acquire[1].srcQueueFamilyIndex = VK_QUEUE_FAMILY_FOREIGN_EXT;
+-    acquire[1].dstQueueFamilyIndex = queueFamily;
+-    acquire[1].image = frameImage;
+-    acquire[1].subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 };
+-
+-    vk.cmdPipelineBarrier(commandBuffer,
+-                          VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
+-                          0, 0, nullptr, 0, nullptr, 2, acquire);
+-
+-    VkImageBlit blit {};
+-    blit.srcSubresource = { VK_IMAGE_ASPECT_COLOR_BIT, sourceRange.baseMipLevel, sourceRange.baseArrayLayer, 1 };
+-    blit.srcOffsets[1] = { static_cast<int32_t>(copyWidth), static_cast<int32_t>(copyHeight), 1 };
+-    blit.dstSubresource = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1 };
+-    blit.dstOffsets[1] = { static_cast<int32_t>(copyWidth), static_cast<int32_t>(copyHeight), 1 };
+-    vk.cmdBlitImage(commandBuffer, pendingImage.image, sourceLayout, frameImage,
+-                    VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &blit, VK_FILTER_NEAREST);
+-
+-    VkImageMemoryBarrier release[2] {};
+-    release[0].sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+-    release[0].srcAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+-    release[0].dstAccessMask = 0;
+-    release[0].oldLayout = sourceLayout;
+-    release[0].newLayout = pendingImage.layout;
+-    release[0].srcQueueFamilyIndex = transferOwnership ? queueFamily : VK_QUEUE_FAMILY_IGNORED;
+-    release[0].dstQueueFamilyIndex = transferOwnership ? pendingImage.srcQueueFamily : VK_QUEUE_FAMILY_IGNORED;
+-    release[0].image = pendingImage.image;
+-    release[0].subresourceRange = sourceRange;
+-
+-    release[1].sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+-    release[1].srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+-    release[1].dstAccessMask = 0;
+-    release[1].oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+-    release[1].newLayout = VK_IMAGE_LAYOUT_GENERAL;
+-    release[1].srcQueueFamilyIndex = queueFamily;
+-    release[1].dstQueueFamilyIndex = VK_QUEUE_FAMILY_FOREIGN_EXT;
+-    release[1].image = frameImage;
+-    release[1].subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 };
+-
+-    vk.cmdPipelineBarrier(commandBuffer,
+-                          VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,
+-                          0, 0, nullptr, 0, nullptr, 2, release);
+-    vk.endCommandBuffer(commandBuffer);
+-
+-    std::vector<VkCommandBuffer> submitted = pendingCommandBuffers;
+-    submitted.push_back(commandBuffer);
+-    const bool useSemaphores = pendingCommandBuffers.empty();
+-    std::vector<VkPipelineStageFlags> waitStages(pendingImage.waitSemaphores.size(), VK_PIPELINE_STAGE_TRANSFER_BIT);
+-
+-    VkSubmitInfo submit { VK_STRUCTURE_TYPE_SUBMIT_INFO };
+-    if (useSemaphores && !pendingImage.waitSemaphores.empty()) {
+-        submit.waitSemaphoreCount = static_cast<uint32_t>(pendingImage.waitSemaphores.size());
+-        submit.pWaitSemaphores = pendingImage.waitSemaphores.data();
+-        submit.pWaitDstStageMask = waitStages.data();
+-    }
+-    submit.commandBufferCount = static_cast<uint32_t>(submitted.size());
+-    submit.pCommandBuffers = submitted.data();
+-    if (pendingSignalSemaphore != VK_NULL_HANDLE) {
+-        submit.signalSemaphoreCount = 1;
+-        submit.pSignalSemaphores = &pendingSignalSemaphore;
+-    }
+-
+-    VkResult result;
+-    {
+-        std::lock_guard<std::mutex> lock(queueMutex);
+-        result = vk.queueSubmit(queue, 1, &submit, frameFence);
+-    }
+-
+-    pendingImage.waitSemaphores.clear();
+-    pendingCommandBuffers.clear();
+-    pendingSignalSemaphore = VK_NULL_HANDLE;
+-
+-    if (result != VK_SUCCESS) {
+-        LOGE("Vulkan frame submit failed: %d", result);
+-        return false;
+-    }
+-    frameInFlight = true;
+-    waitForFrame();
+-    return true;
+-}
++bool VulkanBackend::presentFrame(unsigned width, unsigned height) {
++    if (!isStarted() || frameImage == VK_NULL_HANDLE || pendingImage.image == VK_NULL_HANDLE) return false;
++
++    waitForFrame();
++
++    uint32_t sdrIndex = 0;
++    bool useDirect = false;
++    if (nativeSdrWindow != nullptr && !nativeSdrDisabled && ensureNativeSdrSwapchain()) {
++        // Source format comes from retro_vulkan_image::create_info.format.
++        // Unknown, sRGB-encoded and HDR/FP16 sources cannot be blindly blitted.
++        const bool supported = pendingImage.format == VK_FORMAT_R8G8B8A8_UNORM ||
++                               pendingImage.format == VK_FORMAT_B8G8R8A8_UNORM;
++        VkFormatProperties sourceProps {};
++        if (supported) vk.getPhysicalDeviceFormatProperties(gpu, pendingImage.format, &sourceProps);
++        if (!supported || (sourceProps.optimalTilingFeatures & VK_FORMAT_FEATURE_BLIT_SRC_BIT) == 0) {
++            disableNativeSdrSwapchain("non-SDR or non-blittable core source");
++        } else {
++            const VkResult acquired = vk.acquireNextImage(
++                device, nativeSdrSwapchain, 0, nativeSdrAcquire, VK_NULL_HANDLE, &sdrIndex);
++            if (acquired == VK_SUCCESS || acquired == VK_SUBOPTIMAL_KHR) {
++                useDirect = sdrIndex < nativeSdrImages.size() &&
++                            sdrIndex < nativeSdrComplete.size();
++            } else if (acquired != VK_NOT_READY && acquired != VK_TIMEOUT) {
++                disableNativeSdrSwapchain("native SDR swapchain out of date or surface lost");
++            }
++        }
++    }
++
++    const uint32_t copyWidth = std::min(width, frameWidth);
++    const uint32_t copyHeight = std::min(height, frameHeight);
++    const bool generalLayout = pendingImage.layout == VK_IMAGE_LAYOUT_GENERAL;
++    const VkImageLayout sourceLayout = generalLayout ? VK_IMAGE_LAYOUT_GENERAL : VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
++    const bool transferOwnership = pendingImage.srcQueueFamily != VK_QUEUE_FAMILY_IGNORED &&
++                                   pendingImage.srcQueueFamily != queueFamily;
++
++    vk.resetCommandBuffer(commandBuffer, 0);
++    VkCommandBufferBeginInfo begin { VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO };
++    begin.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
++    vk.beginCommandBuffer(commandBuffer, &begin);
++
++    VkImageSubresourceRange sourceRange = pendingImage.range;
++    sourceRange.levelCount = 1;
++    sourceRange.layerCount = 1;
++
++    VkImageMemoryBarrier acquire[2] {};
++    acquire[0].sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
++    acquire[0].srcAccessMask = VK_ACCESS_MEMORY_WRITE_BIT;
++    acquire[0].dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
++    acquire[0].oldLayout = pendingImage.layout;
++    acquire[0].newLayout = sourceLayout;
++    acquire[0].srcQueueFamilyIndex = transferOwnership ? pendingImage.srcQueueFamily : VK_QUEUE_FAMILY_IGNORED;
++    acquire[0].dstQueueFamilyIndex = transferOwnership ? queueFamily : VK_QUEUE_FAMILY_IGNORED;
++    acquire[0].image = pendingImage.image;
++    acquire[0].subresourceRange = sourceRange;
++
++    acquire[1].sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
++    acquire[1].srcAccessMask = 0;
++    acquire[1].dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
++    acquire[1].oldLayout = VK_IMAGE_LAYOUT_GENERAL;
++    acquire[1].newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
++    acquire[1].srcQueueFamilyIndex = VK_QUEUE_FAMILY_FOREIGN_EXT;
++    acquire[1].dstQueueFamilyIndex = queueFamily;
++    acquire[1].image = frameImage;
++    acquire[1].subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 };
++
++    vk.cmdPipelineBarrier(commandBuffer,
++                          VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
++                          0, 0, nullptr, 0, nullptr, 2, acquire);
++
++    VkImageBlit blit {};
++    blit.srcSubresource = { VK_IMAGE_ASPECT_COLOR_BIT, sourceRange.baseMipLevel, sourceRange.baseArrayLayer, 1 };
++    blit.srcOffsets[1] = { static_cast<int32_t>(copyWidth), static_cast<int32_t>(copyHeight), 1 };
++    blit.dstSubresource = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1 };
++    blit.dstOffsets[1] = { static_cast<int32_t>(copyWidth), static_cast<int32_t>(copyHeight), 1 };
++    vk.cmdBlitImage(commandBuffer, pendingImage.image, sourceLayout, frameImage,
++                    VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &blit, VK_FILTER_NEAREST);
++
++    if (useDirect) {
++        // Both present paths consume the same core image in a single submission.
++        // GLES remains available for shaders, captures and immediate fallback.
++        const VkImage target = nativeSdrImages[sdrIndex];
++        const VkImageSubresourceRange targetRange { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 };
++        VkImageMemoryBarrier toTransfer { VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER };
++        toTransfer.srcAccessMask = 0;
++        toTransfer.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
++        toTransfer.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED; // discard previous presented contents
++        toTransfer.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
++        toTransfer.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
++        toTransfer.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
++        toTransfer.image = target;
++        toTransfer.subresourceRange = targetRange;
++        vk.cmdPipelineBarrier(commandBuffer, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
++                              VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 1, &toTransfer);
++        VkClearColorValue black {};
++        black.float32[3] = 1.0f;
++        vk.cmdClearColorImage(commandBuffer, target, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
++                              &black, 1, &targetRange);
++        const double scale = std::min(
++            static_cast<double>(nativeSdrExtent.width) / std::max(1u, copyWidth),
++            static_cast<double>(nativeSdrExtent.height) / std::max(1u, copyHeight));
++        const int32_t dstW = std::max(1, static_cast<int32_t>(copyWidth * scale));
++        const int32_t dstH = std::max(1, static_cast<int32_t>(copyHeight * scale));
++        const int32_t left = (static_cast<int32_t>(nativeSdrExtent.width) - dstW) / 2;
++        const int32_t top = (static_cast<int32_t>(nativeSdrExtent.height) - dstH) / 2;
++        VkImageBlit nativeBlit = blit;
++        nativeBlit.dstOffsets[0] = { left, top, 0 };
++        nativeBlit.dstOffsets[1] = { left + dstW, top + dstH, 1 };
++        vk.cmdBlitImage(commandBuffer, pendingImage.image, sourceLayout, target,
++                        VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &nativeBlit, VK_FILTER_NEAREST);
++        VkImageMemoryBarrier toPresent { VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER };
++        toPresent.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
++        toPresent.dstAccessMask = 0;
++        toPresent.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
++        toPresent.newLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
++        toPresent.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
++        toPresent.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
++        toPresent.image = target;
++        toPresent.subresourceRange = targetRange;
++        vk.cmdPipelineBarrier(commandBuffer, VK_PIPELINE_STAGE_TRANSFER_BIT,
++                              VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, 0, 0, nullptr, 0, nullptr, 1, &toPresent);
++    }
++
++    VkImageMemoryBarrier release[2] {};
++    release[0].sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
++    release[0].srcAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
++    release[0].dstAccessMask = 0;
++    release[0].oldLayout = sourceLayout;
++    release[0].newLayout = pendingImage.layout;
++    release[0].srcQueueFamilyIndex = transferOwnership ? queueFamily : VK_QUEUE_FAMILY_IGNORED;
++    release[0].dstQueueFamilyIndex = transferOwnership ? pendingImage.srcQueueFamily : VK_QUEUE_FAMILY_IGNORED;
++    release[0].image = pendingImage.image;
++    release[0].subresourceRange = sourceRange;
++
++    release[1].sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
++    release[1].srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
++    release[1].dstAccessMask = 0;
++    release[1].oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
++    release[1].newLayout = VK_IMAGE_LAYOUT_GENERAL;
++    release[1].srcQueueFamilyIndex = queueFamily;
++    release[1].dstQueueFamilyIndex = VK_QUEUE_FAMILY_FOREIGN_EXT;
++    release[1].image = frameImage;
++    release[1].subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 };
++
++    vk.cmdPipelineBarrier(commandBuffer,
++                          VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,
++                          0, 0, nullptr, 0, nullptr, 2, release);
++    vk.endCommandBuffer(commandBuffer);
++
++    std::vector<VkCommandBuffer> submitted = pendingCommandBuffers;
++    submitted.push_back(commandBuffer);
++    const bool useSemaphores = pendingCommandBuffers.empty();
++    std::vector<VkSemaphore> waits;
++    if (useSemaphores) waits = pendingImage.waitSemaphores;
++    if (useDirect) waits.push_back(nativeSdrAcquire);
++    std::vector<VkPipelineStageFlags> waitStages(waits.size(), VK_PIPELINE_STAGE_TRANSFER_BIT);
++    std::vector<VkSemaphore> signals;
++    if (pendingSignalSemaphore != VK_NULL_HANDLE) signals.push_back(pendingSignalSemaphore);
++    if (useDirect) signals.push_back(nativeSdrComplete[sdrIndex]);
++
++    VkSubmitInfo submit { VK_STRUCTURE_TYPE_SUBMIT_INFO };
++    if (!waits.empty()) {
++        submit.waitSemaphoreCount = static_cast<uint32_t>(waits.size());
++        submit.pWaitSemaphores = waits.data();
++        submit.pWaitDstStageMask = waitStages.data();
++    }
++    submit.commandBufferCount = static_cast<uint32_t>(submitted.size());
++    submit.pCommandBuffers = submitted.data();
++    if (!signals.empty()) {
++        submit.signalSemaphoreCount = static_cast<uint32_t>(signals.size());
++        submit.pSignalSemaphores = signals.data();
++    }
++
++    VkResult result;
++    {
++        std::lock_guard<std::mutex> lock(queueMutex);
++        result = vk.queueSubmit(queue, 1, &submit, frameFence);
++    }
++
++    pendingImage.waitSemaphores.clear();
++    pendingCommandBuffers.clear();
++    pendingSignalSemaphore = VK_NULL_HANDLE;
++
++    if (result != VK_SUCCESS) {
++        LOGE("Vulkan frame submit failed: %d", result);
++        if (useDirect) disableNativeSdrSwapchain("frame submission failed");
++        return false;
++    }
++    frameInFlight = true;
++    waitForFrame();
++    if (useDirect) {
++        const VkSemaphore finished = nativeSdrComplete[sdrIndex];
++        VkPresentInfoKHR present { VK_STRUCTURE_TYPE_PRESENT_INFO_KHR };
++        present.waitSemaphoreCount = 1;
++        present.pWaitSemaphores = &finished;
++        present.swapchainCount = 1;
++        present.pSwapchains = &nativeSdrSwapchain;
++        present.pImageIndices = &sdrIndex;
++        VkResult presentResult;
++        {
++            std::lock_guard<std::mutex> lock(queueMutex);
++            presentResult = vk.queuePresent(queue, &present);
++        }
++        if (presentResult == VK_SUCCESS || presentResult == VK_SUBOPTIMAL_KHR) {
++            nativeSdrStatus.store(7u, std::memory_order_release);
++        } else {
++            disableNativeSdrSwapchain("frame presentation failed; GLES retained");
++        }
++    }
++    return true;
++}
+ 
+ void VulkanBackend::callbackSetImage(void* handle, const retro_vulkan_image* image, uint32_t numSemaphores,
+                                      const VkSemaphore* semaphores, uint32_t srcQueueFamily) {
+     auto* self = static_cast<VulkanBackend*>(handle);
+     self->pendingImage.image = image->create_info.image;
++    self->pendingImage.format = image->create_info.format;
+     self->pendingImage.layout = image->image_layout;
+     self->pendingImage.range = image->create_info.subresourceRange;
+     self->pendingImage.srcQueueFamily = srcQueueFamily;
+diff --git a/src/main/cpp/vulkan/vulkanbackend.h b/src/main/cpp/vulkan/vulkanbackend.h
+--- a/src/main/cpp/vulkan/vulkanbackend.h
++++ b/src/main/cpp/vulkan/vulkanbackend.h
+@@ -131,4 +131,5 @@
+     struct PendingImage {
+         VkImage image = VK_NULL_HANDLE;
++        VkFormat format = VK_FORMAT_UNDEFINED;
+         VkImageLayout layout = VK_IMAGE_LAYOUT_UNDEFINED;
+         VkImageSubresourceRange range {};

@@ -17,6 +17,7 @@ concurrency:
 
 permissions:
   contents: read
+  pull-requests: read
 
 env:
   NDK_VERSION: "30.0.16248370"
@@ -25,9 +26,47 @@ env:
   SKIP_MPV_NATIVE: "1"
 
 jobs:
+  games-changes:
+    runs-on: ubuntu-latest
+    outputs:
+      native: ${{ steps.detect.outputs.native }}
+      slang: ${{ steps.detect.outputs.slang }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 2
+      - name: Detect game/renderer changes by file, not PR title or branch name
+        id: detect
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          BEFORE: ${{ github.event.before }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "$GITHUB_EVENT_NAME" = "pull_request" ]; then
+            files=$(gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER/files?per_page=100" --paginate --jq '.[].filename')
+          elif [ "$GITHUB_EVENT_NAME" = "push" ]; then
+            files=$(git diff --name-only "$BEFORE" "$GITHUB_SHA" || git ls-files)
+          else
+            files=$(git ls-files)
+          fi
+          native=false
+          slang=false
+          if grep -Eq '^(app/src/(main|test)/java/com/ambient/tv/(games|ui/games|ui/gamepad)/|app/src/main/assets/games/|libretrodroid_wrapper/|scripts/(patches/libretrodroid/|native_libretro_vulkan/|fetch_libretrodroid\.sh|build_librashader_android\.sh)|gradle/external-versions\.properties|\.github/workflows/pr-checks\.yml)' <<< "$files"; then
+            native=true
+          fi
+          if grep -Eq '^(app/src/main/assets/games/slang/|app/src/main/java/com/ambient/tv/ui/games/|scripts/(native_libretro_vulkan/|patches/libretrodroid/|build_librashader_android\.sh|test_librashader_preset_api\.py)|gradle/external-versions\.properties|\.github/workflows/pr-checks\.yml)' <<< "$files"; then
+            slang=true
+          fi
+          printf 'native=%s\nslang=%s\n' "$native" "$slang" >> "$GITHUB_OUTPUT"
+
   unit-tests:
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    env:
+      # Robolectric downloads android-all separately from Gradle; repo1 can return 429.
+      ROBOLECTRIC_MAVEN_MIRROR: https://maven-central.storage-download.googleapis.com/maven2/
     steps:
       - uses: actions/checkout@v5
 
@@ -59,6 +98,13 @@ jobs:
           bash -n build.sh
           python3 -m unittest discover -s scripts/tests -p 'test_*.py'
 
+      - name: Validate game GLSL ES 100 shader sources
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq glslang-tools
+          python3 scripts/check_game_glsl.py
+          python3 scripts/check_game_slang.py
+
       - name: Fetch LibretroDroid
         # The games frontend (pinned Argosy fork plus scripts/patches/libretrodroid).
         run: ./scripts/fetch_libretrodroid.sh
@@ -82,3 +128,110 @@ jobs:
           name: unit-test-reports
           path: app/build/reports/tests/
           retention-days: 7
+
+  # The normal JVM job already builds ARM64. For the Vulkan/HDR output
+  # development PR, additionally compile all remaining Android ABIs and
+  # verify 16-KiB ELF LOAD-segment alignment. A green ARM64-only build
+  # cannot prove that the native frontend works on the other release ABIs.
+  native-vulkan-abis:
+    needs: games-changes
+    # All game-native changes are checked on PRs AND on main, even after branch merges.
+    if: needs.games-changes.outputs.native == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - abi: armeabi-v7a
+            build: arm
+          - abi: x86
+            build: x86
+          - abi: x86_64
+            build: x86_64
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "21"
+      - name: Install NDK and CMake
+        run: |
+          sdkmanager="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          [ -x "$sdkmanager" ] || sdkmanager="$(command -v sdkmanager)"
+          yes | "$sdkmanager" --licenses > /dev/null 2>&1 || true
+          "$sdkmanager" "ndk;${NDK_VERSION}" "cmake;3.22.1"
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Apply pinned LibretroDroid patches
+        run: ./scripts/fetch_libretrodroid.sh
+      - name: Build native LibretroDroid (${{ matrix.abi }})
+        run: ./gradlew :libretrodroid:assembleDebug -PAPK_ABI=${{ matrix.build }} --no-daemon
+      - name: Verify ELF 16-KiB alignment (${{ matrix.abi }})
+        run: |
+          set -euo pipefail
+          readelf="$ANDROID_HOME/ndk/${NDK_VERSION}/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-readelf"
+          test -x "$readelf"
+          mapfile -t libs < <(find libretrodroid_wrapper/build -type f -path "*/${{ matrix.abi }}/*.so" | sort -u)
+          test "${#libs[@]}" -gt 0 || { echo "::error::No native output libraries found"; exit 1; }
+          python3 scripts/check_elf_page_alignment.py "$readelf" "${libs[@]}"
+
+  # The Rust Vulkan runtime is a separate library: the LibretroDroid NDK build can
+  # pass while a missing/incompatible librashader.so would fail on device.
+  # Build exactly the pinned Vulkan-only features, for every supported ABI.
+  native-slang-runtime:
+    needs: games-changes
+    if: needs.games-changes.outputs.slang == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        abi: [arm64-v8a, armeabi-v7a, x86, x86_64]
+    steps:
+      - uses: actions/checkout@v5
+      - name: Install pinned Android NDK
+        run: |
+          sdkmanager="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          [ -x "$sdkmanager" ] || sdkmanager="$(command -v sdkmanager)"
+          yes | "$sdkmanager" --licenses > /dev/null 2>&1 || true
+          "$sdkmanager" "ndk;30.0.16248370"
+      - name: Build Vulkan-only librashader C runtime
+        env:
+          LIBRASHADER_ABIS: ${{ matrix.abi }}
+        run: |
+          set -euo pipefail
+          rustup --version
+          cargo --version
+          bash scripts/build_librashader_android.sh
+          test -s "app/src/main/jniLibs/$LIBRASHADER_ABIS/liblibrashader_capi.so"
+          file "app/src/main/jniLibs/$LIBRASHADER_ABIS/liblibrashader_capi.so"
+          so="app/src/main/jniLibs/$LIBRASHADER_ABIS/liblibrashader_capi.so"
+          raw=$(stat -c%s "$so")
+          compressed=$(gzip -9 -c "$so" | wc -c)
+          test "$raw" -le 12582912 || { echo "::error::Vulkan Slang exceeds 12 MiB per ABI"; exit 1; }
+          echo "Vulkan Slang $LIBRASHADER_ABIS: $raw raw ELF bytes, $compressed gzip bytes (APK ZIP may differ)" >> "$GITHUB_STEP_SUMMARY"
+
+  # Validate the actual pinned parser and C ABI, not just GLSL stage syntax.
+  slang-preset-api:
+    needs: games-changes
+    if: needs.games-changes.outputs.slang == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v5
+      - name: Compile pinned host-side Slang C ABI and parse every bundled preset
+        run: |
+          set -euo pipefail
+          pin="$(sed -n 's/^LIBRASHADER_COMMIT=//p' gradle/external-versions.properties)"
+          test "${#pin}" -eq 40
+          mkdir -p third_party/.librashader-host-src
+          git -C third_party/.librashader-host-src init -q
+          git -C third_party/.librashader-host-src remote add origin https://github.com/SnowflakePowered/librashader
+          git -C third_party/.librashader-host-src fetch -q --depth 1 origin "$pin"
+          git -C third_party/.librashader-host-src checkout -q FETCH_HEAD
+          test "$(git -C third_party/.librashader-host-src rev-parse HEAD)" = "$pin"
+          export CARGO_TARGET_DIR="$PWD/third_party/.librashader-host-target"
+          cargo build --manifest-path third_party/.librashader-host-src/Cargo.toml \
+            -p librashader-capi --release --locked --no-default-features --features runtime-vulkan
+          python3 scripts/test_librashader_preset_api.py \
+            third_party/.librashader-host-target/release/liblibrashader_capi.so

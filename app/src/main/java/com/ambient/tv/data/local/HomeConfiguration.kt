@@ -25,6 +25,10 @@ data class HomeRowDefinition(
         const val SYSTEM_TRAILERS = "trailers"
         const val SYSTEM_SPOTIFY = "spotify"
         const val SYSTEM_RADIO = "radio"
+        const val SYSTEM_GAMES = "games"
+        const val GAMES_ALL = "all"
+        const val GAMES_FAVORITES = "favorites"
+        const val GAMES_RECENT = "recent"
         const val RADIO_POPULAR = "popular"
         const val RADIO_FAVORITES = "favorites"
         const val RADIO_RECENT = "recent"
@@ -108,6 +112,7 @@ fun homeSystemReady(
     youtubeReady: Boolean,
     spotifyReady: Boolean,
     radioReady: Boolean = false,
+    gamesReady: Boolean = false,
     telegramReady: Boolean = false,
     embyReady: Boolean = false,
     photosReady: Boolean = false,
@@ -124,5 +129,6 @@ fun homeSystemReady(
     HomeRowDefinition.SYSTEM_TELEGRAM -> telegramReady
     HomeRowDefinition.SYSTEM_SPOTIFY -> spotifyReady
     HomeRowDefinition.SYSTEM_RADIO -> radioReady
+    HomeRowDefinition.SYSTEM_GAMES -> gamesReady
     else -> false
 }
