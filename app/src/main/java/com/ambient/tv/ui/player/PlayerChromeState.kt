@@ -4,7 +4,9 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.MutableState
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.compositionLocalOf
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.ui.focus.FocusRequester
@@ -23,6 +25,8 @@ import androidx.compose.ui.input.key.isShiftPressed
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
 import com.ambient.tv.ui.common.PlayerPanelNavigation
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 
 /** UI lifetime is the fullscreen player, not its current decoder or media item. */
 class PlayerChromeState(initialZapOsd: Boolean = false) {
@@ -53,6 +57,40 @@ class PlayerChromeState(initialZapOsd: Boolean = false) {
     internal var hasFocus = false
     /** Last title that was ready in this player; see [titleChangeRevealsOsd]. */
     internal var readyTitleIdentity: String? = null
+    private var seekGeneration: Long? = null
+    private var heldSeekDirection = 0
+    private var retiredSeekDirection = 0
+
+    /** The chrome survives item/renderer changes; a held seek belongs to just one session. */
+    internal fun reconcileSeekSession(generation: Long, replacingSource: Boolean) {
+        if (seekGeneration != generation || replacingSource) {
+            if (heldSeekDirection != 0) retiredSeekDirection = heldSeekDirection
+            osd.progressiveSeek.cancel()
+        }
+        seekGeneration = generation
+    }
+
+    /** Repeats from the outgoing key hold must not start a new seek on the next item. */
+    internal fun consumeRetiredSeekKey(event: androidx.compose.ui.input.key.KeyEvent): Boolean {
+        val direction = when (event.key) {
+            Key.DirectionLeft -> -1
+            Key.DirectionRight -> 1
+            else -> return false
+        }
+        if (event.type == androidx.compose.ui.input.key.KeyEventType.KeyUp) {
+            if (heldSeekDirection == direction) heldSeekDirection = 0
+            if (retiredSeekDirection == direction) {
+                retiredSeekDirection = 0
+                return true
+            }
+        } else if (event.type == androidx.compose.ui.input.key.KeyEventType.KeyDown) {
+            if (retiredSeekDirection == direction && event.nativeKeyEvent.repeatCount > 0) return true
+            // A fresh physical press is valid even if the previous release was lost.
+            retiredSeekDirection = 0
+            heldSeekDirection = direction
+        }
+        return false
+    }
 
     /** Synchronous: no panel-close effect may reveal controls between these changes. */
     internal fun closePanelsForInactivity(expectedActivity: Int): Boolean {
@@ -73,6 +111,10 @@ fun PersistentPlayerChrome(
     content: @Composable () -> Unit,
 ) {
     val chrome = remember(owner) { PlayerChromeState(initialZapOsd) }
+    // Observe ownership changes only, not every decoder-position tick.
+    val sessionGeneration by remember {
+        BackgroundPlaybackSession.snapshot.map { it.generation }.distinctUntilChanged()
+    }.collectAsState(initial = BackgroundPlaybackSession.snapshot.value.generation)
     CompositionLocalProvider(
         LocalPlayerChromeState provides chrome,
         LocalPlayerControlFocus provides chrome.focus,
@@ -87,8 +129,9 @@ fun PersistentPlayerChrome(
                 chrome.osd.interact()
             }
         }
-        LaunchedEffect(changingItem) {
-            if (changingItem) chrome.osd.progressiveSeek.cancel()
+        LaunchedEffect(chrome, changingItem, sessionGeneration) {
+            val current = BackgroundPlaybackSession.snapshot.value
+            chrome.reconcileSeekSession(current.generation, changingItem || current.replacingSource)
         }
         androidx.compose.runtime.DisposableEffect(chrome) {
             onDispose { chrome.osd.progressiveSeek.cancel() }
@@ -102,6 +145,11 @@ fun PersistentPlayerChrome(
         Box(Modifier.fillMaxSize()
             .onFocusChanged { chrome.hasFocus = it.hasFocus }
             .onPreviewKeyEvent {
+                // A same-handle gapless handoff can occur before Compose observes its new
+                // generation. Never deliver the outgoing KeyUp target to the incoming item.
+                val current = BackgroundPlaybackSession.snapshot.value
+                chrome.reconcileSeekSession(current.generation, changingItem || current.replacingSource)
+                if (chrome.consumeRetiredSeekKey(it)) return@onPreviewKeyEvent true
                 // Keep the active direct scrub on one owner even if showing seek feedback
                 // changes focus from the engine to the timeline between KeyDown and KeyUp.
                 // Run in the outer preview phase, before a newly focused child can swallow

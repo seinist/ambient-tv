@@ -84,6 +84,12 @@ internal class PlayerOsdController(initialZapOsd: Boolean = false) {
         interact()
     }
 
+    /** A held direct scrub is user intent before KeyUp commits a decoder seek. */
+    fun startUserSeekFeedback() {
+        BackgroundPlaybackSession.userSeek()
+        showSeekFeedback()
+    }
+
     fun expand() {
         update(presentation.expand())
         shownByZap.value = false

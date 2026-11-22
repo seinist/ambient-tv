@@ -234,14 +234,16 @@ internal fun VlcPlayerContent(
 
     // One remote handling for the engine and, while the focus is in the panel above it, the panel host.
     val chapterNavigation = com.ambient.tv.ui.player.LocalPlaybackNavigation.current
-    val osdKeys: (androidx.compose.ui.input.key.KeyEvent) -> Boolean = { event ->
+    val osdKeys: (androidx.compose.ui.input.key.KeyEvent) -> Boolean = osdKeys@{ event ->
+        if (!seek.isActive) return@osdKeys false
+        val seekPositionMs = seek.refreshForInput()
         // Shared remote handling (PlayerOsdKeys); only the actions below are VLC's own.
         val restartTitle = { seek.seekTo(0L) }
         handlePlayerOsdKey(
             event.key, event.type == KeyEventType.KeyDown,
             OsdKeyState(OsdContent.VIDEO, controlsVisible && !osd.seekFeedback && !osd.closing,
                 panel != UnifiedPlayerPanel.NONE, osd.seekFeedback, closing = osd.closing, seekBarFocused = osd.seekBarFocused),
-            progressiveOsdSeekSteps(BackgroundPlaybackSession.seekJumpMs(state.seekJumpMs), seek.positionMs, timelineDurationMs, osd),
+            progressiveOsdSeekSteps(BackgroundPlaybackSession.seekJumpMs(state.seekJumpMs), seekPositionMs, timelineDurationMs, osd),
             object : OsdKeyTarget {
                 override fun chapterSeekDelta(direction: Int): Long? {
                     // Performance mode can suspend the hidden OSD clock; sample only on input.
