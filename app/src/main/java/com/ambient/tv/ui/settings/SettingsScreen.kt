@@ -1182,6 +1182,12 @@ fun SettingsScreen(
                                             checked = uiState.nextUpOverlayEnabled,
                                             onCheckedChange = viewModel::onNextUpOverlayEnabledChanged,
                                         )
+                                        TvSettingRow(
+                                            title = stringResource(R.string.settings_next_up_minimal),
+                                            body = stringResource(R.string.settings_next_up_minimal_hint),
+                                            checked = uiState.nextUpMinimalEnabled,
+                                            onCheckedChange = viewModel::onNextUpMinimalEnabledChanged,
+                                        )
                                         SettingsSelect(label = stringResource(R.string.settings_next_up_credits_delay), description = stringResource(R.string.settings_next_up_credits_delay_hint), options = listOf(0, 5, 10, 15, 30).map { seconds ->
                                             SettingsSelectOption(
                                                 text = if (seconds == 0) stringResource(R.string.credits_skip_off) else stringResource(R.string.settings_next_up_seconds, seconds),

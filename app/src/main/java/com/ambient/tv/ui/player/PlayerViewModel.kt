@@ -331,6 +331,7 @@ class PlayerViewModel @Inject constructor(
                 else appPreferences.nextUpAutoplayCollections,
                 stillWatchingEvery = appPreferences.nextUpStillWatchingEpisodes,
                 showOverlay = appPreferences.nextUpOverlayEnabled,
+                minimal = appPreferences.nextUpMinimalEnabled,
             ),
         )
     }

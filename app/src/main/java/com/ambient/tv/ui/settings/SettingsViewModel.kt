@@ -548,13 +548,16 @@ class SettingsViewModel @Inject constructor(
         ),
         creditsSkipMode = appPreferences.creditsSkipMode,
         introSkipMode = appPreferences.introSkipMode,
-        nextUpEnabled = appPreferences.nextUpEnabled,
-        nextUpLeadSeconds = appPreferences.nextUpLeadSeconds,
-        nextUpCreditsDelaySeconds = appPreferences.nextUpCreditsDelaySeconds,
-        nextUpAutoplayEpisodes = appPreferences.nextUpAutoplayEpisodes,
-        nextUpAutoplayCollections = appPreferences.nextUpAutoplayCollections,
-        nextUpOverlayEnabled = appPreferences.nextUpOverlayEnabled,
-        nextUpStillWatchingEpisodes = appPreferences.nextUpStillWatchingEpisodes,
+        nextUp = NextUpSettingsDraft(
+            enabled = appPreferences.nextUpEnabled,
+            leadSeconds = appPreferences.nextUpLeadSeconds,
+            creditsDelaySeconds = appPreferences.nextUpCreditsDelaySeconds,
+            autoplayEpisodes = appPreferences.nextUpAutoplayEpisodes,
+            autoplayCollections = appPreferences.nextUpAutoplayCollections,
+            overlayEnabled = appPreferences.nextUpOverlayEnabled,
+            minimalEnabled = appPreferences.nextUpMinimalEnabled,
+            stillWatchingEpisodes = appPreferences.nextUpStillWatchingEpisodes,
+        ),
         sleepAutoStartKey = appPreferences.sleepAutoStartKey,
         sleepWarningMinutes = appPreferences.sleepWarningMinutes,
         sleepDailyStopMinute = appPreferences.sleepDailyStopMinute,
@@ -2641,18 +2644,19 @@ class SettingsViewModel @Inject constructor(
     fun onIntroSkipModeChanged(value: String) = _uiState.update { it.copy(introSkipMode = value) }
 
     fun onNextUpCreditsDelaySecondsChanged(value: Int) = _uiState.update {
-        it.copy(nextUpCreditsDelaySeconds = value.takeIf { it in listOf(0, 5, 10, 15, 30) } ?: 0)
+        it.copy(nextUp = it.nextUp.copy(creditsDelaySeconds = value.takeIf { it in listOf(0, 5, 10, 15, 30) } ?: 0))
     }
 
-    fun onNextUpEnabledChanged(value: Boolean) = _uiState.update { it.copy(nextUpEnabled = value) }
+    fun onNextUpEnabledChanged(value: Boolean) = _uiState.update { it.copy(nextUp = it.nextUp.copy(enabled = value)) }
     fun onNextUpLeadSecondsChanged(value: Int) = _uiState.update {
-        it.copy(nextUpLeadSeconds = value.takeIf(AppPreferences.NEXT_UP_LEAD_SECONDS::contains) ?: 30)
+        it.copy(nextUp = it.nextUp.copy(leadSeconds = value.takeIf(AppPreferences.NEXT_UP_LEAD_SECONDS::contains) ?: 30))
     }
-    fun onNextUpAutoplayEpisodesChanged(value: Boolean) = _uiState.update { it.copy(nextUpAutoplayEpisodes = value) }
-    fun onNextUpAutoplayCollectionsChanged(value: Boolean) = _uiState.update { it.copy(nextUpAutoplayCollections = value) }
-    fun onNextUpOverlayEnabledChanged(value: Boolean) = _uiState.update { it.copy(nextUpOverlayEnabled = value) }
+    fun onNextUpAutoplayEpisodesChanged(value: Boolean) = _uiState.update { it.copy(nextUp = it.nextUp.copy(autoplayEpisodes = value)) }
+    fun onNextUpAutoplayCollectionsChanged(value: Boolean) = _uiState.update { it.copy(nextUp = it.nextUp.copy(autoplayCollections = value)) }
+    fun onNextUpOverlayEnabledChanged(value: Boolean) = _uiState.update { it.copy(nextUp = it.nextUp.copy(overlayEnabled = value)) }
+    fun onNextUpMinimalEnabledChanged(value: Boolean) = _uiState.update { it.copy(nextUp = it.nextUp.copy(minimalEnabled = value)) }
     fun onNextUpStillWatchingEpisodesChanged(value: Int) = _uiState.update {
-        it.copy(nextUpStillWatchingEpisodes = value.takeIf(AppPreferences.NEXT_UP_STILL_WATCHING_VALUES::contains) ?: 3)
+        it.copy(nextUp = it.nextUp.copy(stillWatchingEpisodes = value.takeIf(AppPreferences.NEXT_UP_STILL_WATCHING_VALUES::contains) ?: 3))
     }
     fun onSleepAutoStartChanged(value: String) = _uiState.update {
         it.copy(sleepAutoStartKey = value.takeIf(AppPreferences.SLEEP_AUTO_START_KEYS::contains) ?: AppPreferences.SLEEP_AUTO_START_OFF)
@@ -3117,6 +3121,7 @@ class SettingsViewModel @Inject constructor(
         appPreferences.nextUpAutoplayEpisodes = state.nextUpAutoplayEpisodes
         appPreferences.nextUpAutoplayCollections = state.nextUpAutoplayCollections
         appPreferences.nextUpOverlayEnabled = state.nextUpOverlayEnabled
+        appPreferences.nextUpMinimalEnabled = state.nextUpMinimalEnabled
         appPreferences.nextUpStillWatchingEpisodes = state.nextUpStillWatchingEpisodes
         appPreferences.sleepAutoStartKey = state.sleepAutoStartKey
         appPreferences.sleepWarningMinutes = state.sleepWarningMinutes

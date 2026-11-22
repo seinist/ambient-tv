@@ -550,7 +550,8 @@ private fun TelegramPlaybackContent(
     }
     val queue by viewModel.queue.collectAsState()
     val preferences = viewModel.preferences
-    val metadata = remember(media.mediaKey, queue) {
+    val nextUpMinimal = preferences.nextUpMinimalEnabled
+    val metadata = remember(media.mediaKey, queue, nextUpMinimal) {
         val base = media.playerMetadata()
         val next = queue.next
         base.copy(
@@ -574,6 +575,7 @@ private fun TelegramPlaybackContent(
                 autoplay = preferences.nextUpAutoplayCollections,
                 stillWatchingEvery = preferences.nextUpStillWatchingEpisodes,
                 showOverlay = preferences.nextUpOverlayEnabled,
+                minimal = nextUpMinimal,
             ),
         )
     }

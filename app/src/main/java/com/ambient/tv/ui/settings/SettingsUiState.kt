@@ -49,6 +49,18 @@ data class UiDisplayDraft(
     val renderResolutionKey: String = UiRenderResolutionPolicy.SYSTEM,
 )
 
+/** Keep Next Up drafts together; the parent constructor is at the JVM parameter-slot limit. */
+data class NextUpSettingsDraft(
+    val enabled: Boolean = true,
+    val leadSeconds: Int = 30,
+    val creditsDelaySeconds: Int = 0,
+    val autoplayEpisodes: Boolean = false,
+    val autoplayCollections: Boolean = false,
+    val overlayEnabled: Boolean = true,
+    val minimalEnabled: Boolean = false,
+    val stillWatchingEpisodes: Int = 3,
+)
+
 data class SettingsUiState(
     val trailersConfigured: Boolean = false,
     val mpvImageOptions: MpvImageOptions = MpvImageOptions(),
@@ -213,13 +225,7 @@ data class SettingsUiState(
     val seekPlayback: com.ambient.tv.data.local.SeekPlaybackSettings = com.ambient.tv.data.local.SeekPlaybackSettings(),
     val creditsSkipMode: String = "button",
     val introSkipMode: String = "button",
-    val nextUpEnabled: Boolean = true,
-    val nextUpLeadSeconds: Int = 30,
-    val nextUpCreditsDelaySeconds: Int = 0,
-    val nextUpAutoplayEpisodes: Boolean = false,
-    val nextUpAutoplayCollections: Boolean = false,
-    val nextUpOverlayEnabled: Boolean = true,
-    val nextUpStillWatchingEpisodes: Int = 3,
+    val nextUp: NextUpSettingsDraft = NextUpSettingsDraft(),
     val sleepAutoStartKey: String = com.ambient.tv.data.local.AppPreferences.SLEEP_AUTO_START_OFF,
     val sleepWarningMinutes: Int = com.ambient.tv.data.local.AppPreferences.SLEEP_WARNING_DEFAULT,
     val sleepDailyStopMinute: Int = com.ambient.tv.data.local.AppPreferences.SLEEP_DAILY_STOP_OFF,
@@ -312,6 +318,14 @@ data class SettingsUiState(
 ) {
     val uiScale: Float get() = uiDisplay.scale
     val uiRenderResolutionKey: String get() = uiDisplay.renderResolutionKey
+    val nextUpEnabled: Boolean get() = nextUp.enabled
+    val nextUpLeadSeconds: Int get() = nextUp.leadSeconds
+    val nextUpCreditsDelaySeconds: Int get() = nextUp.creditsDelaySeconds
+    val nextUpAutoplayEpisodes: Boolean get() = nextUp.autoplayEpisodes
+    val nextUpAutoplayCollections: Boolean get() = nextUp.autoplayCollections
+    val nextUpOverlayEnabled: Boolean get() = nextUp.overlayEnabled
+    val nextUpMinimalEnabled: Boolean get() = nextUp.minimalEnabled
+    val nextUpStillWatchingEpisodes: Int get() = nextUp.stillWatchingEpisodes
     val bigSeekJumpSeconds: Int get() = seekPlayback.bigSeekJumpSeconds
     val pauseRewindSeconds: Int get() = seekPlayback.pauseRewindSeconds
     val pauseRewindMinPauseSeconds: Int get() = seekPlayback.pauseRewindMinPauseSeconds
@@ -449,6 +463,7 @@ internal fun SettingsUiState.editableValues(): List<Any?> = listOf(
     nextUpAutoplayEpisodes,
     nextUpAutoplayCollections,
     nextUpOverlayEnabled,
+    nextUpMinimalEnabled,
     nextUpStillWatchingEpisodes,
     sleepAutoStartKey,
     sleepWarningMinutes,
@@ -639,13 +654,16 @@ internal fun mergeStoredSettings(draft: SettingsUiState, baseline: SettingsUiSta
     ),
     creditsSkipMode = if (draft.creditsSkipMode != baseline.creditsSkipMode) draft.creditsSkipMode else stored.creditsSkipMode,
     introSkipMode = if (draft.introSkipMode != baseline.introSkipMode) draft.introSkipMode else stored.introSkipMode,
-    nextUpEnabled = if (draft.nextUpEnabled != baseline.nextUpEnabled) draft.nextUpEnabled else stored.nextUpEnabled,
-    nextUpLeadSeconds = if (draft.nextUpLeadSeconds != baseline.nextUpLeadSeconds) draft.nextUpLeadSeconds else stored.nextUpLeadSeconds,
-    nextUpCreditsDelaySeconds = if (draft.nextUpCreditsDelaySeconds != baseline.nextUpCreditsDelaySeconds) draft.nextUpCreditsDelaySeconds else stored.nextUpCreditsDelaySeconds,
-    nextUpAutoplayEpisodes = if (draft.nextUpAutoplayEpisodes != baseline.nextUpAutoplayEpisodes) draft.nextUpAutoplayEpisodes else stored.nextUpAutoplayEpisodes,
-    nextUpAutoplayCollections = if (draft.nextUpAutoplayCollections != baseline.nextUpAutoplayCollections) draft.nextUpAutoplayCollections else stored.nextUpAutoplayCollections,
-    nextUpOverlayEnabled = if (draft.nextUpOverlayEnabled != baseline.nextUpOverlayEnabled) draft.nextUpOverlayEnabled else stored.nextUpOverlayEnabled,
-    nextUpStillWatchingEpisodes = if (draft.nextUpStillWatchingEpisodes != baseline.nextUpStillWatchingEpisodes) draft.nextUpStillWatchingEpisodes else stored.nextUpStillWatchingEpisodes,
+    nextUp = NextUpSettingsDraft(
+        enabled = if (draft.nextUpEnabled != baseline.nextUpEnabled) draft.nextUpEnabled else stored.nextUpEnabled,
+        leadSeconds = if (draft.nextUpLeadSeconds != baseline.nextUpLeadSeconds) draft.nextUpLeadSeconds else stored.nextUpLeadSeconds,
+        creditsDelaySeconds = if (draft.nextUpCreditsDelaySeconds != baseline.nextUpCreditsDelaySeconds) draft.nextUpCreditsDelaySeconds else stored.nextUpCreditsDelaySeconds,
+        autoplayEpisodes = if (draft.nextUpAutoplayEpisodes != baseline.nextUpAutoplayEpisodes) draft.nextUpAutoplayEpisodes else stored.nextUpAutoplayEpisodes,
+        autoplayCollections = if (draft.nextUpAutoplayCollections != baseline.nextUpAutoplayCollections) draft.nextUpAutoplayCollections else stored.nextUpAutoplayCollections,
+        overlayEnabled = if (draft.nextUpOverlayEnabled != baseline.nextUpOverlayEnabled) draft.nextUpOverlayEnabled else stored.nextUpOverlayEnabled,
+        minimalEnabled = if (draft.nextUpMinimalEnabled != baseline.nextUpMinimalEnabled) draft.nextUpMinimalEnabled else stored.nextUpMinimalEnabled,
+        stillWatchingEpisodes = if (draft.nextUpStillWatchingEpisodes != baseline.nextUpStillWatchingEpisodes) draft.nextUpStillWatchingEpisodes else stored.nextUpStillWatchingEpisodes,
+    ),
     sleepAutoStartKey = if (draft.sleepAutoStartKey != baseline.sleepAutoStartKey) draft.sleepAutoStartKey else stored.sleepAutoStartKey,
     sleepWarningMinutes = if (draft.sleepWarningMinutes != baseline.sleepWarningMinutes) draft.sleepWarningMinutes else stored.sleepWarningMinutes,
     sleepDailyStopMinute = if (draft.sleepDailyStopMinute != baseline.sleepDailyStopMinute) draft.sleepDailyStopMinute else stored.sleepDailyStopMinute,

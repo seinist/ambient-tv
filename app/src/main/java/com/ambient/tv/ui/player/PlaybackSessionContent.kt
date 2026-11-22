@@ -9,6 +9,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -24,6 +25,9 @@ import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import kotlin.math.ceil
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.onStart
 
 /** Shared title actions for renderer controls and the persistent OSD above their layout. */
 internal data class PlaybackItemControls(
@@ -69,6 +73,13 @@ fun PlaybackSessionContent(
 ) {
     val handheld = com.ambient.tv.ui.mobile.LocalHandheldUi.current
     val chrome = LocalPlayerChromeState.current
+    val preferences = videoImagePreferences(androidx.compose.ui.platform.LocalContext.current)
+    // This is a global presentation choice. Refresh it on settings import/TV sync as well as
+    // player entry, without replacing the session or restarting its countdown effects.
+    val minimalNextUp by remember(preferences) {
+        preferences.changes().onStart { emit(Unit) }
+            .map { preferences.nextUpMinimalEnabled }.distinctUntilChanged()
+    }.collectAsState(initial = preferences.nextUpMinimalEnabled)
     var introSkipMode by remember(metadata.route) { mutableStateOf(metadata.introSkipMode) }
     var creditsSkipMode by remember(metadata.route) { mutableStateOf(metadata.creditsSkipMode) }
     var autoplay by remember(metadata.route, metadata.nextUpConfig.autoplay) {
@@ -96,7 +107,7 @@ fun PlaybackSessionContent(
         playbackSegments = segments,
         introSkipMode = introSkipMode,
         creditsSkipMode = creditsSkipMode,
-        nextUpConfig = metadata.nextUpConfig.copy(autoplay = autoplay),
+        nextUpConfig = metadata.nextUpConfig.copy(autoplay = autoplay, minimal = minimalNextUp),
     )
     SideEffect { BackgroundPlaybackSession.refreshMetadata(activeMetadata) }
     val observedSnapshot by BackgroundPlaybackSession.snapshot.collectAsState()
@@ -170,7 +181,7 @@ fun PlaybackSessionContent(
     // and an imprecise/keyframe-decoding backend can keep repeating that tail without EOF.
     // Preserve still-watching confirmation, disabled SponsorBlock, manual categories, sleep
     // timers and post-credit scenes (segments ending before EOF).
-    val sponsorSettings = videoImagePreferences(androidx.compose.ui.platform.LocalContext.current)
+    val sponsorSettings = preferences
     val terminalSponsorHandoff = canOfferNext && !metadata.successorsLoading && !navigation.skipOverlayBlocked &&
         !navigation.chaptersOpen && (candidateKey != dismissedKey || config.autoplay) && candidateKey != handledKey &&
         metadata.source == "youtube" && metadata.sponsorSkipEnabled && snapshot.status.playing &&
@@ -224,6 +235,57 @@ fun PlaybackSessionContent(
     // An open player panel or dialog (e.g. Details by Info) keeps the remote; the card waits.
     val nextUpOwnsRemote = chrome == null ||
         (chrome.panels.panel == com.ambient.tv.ui.common.UnifiedPlayerPanel.NONE && chrome.panels.dialogFocusOwner == null)
+    val compactOtherOwner = !nextUpOwnsRemote || !windowInfo.isWindowFocused ||
+        panelActivity?.blocked == true || panelActivity?.popupWindowFocused == true
+    val compactSeekActive = chrome?.osd?.progressiveSeek?.active == true
+    val terminalCompactConfirmation = config.minimal && confirmationNeedsTimeout &&
+        !compactOtherOwner && !compactSeekActive
+    var compactConfirmationReady by remember(metadata.route, snapshot.generation, candidateKey, seekVersion) {
+        mutableStateOf(false)
+    }
+    // At EOF the paused OSD never auto-hides. Release that passive surface for the bounded
+    // confirmation, but let a real seek finish first. The confirmation deadline is unchanged.
+    LaunchedEffect(metadata.route, snapshot.generation, candidateKey, terminalCompactConfirmation, seekVersion) {
+        compactConfirmationReady = false
+        if (!terminalCompactConfirmation || chrome == null) return@LaunchedEffect
+        if (!atEnd) kotlinx.coroutines.delay(NEXT_UP_EOF_GRACE_MS)
+        while (true) {
+            val current = BackgroundPlaybackSession.snapshot.value
+            val activity = chrome.panels.activity
+            if (current.metadata?.route != metadata.route || current.generation != snapshot.generation ||
+                current.replacingSource || BackgroundPlaybackSession.externalSeekVersion != seekVersion ||
+                handledKey == candidateKey || dismissedKey == candidateKey ||
+                com.ambient.tv.companion.CompanionQueuePlayback.pending ||
+                chrome.panels.panel != com.ambient.tv.ui.common.UnifiedPlayerPanel.NONE ||
+                chrome.panels.dialogFocusOwner != null || activity.blocked || activity.popupWindowFocused ||
+                !windowInfo.isWindowFocused || navigation.chaptersOpen || chrome.osd.progressiveSeek.active) return@LaunchedEffect
+            val endedNow = current.status.ended ||
+                (metadata.source == "youtube" && BackgroundPlaybackSession.userEndSeekRequested(current.generation))
+            val reachedDurationNow = durationMs > 0L &&
+                current.status.positionMs + metadata.timelineOffsetMs >= durationMs
+            if (!endedNow && !reachedDurationNow) return@LaunchedEffect
+            if (chrome.osdModel.value?.hasPendingSeek() != true) {
+                chrome.osd.hideImmediately()
+                compactConfirmationReady = true
+                return@LaunchedEffect
+            }
+            // Read the live coordinator: a stopped clock may acknowledge a seek without
+            // publishing a different OSD position. Session/seek changes cancel this effect.
+            kotlinx.coroutines.delay(100L)
+        }
+    }
+    // Compact Next Up waits for player controls and seeks to finish. This affects presentation
+    // only: autoplay, still-watching timeout and dismiss/focus restoration keep their own state.
+    // Observe the poll's state writes even while the non-observable pending-seek guard below
+    // short-circuits. Otherwise a stopped decoder can acknowledge without ever showing the card.
+    val compactOsdVisible = config.minimal && chrome?.osd?.visible?.value == true
+    val compactReadyForPresentation = config.minimal && compactConfirmationReady
+    val compactPresentationBlocked = config.minimal && (
+        compactOtherOwner || compactSeekActive || chrome?.osdModel?.value?.hasPendingSeek() == true ||
+            compactOsdVisible ||
+            (!compactReadyForPresentation && (chrome?.osd?.seekBarFocused == true || chrome?.osd?.seekFeedback == true))
+        )
+    val nextUpPresented = showNextUp && !compactPresentationBlocked
     var nextUpFocused by remember(candidateKey) { mutableStateOf(false) }
     LaunchedEffect(showNextUp) {
         if (wasNextUpVisible && !showNextUp && handledKey != candidateKey) navigation.returnToControls()
@@ -386,7 +448,7 @@ fun PlaybackSessionContent(
         Box(Modifier.fillMaxSize().onPreviewKeyEvent { event ->
             // A remote key while the visible Next Up card lacks focus (the starting player took
             // it) moves into the card instead of operating the hidden controls underneath.
-            if (showNextUp && nextUpOwnsRemote && !nextUpFocused && !handheld && event.type == KeyEventType.KeyDown &&
+            if (nextUpPresented && nextUpOwnsRemote && !nextUpFocused && !handheld && event.type == KeyEventType.KeyDown &&
                 event.key in NextUpRescueKeys &&
                 runCatching { nextUpFocus.requestFocus() }.getOrDefault(false)
             ) return@onPreviewKeyEvent true
@@ -408,7 +470,7 @@ fun PlaybackSessionContent(
             }
         }) {
             PlaybackNavigationProvider(activeMetadata, timelineKey, timeline, timelineLoader, onTimelineSeek,
-                nextUpVisible = showNextUp,
+                nextUpVisible = nextUpPresented,
                 onPlayNext = if (candidate != null) ({ automatic -> playNext(automatic) }) else null,
                 // With Next Up enabled, open-ended credits must not bypass its autoplay/confirmation rules.
                 canAutoAdvance = !metadata.isTrailer && !changingItem && !queuePending && !linkCreditsToNextUp && !BackgroundPlaybackSession.shouldConfirmNextUp(config.stillWatchingEvery) &&
@@ -416,38 +478,52 @@ fun PlaybackSessionContent(
                 navigationState = navigation,
                 creditsHandledByNextUp = linkCreditsToNextUp,
             ) { content() }
-            if (showNextUp) {
-                NextUpOverlay(
-                    playFocus = nextUpFocus,
-                    claimFocus = nextUpOwnsRemote,
-                    candidate = candidate,
-                    secondsRemaining = secondsRemaining,
-                    creditsCountdown = creditsRemainingMs != null,
-                    leadSeconds = if (creditsRemainingMs != null) config.creditsDelaySeconds else timing.progressWindowSeconds,
-                    autoplay = config.autoplay,
-                    stillWatching = stillWatching,
-                    onPlayNow = { playNext(automatic = false) },
-                    onAutoplayChanged = onAutoplayChanged?.let { persist ->
-                        { enabled ->
-                            persist(enabled)
-                            autoplay = enabled
-                        }
-                    },
-                    onDismiss = {
-                        dismissedKey = candidateKey
-                        navigation.returnToControls()
-                    },
-                    onSkipCredits = timing.credits?.takeIf { it.endMs > positionMs }?.let { credits ->
-                        {
-                            navigation.interact()
-                            if (onTimelineSeek != null) onTimelineSeek(credits.endMs)
-                            else BackgroundPlaybackSession.seekTo((credits.endMs - metadata.timelineOffsetMs).coerceAtLeast(0))
-                            navigation.returnToControls()
-                        }
-                    },
-                    modifier = Modifier.align(Alignment.BottomEnd).padding(if (handheld) 12.dp else 32.dp)
-                        .onFocusChanged { nextUpFocused = it.hasFocus },
-                )
+            // Remove a compact outgoing card immediately on title/session replacement or when
+            // another control takes over. A logical dismissal may finish its inert fade while
+            // the OSD returns; otherwise returnToControls() would cut off every exit animation.
+            if (candidate != null && (!config.minimal ||
+                    ((!compactPresentationBlocked || !showNextUp) && acquired && ownsSnapshot &&
+                        !changingItem && candidateKey != handledKey))) {
+                key(metadata.route, snapshot.generation, candidateKey) {
+                    NextUpOverlayVisibility(
+                        visible = nextUpPresented,
+                        minimal = config.minimal,
+                        modifier = Modifier.align(Alignment.BottomEnd).padding(if (handheld) 12.dp else 32.dp),
+                    ) {
+                        NextUpOverlay(
+                            playFocus = nextUpFocus,
+                            claimFocus = nextUpOwnsRemote && nextUpPresented,
+                            candidate = candidate,
+                            secondsRemaining = secondsRemaining,
+                            creditsCountdown = creditsRemainingMs != null,
+                            leadSeconds = if (creditsRemainingMs != null) config.creditsDelaySeconds else timing.progressWindowSeconds,
+                            autoplay = config.autoplay,
+                            stillWatching = stillWatching,
+                            onPlayNow = { playNext(automatic = false) },
+                            onAutoplayChanged = onAutoplayChanged?.let { persist ->
+                                { enabled ->
+                                    persist(enabled)
+                                    autoplay = enabled
+                                }
+                            },
+                            onDismiss = {
+                                dismissedKey = candidateKey
+                                navigation.returnToControls()
+                            },
+                            onSkipCredits = timing.credits?.takeIf { it.endMs > positionMs }?.let { credits ->
+                                {
+                                    navigation.interact()
+                                    if (onTimelineSeek != null) onTimelineSeek(credits.endMs)
+                                    else BackgroundPlaybackSession.seekTo((credits.endMs - metadata.timelineOffsetMs).coerceAtLeast(0))
+                                    navigation.returnToControls()
+                                }
+                            },
+                            modifier = Modifier.onFocusChanged { nextUpFocused = it.hasFocus },
+                            minimal = config.minimal,
+                            interactive = nextUpPresented,
+                        )
+                    }
+                }
             }
         }
     }
