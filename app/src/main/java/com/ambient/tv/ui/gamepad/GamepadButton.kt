@@ -39,11 +39,28 @@ fun isGamepadButtonKeyCode(keyCode: Int): Boolean =
 
 /** Button names printed on the controller in front of the user. */
 enum class GamepadLabels {
+    /** Android's neutral button names; no physical brand was identified. */
+    GENERIC,
     XBOX, PLAYSTATION,
     /** Android maps Nintendo pads by position: the bottom button (labelled B) is BUTTON_A. */
     NINTENDO;
 
     fun label(button: GamepadButton): String = when (this) {
+        GENERIC -> when (button) {
+            GamepadButton.A -> "A"
+            GamepadButton.B -> "B"
+            GamepadButton.X -> "X"
+            GamepadButton.Y -> "Y"
+            GamepadButton.L1 -> "L1"
+            GamepadButton.R1 -> "R1"
+            GamepadButton.L2 -> "L2"
+            GamepadButton.R2 -> "R2"
+            GamepadButton.THUMB_L -> "L3"
+            GamepadButton.THUMB_R -> "R3"
+            GamepadButton.START -> "Start"
+            GamepadButton.SELECT -> "Select"
+            GamepadButton.MODE -> "Home"
+        }
         XBOX -> when (button) {
             GamepadButton.A -> "A"
             GamepadButton.B -> "B"
@@ -100,5 +117,9 @@ enum class GamepadLabels {
             VENDOR_NINTENDO -> NINTENDO
             else -> XBOX
         }
+
+        /** Use full device evidence in new presentation code; vendor-only callers stay compatible. */
+        fun forController(vendorId: Int, productId: Int, name: String): GamepadLabels =
+            resolveControllerModel(vendorId, productId, name).labels
     }
 }

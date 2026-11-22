@@ -63,6 +63,8 @@ data class CompanionState(
     val searchEmpty: Boolean = false,
     val paired: List<CompanionPeer> = emptyList(),
     val connected: List<String> = emptyList(),
+    /** TV-side authenticated sessions, keyed by session so an old socket cannot hide a reconnect. */
+    val connectedSessions: Map<String, CompanionConnectedPeer> = emptyMap(),
     val syncPeers: Map<String, List<String>> = emptyMap(),
     val target: CompanionPeer? = null,
     val online: Boolean = false,
@@ -1480,7 +1482,7 @@ class CompanionManager @Inject constructor(@ApplicationContext private val conte
             sockets.filterValues { it == sessionPin }.keys.filter { it !== socket }.forEach { runCatching { it.close() } }
             sockets[socket] = sessionPin
             if (!observer) {
-                mutable.update { it.copy(connected = (it.connected + peer.name).distinct()) }
+                mutable.update { it.withConnectedPeer(nonce, peer) }
                 if (newlyPaired) pairedNotice(peer) else connectionNotice(peer)
             }
             output.writeFrame(CompanionFrame(type = "ready", nonce = nonce, name = deviceName, networkMac = if (television) receiverMac(link) else ""))
@@ -1662,8 +1664,10 @@ class CompanionManager @Inject constructor(@ApplicationContext private val conte
                 }
             }
             peer?.takeUnless { observer }?.let { p ->
-                mutable.update { it.copy(connected = it.connected - p.name) }
-                notice(R.string.companion_disconnected, p.name)
+                val remaining = mutable.updateAndGet { it.withDisconnectedPeer(session) }
+                if (remaining.connectedSessions.values.none { it.fingerprint == p.fingerprint }) {
+                    notice(R.string.companion_disconnected, p.name)
+                }
             }
         }
     }
@@ -1677,7 +1681,6 @@ class CompanionManager @Inject constructor(@ApplicationContext private val conte
 
     /** The single reachability answer used by every device list, picker and action guard. */
     fun reachability(peer: CompanionPeer, state: CompanionState = mutable.value, nowMs: Long = SystemClock.elapsedRealtime()): PeerReachability {
-        if (television && peer.name in state.connected) return PeerReachability.CONNECTED
         val wakeable = !television && companionWakeable(runCatching { connectionTransport?.store?.get(peer.fingerprint) }.getOrNull())
         return companionReachability(peer.fingerprint, state, wakeable, nowMs)
     }

@@ -17,7 +17,8 @@ internal fun companionReachability(
     wakeable: Boolean,
     nowMs: Long,
 ): PeerReachability = when {
-    state.online && state.target?.fingerprint == fingerprint || fingerprint in state.syncPeers -> PeerReachability.CONNECTED
+    state.online && state.target?.fingerprint == fingerprint || fingerprint in state.syncPeers ||
+        state.connectedSessions.values.any { it.fingerprint == fingerprint } -> PeerReachability.CONNECTED
     state.devices.any { it.fingerprint == fingerprint } || fingerprint in state.sessions ||
         state.lastSeen[fingerprint]?.let { nowMs - it in 0 until COMPANION_SEEN_TTL_MS } == true -> PeerReachability.REACHABLE
     wakeable -> PeerReachability.WAKEABLE

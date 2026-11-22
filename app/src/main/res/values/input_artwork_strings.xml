@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="input_artwork_up">Up</string>
+    <string name="input_artwork_down">Down</string>
+    <string name="input_artwork_left">Left</string>
+    <string name="input_artwork_right">Right</string>
+    <string name="input_artwork_space">Space</string>
+    <string name="input_artwork_power">Power</string>
+    <string name="input_artwork_menu">Menu</string>
+    <string name="input_artwork_home">Home</string>
+    <string name="input_artwork_back">Back</string>
+    <string name="input_artwork_play_pause">Play/pause</string>
+    <string name="input_artwork_red">Red</string>
+    <string name="input_artwork_green">Green</string>
+    <string name="input_artwork_yellow">Yellow</string>
+    <string name="input_artwork_blue">Blue</string>
+</resources>

@@ -1,7 +1,5 @@
 package com.ambient.tv.ui.settings
 
-import com.ambient.tv.ui.gamepad.GamepadButton
-import com.ambient.tv.ui.gamepad.GamepadLabels
 import com.ambient.tv.ui.gamepad.retro.RetroPadButton
 
 /**
@@ -12,11 +10,18 @@ internal enum class InputArtworkShape { PAD, OVAL, THREE_GRIP, REMOTE, KEYBOARD,
 internal data class InputArtworkKey(
     val id: String, val label: String, val x: Float, val y: Float,
     val target: RetroPadButton? = null, val wide: Boolean = false,
+    /** Both dimensions use the viewport WIDTH as their unit, keeping round keys round. */
+    val widthFraction: Float = if (wide) .13f else .06f,
+    val heightFraction: Float = .06f,
+    /** Buttons outside the front view (e.g. rear triggers) get separate accessible controls. */
+    val auxiliary: Boolean = false,
 )
 internal data class InputArtwork(
     val title: String,
     val shape: InputArtworkShape,
     val keys: List<InputArtworkKey>,
+    val aspectRatio: Float = defaultArtworkAspectRatio(shape),
+    val vectorId: String? = null,
 )
 
 private fun key(id: String, label: String, x: Float, y: Float, target: RetroPadButton? = null, wide: Boolean = false) =
@@ -39,60 +44,6 @@ private fun snesKeys() = direction() + listOf(
     key("select", "−", .455f, .63f, RetroPadButton.SELECT),
     key("start", "+", .55f, .63f, RetroPadButton.START),
 )
-
-internal fun attachedArtwork(kind: String, labels: GamepadLabels = GamepadLabels.XBOX): InputArtwork = when (kind) {
-    "companion" -> InputArtwork("Handy-Controller", InputArtworkShape.SCREEN_PAD,
-        snesKeys() + listOf(
-            key("l2", "L2", .17f, .13f, RetroPadButton.L2),
-            key("r2", "R2", .83f, .13f, RetroPadButton.R2),
-            key("l3", "L3", .38f, .83f, RetroPadButton.L3),
-            key("r3", "R3", .62f, .83f, RetroPadButton.R3),
-        ))
-    "remote" -> InputArtwork("Fernbedienung", InputArtworkShape.REMOTE, listOf(
-        key("power", "⏻", .50f, .13f),
-        key("back", "↩", .445f, .25f), key("menu", "☰", .555f, .25f),
-        key("up", "▲", .50f, .39f), key("left", "◀", .435f, .49f),
-        key("ok", "OK", .50f, .49f), key("right", "▶", .565f, .49f),
-        key("down", "▼", .50f, .59f),
-        key("home", "⌂", .445f, .69f), key("play", "▶Ⅱ", .555f, .69f),
-        key("red", "R", .44f, .81f), key("green", "G", .48f, .81f),
-        key("yellow", "Y", .52f, .81f), key("blue", "B", .56f, .81f),
-    ))
-    "keyboard" -> InputArtwork("Tastatur", InputArtworkShape.KEYBOARD, buildList {
-        val first = listOf("Esc", "F1", "F2", "F3", "F4", "F5", "F6", "F7", "F8", "F9", "F10", "F11", "F12")
-        first.forEachIndexed { i, name -> add(key(name, name, .1f + .8f * i / 12f, .23f)) }
-        listOf("Q","W","E","R","T","Z","U","I","O","P").forEachIndexed { i, name ->
-            add(key(name, name, .14f + .72f * i / 9f, .43f))
-        }
-        listOf("A","S","D","F","G","H","J","K","L").forEachIndexed { i, name ->
-            add(key(name, name, .16f + .68f * i / 8f, .60f))
-        }
-        listOf("Y","X","C","V","B","N","M").forEachIndexed { i, name ->
-            add(key(name, name, .25f + .5f * i / 6f, .76f))
-        }
-        add(key("Space", "Leertaste", .49f, .91f, wide = true))
-        add(key("Enter", "↵", .9f, .60f))
-    })
-    else -> InputArtwork("Controller", InputArtworkShape.PAD, listOf(
-        key("l2", labels.label(GamepadButton.L2), .20f, .13f),
-        key("r2", labels.label(GamepadButton.R2), .80f, .13f),
-        key("l1", labels.label(GamepadButton.L1), .27f, .23f),
-        key("r1", labels.label(GamepadButton.R1), .73f, .23f),
-        key("up", "▲", .28f, .43f),
-        key("left", "◀", .20f, .54f),
-        key("right", "▶", .36f, .54f),
-        key("down", "▼", .28f, .65f),
-        key("x", labels.label(GamepadButton.X), .67f, .54f),
-        key("y", labels.label(GamepadButton.Y), .75f, .41f),
-        key("a", labels.label(GamepadButton.A), .75f, .66f),
-        key("b", labels.label(GamepadButton.B), .83f, .54f),
-        key("select", labels.label(GamepadButton.SELECT), .435f, .39f),
-        key("start", labels.label(GamepadButton.START), .565f, .39f),
-        key("l3", labels.label(GamepadButton.THUMB_L), .39f, .77f),
-        key("r3", labels.label(GamepadButton.THUMB_R), .61f, .77f),
-        key("mode", "●", .5f, .6f),
-    ))
-}
 
 /** Every registered console system uses the same vector materials, not a distinct art style. */
 internal val supportedConsoleArtworkIds: Set<String> = setOf(
@@ -131,8 +82,8 @@ private fun shoulderPair(l: String = "L", r: String = "R") = listOf(
     key("r", r, .76f, .22f, RetroPadButton.R),
 )
 private fun startSelect(start: String = "+", select: String = "−") = listOf(
-    key("start", start, .57f, .75f, RetroPadButton.START, wide = start.length > 3),
-    key("select", select, .45f, .75f, RetroPadButton.SELECT, wide = select.length > 3),
+    key("start", start, .58f, .75f, RetroPadButton.START, wide = start.length > 3),
+    key("select", select, .42f, .75f, RetroPadButton.SELECT, wide = select.length > 3),
 )
 private fun fourFace(a: String = "A", b: String = "B", x: String = "X", y: String = "Y") = listOf(
     key("y", y, .68f, .54f, RetroPadButton.Y),
@@ -154,8 +105,8 @@ private fun retroKeyRows(): List<InputArtworkKey> = listOf(
     key("left", "←", .15f, .49f, RetroPadButton.LEFT),
     key("right", "→", .31f, .49f, RetroPadButton.RIGHT),
     key("down", "↓", .23f, .64f, RetroPadButton.DOWN),
-    key("b", "Fire", .76f, .53f, RetroPadButton.B, wide = true),
-    key("a", "Fire 2", .87f, .53f, RetroPadButton.A, wide = true),
+    key("b", "Fire", .73f, .53f, RetroPadButton.B, wide = true),
+    key("a", "Fire 2", .90f, .53f, RetroPadButton.A, wide = true),
     key("select", "Shift", .42f, .78f, RetroPadButton.SELECT, wide = true),
     key("start", "Return", .60f, .78f, RetroPadButton.START, wide = true),
 )
@@ -165,7 +116,10 @@ private fun retroKeyRows(): List<InputArtworkKey> = listOf(
  * Templates show familiar *positions*, not guaranteed core-provided button descriptors.
  * All 31 registered systems have explicit artwork; a generic fallback handles future cores.
  */
-internal fun consoleArtwork(systemId: String, variant: String = ""): InputArtwork {
+internal fun consoleArtwork(systemId: String, variant: String = ""): InputArtwork =
+    originalConsoleArtwork(systemId, variant).withConsoleVector(systemId, variant)
+
+private fun originalConsoleArtwork(systemId: String, variant: String = ""): InputArtwork {
     val title = when (systemId) {
         "nes" -> "Nintendo Entertainment System"
         "snes" -> "Super Nintendo"
@@ -266,18 +220,18 @@ internal fun consoleArtwork(systemId: String, variant: String = ""): InputArtwor
             ))
         "nds", "n3ds" -> InputArtwork(title, InputArtworkShape.DUAL_SCREEN,
             listOf(
-                key("up", "▲", .19f, .46f, RetroPadButton.UP),
-                key("down", "▼", .19f, .65f, RetroPadButton.DOWN),
-                key("left", "◀", .13f, .56f, RetroPadButton.LEFT),
-                key("right", "▶", .25f, .56f, RetroPadButton.RIGHT),
-                key("y", "Y", .76f, .56f, RetroPadButton.Y),
-                key("x", "X", .83f, .45f, RetroPadButton.X),
-                key("b", "B", .83f, .67f, RetroPadButton.B),
-                key("a", "A", .90f, .56f, RetroPadButton.A),
-                key("start", "+", .59f, .83f, RetroPadButton.START),
-                key("select", "−", .41f, .83f, RetroPadButton.SELECT),
-                key("l", "L", .20f, .16f, RetroPadButton.L),
-                key("r", "R", .80f, .16f, RetroPadButton.R),
+                key("up", "▲", .19f, .62f, RetroPadButton.UP),
+                key("down", "▼", .19f, .76f, RetroPadButton.DOWN),
+                key("left", "◀", .11f, .69f, RetroPadButton.LEFT),
+                key("right", "▶", .27f, .69f, RetroPadButton.RIGHT),
+                key("y", "Y", .73f, .69f, RetroPadButton.Y),
+                key("x", "X", .81f, .62f, RetroPadButton.X),
+                key("b", "B", .81f, .76f, RetroPadButton.B),
+                key("a", "A", .89f, .69f, RetroPadButton.A),
+                key("start", "+", .59f, .89f, RetroPadButton.START),
+                key("select", "−", .41f, .89f, RetroPadButton.SELECT),
+                key("l", "L", .20f, .16f, RetroPadButton.L).copy(auxiliary = true),
+                key("r", "R", .80f, .16f, RetroPadButton.R).copy(auxiliary = true),
             ))
         "gamecube" -> InputArtwork(title, InputArtworkShape.PAD,
             direction() + listOf(
@@ -292,17 +246,19 @@ internal fun consoleArtwork(systemId: String, variant: String = ""): InputArtwor
             ))
         "wii" -> InputArtwork(if (variant == "nunchuk") "$title · Nunchuk" else "$title · Remote",
             InputArtworkShape.WII_REMOTE, listOf(
-                key("up", "▲", .50f, .25f, RetroPadButton.UP),
-                key("left", "◀", .45f, .35f, RetroPadButton.LEFT),
-                key("right", "▶", .55f, .35f, RetroPadButton.RIGHT),
-                key("down", "▼", .50f, .45f, RetroPadButton.DOWN),
+                key("up", "▲", .50f, .265f, RetroPadButton.UP),
+                key("left", "◀", .25f, .34f, RetroPadButton.LEFT),
+                key("right", "▶", .75f, .34f, RetroPadButton.RIGHT),
+                key("down", "▼", .50f, .415f, RetroPadButton.DOWN),
                 key("a", "A", .50f, .53f, RetroPadButton.A),
-                key("b", "B", .50f, .63f, RetroPadButton.B),
-                key("start", "+", .50f, .73f, RetroPadButton.START),
-                key("select", "−", .50f, .81f, RetroPadButton.SELECT),
-                key("l", if (variant == "nunchuk") "C" else "1", .45f, .91f, RetroPadButton.L),
-                key("r", if (variant == "nunchuk") "Z" else "2", .55f, .91f, RetroPadButton.R),
-            ))
+                key("b", "B", .50f, .63f, RetroPadButton.B).copy(auxiliary = true),
+                key("start", "+", .70f, .68f, RetroPadButton.START),
+                key("select", "−", .30f, .68f, RetroPadButton.SELECT),
+                key("l", if (variant == "nunchuk") "C" else "1", .50f, .79f, RetroPadButton.L)
+                    .copy(auxiliary = variant == "nunchuk"),
+                key("r", if (variant == "nunchuk") "Z" else "2", .50f, .89f, RetroPadButton.R)
+                    .copy(auxiliary = variant == "nunchuk"),
+            ).map { it.copy(widthFraction = .18f, heightFraction = .18f) })
         "wiiu" -> InputArtwork(title, InputArtworkShape.SCREEN_PAD,
             direction() + fourFace() + shoulderPair() + startSelect())
         "psp" -> InputArtwork(title, InputArtworkShape.HANDHELD,

@@ -23,6 +23,27 @@ class CompanionGamepadTest {
         onMenu = {},
     )
 
+    @Test fun playerStatusUsesPinnedIdentityAndClearsOnReleaseAndGameEnd() {
+        val input = pad()
+        val settings = com.ambient.tv.ui.gamepad.retro.RetroInputSettings
+        settings.attach(emptyMap()) {}
+        try {
+            assertTrue(CompanionGamepadSession.playerPorts.value.isEmpty())
+            CompanionGamepadSession.attach(input, "snes", "snes9x", "Test", false) {}
+            CompanionGamepadSession.setReady(input, true)
+            assertEquals(0, CompanionGamepadSession.claim("tls-first", "pinned-first"))
+            assertEquals(1, CompanionGamepadSession.claim("tls-second", "pinned-second"))
+            assertEquals(mapOf("pinned-first" to 0, "pinned-second" to 1), CompanionGamepadSession.playerPorts.value)
+            CompanionGamepadSession.release("tls-first")
+            assertEquals(mapOf("pinned-second" to 1), CompanionGamepadSession.playerPorts.value)
+            CompanionGamepadSession.detach(input)
+            assertTrue(CompanionGamepadSession.playerPorts.value.isEmpty())
+        } finally {
+            CompanionGamepadSession.detach(input)
+            settings.attach(emptyMap()) {}
+        }
+    }
+
     @Test fun pairedPhonesUsePersistentPlayerSettingsAndDoNotHijackEachOther() {
         val input = pad()
         val first = com.ambient.tv.ui.gamepad.retro.companionControllerDescriptor("fingerprint-a")

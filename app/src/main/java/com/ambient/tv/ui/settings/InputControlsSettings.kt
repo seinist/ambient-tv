@@ -1,16 +1,23 @@
 package com.ambient.tv.ui.settings
 
 import android.view.KeyEvent
+import androidx.compose.foundation.focusGroup
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import com.ambient.tv.R
@@ -20,7 +27,6 @@ import com.ambient.tv.ui.common.TvActionButton
 import com.ambient.tv.ui.gamepad.GamepadButton
 import com.ambient.tv.ui.gamepad.GamepadContext
 import com.ambient.tv.ui.gamepad.GamepadInput
-import com.ambient.tv.ui.gamepad.GamepadLabels
 import com.ambient.tv.ui.keyboard.KeyAction
 import com.ambient.tv.ui.keyboard.KeyBinding
 import com.ambient.tv.ui.keyboard.KeyBindingScope
@@ -39,29 +45,52 @@ internal fun LazyListScope.inputControlsItems(scope: KeyBindingScope) {
 
 @Composable
 private fun InputControlsPage(scope: KeyBindingScope) {
-    var kind by rememberSaveable(scope) { mutableStateOf("controller") }
-    var selectedKey by rememberSaveable(kind, scope) { mutableStateOf("a") }
+    val controllers = rememberConnectedControllers()
+    val availableKinds = availablePlayerInputKinds(controllers.isNotEmpty())
+    var requestedKind by rememberSaveable(scope) { mutableStateOf(availableKinds.first()) }
+    val kind = availableInputSelection(requestedKind, availableKinds)!!
+    var selectedKey by rememberSaveable(kind, scope) {
+        mutableStateOf(when (kind) { "remote" -> "ok"; "keyboard" -> "Space"; else -> "a" })
+    }
     var long by rememberSaveable(kind, scope) { mutableStateOf(false) }
     var controllerDescriptor by rememberSaveable(scope) { mutableStateOf("") }
     val controllerContext = if (scope == KeyBindingScope.GLOBAL) GamepadContext.MENUS else GamepadContext.PLAYER
-    val controllers = rememberConnectedControllers()
-    val selectedController = controllers.firstOrNull { it.descriptor == controllerDescriptor }
-    val labels = GamepadLabels.forVendor((selectedController ?: controllers.firstOrNull())?.vendorId)
-    val artwork = attachedArtwork(kind, labels)
+    val availableDescriptor = availableControllerDescriptor(controllerDescriptor, controllers.map { it.descriptor })
+    val selectedController = controllers.firstOrNull { it.descriptor == availableDescriptor }
+    val previewController = selectedController ?: controllers.firstOrNull()
+    val controllerModel = GamepadInput.config.controllerModel(previewController)
+    val artwork = attachedArtwork(kind, controllerModel.labels, controllerModel = controllerModel)
+    val visibleSelectedKey = selectedKey.takeIf { id -> artwork.keys.any { it.id == id } }
+        ?: artwork.keys.firstOrNull()?.id.orEmpty()
     val tokens = LocalUiTokens.current
+    val availableTabFocus = remember { FocusRequester() }
+    var pageFocused by remember { mutableStateOf(false) }
+    val recoverFocus = pageFocused && (requestedKind != kind || controllerDescriptor != availableDescriptor)
+    LaunchedEffect(kind, availableDescriptor) {
+        if (requestedKind != kind || controllerDescriptor != availableDescriptor) {
+            requestedKind = kind
+            controllerDescriptor = availableDescriptor
+            if (recoverFocus) {
+                withFrameNanos { }
+                runCatching { availableTabFocus.requestFocus() }
+            }
+        }
+    }
 
-    Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(tokens.compactGap)) {
+    Column(Modifier.fillMaxWidth().onFocusChanged { pageFocused = it.hasFocus }.focusGroup(),
+        verticalArrangement = Arrangement.spacedBy(tokens.compactGap)) {
         SettingsHint(stringResource(R.string.input_mapping_select_key))
         SettingsActionRow {
             listOf(
                 "controller" to R.string.input_mapping_controller,
                 "remote" to R.string.input_mapping_remote,
                 "keyboard" to R.string.input_mapping_keyboard,
-            ).forEach { (id, text) ->
+            ).filter { it.first in availableKinds }.forEach { (id, text) ->
                 TvActionButton(
                     text = stringResource(text),
                     selected = kind == id,
-                    onClick = { kind = id },
+                    onClick = { requestedKind = id },
+                    modifier = if (id == kind) Modifier.focusRequester(availableTabFocus) else Modifier,
                 )
             }
         }
@@ -75,16 +104,17 @@ private fun InputControlsPage(scope: KeyBindingScope) {
                         onClick = { controllerDescriptor = id })
                 },
             )
+            previewController?.let { ControllerModelSettings(it) }
         }
         SettingsSubheader(
             stringResource(R.string.input_mapping_attached_preview, when (kind) {
-                "controller" -> (selectedController ?: controllers.firstOrNull())?.name ?: artwork.title
+                "controller" -> previewController?.name ?: artwork.title
                 else -> artwork.title
             })
         )
         InputDeviceArtwork(
             artwork = artwork,
-            selectedKey = selectedKey,
+            selectedKey = visibleSelectedKey,
             onSelectKey = { selectedKey = it.id },
         )
         SettingsActionRow {
@@ -101,11 +131,11 @@ private fun InputControlsPage(scope: KeyBindingScope) {
         }
 
         if (kind == "controller") {
-            val selected = GamepadButton.fromKey(selectedKey)
+            val selected = GamepadButton.fromKey(visibleSelectedKey)
             if (selected == null) {
                 SettingsHint(stringResource(R.string.input_mapping_fixed_key))
             } else {
-                SettingsHint(stringResource(R.string.input_mapping_key_selected, labels.label(selected)))
+                SettingsHint(stringResource(R.string.input_mapping_key_selected, controllerModel.label(selected)))
                 // Only the selected button is shown; no 4 long unfolded lists.
                 ControllerMapping(controllerContext, long, selected, selectedController?.descriptor)
             }
@@ -115,7 +145,7 @@ private fun InputControlsPage(scope: KeyBindingScope) {
             }
             ControllerReset(controllerContext, selectedController?.descriptor)
         } else {
-            RemoteKeyboardMapping(scope, kind, selectedKey, long)
+            RemoteKeyboardMapping(scope, kind, visibleSelectedKey, long)
             // The original press-to-learn rows are still available for unfamiliar buttons.
             SettingsSubheader(stringResource(R.string.input_mapping_all_actions))
             KeyBindingSettings(scope, kind)
@@ -126,7 +156,7 @@ private fun InputControlsPage(scope: KeyBindingScope) {
 internal fun visualKeyCode(kind: String, key: String): Int? {
     if (kind == "companion") return com.ambient.tv.ui.gamepad.retro.RetroPadButton.fromKey(key)
         ?.let { com.ambient.tv.ui.gamepad.retro.companionControllerKey(it) }
-    if (kind == "controller") return GamepadButton.fromKey(key)?.keyCode ?: when (key) {
+    if (kind == "controller" || kind == "gamepad") return GamepadButton.fromKey(key)?.keyCode ?: when (key) {
         "up" -> KeyEvent.KEYCODE_DPAD_UP
         "down" -> KeyEvent.KEYCODE_DPAD_DOWN
         "left" -> KeyEvent.KEYCODE_DPAD_LEFT
@@ -138,8 +168,24 @@ internal fun visualKeyCode(kind: String, key: String): Int? {
         "Esc" -> KeyEvent.KEYCODE_ESCAPE
         "Enter" -> KeyEvent.KEYCODE_ENTER
         "Space" -> KeyEvent.KEYCODE_SPACE
+        "Tab" -> KeyEvent.KEYCODE_TAB
+        "Backspace" -> KeyEvent.KEYCODE_DEL
+        "Delete" -> KeyEvent.KEYCODE_FORWARD_DEL
+        "Shift" -> KeyEvent.KEYCODE_SHIFT_LEFT
+        "Ctrl" -> KeyEvent.KEYCODE_CTRL_LEFT
+        "Alt" -> KeyEvent.KEYCODE_ALT_LEFT
+        "Caps" -> KeyEvent.KEYCODE_CAPS_LOCK
+        "Home" -> KeyEvent.KEYCODE_MOVE_HOME
+        "End" -> KeyEvent.KEYCODE_MOVE_END
+        "PageUp" -> KeyEvent.KEYCODE_PAGE_UP
+        "PageDown" -> KeyEvent.KEYCODE_PAGE_DOWN
+        "up" -> KeyEvent.KEYCODE_DPAD_UP
+        "down" -> KeyEvent.KEYCODE_DPAD_DOWN
+        "left" -> KeyEvent.KEYCODE_DPAD_LEFT
+        "right" -> KeyEvent.KEYCODE_DPAD_RIGHT
         else -> when {
             key.length == 1 && key[0] in 'A'..'Z' -> KeyEvent.KEYCODE_A + key[0].code - 'A'.code
+            key.length == 1 && key[0] in '0'..'9' -> KeyEvent.KEYCODE_0 + key[0].code - '0'.code
             key.startsWith("F") && key.drop(1).toIntOrNull() in 1..12 ->
                 KeyEvent.KEYCODE_F1 + (key.drop(1).toInt() - 1)
             else -> null

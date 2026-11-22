@@ -98,6 +98,7 @@ jobs:
           bash -n build.sh
           python3 -m unittest discover -s scripts/tests -p 'test_*.py'
           python3 scripts/import_game_system_icons.py --check
+          python3 scripts/import_input_controller_artwork.py --check
 
       - name: Validate game GLSL ES 100 shader sources
         run: |
@@ -125,6 +126,15 @@ jobs:
               | sed 's/%/%25/g; s/^/::error title=gradle::/'
             exit 1
           fi
+
+      - name: Upload input artwork previews
+        if: always()
+        uses: actions/upload-artifact@v5
+        with:
+          name: input-artwork-previews
+          path: app/build/reports/input-artwork/
+          if-no-files-found: ignore
+          retention-days: 7
 
       - name: Upload test reports
         if: failure()
