@@ -7,7 +7,8 @@ import com.ambient.tv.notifications.notifyResult
 import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import com.ambient.tv.data.browse.BrowseScopes
+import com.ambient.tv.data.browse.PlaybackAvailability
+import com.ambient.tv.data.browse.PlaybackAccessProbe
 import com.ambient.tv.data.browse.mediaProvider
 import com.ambient.tv.data.emby.EmbyBackend
 import com.ambient.tv.data.files.FileKeys
@@ -26,7 +27,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.distinctUntilChanged
-import kotlinx.coroutines.flow.filterNotNull
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.async
@@ -35,6 +36,7 @@ import com.ambient.tv.domain.model.dedupeCastMembers
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.isActive
+import kotlinx.coroutines.withContext
 
 sealed interface DetailUiState {
     data object Loading : DetailUiState
@@ -53,6 +55,9 @@ sealed interface DetailUiState {
         val actionMessage: String? = null,
         val autoSelectDisplayVersion: Boolean = true,
         val themeMusic: ThemeMusic? = null,
+        /** Cached metadata alone never grants playback, people navigation or edit actions. */
+        val connectionVerified: Boolean = false,
+        val connectionChecking: Boolean = false,
         val offline: Boolean = false,
         val removed: Boolean = false,
     ) : DetailUiState
@@ -81,14 +86,14 @@ class DetailViewModel @Inject constructor(
     private val appPreferences: AppPreferences,
     val themeMusicPlayer: ThemeMusicPlayer,
     val availability: com.ambient.tv.data.browse.SourceAvailability,
-    private val browseScopes: BrowseScopes,
     private val tmdb: com.ambient.tv.trailers.TmdbTrailerRepository,
     private val refreshBus: com.ambient.tv.ui.common.PlexRefreshBus,
     private val artworkRefresh: com.ambient.tv.network.MediaArtworkRefresh,
+    private val playbackAvailability: PlaybackAvailability,
 ) : ViewModel() {
     private val ratingKey: String = checkNotNull(savedStateHandle["ratingKey"])
     /** Match the cache's server/account identity without retaining credentials in focus memory. */
-    val focusScope: String get() = browseScopes.forProvider(mediaProvider(ratingKey))
+    val focusScope: String get() = playbackAvailability.mediaIdentity(ratingKey)
     val reconnectSources: Set<String> = setOf(when {
         FileKeys.owns(ratingKey) -> runCatching { "files:${FileKeys.parse(ratingKey).first}" }.getOrDefault("files")
         com.ambient.tv.data.dlna.DlnaKeys.owns(ratingKey) -> runCatching {
@@ -112,6 +117,12 @@ class DetailViewModel @Inject constructor(
     val uiState: StateFlow<DetailUiState> = _uiState.asStateFlow()
     private var loadJob: Job? = null
     private val refreshPolicy = DetailRefreshPolicy()
+    private val connectionPolicy = DetailConnectionPolicy()
+    private var contentScope = focusScope
+    private var connectionJob: Job? = null
+    private var connectionAttempt = 0L
+    private val _connectionRetrying = MutableStateFlow(false)
+    val connectionRetrying: StateFlow<Boolean> = _connectionRetrying.asStateFlow()
     private var reloadJob: Job? = null
     private var autoReloads = 0
     private var themeMusicJob: Job? = null
@@ -132,13 +143,48 @@ class DetailViewModel @Inject constructor(
         com.ambient.tv.data.browse.SourceHealth.AUTH_REQUIRED,
     )
 
+    private fun connectionVerified(): Boolean = connectionPolicy.isVerified(
+        playbackAvailability.mediaScope(ratingKey), playbackAvailability.isMediaVerified(ratingKey),
+    )
+
+    private fun canUseDetails(): Boolean = (_uiState.value as? DetailUiState.Loaded)?.let {
+        it.connectionVerified && !it.offline && !it.removed && connectionVerified()
+    } == true
+
     fun retryOffline() {
         val state = _uiState.value
-        val failed = state is DetailUiState.Error || (state as? DetailUiState.Loaded)?.offline == true
-        if (availability.hasNetwork() && failed && loadJob?.isActive != true) load()
+        val failed = state is DetailUiState.Error || (state as? DetailUiState.Loaded)?.connectionVerified == false
+        if (availability.hasNetwork() && failed && loadJob?.isActive != true && connectionJob?.isActive != true) load()
     }
 
-    /** Reloads after a temporary failure with backoff (2, 4, 8 s …) instead of hiding Play. */
+    /** Explicit Retry checks the actual service before the shared recovery flow may wake it. */
+    fun retryConnection() {
+        if (connectionJob?.isActive == true) return
+        loadJob?.cancel()
+        reloadJob?.cancel()
+        val attempt = ++connectionAttempt
+        _connectionRetrying.value = true
+        updateLoaded { it.copy(connectionChecking = true) }
+        connectionJob = viewModelScope.launch {
+            try {
+                val access = playbackAvailability.retryMedia(ratingKey)
+                currentCoroutineContext().ensureActive()
+                if (access.allowed) load(automatic = false)
+                else {
+                    connectionPolicy.failed()
+                    updateLoaded { it.copy(connectionVerified = false, offline = true, themeMusic = null) }
+                }
+            } finally {
+                if (attempt == connectionAttempt) {
+                    _connectionRetrying.value = false
+                    // load() owns the spinner after reconnect, until fresh details arrive.
+                    if (loadJob?.isActive != true) updateLoaded { it.copy(connectionChecking = false) }
+                }
+            }
+        }
+    }
+
+    /** Temporary failures retry with backoff (2, 4, 8 s …), keeping the cached preview locked. */
     private fun scheduleReload(): Boolean {
         if (autoReloads >= DETAIL_MAX_AUTO_RELOADS) return false
         val wait = detailReloadDelayMs(autoReloads++)
@@ -152,36 +198,68 @@ class DetailViewModel @Inject constructor(
 
     init {
         viewModelScope.launch {
-            _uiState.map { (it as? DetailUiState.Loaded)?.item }.filterNotNull()
-                .map { item -> item.takeIf { it.wideBackdropUrl == null } }
+            _uiState.map { (it as? DetailUiState.Loaded)?.takeIf { state -> state.connectionVerified && !state.offline && !state.removed }?.item }
+                .map { item -> item?.takeIf { it.wideBackdropUrl == null } }
                 // A new match (guid) needs a new fallback as well, not only another item.
                 .distinctUntilChanged { a, b -> a?.ratingKey == b?.ratingKey && a?.guid == b?.guid }
-                .collect { item ->
-                    if (item == null) return@collect
+                .collectLatest { item ->
+                    if (item == null) return@collectLatest
+                    val scope = playbackAvailability.mediaScope(ratingKey)
                     val fromServer = mediaRepository.getAlternativeBackdrop(item.ratingKey).getOrNull()
-                    if (fromServer != null) { _fallbackBackdrop.value = fromServer; return@collect }
-                    if (!tmdb.configured || item.type !in setOf("movie", "show")) return@collect
+                    if (!canUseDetails() || scope != playbackAvailability.mediaScope(ratingKey)) return@collectLatest
+                    if (fromServer != null) { _fallbackBackdrop.value = fromServer; return@collectLatest }
+                    if (!tmdb.configured || item.type !in setOf("movie", "show")) return@collectLatest
                     val language = java.util.Locale.getDefault().let { if (it.language == "de") "de-DE" else it.toLanguageTag() }
-                    tmdb.backdropFor(item, language).getOrNull()?.let { _fallbackBackdrop.value = it }
+                    tmdb.backdropFor(item, language).getOrNull()?.let {
+                        if (canUseDetails() && scope == playbackAvailability.mediaScope(ratingKey)) _fallbackBackdrop.value = it
+                    }
                 }
         }
         viewModelScope.launch {
-            // The stored rights decide at once; the background re-check only corrects them.
-            _uiState.map { (it as? DetailUiState.Loaded)?.item }.filterNotNull()
-                .distinctUntilChanged { a, b -> a.ratingKey == b.ratingKey && a.type == b.type }
-                .collect { item ->
+            _uiState.map { (it as? DetailUiState.Loaded)?.takeIf { state -> state.connectionVerified && !state.offline && !state.removed }?.item }
+                .distinctUntilChanged { a, b -> a?.ratingKey == b?.ratingKey && a?.type == b?.type }
+                .collectLatest { item ->
+                    if (item == null) { _editSupport.value = com.ambient.tv.domain.model.MetadataEditSupport.NONE; return@collectLatest }
+                    val scope = playbackAvailability.mediaScope(ratingKey)
                     _editSupport.value = mediaRepository.metadataEditSupport(item)
-                    if (mediaRepository.refreshMetadataEditRights(ratingKey)) _editSupport.value = mediaRepository.metadataEditSupport(item)
+                    if (mediaRepository.refreshMetadataEditRights(ratingKey) && canUseDetails() && scope == playbackAvailability.mediaScope(ratingKey)) {
+                        _editSupport.value = mediaRepository.metadataEditSupport(item)
+                    }
                 }
         }
         viewModelScope.launch {
-            availability.changes.collect {
-                // Recovery refreshes through the visible screen after cache expiry. Health updates
-                // only patch availability, so background pages do not start duplicate loads.
+            playbackAvailability.changes.collect {
+                // A host probe or a request by another page cannot unlock cached details.
+                // The shared proof is invalidated on source/account/network changes.
+                if (contentScope != focusScope) {
+                    contentScope = focusScope
+                    connectionPolicy.failed()
+                    loadJob?.cancel()
+                    reloadJob?.cancel()
+                    connectionJob?.cancel()
+                    connectionAttempt++
+                    _connectionRetrying.value = false
+                    themeMusicJob?.cancel()
+                    _fallbackBackdrop.value = null
+                    _editSupport.value = com.ambient.tv.domain.model.MetadataEditSupport.NONE
+                    _uiState.value = cachedItem?.let { DetailUiState.Loaded(item = it) }
+                        ?: DetailUiState.Error("", R.string.offline_detail_connection_required)
+                    return@collect
+                }
                 val current = _uiState.value as? DetailUiState.Loaded ?: return@collect
-                val health = availability.mediaState(ratingKey)
-                val offline = health == com.ambient.tv.data.browse.SourceHealth.OFFLINE || health == com.ambient.tv.data.browse.SourceHealth.AUTH_REQUIRED
-                _uiState.value = current.copy(offline = offline, themeMusic = current.themeMusic.takeUnless { offline })
+                val verified = connectionVerified()
+                if (!verified) {
+                    themeMusicJob?.cancel()
+                    // Once the hero has finished, this job only owns secondary rows. Stop that
+                    // work immediately when the source becomes unverified again.
+                    if (current.connectionVerified && !current.connectionChecking) loadJob?.cancel()
+                }
+                _uiState.value = current.copy(
+                    connectionVerified = verified, offline = sourceOffline(),
+                    childrenLoading = current.childrenLoading && verified,
+                    similarLoading = current.similarLoading && verified,
+                    themeMusic = current.themeMusic.takeIf { verified },
+                )
             }
         }
     }
@@ -194,82 +272,125 @@ class DetailViewModel @Inject constructor(
      *
      * None of the secondary rows can hold the hero behind a full-page loading state anymore.
      */
-    fun load() = load(automatic = false)
+    fun load() {
+        if (connectionJob?.isActive != true) load(automatic = false)
+    }
 
     private fun load(automatic: Boolean) {
         val generation = refreshPolicy.beginLoad() ?: return
         if (!automatic) autoReloads = 0
         reloadJob?.cancel()
         loadJob?.cancel()
+        val requestScope = playbackAvailability.mediaScope(ratingKey)
+        val requestIdentity = playbackAvailability.mediaIdentity(ratingKey)
+        // Cached rows from a different account/server must never survive a source switch.
+        if (contentScope != focusScope) {
+            contentScope = focusScope
+            connectionPolicy.failed()
+            _fallbackBackdrop.value = null
+            _uiState.value = DetailUiState.Loading
+        }
+        updateLoaded { it.copy(connectionChecking = true, connectionVerified = connectionVerified()) }
         refreshThemeMusic()
         loadJob = viewModelScope.launch {
-            mediaRepository.restoreCache()
-            if (_uiState.value !is DetailUiState.Loaded) cachedItem?.let { item ->
-                _uiState.value = DetailUiState.Loaded(
-                    item = item,
-                    children = cachedDetailChildren(item, ratingKey, mediaRepository::cachedChildren),
-                    similar = mediaRepository.cachedSimilar(ratingKey).orEmpty(),
-                    childrenLoading = detailChildrenKey(item, ratingKey) != null,
-                    seasons = cachedSeasonStrip(item),
-                    autoSelectDisplayVersion = appPreferences.autoSelectDisplayVersion,
-                    offline = sourceOffline(),
-                )
-            }
-            if (_uiState.value !is DetailUiState.Loaded) _uiState.value = DetailUiState.Loading
-
-            val result = mediaRepository.getMetadataFast(ratingKey)
-            kotlinx.coroutines.currentCoroutineContext().ensureActive()
-            if (!refreshPolicy.isCurrent(generation)) return@launch
-            result.fold(
-                onSuccess = { freshItem ->
-                    autoReloads = 0
-                    val item = freshItem
-                    if (item == null) {
-                        val previous = _uiState.value as? DetailUiState.Loaded
-                        _uiState.value = previous?.copy(removed = true, childrenLoading = false, themeMusic = null)
-                            ?: DetailUiState.Error("", com.ambient.tv.R.string.browse_item_removed)
-                        return@fold
-                    }
-                    val previous = _uiState.value as? DetailUiState.Loaded
+            try {
+                mediaRepository.restoreCache()
+                currentCoroutineContext().ensureActive()
+                if (requestIdentity != playbackAvailability.mediaIdentity(ratingKey)) return@launch
+                if (_uiState.value !is DetailUiState.Loaded) cachedItem?.let { item ->
                     _uiState.value = DetailUiState.Loaded(
                         item = item,
-                        children = previous?.children.orEmpty(),
+                        children = cachedDetailChildren(item, ratingKey, mediaRepository::cachedChildren),
+                        similar = mediaRepository.cachedSimilar(ratingKey).orEmpty(),
                         childrenLoading = detailChildrenKey(item, ratingKey) != null,
-                        seasons = previous?.seasons ?: cachedSeasonStrip(item),
-                        nextEpisode = previous?.nextEpisode,
-                        similar = previous?.similar.orEmpty(),
-                        // Reserve the recommendations row while it loads so the cast below it
-                        // doesn't jump down when the row pops in.
-                        similarLoading = item.type in RELATED_TYPES && previous?.similar.isNullOrEmpty(),
-                        actorRows = previous?.actorRows.orEmpty(),
-                        actionInProgress = previous?.actionInProgress ?: false,
-                        actionMessage = previous?.actionMessage,
+                        seasons = cachedSeasonStrip(item),
                         autoSelectDisplayVersion = appPreferences.autoSelectDisplayVersion,
-                        themeMusic = previous?.themeMusic.takeUnless { sourceOffline() },
+                        connectionChecking = true,
                         offline = sourceOffline(),
                     )
-                    refreshThemeMusic()
-                    loadSecondaryContent(item, generation)
-                },
-                onFailure = { error ->
-                    val removed = detailItemRemoved(error)
-                    // A starting server (503, timeout) is retried with backoff; Play stays visible.
-                    val retrying = !removed && detailFailureTransient(error) && !sourceOffline() && scheduleReload()
-                    // A cached card is still much more useful than replacing the whole detail
-                    // page with an error because a background refresh failed temporarily.
-                    if (_uiState.value !is DetailUiState.Loaded) {
-                        if (!retrying) _uiState.value = DetailUiState.Error(error.message ?: "")
-                    } else {
-                        val current = _uiState.value as DetailUiState.Loaded
-                        val offline = detailOfflineAfterFailure(removed, availability.mediaState(ratingKey), retrying)
-                        _uiState.value = current.copy(removed = removed, offline = offline,
-                            childrenLoading = false,
-                            childrenLoadFailed = current.childrenLoadFailed ||
-                                (!removed && current.childrenLoading && current.children.isEmpty()),
-                            themeMusic = current.themeMusic.takeUnless { offline || removed })
-                    }
-                },
-            )
+                }
+                if (_uiState.value !is DetailUiState.Loaded) _uiState.value = DetailUiState.Loading
+
+                val result = withContext(PlaybackAccessProbe) { mediaRepository.getMetadataFast(ratingKey) }
+                kotlinx.coroutines.currentCoroutineContext().ensureActive()
+                if (!refreshPolicy.isCurrent(generation)) return@launch
+                if (requestIdentity != playbackAvailability.mediaIdentity(ratingKey)) {
+                    connectionPolicy.failed()
+                    // The provider cache already uses the new identity; never retain the old account's
+                    // poster/title while waiting for the next entry or the user's Retry.
+                    _uiState.value = cachedItem?.let { DetailUiState.Loaded(item = it) }
+                        ?: DetailUiState.Error("", R.string.offline_detail_connection_required)
+                    return@launch
+                }
+                result.fold(
+                    onSuccess = { freshItem ->
+                        autoReloads = 0
+                        val item = freshItem
+                        if (item == null) {
+                            connectionPolicy.failed()
+                            val previous = _uiState.value as? DetailUiState.Loaded
+                            _uiState.value = previous?.copy(removed = true, connectionVerified = false, connectionChecking = false, childrenLoading = false, themeMusic = null)
+                                ?: DetailUiState.Error("", com.ambient.tv.R.string.browse_item_removed)
+                            return@fold
+                        }
+                        val verified = connectionPolicy.confirmMetadata(
+                            requestScope, playbackAvailability.mediaScope(ratingKey),
+                            playbackAvailability.confirmMedia(ratingKey, requestScope),
+                        )
+                        if (!verified) {
+                            connectionPolicy.failed()
+                            val previous = _uiState.value as? DetailUiState.Loaded
+                            _uiState.value = previous?.copy(connectionVerified = false, connectionChecking = false, themeMusic = null)
+                                ?: DetailUiState.Loaded(item = item, offline = sourceOffline())
+                            return@fold
+                        }
+                        val previous = _uiState.value as? DetailUiState.Loaded
+                        _uiState.value = DetailUiState.Loaded(
+                            item = item,
+                            children = previous?.children.orEmpty(),
+                            childrenLoading = detailChildrenKey(item, ratingKey) != null,
+                            seasons = previous?.seasons ?: cachedSeasonStrip(item),
+                            nextEpisode = previous?.nextEpisode,
+                            similar = previous?.similar.orEmpty(),
+                            // Reserve the recommendations row while it loads so the cast below it
+                            // doesn't jump down when the row pops in.
+                            similarLoading = item.type in RELATED_TYPES && previous?.similar.isNullOrEmpty(),
+                            actorRows = previous?.actorRows.orEmpty(),
+                            actionInProgress = previous?.actionInProgress ?: false,
+                            actionMessage = previous?.actionMessage,
+                            autoSelectDisplayVersion = appPreferences.autoSelectDisplayVersion,
+                            themeMusic = previous?.themeMusic,
+                            connectionVerified = true,
+                            connectionChecking = false,
+                            offline = false,
+                        )
+                        refreshThemeMusic()
+                        loadSecondaryContent(item, generation)
+                    },
+                    onFailure = { error ->
+                        connectionPolicy.failed()
+                        val removed = detailItemRemoved(error)
+                        // A starting server (503, timeout) is retried while the preview stays locked.
+                        val retrying = !removed && detailFailureTransient(error) && !sourceOffline() && scheduleReload()
+                        // A cached card is still much more useful than replacing the whole detail
+                        // page with an error because a background refresh failed temporarily.
+                        if (_uiState.value !is DetailUiState.Loaded) {
+                            if (!retrying) _uiState.value = DetailUiState.Error(error.message ?: "")
+                        } else {
+                            val current = _uiState.value as DetailUiState.Loaded
+                            val offline = detailOfflineAfterFailure(removed, availability.mediaState(ratingKey), retrying)
+                            _uiState.value = current.copy(removed = removed, offline = offline,
+                                connectionVerified = false, connectionChecking = false,
+                                childrenLoading = false,
+                                childrenLoadFailed = current.childrenLoadFailed ||
+                                    (!removed && current.childrenLoading && current.children.isEmpty()),
+                                themeMusic = null)
+                        }
+                    },
+                )
+            } finally {
+                if (refreshPolicy.isCurrent(generation) && !_connectionRetrying.value) updateLoaded { it.copy(connectionChecking = false) }
+            }
         }
     }
 
@@ -279,8 +400,10 @@ class DetailViewModel @Inject constructor(
     }
 
     private suspend fun loadSecondaryContent(item: MediaItem, generation: Long) = coroutineScope {
+        if (!canUseDetails()) return@coroutineScope
+        val scope = playbackAvailability.mediaScope(ratingKey)
         fun updateCurrent(transform: (DetailUiState.Loaded) -> DetailUiState.Loaded) {
-            if (refreshPolicy.isCurrent(generation)) updateLoaded(transform)
+            if (refreshPolicy.isCurrent(generation) && scope == playbackAvailability.mediaScope(ratingKey) && canUseDetails()) updateLoaded(transform)
         }
         launch {
             val showKey = seriesKeyForSeasonStrip(item.type, item.parentRatingKey, item.grandparentRatingKey)
@@ -298,7 +421,7 @@ class DetailViewModel @Inject constructor(
                 updateCurrent { it.copy(childrenLoading = true, childrenLoadFailed = false) }
                 val result = loadDetailChildren(item, childKey, mediaRepository::getChildren)
                 currentCoroutineContext().ensureActive()
-                if (!refreshPolicy.isCurrent(generation)) return@launch
+                if (!refreshPolicy.isCurrent(generation) || !canUseDetails()) return@launch
                 val children = result.getOrElse {
                     // Otherwise a show simply looks like it has no seasons.
                     com.ambient.tv.notifications.AppNotifications.post(com.ambient.tv.notifications.AppNotice(
@@ -373,15 +496,16 @@ class DetailViewModel @Inject constructor(
      */
     fun refreshThemeMusic() {
         val current = _uiState.value as? DetailUiState.Loaded ?: return
-        if (current.offline || current.removed || current.item.type !in THEME_MUSIC_TYPES || !themeMusicEnabled()) {
+        if (!canUseDetails() || current.item.type !in THEME_MUSIC_TYPES || !themeMusicEnabled()) {
             themeMusicJob?.cancel()
             if (current.themeMusic != null) updateLoaded { it.copy(themeMusic = null) }
             return
         }
         if (current.themeMusic != null || themeMusicJob?.isActive == true) return
+        val scope = playbackAvailability.mediaScope(ratingKey)
         themeMusicJob = viewModelScope.launch {
             val music = mediaRepository.getThemeMusic(ratingKey).getOrNull() ?: return@launch
-            updateLoaded { it.copy(themeMusic = music) }
+            if (canUseDetails() && scope == playbackAvailability.mediaScope(ratingKey)) updateLoaded { it.copy(themeMusic = music) }
         }
     }
 
@@ -428,6 +552,7 @@ class DetailViewModel @Inject constructor(
      * item is re-read a few times until it changed; children and rows follow with a full load.
      */
     fun onMetadataEdited(success: Boolean) {
+        if (!canUseDetails()) return
         val before = (_uiState.value as? DetailUiState.Loaded)?.item ?: return
         _editSupport.value = mediaRepository.metadataEditSupport(before)
         notifyResult("detail:$ratingKey", detailSystem(), before.title, R.string.notice_metadata_updated, success = success, kind = NoticeKind.LIBRARY)
@@ -469,6 +594,9 @@ class DetailViewModel @Inject constructor(
 
     private fun runAction(message: Int, block: suspend () -> Result<Unit>) {
         val current = _uiState.value as? DetailUiState.Loaded ?: return
+        if (!canUseDetails()) return
+        val actionIdentity = playbackAvailability.mediaIdentity(ratingKey)
+        val actionScope = playbackAvailability.mediaScope(ratingKey)
         if (!refreshPolicy.beginAction(loadJob?.isActive == true || reloadJob?.isActive == true)) return
         // Old progressive reads must not replace the action's watch-state update afterwards.
         loadJob?.cancel()
@@ -478,14 +606,19 @@ class DetailViewModel @Inject constructor(
             try {
                 suspendResult { block().getOrThrow() }.fold(
                     onSuccess = {
+                        if (actionIdentity != playbackAvailability.mediaIdentity(ratingKey)) return@fold
                         notifyResult("detail:$ratingKey", detailSystem(), current.item.title, message, kind = NoticeKind.LIBRARY)
                         // Keep the action guard through the fast metadata read. A queued entry
                         // refresh may then replace the remaining rows without racing this update.
                         val refreshed = suspendResult { mediaRepository.getMetadataFast(ratingKey).getOrThrow() }.getOrNull()
-                        updateLoaded { it.copy(item = refreshed ?: it.item, actionMessage = "ok") }
+                        if (actionScope == playbackAvailability.mediaScope(ratingKey)) updateLoaded { it.copy(item = refreshed ?: it.item, actionMessage = "ok") }
                     },
                     onFailure = { error ->
-                        notifyResult("detail:$ratingKey", detailSystem(), current.item.title, success = false, kind = NoticeKind.LIBRARY)
+                        // The failed request itself invalidates accessGeneration. Still report
+                        // its outcome for this account; only a different source discards it.
+                        if (actionIdentity != playbackAvailability.mediaIdentity(ratingKey)) return@fold
+                        notifyResult("detail:$ratingKey", detailSystem(), current.item.title, success = false,
+                            kind = NoticeKind.LIBRARY, failureMessage = R.string.offline_browse_action_unconfirmed)
                         updateLoaded { it.copy(actionMessage = error.message ?: "error") }
                     },
                 )
@@ -501,6 +634,7 @@ class DetailViewModel @Inject constructor(
         com.ambient.tv.data.files.FileKeys.owns(ratingKey) -> "files"
         com.ambient.tv.data.jellyfin.JellyfinBackend.owns(ratingKey) -> "jellyfin"
         com.ambient.tv.data.emby.EmbyBackend.owns(ratingKey) -> "emby"
+        com.ambient.tv.data.dlna.DlnaKeys.owns(ratingKey) -> "dlna"
         else -> "plex"
     }
 }

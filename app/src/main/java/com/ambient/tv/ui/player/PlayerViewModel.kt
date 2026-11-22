@@ -28,9 +28,7 @@ import com.ambient.tv.domain.playback.PlaybackMode
 import com.ambient.tv.domain.playback.PlaybackPlanner
 import com.ambient.tv.domain.repository.MediaRepository
 import com.ambient.tv.ui.player.backend.MpvBackendAvailability
-import com.ambient.tv.connectivity.PlaybackServerRecovery
 import com.ambient.tv.connectivity.PlaybackServerUnreachable
-import com.ambient.tv.connectivity.ResumeConnectivityMonitor
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -117,6 +115,7 @@ sealed interface PlayerUiState {
         val engineStartPositionMs: Long = 0,
         /** The metadata this state was built from, kept for the player's details dialog (no new request). */
         val item: MediaItem? = null,
+        val sourceAccessIdentity: String? = null,
     ) : PlayerUiState {
         val nextVideoItem: MediaItem? get() = nextEpisode ?: nextCollectionItem
         /** What the engine was built from: the item's own stream, or the first of a gapless chain. */
@@ -159,8 +158,6 @@ class PlayerViewModel @Inject constructor(
     private val performanceProfileResolver: com.ambient.tv.ui.performance.PerformanceProfileResolver,
     private val tokenStore: TokenStore,
     private val displayVersionSelector: DisplayVersionSelector,
-    private val playbackServerRecovery: PlaybackServerRecovery,
-    private val resumeConnectivityMonitor: ResumeConnectivityMonitor,
     private val companionMapper: com.ambient.tv.companion.CompanionMediaMapper,
 ) : ViewModel() {
 
@@ -172,6 +169,7 @@ class PlayerViewModel @Inject constructor(
     fun displaySwitchPauseMs(): Int = appPreferences.displaySwitchPauseMs
 
     private var ratingKey: String = checkNotNull(savedStateHandle["ratingKey"])
+    private var requestSourceIdentity = playbackAvailability.mediaIdentity(ratingKey)
     private var mediaIndex: Int = savedStateHandle.get<String>("mediaIndex")?.toIntOrNull() ?: 0
     /** Set only by a tap/OK on a specific version row; ordinary Play keeps Auto. */
     private val explicitVersion = savedStateHandle.get<Boolean>("explicitVersion") == true
@@ -246,6 +244,7 @@ class PlayerViewModel @Inject constructor(
         val state = _uiState.value as? PlayerUiState.Ready ?: return
         val index = key.toIntOrNull() ?: return
         if (state.companionVersions.none { it.first == key } || index == state.selectedVersionIndex) return
+        cancelRecovery()
         BackgroundPlaybackSession.cancelResumeRewind()
         forcedVersion = index
         versionResumeMs = (BackgroundPlaybackSession.currentStatus()?.positionMs ?: state.startPositionMs) + state.timelineOffsetMs
@@ -290,6 +289,7 @@ class PlayerViewModel @Inject constructor(
             subtitle = copy.subtitle,
             source = titleSource(ratingKey),
             mediaId = ratingKey,
+            sourceAccessIdentity = state.sourceAccessIdentity,
             companionMedia = companionMedia,
             parentMediaIds = parentMediaIds,
             videoScope = videoScope,
@@ -352,12 +352,18 @@ class PlayerViewModel @Inject constructor(
     private var itemTransitionToken: Long? = null
     private var playbackLoadJob: Job? = null
     private var successorsJob: Job? = null
+    private var recoveryJob: Job? = null
+    private val recoveryRequests = PlaybackRecoveryRequests()
+    private var recoveryTicket: PlaybackRecoveryRequests.Ticket? = null
+    private var lastPlaybackReady: PlayerUiState.Ready? = null
 
     /** Keep the fullscreen destination and its OSD; only replace the playback request. */
     fun playNext(nextId: String) {
         if (changingItem || nextId == ratingKey) return
         val current = _uiState.value as? PlayerUiState.Ready ?: return
         if (nextId != current.nextAudioTrack?.ratingKey && nextId != current.nextVideoItem?.ratingKey) return
+        if (current.sourceAccessIdentity != playbackAvailability.mediaIdentity(ratingKey)) return
+        cancelRecovery()
         changingItem = true
         clearGaplessNext()
         itemTransitionToken = BackgroundPlaybackSession.beginItemTransition()
@@ -365,6 +371,7 @@ class PlayerViewModel @Inject constructor(
         successorsJob?.cancel()
         timelineSeekJob?.cancel()
         ratingKey = nextId
+        requestSourceIdentity = playbackAvailability.mediaIdentity(nextId)
         mediaIndex = 0
         restartFromBeginning = false
         savedResumeRequest.skip()
@@ -383,8 +390,10 @@ class PlayerViewModel @Inject constructor(
             try {
                 loadPlayback()
                 (_uiState.value as? PlayerUiState.Error)?.let { error ->
-                    BackgroundPlaybackSession.pause()
-                    itemTransitionToken?.let { BackgroundPlaybackSession.failSourceReplacement(it, error.message) }
+                    itemTransitionToken?.takeIf(BackgroundPlaybackSession::isSourceReplacement)?.let {
+                        BackgroundPlaybackSession.pause()
+                        BackgroundPlaybackSession.failSourceReplacement(it, error.message)
+                    }
                 }
             } finally { changingItem = false }
         }
@@ -416,33 +425,34 @@ class PlayerViewModel @Inject constructor(
         viewModelScope.launch {
             _uiState.collect { state ->
                 if (state is PlayerUiState.Ready) {
+                    lastPlaybackReady = state
                     lastReadyRatingKey = state.requestedRatingKey
                     lastReadyMediaType = state.mediaType
                 }
             }
         }
-        viewModelScope.launch {
-            var seenVpn = resumeConnectivityMonitor.vpnDropGeneration.value
-            resumeConnectivityMonitor.vpnDropGeneration.collect { generation ->
-                if (generation == seenVpn) return@collect
-                seenVpn = generation
-                if (_uiState.value is PlayerUiState.Ready &&
-                    PlaybackServerUnreachable.appliesToLocalMedia(ratingKey)
-                ) {
-                    handleServerUnreachable(context.getString(R.string.wg_vpn_network_lost))
-                }
-            }
-        }
+        // A lost network/proof blocks new starts. An existing buffered stream runs until its
+        // own engine reports failure; an unrelated metadata/VPN check must not interrupt it.
+        viewModelScope.launch { BackgroundPlaybackSession.snapshot.collect { cancelStaleRecovery() } }
 
         playbackLoadJob = viewModelScope.launch { loadPlayback() }
     }
 
-    private suspend fun loadPlayback() {
+    private suspend fun loadPlayback(mayPublish: () -> Boolean = { true }, reuseActive: Boolean = true) {
+        if (!mayPublish()) return
         val ratingKey = ratingKey
         val reopenRoute = reopenRoute
         val transitionToken = itemTransitionToken
-        if (!restartFromBeginning && forcedVersion == null) {
-            (BackgroundPlaybackSession.cached(reopenRoute) as? PlayerUiState.Ready)?.let {
+        if (requestSourceIdentity != playbackAvailability.mediaIdentity(ratingKey)) {
+            _uiState.value = PlayerUiState.Error(context.getString(R.string.browse_playback_unavailable))
+            return
+        }
+        if (reuseActive && !restartFromBeginning && forcedVersion == null) {
+            (BackgroundPlaybackSession.cached(reopenRoute).takeIf {
+                BackgroundPlaybackSession.snapshot.value.active && BackgroundPlaybackSession.snapshot.value.status.error == null
+            } as? PlayerUiState.Ready)?.takeIf {
+                it.sourceAccessIdentity == playbackAvailability.mediaIdentity(ratingKey) && playbackAvailability.isMediaVerified(it.sourceRatingKey)
+            }?.let {
                 savedResumeRequest.skip()
                 _uiState.value = it.copy(playbackBackendKey = BackgroundPlaybackSession.snapshot.value.backend)
                 if (it.successorsLoading) {
@@ -459,11 +469,20 @@ class PlayerViewModel @Inject constructor(
                 }
                 return
             }
-        } else if (forcedVersion == null && BackgroundPlaybackSession.snapshot.value.metadata?.route == reopenRoute) {
+        } else if (reuseActive && forcedVersion == null && BackgroundPlaybackSession.snapshot.value.metadata?.route == reopenRoute) {
             BackgroundPlaybackSession.stop()
         }
-        if (!playbackAvailability.media(ratingKey)) {
+        val expectedOwner = BackgroundPlaybackSession.recoveryOwner()
+        fun currentLoad() = mayPublish() && expectedOwner.matches(BackgroundPlaybackSession.recoveryOwner())
+        val sourceIdentity = requestSourceIdentity
+        if (sourceIdentity != playbackAvailability.mediaIdentity(ratingKey)) {
             _uiState.value = PlayerUiState.Error(context.getString(R.string.browse_playback_unavailable))
+            return
+        }
+        val access = playbackAvailability.checkMedia(ratingKey)
+        if (!currentLoad()) return
+        if (!access.allowed) {
+            _uiState.value = PlayerUiState.Error(accessFailureMessage(access))
             return
         }
         serverAudioFallbackCodec = null
@@ -471,6 +490,11 @@ class PlayerViewModel @Inject constructor(
         mediaRepository.getMetadata(ratingKey).fold(
             onSuccess = { item ->
                 currentCoroutineContext().ensureActive()
+                if (!currentLoad()) return@fold
+                if (sourceIdentity != playbackAvailability.mediaIdentity(ratingKey)) {
+                    _uiState.value = PlayerUiState.Error(context.getString(R.string.browse_playback_unavailable))
+                    return@fold
+                }
                 if (item == null) {
                     sourceAvailability.notifyBlocked()
                     _uiState.value = PlayerUiState.Error(context.getString(R.string.player_media_not_found))
@@ -478,6 +502,7 @@ class PlayerViewModel @Inject constructor(
                 }
                 videoScope = loadVideoScope(item)
                 currentCoroutineContext().ensureActive()
+                if (!currentLoad()) return@fold
                 // An explicit version picker click wins over display Auto and codec preference.
                 // Match the source after metadata refresh, rather than trusting a shifted list index.
                 var selectedVersionIndex = forcedVersion ?: if (explicitVersion) {
@@ -530,6 +555,13 @@ class PlayerViewModel @Inject constructor(
                 }
 
                 val playbackRatingKey = version.sourceRatingKey ?: ratingKey
+                // Merged titles can select a different physical source after the entry guard.
+                val physicalAccess = playbackAvailability.checkMedia(playbackRatingKey)
+                if (!currentLoad()) return@fold
+                if (!physicalAccess.allowed) {
+                    _uiState.value = PlayerUiState.Error(context.getString(R.string.browse_playback_unavailable))
+                    return@fold
+                }
                 val playbackMediaIndex = version.sourceMediaIndex
                 Timber.i(
                     "Version selection: requested=%d selected=%d display=%s auto=%s sourceKey=%s sourceMedia=%d",
@@ -554,7 +586,11 @@ class PlayerViewModel @Inject constructor(
                 // retain a viewOffset at (or just before) the end for watched items; feeding that
                 // position back into a fresh player makes the decoder open and immediately close.
                 val resumeAtEnd = (item.progressFraction ?: 0f) > 0.94f
-                val savedPositionMs = versionResumeMs ?: if (restartFromBeginning || resumeAtEnd) {
+                val recoveryPosition = if (restartFromBeginning) {
+                    BackgroundPlaybackSession.clearRecoveryPosition(reopenRoute, sourceIdentity)
+                    null
+                } else BackgroundPlaybackSession.recoveryPosition(reopenRoute, sourceIdentity)
+                val savedPositionMs = recoveryPosition ?: versionResumeMs ?: if (restartFromBeginning || resumeAtEnd) {
                     0L
                 } else {
                     item.viewOffsetMs ?: 0L
@@ -564,7 +600,7 @@ class PlayerViewModel @Inject constructor(
                 val startPositionMs = savedResumeRequest.position(
                     savedPositionMs,
                     appPreferences.resumeRewindSeconds,
-                    eligible = versionResumeMs == null && !restartFromBeginning && !resumeAtEnd &&
+                    eligible = recoveryPosition == null && versionResumeMs == null && !restartFromBeginning && !resumeAtEnd &&
                         !audioOnlyPlaybackHint(ratingKey, item.type, version.videoCodec) &&
                         !item.type.equals("photo", ignoreCase = true),
                 )
@@ -605,6 +641,7 @@ class PlayerViewModel @Inject constructor(
                     Timber.i("Server audio conversion target=%s channels=%d", codec, channels)
                     val result = mediaRepository.getAudioCompatibleStreamUrl(playbackRatingKey, playbackMediaIndex,
                         startPositionMs, codec, preferredAudio?.id, channels)
+                    if (!currentLoad()) return@fold
                     if (result.isFailure) {
                         _uiState.value = PlayerUiState.Error(context.getString(R.string.player_audio_conversion_failed))
                         return@fold
@@ -615,6 +652,7 @@ class PlayerViewModel @Inject constructor(
                 }
 
                 val selectedPlan = plan
+                if (!currentLoad()) return@fold
                 _uiState.value = if (selectedPlan != null) {
                     if (selectedPlan.mode == PlaybackMode.DIRECT_PLAY) {
                         mediaRepository.preparePlayback(playbackRatingKey, playbackMediaIndex)
@@ -626,10 +664,17 @@ class PlayerViewModel @Inject constructor(
                     )
                     parentMediaIds = listOfNotNull(item.parentRatingKey, item.grandparentRatingKey).distinct()
                     currentCoroutineContext().ensureActive()
+                    if (!currentLoad()) return@fold
+                    if (sourceIdentity != playbackAvailability.mediaIdentity(ratingKey) ||
+                        !playbackAvailability.isMediaVerified(playbackRatingKey)) {
+                        _uiState.value = PlayerUiState.Error(context.getString(R.string.browse_playback_unavailable))
+                        return@fold
+                    }
                     if (transitionToken != null && !BackgroundPlaybackSession.isSourceReplacement(transitionToken)) return
                     itemTransitionToken = null
                     PlayerUiState.Ready(
                         item = item,
+                        sourceAccessIdentity = sourceIdentity,
                         streamUrl = selectedPlan.url,
                         playbackMode = selectedPlan.mode,
                         playbackReason = selectedPlan.reason,
@@ -711,6 +756,7 @@ class PlayerViewModel @Inject constructor(
             },
             onFailure = { error ->
                 currentCoroutineContext().ensureActive()
+                if (!currentLoad()) return@fold
                 sourceAvailability.notifyBlocked()
                 _uiState.value = PlayerUiState.Error(error.message ?: context.getString(R.string.player_load_failed))
             },
@@ -759,6 +805,16 @@ class PlayerViewModel @Inject constructor(
     val gaplessNext: kotlinx.coroutines.flow.StateFlow<GaplessNext?> = _gaplessNext
     private var gaplessJob: Job? = null
 
+    init {
+        viewModelScope.launch {
+            playbackAvailability.changes.collect {
+                cancelStaleRecovery()
+                if (_gaplessNext.value?.let { !playbackAvailability.isMediaVerified(it.state.sourceRatingKey) } == true)
+                    clearGaplessNext()
+            }
+        }
+    }
+
     private fun clearGaplessNext() {
         gaplessJob?.cancel()
         gaplessJob = null
@@ -790,6 +846,7 @@ class PlayerViewModel @Inject constructor(
 
     /** Hands the prepared song to the running Media3 engine, which keeps it while minimized. */
     private fun queueGaplessNext(fromRoute: String, prepared: GaplessNext) {
+        if (!playbackAvailability.isMediaVerified(prepared.state.sourceRatingKey)) return
         val player = (BackgroundPlaybackSession.activeHandle() as? Media3PlaybackHandle)?.player ?: return
         val parents = gaplessParents(prepared.item)
         Media3GaplessQueue.offer(player, GaplessQueue.Entry(
@@ -798,6 +855,8 @@ class PlayerViewModel @Inject constructor(
             fromRoute = fromRoute,
             metadata = metadata(prepared.state, parents),
             continuation = { continueGaplessWithoutScreen(prepared, parents) },
+            canStart = { prepared.state.sourceAccessIdentity == playbackAvailability.mediaIdentity(prepared.ratingKey) &&
+                playbackAvailability.isMediaVerified(prepared.state.sourceRatingKey) },
         ))
     }
 
@@ -821,6 +880,7 @@ class PlayerViewModel @Inject constructor(
         val prepared = next?.let { resolveGaplessNext(state, it) } ?: return
         currentCoroutineContext().ensureActive()
         if (BackgroundPlaybackSession.snapshot.value.metadata?.route != route) return
+        if (!playbackAvailability.isMediaVerified(prepared.state.sourceRatingKey)) return
         val player = (BackgroundPlaybackSession.activeHandle() as? Media3PlaybackHandle)?.player ?: return
         val nextParents = gaplessParents(prepared.item)
         Media3GaplessQueue.offer(player, GaplessQueue.Entry(
@@ -829,6 +889,8 @@ class PlayerViewModel @Inject constructor(
             fromRoute = route,
             metadata = metadata(prepared.state, nextParents),
             continuation = { continueGaplessWithoutScreen(prepared, nextParents) },
+            canStart = { prepared.state.sourceAccessIdentity == playbackAvailability.mediaIdentity(prepared.ratingKey) &&
+                playbackAvailability.isMediaVerified(prepared.state.sourceRatingKey) },
         ))
     }
 
@@ -843,6 +905,8 @@ class PlayerViewModel @Inject constructor(
             com.ambient.tv.ui.player.backend.PlaybackBackend.MEDIA3
         if (!gaplessEligible(current.mediaType, current.playbackMode, onMedia3, current.serverAudioConversionCodec)) return null
         if (titleSource(next.ratingKey) != titleSource(current.requestedRatingKey)) return null
+        val identity = playbackAvailability.mediaIdentity(next.ratingKey)
+        if (!playbackAvailability.media(next.ratingKey)) return null
         val item = mediaRepository.getMetadata(next.ratingKey).getOrNull() ?: return null
         if (!item.type.equals("track", true) && !item.type.equals("audio", true)) return null
         val versionIndex = displayVersionSelector.selectIndex(item.mediaVersions, 0)
@@ -862,8 +926,11 @@ class PlayerViewModel @Inject constructor(
             highQualityAssets = performanceProfileResolver.effectiveHighQualityAssets(),
         )
         val sourceKey = version.sourceRatingKey ?: next.ratingKey
+        if (!playbackAvailability.media(sourceKey)) return null
+        if (identity != playbackAvailability.mediaIdentity(next.ratingKey)) return null
         val state = now.copy(
             item = item,
+            sourceAccessIdentity = identity,
             streamUrl = plan.url,
             playbackReason = plan.reason,
             title = item.title,
@@ -919,13 +986,19 @@ class PlayerViewModel @Inject constructor(
      */
     fun adoptGaplessNext(nextRatingKey: String): Boolean {
         val prepared = _gaplessNext.value?.takeIf { it.ratingKey == nextRatingKey } ?: return false
+        if (!playbackAvailability.isMediaVerified(prepared.state.sourceRatingKey)) {
+            clearGaplessNext()
+            return false
+        }
         val current = _uiState.value as? PlayerUiState.Ready ?: return false
         if (changingItem) return false
         val fromRoute = current.playbackRoute ?: reopenRoute
+        cancelRecovery()
         clearGaplessNext()
         successorsJob?.cancel()
         timelineSeekJob?.cancel()
         ratingKey = nextRatingKey
+        requestSourceIdentity = playbackAvailability.mediaIdentity(nextRatingKey)
         mediaIndex = 0
         restartFromBeginning = false
         savedResumeRequest.skip()
@@ -1012,6 +1085,7 @@ class PlayerViewModel @Inject constructor(
     fun audioConversionLocationChanged(session: AudioSession, positionMs: Long): Boolean {
         val current = _uiState.value as? PlayerUiState.Ready ?: return false
         if (changingItem || !supportsServerAudioConversion(current.sourceRatingKey)) return false
+        cancelRecovery()
         val restart = session.conversionRestart(current.serverAudioStreamId ?: conversionRestart?.streamId,
             positionMs, current.timelineOffsetMs, current.serverAudioConversionCodec != null)
         conversionRestart = restart
@@ -1524,7 +1598,44 @@ class PlayerViewModel @Inject constructor(
             handleServerUnreachable(message)
             return
         }
+        if (PlaybackServerUnreachable.appliesToLocalMedia(ratingKey) &&
+            ambiguousNativePlaybackFailure(message, context.getString(R.string.vlc_playback_error))) {
+            probeNativePlaybackFailure(message)
+            return
+        }
         switchToVlcOrError(message)
+    }
+
+    private fun probeNativePlaybackFailure(message: String) {
+        val current = _uiState.value as? PlayerUiState.Ready ?: return
+        val owner = BackgroundPlaybackSession.recoveryOwner()
+        if (!owner.owns(reopenRoute, requestSourceIdentity) || owner.replacingSource ||
+            requestSourceIdentity != playbackAvailability.mediaIdentity(ratingKey)) return
+        cancelRecovery()
+        lastPlaybackReady = current
+        BackgroundPlaybackSession.rememberRecoveryPosition(owner)
+        val ticket = recoveryRequests.begin(PlaybackRecoveryRequests.Target(reopenRoute, requestSourceIdentity), owner)
+        recoveryTicket = ticket
+        val sourceIdentity = playbackAvailability.mediaIdentity(current.sourceRatingKey)
+        fun stillCurrent() = recoveryRequests.current(ticket, recoveryTarget(), BackgroundPlaybackSession.recoveryOwner()) &&
+            sourceIdentity == playbackAvailability.mediaIdentity(current.sourceRatingKey)
+        _uiState.value = PlayerUiState.Error(context.getString(R.string.player_server_unreachable_rechecking))
+        recoveryJob = viewModelScope.launch {
+            try {
+                // Native errors carry no transport code. Check access before a decoder change,
+                // without classifying a codec failure as an outage or waking a reachable service.
+                val access = suspendResult { playbackAvailability.checkMedia(current.sourceRatingKey, force = true) }.getOrNull()
+                if (!stillCurrent()) return@launch
+                recoveryRequests.finish(ticket)
+                recoveryTicket = null
+                recoveryJob = null
+                _uiState.value = current
+                if (access?.allowed == true) switchToVlcOrError(message) else handleServerUnreachable(message)
+            } finally {
+                recoveryRequests.finish(ticket)
+                if (recoveryTicket === ticket) { recoveryTicket = null; recoveryJob = null }
+            }
+        }
     }
 
     fun reportPlaybackException(error: androidx.media3.common.PlaybackException) {
@@ -1538,46 +1649,119 @@ class PlayerViewModel @Inject constructor(
         reportPlaybackError(error.message.orEmpty(), error)
     }
 
-    /**
-     * "Retry" on the error screen: a fresh start of the title (new stream URL, renderer choice and
-     * server check). It resumes where the server last saved the position.
-     */
+    /** Explicit retry first confirms protected access, then resolves a fresh stream at the local clock. */
     fun retryPlayback() {
         if (_uiState.value !is PlayerUiState.Error) return
-        savedResumeRequest.skip()
         serverUnreachableRetryAttempted = false
         videoFallbackAttempted = false
-        runCatching { BackgroundPlaybackSession.stop() }
-        itemTransitionToken = null
-        _uiState.value = PlayerUiState.Loading
-        playbackLoadJob = viewModelScope.launch { loadPlayback() }
+        recoverServerPlayback(manual = true)
     }
 
     private fun handleServerUnreachable(rawMessage: String) {
+        val current = _uiState.value as? PlayerUiState.Ready ?: return
+        if (changingItem || current.requestedRatingKey != ratingKey) return
+        if (requestSourceIdentity != playbackAvailability.mediaIdentity(ratingKey)) return
+        val failedOwner = BackgroundPlaybackSession.recoveryOwner()
+        if (!failedOwner.owns(reopenRoute, requestSourceIdentity) || failedOwner.replacingSource) return
+        lastPlaybackReady = current
+        playbackAvailability.invalidateMedia(current.sourceRatingKey)
+        clearGaplessNext()
         Timber.w("Local media server unreachable during playback: %s", rawMessage)
-        // Pause immediately so a dead socket does not keep spinning; stop if we cannot recover.
-        runCatching { BackgroundPlaybackSession.pause() }
-        val unreachable = context.getString(R.string.player_server_unreachable)
         if (serverUnreachableRetryAttempted) {
-            runCatching { BackgroundPlaybackSession.stop() }
-            _uiState.value = PlayerUiState.Error(unreachable)
+            cancelRecovery()
+            val owner = BackgroundPlaybackSession.recoveryOwner()
+            if (owner.owns(reopenRoute, requestSourceIdentity)) {
+                BackgroundPlaybackSession.rememberRecoveryPosition(owner)
+                BackgroundPlaybackSession.stopForRecovery(owner, reopenRoute, requestSourceIdentity)
+            }
+            _uiState.value = PlayerUiState.Error(context.getString(R.string.player_server_unreachable))
             return
         }
         serverUnreachableRetryAttempted = true
-        // Say what actually happens: a wake only when Wake-on-LAN is set up, otherwise one more check.
-        _uiState.value = PlayerUiState.Error(context.getString(
-            if (playbackServerRecovery.wakeConfigured(ratingKey)) R.string.player_server_unreachable_retrying
-            else R.string.player_server_unreachable_rechecking))
-        viewModelScope.launch {
-            // suspendResult rethrows cancellation: leaving the player mid-recheck must not stop
-            // whatever plays by then through the global session below.
-            val recovered = suspendResult { playbackServerRecovery.tryWakeAndRecheck(ratingKey) }.getOrDefault(false)
-            if (recovered) {
-                Timber.i("Server reachable after one WoL/retry; reloading playback")
-                loadPlayback()
-            } else {
-                runCatching { BackgroundPlaybackSession.stop() }
-                _uiState.value = PlayerUiState.Error(unreachable)
+        recoverServerPlayback(manual = false)
+    }
+
+    private fun recoveryTarget() = PlaybackRecoveryRequests.Target(reopenRoute, playbackAvailability.mediaIdentity(ratingKey))
+
+    private fun cancelRecovery() {
+        recoveryRequests.cancel()
+        recoveryTicket = null
+        recoveryJob?.cancel()
+        recoveryJob = null
+    }
+
+    private fun cancelStaleRecovery() {
+        val ticket = recoveryTicket ?: return
+        if (!recoveryRequests.current(ticket, recoveryTarget(), BackgroundPlaybackSession.recoveryOwner())) {
+            cancelRecovery()
+            _uiState.value = PlayerUiState.Error(context.getString(R.string.browse_playback_unavailable))
+        }
+    }
+
+    fun onPlaybackScreenDisposed() {
+        val interrupted = recoveryTicket != null || playbackLoadJob?.isActive == true
+        playbackLoadJob?.cancel()
+        cancelRecovery()
+        if (interrupted) _uiState.value = PlayerUiState.Error(context.getString(R.string.player_server_unreachable))
+    }
+
+    private fun accessFailureMessage(result: com.ambient.tv.data.browse.PlaybackAccessResult): String =
+        if (result.authRequired) context.getString(R.string.offline_playback_auth, result.name)
+        else context.getString(R.string.offline_playback_unavailable, result.name)
+
+    private fun recoverServerPlayback(manual: Boolean) {
+        cancelRecovery()
+        playbackLoadJob?.cancel()
+        successorsJob?.cancel()
+        clearGaplessNext()
+        if (requestSourceIdentity != playbackAvailability.mediaIdentity(ratingKey)) {
+            _uiState.value = PlayerUiState.Error(context.getString(R.string.browse_playback_unavailable))
+            return
+        }
+        val route = reopenRoute
+        val sessionReady = BackgroundPlaybackSession.snapshot.value.metadata
+            ?.takeIf { it.route == route && it.sourceAccessIdentity == requestSourceIdentity }?.resumeState as? PlayerUiState.Ready
+        val sourceKey = (sessionReady ?: lastPlaybackReady)?.takeIf { it.requestedRatingKey == ratingKey }?.sourceRatingKey ?: ratingKey
+        val sourceIdentity = playbackAvailability.mediaIdentity(sourceKey)
+        val owner = BackgroundPlaybackSession.recoveryOwner()
+        if (owner.owns(route, requestSourceIdentity)) {
+            BackgroundPlaybackSession.rememberRecoveryPosition(owner)
+            // This path follows a terminal engine failure. Retire only that renderer so an
+            // identical URL/start key cannot reuse it, and its failed Pause intent cannot win.
+            BackgroundPlaybackSession.stopForRecovery(owner, route, requestSourceIdentity)
+        }
+        restartFromBeginning = false
+        savedStateHandle["restart"] = false
+        savedResumeRequest.skip()
+        itemTransitionToken = null
+        val target = PlaybackRecoveryRequests.Target(route, requestSourceIdentity)
+        val ticket = recoveryRequests.begin(target, BackgroundPlaybackSession.recoveryOwner())
+        recoveryTicket = ticket
+        fun current(): Boolean = recoveryRequests.current(ticket, recoveryTarget(), BackgroundPlaybackSession.recoveryOwner()) &&
+            sourceIdentity == playbackAvailability.mediaIdentity(sourceKey)
+        val allowWake = manual || playbackAvailability.automaticMediaWakeAllowed(sourceKey)
+        _uiState.value = if (manual) PlayerUiState.Loading else PlayerUiState.Error(context.getString(
+            if (allowWake) R.string.player_server_unreachable_retrying else R.string.player_server_unreachable_rechecking))
+        recoveryJob = viewModelScope.launch {
+            try {
+                val access = playbackAvailability.retryMedia(sourceKey, allowWake = allowWake)
+                if (!current()) return@launch
+                if (access.allowed) {
+                    _uiState.value = PlayerUiState.Loading
+                    loadPlayback(mayPublish = ::current, reuseActive = false)
+                } else {
+                    BackgroundPlaybackSession.stopForRecovery(ticket.owner, route, requestSourceIdentity)
+                    _uiState.value = PlayerUiState.Error(accessFailureMessage(access))
+                }
+            } catch (error: Exception) {
+                if (error is kotlinx.coroutines.CancellationException) throw error
+                if (current()) {
+                    BackgroundPlaybackSession.stopForRecovery(ticket.owner, route, requestSourceIdentity)
+                    _uiState.value = PlayerUiState.Error(context.getString(R.string.player_server_unreachable))
+                }
+            } finally {
+                recoveryRequests.finish(ticket)
+                if (recoveryTicket === ticket) { recoveryTicket = null; recoveryJob = null }
             }
         }
     }
@@ -1615,6 +1799,7 @@ class PlayerViewModel @Inject constructor(
     }
 
     override fun onCleared() {
+        cancelRecovery()
         itemTransitionToken?.let(BackgroundPlaybackSession::cancelSourceReplacement)
         super.onCleared()
     }

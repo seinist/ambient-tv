@@ -19,6 +19,17 @@ internal fun homeRowSource(rowId: String): String {
     return "$system.$contentKey"
 }
 
+/** Configured-source fallback when there is no browse snapshot; cached shelves need no extra rows. */
+internal fun homeOfflineReconnectSystems(
+    definitions: List<HomeRowDefinition>,
+    offline: Set<String>,
+    hasSavedContent: Boolean = false,
+): List<String> = if (hasSavedContent) emptyList() else definitions.asSequence()
+    .filter { it.enabled && it.system in offline }
+    .map { it.system }
+    .distinct()
+    .toList()
+
 internal fun orderedHomeRowKeys(
     definitions: List<HomeRowDefinition>, contentIds: List<String>, shortcuts: List<HomeRowDefinition>,
     hasLive: Boolean, hasRecent: Boolean, tvRowSources: Map<String, String> = emptyMap(),

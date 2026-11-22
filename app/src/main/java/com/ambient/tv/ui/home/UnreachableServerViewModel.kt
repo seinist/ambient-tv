@@ -11,6 +11,7 @@ import javax.inject.Inject
 class UnreachableServerViewModel @Inject constructor(
     private val gate: UnreachableServerGate,
     private val connectionActions: ConnectionStatusActions,
+    val availability: com.ambient.tv.data.browse.SourceAvailability,
 ) : ViewModel() {
     val state = gate.state
     val nextAutomaticCheckAtElapsedMs = gate.nextAutomaticCheckAtElapsedMs

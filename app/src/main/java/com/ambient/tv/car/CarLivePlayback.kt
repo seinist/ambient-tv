@@ -33,6 +33,7 @@ internal fun CarAudioSelection.Live.playerMetadata(
     )
     return PlaybackMetadata(
         route = Destinations.tvhPlayer("channel", channel.uuid, sourceId),
+        sourceAccessIdentity = sourceIdentity,
         title = channel.name,
         subtitle = channel.numberLabel.orEmpty(),
         source = system,

@@ -5,6 +5,8 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.widthIn
@@ -43,13 +45,10 @@ import com.ambient.tv.ui.common.systemName
 import com.ambient.tv.ui.mobile.DeviceActionRow
 import kotlinx.coroutines.delay
 
-/** Manual actions depend on the chosen server, not another offline server's Wake-on-LAN setup. */
+/** Always verify the selected service before deciding whether its machine still needs WOL. */
 @Composable
-fun offlineActionLabel(state: UnreachableServerGateState, system: String): String = stringResource(when {
-    state.retrying -> R.string.unreachable_retrying
-    system !in state.wakeReady -> R.string.offline_reconnect
-    else -> R.string.offline_wake
-})
+fun offlineActionLabel(state: UnreachableServerGateState): String =
+    stringResource(if (state.retrying) R.string.unreachable_retrying else R.string.home_retry)
 
 /** Monotonic deadline of the existing background retry (not a second retry timer). */
 internal fun offlineRetrySeconds(nextCheckAtElapsedMs: Long, nowElapsedMs: Long): Int? {
@@ -58,7 +57,7 @@ internal fun offlineRetrySeconds(nextCheckAtElapsedMs: Long, nowElapsedMs: Long)
     return ((remaining + 999L) / 1_000L).coerceAtMost(Int.MAX_VALUE.toLong()).toInt()
 }
 
-/** An unreachable media server shows one recovery page until its service is usable again. */
+/** A source guard keeps its saved browse tree alive. Only playback/detail actions are gated. */
 @Composable
 fun OfflineSystemGuard(system: String, onOpenSettings: (String) -> Unit, content: @Composable () -> Unit) {
     val vm: UnreachableServerViewModel = hiltViewModel()
@@ -71,15 +70,64 @@ fun OfflineSystemGuard(system: String, onOpenSettings: (String) -> Unit, content
             vm.onOpenSystem(system)
         }
     }
-    if (offline) {
-        val nextCheckAt by vm.nextAutomaticCheckAtElapsedMs.collectAsState()
-        OfflineSystemPage(
-            system, state, { vm.retrySystem(system) },
-            // Go straight to this server's existing Wake-on-LAN group and MAC editor.
-            { onOpenSettings("wake:" + system) },
-            nextCheckAtElapsedMs = nextCheckAt,
+    content()
+}
+
+/** One compact recovery action above a saved catalog; never requests focus or starts WOL. */
+@Composable
+fun OfflineSourceStatus(
+    systems: Set<String>? = null,
+    modifier: Modifier = Modifier,
+    additionalSources: List<String> = emptyList(),
+    onRetryAdditional: () -> Unit = {},
+) {
+    val vm: UnreachableServerViewModel = hiltViewModel()
+    val state by vm.state.collectAsState()
+    val sourceRevision by vm.availability.changes.collectAsState()
+    val offline = remember(state.offline, systems, sourceRevision) {
+        val failedServices = systems.orEmpty().filter {
+            it in setOf("plex", "jellyfin", "emby", "tvheadend") && vm.availability.browseUnconfirmed(it)
+        }
+        (state.offline + failedServices).filter { systems == null || it in systems }
+    }
+    if (offline.isNotEmpty() || additionalSources.isNotEmpty()) SavedBrowseStatus(
+        sources = (offline + additionalSources).distinct(), retrying = state.retrying,
+        onRetry = { offline.forEach(vm::retrySystem); onRetryAdditional() },
+        modifier = modifier,
+    )
+}
+
+/** Reusable by Live TV, where repository fallback can be stale without a host-offline flag. */
+@Composable
+fun SavedBrowseStatus(
+    sources: List<String>,
+    retrying: Boolean,
+    onRetry: () -> Unit,
+    modifier: Modifier = Modifier,
+    savedAt: String? = null,
+) {
+    val names = sources.map { source ->
+        MediaSystem.fromKey(source)?.let { systemName(it) } ?: source
+    }.joinToString(", ")
+    Row(
+        modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f))
+            .padding(horizontal = 16.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(16.dp),
+    ) {
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Text(stringResource(R.string.offline_browse_saved_title, names), style = MaterialTheme.typography.titleSmall)
+            Text(
+                savedAt?.let { stringResource(R.string.offline_browse_saved_at, it) }
+                    ?: stringResource(R.string.offline_browse_saved_body),
+                style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        TvActionButton(
+            text = stringResource(if (retrying) R.string.unreachable_retrying else R.string.home_retry),
+            onClick = onRetry, loading = retrying, enabled = !retrying,
         )
-    } else content()
+    }
 }
 
 @Composable
@@ -140,7 +188,7 @@ fun OfflineSystemPage(
                 textAlign = TextAlign.Center,
             )
             Text(
-                stringResource(R.string.offline_library_body),
+                stringResource(R.string.offline_browse_no_cache_body),
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 textAlign = TextAlign.Center,
@@ -164,7 +212,11 @@ fun OfflineSystemPage(
                     )
                 }
                 Text(
-                    stringResource(if (system in state.wakeReady) R.string.offline_wol_ready else R.string.offline_wol_missing),
+                    stringResource(when {
+                        system in state.wakeReady -> R.string.offline_wol_ready
+                        state.hostHealth[system] == HostHealth.ONLINE -> R.string.offline_wol_not_needed
+                        else -> R.string.offline_wol_missing
+                    }),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     textAlign = TextAlign.Center,
@@ -186,7 +238,7 @@ fun OfflineSystemPage(
                 horizontalArrangement = Arrangement.spacedBy(12.dp),
             ) {
                 TvActionButton(
-                    text = offlineActionLabel(state, system),
+                    text = offlineActionLabel(state),
                     onClick = onReconnect,
                     loading = state.retrying,
                     modifier = Modifier

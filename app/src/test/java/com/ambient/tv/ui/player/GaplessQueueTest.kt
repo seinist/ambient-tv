@@ -79,6 +79,30 @@ class GaplessQueueTest {
         assertTrue(launched.isEmpty())
     }
 
+    @Test fun revokedSourceCannotAdvanceWhileTheScreenIsGone() {
+        var verified = true
+        val engine = FakeEngine()
+        queue.bind(engine)
+        queue.offer(GaplessQueue.Entry("b", "http://server/b", "player/a",
+            PlaybackMetadata("player/b", "b", source = "plex", mediaId = "b"),
+            canStart = { verified }))
+        verified = false // Network loss, source failure or account change after preparation.
+        assertFalse(queue.onAutoTransition(engine, engine.advance()))
+        assertTrue(engine.paused)
+        assertTrue(continued.isEmpty())
+        assertTrue(launched.isEmpty())
+        assertNull(queue.entry)
+    }
+
+    @Test fun anUnverifiedSourceIsNeverQueued() {
+        val engine = FakeEngine()
+        queue.bind(engine)
+        queue.offer(GaplessQueue.Entry("b", "http://server/b", "player/a",
+            PlaybackMetadata("player/b", "b", source = "emby", mediaId = "b"),
+            canStart = { false }))
+        assertEquals(listOf("current"), engine.items)
+    }
+
     @Test fun unknownOrRefusedSongPausesInsteadOfPlayingUnderTheOldTitle() {
         val engine = FakeEngine()
         queue.bind(engine)

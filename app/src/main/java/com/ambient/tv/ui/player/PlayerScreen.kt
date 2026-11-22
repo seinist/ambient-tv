@@ -172,6 +172,14 @@ fun PlayerScreen(
     viewModel: PlayerViewModel = hiltViewModel(),
 ) {
     val uiState by viewModel.uiState.collectAsState()
+    val lifecycle = androidx.lifecycle.compose.LocalLifecycleOwner.current.lifecycle
+    DisposableEffect(viewModel, lifecycle) {
+        val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
+            if (event == androidx.lifecycle.Lifecycle.Event.ON_STOP) viewModel.onPlaybackScreenDisposed()
+        }
+        lifecycle.addObserver(observer)
+        onDispose { lifecycle.removeObserver(observer); viewModel.onPlaybackScreenDisposed() }
+    }
     val persistentVideoHost = LocalPersistentPlaybackVideoHost.current
     val leave = {
         val (playedRatingKey, mediaType) = viewModel.playbackExit()

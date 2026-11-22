@@ -52,6 +52,8 @@ class AmbientTvApplication : Application(), coil3.SingletonImageLoader.Factory {
     @Inject lateinit var mediaImageAuthInterceptor: MediaImageAuthInterceptor
     @Inject lateinit var mediaArtworkDiskCacheInterceptor: MediaArtworkDiskCacheInterceptor
     @Inject lateinit var mediaArtworkRefresh: com.ambient.tv.network.MediaArtworkRefresh
+    @Inject lateinit var mediaArtworkNetworkAccess: com.ambient.tv.network.MediaArtworkNetworkAccess
+    @Inject lateinit var mediaArtworkNetworkInterceptor: com.ambient.tv.network.MediaArtworkNetworkInterceptor
     @Inject lateinit var performanceProfileResolver: PerformanceProfileResolver
     @Inject @SharedOkHttp lateinit var sharedConnectionPool: ConnectionPool
     @Inject @SharedOkHttp lateinit var sharedDispatcher: Dispatcher
@@ -128,6 +130,7 @@ class AmbientTvApplication : Application(), coil3.SingletonImageLoader.Factory {
             .allowRgb565(lowRam || performanceProfileResolver.current().constrainImageDecodeSize)
             .components {
                 // Coil 3 has no built-in network loading; the shared client keeps auth headers.
+                add(mediaArtworkNetworkInterceptor)
                 add(mediaArtworkDiskCacheInterceptor)
                 add(OkHttpNetworkFetcherFactory(callFactory = { imageClient }))
                 add(com.ambient.tv.data.photos.FileImageKeyer())

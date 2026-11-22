@@ -4,7 +4,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 
 enum class HostHealth { UNKNOWN, ONLINE, OFFLINE }
-data class HostObservation(val health: HostHealth = HostHealth.UNKNOWN, val generation: Long = 0, val recoveries: Long = 0)
+data class HostObservation(val health: HostHealth = HostHealth.UNKNOWN, val generation: Long = 0, val recoveries: Long = 0, val outages: Long = 0)
 data class HostCheck(val machine: String, val generation: Long)
 
 /** A success invalidates every failure that was already in flight for this machine. */
@@ -16,11 +16,12 @@ class HostHealthStore {
     @Synchronized fun online(machine: String) {
         val previous = current(machine)
         mutable.value = mutable.value + (machine to HostObservation(HostHealth.ONLINE, previous.generation + 1,
-            previous.recoveries + if (previous.health == HostHealth.OFFLINE) 1L else 0L))
+            previous.recoveries + if (previous.health == HostHealth.OFFLINE) 1L else 0L, previous.outages))
     }
     @Synchronized fun offline(check: HostCheck): Boolean {
         if (current(check.machine).generation != check.generation) return false
-        mutable.value = mutable.value + (check.machine to HostObservation(HostHealth.OFFLINE, check.generation + 1, current(check.machine).recoveries))
+        val previous = current(check.machine)
+        mutable.value = mutable.value + (check.machine to HostObservation(HostHealth.OFFLINE, check.generation + 1, previous.recoveries, previous.outages + 1))
         return true
     }
 }

@@ -1254,6 +1254,16 @@ private data class ScreensaverPreview(
     val qualityKey: String,
 )
 
+private data class PendingPlaybackStart(
+    val ticket: com.ambient.tv.ui.navigation.PlaybackStartRequests.Ticket,
+    val title: String,
+    val identity: () -> String,
+    val check: suspend (Boolean) -> com.ambient.tv.data.browse.PlaybackAccessResult,
+    val start: () -> Unit,
+    val busy: Boolean = true,
+    val failure: com.ambient.tv.data.browse.PlaybackAccessResult? = null,
+)
+
 @Composable
 @OptIn(androidx.compose.ui.ExperimentalComposeUiApi::class)
 private fun AmbientTvApp(
@@ -1312,8 +1322,100 @@ private fun AmbientTvApp(
             }
         }
     }
+    var pendingMediaSelection by remember { mutableStateOf<ResolvedMediaSelection?>(null) }
+    var pendingMediaSelectionOrigin by remember { mutableStateOf<String?>(null) }
+    var pendingMediaSelectionIdentity by remember { mutableStateOf<String?>(null) }
+    fun mediaSelectionCurrent(selection: ResolvedMediaSelection): Boolean =
+        pendingMediaSelectionOrigin == navController.currentBackStackEntry?.id &&
+            pendingMediaSelectionIdentity == playbackAvailability.mediaIdentity(selection.original.ratingKey)
     val playbackGateScope = rememberCoroutineScope()
+    val playbackRequests = remember { com.ambient.tv.ui.navigation.PlaybackStartRequests() }
     var playbackGateJob by remember { mutableStateOf<kotlinx.coroutines.Job?>(null) }
+    var pendingPlaybackStart by remember { mutableStateOf<PendingPlaybackStart?>(null) }
+
+    fun cancelPlaybackStart() {
+        playbackRequests.cancel()
+        playbackGateJob?.cancel()
+        playbackGateJob = null
+        pendingPlaybackStart = null
+    }
+
+    fun runPlaybackStart(request: PendingPlaybackStart, retry: Boolean) {
+        if (retry && playbackGateJob?.isActive == true) return
+        playbackGateJob?.cancel()
+        pendingPlaybackStart = request.copy(busy = true)
+        playbackGateJob = playbackGateScope.launch {
+            val result = suspendResult { request.check(retry) }.getOrElse {
+                com.ambient.tv.data.browse.PlaybackAccessResult(false, "", "")
+            }
+            if (!playbackRequests.current(request.ticket, navController.currentBackStackEntry?.id, request.identity())) {
+                if (pendingPlaybackStart?.ticket == request.ticket) cancelPlaybackStart()
+                return@launch
+            }
+            if (result.allowed) {
+                pendingPlaybackStart = null
+                playbackRequests.finish(request.ticket)
+                request.start()
+            } else {
+                pendingPlaybackStart = request.copy(busy = false, failure = result)
+            }
+        }
+    }
+
+    fun requestPlaybackStart(
+        key: String,
+        title: String,
+        identity: () -> String,
+        check: suspend (Boolean) -> com.ambient.tv.data.browse.PlaybackAccessResult,
+        start: () -> Unit,
+    ) {
+        val ticket = playbackRequests.begin(key, navController.currentBackStackEntry?.id, identity()) ?: return
+        pendingMediaSelection = null
+        runPlaybackStart(PendingPlaybackStart(ticket, title, identity, check, start), retry = false)
+    }
+
+    fun requestLocalPlayback(route: String, title: String = "", navigate: (String) -> Unit) {
+        val running = BackgroundPlaybackSession.snapshot.value
+        if (com.ambient.tv.ui.navigation.mayReusePlaybackSession(route, running.metadata?.route,
+                running.active, running.metadata?.sourceAccessIdentity, playbackAvailability.routeIdentity(route)) &&
+                playbackAvailability.isRouteVerified(route)) {
+            cancelPlaybackStart()
+            navigate(route)
+            return
+        }
+        requestPlaybackStart(route, title, identity = { playbackAvailability.routeIdentity(route) },
+            check = { retry -> playbackAvailability.checkRoute(route, retry) }, start = { navigate(route) })
+    }
+
+    // Navigation/profile changes invalidate the captured start immediately, including late WOL success.
+    DisposableEffect(navController) {
+        val listener = androidx.navigation.NavController.OnDestinationChangedListener { _, _, _ ->
+            pendingMediaSelection?.let { if (!mediaSelectionCurrent(it)) pendingMediaSelection = null }
+            pendingPlaybackStart?.let { request ->
+                if (request.ticket.origin != navController.currentBackStackEntry?.id) cancelPlaybackStart()
+            }
+        }
+        navController.addOnDestinationChangedListener(listener)
+        onDispose { navController.removeOnDestinationChangedListener(listener); cancelPlaybackStart() }
+    }
+    LaunchedEffect(playbackAvailability) {
+        playbackAvailability.changes.collect {
+            pendingMediaSelection?.let { if (!mediaSelectionCurrent(it)) pendingMediaSelection = null }
+            pendingPlaybackStart?.let { request ->
+                if (!playbackRequests.current(request.ticket, navController.currentBackStackEntry?.id, request.identity()))
+                    cancelPlaybackStart()
+            }
+        }
+    }
+    val playbackGateLifecycle = androidx.lifecycle.compose.LocalLifecycleOwner.current.lifecycle
+    DisposableEffect(playbackGateLifecycle) {
+        val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
+            if (event == androidx.lifecycle.Lifecycle.Event.ON_STOP) cancelPlaybackStart()
+        }
+        playbackGateLifecycle.addObserver(observer)
+        onDispose { playbackGateLifecycle.removeObserver(observer) }
+    }
+
     /** [navigate] replaces the plain local navigation, e.g. to rebuild the back stack below the player. */
     fun playOnSelectedTarget(
         route: String,
@@ -1321,16 +1423,16 @@ private fun AmbientTvApp(
         navigate: ((String) -> Unit)? = null,
         options: androidx.navigation.NavOptionsBuilder.() -> Unit = {},
     ) {
+        val origin = navController.currentBackStackEntry?.id
+        val identity = playbackAvailability.routeIdentity(route)
         val localPlayback = {
-            playbackGateJob?.cancel()
-            playbackGateJob = playbackGateScope.launch {
-                if (BackgroundPlaybackSession.snapshot.value.metadata?.route == route || playbackAvailability.route(route)) {
-                    if (navigate != null) navigate(route) else navController.navigate(route, options)
+            if (origin == navController.currentBackStackEntry?.id && identity == playbackAvailability.routeIdentity(route)) {
+                requestLocalPlayback(route, title) { requested ->
+                    if (navigate != null) navigate(requested) else navController.navigate(requested, options)
                 }
             }
             Unit
         }
-        // Opening an existing player is navigation, not a new playback request.
         if (!handheld || route == Destinations.spotifyPlayer()) {
             localPlayback()
         } else {
@@ -1346,7 +1448,6 @@ private fun AmbientTvApp(
     }
     val spotifyTakeover by spotifyRepository.playbackTakeover.collectAsState()
     val mediaSelectionScope = rememberCoroutineScope()
-    var pendingMediaSelection by remember { mutableStateOf<ResolvedMediaSelection?>(null) }
     var pendingMediaSelectionCollectionId by remember { mutableStateOf<String?>(null) }
     var pendingMediaSelectionCollectionSort by remember { mutableStateOf<String?>(null) }
     var mediaSelectionBusy by remember { mutableStateOf(false) }
@@ -1515,25 +1616,36 @@ private fun AmbientTvApp(
             MediaSelectionPreferences.DETAILS -> navigateToDetails(ratingKey, collectionId, collectionSort)
             MediaSelectionPreferences.PLAY, MediaSelectionPreferences.ASK -> {
                 if (mediaSelectionBusy) return
-                mediaSelectionBusy = true
-                val originEntry = navController.currentBackStackEntry?.id
-                mediaSelectionScope.launch {
-                    val selection = try {
-                        suspendResult { MediaSelectionResolver.resolve(mediaRepository, ratingKey) }.getOrNull()
-                    } finally {
-                        mediaSelectionBusy = false
-                    }
-                    if (navController.currentBackStackEntry?.id != originEntry) return@launch
-                    if (selection == null || selection.playable == null) {
-                        navigateToDetails(selection?.original?.ratingKey ?: ratingKey, collectionId, collectionSort)
-                    } else if (appPreferences.mediaSelectionBehaviorKey == MediaSelectionPreferences.ASK) {
-                        pendingMediaSelectionCollectionId = collectionId
-                        pendingMediaSelectionCollectionSort = collectionSort
-                        pendingMediaSelection = selection
-                    } else {
-                        navigateToResolvedPlayback(selection, collectionId = collectionId, collectionSort = collectionSort)
-                    }
-                }
+                var resolved: ResolvedMediaSelection? = null
+                requestPlaybackStart(
+                    key = "selection:$ratingKey:$collectionId:$collectionSort",
+                    title = mediaRepository.cachedMediaItem(ratingKey)?.title.orEmpty(),
+                    identity = { playbackAvailability.mediaIdentity(ratingKey) },
+                    check = { retry ->
+                        val access = if (retry) playbackAvailability.retryMedia(ratingKey) else playbackAvailability.checkMedia(ratingKey)
+                        if (!access.allowed) access else {
+                            resolved = suspendResult { MediaSelectionResolver.resolve(mediaRepository, ratingKey) }.getOrNull()
+                            // Resolution can make further episode requests. Their failures must not
+                            // turn a direct-play request into an unrelated detail navigation.
+                            access.copy(allowed = resolved != null && playbackAvailability.isMediaVerified(ratingKey))
+                        }
+                    },
+                    start = {
+                        resolved?.let { selection ->
+                            if (selection.playable == null) {
+                                navigateToDetails(selection.original.ratingKey, collectionId, collectionSort)
+                            } else if (appPreferences.mediaSelectionBehaviorKey == MediaSelectionPreferences.ASK) {
+                                pendingMediaSelectionCollectionId = collectionId
+                                pendingMediaSelectionCollectionSort = collectionSort
+                                pendingMediaSelectionOrigin = navController.currentBackStackEntry?.id
+                                pendingMediaSelectionIdentity = playbackAvailability.mediaIdentity(selection.original.ratingKey)
+                                pendingMediaSelection = selection
+                            } else {
+                                navigateToResolvedPlayback(selection, collectionId = collectionId, collectionSort = collectionSort)
+                            }
+                        }
+                    },
+                )
             }
             else -> navigateToDetails(ratingKey, collectionId, collectionSort)
         }
@@ -1645,11 +1757,13 @@ private fun AmbientTvApp(
             "url" -> "shared"
             else -> uri.getQueryParameter("sourceId")?.substringBefore(':') ?: "tvheadend"
         }
-        BackgroundPlaybackSession.beginSourceReplacement(com.ambient.tv.ui.player.PlaybackMetadata(
-            route, "", source = source, mediaId = uri.pathSegments.last(), companionMedia = media,
-            isLive = media.kind == "live:channel"), playWhenReadyOverride = true)
-        if (companionRoute in setOf(Destinations.PLAYER, Destinations.YOUTUBE_PLAYER, Destinations.TVH_PLAYER)) navController.popBackStack()
-        navController.navigate(route)
+        requestLocalPlayback(route) { requested ->
+            BackgroundPlaybackSession.beginSourceReplacement(com.ambient.tv.ui.player.PlaybackMetadata(
+                requested, "", source = source, mediaId = uri.pathSegments.last(), companionMedia = media,
+                isLive = media.kind == "live:channel"), playWhenReadyOverride = true)
+            if (companionRoute in setOf(Destinations.PLAYER, Destinations.YOUTUBE_PLAYER, Destinations.TVH_PLAYER)) navController.popBackStack()
+            navController.navigate(requested)
+        }
     }
     companionServerSwitch?.let { (switch, media) ->
         com.ambient.tv.ui.common.AppDialog(
@@ -2056,18 +2170,14 @@ private fun AmbientTvApp(
     val launcherRoute by com.ambient.tv.launcher.LauncherIntents.requests.collectAsState()
     LaunchedEffect(launcherRoute) {
         val route = launcherRoute ?: return@LaunchedEffect
-        // Launcher rows and programme reminders open players directly: an unreachable system stops here too.
-        if (!playbackAvailability.route(route)) {
-            com.ambient.tv.launcher.LauncherIntents.consumed(route)
-            return@LaunchedEffect
-        }
-        // A new player route (launcher, DLNA sender switching media) replaces an open player
-        // instead of stacking players on the back stack.
-        val replacePlayer = route.startsWith("player/") && navController.currentDestination?.route == Destinations.PLAYER
-        runCatching {
-            navController.navigate(route) {
-                launchSingleTop = true
-                if (replacePlayer) popUpTo(Destinations.PLAYER) { inclusive = true }
+        // Launcher, reminder and DLNA-sender starts share the cancellable foreground gate.
+        requestLocalPlayback(route) { requested ->
+            val replacePlayer = requested.startsWith("player/") && navController.currentDestination?.route == Destinations.PLAYER
+            runCatching {
+                navController.navigate(requested) {
+                    launchSingleTop = true
+                    if (replacePlayer) popUpTo(Destinations.PLAYER) { inclusive = true }
+                }
             }
         }
         com.ambient.tv.launcher.LauncherIntents.consumed(route)
@@ -2088,7 +2198,7 @@ private fun AmbientTvApp(
     }
     LaunchedEffect(openPlaybackRequest) {
         if (openPlaybackRequest > 0) BackgroundPlaybackSession.snapshot.value.metadata?.route?.let {
-            navController.navigate(it) { launchSingleTop = true }
+            requestLocalPlayback(it) { requested -> navController.navigate(requested) { launchSingleTop = true } }
         }
     }
     // The photo viewer is a presentation too: a running slideshow must not start the screensaver.
@@ -2457,7 +2567,9 @@ private fun AmbientTvApp(
     }
 
     com.ambient.tv.companion.PlaybackPresentationProvider(companionVm.manager, companionVm.mapper, spotifyRepository,
-        onOpenLocal = { route -> guardedSettingsExit { navController.navigate(route) { launchSingleTop = true } } }) {
+        onOpenLocal = { route -> guardedSettingsExit {
+            requestLocalPlayback(route) { requested -> navController.navigate(requested) { launchSingleTop = true } }
+        } }) {
     CompositionLocalProvider(LocalContentColor provides MaterialTheme.colorScheme.onSurface) {
         Box(modifier = Modifier.fillMaxSize()) {
             if (!pipPresentation && !persistentVideoHost) {
@@ -2538,7 +2650,9 @@ private fun AmbientTvApp(
                 onNavigate = ::navigateSidebar,
                 onOpenPlayback = { route ->
                     if (BackgroundPlaybackSession.snapshot.value.metadata?.route == route) reopenBackgroundPlayer()
-                    else guardedSettingsExit { navController.navigate(route) { launchSingleTop = true } }
+                    else guardedSettingsExit {
+                        requestLocalPlayback(route) { requested -> navController.navigate(requested) { launchSingleTop = true } }
+                    }
                 },
                 onOpenSystemSettings = ::openSystemSettings,
                 onOverlayBottomInsetChanged = { handheldNotificationBottomInset = it },
@@ -2618,7 +2732,9 @@ private fun AmbientTvApp(
                     onOpenSystemSettings = ::openSystemSettings,
                     onOpenPlayback = { route ->
                         if (BackgroundPlaybackSession.snapshot.value.metadata?.route == route) reopenBackgroundPlayer()
-                        else guardedSettingsExit { navController.navigate(route) { launchSingleTop = true } }
+                        else guardedSettingsExit {
+                            requestLocalPlayback(route) { requested -> navController.navigate(requested) { launchSingleTop = true } }
+                        }
                     },
                     onSidebarClosedByBack = {
                         val browsing = currentRoute !in FULLSCREEN_ROUTES && currentRoute != Destinations.SETTINGS
@@ -3808,13 +3924,30 @@ private fun AmbientTvApp(
                         },
                     )
                 }
+                pendingPlaybackStart?.let { request ->
+                    androidx.compose.runtime.key(request.ticket.serial) {
+                        com.ambient.tv.ui.common.PlaybackConnectionDialog(
+                            title = request.title,
+                            busy = request.busy,
+                            failure = request.failure,
+                            onRetry = { runPlaybackStart(request, retry = true) },
+                            onCancel = ::cancelPlaybackStart,
+                            onLogin = {
+                                val system = request.failure?.system?.substringBefore(':') ?: "library"
+                                cancelPlaybackStart()
+                                openSystemSettings(system)
+                            },
+                        )
+                    }
+                }
                 pendingMediaSelection?.let { selection ->
                     MediaSelectionDialog(
                         selection = selection,
                         onDismiss = { pendingMediaSelection = null },
                         onPlay = {
+                            val current = mediaSelectionCurrent(selection)
                             pendingMediaSelection = null
-                            navigateToResolvedPlayback(
+                            if (current) navigateToResolvedPlayback(
                                 selection = selection,
                                 restart = false,
                                 collectionId = pendingMediaSelectionCollectionId,
@@ -3822,8 +3955,9 @@ private fun AmbientTvApp(
                             )
                         },
                         onRestart = {
+                            val current = mediaSelectionCurrent(selection)
                             pendingMediaSelection = null
-                            navigateToResolvedPlayback(
+                            if (current) navigateToResolvedPlayback(
                                 selection = selection,
                                 restart = true,
                                 collectionId = pendingMediaSelectionCollectionId,
@@ -3831,8 +3965,9 @@ private fun AmbientTvApp(
                             )
                         },
                         onDetails = {
+                            val current = mediaSelectionCurrent(selection)
                             pendingMediaSelection = null
-                            navigateToDetails(
+                            if (current) navigateToDetails(
                                 selection.original.ratingKey,
                                 pendingMediaSelectionCollectionId,
                                 pendingMediaSelectionCollectionSort,

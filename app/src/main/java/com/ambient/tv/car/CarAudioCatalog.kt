@@ -42,10 +42,10 @@ internal data class CarAudioEntry(
 internal sealed interface CarAudioSelection {
     data class Radio(val station: RadioStation, val queue: List<RadioStation>) : CarAudioSelection
     data class Spotify(val uri: String) : CarAudioSelection
-    data class Library(val item: MediaItem, val queue: List<String>) : CarAudioSelection
+    data class Library(val item: MediaItem, val queue: List<String>, val sourceIdentity: String = "") : CarAudioSelection
     data class Live(val channel: LiveTvChannel, val stream: LiveTvPlaybackSource,
         val queue: List<String>, val system: String,
-        val artworkHeaders: Map<String, String> = emptyMap()) : CarAudioSelection
+        val artworkHeaders: Map<String, String> = emptyMap(), val sourceIdentity: String = "") : CarAudioSelection
     /** [queue] holds car item IDs of the browsed Telegram audio posts. */
     data class Telegram(val media: TelegramMedia, val url: String, val queue: List<String>) : CarAudioSelection
 }
@@ -59,6 +59,7 @@ internal class CarAudioCatalog @Inject constructor(
     private val spotify: SpotifyRepository,
     private val media: RoutingMediaRepository,
     private val auxiliary: CarAuxiliaryAudio,
+    private val playbackAvailability: com.ambient.tv.data.browse.PlaybackAvailability,
     /** Lazy: a no-Monogram build or a disabled system never touches the native client. */
     private val telegram: javax.inject.Provider<TelegramRepository>,
 ) {
@@ -377,19 +378,21 @@ internal class CarAudioCatalog @Inject constructor(
             return CarAudioSelection.Telegram(media, repository.playerHttpUrl(media), queue.ifEmpty { listOf(id) })
         }
         CarAudioIds.musicItemId(id)?.let { key ->
+            val identity = playbackAvailability.mediaIdentity(key)
+            if (!playbackAvailability.media(key)) return null
             // Browse previews often omit stream URLs; resolve the authoritative track
             // metadata before claiming the item is unavailable to the head unit.
             val preview = entriesById[id]?.libraryItem
             if (preview != null && !carAudioPlayableType(preview.type)) return null
             val item = media.getMetadata(key).getOrNull()
                 ?.takeIf { carAudioPlayableType(it.type) && !it.streamUrl.isNullOrBlank() }
-                ?: preview?.takeIf { !it.streamUrl.isNullOrBlank() }
                 ?: return null
+            if (identity != playbackAvailability.mediaIdentity(key) || !playbackAvailability.isMediaVerified(key)) return null
             if (!carAudioPlayableType(item.type)) return null
             val queue = parents[id]?.let(pages::get)?.entries.orEmpty()
                 .filter { it.playable }
                 .mapNotNull { CarAudioIds.musicItemId(it.id) }
-            return CarAudioSelection.Library(item, queue.ifEmpty { listOf(key) })
+            return CarAudioSelection.Library(item, queue.ifEmpty { listOf(key) }, sourceIdentity = identity)
         }
         return null
     }

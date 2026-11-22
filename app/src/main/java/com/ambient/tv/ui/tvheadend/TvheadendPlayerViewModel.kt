@@ -32,11 +32,12 @@ import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.delay
 import com.ambient.tv.ui.player.BackgroundPlaybackSession
-import com.ambient.tv.connectivity.PlaybackServerRecovery
 import com.ambient.tv.connectivity.PlaybackServerUnreachable
 import com.ambient.tv.connectivity.HostConnectivity
 import com.ambient.tv.connectivity.HostHealth
 import com.ambient.tv.ui.player.PlaybackMetadata
+import com.ambient.tv.ui.player.PlaybackRecoveryRequests
+import com.ambient.tv.ui.player.PlaybackRecoveryOwner
 import com.ambient.tv.ui.navigation.Destinations
 
 enum class TvheadendPlaybackErrorKind {
@@ -89,7 +90,6 @@ class TvheadendPlayerViewModel @Inject constructor(
     savedStateHandle: SavedStateHandle,
     registry: LiveTvRegistry,
     private val preferences: AppPreferences,
-    private val playbackServerRecovery: PlaybackServerRecovery,
     private val companionMapper: com.ambient.tv.companion.CompanionMediaMapper,
     private val playbackAvailability: com.ambient.tv.data.browse.PlaybackAvailability,
     private val hosts: HostConnectivity,
@@ -98,11 +98,17 @@ class TvheadendPlayerViewModel @Inject constructor(
     private val repository = registry.repository(savedStateHandle.get<String>("sourceId"))
     val sourceSystem = repository.source.system
     private val sourceId = repository.source.id
+    private val sourceIdentity = playbackAvailability.routeIdentity(Destinations.tvhPlayer("channel", "", sourceId))
     private val historyScope = if (sourceSystem == "tvheadend") preferences.tvheadendHistoryScope else sourceId
     private var ownedSession: LiveTvPlaybackSession? = null
     private var pendingSourceReplacement: Long? = null
     private val streamMutex = Mutex()
     private var loadingJob: Job? = null
+    private var zapJob: Job? = null
+    private var fallbackJob: Job? = null
+    private var recoveryJob: Job? = null
+    private val recoveryRequests = PlaybackRecoveryRequests()
+    private var recoveryTicket: PlaybackRecoveryRequests.Ticket? = null
     private val kind: String = savedStateHandle["kind"] ?: "channel"
     internal val startsWithLiveChannel: Boolean get() = kind == "channel"
     private val initialId: String = savedStateHandle["id"] ?: ""
@@ -140,6 +146,7 @@ class TvheadendPlayerViewModel @Inject constructor(
     private var videoFailureConfirmed = false
     fun metadata(state: TvheadendPlayerState.Ready) = PlaybackMetadata(
         route = Destinations.tvhPlayer(kind, state.channel?.uuid ?: initialId, sourceId),
+        sourceAccessIdentity = sourceIdentity,
         title = state.source.title, subtitle = state.source.subtitle.orEmpty(),
         source = sourceSystem, liveTvSession = state.source.session, mediaId = state.channel?.uuid ?: initialId,
         companionMedia = companionSource?.let { com.ambient.tv.companion.CompanionMedia("live:$kind", state.channel?.uuid ?: initialId, it) },
@@ -250,6 +257,7 @@ class TvheadendPlayerViewModel @Inject constructor(
         com.ambient.tv.livetv.LiveTimeshift.resumeSeekHandler = timeshiftResumeSeekHandler
         if (kind == "channel") com.ambient.tv.livetv.LiveTvReturnFocus.watched(repository.source.id, initialId)
         load()
+        viewModelScope.launch { playbackAvailability.changes.collect { cancelStaleRecovery() } }
         viewModelScope.launch {
             BackgroundPlaybackSession.snapshot.map { Triple(it.generation, it.replacingSource, it.metadata) }
                 .distinctUntilChanged().collect { (generation, replacing, metadata) ->
@@ -257,6 +265,7 @@ class TvheadendPlayerViewModel @Inject constructor(
                     // A queued observation must never reinstall a station already replaced again.
                     if (snapshot.generation != generation || snapshot.replacingSource != replacing ||
                         snapshot.metadata !== metadata) return@collect
+                    cancelStaleRecovery()
                     if (generation == lastSessionGeneration) {
                         val current = _uiState.value as? TvheadendPlayerState.Ready ?: return@collect
                         val updated = liveRadioSessionMetadata(snapshot, sourceId, sourceSystem, kind, generation, current)
@@ -268,6 +277,7 @@ class TvheadendPlayerViewModel @Inject constructor(
                     val restored = liveRadioSessionRestore(snapshot, sourceId, sourceSystem, kind, lastSessionGeneration)
                     lastSessionGeneration = maxOf(lastSessionGeneration, generation)
                     if (restored == null || snapshot.metadata?.resumeState === _uiState.value) return@collect
+                    cancelRecovery()
                     loadingJob?.cancel()
                     seekJob?.cancel()
                     pendingSourceReplacement = null
@@ -363,126 +373,157 @@ class TvheadendPlayerViewModel @Inject constructor(
     }
 
     private fun load() {
-        (BackgroundPlaybackSession.cached(Destinations.tvhPlayer(kind, currentChannelUuid, sourceId)) as? TvheadendPlayerState.Ready)?.let {
+        loadingJob?.cancel()
+        loadingJob = viewModelScope.launch { loadPlayback() }
+    }
+
+    private suspend fun loadPlayback(recovery: PlaybackRecoveryRequests.Ticket? = null) {
+        val route = Destinations.tvhPlayer(kind, if (kind == "channel") currentChannelUuid else initialId, sourceId)
+        var expectedOwner = BackgroundPlaybackSession.recoveryOwner()
+        fun current() = sourceIdentity == playbackAvailability.routeIdentity(route) &&
+            (if (recovery == null) expectedOwner.matches(BackgroundPlaybackSession.recoveryOwner()) else currentRecovery(recovery))
+        if (sourceIdentity != playbackAvailability.routeIdentity(route)) {
+            _uiState.value = TvheadendPlayerState.Error(context.getString(com.ambient.tv.R.string.browse_playback_unavailable))
+            return
+        }
+        if (!current()) return
+        (BackgroundPlaybackSession.cached(route).takeIf {
+            recovery == null &&
+            BackgroundPlaybackSession.snapshot.value.active && BackgroundPlaybackSession.snapshot.value.status.error == null &&
+                BackgroundPlaybackSession.snapshot.value.metadata?.sourceAccessIdentity == sourceIdentity &&
+                playbackAvailability.isLiveVerified(sourceId, kind)
+        } as? TvheadendPlayerState.Ready)?.let {
             savedResumeRequest.skip()
             _uiState.value = withProgrammeArtwork(it.copy(playbackBackendKey = BackgroundPlaybackSession.snapshot.value.backend))
             artwork.requestTitleArt(listOfNotNull(it.nowEvent?.title, it.recordingArtSource?.title), viewModelScope)
             viewModelScope.launch { channels = runCatching { repository.channels() }.getOrDefault(emptyList()) }
             return
         }
-        loadingJob?.cancel()
-        loadingJob = viewModelScope.launch {
-            if (!playbackAvailability.network()) {
-                _uiState.value = TvheadendPlayerState.Error(context.getString(com.ambient.tv.R.string.browse_playback_unavailable))
-                return@launch
-            }
-            _uiState.value = TvheadendPlayerState.Loading
-            // Confirmed offline TVHeadend: check (and wake, when configured) before starting.
-            // A cached EPG after an individual API error does not mean playback is unavailable.
-            if (sourceSystem == "tvheadend" && hosts.health("tvheadend") == HostHealth.OFFLINE &&
-                !suspendResult { playbackServerRecovery.tryWakeAndRecheck("tvh:resume") }.getOrDefault(false)) {
-                _uiState.value = TvheadendPlayerState.Error(
-                    message = tvheadendUnreachableMessage(),
-                    kind = TvheadendPlaybackErrorKind.SERVER_UNAVAILABLE,
-                )
-                return@launch
-            }
-            fallbackAttempted = false
-            localFallbackBackends.clear()
-            videoFailureConfirmed = false
-            com.ambient.tv.ui.player.AudioCodecRejects.clear()
-            try {
-                when (kind) {
-                    "recording" -> {
-                        val entry = (repository.finishedRecordings() + repository.failedRecordings()).firstOrNull { it.uuid == initialId }
-                        if (entry == null) {
-                            _uiState.value = TvheadendPlayerState.Error(
-                                message = context.getString(com.ambient.tv.R.string.tvh_recording_not_found),
-                                kind = TvheadendPlaybackErrorKind.RECORDING_UNAVAILABLE,
-                            )
-                        } else {
-                            val artwork = tvhPanelArtwork(entry.fanartUrl, entry.imageUrl)
-                            val source = acquireStream(open = { repository.recordingStream(entry) })
-                            val resumeSource = source.copy(startPositionMs = savedResumeRequest.position(
-                                source.startPositionMs, preferences.resumeRewindSeconds, eligible = !source.isLive,
-                            ))
-                            _uiState.value = TvheadendPlayerState.Ready(
-                                resumeSource,
-                                artworkUrl = artwork.first,
-                                artworkFallbackUrls = artwork.second,
-                                recordingArtSource = entry,
-                                playbackBackendKey = com.ambient.tv.ui.player.savedPlaybackRenderer(
-                                    preferences.tvheadendPlaybackBackendKey,
-                                    preferences.titleVideoSettings["$sourceSystem:$initialId"], null,
-                                    com.ambient.tv.ui.player.backend.MpvBackendAvailability.isAvailable),
-                                audioVisualizerModeKey = preferences.audioVisualizerModeKey,
-                                audioPassthroughEnabled = preferences.mediaAudioPassthroughEnabled,
-                                projectmPresetIntervalSeconds = preferences.projectmPresetIntervalSeconds,
-                                projectmTransitionSeconds = preferences.projectmTransitionSeconds,
-                                projectmQualityKey = preferences.projectmQualityKey,
-                                projectmPresetCategoryKey = preferences.projectmPresetCategoryKey,
-                            ).withSelectedRenderer(restorePosition = false).let(::withProgrammeArtwork)
-                            this@TvheadendPlayerViewModel.artwork.requestTitleArt(listOf(entry.title), viewModelScope)
-                        }
-                    }
-                    else -> {
-                        channels = repository.channels()
-                        val channel = channels.firstOrNull { it.uuid == currentChannelUuid }
-                        if (channel == null) {
-                            _uiState.value = TvheadendPlayerState.Error(
-                                message = context.getString(com.ambient.tv.R.string.tvh_channel_not_found),
-                                kind = TvheadendPlaybackErrorKind.CHANNEL_NOT_FOUND,
-                            )
-                        } else {
-                            val artwork = tvhPanelArtwork(null, channel.iconUrl)
-                            _uiState.value = TvheadendPlayerState.Ready(
-                                source = timeshifted(acquireStream(open = { repository.liveStream(channel) }), channel.uuid),
-                                channel = channel,
-                                artworkUrl = artwork.first,
-                                artworkFallbackUrls = artwork.second,
-                                playbackBackendKey = preferences.tvheadendPlaybackBackendKey,
-                                audioVisualizerModeKey = preferences.audioVisualizerModeKey,
-                                audioPassthroughEnabled = preferences.mediaAudioPassthroughEnabled,
-                                projectmPresetIntervalSeconds = preferences.projectmPresetIntervalSeconds,
-                                projectmTransitionSeconds = preferences.projectmTransitionSeconds,
-                                projectmQualityKey = preferences.projectmQualityKey,
-                                projectmPresetCategoryKey = preferences.projectmPresetCategoryKey,
-                            ).withSelectedRenderer(restorePosition = false)
-                        }
+        val access = playbackAvailability.checkLive(sourceId, kind, if (kind == "channel") currentChannelUuid else initialId)
+        if (!current()) return
+        if (!access.allowed) {
+            _uiState.value = TvheadendPlayerState.Error(accessFailureMessage(access))
+            return
+        }
+        _uiState.value = TvheadendPlayerState.Loading
+        fallbackAttempted = false
+        localFallbackBackends.clear()
+        videoFailureConfirmed = false
+        com.ambient.tv.ui.player.AudioCodecRejects.clear()
+        try {
+            when (kind) {
+                "recording" -> {
+                    val entry = (repository.finishedRecordings() + repository.failedRecordings()).firstOrNull { it.uuid == initialId }
+                    if (!current()) return
+                    if (entry == null) {
+                        _uiState.value = TvheadendPlayerState.Error(
+                            message = context.getString(com.ambient.tv.R.string.tvh_recording_not_found),
+                            kind = TvheadendPlaybackErrorKind.RECORDING_UNAVAILABLE,
+                        )
+                    } else {
+                        val artwork = tvhPanelArtwork(entry.fanartUrl, entry.imageUrl)
+                        val source = acquireStream(recovery = recovery, onReplacement = { expectedOwner = it },
+                            open = { repository.recordingStream(entry) })
+                        if (!current()) return
+                        val localPosition = BackgroundPlaybackSession.recoveryPosition(route, sourceIdentity)
+                        val resumeSource = source.copy(startPositionMs = savedResumeRequest.position(
+                            localPosition ?: source.startPositionMs, preferences.resumeRewindSeconds,
+                            eligible = localPosition == null && !source.isLive,
+                        ))
+                        _uiState.value = TvheadendPlayerState.Ready(
+                            resumeSource,
+                            artworkUrl = artwork.first,
+                            artworkFallbackUrls = artwork.second,
+                            recordingArtSource = entry,
+                            playbackBackendKey = com.ambient.tv.ui.player.savedPlaybackRenderer(
+                                preferences.tvheadendPlaybackBackendKey,
+                                preferences.titleVideoSettings["$sourceSystem:$initialId"], null,
+                                com.ambient.tv.ui.player.backend.MpvBackendAvailability.isAvailable),
+                            audioVisualizerModeKey = preferences.audioVisualizerModeKey,
+                            audioPassthroughEnabled = preferences.mediaAudioPassthroughEnabled,
+                            projectmPresetIntervalSeconds = preferences.projectmPresetIntervalSeconds,
+                            projectmTransitionSeconds = preferences.projectmTransitionSeconds,
+                            projectmQualityKey = preferences.projectmQualityKey,
+                            projectmPresetCategoryKey = preferences.projectmPresetCategoryKey,
+                        ).withSelectedRenderer(restorePosition = false).let(::withProgrammeArtwork)
+                        this@TvheadendPlayerViewModel.artwork.requestTitleArt(listOf(entry.title), viewModelScope)
                     }
                 }
-            } catch (error: Throwable) {
-                if (error is CancellationException) throw error;
-                val channelName = channels.firstOrNull { it.uuid == currentChannelUuid }?.name
-                _uiState.value = TvheadendPlayerState.Error(
-                    message = error.message ?: context.getString(com.ambient.tv.R.string.tvh_playback_failed),
-                    kind = if (kind == "channel") TvheadendPlaybackErrorKind.SERVER_UNAVAILABLE else TvheadendPlaybackErrorKind.RECORDING_UNAVAILABLE,
-                    channelName = channelName,
-                )
+                else -> {
+                    channels = repository.channels()
+                    if (!current()) return
+                    val channel = channels.firstOrNull { it.uuid == currentChannelUuid }
+                    if (channel == null) {
+                        _uiState.value = TvheadendPlayerState.Error(
+                            message = context.getString(com.ambient.tv.R.string.tvh_channel_not_found),
+                            kind = TvheadendPlaybackErrorKind.CHANNEL_NOT_FOUND,
+                        )
+                    } else {
+                        val artwork = tvhPanelArtwork(null, channel.iconUrl)
+                        val source = timeshifted(acquireStream(recovery = recovery, onReplacement = { expectedOwner = it },
+                            open = { repository.liveStream(channel) }), channel.uuid)
+                        if (!current()) return
+                        _uiState.value = TvheadendPlayerState.Ready(
+                            source = source,
+                            channel = channel,
+                            artworkUrl = artwork.first,
+                            artworkFallbackUrls = artwork.second,
+                            playbackBackendKey = preferences.tvheadendPlaybackBackendKey,
+                            audioVisualizerModeKey = preferences.audioVisualizerModeKey,
+                            audioPassthroughEnabled = preferences.mediaAudioPassthroughEnabled,
+                            projectmPresetIntervalSeconds = preferences.projectmPresetIntervalSeconds,
+                            projectmTransitionSeconds = preferences.projectmTransitionSeconds,
+                            projectmQualityKey = preferences.projectmQualityKey,
+                            projectmPresetCategoryKey = preferences.projectmPresetCategoryKey,
+                        ).withSelectedRenderer(restorePosition = false)
+                    }
+                }
             }
+        } catch (error: Throwable) {
+            if (error is CancellationException) throw error;
+            if (!current()) return
+            pendingSourceReplacement?.let(BackgroundPlaybackSession::cancelSourceReplacement)
+            val channelName = channels.firstOrNull { it.uuid == currentChannelUuid }?.name
+            _uiState.value = TvheadendPlayerState.Error(
+                message = error.message ?: context.getString(com.ambient.tv.R.string.tvh_playback_failed),
+                kind = if (kind == "channel") TvheadendPlaybackErrorKind.SERVER_UNAVAILABLE else TvheadendPlaybackErrorKind.RECORDING_UNAVAILABLE,
+                channelName = channelName,
+            )
         }
     }
 
     private suspend fun acquireStream(
         pendingMetadata: PlaybackMetadata? = null,
+        recovery: PlaybackRecoveryRequests.Ticket? = null,
+        onReplacement: ((PlaybackRecoveryOwner) -> Unit)? = null,
         open: suspend () -> TvhPlaybackSource,
     ): TvhPlaybackSource {
+        val owner = BackgroundPlaybackSession.recoveryOwner()
+        fun currentSource() = sourceIdentity == playbackAvailability.routeIdentity(Destinations.tvhPlayer("channel", "", sourceId))
+        check(currentSource() && playbackAvailability.checkLive(sourceId, kind,
+            if (kind == "channel") currentChannelUuid else initialId).allowed) { "TV source unavailable" }
         val job = currentCoroutineContext()[Job]
         return withContext(NonCancellable) { streamMutex.withLock {
-            if (job?.isActive == false) throw CancellationException()
+            if (job?.isActive == false || !owner.matches(BackgroundPlaybackSession.recoveryOwner()) ||
+                recovery != null && !currentRecovery(recovery)) throw CancellationException()
             val previous = BackgroundPlaybackSession.snapshot.value.metadata?.liveTvSession
             val replacement = BackgroundPlaybackSession.beginSourceReplacement(
                 replacementMetadata = pendingMetadata,
                 playWhenReadyOverride = true.takeIf { changingChannel },
             )
             pendingSourceReplacement = replacement
+            if (recovery != null && !recoveryRequests.transfer(recovery, owner, BackgroundPlaybackSession.recoveryOwner())) {
+                BackgroundPlaybackSession.cancelSourceReplacement(replacement)
+                throw CancellationException()
+            }
+            onReplacement?.invoke(BackgroundPlaybackSession.recoveryOwner())
             try {
                 suspendResult { previous?.report(0, false, true) }
                 if (ownedSession !== previous) suspendResult { ownedSession?.report(0, false, true) }
                 ownedSession = null
                 if (job?.isActive == false || !BackgroundPlaybackSession.isSourceReplacement(replacement)) throw CancellationException()
                 val stream = open()
-                if (job?.isActive == false || !BackgroundPlaybackSession.isSourceReplacement(replacement)) {
+                if (job?.isActive == false || !currentSource() || !BackgroundPlaybackSession.isSourceReplacement(replacement)) {
                     suspendResult { stream.session?.report(0, false, true) }
                     throw CancellationException()
                 }
@@ -493,7 +534,14 @@ class TvheadendPlayerViewModel @Inject constructor(
                     !BackgroundPlaybackSession.snapshot.value.active) {
                     _uiState.value = TvheadendPlayerState.Stopped
                 }
+                val failedOwner = BackgroundPlaybackSession.recoveryOwner()
+                val wasOwned = BackgroundPlaybackSession.isSourceReplacement(replacement)
                 BackgroundPlaybackSession.cancelSourceReplacement(replacement)
+                if (wasOwned) {
+                    val stoppedOwner = BackgroundPlaybackSession.recoveryOwner()
+                    if (recovery != null) recoveryRequests.transfer(recovery, failedOwner, stoppedOwner)
+                    onReplacement?.invoke(stoppedOwner)
+                }
                 throw error
             }
         } }
@@ -590,6 +638,7 @@ class TvheadendPlayerViewModel @Inject constructor(
     }
 
     override fun onCleared() {
+        cancelRecovery()
         if (com.ambient.tv.livetv.LiveTimeshift.seekHandler === timeshiftSeekHandler) com.ambient.tv.livetv.LiveTimeshift.seekHandler = null
         if (com.ambient.tv.livetv.LiveTimeshift.resumeSeekHandler === timeshiftResumeSeekHandler) com.ambient.tv.livetv.LiveTimeshift.resumeSeekHandler = null
         // Leaving during tune must retire the pending session immediately. A late response
@@ -633,14 +682,9 @@ class TvheadendPlayerViewModel @Inject constructor(
     }
 
     fun retry() {
-        savedResumeRequest.skip()
-        viewModelScope.launch {
-            if (BackgroundPlaybackSession.snapshot.value.metadata?.historyScope == historyScope) {
-                BackgroundPlaybackSession.stop(keepSleepTimer = true)
-            }
-            runCatching { repository.invalidateAll() }
-            load()
-        }
+        if (_uiState.value !is TvheadendPlayerState.Error) return
+        serverUnreachableRetryAttempted = false
+        recoverServerPlayback(manual = true)
     }
 
     val preferredAudioLanguage: String? get() = preferences.playbackAudioLanguage
@@ -675,32 +719,114 @@ class TvheadendPlayerViewModel @Inject constructor(
         else com.ambient.tv.R.string.tvh_unreachable_no_wake)
 
     fun reportServerUnreachable(reason: String = "") {
-        val current = _uiState.value as? TvheadendPlayerState.Ready
-        runCatching { BackgroundPlaybackSession.pause() }
+        if (changingChannel) return
+        val current = _uiState.value as? TvheadendPlayerState.Ready ?: return
+        if (sourceIdentity != playbackAvailability.routeIdentity(recoveryRoute())) return
+        val failedOwner = BackgroundPlaybackSession.recoveryOwner()
+        if (!failedOwner.owns(recoveryRoute(), sourceIdentity) || failedOwner.replacingSource) return
+        playbackAvailability.invalidateLive(sourceId)
         if (serverUnreachableRetryAttempted) {
-            runCatching { BackgroundPlaybackSession.stop(keepSleepTimer = true) }
+            cancelRecovery()
+            val owner = BackgroundPlaybackSession.recoveryOwner()
+            if (owner.owns(recoveryRoute(), sourceIdentity)) {
+                BackgroundPlaybackSession.rememberRecoveryPosition(owner)
+                BackgroundPlaybackSession.stopForRecovery(owner, recoveryRoute(), sourceIdentity)
+            }
             _uiState.value = TvheadendPlayerState.Error(
                 message = reason.ifBlank { if (sourceSystem == "tvheadend") tvheadendUnreachableMessage() else context.getString(com.ambient.tv.R.string.player_server_unreachable) },
                 kind = TvheadendPlaybackErrorKind.SERVER_UNAVAILABLE,
-                channelName = current?.channel?.name,
+                channelName = current.channel?.name,
             )
             return
         }
         serverUnreachableRetryAttempted = true
-        viewModelScope.launch {
-            // suspendResult rethrows cancellation, so leaving mid-recheck never stops the global session.
-            val recovered = suspendResult { if (sourceSystem == "tvheadend") playbackServerRecovery.tryWakeAndRecheck("tvh:resume") else repository.capabilities(true).available }.getOrDefault(false)
-            if (recovered) {
-                // Reload the same channel/recording after a brief resume wake.
-                fallbackAttempted = false
-                load()
-            } else {
-                runCatching { BackgroundPlaybackSession.stop(keepSleepTimer = true) }
-                _uiState.value = TvheadendPlayerState.Error(
-                    message = reason.ifBlank { if (sourceSystem == "tvheadend") tvheadendUnreachableMessage() else context.getString(com.ambient.tv.R.string.player_server_unreachable) },
-                    kind = TvheadendPlaybackErrorKind.SERVER_UNAVAILABLE,
-                    channelName = current?.channel?.name,
-                )
+        recoverServerPlayback(manual = false)
+    }
+
+    private fun recoveryRoute() = Destinations.tvhPlayer(kind, if (kind == "channel") currentChannelUuid else initialId, sourceId)
+    private fun recoveryTarget() = PlaybackRecoveryRequests.Target(recoveryRoute(), playbackAvailability.routeIdentity(recoveryRoute()))
+    private fun currentRecovery(ticket: PlaybackRecoveryRequests.Ticket): Boolean =
+        recoveryRequests.current(ticket, recoveryTarget(), BackgroundPlaybackSession.recoveryOwner())
+
+    private fun cancelRecovery() {
+        recoveryRequests.cancel()
+        recoveryTicket = null
+        recoveryJob?.cancel()
+        recoveryJob = null
+        fallbackJob?.cancel()
+        fallbackJob = null
+    }
+
+    private fun cancelStaleRecovery() {
+        val ticket = recoveryTicket ?: return
+        if (currentRecovery(ticket)) return
+        cancelRecovery()
+        _uiState.value = TvheadendPlayerState.Error(context.getString(com.ambient.tv.R.string.browse_playback_unavailable))
+    }
+
+    fun onPlaybackScreenDisposed() {
+        val interrupted = recoveryTicket != null || loadingJob?.isActive == true || zapJob?.isActive == true || fallbackJob?.isActive == true
+        loadingJob?.cancel()
+        zapJob?.cancel()
+        seekJob?.cancel()
+        pendingSourceReplacement?.let(BackgroundPlaybackSession::cancelSourceReplacement)
+        cancelRecovery()
+        if (interrupted) _uiState.value = TvheadendPlayerState.Error(context.getString(com.ambient.tv.R.string.player_server_unreachable))
+    }
+
+    private fun accessFailureMessage(result: com.ambient.tv.data.browse.PlaybackAccessResult): String =
+        if (result.authRequired) context.getString(com.ambient.tv.R.string.offline_playback_auth, result.name)
+        else context.getString(com.ambient.tv.R.string.offline_playback_unavailable, result.name)
+
+    private fun recoverServerPlayback(manual: Boolean) {
+        cancelRecovery()
+        loadingJob?.cancel()
+        seekJob?.cancel()
+        val route = recoveryRoute()
+        if (sourceIdentity != playbackAvailability.routeIdentity(route)) {
+            _uiState.value = TvheadendPlayerState.Error(context.getString(com.ambient.tv.R.string.browse_playback_unavailable))
+            return
+        }
+        val channelName = (_uiState.value as? TvheadendPlayerState.Ready)?.channel?.name
+            ?: channels.firstOrNull { it.uuid == currentChannelUuid }?.name
+        val owner = BackgroundPlaybackSession.recoveryOwner()
+        if (owner.owns(route, sourceIdentity)) {
+            BackgroundPlaybackSession.rememberRecoveryPosition(owner)
+            BackgroundPlaybackSession.stopForRecovery(owner, route, sourceIdentity)
+        }
+        savedResumeRequest.skip()
+        val id = if (kind == "channel") currentChannelUuid else initialId
+        val ticket = recoveryRequests.begin(PlaybackRecoveryRequests.Target(route, sourceIdentity), BackgroundPlaybackSession.recoveryOwner())
+        recoveryTicket = ticket
+        val allowWake = manual || playbackAvailability.automaticLiveWakeAllowed(sourceId)
+        _uiState.value = if (manual) TvheadendPlayerState.Loading else TvheadendPlayerState.Error(
+            context.getString(if (allowWake) com.ambient.tv.R.string.player_server_unreachable_retrying
+                else com.ambient.tv.R.string.player_server_unreachable_rechecking),
+            TvheadendPlaybackErrorKind.SERVER_UNAVAILABLE, channelName)
+        recoveryJob = viewModelScope.launch {
+            try {
+                val access = playbackAvailability.checkLive(sourceId, kind, id, retry = true, allowWake = allowWake)
+                if (!currentRecovery(ticket)) return@launch
+                if (access.allowed) {
+                    repository.invalidateAll()
+                    if (!currentRecovery(ticket)) return@launch
+                    fallbackAttempted = false
+                    loadPlayback(ticket)
+                } else {
+                    BackgroundPlaybackSession.stopForRecovery(ticket.owner, route, sourceIdentity)
+                    _uiState.value = TvheadendPlayerState.Error(accessFailureMessage(access),
+                        TvheadendPlaybackErrorKind.SERVER_UNAVAILABLE, channelName)
+                }
+            } catch (error: Exception) {
+                if (error is CancellationException) throw error
+                if (currentRecovery(ticket)) {
+                    BackgroundPlaybackSession.stopForRecovery(ticket.owner, route, sourceIdentity)
+                    _uiState.value = TvheadendPlayerState.Error(context.getString(com.ambient.tv.R.string.player_server_unreachable),
+                        TvheadendPlaybackErrorKind.SERVER_UNAVAILABLE, channelName)
+                }
+            } finally {
+                recoveryRequests.finish(ticket)
+                if (recoveryTicket === ticket) { recoveryTicket = null; recoveryJob = null }
             }
         }
     }
@@ -724,9 +850,14 @@ class TvheadendPlayerViewModel @Inject constructor(
         recoverPlayback(reason, allowServerProfile = true)
     }
 
-    private fun recoverPlayback(reason: String, allowServerProfile: Boolean) {
+    private fun recoverPlayback(reason: String, allowServerProfile: Boolean, connectionChecked: Boolean = false) {
         if (PlaybackServerUnreachable.isNetworkish(null, reason)) {
             reportServerUnreachable(reason)
+            return
+        }
+        if (!connectionChecked && com.ambient.tv.ui.player.ambiguousNativePlaybackFailure(
+                reason, context.getString(com.ambient.tv.R.string.vlc_playback_error))) {
+            probeNativePlaybackFailure(reason, allowServerProfile)
             return
         }
 
@@ -775,19 +906,29 @@ class TvheadendPlayerViewModel @Inject constructor(
             return
         }
         val channel = current.channel ?: return
-        viewModelScope.launch {
+        var expectedOwner = BackgroundPlaybackSession.recoveryOwner()
+        val route = recoveryRoute()
+        fun currentRequest() = expectedOwner.matches(BackgroundPlaybackSession.recoveryOwner()) &&
+            recoveryRoute() == route && sourceIdentity == playbackAvailability.routeIdentity(route)
+        fallbackJob = viewModelScope.launch {
             fallbackAttempted = true
             suspendResult {
                 val currentProfile = current.source.streamProfile
                 val profiles = repository.streamProfiles()
+                if (!currentRequest()) throw CancellationException()
                 val candidates = profiles
                     .filterNot { it.name.equals(currentProfile, ignoreCase = true) }
                     .sortedByDescending { profile -> tvheadendFallbackProfileRank(profile.name, profile.profileClass) }
                 val selected = candidates.firstOrNull() ?: error(reason.ifBlank { context.getString(com.ambient.tv.R.string.tvh_no_fallback_profile) })
-                timeshifted(acquireStream(open = { repository.liveStream(channel, selected.name) }), channel.uuid)
+                val source = timeshifted(acquireStream(onReplacement = { expectedOwner = it },
+                    open = { repository.liveStream(channel, selected.name) }), channel.uuid)
+                currentCoroutineContext().ensureActive()
+                if (!currentRequest()) throw CancellationException()
+                source
             }.fold(
-                onSuccess = { source -> _uiState.value = current.copy(source = source, channel = channel, sourceHdrStandard = null) },
+                onSuccess = { source -> if (currentRequest()) _uiState.value = current.copy(source = source, channel = channel, sourceHdrStandard = null) },
                 onFailure = { error ->
+                    if (!currentRequest()) return@fold
                     val message = error.message ?: reason.ifBlank { context.getString(com.ambient.tv.R.string.tvh_playback_failed) }
                     _uiState.value = TvheadendPlayerState.Error(
                         message = message,
@@ -799,12 +940,43 @@ class TvheadendPlayerViewModel @Inject constructor(
         }
     }
 
+    private fun probeNativePlaybackFailure(reason: String, allowServerProfile: Boolean) {
+        val current = _uiState.value as? TvheadendPlayerState.Ready ?: return
+        val owner = BackgroundPlaybackSession.recoveryOwner()
+        val route = recoveryRoute()
+        if (!owner.owns(route, sourceIdentity) || owner.replacingSource ||
+            sourceIdentity != playbackAvailability.routeIdentity(route)) return
+        cancelRecovery()
+        BackgroundPlaybackSession.rememberRecoveryPosition(owner)
+        val ticket = recoveryRequests.begin(PlaybackRecoveryRequests.Target(route, sourceIdentity), owner)
+        recoveryTicket = ticket
+        val id = if (kind == "channel") currentChannelUuid else initialId
+        _uiState.value = TvheadendPlayerState.Error(context.getString(com.ambient.tv.R.string.player_server_unreachable_rechecking),
+            TvheadendPlaybackErrorKind.SERVER_UNAVAILABLE, current.channel?.name)
+        recoveryJob = viewModelScope.launch {
+            try {
+                val access = suspendResult { playbackAvailability.checkLive(sourceId, kind, id, retry = true, allowWake = false) }.getOrNull()
+                if (!currentRecovery(ticket)) return@launch
+                recoveryRequests.finish(ticket)
+                recoveryTicket = null
+                recoveryJob = null
+                _uiState.value = current
+                if (access?.allowed == true) recoverPlayback(reason, allowServerProfile, connectionChecked = true)
+                else reportServerUnreachable(reason)
+            } finally {
+                recoveryRequests.finish(ticket)
+                if (recoveryTicket === ticket) { recoveryTicket = null; recoveryJob = null }
+            }
+        }
+    }
+
     fun switchPlaybackBackend(key: String, positionMs: Long, makeGlobal: Boolean) {
         if (changingChannel) return
         val normalized = key.takeIf { it in setOf("auto", "media3", "vlc", "mpv") } ?: "auto"
         if (normalized == "mpv" && !com.ambient.tv.ui.player.backend.MpvBackendAvailability.isAvailable) return
         val current = _uiState.value as? TvheadendPlayerState.Ready ?: return
         if (!com.ambient.tv.ui.player.currentPlayerRendererAvailability(metadata(current)).canSelect(normalized)) return
+        cancelRecovery()
         if (makeGlobal) preferences.tvheadendPlaybackBackendKey = normalized
         // Only this explicit action changes the manual choice. Recovery stays session-local.
         BackgroundPlaybackSession.cancelResumeRewind()
@@ -860,7 +1032,13 @@ class TvheadendPlayerViewModel @Inject constructor(
 
     fun zap(delta: Int) {
         if (kind != "channel" || delta == 0 || changingChannel) return
-        viewModelScope.launch {
+        cancelRecovery()
+        loadingJob?.cancel()
+        val outgoingOwner = BackgroundPlaybackSession.recoveryOwner()
+        val outgoingChannel = currentChannelUuid
+        fun current() = outgoingOwner.matches(BackgroundPlaybackSession.recoveryOwner()) &&
+            currentChannelUuid == outgoingChannel && sourceIdentity == playbackAvailability.routeIdentity(recoveryRoute())
+        zapJob = viewModelScope.launch {
             changingChannel = true
             try {
                 if (channels.isEmpty()) {
@@ -876,15 +1054,27 @@ class TvheadendPlayerViewModel @Inject constructor(
                         return@launch
                     }
                 }
+                if (!current()) return@launch
                 if (channels.isEmpty()) return@launch
                 val ring = zapChannels(channels, zapOrder)
                 val currentIndex = ring.indexOfFirst { it.uuid == currentChannelUuid }.let { if (it < 0) 0 else it }
                 val nextIndex = ((currentIndex + delta) % ring.size + ring.size) % ring.size
                 val channel = ring[nextIndex]
                 if (channel.uuid == currentChannelUuid) return@launch
+                val access = playbackAvailability.checkLive(sourceId, "channel", channel.uuid)
+                if (!current()) return@launch
+                if (!access.allowed) {
+                    com.ambient.tv.notifications.AppNotifications.post(com.ambient.tv.notifications.AppNotice(
+                        key = "playback:unavailable", message = com.ambient.tv.R.string.browse_playback_unavailable,
+                        phase = com.ambient.tv.notifications.NoticePhase.ERROR,
+                        kind = com.ambient.tv.notifications.NoticeKind.PLAYBACK,
+                    ))
+                    return@launch
+                }
                 // Retain the OSD while acquireStream serially retires the upstream session.
                 // PlaybackSessionContent suppresses EOF during the replacement.
                 currentChannelUuid = channel.uuid
+                serverUnreachableRetryAttempted = false
                 fallbackAttempted = false
                 localFallbackBackends.clear()
                 videoFailureConfirmed = false
@@ -902,11 +1092,17 @@ class TvheadendPlayerViewModel @Inject constructor(
                     isLive = true,
                     hasVideo = channel.kind != LiveTvChannelKind.RADIO,
                     liveTvSourceId = sourceId,
+                    sourceAccessIdentity = sourceIdentity,
                 )
+                var replacementOwner: PlaybackRecoveryOwner? = null
                 val source = timeshifted(acquireStream(
                     open = { repository.liveStream(channel) },
                     pendingMetadata = pendingMetadata,
+                    onReplacement = { replacementOwner = it },
                 ), channel.uuid)
+                currentCoroutineContext().ensureActive()
+                if (replacementOwner?.matches(BackgroundPlaybackSession.recoveryOwner()) != true ||
+                    sourceIdentity != playbackAvailability.routeIdentity(recoveryRoute())) return@launch
                 val artwork = tvhPanelArtwork(null, channel.iconUrl)
                 _uiState.value = TvheadendPlayerState.Ready(
                     source = source,

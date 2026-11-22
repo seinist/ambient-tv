@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="offline_detail_connection_required">Connection required</string>
+    <string name="offline_detail_connection_description">Saved information remains visible. Connect to the source to play this item and see all details.</string>
+    <string name="offline_detail_retry">Try again</string>
+    <string name="offline_detail_checking">Checking connection…</string>
+</resources>

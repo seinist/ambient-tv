@@ -64,6 +64,7 @@ class TvheadendRepository @Inject constructor(
     private val wireGuardRoute: WireGuardRouteController,
     browseDisk: com.ambient.tv.data.browse.BrowseDiskStore,
     private val browseScopes: com.ambient.tv.data.browse.BrowseScopes,
+    private val availability: com.ambient.tv.data.browse.SourceAvailability,
     @com.ambient.tv.di.SharedOkHttp private val sharedConnectionPool: okhttp3.ConnectionPool,
     @com.ambient.tv.di.SharedOkHttp private val sharedDispatcher: okhttp3.Dispatcher,
     /** Runs the one TVHeadend wake (state, card, gate); a Provider because it uses this repository. */
@@ -161,6 +162,22 @@ class TvheadendRepository @Inject constructor(
         // No wake here: the connection manager calls this from inside its own wake.
         val obj = getJson("api/serverinfo", wake = false).jsonObject
         TvhServerInfo(name = obj.string("name") ?: "TVHeadend", version = obj.string("sw_version"), apiVersion = obj.int("api_version"))
+    }
+
+    /** Required playback API only: no stale fallback, optional admin metadata or implicit WOL. */
+    suspend fun probePlaybackAccess(kind: String, id: String): Result<Boolean> = suspendResult {
+        val scope = currentCacheScope()
+        val path = when (kind) {
+            "channel" -> "api/channel/grid"
+            "recording" -> "api/dvr/entry/grid_finished"
+            else -> return@suspendResult false
+        }
+        val rows = entries(getJson(path, mapOf("limit" to "9999"), wake = false))
+        val allowed = id.isBlank() || rows.any { it.string("uuid") == id } ||
+            (kind == "recording" && entries(getJson("api/dvr/entry/grid_failed", mapOf("limit" to "9999"), wake = false))
+                .any { it.string("uuid") == id })
+        check(scope == currentCacheScope()) { "TV source configuration changed." }
+        allowed
     }
 
     suspend fun testConnection(explicit: Boolean = false): Result<TvhServerInfo> =
@@ -749,9 +766,10 @@ class TvheadendRepository @Inject constructor(
     }
 
     private suspend fun getJson(path: String, params: Map<String, String> = emptyMap(), wake: Boolean = true): JsonElement {
+        val accessScope = browseScopes.forProvider("tvheadend")
         ensureConfiguredAndAllowed()
         if (wake) ensureAwakeIfNeeded()
-        return withContext(Dispatchers.IO) {
+        return try { withContext(Dispatchers.IO) {
             val url = buildUrl(path, params)
             val request = Request.Builder().url(url).get().build()
             client.newCall(request).execute().use { response ->
@@ -777,6 +795,12 @@ class TvheadendRepository @Inject constructor(
                 val body = response.body.string().orEmpty()
                 if (body.isBlank()) JsonObject(emptyMap()) else json.parseToJsonElement(body)
             }
+        } } catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
+        catch (error: Exception) {
+            // An optional/admin-only API error must not revoke working channel access.
+            if ((path == "api/channel/grid" || path.startsWith("api/dvr/entry/grid_")) &&
+                accessScope == browseScopes.forProvider("tvheadend")) availability.accessFailed("tvheadend")
+            throw error
         }
     }
 

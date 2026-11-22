@@ -29,7 +29,12 @@ class DisplaySnapshots @Inject constructor(@PublishedApi internal val disk: Brow
     }
 
     inline fun <reified T> write(owner: String, namespace: String, key: String, value: T) {
-        disk.put(namespace, key, { current(owner, namespace) }) { encodeBrowseJson(json, sanitizeDisplayJson(json.parseToJsonElement(encodeBrowseJson(json, value)))) }
+        writeDeferred(owner, namespace, key) { value }
+    }
+
+    /** Metadata projection shares the disk worker's idle budget, never the focused UI thread. */
+    inline fun <reified T> writeDeferred(owner: String, namespace: String, key: String, crossinline value: () -> T) {
+        disk.put(namespace, key, { current(owner, namespace) }) { encodeBrowseJson(json, sanitizeDisplayJson(json.parseToJsonElement(encodeBrowseJson(json, value())))) }
     }
 }
 

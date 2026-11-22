@@ -39,12 +39,15 @@ class FilteredBrowseViewModel internal constructor(
     private val preferences: AppPreferences,
     private val readItems: suspend (String, String) -> Result<List<MediaItem>>,
     private val prepareRefresh: suspend (Set<String>) -> Unit,
+    private val savedItems: FilteredBrowseCache? = null,
 ) : ViewModel() {
     @Inject constructor(
         savedStateHandle: SavedStateHandle,
         repository: MediaRepository,
         preferences: AppPreferences,
         reconnects: BrowseReconnects,
+        snapshots: com.ambient.tv.data.browse.DisplaySnapshots,
+        scopes: com.ambient.tv.data.browse.BrowseScopes,
     ) : this(savedStateHandle, preferences,
         { kind, id -> when (kind) {
             "actor" -> repository.getItemsByActor(id)
@@ -52,6 +55,9 @@ class FilteredBrowseViewModel internal constructor(
             else -> Result.failure(IllegalArgumentException("Unknown browse filter"))
         } },
         { sources -> reconnects.prepareEntry(sources); Unit },
+        ScopedFilteredBrowseCache(snapshots, scopes,
+            com.ambient.tv.data.browse.mediaProvider(checkNotNull(savedStateHandle.get<String>("filterId"))),
+            "${savedStateHandle.get<String>("kind")}:${savedStateHandle.get<String>("filterId")}"),
     )
 
     private val kind: String = checkNotNull(savedStateHandle.get<String>("kind"))
@@ -60,7 +66,7 @@ class FilteredBrowseViewModel internal constructor(
     val title: String = checkNotNull(savedStateHandle.get<String>("title"))
     private val stateKey = "browse:$kind:$id"
     /** Process-local initial focus is shared across the same actor/collection destination. */
-    internal val focusScopeKey: String get() = stateKey
+    internal val focusScopeKey: String get() = savedItems?.scopeKey?.let { "$it:$stateKey" } ?: stateKey
     /** The selected layout is available before the first fetch completes. */
     val loadingViewMode: BrowseViewMode get() = viewMode()
     private var sourceItems: List<MediaItem> = emptyList()
@@ -83,6 +89,7 @@ class FilteredBrowseViewModel internal constructor(
     fun load() = load(refreshCaches = false)
 
     internal fun enter(returned: com.ambient.tv.ui.common.NavigationPlaybackReturn?) {
+        if (savedItems?.isCurrent(savedItems.scopeKey) == false) { load(); return }
         val current = _uiState.value as? FilteredBrowseUiState.Loaded
         val prepared = current?.let { prepareFilteredBrowsePlaybackReturn(it, returned) }
         if (prepared == null) {
@@ -96,7 +103,7 @@ class FilteredBrowseViewModel internal constructor(
         _refreshError.value = null
         playbackReturnRevision = prepared.playbackReturnRevision
         sessionFocusedRatingKey = prepared.focusedRatingKey
-        preferences.setSectionFocus(stateKey, checkNotNull(prepared.focusedRatingKey))
+        preferences.setSectionFocus(focusScopeKey, checkNotNull(prepared.focusedRatingKey))
         _uiState.value = prepared
     }
 
@@ -108,6 +115,13 @@ class FilteredBrowseViewModel internal constructor(
     private fun load(refreshCaches: Boolean) {
         val revision = ++loadRevision
         loadJob?.cancel()
+        if (savedItems?.refreshScope() == true) {
+            sourceItems = emptyList()
+            sessionFocusedRatingKey = null
+            playbackReturnRevision = 0L
+            _uiState.value = FilteredBrowseUiState.Loading
+        }
+        val requestScope = savedItems?.scopeKey
         _refreshing.value = true
         _refreshError.value = null
         if (_uiState.value !is FilteredBrowseUiState.Loaded) {
@@ -115,14 +129,21 @@ class FilteredBrowseViewModel internal constructor(
         }
         loadJob = viewModelScope.launch {
             try {
+                if (_uiState.value !is FilteredBrowseUiState.Loaded) {
+                    com.ambient.tv.util.suspendResult { savedItems?.read() }.getOrNull()?.let { cached ->
+                        if (revision != loadRevision || (requestScope != null && savedItems?.isCurrent(requestScope) != true)) return@launch
+                        sourceItems = cached
+                        _uiState.value = buildLoaded()
+                    }
+                }
                 val result = com.ambient.tv.util.suspendResult {
                     if (refreshCaches) prepareRefresh(reconnectSources)
                     readItems(kind, id).getOrThrow()
                 }
                 kotlinx.coroutines.currentCoroutineContext().ensureActive()
-                if (revision != loadRevision) return@launch
+                if (revision != loadRevision || (requestScope != null && savedItems?.isCurrent(requestScope) != true)) return@launch
                 result.fold(
-                    onSuccess = { sourceItems = it; _uiState.value = buildLoaded() },
+                    onSuccess = { sourceItems = it; savedItems?.write(it); _uiState.value = buildLoaded() },
                     onFailure = {
                         if (_uiState.value !is FilteredBrowseUiState.Loaded) {
                             _uiState.value = FilteredBrowseUiState.Error(it.message.orEmpty())
@@ -139,7 +160,7 @@ class FilteredBrowseViewModel internal constructor(
     fun setViewMode(mode: BrowseViewMode) {
         if (mode == viewMode()) return
         preferences.setSectionViewMode(stateKey, mode.name)
-        _uiState.value = buildLoaded()
+        if (_uiState.value is FilteredBrowseUiState.Loaded) _uiState.value = buildLoaded()
     }
 
     fun setSort(selectedSort: BrowseSort) {
@@ -147,25 +168,25 @@ class FilteredBrowseViewModel internal constructor(
         val descending = selectedSort == BrowseSort.YEAR
         preferences.setSectionSort(stateKey, selectedSort.name)
         preferences.setSectionSortOrder(stateKey, if (descending) "DESCENDING" else "ASCENDING")
-        _uiState.value = buildLoaded()
+        if (_uiState.value is FilteredBrowseUiState.Loaded) _uiState.value = buildLoaded()
     }
 
     fun setSortDescending(descending: Boolean) {
         preferences.setSectionSortOrder(stateKey, if (descending) "DESCENDING" else "ASCENDING")
-        _uiState.value = buildLoaded()
+        if (_uiState.value is FilteredBrowseUiState.Loaded) _uiState.value = buildLoaded()
     }
 
     fun onItemFocused(item: MediaItem) {
         // Session memory is enough while browsing. Emitting Loaded here invalidates the
         // whole result grid on every D-pad step, even though only two tiles change focus.
         sessionFocusedRatingKey = item.ratingKey
-        preferences.setSectionFocus(stateKey, item.ratingKey)
+        preferences.setSectionFocus(focusScopeKey, item.ratingKey)
     }
 
     /** A retained screen can return before its refresh finishes; publish its exit target once. */
     fun captureFocusForReturn() {
         val current = _uiState.value as? FilteredBrowseUiState.Loaded ?: return
-        val focused = preferences.sectionFocus(stateKey)
+        val focused = preferences.sectionFocus(focusScopeKey)
         if (current.focusedRatingKey != focused) _uiState.value = current.copy(focusedRatingKey = focused)
     }
 
@@ -189,6 +210,6 @@ class FilteredBrowseViewModel internal constructor(
             )
         }
         return FilteredBrowseUiState.Loaded(title, items, viewMode(), sort, descending,
-            preferences.sectionFocus(stateKey), playbackReturnRevision)
+            preferences.sectionFocus(focusScopeKey), playbackReturnRevision)
     }
 }

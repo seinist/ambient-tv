@@ -110,6 +110,27 @@ class IptvGuideIndexIntegrationTest {
         assertEquals(1, counts["/guide"]?.get())
     }
 
+    @Test fun storedPlaylistRemainsBrowsableButCannotAuthorizePlaybackUntilFreshReadSucceeds() = runBlocking {
+        val repo = repository()
+        val channel = repo.channels().first()
+        docs["/list"] = "<html>Provider unavailable</html>"
+        assertEquals(2, repo.channels(force = true).size)
+        assertTrue(repo.servingCachedData)
+        assertTrue(runCatching { repo.verifyPlayback("channel", channel.uuid) }.isFailure)
+        docs["/list"] = playlist()
+        assertTrue(repo.verifyPlayback("channel", channel.uuid))
+        assertFalse(repo.servingCachedData)
+    }
+
+    @Test fun channelVerificationDoesNotFetchOptionalGuideAndRejectsMissingChannel() = runBlocking {
+        val repo = repository()
+        val channel = repo.channels().first()
+        assertTrue(repo.verifyPlayback("channel", channel.uuid))
+        assertFalse(repo.verifyPlayback("channel", "removed-channel"))
+        assertNull(counts["/guide"])
+        assertFalse(repo.verifyPlayback("recording", "anything"))
+    }
+
     @Test fun failureOfSecondFeedCannotPublishTheFirstFeedsPartialReplacement() = runBlocking {
         docs["/list"] = playlist("url-tvg=\"$base/guide,$base/second\"")
         docs["/guide"] = guide(programme("c1", "Old one", -60, 3600))

@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="offline_detail_connection_required">Verbindung erforderlich</string>
+    <string name="offline_detail_connection_description">Gespeicherte Informationen bleiben sichtbar. Für die Wiedergabe und alle Details wird eine Verbindung zur Quelle benötigt.</string>
+    <string name="offline_detail_retry">Erneut versuchen</string>
+    <string name="offline_detail_checking">Verbindung wird geprüft…</string>
+</resources>

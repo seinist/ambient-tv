@@ -18,13 +18,13 @@ import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.async
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.isActive
-import kotlinx.coroutines.launch
 import kotlinx.coroutines.runInterruptible
 
 /** One manual wake press: who pressed it and how to reach that service afterwards. */
@@ -58,18 +58,36 @@ class ManualWakeCoordinator(
 ) {
     enum class Outcome { AWAKE, FAILED, ALREADY_WAKING, NO_MAC }
 
-    suspend fun wake(request: ManualWakeRequest): Outcome {
+    suspend fun wake(
+        request: ManualWakeRequest,
+        stillCurrent: () -> Boolean = { true },
+        alreadyAwake: suspend () -> Boolean = { false },
+    ): Outcome {
+        suspend fun ensureCurrent() {
+            currentCoroutineContext().ensureActive()
+            if (!stillCurrent()) throw kotlinx.coroutines.CancellationException("Offline retry changed")
+        }
+        ensureCurrent()
         val (machine, macs) = group(request.system, request.host, request.mac)
         if (macs.isEmpty()) return Outcome.NO_MAC
         if (!notices.tryBegin(machine, request.system, request.subject, request.member)) return Outcome.ALREADY_WAKING
         val own = canonicalWolMacKey(request.mac)
         try {
+            // Retry actions may have waited for a VPN route since their initial probe. Check
+            // again immediately before the first burst; explicit Settings wake keeps its intent.
+            val awake = alreadyAwake()
+            ensureCurrent()
+            if (awake) {
+                answered(macs)
+                notices.finish(machine, request.system, success = true, member = request.member)
+                return Outcome.AWAKE
+            }
             val host = request.host?.let(::normalizeWakeGroupHost)
             val port = request.probePort?.takeIf { it in 1..65535 }
             // One burst per NIC of the machine; WolManager coalesces equal MACs across callers.
             suspend fun burst(retry: Boolean) {
                 val results = macs.map { mac ->
-                    currentCoroutineContext().ensureActive()
+                    ensureCurrent()
                     if (mac == own) send(mac, request.broadcast, request.wolPort, request.wireGuardHost, retry)
                     else send(mac, "255.255.255.255", 9, null, retry)
                 }
@@ -86,7 +104,9 @@ class ManualWakeCoordinator(
                 windowMs = windowMs,
                 pollMs = pollMs,
                 send = { attempt -> burst(retry = attempt > 0) },
-                reachable = { reachable(host, port) },
+                // A sibling port is sufficient to stop WOL; the caller then checks its own
+                // service. This also keeps retry cancellation/endpoint guards live while waiting.
+                reachable = { alreadyAwake() || reachable(host, port) },
                 onAnswered = { answered(macs) },
                 onSent = { attempt, attempts ->
                     currentCoroutineContext().ensureActive()
@@ -116,7 +136,7 @@ class MachineWake @Inject constructor(
 ) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val lock = Any()
-    private val jobs = mutableMapOf<String, Job>()
+    private val jobs = mutableMapOf<String, Deferred<ManualWakeCoordinator.Outcome>>()
     private val lastRequests = linkedMapOf<String, ManualWakeRequest>()
 
     /** Bounded, process-local endpoint data; no credentials and no Activity references. */
@@ -141,23 +161,39 @@ class MachineWake @Inject constructor(
         machines.keyFor(system, host, mac)
 
     /** Fire-and-forget: progress and result appear on the machine's shared wake card. */
-    fun wake(request: ManualWakeRequest) = enqueue(request, null)
+    fun wake(request: ManualWakeRequest) { enqueue(request) }
 
-    /** Wake a machine, then reconnect the originally selected service and its offline siblings. */
-    fun wakeThen(request: ManualWakeRequest, onAwake: () -> Unit) = enqueue(request, onAwake)
+    /** Keep one retry operation alive until the shared manual wake has actually finished. */
+    suspend fun wakeAndAwait(
+        request: ManualWakeRequest,
+        recoveryInProgress: () -> Boolean = { false },
+        stillCurrent: () -> Boolean = { true },
+        alreadyAwake: suspend () -> Boolean,
+    ): ManualWakeCoordinator.Outcome {
+        currentCoroutineContext().ensureActive()
+        return enqueue(request, alreadyAwake, recoveryInProgress, stillCurrent)?.await()
+            ?: ManualWakeCoordinator.Outcome.ALREADY_WAKING
+    }
 
-    private fun enqueue(request: ManualWakeRequest, onAwake: (() -> Unit)?) {
+    private fun enqueue(
+        request: ManualWakeRequest,
+        alreadyAwake: (suspend () -> Boolean)? = null,
+        recoveryInProgress: () -> Boolean = { false },
+        stillCurrent: () -> Boolean = { true },
+    ): Deferred<ManualWakeCoordinator.Outcome>? {
         val machine = machines.keyFor(request.system, request.host, request.mac)
         val job = synchronized(lock) {
             val previous = jobs[machine]
-            if ((previous != null && !previous.isCompleted && !previous.isCancelled) || WakeNotices.isWaking(machine)) return
+            if (previous != null && !previous.isCompleted && !previous.isCancelled) return previous
+            if (WakeNotices.isWaking(machine)) return null
             lastRequests.remove(machine)
             lastRequests[machine] = request
             while (lastRequests.size > 32) lastRequests.remove(lastRequests.keys.first())
-            scope.launch(start = CoroutineStart.LAZY) {
+            scope.async(start = CoroutineStart.LAZY) {
                 withCancellableWake(machine) {
                     // A quick retry cannot be overwritten by the previous attempt's cleanup.
                     previous?.join()
+                    if (!stillCurrent()) throw kotlinx.coroutines.CancellationException("Offline retry changed")
                     var coordinated = false
                     fun report(phase: NoticePhase, message: Int, blockedBy: ConnectivityDependency? = null,
                         cancelled: Boolean = false, args: List<String> = emptyList()) = AppNotifications.post(AppNotice(
@@ -167,7 +203,9 @@ class MachineWake @Inject constructor(
                     ))
                     try {
                         val vpnHost = request.wireGuardHost?.takeIf(String::isNotBlank)
-                        report(NoticePhase.WORKING, R.string.notice_connecting,
+                        // Retry already has a busy action. Announce waking only if it is
+                        // actually needed; a concurrent service connect owns its own feedback.
+                        if (alreadyAwake == null) report(NoticePhase.WORKING, R.string.notice_connecting,
                             ConnectivityDependency.VPN.takeIf { vpnHost != null })
                         if (vpnHost != null) {
                             val activation = wireGuardRoute.ensureForWakeHost(vpnHost)
@@ -176,25 +214,37 @@ class MachineWake @Inject constructor(
                                 report(NoticePhase.ERROR,
                                     if (reason != null) R.string.notice_vpn_failed_reason else R.string.notice_vpn_failed,
                                     ConnectivityDependency.VPN, args = listOfNotNull(reason))
-                                return@withCancellableWake
+                                return@withCancellableWake ManualWakeCoordinator.Outcome.FAILED
                             }
                         }
                         currentCoroutineContext().ensureActive()
-                        if (!request.mac.isNullOrBlank() && !wolManager.wakePossible(request.mac,
+                        val awake = alreadyAwake?.invoke() == true
+                        currentCoroutineContext().ensureActive()
+                        if (!awake && recoveryInProgress())
+                            return@withCancellableWake ManualWakeCoordinator.Outcome.ALREADY_WAKING
+                        if (!awake && !request.mac.isNullOrBlank() && !wolManager.wakePossible(request.mac,
                                 request.host?.takeIf(String::isNotBlank), request.wireGuardHost, request.broadcast)) {
                             val outside = wolManager.serverUnreachableFromHere(request.host, request.wireGuardHost)
                             report(NoticePhase.ERROR,
                                 if (outside) R.string.wol_not_local_network else R.string.wol_network_unavailable)
-                            return@withCancellableWake
+                            return@withCancellableWake ManualWakeCoordinator.Outcome.FAILED
                         }
                         currentCoroutineContext().ensureActive()
+                        if (!stillCurrent()) throw kotlinx.coroutines.CancellationException("Offline retry changed")
                         coordinated = true
-                        when (coordinator.wake(request)) {
+                        var initialProbe = true
+                        val outcome = coordinator.wake(request, stillCurrent) {
+                            if (initialProbe) {
+                                initialProbe = false
+                                awake
+                            } else alreadyAwake?.invoke() == true
+                        }
+                        when (outcome) {
                             ManualWakeCoordinator.Outcome.NO_MAC ->
                                 report(NoticePhase.ERROR, R.string.notice_wake_failed)
-                            ManualWakeCoordinator.Outcome.AWAKE -> onAwake?.invoke()
                             else -> Unit
                         }
+                        outcome
                     } catch (cancelled: kotlinx.coroutines.CancellationException) {
                         if (!coordinated) report(NoticePhase.INFO, R.string.notice_wake_cancelled, cancelled = true)
                         throw cancelled
@@ -204,11 +254,13 @@ class MachineWake @Inject constructor(
                             currentCoroutineContext().ensureActive()
                         }
                         report(NoticePhase.ERROR, R.string.notice_wake_failed)
+                        ManualWakeCoordinator.Outcome.FAILED
                     }
                 }
             }.also { jobs[machine] = it }
         }
         job.invokeOnCompletion { synchronized(lock) { if (jobs[machine] === job) jobs.remove(machine) } }
         job.start()
+        return job
     }
 }

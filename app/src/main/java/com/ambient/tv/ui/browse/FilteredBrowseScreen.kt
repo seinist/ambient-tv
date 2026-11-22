@@ -132,6 +132,13 @@ fun FilteredBrowseScreen(
     }
     val refreshing by viewModel.refreshing.collectAsState()
     val refreshError by viewModel.refreshError.collectAsState()
+    val recovery: com.ambient.tv.ui.home.UnreachableServerViewModel = hiltViewModel()
+    val connection by recovery.state.collectAsState()
+    val source = viewModel.reconnectSources.single()
+    val sourceRevision by recovery.availability.changes.collectAsState()
+    val sourceUnconfirmed = remember(source, sourceRevision) { recovery.availability.browseUnconfirmed(source) }
+    val contentUnconfirmed = source in connection.offline || sourceUnconfirmed || refreshError != null
+    val retrySource: () -> Unit = { recovery.retrySystem(source) }
     com.ambient.tv.ui.common.RefreshOnEnterAndReconnect(viewModel.reconnectSources) { viewModel.enter(playbackReturn) }
     val uhdScale = rememberUhdScale()
     val focusChain = com.ambient.tv.ui.common.rememberPageFocusChain()
@@ -229,11 +236,9 @@ fun FilteredBrowseScreen(
                     if (loaded != null) Text(stringResource(R.string.library_item_count, loaded.items.size),
                         style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
-                if (refreshError != null && loaded != null) Text(
-                    stringResource(R.string.library_load_failed),
-                    modifier = Modifier.padding(horizontal = screenGutter(), vertical = 4.dp),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.error,
+                if (loaded != null && contentUnconfirmed) com.ambient.tv.ui.home.SavedBrowseStatus(
+                    sources = listOf(source), retrying = connection.retrying || refreshing,
+                    onRetry = retrySource, modifier = Modifier.padding(horizontal = screenGutter(), vertical = 4.dp),
                 )
                 if (loaded != null && filterBarShown) FilterBar(
                     groups = emptyList(),
@@ -265,7 +270,7 @@ fun FilteredBrowseScreen(
                             kind = com.ambient.tv.ui.common.BrowseStatusKind.ERROR,
                             body = value.message.ifBlank { stringResource(R.string.error_generic) },
                             actionLabel = stringResource(R.string.home_retry),
-                            onAction = viewModel::load,
+                            onAction = retrySource,
                         )
                     }
                     is FilteredBrowseUiState.Loaded -> {
@@ -295,7 +300,12 @@ fun FilteredBrowseScreen(
                             enabled = !showOptions,
                         )
                         if (value.items.isEmpty()) Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                            com.ambient.tv.ui.common.BrowseStatusPanel(stringResource(R.string.library_empty_title), stringResource(R.string.library_empty_body))
+                            if (contentUnconfirmed) com.ambient.tv.ui.common.BrowseStatusPanel(
+                                title = stringResource(R.string.offline_browse_section_unavailable),
+                                body = stringResource(R.string.offline_browse_section_unavailable_body),
+                                actionLabel = stringResource(R.string.home_retry), onAction = retrySource,
+                                kind = com.ambient.tv.ui.common.BrowseStatusKind.INFO,
+                            ) else com.ambient.tv.ui.common.BrowseStatusPanel(stringResource(R.string.library_empty_title), stringResource(R.string.library_empty_body))
                         } else Box(Modifier.fillMaxSize()
                             .then(playbackFocus.modifier)
                             .focusRestorer()

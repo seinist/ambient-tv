@@ -19,3 +19,14 @@ internal fun TvheadendUiState.awaitingInitialContent(): Boolean =
 
 internal fun TvheadendUiState.emptyContentHasError(): Boolean =
     !tabHasContent() && error != null && !loading && !refreshing
+
+/** An offline/cached empty tab is unknown, never proof that there are no recordings or timers. */
+internal fun TvheadendUiState.emptyContentUnconfirmed(): Boolean =
+    !tabHasContent() && !loading && !refreshing &&
+        (connectionRequired || dashboard?.warnings?.isNotEmpty() == true)
+
+internal val TvheadendUiState.connectionRequired: Boolean get() = offline || savedView || serviceUnconfirmed
+
+/** A failed write is not a confirmed deletion, nor permission to replay that write later. */
+internal fun TvheadendUiState.afterUnconfirmedRecordingAction(feedback: com.ambient.tv.notifications.OperationFeedback): TvheadendUiState =
+    copy(savedView = true, actionInProgress = false, actionFeedback = feedback)

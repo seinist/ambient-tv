@@ -17,6 +17,13 @@ interface LiveTvRepository {
     fun authHeaders(): Map<String, String> = emptyMap()
     suspend fun capabilities(force: Boolean = false): LiveTvCapabilities
     suspend fun channels(force: Boolean = false): List<LiveTvChannel>
+    /** Fresh protected API read. Cached dashboard data or server identity cannot grant play access. */
+    suspend fun verifyPlayback(kind: String, id: String): Boolean = when (kind) {
+        "channel" -> channels(force = true).let { id.isBlank() || it.any { channel -> channel.uuid == id } }
+        "recording" -> finishedRecordings(force = true).let { id.isBlank() || it.any { recording -> recording.uuid == id } } ||
+            failedRecordings(force = true).any { recording -> recording.uuid == id }
+        else -> false
+    }
     suspend fun epgEvents(startEpochSeconds: Long = System.currentTimeMillis() / 1000 - 3600, windowHours: Int = 24, force: Boolean = false): List<LiveTvProgramme>
     suspend fun channelEpgEvents(channelId: String, startEpochSeconds: Long, windowHours: Int = 8): List<LiveTvProgramme> =
         epgEvents(startEpochSeconds, windowHours).filter { it.channelUuid == channelId }

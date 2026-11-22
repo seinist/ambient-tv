@@ -50,6 +50,7 @@ class LiveTvRegistry @Inject constructor(
     private val browseDisk: com.ambient.tv.data.browse.BrowseDiskStore,
     private val guideIndex: ProgrammeGuideIndex,
     hosts: HostConnectivity,
+    private val availability: com.ambient.tv.data.browse.SourceAvailability,
 ) {
     private val client = OkHttpClient.Builder().connectionPool(pool).dispatcher(dispatcher)
         .connectTimeout(8, TimeUnit.SECONDS).readTimeout(20, TimeUnit.SECONDS)
@@ -111,7 +112,9 @@ class LiveTvRegistry @Inject constructor(
                     val auth = "MediaBrowser Client=\"${AppBrand.name}\", Device=\"Android TV\", DeviceId=\"${preferences.clientIdentifier}\", Version=\"${BuildConfig.VERSION_NAME}\", Token=\"$token\""
                     mapOf("Authorization" to auth, "X-Emby-Authorization" to auth, "X-Emby-Token" to token)
                 }
-                val http = LiveTvHttp(base, headers, client) { preferences.localNetworkOnly }
+                val http = LiveTvHttp(base, headers, client,
+                    failed = { availability.accessFailed(source.id) },
+                    localOnly = { preferences.localNetworkOnly })
                 if (system == "plex") PlexLiveTvRepository(source, http) { liveTvAudioProfile(context, preferences) }
                 else MediaBrowserLiveTvRepository(source, http, requireNotNull(user), preferences.clientIdentifier) { liveTvAudioProfile(context, preferences) }
             }
@@ -141,7 +144,8 @@ class LiveTvRegistry @Inject constructor(
             val fingerprint = listOf(config)
             val repository = instances[source.id]?.takeIf { it.first == fingerprint }?.second
                 ?: IptvLiveTvRepository(source, config, iptvClient, java.io.File(context.cacheDir, "iptv"), guideIndex,
-                    isCurrent = { iptv.sources().any { it.enabled && sameIptvGuideSource(it, config) } })
+                    isCurrent = { iptv.sources().any { it.enabled && sameIptvGuideSource(it, config) } },
+                    accessFailed = { availability.accessFailed(source.id) })
             instances[source.id] = fingerprint to repository
             add(repository)
         }
@@ -176,6 +180,12 @@ class LiveTvRegistry @Inject constructor(
     @Synchronized fun browseState(repository: LiveTvRepository): LiveTvBrowseState {
         return browseStates[repository.source.id]?.takeIf { it.first === repository }?.second
             ?: LiveTvBrowseState().also { browseStates[repository.source.id] = repository to it }
+    }
+
+    /** Exact endpoint/login/configuration fingerprint; callers hash it before writing to disk. */
+    @Synchronized internal fun displayCacheIdentity(repository: LiveTvRepository): String? {
+        configured() // Refresh fingerprints after Settings changed a retained destination's source.
+        return instances[repository.source.id]?.takeIf { it.second === repository }?.first?.joinToString("\u0000")
     }
 
     /** Reset browsing positions across sources without discarding their dashboard caches. */

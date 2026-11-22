@@ -1,5 +1,6 @@
 package com.ambient.tv.ui.home
 
+import com.ambient.tv.domain.model.MediaItem
 import com.ambient.tv.ui.common.ContentRowData
 
 /** Keep visible aggregate rows intact until all libraries contributing to them have answered. */
@@ -37,6 +38,17 @@ internal fun mergeColdStartHomeRows(
     return restored.filterNot { it.id in visibleIds } + visible
 }
 
-/** Server reachability controls playback, but not cached Plex/Jellyfin/Emby posters. */
-internal fun homeRowHiddenByOffline(system: String, offline: Set<String>): Boolean =
-    system in offline && system !in setOf("plex", "jellyfin", "emby")
+/** Prefer a reachable duplicate, but retain titles whose only copy is a saved offline preview. */
+internal fun homeContinueItems(
+    itemsBySystem: Map<String, List<MediaItem>>,
+    offline: Set<String>,
+    limit: Int,
+): List<MediaItem> = itemsBySystem.asSequence()
+    .flatMap { (system, items) -> items.asSequence().map { (system !in offline) to it } }
+    .sortedWith(compareByDescending<Pair<Boolean, MediaItem>> { it.first }
+        .thenByDescending { it.second.lastViewedAt ?: 0L })
+    .distinctBy { it.second.canonicalContentKey }
+    .map { it.second }
+    .sortedByDescending { it.lastViewedAt ?: 0L }
+    .take(limit)
+    .toList()

@@ -92,6 +92,7 @@ class PlaybackService : MediaLibraryService() {
     @Inject lateinit var radioPlaybackLauncher: com.ambient.tv.ui.radio.RadioPlaybackLauncher
     @Inject lateinit var radioQueue: com.ambient.tv.ui.radio.RadioPlaybackQueue
     @Inject internal lateinit var carCatalog: CarAudioCatalog
+    @Inject lateinit var playbackAvailability: com.ambient.tv.data.browse.PlaybackAvailability
     @Inject lateinit var spotify: SpotifyRepository
     // Resolved only for a Telegram playback: other sources never touch the repository.
     @Inject lateinit var telegram: javax.inject.Provider<com.ambient.tv.data.telegram.TelegramRepository>
@@ -101,6 +102,11 @@ class PlaybackService : MediaLibraryService() {
     private var carSelectionItemId: String? = null
     private var carSelectionGeneration: Long? = null
     private var carPlaybackError: String? = null
+    private var serviceAudioOwner: PlaybackRecoveryOwner? = null
+    private var observedFailureOwner: PlaybackRecoveryOwner? = null
+    private val sourceRecoveryRequests = PlaybackRecoveryRequests()
+    private var sourceRecoveryTicket: PlaybackRecoveryRequests.Ticket? = null
+    private var sourceRecoveryJob: Job? = null
     private var destroying = false
     private val carSpotifySelection = CarSpotifySelection()
     private val carSpotifySelected: Boolean get() = carSpotifySelection.active
@@ -152,6 +158,7 @@ class PlaybackService : MediaLibraryService() {
                 Timber.i("Keeping play intent during requested TV output reconfiguration")
                 return
             }
+            cancelSourceRecovery()
             resumeOnFocus = false
             BackgroundPlaybackSession.pause()
         }
@@ -169,8 +176,10 @@ class PlaybackService : MediaLibraryService() {
                 cancelCarSelection()
             }
             override fun play() {
-                carPlaybackError = null
-                if (carSpotifySelected) spotify.play() else BackgroundPlaybackSession.userPlay()
+                if (carSpotifySelected) {
+                    carPlaybackError = null
+                    spotify.play()
+                } else playSessionPlayback()
             }
             override fun pause() {
                 libraryCallback.cancelPendingSelections()
@@ -206,6 +215,10 @@ class PlaybackService : MediaLibraryService() {
         // Synchronize focus on play/pause immediately, not at the next polling tick.
         scope.launch {
             BackgroundPlaybackSession.snapshot.collect { state ->
+                val owner = BackgroundPlaybackSession.recoveryOwner()
+                sourceRecoveryTicket?.let { if (!it.owner.matches(owner)) cancelSourceRecovery() }
+                if (serviceAudioOwner?.matches(owner) != true) serviceAudioOwner = null
+                observeSourceFailure(state, owner)
                 if (state.active && observedPlaybackGeneration != state.generation) {
                     // A source chosen in the app also supersedes a still-resolving Auto request.
                     libraryCallback.cancelPendingSelections()
@@ -476,6 +489,7 @@ class PlaybackService : MediaLibraryService() {
     // controller authorization belongs to PlaybackLibraryCallback.onConnectAsync/onGetLibraryRoot.
 
     private fun cancelCarSelection() {
+        cancelSourceRecovery()
         carSelectionVersion++
         val spotifyStart = pendingSpotifyStart
         pendingSpotifyStart = null
@@ -521,6 +535,140 @@ class PlaybackService : MediaLibraryService() {
         currentCoroutineContext().ensureActive()
         if (version != carSelectionVersion || BackgroundPlaybackSession.snapshot.value.generation != generation) {
             throw CancellationException("Playback selection replaced")
+        }
+    }
+
+    private suspend fun checkResolvedCarSelection(
+        selection: CarAudioSelection,
+        version: Long,
+        generation: Long,
+        sourceCurrent: () -> Boolean = { true },
+    ) {
+        try {
+            checkCarSelection(version, generation)
+            check(sourceCurrent()) { "Playback source changed" }
+        } catch (error: Exception) {
+            // Resolving radio can already own a tuner lease. Cancelled retries must release it.
+            if (selection is CarAudioSelection.Live) withContext(kotlinx.coroutines.NonCancellable) {
+                runCatching { selection.stream.session?.report(0L, playing = false, stopped = true) }
+            }
+            throw error
+        }
+    }
+
+    private fun cancelSourceRecovery() {
+        val ticket = sourceRecoveryTicket
+        sourceRecoveryRequests.cancel()
+        sourceRecoveryTicket = null
+        sourceRecoveryJob?.cancel()
+        sourceRecoveryJob = null
+        if (ticket?.owner?.matches(BackgroundPlaybackSession.recoveryOwner()) == true &&
+            carPlaybackError == getString(R.string.offline_playback_checking_message)) {
+            carPlaybackError = null
+            if (!destroying) updateSessionState(BackgroundPlaybackSession.snapshot.value)
+        }
+    }
+
+    /** A minimized renderer still reports failures even when its Compose listener is gone. */
+    private fun observeSourceFailure(state: BackgroundPlaybackSession.Snapshot, owner: PlaybackRecoveryOwner) {
+        val metadata = state.metadata ?: return
+        val message = state.status.error ?: return
+        if (state.replacingSource || !hasServerPlaybackRoute(metadata) ||
+            observedFailureOwner?.matches(owner) == true) return
+        val identity = metadata.sourceAccessIdentity ?: return
+        if (!owner.owns(metadata.route, identity) || identity != playbackAvailability.routeIdentity(metadata.route)) return
+        val media3Error = (BackgroundPlaybackSession.activeHandle() as? Media3PlaybackHandle)?.player?.playerError
+        val networkFailure = media3Error?.let(com.ambient.tv.connectivity.PlaybackServerUnreachable::isNetworkish)
+            ?: com.ambient.tv.connectivity.PlaybackServerUnreachable.isNetworkish(null, message)
+        if (!networkFailure) return
+        observedFailureOwner = owner
+        BackgroundPlaybackSession.rememberRecoveryPosition(owner)
+        // A foreground callback may already have revoked it. Do not invalidate its new probe twice.
+        if (playbackAvailability.isRouteVerified(metadata.route)) playbackAvailability.invalidateRoute(metadata.route)
+        BackgroundPlaybackSession.pauseForRecovery(owner, metadata.route, identity)
+    }
+
+    private fun playSessionPlayback() {
+        val state = BackgroundPlaybackSession.snapshot.value
+        val metadata = state.metadata
+        if (!hasServerPlaybackRoute(metadata)) {
+            carPlaybackError = null
+            BackgroundPlaybackSession.userPlay()
+            return
+        }
+        metadata ?: return
+        val identity = metadata.sourceAccessIdentity
+        if (identity == null || identity != playbackAvailability.routeIdentity(metadata.route)) {
+            carPlaybackError = getString(R.string.offline_playback_open_to_retry)
+            updateSessionState(state)
+            return
+        }
+        if (state.status.error == null) {
+            // A healthy paused/buffered renderer keeps its existing stream and play intent.
+            carPlaybackError = null
+            BackgroundPlaybackSession.userPlay()
+            return
+        }
+        if (sourceRecoveryJob?.isActive == true) return
+        val owner = BackgroundPlaybackSession.recoveryOwner()
+        BackgroundPlaybackSession.rememberRecoveryPosition(owner)
+        val itemId = serviceReconnectItem(metadata, serviceAudioOwner, owner)
+        if (itemId == null) {
+            // VM-owned video, versions and queues must resolve through their player. The
+            // notification opens that existing guarded route; no background activity launch.
+            carPlaybackError = getString(R.string.offline_playback_open_to_retry)
+            updateSessionState(state)
+            return
+        }
+        val target = PlaybackRecoveryRequests.Target(metadata.route, identity)
+        val ticket = sourceRecoveryRequests.begin(target, owner)
+        sourceRecoveryTicket = ticket
+        BackgroundPlaybackSession.pauseForRecovery(owner, metadata.route, identity)
+        carPlaybackError = getString(R.string.offline_playback_checking_message)
+        updateSessionState(BackgroundPlaybackSession.snapshot.value)
+        sourceRecoveryJob = scope.launch {
+            val access = com.ambient.tv.util.suspendResult {
+                playbackAvailability.checkRoute(metadata.route, retry = true)
+            }.getOrElse { com.ambient.tv.data.browse.PlaybackAccessResult(false, metadata.source, metadata.source) }
+            val currentTarget = PlaybackRecoveryRequests.Target(metadata.route, playbackAvailability.routeIdentity(metadata.route))
+            if (!sourceRecoveryRequests.current(ticket, currentTarget, BackgroundPlaybackSession.recoveryOwner())) {
+                if (sourceRecoveryTicket === ticket) {
+                    sourceRecoveryRequests.cancel()
+                    sourceRecoveryTicket = null
+                    sourceRecoveryJob = null
+                    if (ticket.owner.matches(BackgroundPlaybackSession.recoveryOwner())) {
+                        carPlaybackError = getString(R.string.offline_playback_open_to_retry)
+                        updateSessionState(BackgroundPlaybackSession.snapshot.value)
+                    }
+                }
+                return@launch
+            }
+            sourceRecoveryRequests.finish(ticket)
+            sourceRecoveryTicket = null
+            sourceRecoveryJob = null
+            if (!access.allowed) {
+                carPlaybackError = getString(if (access.authRequired) R.string.offline_playback_auth
+                    else R.string.offline_playback_unavailable, access.name)
+                updateSessionState(BackgroundPlaybackSession.snapshot.value)
+                return@launch
+            }
+            val position = BackgroundPlaybackSession.recoveryPosition(metadata.route, identity)
+            val oldMusicQueue = carMusicQueue
+            val oldLiveQueue = carLiveQueue
+            launchCarSelection(itemId) { version, generation ->
+                check(owner.matches(BackgroundPlaybackSession.recoveryOwner()) &&
+                    identity == playbackAvailability.routeIdentity(metadata.route)) { "Playback source changed" }
+                val resolved = carCatalog.resolve(itemId) ?: error("Unavailable audio item")
+                checkResolvedCarSelection(resolved, version, generation) {
+                    identity == playbackAvailability.routeIdentity(metadata.route)
+                }
+                val selection = when (resolved) {
+                    is CarAudioSelection.Library -> resolved.copy(queue = oldMusicQueue.takeIf { metadata.mediaId in it } ?: resolved.queue)
+                    is CarAudioSelection.Live -> resolved.copy(queue = oldLiveQueue.takeIf { itemId in it } ?: resolved.queue)
+                    else -> error("Unavailable audio item")
+                }
+                startCarAudio(selection, version, generation, recoveryPositionMs = position, recoveryOwner = owner)
+            }
         }
     }
 
@@ -571,7 +719,7 @@ class PlaybackService : MediaLibraryService() {
             val selection = if (resolved is CarAudioSelection.Live && liveQueue != null &&
                 mediaItems[0].mediaId in liveQueue) resolved.copy(queue = liveQueue)
                 else resolved
-            checkCarSelection(version, generation)
+            checkResolvedCarSelection(selection, version, generation)
             startCarAudio(selection, version, generation)
             if (version != carSelectionVersion) throw CancellationException("Playback selection replaced")
             if (startPositionMs != C.TIME_UNSET) seekSessionPlayback(startPositionMs)
@@ -597,6 +745,9 @@ class PlaybackService : MediaLibraryService() {
             try {
                 start(version, generation)
                 if (version != carSelectionVersion) throw CancellationException("Playback selection replaced")
+                serviceAudioOwner = BackgroundPlaybackSession.recoveryOwner().takeIf {
+                    !carSpotifySelected && BackgroundPlaybackSession.snapshot.value.metadata?.hasVideo == false
+                }
                 if (carSpotifySelected) {
                     publishCarSpotify(spotify.playback.value)
                     if (!BackgroundPlaybackSession.snapshot.value.active) clearPlaybackNotification()
@@ -626,7 +777,13 @@ class PlaybackService : MediaLibraryService() {
         return result
     }
 
-    private suspend fun startCarAudio(selection: CarAudioSelection, version: Long, generation: Long) {
+    private suspend fun startCarAudio(
+        selection: CarAudioSelection,
+        version: Long,
+        generation: Long,
+        recoveryPositionMs: Long? = null,
+        recoveryOwner: PlaybackRecoveryOwner? = null,
+    ) {
         carLiveMetadataJob?.cancel()
         carLiveMetadataJob = null
         when (selection) {
@@ -672,6 +829,12 @@ class PlaybackService : MediaLibraryService() {
                 }
             }
             is CarAudioSelection.Library -> {
+                val mediaId = selection.item.ratingKey
+                check(selection.sourceIdentity == playbackAvailability.mediaIdentity(mediaId) &&
+                    playbackAvailability.media(mediaId)) { "Media source unavailable" }
+                val physicalSource = selection.item.mediaVersions.firstOrNull()?.sourceRatingKey ?: mediaId
+                check(playbackAvailability.media(physicalSource)) { "Media source unavailable" }
+                checkCarSelection(version, generation)
                 if (carSpotifySelected) spotify.pause()
                 carSpotifySelection.clear()
                 val item = selection.item
@@ -681,6 +844,8 @@ class PlaybackService : MediaLibraryService() {
                 carTelegramQueue = emptyList()
                 repository.preparePlayback(item.ratingKey, 0)
                 checkCarSelection(version, generation)
+                check(selection.sourceIdentity == playbackAvailability.mediaIdentity(mediaId) &&
+                    playbackAvailability.isMediaVerified(physicalSource)) { "Media source changed" }
                 val source = when {
                     JellyfinBackend.owns(item.ratingKey) -> "jellyfin"
                     EmbyBackend.owns(item.ratingKey) -> "emby"
@@ -688,17 +853,21 @@ class PlaybackService : MediaLibraryService() {
                     FileKeys.owns(item.ratingKey) -> "files"
                     else -> "plex"
                 }
+                val startPositionMs = recoveryPositionMs ?: item.viewOffsetMs?.coerceAtLeast(0L) ?: 0L
+                replaceFailedServiceOwner(recoveryOwner)
                 PlaybackEngineFactory.create(
                     context = this,
                     streamUrl = url,
-                    startPositionMs = item.viewOffsetMs?.coerceAtLeast(0L) ?: 0L,
+                    startPositionMs = startPositionMs,
                     metadata = PlaybackMetadata(
                         route = Destinations.player(item.ratingKey),
+                        sourceAccessIdentity = selection.sourceIdentity,
                         title = item.title,
                         subtitle = item.parentTitle.orEmpty(),
                         source = source,
                         mediaId = item.ratingKey,
                         hasVideo = false,
+                        resumeState = ServiceAudioResumeState(startPositionMs),
                         artworkUrl = item.thumbUrl,
                         durationMs = item.durationMs ?: 0L,
                         fileProgressStreamUrl = url.takeIf { source == "files" },
@@ -723,6 +892,18 @@ class PlaybackService : MediaLibraryService() {
                 )
             }
             is CarAudioSelection.Live -> {
+                val sourceId = selection.channel.sourceId
+                val route = Destinations.tvhPlayer("channel", selection.channel.uuid, sourceId)
+                try {
+                    check(selection.sourceIdentity == playbackAvailability.routeIdentity(route) &&
+                        playbackAvailability.checkLive(sourceId, "channel", selection.channel.uuid).allowed) { "TV source unavailable" }
+                    checkCarSelection(version, generation)
+                } catch (error: Exception) {
+                    kotlinx.coroutines.withContext(kotlinx.coroutines.NonCancellable) {
+                        runCatching { selection.stream.session?.report(0L, playing = false, stopped = true) }
+                    }
+                    throw error
+                }
                 if (carSpotifySelected) spotify.pause()
                 carSpotifySelection.clear()
                 carMusicQueue = emptyList()
@@ -733,6 +914,7 @@ class PlaybackService : MediaLibraryService() {
                 val playbackId = carLiveQueue.firstOrNull {
                     CarAudioIds.liveAudioSpec(it)?.second == channel.uuid
                 } ?: return
+                replaceFailedServiceOwner(recoveryOwner)
                 val player = PlaybackEngineFactory.create(
                     context = this,
                     streamUrl = stream.url,
@@ -746,6 +928,15 @@ class PlaybackService : MediaLibraryService() {
                 observeCarLiveRadio(player, playbackId)
             }
         }
+    }
+
+    /** A successful re-read can return the same URL; never reacquire its failed renderer. */
+    private fun replaceFailedServiceOwner(owner: PlaybackRecoveryOwner?) {
+        if (owner == null) return
+        check(owner.matches(BackgroundPlaybackSession.recoveryOwner())) { "Playback session changed" }
+        // All suspending resolution and access checks finished. Keep the listening session,
+        // but release exactly its failed handle before the synchronous fresh acquisition.
+        BackgroundPlaybackSession.beginSourceReplacement(playWhenReadyOverride = true)
     }
 
     /** Enrich a service-started radio without delaying its tune or opening a second stream. */
@@ -812,6 +1003,11 @@ class PlaybackService : MediaLibraryService() {
             return
         }
         val current = BackgroundPlaybackSession.snapshot.value.metadata
+        if (!serviceQueueSourceCurrent(current, current?.route?.let(playbackAvailability::routeIdentity))) {
+            carPlaybackError = getString(R.string.offline_playback_open_to_retry)
+            updateSessionState(BackgroundPlaybackSession.snapshot.value)
+            return
+        }
         if (current?.source == "radio") {
             playRadioAdjacent(next)
             return
@@ -906,11 +1102,12 @@ class PlaybackService : MediaLibraryService() {
         val carLive = metadata?.source in setOf("iptv", "tvheadend") && liveIndex >= 0
         val telegramIndex = if (metadata?.source == "telegram") carTelegramIndex(metadata.mediaId) else -1
         val carTelegram = telegramIndex >= 0
-        val hasPrevious = hasPreviousRadio || (carMusic && carIndex > 0) || (carLive && liveIndex > 0) ||
-            (carTelegram && telegramIndex > 0)
-        val hasNext = hasNextRadio || (carMusic && carIndex < carMusicQueue.lastIndex) ||
+        val queueCurrent = serviceQueueSourceCurrent(metadata, metadata?.route?.let(playbackAvailability::routeIdentity))
+        val hasPrevious = queueCurrent && (hasPreviousRadio || (carMusic && carIndex > 0) || (carLive && liveIndex > 0) ||
+            (carTelegram && telegramIndex > 0))
+        val hasNext = queueCurrent && (hasNextRadio || (carMusic && carIndex < carMusicQueue.lastIndex) ||
             (carLive && liveIndex < carLiveQueue.lastIndex) ||
-            (carTelegram && telegramIndex < carTelegramQueue.lastIndex)
+            (carTelegram && telegramIndex < carTelegramQueue.lastIndex))
         val liveProgramme = (metadata?.resumeState as? com.ambient.tv.ui.tvheadend.TvheadendPlayerState.Ready)?.nowEvent
         val radioStation = radioQueue.current()?.takeIf { metadata?.source == "radio" && it.id == metadata.mediaId }
         val radioDescription = liveProgramme?.description?.takeIf(String::isNotBlank)
@@ -963,7 +1160,8 @@ class PlaybackService : MediaLibraryService() {
             isLive = metadata?.isLive == true,
         ))
         // Position updates go to MediaSession; avoid rebuilding a notification twice a second.
-        val notificationKey = Triple(state.generation, state.status.copy(positionMs = 0, durationMs = 0),
+        val notificationKey = Triple(state.generation, state.status.copy(positionMs = 0, durationMs = 0,
+            error = carPlaybackError ?: state.status.error),
             BackgroundPlaybackSession.sleepWarningDeadline?.let { sleepWarningMinutesLeft(it, now) })
         if (lastNotification != notificationKey) {
             getSystemService(NotificationManager::class.java).notify(NOTIFICATION, notification(state))
@@ -1032,10 +1230,14 @@ class PlaybackService : MediaLibraryService() {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
         val radioPrevious = state.metadata?.source == "radio" && radioQueue.previous() != null
         val radioNext = state.metadata?.source == "radio" && radioQueue.next() != null
+        val openPlayerToRetry = !state.playing && hasServerPlaybackRoute(state.metadata) && state.metadata?.let {
+            it.sourceAccessIdentity != playbackAvailability.routeIdentity(it.route) ||
+                (state.status.error != null && serviceReconnectItem(it, serviceAudioOwner, BackgroundPlaybackSession.recoveryOwner()) == null)
+        } == true
         val builder = Notification.Builder(this, CHANNEL)
             .setSmallIcon(android.R.drawable.ic_media_play)
             .setContentTitle(state.metadata?.title ?: getString(R.string.app_name))
-            .setContentText(state.status.error ?: state.metadata?.subtitle ?: getString(R.string.background_playback))
+            .setContentText(carPlaybackError ?: state.status.error ?: state.metadata?.subtitle ?: getString(R.string.background_playback))
             .setContentIntent(openPlaybackIntent())
             .setOnlyAlertOnce(true)
             .setOngoing(state.playing)
@@ -1045,8 +1247,12 @@ class PlaybackService : MediaLibraryService() {
                     android.graphics.drawable.Icon.createWithResource(this@PlaybackService, android.R.drawable.ic_media_previous),
                     getString(R.string.companion_previous), action(ACTION_PREVIOUS, 4)).build())
                 addAction(Notification.Action.Builder(
-                    android.graphics.drawable.Icon.createWithResource(this@PlaybackService, if (state.playing) android.R.drawable.ic_media_pause else android.R.drawable.ic_media_play),
-                    getString(if (state.playing) R.string.player_pause else R.string.player_play), action(ACTION_TOGGLE, 1)).build())
+                    android.graphics.drawable.Icon.createWithResource(this@PlaybackService,
+                        if (openPlayerToRetry) android.R.drawable.ic_menu_view
+                        else if (state.playing) android.R.drawable.ic_media_pause else android.R.drawable.ic_media_play),
+                    getString(if (openPlayerToRetry) R.string.offline_playback_open_player
+                        else if (state.playing) R.string.player_pause else R.string.player_play),
+                    if (openPlayerToRetry) openPlaybackIntent() else action(ACTION_TOGGLE, 1)).build())
                 if (radioNext) addAction(Notification.Action.Builder(
                     android.graphics.drawable.Icon.createWithResource(this@PlaybackService, android.R.drawable.ic_media_next),
                     getString(R.string.companion_next), action(ACTION_NEXT, 5)).build())
@@ -1093,6 +1299,7 @@ class PlaybackService : MediaLibraryService() {
                 when (change) {
                     AudioManager.AUDIOFOCUS_LOSS -> {
                         Timber.i("Playback paused: audio focus lost permanently")
+                        cancelSourceRecovery()
                         resumeOnFocus = false
                         BackgroundPlaybackSession.pause()
                     }
@@ -1105,7 +1312,7 @@ class PlaybackService : MediaLibraryService() {
                         Timber.i("Audio focus back: resuming playback")
                         resumeOnFocus = false
                         focusRetries = 0
-                        BackgroundPlaybackSession.play()
+                        resumeAfterAudioFocus()
                     }
                 }
             }.build()
@@ -1147,9 +1354,18 @@ class PlaybackService : MediaLibraryService() {
             // requestFocus() clears the flag once focus is granted, so keep the intent here.
             val resume = resumeOnFocus
             if (requestFocus() == AudioManager.AUDIOFOCUS_REQUEST_GRANTED && resume) {
-                BackgroundPlaybackSession.play()
+                resumeAfterAudioFocus()
             }
         }
+    }
+
+    /** Focus returning is not a fresh Retry command for an errored stream or another account. */
+    private fun resumeAfterAudioFocus() {
+        val state = BackgroundPlaybackSession.snapshot.value
+        val metadata = state.metadata
+        if (hasServerPlaybackRoute(metadata) && (state.status.error != null ||
+                metadata?.sourceAccessIdentity != metadata?.route?.let(playbackAvailability::routeIdentity))) return
+        BackgroundPlaybackSession.play()
     }
 
     private fun abandonFocus() {

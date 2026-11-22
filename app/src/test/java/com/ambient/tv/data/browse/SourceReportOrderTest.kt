@@ -23,4 +23,31 @@ class SourceReportOrderTest {
         assertTrue(order.accept("plex", old, SourceHealth.ONLINE))
         assertTrue(order.accept("jellyfin", old, SourceHealth.OFFLINE))
     }
+
+    @Test
+    fun anotherReachableNasPortCannotConfirmAFailedServiceRead() {
+        val onlineHost = com.ambient.tv.connectivity.HostHealth.ONLINE
+        assertTrue(browseSourceUnconfirmed(true, onlineHost, SourceHealth.OFFLINE, false))
+        assertTrue(browseSourceUnconfirmed(true, onlineHost, SourceHealth.ONLINE, true))
+        assertTrue(browseSourceUnconfirmed(true, onlineHost, SourceHealth.AUTH_REQUIRED, false))
+        assertFalse(browseSourceUnconfirmed(true, onlineHost, SourceHealth.ONLINE, false))
+    }
+
+    @Test
+    fun networkOrHostLossLocksAPreviouslyLoadedViewButUnknownAloneDoesNot() {
+        assertTrue(browseSourceUnconfirmed(false, com.ambient.tv.connectivity.HostHealth.ONLINE, SourceHealth.ONLINE, false))
+        assertTrue(browseSourceUnconfirmed(true, com.ambient.tv.connectivity.HostHealth.OFFLINE, SourceHealth.ONLINE, false))
+        assertFalse(browseSourceUnconfirmed(true, com.ambient.tv.connectivity.HostHealth.UNKNOWN, SourceHealth.UNKNOWN, false))
+    }
+
+    @Test
+    fun publicIdentityDoesNotRemoveTheSavedViewWarning() {
+        assertFalse(browseResponseConfirmsRead("plex", "/identity"))
+        assertFalse(browseResponseConfirmsRead("plex", "/"))
+        assertFalse(browseResponseConfirmsRead("jellyfin", "/jellyfin/System/Info/Public"))
+        assertFalse(browseResponseConfirmsRead("emby", "/emby/System/Info/Public/"))
+        assertTrue(browseResponseConfirmsRead("plex", "/library/sections"))
+        assertTrue(browseResponseConfirmsRead("jellyfin", "/Users/user/Items"))
+        assertTrue(browseResponseConfirmsRead("emby", "/Items/item"))
+    }
 }

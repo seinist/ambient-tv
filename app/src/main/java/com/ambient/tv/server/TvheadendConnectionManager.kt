@@ -61,6 +61,8 @@ class TvheadendConnectionManager @Inject constructor(
     /** Short checks only (background probe); a wake never holds it. */
     private val connectionMutex = Mutex()
     private val connectRun = SharedConnectRun(CoroutineScope(SupervisorJob() + Dispatchers.IO))
+    /** Synchronous ownership check; the derived UI state may still show the previous result. */
+    fun isConnecting(): Boolean = connectRun.active
     private val reconnectPause = ReconnectPause()
 
     fun isAutomaticReconnectPaused(): Boolean = reconnectPause.isPaused(endpointKey())

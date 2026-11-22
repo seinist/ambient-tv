@@ -72,6 +72,7 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
@@ -163,6 +164,7 @@ sealed interface HomeUiState {
         val recentTvItems: List<HomeLiveTvItem> = emptyList(),
         val rowKeys: List<String> = emptyList(),
         val tvRows: Map<String, HomeTvRow> = emptyMap(),
+        val savedLiveSources: Map<String, String> = emptyMap(),
         val liveTvTitle: String = "",
         val recentTvTitle: String = "",
         val initialFocusTarget: HomeInitialFocusTarget = HomeInitialFocusTarget.NONE,
@@ -201,6 +203,8 @@ class HomeViewModel @Inject constructor(
     private val radioRepository: RadioBrowserRepository,
     private val telegramRepository: com.ambient.tv.data.telegram.TelegramRepository,
     private val homeRowSnapshots: HomeRowSnapshots,
+    private val displaySnapshots: com.ambient.tv.data.browse.DisplaySnapshots,
+    private val playbackAvailability: com.ambient.tv.data.browse.PlaybackAvailability,
     private val smartTubeEngine: SmartTubeEngine,
     private val youtubeContentCache: YouTubeContentCache,
     private val youtubePlaybackContext: YouTubeBrowsePlaybackContext,
@@ -303,6 +307,18 @@ class HomeViewModel @Inject constructor(
     /** The live TV preview of this load has finished (successfully or not). */
     private var tvPreviewComplete = false
     private var tvPreviewScope: String? = null
+    private val savedTvSourceIds = mutableSetOf<String>()
+    private var tvRetryJob: Job? = null
+
+    fun retrySavedLiveSources() {
+        if (tvRetryJob?.isActive == true) return
+        val sources = (_uiState.value as? HomeUiState.Loaded)?.savedLiveSources?.keys.orEmpty()
+        if (sources.isEmpty()) return
+        tvRetryJob = viewModelScope.launch {
+            sources.map { source -> async { playbackAvailability.retryLive(source) } }.awaitAll()
+            startTvPreview()
+        }
+    }
     private var activeFocusKnown = false
     private var activeFocusedRatingKey: String? = null
     private var activeFocusedRowId: String? = null
@@ -383,9 +399,7 @@ class HomeViewModel @Inject constructor(
             ?: return false
         val system = rowId.substringAfter(':', HomeRowDefinition.SYSTEM_TVHEADEND)
         val content = if (rowId.startsWith("recent-tv")) "recent_channels" else "live"
-        return hasEnabledRow(system, content) && liveTvRegistry.configured().any { it.source.id == item.channel.sourceId } &&
-            homeTvSourceVisible(item.channel.sourceId, unreachableServers.current().offline,
-                tvheadendConnectionManager.state.value is ServerConnectionState.Online)
+        return hasEnabledRow(system, content) && liveTvRegistry.configured().any { it.source.id == item.channel.sourceId }
     }
 
     private fun playbackRowEnabled(row: ContentRowData): Boolean = when {
@@ -439,8 +453,11 @@ class HomeViewModel @Inject constructor(
             if (current.playbackReturnToken == expected.key) return null
             if (expected.liveTvSource != null) {
                 if (!livePlaybackReturnVisible(expected)) return null
-            } else if (expected.source?.let { homeRowHidden(it.id) } != false) return null
-            return prepareHomePlaybackReturn(current, expected)?.withCurrentLiveHeroArt()
+                return prepareHomePlaybackReturn(current, expected)?.withCurrentLiveHeroArt()
+            }
+            val source = expected.source
+                ?: return null
+            return prepareHomePlaybackReturn(current, expected.copy(source = source))?.withCurrentLiveHeroArt()
         }
         val pending = pendingPlaybackReturn(focusStateKey, pendingYouTubePlaybackReturn.value,
             pendingTelegramPlaybackReturn.value)?.takeIf { it.key == expected.key } ?: return null
@@ -489,6 +506,14 @@ class HomeViewModel @Inject constructor(
 
     // TMDB results repaint only the current hero artwork, never the Home LazyRows. The
     // programme's EPG image and logo are restored automatically when the artwork map resets.
+    init {
+        viewModelScope.launch {
+            availability.changes.collect {
+                if (hasEntered) (_uiState.value as? HomeUiState.Loaded)?.let { publishRows(lastPublication?.first ?: it.rows) }
+            }
+        }
+    }
+
     init {
         viewModelScope.launch {
             liveTvArtwork.titleArt.collect { titleArt ->
@@ -578,9 +603,9 @@ class HomeViewModel @Inject constructor(
                 val hidden = gate.offline
                 if (hidden == previousHidden) return@collect
                 previousHidden = hidden
-                if (hidden.isEmpty()) return@collect
                 when (val current = _uiState.value) {
-                    is HomeUiState.Loaded -> publishRows(current.rows)
+                    // Update saved-state status and programme claims without removing shelves.
+                    is HomeUiState.Loaded -> publishRows(lastPublication?.first ?: current.rows)
                     is HomeUiState.Offline, is HomeUiState.Error, is HomeUiState.WakeTimedOut ->
                         publishRows(emptyList())
                     else -> Unit
@@ -591,8 +616,7 @@ class HomeViewModel @Inject constructor(
 
 
     init {
-        // TVHeadend's channel cache remains available in its own browser, but Home must react
-        // immediately when the service loses or regains its verified connection.
+        // Keep channels visible and update current-programme claims when the service changes.
         viewModelScope.launch {
             var wasOnline = false
             tvheadendConnectionManager.state
@@ -667,8 +691,13 @@ class HomeViewModel @Inject constructor(
         libraryLoading = appPreferences.isConfigured || appPreferences.isJellyfinConfigured || appPreferences.isEmbyConfigured
         ++tvPreviewGeneration
         tvPreviewJob?.cancel()
-        val nextTvScope = liveTvRegistry.configured().joinToString { it.source.id }
-        if (!keepSnapshot || tvPreviewScope != nextTvScope) tvPreview = HomeTvPreview()
+        val nextTvScope = liveTvRegistry.configured().joinToString {
+            com.ambient.tv.livetv.liveTvDisplayNamespace(displaySnapshots, it, liveTvRegistry).orEmpty()
+        }
+        if (!keepSnapshot || tvPreviewScope != nextTvScope) {
+            tvPreview = HomeTvPreview()
+            savedTvSourceIds.clear()
+        }
         tvPreviewComplete = false
         // Retain each provider's last answer until its asynchronous replacement arrives.
         if (!keepSnapshot) continueBySystem.clear()
@@ -867,7 +896,8 @@ class HomeViewModel @Inject constructor(
 
     fun retryOffline() {
         if (!hasEntered || loadJob?.isActive == true || !availability.hasNetwork()) return
-        if (browseProviders.any { availability.state(it) == com.ambient.tv.data.browse.SourceHealth.OFFLINE }) {
+        if (browseProviders.any { availability.browseUnconfirmed(it) &&
+                availability.reportedState(it) != com.ambient.tv.data.browse.SourceHealth.AUTH_REQUIRED }) {
             start(plexOnly, jellyfinOnly, embyOnly, homeFocusStateKey, refreshing = false)
         }
     }
@@ -959,14 +989,11 @@ class HomeViewModel @Inject constructor(
         return rows.subList(0, at) + shown + rows.subList(at, rows.size)
     }
 
-    /**
-     * A dead media server must not blank the library when something else still works.
-     * Confirming the dialog hides that server; with nothing else reachable the blocking state stays.
-     */
+    /** A failed source never replaces an already visible saved catalog. */
     private fun failOrContinue(failure: HomeUiState) {
         val loaded = _uiState.value as? HomeUiState.Loaded
         // An offline media server must not replace already visible cached Home feeds.
-        // Its reconnect entry is still appended to the existing independent rows.
+        // Recovery remains in the compact status above the unchanged shelves.
         if (loaded != null && loaded.rowKeys.isNotEmpty()) return
         unreachableServers.refresh()
         val now = unreachableServers.current()
@@ -1513,7 +1540,7 @@ class HomeViewModel @Inject constructor(
         return if (plexOnly || jellyfinOnly || embyOnly) rows else rows.sortedBy { order[homeRowSource(it.id)] ?: Int.MAX_VALUE }
     }
 
-    /** Home only advertises verified TVHeadend channels; its own browser can still use cache offline. */
+    /** Channel previews use saved metadata; only the central playback entry verifies a stream. */
     private fun startTvPreview() {
         val generation = ++tvPreviewGeneration
         tvPreviewJob?.cancel()
@@ -1540,44 +1567,75 @@ class HomeViewModel @Inject constructor(
             hasEnabledRow(it.source.system, "live") || hasEnabledRow(it.source.system, "recent_channels")
         }
         val previews = repositories.map { repo -> async {
+            val previous = HomeTvPreview(
+                tvPreview.live.filter { it.channel.sourceId == repo.source.id }.map { it.copy(event = null) },
+                tvPreview.recent.filter { it.channel.sourceId == repo.source.id }.map { it.copy(event = null) },
+            )
             suspendResult {
-                if (repo.source.system == "tvheadend") {
-                    // capabilities()/channels() can succeed from the disk cache while TVHeadend
-                    // is switched off. Wait for the shared WOL/connect result, then make a fresh
-                    // uncached API probe before claiming that these channels are playable.
-                    if (!tvheadendConnectionManager.ensureConnected() ||
-                        tvheadendRepository.probeServerInfo().isFailure
-                    ) return@suspendResult HomeTvPreview()
-                }
-                if (!loadCoordinator.request(repo.source.id, "home:capabilities", BrowseLoadPriority.HOME) {
-                        repo.capabilities()
-                    }.available) return@suspendResult HomeTvPreview()
-                val channels = loadCoordinator.request(repo.source.id, "home:channels", BrowseLoadPriority.HOME) {
-                    repo.channels()
-                }
                 val historyScope = if (repo.source.system == "tvheadend") appPreferences.tvheadendHistoryScope else repo.source.id
                 val recent = appPreferences.recentTvChannelIds(historyScope)
                 val showLive = hasEnabledRow(repo.source.system, "live")
                 val showRecent = hasEnabledRow(repo.source.system, "recent_channels")
                 val headers = repo.authHeaders()
                 fun item(channel: TvhChannel) = HomeLiveTvItem(channel, null, headers, repo.source.name)
-                val preview = HomeTvPreview(
+                fun preview(channels: List<TvhChannel>) = HomeTvPreview(
                     if (showLive) channels.take(HOME_LIVE_TV_LIMIT).map(::item) else emptyList(),
                     if (showRecent) recent.mapNotNull { id -> channels.firstOrNull { it.uuid == id }?.let(::item) } else emptyList())
+                fun publish(preview: HomeTvPreview) {
+                    if (liveTvRegistry.displayCacheIdentity(repo) == null) return
+                    tvPreview = HomeTvPreview(
+                        tvPreview.live.filterNot { it.channel.sourceId == repo.source.id } + preview.live,
+                        tvPreview.recent.filterNot { it.channel.sourceId == repo.source.id } + preview.recent,
+                    )
+                    (_uiState.value as? HomeUiState.Loaded)?.let { publishRows(it.rows) }
+                }
+                val namespace = com.ambient.tv.livetv.liveTvDisplayNamespace(displaySnapshots, repo, liveTvRegistry)
+                    ?: return@suspendResult HomeTvPreview()
+                val cachedChannels = liveTvRegistry.browseState(repo).dashboard?.channels
+                    ?: displaySnapshots.read<com.ambient.tv.livetv.LiveTvDashboard>(namespace, "dashboard")?.channels
+                    ?: displaySnapshots.read<List<TvhChannel>>(namespace, "channels")
+                if (liveTvRegistry.displayCacheIdentity(repo) == null) return@suspendResult HomeTvPreview()
+                if (!cachedChannels.isNullOrEmpty()) {
+                    savedTvSourceIds += repo.source.id
+                    publish(preview(cachedChannels))
+                }
+                val channelResult = suspendResult {
+                    val source = com.ambient.tv.livetv.liveTvHostSource(repo.source.id, repo.source.system)
+                    val force = availability.browseUnconfirmed(source)
+                    val started = availability.accessGeneration(source)
+                    loadCoordinator.request(repo.source.id, "home:channels", BrowseLoadPriority.HOME) { repo.channels(force) }
+                        .also {
+                            if (force && !repo.servingCachedData && liveTvRegistry.displayCacheIdentity(repo) != null)
+                                availability.confirmBrowseRead(source, started)
+                        }
+                }
+                val channels = channelResult.getOrElse {
+                    savedTvSourceIds += repo.source.id
+                    cachedChannels ?: return@suspendResult previous
+                }
+                kotlinx.coroutines.currentCoroutineContext().ensureActive()
+                if (liveTvRegistry.displayCacheIdentity(repo) == null) return@suspendResult HomeTvPreview()
+                val storedChannels = channelResult.isFailure || repo.servingCachedData
+                if (storedChannels) savedTvSourceIds += repo.source.id else savedTvSourceIds -= repo.source.id
+                if (!storedChannels) displaySnapshots.write("livetv:${repo.source.id}", namespace, "channels", channels)
+                val preview = preview(channels)
                 // Publish usable channel cards before waiting for EPG.
-                tvPreview = HomeTvPreview(
-                    tvPreview.live.filterNot { it.channel.sourceId == repo.source.id } + preview.live,
-                    tvPreview.recent.filterNot { it.channel.sourceId == repo.source.id } + preview.recent,
-                )
-                (_uiState.value as? HomeUiState.Loaded)?.let { publishRows(it.rows) }
+                publish(preview)
+                if (storedChannels) return@suspendResult preview
                 val events = suspendResult {
                     loadCoordinator.request(repo.source.id, "home:now-events", BrowseLoadPriority.HOME) {
                         repo.nowEvents()
                     }
                 }.getOrDefault(emptyList()).associateBy { it.channelUuid }
-                HomeTvPreview(preview.live.map { it.copy(event = events[it.channel.uuid]) },
-                    preview.recent.map { it.copy(event = events[it.channel.uuid]) })
-            }.getOrDefault(HomeTvPreview())
+                if (liveTvRegistry.displayCacheIdentity(repo) == null) return@suspendResult HomeTvPreview()
+                HomeTvPreview(preview.live.map { it.copy(event = events[it.channel.uuid].takeUnless { repo.servingCachedData }) },
+                    preview.recent.map { it.copy(event = events[it.channel.uuid].takeUnless { repo.servingCachedData }) })
+            }.getOrElse {
+                if (liveTvRegistry.displayCacheIdentity(repo) != null) {
+                    savedTvSourceIds += repo.source.id
+                    previous
+                } else HomeTvPreview()
+            }
         } }.map { it.await() }
         HomeTvPreview(previews.flatMap { it.live }, previews.flatMap { it.recent })
     }
@@ -2293,8 +2351,8 @@ class HomeViewModel @Inject constructor(
 
     /**
      * Adds (or refreshes) the cross-system continue row: every server's in-progress titles in one
-     * row, most recently watched first, the same title from two servers once. Offline media
-     * servers retain their cached lists until a verified fresh answer replaces them.
+     * row, most recently watched first, the same title from two available servers once.
+     * Offline sources retain their cached lists but do not contribute playable Home cards.
      */
     private fun withAllContinueRow(rows: List<ContentRowData>): List<ContentRowData> {
         val others = rows.filterNot { it.id == ALL_CONTINUE_ROW_ID }
@@ -2304,14 +2362,12 @@ class HomeViewModel @Inject constructor(
             HomeRowDefinition.SYSTEM_JELLYFIN to jellyfinRepository,
             HomeRowDefinition.SYSTEM_EMBY to embyRepository,
         ).filter { (system, _) -> system in appPreferences.allContinueSystems && homeSystemActive(system) }
-        val items = sources.flatMap { (system, repository) ->
-            // Use the cached list only if the server has visible rows, even while it sleeps.
-            continueBySystem[system]
+        val itemsBySystem = sources.associate { (system, repository) ->
+            system to (continueBySystem[system]
                 ?: if (rows.any { it.id.startsWith("$system.") }) runCatching { repository.cachedOnDeck() }.getOrNull().orEmpty() else emptyList()
+            )
         }
-            .sortedByDescending { it.lastViewedAt ?: 0L }
-            .distinctBy { it.canonicalContentKey }
-            .take(HOME_ROW_LIMIT)
+        val items = homeContinueItems(itemsBySystem, unreachableServers.current().offline, HOME_ROW_LIMIT)
         if (items.isEmpty()) return others
         val row = ContentRowData(
             definition.displayTitle(context),
@@ -2349,11 +2405,14 @@ class HomeViewModel @Inject constructor(
             heldPublication = rows to hasRows
             return
         }
+        val offlineSystems = unreachableServers.current().offline
+        // Saved rows are previews. Their IDs and positions survive connection changes.
+        val visibleMediaRows = rows
         // On handhelds there is no Android TV launcher. On TVs, convert potentially
         // hundreds of metadata records only after the debounce expires, on the IO worker.
         val mediaConfigured = appPreferences.isConfigured || appPreferences.isJellyfinConfigured || appPreferences.isEmbyConfigured
         if ((hasRows || !mediaConfigured) && launcherPublisher.channelPublishingEnabled) {
-            val launcherRows = rows.filterNot { homeRowHidden(it.id) }
+            val launcherRows = visibleMediaRows
             val continueRows = launcherRows.filter { it.id == ALL_CONTINUE_ROW_ID }
                 .ifEmpty { launcherRows.filter { it.id.endsWith(".continue") } }
             val recentRows = launcherRows.filter { ".recentlyAdded" in it.id }
@@ -2389,14 +2448,13 @@ class HomeViewModel @Inject constructor(
             }
         }
         @Suppress("NAME_SHADOWING")
-        val combinedRows = rows.filterNot {
+        val combinedRows = visibleMediaRows.filterNot {
             it.id == PHOTO_ROW_ID || it.id.startsWith("trailers.") || it.id.startsWith("radio.") ||
-                it.id.startsWith("youtube.") || it.id.startsWith("telegram.") || it.id.startsWith("games.") || homeRowHidden(it.id)
-        } + listOfNotNull(photoRow?.takeUnless { homeRowHidden(it.id) }) + trailerRows + radioRows + gameRows + youtubeRows + telegramRows
+                it.id.startsWith("youtube.") || it.id.startsWith("telegram.") || it.id.startsWith("games.")
+        } + listOfNotNull(photoRow) + trailerRows + radioRows + gameRows + youtubeRows + telegramRows
         val playedRow = trailerPlaybackReturn.source?.takeIf {
             playbackRowEnabled(it) || (it.items.none { item -> homeTrailerVideoId(item.ratingKey) != null ||
-                homeYouTubeVideoId(item.ratingKey) != null || item.ratingKey.startsWith(com.ambient.tv.data.telegram.TELEGRAM_MEDIA_PREFIX) } &&
-                !homeRowHidden(it.id))
+                homeYouTubeVideoId(item.ratingKey) != null || item.ratingKey.startsWith(com.ambient.tv.data.telegram.TELEGRAM_MEDIA_PREFIX) })
         }
         val rows = if (playedRow == null) combinedRows else combinedRows
             .filterNot { it.id == playedRow.id } + playedRow
@@ -2404,8 +2462,17 @@ class HomeViewModel @Inject constructor(
         // can go offline while Home is still open and its cached preview is still in memory.
         val offlineTvSystems = unreachableServers.current().offline
         val tvheadendOnline = tvheadendConnectionManager.state.value is ServerConnectionState.Online
-        val liveTvItems = tvPreview.live.filter { homeTvSourceVisible(it.channel.sourceId, offlineTvSystems, tvheadendOnline) }
-        val recentTvItems = tvPreview.recent.filter { homeTvSourceVisible(it.channel.sourceId, offlineTvSystems, tvheadendOnline) }
+        val nowEpochSeconds = System.currentTimeMillis() / 1_000L
+        fun savedChannel(item: HomeLiveTvItem): HomeLiveTvItem = item.copy(event = item.event?.takeIf {
+            homeTvSourceReachable(item.channel.sourceId, offlineTvSystems, tvheadendOnline) &&
+                !availability.browseUnconfirmed(com.ambient.tv.livetv.liveTvHostSource(item.channel.sourceId, item.channel.sourceId.substringBefore(':'))) && it.isLive(nowEpochSeconds)
+        })
+        val liveTvItems = tvPreview.live.map(::savedChannel)
+        val recentTvItems = tvPreview.recent.map(::savedChannel)
+        val savedLiveSources = (liveTvItems + recentTvItems).filter { item ->
+            item.channel.sourceId in savedTvSourceIds || availability.browseUnconfirmed(
+                com.ambient.tv.livetv.liveTvHostSource(item.channel.sourceId, item.channel.sourceId.substringBefore(':')))
+        }.associate { it.channel.sourceId to it.sourceName.ifBlank { it.channel.sourceId.substringBefore(':') } }
         val previous = _uiState.value as? HomeUiState.Loaded
         val shortcuts = if (plexOnly || jellyfinOnly || embyOnly) emptyList() else appPreferences.homeRows.filter { row ->
             row.enabled && homeSystemActive(row.system) && when (row.system) {
@@ -2435,15 +2502,15 @@ class HomeViewModel @Inject constructor(
             }
         }
         val tvRows = if (returnedTvRow == null) refreshedTvRows else refreshedTvRows +
-            (checkNotNull(returnedTvRow.target.rowId) to checkNotNull(returnedTvRow.liveTvSource))
+            (checkNotNull(returnedTvRow.target.rowId) to checkNotNull(returnedTvRow.liveTvSource).let { row ->
+                row.copy(items = row.items.map(::savedChannel))
+            })
         val homeDefinitions = if (plexOnly || jellyfinOnly || embyOnly) emptyList() else appPreferences.homeRows
         val tvRowSources = tvRows.keys.filter { ':' in it }.associateWith { key -> "${key.substringAfter(':')}.${if (key.startsWith("recent")) "recent_channels" else "live"}" }
-        // Offline providers retain one reconnect row in their original editor position. When
-        // absolutely nothing is available, keep the full offline page instead of a lone row.
-        val offlineReconnectSystems = if (rows.isEmpty() && shortcuts.isEmpty() && tvRows.isEmpty()) emptyList()
-            else unreachableServers.current().offline.filter { system ->
-                homeDefinitions.any { it.enabled && it.system == system }
-            }
+        // Cached shelves stay exactly where the editor placed them. Recovery lives in one
+        // compact status; source cards are only the useful fallback when no snapshot exists.
+        val offlineReconnectSystems = homeOfflineReconnectSystems(homeDefinitions, offlineSystems,
+            hasSavedContent = rows.isNotEmpty() || tvRows.isNotEmpty() || shortcuts.isNotEmpty())
         val orderedRowKeys = orderedHomeRowKeys(homeDefinitions, rows.map { it.id },
             shortcuts, tvRows.containsKey("live-tv"), tvRows.containsKey("recent-tv"), tvRowSources, offlineReconnectSystems)
         // Cold start reveals rows top-down, so Live TV cannot outrun a still-loading media server.
@@ -2534,6 +2601,7 @@ class HomeViewModel @Inject constructor(
             playbackReturnToken = previous?.playbackReturnToken,
             focusRecovery = focusRecovery, focusedRatingKey = focusedKey, focusedRowId = focusedRowId, hero = hero,
             tvRows = tvRows, liveTvItems = liveTvItems, shortcuts = shortcuts, recentTvItems = recentTvItems, rowKeys = rowKeys,
+            savedLiveSources = savedLiveSources,
             liveTvTitle = configuredRow(HomeRowDefinition.SYSTEM_TVHEADEND, "live")?.displayTitle(context).orEmpty(),
             recentTvTitle = configuredRow(HomeRowDefinition.SYSTEM_TVHEADEND, "recent_channels")?.displayTitle(context).orEmpty(),
             initialFocusTarget = initialFocusTarget,
@@ -2662,12 +2730,12 @@ class HomeViewModel @Inject constructor(
         val enabled = appPreferences.homeRows.filter { it.enabled && it.contentKey in setOf("live", "recent_channels") }
         fun allowed(item: HomeLiveTvItem, key: String): Boolean {
             val system = item.channel.sourceId.substringBefore(':').ifBlank { HomeRowDefinition.SYSTEM_TVHEADEND }
-            return enabled.any { it.system == system && it.contentKey == key } && !homeRowHidden("$system.$key")
+            return enabled.any { it.system == system && it.contentKey == key }
         }
         val offlineSystems = unreachableServers.current().offline
         val tvheadendOnline = tvheadendConnectionManager.state.value is ServerConnectionState.Online
         val items = (tvPreview.recent.filter { allowed(it, "recent_channels") } + tvPreview.live.filter { allowed(it, "live") })
-            .filter { homeTvSourceVisible(it.channel.sourceId, offlineSystems, tvheadendOnline) }
+            .filter { homeTvSourceReachable(it.channel.sourceId, offlineSystems, tvheadendOnline) }
             .distinctBy { it.channel.sourceId to it.channel.uuid }
         return com.ambient.tv.launcher.LauncherChannelContent(
             name = null,
@@ -2694,12 +2762,8 @@ class HomeViewModel @Inject constructor(
         else -> null
     }
 
-    private fun homeRowHidden(id: String): Boolean =
-        homeRowHiddenByOffline(id.substringBefore('.'), unreachableServers.current().offline)
-
     private fun homeSystemActive(system: String): Boolean {
-        // Live TV still uses homeTvSourceVisible: only its explicit Online status enables cards.
-        if (homeRowHiddenByOffline(system, unreachableServers.current().offline)) return false
+        // Configuration keeps the source eligible for saved previews and later refreshes.
         return homeSystemReady(
         system,
         plexReady = plexOnly || appPreferences.isConfigured,

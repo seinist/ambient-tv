@@ -53,6 +53,7 @@ internal fun liveTvSearchSource(system: String): SearchSource? = when (system) {
 internal suspend fun searchLiveTvRepositories(
     repositories: List<com.ambient.tv.livetv.LiveTvRepository>,
     query: String,
+    saved: TvhSearchResults = TvhSearchResults(),
 ): Pair<TvhSearchResults, Boolean> = coroutineScope {
     val found = repositories.map { repo -> async {
         suspendResult {
@@ -60,9 +61,20 @@ internal suspend fun searchLiveTvRepositories(
             repo.search(query)
         }
     } }.map { it.await() }
-    val successes = found.mapNotNull { it.getOrNull() }
-    TvhSearchResults(successes.flatMap { it.channels }, successes.flatMap { it.programs }, successes.flatMap { it.recordings },
-        incomplete = successes.isNotEmpty() && found.any { it.isFailure || it.getOrNull()?.incomplete == true }) to
+    val display = found.mapIndexed { index, result ->
+        val id = repositories[index].source.id
+        val previous = TvhSearchResults(saved.channels.filter { it.sourceId == id },
+            saved.programs.filter { it.sourceId == id }, saved.recordings.filter { it.sourceId == id })
+        result.getOrNull()?.let { fresh ->
+            if (!fresh.incomplete) fresh else fresh.copy(
+                channels = (fresh.channels + previous.channels).distinctBy { it.sourceId to it.uuid },
+                programs = (fresh.programs + previous.programs).distinctBy { it.sourceId to it.eventId },
+                recordings = (fresh.recordings + previous.recordings).distinctBy { it.sourceId to it.uuid },
+            )
+        } ?: previous
+    }
+    TvhSearchResults(display.flatMap { it.channels }, display.flatMap { it.programs }, display.flatMap { it.recordings },
+        incomplete = found.any { it.isSuccess } && found.any { it.isFailure || it.getOrNull()?.incomplete == true }) to
         found.any { it.isFailure || it.getOrNull()?.incomplete == true }
 }
 
@@ -122,6 +134,7 @@ class SearchViewModel @Inject constructor(
     private val embyRepository: EmbyRepository,
     private val trailerRepository: TmdbTrailerRepository,
     private val preferences: AppPreferences,
+    private val browseScopes: com.ambient.tv.data.browse.BrowseScopes,
     private val smartTubeEngine: SmartTubeEngine,
     private val spotifyRepository: SpotifyRepository,
     private val radioRepository: RadioBrowserRepository,
@@ -148,13 +161,11 @@ class SearchViewModel @Inject constructor(
         }
 
     private fun availableSearchSources(): Set<SearchSource> {
-        val hidden = unreachableServers.current().offline
         return buildSet {
-            if (preferences.isConfigured && "plex" !in hidden) add(SearchSource.PLEX)
-            if (preferences.isJellyfinConfigured && "jellyfin" !in hidden) add(SearchSource.JELLYFIN)
-            if (preferences.isEmbyConfigured && "emby" !in hidden) add(SearchSource.EMBY)
-            if (liveTvRegistry.configured().any { liveTvSearchSource(it.source.system) == SearchSource.LIVE_TV &&
-                    !(it.source.system == "tvheadend" && "tvheadend" in hidden) }) add(SearchSource.LIVE_TV)
+            if (preferences.isConfigured) add(SearchSource.PLEX)
+            if (preferences.isJellyfinConfigured) add(SearchSource.JELLYFIN)
+            if (preferences.isEmbyConfigured) add(SearchSource.EMBY)
+            if (liveTvRegistry.configured().any { liveTvSearchSource(it.source.system) == SearchSource.LIVE_TV }) add(SearchSource.LIVE_TV)
             if (preferences.trailersEnabled && trailerRepository.configured) add(SearchSource.TRAILERS)
             if (com.ambient.tv.data.telegram.telegramSearchAvailable(com.ambient.tv.BuildConfig.MONOGRAM_NATIVE,
                     preferences.telegramEnabled, telegramRepository.available)) add(SearchSource.TELEGRAM)
@@ -180,10 +191,20 @@ class SearchViewModel @Inject constructor(
     private var searchJob: Job? = null
     private var youtubeProbe: Job? = null
     private var searchRevision = 0L
+    private var resultSourceIdentity = currentSourceIdentity()
+    private fun currentSourceIdentity(): List<String> = listOf("plex", "jellyfin", "emby").map(browseScopes::forProvider) +
+        liveTvRegistry.configured().map { liveTvRegistry.displayCacheIdentity(it).orEmpty() }
 
     fun refreshSources() = refreshSources(preserveResults = false)
 
     private fun refreshSources(preserveResults: Boolean) {
+        val currentIdentity = currentSourceIdentity()
+        if (currentIdentity != resultSourceIdentity) {
+            searchJob?.cancel()
+            searchRevision++
+            resultSourceIdentity = currentIdentity
+            _uiState.update(::clearResults)
+        }
         val available = availableSearchSources()
         if (available != _uiState.value.availableSources) {
             val selected = reconcileSearchSources(_uiState.value.selectedSources, _uiState.value.availableSources, available)
@@ -254,7 +275,7 @@ class SearchViewModel @Inject constructor(
 
     fun useRecentSearch(query: String) = onQueryChanged(query)
 
-    fun submitSearch() = startSearch(preserveResults = false)
+    fun submitSearch() = startSearch(preserveResults = _uiState.value.hasSearched)
 
     internal fun refreshAfterReconnect(returned: com.ambient.tv.ui.common.NavigationPlaybackReturn? = null) {
         val prepared = prepareSearchPlaybackReturn(_uiState.value, returned)
@@ -459,7 +480,7 @@ class SearchViewModel @Inject constructor(
                 }
             }
             if (tvheadendEnabled) launch {
-                val result = suspendResult { searchLiveTvRepositories(tvRepositories, query) }
+                val result = suspendResult { searchLiveTvRepositories(tvRepositories, query, _uiState.value.tvheadendResults) }
                 updateForQuery(query, revision) { state ->
                     result.fold(
                         onSuccess = { state.copy(tvheadendResults = it.first, tvheadendState = liveTvSearchState(it.first, it.second)) },
@@ -482,6 +503,9 @@ class SearchViewModel @Inject constructor(
     }
 
     private inline fun updateForQuery(query: String, revision: Long, transform: (SearchUiState) -> SearchUiState) {
-        _uiState.update { state -> if (state.query.trim() == query && searchRevision == revision && state.hasSearched) transform(state) else state }
+        _uiState.update { state ->
+            if (resultSourceIdentity != currentSourceIdentity()) clearResults(state)
+            else if (state.query.trim() == query && searchRevision == revision && state.hasSearched) transform(state) else state
+        }
     }
 }

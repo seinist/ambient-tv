@@ -77,7 +77,13 @@ class UiRenderConfigurationTest {
                 resources.updateConfiguration(updated, metrics)
                 host.dispatchConfigurationChanged(updated)
             }
-            rule.waitForIdle()
+            // The host owns a lifecycle-aware window recomposer driven by Choreographer,
+            // separate from the rule's recomposer/test clock. Rule idleness alone does not
+            // guarantee its configuration SideEffect has run. Observe that delivery on the
+            // UI thread, retaining the actual host/recomposer path and all assertions below.
+            rule.waitUntil(timeoutMillis = 5_000) {
+                rule.runOnIdle { observedConfiguration?.densityDpi == updated.densityDpi }
+            }
             rule.runOnIdle {
                 assertSame(originalIdentity, compositionIdentity)
                 assertEquals(updated.densityDpi, checkNotNull(observedConfiguration).densityDpi)
