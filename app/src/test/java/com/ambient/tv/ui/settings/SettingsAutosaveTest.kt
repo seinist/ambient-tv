@@ -21,7 +21,7 @@ class SettingsAutosaveTest {
     }
 
     @Test fun `ordinary settings are saved immediately`() {
-        val changed = saved.copy(nextUpEnabled = !saved.nextUpEnabled,
+        val changed = saved.copy(nextUp = saved.nextUp.copy(enabled = !saved.nextUpEnabled),
             uiDisplay = saved.uiDisplay.copy(scale = saved.uiScale + 0.1f), host = "typing")
         val target = changed.deferredSettingsFrom(saved)
         assertEquals(changed.nextUpEnabled, target.nextUpEnabled)
@@ -40,6 +40,19 @@ class SettingsAutosaveTest {
         assertEquals(90, merged.bigSeekJumpSeconds)
         assertEquals(30, merged.pauseRewindMinPauseSeconds)
         assertEquals(10, merged.resumeRewindSeconds)
+        org.junit.Assert.assertNotEquals(saved.editableValues(), draft.editableValues())
+    }
+
+    @Test fun `minimal Next Up layout saves and merges independently from playback rules`() {
+        val draft = saved.copy(nextUp = saved.nextUp.copy(minimalEnabled = true))
+        val stored = saved.copy(nextUp = saved.nextUp.copy(
+            enabled = false, overlayEnabled = false, leadSeconds = 60, creditsDelaySeconds = 10,
+            autoplayEpisodes = true, autoplayCollections = true, stillWatchingEpisodes = 5,
+        ))
+        assertEquals(true, draft.deferredSettingsFrom(saved).nextUpMinimalEnabled)
+        val merged = mergeStoredSettings(draft, saved, stored)
+        assertEquals(stored.nextUp.copy(minimalEnabled = true), merged.nextUp)
+        assertEquals(true, mergeStoredSettings(saved, saved, draft).nextUpMinimalEnabled)
         org.junit.Assert.assertNotEquals(saved.editableValues(), draft.editableValues())
     }
 

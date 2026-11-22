@@ -438,6 +438,7 @@ fun YouTubePlayerScreen(
                         autoplay = prefs.youtubeAutoplayNextEnabled && !isTrailer,
                         stillWatchingEvery = prefs.nextUpStillWatchingEpisodes,
                         showOverlay = prefs.nextUpOverlayEnabled,
+                        minimal = prefs.nextUpMinimalEnabled,
                     ),
                 ),
                 onStopped = onBack,
@@ -1290,6 +1291,7 @@ private fun YouTubeMedia3Playback(
                 panelNavigation = panelNavigation,
                 liveDvrWindow = liveDvrWindow,
                 onGoLive = ::jumpToLive,
+                pendingSeek = { seekIsCurrent() && seekCoordinator.pendingTarget != null },
             )
         }
         error?.let { Text(it, color = MaterialTheme.colorScheme.error, modifier = Modifier.align(Alignment.TopCenter).padding(24.dp)) }
@@ -1645,6 +1647,7 @@ private fun YouTubeVlcPlayback(playback: YouTubePlayback, audioUri: String?, str
                 panelNavigation = panelNavigation,
                 liveDvrWindow = liveDvrWindow,
                 onGoLive = ::jumpToLive,
+                pendingSeek = { seekIsCurrent() && seekCoordinator.pendingTarget != null },
             )
         }
     }
@@ -1976,6 +1979,7 @@ private fun YouTubeMpvPlayback(playback: YouTubePlayback, streams: YouTubeStream
                 panelNavigation = panelNavigation,
                 liveDvrWindow = liveDvrWindow,
                 onGoLive = ::jumpToLive,
+                pendingSeek = { seekIsCurrent() && seekCoordinator.pendingTarget != null },
             )
         }
     }
@@ -2001,7 +2005,10 @@ internal data class YouTubeOsdModel(
     val itemControls: PlaybackItemControls? = null,
     val liveDvrWindow: YouTubeLiveDvrWindow? = null,
     val onGoLive: (() -> Unit)? = null,
+    val pendingSeek: () -> Boolean = { false },
 ) : com.ambient.tv.ui.player.PlayerOsdSpec {
+    override fun hasPendingSeek(): Boolean = pendingSeek()
+
     @Composable
     override fun Content(visible: Boolean, panel: UnifiedPlayerPanel) {
         val seekFocusRequester = com.ambient.tv.ui.player.rememberPlayerSeekFocus()
@@ -2152,6 +2159,7 @@ private fun YouTubeControls(
     panelNavigation: com.ambient.tv.ui.common.PlayerPanelNavigation,
     liveDvrWindow: YouTubeLiveDvrWindow? = null,
     onGoLive: (() -> Unit)? = null,
+    pendingSeek: () -> Boolean = { false },
 ) {
     val primaryFocusRequester = com.ambient.tv.ui.player.rememberPlayerPlayFocus()
     val panel by panelNavigation
@@ -2181,6 +2189,7 @@ private fun YouTubeControls(
         itemControls = LocalPlaybackItemControls.current,
         liveDvrWindow = liveDvrWindow,
         onGoLive = onGoLive,
+        pendingSeek = pendingSeek,
     ), visible = controlsVisible)
     com.ambient.tv.ui.player.PublishPlayerPanel(com.ambient.tv.ui.player.PlayerPanelModel(
         scrimAlpha = 0.32f,

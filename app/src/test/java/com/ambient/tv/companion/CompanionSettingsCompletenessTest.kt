@@ -65,6 +65,26 @@ class CompanionSettingsCompletenessTest {
         assertEquals(before.watchedThresholdPercent, accountsOnly.watchedThresholdPercent)
     }
 
+    @Test fun minimalNextUpLayoutTravelsAsAPortablePreferenceAndOmittedValuesStayOmitted() {
+        val target = preferences()
+        fun incoming(minimal: Boolean) = source().copy(extras = SettingsBackupExtras(
+            portable = PortableSettingsExtras(nextUpMinimalEnabled = minimal),
+        ))
+        for (mode in listOf("preferences", "settings")) {
+            send(incoming(true), target, mode)
+            assertTrue(target.nextUpMinimalEnabled)
+            receive("""{"schemaVersion":79,"exportedAtEpochMs":0}""", target, mode)
+            assertTrue(target.nextUpMinimalEnabled)
+            receive("""{"schemaVersion":$schema,"exportedAtEpochMs":0,
+                "extras":{"portable":{"nextUpMinimalEnabled":null}}}""", target, mode)
+            assertTrue(target.nextUpMinimalEnabled)
+            send(incoming(false), target, mode)
+            assertFalse(target.nextUpMinimalEnabled)
+        }
+        send(incoming(true), target, "accounts", device = true)
+        assertFalse(target.nextUpMinimalEnabled)
+    }
+
     @Test fun wakeOnOpenTransfersOnlyWhenExplicitlyProvidedByANewCompanionSender() {
         val target = preferences().apply { wakeOnOpenSystems = setOf("plex") }
         receive("""{"schemaVersion":81,"exportedAtEpochMs":0}""", target)
@@ -114,7 +134,7 @@ class CompanionSettingsCompletenessTest {
             lyricsVisible = false, lyricsOnlineEnabled = false, frameDropOverlayHistory = true,
             liveTvReminderAutoSwitch = true, autoUpdateCheck = false, projectmFavorites = setOf("chosen.milk"),
             keyBindings = mapOf("refresh" to "183:0"), gamepadSettings = mapOf("confirm" to "b"), retroInputSettings = mapOf("dpad_stick" to "1"), gameSettings = mapOf("shader" to "crt"),
-            viewTransitionStyleKey = "slide",
+            viewTransitionStyleKey = "slide", nextUpMinimalEnabled = true,
             gameMetadataOptions = com.ambient.tv.games.metadata.GameMetadataOptions(
                 provider = "thegamesdb", automatic = false, region = "jp", language = "de"),
         )
@@ -141,6 +161,7 @@ class CompanionSettingsCompletenessTest {
             assertFalse(target.lyricsVisible)
             assertFalse(target.lyricsOnlineEnabled)
             assertTrue(target.frameDropOverlayHistory)
+            assertTrue(target.nextUpMinimalEnabled)
             assertEquals("slide", target.viewTransitionStyleKey)
             assertEquals(portable.gameMetadataOptions, target.gameMetadataOptions)
             assertEquals(mapOf("refresh" to "183:0"), target.keyBindings)
@@ -157,6 +178,7 @@ class CompanionSettingsCompletenessTest {
         }
         send(incoming, accountsTarget, "accounts", device = true)
         assertTrue(accountsTarget.gaplessMusicEnabled)
+        assertFalse(accountsTarget.nextUpMinimalEnabled)
         assertEquals("cinematic", accountsTarget.viewTransitionStyleKey)
         assertEquals(256, accountsTarget.imageCacheMb)
         assertEquals(9984, accountsTarget.tvheadendHtspPort)

@@ -4,6 +4,7 @@ import androidx.activity.ComponentActivity
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.mutableStateOf
@@ -11,11 +12,16 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
+import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onRoot
+import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performKeyInput
 import androidx.compose.ui.test.pressKey
 import com.ambient.tv.companion.CompanionQueuePlayback
+import com.ambient.tv.R
+import com.ambient.tv.ui.common.UnifiedPlayerPanel
 import com.ambient.tv.ui.mobile.LocalHandheldUi
 import java.time.Duration
 import org.junit.After
@@ -78,6 +84,7 @@ class PlaybackItemControlsTest {
             BackgroundPlaybackSession.takeCompleted()
             CompanionQueuePlayback.pending = false
             videoImagePreferences(rule.activity).pauseRewindSeconds = 0
+            videoImagePreferences(rule.activity).nextUpMinimalEnabled = false
         }
     }
 
@@ -85,6 +92,7 @@ class PlaybackItemControlsTest {
         rule.runOnUiThread {
             CompanionQueuePlayback.pending = false
             videoImagePreferences(rule.activity).pauseRewindSeconds = 0
+            videoImagePreferences(rule.activity).nextUpMinimalEnabled = false
             BackgroundPlaybackSession.stop()
             BackgroundPlaybackSession.takeCompleted()
         }
@@ -95,6 +103,7 @@ class PlaybackItemControlsTest {
         clock: Clock = Clock(),
         onTimelineSeek: ((Long) -> Unit)? = null,
         hasPrevious: Boolean = false,
+        chrome: PlayerChromeState? = null,
     ): Fixture {
         val fixture = Fixture(metadata, clock).apply { previousAvailable.value = hasPrevious }
         rule.runOnUiThread {
@@ -104,6 +113,7 @@ class PlaybackItemControlsTest {
             CompositionLocalProvider(
                 LocalPlayerChangingItem provides fixture.changing.value,
                 LocalHandheldUi provides true,
+                LocalPlayerChromeState provides chrome,
             ) {
                 PlaybackSessionContent(
                     metadata = fixture.metadata.value,
@@ -489,6 +499,197 @@ class PlaybackItemControlsTest {
         rule.waitForIdle()
         rule.runOnIdle {
             assertFalse(BackgroundPlaybackSession.snapshot.value.active)
+            assertTrue(fixture.advances.isEmpty())
+        }
+    }
+
+    @Test fun minimalCloseHidesTheCardButAutoplayStillAdvancesOnlyOnceAtTheEnd() {
+        rule.runOnUiThread { videoImagePreferences(rule.activity).nextUpMinimalEnabled = true }
+        val fixture = mount(metadata().copy(nextUpConfig = NextUpConfig(
+            enabled = true, autoplay = true, stillWatchingEvery = 0, minimal = true,
+        )), clock = Clock().apply { position = 100_000L })
+        rule.onNodeWithText(rule.activity.getString(R.string.next_up_close)).performClick()
+        rule.onNodeWithText(successor.title).assertDoesNotExist()
+        rule.runOnIdle {
+            assertTrue(fixture.advances.isEmpty())
+            assertTrue(BackgroundPlaybackSession.snapshot.value.metadata!!.nextUpConfig.autoplay)
+            fixture.clock.position = 120_000L
+            fixture.clock.ended = true
+            fixture.clock.playing = false
+            BackgroundPlaybackSession.tick()
+        }
+        rule.waitForIdle()
+        rule.runOnIdle { BackgroundPlaybackSession.tick() }
+        rule.runOnIdle { assertEquals(listOf(successor), fixture.advances) }
+    }
+
+    @Test fun minimalPlayAndAnAlreadyPublishedNextActionCannotStartTheSuccessorTwice() {
+        rule.runOnUiThread { videoImagePreferences(rule.activity).nextUpMinimalEnabled = true }
+        val fixture = mount(metadata().copy(nextUpConfig = NextUpConfig(
+            enabled = true, autoplay = false, minimal = true,
+        )), clock = Clock().apply { position = 100_000L })
+        val next = rule.runOnIdle { requireNotNull(fixture.controls?.next) }
+        rule.onNodeWithText(rule.activity.getString(R.string.player_play)).performClick()
+        rule.runOnIdle {
+            next()
+            next()
+            assertEquals(listOf(successor), fixture.advances)
+        }
+        rule.onNodeWithText(successor.title).assertDoesNotExist()
+    }
+
+    @Test fun minimalStillWatchingRemainsABoundedManualChoiceEvenWithTheOverlayDisabled() {
+        rule.runOnUiThread { videoImagePreferences(rule.activity).nextUpMinimalEnabled = true }
+        val fixture = mount(metadata().copy(nextUpConfig = NextUpConfig(
+            enabled = true, autoplay = true, stillWatchingEvery = 1, showOverlay = false, minimal = true,
+        )))
+        rule.mainClock.autoAdvance = false
+        rule.runOnIdle {
+            BackgroundPlaybackSession.recordAutomaticNextUp(successor)
+            fixture.clock.position = 120_000L
+            fixture.clock.ended = true
+            fixture.clock.playing = false
+            BackgroundPlaybackSession.tick()
+        }
+        rule.mainClock.advanceTimeBy(300L)
+        rule.waitForIdle()
+        rule.onNodeWithText(rule.activity.getString(R.string.next_up_still_watching)).assertIsDisplayed()
+        rule.onNodeWithText(rule.activity.getString(R.string.next_up_continue)).assertIsDisplayed()
+        rule.runOnIdle { assertTrue(fixture.advances.isEmpty()) }
+        rule.mainClock.advanceTimeBy(NEXT_UP_CONFIRMATION_TIMEOUT_MS + 1_000L)
+        rule.waitForIdle()
+        rule.runOnIdle {
+            assertFalse(BackgroundPlaybackSession.snapshot.value.active)
+            assertTrue(fixture.advances.isEmpty())
+        }
+    }
+
+    @Test fun minimalCardYieldsToTheOsdWithoutCancellingTheAutoplayTransition() {
+        rule.runOnUiThread { videoImagePreferences(rule.activity).nextUpMinimalEnabled = true }
+        val chrome = PlayerChromeState().apply { osd.hideImmediately() }
+        val fixture = mount(metadata().copy(nextUpConfig = NextUpConfig(
+            enabled = true, autoplay = true, stillWatchingEvery = 0, minimal = true,
+        )), clock = Clock().apply { position = 100_000L }, chrome = chrome)
+        rule.onNodeWithText(successor.title).assertIsDisplayed()
+        rule.runOnIdle { chrome.osd.expand() }
+        rule.onNodeWithText(successor.title).assertDoesNotExist()
+        rule.runOnIdle {
+            assertTrue(chrome.osd.visible.value)
+            fixture.clock.position = 120_000L
+            fixture.clock.ended = true
+            fixture.clock.playing = false
+            BackgroundPlaybackSession.tick()
+        }
+        rule.runOnIdle { assertEquals(listOf(successor), fixture.advances) }
+    }
+
+    @Test fun minimalTerminalConfirmationHidesThePassiveOsdBeforeItsBoundedDeadline() {
+        rule.runOnUiThread { videoImagePreferences(rule.activity).nextUpMinimalEnabled = true }
+        val chrome = PlayerChromeState().apply { osd.expand() }
+        val fixture = mount(metadata().copy(nextUpConfig = NextUpConfig(
+            enabled = true, autoplay = true, stillWatchingEvery = 1, minimal = true,
+        )), chrome = chrome)
+        rule.mainClock.autoAdvance = false
+        rule.runOnIdle {
+            BackgroundPlaybackSession.recordAutomaticNextUp(successor)
+            fixture.clock.position = 120_000L
+            fixture.clock.ended = true
+            fixture.clock.playing = false
+            BackgroundPlaybackSession.tick()
+        }
+        rule.mainClock.advanceTimeBy(300L)
+        rule.waitForIdle()
+        rule.runOnIdle {
+            assertFalse("An ended player's passive OSD must not hide the entire confirmation", chrome.osd.visible.value)
+            assertTrue(BackgroundPlaybackSession.snapshot.value.active)
+            assertTrue(fixture.advances.isEmpty())
+        }
+        rule.onNodeWithText(rule.activity.getString(R.string.next_up_still_watching)).assertIsDisplayed()
+        rule.onNodeWithText(rule.activity.getString(R.string.next_up_continue)).assertIsDisplayed()
+        rule.mainClock.advanceTimeBy(NEXT_UP_CONFIRMATION_TIMEOUT_MS + 1_000L)
+        rule.waitForIdle()
+        rule.runOnIdle {
+            assertFalse(BackgroundPlaybackSession.snapshot.value.active)
+            assertTrue(fixture.advances.isEmpty())
+        }
+    }
+
+    @Test fun minimalTerminalConfirmationWaitsForAnActiveScrubBeforeTakingTheOsd() {
+        rule.runOnUiThread { videoImagePreferences(rule.activity).nextUpMinimalEnabled = true }
+        val chrome = PlayerChromeState().apply { osd.expand() }
+        val fixture = mount(metadata().copy(nextUpConfig = NextUpConfig(
+            enabled = true, autoplay = true, stillWatchingEvery = 1, minimal = true,
+        )), chrome = chrome)
+        rule.mainClock.autoAdvance = false
+        rule.runOnIdle {
+            BackgroundPlaybackSession.recordAutomaticNextUp(successor)
+            chrome.osd.progressiveSeek.press(-1, 119_000L, 120_000L)
+            fixture.clock.position = 120_000L
+            fixture.clock.ended = true
+            fixture.clock.playing = false
+            BackgroundPlaybackSession.tick()
+        }
+        rule.mainClock.advanceTimeBy(300L)
+        rule.waitForIdle()
+        rule.runOnIdle {
+            assertTrue("Held seek input retains its OSD", chrome.osd.visible.value)
+            assertTrue(chrome.osd.progressiveSeek.active)
+            assertTrue(fixture.advances.isEmpty())
+        }
+        rule.onNodeWithText(rule.activity.getString(R.string.next_up_still_watching)).assertDoesNotExist()
+        rule.runOnIdle { chrome.osd.progressiveSeek.cancel() }
+        rule.mainClock.advanceTimeBy(300L)
+        rule.waitForIdle()
+        rule.runOnIdle { assertFalse(chrome.osd.visible.value) }
+        rule.onNodeWithText(rule.activity.getString(R.string.next_up_continue)).assertIsDisplayed()
+    }
+
+    @Test fun pendingDecoderAckReleasesTerminalConfirmationWithoutAnotherSnapshotOrANewDeadline() {
+        rule.runOnUiThread { videoImagePreferences(rule.activity).nextUpMinimalEnabled = true }
+        var awaitingDecoderAck = true // Deliberately not Compose state: only the poll can observe completion.
+        val chrome = PlayerChromeState().apply {
+            osd.expand()
+            osdModel.value = object : PlayerOsdSpec {
+                override fun hasPendingSeek() = awaitingDecoderAck
+                @Composable override fun Content(visible: Boolean, panel: UnifiedPlayerPanel) = Unit
+            }
+        }
+        val fixture = mount(metadata().copy(nextUpConfig = NextUpConfig(
+            enabled = true, autoplay = true, stillWatchingEvery = 1, minimal = true,
+        )), chrome = chrome)
+        rule.mainClock.autoAdvance = false
+        rule.runOnIdle {
+            BackgroundPlaybackSession.recordAutomaticNextUp(successor)
+            fixture.clock.position = 120_000L
+            fixture.clock.ended = true
+            fixture.clock.playing = false
+            BackgroundPlaybackSession.tick()
+        }
+        val start = rule.mainClock.currentTime
+        rule.mainClock.advanceTimeBy(NEXT_UP_CONFIRMATION_TIMEOUT_MS / 2)
+        rule.waitForIdle()
+        rule.runOnIdle {
+            assertTrue("An unacknowledged decoder seek retains the OSD", chrome.osd.visible.value)
+            assertTrue(BackgroundPlaybackSession.snapshot.value.active)
+        }
+        rule.onNodeWithText(rule.activity.getString(R.string.next_up_continue)).assertDoesNotExist()
+        // No tick, model publication, seek-version change or observable state mutation follows.
+        rule.runOnIdle { awaitingDecoderAck = false }
+        rule.mainClock.advanceTimeBy(300L)
+        rule.waitForIdle()
+        rule.runOnIdle {
+            assertFalse("The live decoder guard must be rechecked even with a stopped clock", chrome.osd.visible.value)
+            assertTrue(BackgroundPlaybackSession.snapshot.value.active)
+            assertEquals(120_000L, BackgroundPlaybackSession.snapshot.value.status.positionMs)
+            assertTrue(fixture.advances.isEmpty())
+        }
+        rule.onNodeWithText(rule.activity.getString(R.string.next_up_continue)).assertIsDisplayed()
+        // This is after the original deadline but before a deadline restarted on acknowledgement.
+        rule.mainClock.advanceTimeBy(NEXT_UP_CONFIRMATION_TIMEOUT_MS + 1_000L - (rule.mainClock.currentTime - start))
+        rule.waitForIdle()
+        rule.runOnIdle {
+            assertFalse("Showing the delayed prompt must not extend its original deadline",
+                BackgroundPlaybackSession.snapshot.value.active)
             assertTrue(fixture.advances.isEmpty())
         }
     }

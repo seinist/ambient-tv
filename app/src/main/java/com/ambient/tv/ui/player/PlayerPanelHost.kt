@@ -295,6 +295,8 @@ private fun PlayerPanelContent(model: PlayerPanelModel, navigation: com.ambient.
 internal interface PlayerOsdSpec {
     /** Only live channel players provide this to prevent stale OSD models on a channel change. */
     val sourceIdentity: String? get() = null
+    /** Read the current seek owner, including an unacknowledged decoder seek. */
+    fun hasPendingSeek(): Boolean = false
     /** [visible]: the shared OSD visibility; [panel]: the open panel. */
     @Composable
     fun Content(visible: Boolean, panel: UnifiedPlayerPanel)
@@ -330,6 +332,8 @@ internal data class PlayerOsdModel(
     /** The engine's technical badges (engine, mode, resolution, codecs). */
     val badges: @Composable () -> Unit,
 ) : PlayerOsdSpec {
+    override fun hasPendingSeek(): Boolean = seekState.isActive && seekState.awaitingSeekAck
+
     @Composable
     override fun Content(visible: Boolean, panel: UnifiedPlayerPanel) = PlayerOsdContent(this, visible, panel)
 }

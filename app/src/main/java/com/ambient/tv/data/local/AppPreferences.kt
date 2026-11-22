@@ -1583,6 +1583,10 @@ class AppPreferences @Inject constructor(
         get() = prefs.getBoolean(KEY_NEXT_UP_OVERLAY_ENABLED, true)
         set(value) = prefs.edit { putBoolean(KEY_NEXT_UP_OVERLAY_ENABLED, value) }
 
+    var nextUpMinimalEnabled: Boolean
+        get() = prefs.getBoolean(KEY_NEXT_UP_MINIMAL_ENABLED, false)
+        set(value) = prefs.edit { putBoolean(KEY_NEXT_UP_MINIMAL_ENABLED, value) }
+
     var nextUpStillWatchingEpisodes: Int
         get() = prefs.getInt(KEY_NEXT_UP_STILL_WATCHING, 3).takeIf { it in NEXT_UP_STILL_WATCHING_VALUES } ?: 3
         set(value) = prefs.edit { putInt(KEY_NEXT_UP_STILL_WATCHING, value.takeIf { it in NEXT_UP_STILL_WATCHING_VALUES } ?: 3) }
@@ -2732,6 +2736,7 @@ class AppPreferences @Inject constructor(
         const val KEY_NEXT_UP_AUTOPLAY_EPISODES = "next_up_autoplay_episodes"
         const val KEY_NEXT_UP_AUTOPLAY_COLLECTIONS = "next_up_autoplay_collections"
         const val KEY_NEXT_UP_OVERLAY_ENABLED = "next_up_overlay_enabled"
+        const val KEY_NEXT_UP_MINIMAL_ENABLED = "next_up_minimal_enabled"
         const val KEY_NEXT_UP_STILL_WATCHING = "next_up_still_watching_episodes"
         val NEXT_UP_LEAD_SECONDS = setOf(10, 20, 30, 60)
         val NEXT_UP_STILL_WATCHING_VALUES = setOf(0, 2, 3, 5)

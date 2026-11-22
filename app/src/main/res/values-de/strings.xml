@@ -1162,6 +1162,8 @@
     <string name="settings_next_up_autoplay_collections_hint">Spielt den nächsten Film der Sammlung.</string>
     <string name="settings_next_up_overlay">Next-Up-Overlay anzeigen</string>
     <string name="settings_next_up_overlay_hint">Vorschau vor dem Ende einblenden.</string>
+    <string name="settings_next_up_minimal">Minimalistischer NextUp-Dialog</string>
+    <string name="settings_next_up_minimal_hint">Zeigt eine kompakte Vorschau auf den nächsten Titel.</string>
     <string name="settings_next_up_advances">%1$d Wechsel</string>
     <string name="player_next_item">Nächstes Element</string>
     <string name="player_previous_item">Vorheriges Video</string>
@@ -1744,6 +1746,8 @@
     <string name="next_up_ready">Bereit zur Wiedergabe</string>
     <string name="next_up_autoplay_on">Automatische Wiedergabe an</string>
     <string name="next_up_autoplay_off">Automatische Wiedergabe aus</string>
+    <string name="next_up_autoplay_off_short">Autoplay aus</string>
+    <string name="next_up_starts_in_short">Start in %1$d s</string>
     <string name="next_up_confirm">Zum Weiterschauen bestätigen</string>
     <string name="next_up_episode_starts_in">Nächste Folge startet in %1$d s</string>
     <string name="next_up_item_starts_in">Nächster Titel startet in %1$d s</string>

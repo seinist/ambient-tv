@@ -2,6 +2,10 @@ package com.ambient.tv.ui.player
 
 import com.ambient.tv.ui.common.requestHeaders
 import coil3.request.crossfade
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.focusGroup
@@ -73,17 +77,38 @@ internal fun NextUpOverlay(
     playFocus: FocusRequester = remember(candidate.source, candidate.mediaId) { FocusRequester() },
     /** False while a player panel or dialog owns the remote: the card then does not take focus. */
     claimFocus: Boolean = true,
+    minimal: Boolean = false,
+    /** An outgoing fade is visual only; it must release remote, Back and pointer input at once. */
+    interactive: Boolean = true,
 ) {
     val handheld = com.ambient.tv.ui.mobile.LocalHandheldUi.current
     var actionFocused by remember(candidate.source, candidate.mediaId) { mutableStateOf(false) }
     val footerButtons = remember { DialogButtonFocusScope(containSingleButton = true) }
     TransientPlayerActionFocus(
-        visible = claimFocus,
+        visible = claimFocus && interactive,
         requester = playFocus,
         hasActionFocus = actionFocused,
         onDismiss = onDismiss,
         persistent = true,
     )
+    val actionModifier = Modifier.fillMaxWidth()
+        .onFocusChanged { actionFocused = it.hasFocus }
+        .focusProperties {
+            onExit = {
+                if (interactive) {
+                    when (requestedFocusDirection) {
+                        FocusDirection.Left, FocusDirection.Right,
+                        FocusDirection.Up, FocusDirection.Down -> cancelFocusChange()
+                        else -> Unit
+                    }
+                }
+            }
+        }.focusGroup()
+    if (minimal) {
+        MinimalNextUpCard(candidate, secondsRemaining, autoplay, stillWatching,
+            onPlayNow, onDismiss, modifier, playFocus, interactive, actionModifier, footerButtons)
+        return
+    }
     val shape = RoundedCornerShape(14.dp)
     Column(
         modifier = modifier
@@ -154,19 +179,7 @@ internal fun NextUpOverlay(
         // credits controls wrap; the primary action stays at the end of its line.
         CompositionLocalProvider(LocalDialogButtonFocus provides footerButtons) {
             FlowRow(
-                modifier = Modifier.fillMaxWidth()
-                    .onFocusChanged { actionFocused = it.hasFocus }
-                    .focusProperties {
-                        onExit = {
-                            // Keep D-pad navigation in the overlay, including a one-button
-                            // wrapped line. Explicit focus returns after an action still work.
-                            when (requestedFocusDirection) {
-                                FocusDirection.Left, FocusDirection.Right,
-                                FocusDirection.Up, FocusDirection.Down -> cancelFocusChange()
-                                else -> Unit
-                            }
-                        }
-                    }.focusGroup(),
+                modifier = actionModifier,
                 horizontalArrangement = Arrangement.spacedBy(if (handheld) 8.dp else 10.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
@@ -203,6 +216,108 @@ internal fun NextUpOverlay(
                         prominent = true,
                     )
                 }
+            }
+        }
+    }
+}
+
+/** Presentation-only transition. Session replacement removes this host instead of fading stale actions. */
+@Composable
+internal fun NextUpOverlayVisibility(
+    visible: Boolean,
+    minimal: Boolean,
+    modifier: Modifier = Modifier,
+    content: @Composable () -> Unit,
+) {
+    if (minimal && !com.ambient.tv.ui.performance.LocalPerformanceProfile.current.reducedEffects) {
+        AnimatedVisibility(
+            visible = visible,
+            modifier = modifier,
+            enter = fadeIn(tween(180)),
+            exit = fadeOut(tween(140)),
+        ) { content() }
+    } else if (visible) {
+        Box(modifier) { content() }
+    }
+}
+
+/** The small card never enters the image loader or renders the full card's secondary controls. */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun MinimalNextUpCard(
+    candidate: NextUpCandidate,
+    secondsRemaining: Int,
+    autoplay: Boolean,
+    stillWatching: Boolean,
+    onPlayNow: () -> Unit,
+    onDismiss: () -> Unit,
+    modifier: Modifier,
+    playFocus: FocusRequester,
+    interactive: Boolean,
+    actionModifier: Modifier,
+    footerButtons: DialogButtonFocusScope,
+) {
+    val shape = RoundedCornerShape(14.dp)
+    val handheld = com.ambient.tv.ui.mobile.LocalHandheldUi.current
+    val context = remember(candidate) {
+        val episode = if (candidate.mediaType == "episode") buildList {
+            candidate.season?.takeIf { it >= 0 }?.let { add("S${it.toString().padStart(2, '0')}") }
+            candidate.episode?.takeIf { it > 0 }?.let { add("E${it.toString().padStart(2, '0')}") }
+        }.joinToString(" ") else ""
+        episode.ifBlank { candidate.subtitle.trim().takeUnless { it == candidate.title }.orEmpty() }
+    }
+    val heading = stringResource(if (stillWatching) R.string.next_up_still_watching else R.string.next_up_title)
+    val countdownText = when (nextUpCountdown(autoplay, stillWatching, secondsRemaining)) {
+        // The question and Continue action already provide the complete confirmation prompt.
+        NextUpCountdown.CONFIRMATION -> ""
+        NextUpCountdown.DISABLED -> stringResource(R.string.next_up_autoplay_off_short)
+        NextUpCountdown.READY -> stringResource(R.string.next_up_ready)
+        NextUpCountdown.COUNTDOWN -> stringResource(R.string.next_up_starts_in_short, secondsRemaining)
+    }
+    Column(
+        modifier = modifier.widthIn(max = 400.dp).fillMaxWidth()
+            .background(Color(0xF216181B), shape)
+            .border(1.dp, Color.White.copy(alpha = 0.14f), shape)
+            .padding(if (handheld) 14.dp else 16.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        // Natural wrapping preserves readable text for narrow handsets and larger font scales.
+        FlowRow(
+            Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalArrangement = Arrangement.spacedBy(4.dp),
+        ) {
+            Text(
+                if (context.isNotBlank() && !stillWatching) "$heading · $context" else heading,
+                Modifier.padding(end = 12.dp),
+                color = Color.White.copy(alpha = 0.72f), fontSize = 13.sp,
+                maxLines = 1, overflow = TextOverflow.Ellipsis,
+            )
+            if (countdownText.isNotEmpty()) {
+                Text(countdownText, color = Color.White, fontSize = 13.sp)
+            }
+        }
+        Text(candidate.title, color = Color.White, fontSize = if (handheld) 18.sp else 20.sp,
+            fontWeight = FontWeight.SemiBold, maxLines = 2, overflow = TextOverflow.Ellipsis)
+        CompositionLocalProvider(LocalDialogButtonFocus provides footerButtons) {
+            FlowRow(
+                modifier = actionModifier,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                TvActionButton(
+                    stringResource(if (stillWatching) R.string.next_up_continue else R.string.player_play),
+                    { if (interactive) onPlayNow() },
+                    Modifier.focusRequester(playFocus).focusProperties { canFocus = interactive },
+                    enabled = interactive,
+                    prominent = true,
+                )
+                TvActionButton(
+                    stringResource(R.string.next_up_close),
+                    { if (interactive) onDismiss() },
+                    Modifier.focusProperties { canFocus = interactive },
+                    enabled = interactive,
+                )
             }
         }
     }

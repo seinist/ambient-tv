@@ -40,6 +40,8 @@ data class NextUpConfig(
     /** Off: advance silently at the end; the card only appears for the still-watching check. */
     val showOverlay: Boolean = true,
     val creditsDelaySeconds: Int = 0,
+    /** Presentation only; both layouts use the same countdown and transition rules. */
+    val minimal: Boolean = false,
 )
 
 data class PlaybackMetadata(
