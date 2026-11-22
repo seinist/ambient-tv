@@ -1,11 +1,16 @@
 package com.ambient.tv.data.browse
 
 import java.io.IOException
+import java.net.ConnectException
+import com.ambient.tv.youtube.IncompleteYouTubeFeedException
 import kotlinx.coroutines.CancellationException
+import okhttp3.ResponseBody.Companion.toResponseBody
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import retrofit2.HttpException
+import retrofit2.Response
 
 class OnlineServiceAvailabilityTest {
     @Test fun internetLossDoesNotMarkIntranetMediaOffline() {
@@ -42,6 +47,59 @@ class OnlineServiceAvailabilityTest {
         assertFalse(onlineServiceRequestFailed(CancellationException("navigation changed")))
         assertFalse(onlineServiceRequestFailed(IllegalStateException("login required")))
         assertFalse(onlineServiceRequestFailed(IllegalStateException("empty feed")))
+    }
+
+    @Test fun incompleteFeedWithoutTransportFailureDoesNotMeanSmartTubeIsOffline() {
+        assertFalse(onlineServiceRequestFailed(IncompleteYouTubeFeedException()))
+        assertFalse(onlineServiceRequestFailed(IncompleteYouTubeFeedException(
+            IllegalStateException("A feed has no results"),
+        )))
+    }
+
+    @Test fun incompleteFeedPreservesARealConnectionFailure() {
+        assertTrue(onlineServiceRequestFailed(IncompleteYouTubeFeedException(
+            ConnectException("Network is unreachable"),
+        )))
+    }
+
+    @Test fun rejectedRequestsAndRateLimitsStayDistinctFromAnOfflineService() {
+        listOf(401, 403, 404, 429).forEach { status ->
+            val http = HttpException(Response.error<Unit>(status, "Rejected".toResponseBody()))
+            assertFalse("HTTP $status", onlineServiceRequestFailed(http))
+            assertFalse("Wrapped HTTP $status", onlineServiceRequestFailed(
+                IOException("Feed fetch failed", http),
+            ))
+            assertFalse("Incomplete HTTP $status", onlineServiceRequestFailed(
+                IncompleteYouTubeFeedException(http),
+            ))
+        }
+    }
+
+    @Test fun smartTubeStringHttpWrappersDoNotTurnAccessErrorsIntoOfflineStatus() {
+        listOf(403, 429).forEach { status ->
+            assertFalse(onlineServiceRequestFailed(
+                IOException("HTTP $status", IllegalStateException("MediaServiceCore request rejected")),
+            ))
+        }
+    }
+
+    @Test fun serverOutagesAndRequestTimeoutsRemainReportedThroughFeedWrappers() {
+        listOf(408, 500, 502, 503).forEach { status ->
+            val http = HttpException(Response.error<Unit>(status, "Unavailable".toResponseBody()))
+            assertTrue("HTTP $status", onlineServiceRequestFailed(http))
+            assertTrue("Wrapped HTTP $status", onlineServiceRequestFailed(
+                IOException("Feed fetch failed", http),
+            ))
+            assertTrue("Incomplete HTTP $status", onlineServiceRequestFailed(
+                IncompleteYouTubeFeedException(http),
+            ))
+        }
+    }
+
+    @Test fun aWrappedCancellationDoesNotBecomeAnOfflineFailure() {
+        val cancellation = CancellationException("Feed navigation changed")
+        assertFalse(onlineServiceRequestFailed(IOException("Fetch interrupted", cancellation)))
+        assertFalse(onlineServiceRequestFailed(IncompleteYouTubeFeedException(cancellation)))
     }
 
     @Test fun unvalidatedRouteIsNotAnInternetOutage() {

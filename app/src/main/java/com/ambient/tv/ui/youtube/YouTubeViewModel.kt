@@ -104,7 +104,6 @@ class YouTubeViewModel @Inject constructor(
     private val contentCache: YouTubeContentCache,
     private val playbackContext: YouTubeBrowsePlaybackContext,
     private val loadCoordinator: BrowseLoadCoordinator,
-    private val onlineServices: com.ambient.tv.data.browse.OnlineServiceAvailability,
 ) : ViewModel() {
     /** Set on the channel page route: the screen shows that channel instead of a feed. */
     private val channelId: String? = savedStateHandle.get<String>("channelId")?.takeIf(String::isNotBlank)
@@ -857,7 +856,6 @@ class YouTubeViewModel @Inject constructor(
         val needsCheck = !needsLogin && channelId == null && _uiState.value.query.isBlank() &&
             smartTubePrivateFeedForbidden(error, _uiState.value.feed.key, _uiState.value.signedIn)
         if (needsLogin || needsCheck) rowPublisher.cancelPending()
-        if (!needsLogin && !needsCheck) onlineServices.failed("youtube", error)
         if (loginRejected || needsCheck) engine.reportAccountAttention()
         val empty = _uiState.value.rows.isEmpty()
         val showGenericError = !needsLogin && !needsCheck
@@ -992,7 +990,6 @@ class YouTubeViewModel @Inject constructor(
                     signed to refreshYouTubeRowExtents(rows, refreshRows) { rowId -> engine.continueRow(cacheKey, rowId) }
                 }.onSuccess { (signed, rows) ->
                     if (generation != contentGeneration || contentCache.revision() != cacheRevision) return@onSuccess
-                    if (rows.any { it.items.isNotEmpty() }) onlineServices.succeeded("youtube")
                     YouTubeFreshThisRun.loaded(cacheKey)
                     // An empty private Home even after its bounded retry is not evidence that
                     // the user has no videos. Keep the prior tiles and offer a safe recovery.
@@ -1065,7 +1062,6 @@ class YouTubeViewModel @Inject constructor(
                     refreshYouTubeRowExtents(rows, refreshRows) { rowId -> engine.continueRow(cacheKey, rowId) }
                 }.onSuccess { rows ->
                     if (generation != contentGeneration || contentCache.revision() != cacheRevision) return@onSuccess
-                    onlineServices.succeeded("youtube")
                     applyRefreshed(cacheKey, contentCache.replace(cacheKey, rows, cacheRevision,
                         preferIncomingOrder = !pinned(cacheKey)), cacheRevision)
                     resolveChannelHeader(channelId, rows, generation)
@@ -1130,7 +1126,6 @@ class YouTubeViewModel @Inject constructor(
                 }
                     .onSuccess { rows ->
                         if (generation == contentGeneration && _uiState.value.query == query && contentCache.revision() == cacheRevision) {
-                            onlineServices.succeeded("youtube")
                             _uiState.value = _uiState.value.copy(loading = false, rows = contentCache.replace(cacheKey, rows, cacheRevision,
                                 preferIncomingOrder = true))
                             if (displayedContentKey == cacheKey) armPaging(cacheKey, cacheRevision)
