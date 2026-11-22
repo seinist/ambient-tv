@@ -12,7 +12,7 @@ class DetailReloadTest {
     private fun http(code: Int) = retrofit2.HttpException(Response.error<Any>(code, "".toResponseBody()))
 
     @Test
-    fun aStartingServerKeepsPlayVisibleWhileRetrying() {
+    fun aStartingServerCanRetryWithoutClaimingItsHostIsOffline() {
         assertTrue(detailFailureTransient(http(503)))
         assertTrue(detailFailureTransient(java.net.SocketTimeoutException()))
         assertTrue(detailFailureTransient(java.io.IOException("Media source changed during loading; please retry")))

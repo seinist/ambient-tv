@@ -67,13 +67,25 @@ internal fun LiveTvTimerEditDialog(
     message: OperationFeedback?,
     onSave: (LiveTvTimerEdit) -> Unit,
     onDismiss: () -> Unit,
+    connectionRequired: Boolean = false,
+    retrying: Boolean = false,
+    onRetry: () -> Unit = {},
 ) {
     var before by remember(title) { mutableStateOf(paddingBefore ?: 0) }
     var after by remember(title) { mutableStateOf(paddingAfter ?: 0) }
     var pri by remember(title) { mutableStateOf(priority) }
     var active by remember(title) { mutableStateOf(enabled) }
     val initialFocus = remember { FocusRequester() }
-    LaunchedEffect(Unit) { delay(60); runCatching { initialFocus.requestFocus() } }
+    val actionFocus = remember { FocusRequester() }
+    var focusedInitially by remember { mutableStateOf(false) }
+    LaunchedEffect(connectionRequired) {
+        if (connectionRequired || !focusedInitially) {
+            delay(60)
+            val target = if (connectionRequired || (paddingBefore == null && enabled == null)) actionFocus else initialFocus
+            runCatching { target.requestFocus() }
+            focusedInitially = true
+        }
+    }
     AppDialog(
         onDismiss = onDismiss,
         title = stringResource(if (series) R.string.tvh_edit_series_timer else R.string.tvh_edit_timer),
@@ -84,9 +96,9 @@ internal fun LiveTvTimerEditDialog(
         maxWidth = 760.dp,
         footer = {
             TvActionButton(
-                text = stringResource(R.string.tvh_save),
+                text = stringResource(if (connectionRequired) R.string.home_retry else R.string.tvh_save),
                 onClick = {
-                    onSave(LiveTvTimerEdit(
+                    if (connectionRequired) onRetry() else onSave(LiveTvTimerEdit(
                         paddingBeforeMinutes = before.takeIf { paddingBefore != null && it != paddingBefore },
                         paddingAfterMinutes = after.takeIf { paddingAfter != null && it != paddingAfter },
                         priority = pri.takeIf { it != priority },
@@ -94,11 +106,15 @@ internal fun LiveTvTimerEditDialog(
                     ))
                 },
                 selected = true,
-                loading = busy,
+                loading = busy || retrying,
+                enabled = !busy && !retrying,
+                modifier = Modifier.focusRequester(actionFocus),
             )
             TvActionButton(text = stringResource(R.string.back), onClick = onDismiss)
         },
     ) {
+        if (connectionRequired) Text(stringResource(R.string.offline_browse_actions_unavailable),
+            style = MaterialTheme.typography.bodyMedium)
         val beforeLabel = if (before == 0 && zeroIsServerDefault) stringResource(R.string.tvh_padding_default)
             else stringResource(R.string.tvh_padding_minutes, before)
         val afterLabel = if (after == 0 && zeroIsServerDefault) stringResource(R.string.tvh_padding_default)
@@ -107,10 +123,12 @@ internal fun LiveTvTimerEditDialog(
             label = stringResource(R.string.tvh_padding_before), value = beforeLabel,
             onPrevious = { before = nextPaddingStep(before, -1) }, onNext = { before = nextPaddingStep(before, 1) },
             modifier = Modifier.focusRequester(initialFocus),
+            enabled = !connectionRequired && !busy,
         )
         if (paddingAfter != null) SettingStepper(
             label = stringResource(R.string.tvh_padding_after), value = afterLabel,
             onPrevious = { after = nextPaddingStep(after, -1) }, onNext = { after = nextPaddingStep(after, 1) },
+            enabled = !connectionRequired && !busy,
         )
         pri?.let { current ->
             val index = TVH_PRIORITIES.indexOf(current).coerceAtLeast(0)
@@ -118,6 +136,7 @@ internal fun LiveTvTimerEditDialog(
                 label = stringResource(R.string.tvh_priority), value = stringResource(priorityLabel(current)),
                 onPrevious = { pri = TVH_PRIORITIES[(index - 1).coerceAtLeast(0)] },
                 onNext = { pri = TVH_PRIORITIES[(index + 1).coerceAtMost(TVH_PRIORITIES.lastIndex)] },
+                enabled = !connectionRequired && !busy,
             )
         }
         active?.let { on ->
@@ -126,6 +145,7 @@ internal fun LiveTvTimerEditDialog(
                 TvActionButton(
                     text = stringResource(if (on) R.string.tvh_series_enabled else R.string.tvh_series_disabled),
                     onClick = { active = !on }, selected = on,
+                    enabled = !connectionRequired && !busy,
                     modifier = if (paddingBefore == null) Modifier.focusRequester(initialFocus) else Modifier,
                 )
             }
@@ -135,12 +155,12 @@ internal fun LiveTvTimerEditDialog(
 }
 
 @Composable
-private fun SettingStepper(label: String, value: String, onPrevious: () -> Unit, onNext: () -> Unit, modifier: Modifier = Modifier) {
+private fun SettingStepper(label: String, value: String, onPrevious: () -> Unit, onNext: () -> Unit, modifier: Modifier = Modifier, enabled: Boolean = true) {
     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
         Text(label, style = MaterialTheme.typography.titleSmall, modifier = Modifier.weight(1f))
-        TvActionButton(text = "−", onClick = onPrevious, modifier = modifier)
+        TvActionButton(text = "−", onClick = onPrevious, modifier = modifier, enabled = enabled)
         Text(value, style = MaterialTheme.typography.titleSmall, modifier = Modifier.widthIn(min = 120.dp))
-        TvActionButton(text = "+", onClick = onNext)
+        TvActionButton(text = "+", onClick = onNext, enabled = enabled)
     }
 }
 
@@ -153,18 +173,31 @@ internal fun LiveTvConfirmDialog(
     busy: Boolean,
     onConfirm: () -> Unit,
     onDismiss: () -> Unit,
+    connectionRequired: Boolean = false,
+    retrying: Boolean = false,
+    onRetry: () -> Unit = {},
 ) {
     val initialFocus = remember { FocusRequester() }
-    LaunchedEffect(Unit) { delay(60); runCatching { initialFocus.requestFocus() } }
+    val retryFocus = remember { FocusRequester() }
+    LaunchedEffect(connectionRequired) {
+        delay(60)
+        runCatching { (if (connectionRequired) retryFocus else initialFocus).requestFocus() }
+    }
     AppDialog(
         onDismiss = onDismiss,
         title = title,
         hint = question,
         captureInitialFocus = false,
         footer = {
-            TvActionButton(text = confirmLabel, onClick = onConfirm, loading = busy)
+            TvActionButton(text = if (connectionRequired) stringResource(R.string.home_retry) else confirmLabel,
+                onClick = if (connectionRequired) onRetry else onConfirm,
+                loading = busy || retrying, enabled = !busy && !retrying,
+                modifier = Modifier.focusRequester(retryFocus))
             // Back first: an accidental double OK must not delete anything.
             TvActionButton(text = stringResource(R.string.back), onClick = onDismiss, modifier = Modifier.focusRequester(initialFocus))
         },
-    )
+    ) {
+        if (connectionRequired) Text(stringResource(R.string.offline_browse_actions_unavailable),
+            style = MaterialTheme.typography.bodyMedium)
+    }
 }

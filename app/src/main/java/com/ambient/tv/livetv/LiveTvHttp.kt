@@ -23,6 +23,7 @@ internal class LiveTvHttp(
     val base: HttpUrl,
     val headers: Map<String, String>,
     private val client: OkHttpClient,
+    private val failed: () -> Unit = {},
     private val localOnly: () -> Boolean,
 ) {
     fun url(path: String, query: Map<String, String?> = emptyMap()): HttpUrl {
@@ -43,7 +44,10 @@ internal class LiveTvHttp(
                 val call = client.newCall(request)
                 continuation.invokeOnCancellation { call.cancel() }
                 call.enqueue(object : Callback {
-                    override fun onFailure(call: Call, e: IOException) { continuation.resumeWith(Result.failure(e)) }
+                    override fun onFailure(call: Call, e: IOException) {
+                        if (!call.isCanceled()) failed()
+                        continuation.resumeWith(Result.failure(e))
+                    }
                     override fun onResponse(call: Call, response: Response) {
                         continuation.resumeWith(runCatching {
                             response.use {
@@ -51,7 +55,7 @@ internal class LiveTvHttp(
                                 val text = it.body.string().orEmpty()
                                 if (text.isBlank()) JsonObject(emptyMap()) else Json.parseToJsonElement(text).jsonObject
                             }
-                        })
+                        }.onFailure { if (!call.isCanceled()) failed() })
                     }
                 })
             }

@@ -34,9 +34,9 @@ internal fun detailFailureTransient(error: Throwable): Boolean {
 }
 
 /**
- * "Offline" (Play hidden) comes only from the source's availability - its host is down or the
- * service refused - never from a single failed request: a 503 of a server that is still starting
- * or a timeout keeps Play visible while the page reloads with backoff.
+ * The health message distinguishes a confirmed offline/auth failure from a transient retry.
+ * It does not grant playback: DetailConnectionPolicy locks every failed metadata refresh until
+ * a fresh request succeeds, even while the service's broad availability still says ONLINE.
  */
 internal fun detailOfflineAfterFailure(removed: Boolean, sourceHealth: SourceHealth, retriesLeft: Boolean): Boolean = when {
     removed -> false

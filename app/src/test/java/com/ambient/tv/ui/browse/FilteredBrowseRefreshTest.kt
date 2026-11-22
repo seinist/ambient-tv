@@ -208,4 +208,62 @@ class FilteredBrowseRefreshTest {
             assertEquals(1, reads)
         } finally { store.clear(); Dispatchers.resetMain() }
     }
+    @Test fun savedCatalogSurvivesAFirstOfflineReadAndCanStillBeSorted() = runTest {
+        Dispatchers.setMain(StandardTestDispatcher(testScheduler))
+        val cached = listOf(item("later", 2026), item("earlier", 2020))
+        var writes = 0
+        val cache = object : FilteredBrowseCache {
+            override suspend fun read() = cached
+            override fun write(items: List<MediaItem>) { writes++ }
+        }
+        val model = FilteredBrowseViewModel(saved(), AppPreferences(memoryPreferences()),
+            { _, _ -> Result.failure(java.io.IOException("Offline")) }, {}, cache)
+        val store = ViewModelStore().apply { put("browse", model) }
+        try {
+            model.load(); runCurrent()
+            assertEquals(cached.sortedBy { it.title }, (model.uiState.value as FilteredBrowseUiState.Loaded).items)
+            assertNotNull(model.refreshError.value)
+            assertEquals(0, writes)
+            model.setSort(BrowseSort.YEAR)
+            assertEquals("later", (model.uiState.value as FilteredBrowseUiState.Loaded).items.first().ratingKey)
+        } finally { store.clear(); Dispatchers.resetMain() }
+    }
+
+    @Test fun layoutControlsCannotTurnAnOfflineFailureWithoutCacheIntoAnEmptyCatalog() = runTest {
+        Dispatchers.setMain(StandardTestDispatcher(testScheduler))
+        val model = FilteredBrowseViewModel(saved(), AppPreferences(memoryPreferences()),
+            { _, _ -> Result.failure(java.io.IOException("Offline")) }, {})
+        val store = ViewModelStore().apply { put("browse", model) }
+        try {
+            model.load(); runCurrent()
+            assertTrue(model.uiState.value is FilteredBrowseUiState.Error)
+            model.setViewMode(BrowseViewMode.LIST)
+            model.setSort(BrowseSort.YEAR)
+            model.setSortDescending(false)
+            assertTrue(model.uiState.value is FilteredBrowseUiState.Error)
+        } finally { store.clear(); Dispatchers.resetMain() }
+    }
+
+    @Test fun aRetainedBrowseDestinationDropsThePreviousAccountsSavedItems() = runTest {
+        Dispatchers.setMain(StandardTestDispatcher(testScheduler))
+        var account = "first"
+        val cache = object : FilteredBrowseCache {
+            override var scopeKey = account
+            override fun refreshScope(): Boolean = (account != scopeKey).also { if (it) scopeKey = account }
+            override fun isCurrent(scope: String) = scope == account
+            override suspend fun read() = if (account == "first") listOf(item("private-first-account")) else null
+            override fun write(items: List<MediaItem>) = Unit
+        }
+        val model = FilteredBrowseViewModel(saved(), AppPreferences(memoryPreferences()),
+            { _, _ -> Result.failure(java.io.IOException("Offline")) }, {}, cache)
+        val store = ViewModelStore().apply { put("browse", model) }
+        try {
+            model.load(); runCurrent()
+            assertTrue(model.uiState.value is FilteredBrowseUiState.Loaded)
+            account = "second"
+            model.enter(null); runCurrent()
+            assertTrue(model.uiState.value is FilteredBrowseUiState.Error)
+        } finally { store.clear(); Dispatchers.resetMain() }
+    }
+
 }

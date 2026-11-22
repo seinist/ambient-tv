@@ -20,6 +20,12 @@ class TvheadendLiveTvRepository(
     override suspend fun channels(force: Boolean): List<LiveTvChannel> {
         checkSource(); return delegate.channels(force).map { it.copy(sourceId = source.id) }
     }
+    override suspend fun verifyPlayback(kind: String, id: String): Boolean {
+        checkSource()
+        val allowed = delegate.probePlaybackAccess(kind, id).getOrThrow()
+        checkSource()
+        return allowed
+    }
     override suspend fun epgEvents(startEpochSeconds: Long, windowHours: Int, force: Boolean): List<LiveTvProgramme> {
         checkSource(); return delegate.epgEvents(startEpochSeconds, windowHours, force).map { it.copy(sourceId = source.id) }
     }

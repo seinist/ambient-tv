@@ -275,6 +275,7 @@ fun SearchScreen(
                     }
                 }
                 // Up from the results: source chips, then the query field (no chips: straight to the field).
+                com.ambient.tv.ui.home.OfflineSourceStatus(systems = viewModel.reconnectSources)
                 Box(Modifier.fillMaxSize()
                     .then(playbackFocus.modifier)
                     .pageContentUp(focusChain) { if (uiState.availableSources.isEmpty()) queryFocus else focusChain.contentUp }
@@ -290,7 +291,10 @@ fun SearchScreen(
                         !uiState.hasSearched -> RecentSearches(uiState.recentSearches, viewModel::useRecentSearch, viewModel::clearRecentSearches)
                         uiState.hasSearched && !uiState.hasResults && !uiState.isSearching ->
                             com.ambient.tv.ui.common.BrowseStatusPanel(
-                                title = stringResource(R.string.search_no_results),
+                                title = stringResource(if (listOf(uiState.plexState, uiState.jellyfinState, uiState.embyState,
+                                    uiState.trailerState, uiState.telegramState, uiState.youtubeState, uiState.spotifyState,
+                                    uiState.radioState, uiState.tvheadendState).any { it == SearchSourceState.ERROR || it == SearchSourceState.PARTIAL })
+                                    R.string.offline_browse_search_unavailable else R.string.search_no_results),
                                 body = if (listOf(uiState.plexState, uiState.jellyfinState, uiState.embyState, uiState.trailerState, uiState.telegramState, uiState.youtubeState, uiState.spotifyState, uiState.radioState, uiState.tvheadendState).any { it == SearchSourceState.ERROR || it == SearchSourceState.PARTIAL }) {
                                     stringResource(R.string.search_no_results_partial_error)
                                 } else stringResource(R.string.search_no_results_body),

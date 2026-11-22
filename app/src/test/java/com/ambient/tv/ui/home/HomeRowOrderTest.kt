@@ -28,6 +28,35 @@ class HomeRowOrderTest {
                 definitions = definitions), pendingSystems = emptySet()))
     }
 
+    @Test fun savedRowsKeepTheirEditorOrderWithoutAdditionalRecoveryFocusRows() {
+        val definitions = listOf(row("plex", "continue"), row("plex", "recent"), row("jellyfin", "recent"),
+            row("tvheadend", "live"), row("tvheadend", "recent_channels"), row("radio", "favorites"))
+        val offline = setOf("plex", "jellyfin", "tvheadend")
+        val cachedIds = listOf("plex.continue", "plex.recentlyAddedMovies", "plex.recentlyAddedEpisodes",
+            "jellyfin.recentlyAddedMovies", "radio.favorites")
+        val fallback = homeOfflineReconnectSystems(definitions, offline, hasSavedContent = true)
+        assertTrue(fallback.isEmpty())
+        val keys = orderedHomeRowKeys(definitions, cachedIds, emptyList(), true, true, offlineSystems = fallback)
+        assertEquals(cachedIds.take(4) + listOf("live-tv", "recent-tv", "radio.favorites"), keys)
+        assertEquals(keys, revealHomeRowsInOrder(definitions, keys,
+            homeRowKeySources(cachedIds, emptyList(), true, true, definitions = definitions), pendingSystems = emptySet()))
+    }
+
+    @Test fun anEntirelyOfflineHomeKeepsEachConfiguredProvidersRetryInEditorOrder() {
+        val definitions = listOf(row("emby", "recent").copy(enabled = false), row("plex", "continue"),
+            row("plex", "recent"), row("jellyfin", "recent"), row("tvheadend", "live"),
+            row("tvheadend", "recent_channels"))
+        // Gate discovery order need not match the editor; disabled and unlisted systems do
+        // not reserve a row, and multiple definitions still produce only one retry action.
+        val offline = setOf("tvheadend", "radio", "jellyfin", "emby", "plex")
+        val reconnect = homeOfflineReconnectSystems(definitions, offline)
+        assertEquals(listOf("plex", "jellyfin", "tvheadend"), reconnect)
+        assertEquals(listOf("offline:plex", "offline:jellyfin", "offline:tvheadend"),
+            orderedHomeRowKeys(definitions, emptyList(), emptyList(), false, false, offlineSystems = reconnect))
+        assertEquals(emptyList<String>(), homeOfflineReconnectSystems(definitions, emptySet()))
+        assertEquals(emptyList<String>(), homeOfflineReconnectSystems(emptyList(), offline))
+    }
+
     @Test fun emptyRecentRowDoesNotReserveAFocusDestination() {
         assertEquals(listOf("plex.continue"), orderedHomeRowKeys(listOf(row("tvheadend", "recent_channels")), listOf("plex.continue"), emptyList(), false, false))
     }

@@ -1,0 +1,4 @@
+<resources>
+    <string name="offline_playback_open_to_retry">Open the player to reconnect and reload this playback.</string>
+    <string name="offline_playback_open_player">Open player</string>
+</resources>

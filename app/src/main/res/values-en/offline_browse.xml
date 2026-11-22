@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="offline_browse_saved_title">Saved view · %1$s</string>
+    <string name="offline_browse_saved_body">Browse saved titles. A successful connection is required to play.</string>
+    <string name="offline_browse_saved_at">Last updated %1$s. Connect again to play or change recordings.</string>
+    <string name="offline_browse_no_cache_title">No saved content yet</string>
+    <string name="offline_browse_no_cache_body">This source is configured. Connect to load its content; retry checks the connection before waking the server.</string>
+    <string name="offline_browse_section_unavailable">This part of the saved view is unavailable</string>
+    <string name="offline_browse_section_unavailable_body">The source has not confirmed this list. Retry to load its current content.</string>
+    <string name="offline_browse_guide_saved">Saved guide</string>
+    <string name="offline_browse_programme_unavailable">Connect to update programme information</string>
+    <string name="offline_browse_search_unavailable">Some sources could not be searched</string>
+    <string name="offline_browse_search_unavailable_body">Saved matches remain visible. Retry to include unavailable sources.</string>
+    <string name="offline_browse_actions_unavailable">The connection is unconfirmed. Retry to reload the server state before making changes. The current view is kept.</string>
+    <string name="offline_browse_action_unconfirmed">The change could not be confirmed. Reload the server state before trying again; the change will not be repeated automatically.</string>
+</resources>

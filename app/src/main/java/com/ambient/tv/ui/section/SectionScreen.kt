@@ -214,6 +214,14 @@ fun SectionScreen(
     ) { viewModel.refreshAfterEntry(playbackReturn) }
     DisposableEffect(viewModel) { onDispose { viewModel.captureFocusForReturn() } }
     val refreshing by viewModel.refreshing.collectAsState()
+    val refreshFailed by viewModel.refreshFailed.collectAsState()
+    val source = com.ambient.tv.data.browse.mediaProvider(viewModel.sectionKey)
+    val recovery: com.ambient.tv.ui.home.UnreachableServerViewModel = hiltViewModel()
+    val connection by recovery.state.collectAsState()
+    val sourceRevision by recovery.availability.changes.collectAsState()
+    val sourceUnconfirmed = remember(source, sourceRevision) { recovery.availability.browseUnconfirmed(source) }
+    val contentUnconfirmed = source in connection.offline || sourceUnconfirmed || refreshFailed
+    val retrySource: () -> Unit = { recovery.retrySystem(source) }
     ReportSidebarContentReady(uiState !is SectionUiState.Loading)
     val refreshGeneration by viewModel.refreshGeneration.collectAsState()
     val activeDestination = com.ambient.tv.ui.common.isActiveNavigationDestination()
@@ -239,7 +247,12 @@ fun SectionScreen(
     if (onBack != null) {
         BackHandler(enabled = uiState !is SectionUiState.Loaded) { onBack() }
     }
-    Box(modifier = Modifier.fillMaxSize()) {
+    Column(modifier = Modifier.fillMaxSize()) {
+        if (uiState is SectionUiState.Loaded && contentUnconfirmed) com.ambient.tv.ui.home.SavedBrowseStatus(
+            sources = listOf(source), retrying = connection.retrying || refreshing, onRetry = retrySource,
+            modifier = Modifier.padding(horizontal = screenGutter(), vertical = 8.dp),
+        )
+    Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
         when (val state = uiState) {
             SectionUiState.Loading -> LibraryLoadingState(
                 viewModel.loadingViewMode,
@@ -253,7 +266,7 @@ fun SectionScreen(
                     kind = com.ambient.tv.ui.common.BrowseStatusKind.ERROR,
                     body = sanitizeUiErrorMessage(state.message) ?: stringResource(R.string.error_generic),
                     actionLabel = stringResource(R.string.home_retry),
-                    onAction = viewModel::load,
+                    onAction = retrySource,
                 )
             }
             is SectionUiState.Loaded -> SectionContent(
@@ -282,11 +295,14 @@ fun SectionScreen(
                 onSelectLetter = viewModel::selectLetter,
                 onRefresh = viewModel::reload,
                 refreshing = refreshing,
+                contentUnconfirmed = contentUnconfirmed,
+                onRetrySource = retrySource,
                 playbackReturnToken = playbackReturn?.revision?.takeIf { it == state.playbackReturnRevision },
                 sessionFocusForPage = viewModel::currentSessionFocus,
             )
         }
 
+    }
     }
 }
 
@@ -313,6 +329,8 @@ internal fun SectionContent(
     sectionKey: String? = null,
     onRefresh: () -> Unit = {},
     refreshing: Boolean = false,
+    contentUnconfirmed: Boolean = false,
+    onRetrySource: () -> Unit = onRefresh,
     playbackReturnToken: Any? = null,
     /** The screen owns the ViewModel; the reusable content only reads its buffered focus. */
     sessionFocusForPage: (SectionPage) -> com.ambient.tv.ui.common.BrowseFocusSnapshot? = { null },
@@ -528,7 +546,20 @@ internal fun SectionContent(
                         CompositionLocalProvider(LocalAlphabetBarShown provides showAlphabetBar,
                             LocalBrowseRightIndexFocus provides alphabetRightFocusRequester.takeIf { showAlphabetBar }) {
                             key(state.playbackReturnRevision) {
-                                SoftViewChange(state.viewMode, Modifier.fillMaxSize()) { when (state.page) {
+                                SoftViewChange(state.viewMode, Modifier.fillMaxSize()) {
+                                val hasContent = when (state.page) {
+                                    SectionPage.RECOMMENDATIONS -> state.recommendationRows.any { it.items.isNotEmpty() }
+                                    SectionPage.LIBRARY -> state.items.isNotEmpty()
+                                    SectionPage.COLLECTIONS -> state.collections.isNotEmpty()
+                                }
+                                if (contentUnconfirmed && !hasContent && state.libraryFilters.isDefault) {
+                                    com.ambient.tv.ui.common.BrowseStatusPanel(
+                                        title = stringResource(R.string.offline_browse_section_unavailable),
+                                        body = stringResource(R.string.offline_browse_section_unavailable_body),
+                                        actionLabel = stringResource(R.string.home_retry), onAction = onRetrySource,
+                                        kind = com.ambient.tv.ui.common.BrowseStatusKind.INFO,
+                                    )
+                                } else when (state.page) {
                                 SectionPage.RECOMMENDATIONS -> RecommendationsPage(
                                     focusState,
                                     onItemClick,

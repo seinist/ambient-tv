@@ -2369,8 +2369,9 @@
     <string name="offline_host_offline">Server host is not reachable on the network.</string>
     <string name="offline_host_unknown">Connection status is being determined.</string>
     <string name="offline_server_address">Server address: %1$s</string>
-    <string name="offline_wol_ready">Automatic Wake-on-LAN is configured.</string>
-    <string name="offline_wol_missing">Automatic Wake-on-LAN is not configured.</string>
+    <string name="offline_wol_ready">Wake-on-LAN is available if the server is still offline.</string>
+    <string name="offline_wol_missing">No Wake-on-LAN address is configured for this server.</string>
+    <string name="offline_wol_not_needed">The server is reachable; Wake-on-LAN is not needed.</string>
     <string name="offline_auto_check_manual">Manual connection attempt in progress…</string>
     <string name="offline_auto_check_waiting">Waiting for the next automatic check…</string>
     <string name="offline_auto_check_now">Automatic check is due…</string>

@@ -45,7 +45,8 @@ class DlnaRepository @Inject constructor(
             require(count in 1..PAGE_SIZE)
             val server = store.server(serverId) ?: error("DLNA server was removed")
             val scope = requireNotNull(store.playbackScope(server))
-            wake.ensureAwake(server)
+            if (kotlinx.coroutines.currentCoroutineContext()[com.ambient.tv.data.browse.PlaybackAccessProbe.Key] == null)
+                wake.ensureAwake(server)
             val page = browseDlnaPageWithFallback(count) { requestedCount ->
                 currentCoroutineContext().ensureActive()
                 val result = soap(
@@ -93,7 +94,8 @@ class DlnaRepository @Inject constructor(
             val (serverId, objectId) = DlnaKeys.parse(ratingKey)
             val server = store.server(serverId) ?: error("DLNA server was removed")
             val scope = requireNotNull(store.playbackScope(server))
-            wake.ensureAwake(server)
+            if (kotlinx.coroutines.currentCoroutineContext()[com.ambient.tv.data.browse.PlaybackAccessProbe.Key] == null)
+                wake.ensureAwake(server)
             val xml = soap(
                 server,
                 "Browse",

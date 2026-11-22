@@ -98,6 +98,8 @@ data class PlaybackMetadata(
     val fileProgressStreamUrl: String? = null,
     /** Local source incarnation for playback owners without a PlayerUiState.Ready, e.g. Auto. */
     val localProgressScope: String? = null,
+    /** Exact endpoint/account that authorized this session; never inferred from a reused item ID. */
+    val sourceAccessIdentity: String? = null,
 )
 
 /** Library context of a title: where "remember changes for" can store besides the title itself. */
@@ -294,6 +296,7 @@ object BackgroundPlaybackSession {
             mutableSnapshot.value = current.copy(metadata = metadata)
     }
     private var generation = 0L
+    private val recoveryPositions = PlaybackRecoveryPositions()
     private var appContext: Context? = null
     private val pauseRewind = PauseRewindPolicy()
     private var pauseRewindOwner: PlaybackHandle? = null
@@ -619,6 +622,49 @@ object BackgroundPlaybackSession {
         if (isSourceReplacement(token)) stop()
     }
     fun activeHandle(): PlaybackHandle? = handle
+    internal fun recoveryOwner(): PlaybackRecoveryOwner {
+        checkThread()
+        val state = snapshot.value
+        return PlaybackRecoveryOwner(state.generation, state.metadata?.route,
+            state.metadata?.sourceAccessIdentity, handle, state.replacingSource)
+    }
+
+    /** An old player callback must never pause/stop a newer title, renderer or account. */
+    internal fun pauseForRecovery(owner: PlaybackRecoveryOwner, route: String, sourceIdentity: String): Boolean {
+        if (!owner.owns(route, sourceIdentity) || !owner.matches(recoveryOwner())) return false
+        pause()
+        return true
+    }
+
+    internal fun stopForRecovery(owner: PlaybackRecoveryOwner, route: String, sourceIdentity: String): Boolean {
+        if (!owner.owns(route, sourceIdentity) || !owner.matches(recoveryOwner())) return false
+        stop(keepSleepTimer = true)
+        return true
+    }
+
+    internal fun rememberRecoveryPosition(owner: PlaybackRecoveryOwner) {
+        if (!owner.matches(recoveryOwner())) return
+        val state = snapshot.value
+        recordRecoveryPosition(state, handle?.status() ?: state.status, failure = true)
+    }
+
+    internal fun recoveryPosition(route: String, sourceIdentity: String): Long? = recoveryPositions.resume(route, sourceIdentity)
+    internal fun clearRecoveryPosition(route: String, sourceIdentity: String) = recoveryPositions.clear(route, sourceIdentity)
+
+    private fun recordRecoveryPosition(state: Snapshot, status: PlaybackStatus, failure: Boolean = status.error != null) {
+        val metadata = state.metadata ?: return
+        val identity = metadata.sourceAccessIdentity ?: return
+        val initial = when (val resume = metadata.resumeState) {
+            is PlayerUiState.Ready -> resume.startPositionMs + resume.timelineOffsetMs
+            is com.ambient.tv.ui.tvheadend.TvheadendPlayerState.Ready -> resume.source.startPositionMs
+            is ServiceAudioResumeState -> resume.startPositionMs
+            else -> metadata.timelineOffsetMs
+        }
+        recoveryPositions.observe(metadata.route, identity, state.generation, metadata.isLive,
+            status.positionMs, state.requestedTimelinePositionMs ?: (status.positionMs + metadata.timelineOffsetMs),
+            initial, status.playing, failure, requestedSeek = state.requestedTimelinePositionMs != null)
+    }
+
     fun currentStatus(): PlaybackStatus? {
         checkThread()
         return handle?.status()
@@ -690,6 +736,7 @@ object BackgroundPlaybackSession {
             }
         }
         val current = snapshot.value
+        recordRecoveryPosition(current, status)
         mutableSnapshot.value = current.copy(status = status,
             wantsToPlay = if (current.replacingSource) current.wantsToPlay
                 else player.wantsToPlay() || DisplayPlaybackStartup.isWaiting(player))

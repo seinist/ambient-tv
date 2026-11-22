@@ -46,6 +46,8 @@ internal class GaplessQueue(
         val metadata: PlaybackMetadata,
         /** Prepares the song after this one once it played on without the player screen. */
         val continuation: (suspend () -> Unit)? = null,
+        /** A queued stream cannot outlive its verified source/account, even without a screen. */
+        val canStart: () -> Boolean = { true },
     )
 
     var target: Target? = null
@@ -94,7 +96,7 @@ internal class GaplessQueue(
         val index = player.currentIndex
         if (player.itemCount > index + 1) player.removeItems(index + 1, player.itemCount)
         val next = entry ?: return
-        if (endOfItemSleep() || sessionRoute() != next.fromRoute) return
+        if (endOfItemSleep() || sessionRoute() != next.fromRoute || !next.canStart()) return
         player.appendItem(next.ratingKey, next.streamUrl)
     }
 
@@ -112,6 +114,10 @@ internal class GaplessQueue(
             return false
         }
         entry = null
+        if (!next.canStart()) {
+            player.pause()
+            return false
+        }
         if (!continueSession(next.fromRoute, next.metadata)) {
             Timber.w("Gapless: session refused %s", next.ratingKey)
             player.pause()

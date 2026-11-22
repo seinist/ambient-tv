@@ -1,7 +1,10 @@
 package com.ambient.tv.ui.home
 
+import com.ambient.tv.domain.model.MediaItem
 import com.ambient.tv.ui.common.ContentRowData
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
+import org.junit.Assert.assertSame
 import org.junit.Test
 
 class HomeRefreshRowsTest {
@@ -58,11 +61,30 @@ class HomeRefreshRowsTest {
     }
 
     @Test
-    fun offlineServersRetainCachedPostersButNotLiveTvHomeRows() {
-        for (provider in listOf("plex", "jellyfin", "emby")) {
-            assertEquals(false, homeRowHiddenByOffline(provider, setOf(provider)))
-        }
-        assertEquals(true, homeRowHiddenByOffline("tvheadend", setOf("tvheadend")))
-        assertEquals(false, homeRowHiddenByOffline("tvheadend", emptySet()))
+    fun onlineDuplicateWinsWhenTheMostRecentlyWatchedServerIsOffline() {
+        val sleeping = item("123", "Shared movie", lastViewedAt = 30)
+        val available = item("j:abc", "Shared movie", lastViewedAt = 20)
+        val another = item("e:def", "Another movie", lastViewedAt = 10)
+        val cached = linkedMapOf("plex" to listOf(sleeping), "jellyfin" to listOf(available), "emby" to listOf(another))
+        assertEquals(listOf(available, another), homeContinueItems(cached, setOf("plex"), 10))
+        assertEquals(listOf(sleeping, another), homeContinueItems(cached, emptySet(), 10))
+        assertEquals(listOf(available), homeContinueItems(cached, setOf("plex"), 1))
+        assertEquals(listOf(sleeping, another), homeContinueItems(cached, cached.keys, 10))
     }
+
+    @Test
+    fun offlineOnlyTitlesRemainAlongsideReachableTitlesWithTheirOriginalProgress() {
+        val saved = item("123", "Only on Plex", lastViewedAt = 30).copy(viewOffsetMs = 9000L)
+        val online = item("j:abc", "Jellyfin title", lastViewedAt = 20)
+        val results = homeContinueItems(mapOf("plex" to listOf(saved), "jellyfin" to listOf(online)), setOf("plex"), 10)
+        assertEquals(listOf(saved, online), results)
+        assertEquals(9000L, results.first().viewOffsetMs)
+    }
+
+    private fun item(key: String, title: String, lastViewedAt: Long = 0) = MediaItem(
+        ratingKey = key, title = title, type = "movie", index = null, thumbUrl = null, artUrl = null,
+        year = 2026, summary = null, tagline = null, durationMs = null, viewOffsetMs = null,
+        parentTitle = null, parentRatingKey = null, grandparentTitle = null, grandparentRatingKey = null,
+        contentRating = null, rating = null, studio = null, lastViewedAt = lastViewedAt,
+    )
 }

@@ -77,9 +77,15 @@ class SectionViewModel @Inject constructor(
     private val preferences: AppPreferences,
     private val plexRefreshBus: PlexRefreshBus,
     private val loadCoordinator: BrowseLoadCoordinator,
+    private val browseScopes: com.ambient.tv.data.browse.BrowseScopes,
 ) : ViewModel() {
 
     val sectionKey: String = checkNotNull(savedStateHandle["sectionKey"])
+    private var snapshotScope = browseScopes.forProvider(com.ambient.tv.data.browse.mediaProvider(sectionKey))
+    private fun snapshotKey(): String = "$snapshotScope:${stateKey()}"
+    private fun scopeCurrent(scope: String = snapshotScope): Boolean =
+        browseScopes.forProvider(com.ambient.tv.data.browse.mediaProvider(sectionKey)) == scope
+    private fun focusStateKey(targetPage: SectionPage = page): String = "$snapshotScope:${stateKey(targetPage)}"
     val autoRefreshIntervalSeconds: Int get() = preferences.plexAutoRefreshIntervalSeconds
     val refreshGeneration = plexRefreshBus.generation
     val loadingViewMode: SectionViewMode get() = viewMode()
@@ -98,6 +104,8 @@ class SectionViewModel @Inject constructor(
     val uiState: StateFlow<SectionUiState> = _uiState.asStateFlow()
     private val _refreshing = MutableStateFlow(false)
     val refreshing: StateFlow<Boolean> = _refreshing.asStateFlow()
+    private val _refreshFailed = MutableStateFlow(false)
+    val refreshFailed: StateFlow<Boolean> = _refreshFailed.asStateFlow()
     private var loadJob: Job? = null
     private var loadGeneration = 0
     private var rebuildJob: Job? = null
@@ -110,7 +118,12 @@ class SectionViewModel @Inject constructor(
     private var rebuildVersion = 0
     private var playbackReturnRevision = 0L
 
-    fun retryOffline() { if (availability.hasNetwork() && availability.state(com.ambient.tv.data.browse.mediaProvider(sectionKey)) == com.ambient.tv.data.browse.SourceHealth.OFFLINE && loadJob?.isActive != true) load() }
+    fun retryOffline() {
+        val source = com.ambient.tv.data.browse.mediaProvider(sectionKey)
+        if (availability.hasNetwork() && availability.browseUnconfirmed(source) &&
+            availability.reportedState(source) != com.ambient.tv.data.browse.SourceHealth.AUTH_REQUIRED &&
+            loadJob?.isActive != true) load()
+    }
 
     init {
         if (sourceItems.isNotEmpty()) {
@@ -118,8 +131,8 @@ class SectionViewModel @Inject constructor(
             // library on a worker: the page showed its loading skeleton for those frames even
             // with a warm cache. A page built on the last visit is shown from the first frame;
             // the rebuild then replaces it with the current data.
-            SectionLoadedSnapshots.get(stateKey())?.let { snapshot ->
-                _uiState.value = snapshot.withLatestBrowseFocus(focusBuffer.get(stateKey()))
+            SectionLoadedSnapshots.get(snapshotKey())?.let { snapshot ->
+                _uiState.value = snapshot.withLatestBrowseFocus(focusBuffer.get(focusStateKey()))
                     .copy(playbackReturnRevision = playbackReturnRevision)
             }
             rebuild()
@@ -128,7 +141,7 @@ class SectionViewModel @Inject constructor(
 
     /** Entry already expired this source under the shared mutation guard. */
     internal fun refreshAfterEntry(returned: com.ambient.tv.ui.common.NavigationPlaybackReturn? = null) {
-        if (restorePlaybackReturn(returned)) return
+        if (scopeCurrent() && restorePlaybackReturn(returned)) return
         load(force = true, invalidateCache = false)
     }
 
@@ -165,10 +178,27 @@ class SectionViewModel @Inject constructor(
     fun load(force: Boolean = false, invalidateCache: Boolean = force, notifyFailure: Boolean = false) {
         val generation = ++loadGeneration
         loadJob?.cancel()
+        val requestScope = browseScopes.forProvider(mediaProvider(sectionKey))
+        if (snapshotScope != requestScope) {
+            collectionJob?.cancel()
+            collectionJob = null
+            rebuildJob?.cancel()
+            rebuildVersion++
+            snapshotScope = requestScope
+            sourceItems = emptyList()
+            onDeck = emptyList()
+            staleCollectionSource = null
+            collectionsLoading = false
+            selectedLetter = null
+            focusedRecommendationRowId = null
+            playbackReturnRevision = 0L
+            _refreshFailed.value = false
+            _uiState.value = SectionUiState.Loading
+        }
         _refreshing.value = true
         loadJob = viewModelScope.launch {
             mediaRepository.restoreCache()
-            if (generation != loadGeneration) return@launch
+            if (generation != loadGeneration || !scopeCurrent(requestScope)) return@launch
             if (force) {
                 collectionJob?.cancel()
                 collectionJob = null
@@ -182,7 +212,7 @@ class SectionViewModel @Inject constructor(
                 loadCoordinator.librarySections(mediaProvider(sectionKey), BrowseLoadPriority.VISIBLE) {
                     mediaRepository.getProviderLibrarySections(sectionKey)
                 }.onSuccess {
-                    if (generation != loadGeneration) return@onSuccess
+                    if (generation != loadGeneration || !scopeCurrent(requestScope)) return@onSuccess
                     if (sourceItems.isNotEmpty() || _uiState.value is SectionUiState.Loaded) rebuild(background = true)
                 }
             }
@@ -191,7 +221,7 @@ class SectionViewModel @Inject constructor(
                 loadCoordinator.request(mediaProvider(sectionKey), "view:ondeck:$sectionKey", BrowseLoadPriority.VISIBLE) {
                     mediaRepository.getProviderOnDeck(sectionKey)
                 }.onSuccess {
-                    if (generation != loadGeneration) return@onSuccess
+                    if (generation != loadGeneration || !scopeCurrent(requestScope)) return@onSuccess
                     onDeck = it
                     if (sourceItems.isNotEmpty()) rebuild(background = true)
                 }
@@ -207,7 +237,7 @@ class SectionViewModel @Inject constructor(
             var publishedItemCount = 0
             val result = loadCoordinator.request(mediaProvider(sectionKey), "view:items:$sectionKey", BrowseLoadPriority.VISIBLE) {
                 mediaRepository.getSectionItems(sectionKey) { pageItems ->
-                if (showPagesWhileLoading && generation == loadGeneration) {
+                if (showPagesWhileLoading && generation == loadGeneration && scopeCurrent(requestScope)) {
                     progressiveItems += pageItems
                     // Publish the first page immediately, then update in coarse batches so a
                     // very large library does not trigger a complete sort on every 100 items.
@@ -215,7 +245,7 @@ class SectionViewModel @Inject constructor(
                         publishedItemCount = progressiveItems.size
                         val snapshot = progressiveItems.toList()
                         withContext(Dispatchers.Main.immediate) {
-                            if (generation == loadGeneration) {
+                            if (generation == loadGeneration && scopeCurrent(requestScope)) {
                                 sourceItems = snapshot
                                 rebuild(background = true)
                             }
@@ -224,9 +254,10 @@ class SectionViewModel @Inject constructor(
                 }
             }
             }
-            if (generation != loadGeneration) return@launch
+            if (generation != loadGeneration || !scopeCurrent(requestScope)) return@launch
             result.fold(
                 onSuccess = { items ->
+                    _refreshFailed.value = false
                     // A reload returns Jellyfin/Emby items without collection tags. Keep the
                     // known ones so the collections page is updated in place, not blanked.
                     val carryOver = items.none { it.collections.isNotEmpty() } && sourceItems.any { it.collections.isNotEmpty() }
@@ -237,16 +268,17 @@ class SectionViewModel @Inject constructor(
                         items.map { item -> known[item.ratingKey]?.takeIf { it.isNotEmpty() }?.let { item.copy(collections = it) } ?: item }
                     } else items
                     sourceItems = com.ambient.tv.data.browse.reconcileComplete(previousItems, sourceItems) { it.ratingKey }
-                    val focused = focusBuffer.get(stateKey()) ?: preferences.sectionFocus(stateKey())?.let { com.ambient.tv.ui.common.BrowseFocusSnapshot(it, preferences.sectionFocusRow(stateKey())) }
+                    val focused = focusBuffer.get(focusStateKey()) ?: preferences.sectionFocus(focusStateKey())?.let { com.ambient.tv.ui.common.BrowseFocusSnapshot(it, preferences.sectionFocusRow(focusStateKey())) }
                     val continueItems = sectionContinueWatching(onDeck, sourceItems)
                     if (focused != null && (sourceItems + continueItems).none { focused.itemKey in it.allRatingKeys }) {
                         val next = com.ambient.tv.data.browse.survivingFocus(previousItems.map { it.ratingKey }, sourceItems.map { it.ratingKey }, focused.itemKey)
-                        if (next != null) focusBuffer.update(stateKey(), next, focused.rowId)
+                        if (next != null) focusBuffer.update(focusStateKey(), next, focused.rowId)
                     }
                     rebuild(background = true)
                     if (page == SectionPage.COLLECTIONS) ensureCollectionsLoaded()
                 },
                 onFailure = { error ->
+                    _refreshFailed.value = true
                     if (_uiState.value !is SectionUiState.Loaded) {
                         _uiState.value = SectionUiState.Error(error.message ?: "")
                     } else if (notifyFailure && generation == loadGeneration && error !is kotlinx.coroutines.CancellationException) {
@@ -277,17 +309,23 @@ class SectionViewModel @Inject constructor(
     private fun ensureCollectionsLoaded() {
         val stale = staleCollectionSource
         if (sourceItems.isEmpty() || (stale == null && sourceItems.any { it.collections.isNotEmpty() }) || collectionJob?.isActive == true) return
+        val collectionScope = snapshotScope
         collectionJob = viewModelScope.launch {
             collectionsLoading = stale == null
             if (collectionsLoading) rebuild(background = true)
-            mediaRepository.enrichCollections(stale ?: sourceItems).onSuccess { enriched ->
+            mediaRepository.enrichCollections(stale ?: sourceItems).onFailure {
+                if (scopeCurrent(collectionScope)) _refreshFailed.value = true
+            }.onSuccess { enriched ->
+                if (!scopeCurrent(collectionScope)) return@onSuccess
                 staleCollectionSource = null
                 if (enriched !== sourceItems) {
                     sourceItems = enriched
                 }
             }
-            collectionsLoading = false
-            rebuild(background = true)
+            if (scopeCurrent(collectionScope)) {
+                collectionsLoading = false
+                rebuild(background = true)
+            }
         }
     }
 
@@ -304,7 +342,7 @@ class SectionViewModel @Inject constructor(
 
     /** Updated on each focused tile without publishing an expensive whole-grid Loaded state. */
     internal fun currentSessionFocus(targetPage: SectionPage): com.ambient.tv.ui.common.BrowseFocusSnapshot? =
-        focusBuffer.get(stateKey(targetPage))
+        focusBuffer.get(focusStateKey(targetPage))
 
     private fun sort(): SectionSort = preferences.sectionSort(stateKey())?.let { runCatching { SectionSort.valueOf(it) }.getOrNull() } ?: SectionSort.TITLE
     private fun sortOrder(): SectionSortOrder = preferences.sectionSortOrder(stateKey())
@@ -433,7 +471,7 @@ class SectionViewModel @Inject constructor(
     }
 
     private fun bufferFocus(itemKey: String, rowId: String?) {
-        focusBuffer.update(stateKey(), itemKey, rowId)
+        focusBuffer.update(focusStateKey(), itemKey, rowId)
         focusPersistenceJob?.cancel()
         focusPersistenceJob = viewModelScope.launch {
             delay(600)
@@ -450,7 +488,7 @@ class SectionViewModel @Inject constructor(
         // A retained ViewModel can be shown again before its entry refresh completes. Store
         // the return target once on exit, rather than making every focus hop recompose it.
         val current = _uiState.value as? SectionUiState.Loaded ?: return
-        _uiState.value = current.withLatestBrowseFocus(focusBuffer.get(stateKey(current.page)))
+        _uiState.value = current.withLatestBrowseFocus(focusBuffer.get(focusStateKey(current.page)))
     }
 
     private fun flushFocusWrites() {
@@ -471,8 +509,8 @@ class SectionViewModel @Inject constructor(
         val filters = libraryFilters()
         val facets = libraryFilterFacets(sourceItems)
         val view = viewMode()
-        val bufferedFocus = focusBuffer.get(stateKey())
-        val focused = bufferedFocus?.itemKey ?: preferences.sectionFocus(stateKey())
+        val bufferedFocus = focusBuffer.get(focusStateKey())
+        val focused = bufferedFocus?.itemKey ?: preferences.sectionFocus(focusStateKey())
         val genre = filters.genre?.takeIf { name -> facets.genres.any { it.equals(name, ignoreCase = true) } }
         val decade = filters.decade?.takeIf { it in facets.decades }
         val contentRating = filters.contentRating?.takeIf { name -> facets.contentRatings.any { it.equals(name, ignoreCase = true) } }
@@ -482,7 +520,7 @@ class SectionViewModel @Inject constructor(
         val sorted = applyLibraryViewOptions(sourceItems, sort, order, applied)
         val letters = libraryAlphabetLetters(sorted)
         val rows = recommendationRows(sourceItems)
-        val focusedRecommendationRow = (if (bufferedFocus != null) bufferedFocus.rowId else focusedRecommendationRowId ?: preferences.sectionFocusRow(stateKey()))
+        val focusedRecommendationRow = (if (bufferedFocus != null) bufferedFocus.rowId else focusedRecommendationRowId ?: preferences.sectionFocusRow(focusStateKey()))
             ?.takeIf { rowId -> focused != null && rows.any { row -> row.id == rowId && row.items.any { focused in it.allRatingKeys } } }
         val collections = collectionEntries(sourceItems, sort, order)
         return SectionUiState.Loaded(
@@ -514,6 +552,11 @@ class SectionViewModel @Inject constructor(
 
     /** Sorting and collection grouping can touch tens of thousands of entries; keep it off Compose's main thread. */
     private fun rebuild(background: Boolean = false) {
+        if (!scopeCurrent()) {
+            load(force = false)
+            return
+        }
+        val rebuildScope = snapshotScope
         val version = ++rebuildVersion
         rebuildJob?.cancel()
         rebuildJob = viewModelScope.launch(Dispatchers.Default) {
@@ -526,11 +569,11 @@ class SectionViewModel @Inject constructor(
             }
             val loaded = buildLoaded()
             withContext(Dispatchers.Main.immediate) {
-                if (version == rebuildVersion) {
-                    SectionLoadedSnapshots.put(stateKey(), loaded)
+                if (version == rebuildVersion && rebuildScope == snapshotScope && scopeCurrent(rebuildScope)) {
+                    SectionLoadedSnapshots.put(snapshotKey(), loaded)
                     // Sorting may finish after another key press. Publish the latest target,
                     // including a not-yet-persisted one, instead of an older worker snapshot.
-                    _uiState.value = loaded.withLatestBrowseFocus(focusBuffer.get(stateKey()))
+                    _uiState.value = loaded.withLatestBrowseFocus(focusBuffer.get(focusStateKey()))
                         .copy(playbackReturnRevision = playbackReturnRevision)
                 }
             }

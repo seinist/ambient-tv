@@ -69,13 +69,13 @@ class SectionFocusStateTest {
             }
             runCurrent()
             assertEquals(1, emissions.size)
-            assertNull(fixture.preferences.sectionFocus(LIBRARY_STATE_KEY))
+            assertNull(fixture.preferences.sectionFocus(fixture.focusStateKey(LIBRARY_STATE_KEY)))
 
             val latest = fixture.items.last().ratingKey
             model.captureFocusForReturn()
             assertEquals(latest, (model.uiState.value as SectionUiState.Loaded).focusedRatingKey)
-            assertEquals(latest, fixture.preferences.sectionFocus(LIBRARY_STATE_KEY))
-            assertNull(fixture.preferences.sectionFocusRow(LIBRARY_STATE_KEY))
+            assertEquals(latest, fixture.preferences.sectionFocus(fixture.focusStateKey(LIBRARY_STATE_KEY)))
+            assertNull(fixture.preferences.sectionFocusRow(fixture.focusStateKey(LIBRARY_STATE_KEY)))
             assertEquals("Leaving publishes one complete restore snapshot", 2, emissions.size)
 
             model.captureFocusForReturn()
@@ -105,7 +105,7 @@ class SectionFocusStateTest {
             assertEquals(latest, captured.focusedCollectionId)
             assertNull(captured.focusedRatingKey)
             assertNull(captured.focusedRecommendationRowId)
-            assertEquals("collection:$latest", fixture.preferences.sectionFocus(COLLECTION_STATE_KEY))
+            assertEquals("collection:$latest", fixture.preferences.sectionFocus(fixture.focusStateKey(COLLECTION_STATE_KEY)))
             assertEquals(2, emissions.size)
         }
     }
@@ -151,8 +151,8 @@ class SectionFocusStateTest {
             val restored = model.awaitLoaded { it.page == SectionPage.COLLECTIONS }
             assertEquals(collectionTarget, restored.focusedCollectionId)
             assertNull(restored.focusedRatingKey)
-            assertEquals(libraryTarget, fixture.preferences.sectionFocus(LIBRARY_STATE_KEY))
-            assertEquals("collection:$collectionTarget", fixture.preferences.sectionFocus(COLLECTION_STATE_KEY))
+            assertEquals(libraryTarget, fixture.preferences.sectionFocus(fixture.focusStateKey(LIBRARY_STATE_KEY)))
+            assertEquals("collection:$collectionTarget", fixture.preferences.sectionFocus(fixture.focusStateKey(COLLECTION_STATE_KEY)))
         }
     }
 
@@ -255,12 +255,13 @@ class SectionFocusStateTest {
         } as MediaRepository
         private val context: Application = RuntimeEnvironment.getApplication()
         private val scopes = BrowseScopes(preferences, TokenStore(memoryPreferences(), preferences))
+        fun focusStateKey(key: String) = "${scopes.forProvider("plex")}:$key"
         private val dlna = DlnaStore(memoryPreferences())
         private val hosts = HostConnectivity(preferences, dlna, WakeMachines(preferences, dlna))
         private val availability = SourceAvailability(context, scopes, preferences, hosts)
         private val prefetcher = MetadataPrefetcher(repository, availability, scopes, com.ambient.tv.data.browse.BrowseLoadCoordinator(scopes))
         val model = SectionViewModel(context, SavedStateHandle(mapOf("sectionKey" to SECTION_KEY)),
-            repository, prefetcher, availability, preferences, PlexRefreshBus(), com.ambient.tv.data.browse.BrowseLoadCoordinator(scopes))
+            repository, prefetcher, availability, preferences, PlexRefreshBus(), com.ambient.tv.data.browse.BrowseLoadCoordinator(scopes), scopes)
         private val store = ViewModelStore().apply { put("section", model) }
 
         fun pauseNextRebuild(): RebuildGate = RebuildGate().also {

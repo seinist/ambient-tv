@@ -56,6 +56,19 @@ class LiveTvSearchFailureTest {
         assertEquals(SearchSourceState.READY, liveTvSearchState(results, failed))
     }
 
+    @Test fun failedSourceKeepsOnlyItsOwnSavedMatchesWhileHealthyEmptyResultsReplaceOldMatches() = runBlocking {
+        val saved = LiveTvSearchResults(channels = listOf(
+            LiveTvChannel("old-one", "Old healthy match", null, null, sourceId = "working"),
+            LiveTvChannel("old-two", "Saved offline match", null, null, sourceId = "offline"),
+            LiveTvChannel("removed", "Removed source", null, null, sourceId = "removed"),
+        ))
+        val (results, failed) = searchLiveTvRepositories(
+            listOf(repository("working"), repository("offline", fail = true)), "unmatched", saved)
+        assertTrue(failed)
+        assertEquals(listOf("old-two"), results.channels.map { it.uuid })
+        assertEquals(SearchSourceState.PARTIAL, liveTvSearchState(results, failed))
+    }
+
     @Test fun cancellationIsNotConvertedIntoProviderFailure() = runBlocking {
         try {
             searchLiveTvRepositories(listOf(repository("cancelled", cancel = true)), "news")

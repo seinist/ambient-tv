@@ -358,6 +358,13 @@ fun HomeScreen(
     if (systemOverview && !LocalHandheldUi.current) HomeFocusBackdrop(heroContent, overviewRowsScrolling)
     Column(Modifier.fillMaxSize()) {
         if (!systemOverview) com.ambient.tv.update.UpdateHomeCard()
+        if ((uiState as? HomeUiState.Loaded)?.let {
+                it.rows.isNotEmpty() || it.tvRows.isNotEmpty() || it.shortcuts.isNotEmpty()
+            } == true) OfflineSourceStatus(systems = overviewProvider?.let(::setOf)
+                ?: viewModel.reconnectSources(plexOnly, jellyfinOnly, embyOnly),
+                modifier = Modifier.padding(horizontal = screenGutter(), vertical = 8.dp),
+                additionalSources = (uiState as? HomeUiState.Loaded)?.savedLiveSources?.values.orEmpty().toList(),
+                onRetryAdditional = viewModel::retrySavedLiveSources)
         val handheldHeader = LocalHandheldUi.current
         // Phones have no tall hero corner: reserve a real row so the configured clock
         // stays visible without covering the first cards or update notice.
@@ -759,6 +766,10 @@ internal fun LibraryContent(
         ) {
             items(state.rowKeys, key = { it }) { rowKey ->
                 when {
+                    rowKey.startsWith(HOME_OFFLINE_ROW_PREFIX) -> HomeOfflineRow(
+                        system = rowKey.removePrefix(HOME_OFFLINE_ROW_PREFIX),
+                        columnFocus = null, rowKey = rowKey, onFocused = {},
+                    )
                     rowKey in state.tvRows -> {
                         val recent = rowKey.startsWith("recent-tv")
                         HomeLiveTvRow(
@@ -1296,7 +1307,7 @@ internal fun homeFirstBrowseFocusKey(state: HomeUiState.Loaded): com.ambient.tv.
     return null
 }
 
-/** An offline server's place on Home: its name and the one action that wakes and reconnects it. */
+/** Configured-source fallback only when this Home has no saved content at all. */
 @Composable
 private fun HomeOfflineRow(system: String, columnFocus: RowColumnFocus?, rowKey: Any, onFocused: () -> Unit) {
     val vm: UnreachableServerViewModel = hiltViewModel()
@@ -1308,9 +1319,12 @@ private fun HomeOfflineRow(system: String, columnFocus: RowColumnFocus?, rowKey:
             Text(stringResource(R.string.offline_library_title, media?.let { com.ambient.tv.ui.common.systemName(it) } ?: system),
                 style = MaterialTheme.typography.titleLarge)
         }
+        Text(stringResource(R.string.offline_browse_no_cache_body),
+            modifier = Modifier.padding(start = screenGutter(), end = screenGutter(), bottom = 10.dp),
+            style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
         Row(Modifier.padding(horizontal = screenGutter())) {
             TvActionButton(
-                text = offlineActionLabel(gate, system),
+                text = offlineActionLabel(gate),
                 onClick = { vm.retrySystem(system) },
                 loading = gate.retrying,
                 modifier = Modifier.rowColumnFocusTarget(columnFocus, rowKey, system, soundsOnFocus = true)
@@ -1541,7 +1555,7 @@ internal fun HomeLiveTvRow(
                         onArtworkNeeded = onArtworkNeeded,
                         nowSeconds = { nowSeconds },
                         onClick = { onWatch(item.channel) },
-                        onFocused = { onItemFocused(item) },
+                        onFocused = { onItemFocused(item.copy(event = item.event?.takeIf { it.isLive(nowSeconds) })) },
                         modifier = Modifier
                             .rowColumnFocusTarget(columnFocus, rowKey, "${item.channel.sourceId}:${item.channel.uuid}")
                             .browseFocusTarget("${item.channel.sourceId}:${item.channel.uuid}", rowKey = logicalRowFocusKey(rowKey))
@@ -1629,7 +1643,7 @@ private fun LiveChannelTile(
     val shape = androidx.compose.foundation.shape.RoundedCornerShape(tokens.cardRadius)
     val logo = item.channel.iconUrl
     val scheme = MaterialTheme.colorScheme
-    val event = item.event
+    val event = item.event?.takeIf { it.isLive(nowSeconds()) }
     val programmeArtwork = item.channel.sourceId.substringBefore(':') == HomeRowDefinition.SYSTEM_TVHEADEND
     val titleKey = event?.title?.takeIf { programmeArtwork }?.let(::liveTvArtKey)
     // Each composed LazyRow tile observes only its own programme: updates for another title
@@ -1644,7 +1658,7 @@ private fun LiveChannelTile(
             onArtworkNeeded(event.title, this)
         }
     }
-    val artwork = if (programmeArtwork) item.bestArtwork(
+    val artwork = if (programmeArtwork) item.copy(event = event).bestArtwork(
         tmdbUrl?.let { url -> titleKey?.let { mapOf(it to url) } }.orEmpty()
     ) else null
     val backdrop = artwork?.takeUnless { it.logo }
@@ -1967,7 +1981,10 @@ internal fun HomeHero(
                 } else {
                     MaterialTheme.typography.bodyMedium.copy(shadow = metadataShadow)
                 }
-                val live = heroItem.live
+                val nowEpochSeconds by androidx.compose.runtime.produceState(System.currentTimeMillis() / 1_000L, heroItem.key) {
+                    while (true) { delay(30_000L); value = System.currentTimeMillis() / 1_000L }
+                }
+                val live = heroItem.live?.takeIf { nowEpochSeconds in it.startEpochSeconds until it.stopEpochSeconds }
                 val metaBeforeRating = live?.timeLabel ?: mediaItem?.year?.toString().orEmpty()
                 val durationLabel = formatDuration(
                     live?.let { (it.stopEpochSeconds - it.startEpochSeconds) * 1000L } ?: mediaItem?.durationMs,

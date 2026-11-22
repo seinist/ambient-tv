@@ -173,6 +173,14 @@ fun TvheadendPlayerScreen(
     viewModel: TvheadendPlayerViewModel = hiltViewModel(),
 ) {
     val state by viewModel.uiState.collectAsState()
+    val lifecycle = androidx.lifecycle.compose.LocalLifecycleOwner.current.lifecycle
+    DisposableEffect(viewModel, lifecycle) {
+        val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
+            if (event == androidx.lifecycle.Lifecycle.Event.ON_STOP) viewModel.onPlaybackScreenDisposed()
+        }
+        lifecycle.addObserver(observer)
+        onDispose { lifecycle.removeObserver(observer); viewModel.onPlaybackScreenDisposed() }
+    }
     val persistentVideoHost = LocalPersistentPlaybackVideoHost.current
     val tvhContext = LocalContext.current
     val activity = remember(tvhContext) { tvhContext.findActivity() }
@@ -339,6 +347,7 @@ fun TvheadendPlayerScreen(
                             onBack = onBack,
                             onZap = viewModel::zap,
                             onPlaybackFallback = viewModel::requestPlaybackFallback,
+                            onServerUnreachable = viewModel::reportServerUnreachable,
                             onVideoFallback = viewModel::requestVideoFallback,
                             onAudioFallback = viewModel::requestAudioFallback,
                             preferredAudioLanguage = viewModel.preferredAudioLanguage,
@@ -440,6 +449,7 @@ private fun TvheadendPlaybackSurface(
     onBack: () -> Unit,
     onZap: (Int) -> Unit,
     onPlaybackFallback: (String) -> Unit,
+    onServerUnreachable: (String) -> Unit,
     onVideoFallback: (String) -> Unit,
     onAudioFallback: (String) -> Unit,
     preferredAudioLanguage: String?,
@@ -646,7 +656,7 @@ private fun TvheadendPlaybackSurface(
                 val reason = listOf(renderer, error.message.orEmpty()).filter { it.isNotBlank() }.joinToString(": ")
                 Timber.e(error, "TVHeadend playback error; profile=${source.streamProfile}")
                 if (com.ambient.tv.connectivity.PlaybackServerUnreachable.isNetworkish(error)) {
-                    onPlaybackFallback(reason.ifBlank { "timeout" })
+                    onServerUnreachable(reason.ifBlank { "timeout" })
                     return
                 }
                 if (!fallbackRequested) {

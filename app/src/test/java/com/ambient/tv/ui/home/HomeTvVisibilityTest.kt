@@ -5,14 +5,15 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class HomeTvVisibilityTest {
-    @Test fun cachedTvheadendChannelsAreNotHomeRowsUntilServiceIsOnline() {
-        assertFalse(homeTvSourceVisible("tvheadend:living-room", emptySet(), tvheadendOnline = false))
-        assertTrue(homeTvSourceVisible("tvheadend:living-room", emptySet(), tvheadendOnline = true))
+    @Test fun programmeClaimsNeedAConfirmedTvheadendConnection() {
+        assertFalse(homeTvSourceReachable("tvheadend:living-room", emptySet(), tvheadendOnline = false))
+        assertTrue(homeTvSourceReachable("tvheadend:living-room", emptySet(), tvheadendOnline = true))
     }
 
-    @Test fun confirmedOfflineAlwaysHidesTheAffectedSource() {
-        assertFalse(homeTvSourceVisible("tvheadend:living-room", setOf("tvheadend"), tvheadendOnline = true))
-        assertFalse(homeTvSourceVisible("plex:server-a", setOf("plex"), tvheadendOnline = true))
+    @Test fun offlineStatusSuppressesProgrammeClaimsForTheAffectedSource() {
+        assertFalse(homeTvSourceReachable("tvheadend:living-room", setOf("tvheadend"), tvheadendOnline = true))
+        assertFalse(homeTvSourceReachable("plex:server-a", setOf("plex:server-a"), tvheadendOnline = true))
+        assertTrue(homeTvSourceReachable("plex:server-b", setOf("plex:server-a", "plex"), tvheadendOnline = true))
     }
 
     @Test fun launcherClearsOnlyWhenEveryEnabledSourceIsConfirmedOffline() {
@@ -23,8 +24,8 @@ class HomeTvVisibilityTest {
         assertFalse(allHomeTvSourcesOffline(emptyList(), emptySet(), tvheadendFailed = true))
     }
 
-    @Test fun unrelatedLiveTvSourcesStayVisible() {
-        assertTrue(homeTvSourceVisible("iptv:playlist", setOf("tvheadend"), tvheadendOnline = false))
-        assertTrue(homeTvSourceVisible("jellyfin:server-b", setOf("tvheadend"), tvheadendOnline = false))
+    @Test fun unrelatedLiveTvSourcesKeepIndependentProgrammeClaims() {
+        assertTrue(homeTvSourceReachable("iptv:playlist", setOf("tvheadend"), tvheadendOnline = false))
+        assertTrue(homeTvSourceReachable("jellyfin:server-b", setOf("tvheadend"), tvheadendOnline = false))
     }
 }

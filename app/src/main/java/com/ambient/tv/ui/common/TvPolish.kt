@@ -2,6 +2,7 @@ package com.ambient.tv.ui.common
 
 import com.ambient.tv.ui.theme.SelectionIndicator
 import com.ambient.tv.network.artworkRefreshRevision
+import com.ambient.tv.network.artworkNetworkAccess
 import coil3.request.crossfade
 import coil3.request.bitmapConfig
 import androidx.activity.compose.BackHandler
@@ -450,7 +451,7 @@ private val BackdropArtworkKeys = ArtworkMemoryKeyIndex(maxModels = 64)
 
 /** Only the edited URLs restart their requests; ordinary frames/progress never emit here. */
 @Composable
-private fun rememberArtworkRefresh(
+internal fun rememberArtworkRefresh(
     model: Any?, refresh: com.ambient.tv.network.MediaArtworkRefresh?, address: com.ambient.tv.network.MediaArtworkAddress?,
 ): Long {
     val url = remember(model) { (model as? String)?.let { com.ambient.tv.network.mediaArtworkResourceUrl(it) } }
@@ -498,6 +499,8 @@ fun ArtworkImage(
     backdrop: Boolean = focusCrop,
     /** Coil fades the real bitmap in only after load; opt in for changing Live TV backdrops. */
     crossfadeOnLoad: Boolean = false,
+    /** Locked detail previews may display cached bytes, but must not fetch remote artwork. */
+    cacheOnly: Boolean = false,
 ) {
     val context = LocalContext.current
     val candidates = remember(model, fallbackModels) {
@@ -509,9 +512,11 @@ fun ArtworkImage(
             .filter { it != null && (it !is String || it.isNotBlank()) }
             .distinct()
     }
-    var candidateIndex by remember(candidates) { mutableStateOf(0) }
+    val primaryNetwork = rememberArtworkNetworkAccess(candidates.firstOrNull(), artworkHeadersForModel(candidates.firstOrNull(), headers))
+    var candidateIndex by remember(candidates, primaryNetwork.recovery) { mutableStateOf(0) }
     val currentModel = candidates.getOrNull(candidateIndex)
     val effectiveHeaders = remember(currentModel, headers) { artworkHeadersForModel(currentModel, headers) }
+    val network = rememberArtworkNetworkAccess(currentModel, effectiveHeaders)
     val headerKey = remember(effectiveHeaders) { com.ambient.tv.network.mediaArtworkHeadersKey(effectiveHeaders) }
     val refresh = (context.applicationContext as? com.ambient.tv.AmbientTvApplication)?.mediaArtworkRefresh
     val sourceVersion = refresh?.sources?.collectAsState()?.value
@@ -581,7 +586,13 @@ fun ArtworkImage(
     val cap1080 = !backdrop && density > CARD_IMAGE_1080_DENSITY &&
         remember(context) { com.ambient.tv.ui.player.videoImagePreferences(context).cardImages1080 }
     val cardSize = remember(cap1080, density) { if (cap1080) CardImage1080SizeResolver(density) else null }
-    val request = remember(currentModel, context, headers, constrainDecode, cardSize, crossfadeOnLoad, refreshRevision, address?.imageKey, headerKey) {
+    // A successful painter keeps its request during an outage/recovery. Only failed/in-flight
+    // images retry; otherwise every visible poster would briefly re-enter its loading state.
+    var successfulNetwork by remember(currentModel, refreshRevision, address?.imageKey, headerKey) {
+        mutableStateOf<com.ambient.tv.network.ArtworkNetworkState?>(null)
+    }
+    val requestNetwork = successfulNetwork ?: network
+    val request = remember(currentModel, context, headers, constrainDecode, cardSize, crossfadeOnLoad, refreshRevision, address?.imageKey, headerKey, requestNetwork, cacheOnly) {
         ImageRequest.Builder(context).data(currentModel).crossfade(crossfadeOnLoad)
             .placeholderMemoryCacheKey(cachedKey)
             .apply {
@@ -601,6 +612,7 @@ fun ArtworkImage(
                 // Inexact like AsyncImage's own resolver: never upscale a smaller source.
                 cardSize?.let { size(it); precision(coil3.size.Precision.INEXACT) }
             }
+            .artworkNetworkAccess(requestNetwork, cacheOnly)
             .build()
     }
     var loading by remember(currentModel) { mutableStateOf(hasModel && !shownFromMemory) }
@@ -624,6 +636,7 @@ fun ArtworkImage(
                 onSuccess = {
                     loading = false
                     failed = false
+                    successfulNetwork = requestNetwork
                     val key = it.result.memoryCacheKey
                     // Diagnostics: why a picture that was loaded before had to load again.
                     val source = it.result.dataSource
@@ -659,6 +672,7 @@ fun ArtworkImage(
                 },
                 onError = {
                     loading = false
+                    successfulNetwork = null
                     if (candidateIndex < candidates.lastIndex) {
                         candidateIndex += 1
                     } else {
@@ -723,7 +737,8 @@ fun CrossfadeBackdropImage(
     }
     val scope = address?.scope ?: headerKey
     val refreshRevision = rememberArtworkRefresh(normalized, refresh, address)
-    LaunchedEffect(normalized, refreshRevision, scope) {
+    val network = rememberArtworkNetworkAccess(normalized, effectiveHeaders)
+    LaunchedEffect(normalized, refreshRevision, scope, network.recovery) {
         if (layers.lastOrNull()?.scope != scope) layers.clear()
         if (normalized == null) {
             layers.clear()
@@ -737,9 +752,13 @@ fun CrossfadeBackdropImage(
     Box(if (focusCrop) modifier.onSizeChanged { containerSize = it } else modifier) {
         layers.filter { it.scope == scope }.forEach { layer ->
             androidx.compose.runtime.key(layer.id) {
-                val request = remember(layer.model, context, headers, constrainDecode, decodeSize) {
+                val layerNetwork = rememberArtworkNetworkAccess(layer.model, artworkHeadersForModel(layer.model, headers))
+                var successfulNetwork by remember { mutableStateOf<com.ambient.tv.network.ArtworkNetworkState?>(null) }
+                val requestNetwork = successfulNetwork ?: layerNetwork
+                val request = remember(layer.model, context, headers, constrainDecode, decodeSize, requestNetwork) {
                     ImageRequest.Builder(context).data(layer.model).crossfade(false)
                         .artworkRefreshRevision(layer.refreshRevision)
+                        .artworkNetworkAccess(requestNetwork)
                         .apply {
                             requestHeaders(artworkHeadersForModel(layer.model, headers))
                             if (decodeSize != null) {
@@ -781,6 +800,7 @@ fun CrossfadeBackdropImage(
                         alpha = layer.alpha.value
                     },
                     onSuccess = {
+                        successfulNetwork = requestNetwork
                         if (focusCrop) {
                             focusRevision = artworkFocusRevision(it.result.diskCacheKey, it.result.memoryCacheKey?.key, it.result.memoryCacheKey?.extras.orEmpty())
                             visibleFraction = cropVisibleFraction(it.painter.intrinsicSize, containerSize) ?: 1f
@@ -788,6 +808,7 @@ fun CrossfadeBackdropImage(
                         loaded = true
                     },
                     onError = {
+                        successfulNetwork = null
                         // Backdrops retain their last valid artwork, but changing radio
                         // stations must never leave the previous station's cover indefinitely.
                         if (!retainPreviousOnError) layers.clear()

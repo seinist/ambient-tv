@@ -26,6 +26,44 @@ class SourceAvailability @Inject constructor(@ApplicationContext context: Contex
     val changes = mutable.asStateFlow()
     private val health = mutableMapOf<String, SourceHealth>()
     private val order = SourceReportOrder()
+    private var networkGeneration = 0L
+    private var accessNetwork: Network? = connectivity.activeNetwork
+    private val accessFailures = mutableMapOf<String, Long>()
+    /** A reachable sibling port does not confirm this service's last failed data read. */
+    private val unconfirmedReads = mutableSetOf<String>()
+
+    /** Successful HTTP/port checks never restore an old authenticated playback permission. */
+    @Synchronized fun accessGeneration(provider: String, hostSystem: String = provider): String {
+        val scope = scopes.forProvider(provider)
+        val outages = hosts.machine(hostSystem)?.let { hosts.states.value[it]?.outages } ?: 0L
+        return "$networkGeneration:${accessFailures[scope] ?: 0L}:$outages"
+    }
+
+    /** Captured live-TV profiles report their own service failure, independent of VOD selection. */
+    @Synchronized fun accessFailed(provider: String) {
+        val scope = scopes.forProvider(provider)
+        accessFailures[scope] = (accessFailures[scope] ?: 0L) + 1L
+        unconfirmedReads += scope
+        mutable.value++
+    }
+
+    /** Display/action state, deliberately stricter than shared physical-host reachability. */
+    @Synchronized fun browseUnconfirmed(provider: String): Boolean {
+        val scope = scopes.forProvider(provider)
+        return browseSourceUnconfirmed(hasNetwork(), hosts.health(provider),
+            health.getOrPut(scope) { SourceHealth.UNKNOWN }, scope in unconfirmedReads)
+    }
+
+    /**
+     * Only a fresh successful data read without cache fallback may clear a saved-view warning.
+     * A request that overlaps a newer failure or network change cannot unlock the view.
+     * This never grants playback permission; the protected playback verifier owns that proof.
+     */
+    @Synchronized fun confirmBrowseRead(provider: String, started: String, hostSystem: String = provider): Boolean {
+        if (!hasNetwork() || started != accessGeneration(provider, hostSystem)) return false
+        report(scopes.forProvider(provider), SourceHealth.ONLINE, order.begin())
+        return true
+    }
 
     init {
         CoroutineScope(SupervisorJob() + Dispatchers.Default).launch {
@@ -41,6 +79,13 @@ class SourceAvailability @Inject constructor(@ApplicationContext context: Contex
     }
 
     @Synchronized private fun changed() {
+        val current = connectivity.activeNetwork
+        // Internet-validation/capability changes do not disconnect an otherwise usable LAN.
+        if (current == accessNetwork) return
+        accessNetwork = current
+        networkGeneration++
+        // Previously loaded live dashboards also need a new read after a network change.
+        unconfirmedReads += health.keys
         if (!hasNetwork()) listOf("plex", "jellyfin", "emby", "youtube", "spotify").forEach { health[scopes.forProvider(it)] = SourceHealth.OFFLINE }
         else health.replaceAll { _, value -> if (value == SourceHealth.ONLINE) SourceHealth.UNKNOWN else value }
         mutable.value++
@@ -57,6 +102,10 @@ class SourceAvailability @Inject constructor(@ApplicationContext context: Contex
         return state(mediaProvider(id))
     }
     fun hasNetwork(): Boolean = connectivity.activeNetwork != null
+    /** A sibling's open port must not turn failed service artwork into repeated network loads. */
+    @Synchronized fun reportedState(provider: String): SourceHealth =
+        if (!hasNetwork()) SourceHealth.OFFLINE else health[scopes.forProvider(provider)] ?: SourceHealth.UNKNOWN
+
     @Synchronized fun state(provider: String): SourceHealth =
         if (!hasNetwork()) SourceHealth.OFFLINE else hostState(provider, health[scopes.forProvider(provider)] ?: SourceHealth.UNKNOWN)
 
@@ -64,9 +113,15 @@ class SourceAvailability @Inject constructor(@ApplicationContext context: Contex
         if (!hasNetwork()) SourceHealth.OFFLINE else hostAwareSourceHealth(hosts.health(system), service)
 
     /** [started]: when the request behind it began; a failure older than the last success is stale. */
-    @Synchronized private fun report(scope: String, state: SourceHealth, started: Long) {
+    @Synchronized private fun report(scope: String, state: SourceHealth, started: Long, confirmsRead: Boolean = true) {
         if (!order.accept(scope, started, state)) return
-        if (health.put(scope, state) != state) mutable.value++
+        val invalidatesAccess = state == SourceHealth.OFFLINE || state == SourceHealth.AUTH_REQUIRED || state == SourceHealth.UNKNOWN
+        val wasUnconfirmed = scope in unconfirmedReads
+        if (invalidatesAccess) {
+            accessFailures[scope] = (accessFailures[scope] ?: 0L) + 1L
+            unconfirmedReads += scope
+        } else if (state == SourceHealth.ONLINE && confirmsRead) unconfirmedReads -= scope
+        if (health.put(scope, state) != state || invalidatesAccess || wasUnconfirmed != (scope in unconfirmedReads)) mutable.value++
     }
 
     fun interceptor(provider: String) = Interceptor { chain ->
@@ -83,7 +138,8 @@ class SourceAvailability @Inject constructor(@ApplicationContext context: Contex
                         401, 403 -> if (com.ambient.tv.network.ElevatedRequest.isElevated(chain.request())) SourceHealth.ONLINE else SourceHealth.AUTH_REQUIRED
                         in 200..499 -> SourceHealth.ONLINE
                         else -> SourceHealth.UNKNOWN
-                    }, started)
+                    }, started, confirmsRead = response.networkResponse != null && response.isSuccessful &&
+                        browseResponseConfirmsRead(provider, chain.request().url.encodedPath))
                 }
             }
         } catch (error: IOException) {
@@ -137,4 +193,20 @@ internal fun hostAwareSourceHealth(host: com.ambient.tv.connectivity.HostHealth,
     service == SourceHealth.AUTH_REQUIRED -> service
     host == com.ambient.tv.connectivity.HostHealth.ONLINE && service == SourceHealth.OFFLINE -> SourceHealth.UNKNOWN
     else -> service
+}
+
+/** An open NAS port cannot erase a known failure of one of its services. */
+internal fun browseSourceUnconfirmed(
+    hasNetwork: Boolean,
+    host: com.ambient.tv.connectivity.HostHealth,
+    service: SourceHealth,
+    failedRead: Boolean,
+): Boolean = !hasNetwork || host == com.ambient.tv.connectivity.HostHealth.OFFLINE || failedRead ||
+    service == SourceHealth.OFFLINE || service == SourceHealth.AUTH_REQUIRED
+
+/** Public identity probes show reachability, not a recovered catalog/account. */
+internal fun browseResponseConfirmsRead(provider: String, path: String): Boolean = when (provider) {
+    "plex" -> path.trimEnd('/') !in setOf("", "/identity")
+    "jellyfin", "emby" -> !path.trimEnd('/').endsWith("/System/Info/Public", ignoreCase = true)
+    else -> true
 }

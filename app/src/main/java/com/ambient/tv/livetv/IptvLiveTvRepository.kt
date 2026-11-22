@@ -37,6 +37,7 @@ class IptvLiveTvRepository(
     private val cacheDir: File,
     private val guideIndex: ProgrammeGuideIndex,
     private val isCurrent: () -> Boolean = { true },
+    private val accessFailed: () -> Unit = {},
 ) : LiveTvRepository {
     private val lock = Mutex()
     private val cacheGuard = Any()
@@ -66,6 +67,13 @@ class IptvLiveTvRepository(
     )
 
     override suspend fun channels(force: Boolean): List<LiveTvChannel> = channels(playlist(force))
+
+    /** A disk fallback keeps channels browsable but must never authorize a new playback. */
+    override suspend fun verifyPlayback(kind: String, id: String): Boolean {
+        if (kind != "channel") return false
+        val fresh = playlist(force = true, allowFallback = false)
+        return id.isBlank() || fresh.channels.any { it.uuid == id }
+    }
 
     private fun channels(playlist: IptvPlaylist): List<LiveTvChannel> = playlist.channels.map { channel ->
         LiveTvChannel(
@@ -114,7 +122,7 @@ class IptvLiveTvRepository(
         config.userAgent.takeIf(String::isNotBlank)?.let { put("User-Agent", it) }
     }
 
-    private suspend fun playlist(force: Boolean): IptvPlaylist = withContext(Dispatchers.IO) { lock.withLock {
+    private suspend fun playlist(force: Boolean, allowFallback: Boolean = true): IptvPlaylist = withContext(Dispatchers.IO) { lock.withLock {
         currentCoroutineContext().ensureActive()
         check(isCurrent()) { "IPTV source changed" }
         val now = System.currentTimeMillis()
@@ -139,7 +147,9 @@ class IptvLiveTvRepository(
         }
             // Offline or provider hiccup: the last good playlist keeps the channel list usable.
             .getOrElse { error ->
-                if (!cache.isFile) throw error
+                if (isCurrent()) accessFailed()
+                synchronized(cacheGuard) { if (revision == refreshPolicy.revision) playlistFromFallback = true }
+                if (!allowFallback || !cache.isFile) throw error
                 fromFallback = true
                 parse(cache.readText())
             }

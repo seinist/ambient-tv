@@ -102,6 +102,8 @@ import androidx.compose.material.icons.filled.MoreHoriz
 import androidx.compose.material.icons.filled.PlaylistRemove
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.RestartAlt
+import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material3.Icon
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
@@ -152,6 +154,7 @@ import com.ambient.tv.ui.common.BrowseFocusInitialTarget
 import com.ambient.tv.ui.common.BrowseFocusHoldEntry
 import com.ambient.tv.ui.common.BrowseFocusKey
 import com.ambient.tv.ui.common.BrowseFocusSlot
+import com.ambient.tv.ui.common.browseFocusTarget
 import com.ambient.tv.ui.common.RegisterBrowseFocusSlots
 import com.ambient.tv.ui.common.LocalBrowseFocusReturnState
 import com.ambient.tv.ui.common.rememberBrowsePlaybackReturn
@@ -198,8 +201,9 @@ fun DetailScreen(
                 StatePanel(
                     title = stringResource(R.string.detail_load_failed),
                     body = state.messageRes?.let { stringResource(it) } ?: state.message.ifBlank { stringResource(R.string.error_generic) },
-                    actionLabel = stringResource(R.string.home_retry),
-                    onAction = viewModel::load,
+                    actionLabel = stringResource(R.string.offline_detail_retry),
+                    onAction = viewModel::retryConnection,
+                    actionLoading = viewModel.connectionRetrying.collectAsState().value,
                 )
                 PageUtilityBar(
                     onBack = onBack,
@@ -209,72 +213,177 @@ fun DetailScreen(
                 )
             }
             is DetailUiState.Loaded -> {
-                val focusScope = viewModel.focusScope
-                val active = isActiveNavigationDestination()
-                val entry = remember(focusScope, state.item.ratingKey) { DetailFocusEntry() }
-                val entryToken = entry.enter(active)
-                val acceptedReturn = rememberPlaybackReturnOnEntry(DetailFocusSessions.pendingPlaybackReturn(state.item.ratingKey)) { it.revision }
-                var committedReturn by remember(focusScope, state.item.ratingKey) { mutableStateOf<DetailPlaybackReturn?>(null) }
-                val returned = acceptedReturn ?: committedReturn.takeIf { active }
-                SideEffect {
-                    if (!active) committedReturn = null
-                    else if (acceptedReturn != null) {
-                        committedReturn = acceptedReturn
-                        DetailFocusSessions.consumePlaybackReturn(acceptedReturn)
-                    }
-                }
-                var entryPrepared by remember(focusScope, state.item.ratingKey, entryToken, returned?.revision) { mutableStateOf(false) }
-                val pageMemory = remember(focusScope, state.item.ratingKey) { DetailFocusSessions.page(focusScope, state.item.ratingKey) }
-                val waitingForEntry = !entryPrepared && !LocalHandheldUi.current && detailEntryWaitsForChildren(
-                    state.item, state.children, state.childrenLoading, returned,
-                    pageMemory.key, pageMemory.hasRecordedFocus,
-                )
-                SideEffect { if (!waitingForEntry) entryPrepared = true }
-                BrowseFocusHoldEntry(waitingForEntry)
-                ReportSidebarContentReady(!waitingForEntry)
-                if (waitingForEntry) {
-                    DetailLoadingSkeleton(onBack, onOpenSettings, requestInitialFocus = false)
-                } else androidx.compose.runtime.key(focusScope, state.item.ratingKey, returned?.revision) {
-                    DetailContent(
-                        fallbackBackdrop = viewModel.fallbackBackdrop.collectAsState().value,
-                        onTrailer = onTrailer,
+                if (!state.connectionVerified || state.offline || state.removed) {
+                    BrowseFocusHoldEntry(false)
+                    ReportSidebarContentReady(true)
+                    LockedDetailPreview(
                         item = state.item,
-                        focusScope = focusScope,
-                        entryToken = entryToken,
-                        playbackReturn = returned,
-                        playbackAvailable = !state.offline && !state.removed,
-                        availabilityMessage = if (state.removed) R.string.browse_item_removed else if (state.offline) R.string.browse_offline else null,
-                        children = state.children,
-                        childrenLoading = state.childrenLoading,
-                        childrenLoadFailed = state.childrenLoadFailed,
-                        seasons = state.seasons,
-                        onRetryChildren = viewModel::load,
-                        nextEpisode = state.nextEpisode,
-                        similar = state.similar,
-                        similarLoading = state.similarLoading,
-                        actorRows = state.actorRows,
-                        actionInProgress = state.actionInProgress,
-                        autoSelectDisplayVersion = state.autoSelectDisplayVersion,
-                        onPlay = onPlay,
-                        onPlayVersion = onPlayVersion,
-                        onOpenChild = onOpenChild,
-                        onOpenEpisode = onOpenEpisode,
-                        onOpenSeason = onOpenSeason,
-                        onOpenSeries = onOpenSeries,
+                        checking = state.connectionChecking,
+                        removed = state.removed,
+                        onRetry = viewModel::retryConnection,
                         onBack = onBack,
                         onOpenSettings = onOpenSettings,
-                        onBrowseActor = onBrowseActor,
-                        onBrowseCollection = onBrowseCollection,
-                        onSetWatched = viewModel::setWatched,
-                        onRemoveFromContinue = viewModel::removeFromContinueWatching,
-                        editSupport = viewModel.editSupport.collectAsState().value.takeIf { !state.offline && !state.removed }
-                            ?: com.ambient.tv.domain.model.MetadataEditSupport.NONE,
-                        onMetadataEdited = viewModel::onMetadataEdited,
                     )
+                } else {
+                    val focusScope = viewModel.focusScope
+                    val active = isActiveNavigationDestination()
+                    val entry = remember(focusScope, state.item.ratingKey) { DetailFocusEntry() }
+                    val entryToken = entry.enter(active)
+                    val acceptedReturn = rememberPlaybackReturnOnEntry(DetailFocusSessions.pendingPlaybackReturn(state.item.ratingKey)) { it.revision }
+                    var committedReturn by remember(focusScope, state.item.ratingKey) { mutableStateOf<DetailPlaybackReturn?>(null) }
+                    val returned = acceptedReturn ?: committedReturn.takeIf { active }
+                    SideEffect {
+                        if (!active) committedReturn = null
+                        else if (acceptedReturn != null) {
+                            committedReturn = acceptedReturn
+                            DetailFocusSessions.consumePlaybackReturn(acceptedReturn)
+                        }
+                    }
+                    var entryPrepared by remember(focusScope, state.item.ratingKey, entryToken, returned?.revision) { mutableStateOf(false) }
+                    val pageMemory = remember(focusScope, state.item.ratingKey) { DetailFocusSessions.page(focusScope, state.item.ratingKey) }
+                    val waitingForEntry = !entryPrepared && !LocalHandheldUi.current && detailEntryWaitsForChildren(
+                        state.item, state.children, state.childrenLoading, returned,
+                        pageMemory.key, pageMemory.hasRecordedFocus,
+                    )
+                    SideEffect { if (!waitingForEntry) entryPrepared = true }
+                    BrowseFocusHoldEntry(waitingForEntry)
+                    ReportSidebarContentReady(!waitingForEntry)
+                    if (waitingForEntry) {
+                        DetailLoadingSkeleton(onBack, onOpenSettings, requestInitialFocus = false)
+                    } else androidx.compose.runtime.key(focusScope, state.item.ratingKey, returned?.revision) {
+                        DetailContent(
+                            fallbackBackdrop = viewModel.fallbackBackdrop.collectAsState().value,
+                            onTrailer = onTrailer,
+                            item = state.item,
+                            focusScope = focusScope,
+                            entryToken = entryToken,
+                            playbackReturn = returned,
+                            playbackAvailable = !state.offline && !state.removed,
+                            availabilityMessage = if (state.removed) R.string.browse_item_removed else if (state.offline) R.string.browse_offline else null,
+                            children = state.children,
+                            childrenLoading = state.childrenLoading,
+                            childrenLoadFailed = state.childrenLoadFailed,
+                            seasons = state.seasons,
+                            onRetryChildren = viewModel::load,
+                            nextEpisode = state.nextEpisode,
+                            similar = state.similar,
+                            similarLoading = state.similarLoading,
+                            actorRows = state.actorRows,
+                            actionInProgress = state.actionInProgress,
+                            autoSelectDisplayVersion = state.autoSelectDisplayVersion,
+                            onPlay = onPlay,
+                            onPlayVersion = onPlayVersion,
+                            onOpenChild = onOpenChild,
+                            onOpenEpisode = onOpenEpisode,
+                            onOpenSeason = onOpenSeason,
+                            onOpenSeries = onOpenSeries,
+                            onBack = onBack,
+                            onOpenSettings = onOpenSettings,
+                            onBrowseActor = onBrowseActor,
+                            onBrowseCollection = onBrowseCollection,
+                            onSetWatched = viewModel::setWatched,
+                            onRemoveFromContinue = viewModel::removeFromContinueWatching,
+                            editSupport = viewModel.editSupport.collectAsState().value.takeIf { !state.offline && !state.removed }
+                                ?: com.ambient.tv.domain.model.MetadataEditSupport.NONE,
+                            onMetadataEdited = viewModel::onMetadataEdited,
+                        )
+                    }
                 }
             }
         }
     }
+    }
+}
+
+/**
+ * A cached item's useful, deliberately small preview. The full detail composition (and its
+ * focus registrations, menus and episode callbacks) does not exist while access is unverified.
+ */
+@Composable
+internal fun LockedDetailPreview(
+    item: MediaItem,
+    checking: Boolean,
+    removed: Boolean,
+    onRetry: () -> Unit,
+    onBack: () -> Unit,
+    onOpenSettings: () -> Unit,
+) {
+    BrowseFocusContentIdentity("locked-detail:${item.ratingKey}", restoreInitialTarget = true)
+    BrowseFocusInitialTarget("detail:retry")
+    val focus = remember(item.ratingKey) { FocusRequester() }
+    val handheld = LocalHandheldUi.current
+    val active = isActiveNavigationDestination()
+    val pending = com.ambient.tv.ui.navigation.LocalSidebarContentPending.current
+    LaunchedEffect(item.ratingKey, handheld, active, pending) {
+        if (!handheld && active && !pending) {
+            withFrameNanos { }
+            runCatching { focus.requestFocus() }
+        }
+    }
+    Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
+        Column(
+            Modifier.fillMaxSize().verticalScroll(rememberScrollState())
+                .padding(top = 72.dp, bottom = 36.dp),
+        ) {
+            DeviceActionRow(
+                stack = handheldDetailStacks(LocalConfiguration.current.screenWidthDp),
+                modifier = Modifier.fillMaxWidth().padding(
+                    start = screenGutter(), end = screenGutter(),
+                    top = com.ambient.tv.ui.common.pageHeaderTop(18.dp), bottom = 24.dp,
+                ),
+                horizontalArrangement = Arrangement.spacedBy(28.dp),
+                verticalAlignment = Alignment.Top,
+            ) {
+                val square = com.ambient.tv.ui.common.detailArtworkIsSquare(item.type)
+                val poster = item.thumbUrl ?: item.parentThumbUrl ?: item.grandparentThumbUrl
+                val posterShape = RoundedCornerShape(14.dp)
+                ArtworkImage(
+                    model = poster,
+                    fallbackModels = listOfNotNull(item.parentThumbUrl, item.grandparentThumbUrl).filter { it != poster },
+                    title = item.title,
+                    cacheOnly = true,
+                    modifier = Modifier.width(deviceDp(if (square) 210.dp else 190.dp, 144.dp))
+                        .aspectRatio(if (square) 1f else 2f / 3f).clip(posterShape)
+                        .border(1.dp, Color.White.copy(alpha = .14f), posterShape),
+                )
+                Column(Modifier.weight(1f).widthIn(max = 860.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                    com.ambient.tv.ui.common.DetailEyebrow(com.ambient.tv.ui.common.detailEyebrow(item))
+                    Text(item.title, style = MaterialTheme.typography.headlineLarge, maxLines = 3, overflow = TextOverflow.Ellipsis)
+                    com.ambient.tv.ui.common.detailPrimaryMeta(item).takeIf { it.isNotEmpty() }?.let { meta ->
+                        Text(meta.joinToString(" · "), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    item.summary?.takeIf(String::isNotBlank)?.let { summary ->
+                        Text(summary, style = MaterialTheme.typography.bodyMedium, maxLines = 5, overflow = TextOverflow.Ellipsis)
+                    }
+                    Column(
+                        Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surface, RoundedCornerShape(14.dp))
+                            .border(1.dp, MaterialTheme.colorScheme.onSurface.copy(alpha = .12f), RoundedCornerShape(14.dp))
+                            .padding(20.dp),
+                        verticalArrangement = Arrangement.spacedBy(12.dp),
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                            Icon(Icons.Filled.Lock, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(22.dp))
+                            Text(
+                                stringResource(if (removed) R.string.browse_item_removed else R.string.offline_detail_connection_required),
+                                style = MaterialTheme.typography.titleMedium,
+                            )
+                        }
+                        Text(stringResource(R.string.offline_detail_connection_description), style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        DeviceActionRow(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                            TvActionButton(
+                                text = stringResource(if (checking) R.string.offline_detail_checking else R.string.offline_detail_retry),
+                                onClick = onRetry, loading = checking, icon = Icons.Filled.Refresh,
+                                modifier = Modifier.browseFocusTarget("detail:retry").focusRequester(focus),
+                            )
+                            TvActionButton(stringResource(R.string.back), onBack, modifier = Modifier.browseFocusTarget("detail:back"))
+                        }
+                    }
+                }
+            }
+        }
+        PageUtilityBar(onBack = onBack, onSettings = onOpenSettings, requestInitialFocus = false,
+            leftNavigatesBack = false, modifier = Modifier.align(Alignment.TopCenter))
     }
 }
 
@@ -566,7 +675,7 @@ internal fun DetailContent(
         val castItems = item.cast.dedupeCastMembers().take(16)
         val rowDefaults = buildMap {
             preferredChild?.let { put("children", it) }
-            castItems.firstOrNull { it.id != null }?.let { put("cast", "cast:${it.id ?: it.name}") }
+            castItems.firstOrNull { !it.id.isNullOrBlank() }?.let { put("cast", "cast:${it.id ?: it.name}") }
             item.collections.firstOrNull { it.id != null }?.let { put("collections", "collection:${it.id ?: it.name}") }
         }
         // Decorative/disabled cards and loading placeholders are not navigation destinations.
@@ -575,7 +684,7 @@ internal fun DetailContent(
             addAll(versionRowKeys)
             if (seasonStripVisible) add("season-strip")
             if (childrenSectionVisible && (children.isNotEmpty() || (childrenLoadFailed && !childrenLoading))) add("children")
-            if (castItems.any { it.id != null }) add("cast")
+            if (castItems.any { !it.id.isNullOrBlank() }) add("cast")
             if (similar.isNotEmpty()) add("similar")
             actorRows.filter { it.items.isNotEmpty() }.forEach { add("actor:${it.actorId}") }
             if (item.collections.any { it.id != null }) add("collections")
@@ -1955,7 +2064,7 @@ private fun CollectionsSection(
 }
 
 @Composable
-private fun CastSection(
+internal fun CastSection(
     item: MediaItem,
     onBrowseActor: (String, String) -> Unit,
     restoreFocusKey: String?,
@@ -1963,8 +2072,8 @@ private fun CastSection(
 ) {
     val columnFocus = LocalDetailRowFocus.current?.focus
     val members = remember(item.cast) { item.cast.dedupeCastMembers().take(16) }
-    val keys = remember(members) { members.map { "cast:${it.id ?: it.name}" } }
-    val focusableKeys = remember(members) { members.filter { it.id != null }.map { "cast:${it.id}" } }
+    val keys = remember(members) { members.map { "cast:${it.id?.takeIf(String::isNotBlank) ?: it.name}" } }
+    val focusableKeys = remember(members) { members.filter { !it.id.isNullOrBlank() }.map { "cast:${it.id}" } }
     Column(modifier = Modifier.fillMaxWidth().bringFocusedContextIntoView()) {
         Text(stringResource(R.string.detail_cast), style = MaterialTheme.typography.titleLarge, modifier = Modifier.padding(start = screenGutter(), end = screenGutter(), bottom = 12.dp))
         LazyRow(
@@ -1976,11 +2085,12 @@ private fun CastSection(
             horizontalArrangement = Arrangement.spacedBy(20.dp),
             modifier = Modifier.containRowFocusExit(),
         ) {
-            items(members, key = { it.id ?: it.name }) { member ->
-                val focusKey = "cast:${member.id ?: member.name}"
+            items(members, key = { it.id?.takeIf(String::isNotBlank) ?: it.name }) { member ->
+                val focusKey = "cast:${member.id?.takeIf(String::isNotBlank) ?: member.name}"
                 val requester = remember(member.id, member.name) { FocusRequester() }
                 RestoreDetailFocus(restoreFocusKey == focusKey, requester)
                 var isFocused by remember(member.id, member.name) { mutableStateOf(false) }
+                var portraitMissing by remember(member.thumbUrl) { mutableStateOf(member.thumbUrl.isNullOrBlank()) }
                 // Fade the focus ring in/out instead of toggling it, so moving along the row glides.
                 val ringWidth by animateDpAsState(if (isFocused) 2.dp else 0.dp, tween(180), label = "castRing")
                 val ringColor by animateColorAsState(
@@ -1989,8 +2099,8 @@ private fun CastSection(
                     label = "castRingColor",
                 )
                 androidx.tv.material3.Surface(
-                    onClick = { member.id?.let { onBrowseActor(it, member.name) } },
-                    enabled = member.id != null,
+                    onClick = { member.id?.takeIf(String::isNotBlank)?.let { onBrowseActor(it, member.name) } },
+                    enabled = !member.id.isNullOrBlank(),
                     colors = transparentSurfaceColors(),
                     // No Modifier.scale() here, so also no reserved padding for one - rather
                     // than fight Surface's own default pop-and-grow (which had nothing to
@@ -1998,26 +2108,49 @@ private fun CastSection(
                     // with a border around the portrait instead, like the rest of the app.
                     scale = noSurfaceScale(),
                     border = noSurfaceBorder(),
-                    modifier = Modifier.width(112.dp).detailRowTarget("cast", focusKey, columnFocus, soundsOnFocus = false)
-                        .focusProperties { canFocus = member.id != null }
+                    modifier = Modifier.width(112.dp).height(154.dp).detailRowTarget("cast", focusKey, columnFocus, soundsOnFocus = false)
+                        .focusProperties { canFocus = !member.id.isNullOrBlank() }
                         .focusRequester(requester)
-                        .activateOnTvKey(enabled = member.id != null, onClick = { member.id?.let { onBrowseActor(it, member.name) } })
+                        .activateOnTvKey(enabled = !member.id.isNullOrBlank(), onClick = { member.id?.takeIf(String::isNotBlank)?.let { onBrowseActor(it, member.name) } })
                         .onFocusChanged {
                             isFocused = it.isFocused
                             if (it.isFocused) onFocused(focusKey)
                         },
                 ) {
-                    Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.padding(6.dp)) {
-                        ArtworkImage(
-                            model = member.thumbUrl,
-                            title = member.name,
-                            contentScale = ContentScale.Crop,
-                            modifier = Modifier.size(92.dp).clip(CircleShape)
-                                .border(ringWidth, ringColor, CircleShape),
-                        )
-                        Text(member.name, style = MaterialTheme.typography.labelMedium, maxLines = 1, modifier = Modifier.padding(top = 6.dp))
-                        member.role?.let {
-                            Text(it, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
+                    // Every person keeps the same tile and focus address, including missing or
+                    // failed portraits. A name/role card fills that slot instead of an empty circle.
+                    Box(Modifier.fillMaxSize().padding(6.dp)) {
+                        if (portraitMissing) {
+                            val shape = RoundedCornerShape(12.dp)
+                            Column(
+                                Modifier.fillMaxSize().background(MaterialTheme.colorScheme.surfaceVariant, shape)
+                                    .border(ringWidth, ringColor, shape).padding(10.dp),
+                                verticalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterVertically),
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                            ) {
+                                Text(member.name, style = MaterialTheme.typography.labelMedium, maxLines = 3,
+                                    overflow = TextOverflow.Ellipsis, textAlign = androidx.compose.ui.text.style.TextAlign.Center)
+                                member.role?.takeIf(String::isNotBlank)?.let {
+                                    Text(it, style = MaterialTheme.typography.labelSmall, maxLines = 2,
+                                        overflow = TextOverflow.Ellipsis, textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                }
+                            }
+                        } else Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.fillMaxSize()) {
+                            ArtworkImage(
+                                model = member.thumbUrl,
+                                title = member.name,
+                                contentScale = ContentScale.Crop,
+                                fallbackContent = { SideEffect { portraitMissing = true } },
+                                modifier = Modifier.size(92.dp).clip(CircleShape)
+                                    .border(ringWidth, ringColor, CircleShape),
+                            )
+                            Text(member.name, style = MaterialTheme.typography.labelMedium, maxLines = 1,
+                                overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 6.dp))
+                            member.role?.takeIf(String::isNotBlank)?.let {
+                                Text(it, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    overflow = TextOverflow.Ellipsis, maxLines = 1)
+                            }
                         }
                     }
                 }

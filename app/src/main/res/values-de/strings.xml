@@ -2296,8 +2296,9 @@
     <string name="offline_host_offline">Das Servergerät ist im Netzwerk nicht erreichbar.</string>
     <string name="offline_host_unknown">Verbindungsstatus wird ermittelt.</string>
     <string name="offline_server_address">Serveradresse: %1$s</string>
-    <string name="offline_wol_ready">Automatisches Wake-on-LAN ist eingerichtet.</string>
-    <string name="offline_wol_missing">Automatisches Wake-on-LAN ist nicht eingerichtet.</string>
+    <string name="offline_wol_ready">Wake-on-LAN ist verfügbar, falls der Server noch offline ist.</string>
+    <string name="offline_wol_missing">Für diesen Server ist keine Wake-on-LAN-Adresse eingerichtet.</string>
+    <string name="offline_wol_not_needed">Der Server ist erreichbar; Wake-on-LAN ist nicht nötig.</string>
     <string name="offline_auto_check_manual">Manueller Verbindungsversuch läuft…</string>
     <string name="offline_auto_check_waiting">Warte auf die nächste automatische Prüfung…</string>
     <string name="offline_auto_check_now">Automatische Prüfung steht an…</string>

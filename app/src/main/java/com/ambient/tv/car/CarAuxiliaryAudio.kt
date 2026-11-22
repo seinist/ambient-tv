@@ -92,6 +92,7 @@ internal class CarAuxiliaryAudio @Inject constructor(
     private val files: FilesRepository,
     private val fileStore: FileStore,
     private val access: FileAccess,
+    private val playbackAvailability: com.ambient.tv.data.browse.PlaybackAvailability,
 ) {
     private data class LiveRadioSnapshot(
         val loadedAt: Long,
@@ -329,11 +330,22 @@ internal class CarAuxiliaryAudio @Inject constructor(
     suspend fun resolveLive(id: String, group: String? = null): CarAudioSelection.Live? {
         val (sourceId, uuid) = CarAudioIds.liveAudioSpec(id) ?: return null
         val repo = liveRepository(sourceId) ?: return null
+        val route = com.ambient.tv.ui.navigation.Destinations.tvhPlayer("channel", uuid, sourceId)
+        val identity = playbackAvailability.routeIdentity(route)
+        if (!playbackAvailability.checkLive(sourceId, "channel", uuid).allowed) return null
         val radios = liveRadioChannels(repo, waitForGuide = false)
         val selection = withContext(Dispatchers.Default) { radios.selection(uuid, group) } ?: return null
+        if (liveRepository(sourceId) !== repo) return null
         val siblings = selection.queue.map { CarAudioIds.liveAudio(sourceId, it.uuid) }
-        return CarAudioSelection.Live(selection.channel, repo.liveStream(selection.channel), siblings,
-            repo.source.system, artworkHeaders = repo.authHeaders())
+        val stream = repo.liveStream(selection.channel)
+        if (identity != playbackAvailability.routeIdentity(route)) {
+            kotlinx.coroutines.withContext(kotlinx.coroutines.NonCancellable) {
+                runCatching { stream.session?.report(0L, playing = false, stopped = true) }
+            }
+            return null
+        }
+        return CarAudioSelection.Live(selection.channel, stream, siblings,
+            repo.source.system, artworkHeaders = repo.authHeaders(), sourceIdentity = identity)
     }
 
     /** Called after playback starts; fetching programme details never gates stream selection. */

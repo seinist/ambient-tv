@@ -67,12 +67,13 @@ internal fun Guide(
     titleArt: Map<String, String> = emptyMap(),
     onArtworkNeeded: (String, kotlinx.coroutines.CoroutineScope) -> Unit = { _, _ -> },
     artworkUpdates: StateFlow<Map<String, String>>? = null,
+    savedView: Boolean = false,
 ) = LiveTvChannelBrowser(browseState, channels, events, imageHeaders, onEvent,
     firstContentFocusRequester, focusTarget, onFocused, options, onOptions, onWatch, canWatch, controls,
     refreshing = refreshing, restoreFocus = restoreFocus, preparedPlaybackReturn = preparedPlaybackReturn,
     onFocusRestored = onFocusRestored,
     pageFocusChain = pageFocusChain, listing = listing, titleArt = titleArt, onArtworkNeeded = onArtworkNeeded,
-    artworkUpdates = artworkUpdates)
+    artworkUpdates = artworkUpdates, savedView = savedView)
 
 /** The same filtered rows drive rendering, alphabet jumps and restored focus. */
 @OptIn(ExperimentalFoundationApi::class)
@@ -103,6 +104,7 @@ internal fun LiveTvChannelBrowser(
     titleArt: Map<String, String> = emptyMap(),
     onArtworkNeeded: (String, kotlinx.coroutines.CoroutineScope) -> Unit = { _, _ -> },
     artworkUpdates: StateFlow<Map<String, String>>? = null,
+    savedView: Boolean = false,
 ) {
     val now = listing.now
     val timelineOrigin = remember(now) { guideTimelineOrigin(now) }
@@ -324,8 +326,8 @@ internal fun LiveTvChannelBrowser(
                     items(visibleChannels, key = { it.uuid }) { channel ->
                         val rowEvents = eventsByChannel[channel.uuid].orEmpty()
                         if (channelList) {
-                            val current = rowEvents.firstOrNull { it.isLive(now) }
-                            val next = rowEvents.firstOrNull { it.startEpochSeconds >= now }
+                            val current = rowEvents.firstOrNull { !savedView && it.isLive(now) }
+                            val next = rowEvents.firstOrNull { !savedView && it.startEpochSeconds >= now }
                             val recording = current?.let { event -> findProgrammeRecording(event, upcoming) != null } == true
                             // Only laid-out rows trigger TMDB work. Art updates never change row keys or size.
                             LaunchedEffect(current?.eventId, current?.title) {
@@ -338,7 +340,7 @@ internal fun LiveTvChannelBrowser(
                                     if (showAlphabet) alphabetTarget.value = channel.uuid
                                     contentFocused(channel.uuid, null)
                                 },
-                                art = currentArt,
+                                art = currentArt, savedView = savedView,
                                 modifier = Modifier.focusRequester(rowFocus.getOrPut(channel.uuid) { FocusRequester() })
                                     .then(if (channel.uuid == focusTarget.contentId) Modifier.focusRequester(firstContentFocusRequester) else Modifier))
                         } else {
@@ -414,7 +416,7 @@ internal fun LiveTvChannelBrowser(
                                 }
                                 if (rowEvents.isEmpty() && browsePending) Box(Modifier.padding(12.dp), contentAlignment = Alignment.Center) {
                                     androidx.compose.material3.CircularProgressIndicator(modifier = Modifier.size(24.dp), color = MaterialTheme.colorScheme.primary)
-                                } else if (rowEvents.isEmpty()) Text(stringResource(R.string.guide_no_programme), modifier = Modifier.padding(12.dp),
+                                } else if (rowEvents.isEmpty()) Text(stringResource(if (savedView) R.string.offline_browse_programme_unavailable else R.string.guide_no_programme), modifier = Modifier.padding(12.dp),
                                     style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                 else CompositionLocalProvider(LocalBringIntoViewSpec provides horizontalScrollSpec) {
                                 LazyRow(state = rowState, modifier = Modifier.containRowFocusExit(),
@@ -430,6 +432,7 @@ internal fun LiveTvChannelBrowser(
                                             artworkUpdates = artworkUpdates,
                                             gapBeforeSeconds = slot.gapBeforeSeconds,
                                             visibleSeconds = slot.visibleSeconds,
+                                            savedView = savedView,
                                             onArtworkNeeded = { onArtworkNeeded(event.title, it) },
                                             modifier = (if (channel.uuid == focusTarget.rowId && "event:${event.eventId}" == focusTarget.contentId)
                                                 Modifier.focusRequester(firstContentFocusRequester) else Modifier)

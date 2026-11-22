@@ -171,7 +171,7 @@ fun TvheadendScreen(
     val channels = state.dashboard?.channels.orEmpty()
     val recordingArt: (TvhDvrEntry) -> LiveTvArt? = { liveTvRecordingArt(it, events, channels, titleArt) }
     val seriesArt: (TvhAutoRec) -> LiveTvArt? = { liveTvSeriesArt(it, events, channels, titleArt) }
-    val canEditTimers = state.capabilities.editTimers && !state.offline
+    val canEditTimers = state.capabilities.editTimers && !state.connectionRequired
     val channelBrowser = state.tab == TvheadendTab.LIVE || state.tab == TvheadendTab.GUIDE
     val channelControls = rememberLiveTvBrowseControls(viewModel.browseState, "channels")
     val guideControls = rememberLiveTvBrowseControls(viewModel.browseState, "guide")
@@ -320,21 +320,15 @@ fun TvheadendScreen(
 
         OperationFeedbackScope(viewModel.feedback, "dashboard", state.selectedEvent == null && state.selectedRecording == null)
         OperationFeedbackScope(viewModel.feedback, "timers", state.tab == TvheadendTab.TIMERS && state.selectedEvent == null && state.selectedRecording == null)
-        if (state.dashboard != null && state.error != null && state.tabHasContent()) {
+        if (state.dashboard != null && state.error != null && state.tabHasContent() && !state.connectionRequired) {
             OperationFeedbackContent(state.error, Modifier.fillMaxWidth(),
                 actionLabel = stringResource(R.string.home_retry), onAction = viewModel::refresh)
         }
-        if (state.offline && state.dashboard != null) Row(
-            Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(12.dp),
-        ) {
-            // Cached data stays browsable; play, record, timers and delete wait for the server.
-            Text(stringResource(R.string.tvh_offline_hint), style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.weight(1f, fill = false))
-            if (state.canWake) TvActionButton(text = stringResource(R.string.tvh_wake_server), onClick = viewModel::wakeServer,
-                enabled = !state.waking, loading = state.waking)
-        }
+        if (state.connectionRequired && state.dashboard != null) com.ambient.tv.ui.home.SavedBrowseStatus(
+            sources = listOf(state.source.name), retrying = state.waking || state.refreshing,
+            onRetry = viewModel::retryConnection,
+            savedAt = state.lastUpdatedEpochMillis?.let { formatDateTime(it / 1_000L) },
+        )
         if (state.tab == TvheadendTab.TIMERS) state.actionFeedback?.takeIf { it.scope == "timers" }?.let {
             OperationFeedbackContent(it, Modifier.fillMaxWidth())
         }
@@ -351,6 +345,12 @@ fun TvheadendScreen(
             state.awaitingInitialContent() -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                 androidx.compose.material3.CircularProgressIndicator(color = MaterialTheme.colorScheme.primary)
             }
+            state.emptyContentUnconfirmed() -> com.ambient.tv.ui.common.BrowseStatusPanel(
+                title = stringResource(if (state.dashboard == null) R.string.offline_browse_no_cache_title else R.string.offline_browse_section_unavailable),
+                body = stringResource(if (state.dashboard == null) R.string.offline_browse_no_cache_body else R.string.offline_browse_section_unavailable_body),
+                actionLabel = stringResource(R.string.home_retry), onAction = viewModel::retryConnection,
+                kind = com.ambient.tv.ui.common.BrowseStatusKind.INFO, modifier = Modifier.fillMaxSize(),
+            )
             state.emptyContentHasError() -> OperationFeedbackContent(
                 feedback = state.error!!,
                 layout = FeedbackLayout.PAGE,
@@ -373,7 +373,8 @@ fun TvheadendScreen(
                         pageFocusChain = pageFocusChains.getValue(tab),
                         listing = channelListing,
                         channelList = true,
-                        canWatch = !state.offline,
+                        canWatch = true, // Every activation enters the shared fresh-service playback gate.
+                        savedView = state.connectionRequired,
                         refreshing = state.refreshing,
                         channels = dashboard?.channels.orEmpty(),
                         events = dashboard?.events.orEmpty(),
@@ -397,7 +398,8 @@ fun TvheadendScreen(
                         pageFocusChain = pageFocusChains.getValue(tab),
                         listing = channelListing,
                         onWatch = watchChannel,
-                        canWatch = !state.offline,
+                        canWatch = true,
+                        savedView = state.connectionRequired,
                         // Channel cards may arrive before EPG; do not label each row "no programme"
                         // until this entry's dashboard request has actually settled.
                         refreshing = state.refreshing || !state.initialDashboardSettled,
@@ -421,10 +423,10 @@ fun TvheadendScreen(
                         imageHeaders = viewModel.imageHeaders,
                         art = recordingArt,
                         onArtworkNeeded = { title, scope -> viewModel.requestTitleArt(listOf(title), scope) },
-                        canDelete = state.capabilities.deleteRecordings && !state.offline,
+                        canDelete = state.capabilities.deleteRecordings && !state.connectionRequired,
                         busy = state.actionInProgress,
                         onDelete = { pendingDelete = PendingDelete.Recording(it) },
-                        onPlay = { if (state.offline) viewModel.selectRecording(it) else onPlayRecording(it.uuid) },
+                        onPlay = { onPlayRecording(it.uuid) },
                         onSelect = viewModel::selectRecording,
                         firstContentFocusRequester = firstContentFocusRequester,
                         focusTarget = contentFocusTarget,
@@ -442,7 +444,7 @@ fun TvheadendScreen(
                     TvheadendTab.TIMERS -> TimerList(
                         timers = dashboard?.upcoming.orEmpty(),
                         autoRecs = dashboard?.autoRecs.orEmpty(),
-                        canManage = state.capabilities.manageTimers && !state.offline,
+                        canManage = state.capabilities.manageTimers && !state.connectionRequired,
                         canEdit = canEditTimers,
                         busy = state.actionInProgress,
                         imageHeaders = viewModel.imageHeaders,
@@ -481,9 +483,11 @@ fun TvheadendScreen(
             timer = timer,
             art = art,
             imageHeaders = viewModel.imageHeaders,
-            canRecord = state.capabilities.manageTimers && !state.offline,
-            canRecordSeries = state.capabilities.seriesTimers && !state.offline,
-            canWatch = !state.offline && channel != null && event.isLive(System.currentTimeMillis() / 1000L),
+            canRecord = state.capabilities.manageTimers && !state.connectionRequired,
+            canRecordSeries = state.capabilities.seriesTimers && !state.connectionRequired,
+            canWatch = !state.connectionRequired && channel != null && event.isLive(System.currentTimeMillis() / 1000L),
+            connectionRequired = state.connectionRequired, retrying = state.waking || state.refreshing,
+            onRetry = viewModel::retryConnection,
             busy = state.actionInProgress,
             message = state.actionFeedback?.takeIf { it.scope == "event:${event.eventId}" },
             onDismiss = { viewModel.selectEvent(null) },
@@ -513,8 +517,10 @@ fun TvheadendScreen(
             finished = finished,
             art = recordingArt(entry),
             imageHeaders = viewModel.imageHeaders,
-            canPlay = completed && !state.offline,
-            canManage = !state.offline && entry.canDelete && if (finished) state.capabilities.deleteRecordings else state.capabilities.manageTimers,
+            canPlay = completed && !state.connectionRequired,
+            canManage = !state.connectionRequired && entry.canDelete && if (finished) state.capabilities.deleteRecordings else state.capabilities.manageTimers,
+            connectionRequired = state.connectionRequired, retrying = state.waking || state.refreshing,
+            onRetry = viewModel::retryConnection,
             canEdit = canEditTimers && upcoming && !finished,
             onEdit = { viewModel.edit(LiveTvEditTarget.Timer(entry)) },
             busy = state.actionInProgress,
@@ -534,6 +540,8 @@ fun TvheadendScreen(
             priority = editing.entry.priority, enabled = null,
             zeroIsServerDefault = state.source.system == "tvheadend",
             busy = state.actionInProgress, message = state.actionFeedback?.takeIf { it.scope == "edit" },
+            connectionRequired = state.connectionRequired, retrying = state.waking || state.refreshing,
+            onRetry = viewModel::retryConnection,
             onSave = { edit -> if (edit.isEmpty) viewModel.edit(null) else viewModel.updateTimer(editing.entry, edit) },
             onDismiss = { viewModel.edit(null) },
         )
@@ -543,6 +551,8 @@ fun TvheadendScreen(
             priority = editing.entry.priority, enabled = editing.entry.enabled.takeIf { editing.entry.canDisable },
             zeroIsServerDefault = state.source.system == "tvheadend",
             busy = state.actionInProgress, message = state.actionFeedback?.takeIf { it.scope == "edit" },
+            connectionRequired = state.connectionRequired, retrying = state.waking || state.refreshing,
+            onRetry = viewModel::retryConnection,
             onSave = { edit -> if (edit.isEmpty) viewModel.edit(null) else viewModel.updateSeriesTimer(editing.entry, edit) },
             onDismiss = { viewModel.edit(null) },
         )
@@ -559,6 +569,8 @@ fun TvheadendScreen(
         LiveTvConfirmDialog(
             title = title, question = stringResource(question), confirmLabel = stringResource(confirm),
             busy = state.actionInProgress,
+            connectionRequired = state.connectionRequired, retrying = state.waking || state.refreshing,
+            onRetry = viewModel::retryConnection,
             onConfirm = {
                 pendingDelete = null
                 when (pending) {
@@ -659,6 +671,7 @@ internal fun ChannelRow(
     onFocused: () -> Unit,
     art: LiveTvArt? = null,
     modifier: Modifier = Modifier,
+    savedView: Boolean = false,
 ) {
     if (LocalHandheldUi.current) {
         androidx.compose.material3.ListItem(
@@ -747,9 +760,9 @@ internal fun ChannelRow(
             }
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(5.dp)) {
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                    MetaBadge(stringResource(R.string.tvh_now), emphasized = true)
+                    if (!savedView && current != null) MetaBadge(stringResource(R.string.tvh_now), emphasized = true)
                     if (recording) MetaBadge(stringResource(R.string.tvh_recording), emphasized = true)
-                    MarqueeTitle(current?.title ?: "–", focused = focused, style = MaterialTheme.typography.titleSmall)
+                    MarqueeTitle(current?.title ?: if (savedView) stringResource(R.string.offline_browse_programme_unavailable) else "–", focused = focused, style = MaterialTheme.typography.titleSmall)
                 }
                 current?.let { event ->
                     // Advances while the list stays open, not only when the row recomposes.
@@ -780,6 +793,7 @@ internal fun GuideEventCard(
     artworkUpdates: kotlinx.coroutines.flow.StateFlow<Map<String, String>>? = null,
     gapBeforeSeconds: Long = 0L,
     visibleSeconds: Long = event.durationSeconds,
+    savedView: Boolean = false,
 ) {
     // LazyRow only composes nearby events; never prefetch the full multi-day EPG.
     LaunchedEffect(event.eventId, event.title) { onArtworkNeeded(this) }
@@ -796,7 +810,7 @@ internal fun GuideEventCard(
     var focused by remember { mutableStateOf(false) }
     val width = guideTimelineWidthDp(visibleSeconds).coerceAtLeast(24f).dp
     val gapWidth = guideTimelineWidthDp(gapBeforeSeconds).dp
-    val live = event.isLive(now)
+    val live = !savedView && event.isLive(now)
     val tokens = LocalUiTokens.current
     val cardShape = RoundedCornerShape(tokens.cardRadius)
     Row(verticalAlignment = Alignment.CenterVertically) {
@@ -806,7 +820,7 @@ internal fun GuideEventCard(
                 .background(MaterialTheme.colorScheme.surface.copy(alpha = .44f)),
             contentAlignment = Alignment.Center,
         ) {
-            if (gapWidth >= 115.dp) Text(stringResource(R.string.guide_no_programme),
+            if (gapWidth >= 115.dp) Text(stringResource(if (savedView) R.string.offline_browse_programme_unavailable else R.string.guide_no_programme),
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 maxLines = 1, overflow = TextOverflow.Ellipsis)
@@ -1154,6 +1168,9 @@ private fun EventDialog(
     reminded: Boolean = false,
     canRemind: Boolean = false,
     onToggleReminder: () -> Unit = {},
+    connectionRequired: Boolean = false,
+    retrying: Boolean = false,
+    onRetry: () -> Unit = {},
 ) {
     val playing = livePlaybackIndicator("channel", event.channelUuid)
     val openCurrent = com.ambient.tv.companion.LocalOpenActivePlayback.current
@@ -1170,12 +1187,14 @@ private fun EventDialog(
         maxWidth = 860.dp,
         header = {
             Row(horizontalArrangement = Arrangement.spacedBy(9.dp), verticalAlignment = Alignment.CenterVertically) {
-                if (event.isLive(System.currentTimeMillis() / 1000L)) MetaBadge(stringResource(R.string.tvh_live), emphasized = true)
-                if (timer != null) MetaBadge(stringResource(R.string.tvh_recording), emphasized = true)
+                if (!connectionRequired && event.isLive(System.currentTimeMillis() / 1000L)) MetaBadge(stringResource(R.string.tvh_live), emphasized = true)
+                if (!connectionRequired && timer != null) MetaBadge(stringResource(R.string.tvh_recording), emphasized = true)
                 Text(event.channelName, style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         },
         footer = {
+            if (connectionRequired) TvActionButton(text = stringResource(R.string.home_retry), onClick = onRetry,
+                loading = retrying, enabled = !retrying, modifier = Modifier.focusRequester(initialFocus))
             if (canWatch) TvActionButton(text = stringResource(if (playing != null) R.string.playback_open else R.string.tvh_watch), onClick = { if (playing != null) openCurrent(playing) else onWatch() }, selected = true, modifier = Modifier.focusRequester(initialFocus))
             if (timer == null && canRecord) {
                 TvActionButton(text = stringResource(R.string.tvh_record), onClick = { pending = R.string.tvh_record; onRecord() }, enabled = !busy, loading = busy && pending == R.string.tvh_record, modifier = if (!canWatch && !busy) Modifier.focusRequester(initialFocus) else Modifier)
@@ -1187,9 +1206,10 @@ private fun EventDialog(
                 selected = reminded)
             // Back takes the first focus whenever no record/cancel button above can (also for a timer that cannot be deleted).
             val recordActionFocusable = !busy && canRecord && (timer == null || timer.canDelete)
-            TvActionButton(text = stringResource(R.string.back), onClick = onDismiss, modifier = if (!canWatch && !recordActionFocusable) Modifier.focusRequester(initialFocus) else Modifier)
+            TvActionButton(text = stringResource(R.string.back), onClick = onDismiss, modifier = if (!connectionRequired && !canWatch && !recordActionFocusable) Modifier.focusRequester(initialFocus) else Modifier)
         },
     ) {
+        if (connectionRequired) Text(stringResource(R.string.offline_browse_saved_body), style = MaterialTheme.typography.bodyMedium)
         com.ambient.tv.companion.PlaybackStatusSection(playing)
         art?.let { LiveTvArtBox(it, event.title, imageHeaders, Modifier.fillMaxWidth().height(200.dp)) }
         event.subtitle?.takeIf { it.isNotBlank() }?.let { Text(it, style = MaterialTheme.typography.titleSmall) }
@@ -1215,6 +1235,9 @@ private fun RecordingDialog(
     onPlay: () -> Unit,
     onCancel: () -> Unit,
     onDelete: () -> Unit,
+    connectionRequired: Boolean = false,
+    retrying: Boolean = false,
+    onRetry: () -> Unit = {},
 ) {
     val playing = livePlaybackIndicator("recording", entry.uuid)
     val openCurrent = com.ambient.tv.companion.LocalOpenActivePlayback.current
@@ -1243,6 +1266,8 @@ private fun RecordingDialog(
             }
         },
         footer = {
+            if (connectionRequired) TvActionButton(text = stringResource(R.string.home_retry), onClick = onRetry,
+                loading = retrying, enabled = !retrying, modifier = Modifier.focusRequester(initialFocus))
             if (finished) {
                 if (canPlay) TvActionButton(text = stringResource(if (playing != null) R.string.playback_open else R.string.tvh_watch), onClick = { if (playing != null) openCurrent(playing) else onPlay() }, selected = true, modifier = Modifier.focusRequester(initialFocus))
                 if (canManage) TvActionButton(text = stringResource(R.string.tvh_delete_recording), onClick = onDelete, loading = busy, modifier = if (!canPlay && !busy) Modifier.focusRequester(initialFocus) else Modifier)
@@ -1251,9 +1276,10 @@ private fun RecordingDialog(
                 if (canManage) TvActionButton(text = stringResource(if (entry.isActivelyRecording()) R.string.player_record_stop else R.string.tvh_cancel_recording), onClick = onCancel, loading = busy, modifier = if (!canEdit && !busy) Modifier.focusRequester(initialFocus) else Modifier)
             }
             val actionTakesFocus = (finished && canPlay) || (!busy && (canManage || (canEdit && !finished)))
-            TvActionButton(text = stringResource(R.string.back), onClick = onDismiss, modifier = if (!actionTakesFocus) Modifier.focusRequester(initialFocus) else Modifier)
+            TvActionButton(text = stringResource(R.string.back), onClick = onDismiss, modifier = if (!connectionRequired && !actionTakesFocus) Modifier.focusRequester(initialFocus) else Modifier)
         },
     ) {
+        if (connectionRequired) Text(stringResource(R.string.offline_browse_saved_body), style = MaterialTheme.typography.bodyMedium)
         com.ambient.tv.companion.PlaybackStatusSection(playing)
         art?.let { LiveTvArtBox(it, entry.title, imageHeaders, Modifier.fillMaxWidth().height(200.dp)) }
         entry.description?.takeIf { it.isNotBlank() }?.let { Text(it, style = MaterialTheme.typography.bodyMedium) }

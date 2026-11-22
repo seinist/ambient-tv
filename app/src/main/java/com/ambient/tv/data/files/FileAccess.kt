@@ -184,7 +184,8 @@ class FileAccess @Inject constructor(
     /** Brings up the WireGuard route (if this source uses it), then wakes the NAS when configured. */
     suspend fun prepare(source: FileSource) {
         wireGuardRoute.ensureForFileSource(source).getOrElse { throw WireGuardUnavailableException(it.message) }
-        wake.ensureAwake(source)
+        if (kotlinx.coroutines.currentCoroutineContext()[com.ambient.tv.data.browse.PlaybackAccessProbe.Key] == null)
+            wake.ensureAwake(source)
     }
     suspend fun testNfs(source: FileSource) = observedIO(source) { nfs.list(source, "", 1); Unit }
     suspend fun testSmb(source: FileSource, password: String) = observedIO(source) { smb(source).list(source, "", password, 1); Unit }
